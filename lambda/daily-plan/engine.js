@@ -523,6 +523,35 @@ const SOAK_FCST_POP_PCT = SOAK_THRESHOLDS.SOAK_FCST_POP_PCT;     // min PoP for 
 // the branch ordering, NOT this number. Lowering it below 0.74" to force it to fire would be fitting to a
 // single observed day (2026-07-07, 0.74") and would breach the derivation above.
 const SOAK_TODAY_SMALL_IN = SOAK_THRESHOLDS.SOAK_TODAY_SMALL_IN; // today-forecast bar for small vessels (bags/pots/cells)
+const SOON_QPF_IN = SOAK_THRESHOLDS.SOON_QPF_IN;                 // near-term (next few hours) amount that counts — 'soon' branch
+// The sat_kinds that rest on a FORECAST rather than on measured water. Membership decides subordination to
+// the freshTransplant / bagHeatGate carve-outs (see _satApplies). A new forecast branch that forgets to
+// enrol here silently gains the right to starve a fresh transplant, so this is the one place to add it.
+const FORECAST_SAT_KINDS = new Set(['today', 'incoming_dry', 'soon']);
+
+// ONE reason string per sat_kind, in one place. This ternary previously lived inline and IDENTICALLY in
+// both rain_skipped push sites (the ledger leg and the legacy leg), with a trailing `else` that assumed
+// 'incoming' — so adding a kind would have printed "rain incoming on already-wet media" over a DRY
+// deferral in both, which is not a cosmetic error: that sentence is the user's only explanation for why
+// a thirsty plant was skipped, and it would have asserted the opposite of the reason. Unknown kinds now
+// degrade to a truthful generic rather than to a confident wrong one.
+const popSuffix = (pop) => (pop == null ? '' : ` @ ${pop}%`);
+function satReason(sat){
+  switch(sat && sat.kind){
+    case 'soak':
+      return `Skip — saturated (heavy soak, ${sat.wp}" over the last few days; let it drain)`;
+    case 'today':
+      return `Skip — ${sat.fq}" rain falling today${popSuffix(sat.pop)}`;
+    case 'incoming':
+      return `Skip — rain incoming on already-wet media (${sat.fq}" forecast${popSuffix(sat.pop)}); let it drain`;
+    case 'incoming_dry':
+      return `Skip — ${sat.fq}" rain expected tomorrow${popSuffix(sat.pop)}; waiting for it beats watering twice`;
+    case 'soon':
+      return `Skip — ${sat.fq}" rain expected within a few hours${popSuffix(sat.pop)}`;
+    default:
+      return `Skip — rain expected${popSuffix(sat && sat.pop)}`;
+  }
+}
 // Returns { wp, kind:'soak'|'incoming', fq?, pop? } when an outdoor planting must NOT be watered (media
 // saturated, or wet with more rain imminent = no drying window), else null. Pure fn of hydrology + exposure.
 // BUG-TODAYWATER-001 — "is meaningful rain forecast for TODAY?" Deliberately reuses SOAK_FCST_QPF_IN and
@@ -554,6 +583,10 @@ function saturationSuppressed(rcls, hy, opts){
   const wp = windowPrecip(hy); if(wp==null) return null;
   const wpR = Math.round(wp*100)/100;
   const todayAware = !!(opts && opts.todayAware);
+  // Both default FALSE, so an un-updated caller — and every existing fixture and parity golden — is
+  // byte-identical. See the two branches at the bottom of this function.
+  const deferDry = !!(opts && opts.deferDry);
+  const soonAware = !!(opts && opts.soonAware);
   // BUG-TODAYWATER-001 — DISJOINT TERMS. windowPrecip is `recent + today`, and `today` is a FORECAST, so
   // the soak cap has always been part-prediction. Left that way, any forecast >= SOAK_CAP_IN trips SOAK
   // before the today branch is reached — which would make the small-vessel bar below dead code AND let a
@@ -595,6 +628,61 @@ function saturationSuppressed(rcls, hy, opts){
     const tf = todayForecastIn(hy);
     if(tf >= bar)
       return { wp: wpR, fq: tf, pop: hy.today_pop, kind: 'today' };
+  }
+  // ── 'incoming_dry' — Dave's actual question, and the one case the branches above refuse ─────────────
+  //
+  // "If we need 0.5+ right now, but tomorrow we expect an inch, should we really give a moderate soak
+  // today to get even more tomorrow?" (2026-09-13). The 'incoming' branch above is that rule EXCEPT for
+  // its `soakBasis >= SOAK_WET_FLOOR_IN` prerequisite — and Dave's scenario is by construction a DRY
+  // planting, which is exactly the state in which that branch declines to fire. So this is the same
+  // judgement applied without the wetness precondition, not a new agronomic bar.
+  //
+  // THE BARS ARE DELIBERATELY UNCHANGED at SOAK_FCST_QPF_IN / SOAK_FCST_POP_PCT. Backtested 2026-09-14
+  // against 85 days of this season's own stored plans (daily_plan tomorrow_precip_in/_pop joined to what
+  // weather_daily later recorded): at 0.50"/60% the gate fires 9 times with ZERO busts (median actual
+  // 1.04"), and tightening to 0.75"/80% only drops it to 4 fires, also zero busts. There was no evidence
+  // for inventing a stricter constant, and the today-branch header above states the principle — reusing an
+  // approved bar introduces no new agronomic judgement. Caveat, recorded honestly: 9 firings over one
+  // summer is thin, and PoP calibration shifts by season. Revisit with a full year.
+  //
+  // TWO THINGS DO CHANGE for the dry case, because they are wrong here rather than merely permissive:
+  //
+  //  1. FAIL CLOSED ON A NULL PoP. 'incoming' accepts `pop==null` — justified in its own comment because
+  //     an already-wet planting can wait for the overnight re-evaluation. A DRY planting cannot: a missing
+  //     probability would defer it on an amount with no confidence attached at all. This follows
+  //     todayQualifies, and the engine's standing convention that unknown fails safe toward WATERING.
+  //  2. SUBORDINATE TO THE FAST-DRY CARVE-OUTS. See _satApplies below: like 'today' and unlike 'incoming',
+  //     this yields to freshTransplant and bagHeatGate. A forecast busts; a fresh transplant in a hot
+  //     fabric bag does not get a second chance.
+  //
+  // Flag-gated and OFF by default, so this ships inert and Dave flips it when he is ready — the same
+  // shape every comparable change in this engine used (CARE_TODAY_AWARE_ENABLED, CARE_RAIN_CREDIT_ENABLED).
+  // Reports its own basis in `wp` so "did we skip on a forecast that busted?" stays answerable, and carries
+  // a DISTINCT sat_kind so it can never be confused with the wet-media branch in the stored payload.
+  if(deferDry && fq!=null && fq >= SOAK_FCST_QPF_IN && pop!=null && pop >= SOAK_FCST_POP_PCT)
+    return { wp: Math.round(soakBasis*100)/100, fq, pop, kind: 'incoming_dry' };
+  // ── 'soon' — "in the next few hours, is it going to give us another quarter inch?" ──────────────────
+  //
+  // Ordered LAST because it is the narrowest claim: it only fires on what the other branches missed. The
+  // rest-of-day sum the 'today' branch judges cannot answer this question at 07:00, when it is reporting
+  // seventeen hours of possibility; today_next_in is the same hourly grid bounded to the next few hours
+  // (station.NEAR_TERM_WINDOW_H), so a concentrated shower that is genuinely imminent clears this bar while
+  // a day's worth of scattered maybes does not.
+  //
+  // SOON_QPF_IN is 0.25 because that is the number Dave named, and it happens to be defensible: it clears
+  // every per-tier initial abstraction in RAIN_TIER_IA (0.17-0.25), so a quarter inch actually does
+  // something for every vessel he owns rather than merely wetting the surface.
+  //
+  // This is the LOWEST-RISK of the forecast branches and it is worth saying why, because the bar looks
+  // loose next to the others: the horizon is ~3 hours, not 36, and the plan now regenerates HOURLY. A bust
+  // is visible and corrected within the hour, with most of the watering day still ahead. At three runs a
+  // day this branch would have been indefensible; it is only reasonable as a consequence of
+  // OPS-PLANHOURLY-001. today_pop is a DAILY maximum probability, so it is used only as a sanity floor on
+  // the day being rainy at all — the hourly amount is doing the real work.
+  if(soonAware){
+    const soon = hy && hy.today_next_in, tPop = hy && hy.today_pop;
+    if(soon!=null && soon >= SOON_QPF_IN && tPop!=null && tPop >= SOAK_FCST_POP_PCT)
+      return { wp: wpR, fq: soon, pop: tPop, kind: 'soon' };
   }
   return null;
 }
@@ -861,7 +949,10 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
 // generatePlan — {enabled, eventsByPlant, weatherByDate, weatherRowCount, effNowMs}. Null/absent ->
 // byte-identical legacy path; the fold requires BOTH the flag and a real event window (a failed
 // event-window read degrades the whole run to flag-OFF, per the canon fail-to-today's-model rule).
-function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false, droughtState=null){
+// `satOpts` is an OBJECT, not two more positionals: this list is already twelve deep and every caller
+// passes them by position, so a thirteenth and fourteenth boolean would be one transposition away from
+// silently arming a suppression branch. Defaults to {} so every existing caller is byte-identical.
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false, droughtState=null, satOpts={}){
   const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[], feedSuppressed=[];
   let overwinterHeld=0, overwinterDeferred=0;
@@ -994,7 +1085,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     const rcls=rainClass(p);
     // DRG-WXSATCAP-001: flag-independent heavy-soak cap (outer gate).
     // BUG-TODAYWATER-001: pass the vessel size so the TODAY branch can hold small vessels to a higher bar.
-    const _sat=saturationSuppressed(rcls, hydrology, { todayAware: todayAwareEnabled, smallVessel: isSmallVessel(p) });
+    const _sat=saturationSuppressed(rcls, hydrology, { todayAware: todayAwareEnabled, smallVessel: isSmallVessel(p), deferDry: !!satOpts.deferDry, soonAware: !!satOpts.soonAware });
     // DRG-WXWATER-001 coarse-v1 (flag-ON only): exposure eligibility. Flag-OFF uses the location-derived class
     // (rcls==='outdoor'); flag-ON derives exposure from the location, honoring a stored rain_exposed
     // boolean as an explicit override. _creditClass/_iaShown collapse to the flag-OFF values when OFF.
@@ -1032,7 +1123,15 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // and a forecast busts. Letting a prediction outrank bagHeatGate would skip a 5-gal fabric bag at 92F,
     // and outrank freshTransplant would skip a small root ball — both cost plants when the rain no-shows,
     // and both are exactly the cases those carve-outs were written to protect.
-    const _satApplies = _sat && (_sat.kind !== 'today' || !(freshTransplant || bagHeatGate));
+    // A forecast busts; measured water in the media does not. Every FORECAST-based suppression therefore
+    // yields to the fast-dry carve-outs, while 'soak' and 'incoming' — both of which require water already
+    // measured in the media — outrank them, exactly as before.
+    //
+    // 'incoming_dry' and 'soon' join 'today' here rather than joining 'incoming', even though 'incoming_dry'
+    // is a relaxation of 'incoming': what made 'incoming' safe to leave unsubordinated was its already-wet
+    // prerequisite, and that is precisely the clause 'incoming_dry' drops. Inheriting its exemption along
+    // with its bars would have carried over a guarantee that no longer holds.
+    const _satApplies = _sat && (!FORECAST_SAT_KINDS.has(_sat.kind) || !(freshTransplant || bagHeatGate));
     // ── V4-WATERMATH-001 F2 fork ──────────────────────────────────────────────────────────────────
     // Flag ON + watering history exists -> the continuous ledger replaces the dW>=wi chain below.
     // dW==null deliberately FALLS THROUGH to the legacy never:true push (canon: never-watered path
@@ -1048,11 +1147,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
           days_since:dW,interval:_lg.wiEff,saturated:true,
           sat_kind:_sat.kind, sat_wp:_sat.wp,
           today_in:(hydrology&&hydrology.today_precip_in)??null, today_pop:(hydrology&&hydrology.today_pop)??null,
-          reason: _sat.kind==='soak'
-            ? `Skip — saturated (heavy soak, ${_sat.wp}" over the last few days; let it drain)`
-            : _sat.kind==='today'
-            ? `Skip — ${_sat.fq}" rain falling today${_sat.pop==null?'':' @ '+_sat.pop+'%'}`
-            : `Skip — rain incoming on already-wet media (${_sat.fq}" forecast${_sat.pop==null?'':' @ '+_sat.pop+'%'}); let it drain`,
+          reason: satReason(_sat),
           ledger:_lg.pub});
       } else if(_lg.due){
         // PAYLOAD CONTRACT (canon Decision 10): days_since/overdue_by/interval stay INTEGER CALENDAR
@@ -1073,11 +1168,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
         // literal and deploy in one unordered matrix wave, so a bump opens a mismatch window).
         sat_kind:_sat.kind, sat_wp:_sat.wp,
         today_in:(hydrology&&hydrology.today_precip_in)??null, today_pop:(hydrology&&hydrology.today_pop)??null,
-        reason: _sat.kind==='soak'
-          ? `Skip — saturated (heavy soak, ${_sat.wp}" over the last few days; let it drain)`
-          : _sat.kind==='today'
-          ? `Skip — ${_sat.fq}" rain falling today${_sat.pop==null?'':' @ '+_sat.pop+'%'}`
-          : `Skip — rain incoming on already-wet media (${_sat.fq}" forecast${_sat.pop==null?'':' @ '+_sat.pop+'%'}); let it drain`});
+        reason: satReason(_sat)});
     } else if(dW!=null && dW>=wi && rc && effDays<wi){
       rainSkipped.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:inGround,
         days_since:dW,interval:wi,credited_days:rc.credit_days,
@@ -1252,7 +1343,7 @@ function hydrologyStatus(hy){
 // handler threads through (weatherDaily was already passed as the F1 seam; it is consumed now).
 // All default to inert — an un-updated caller is byte-identical, and enabled-without-events stays
 // legacy (the handler passes enabled=false when the event-window read fails).
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null}){
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null, deferDryEnabled=false, soonAwareEnabled=false}){
   const ledgerOpts = (waterLedgerEnabled && eventsByPlant)
     ? ledger.buildLedgerOpts({ weatherDaily, eventsByPlant, today, nowMs })
     : null;
@@ -1270,7 +1361,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const rainComing = _todayComing || _tomorrowComing;
   const rainHorizon = _todayComing ? 'today' : (_tomorrowComing ? 'tomorrow' : null);
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState);
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState,{deferDry:deferDryEnabled,soonAware:soonAwareEnabled});
     users[u]=up; }
   const lwOut=(hy && Array.isArray(hy.wetness_window)) ? lw.assessLeafWetness(hy.wetness_window, today) : null;
   return {date:today,
@@ -1296,7 +1387,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     ...(lwOut ? { leaf_wetness: lwOut } : {}),
     hot:(weather&&weather.highToday>=HOT_F)||false, water_source:(fertModel.water_quality||{}).source||null, users};
 }
-module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression, feedSuppression, isMedHerb,
+module.exports={generatePlan, PLAN_SCHEMA_VERSION, saturationSuppressed, todayQualifies, satReason, FORECAST_SAT_KINDS, SOON_QPF_IN, SOAK_CAP_IN, SOAK_TODAY_SMALL_IN, BAG_HEAT_GATE_F, generatePlanForUser, resolveCadence, coldFor, fertilizeRec, feedPhase, daysBetween, HOT_F, rainClass, rainCreditDays, windowPrecip, RAIN_IA, TRANSPLANT_CARVEOUT_DAYS, hydrologyStatus, computeCallout, isSmallVessel, vesselSizeSmall, waterSuppression, feedSuppression, isMedHerb,
   RAIN_TIER_IA, RAIN_TIER_HOLD, RAIN_VESSEL_TIER, rainTierFor, rainDepthTierFor, RAIN_DEPTH_TIER_OVERRIDE,
   FABRIC_GROUND_MIN_GAL, RAIN_MAX_DAYS, rainStageFor, rainMaxDays, rainCreditDaysTiered, bagHeatDemoteCredit,
   dailyFloorFor, DAILY_FLOOR_DAYS, RESERVOIR_VESSEL_TYPES, RIGID_POT_TYPES,

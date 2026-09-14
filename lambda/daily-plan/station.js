@@ -27,6 +27,13 @@ function stationConfig() {
 const FRESHNESS_MAX_MIN = Number(process.env.AWN_FRESHNESS_MAX_MIN || 90); // B7: newest reading older than this => treat offline
 const COORD_TOL = 0.02; // ~1.5km: bind a station to a Space by matching stored coords
 
+// How far ahead the NEAR-TERM rain window looks, in hours (Dave 2026-09-13: "the next few hours — is it
+// going to give us another quarter inch?"). 3 is a deliberate compromise: long enough that a shower already
+// visible on the hourly grid lands inside it, short enough that the forecast is still a near-nowcast rather
+// than a day-ahead guess. It is only actionable at all because the plan now regenerates HOURLY
+// (OPS-PLANHOURLY-001) — at 3 runs a day a 3-hour window would have been stale before anyone read it.
+const NEAR_TERM_WINDOW_H = 3;
+
 // DRG-GAUGESANITY-001 — upper plausibility bound on the daily accumulator. FRESHNESS_MAX_MIN only ever
 // established that the gauge is REPORTING; nothing established that the number was POSSIBLE. A tipping bucket
 // that phantom-tips (spider in the funnel, debris, a hail strike on the cone) reports an unbounded total, and
@@ -290,9 +297,20 @@ function gaugeWindow(st, planDay) {
 //
 // Returns null — never 0 — whenever the data cannot support an answer, so the caller falls back to the H2
 // whole-day behaviour rather than reporting "no more rain coming" and over-watering into an incoming storm.
-function remainingHourlyIn(hourly, day, hourNow) {
+// `windowH` (OPS-PLANHOURLY-001 sequel) bounds the sum to the NEXT N hours instead of the rest of the day.
+// Omitted => unbounded, byte-identical to the original. Dave's question is "in the next few hours, is it
+// going to give us another quarter inch?" — which the rest-of-day sum cannot answer at 07:00, when it is
+// reporting seventeen hours of possibility.
+//
+// The window deliberately does NOT cross midnight. Every row here is matched by DATE-STRING PREFIX on `day`
+// (that is what makes the function DST-safe), so admitting tomorrow's hours would mean matching two dates
+// and re-deriving the boundary — and rain after midnight is not a reason to skip TODAY's watering anyway.
+// The honest cost: in the 21:00 run the window is only ever 2-3 hours wide and shrinks to nothing, so the
+// near-term branch quietly stops contributing late in the evening rather than reaching into tomorrow.
+function remainingHourlyIn(hourly, day, hourNow, windowH) {
   if (!hourly || !Array.isArray(hourly.time) || !Array.isArray(hourly.precipitation)) return null;
   if (typeof day !== 'string' || !Number.isFinite(hourNow)) return null;
+  const bounded = Number.isFinite(windowH) && windowH > 0;
   const t = hourly.time, p = hourly.precipitation;
   let dayRows = 0, futureRows = 0, finiteRows = 0, sum = 0;
   for (let i = 0; i < t.length; i++) {
@@ -301,6 +319,7 @@ function remainingHourlyIn(hourly, day, hourNow) {
     dayRows++;
     const h = Number(s.slice(11, 13));
     if (!Number.isFinite(h) || h <= hourNow) continue;
+    if (bounded && h > hourNow + windowH) continue;
     futureRows++;
     const v = p[i];
     if (!Number.isFinite(v)) continue;
@@ -335,7 +354,11 @@ function remainingForecast(base, st, day) {
   if (hour == null) return { in: null, why: 'no_hour' };
   const v = remainingHourlyIn(hourly, day, hour);
   if (v == null) return { in: null, why: 'hourly_unusable' };
-  return { in: v, hour, why: null };
+  // The near-term window rides the SAME hourly array and the SAME resolved hour, so it can never disagree
+  // with `remaining` about what time it is or which rows are in the future. null when the bounded sum is
+  // unusable — the caller must not read a missing near-term figure as "no rain coming soon".
+  const soon = remainingHourlyIn(hourly, day, hour, NEAR_TERM_WINDOW_H);
+  return { in: v, hour, soon, why: null };
 }
 
 // Bind a station to a Space by coordinate proximity (coords live in spaces.weather_lat/lng — no DDL). Exact
@@ -409,6 +432,14 @@ function mergeStationHydrology(hy, st, opts) {
     merged.today_remaining_in = remaining;
     merged.today_precip_in = round2(observed + remaining);
     prov.today_source = remaining > 0 ? 'station+forecast' : 'station';
+    // Near-term (next NEAR_TERM_WINDOW_H hours). Spread CONDITIONALLY — an absent key keeps an unaffected
+    // run byte-identical against the parity goldens, which is the house pattern for additive hydrology
+    // fields. Only meaningful on the hourly basis: the whole-day fallback has no intra-day resolution to
+    // bound, and emitting a figure derived from it would be inventing precision the data does not have.
+    if (rf.in != null && rf.soon != null) {
+      merged.today_next_in = rf.soon;
+      prov.today_next_window_h = NEAR_TERM_WINDOW_H;
+    }
   } else {
     prov.today_source = fToday != null ? 'forecast' : 'unavailable';
   }
@@ -467,4 +498,4 @@ function mergeStationWeather(wx, st) {
   return { merged: { ...wx, tonightLow: low }, prov };
 }
 
-module.exports = { stationConfig, deriveStation, overnightMins, OVERNIGHT_MIN_SAMPLES, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, COORD_TOL };
+module.exports = { stationConfig, deriveStation, overnightMins, OVERNIGHT_MIN_SAMPLES, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, COORD_TOL, NEAR_TERM_WINDOW_H };

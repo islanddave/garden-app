@@ -221,6 +221,12 @@ async function fetchPrecip(lat, lng) {
       upcoming_precip_in: round2(tomorrow + (ps[4] || 0)),
       tomorrow_precip_in: round2(tomorrow),
       tomorrow_pop: pop[3] != null ? pop[3] : null,
+      // D+2's PROBABILITY. `pop[4]` has been in every response this Lambda has ever parsed and was never
+      // read, which is the whole reason `upcoming_precip_in` (D1+D2, two lines up) gates nothing: the
+      // suppression design bars everything on a PoP, so an unprobabilised amount is structurally unusable
+      // however much rain it claims. Extracted now so the two-day horizon can be reasoned about at all.
+      // Same null-not-zero convention as its siblings — a missing probability must never read as 0%.
+      upcoming_pop: pop[4] != null ? pop[4] : null,
       // BUG-TODAYWATER-001 actuals backfill: D-1 OBSERVED rain as its own field — recent_precip_in is the
       // D-2+D-1 SUM, so what actually fell on a given day was unrecoverable BY CONSTRUCTION, which made a
       // busted today-forecast undetectable after the fact. Consumed ONLY by handler.backfillYesterdayActual

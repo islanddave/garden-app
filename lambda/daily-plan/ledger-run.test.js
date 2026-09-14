@@ -234,15 +234,23 @@ describe('resolveInvokeOptions — flagOverrides sanitization', () => {
     expect(out.dryRun).toBe(true);
     expect(out.flagOverrides).toEqual({ CARE_WATER_LEDGER_ENABLED: true });
   });
-  it('arrays/garbage/absence -> null; the whitelist is exactly the seven CARE flags', () => {
+  it('arrays/garbage/absence -> null; the whitelist is exactly the nine CARE flags', () => {
     expect(resolveInvokeOptions({ flagOverrides: [true] }, OPTS).flagOverrides).toBeNull();
     expect(resolveInvokeOptions({ flagOverrides: 'CARE_WATER_LEDGER_ENABLED' }, OPTS).flagOverrides).toBeNull();
     expect(resolveInvokeOptions({}, OPTS).flagOverrides).toBeNull();
     // Exhaustive on purpose: widening the shadow seam is a decision, so it has to be made HERE as
     // well as at the read site. V4-COVEREDNOTMODELLED-001 added the seventh entry.
+    //
+    // Eighth and ninth added 2026-09-13 for forecast-aware deferral (CARE_RAIN_DEFER_DRY_ENABLED,
+    // CARE_RAIN_SOON_ENABLED). This test RED-ED on that change, which is the outcome it was written
+    // for — the widening is deliberate and is recorded here rather than absorbed. Both decide whether
+    // a THIRSTY planting is skipped, so being able to shadow them through
+    // `rerun-daily-plan.sh --flag-overrides` before any env flip is the point: without an entry, the
+    // only way to learn what they do in prod would be to turn them on in prod.
     expect(LEDGER_OVERRIDABLE_FLAGS).toEqual(['CARE_WATER_LEDGER_ENABLED', 'CARE_RAIN_CREDIT_ENABLED',
       'CARE_RAIN_MAXDAYS_ENABLED', 'CARE_TODAY_AWARE_ENABLED', 'CARE_CADENCE_SCOPES_ENABLED',
-      'CARE_RAIN_MEASURED_CREDIT_ENABLED', 'CARE_COVER_INHERIT_ENABLED']);
+      'CARE_RAIN_MEASURED_CREDIT_ENABLED', 'CARE_COVER_INHERIT_ENABLED',
+      'CARE_RAIN_DEFER_DRY_ENABLED', 'CARE_RAIN_SOON_ENABLED']);
   });
   // DRG-INTRADAY-002 Track 0. Asserted on its own rather than left to the list pin above, because
   // the list pin passes whether or not the name is spelled the same as the read site at :939 — and
