@@ -26,6 +26,29 @@ export const NEED_EVENT_TYPE = {
   overwintering: 'moisture_check',
 }
 
+// BUG-MOISTURECHECKNOBUTTON-001 — the SECONDARY event a row may offer alongside its primary log:
+// "I went and felt it, it's still damp." Everything around this shipped in V4-WATERMATH-001 F0 (the
+// registry entry, the icon, the reward exclusion, the read-side 24h check-off) except the affordance,
+// so prod holds zero rows of it all time. This is the affordance.
+//
+// It stays a SECONDARY action rather than becoming another NEED_EVENT_TYPE entry: the bucket is still
+// water_due, the row still primarily wants watering, and the bulk/group machinery keys off
+// NEED_EVENT_TYPE — moisture_check is in BATCH_EXCLUDED_TYPES precisely because "none of these 500
+// need water" is a fabricated observation, so it must never reach a bulk button.
+export const MOISTURE_CHECK_EVENT = 'moisture_check'
+
+// water_due ONLY. Both exclusions are correctness, not taste:
+//   no_history    — DONE_EVENTS.no_history is ['watering','rain']. Declaring the soil damp
+//                   establishes no watering history, so the server would NOT check the card off.
+//                   Offering it here would optimistically hide a row that returns on the next plan
+//                   read, which is worse than no control at all.
+//   overwintering — NEED_EVENT_TYPE.overwintering already IS moisture_check. A second control would
+//                   post the identical event as the chip beside it.
+// Every other need is off the watering clock entirely.
+export function canMoistureCheck(row) {
+  return !!row && row.need === 'water_due'
+}
+
 // Bucket -> short care verb (the "By type" group label + chip label). Text channel, never color-only.
 export const NEED_LABEL = {
   water_due: 'Water',

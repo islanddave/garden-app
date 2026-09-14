@@ -14,6 +14,7 @@ import {
   buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, waterStaleness, capStaleRows,
   dormantRows, feedSuppressedRows, FEED_SUPPRESSED_LISTED, droughtRows,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
+  canMoistureCheck, MOISTURE_CHECK_EVENT,
 } from '../../lib/careNeeded.js'
 import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
 
@@ -62,9 +63,11 @@ function writeSkipped(set) {
   try { localStorage.setItem(skipKeyName(), JSON.stringify([...set])) } catch { return }
 }
 
-function eventBody(row) {
+// `eventType` overrides the row's primary type — the moisture check posts through this same body so
+// the two writes cannot drift in shape. Omitted => the row's own mapped type, as before.
+function eventBody(row, eventType) {
   return {
-    project_id: row.projectId, event_type: row.eventType, event_date: todayLocalISO(),
+    project_id: row.projectId, event_type: eventType || row.eventType, event_date: todayLocalISO(),
     plant_id: row.plantingId, is_public: true, has_photo: false,
     notes: null, private_notes: null, quantity: null, metadata: null,
   }
@@ -124,7 +127,39 @@ const SR_ONLY = {
   clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap',
 }
 
-function Row({ row, pending, onLog, onSkip }) {
+// BUG-MOISTURECHECKNOBUTTON-001 — "I checked it, it's still moist."
+//
+// A real <button>, never a <div aria-label>. A generic role cannot be named, so the label on a
+// role-less div is dropped outright and the control reaches AT as an unlabelled node.
+//
+// Quiet green, not a severity colour. It is a log action like the care chip, so it carries the
+// green token family rather than Skip's bare text — but it must not compete with the chip for the
+// eye. BD-036b made "the thing you want to tap is the thing that is coloured" the rule of this row,
+// and the thing you want to tap is still Water; this is the exception you take when you get there
+// and find the soil damp. The green tint is also what separates it from the visually similar Skip
+// sitting next to it, which writes nothing at all.
+//
+// 48px wide so the target clears 44px in BOTH axes (ROW_TAP_MIN covers the vertical). Text-labelled
+// rather than icon-only: an unfamiliar glyph carries no channel a screen reader or a hurried thumb
+// can use, and "Moist" is one word wide.
+function MoistureButton({ row, pending, onMoist }) {
+  return (
+    <button
+      type="button" onClick={() => onMoist(row)} disabled={pending}
+      aria-label={'Checked ' + row.name + ' — still moist'}
+      style={{
+        flexShrink: 0, width: 48, minHeight: ROW_TAP_MIN, border: 'none',
+        borderLeft: '1px solid ' + P.border, background: pending ? P.greenPale : 'none',
+        color: P.green, fontWeight: 600, fontSize: '0.7rem',
+        cursor: pending ? 'default' : 'pointer',
+      }}
+    >
+      {pending ? '…' : 'Moist'}
+    </button>
+  )
+}
+
+function Row({ row, pending, onLog, onSkip, onMoist }) {
   const detailHref = (row.projectId && row.plantingId)
     ? '/projects/' + row.projectId + '/plantings/' + row.plantingId
     : '/garden'
@@ -162,6 +197,9 @@ function Row({ row, pending, onLog, onSkip }) {
         style={{ flexShrink: 0, width: 42, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.light, cursor: 'pointer', fontSize: '0.7rem' }}>
         Skip
       </button>
+      {/* Ordered by escalating commitment left-to-right: do nothing today -> record what you found
+          -> record the watering. Only water_due rows carry the middle one (canMoistureCheck). */}
+      {canMoistureCheck(row) && <MoistureButton row={row} pending={pending} onMoist={onMoist} />}
       <CareChipButton row={row} pending={pending} onLog={onLog} />
     </div>
   )
@@ -173,7 +211,7 @@ function SubHeader({ label }) {
   )
 }
 
-function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, mode, onShowAll, groupBulk, onGroupBulk, bulkBusy }) {
+function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, onMoist, mode, onShowAll, groupBulk, onGroupBulk, bulkBusy }) {
   const panelId = 'care-group-' + group.key
   return (
     <div style={{ border: '1px solid ' + P.border, borderRadius: 12, background: P.white, overflow: 'hidden' }}>
@@ -201,7 +239,7 @@ function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, mode, on
       {expanded && (
         <div id={panelId} role="list">
           {(() => {
-            const R = (r) => <Row key={r.key} row={r} pending={pendingKeys.has(r.key)} onLog={onLog} onSkip={onSkip} />
+            const R = (r) => <Row key={r.key} row={r} pending={pendingKeys.has(r.key)} onLog={onLog} onSkip={onSkip} onMoist={onMoist} />
             if (mode === 'location') {
               const { beds, containers } = splitContainersBeds(group.rows)
               // Only show the sub-split when a location actually mixes both lanes.
@@ -407,9 +445,23 @@ export default function CareNeeded({ plan }) {
     setPendingKeys(prev => { const n = new Set(prev); if (on) n.add(key); else n.delete(key); return n })
   }, [])
 
+  // In-flight write keys, as a REF rather than from `pendingKeys`.
+  //
+  // BUG-MOISTURECHECKNOBUTTON-001 forced this: the row now carries TWO controls that write an event
+  // (Water and Moist), and both of their handlers close over the same un-flushed `pendingKeys`. Two
+  // taps landing in one React batch — a thumb on a phone, or a finger that catches both — therefore
+  // both pass a state-only guard and both POST, producing a watering AND a "still moist" for one
+  // gesture, of which the undo toast can reverse only the first. The `disabled` attribute closes
+  // nothing here either: it is applied by the very render that has not flushed.
+  //
+  // Shared across BOTH handlers deliberately. A per-handler ref would still let Water and Moist
+  // race each other, which is the case this row newly makes reachable.
+  const writeInFlightRef = useRef(new Set())
+
   // One-tap: await-then-fade. On failure restore the row + error toast (never fade-and-forget — L-104).
   const logRow = useCallback(async (row) => {
-    if (pendingKeys.has(row.key)) return
+    if (writeInFlightRef.current.has(row.key) || pendingKeys.has(row.key)) return
+    writeInFlightRef.current.add(row.key)
     setPending(row.key, true)
     try {
       const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
@@ -446,6 +498,57 @@ export default function CareNeeded({ plan }) {
     } catch {
       toast.show({ message: 'Couldn’t log — tap to retry', tone: 'error' })
     } finally {
+      writeInFlightRef.current.delete(row.key)
+      setPending(row.key, false)
+    }
+  }, [fetch, toast, pendingKeys, rows.length, setPending, announce])
+
+  // BUG-MOISTURECHECKNOBUTTON-001 — the same await-then-fade + undo contract logRow has, pointed at
+  // moisture_check instead of the row's primary type. Identical shape on purpose: a failed write
+  // restores the row and toasts (never fade-and-forget — L-104), and undo soft-deletes the event.
+  // The toast GROUP key is the event type, so a run of moisture checks coalesces into its own
+  // statement instead of being counted into "Logged Water for N plants".
+  //
+  // Zero reward is deliberately NOT asserted here. It is a property of the TYPE, applied server-side
+  // in lambda/events/index.js — the flat grant, both recomputes and the critter award all sit behind
+  // isRewardedEventType (see NON_REWARD_EVENT_TYPES in lib/eventTypes.js). The client's entire
+  // obligation is to post the right event_type through the ordinary single-event path and fire
+  // nothing else; re-implementing the exclusion here would just be a second place to drift.
+  //
+  // Guarded by the SHARED writeInFlightRef above, not by `pendingKeys` — see the note there for why
+  // a state-only guard (and `disabled`) cannot close a same-batch double-tap.
+  const moistRow = useCallback(async (row) => {
+    if (writeInFlightRef.current.has(row.key) || pendingKeys.has(row.key)) return
+    writeInFlightRef.current.add(row.key)
+    setPending(row.key, true)
+    try {
+      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row, MOISTURE_CHECK_EVENT)) })
+      const id = res && res.id
+      setLogged(prev => new Set(prev).add(row.key))
+      const remaining = rows.length - 1
+      announce('Checked ' + row.name + ' — still moist. ' + remaining + ' remaining')
+      toast.showUndo({
+        message: 'Checked ' + row.name + ' — still moist',
+        group: 'care-log-' + MOISTURE_CHECK_EVENT,
+        groupMessage: (n) => 'Checked ' + n + ' plants — still moist',
+        onUndo: async () => {
+          if (!id) { setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n }); return }
+          try {
+            await fetch('/api/events/' + id, { method: 'DELETE' })
+            setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+          } catch (e) {
+            if (e?.status === 404) {
+              setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+            } else {
+              toast.show({ message: 'Couldn’t undo — the check is still saved', tone: 'error' })
+            }
+          }
+        },
+      })
+    } catch {
+      toast.show({ message: 'Couldn’t save that — tap to retry', tone: 'error' })
+    } finally {
+      writeInFlightRef.current.delete(row.key)
       setPending(row.key, false)
     }
   }, [fetch, toast, pendingKeys, rows.length, setPending, announce])
@@ -624,7 +727,7 @@ export default function CareNeeded({ plan }) {
           {groups.map(g => (
             <Group key={g.key} group={g} expanded={isExpanded(g)}
               onToggle={() => setOverrides(prev => ({ ...prev, [g.key]: !((g.key in prev) ? prev[g.key] : autoKeys.has(g.key)) }))}
-              pendingKeys={pendingKeys} onLog={logRow} onSkip={skipRow} mode={mode}
+              pendingKeys={pendingKeys} onLog={logRow} onSkip={skipRow} onMoist={moistRow} mode={mode}
               groupBulk={groupBulkFor(g)} onGroupBulk={runBulk} bulkBusy={!!bulkProgress}
               onShowAll={() => setShowCapped(true)} />
           ))}
