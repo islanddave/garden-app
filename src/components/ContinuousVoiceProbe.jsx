@@ -414,6 +414,27 @@ export default function ContinuousVoiceProbe() {
     // between "the simulation was off" and "this log predates the toggle" — and a settle-window gap
     // measured under those two conditions does not mean the same thing.
     log(`search round-trip simulation: ${roundTrip ? 'ON — any gap spanning +6000ms is CONFOUNDED' : 'OFF — gaps are clean'}`)
+    // SCOPE, STATED IN THE LOG ITSELF — and it is the same principle as the round-trip line above and
+    // the raw-transcript note in the FINAL handler: an instrument that does not declare what it
+    // measures lets a reader assume it measured everything.
+    //
+    // THIS COST A REAL DAY. On 2026-09-13 Dave ran this probe and pasted the log; three conclusions
+    // were drawn from it and all three were wrong, because the log LOOKS like an end-to-end trace of
+    // /log/voice and is not. It reported that the one-breath utterance "still does not parse", that a
+    // trailing "next" was swallowed and the save lost, and that a bare number had been saved as a
+    // search. None of those are probe-observable: this component imports `classify` and nothing else,
+    // while VoiceHarvest additionally runs splitTrailingCommand, segmentCandidates, parseValueSequence
+    // and classifyPartial — precisely the functions that handle those three shapes — and the probe
+    // performs NO writes at all (its only fetch is /manifest.webmanifest). The withdrawal is recorded
+    // in project-state/voice-device-trace-analysis-20260913.md.
+    //
+    // So the line below is not decoration. It travels with every pasted log, into the hands of whoever
+    // reasons about it next, and it is the only thing standing between "classify() said search" and
+    // "the app searched". Do not drop it to tidy the header.
+    log('scope: this probe runs classify() ONLY and never writes. splitTrailingCommand,')
+    log('  segmentCandidates, parseValueSequence and classifyPartial run in /log/voice, NOT here —')
+    log('  so a one-breath phrase, a trailing command, or a bare number may resolve on the real page')
+    log('  and still read as unparsed/search below. A COMMIT line is a classification, not a save.')
 
     // A FRESH DEBOUNCER PER RUN, deliberately: `resetSession()` would clear the duplicate-suppression
     // memory of a layer that might still be holding a pending utterance from the previous run, which
@@ -443,7 +464,16 @@ export default function ContinuousVoiceProbe() {
     const permBefore = await micPermission()
     setEnv(e => ({ ...e, permBefore, permAfter: '—' }))
     log(`mic permission before: ${permBefore}`)
+    // THE UNIT WORDS STAY IN THIS PROMPT even though v4.131.0 made them optional on the real page
+    // (V5-VOICEVOCAB-001), and the reason is the point of the probe: the assumption happens in
+    // VoiceHarvest, not in classify(), so dropping them here would measure nothing new while giving
+    // up the one measurement this instrument uniquely provides — how Chrome TRANSCRIBES "count" and
+    // "grams". That is what the 2026-09-13 run exposed: "three count" came back as "recount" and the
+    // count was lost, while "grams" transcribed as "G" three times out of three. Recognition of
+    // those two words is a live question; keep saying them here so it stays measurable.
     log('SAY: "cucumber" … "three count" … "231 grams" … "next"  (pause between each)')
+    log('  (say the unit words HERE even though /log/voice no longer needs them — this run measures')
+    log('   how Chrome transcribes them, which is a different question from whether the app needs them)')
 
     arm()
 

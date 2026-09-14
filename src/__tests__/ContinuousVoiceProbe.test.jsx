@@ -59,6 +59,41 @@ describe('ContinuousVoiceProbe — S0 debounce host', () => {
     expect(rec.started).toBe(true)
   })
 
+  it('declares its own SCOPE in the log — classify() only, and it never writes', async () => {
+    // PINNED BECAUSE THE ABSENCE OF THIS LINE ALREADY COST A DAY. On 2026-09-13 a probe log was read
+    // as an end-to-end trace of /log/voice and produced three wrong conclusions — one-breath "does
+    // not parse", a trailing "next" swallowed, a bare number "saved" as a search. None are
+    // probe-observable: this component imports `classify` and nothing else, while VoiceHarvest also
+    // runs splitTrailingCommand / segmentCandidates / parseValueSequence / classifyPartial, and the
+    // probe performs no writes at all. The header line travels with every pasted log; without it the
+    // log looks complete and is not. If this test is ever deleted, the line goes quiet and the same
+    // misreading is available to the next reader.
+    await startProbe()
+    expect(probeLog()).toContain('classify() ONLY')
+    expect(probeLog()).toContain('never writes')
+    expect(probeLog()).toContain('a save')
+  })
+
+  it('does not import the page-only grammar it disclaims — the scope line stays TRUE', async () => {
+    // Non-vacuity for the line above: a claim in a log is only worth pinning if something fails when
+    // it stops being true. If the probe ever grows one of these imports, the disclaimer becomes a
+    // lie in a document people reason from, which is worse than never having stated it.
+    // Scanned per LINE, not with a spanning regex. This file omits semicolons, so an `import[^;]*`
+    // pattern runs past the import block and matches the comment that merely NAMES these functions —
+    // which is how the first version of this test failed against correct code.
+    // resolve(process.cwd(), …) and NOT new URL(…, import.meta.url): under this runner import.meta.url
+    // is not a file: URL and readFileSync rejects it — the same trap EventDetail.metadataKeys.test.js
+    // already documents at its own top.
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const src = readFileSync(resolve(process.cwd(), 'src/components/ContinuousVoiceProbe.jsx'), 'utf8')
+    const importLines = src.split('\n').filter((l) => /^\s*import\b/.test(l))
+    expect(importLines.some((l) => /\bclassify\b/.test(l))).toBe(true)   // the import block was found
+    for (const fn of ['splitTrailingCommand', 'segmentCandidates', 'parseValueSequence', 'classifyPartial']) {
+      expect(importLines.filter((l) => new RegExp(`\\b${fn}\\b`).test(l))).toEqual([])
+    }
+  })
+
   it('logs resultIndex and results.length for every event (gate B1)', async () => {
     const rec = await startProbe()
     act(() => { rec.deliverFinal('cucumber', 0) })
