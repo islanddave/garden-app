@@ -184,16 +184,22 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
       expect(screen.getByText(/0\.56/)).toBeTruthy()
     })
 
-    it('on the NIGHTLY path an unknown amount renders no rain line at all — CHARACTERIZED, not fixed here', () => {
-      // The nightly hydrology reaches the identical lines, so it is worth stating what it does. It
-      // never reaches the `!rainAmtKnown` branch: the rain line renders only when `rainIn > 0 ||
-      // uncertain || live`, and an unknown amount satisfies none of those without a live overlay. So
-      // the unknown-amount guard is reachable ONLY on the live path — which is the one this fix is
-      // about. Recorded so a later reader does not mistake the guard for dead code.
+    // WAS: 'on the NIGHTLY path an unknown amount renders no rain line at all — CHARACTERIZED, not fixed
+    // here'. That test documented a deliberate gap and said so; BUG-RAINTOMORROWMISLABEL-001 (a) closed
+    // it, so this flips from characterizing the gap to asserting the fix. The old body expected
+    // queryByText(/chance of rain/) to be NULL — it is now the whole point.
+    //
+    // Why it changed: dropping the `?? upcoming_precip_in` fallback (which rendered a D+1+D+2 total under
+    // "tomorrow" copy) leaves rainIn null more often, and the render gate keyed on `rainIn > 0`. Left
+    // alone, removing a WRONG number would also have removed the RIGHT one — the probability. The gate
+    // now also opens on `rainPop >= RAIN_POP_DISPLAY_THRESHOLD`, which makes the pre-existing
+    // `!rainAmtKnown` branch reachable on the nightly path for the first time.
+    it('on the NIGHTLY path an unknown amount now renders the probability, never a two-day total', () => {
       const nightlyNoAmount = { recent_precip_in: null, today_precip_in: null, today_pop: 10, tomorrow_precip_in: null, tomorrow_pop: 63 }
       const { unmount } = render(<WeatherWidget weather={weather} hydrology={nightlyNoAmount}
         generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
-      expect(screen.queryByText(/chance of rain/i)).toBeNull()
+      expect(screen.getByText(/63% chance of rain tomorrow/i)).toBeTruthy()
+      // Still no invented AMOUNT — the honest half is the probability, and only the probability.
       expect(screen.queryByText(/rain expected/i)).toBeNull()
       unmount()
       // ANTI-VACUITY: the same queries DO find a line when the amount is known, so the nulls above
@@ -593,5 +599,27 @@ describe('WeatherWidget — a live stamp covers only what is live (BUG-WXLIVESTA
     expect(screen.getByText(/Showery pattern/i)).toBeTruthy()      // banner: shown
     expect(screen.queryByText(/could climb/i)).toBeNull()          // note hedge: still live-gated
     expect(screen.getByText(/0\.47″ rain expected today · 90%/)).toBeTruthy()  // 0.52 * 90% — the live figure, still PoP-weighted
+  })
+})
+
+// BUG-RAINTOMORROWMISLABEL-001 (a) — a two-day total must never render under "tomorrow" copy.
+describe('tomorrow amount is D+1 only, never the D+1+D+2 sum', () => {
+  it('a null tomorrow amount falls back to the PoP-only string, NOT to upcoming_precip_in', () => {
+    const hydrology = {
+      today_precip_in: 0, today_pop: 0, today_observed_in: 0, today_remaining_in: 0,
+      recent_precip_in: 0,
+      tomorrow_precip_in: null, tomorrow_pop: 70,
+      upcoming_precip_in: 1.8,          // D+1 + D+2 — the number that used to leak through
+      status: { ok: true, uncertainty: { flag: false } },
+    }
+    const { container } = render(
+      <WeatherWidget weather={{}} hydrology={hydrology} generatedAt="2026-09-14T09:30:00Z"
+        planDate="2026-09-14" waterDueCount={0} />
+    )
+    const text = container.textContent
+    expect(text).toMatch(/70% chance of rain tomorrow/)
+    // The two-day figure, and anything weighted from it, must be absent.
+    expect(text).not.toMatch(/1\.8/)
+    expect(text).not.toMatch(/1\.26/)   // 1.8 * 70/100, what rainAmtWeighted would have printed
   })
 })

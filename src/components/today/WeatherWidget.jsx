@@ -296,7 +296,19 @@ export default function WeatherWidget({
   const todayIn = rainSrc.today_precip_in ?? null
   const todayPop = rainSrc.today_pop ?? 0
   const showToday = todayIn > 0 || ((uncertain || live) && todayPop >= 50)
-  const rainIn = showToday ? todayIn : (rainSrc.tomorrow_precip_in ?? rainSrc.upcoming_precip_in ?? null)
+  // BUG-RAINTOMORROWMISLABEL-001 (a) — the `?? rainSrc.upcoming_precip_in` fallback is GONE.
+  // `upcoming_precip_in` is D+1 PLUS D+2 (lambda/daily-plan/index.js), so whenever tomorrow's own amount
+  // was null the card printed a TWO-DAY total under copy that says "tomorrow" — and `rainWhen` on the very
+  // next line still said 'tomorrow', so nothing downstream could tell. A number for the wrong window is
+  // worse than no number: when tomorrow's amount is unknown, rainAmtKnown goes false and the card shows
+  // the honest "{pop}% chance of rain tomorrow" string instead. That string already existed but was
+  // UNREACHABLE — the render gate below keyed on `rainIn > 0`, so a row with no amount showed no line at
+  // all; the gate is widened there so dropping a wrong number does not also drop the right one.
+  //
+  // It matters more since OPS-PLANDEFER-001: the 'incoming_dry' branch defers watering on
+  // `tomorrow_precip_in` ALONE, so a card showing D+1+D+2 would have Dave sanity-checking a deferral
+  // against a larger number than the engine ever saw. The card and the engine must read the same window.
+  const rainIn = showToday ? todayIn : (rainSrc.tomorrow_precip_in ?? null)
   const rainPop = showToday ? todayPop : (rainSrc.tomorrow_pop ?? 0)
   const rainWhen = showToday ? 'today' : 'tomorrow'
   const rainAmtKnown = rainIn != null
@@ -456,7 +468,13 @@ export default function WeatherWidget({
           forecast field at 0 (Open-Meteo drops a delivered event from the current day's total — measured
           2026-09-06: 0.0" reported for a day the gauge finished at 0.29"), so the old gate hid the line
           precisely when the card had a real number to show. */}
-      {(rainIn > 0 || uncertain || live || gaugeMeasured) && (
+      {/* `rainPop >= RAIN_POP_DISPLAY_THRESHOLD` added with BUG-RAINTOMORROWMISLABEL-001 (a). Dropping the
+          bad `?? upcoming_precip_in` fallback leaves rainIn null when tomorrow's own amount is unknown,
+          and this gate reads rainIn — so removing a wrong number would have silently removed the whole
+          line, costing Dave the one honest thing still known: the probability. The rainNote ternary
+          already has a `{pop}% chance of rain {when}` branch for exactly this case; it was simply
+          unreachable, because a row with no amount could never open the gate. */}
+      {(rainIn > 0 || uncertain || live || gaugeMeasured || rainPop >= RAIN_POP_DISPLAY_THRESHOLD) && (
         <div style={{ marginTop: tokens.space.sm, textAlign: 'center', fontSize: tokens.type.xs, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
           {/* care.rainPct is drawn for this exact line: its registry note calls it "the FORECAST twin
               of event.rain … one drop under a raised cloud reads as 'some chance', three streaks read
