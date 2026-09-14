@@ -1,7 +1,7 @@
 {
-  "version": "4.131.0",
+  "version": "4.132.0",
   "date": "2026-09-14",
   "highlights": [
-    "Harvest by voice no longer needs the unit words. Say the crop, then the count, then the weight, and the app fills in the units - telling you which one it assumed, so a wrong one is visible before you save. Saying count or grams still works and still takes precedence."
+    "Today can now hold off watering when real rain is close — a quarter inch due in the next few hours, or a soaking forecast for tomorrow — and water cards gained a Moist button for when you have checked and it does not need it."
   ]
 }
