@@ -117,6 +117,74 @@ function dayBefore(dayStr) {
 // Night key = the date the night STARTS on, matching radiativeFrost.nightsFrom, so a night's observed
 // minimum and its forecast conditions join on the same key without either side re-deriving it.
 const OVERNIGHT_MIN_SAMPLES = Number(process.env.AWN_OVERNIGHT_MIN_SAMPLES || 24);   // 2h of 5-min records
+
+// ── V5-WXSTATIONCOVARIATES-001 — the CALM/CLEAR covariates, and why they live inside this loop ──────
+//
+// WHY THIS EXISTS. The block above records the night's minimum. A crucible (2026-09-14) established
+// that the minimum ALONE cannot answer the question the corpus exists for — "does the forecast run
+// warm on CALM, CLEAR frost nights here" — because nothing in this system has ever recorded whether a
+// night WAS calm or clear. This loop was reading exactly two fields off each record (`dateutc`,
+// `tempf`) and dropping the other twenty-five, wind among them.
+//
+// THIS is the half with a deadline, and it is the opposite of the one you would guess. The forecast
+// side (WeatherNext) is archived back to 2026-01-01 and can be rebuilt at any time. The AWN API
+// serves a ~3-day rolling window, so a night that ages out takes its wind, its dewpoint and its
+// duration-below-threshold with it, permanently. Cost here is arithmetic inside a loop that already
+// visits every record.
+//
+// FIELD NAMES ARE VERIFIED AGAINST A LIVE RECORD, NOT INFERRED (2026-09-14, rt.ambientweather.net):
+//   windspeedmph  windgustmph  winddir  maxdailygust  humidity  solarradiation   — all lowercase
+//   dewPoint                                                                     — camelCase, ALONE
+// That last one is a trap worth stating plainly: every sibling field is lowercase, so `dewpoint` or
+// `dewpointf` returns undefined for every record forever, and a `Number.isFinite` guard turns that
+// into "this station has no such sensor" — silent, permanent, and indistinguishable from the truth.
+// Do NOT normalize the capitalization. `windSamples`/`dewSamples` below exist so that if AWN ever
+// does rename a field, the corpus reports a covariate that stopped arriving instead of a night that
+// was merely calm.
+//
+// Counts, not minutes. `samplesBelow` is a raw count, deliberately: the nominal interval is 5 minutes
+// but that is AWN's choice, not ours, and baking 5 into a stored "minutes" figure would silently
+// misreport every night if they ever change it. The consumer multiplies by the observed interval.
+const COVARIATE_THRESHOLDS_F = [40, 38, 33, 32];   // the app's own frost tiers, plus freezing
+
+// Accrue one record's covariates into the night's bucket. Pure, total, and never throws on a missing
+// or malformed field — absence is recorded as absence (a sample that does not increment `windSamples`),
+// never coerced to zero. 0 mph is a real and meteorologically important value here: a dead-calm night
+// is the radiative case. Conflating "no anemometer reading" with "no wind" would invent exactly the
+// signal this covariate exists to measure.
+function accrueCovariates(b, r, hour) {
+  if (b.windSamples === undefined) {
+    b.windSamples = 0; b.windMinMph = null; b.windMaxMph = null; b.windSumMph = 0;
+    b.dewSamples = 0; b.dewPointMinF = null;
+    b.samplesBelow = {}; for (const t of COVARIATE_THRESHOLDS_F) b.samplesBelow[t] = 0;
+    b.hourly = {};
+  }
+  const w = r.windspeedmph;
+  if (Number.isFinite(w)) {
+    b.windSamples += 1; b.windSumMph += w;
+    if (b.windMinMph == null || w < b.windMinMph) b.windMinMph = w;
+    if (b.windMaxMph == null || w > b.windMaxMph) b.windMaxMph = w;
+  }
+  const dp = r.dewPoint;                       // camelCase — see the note above; this is not a typo
+  if (Number.isFinite(dp)) {
+    b.dewSamples += 1;
+    if (b.dewPointMinF == null || dp < b.dewPointMinF) b.dewPointMinF = dp;
+  }
+  for (const t of COVARIATE_THRESHOLDS_F) if (r.tempf < t) b.samplesBelow[t] += 1;
+  // Per-hour minimum AND the reading nearest the top of the hour. Both, because a later comparison
+  // against an hourly forecast can legitimately mean either "coldest within the hour" or "the value
+  // at the hour mark", and picking one now is a guess that cannot be undone once the raw 5-minute
+  // records age out. ~14 numbers a night — it buys back an irreversible choice for a rounding error
+  // of payload. See the crucible finding on baking in an unverifiable alignment.
+  const h = b.hourly[hour] || (b.hourly[hour] = { min: null, at: null, atOff: null });
+  if (h.min == null || r.tempf < h.min) h.min = r.tempf;
+  // Minutes past the hour needs no timezone: every US civil offset is a whole number of hours, so the
+  // minute field is identical in UTC and local time. Deriving it from `civilHour` would be the same
+  // number by a longer route with a DST hazard attached.
+  const mins = Math.floor(r.dateutc / 60000) % 60;
+  if (h.atOff == null || mins < h.atOff) { h.atOff = mins; h.at = r.tempf; }
+}
+
 function overnightMins(recs, tz) {
   const out = {};
   if (!Array.isArray(recs) || !tz) return out;
@@ -132,6 +200,13 @@ function overnightMins(recs, tz) {
     const b = out[key] || (out[key] = { minF: null, samples: 0, endHour: null });
     b.samples += 1;
     if (b.minF == null || r.tempf < b.minF) b.minF = r.tempf;
+    // Covariates are computed defensively and SEPARATELY from the minimum above. A throw in here must
+    // never cost the night its temperature — and, because `deriveStation` is called bare at
+    // handler.js (unlike the explicitly-guarded `fetchStation` beside it), a throw anywhere in this
+    // function ends the whole invocation: no daily_plan row for any Space, and no frost alert. The
+    // try/catch is not defensive-programming reflex; it is the difference between losing a covariate
+    // and losing the nightly plan.
+    try { accrueCovariates(b, r, hour); } catch { b.covariateError = true; }
     // The LAST morning hour seen. Tracks only hours <= 8, so it stays null when the night has no
     // morning coverage at all — which is the honest signal that the minimum may not have been
     // observed yet, since a radiative minimum lands shortly after sunrise. (An earlier form seeded
@@ -142,8 +217,26 @@ function overnightMins(recs, tz) {
   // doing. Drop it rather than publishing a number that reads like a measurement. Same discipline as
   // radiativeFrost's MIN_HOURS gate, and the same reason: absence must not be dressed as data.
   for (const k of Object.keys(out)) {
-    if (out[k].samples < OVERNIGHT_MIN_SAMPLES || out[k].minF == null) delete out[k];
-    else out[k].minF = Math.round(out[k].minF * 10) / 10;
+    if (out[k].samples < OVERNIGHT_MIN_SAMPLES || out[k].minF == null) { delete out[k]; continue; }
+    const b = out[k];
+    b.minF = Math.round(b.minF * 10) / 10;
+    // Finalize the covariates. A night whose covariates never initialized (every record malformed, or
+    // accrueCovariates threw on the first one) keeps its minimum and reports the covariates as absent
+    // — it does not lose the night, and it does not claim a calm night it never measured.
+    if (b.windSamples === undefined) { b.covariatesAvailable = false; continue; }
+    b.covariatesAvailable = true;
+    b.windMeanMph = b.windSamples ? Math.round((b.windSumMph / b.windSamples) * 10) / 10 : null;
+    delete b.windSumMph;
+    if (b.dewPointMinF != null) b.dewPointMinF = Math.round(b.dewPointMinF * 10) / 10;
+    for (const h of Object.values(b.hourly)) {
+      h.min = Math.round(h.min * 10) / 10;
+      if (h.at != null) h.at = Math.round(h.at * 10) / 10;
+      delete h.atOff;                       // an accumulator, not a measurement
+    }
+    // Coverage, not just presence. `windSamples` well below `samples` means the anemometer dropped out
+    // mid-night, which makes a mean over the survivors a different quantity from a mean over the night
+    // — the consumer needs to be able to tell. Reported, never used to silently discard the night.
+    b.windCoverage = b.samples ? Math.round((b.windSamples / b.samples) * 100) / 100 : 0;
   }
   return out;
 }
