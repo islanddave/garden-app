@@ -1391,6 +1391,21 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // followed by scripts/rerun-daily-plan.sh --live: about two minutes, no promote.
   // Mirror any flip in src/lib/featureFlags.js -- the CJS Lambda cannot import that ESM module.
   const todayAwareEnabled = _flag('CARE_TODAY_AWARE_ENABLED', process.env.CARE_TODAY_AWARE_ENABLED === 'true');
+  // Forecast-aware watering deferral, Dave 2026-09-13. BOTH default OFF, so the deploy is inert and each
+  // behaviour change is a deliberate flip rather than a side effect of shipping — the same posture as
+  // measuredCreditEnabled below, and for the same reason: these decide whether a thirsty plant is skipped.
+  //
+  // CARE_RAIN_DEFER_DRY_ENABLED — lets tomorrow's forecast defer a DRY planting, not merely an already-wet
+  // one (engine 'incoming_dry'). Bars reuse SOAK_FCST_QPF_IN/POP_PCT, backtested over 85 days of this
+  // season's stored plans: 9 firings, 0 busts. FLIP THIS SECOND — it is the one with a real downside if
+  // the forecast is wrong, and it is worth watching sat_kind='incoming_dry' rows for a week first.
+  //
+  // CARE_RAIN_SOON_ENABLED — near-term branch ('soon'): >= SOON_QPF_IN within station.NEAR_TERM_WINDOW_H
+  // hours. FLIP THIS FIRST: a ~3-hour horizon re-evaluated hourly is the lowest-risk of the forecast
+  // branches, because a bust is visible and corrected within the hour with the watering day still ahead.
+  // It is only defensible at all because of OPS-PLANHOURLY-001; do NOT enable it on a 3-runs-a-day schedule.
+  const deferDryEnabled = _flag('CARE_RAIN_DEFER_DRY_ENABLED', process.env.CARE_RAIN_DEFER_DRY_ENABLED === 'true');
+  const soonAwareEnabled = _flag('CARE_RAIN_SOON_ENABLED', process.env.CARE_RAIN_SOON_ENABLED === 'true');
   // BUG-RAINFORECASTCREDIT-001 — rain credit spends MEASURED precipitation only (engine.creditPrecip).
   // Default OFF: absent env => byte-identical plan, so the deploy is inert and the behaviour change is a
   // deliberate flip, not a side effect of shipping. Flipping it makes the engine stop crediting rain that
@@ -1482,7 +1497,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // window + the run instant feed the ledger fold, all behind waterLedgerEnabled. enabled is
     // ANDed with `ledgerEvents != null` so a failed event-window read degrades the run to flag-OFF
     // (a fold against a falsely-empty window would over-due every planting — see readLedgerEvents).
-    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled,
+    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled, deferDryEnabled, soonAwareEnabled,
       waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now(),
       droughtState: droughtBySpace[spaceId] || null });
     // V5-DROUGHTSPACE-001 — the garden-wide line, computed ONCE per Space and written onto every user's
@@ -1687,7 +1702,13 @@ const LEDGER_OVERRIDABLE_FLAGS = ['CARE_WATER_LEDGER_ENABLED', 'CARE_RAIN_CREDIT
   // V4-COVEREDNOTMODELLED-001 phase 2. Listed so the dry-run shadow can A/B the inheritance against
   // live rows before any env flip — the same seam the water-ledger flip was measured through, and
   // the only way to re-run the blast-radius count against real data rather than a fixture.
-  'CARE_COVER_INHERIT_ENABLED'];
+  'CARE_COVER_INHERIT_ENABLED',
+  // Forecast-aware deferral (OPS-PLANHOURLY-001 sequel). Listed for exactly the reason the block above
+  // records: without an entry here `rerun-daily-plan.sh --flag-overrides` cannot shadow these against
+  // live rows, and the only way left to find out what they do would be to flip them in prod and watch.
+  // Both decide whether a THIRSTY planting is skipped, so they are the last two that should ship
+  // unmeasurable — count the sat_kind='incoming_dry'/'soon' rows a dry run produces before any flip.
+  'CARE_RAIN_DEFER_DRY_ENABLED', 'CARE_RAIN_SOON_ENABLED'];
 function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   const envLive = String(envDryRun ?? 'true').toLowerCase() === 'false';
   const dryRun = (event && event.dryRun === true) ? true : !envLive;
