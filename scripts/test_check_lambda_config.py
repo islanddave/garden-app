@@ -258,7 +258,10 @@ def test_every_declared_function_declares_a_url_expectation():
 
 def test_eventbridge_block_is_loaded_and_well_formed():
     rules = clc.load_eventbridge()
-    assert len(rules) >= 4, "expected the four live schedules to be declared"
+    # Shape, not a frozen count. The old `len(rules) >= 4` encoded the pre-hourly schedule and went
+    # red the moment three rules were correctly retired (2026-09-15) — a count gate cannot tell
+    # "someone deleted the block" from "the schedule legitimately shrank".
+    assert rules, "eventbridge block is empty — nothing would be verified"
     for r in rules:
         assert isinstance(r.get("name"), str) and r["name"]
         assert r.get("state") in (None, "ENABLED", "DISABLED")
@@ -268,7 +271,31 @@ def test_eventbridge_is_not_returned_as_a_function():
     """load_manifest() must stay FUNCTIONS ONLY — --function and three other tests rely on it."""
     assert "eventbridge" not in clc.load_manifest()
 
-def test_intraday_rules_are_declared():
-    """A0.3 verifies only garden-daily-plan-nightly; these two were verified by nothing."""
+RETIRED_RULES = {
+    "garden-daily-plan-nightly",
+    "garden-daily-plan-intraday-am",
+    "garden-daily-plan-intraday-pm",
+}
+
+def test_hourly_rule_is_declared():
+    """OPS-PLANHOURLY-001 — the one schedule that must exist, so check_event_rules() verifies it.
+
+    Replaces test_intraday_rules_are_declared, whose premise ("A0.3 verifies only
+    garden-daily-plan-nightly, so these two were verified by nothing") expired when A0.3 was
+    repointed at hourly and gained invariant 3b.
+    """
     names = {r["name"] for r in clc.load_eventbridge()}
-    assert {"garden-daily-plan-intraday-am", "garden-daily-plan-intraday-pm"} <= names
+    assert "garden-daily-plan-hourly" in names
+
+def test_retired_rules_are_not_declared():
+    """The manifest and deploy-lambda.yml invariant 3b must not contradict each other.
+
+    3b hard-fails when any of these three EXISTS live; check_event_rules() hard-fails when a
+    declared rule is ABSENT. Declaring one here would therefore make the deploy unshippable in
+    both directions at once — no live state could satisfy both gates. This test is the only
+    thing that couples the two files, because neither can see the other at runtime.
+    """
+    names = {r["name"] for r in clc.load_eventbridge()}
+    assert not (RETIRED_RULES & names), (
+        "manifest re-declares retired rule(s) %s that deploy-lambda.yml invariant 3b asserts "
+        "ABSENT — the two gates now demand opposite live states" % sorted(RETIRED_RULES & names))

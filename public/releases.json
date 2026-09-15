@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.135.0",
+    "date": "2026-09-15",
+    "highlights": [
+      "Today's plan really does refresh every hour now. The hourly schedule announced in 4.130.0 shipped its code but never replaced the old three-times-a-day timer, so the plan has been regenerating on the old schedule ever since — which is why a rainy morning could still show a stale watering call. The timer is now correct, and the deploy refuses to go green unless the old timers are actually gone."
+    ]
+  },
+  {
     "version": "4.134.0",
     "date": "2026-09-14",
     "highlights": [

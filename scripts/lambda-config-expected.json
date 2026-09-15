@@ -423,19 +423,10 @@
   },
   "eventbridge": [
     {
-      "name": "garden-daily-plan-nightly",
+      "name": "garden-daily-plan-hourly",
       "state": "ENABLED",
-      "targets": 1
-    },
-    {
-      "name": "garden-daily-plan-intraday-am",
-      "state": "ENABLED",
-      "targets": 1
-    },
-    {
-      "name": "garden-daily-plan-intraday-pm",
-      "state": "ENABLED",
-      "targets": 1
+      "targets": 1,
+      "_note": "OPS-PLANHOURLY-001. Supersedes garden-daily-plan-nightly + -intraday-am + -intraday-pm, all three retired 2026-09-15 and asserted ABSENT by deploy-lambda.yml invariant 3b. check_event_rules() iterates only this declared list and never flags an undeclared-but-live rule, so their absence CANNOT be enforced here — 3b is the only thing that checks it."
     },
     {
       "name": "garden-xp-reconcile-daily",

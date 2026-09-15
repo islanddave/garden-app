@@ -21,6 +21,28 @@ name: Deploy Lambda Functions
 # Removing `push: main` is safe because `main` is capability-gated to the garden-bot App (3951762) and
 # promote-gate's fast-forward is the ONLY writer. This is also the only `push: main` workflow in the
 # repo, so nothing else changes shape.
+#
+# ⚠️ DISPATCH-REF TRAP (OPS-WFSELFFIXORDER-001, proven 2026-09-15). A CHANGE TO THIS FILE CANNOT TAKE
+# EFFECT ON THE PROMOTE THAT SHIPS IT, IF THAT PROMOTE IS DISPATCHED FROM `main`.
+#
+# promote-gate calls this workflow with `uses: ./.github/workflows/deploy-lambda.yml`. A *local*
+# `uses: ./…` reference is resolved from the CALLER RUN'S OWN COMMIT (`github.sha`), NOT from the
+# `ref:` input below. `ref:` only feeds the `actions/checkout` inside this workflow. So a promote runs
+# NEW SOURCE CODE UNDER OLD STEP DEFINITIONS whenever the caller's commit is behind the SHA it promotes.
+#
+# Dispatching promote-gate against `main` does exactly that: main is fast-forwarded DURING the run, but
+# the workflow definitions were pinned at dispatch time — so this file is always exactly one promote
+# behind. Proven on promote run 34979965132: dispatched branch=main head_sha=1474c2db (15 commits
+# behind the dev SHA it promoted), and the executed step name was the PRE-change
+# "Ensure EventBridge cron rules for daily-plan (nightly + intraday)". The hourly migration in that very
+# promote was never attempted, and the run was green end to end — it correctly did what the old recipe
+# said. Live AWS still had all three retired rules afterwards, which is what a correct run of the OLD
+# recipe produces; nothing was drifted or half-applied.
+#
+# RULE: dispatch promote-gate from `dev` (or from an explicit SHA that carries the intended recipe)
+# whenever the promote includes a change to this file or to promote-gate.yml. Verify the fix landed by
+# reading LIVE AWS (`aws events list-rules --name-prefix garden-daily-plan`), never by the run's colour —
+# a green promote is compatible with the change having never executed.
 on:
   workflow_call:
     inputs:
@@ -745,27 +767,15 @@ jobs:
           aws lambda wait function-updated --function-name "$FN"
           echo "env ensured on $FN"
 
-      - name: Ensure EventBridge cron rule for daily-plan (ENABLED - engine live)
-        if: matrix.function == 'daily-plan'
-        continue-on-error: true  # requires events:PutRule + events:PutTargets + lambda:AddPermission
-        run: |
-          RULE_NAME=garden-daily-plan-nightly
-          # Engine is LIVE: rule ENABLED so the nightly run SURVIVES every deploy. Was DISABLED, which silently re-darkened the engine on each prod deploy (L-186 recurrence, fixed 2026-06-21).
-          aws events put-rule \
-            --name "$RULE_NAME" \
-            --schedule-expression 'cron(0 6 * * ? *)' \
-            --state ENABLED \
-            --description 'Overnight Daily Plan generation (DRG-TODAY-001). LIVE.'
-          LAMBDA_ARN=$(aws lambda get-function --function-name garden-daily-plan --query 'Configuration.FunctionArn' --output text)
-          aws events put-targets --rule "$RULE_NAME" --targets "Id=1,Arn=$LAMBDA_ARN"
-          RULE_ARN=$(aws events describe-rule --name "$RULE_NAME" --query 'Arn' --output text)
-          aws lambda add-permission \
-            --function-name garden-daily-plan \
-            --statement-id EventBridgeInvokeNightly \
-            --action lambda:InvokeFunction \
-            --principal events.amazonaws.com \
-            --source-arn "$RULE_ARN" 2>/dev/null || echo "AddPermission already exists (expected on re-deploy)."
-          echo "EventBridge rule $RULE_NAME wired to garden-daily-plan (DISABLED, cron 0 6 * * ? *)"
+      # REMOVED 2026-09-15 (OPS-WFSELFFIXORDER-001). This step used to sit here and re-create
+      # garden-daily-plan-nightly with `cron(0 6 * * ? *)`, 88 lines AFTER the step at ~616 retires it.
+      # Both carried `if: matrix.function == 'daily-plan'`, so both ran in the same matrix leg in file
+      # order: A retired the rule, B resurrected it. The hourly migration (OPS-PLANHOURLY-001) would
+      # therefore have half-applied on any run that loaded the new recipe — hourly created, nightly
+      # never actually gone. It never got the chance: the 2026-09-15 promote loaded the PRE-hourly
+      # recipe entirely (see the dispatch-ref note at the top of this file), so this duplicate was
+      # latent, not causal. Do not reinstate. The single source of truth for daily-plan scheduling is
+      # the `ensure_rule`/`retire_rule` step above.
 
   # A0.3 — post-deploy verification (HARD GATE; deliberately NOT continue-on-error).
   # The deploy matrix tolerates partial config failures (many continue-on-error steps); this job is
@@ -775,7 +785,11 @@ jobs:
   #       guards the set-not-merge wipe hazard, where a transient read failure in any env-merge step
   #       replaces the entire Variables map with a partial one;
   #   (2) DRY_RUN == "false" — a wiped/reset value silently re-darkens the nightly engine (L-186 class);
-  #   (3) EventBridge rule garden-daily-plan-nightly is ENABLED with exactly one target.
+  #   (3) EventBridge rule garden-daily-plan-hourly is ENABLED with exactly one target, and
+  #       (3b) the three rules it supersedes — nightly, intraday-am, intraday-pm — are ABSENT.
+  #       3b exists because retire_rule swallows its own errors and check-lambda-config.py only
+  #       iterates DECLARED rules, so "hourly created but the old ones still firing" is otherwise
+  #       a green deploy.
   #   (4) OPS-LAMBDACONFIG-001 — live memory/timeout/env across ALL 26 functions matches
   #       scripts/lambda-config-expected.json, including flags declared deliberately ABSENT.
   #       (1)-(3) stay as hand-written invariants because they cover EventBridge and cross-key
@@ -805,7 +819,13 @@ jobs:
         run: |
           set -euo pipefail
           FN=garden-daily-plan
-          RULE=garden-daily-plan-nightly
+          RULE=garden-daily-plan-hourly
+          # The three rules the hourly schedule replaces. Asserted ABSENT below, not merely ignored:
+          # `retire_rule` swallows its own failures (`|| true` on remove-targets and delete-rule), and
+          # check-lambda-config.py only iterates the DECLARED list, so an undeclared-but-live rule is
+          # invisible to it. Without this check a half-applied migration — hourly created, the old
+          # rules still firing — is a fully green deploy that regenerates the plan five times a day.
+          RETIRED_RULES="garden-daily-plan-nightly garden-daily-plan-intraday-am garden-daily-plan-intraday-pm"
           fail=0
           ENVJSON=$(aws lambda get-function-configuration --function-name "$FN" --region us-east-1 \
             --query 'Environment.Variables' --output json 2>/dev/null) || ENVJSON=""
@@ -847,11 +867,18 @@ jobs:
             echo "::error::INVARIANT 3 BROKEN: $RULE has $NTARGETS targets (expected exactly 1)"
             fail=1
           fi
+          # INVARIANT 3b — the superseded rules must be GONE, not merely undeclared.
+          for R in $RETIRED_RULES; do
+            if aws events describe-rule --name "$R" --region us-east-1 >/dev/null 2>&1; then
+              echo "::error::INVARIANT 3b BROKEN: retired rule $R still exists — the hourly migration is HALF-APPLIED. The plan will regenerate on both schedules."
+              fail=1
+            fi
+          done
           if [[ "$fail" -ne 0 ]]; then
             echo "::error::A0.3 post-deploy verification FAILED — daily-plan safety invariants do not hold; treat this deploy as BAD."
             exit 1
           fi
-          echo "A0.3 verify OK: env keys present, DRY_RUN=false, $RULE ENABLED with exactly 1 target."
+          echo "A0.3 verify OK: env keys present, DRY_RUN=false, $RULE ENABLED with exactly 1 target, all 3 superseded rules absent."
 
       # OPS-LAMBDACONFIG-001 — the generalization of the step above, across all 26 functions.
       #
