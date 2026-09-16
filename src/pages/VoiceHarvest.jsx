@@ -901,15 +901,21 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         return
       }
 
-      // BOTH AMOUNTS, NO NAME — "three count, two thirty one grams" with the planting already
-      // chosen. segmentCandidates() refuses a nameless run by design, so this shape had no reader
-      // at all and lost BOTH values. It is Dave's common case rather than an edge one: he says the
-      // crop, pauses, then says the numbers together, and Chrome ends the session at that pause.
+      // BOTH AMOUNTS, NO NAME — "three count, two thirty one grams". segmentCandidates() refuses a
+      // nameless run by design, so this shape had no reader at all and lost BOTH values. It is Dave's
+      // common case rather than an edge one: he says the crop, pauses, then says the numbers together,
+      // and Chrome ends the session at that pause.
       //
-      // GATED ON A PLANTING BEING SELECTED. Without one there is nothing to attach the values to,
-      // and a bare number before a plant is chosen may legitimately be a search — the same rule
-      // the grammar states at the search branch and BUG-VOICEBARENUMNOSEL-001 documents.
-      const seq = selectedRef.current ? parseValueSequence(result.transcript) : null
+      // NOT GATED ON A PLANTING BEING SELECTED (BUG-VOICEVALPAIRNOSEL-001). It was, on the rule that a
+      // bare number before a plant is chosen may be a search. That rule belongs to the hold above and
+      // cannot reach here: parseValueSequence accepts only two or more groups that each END IN A UNIT
+      // WORD, and this branch runs only on an utterance classify() already refused as `unparsed`, so
+      // no search is suppressed. "Nothing to attach the values to" was already untrue of the
+      // single-value branches below, which apply "four count" with nothing selected. The gate made the
+      // pair the one amount that could not be said before the crop: device trace 2026-09-16 +27268,
+      // "4 count 4 G" came back "Didn't catch that" and the weight had to be said again. saveRecord
+      // still refuses without a crop, so an early pair waits for one exactly as a single amount does.
+      const seq = parseValueSequence(result.transcript)
       if (seq && seq.length) {
         for (const v of seq) {
           const next = { value: v.value, unit: v.unit }

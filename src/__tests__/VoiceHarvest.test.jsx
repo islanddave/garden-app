@@ -1155,3 +1155,56 @@ describe('BUG-VOICEHELDREPEAT-001 — a held number restated with its unit is th
     expect(statusText()).toContain('3 count assumed')
   })
 })
+
+// ── BUG-VOICEVALPAIRNOSEL-001 — a count and a weight said BEFORE the crop ─────────────────────────
+//
+// Device, 2026-09-16 real-page trace +27268: "4 count 4 G" with nothing selected came back "Didn't
+// catch that", while "four count" alone moments earlier was applied with nothing selected and survived
+// into the saved Cucamelon row. Same values, same moment — the pair lost its weight and the single kept
+// its count, so Dave had to say the weight again after the crop.
+describe('BUG-VOICEVALPAIRNOSEL-001 — a count and weight said before the crop', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('keeps the pair, and "next" saves both once the crop is chosen', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'three count 231 G')
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    const posts = harvestPosts()
+    expect(posts).toHaveLength(1)
+    const body = JSON.parse(posts[0][1].body)
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+  })
+
+  it('reads the device transcript "4 count 4 G" instead of refusing it', async () => {
+    const rec = await startListening()
+    await speak(rec, '4 count 4 G')
+    expect(record()).toContain('4 count')
+    expect(record()).toContain('4 g')
+    expect(statusText()).not.toContain("Didn't catch that")
+  })
+
+  it('a pair with a trailing "next" and no crop keeps the values and still refuses the save', async () => {
+    // The other door to the same reader (the head of a trailing-command split), and the safety half:
+    // values arriving early must not become a save without a crop. "next" stays the only go-ahead.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'three count 231 G next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+    expect(harvestPosts()).toHaveLength(0)
+    expect(statusText()).toContain('still need a crop')
+    expect(record()).toContain('3 count')
+    expect(record()).toContain('231 g')
+
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+    expect(harvestPosts()).toHaveLength(1)
+    expect(JSON.parse(harvestPosts()[0][1].body).harvest)
+      .toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+  })
+})
