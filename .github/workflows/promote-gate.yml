@@ -422,9 +422,10 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           # A blob that resolves on NEITHER side compares '' = '' below and reads as unchanged, i.e.
-          # fail-OPEN — so each one is guarded explicitly rather than left to the comparison.
-          if [ -z "$MAIN_CFG" ] || [ -z "$DEV_CFG" ] || [ -z "$MAIN_CHK" ] || [ -z "$DEV_CHK" ]; then
-            echo "::warning::could not resolve the config manifest / checker blob SHAs — failing CLOSED, deploying Lambdas"
+          # fail-OPEN — so each one is guarded explicitly rather than left to the comparison. The
+          # recipe blob went unguarded from OPS-PROMOTERACE-001 until 2026-09-16.
+          if [ -z "$MAIN_WF" ] || [ -z "$DEV_WF" ] || [ -z "$MAIN_CFG" ] || [ -z "$DEV_CFG" ] || [ -z "$MAIN_CHK" ] || [ -z "$DEV_CHK" ]; then
+            echo "::warning::could not resolve the recipe / config manifest / checker blob SHAs — failing CLOSED, deploying Lambdas"
             echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           if [ "$MAIN_LAM" != "$DEV_LAM" ] || [ "$MAIN_WF" != "$DEV_WF" ] || [ "$MAIN_CFG" != "$DEV_CFG" ] || [ "$MAIN_CHK" != "$DEV_CHK" ]; then
