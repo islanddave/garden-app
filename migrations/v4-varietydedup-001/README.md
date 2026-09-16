@@ -13,6 +13,42 @@ and reversible via `0r-rollback.sql`.
 Verified by content, not by the psql return: Alaska Mix is 2→1 live, 0 plantings remain on the
 archived loser, and **0 visible plantings anywhere in the database point at an archived variety**.
 
+### Reversal 2026-09-11 — Golden California Wonder and Orange Sun are live again, on purpose
+
+Two of the three California Wonder archives were **undone deliberately** on 2026-09-11. Dave decided
+(session `garden-sowprofile-20260911`, recorded in
+`Projects/Gardening/seeds/_sowprofile-20260911/decisions.sql`, ledger `OPS-SOWPROFILEFILL-001`) to
+restore **Golden California Wonder `960c10f5…`** and **Orange Sun `750c8334…`**, because Botanical
+Interests seed packets point at them and the archive had taken those packets out of Sow Now.
+`audit_events` records it: `RESTORE` ×2, actor `agent:garden-sowprofile-20260911`, 2026-09-11
+14:20:14Z. Measured on prod 2026-09-16: both rows are live and 4 live seed packets point at them
+(`b0605503`, `0cf79737` → `960c10f5`; `3171030b`, `88bb5eca` → `750c8334`).
+
+The cause was a gap in this migration's own impact check: §Archive-impact below looked at
+**plantings only**. `inventory_items` was checked for the Alaska loser but never for the California
+Wonder family.
+
+**`1eff5046…` "California Wonder" stays archived.** The same `decisions.sql` re-pointed its 2 Botanical
+Interests packets (`7e9aed24`, `a93fa5b5`) to the live California Wonder `10c259d8…`, so nothing points at
+it.
+
+**Do not re-archive the two restored rows.** Doing so strands the 4 packets again. In particular, **do
+not re-run `0a-data-fix.sql`**: its California Wonder `UPDATE` is guarded only on `deleted_at IS NULL`,
+and its receipt `INSERT` is `ON CONFLICT (version) DO UPDATE`, so a re-run today would succeed and
+archive both again.
+
+Gates, updated 2026-09-16 (`OPS-GATEREDS0915FIX-001`):
+- `post_cw_archive_targets_archived` still listed all three ids, so it went red on prod in the weekly
+  gate-invariants run 35001558568 (expected 0, got 2). It is **narrowed to `1eff5046` alone**, not
+  retired.
+- `post_prod_apply_actually_landed` (`continuous: false`, "all four rows archived") now reads 2 on
+  correct data. It is marked `retired:` with the reason, following
+  `v4-anchorbase-001 :: post_starts_empty`.
+- Left as they are: the `pre:` gates. They are `continuous: false` checks of the state before the
+  2026-09-01 apply. On prod on 2026-09-16, `pre_alaska_loser_live` read rowcount 0 and
+  `pre_cw_archive_targets_live` read rowcount 2 (it needs 3). Both have failed by construction ever
+  since the apply, and the restore does not change that. The other five still pass.
+
 ### Correction 2026-09-01 — one premise in `0a-data-fix.sql` had gone stale before apply
 
 The comment block in `0a-data-fix.sql` (and the reasoning repeated below) asserts:

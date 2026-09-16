@@ -174,13 +174,32 @@ post:
     expect: scalar_eq
     value: 0
 
+  # NARROWED 2026-09-16 (OPS-GATEREDS0915FIX-001), not retired. This gate used to assert all three
+  # California Wonder off-target rows stay archived. Two of those archives were REVERSED ON PURPOSE on
+  # 2026-09-11: Dave decided (session garden-sowprofile-20260911, recorded in
+  # Projects/Gardening/seeds/_sowprofile-20260911/decisions.sql, ledger OPS-SOWPROFILEFILL-001) to
+  # restore Golden California Wonder 960c10f5 and Orange Sun 750c8334, because Botanical Interests
+  # seed packets point at them and the 2026-09-01 archive had taken those packets out of Sow Now. The
+  # archive-impact check behind this migration covered plantings only and never looked at
+  # inventory_items for these three. audit_events carries the restore: RESTORE x2, actor
+  # agent:garden-sowprofile-20260911, 2026-09-11 14:20:14Z. Left three ids wide, this gate went red on
+  # prod in the weekly run 35001558568 (expected scalar_eq=0, got 2) while the data was exactly as
+  # decided.
+  #
+  # This is not a guard narrowed to dodge inconvenient rows. The decision the two ids encoded was
+  # withdrawn, and re-archiving them would strand 4 live seed packets again (measured on prod
+  # 2026-09-16: b0605503 and 0cf79737 on 960c10f5, 3171030b and 88bb5eca on 750c8334). 1eff5046 is
+  # still archived deliberately: the same decisions.sql re-pointed its 2 packets to the live
+  # California Wonder 10c259d8, so nothing points at it and the gate keeps guarding it.
   - name: post_cw_archive_targets_archived
-    note: All three California Wonder off-target rows are archived; none is still live.
+    note: >
+      The superseded "California Wonder" row 1eff5046 stays archived. Narrowed from all three
+      California Wonder rows on 2026-09-16: Golden California Wonder 960c10f5 and Orange Sun 750c8334
+      were restored on purpose on 2026-09-11 and are live by decision (see the comment above and
+      README.md "Reversal 2026-09-11"). Do not put them back in this list.
     sql: |
       SELECT count(*) FROM public.plant_varieties
-       WHERE id IN ('960c10f5-80e9-4a92-8e8c-da70f54c89f0',
-                     '750c8334-1aaa-493b-bcef-02d7a9378a39',
-                     '1eff5046-f6a1-4f5d-82df-85a35e890849')
+       WHERE id IN ('1eff5046-f6a1-4f5d-82df-85a35e890849')
          AND deleted_at IS NULL
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '4.36.0-varietydedup-001')
@@ -217,7 +236,22 @@ post:
     expect: scalar_eq
     value: 0
 
+  # Retired 2026-09-16 (OPS-GATEREDS0915FIX-001), in the shape of v4-anchorbase-001 ::
+  # post_starts_empty: an apply-time receipt that later, legitimate data made permanently false. The
+  # 2026-09-11 restore of 960c10f5 and 750c8334 (see post_cw_archive_targets_archived above) means
+  # this reads 2, not 0, in any runbook --phase post run. Kept in place, SQL unchanged, so the
+  # 2026-09-01 receipt stays legible.
   - name: post_prod_apply_actually_landed
+    retired: >
+      Served its purpose and expired 2026-09-11. It was the apply-time proof that 0a archived all four
+      rows on prod rather than matching nothing, and all four were archived by the 2026-09-01 apply
+      (audit_events SOFT_DELETE at the timestamp of receipt 4.36.0-varietydedup-001). On 2026-09-11
+      Dave had Golden California Wonder 960c10f5 and Orange
+      Sun 750c8334 restored so their seed packets return to Sow Now (seeds/_sowprofile-20260911/
+      decisions.sql, OPS-SOWPROFILEFILL-001), so "all four archived" is now permanently false on
+      correct data and this reads 2. The two archives that still stand are guarded continuously by
+      post_alaska_loser_archived (f2c6edd8) and the narrowed post_cw_archive_targets_archived
+      (1eff5046).
     note: >
       env:prod and scripted. On prod all four rows exist, so this is the gate that tells an applied
       migration from one that matched nothing — every self-armed gate above shares its predicate
