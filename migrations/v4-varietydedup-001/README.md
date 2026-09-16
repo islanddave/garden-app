@@ -44,6 +44,10 @@ Gates, updated 2026-09-16 (`OPS-GATEREDS0915FIX-001`):
 - `post_prod_apply_actually_landed` (`continuous: false`, "all four rows archived") now reads 2 on
   correct data. It is marked `retired:` with the reason, following
   `v4-anchorbase-001 :: post_starts_empty`.
+- `post_no_orphaned_active_planting` still listed all 4 archived ids. It read 0 on 2026-09-16, but the
+  first visible planting sown from one of the 4 restored packets would have turned it red on correct
+  data. It is **narrowed to `f2c6edd8` and `1eff5046`**, the two varieties still archived on purpose.
+  Its blank-`variety_ref` rationale applies only to archived varieties.
 - Left as they are: the `pre:` gates. They are `continuous: false` checks of the state before the
   2026-09-01 apply. On prod on 2026-09-16, `pre_alaska_loser_live` read rowcount 0 and
   `pre_cw_archive_targets_live` read rowcount 2 (it needs 3). Both have failed by construction ever

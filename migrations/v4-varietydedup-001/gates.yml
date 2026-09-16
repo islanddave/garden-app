@@ -219,16 +219,35 @@ post:
     expect: scalar_eq
     value: 0
 
+  # NARROWED 2026-09-16 (OPS-GATEREDS0915FIX-001), the same reversal as post_cw_archive_targets_archived
+  # above. The list used to carry all 4 varieties this migration archived. Golden California Wonder
+  # 960c10f5 and Orange Sun 750c8334 were restored on purpose on 2026-09-11 (Dave's decision, recorded
+  # in Projects/Gardening/seeds/_sowprofile-20260911/decisions.sql, ledger OPS-SOWPROFILEFILL-001), so
+  # both are live and 4 live seed packets point at them. The first planting sown from one of those
+  # packets is a visible row on 960c10f5 or 750c8334, and with them still listed this gate would go
+  # red on it with no defect behind it. It read 0 on prod on 2026-09-16 both before and after this
+  # change; the narrowing matters for the next planting, not for today's data.
+  #
+  # The rationale below only ever applied to ARCHIVED varieties, and it no longer applies to these
+  # two. Checked on 2026-09-16, not argued: every planting read in lambda/plants/index.js (~735, and
+  # four more) builds variety_ref as CASE WHEN pv.id IS NOT NULL over
+  # LEFT JOIN public.cultivar pv ON pv.id = p.cultivar_id AND pv.deleted_at IS NULL, and public.cultivar
+  # and public.garden_node are views over plant_varieties and plants with no WHERE clause. Run on prod
+  # against the real plantings of these ids, that join resolves variety_ref for both plantings on
+  # 960c10f5 and both on 750c8334, and blanks it for 1eff5046's planting. f2c6edd8 and 1eff5046 are
+  # still archived on purpose, so they stay listed.
   - name: post_no_orphaned_active_planting
     note: >
-      THE blast-radius bound. No visible planting may be left referencing any of the 4 archived
-      varieties, because lambda/plants/index.js:455 would render it with a blank variety_ref.
-      Covers the Alaska loser as well as the 3 CA Wonder rows.
+      THE blast-radius bound. No visible planting may reference a variety this migration archived
+      that is STILL archived: the Alaska loser f2c6edd8 and the superseded California Wonder
+      1eff5046. Every planting read in lambda/plants/index.js LEFT JOINs public.cultivar with
+      deleted_at IS NULL, so such a planting would render with a blank variety_ref. Narrowed on
+      2026-09-16: Golden California Wonder 960c10f5 and Orange Sun 750c8334 were restored on
+      2026-09-11 and are live by decision, so a planting on either is normal (see the comment above
+      and README.md "Reversal 2026-09-11"). Do not put them back in this list.
     sql: |
       SELECT count(*) FROM public.plants
        WHERE variety_id IN ('f2c6edd8-7b8f-4bd2-a443-a7e1070fa6d7',
-                             '960c10f5-80e9-4a92-8e8c-da70f54c89f0',
-                             '750c8334-1aaa-493b-bcef-02d7a9378a39',
                              '1eff5046-f6a1-4f5d-82df-85a35e890849')
          AND deleted_at IS NULL AND archived_at IS NULL
          AND EXISTS (SELECT 1 FROM public.schema_version
