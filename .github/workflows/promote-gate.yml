@@ -368,10 +368,25 @@ jobs:
       # silently — scripts/verify-deploy.py:161 already carries that bug, and this train alone
       # touches 30 lambda files.
       #
+      # OPS-LAMCHANGEDBLIND-001 — plus the blobs of the two files deploy-lambda.yml reads from OUTSIDE
+      # lambda/: scripts/lambda-config-expected.json (facebook-share timeout/memory, and the manifest
+      # verify-daily-plan asserts) and scripts/check-lambda-config.py (the assertion itself). Without
+      # them a manifest- or checker-only promote reads as unchanged, deploy-lambdas is skipped, and
+      # verify-daily-plan — the only step anywhere that checks the manifest against live AWS — is
+      # skipped with it: the declared config ships unverified on a green promote. If deploy-lambda.yml
+      # starts reading another file outside lambda/, it belongs in this comparison too.
+      #
+      # NOTE (2026-09-16): the lambda/ lookup has never resolved. For a DIRECTORY the contents API
+      # returns a JSON array, and the parser below prints '' for anything that is not an object, so
+      # all 66 runs 2026-08-14..09-15 that got past force_lambda logged `<none>` for both trees and
+      # took the fail-closed branch. Every promote has deployed Lambdas; the comparison and the
+      # SPA-only skip have never executed. Repairing that lookup ACTIVATES the skip for the first
+      # time — re-audit what deploy-lambda.yml reads before doing it.
+      #
       # Fails CLOSED: any error, any missing field => lambda_changed=true. Deploying Lambdas that did
       # not change is a no-op costing ~6 minutes; skipping Lambdas that DID change is the bug this
       # whole change exists to prevent.
-      - name: Detect lambda changes (pre-FF, while main is still the old code)
+      - name: Detect lambda changes (pre-FF; lambda/ + recipe + config manifest + checker)
         id: lam
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
@@ -394,17 +409,29 @@ jobs:
           DEV_LAM=$(subtree "$DEV_SHA" lambda)
           MAIN_WF=$(subtree main .github/workflows/deploy-lambda.yml)
           DEV_WF=$(subtree "$DEV_SHA" .github/workflows/deploy-lambda.yml)
+          MAIN_CFG=$(subtree main scripts/lambda-config-expected.json)
+          DEV_CFG=$(subtree "$DEV_SHA" scripts/lambda-config-expected.json)
+          MAIN_CHK=$(subtree main scripts/check-lambda-config.py)
+          DEV_CHK=$(subtree "$DEV_SHA" scripts/check-lambda-config.py)
           echo "main lambda/ tree = ${MAIN_LAM:-<none>}"
           echo "dev  lambda/ tree = ${DEV_LAM:-<none>}"
+          echo "main recipe/manifest/checker blobs = ${MAIN_WF:-<none>} ${MAIN_CFG:-<none>} ${MAIN_CHK:-<none>}"
+          echo "dev  recipe/manifest/checker blobs = ${DEV_WF:-<none>} ${DEV_CFG:-<none>} ${DEV_CHK:-<none>}"
           if [ -z "$MAIN_LAM" ] || [ -z "$DEV_LAM" ]; then
             echo "::warning::could not resolve one or both lambda/ tree SHAs — failing CLOSED, deploying Lambdas"
             echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if [ "$MAIN_LAM" != "$DEV_LAM" ] || [ "$MAIN_WF" != "$DEV_WF" ]; then
-            echo "lambda code or deploy recipe changed -> Lambdas will deploy BEFORE the SPA"
+          # A blob that resolves on NEITHER side compares '' = '' below and reads as unchanged, i.e.
+          # fail-OPEN — so each one is guarded explicitly rather than left to the comparison.
+          if [ -z "$MAIN_CFG" ] || [ -z "$DEV_CFG" ] || [ -z "$MAIN_CHK" ] || [ -z "$DEV_CHK" ]; then
+            echo "::warning::could not resolve the config manifest / checker blob SHAs — failing CLOSED, deploying Lambdas"
+            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$MAIN_LAM" != "$DEV_LAM" ] || [ "$MAIN_WF" != "$DEV_WF" ] || [ "$MAIN_CFG" != "$DEV_CFG" ] || [ "$MAIN_CHK" != "$DEV_CHK" ]; then
+            echo "lambda code, deploy recipe, config manifest or checker changed -> Lambdas will deploy BEFORE the SPA"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "lambda/ identical between main and $DEV_SHA -> skipping Lambda deploy (SPA-only promote)"
+            echo "lambda/, deploy recipe, config manifest and checker identical between main and $DEV_SHA -> skipping Lambda deploy (SPA-only promote)"
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
