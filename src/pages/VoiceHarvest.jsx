@@ -782,6 +782,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // A held number is now resolved by whatever comes next (see the resolution sites below):
       //   unit          -> rejoin, exactly as before
       //   another number-> the held one was the count; it is applied and the new one is held
+      //   restated value-> the same number with its unit; the hold is released, nothing is assumed
       //   anything else -> applied to the next empty slot with an assumed unit
       // so Dave never says "count" or "grams", and no utterance loses a number he spoke.
       heldNumRef.current = partial.value; setHeldNum(partial.value)
@@ -791,6 +792,27 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // progress line: the number landed, and saying a unit is now optional rather than required.
       say('ok', `${partial.value} — say a unit to change it, or carry on.`)
       return
+    } else if (heldNumRef.current != null
+               && (result.kind === 'quantity' || result.kind === 'weight')
+               && result.value === heldNumRef.current) {
+      // BUG-VOICEHELDREPEAT-001 — THE SAME NUMBER WITH ITS UNIT IS THE HELD NUMBER, RESTATED.
+      //
+      // Chrome delivers a continuous session cumulatively: "87" as one final, then "87 G" as the next
+      // final of the SAME session. Once the gap passes the settle window the tick has already
+      // committed "87" as held, the debouncer can no longer supersede it, and the resolution site
+      // below read "87 G" as a second amount — 87 count by slot order, then 87 g — and "next" saved a
+      // count nobody said. The device timing is on record (2026-09-16: 551 ms, avoided only because
+      // Chrome heard "grounds"). A person answering the banner above with "87 grams" reaches the same
+      // place across a session boundary, so the rule is not scoped to one session.
+      //
+      // The utterance carries the number itself, so the hold is released and the ordinary
+      // quantity/weight branch applies it as said — no second copy of the announcement or the haptic.
+      // EQUALITY IS THE WHOLE TEST: a different value with a unit is a different amount, and the
+      // resolution site still infers the held number's unit for it. What this reads wrongly is a bare
+      // amount followed by the OTHER axis sharing its number; that slot stays visibly empty, and an
+      // empty quantity refuses at "next".
+      heldNumRef.current = null; setHeldNum(null)
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-restated ${result.value} ${result.unit} (held number resolved)`)
     } else if (heldNumRef.current != null) {
       // V5-VOICEVOCAB-001 — RESOLUTION SITE. Any other utterance ends the pairing, and the held
       // number is now APPLIED with an assumed unit rather than thrown away.

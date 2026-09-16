@@ -1077,3 +1077,81 @@ describe('the candidate list says how much of itself it is hiding', () => {
     expect(card.textContent).not.toContain('showing')
   })
 })
+
+// ── BUG-VOICEHELDREPEAT-001 — a held number that comes back WITH its unit ─────────────────────────
+//
+// The device shape, from the 2026-09-16 real-page trace: "87" landed as a final, the settle tick
+// committed it as held-number 517 ms later, and 551 ms after the number the SAME session re-delivered
+// the whole phrase at the next result index — as "87 grounds". Chrome returned grams as "G" five times
+// in six in that run, so the same timing with "87 G" is the ordinary case. The debouncer cannot
+// supersede a final it has already committed, so the page receives one spoken phrase as two
+// utterances, and the second one resolved the hold by SLOT ORDER: 87 count assumed, then 87 g.
+describe('BUG-VOICEHELDREPEAT-001 — a held number restated with its unit is that number', () => {
+  // The failing cases leave fake timers installed when an assertion throws; restoring here keeps a red
+  // run from bleeding into the next test and muddying which one actually failed.
+  afterEach(() => { vi.useRealTimers() })
+
+  // A bare number committed by the SETTLE TICK, with no session end. `speak()` cannot produce this:
+  // it flushes at the boundary, and the boundary never falls between Chrome's cumulative finals.
+  async function holdByTick(rec, text) {
+    await act(async () => { rec.deliverFinal(text) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(551) })
+  }
+
+  it('the device shape: "87", the tick, then the same session\'s "87 G" is a weight and no count', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await holdByTick(rec, '87')
+    // Precondition, so this cannot pass by never reaching the hold.
+    expect(record()).toContain('87 … needs a unit')
+
+    await act(async () => { rec.deliverFinal('87 G') })   // next index, same session
+    await act(async () => { rec.endSession() })
+    expect(record()).toContain('87 g')
+    expect(record()).toContain('Quantity—')
+    expect(statusText()).not.toContain('assumed')
+
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+    expect(harvestPosts(), 'no count was spoken, so none may be saved').toHaveLength(0)
+    expect(statusText()).toContain('still need a quantity')
+  })
+
+  it('a restatement after a session boundary is the same number too — "87", then "87 grams"', async () => {
+    // The banner under a held number says "say a unit to change it", and "87 grams" is how a person
+    // says a unit for 87. Across a boundary it reached the same slot-order resolution.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, '87')
+    await speak(rec, '87 grams')
+    expect(record()).toContain('87 g')
+    expect(record()).toContain('Quantity—')
+    expect(statusText()).not.toContain('assumed')
+  })
+
+  it('the mirror image makes no phantom WEIGHT — count said, "5", then "5 count"', async () => {
+    // With the count slot filled, slot order sends a held number to grams, so restating it as a
+    // count wrote 5 g beside the corrected 5 count.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three count')
+    await speak(rec, '5')
+    await speak(rec, '5 count')
+    expect(record()).toContain('5 count')
+    expect(record()).toContain('Weight—')
+    expect(statusText()).not.toContain('assumed')
+  })
+
+  it('a DIFFERENT value with its unit still resolves the hold by slot order', async () => {
+    // Non-vacuity for the equality: V5-VOICEVOCAB-001's inference must survive for a number that is
+    // not being restated, or "3" then "231 grams" would lose the count Dave said.
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, '3')
+    await speak(rec, '231 grams')
+    expect(record()).toContain('3 count')
+    expect(record()).toContain('231 g')
+    expect(statusText()).toContain('3 count assumed')
+  })
+})
