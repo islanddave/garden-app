@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.135.1",
+    "date": "2026-09-16",
+    "highlights": [
+      "The Lamb's Ear page no longer shows Harvested and Put up sections. Lamb's ear is an ornamental that isn't harvested, so its page now matches your other ornamental plants."
+    ]
+  },
+  {
     "version": "4.135.0",
     "date": "2026-09-15",
     "highlights": [

@@ -51,7 +51,7 @@ export const NOT_HARVEST_TRACKED_SLUGS = Object.freeze([
   'crown_of_thorns', 'delphinium', 'dianthus', 'dogwood', 'dracaena', 'echeveria', 'edelweiss', 'fish',
   'fittonia', 'flower_mix', 'four_o_clock', 'foxglove', 'geranium', 'goldenrod', 'haworthia',
   'helichrysum', 'hibiscus', 'hollyhock', 'horseweed', 'hosta', 'hoya', 'jade', 'japanese_maple',
-  'lantana',
+  'lamb_s_ear', 'lantana',
   'lithops', 'marigold',
   'meat', 'milk', 'milkweed', 'money_plant', 'morning_glory', 'penstemon', 'petunia', 'pineapple', 'poppy',
   'pothos', 'rose', 'sedum', 'sempervivum', 'spider_plant', 'stock', 'succulent', 'sunflower',

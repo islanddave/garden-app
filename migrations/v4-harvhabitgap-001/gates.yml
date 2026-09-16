@@ -154,6 +154,21 @@ post:
   # Antirrhinum majus as a vocabulary entry whatever this one planting turns out to be; it simply has
   # no planting behind it now. Un-seeding it to match the re-key would discard a sourced fact and add
   # a ninth NULL to police, which is the wrong direction on both counts.
+  #
+  # 2026-09-16 (OPS-GATEREDS0915FIX-001): lamb_s_ear added. The crop type was minted 2026-09-11
+  # 18:47:45Z with a NULL harvest_habit and on no list, so this gate went red on prod on the very next
+  # run, the weekly schedule run 35001558568 (2026-09-15) — expected scalar_eq=0, got 1. It came from
+  # a direct-SQL re-identification (the "Garden Sage" planting 6f73af20 re-filed as Lamb's Ear, Stachys
+  # byzantina), not from the app, but the app's own mint route never sets harvest_habit either, so an
+  # in-app mint would have gone red the same way. Registered rather than seeded, on the goldenrod/hoya
+  # precedent: category='ornamental', an ornamental groundcover, and its one live planting carries
+  # zero harvest events (measured on prod 2026-09-16: watering, rain, fertilizing, photo and
+  # potting_up only). NULL is the honest value and no habit was invented to clear the red.
+  # Deliberately NOT parked in unseeded_vocabulary: that list is for slugs with NO live planting, and
+  # this one has one, so parking it there would turn post_no_unseeded_slug_has_a_live_planting red
+  # instead. Recorded in not_harvest_tracked.slugs AND in the copied list in src/lib/harvestTracked.js
+  # in the same change — the horseweed registration updated only this file and the JSON and needed a
+  # follow-up commit to sync the copy. Projection untouched (nothing added to by_crop_type).
   - name: post_every_null_habit_is_a_recorded_decision
     sql: |
       SELECT count(*) FROM public.crop_types c
@@ -169,7 +184,7 @@ post:
            'dianthus','dogwood',
            'dracaena','echeveria','edelweiss','elderberry','fish','fittonia','flower_mix',
            'four_o_clock','foxglove','geranium','ginger','goldenrod','grape','haworthia','helichrysum',
-           'hibiscus','hollyhock','hosta','hoya','jade','japanese_maple','lantana','lithops','luffa',
+           'hibiscus','hollyhock','hosta','hoya','jade','japanese_maple','lamb_s_ear','lantana','lithops','luffa',
            'marigold','meat','milk','milkweed','money_plant','morning_glory','mustard',
            'nectarine','parsnip','pear','penstemon','perilla','petunia','pineapple','plum','poppy','pothos',
            'radish','raspberry','rhubarb','rose','sedum','sempervivum','sour_cherry','spider_plant',
