@@ -6,6 +6,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { householdScope, loadOwnedLocation, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { validateExtractRequest, buildAnthropicRequest, parseExtractResponse } from './extract.js';
+// BUG-SEEDSTAGETZSHIFT-001 — the /seed-stage date rule, in a module a test can execute.
+import { resolveStageEnteredAt } from './seed-stage-date.js';
 // V4-SEEDORIGIN-001. A per-directory copy of the vocabulary canonically defined in
 // lambda/preservation/provenance.js — each Lambda is zipped from its own directory, so a
 // `../preservation/` import 502s the deployed handler (caught 2026-05-20).
@@ -499,28 +501,31 @@ export const handler = async (event) => {
       // BACKDATABLE ON PURPOSE. The founding use case is retroactive — the 1884 tomato lot went
       // through its ferment and out to dry before any of this existed, and a stage history that can
       // only be written in the present tense cannot record what actually happened. Absent -> now().
-      const enteredAt = body.entered_at ?? null;
+      //
+      // BUG-SEEDSTAGETZSHIFT-001 — the day SavedSeeds sends (`${when}T12:00:00`) is resolved to an
+      // instant HERE and never cast zoneless: that cast read it in the session's GMT and filed every
+      // picked day at 08:00 Eastern, under the intake row written seconds before. Today in
+      // America/New_York -> this request's instant; any other day -> 12:00 Eastern on it.
+      // seed-stage-date.js carries the rule and the measurement.
+      const now = new Date();
+      const resolved = resolveStageEnteredAt(body.entered_at, now);
+      // Malformed input would otherwise reach Postgres, raise 22007 and fall through the catch as
+      // an opaque 500. A named 400 is the better answer and it is free here.
+      if (resolved.invalid) return resp(400, { error: 'entered_at must be a valid date' });
+      const enteredAt = resolved.at;
       // BACKDATABLE, NOT FORWARD-DATABLE (WAVE-2 S3d). The column is seed_lot_stage_log.entered_at,
       // verified live — nothing on inventory_items — and it is the value /seeds/saved derives its
       // whole queue from: the card's elapsed() reads stage_entered_at, so a lot entered with a
       // mistyped year reads "0 days in drying" forever and quietly leaves the list of things that
       // need checking, on the one page whose entire job is to produce that list.
       //
-      // THE TOLERANCE IS LOAD-BEARING, NOT SLOP. SavedSeeds sends `${when}T12:00:00` — a local date
-      // pinned to noon with no zone, deliberately, so a date typed on a phone in Eastern does not
-      // land on the previous UTC day. Node parses a zoneless ISO string in the runtime's zone (UTC
-      // on Lambda), so a genuine "today" arrives AHEAD of server now for any user west of UTC — a
-      // strict `> Date.now()` would refuse Dave's own entry every morning before 08:00 Eastern.
-      // 48h clears the worst genuine lead (~26h, a UTC+14 midnight) and still refuses what this
-      // exists to refuse, which is wrong by months or years and never by hours.
-      if (enteredAt != null) {
-        const t = Date.parse(enteredAt);
-        // NaN is the malformed case, which today reaches Postgres, raises 22007 and falls through
-        // the catch as an opaque 500. A named 400 is the better answer and it is free here.
-        if (Number.isNaN(t)) return resp(400, { error: 'entered_at must be a valid date' });
-        if (t > Date.now() + FUTURE_ENTERED_AT_TOLERANCE_MS) {
-          return resp(400, { error: 'entered_at cannot be in the future' });
-        }
+      // THE TOLERANCE IS LOAD-BEARING, NOT SLOP. A phone east of Eastern that is past its own
+      // midnight sends a day Eastern has not reached yet, which resolves to that day's noon ET —
+      // genuinely ahead of server now, by up to ~30h (a UTC+14 phone just past midnight). A strict
+      // `> now` would refuse a correct entry. 48h clears that and still refuses what this exists to
+      // refuse, which is wrong by months or years and never by hours.
+      if (enteredAt != null && Date.parse(enteredAt) > now.getTime() + FUTURE_ENTERED_AT_TOLERANCE_MS) {
+        return resp(400, { error: 'entered_at cannot be in the future' });
       }
       const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim() : null;
 

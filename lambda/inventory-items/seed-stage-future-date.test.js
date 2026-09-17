@@ -12,10 +12,13 @@
 // tomato lot fermented and dried before any of this existed.
 //
 // WHY THE TOLERANCE IS NOT ZERO, and why testing it matters more than testing the rejection:
-// SavedSeeds sends `${when}T12:00:00`, a local date pinned to noon with no zone, so a genuine
-// "today" arrives AHEAD of server now for any user west of UTC. A strict `> Date.now()` test would
-// refuse Dave's own entry every morning before 08:00 Eastern — a fix that breaks the happy path is
-// not a fix. The first case below is the one that catches that regression.
+// SavedSeeds sends `${when}T12:00:00`, a calendar day. Since BUG-SEEDSTAGETZSHIFT-001 the route
+// resolves it in Eastern (seed-stage-date.js): today becomes the request instant, but a day Eastern
+// has not reached yet — a phone past its own midnight — becomes that day's noon ET, genuinely AHEAD
+// of server now. A strict `> Date.now()` test would refuse that correct entry — a fix that breaks the
+// happy path is not a fix. The first case below sends the runner's local date, which only leads
+// Eastern on some runners at some hours; the deterministic guard for that regression is the
+// "a day Eastern has not reached" case in seed-stage-date.test.js.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
 
