@@ -1268,7 +1268,21 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // nightly plan (B6); a null station simply leaves Open-Meteo/NWS as the source.
   const stationRaw = fetchStation ? await fetchStation() : null;
   console.log(JSON.stringify({ msg: 'station-fetched', ms: Date.now() - t0, present: !!stationRaw }));
-  const station = deriveStation(stationRaw, { nowMs: Date.now() });
+  // BUG-DERIVESTATIONBARE-001 — the DERIVATION gets the same promise the FETCH above already makes.
+  // fetchStation is guarded so a gauge outage can never empty the nightly plan (B6); deriveStation beside
+  // it was bare, so one throw here (a bad `tz` in AWN_STATIONS_JSON reaching Intl is the live path — the
+  // records themselves are attacker-free but the config is hand-edited) cost the ENTIRE plan for every
+  // Space and the frost alert with it. Failure semantics, chosen deliberately rather than left undeclared:
+  // degrade to "no gauge" — byte-identical to the null-fetch state the code already handles everywhere —
+  // and NAME the degrade so it is observable instead of silent (L-443: keep the detection, drop the outage).
+  let station = null;
+  let stationDegraded = null;
+  try {
+    station = deriveStation(stationRaw, { nowMs: Date.now() });
+  } catch (e) {
+    stationDegraded = e?.message || String(e);
+    console.error(JSON.stringify({ msg: 'station-derive-failed', degraded: 'station_derive_failed', error: stationDegraded }));
+  }
   let boundSpaces = 0;
   // V4-WATERMATH-001 F1 — the ledger flag, read ONCE and used for exactly one thing in F1: whether the
   // weather_daily SELECT happens at all. Default OFF, and OFF is byte-identical — the engine is not
@@ -1295,8 +1309,23 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // null = the read failed, which is NOT "he did not water" (see evaluateDrought's refusal branch).
   const deepWaterRows = await drought.readDeepWaterDays(pg, drought.windowStart(today), prevPlanDate(today));
   for (const s of spaces) {
-    let wx = await weatherForSpace(s, { geocodeZip, fetchNWS });
-    let hy = await hydrologyForSpace(s, { geocodeZip, fetchPrecip });  // assembled BEFORE suggestions
+    // BUG-WXFETCHFROSTCLEAR-001 — same seam, same promise. The SHIPPED fetchNWS/fetchPrecip catch
+    // everything and return null (index.js), and a null weather is already handled correctly downstream:
+    // frostEval gets tonightLow null + lowSource 'forecast_absent', sets degraded, and in frost season
+    // that raises the frost_eval_degraded ops alert — silence never reads as "no frost". What was NOT
+    // guarded is the seam itself: an injected or future fetcher that THROWS would take the whole run, and
+    // with it every Space's plan and the frost alert. Degrade this Space to no-weather and name it.
+    let wx = null; let hy = null;
+    try {
+      wx = await weatherForSpace(s, { geocodeZip, fetchNWS });
+    } catch (e) {
+      console.error(JSON.stringify({ msg: 'weather-fetch-failed', degraded: 'weather_fetch_failed', space: s.id, error: e?.message || String(e) }));
+    }
+    try {
+      hy = await hydrologyForSpace(s, { geocodeZip, fetchPrecip });  // assembled BEFORE suggestions
+    } catch (e) {
+      console.error(JSON.stringify({ msg: 'hydrology-fetch-failed', degraded: 'hydrology_fetch_failed', space: s.id, error: e?.message || String(e) }));
+    }
     // Field-granular station merge (B2/B3): station rain overrides recent_precip_in on the hydrology path;
     // station temp calibrates tonightLow on the weather path; forecast fields stay from Open-Meteo/NWS.
     const st = bindStationToSpace(s, station);

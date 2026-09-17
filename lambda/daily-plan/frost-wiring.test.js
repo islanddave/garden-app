@@ -75,7 +75,12 @@ async function drive(opts = {}) {
   const res = await run({
     pg, today: opts.today || DATE, dryRun: opts.dryRun ?? false,
     geocodeZip: async () => ({ lat: 42.5, lng: -72.6 }),
-    fetchNWS: wx('tonightLow' in opts ? opts.tonightLow : 30), fetchPrecip: precip(opts.forecastLows, 'hourlyFrost' in opts ? opts.hourlyFrost : clearNight()), fetchStation: async () => null,
+    // fetchNWS/fetchStation are overridable so a seam FAILURE can be driven, not just a cold night:
+    // opts.fetchNWS null models the shipped fetcher's guarded failure (index.js returns null), and a
+    // thrower models an unguarded one. Defaults are unchanged.
+    fetchNWS: 'fetchNWS' in opts ? opts.fetchNWS : wx('tonightLow' in opts ? opts.tonightLow : 30),
+    fetchPrecip: precip(opts.forecastLows, 'hourlyFrost' in opts ? opts.hourlyFrost : clearNight()),
+    fetchStation: 'fetchStation' in opts ? opts.fetchStation : async () => null,
     publishAlert, etHour: opts.etHour ?? PM_HOUR, event: opts.event || {},
   });
   return { res, pg, publishAlert };
@@ -416,5 +421,49 @@ describe('frostSubject — SNS Subject is ASCII, single-line, and <= 100 chars',
   });
   it('degrades without an observability record', () => {
     expect(frostSubject({ tier: 'imminent', level: 'protect' })).toContain('Frost protect tonight');
+  });
+});
+
+// BUG-DERIVESTATIONBARE-001 + BUG-WXFETCHFROSTCLEAR-001 — the FAILURE semantics of the weather seams,
+// declared rather than left undefined. Two promises are pinned here: a failure at either seam degrades
+// only its own input and says so by NAME in the log, and it never empties the nightly plan or silences
+// the frost alert. Driven through the real run(), because every one of these failures is invisible to a
+// unit test of the pieces — that is exactly how the bare deriveStation call survived review.
+describe('weather-seam failures degrade loudly and never empty the plan', () => {
+  const STATION_RAW = {
+    mac: 'AA:BB:CC:DD:EE:FF',
+    records: [{ dateutc: Date.parse('2026-09-20T18:00:00Z'), tempf: 34, dailyrainin: 0 }],
+  };
+
+  it('BUG-DERIVESTATIONBARE-001: a throw in deriveStation degrades to no-gauge, names it, and still writes the plan AND the frost alert', async () => {
+    // The live throw path, not a contrived one: AWN_STATIONS_JSON is hand-edited, deriveStation hands
+    // cfg.tz to Intl, and an invalid zone raises RangeError (verified: 'Invalid time zone specified').
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    vi.stubEnv('AWN_STATIONS_JSON', JSON.stringify([{ mac: 'AA:BB:CC:DD:EE:FF', tz: 'Not/AZone' }]));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { pg, publishAlert } = await drive({ fetchStation: async () => STATION_RAW, tonightLow: 30 });
+    expect(pg.writes.length).toBeGreaterThan(0);                                            // plan survived
+    expect(publishAlert).toHaveBeenCalled();                                                // frost alert too
+    expect(logLines(err).some((l) => l.degraded === 'station_derive_failed')).toBe(true);    // and it is NAMED
+  });
+
+  it('BUG-WXFETCHFROSTCLEAR-001: a weather fetch that fails the way the shipped one does (null) is NOT an all-clear — it pages frost_eval_degraded in season', async () => {
+    // index.js:fetchNWS catches everything and returns null, so this is production's real failure shape.
+    // The row suspected a silent all-clear; the wiring says otherwise and now a test holds it there.
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    const { pg, publishAlert } = await drive({ fetchNWS: async () => null });
+    expect(pg.writes.length).toBeGreaterThan(0);
+    const sent = publishAlert.mock.calls.map(([a]) => `${a.subject || ''} ${a.message || ''}`).join('\n');
+    expect(sent).toMatch(/frost_eval_degraded/);
+  });
+
+  it('a weather fetcher that THROWS degrades that Space instead of taking the whole run down with it', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { pg, publishAlert } = await drive({ fetchNWS: async () => { throw new Error('nws 503'); } });
+    expect(pg.writes.length).toBeGreaterThan(0);
+    expect(logLines(err).some((l) => l.degraded === 'weather_fetch_failed')).toBe(true);
+    const sent = publishAlert.mock.calls.map(([a]) => `${a.subject || ''} ${a.message || ''}`).join('\n');
+    expect(sent).toMatch(/frost_eval_degraded/);
   });
 });
