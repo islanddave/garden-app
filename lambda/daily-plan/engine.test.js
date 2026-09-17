@@ -688,7 +688,34 @@ describe('BUG-COLDNAMEMATCHNAG-001 — the solanaceous band keys on genus, not o
   });
 
   it('a free-text crop string reading "pepper" does NOT admit an in-ground leek', () => {
+    // LEEK's fixture carries the CORRECTED prod profile: crop 'leek (Allium)', cold {tender:false,28},
+    // matching its crop-type sibling King Richard. Before 2026-09-17 the live row read
+    // crop 'pepper (sweet)' with a pepper's cold {tender:true, protect_below_F:50}.
     expect(named(planFor([LEEK], { tonightLow: 38, highToday: 55 }))).not.toContain('Jaune du Poitou');
+  });
+
+  it('RELEASED FROM THE BAND MEANS ROUTED TO THE PROFILE — not silenced', () => {
+    // The trap this fix could have walked into, pinned so nobody re-walks it. Narrowing the band does
+    // not make a planting silent; it hands it to the profile resolution below, which cards at <= the
+    // profile's own protect_below_F. That is a HIGHER temperature than the band's 40F, so a planting
+    // released from the band with a tender profile cards MORE, not less.
+    // Concretely: both mislabelled plantings carried a pepper's {tender:true, protect_below_F:50}. Had
+    // their data not been corrected in the same change, narrowing the band would have moved them from
+    // "card below 40F" to "card at or below 50F" — the opposite of the intent, and invisible to a test
+    // whose fixture already held the corrected values. Watermelon is the case where tender:true is
+    // CORRECT, so it legitimately cards here and its two siblings already do.
+    const WATERMELON = {
+      name: 'Tender Sweet Orange', variety: 'Tender Sweet Orange', genus: 'Citrullus',
+      crop_type_slug: 'watermelon', container_type: 'in_ground', cadence_scopes: ['cultivar'],
+      db_cadence: { crop: 'watermelon', cold: { tender: true, protect_below_F: 50 }, water_interval_days_inground: 4 },
+    };
+    const row = coldRows(planFor([WATERMELON], { tonightLow: 48, highToday: 62 }))
+      .find(r => r.name === 'Tender Sweet Orange');
+    expect(row, 'not in the band any more, so the profile path must be what answers').toBeTruthy();
+    expect(row.level).toBe('protect');
+    expect(row.text).toMatch(/50°F/);
+    // and the band's own 40F rule is NOT what produced it
+    expect(row.text).not.toMatch(/bring inside tonight/);
   });
 
   it('CONTROL: a real Capsicum still cards at the same temperature that used to card the mint', () => {
