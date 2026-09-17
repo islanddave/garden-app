@@ -1,8 +1,10 @@
 [
   {
     "version": "4.135.1",
-    "date": "2026-09-16",
+    "date": "2026-09-17",
     "highlights": [
+      "Seed stage dates are recorded correctly. A stage you log for today is timed when you log it, a day you pick is kept as that day in Eastern time, and an entry made in the evening no longer shows as the next day in the seed's history. When a seed has several stage entries, the one you entered most recently is its current stage, and the card counts from it.",
+      "Voice harvest logging keeps more of what you say. Saying a count and a weight before you name the crop (\"4 count, 4 grams\") is kept instead of refused, and repeating a number with its unit (\"87\", then \"87 grams\") records the weight you said instead of adding a count you never said.",
       "The Lamb's Ear page no longer shows Harvested and Put up sections. Lamb's ear is an ornamental that isn't harvested, so its page now matches your other ornamental plants."
     ]
   },

@@ -119,8 +119,9 @@ const KITCHEN_TEXT_COLUMNS = new Set([
 const KITCHEN_INTEGER_COLUMNS = new Set(['expected_days_min', 'expected_days_max']);
 
 // ORDER KEYS, stated once. `id DESC` on the stage log is NOT decoration: two rows written in one
-// statement tie on entered_at AND created_at, which is the nondeterminism seed_lot_stage_log has and
-// this table's idx_ksl_batch was built to remove. A "topped up + skimmed" double-tap hits it.
+// statement tie on entered_at AND created_at, which is the nondeterminism seed_lot_stage_log's readers
+// had until they took the same tiebreak (BUG-SEEDSTAGETZSHIFT-001) and this table's idx_ksl_batch was
+// built to remove. A "topped up + skimmed" double-tap hits it.
 export const STAGE_LOG_ORDER = 'entered_at DESC, id DESC';
 export const INPUT_ORDER = 'added_at DESC, id DESC';
 // NULLS LAST is mandatory (SavedSeeds.jsx:594-613): an unknown start must not outrank a measured one
