@@ -129,6 +129,37 @@ function likelyInGround(p,c){
   return isCucurbit(p,c&&c.crop)||isLeek(p,c&&c.crop);
 }
 
+// ── BUG-COLDNAMEMATCHNAG-001 — solanaceous identity for the cold band: genus, then the controlled
+// slug, NEVER free text. ──────────────────────────────────────────────────────────────────────────
+// coldFor's band predicate was `PEPPER_TOMATO.test(c.crop) || PEPPER_TOMATO.test(p.name)`. BOTH arms
+// key on uncontrolled text, and each produced a live false positive on prod (measured 2026-09-17):
+//   * p.name — /pepper/ is a substring of "Peppermint". That planting is Mentha x piperita, outdoors
+//     in the Bag Area, uncovered, hardy, carrying its own DB protect_below_F of 10F. It was told to
+//     come inside below 40F.
+//   * c.crop — free text (see the uncontrolled-crop note at :102-104). "Jaune du Poitou" (genus
+//     Allium ampeloprasum, an IN-GROUND leek) and "Tender Sweet Orange" (genus Citrullus lanatus,
+//     in-ground watermelon) both carry a care-profile crop string reading "pepper", and both matched.
+//     Neither can be carried anywhere.
+// Live census behind the vocabulary below — cold-eligible plantings, prod, 2026-09-17: genuinely
+// solanaceous BY GENUS = 88 (Capsicum 45, Solanum 40 = 39 tomato + 1 eggplant, Physalis 3); NULL genus
+// under a controlled solanaceous slug = 8 (pepper 6, tomato 2 — the two "Cherry Rescue" tomatoes, whose
+// names contain neither "pepper" nor "tomato" and which the old name arm therefore caught only via
+// their crop string). So this is strictly WIDER than the regex on the plants that belong in the band
+// and strictly narrower on the plants that do not.
+// WHY A STATED GENUS IS DECISIVE: a genus that is present and not in the set is a REFUSAL, not a miss.
+// Falling through to the slug on a stated genus would re-admit Peppermint (genus Mentha, slug mint)
+// only if mint were slugged solanaceously — it is not — but it would also make the stated field
+// non-decisive, which is the property that makes this fixable at all. Absent genus (8 live rows) is
+// the only case the slug answers.
+// NOT A REGEX. The defect is not that the pattern was too broad; it is that a NAME was used as an
+// identity key. Tightening the pattern would leave the same class of bug one rename away.
+const SOLANACEOUS_GENERA = new Set(['Capsicum', 'Solanum', 'Physalis']);
+const SOLANACEOUS_SLUGS  = new Set(['pepper', 'tomato', 'eggplant', 'tomatillo']);
+function isSolanaceous(p){
+  if(p.genus) return SOLANACEOUS_GENERA.has(p.genus);
+  return SOLANACEOUS_SLUGS.has(p.crop_type_slug || '');
+}
+
 // ── DRG-WATERCREDIT-001 — Path B-plus rain credit, V1 2-class (crucible verdict 2026-06-18; Dave 2026-06-21) ──
 // Retire the global 0.3in cutoff. Subtract an initial-abstraction (first-wetting/runoff/canopy loss) then credit
 // the remaining rain over the 2-3 day window the engine already reads (recent D-2..D0), capped at one cadence
@@ -804,7 +835,16 @@ function fertilizeRec(p, c, fm, today){
 function coldFor(p, cad, low){
   if(low==null) return null;
   const c=resolveCadence(p,cad);
-  if(PEPPER_TOMATO.test(c.crop||'') || PEPPER_TOMATO.test(p.name||'')){
+  // BUG-COLDNAMEMATCHNAG-001 — the already-indoors check is HOISTED above the solanaceous band.
+  // It used to sit below it (at the old :840, now the second call site removed), so a planting the
+  // band caught could never be silenced by doing the one thing its card asked. Verified against the
+  // SHIPPED engine before the fix: Peppermint with brought_inside logged on 2026-09-16 still returned
+  // {level:'bring_in'} at a 38F low, while Pink Fittonia — which reaches the check because it takes the
+  // profile path below — correctly returned null. That differential is the whole bug.
+  // Hoisting can only ever SUPPRESS a card, never create one, so it cannot widen alert volume; and it
+  // now covers both paths identically, which is what the V4-TROPICALCOLD-001 note below always claimed.
+  if(broughtInside(p)) return null;
+  if(isSolanaceous(p)){
     if(low<40) return {level:'bring_in', text:`bring inside tonight (low ${low}°F)`};
     if(low<45) return ['flowering','fruiting'].includes(p.status) ? {level:'optional', text:`optional: protect flowering plant (low ${low}°F)`} : null;
     return null;
@@ -828,16 +868,15 @@ function coldFor(p, cad, low){
   // stay silent through the profile path, so removing this widens protection to exactly the plants that
   // already carried a number and to nobody else. A slug-keyed restatement would be the redundant second
   // guard :1096-1099 argues against: mutate either and the other holds, and no test can watch one fail.
-  // The nightly-nag mitigation V4-TROPICALCOLD-001 calls a precondition of correctness is the broughtInside
-  // check immediately below, which sits ABOVE profile resolution and so covers these 12 identically.
-  // V4-TROPICALCOLD-001 — already indoors? Then there is nothing to carry in, at any temperature.
-  // `done` (doneEvents.js) only retires a task for the CALENDAR DAY, so without this the card returns
+  // The nightly-nag mitigation V4-TROPICALCOLD-001 calls a precondition of correctness is the
+  // broughtInside check, which as of BUG-COLDNAMEMATCHNAG-001 sits at the TOP of this function and so
+  // covers these 12 and the solanaceous band identically. Its rationale, kept here where it was argued:
+  // `done` (doneEvents.js) only retires a task for the CALENDAR DAY, so without it the card returns
   // every night the low is under the threshold, all winter, for a plant already on the windowsill —
   // the nightly nag the 2026-08-07 band decision rejected. brought_inside/brought_outside are existing
   // logged event types and are a true toggle: the plant is indoors iff the LATER of the two is
   // brought_inside. Unknown (neither ever logged) means outdoors, which is the fail-safe direction —
   // it warns about a plant that is already in rather than staying silent about one that is out.
-  if(broughtInside(p)) return null;
   // Cold-profile resolution, most specific first. Variety/genus/DB (`c.cold`) stays authoritative;
   // the crop-type table is the FALLBACK beneath it, never an override. Ginger, and every other
   // tropical with no hand-authored variety row, reaches a profile only via this second tier.

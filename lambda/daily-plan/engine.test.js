@@ -637,3 +637,95 @@ describe('BUG-COLDCARDDISCARD-001 — an explicit protect_below_F is no longer d
     expect(u.counts.cold).toBe(1);
   });
 });
+
+describe('BUG-COLDNAMEMATCHNAG-001 — the solanaceous band keys on genus, not on what a plant is called', () => {
+  // The band predicate was `PEPPER_TOMATO.test(c.crop) || PEPPER_TOMATO.test(p.name)`. Both arms key on
+  // uncontrolled text and both produced live false positives on prod (measured 2026-09-17). The band
+  // also sat ABOVE the brought-inside check, so anything it caught could not be silenced by obeying it.
+  // Each `it` below fails if either half of the fix is reverted — verified by mutation, not assumed.
+  const planFor = (ps, weather) => generatePlan({
+    plantings: ps.map((p, i) => ({
+      id: 'nm-' + i, project: 'Pasture', project_id: 'pp', status: 'vegetative',
+      substrate_start: '2026-05-01', last_water: '2026-09-01', last_fert: null, db_cadence: null,
+      container_type: 'fabric_bag', ...p,
+    })),
+    cadence: cad, fertModel: fm, today: '2026-09-17', weather: { unit: 'F', ...weather }, ownerFallback: 'dave',
+  });
+  const coldRows = (plan) => Object.values(plan.users).flatMap(u => u.tasks.cold);
+  const named = (plan) => coldRows(plan).map(r => r.name);
+
+  // Live prod shape. Mentha x piperita, outdoors in the Bag Area, hardy, its own DB threshold 10F.
+  // `/pepper/` is a substring of "Peppermint" — that, and nothing else, is why it was carded.
+  const PEPPERMINT = {
+    name: 'Peppermint', variety: 'Peppermint', genus: 'Mentha', crop_type_slug: 'mint',
+    cadence_scopes: ['cultivar'],
+    db_cadence: { crop: 'mint', cold: { tender: false, protect_below_F: 10 }, water_interval_days_container: 4 },
+  };
+  // Live prod shape. genus says Allium; the care profile's free-text crop string says "pepper (sweet)".
+  // In the ground, so there is nowhere to carry it to even if it were tender.
+  const LEEK = {
+    name: 'Jaune du Poitou', variety: 'Jaune du Poitou', genus: 'Allium', crop_type_slug: 'leek',
+    container_type: 'in_ground', cadence_scopes: ['cultivar'],
+    db_cadence: { crop: 'pepper (sweet)', cold: { tender: false, protect_below_F: 28 }, water_interval_days_inground: 7 },
+  };
+  const REAL_PEPPER = {
+    name: 'Bhut Jolokia', variety: 'Bhut Jolokia', genus: 'Capsicum', crop_type_slug: 'pepper',
+    cadence_scopes: ['cultivar'], db_cadence: { crop: 'pepper (hot)', water_interval_days_container: 2 },
+  };
+  // One of the 8 live plantings with NULL genus under a controlled solanaceous slug. Its NAME contains
+  // neither "pepper" nor "tomato", so the old name arm never saw it — only the slug reaches it.
+  const NULL_GENUS_TOMATO = {
+    name: 'Cherry Rescue 1', variety: 'Cherry Rescue 1', genus: null, crop_type_slug: 'tomato',
+    cadence_scopes: ['cultivar'], db_cadence: { crop: 'tomato', water_interval_days_container: 2 },
+  };
+
+  it('a hardy outdoor mint is NOT carded merely because "Peppermint" contains "pepper"', () => {
+    // Pre-fix this returned {level:'bring_in'} at 38F. Its own threshold is 10F, so the profile path
+    // below the band must also stay silent — asserted at a hard freeze so a pass cannot come from the
+    // band being skipped while the profile path quietly cards instead.
+    expect(named(planFor([PEPPERMINT], { tonightLow: 38, highToday: 55 }))).not.toContain('Peppermint');
+    expect(named(planFor([PEPPERMINT], { tonightLow: 15, highToday: 30 }))).not.toContain('Peppermint');
+  });
+
+  it('a free-text crop string reading "pepper" does NOT admit an in-ground leek', () => {
+    expect(named(planFor([LEEK], { tonightLow: 38, highToday: 55 }))).not.toContain('Jaune du Poitou');
+  });
+
+  it('CONTROL: a real Capsicum still cards at the same temperature that used to card the mint', () => {
+    // Without this the two assertions above pass trivially if the band were simply deleted.
+    const rows = coldRows(planFor([REAL_PEPPER], { tonightLow: 38, highToday: 55 }));
+    expect(rows.map(r => r.name)).toContain('Bhut Jolokia');
+    expect(rows.find(r => r.name === 'Bhut Jolokia').level).toBe('bring_in');
+  });
+
+  it('the slug carries identity when genus is NULL — a name the old regex never matched still cards', () => {
+    const rows = coldRows(planFor([NULL_GENUS_TOMATO], { tonightLow: 38, highToday: 55 }));
+    expect(rows.map(r => r.name)).toContain('Cherry Rescue 1');
+    expect(rows.find(r => r.name === 'Cherry Rescue 1').level).toBe('bring_in');
+  });
+
+  it('a stated non-solanaceous genus is a REFUSAL, not a miss — it does not fall through to the slug', () => {
+    // Guards the `if(p.genus)` branch specifically. Mutating isSolanaceous to always consult the slug
+    // would let a mis-slugged planting back into the band on exactly the signal genus was meant to beat.
+    const misSlugged = { ...PEPPERMINT, crop_type_slug: 'pepper' };
+    expect(named(planFor([misSlugged], { tonightLow: 38, highToday: 55 }))).not.toContain('Peppermint');
+  });
+
+  it('ORDERING: a solanaceous planting already brought inside is silenced — it was not, before', () => {
+    // The whole bug in one pair. Pre-fix the band returned above the brought-inside check, so the card
+    // could not be cleared by doing what it asked. The second expect is the control that keeps the
+    // first from passing because the plant stopped carding for some unrelated reason.
+    const inside = { ...REAL_PEPPER, last_brought_inside: '2026-09-16' };
+    expect(named(planFor([inside], { tonightLow: 38, highToday: 55 }))).not.toContain('Bhut Jolokia');
+    const backOut = { ...inside, last_brought_outside: '2026-09-17' };
+    expect(named(planFor([backOut], { tonightLow: 38, highToday: 55 }))).toContain('Bhut Jolokia');
+  });
+
+  it('the 40-45F optional band for flowering/fruiting solanaceous is unchanged', () => {
+    const fruiting = { ...REAL_PEPPER, status: 'fruiting' };
+    const row = coldRows(planFor([fruiting], { tonightLow: 42, highToday: 60 })).find(r => r.name === 'Bhut Jolokia');
+    expect(row.level).toBe('optional');
+    // and a vegetative one in the same band gets nothing
+    expect(named(planFor([REAL_PEPPER], { tonightLow: 42, highToday: 60 }))).not.toContain('Bhut Jolokia');
+  });
+});
