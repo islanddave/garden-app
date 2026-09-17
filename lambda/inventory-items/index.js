@@ -469,7 +469,7 @@ export const handler = async (event) => {
     }
 
     // ── V4-SEEDSAVEFLOW-001 — seed-lot stage history ────────────────────────────────────────────
-    // GET  returns the lot's stage entries, newest first.
+    // GET  returns the lot's stage entries, newest ENTRY first (see the order note on the query).
     // POST advances the lot to a stage AND records the entry, in ONE statement.
     const seedStageMatch = rawPath.match(/^\/api\/inventory-items\/([^/]+)\/seed-stage$/);
     if (seedStageMatch) {
@@ -480,6 +480,14 @@ export const handler = async (event) => {
         // Household-scoped through the PARENT rather than on the log row: seed_lot_stage_log carries
         // created_by but joining the parent is what stops one household reading another's history
         // via a guessed id, and it is the same predicate the write path enforces.
+        //
+        // NEWEST ENTRY WINS (Dave, 2026-09-17). Ordered by when each entry was MADE, not by the date
+        // it carries: a correction dated Sep 1 made after a Sep 7 entry is the lot's current word,
+        // which is what the Change stage sheet promises ("that is the date the list counts from")
+        // and what inventory_items.seed_stage already holds, since every POST below sets it. The
+        // stage_entered_at LATERAL on the list uses this exact key, so SeedStageHistory's CURRENT
+        // badge (the first row carrying the lot's stage) is always the row the card counts from.
+        // entered_at breaks a created_at tie, then id, so every reader resolves one tie the same way.
         const rows = await sql`
           SELECT l.id, l.stage, l.entered_at, l.note, l.created_by, l.created_at
             FROM public.seed_lot_stage_log l
@@ -487,7 +495,7 @@ export const handler = async (event) => {
            WHERE l.inventory_item_id = ${itemId}
              AND i.created_by = ANY(${householdIds})
              AND i.deleted_at IS NULL
-           ORDER BY l.entered_at DESC, l.created_at DESC
+           ORDER BY l.created_at DESC, l.entered_at DESC, l.id DESC
         `;
         return resp(200, rows);
       }
@@ -1231,8 +1239,15 @@ export const handler = async (event) => {
       // The honest source is when the lot ENTERED its current stage, and seed_lot_stage_log already
       // records it exactly (the /seed-stage CTE writes the log entry and the seed_stage in one
       // statement, so they cannot drift). LATERAL rather than a second round trip from the client:
-      // the page fetches this list once and the index idx_seed_lot_stage_log_item
-      // (inventory_item_id, entered_at DESC) is built for this probe.
+      // the page fetches this list once.
+      //
+      // WHICH ENTRY, when the current stage was logged more than once: the NEWEST ENTRY, by
+      // created_at — Dave 2026-09-17, same key as the /seed-stage GET (see the note there). So a
+      // later "stored, Sep 1" correction beats an earlier "stored, Sep 7" advance, and logging an
+      // older stage after newer ones makes the card count that stage from its entered date (the
+      // accepted cost). idx_seed_lot_stage_log_item (inventory_item_id, entered_at DESC) still
+      // serves the lot equality but no longer the order; at <=3 rows per lot the sort is free, and
+      // an index on (inventory_item_id, created_at DESC) waits for a migration of its own.
       //
       // NULLABLE ON PURPOSE — do NOT COALESCE it to updated_at. A lot whose stage was set some other
       // way has no entry, and a fallback would silently restore the bug it is here to fix while
@@ -1267,7 +1282,7 @@ export const handler = async (event) => {
                     WHERE i.seed_stage IS NOT NULL
                       AND sl.inventory_item_id = i.id
                       AND sl.stage = i.seed_stage
-                    ORDER BY sl.entered_at DESC, sl.created_at DESC
+                    ORDER BY sl.created_at DESC, sl.entered_at DESC, sl.id DESC
                     LIMIT 1
                  ) se ON TRUE
             WHERE i.created_by = ANY(${householdIds})
@@ -1286,7 +1301,7 @@ export const handler = async (event) => {
                     WHERE i.seed_stage IS NOT NULL
                       AND sl.inventory_item_id = i.id
                       AND sl.stage = i.seed_stage
-                    ORDER BY sl.entered_at DESC, sl.created_at DESC
+                    ORDER BY sl.created_at DESC, sl.entered_at DESC, sl.id DESC
                     LIMIT 1
                  ) se ON TRUE
             WHERE i.created_by = ANY(${householdIds})

@@ -176,17 +176,17 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     expect(screen.queryAllByTestId('seed-stage-entry-current')).toHaveLength(0)
   })
 
-  it('says so when the current stage is LOGGED but not the newest entry — the corrected-backwards case', async () => {
+  it('says so when the current stage is LOGGED but not the newest entry — the set-back case', async () => {
     // BUG-SEEDSTAGEHEADSHIP-001. The case above uses a ONE-ROW history, where "is the current stage
     // anywhere in the log" (membership) and "is it the newest entry" (headship) always agree — so it
     // passes under either predicate and cannot tell a working detector from a broken one.
     //
     // This is the fixture that separates them. Full history [stored, drying, fermenting] with the lot
-    // corrected back to `drying`: the stage IS in the log at index 1, so the shipped `currentIdx ===
-    // -1` test found no divergence and rendered nothing — leaving a CURRENT badge on the middle row
-    // with a newer `stored` entry above it and no explanation. Correcting a stage BACKWARDS is the
-    // commonest repair there is — /seeds/saved's correction door now logs one, dated to when the lot
-    // actually entered it — so this was the detector's own central case.
+    // set back to `drying`: the stage IS in the log at index 1, so the shipped `currentIdx === -1`
+    // test found no divergence and rendered nothing — leaving a CURRENT badge on the middle row with
+    // a newer `stored` entry above it and no explanation. Since newest-entry-wins (2026-09-17) a
+    // correction on /seeds/saved logs a new row that heads the list, so this shape now comes only
+    // from a writer that moves seed_stage without logging (the wide PUT, the create INSERT).
     //
     // Mutation that must turn this red: `stageBehindLog = currentIdx > 0` → `= false`, or reverting
     // stageOffLog to `stageNotLogged` alone. Both leave every other test in this file green.
@@ -196,9 +196,11 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     await waitFor(() => expect(screen.getByTestId('seed-stage-off-log')).toBeTruthy())
     const notice = screen.getByTestId('seed-stage-off-log').textContent
     // The wording has to distinguish the two facts: this history goes FURTHER than the lot does,
-    // which is the opposite complaint from "there is no entry for it".
+    // which is the opposite complaint from "there is no entry for it". "Newer", not "later": rows are
+    // in entry order, so the row above can carry an earlier date.
     expect(notice).toContain('Drying')
-    expect(notice).toContain('later entry')
+    expect(notice).toContain('newer entry')
+    expect(notice).not.toContain('later entry')
     expect(notice).not.toContain('no processing entry')
     // The badge still marks where the lot actually is — the notice explains it, it does not replace it.
     expect(screen.getAllByTestId('seed-stage-entry-current')).toHaveLength(1)
@@ -212,6 +214,57 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     historyRef.current = HISTORY
     await renderPage()
     await waitFor(() => expect(screen.getByTestId('seed-stage-entries')).toBeTruthy())
+    expect(screen.queryByTestId('seed-stage-off-log')).toBeNull()
+  })
+
+  // ── Newest entry wins (Dave, 2026-09-17) ───────────────────────────────────────────────────────
+  // The route orders the history by when each entry was MADE (created_at DESC, entered_at DESC,
+  // id DESC), the same key the list uses for the card's stage_entered_at. These fixtures are in that
+  // order, and the component must render them as given: the CURRENT badge is "the first row carrying
+  // the lot's stage", so it only marks the row the card counts from while nothing here re-sorts by
+  // date. The server half — that the SQL really uses this key — is pinned in
+  // lambda/inventory-items/seed-lot-shape.test.js and executed in
+  // tests/integration/seed-lifecycle.int.test.js.
+
+  it('a later-made correction dated EARLIER heads the list, carries the badge, and raises no notice', async () => {
+    // Purple Peach Ghost, live 2026-09-07: moved to Stored (dated Sep 7), then 17 seconds later
+    // corrected to "Stored, Sep 1". The correction is the lot's current word.
+    itemRef.current = { ...LOT, seed_stage: 'stored' }
+    historyRef.current = [
+      { id: 'ppg-3', stage: 'stored', entered_at: '2026-09-01T12:00:00.000Z', note: null, created_by: 'dave', created_at: '2026-09-07T16:36:00.288Z' },
+      { id: 'ppg-2', stage: 'stored', entered_at: '2026-09-07T16:35:43.333Z', note: null, created_by: 'dave', created_at: '2026-09-07T16:35:43.333Z' },
+      { id: 'ppg-1', stage: 'drying', entered_at: '2026-09-07T16:34:59.562Z', note: null, created_by: 'dave', created_at: '2026-09-07T16:34:59.562Z' },
+    ]
+    await renderPage()
+    await waitFor(() => expect(entries().length).toBe(3))
+    // Rendered in entry order, NOT re-sorted by date: Sep 1 sits above Sep 7.
+    expect(entries().map(r => r.dataset.stage)).toEqual(['stored', 'stored', 'drying'])
+    expect(entries()[0].textContent).toContain('Sep 1, 2026')
+    expect(entries()[1].textContent).toContain('Sep 7, 2026')
+    const marks = screen.getAllByTestId('seed-stage-entry-current')
+    expect(marks).toHaveLength(1)
+    expect(entries()[0].contains(marks[0])).toBe(true)
+    expect(screen.queryByTestId('seed-stage-off-log')).toBeNull()
+  })
+
+  it('an OLD stage logged after newer ones becomes current — the accepted cost, pinned on purpose', async () => {
+    // Dave accepted this when choosing newest-entry-wins: backfilling "Fermenting, Aug 20" after the
+    // lot was already Stored makes the lot fermenting (the POST sets seed_stage) and the card count
+    // from Aug 20. The panel must agree with that, not flag it. If this ever needs to change, it is a
+    // product decision, not a bug fix.
+    itemRef.current = { ...LOT, seed_stage: 'fermenting' }
+    historyRef.current = [
+      { id: 'bf-3', stage: 'fermenting', entered_at: '2026-08-20T16:00:00.000Z', note: null, created_by: 'dave', created_at: '2026-09-12T14:00:00.000Z' },
+      { id: 'bf-2', stage: 'stored',     entered_at: '2026-09-10T16:00:00.000Z', note: null, created_by: 'dave', created_at: '2026-09-10T20:00:00.000Z' },
+      { id: 'bf-1', stage: 'drying',     entered_at: '2026-09-05T16:00:00.000Z', note: null, created_by: 'dave', created_at: '2026-09-05T20:00:00.000Z' },
+    ]
+    await renderPage()
+    await waitFor(() => expect(entries().length).toBe(3))
+    expect(entries().map(r => r.dataset.stage)).toEqual(['fermenting', 'stored', 'drying'])
+    expect(entries()[0].textContent).toContain('Aug 20, 2026')
+    const marks = screen.getAllByTestId('seed-stage-entry-current')
+    expect(marks).toHaveLength(1)
+    expect(entries()[0].contains(marks[0])).toBe(true)
     expect(screen.queryByTestId('seed-stage-off-log')).toBeNull()
   })
 

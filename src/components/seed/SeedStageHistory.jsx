@@ -82,19 +82,25 @@ export default function SeedStageHistory({
   // /seed-stage CTE logs, while the wide PUT and the create INSERT both assign the column and append
   // nothing. (The client's one non-logging stage writer — the <select> that used to sit on
   // /inventory/:id — was removed by V5-SEEDSTAGEONEPLACE-001, but the two server-side writers remain
-  // and every live staged lot predates the change.) A backdated correction from /seeds/saved is the
-  // other producer: it logs, but its entry can be OLDER than an existing row for a different stage.
-  // "Newest entry" and "where the lot is now" are therefore genuinely allowed to differ, and when
-  // they do the user is told so below rather than left to notice.
+  // and every live staged lot predates the change.) "Newest entry" and "where the lot is now" are
+  // therefore genuinely allowed to differ, and when they do the user is told so below rather than
+  // left to notice.
+  //
+  // NEWEST ENTRY WINS (Dave, 2026-09-17). The route orders rows by when each entry was MADE, not by
+  // the date it carries, so a backdated correction from /seeds/saved lands at row 0 — it is the lot's
+  // current word, not a divergence — and row order here is the same key the list uses for the
+  // card's elapsed time. Do not re-sort by entered_at in this component: the CURRENT badge would then
+  // stop marking the row the card counts from.
   const currentIdx = currentStage ? rows.findIndex(r => r.stage === currentStage) : -1
 
   // BUG-SEEDSTAGEHEADSHIP-001 — MEMBERSHIP IS THE WRONG PREDICATE, and the difference is the whole
   // point of this notice. `currentIdx === -1` asks "is the current stage ANYWHERE in the history".
   // The invariant this panel exists to report is "is the current stage the HEAD of the history" —
-  // and the two disagree on precisely the case a repair creates most often, because correcting a
-  // stage BACKWARDS lands it on one that is already logged, with a later entry still above it.
+  // and the two disagree whenever the pointer is moved BACKWARDS without a log row (the wide PUT),
+  // onto a stage that is already logged with a newer entry still above it. (A correction made on
+  // /seeds/saved logs a new entry, which heads the list.)
   //
-  // Worked: log (newest first) [stored, drying, fermenting], lot corrected back to `drying`.
+  // Worked: log (newest entry first) [stored, drying, fermenting], lot set back to `drying`.
   // currentIdx is 1, membership says "no divergence", nothing renders — and the reader sees the
   // CURRENT badge painted on a middle row with a NEWER `stored` entry sitting above it, unexplained.
   // That is the exact confusion the notice was written to prevent, and it was silent on it.
@@ -143,13 +149,14 @@ export default function SeedStageHistory({
       )}
 
       {/* Two different facts, so two different sentences. "No entry for it" tells the reader the
-          history simply does not cover where the lot is. "A later entry above" tells them the
+          history simply does not cover where the lot is. "A newer entry above" tells them the
           history goes FURTHER than the lot does — the pointer was moved back — which is the case
-          that otherwise renders as a current badge stranded mid-list under a newer row. */}
+          that otherwise renders as a current badge stranded mid-list under a newer row. "Newer",
+          not "later": rows are in entry order, so the row above can carry an EARLIER date. */}
       {stageOffLog && (
         <p data-testid="seed-stage-off-log" style={noteInk}>
           {stageBehindLog
-            ? `Set back to ${seedStageLabel(currentStage)} here — there’s a later entry above it.`
+            ? `Set back to ${seedStageLabel(currentStage)} here — there’s a newer entry above it.`
             : `Set to ${seedStageLabel(currentStage)} here — there’s no processing entry for it.`}
         </p>
       )}

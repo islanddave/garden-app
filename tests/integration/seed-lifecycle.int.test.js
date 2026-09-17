@@ -172,7 +172,7 @@ describe('seed lot write path — create -> link parent -> advance stages', () =
     })
     expect(status).toBe(200)
     expect(body).toHaveLength(3)
-    expect(body.map((r) => r.stage)).toEqual(['stored', 'drying', 'fermenting']) // entered_at DESC
+    expect(body.map((r) => r.stage)).toEqual(['stored', 'drying', 'fermenting']) // newest entry first
 
     const [row] = await directSql`SELECT seed_stage FROM inventory_items WHERE id = ${lotId}`
     expect(row.seed_stage).toBe('stored')
@@ -553,5 +553,68 @@ describe('POST must not silently drop source_plant_id', () => {
     const { status, body } = await createSeedLot({ source_plant_id: foreignPlantId })
     expect(status).toBe(400)
     expect(String(body.error ?? '')).not.toContain(foreignPlantId)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// NEWEST ENTRY WINS (Dave, 2026-09-17) — the one layer that EXECUTES the order key.
+// lambda/inventory-items/seed-lot-shape.test.js proves the history GET and both list LATERALs name
+// `created_at DESC, entered_at DESC, id DESC`; only a real Postgres proves that key picks the row.
+// Each POST is its own statement, so created_at strictly increases in the order they are awaited.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('newest entry wins — the history and the card follow the entry made last', () => {
+  const stage = (lotId, body) => callHandler(handler, {
+    method: 'POST', path: `/api/inventory-items/${lotId}/seed-stage`, body,
+  })
+  const history = async (lotId) => (await callHandler(handler, {
+    method: 'GET', path: `/api/inventory-items/${lotId}/seed-stage`,
+  })).body
+  // Both list branches: /seeds/saved fetches the filtered one, the inventory drawer the other.
+  const cardFrom = async (lotId) => {
+    const out = []
+    for (const path of ['/api/inventory-items?category=seeds', '/api/inventory-items']) {
+      const { status, body } = await callHandler(handler, { method: 'GET', path })
+      expect(status, `${path} -> ${JSON.stringify(body).slice(0, 200)}`).toBe(200)
+      const row = body.find((r) => r.id === lotId)
+      expect(row, `lot missing from ${path}`).toBeTruthy()
+      out.push({ stage: row.seed_stage, from: row.stage_entered_at && new Date(row.stage_entered_at).toISOString() })
+    }
+    return out
+  }
+
+  it('a correction made LATER but dated EARLIER heads the history and dates the card (Purple Peach Ghost)', async () => {
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    expect((await stage(lot.id, { stage: 'drying' })).status).toBe(201)
+    expect((await stage(lot.id, { stage: 'stored' })).status).toBe(201)
+    // The Change stage sheet's wire shape: a day marker, resolved to noon Eastern for a past day.
+    expect((await stage(lot.id, { stage: 'stored', entered_at: '2026-09-01T12:00:00' })).status).toBe(201)
+
+    const rows = await history(lot.id)
+    expect(rows.map((r) => r.stage)).toEqual(['stored', 'stored', 'drying'])
+    expect(new Date(rows[0].entered_at).toISOString()).toBe('2026-09-01T16:00:00.000Z')
+    // Non-vacuous: the correction really carries the EARLIER date, so a date order would put it last.
+    expect(Date.parse(rows[0].entered_at)).toBeLessThan(Date.parse(rows[1].entered_at))
+
+    for (const card of await cardFrom(lot.id)) {
+      expect(card).toEqual({ stage: 'stored', from: '2026-09-01T16:00:00.000Z' })
+    }
+  })
+
+  it('an OLD stage logged after newer ones becomes the lot\'s stage and dates the card — the accepted cost', async () => {
+    // Pinned on purpose: Dave accepted this when choosing newest-entry-wins. Changing it is a product
+    // decision, not a bug fix.
+    setTestUserId(USER)
+    const { body: lot } = await createSeedLot()
+    expect((await stage(lot.id, { stage: 'stored' })).status).toBe(201)
+    expect((await stage(lot.id, { stage: 'fermenting', entered_at: '2026-08-20T12:00:00' })).status).toBe(201)
+
+    const [ptr] = await directSql`SELECT seed_stage FROM inventory_items WHERE id = ${lot.id}`
+    expect(ptr.seed_stage).toBe('fermenting')
+    const rows = await history(lot.id)
+    expect(rows.map((r) => r.stage)).toEqual(['fermenting', 'stored'])
+    for (const card of await cardFrom(lot.id)) {
+      expect(card).toEqual({ stage: 'fermenting', from: '2026-08-20T16:00:00.000Z' })
+    }
   })
 })

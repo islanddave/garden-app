@@ -9,7 +9,7 @@
 // BUG-SEEDELAPSEDUPDATED-001 — the list returned nothing about WHEN a lot entered its stage, so the
 // page led with elapsed(updated_at); set_updated_at fires on every row write, so any unrelated edit
 // reset the displayed duration to "today". The list now derives stage_entered_at from the lot's
-// latest stage-log entry for its CURRENT stage.
+// newest stage-log ENTRY (by when it was made) for its CURRENT stage.
 //
 // L-081: no new relation and no contract edit. seed_lot_stage_log was already in this directory's
 // Phase-4 set (the /seed-stage GET and POST name it) and every column read below is already
@@ -126,10 +126,70 @@ describe('BUG-SEEDELAPSEDUPDATED-001 — the list reports when the stage was ent
       // Scoped to the CURRENT stage, not merely the latest entry: after an advance, the previous
       // stage's row is newer-than-nothing and would otherwise date the wrong stage.
       expect(text).toMatch(/sl\.stage = i\.seed_stage/);
-      expect(text).toMatch(/ORDER BY sl\.entered_at DESC/);
+      // NEWEST ENTRY WINS (Dave 2026-09-17): the full key, tiebreaks included — see the describe below.
+      expect(text).toContain('ORDER BY sl.created_at DESC, sl.entered_at DESC, sl.id DESC');
+      expect(text).not.toMatch(/ORDER BY sl\.entered_at DESC/);
       // NOT a fallback to updated_at. COALESCEing the two would restore the exact defect while
       // every assertion above still passed.
       expect(text).not.toMatch(/COALESCE\([^)]*updated_at/);
     });
   }
+});
+
+describe('Newest entry wins (Dave 2026-09-17) — one order key for the history, the badge and the card', () => {
+  // THE RULE. A lot's current entry is the one MADE most recently, not the one carrying the latest
+  // date: "Stored, Sep 1" entered after "Stored, Sep 7" is the correction, and the Change stage sheet
+  // promises "that is the date the list counts from". Three readers decide it and must never
+  // disagree:
+  //   • GET /:id/seed-stage — its row order is what SeedStageHistory badges (first row with the stage)
+  //     and tests for headship (row 0);
+  //   • the list's stage_entered_at LATERAL, in BOTH branches — the card's elapsed time.
+  // So all three must carry the SAME key, tiebreaks included: created_at, then entered_at, then id.
+  //
+  // SHAPE, NOT BEHAVIOUR. The stub records SQL text and executes nothing, so this proves which key
+  // each statement names. That the key picks the right row in Postgres is asserted by
+  // tests/integration/seed-lifecycle.int.test.js ("newest entry wins") against a real database.
+  const KEY = ['created_at DESC', 'entered_at DESC', 'id DESC'];
+
+  // The ORDER BY on the log's alias, and nothing else. The regex can only match a clause built from
+  // `<alias>.<column> DIR` items, so the outer list `ORDER BY i.created_at DESC` cannot satisfy it.
+  const orderOn = (text, alias) => {
+    const re = new RegExp(`ORDER BY (${alias}\\.\\w+ (?:ASC|DESC)(?:, ${alias}\\.\\w+ (?:ASC|DESC))*)`, 'g');
+    const found = [...text.matchAll(re)].map(m => m[1]);
+    expect(found, `exactly one ORDER BY on ${alias}. in this statement`).toHaveLength(1);
+    return found[0].split(', ').map(s => s.slice(alias.length + 1));
+  };
+
+  const historyGet = () => ({
+    requestContext: { http: { method: 'GET' } },
+    rawPath: `/api/inventory-items/${ITEM}/seed-stage`,
+    headers: { authorization: 'Bearer stub-token' },
+  });
+
+  it('the history GET orders by when each entry was made', async () => {
+    stubState.sqlHandler = () => [];
+    const { status } = parse(await handler(historyGet()));
+    expect(status).toBe(200);
+    expect(stubState.sqlCalls).toHaveLength(1);
+    const { text } = stubState.sqlCalls[0];
+    // Anchor: this is the log read, scoped through the parent.
+    expect(text).toMatch(/FROM public\.seed_lot_stage_log l\s+JOIN public\.inventory_items i/);
+    expect(orderOn(text, 'l')).toEqual(KEY);
+  });
+
+  it('both list branches date the card from the same key as the history', async () => {
+    stubState.sqlHandler = () => [];
+    await handler(historyGet());
+    const history = orderOn(stubState.sqlCalls[0].text, 'l');
+    for (const qs of [{ category: 'seeds' }, undefined]) {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      stubState.sqlHandler = () => [];
+      await handler(listGet(qs));
+      expect(stubState.sqlCalls).toHaveLength(1);
+      const { text } = stubState.sqlCalls[0];
+      expect(text).toMatch(/se\.entered_at AS stage_entered_at/);
+      expect(orderOn(text, 'sl')).toEqual(history);
+    }
+  });
 });
