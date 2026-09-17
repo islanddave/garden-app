@@ -64,8 +64,8 @@ const LOT = {
 }
 
 // Newest first, exactly as the route orders them (ORDER BY entered_at DESC, created_at DESC).
-// entered_at is pinned to NOON because that is what SavedSeeds writes — `${when}T12:00:00` — so the
-// rendered calendar day is the same from either side of UTC.
+// entered_at sits at 12:00Z, which is what the route stored for a picked day before
+// BUG-SEEDSTAGETZSHIFT-001 (08:00 Eastern) — the rendered calendar day is the same either way.
 const HISTORY = [
   { id: 'log-3', stage: 'stored',     entered_at: '2026-08-30T12:00:00.000Z', note: 'Packeted into a coin envelope', created_by: 'dave', created_at: '2026-08-30T12:01:00.000Z' },
   { id: 'log-2', stage: 'drying',     entered_at: '2026-08-24T12:00:00.000Z', note: null,                            created_by: 'dave', created_at: '2026-08-24T12:01:00.000Z' },

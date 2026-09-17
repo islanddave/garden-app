@@ -871,9 +871,10 @@ export default function SavedSeeds() {
         method: 'POST',
         body: JSON.stringify({
           stage: advancing.toStage,
-          // Date-only in, timestamptz out. Sent as a local-noon instant so a date typed on a phone
-          // in Eastern does not land on the previous day in UTC — the same off-by-one that backdated
-          // events elsewhere in this app.
+          // A calendar DAY, not an instant. The zoneless noon literal is a day marker the route
+          // resolves in Eastern (lambda/inventory-items/seed-stage-date.js): today becomes the
+          // moment of this request, any other day noon ET. Cast zoneless it read in the DB's GMT
+          // session and filed every day at 08:00 Eastern (BUG-SEEDSTAGETZSHIFT-001).
           entered_at: `${when}T12:00:00`,
           note: note.trim() || undefined,
           // BUG-SEEDPROCFORCED-001 — set ONLY when this is the lot's first stage, where the process
