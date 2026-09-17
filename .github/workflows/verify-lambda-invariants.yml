@@ -1,0 +1,173 @@
+name: Verify Lambda invariants
+
+# A0.3 — live-account invariant audit for the Lambda fleet (HARD GATE; deliberately NOT continue-on-error).
+#
+# EXTRACTED 2026-09-17 (OPS-LAMCHANGEDBLIND-002) from deploy-lambda.yml's `verify-daily-plan` job. The
+# steps below are BYTE-IDENTICAL to the ones that lived there; only their home changed. The reason:
+# promote-gate skips the whole of deploy-lambda.yml on an SPA-only promote, and these assertions went
+# with it. They are the repo's ONLY live-AWS check of state that drifts with NO repo change at all, so
+# losing them on the cheap common-case promote is the hazard that blocked activating that skip.
+#
+# TWO CALLERS, ONE COPY:
+#   * deploy-lambda.yml calls it after its deploy matrix (`needs: deploy`), which keeps it on the
+#     standalone workflow_dispatch path and on scripts/revert-to.py's incident path — revert-to.py
+#     dispatches deploy-lambda.yml directly, so deleting the job there would strip the gate from a
+#     revert, which is exactly when you want it most.
+#   * promote-gate.yml calls it unconditionally as the LAST job of every promote.
+# On a Lambda-carrying promote it therefore runs twice. That is deliberate: a duplicate read-only audit
+# costs ~1 minute, a GAP is the failure this file exists to close. Two `if:` conditions that must stay
+# exact complements would be a gap waiting to open.
+#
+# EVERYTHING HERE IS READ-ONLY: get-function-configuration, get-function-url-config, describe-rule,
+# list-targets-by-rule. Safe to run twice, and safe to run with NO preceding deploy — every invariant
+# asserts live account state, not deploy output.
+#
+# The deploy matrix tolerates partial config failures (many of its env steps are continue-on-error);
+# this is the backstop that fails loudly when the safety invariants do not hold in the LIVE account:
+#   (1) garden-daily-plan env contains ALL of DRY_RUN / SYSTEM_CLERK_SUB / OWNER_FALLBACK_SUB /
+#       AWN_STATIONS_JSON — guards the set-not-merge wipe hazard, where a transient read failure in any
+#       env-merge step replaces the entire Variables map with a partial one;
+#   (1b) AWN_STATIONS_JSON SHAPE, not just presence — station.js ships an EMPTY default on purpose
+#       (public repo: the record is the gauge MAC and the house coordinate), so a wiped env does NOT
+#       fall back to a working config. It silently unbinds the rain gauge and drops the engine to
+#       forecast-only hydrology. This assertion is the only thing that catches that;
+#   (2) DRY_RUN == "false" — a wiped/reset value silently re-darkens the nightly engine (L-186 class);
+#   (3) EventBridge rule garden-daily-plan-hourly is ENABLED with exactly one target, and
+#       (3b) the three rules it supersedes — nightly, intraday-am, intraday-pm — are ABSENT. 3b exists
+#       because retire_rule swallows its own errors and check-lambda-config.py only iterates DECLARED
+#       rules, so "hourly created but the old ones still firing" is otherwise a green deploy;
+#   (4) OPS-LAMBDACONFIG-001 — live memory/timeout/env across ALL 26 functions matches
+#       scripts/lambda-config-expected.json, including flags declared deliberately ABSENT. (1)-(3) stay
+#       hand-written because they cover EventBridge and cross-key relationships the manifest's per-key
+#       model cannot express; (4) covers the breadth.
+#
+# READ THE CHECKOUT COMMENT BELOW WITH THIS CAVEAT: it says the ref is "the commit whose Lambdas just
+# shipped". On an SPA-only promote NONE shipped. The ref is still the promoted SHA, which is the commit
+# whose manifest is authoritative — the assertion is then purely a drift check of live AWS against a
+# manifest that did not move, which is precisely the gap this extraction exists to cover.
+#
+# environment:production is REQUIRED — the OIDC trust for AWS_DEPLOY_ROLE_ARN is scoped to the
+# env:production subject. It does NOT pause. VERIFIED against the environments API 2026-09-17: the
+# `production` environment's protection_rules carry a `branch_policy` entry ONLY, and NO
+# required_reviewers (the reviewer was removed 2026-06-22). That branch policy admits `dev`, `main` and
+# `promote-v*` — every ref promote-gate and deploy-lambda actually run on. The older claims in
+# deploy-lambda.yml that each such job adds "a second/third approval prompt" are STALE; do not reinstate
+# them. For contrast, `production-destructive` (revert-gate.yml) DOES carry required_reviewers=[islanddave]
+# — do not generalize from it to here.
+#
+# No secrets are used or needed: vars.AWS_DEPLOY_ROLE_ARN is a repo VARIABLE, and the Lambdas fetch their
+# own runtime secrets from Secrets Manager. Callers deliberately do NOT pass `secrets: inherit`.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Exact SHA whose scripts/lambda-config-expected.json and scripts/check-lambda-config.py are asserted against live AWS. Empty => the commit of the caller run.'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      # Needed by the config-manifest step below. Pinned to the ref being deployed, NOT the branch
+      # head: the manifest must be the one belonging to the commit whose Lambdas just shipped.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Assert daily-plan safety invariants (hard fail)
+        run: |
+          set -euo pipefail
+          FN=garden-daily-plan
+          RULE=garden-daily-plan-hourly
+          # The three rules the hourly schedule replaces. Asserted ABSENT below, not merely ignored:
+          # `retire_rule` swallows its own failures (`|| true` on remove-targets and delete-rule), and
+          # check-lambda-config.py only iterates the DECLARED list, so an undeclared-but-live rule is
+          # invisible to it. Without this check a half-applied migration — hourly created, the old
+          # rules still firing — is a fully green deploy that regenerates the plan five times a day.
+          RETIRED_RULES="garden-daily-plan-nightly garden-daily-plan-intraday-am garden-daily-plan-intraday-pm"
+          fail=0
+          ENVJSON=$(aws lambda get-function-configuration --function-name "$FN" --region us-east-1 \
+            --query 'Environment.Variables' --output json 2>/dev/null) || ENVJSON=""
+          if [[ -z "$ENVJSON" || "$ENVJSON" == "null" ]]; then
+            echo "::error::INVARIANT 1 BROKEN: could not read $FN env, or env is EMPTY (function missing, or set-not-merge wipe)"
+            fail=1
+            ENVJSON="{}"
+          fi
+          # AWN_STATIONS_JSON is load-bearing AND lives ONLY here: station.js ships an EMPTY default on
+          # purpose (public repo — the record is the gauge MAC + the site coordinate, i.e. the house), so
+          # a wiped env does not fall back to a working config, it silently unbinds the rain gauge and
+          # drops the engine to forecast hydrology. This assertion is the only thing that catches that.
+          for k in DRY_RUN SYSTEM_CLERK_SUB OWNER_FALLBACK_SUB AWN_STATIONS_JSON; do
+            v=$(echo "$ENVJSON" | jq -r --arg k "$k" '.[$k] // empty')
+            if [[ -z "$v" ]]; then
+              echo "::error::INVARIANT 1 BROKEN: $FN env is missing key $k (set-not-merge wipe hazard)"
+              fail=1
+            fi
+          done
+          # Shape, not just presence: a truncated or non-array value parses as "set" above but binds nothing.
+          if ! echo "$ENVJSON" | jq -e '(.AWN_STATIONS_JSON // "") | fromjson? | (type=="array" and length>0 and (.[0] | has("mac") and has("tz") and has("lat") and has("lng")))' >/dev/null; then
+            echo "::error::INVARIANT 1 BROKEN: $FN AWN_STATIONS_JSON is not a non-empty array of {mac,tz,lat,lng}"
+            fail=1
+          fi
+          DR=$(echo "$ENVJSON" | jq -r '.DRY_RUN // empty')
+          if [[ "$DR" != "false" ]]; then
+            echo "::error::INVARIANT 2 BROKEN: $FN DRY_RUN='$DR' (expected 'false') — nightly engine would be dark"
+            fail=1
+          fi
+          STATE=$(aws events describe-rule --name "$RULE" --region us-east-1 \
+            --query 'State' --output text 2>/dev/null) || STATE="MISSING"
+          if [[ "$STATE" != "ENABLED" ]]; then
+            echo "::error::INVARIANT 3 BROKEN: EventBridge rule $RULE state=$STATE (expected ENABLED)"
+            fail=1
+          fi
+          NTARGETS=$(aws events list-targets-by-rule --rule "$RULE" --region us-east-1 \
+            --query 'length(Targets)' --output text 2>/dev/null) || NTARGETS="0"
+          if [[ "$NTARGETS" != "1" ]]; then
+            echo "::error::INVARIANT 3 BROKEN: $RULE has $NTARGETS targets (expected exactly 1)"
+            fail=1
+          fi
+          # INVARIANT 3b — the superseded rules must be GONE, not merely undeclared.
+          for R in $RETIRED_RULES; do
+            if aws events describe-rule --name "$R" --region us-east-1 >/dev/null 2>&1; then
+              echo "::error::INVARIANT 3b BROKEN: retired rule $R still exists — the hourly migration is HALF-APPLIED. The plan will regenerate on both schedules."
+              fail=1
+            fi
+          done
+          if [[ "$fail" -ne 0 ]]; then
+            echo "::error::A0.3 post-deploy verification FAILED — daily-plan safety invariants do not hold; treat this deploy as BAD."
+            exit 1
+          fi
+          echo "A0.3 verify OK: env keys present, DRY_RUN=false, $RULE ENABLED with exactly 1 target, all 3 superseded rules absent."
+
+      # OPS-LAMBDACONFIG-001 — the generalization of the step above, across all 26 functions.
+      #
+      # The A0.3 invariants are hand-written and daily-plan-only, so they could not have caught what
+      # 2026-08-17 found: CARE_WATER_LEDGER_ENABLED and CARE_RAIN_MAXDAYS_ENABLED ABSENT (not false)
+      # from garden-daily-plan, leaving the RAIN_DEPTH subsystem — ~140 lines, fully unit-tested —
+      # unreachable in prod with a green suite either way; and garden-plants running at 1024MB
+      # against a repo that declared 256. Neither was a regression. Both were states nobody had
+      # written down, so the only way to learn them was to go and look at the live account.
+      #
+      # scripts/lambda-config-expected.json is now that written-down state, and this step is what
+      # makes disagreeing with it a red deploy. It also backstops the many `continue-on-error: true`
+      # env-ensure steps in the deploy job above: today one of those can fail silently and leave,
+      # say, garden-harvests with no GARDEN_HOUSEHOLD_IDS — a per-user data partition, green build.
+      #
+      # Deliberately in THIS job rather than a new one: a third `environment: production` job would
+      # add a third approval prompt to every promote. Also deliberately NOT in `deploy_result`, so
+      # a config-drift failure reds the run loudly without withholding a good frontend.
+      - name: Assert live Lambda config matches the declared manifest (hard fail)
+        run: python3 scripts/check-lambda-config.py --region us-east-1

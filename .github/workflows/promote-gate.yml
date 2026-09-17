@@ -421,7 +421,28 @@ jobs:
           # ADDING A COMPARED PATH IS THIS ONE LINE — the log, the fail-closed guard and the
           # comparison below all iterate it. deploy-lambda.yml reads the manifest and the checker
           # from outside lambda/, which is why they are here (OPS-LAMCHANGEDBLIND-001).
-          PATHS=("lambda" ".github/workflows/deploy-lambda.yml" "scripts/lambda-config-expected.json" "scripts/check-lambda-config.py")
+          #
+          # The last two were added 2026-09-17 by the deploy-lambda.yml input audit, under the rule
+          # stated above. deploy-lambda.yml runs `npm run gen:event-types` before zipping (:116); that
+          # executes scripts/gen-lambda-event-types.mjs, which dynamically imports src/lib/eventTypes.js
+          # and WRITES lambda/events/eventTypes.generated.js into the bundle. Both are inputs to the
+          # deployed artifact from outside lambda/. They are also protected by proxy today — ci.yml's
+          # event-types drift guard runs inside build-and-test, which this promote already requires
+          # green, and the generated file is committed under lambda/ — but that chain spans three files
+          # and is annotated as load-bearing in none of them. These entries make the cover structural.
+          #
+          # DELIBERATELY NOT HERE: package.json. deploy-lambda.yml does consume it (the two `npm run`
+          # names resolve in its `scripts` block), but its BLOB moves on every release, because the
+          # version bump rides in the feature commit. Measured 2026-09-17: of the last 100 commits
+          # touching package.json, 92 changed nothing but "version", and main vs dev differ by exactly
+          # that one line right now. Comparing the blob would force changed=true on essentially every
+          # promote, so the SPA-only skip would never fire while still LOOKING enabled — the same
+          # structural blindness as OPS-LAMCHANGEDBLIND-002, reached a different way. Covering it
+          # honestly means comparing a digest of the `scripts` object rather than the blob, which needs
+          # a second resolution mechanism this list deliberately does not have. The residual is narrow:
+          # a `scripts`-block edit that changes deploy-time codegen WITHOUT changing the generated
+          # output and WITHOUT touching either script file above.
+          PATHS=("lambda" ".github/workflows/deploy-lambda.yml" "scripts/lambda-config-expected.json" "scripts/check-lambda-config.py" "src/lib/eventTypes.js" "scripts/gen-lambda-event-types.mjs")
           CHANGED=false
           for P in "${PATHS[@]}"; do
             M=$(subtree main "$P")
@@ -586,6 +607,39 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::error::SPA deploy withheld — Lambda deploy failed. main is advanced; prod still serves the previous SPA. See the run summary."
           exit 1
+
+  # OPS-LAMCHANGEDBLIND-002 — THE SAFETY CHECK THAT SURVIVES THE SKIP. Unconditional by design.
+  #
+  # These assertions used to live ONLY inside deploy-lambda.yml (as `verify-daily-plan`), so the
+  # SPA-only skip above took them with it. They are the repo's only live-AWS check of state that drifts
+  # with NO repo change at all — a console edit, an AWS-side reset, or any of deploy-lambda.yml's many
+  # continue-on-error env steps failing silently. Losing them on the cheap common-case promote is what
+  # blocked activating the skip. Dave's call (2026-09-17) was "move the safety check out first, then
+  # enable"; this job is that move. deploy-lambda.yml still calls the SAME reusable workflow after its
+  # matrix, so a Lambda-carrying promote audits twice — read-only, about a minute, and deliberately
+  # preferred over two `if:` conditions that would have to stay exact complements forever.
+  #
+  # `always()` + an explicit predicate, for the same reason the `deploy` job above needs one: a bare
+  # `needs:` would treat the SKIPPED deploy-lambdas job as unsatisfied and skip THIS job too, which is
+  # precisely the hole it exists to plug. The only precondition is that the promote itself succeeded —
+  # if main never moved, there is nothing to audit.
+  #
+  # IT NEEDS `deploy` DELIBERATELY, i.e. it runs LAST, after the SPA:
+  #   * check-lambda-config.py reads `aws lambda get-function-url-config` and asserts Cors.AllowOrigins
+  #     for the 23 functions whose manifest entry declares cors_origins. deploy.yml's "Restore Lambda
+  #     Function URL CORS" step WRITES that same field for 13 of them on every SPA deploy. Running this
+  #     job beside `deploy` rather than after it would be reading CORS while deploy.yml rewrites it — a
+  #     measure-while-mutating race on a HARD GATE, i.e. an intermittently red promote.
+  #   * Last is also strictly better coverage: the in-deploy-lambda copy runs BEFORE deploy.yml's CORS
+  #     restore, so a restore that writes the WRONG origins is invisible to it until the next promote.
+  # It still cannot withhold the SPA — nothing `needs:` this job, and `deploy` does not depend on it.
+  # That preserves deploy-lambda.yml's deliberate choice to keep these assertions out of deploy_result.
+  verify-lambda-invariants:
+    needs: [resolve, promote, deploy-lambdas, deploy]
+    if: ${{ always() && needs.promote.result == 'success' }}
+    uses: ./.github/workflows/verify-lambda-invariants.yml
+    with:
+      ref: ${{ needs.resolve.outputs.dev_sha }}
 
   # OPS-VERIFY-001 (advisory REPORT-ONLY, per L-147/L-161/L-141) — runs AFTER deploy and
   # gates NOTHING (no job needs it; FF + deploy already happened, so it cannot un-ship).
