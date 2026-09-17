@@ -368,6 +368,18 @@ const NOT_IN_SITES = [
   // class as harvests::user_id, one step further removed: that one is the subject directly, this one
   // is a column the same request wrote from it.
   'plants::user_id',
+  // varieties::scope_id — care_profile.scope_id, written by BUG-CULTIVARNOPROFILE-001's create-path
+  // INSERT (varieties/index.js, the third statement of the POST transaction). NOT body-settable and
+  // not settable at all: the value is `newVarietyId`, a randomUUID() minted three lines earlier in
+  // the same block and bound to the cultivar INSERT's own `id` in the same transaction. No request
+  // key of any name reaches it — validateBody never sees `scope_id`, and the only other binding of
+  // newVarietyId is the row the request itself is creating. So a caller cannot name another
+  // household's cultivar here any more than they can name their own: the id did not exist until the
+  // handler generated it. Ownership on the referenced row is the created_by the same statement pair
+  // wrote from the JWT subject. Same class as plants::user_id directly above — a column written from
+  // a value the same request just produced — one step stronger, because that one reads an id back off
+  // the database and this one never leaves the handler's own scope.
+  'varieties::scope_id',
   // ── Gated inline by a predicate this file's SITES regex cannot express. Each is pinned by its
   //    own named assertion in the third describe block — NOT pre-absolved here. ──
   'projects::parent_id',        // POST create: inline container.created_by SELECT (asserted below)
