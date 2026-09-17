@@ -107,7 +107,7 @@ function roofModelOf(sql) {
   // a mutation survived: swapping `gn.location_id` for `ct.location_id` climbs from the CONTAINER
   // instead, and since container is LEFT JOINed that seeds NOTHING for a project-less planting, so
   // the aggregate is NULL, the COALESCE says false, and rain is credited under every roof.
-  const planting = [...flat.matchAll(/(?:from|join)\s+(?:\w+\.)?garden_node\s+(\w+)\b/g)].map((m) => m[1])
+  const planting = [...flat.matchAll(/(?:from|join)\s+(?:\w+\.)?garden_node\s+(\w+)\b/g)].map((b) => b[1])
   if (!planting.length) throw new Error('the statement does not bind garden_node to an alias')
 
   return {
