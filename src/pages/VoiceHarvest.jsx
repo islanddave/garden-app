@@ -782,6 +782,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // A held number is now resolved by whatever comes next (see the resolution sites below):
       //   unit          -> rejoin, exactly as before
       //   another number-> the held one was the count; it is applied and the new one is held
+      //   restated value-> the same number with its unit; the hold is released, nothing is assumed
       //   anything else -> applied to the next empty slot with an assumed unit
       // so Dave never says "count" or "grams", and no utterance loses a number he spoke.
       heldNumRef.current = partial.value; setHeldNum(partial.value)
@@ -791,6 +792,27 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // progress line: the number landed, and saying a unit is now optional rather than required.
       say('ok', `${partial.value} — say a unit to change it, or carry on.`)
       return
+    } else if (heldNumRef.current != null
+               && (result.kind === 'quantity' || result.kind === 'weight')
+               && result.value === heldNumRef.current) {
+      // BUG-VOICEHELDREPEAT-001 — THE SAME NUMBER WITH ITS UNIT IS THE HELD NUMBER, RESTATED.
+      //
+      // Chrome delivers a continuous session cumulatively: "87" as one final, then "87 G" as the next
+      // final of the SAME session. Once the gap passes the settle window the tick has already
+      // committed "87" as held, the debouncer can no longer supersede it, and the resolution site
+      // below read "87 G" as a second amount — 87 count by slot order, then 87 g — and "next" saved a
+      // count nobody said. The device timing is on record (2026-09-16: 551 ms, avoided only because
+      // Chrome heard "grounds"). A person answering the banner above with "87 grams" reaches the same
+      // place across a session boundary, so the rule is not scoped to one session.
+      //
+      // The utterance carries the number itself, so the hold is released and the ordinary
+      // quantity/weight branch applies it as said — no second copy of the announcement or the haptic.
+      // EQUALITY IS THE WHOLE TEST: a different value with a unit is a different amount, and the
+      // resolution site still infers the held number's unit for it. What this reads wrongly is a bare
+      // amount followed by the OTHER axis sharing its number; that slot stays visibly empty, and an
+      // empty quantity refuses at "next".
+      heldNumRef.current = null; setHeldNum(null)
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-restated ${result.value} ${result.unit} (held number resolved)`)
     } else if (heldNumRef.current != null) {
       // V5-VOICEVOCAB-001 — RESOLUTION SITE. Any other utterance ends the pairing, and the held
       // number is now APPLIED with an assumed unit rather than thrown away.
@@ -879,15 +901,21 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         return
       }
 
-      // BOTH AMOUNTS, NO NAME — "three count, two thirty one grams" with the planting already
-      // chosen. segmentCandidates() refuses a nameless run by design, so this shape had no reader
-      // at all and lost BOTH values. It is Dave's common case rather than an edge one: he says the
-      // crop, pauses, then says the numbers together, and Chrome ends the session at that pause.
+      // BOTH AMOUNTS, NO NAME — "three count, two thirty one grams". segmentCandidates() refuses a
+      // nameless run by design, so this shape had no reader at all and lost BOTH values. It is Dave's
+      // common case rather than an edge one: he says the crop, pauses, then says the numbers together,
+      // and Chrome ends the session at that pause.
       //
-      // GATED ON A PLANTING BEING SELECTED. Without one there is nothing to attach the values to,
-      // and a bare number before a plant is chosen may legitimately be a search — the same rule
-      // the grammar states at the search branch and BUG-VOICEBARENUMNOSEL-001 documents.
-      const seq = selectedRef.current ? parseValueSequence(result.transcript) : null
+      // NOT GATED ON A PLANTING BEING SELECTED (BUG-VOICEVALPAIRNOSEL-001). It was, on the rule that a
+      // bare number before a plant is chosen may be a search. That rule belongs to the hold above and
+      // cannot reach here: parseValueSequence accepts only two or more groups that each END IN A UNIT
+      // WORD, and this branch runs only on an utterance classify() already refused as `unparsed`, so
+      // no search is suppressed. "Nothing to attach the values to" was already untrue of the
+      // single-value branches below, which apply "four count" with nothing selected. The gate made the
+      // pair the one amount that could not be said before the crop: device trace 2026-09-16 +27268,
+      // "4 count 4 G" came back "Didn't catch that" and the weight had to be said again. saveRecord
+      // still refuses without a crop, so an early pair waits for one exactly as a single amount does.
+      const seq = parseValueSequence(result.transcript)
       if (seq && seq.length) {
         for (const v of seq) {
           const next = { value: v.value, unit: v.unit }
