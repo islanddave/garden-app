@@ -142,16 +142,51 @@ def _compare(repo, token, base, head):
     return gh(f"/repos/{repo}/compare/{base}...{head}", token)
 
 
-def _lambda_job_ok(jobs):
-    """OPS-PROMOTERACE-001: the Lambda deploy is now a CALLED workflow inside promote-gate, so it
-    produces jobs named 'deploy-lambdas / deploy (<function>)' rather than a standalone run.
-    Success = at least one such job completed successfully and none failed."""
+LAMBDA_DEPLOYED = "deployed"
+LAMBDA_NOT_APPLICABLE = "not-applicable"
+LAMBDA_UNVERIFIED = "unverified"
+
+
+def _lambda_job_state(jobs):
+    """Which of three states a promote-gate run's Lambda deploy is in. THREE, not two.
+
+    OPS-PROMOTERACE-001: the Lambda deploy is a CALLED workflow inside promote-gate, so when it RUNS
+    it produces jobs named 'deploy-lambdas / deploy (<function>)' rather than a standalone run.
+
+    OPS-LAMCHANGEDBLIND-002 made a second state reachable. Once the SPA-only skip works, a promote
+    where lambda/ did not move skips `deploy-lambdas` entirely, and there are then ZERO
+    'deploy-lambdas / ...' jobs. The previous version of this function returned False for that, which
+    would have reported NOT VERIFIED on every SPA-only promote — reviving, by a different route, the
+    exact permanent-false-alarm failure described in check_lambda_fresh below.
+
+    The fix deliberately does NOT key off "zero nested jobs". A zero count is ambiguous: it reads the
+    same for "correctly skipped", "the job never existed", and "the API answer was truncated or
+    partial". Instead it keys off the SKIPPED CONCLUSION, which is unambiguous and which GitHub really
+    does report: a `uses:` caller job that is skipped appears under its BARE name with
+    conclusion='skipped' (verified against the live API 2026-09-17, promote-gate run 34175616568:
+    {"name": "deploy-lambdas", "status": "completed", "conclusion": "skipped"}). When it RUNS there is
+    no bare entry at all, only the prefixed children.
+
+    `promote` must ALSO have succeeded. That is load-bearing, not belt-and-braces: `deploy-lambdas`
+    has a bare `needs: [resolve, promote]`, so it is skipped when the PROMOTE FAILED too — run
+    34175616568 is exactly that (promote=failure, deploy-lambdas=skipped). Treating that as "not
+    applicable" would report a collapsed promote as verified. Since the job's only other condition is
+    `needs.promote.outputs.lambda_changed == 'true'`, promote=success AND deploy-lambdas=skipped
+    implies lambda_changed was false, which is the state we want to name.
+    """
     lam = [j for j in jobs if j.get("name", "").startswith("deploy-lambdas /")]
-    if not lam:
-        return False
-    if any(j.get("conclusion") not in ("success", "skipped") for j in lam):
-        return False
-    return any(j.get("conclusion") == "success" for j in lam)
+    if lam:
+        if any(j.get("conclusion") not in ("success", "skipped") for j in lam):
+            return LAMBDA_UNVERIFIED
+        if any(j.get("conclusion") == "success" for j in lam):
+            return LAMBDA_DEPLOYED
+        return LAMBDA_UNVERIFIED
+    caller = next((j for j in jobs if j.get("name", "").strip() == "deploy-lambdas"), None)
+    promote = next((j for j in jobs if j.get("name", "").strip() == "promote"), None)
+    if (caller is not None and caller.get("conclusion") == "skipped"
+            and promote is not None and promote.get("conclusion") == "success"):
+        return LAMBDA_NOT_APPLICABLE
+    return LAMBDA_UNVERIFIED
 
 
 def check_lambda_fresh(repo, token, sha):
@@ -164,12 +199,32 @@ def check_lambda_fresh(repo, token, sha):
     #
     # So: look for the Lambda deploy in BOTH places — a standalone run (workflow_dispatch, or any
     # historical push-triggered run) and a promote-gate run carrying successful deploy-lambdas jobs.
+    #
+    # UPDATE 2026-09-17 (OPS-LAMCHANGEDBLIND-002) — the paragraph above is no longer only a warning
+    # about the past. Once the SPA-only skip is live, a promote that touches no Lambda input skips
+    # `deploy-lambdas` on purpose, and reporting NOT VERIFIED for that would have been the same
+    # permanent false alarm in a new place: guaranteed on every SPA-only promote, i.e. the common and
+    # cheap case, which is precisely how a report-only check teaches its reader to ignore it.
+    #
+    # `_lambda_job_state` therefore answers three ways, and the two non-deployed answers are kept
+    # apart on purpose. `not-applicable` is a POSITIVE determination — promote succeeded AND the job
+    # was explicitly skipped, which can only mean lambda_changed=false, which means lambda/, the
+    # deploy recipe, the config manifest, the checker and the event-type inputs are identical between
+    # the previously deployed main and this SHA. The Lambdas in prod were built from an identical
+    # tree, so they ARE current. `unverified` still falls through to the standalone-run path exactly
+    # as before. Collapsing those two would turn a false alarm into a blind spot, which is worse.
     for r in _runs(repo, token, "promote-gate.yml", status="completed"):
         if r.get("head_sha") != sha:
             continue
         try:
-            if _lambda_job_ok(_jobs(repo, token, r["id"])):
+            state = _lambda_job_state(_jobs(repo, token, r["id"]))
+            if state == LAMBDA_DEPLOYED:
                 return True, f"lambda deployed in promote-gate run {r['id']} on {sha[:10]} (current)"
+            if state == LAMBDA_NOT_APPLICABLE:
+                return True, (f"lambda deploy correctly SKIPPED in promote-gate run {r['id']} on "
+                              f"{sha[:10]}: lambda_changed=false, so every compared Lambda input is "
+                              f"identical to the previously deployed main (SPA-only promote). "
+                              f"NOT a deploy — the running Lambdas are current because nothing moved.")
         except urllib.error.HTTPError:
             pass  # fall through to the standalone-run path rather than failing the check
 

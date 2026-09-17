@@ -796,8 +796,8 @@ jobs:
   # The job's API name becomes `verify-daily-plan / verify` (nested reusable workflow). Both readers of
   # these job names were checked: revert-to.py's `_is_lambda_leg` selects matrix legs POSITIVELY
   # (`name == "deploy"` or `name.startswith("deploy (")`), so it excludes this job under either name; and
-  # verify-deploy.py's `_lambda_job_ok` matches the `deploy-lambdas /` prefix, which the extra nesting
-  # level preserves.
+  # verify-deploy.py's `_lambda_job_state` matches the `deploy-lambdas /` prefix, which the extra
+  # nesting level preserves.
   #
   # No `secrets: inherit` — the called workflow uses none (vars.AWS_DEPLOY_ROLE_ARN is a repo variable).
   verify-daily-plan:
