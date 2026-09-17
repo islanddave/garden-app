@@ -376,12 +376,14 @@ jobs:
       # skipped with it: the declared config ships unverified on a green promote. If deploy-lambda.yml
       # starts reading another file outside lambda/, it belongs in this comparison too.
       #
-      # NOTE (2026-09-16): the lambda/ lookup has never resolved. For a DIRECTORY the contents API
-      # returns a JSON array, and the parser below prints '' for anything that is not an object, so
-      # all 66 runs 2026-08-14..09-15 that got past force_lambda logged `<none>` for both trees and
-      # took the fail-closed branch. Every promote has deployed Lambdas; the comparison and the
-      # SPA-only skip have never executed. Repairing that lookup ACTIVATES the skip for the first
-      # time — re-audit what deploy-lambda.yml reads before doing it.
+      # NOTE (2026-09-17, OPS-LAMCHANGEDBLIND-002): the lambda/ lookup never resolved until now. For
+      # a DIRECTORY the contents API returns a JSON array, and the parser printed '' for anything
+      # that was not an object, so all 66 runs 2026-08-14..09-15 that got past force_lambda logged
+      # `<none>` for both trees and took the fail-closed branch. Every promote deployed Lambdas; the
+      # comparison and the SPA-only skip had never executed. `subtree` now re-asks the Trees API for
+      # any path the contents call cannot resolve, so the skip becomes reachable for the first time.
+      # The compared path list was deliberately NOT widened in that change — re-audit what
+      # deploy-lambda.yml reads before trusting a skip.
       #
       # Fails CLOSED: any error, any missing field => lambda_changed=true. Deploying Lambdas that did
       # not change is a no-op costing ~6 minutes; skipping Lambdas that DID change is the bug this
@@ -400,35 +402,42 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           api() { curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
-          # tree sha of a path at a ref, or empty string on any failure
+          # .sha of a JSON OBJECT on stdin; empty for an array, an error body, or unparseable input
+          jsha() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('sha','') if isinstance(d,dict) else '')"; }
+          # blob sha of a FILE / tree sha of a DIRECTORY at a ref, or empty string on any failure.
+          # The contents API answers a file with an object carrying .sha but a DIRECTORY with a JSON
+          # array that has no sha of its own — the blindness above. So anything the contents call
+          # cannot resolve is re-asked of the Trees API, which addresses <ref>:<path> directly and
+          # returns that directory's own tree sha in one call at any depth. Trees 404s a missing path
+          # and 422s a file, so neither yields a sha and both still fail CLOSED below.
           subtree() {
-            api "https://api.github.com/repos/$REPO/contents/$2?ref=$1" \
-              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('sha','') if isinstance(d,dict) else '')" 2>/dev/null || echo ""
+            local S
+            S=$(api "https://api.github.com/repos/$REPO/contents/$2?ref=$1" | jsha 2>/dev/null || echo "")
+            if [ -z "$S" ]; then
+              S=$(api "https://api.github.com/repos/$REPO/git/trees/$1:$2" | jsha 2>/dev/null || echo "")
+            fi
+            printf '%s\n' "$S"
           }
-          MAIN_LAM=$(subtree main lambda)
-          DEV_LAM=$(subtree "$DEV_SHA" lambda)
-          MAIN_WF=$(subtree main .github/workflows/deploy-lambda.yml)
-          DEV_WF=$(subtree "$DEV_SHA" .github/workflows/deploy-lambda.yml)
-          MAIN_CFG=$(subtree main scripts/lambda-config-expected.json)
-          DEV_CFG=$(subtree "$DEV_SHA" scripts/lambda-config-expected.json)
-          MAIN_CHK=$(subtree main scripts/check-lambda-config.py)
-          DEV_CHK=$(subtree "$DEV_SHA" scripts/check-lambda-config.py)
-          echo "main lambda/ tree = ${MAIN_LAM:-<none>}"
-          echo "dev  lambda/ tree = ${DEV_LAM:-<none>}"
-          echo "main recipe/manifest/checker blobs = ${MAIN_WF:-<none>} ${MAIN_CFG:-<none>} ${MAIN_CHK:-<none>}"
-          echo "dev  recipe/manifest/checker blobs = ${DEV_WF:-<none>} ${DEV_CFG:-<none>} ${DEV_CHK:-<none>}"
-          if [ -z "$MAIN_LAM" ] || [ -z "$DEV_LAM" ]; then
-            echo "::warning::could not resolve one or both lambda/ tree SHAs — failing CLOSED, deploying Lambdas"
-            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          # A blob that resolves on NEITHER side compares '' = '' below and reads as unchanged, i.e.
-          # fail-OPEN — so each one is guarded explicitly rather than left to the comparison. The
-          # recipe blob went unguarded from OPS-PROMOTERACE-001 until 2026-09-16.
-          if [ -z "$MAIN_WF" ] || [ -z "$DEV_WF" ] || [ -z "$MAIN_CFG" ] || [ -z "$DEV_CFG" ] || [ -z "$MAIN_CHK" ] || [ -z "$DEV_CHK" ]; then
-            echo "::warning::could not resolve the recipe / config manifest / checker blob SHAs — failing CLOSED, deploying Lambdas"
-            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          if [ "$MAIN_LAM" != "$DEV_LAM" ] || [ "$MAIN_WF" != "$DEV_WF" ] || [ "$MAIN_CFG" != "$DEV_CFG" ] || [ "$MAIN_CHK" != "$DEV_CHK" ]; then
+          # ADDING A COMPARED PATH IS THIS ONE LINE — the log, the fail-closed guard and the
+          # comparison below all iterate it. deploy-lambda.yml reads the manifest and the checker
+          # from outside lambda/, which is why they are here (OPS-LAMCHANGEDBLIND-001).
+          PATHS=("lambda" ".github/workflows/deploy-lambda.yml" "scripts/lambda-config-expected.json" "scripts/check-lambda-config.py")
+          CHANGED=false
+          for P in "${PATHS[@]}"; do
+            M=$(subtree main "$P")
+            D=$(subtree "$DEV_SHA" "$P")
+            echo "$P: main=${M:-<none>} dev=${D:-<none>}"
+            # A path that resolves on NEITHER side would compare '' = '' and read as unchanged, i.e.
+            # fail OPEN — so every path is guarded before any comparison runs, not just the tree.
+            # The recipe blob went unguarded from OPS-PROMOTERACE-001 until 2026-09-16; iterating one
+            # list is what stops the next added path from repeating that.
+            if [ -z "$M" ] || [ -z "$D" ]; then
+              echo "::warning::could not resolve $P on one or both sides — failing CLOSED, deploying Lambdas"
+              echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            if [ "$M" != "$D" ]; then CHANGED=true; fi
+          done
+          if [ "$CHANGED" = "true" ]; then
             echo "lambda code, deploy recipe, config manifest or checker changed -> Lambdas will deploy BEFORE the SPA"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
