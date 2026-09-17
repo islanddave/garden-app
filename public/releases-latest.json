@@ -1,7 +1,9 @@
 {
-  "version": "4.135.2",
+  "version": "4.136.0",
   "date": "2026-09-17",
   "highlights": [
-    "Frost warnings hold up when the weather service or the garden gauge misbehaves. If either returns something unusable, the daily plan still runs, the frost alert still goes out, and the failure is recorded by name instead of passing silently — and a weather outage has never meant 'no frost tonight'."
+    "Cold-protection cards now identify plants by botanical genus instead of by name, so Peppermint is no longer told to come inside",
+    "A cold card can now be cleared by bringing the plant in — previously some returned every night regardless",
+    "Corrected a leek and a watermelon that were recorded as peppers"
   ]
 }
