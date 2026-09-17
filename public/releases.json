@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.135.2",
+    "date": "2026-09-17",
+    "highlights": [
+      "Frost warnings hold up when the weather service or the garden gauge misbehaves. If either returns something unusable, the daily plan still runs, the frost alert still goes out, and the failure is recorded by name instead of passing silently — and a weather outage has never meant 'no frost tonight'."
+    ]
+  },
+  {
     "version": "4.135.1",
     "date": "2026-09-17",
     "highlights": [
