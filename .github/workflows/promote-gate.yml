@@ -388,7 +388,7 @@ jobs:
       # Fails CLOSED: any error, any missing field => lambda_changed=true. Deploying Lambdas that did
       # not change is a no-op costing ~6 minutes; skipping Lambdas that DID change is the bug this
       # whole change exists to prevent.
-      - name: Detect lambda changes (pre-FF; lambda/ + recipe + config manifest + checker)
+      - name: Detect lambda changes (pre-FF; compares every input listed in PATHS below)
         id: lam
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
@@ -418,6 +418,52 @@ jobs:
             fi
             printf '%s\n' "$S"
           }
+          # CONTENT digest of a package.json-shaped file at a ref: parse the JSON, drop the top-level
+          # `version` key, canonicalise (keys sorted at every level, no whitespace) and sha256 it.
+          #
+          # Why a digest instead of the blob: the version bump rides in the feature commit, so the BLOB
+          # of package.json moves on essentially every release. Measured 2026-09-17 over the last 250
+          # commits touching it — version-only 225, deps-only 8, scripts 16, other 1. Comparing the blob
+          # would pin changed=true forever and the SPA-only skip would never fire while still LOOKING
+          # enabled: the same structural blindness as OPS-LAMCHANGEDBLIND-002, reached another way.
+          #
+          # Why it hashes EVERYTHING EXCEPT `version`, rather than just `scripts`: an allowlist is blind
+          # to a key nobody has added yet. `workspaces` is absent today, and adding it would change how
+          # `npm install` resolves inside lambda/<fn> — changing the bundle with NO edit to
+          # deploy-lambda.yml, so nothing else in this comparison would catch it. Excluding one known-
+          # noisy key covers every other key, present and future. Canonicalising is what makes that
+          # affordable: a reformat or a key reorder does not move the digest, only real content does.
+          #
+          # Empty string on ANY failure — unresolvable path, a non-base64 or oversize response, invalid
+          # JSON, a non-object document, a missing python3, a dead network. Empty lands on the SAME
+          # fail-closed exit as subtree() below. Returning empty and having it read as a comparison
+          # RESULT is precisely what OPS-LAMCHANGEDBLIND-002 was; there is exactly one guard, and both
+          # resolvers feed it.
+          pkgdigest() {
+            api "https://api.github.com/repos/$REPO/contents/$2?ref=$1" | python3 -c "import sys,json,base64,hashlib;d=json.load(sys.stdin);p=json.loads(base64.b64decode(d['content'])) if isinstance(d,dict) and d.get('encoding')=='base64' else None;print(hashlib.sha256(json.dumps({k:v for k,v in p.items() if k!='version'},sort_keys=True,separators=(',',':')).encode()).hexdigest())" 2>/dev/null || echo ""
+          }
+          # The comparison IDENTITY of one input at one ref — a blob sha, a tree sha, or a content
+          # digest. BOTH sides of every comparison go through this function, so an identity can never
+          # be derived one way for main and another way for the dev SHA; a difference in HOW the two
+          # sides were computed would be a pure false-positive generator. (Named `ident`, not
+          # `resolve`, because `resolve` is already a JOB in this workflow.)
+          #
+          # The blank guard is defence in depth against a caller bug, and it closes a real edge:
+          # `?ref=` with an EMPTY value is not an error to the contents API, it silently means the
+          # DEFAULT BRANCH. Verified 2026-09-17 against the live API — `subtree "" package.json`
+          # returns main's blob sha rather than empty, so an empty DEV_SHA would have compared main
+          # against main and read as "unchanged", i.e. fail OPEN. That is pre-existing behaviour, not
+          # something the digest introduced; it was invisible because a blank ref on a DIRECTORY does
+          # fail closed (the Trees fallback 404s) and `lambda` was the path anyone thought to test.
+          # Unreachable today — the `resolve` job hard-fails a dev_sha that is not 40 hex, and `set -u`
+          # aborts on an unset one — but an input this step cannot verify should not be trusted twice.
+          ident() {
+            if [ -z "$1" ] || [ -z "$2" ]; then echo ""; return 0; fi
+            case "$2" in
+              digest:*) pkgdigest "$1" "${2#digest:}" ;;
+              *)        subtree  "$1" "$2" ;;
+            esac
+          }
           # ADDING A COMPARED PATH IS THIS ONE LINE — the log, the fail-closed guard and the
           # comparison below all iterate it. deploy-lambda.yml reads the manifest and the checker
           # from outside lambda/, which is why they are here (OPS-LAMCHANGEDBLIND-001).
@@ -431,22 +477,17 @@ jobs:
           # green, and the generated file is committed under lambda/ — but that chain spans three files
           # and is annotated as load-bearing in none of them. These entries make the cover structural.
           #
-          # DELIBERATELY NOT HERE: package.json. deploy-lambda.yml does consume it (the two `npm run`
-          # names resolve in its `scripts` block), but its BLOB moves on every release, because the
-          # version bump rides in the feature commit. Measured 2026-09-17: of the last 100 commits
-          # touching package.json, 92 changed nothing but "version", and main vs dev differ by exactly
-          # that one line right now. Comparing the blob would force changed=true on essentially every
-          # promote, so the SPA-only skip would never fire while still LOOKING enabled — the same
-          # structural blindness as OPS-LAMCHANGEDBLIND-002, reached a different way. Covering it
-          # honestly means comparing a digest of the `scripts` object rather than the blob, which needs
-          # a second resolution mechanism this list deliberately does not have. The residual is narrow:
-          # a `scripts`-block edit that changes deploy-time codegen WITHOUT changing the generated
-          # output and WITHOUT touching either script file above.
-          PATHS=("lambda" ".github/workflows/deploy-lambda.yml" "scripts/lambda-config-expected.json" "scripts/check-lambda-config.py" "src/lib/eventTypes.js" "scripts/gen-lambda-event-types.mjs")
+          # A `digest:` prefix selects the CONTENT digest above instead of the blob/tree sha. Root
+          # package.json is compared that way because deploy-lambda.yml:116-117 resolves the names
+          # `gen:event-types` / `check:event-types` in its `scripts` block, so it is a genuine input —
+          # but its blob moves on every release for the version bump alone. See pkgdigest above for the
+          # measurements and for why the digest covers every key EXCEPT `version`.
+          PATHS=("lambda" ".github/workflows/deploy-lambda.yml" "scripts/lambda-config-expected.json" "scripts/check-lambda-config.py" "src/lib/eventTypes.js" "scripts/gen-lambda-event-types.mjs" "digest:package.json")
           CHANGED=false
+          MOVED=""
           for P in "${PATHS[@]}"; do
-            M=$(subtree main "$P")
-            D=$(subtree "$DEV_SHA" "$P")
+            M=$(ident main "$P")
+            D=$(ident "$DEV_SHA" "$P")
             echo "$P: main=${M:-<none>} dev=${D:-<none>}"
             # A path that resolves on NEITHER side would compare '' = '' and read as unchanged, i.e.
             # fail OPEN — so every path is guarded before any comparison runs, not just the tree.
@@ -456,13 +497,17 @@ jobs:
               echo "::warning::could not resolve $P on one or both sides — failing CLOSED, deploying Lambdas"
               echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
             fi
-            if [ "$M" != "$D" ]; then CHANGED=true; fi
+            if [ "$M" != "$D" ]; then CHANGED=true; MOVED="$MOVED $P"; fi
           done
+          # Both messages are DERIVED from PATHS rather than enumerating it in prose. The old pair
+          # spelled out "lambda code, deploy recipe, config manifest or checker", which is the same
+          # shape that let the recipe blob go unguarded for a year: a list repeated in a second place
+          # is a list that will disagree with the first one.
           if [ "$CHANGED" = "true" ]; then
-            echo "lambda code, deploy recipe, config manifest or checker changed -> Lambdas will deploy BEFORE the SPA"
+            echo "changed Lambda inputs:$MOVED -> Lambdas will deploy BEFORE the SPA"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "lambda/, deploy recipe, config manifest and checker identical between main and $DEV_SHA -> skipping Lambda deploy (SPA-only promote)"
+            echo "all ${#PATHS[@]} compared Lambda inputs identical between main and $DEV_SHA -> skipping Lambda deploy (SPA-only promote)"
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
