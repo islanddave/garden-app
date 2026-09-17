@@ -140,12 +140,24 @@ function likelyInGround(p,c){
 //     Allium ampeloprasum, an IN-GROUND leek) and "Tender Sweet Orange" (genus Citrullus lanatus,
 //     in-ground watermelon) both carry a care-profile crop string reading "pepper", and both matched.
 //     Neither can be carried anywhere.
-// Live census behind the vocabulary below — cold-eligible plantings, prod, 2026-09-17: genuinely
-// solanaceous BY GENUS = 88 (Capsicum 45, Solanum 40 = 39 tomato + 1 eggplant, Physalis 3); NULL genus
-// under a controlled solanaceous slug = 8 (pepper 6, tomato 2 — the two "Cherry Rescue" tomatoes, whose
-// names contain neither "pepper" nor "tomato" and which the old name arm therefore caught only via
-// their crop string). So this is strictly WIDER than the regex on the plants that belong in the band
-// and strictly narrower on the plants that do not.
+// SNAPSHOT, NOT AN INVARIANT — and it drifts, so re-derive before citing it. Counted 2026-09-17
+// against the handler's live-planting filter verbatim (handler.js:1241-1243: deleted_at/archived_at
+// null, status not in ended|failed|dead|archived, project not 'planning' and not archived), 80 rows:
+// solanaceous BY GENUS = 74 (Capsicum 32, Solanum 39 = 38 tomato + 1 eggplant, Physalis 3), plus
+// NULL genus under a controlled solanaceous slug = 6 (pepper 5, tomato 1).
+// TWO CORRECTIONS TO THIS COMMENT'S FIRST DRAFT, both worth keeping as a warning:
+//   (a) it said 88/8, counted over a LOOSER population (status not in ended|failed|dormant, no project
+//       clause). A census is meaningless unless it names the filter it was taken under — these are the
+//       same plants counted two ways, not a disagreement about the garden.
+//   (b) it cited 'the two "Cherry Rescue" tomatoes' as VARIETIES. "Cherry Rescue 1" is a PLANTING
+//       name; its variety is "Cherry". A reviewer searching plant_varieties for it finds nothing and
+//       reasonably concludes the comment is fabricated.
+// The set also MOVES underneath you: "Unknown Sweet Long" sat in the NULL-genus arm when this was
+// first written and left it the same afternoon, because a concurrent session set genus=Capsicum on it.
+// What is STRUCTURALLY true, and is the only thing this vocabulary relies on: genus-then-slug is wider
+// than the old regex on plants that belong in the band (it reaches NULL-genus rows whose names contain
+// neither "pepper" nor "tomato") and narrower on plants that do not (no name or crop string can admit
+// a Mentha or an Allium). That claim needs no counts.
 // WHY A STATED GENUS IS DECISIVE: a genus that is present and not in the set is a REFUSAL, not a miss.
 // Falling through to the slug on a stated genus would re-admit Peppermint (genus Mentha, slug mint)
 // only if mint were slugged solanaceously — it is not — but it would also make the stated field
