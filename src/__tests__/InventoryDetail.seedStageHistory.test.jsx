@@ -126,6 +126,24 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     expect(rows[1].textContent).not.toContain('null')
   })
 
+  it('dates an evening entry by its Eastern day, not the UTC day it has already rolled into', async () => {
+    // BUG-SEEDSTAGETZSHIFT-001. A stage dated today is stamped with the moment it was entered, like
+    // the intake row always was. 21:30 EDT on Sep 7 is 01:30Z on Sep 8, and 19:30 EST on Dec 7 is
+    // 00:30Z on Dec 8 — a slice of the ISO string renders both a day late. Absolute instants, so
+    // this reads the same under ci.yml's plain run and its TZ=America/New_York re-run.
+    historyRef.current = [
+      { ...HISTORY[0], id: 'log-est', entered_at: '2026-12-08T00:30:00.000Z' },
+      { ...HISTORY[1], id: 'log-edt', entered_at: '2026-09-08T01:30:00.000Z' },
+    ]
+    await renderPage()
+    await waitFor(() => expect(entries().length).toBe(2))
+    const [est, edt] = entries()
+    expect(edt.textContent).toContain('Sep 7, 2026')
+    expect(edt.textContent).not.toContain('Sep 8, 2026')
+    expect(est.textContent).toContain('Dec 7, 2026')
+    expect(est.textContent).not.toContain('Dec 8, 2026')
+  })
+
   it('says "undated" rather than rendering an empty slot', async () => {
     // entered_at is NOT NULL in the table, so this is the malformed/unparseable case rather than a
     // missing one — and a blank where a date belongs reads as a layout bug, not as a fact.

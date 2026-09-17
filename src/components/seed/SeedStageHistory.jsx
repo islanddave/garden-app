@@ -22,6 +22,7 @@ import { Link } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
 import { formatDate } from '../../lib/format.js'
+import { etDay } from '../../lib/harvestSummary.js'
 import AsyncRegion from '../forms/AsyncRegion.jsx'
 import { seedStageLabel } from './seedStages.js'
 
@@ -127,12 +128,13 @@ export default function SeedStageHistory({
                 {i === currentIdx && (
                   <span data-testid="seed-stage-entry-current" style={currentInk}>current</span>
                 )}
-                {/* formatDate slices the leading YYYY-MM-DD without constructing a Date (L-107).
-                    Correct here because every entry this app writes is pinned to NOON — SavedSeeds
-                    sends `${when}T12:00:00`, deliberately, so the calendar day reads the same from
-                    either side of UTC. A row defaulted to now() by a hand-crafted POST is the one
-                    case that can read a day forward late in the evening. */}
-                <span style={dateInk}>{formatDate(r.entered_at) || 'undated'}</span>
+                {/* The EASTERN calendar day of the instant, then formatDate's string slice (L-107).
+                    Slicing entered_at itself reads the UTC day, and two kinds of row are real
+                    instants: the intake SaveSeedSheet writes with now(), and — since
+                    BUG-SEEDSTAGETZSHIFT-001 — any stage dated today, which the route stamps with
+                    the moment it was entered. From 20:00 EDT (19:00 EST) both would read tomorrow.
+                    A backdated entry sits at noon Eastern and reads the same either way. */}
+                <span style={dateInk}>{formatDate(etDay(r.entered_at)) || 'undated'}</span>
               </div>
               {r.note && <p style={noteInk}>{r.note}</p>}
             </li>
