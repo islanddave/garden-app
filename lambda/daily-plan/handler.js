@@ -1151,6 +1151,15 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
            cov.state as loc_cover_state,
            cov.state is false as rain_exposed_resolved,
            cov.state is true  as frost_covered_resolved,
+           -- V5-COLDCARDREACHABLE-001: locations.heated (migrations/v5-locheated-001), read off the SAME
+           -- location row as coverage (the planting's own, else its project's). engine.coldFor drops the
+           -- cold card for a heated location. It is NOT coverage: the Stable is covered and unheated.
+           -- IS TRUE, so an un-located planting reads false, i.e. still carded, the fail-safe direction.
+           -- NO ANCESTOR WALK, unlike the flag-gated coverage one: that walk fills a NULL (not stated) from
+           -- the nearest stated parent, and heated is NOT NULL, so every row states it and the walk would
+           -- stop at depth 0 every time. REQUIRES v5-locheated-001 APPLIED on staging AND prod BEFORE this
+           -- ships: a missing column throws on this query, which is the nightly plan for both users.
+           l.heated is true as heated_resolved,
            coalesce(p.assignee_user_id, pj.assignee_user_id) as assignee_user_id,
            vrc.resolved_profile as db_cadence,  -- CARE-CADENCE-001: system||cultivar||leaf merged cadence (NULL/no-cadence-scope -> engine bundled fallback)
            -- BUG-SEEDEDGATE-001: which scopes supplied a NON-NULL watering interval. [] means nothing
