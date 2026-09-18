@@ -4,7 +4,7 @@
 // Reads Neon (conn from Secrets Manager SECRET_ARN_NEON — NEVER hardcode), resolves weather from each Space's
 // postal_code (zip-driven, not hardcoded), runs ./engine per CARETAKER, idempotent upsert into daily_plan.
 const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
-const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001
+const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, FRESHNESS_MAX_MIN } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001; FRESHNESS_MAX_MIN BUG-STATIONSTALESILENT-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
 const { frostEval, isFrostSeason, resolveFrostRun, escalatesBeyond } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
@@ -1424,6 +1424,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // gauge is correctly unbound, and nothing here can tell it from one whose coordinates drifted.
   const stationCfg = stationConfig();
   const stationUnbound = stationCfg.length > 0 && spaces.length > 0 && boundSpaces === 0;
+  // BUG-STATIONSTALESILENT-001 — the half the line above cannot see: a station that BINDS but whose newest reading
+  // is older than FRESHNESS_MAX_MIN (console or WiFi offline). boundSpaces counts it, yet mergeStationHydrology and
+  // mergeStationWeather gate every gauge field on `fresh`, so rain falls back to forecast, the tonightLow floor is
+  // skipped and the offline nights leave no overnight minimum. boundSpaces > 0 implies a station, and makes this
+  // exclusive with stationUnbound, so a run never sends both.
+  const stationStale = boundSpaces > 0 && !station.fresh;
   const owner = process.env.OWNER_FALLBACK_SUB || null;     // unassigned -> Space owner (Dave); NEVER leaks to Jen.
   // DRG-WXWATER-001 coarse-v1: SINGLE flag read-site (spec I2 — plan is computed once nightly, all readers consume
   // the stored plan, so one flag here is inherently consistent). Default OFF; the 3-substrate-tier rain model is
@@ -1658,6 +1664,26 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           } catch (e) {
             console.error(JSON.stringify({ msg: 'station-unbound alert publish FAILED', dedup_key: dk, error: e?.message }));
             frostFailures.push({ kind: 'station_unbound_publish_failed', dedupKey: dk, error: e?.message });
+          }
+        }
+      }
+      // BUG-STATIONSTALESILENT-001 — station_stale, the sibling of the block above: same gate, same dedup store,
+      // keyed per RUN for the same reason. Its own key and subject rather than a wider station_unbound because
+      // the remedy differs: stale is the console or WiFi at the house; unbound is config, AWN keys or coordinates.
+      if (stationStale && frostSeason && frostAlertEnabled && !dryRun && publishAlert) {
+        const dk = `station|${today}|station_stale`;
+        if (!frostPublished.has(dk)) {
+          try {
+            await publishAlert({ topic: 'ops', subject: 'Garden ops - weather station STALE',
+              message: `station_stale — weather station ${station.mac} is bound to ${boundSpaces} of ${spaces.length} Space(s) ` +
+                `but its newest reading is ${station.dataAgeMin} min old (limit ${FRESHNESS_MAX_MIN}) on ${today} during frost season. ` +
+                'Likely the console or its WiFi is offline. Until it reports again, rain is forecast-only (no gauge truth ' +
+                'for watering), tonight\'s low has no station floor, and no overnight minimum is being recorded.' });
+            frostPublished.add(dk);
+            console.log(JSON.stringify({ msg: 'station-stale alert PUBLISHED', dedup_key: dk, data_age_min: station.dataAgeMin }));
+          } catch (e) {
+            console.error(JSON.stringify({ msg: 'station-stale alert publish FAILED', dedup_key: dk, error: e?.message }));
+            frostFailures.push({ kind: 'station_stale_publish_failed', dedupKey: dk, error: e?.message });
           }
         }
       }

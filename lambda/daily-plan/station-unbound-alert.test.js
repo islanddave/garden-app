@@ -6,7 +6,7 @@
 // one clause of the gate, and each was mutation-checked (see _mainsync_20260918/stationdegrade.md).
 // The unit suite mocks SQL (memory garden-lambda-unit-suite-proves-no-db-behavior): this proves the
 // decision and the publish, not anything the database does.
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import h from './handler.js';
 import _cf from './_coverFlags.js';
 const { withCoverFlags } = _cf;
@@ -76,7 +76,11 @@ function quiet() {
     warn: vi.spyOn(console, 'warn').mockImplementation(() => {}) };
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+// BUG-STATIONSTALESILENT-001 — the clock is pinned 5 min after STATION_RAW's record. handler derives the station
+// with Date.now(), so on the real clock this fixture turns STALE at 2026-09-20T19:30Z and the bound cases below
+// would start raising station_stale. Only Date is faked; timers stay real.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(Date.parse('2026-09-20T18:05:00Z')); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('BUG-STATIONDEGRADESILENT-001 — a configured station bound to no Space raises ONE ops alert', () => {
   it('(a) configured + zero Spaces bound -> exactly one alert across two Spaces, on the ops topic, with the per-run dedup key', async () => {
