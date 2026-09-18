@@ -118,8 +118,14 @@ const WX_STROKE = +(ICON.strokeHero * WX_VIEWBOX / WX_SIZE).toFixed(2)
 // cannot carry at all. Levelling these up properly means filled colour VARIANTS on care.cloud and
 // event.rain in the house data-region/colorFills pattern — a shared-registry change that belongs in
 // its own row, not a silent downgrade taken here because a mono twin happened to exist.
-function ConditionIcon({ code = 3 }) {
-  const c = Number(code)
+//
+// BUG-WXICONNULLCLEAR-001 — "unknown" includes a stored null, not only an absent key. fetchNWS starts the
+// cosmetic Open-Meteo call at `code = null` and keeps it on a timeout, a network error or an HTML 503, and
+// engine.generatePlan stores it verbatim. The old `{ code = 3 }` default covered undefined only, so a null
+// reached Number(null) === 0 — WMO "clear sky" — and a failed fetch drew a sun titled "clear". `??` sends
+// null down the same overcast path as an absent code; a real 0 is still a finite code and still clear.
+function ConditionIcon({ code }) {
+  const c = Number(code ?? 3)
   if (c === 0 || c === 1) return <Icon name="care.sun" size={WX_SIZE} title="clear" />
   if (c === 2) return (
     <svg width={WX_SIZE} height={WX_SIZE} viewBox={`0 0 ${WX_VIEWBOX} ${WX_VIEWBOX}`} aria-label="partly cloudy">
