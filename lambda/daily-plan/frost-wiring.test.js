@@ -62,7 +62,11 @@ const clearNight = (date = DATE, next = '2026-09-21', { dew = 33, cloud = 4, win
     timezone: 'America/New_York',
   };
 };
-const precip = (lows = [null, null, null], hourlyFrost = clearNight()) => async () => ({
+// Default lows are a HEALTHY mild window (every night above the 40F advisory point), not [null, null, null]:
+// an all-null window in season is the blind-advisory state that raises frost_advisory_degraded
+// (BUG-HYDROLOGYNULLSILENT-001), and as a silent default it added that ops publish to every case below and
+// turned calls[0]-based assertions vacuous. Cases that exercise the advisory pass `forecastLows` explicitly.
+const precip = (lows = [58, 59, 60], hourlyFrost = clearNight()) => async () => ({
   forecast_lows: lows, forecast_dates: ['2026-09-21', '2026-09-22', '2026-09-23'],
   recent_precip_in: 0, today_precip_in: 0, today_pop: 0, upcoming_precip_in: 0,
   tomorrow_precip_in: 0, tomorrow_pop: 0, yesterday_precip_actual_in: 0,
@@ -463,8 +467,9 @@ describe('weather-seam failures degrade loudly and never empty the plan', () => 
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { pg, publishAlert } = await drive({ fetchStation: async () => STATION_RAW, tonightLow: 30 });
     expect(pg.writes.length).toBeGreaterThan(0);                                            // plan survived
-    // frost alert too — asserted by TOPIC, because this run also raises the station_unbound ops alert
-    // (BUG-STATIONDEGRADESILENT-001) and a bare toHaveBeenCalled() stayed green with the frost publish removed.
+    // frost alert too — asserted by TOPIC, because on the 14:00 ET run this failure also raises the station_unbound
+    // ops alert (BUG-STATIONDEGRADESILENT-001; once a day since V5-STATIONHEALTHYEAR-001) and a bare
+    // toHaveBeenCalled() stayed green with the frost publish removed.
     expect(publishAlert.mock.calls.some(([a]) => a.topic === 'frost')).toBe(true);
     expect(logLines(err).some((l) => l.degraded === 'station_derive_failed')).toBe(true);    // and it is NAMED
   });

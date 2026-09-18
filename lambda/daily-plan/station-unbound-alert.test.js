@@ -6,7 +6,7 @@
 // one clause of the gate, and each was mutation-checked (see _mainsync_20260918/stationdegrade.md).
 // The unit suite mocks SQL (memory garden-lambda-unit-suite-proves-no-db-behavior): this proves the
 // decision and the publish, not anything the database does.
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import h from './handler.js';
 import _cf from './_coverFlags.js';
 const { withCoverFlags } = _cf;
@@ -15,7 +15,9 @@ const { run } = h;
 
 const USER = 'user_dave';
 const DATE = '2026-09-20';        // inside the §3-7 Sep 1 – Nov 15 frost season
-const PM_HOUR = 15;               // an evaluating run (G3 window 14:00-17:59 ET)
+// V5-STATIONHEALTHYEAR-001: the FIRST evaluating run (14:00 ET), the only run that may send a station alert.
+// This was 15 (any evaluating run) before the once-a-day cap; at 15 every positive case below now goes red.
+const PM_HOUR = 14;
 const MAC = 'AA:BB:CC:DD:EE:FF';
 const HOME = { id: 'sp1', postal_code: null, weather_lat: 42.5, weather_lng: -72.6 };   // at the gauge
 const AWAY = { id: 'sp2', postal_code: null, weather_lat: 41.0, weather_lng: -70.0 };   // nowhere near it
@@ -76,7 +78,11 @@ function quiet() {
     warn: vi.spyOn(console, 'warn').mockImplementation(() => {}) };
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+// BUG-STATIONSTALESILENT-001 — the clock is pinned 5 min after STATION_RAW's record. handler derives the station
+// with Date.now(), so on the real clock this fixture turns STALE at 2026-09-20T19:30Z and the bound cases below
+// would start raising station_stale. Only Date is faked; timers stay real.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(Date.parse('2026-09-20T18:05:00Z')); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe('BUG-STATIONDEGRADESILENT-001 — a configured station bound to no Space raises ONE ops alert', () => {
   it('(a) configured + zero Spaces bound -> exactly one alert across two Spaces, on the ops topic, with the per-run dedup key', async () => {
@@ -163,13 +169,17 @@ describe('BUG-STATIONDEGRADESILENT-001 — a configured station bound to no Spac
   });
 });
 
-describe('BUG-STATIONDEGRADESILENT-001 — the gate is frost_eval_degraded\'s gate, clause for clause', () => {
-  it('outside frost season -> no alert', async () => {
+// V5-STATIONHEALTHYEAR-001 changed this gate on purpose: it was frost_eval_degraded's (season + FROST_ALERT_ENABLED,
+// every evaluating run) and is now year-round, flag-free and once a day. The two cases that used to assert
+// "outside season -> none" and "flag unset -> none" now assert the opposite.
+describe('BUG-STATIONDEGRADESILENT-001 — the gate, clause for clause (year-round, no switch, first evaluating run only)', () => {
+  it('outside frost season -> STILL one alert (year-round)', async () => {
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
     vi.stubEnv('AWN_STATIONS_JSON', cfg());
     quiet();
     const { publishAlert } = await drive({ today: '2026-07-04' });
-    expect(publishAlert).not.toHaveBeenCalled();
+    expect(publishAlert).toHaveBeenCalledTimes(1);
+    expect(stationCalls(publishAlert)).toHaveLength(1);
   });
 
   it('a non-evaluating run (02:00 ET) -> no alert', async () => {
@@ -180,11 +190,22 @@ describe('BUG-STATIONDEGRADESILENT-001 — the gate is frost_eval_degraded\'s ga
     expect(publishAlert).not.toHaveBeenCalled();
   });
 
-  it('FROST_ALERT_ENABLED unset -> no alert', async () => {
+  it('the later evaluating runs (15, 16, 17 ET) -> no alert: one email per day, from the 14:00 run', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    vi.stubEnv('AWN_STATIONS_JSON', cfg());
+    quiet();
+    for (const etHour of [15, 16, 17]) {
+      const { publishAlert } = await drive({ etHour });
+      expect(publishAlert).not.toHaveBeenCalled();
+    }
+  });
+
+  it('FROST_ALERT_ENABLED unset -> STILL one alert (no switch; turning frost off must not silence the station)', async () => {
     vi.stubEnv('AWN_STATIONS_JSON', cfg());
     quiet();
     const { publishAlert } = await drive();
-    expect(publishAlert).not.toHaveBeenCalled();
+    expect(publishAlert).toHaveBeenCalledTimes(1);
+    expect(stationCalls(publishAlert)).toHaveLength(1);
   });
 
   it('a dry run -> no alert', async () => {
@@ -208,8 +229,10 @@ describe('BUG-STATIONDEGRADESILENT-001 — the gate is frost_eval_degraded\'s ga
     vi.stubEnv('AWN_STATIONS_JSON', cfg());
     quiet();
     const { publishAlert } = await drive({ pgOpts: { spaces: [], plantings: [planting('p1', 'sp1')] } });
-    // With no Space row there is no weather either, so frost_eval_degraded (rightly) fires; only ours must not.
-    expect(publishAlert.mock.calls.map(([a]) => a.message)).toEqual([expect.stringContaining('frost_eval_degraded')]);
+    // With no Space row there is no weather and no hydrology either, so frost_eval_degraded and (since
+    // BUG-HYDROLOGYNULLSILENT-001) frost_advisory_degraded rightly fire; only ours must not.
+    expect(publishAlert.mock.calls.map(([a]) => a.message)).toEqual([
+      expect.stringContaining('frost_eval_degraded'), expect.stringContaining('frost_advisory_degraded')]);
     expect(stationCalls(publishAlert)).toHaveLength(0);
   });
 

@@ -429,18 +429,25 @@ function isFrostSeason(planDate, opts = {}) {
 // `event.frostEval === true` forces evaluation (the F5 rehearsal lever, via scripts/rerun-daily-plan.sh);
 // `event.frostEval === false` suppresses it. Neither can force a PUBLISH — that stays behind
 // FROST_ALERT_ENABLED and the dry-run gate in handler.js.
+//
+// V5-STATIONHEALTHYEAR-001 — `firstOfDay` marks the FIRST evaluating run of the ET day (the 14:00 ET run on
+// the hourly schedule, in EDT and EST alike). It is the stateless once-per-day cap for the station-health
+// alerts: the in-invocation dedup store forgets between runs, so a condition that holds all afternoon would
+// otherwise send once per evaluating run. Derived HERE, from the same window as `evaluate`, so the cap hour
+// cannot drift out of the window if FROST_RUN_START_HOUR moves. False for a forced or suppressed run.
 const FROST_RUN_START_HOUR = numEnv('FROST_RUN_START_HOUR', 14);
 const FROST_RUN_END_HOUR = numEnv('FROST_RUN_END_HOUR', 17);
 function resolveFrostRun(event, { etHour } = {}) {
-  if (event && event.frostEval === true) return { evaluate: true, slot: 'forced', reason: 'event_override' };
-  if (event && event.frostEval === false) return { evaluate: false, slot: 'suppressed', reason: 'event_override' };
+  if (event && event.frostEval === true) return { evaluate: true, slot: 'forced', reason: 'event_override', firstOfDay: false };
+  if (event && event.frostEval === false) return { evaluate: false, slot: 'suppressed', reason: 'event_override', firstOfDay: false };
   const h = finite(etHour);
-  if (h == null) return { evaluate: false, slot: 'unknown', reason: 'no_et_hour' };
+  if (h == null) return { evaluate: false, slot: 'unknown', reason: 'no_et_hour', firstOfDay: false };
   const inWindow = h >= FROST_RUN_START_HOUR && h <= FROST_RUN_END_HOUR;
   return {
     evaluate: inWindow,
     slot: inWindow ? 'intraday-pm' : (h < 6 ? 'nightly-or-am' : 'other'),
     reason: inWindow ? 'pm_window' : 'outside_pm_window',
+    firstOfDay: inWindow && h === FROST_RUN_START_HOUR,
   };
 }
 
@@ -525,6 +532,16 @@ function frostEval(input = {}, opts = {}) {
   // a `frost_eval_degraded` ops alert on this flag. Outside frost season it is merely noted.
   const degraded = imminentGlobal.lowF == null;
   const degradedAlert = degraded && !!opts.frostSeason;
+  // BUG-HYDROLOGYNULLSILENT-001 — the same §3-7 rule for the ADVISORY tier, kept as its own flag because
+  // `degraded` means "no tonight low" and drives that message. Zero usable D1..D3 lows is not "no frost
+  // ahead": it is the 48-72 h lead time gone. Both shapes land here — a null hydrology (fetchPrecip
+  // returns null on any throw) and a hydrology with no usable temperature_2m_min (fetchPrecip checks neither
+  // r.ok nor that `daily` exists, so a JSON error body would parse into an object of nulls; that shape —
+  // hydrology present, zero lows, no hourly block — was logged live on 2026-09-02 at the 15:30 run). A
+  // horizon of 0 is the tier switched off, not blind. Partial coverage (1-2 of 3 nights) still evaluates
+  // and is not flagged.
+  const advisoryDegraded = advisory.coveredDays === 0 && advisory.horizonDays > 0;
+  const advisoryDegradedAlert = advisoryDegraded && !!opts.frostSeason;
 
   // Highest-severity tier wins the single outbound message; the others remain in the record for the log.
   // D6: "single outbound message" is now literal — every crop that tripped is inside it.
@@ -570,7 +587,7 @@ function frostEval(input = {}, opts = {}) {
     alert: tier != null,
     advisory, advisoryCrops, imminent, imminentGlobal, heat,
     trippedCrops,
-    degraded, degradedAlert,
+    degraded, degradedAlert, advisoryDegraded, advisoryDegradedAlert,
     // §3-8 — logged on EVERY evaluation, alert or not; also the 2026 corpus for the 2027 learned offset.
     observability: {
       tonightLowF: imminentGlobal.lowF,
@@ -623,6 +640,6 @@ module.exports = {
   escalatesBeyond, cropLevels, severityRank, FROST_SEVERITY_RANK,
   evalAdvisory, evalImminent, evalHeat, evalImminentCrops, evalAdvisoryCrops,
   advisoryMessage, imminentMessage, heatMessage, exposurePhrase, cropListPhrase, totalsPhrase, truncate,
-  isFrostSeason, resolveFrostRun,
+  isFrostSeason, resolveFrostRun, FROST_RUN_START_HOUR, FROST_RUN_END_HOUR,
   DEFAULT_THRESHOLDS, HEAT_ENABLED, MAX_NAMED_CROPS, MAX_MESSAGE_CHARS,
 };
