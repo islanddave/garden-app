@@ -127,6 +127,23 @@ planting.
 Staging 0 and unarmed (no receipt, same as the guard). `v_resolved_care` has the identical definition
 on both (same `pg_get_viewdef` md5), so the unarmed staging leg still executes cleanly.
 
+**Non-vacuity — a gate at 0 on both envs proves nothing by itself.** Checked 2026-09-18 by running the
+gate's SQL, read straight from this `gates.yml`, over synthetic rows on real Postgres (staging,
+read-only): its `public.` relations rewritten to fixture CTEs and the view rebuilt from its live
+definition, so nothing is written. The placeholder fixture is the writer's own `NEW_CULTIVAR_PROFILE`,
+extracted from `lambda/varieties/index.js`, not retyped. 13 of 13 scenarios came out as expected. The
+one that matters: that payload on a live planting reads **0 on the guard and 1 here**. The rest pin
+the edges: the placeholder with a real cadence, the Collards shape, `dave_decision`, deleted,
+archived, a leaf cadence (0), a leaf row with no cadence, JSON-null watering, a placeholder from
+another writer (1), two plantings on one cultivar (2), no receipt (0), no row at all (guard 1, sibling
+0). Ten mutations of this gate's SQL each flipped at least one scenario: drop `_basis`, drop the
+cadence test, include deleted, include archived, drop the self-arm, key on `_source`, use
+`resolved_scopes`, count only the cultivar scope, accept any `_basis`, and a hand-copied `?`
+key-presence list in place of the view. Two of them, dropping `_basis` and dropping the cadence test,
+also fail on **live prod** today (Collards and Unknown Sweet Long respectively), while the gate as
+written passes. Whole post corpus, `--continuous-only`: prod PASS=766, staging PASS=747, no FAIL or
+ERROR on either.
+
 ## Rollback
 
 `0r-rollback.sql` removes the eight rows by `_source` and deletes the receipt, disarming the gates.
