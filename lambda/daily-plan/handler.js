@@ -866,7 +866,7 @@ function mergeAlertsSent(...lists) {
   for (const list of lists) {
     for (const a of (Array.isArray(list) ? list : [])) {
       if (!a) continue;
-      const id = typeof a.key === 'string' ? `${a.key} ${a.at ?? ''}` : JSON.stringify(a);
+      const id = typeof a.key === 'string' ? JSON.stringify([a.key, a.at ?? null]) : JSON.stringify(a);
       if (seen.has(id)) continue;
       seen.add(id);
       out.push(a);
@@ -1678,8 +1678,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       const predicted = coverage;
       coverage = sentCoverage(frost.decision, predicted, spaceSent);
       const kept = [...predicted].filter(([id, s]) => s === 'named' && coverage.get(id) !== 'named').length;
+      // `plantings` counts every planting the forecast names and no sent email covers; only the in-ground ones among
+      // them change (coldFor reads coverage for nothing else), so this is the ceiling on the cards it kept.
       if (kept) {
-        console.log(JSON.stringify({ msg: 'frost coverage — post-window: no sent email covers these, in-ground cards kept',
+        console.log(JSON.stringify({ msg: 'frost coverage — post-window: named by the forecast, by no email sent today',
           space: spaceId, plan_date: today, run: frostRun.slot, plantings: kept, sent: spaceSent.length }));
       }
     }
