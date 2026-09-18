@@ -525,6 +525,16 @@ function frostEval(input = {}, opts = {}) {
   // a `frost_eval_degraded` ops alert on this flag. Outside frost season it is merely noted.
   const degraded = imminentGlobal.lowF == null;
   const degradedAlert = degraded && !!opts.frostSeason;
+  // BUG-HYDROLOGYNULLSILENT-001 — the same §3-7 rule for the ADVISORY tier, kept as its own flag because
+  // `degraded` means "no tonight low" and drives that message. Zero usable D1..D3 lows is not "no frost
+  // ahead": it is the 48-72 h lead time gone. Both shapes land here — a null hydrology (fetchPrecip
+  // returns null on any throw) and a hydrology with no usable temperature_2m_min (fetchPrecip checks neither
+  // r.ok nor that `daily` exists, so a JSON error body would parse into an object of nulls; that shape —
+  // hydrology present, zero lows, no hourly block — was logged live on 2026-09-02 at the 15:30 run). A
+  // horizon of 0 is the tier switched off, not blind. Partial coverage (1-2 of 3 nights) still evaluates
+  // and is not flagged.
+  const advisoryDegraded = advisory.coveredDays === 0 && advisory.horizonDays > 0;
+  const advisoryDegradedAlert = advisoryDegraded && !!opts.frostSeason;
 
   // Highest-severity tier wins the single outbound message; the others remain in the record for the log.
   // D6: "single outbound message" is now literal — every crop that tripped is inside it.
@@ -570,7 +580,7 @@ function frostEval(input = {}, opts = {}) {
     alert: tier != null,
     advisory, advisoryCrops, imminent, imminentGlobal, heat,
     trippedCrops,
-    degraded, degradedAlert,
+    degraded, degradedAlert, advisoryDegraded, advisoryDegradedAlert,
     // §3-8 — logged on EVERY evaluation, alert or not; also the 2026 corpus for the 2027 learned offset.
     observability: {
       tonightLowF: imminentGlobal.lowF,

@@ -274,6 +274,45 @@ describe('frostEval — tier precedence, copy split, degraded path', () => {
     expect(r.degraded).toBe(true);
   });
 
+  // BUG-HYDROLOGYNULLSILENT-001 — the advisory tier gets the same §3-7 treatment, on its own flag.
+  it('§3-7: zero usable D1..D3 lows IN frost season raise advisoryDegradedAlert, and leave `degraded` alone', () => {
+    for (const lows of [null, [null, null, null]]) {          // hydrology null, and hydrology with no lows
+      const r = frostEval({ tonightLow: 55, forecastLows: lows, forecastDates: dates }, { frostSeason: true });
+      expect(r.alert).toBe(false);
+      expect(r.advisoryDegraded).toBe(true);
+      expect(r.advisoryDegradedAlert).toBe(true);
+      expect(r.degraded).toBe(false);                         // tonight's low is present; that tier is fine
+      expect(r.degradedAlert).toBe(false);
+    }
+  });
+
+  it('§3-7: the same blind window OUTSIDE frost season is noted but does not page', () => {
+    const r = frostEval({ tonightLow: 55, forecastLows: [null, null, null] }, { frostSeason: false });
+    expect(r.advisoryDegraded).toBe(true);
+    expect(r.advisoryDegradedAlert).toBe(false);
+  });
+
+  it('partial coverage (1 of 3 nights) still evaluates and is NOT degraded', () => {
+    const r = frostEval({ tonightLow: 55, forecastLows: [null, 50, null], forecastDates: dates }, { frostSeason: true });
+    expect(r.advisory.coveredDays).toBe(1);
+    expect(r.advisoryDegraded).toBe(false);
+    expect(r.advisoryDegradedAlert).toBe(false);
+  });
+
+  it('a full healthy window is not degraded', () => {
+    const r = frostEval({ tonightLow: 55, forecastLows: [50, 52, 54], forecastDates: dates }, { frostSeason: true });
+    expect(r.advisoryDegraded).toBe(false);
+    expect(r.advisoryDegradedAlert).toBe(false);
+  });
+
+  it('a horizon of 0 is the advisory tier switched OFF, not blind — no degraded flag', () => {
+    const r = frostEval({ tonightLow: 55, forecastLows: [null, null, null] },
+      { frostSeason: true, thresholds: { ADVISORY_HORIZON_DAYS: 0 } });
+    expect(r.advisory.coveredDays).toBe(0);
+    expect(r.advisoryDegraded).toBe(false);
+    expect(r.advisoryDegradedAlert).toBe(false);
+  });
+
   it('§3-8: an evaluation logs its observability record even when nothing fires', () => {
     const r = frostEval({ tonightLow: 55, highToday: 70, forecastLows: [50, 52, 54], lowSource: 'forecast', exposure });
     expect(r.observability).toMatchObject({

@@ -208,8 +208,10 @@ describe('BUG-STATIONDEGRADESILENT-001 — the gate is frost_eval_degraded\'s ga
     vi.stubEnv('AWN_STATIONS_JSON', cfg());
     quiet();
     const { publishAlert } = await drive({ pgOpts: { spaces: [], plantings: [planting('p1', 'sp1')] } });
-    // With no Space row there is no weather either, so frost_eval_degraded (rightly) fires; only ours must not.
-    expect(publishAlert.mock.calls.map(([a]) => a.message)).toEqual([expect.stringContaining('frost_eval_degraded')]);
+    // With no Space row there is no weather and no hydrology either, so frost_eval_degraded and (since
+    // BUG-HYDROLOGYNULLSILENT-001) frost_advisory_degraded rightly fire; only ours must not.
+    expect(publishAlert.mock.calls.map(([a]) => a.message)).toEqual([
+      expect.stringContaining('frost_eval_degraded'), expect.stringContaining('frost_advisory_degraded')]);
     expect(stationCalls(publishAlert)).toHaveLength(0);
   });
 

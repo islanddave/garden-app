@@ -1612,6 +1612,29 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           }
         }
       }
+      // BUG-HYDROLOGYNULLSILENT-001 — the advisory tier's twin of the block above: no usable D1..D3 lows in
+      // season means the 48-72 h warning could not be evaluated, which must not read as "no frost ahead".
+      // Same gate, same dedup store, per Space like frost_eval_degraded, own key so each tier is named.
+      if (frostDecision.advisoryDegradedAlert && frostAlertEnabled && !dryRun && publishAlert) {
+        const dk = `${spaceId}|${today}|frost_advisory_degraded`;
+        if (!frostPublished.has(dk)) {
+          const why = !hy ? 'the Open-Meteo hydrology fetch returned nothing'
+            : 'the Open-Meteo response carried no temperature_2m_min for those nights';
+          try {
+            await publishAlert({ topic: 'ops', subject: 'Garden ops - frost advisory DEGRADED',
+              message: `frost_advisory_degraded — no forecast lows for the ${frostDecision.advisory.horizonDays}-night advisory window ` +
+                `for space ${spaceId} on ${today} during frost season: ${why}. The advance frost advisory could not be evaluated; ` +
+                'treat those nights as UNKNOWN, not safe. ' +
+                (frostDecision.degraded ? 'Tonight\'s low is ALSO missing (see frost_eval_degraded).'
+                  : 'Tonight\'s imminent check still ran on the NWS low.') });
+            frostPublished.add(dk);
+            console.log(JSON.stringify({ msg: 'frost-advisory-degraded alert PUBLISHED', space: spaceId, dedup_key: dk }));
+          } catch (e) {
+            console.error(JSON.stringify({ msg: 'frost-advisory-degraded alert publish FAILED', space: spaceId, dedup_key: dk, error: e?.message }));
+            frostFailures.push({ kind: 'frost_advisory_degraded_publish_failed', spaceId, dedupKey: dk, error: e?.message });
+          }
+        }
+      }
       // BUG-STATIONDEGRADESILENT-001 — the station_unbound ops alert. The SAME gate and dedup store as
       // frost_eval_degraded above: evaluating run, frost season, flag on, live, publisher injected, one send
       // per key per invocation, failure collected and thrown after the plan is durable. Keyed per RUN, not
