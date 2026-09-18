@@ -8,17 +8,18 @@
 // WHY BOTH EXCLUSIONS ARE RIGHT (claude-ops/project-rules/gardening.md):
 //   * deleted — Deleted-Planting History Rule: a soft-deleted planting retracts the RECORD, not the
 //     history. Rows written before the delete stay; the writer must not mint NEW history onto a
-//     withdrawn record. `events_to_deleted_plants` is a census that grows once per delete by design;
-//     a writer that credited deleted plantings would grow it on every rain day as well, and nobody
-//     could tell the two apart.
+//     withdrawn record. `events_to_deleted_plants` is a census that grows with every planting
+//     soft-delete by design; a writer that credited deleted plantings would grow it on every rain day
+//     as well, and nobody could tell the two apart.
 //   * archived — Archive-Hiding Rule: archiving is a statement about the garden. An archived planting
-//     is not in it, so no rain fell on it, and every row written under it is one that every default
-//     view must hide — and that reappears, one row per rain day, if the planting is ever unarchived.
+//     is no longer part of it, so the garden's rain is not its history; every row written under it is
+//     one that every default view must hide, and it reappears, one row per rain day, on unarchive.
 // The rule also says the two axes must stay SEPARATELY OBSERVABLE, so each is evaluated on its own.
 //
 // WHY THIS FILE EXISTS. Measured 2026-09-18 at 1408ca04: deleting either term, or both, from the rain
-// insert left lambda/daily-plan 78/78 files green, and the ten fleet guards outside it that read
-// handler.js 690/690 green. archived-exclusion.test.js pins the PLANTINGS query (the rain insert
+// insert left lambda/daily-plan 78/78 files green, and 690/690 tests green in the 65 files outside it
+// that reference the daily-plan handler (lambda-level guards, the SQL-comment guards, the daily-plan
+// parity suite, daily-plan-read). archived-exclusion.test.js pins the PLANTINGS query (the rain insert
 // uses gn/ct aliases precisely so that guard does not latch onto it), and rain-roof-rule.test.js
 // leaves every non-roof term FREE by design. So these two terms had no coverage anywhere.
 //
