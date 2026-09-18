@@ -444,4 +444,8 @@ export const PHOTO_MULTI_ATTACH_ENABLED = true
 // The 501 branch in AddSeeds stays too, deliberately: this flag is a client guess about server
 // config, and if it is ever flipped true while the secret is still missing, the honest error message
 // is the backstop. Belt and braces on a surface where the failure is invisible until tapped.
+// V5-SEEDSTAB-001 — /inventory/add-seeds has NO in-app door any more: its two links (Inventory's
+// "Add seeds" chip and Sow now's empty state) now go straight to the seed-mode add form, because with
+// this flag off the page is only a pass-through to it. Turning this flag ON must add a door from
+// Seeds › My seeds in the same change, or bulk intake ships unreachable in the installed PWA.
 export const SEED_BULK_EXTRACT_ENABLED = false

@@ -28,6 +28,7 @@ vi.mock('../components/planting/SaveSeedSheet.jsx', () => ({
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import Seeds, { defaultSeedsView } from '../pages/Seeds.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { writeDraft, clearDraft } from '../lib/draftStash.js'
 
 const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
 
@@ -45,18 +46,21 @@ const BOUGHT = lot({ id: 'pkt-1', name: 'Sungold', variety_name: 'Sungold', quan
 
 let seedRows
 let seedResponse   // optional override: a function returning the promise for the seed list
+let candidates     // sow-candidates items
 
 beforeEach(() => {
   fetchSpy.mockReset()
   saveSheetProps.current = null
   seedRows = [BOUGHT]
   seedResponse = null
+  candidates = []
+  clearDraft('sow-now')
   try { window.sessionStorage.clear() } catch { /* jsdom */ }
   fetchSpy.mockImplementation((path, opts) => {
     const p = String(path)
     if (opts?.method) return Promise.resolve({ ok: true })
     if (p.startsWith('/api/inventory-items?category=seeds')) return seedResponse ? seedResponse() : Promise.resolve(seedRows)
-    if (p.startsWith('/api/inventory-items/sow-candidates')) return Promise.resolve({ items: [] })
+    if (p.startsWith('/api/inventory-items/sow-candidates')) return Promise.resolve({ items: candidates })
     return Promise.resolve([])
   })
 })
@@ -278,5 +282,63 @@ describe('Seeds — offline rows are marked stale (§5.1)', () => {
     await act(async () => { saveSheetProps.current.onSaved({ id: 'x' }, { stageWritten: null }) })
     await waitFor(() => expect(screen.getByTestId('seeds-stale').textContent).toContain('Couldn’t refresh'))
     expect(screen.getAllByTestId('my-seed-row').length).toBe(1)
+  })
+})
+
+describe('Seeds — the view is the URL, so it survives a trip away and back', () => {
+  it('bare /seeds lands on Saved seeds for a drying lot; lot → detail → Back returns to Saved seeds even after the lot is stored', async () => {
+    seedRows = [DRYING]
+    const router = mount(['/today', '/seeds'])
+    await waitFor(() => expect(search(router)).toBe('?view=saved'))
+    await waitFor(() => expect(screen.getByText('Gong Bao')).toBeTruthy())
+    // The lot's detail page is a PUSH that carries the way back.
+    await act(async () => { fireEvent.click(screen.getByText('Gong Bao')) })
+    expect(router.state.location.pathname).toBe('/inventory/lot-dry')
+    expect(router.state.location.state).toEqual({ seedsReturn: '/seeds?view=saved' })
+    // Meanwhile the lot finished drying: the default rule would now say My seeds. The URL says Saved.
+    seedRows = [{ ...DRYING, seed_stage: 'stored' }]
+    await act(async () => { router.navigate(-1) })
+    expect(search(router)).toBe('?view=saved')
+    await waitFor(() => expect(screen.getByTestId('saved-seeds-view')).toBeTruthy())
+  })
+})
+
+describe('Seeds — every view sees the others’ writes without a reload', () => {
+  it('a stage moved in Saved seeds is what My seeds shows next', async () => {
+    seedRows = [DRYING]
+    mount(['/seeds?view=saved'])
+    await waitFor(() => expect(screen.getByTestId('advance-stage')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('advance-stage')) })
+    await act(async () => { fireEvent.change(screen.getByTestId('seed-count-input'), { target: { value: '40' } }) })
+    seedRows = [{ ...DRYING, seed_stage: 'stored', seed_count: 40 }]
+    await act(async () => { fireEvent.click(screen.getByTestId('stage-save')) })
+    await waitFor(() => expect(seedGets()).toBe(2))
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'My seeds' })) })
+    await waitFor(() => expect(document.querySelector('[data-lot-id="lot-dry"]')).toBeTruthy())
+    const line = document.querySelector('[data-lot-id="lot-dry"] [data-testid="my-seed-line"]').textContent
+    expect(line).not.toContain('Drying')
+    expect(line).toContain('40 seeds')
+  })
+
+  it('an archive in Sow now shows in My seeds at once, patched in place — no second seed fetch', async () => {
+    seedRows = [BOUGHT]
+    candidates = [{ inventory_item_id: 'pkt-1', item_name: 'Sungold', variety_name: 'Sungold', variety_id: 'v-b' }]
+    mount(['/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByRole('button', { name: /Archive Sungold/ })).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Archive Sungold/ })) })
+    await waitFor(() => expect(fetchSpy.mock.calls.some(([p, o]) => String(p).includes('/sow-archive') && o?.method === 'PATCH')).toBe(true))
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'My seeds' })) })
+    await waitFor(() => {
+      const line = document.querySelector('[data-lot-id="pkt-1"] [data-testid="my-seed-line"]')
+      expect(line?.textContent).toContain('Archived for this season')
+    })
+    expect(seedGets()).toBe(1)
+  })
+
+  it('reloading with the Sow sheet open on Seeds › Sow now brings the sheet back (draft "sow-now")', async () => {
+    candidates = [{ inventory_item_id: 'pkt-1', item_name: 'Sungold', variety_name: 'Sungold', variety_id: 'v-b' }]
+    writeDraft('sow-now', { inventoryItemId: 'pkt-1' })
+    mount(['/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByRole('dialog', { name: /Sow Sungold/ })).toBeTruthy())
   })
 })

@@ -206,7 +206,9 @@ const PICKER_PATH = '/api/plants?view=picker'
 // module rather than spelled here: the add-a-packet URL had three spellings before.
 const SAVED_VIEW_HREF = seedsHref('saved')
 const ADD_PACKET_HREF = addPacketHref(SAVED_VIEW_HREF)
-const ADD_PACKET_STATE = seedsReturnState(SAVED_VIEW_HREF)
+// location.state for every page this view PUSHES (the add form, a lot's detail): its exits come back
+// here with one Back instead of pushing Seeds again.
+const SAVED_RETURN_STATE = seedsReturnState(SAVED_VIEW_HREF)
 
 // ── BUG-SEEDCANDIDATEAMBIG-001 — the untracked-packet picker ──────────────────────────────────────
 // Measured against prod: ~260 untracked seed rows, roughly 41 phone-screens of unbroken scroll, and
@@ -949,7 +951,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
               empty state, on the first screen a new user sees, reached with wet hands. */}
           <Link
             to={ADD_PACKET_HREF}
-            state={ADD_PACKET_STATE}
+            state={SAVED_RETURN_STATE}
             data-testid="empty-add-packet"
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1031,7 +1033,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <Link to={`/inventory/${item.id}`} style={{ color: P.green, fontWeight: 600, textDecoration: 'none' }}>
+                    <Link to={`/inventory/${item.id}`} state={SAVED_RETURN_STATE} style={{ color: P.green, fontWeight: 600, textDecoration: 'none' }}>
                       {item.variety_name || item.name}
                     </Link>
                     {/* BUG-SEEDELAPSEDUPDATED-001 — elapsed from stage_entered_at, NOT updated_at.
@@ -1132,6 +1134,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                         // and the text stays vertically centred in it.
                         <Link
                           to={`/inventory/${item.id}`}
+                          state={SAVED_RETURN_STATE}
                           data-testid="set-source-plant"
                           style={{
                             display: 'inline-flex', alignItems: 'center',
@@ -1542,7 +1545,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                   FIRST visit too, before any search has been typed. */}
               <SheetRowLink
                 to={ADD_PACKET_HREF}
-                state={ADD_PACKET_STATE}
+                state={SAVED_RETURN_STATE}
                 data-testid="add-seed-packet"
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
