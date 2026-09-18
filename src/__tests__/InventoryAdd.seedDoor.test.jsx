@@ -78,7 +78,8 @@ beforeEach(() => {
 
 describe('safeReturnTo — the return leg cannot leave the origin', () => {
   it('accepts an ordinary internal path', () => {
-    expect(safeReturnTo('/seeds/saved')).toBe('/seeds/saved')
+    // V5-SEEDSTAB-001 — the canonical Seeds URL, query string and all: /seeds/saved only redirects now.
+    expect(safeReturnTo('/seeds?view=saved')).toBe('/seeds?view=saved')
     expect(safeReturnTo('/inventory/abc')).toBe('/inventory/abc')
   })
 
@@ -97,13 +98,13 @@ describe('safeReturnTo — the return leg cannot leave the origin', () => {
   })
 
   it('honours a caller-supplied fallback', () => {
-    expect(safeReturnTo('//evil.example.com', '/seeds/saved')).toBe('/seeds/saved')
+    expect(safeReturnTo('//evil.example.com', '/seeds?view=saved')).toBe('/seeds?view=saved')
   })
 })
 
 describe('the seed door seeds the form', () => {
   it('arrives as a consumable in category seeds', async () => {
-    await renderAdd('type=consumable&category=seeds&return=%2Fseeds%2Fsaved')
+    await renderAdd('type=consumable&category=seeds&return=%2Fseeds%3Fview%3Dsaved')
     // The variety FIELD is the discriminator: InventoryAdd renders it ONLY when form.category is
     // 'seeds' (it is the DB CHECK chk_inventory_seed_requires_variety made visible), so its presence
     // proves the category landed in form STATE rather than merely sitting in the URL.

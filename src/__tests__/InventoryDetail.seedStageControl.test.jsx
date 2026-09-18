@@ -123,11 +123,13 @@ describe('InventoryDetail — the seed_stage control is gone (V5-SEEDSTAGEONEPLA
   it('names where the stage is changed instead, and links there', async () => {
     // Removing the control WITHOUT this is the version of the change that leaves a user who has
     // spotted a wrong stage with nothing to do about it. Asserted as the full href, not a substring:
-    // '/seeds' and '/seeds/saved' are different pages and only one of them has the control.
+    // V5-SEEDSTAB-001 made Saved seeds a VIEW of the Seeds page, so a bare '/seeds' opens whatever
+    // view the page defaults to, and only `view=saved` has the control — `lot` then brings THIS lot
+    // into sight rather than leaving the user to find it in the queue.
     await renderPage()
     const link = screen.getByTestId('seed-stage-change-link')
-    expect(link.getAttribute('href')).toBe('/seeds/saved')
-    expect(link.textContent).toBe("Change this lot's stage on Saved seeds →")
+    expect(link.getAttribute('href')).toBe('/seeds?view=saved&lot=inv-1')
+    expect(link.textContent).toBe('Change stage in Saved seeds →')
   })
 
   it('issues NO stage write of either kind for a seeds lot', async () => {

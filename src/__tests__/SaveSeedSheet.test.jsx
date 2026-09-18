@@ -12,7 +12,7 @@
 //     and a planting that HAS no variety produces no request at all rather than a doomed one.
 // No jest-dom (L-182).
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -268,22 +268,29 @@ describe('V4-SAVESEEDBTN-001 — the success path has an end', () => {
 
   // V5-SEEDSAVEDFILTER-001 — a lot that joined a QUEUE lands on the queue, not on its own page.
   // The three tests below are one decision seen from three sides, and each is worthless without the
-  // other two: the first alone is satisfied by navigating to /seeds/saved unconditionally, and the
-  // untracked case at :216 above is what stops that.
-  it('a TRACKED lot lands on /seeds/saved — the queue it just joined', async () => {
-    // Why this is not cosmetic routing. /seeds/saved holds the only overdue-ferment warning in the
-    // app (past day 5 the seed sprouts in the jar and the lot is finished), and before this change
-    // NOTHING navigated there — the page had one inbound link in the whole frontend, a row in the
-    // collapsed More sheet. A user who saved seed was told the lot existed and then shown a
+  // other two: the first alone is satisfied by navigating to the queue unconditionally, and the
+  // untracked case right after it is what stops that.
+  it('a TRACKED lot lands on Seeds › Saved seeds, opened on that lot — the queue it just joined', async () => {
+    // Why this is not cosmetic routing. The saved-seeds queue holds the only overdue-ferment warning
+    // in the app (past day 5 the seed sprouts in the jar and the lot is finished), and before this
+    // change NOTHING navigated there — the page had one inbound link in the whole frontend, a row in
+    // the collapsed More sheet. A user who saved seed was told the lot existed and then shown a
     // different page, so the queue with a clock running on their lot was never seen.
+    // V5-SEEDSTAB-001 — the queue is the Seeds page's `saved` view now (the old /seeds/saved only
+    // redirects there), and the URL names the lot so the view brings it into sight. The FULL URL is
+    // asserted, not a prefix: a bare '/seeds' leaves the view to the page's default rule, and one
+    // without `lot` has nothing to outline.
     apiFetchSpy.mockResolvedValue({ id: 'inv-9' })
     openSheet()
     fireEvent.click(screen.getByTestId('save-seed-process-wet'))
     fireEvent.click(screen.getByTestId('save-seed-submit'))
     await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
-    expect(navigateSpy.mock.calls[0][0]).toBe('/seeds/saved')
-    // One argument, same reason as the lot route: /seeds/saved is not registered overlayable.
+    expect(navigateSpy.mock.calls[0][0]).toBe('/seeds?view=saved&lot=inv-9')
+    // One argument: no Back marker is current here (no DismissRegistryProvider is mounted), so this
+    // is the plain push it always was — and the route is not registered overlayable either. The
+    // marker-current case, where it REPLACES, is pinned in the V5-SEEDSTAB-001 block below.
     expect(navigateSpy.mock.calls[0][1]).toBeUndefined()
+    expect(navigateSpy.mock.calls[0]).toHaveLength(1)
   })
 
   it('an UNTRACKED lot still lands on its own page — it has no row in the queue', async () => {
@@ -568,5 +575,159 @@ describe('SaveSeedSheet mounts standalone (the sheet is not welded to QuickActio
     render(<MemoryRouter><SaveSeedSheet planting={PL} onClose={() => {}} /></MemoryRouter>)
     expect(screen.getByTestId('save-seed-name')).toBeTruthy()
     expect(screen.getByTestId('save-seed-submit')).toBeTruthy()
+  })
+})
+
+// ── V5-SEEDSTAB-001 — how the sheet ends, per host ──────────────────────────────────────────────
+// Two changes to the ending, and each has a way to be wrong that the routing tests above cannot see,
+// because they run with no Back marker and no host callback:
+//   • REPLACE ONLY WHILE A BACK MARKER IS CURRENT. A push from an armed sheet strands its marker
+//     mid-stack ([planting, planting+marker, dest]), so the first Back from the destination lands on
+//     the planting again at the same URL — a press that visibly does nothing. Replacing collapses the
+//     marker into the destination. With NO marker current it must stay the one-argument push pinned
+//     above: a replace there would overwrite the planting's own entry, and Back would skip it.
+//   • onSaved TAKES THE ENDING OVER. The Seeds page passes it because a push from inside it would
+//     remount the page it is already on; a navigate firing alongside the callback is that bug back.
+// The marker is written straight onto the entry, as the provider would leave it; the provider-armed
+// version of the same case lives in SaveSeedSheet.backNav.test.jsx.
+const MARKER = { __backnav: { v: 2, seq: 1 } }
+const CREATED = { id: 'inv-9', name: 'Brandywine — saved 2026' }
+
+/** The create answers with CREATED and nothing else does, so "the created lot" is checked by identity. */
+const routeCreate = ({ failStage = false } = {}) => apiFetchSpy.mockImplementation((path, opts) => {
+  const p = String(path)
+  if (p === '/api/inventory-items' && opts?.method === 'POST') return Promise.resolve(CREATED)
+  if (failStage && p.endsWith('/seed-stage')) return Promise.reject(new Error('stage write failed'))
+  return Promise.resolve({ ok: true })
+})
+
+const saveWith = (process) => {
+  if (process) fireEvent.click(screen.getByTestId(`save-seed-process-${process}`))
+  fireEvent.click(screen.getByTestId('save-seed-submit'))
+}
+
+describe('V5-SEEDSTAB-001 — the navigating ending REPLACES only while a Back marker is current', () => {
+  afterEach(() => { window.history.replaceState(null, '') })
+
+  it('a TRACKED lot with a marker current replaces into the queue', async () => {
+    routeCreate()
+    openSheet()
+    window.history.replaceState(MARKER, '')
+    saveWith('wet')
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    expect(navigateSpy).toHaveBeenCalledTimes(1)
+    expect(navigateSpy.mock.calls[0]).toEqual(['/seeds?view=saved&lot=inv-9', { replace: true }])
+  })
+
+  it('an UNTRACKED lot with a marker current replaces too — the rule keys on the marker, not the destination', async () => {
+    routeCreate()
+    openSheet()
+    window.history.replaceState(MARKER, '')
+    saveWith(null)
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    expect(navigateSpy.mock.calls[0]).toEqual(['/inventory/inv-9', { replace: true }])
+  })
+
+  it('a stale v1 marker is NOT current — the plain one-argument push', async () => {
+    // history.state survives a reload and a deploy, so a v1 bundle's per-surface marker can still be
+    // sitting on the entry. readMarker rejects it; a looser read here would replace away the
+    // planting's own entry on a stack this sheet never armed.
+    routeCreate()
+    openSheet()
+    window.history.replaceState({ __backnav: { v: 1, id: 'save-seed' } }, '')
+    saveWith('wet')
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    expect(navigateSpy.mock.calls[0]).toEqual(['/seeds?view=saved&lot=inv-9'])
+  })
+
+  it('reads the marker BEFORE onClose — a close that pops it must not turn the replace into a push', async () => {
+    // Closing unmounts the sheet, and in the app its disarm pops the marker. This onClose clears it
+    // synchronously, the worst case of that race: a read placed after onClose() would see no marker
+    // and push, stranding exactly the entry the replace exists to collapse.
+    routeCreate()
+    const onClose = vi.fn(() => { window.history.replaceState(null, '') })
+    render(<MemoryRouter><SaveSeedSheet planting={PL} onClose={onClose} /></MemoryRouter>)
+    window.history.replaceState(MARKER, '')
+    saveWith('wet')
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalled())
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(navigateSpy.mock.calls[0]).toEqual(['/seeds?view=saved&lot=inv-9', { replace: true }])
+  })
+})
+
+describe('V5-SEEDSTAB-001 — a host that passes onSaved owns the ending', () => {
+  const mountHosted = () => {
+    const onClose = vi.fn()
+    const onSaved = vi.fn()
+    render(<MemoryRouter><SaveSeedSheet planting={PL} onClose={onClose} onSaved={onSaved} /></MemoryRouter>)
+    return { onClose, onSaved }
+  }
+
+  it('a tracked lot: closes, hands over the created lot and the stage that landed, and navigates nowhere', async () => {
+    routeCreate()
+    const { onClose, onSaved } = mountHosted()
+    saveWith('wet')
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    await act(async () => {})
+    expect(onSaved).toHaveBeenCalledTimes(1)
+    // By identity: the create's own response, not the stage's or the event's.
+    expect(onSaved.mock.calls[0][0]).toBe(CREATED)
+    expect(onSaved.mock.calls[0][1]).toStrictEqual({ stageWritten: 'fermenting' })
+    // Closed FIRST, then told: the host confirms in place, on a page the sheet no longer covers.
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(onSaved.mock.invocationCallOrder[0])
+    expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  it('no process chosen: stageWritten is null', async () => {
+    routeCreate()
+    const { onSaved } = mountHosted()
+    saveWith(null)
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    await act(async () => {})
+    expect(onSaved).toHaveBeenCalledTimes(1)
+    expect(onSaved.mock.calls[0][0]).toBe(CREATED)
+    expect(onSaved.mock.calls[0][1]).toStrictEqual({ stageWritten: null })
+    expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  it('a stage POST that FAILED: stageWritten is null, never the stage that was asked for', async () => {
+    // The same rule the seed_saved note keeps: name the stage that LANDED. Handing the host
+    // "fermenting" for a stage write that 500'd would tell it the lot joined a queue it is not in.
+    routeCreate({ failStage: true })
+    const { onSaved } = mountHosted()
+    saveWith('wet')
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    await act(async () => {})
+    // Positive control: the stage request really went out and really failed.
+    expect(apiFetchSpy.mock.calls.filter(([p]) => String(p).endsWith('/seed-stage'))).toHaveLength(1)
+    expect(onSaved.mock.calls[0][0]).toBe(CREATED)
+    expect(onSaved.mock.calls[0][1]).toStrictEqual({ stageWritten: null })
+    expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  it('a FAILED create tells the host nothing and keeps the sheet open', async () => {
+    // No lot exists, so there is nothing for the host to outline — and closing would throw away the
+    // filled-in values the retry needs.
+    apiFetchSpy.mockRejectedValue(Object.assign(new Error('variety_id is required for seeds'), { status: 400 }))
+    const { onClose, onSaved } = mountHosted()
+    saveWith('wet')
+    await waitFor(() => expect(screen.getByTestId('save-seed-error')).toBeTruthy())
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(navigateSpy).not.toHaveBeenCalled()
+    expect(screen.getByTestId('save-seed-submit')).toBeTruthy()
+  })
+})
+
+describe('V5-SEEDSTAB-001 — "Not yet" says where an unstaged lot waits', () => {
+  it('names Seeds › My seeds, and no longer Inventory', () => {
+    // Seed left the Inventory list, so "It waits in Inventory" became a pointer to a list that no
+    // longer shows the lot. An unstaged lot is a row in Seeds › My seeds.
+    openSheet()
+    const none = screen.getByTestId('save-seed-process-none')
+    expect(none.textContent).toContain('Not yet — just save the lot')
+    expect(none.textContent).toContain('It waits in Seeds › My seeds until you start the process')
+    expect(none.textContent).not.toMatch(/Inventory/)
   })
 })
