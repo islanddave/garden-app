@@ -1,0 +1,295 @@
+# gates.yml
+# v5-frostband-001 — BUG-STABLEUNKNOWNSLUGS-001 + BUG-PINEAPPLESAGEBAND-001. Two crop types minted,
+# two cultivars re-typed by id, one care_profile `cold` key corrected. Data-only, no DDL.
+#
+# STATUS AT AUTHORING (2026-09-18): AUTHORED, NOT APPLIED on staging or prod.
+#
+# SEQUENCING — README.md. Short form, per environment, staging first:
+#   --phase pre -> apply 0a -> node 0b-derive.mjs --env <env> -> --phase post
+# then `gate_runner.py --all --phase post --continuous-only` on BOTH envs.
+# Pushing this directory before the apply cannot red gate-invariants.yml: every continuous post gate
+# self-arms on this migration's schema_version row.
+#
+# GATE CLASSIFICATION (decided at authoring, not after the first false red)
+#   * Standing invariants (continuous, self-armed): the two failure shapes that could come back after
+#     the apply — a cultivar typed to a new crop type that has since been soft-deleted (derives no type
+#     tag, silently), and a pineapple_sage cultivar whose resolved care profile says hardy again (the
+#     cadence-backfill clone that caused half of this).
+#   * Apply-window receipts (continuous: false): what 0a and 0b wrote. Which crop type a cultivar
+#     carries is Dave's data, not an invariant — he may re-type either one from the variety editor,
+#     and a standing gate would red on the app working.
+#   * Cultivar-id receipts are env: prod. The ids were read on prod; this lane was cleared to read
+#     prod only, so whether staging carries the same rows is unverified. 0a's UPDATEs are id-keyed and
+#     guarded, so on a database without them they match nothing, the safe direction.
+#   * No gate names a column this migration adds (it adds none), so every gate parses on an unapplied
+#     database.
+#
+# NO `sweep` PHASE: nothing is constrained, so there is no predicate that must hold before the apply.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-frostband-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_new_slugs_are_free
+    note: >
+      slug is the PRIMARY KEY and an FK target. A live row here means someone minted the type since
+      authoring (stop: 0a's ON CONFLICT DO NOTHING would leave that row's attributes, not these). A
+      soft-deleted row minted by anyone ELSE would squat the slug invisibly and 0a's revive would skip
+      it, leaving both cultivars typed to a dead crop type. The one exempt case is this migration's own
+      soft-deleted rows after an 0r rehearsal, which 0a revives.
+    sql: |
+      SELECT slug FROM public.crop_types
+       WHERE slug IN ('hylotelephium', 'pineapple_sage')
+         AND NOT (deleted_at IS NOT NULL AND created_by = 'v5-frostband-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_sage_crop_type_live
+    note: >
+      pineapple_sage copies its harvest and weight columns FROM the live sage row. No live sage row
+      means 0a inserts no pineapple_sage row at all, and the re-type below it then matches nothing.
+    sql: |
+      SELECT 1 FROM public.crop_types WHERE slug = 'sage' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_sage_values_are_what_was_reviewed
+    env: prod
+    note: >
+      The values pineapple_sage will inherit, as read on prod 2026-09-18 and reviewed in this lane:
+      cut_and_come_again / 18 d / 72 h loss horizon, first_year_harvest true, cup default, 20 g per
+      unit, {"cup":20,"count":0.5}, estimate / medium, variety_grams_required true, category herb. If
+      this fails, sage was edited since review: re-read it and decide whether pineapple sage should
+      still inherit it before applying. 0a copies whatever is live, so a silent change would ride along.
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug = 'sage' AND deleted_at IS NULL AND category = 'herb'
+         AND harvest_habit = 'cut_and_come_again' AND repeat_interval_days = 18
+         AND loss_horizon_hours = 72 AND set_to_first_pick_days IS NULL
+         AND harvest_season_start_doy IS NULL AND harvest_season_end_doy IS NULL
+         AND first_year_harvest IS TRUE AND dtm_basis IS NULL
+         AND default_unit = 'cup' AND grams_per_unit = 20
+         AND unit_weights = '{"cup": 20, "count": 0.5}'::jsonb
+         AND weight_source = 'estimate' AND weight_confidence = 'medium'
+         AND variety_grams_required IS TRUE
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_autumn_fire_cultivar_is_the_sedum_spectabile_row
+    env: prod
+    note: >
+      Identity receipt for 0a's re-type, which selects by id. Read on prod 2026-09-18: the variety row
+      "Sedum spectabile" behind the planting "Autumn Fire Stonecrop" (29de7a55), typed sedum, no genus
+      recorded. The name is checked here once, as a receipt; it is never the selector.
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = '44907632-80f4-4f8d-bbdd-e7143e0bea7a'
+         AND name = 'Sedum spectabile' AND crop_type_slug = 'sedum' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_pineapple_sage_cultivar_is_the_salvia_elegans_row
+    env: prod
+    note: >
+      Identity receipt. Read on prod 2026-09-18: "Pineapple Sage", genus Salvia, species elegans,
+      lifecycle tender_perennial, typed sage, behind the planting "Pineapple Sage" (e37ab48c).
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = '6b75492d-b08c-4f66-9de9-18157fc1bdaa'
+         AND name = 'Pineapple Sage' AND crop_type_slug = 'sage'
+         AND genus = 'Salvia' AND species = 'elegans' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_pineapple_sage_cold_is_the_garden_sage_clone
+    env: prod
+    note: >
+      The starting state 0a's care_profile UPDATE matches on: the cultivar row written by
+      cadence-backfill-20260823, "Cloned from the sage crop baseline", carrying garden sage's cold block.
+      If this fails the row changed since authoring and 0a's UPDATE will match nothing: find out why
+      before applying, because the email and the card would then disagree.
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE scope = 'cultivar' AND scope_id = '6b75492d-b08c-4f66-9de9-18157fc1bdaa'
+         AND profile->'cold' = '{"tender": false, "protect_below_F": 10}'::jsonb
+         AND profile->>'_source' = 'cadence-backfill-20260823'
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-frostband-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANTS (continuous, self-armed) ─────────────────────────────────────────────────
+
+  - name: post_no_cultivar_typed_to_a_dead_new_crop_type
+    note: >
+      A soft-deleted crop_types row does not fire the ON DELETE SET NULL FK, and applyDerive reads only
+      live crop types, so a cultivar typed to a dead one derives NO type tag and drops out of every
+      by-type view, silently (v4-cropsplit-001). Returns one row per offending cultivar, naming it.
+      Self-armed: vacuous until the stamp exists.
+    sql: |
+      SELECT v.id, v.name, v.crop_type_slug
+        FROM public.plant_varieties v
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-frostband-001')
+         AND v.deleted_at IS NULL
+         AND v.crop_type_slug IN ('hylotelephium', 'pineapple_sage')
+         AND NOT EXISTS (SELECT 1 FROM public.crop_types ct
+                          WHERE ct.slug = v.crop_type_slug AND ct.deleted_at IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_pineapple_sage_resolves_a_hardy_cold_block
+    note: >
+      The two channels must agree for this crop: frostClass bands pineapple_sage tender, so no planting
+      of it may resolve a care profile whose cold block says tender:false — that is the garden-sage
+      clone this migration corrected, and a future cadence backfill that clones "from the sage crop
+      baseline" again would re-create it for the next pineapple sage. Read through v_resolved_care, the
+      view the daily-plan handler selects, so a leaf-scope override is judged too. jsonb comparison, not
+      a boolean cast, so an odd value cannot ERROR the gate. Self-armed.
+    sql: |
+      SELECT p.id, p.name
+        FROM public.plants p
+        JOIN public.plant_varieties v ON v.id = p.variety_id
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = p.id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-frostband-001')
+         AND p.deleted_at IS NULL
+         AND v.crop_type_slug = 'pineapple_sage'
+         AND vrc.resolved_profile->'cold'->'tender' = 'false'::jsonb
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ────────────────────────────────────────────────────
+
+  - name: post_hylotelephium_minted_as_written
+    continuous: false
+    note: >
+      Both environments: 0a mints the vocabulary row everywhere. harvest_habit must be NULL: its
+      no-harvest decision is recorded in v4-harvhabitgap-001's null-habit gate, which this branch
+      updates, and a habit here would contradict that record.
+    sql: |
+      SELECT 1 FROM public.crop_types
+       WHERE slug = 'hylotelephium' AND deleted_at IS NULL
+         AND display_name = 'Hylotelephium (Showy Stonecrop)' AND category = 'succulent'
+         AND default_lifecycle = 'perennial' AND harvest_habit IS NULL
+         AND created_by = 'v5-frostband-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_pineapple_sage_copies_sage
+    continuous: false
+    note: >
+      Every harvest and weight column equals the live sage row's, so harvest readiness and weight
+      resolution for Pineapple Sage are unchanged by the re-type. Window-only: Dave may tune either row
+      afterwards and that is not a regression.
+    sql: |
+      SELECT 1 FROM public.crop_types n JOIN public.crop_types s ON s.slug = 'sage'
+       WHERE n.slug = 'pineapple_sage' AND n.deleted_at IS NULL
+         AND n.display_name = 'Pineapple Sage' AND n.default_lifecycle = 'tender_perennial'
+         AND n.created_by = 'v5-frostband-001'
+         AND n.category                 IS NOT DISTINCT FROM s.category
+         AND n.harvest_habit            IS NOT DISTINCT FROM s.harvest_habit
+         AND n.repeat_interval_days     IS NOT DISTINCT FROM s.repeat_interval_days
+         AND n.loss_horizon_hours       IS NOT DISTINCT FROM s.loss_horizon_hours
+         AND n.set_to_first_pick_days   IS NOT DISTINCT FROM s.set_to_first_pick_days
+         AND n.harvest_season_start_doy IS NOT DISTINCT FROM s.harvest_season_start_doy
+         AND n.harvest_season_end_doy   IS NOT DISTINCT FROM s.harvest_season_end_doy
+         AND n.first_year_harvest       IS NOT DISTINCT FROM s.first_year_harvest
+         AND n.dtm_basis                IS NOT DISTINCT FROM s.dtm_basis
+         AND n.default_unit             IS NOT DISTINCT FROM s.default_unit
+         AND n.grams_per_unit           IS NOT DISTINCT FROM s.grams_per_unit
+         AND n.unit_weights             IS NOT DISTINCT FROM s.unit_weights
+         AND n.weight_source            IS NOT DISTINCT FROM s.weight_source
+         AND n.weight_confidence        IS NOT DISTINCT FROM s.weight_confidence
+         AND n.variety_grams_required   IS NOT DISTINCT FROM s.variety_grams_required
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_autumn_fire_retyped
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = '44907632-80f4-4f8d-bbdd-e7143e0bea7a' AND crop_type_slug = 'hylotelephium'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_pineapple_sage_retyped
+    env: prod
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = '6b75492d-b08c-4f66-9de9-18157fc1bdaa' AND crop_type_slug = 'pineapple_sage'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_pineapple_sage_cold_is_tender
+    env: prod
+    continuous: false
+    note: >
+      The only positive gate on the care_profile edit — the one that can tell "corrected" from
+      "matched nothing". The value is cadence-data-v2.json by_genus_fallback.Salvia's.
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE scope = 'cultivar' AND scope_id = '6b75492d-b08c-4f66-9de9-18157fc1bdaa'
+         AND profile->'cold' = '{"tender": true, "protect_below_F": 32}'::jsonb
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_cold_fix_was_single_key_not_a_full_replace
+    env: prod
+    continuous: false
+    note: >
+      THE METHOD GUARD (v5-heatrespcabbage-001). The corrected row must still carry every key it had
+      before — 14, read on prod 2026-09-18 — including the _source marker the seededgate resolver
+      reads. A whole-object rewrite is how those get dropped.
+    sql: |
+      SELECT 1 FROM public.care_profile cp
+       WHERE cp.scope = 'cultivar' AND cp.scope_id = '6b75492d-b08c-4f66-9de9-18157fc1bdaa'
+         AND cp.profile ?& ARRAY['cold','crop','_tier','notes','_source','confidence','water_method',
+                                 'heat_response','drought_tolerance','water_volume_note',
+                                 'soil_moisture_target','fertilize_interval_days',
+                                 'water_interval_days_inground','water_interval_days_container']
+         AND (SELECT count(*) FROM jsonb_object_keys(cp.profile)) = 14
+         AND cp.profile->>'_source' = 'cadence-backfill-20260823'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_pineapple_sage_watering_unchanged
+    env: prod
+    continuous: false
+    note: >
+      Blast-radius check: the watering engine must read exactly what it read before (a 5-day container
+      interval, the garden-sage clone's, deliberately left alone here).
+    sql: |
+      SELECT 1 FROM public.v_resolved_care vrc
+       WHERE vrc.leaf_id = 'e37ab48c-f68e-448f-a6aa-fe016ecaf4fd'
+         AND vrc.resolved_profile->>'water_interval_days_container' = '5'
+         AND vrc.resolved_profile->>'water_interval_days_inground' = '7'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_moved_cultivars_type_tag_follows_slug
+    continuous: false
+    note: >
+      0b-derive.mjs ran. No moved cultivar keeps a live derived `type` link to anything but its current
+      crop_type_slug (the stale type:sedum / type:sage direction has no other detector). Vacuous on an
+      environment without the two cultivars.
+    sql: |
+      SELECT v.name, t.slug AS tag_slug, v.crop_type_slug
+        FROM public.entity_tag et
+        JOIN public.tag t ON t.id = et.tag_id
+        JOIN public.plant_varieties v ON v.id = et.entity_id
+       WHERE et.entity_type = 'cultivar' AND et.deleted_at IS NULL
+         AND et.entity_id IN ('44907632-80f4-4f8d-bbdd-e7143e0bea7a', '6b75492d-b08c-4f66-9de9-18157fc1bdaa')
+         AND t.facet = 'type' AND t.source = 'derived' AND t.deleted_at IS NULL
+         AND t.slug IS DISTINCT FROM v.crop_type_slug
+    expect: rowcount_eq
+    value: 0
