@@ -397,12 +397,12 @@ jobs:
       #
       # ERREXIT — keep the `|| RC=$?`. GitHub runs a step with no `shell:` as `bash -e {0}`. The first
       # version called the script bare and read `RC=$?` on the next line, so exit 1 or 2 (both DEPLOY
-      # answers) ended the step right there, before `changed=`, and failed the promote pre-FF (B1 of the
-      # v4.138.0 pre-ship pass). Its tests passed because they ran this body with `bash -c`; they now run
-      # it as the runner does (`bash -e <file>`, scripts/test_check_lambda_current.py). Every exit code of
-      # the script now ends in `changed=`. If the step fails anyway, the promote job fails with main
-      # untouched and nothing deploys: deploy-lambdas' `!= 'false'` covers a missing output only when this
-      # job succeeded.
+      # answers) would have ended the step right there, before `changed=`, failing the promote pre-FF
+      # (B1 of the v4.138.0 pre-ship pass, caught before any promote ran it). Its tests passed because
+      # they ran this body with `bash -c`; they now run it as the runner does (`bash -e <file>`,
+      # scripts/test_check_lambda_current.py). Every exit code of the script now ends in `changed=`. If
+      # the step fails anyway, the promote job fails with main untouched and nothing ships to prod:
+      # deploy-lambdas' `!= 'false'` covers a missing output only when this job succeeded.
       #
       # Still pre-FF on purpose. The answer no longer depends on main, but a defect in THIS step then stops
       # the promote with main untouched rather than after the fast-forward.
