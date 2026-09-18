@@ -65,15 +65,22 @@ describe('Open-Meteo daily indexing must not drift (G5)', () => {
   });
 
   it('the pre-frost precipitation indices are UNCHANGED (ps[0..4], pop[2..3])', () => {
+    // BUG-FETCHPRECIPZERO-001 changed how these reads are WRAPPED (`|| 0` -> null-never-0) and nothing
+    // about WHICH index each one reads. The fragments used to pin the `|| 0` text itself, so this index
+    // guard was, as a side effect, also a guard FOR the fabricated zero. They pin the same indices
+    // through the new expressions; the negative assertions are the rule the old text broke. The VALUES
+    // are executed, not matched, in fetchprecip-errorbody.test.js.
     for (const frag of [
-      'round2((ps[0] || 0) + (ps[1] || 0))',   // recent = D-2 + D-1
-      'round2(ps[2] || 0)',                    // today = D0
-      'pop[2] != null',                        // today PoP
-      'round2(tomorrow + (ps[4] || 0))',       // upcoming = D1 + D2
-      'pop[3] != null',                        // tomorrow PoP
-      'Number.isFinite(ps[1])',                // yesterday actual = D-1
+      'sumOrNull(numOrNull(ps[0]), numOrNull(ps[1]))',   // recent = D-2 + D-1
+      'round2OrNull(numOrNull(ps[2]))',                   // today = D0
+      'pop[2] != null',                                   // today PoP
+      'sumOrNull(tomorrow, numOrNull(ps[4]))',            // upcoming = D1 + D2
+      'pop[3] != null',                                   // tomorrow PoP
+      'Number.isFinite(ps[1])',                           // yesterday actual = D-1
     ]) expect(fetchPrecipBody).toContain(frag);
-    expect(fetchPrecipBody).toMatch(/const tomorrow = ps\[3\] \|\| 0/);
+    expect(fetchPrecipBody).toMatch(/const tomorrow = numOrNull\(ps\[3\]\)/);
+    expect(fetchPrecipBody).not.toMatch(/ps\[\d\]\s*(\|\||\?\?)\s*0\b/);
+    expect(fetchPrecipBody).not.toMatch(/tomorrow\s*(\|\||\?\?)\s*0\b/);
   });
 
   it('the frost lows read D1..D3 — indices 3,4,5, one past the precip window', () => {
@@ -220,10 +227,16 @@ describe('F1 — et0_fao_evapotranspiration is APPENDED, never inserted', () => 
 // ── V5-WXBACKFILLVARS-001 — five more appended fields, same discipline, one new URL parameter ─────
 //
 // The failure this block guards is the one the whole file is about, in a new place: five values read
-// BY NAME out of one JSON payload. Get a name wrong and Open-Meteo does not error — it omits the
-// field, the array reads empty, every value becomes null, and the column silently never populates.
+// BY NAME out of one JSON payload. Get a name wrong in the READ (`j.daily.<name>`) and nothing errors —
+// the array reads empty, every value becomes null, and the column silently never populates.
 // Get the ORDER wrong relative to the archive call and the two surfaces stop being readable against
 // each other. Both are pinned below.
+//
+// CORRECTED 2026-09-18 (BUG-FETCHPRECIPZERO-001): this used to say a wrong name "does not error" at
+// Open-Meteo. In the REQUEST it does — measured live, an unknown daily variable answers HTTP 400
+// {"error":true,"reason":"Cannot initialize ForecastVariableDaily from invalid String value ..."} and the
+// WHOLE response is lost, every field at once. Until that fix fetchPrecip turned that body into four
+// fabricated zero rain amounts; it now refuses it (null + the fetchPrecip WARN naming the reason).
 describe('V5 — the five backfillable quantities are APPENDED, never inserted', () => {
   const dailyList = () => {
     const m = fetchPrecipBody.match(/&daily=([a-z0-9_,]+)/i);
@@ -391,8 +404,10 @@ describe('V5 RADIATIVE — the three radiative-frost inputs ride the hourly list
     };
     const make = new Function('round2', 'round3', 'fetch', 'AbortSignal', 'console',
       `${body}\nreturn fetchPrecip;`);
+    // `ok: true` — a real Response always carries it, and since BUG-FETCHPRECIPZERO-001 fetchPrecip
+    // refuses a response without it (an Open-Meteo error is JSON and used to map to fabricated zeros).
     const fetchPrecip = make(round2, round3,
-      async () => ({ json: async () => payload }),
+      async () => ({ ok: true, status: 200, json: async () => payload }),
       { timeout: () => undefined }, { warn() {} });
 
     const out = await fetchPrecip(42.5, -72.6);
@@ -404,7 +419,7 @@ describe('V5 RADIATIVE — the three radiative-frost inputs ride the hourly list
     expect(out.hourly_frost.timezone).toBe('America/New_York');
     // and the absence branch really returns null, from the same real code
     const bare = { ...payload, hourly: { time: hours, precipitation: [0, 0, 0] } };
-    const fp2 = make(round2, round3, async () => ({ json: async () => bare }),
+    const fp2 = make(round2, round3, async () => ({ ok: true, status: 200, json: async () => bare }),
       { timeout: () => undefined }, { warn() {} });
     expect((await fp2(42.5, -72.6)).hourly_frost).toBeNull();
   });
