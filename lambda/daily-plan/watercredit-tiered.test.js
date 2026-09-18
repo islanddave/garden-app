@@ -165,8 +165,11 @@ describe('WXWATER rainStageFor + rainMaxDays (ceiling matrix + crop modifier + f
   });
   it('crop modifier: +1 for Mediterranean herbs, -1 for leafy/Solanaceae at flowering/fruiting, floor 1', () => {
     expect(rainMaxDays('in_ground', 'mature', 'rosemary')).toBe(6);        // 5 +1
-    expect(rainMaxDays('intermediate', 'fruiting', 'tomato')).toBe(1);     // 2 -1
-    expect(rainMaxDays('small_fast', 'fruiting', 'pepper')).toBe(1);       // 1 -1 -> floor 1
+    // BUG-WATERIDENTITYFREETEXT-001: Solanaceae identity now comes from the planting (4th arg, isSolanaceous),
+    // not the crop string, so these two pass one. The pepper line NEEDS it to stay non-vacuous: small_fast
+    // fruiting is already 1, so without an identity the floor below is never exercised and the line passes anyway.
+    expect(rainMaxDays('intermediate', 'fruiting', 'tomato', { genus: 'Solanum' })).toBe(1);     // 2 -1
+    expect(rainMaxDays('small_fast', 'fruiting', 'pepper', { genus: 'Capsicum' })).toBe(1);      // 1 -1 -> floor 1
     expect(rainMaxDays('intermediate', 'flowering', 'lettuce')).toBe(2);   // 3 -1
     expect(rainMaxDays('in_ground', 'vegetative', 'lettuce')).toBe(4);     // no mod (not flower/fruit)
   });

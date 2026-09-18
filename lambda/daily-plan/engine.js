@@ -35,7 +35,6 @@ const BAG_HEAT_GATE_F = 85;
 // empty/garbage watering verdict. Bump ONLY when the items task-array shape changes, in lockstep with both
 // readers' PLAN_SCHEMA_VERSION literals (pinned by an anti-drift source test).
 const PLAN_SCHEMA_VERSION = 1;
-const PEPPER_TOMATO = /pepper|tomato|eggplant|tomatillo|chile|chili|capsicum|solanum/i;
 
 function daysBetween(today, iso){ if(!iso) return null;
   const d0=new Date(iso.slice(0,10)+'T00:00:00Z').getTime(), t0=new Date(today.slice(0,10)+'T00:00:00Z').getTime();
@@ -453,14 +452,26 @@ function rainStageFor(status){ const s=(status||'').toLowerCase();
   if(s==='flowering') return 'flowering';
   if(s==='fruiting'||s==='fruit_set') return 'fruiting';
   return 'mature'; }   // active/harvested/mature/unknown -> mature (loosest column, still capped)
-function rainMaxDays(tier, status, crop){
+// BUG-WATERIDENTITYFREETEXT-001 — the Solanaceae half of the -1 arm keys on isSolanaceous(p), the SAME predicate
+// as coldFor's band (genus when stated, else the controlled slug, never free text). It was a pepper/tomato regex
+// on the care-profile crop STRING, so the two identities disagreed both ways: a leek (genus Allium) and a
+// watermelon (Citrullus) whose crop strings contained "pepper" matched it, and a Capsicum known by genus under
+// a generic crop string did not. `p` is a trailing param so the 3-arg calls keep working; omitted, there is no
+// identity and the arm stays off — the same answer isSolanaceous gives for absent genus + absent slug.
+// Population: isSolanaceous also admits potato (Solanum) and every Physalis. Wanted for potato — even moisture
+// from tuber initiation (~first flowers) through bulking is what prevents growth cracks and hollow heart.
+// INERT IN PROD: the one caller (generatePlanForUser's ceiling clamp) is gated on CARE_RAIN_MAXDAYS_ENABLED, absent from garden-daily-plan
+// (scripts/lambda-config-expected.json declares it null). Snapshot 2026-09-18 over the handler's live filter: 210
+// plantings, both predicates select the same 80, no live potato — so this closes the gap before a flip, and moves
+// nobody today. isLeafy and isMedHerb below are still free text; a med-herb crop string still pre-empts this arm.
+function rainMaxDays(tier, status, crop, p){
   const stage=rainStageFor(status);
   const base=(RAIN_MAX_DAYS[tier]||RAIN_MAX_DAYS.unknown)[stage];
   if(base==null) return null;
   const c=(crop||'').toLowerCase();
   let mod=0;
   if(isMedHerb(c)) mod=1;                                                                 // deep taproot, wilt-tolerant
-  else if((isLeafy(c)||PEPPER_TOMATO.test(c)) && (stage==='flowering'||stage==='fruiting')) mod=-1; // steady-moisture crops
+  else if((isLeafy(c)||(!!p&&isSolanaceous(p))) && (stage==='flowering'||stage==='fruiting')) mod=-1; // steady-moisture crops
   return Math.max(1, base+mod); }
 // Tiered rain credit — mirrors rainCreditDays but with per-tier IA + hold. Returns {credit_days,wp,eff,tier} or null.
 function rainCreditDaysTiered(tier, wi, hy, measuredOnly=false){
@@ -1128,7 +1139,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     // vesselProfile is a pure parse (ledger.js:109) already require'd at the top of this file, so no new import.
     const _rainTier = (rainCreditEnabled || rainMaxDaysEnabled)
       ? rainTierFor(p.container_type, ledger.vesselProfile(p.container_type, p.container_size).sizeGal) : null;
-    if(rainMaxDaysEnabled){ const _cap=rainMaxDays(_rainTier, p.status, c.crop); if(_cap!=null && wi>_cap) wi=_cap; }
+    if(rainMaxDaysEnabled){ const _cap=rainMaxDays(_rainTier, p.status, c.crop, p); if(_cap!=null && wi>_cap) wi=_cap; }
     const dW=daysBetween(today,p.last_water);
     // DRG-WATERCREDIT-001 Path B-plus: credit qualifying window rain against the cadence (per class), with a
     // fresh-transplant carve-out. A credited planting drops OUT of water_due (so counts.water_due is correct —
