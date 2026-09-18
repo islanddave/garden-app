@@ -264,11 +264,39 @@ def test_cli_over_budget_is_unknown(monkeypatch):
     assert cc.main(["--dev-sha", DEV]) == 2
 
 
-# ── the two workflow steps, executed ──────────────────────────────────────────────────────────────
+# ── the two workflow steps, executed as the runner executes them ──────────────────────────────────
+#
+# GitHub runs a `run:` step that declares no shell as `bash -e {0}`, {0} being a file holding the body, so
+# errexit is ON. These helpers used `bash -c` (no -e) until B1 of the v4.138.0 pre-ship pass, and passed a
+# lam step that failed on the runner on every "deploy" answer. Never go back to `bash -c`.
+
+RUNNER_SHELL = ["bash", "-e"]
+
 
 def _workflow(name):
     with open(os.path.join(HERE, "..", ".github", "workflows", name)) as fh:
         return yaml.safe_load(fh)
+
+
+def _declared_shell(workflow, job, step):
+    """The shell a step declares itself or inherits from job/workflow `defaults.run`; None = runner default."""
+    wf = _workflow(workflow)
+    for scope in (step, (wf["jobs"][job].get("defaults") or {}).get("run") or {},
+                  (wf.get("defaults") or {}).get("run") or {}):
+        if scope.get("shell"):
+            return scope["shell"]
+    return None
+
+
+def _run_as_runner(tmp_path, body, env):
+    script = tmp_path / "step.sh"
+    script.write_text(body)
+    return subprocess.run(RUNNER_SHELL + [str(script)], env=env, capture_output=True, text=True)
+
+
+def test_the_harness_runs_with_errexit_on_like_the_runner(tmp_path):
+    proc = _run_as_runner(tmp_path, "set -uo pipefail\nfalse\necho reached\n", dict(os.environ))
+    assert proc.returncode == 1 and "reached" not in proc.stdout
 
 
 def _stub(bindir, name, body):
@@ -291,7 +319,7 @@ def _run_lam(tmp_path, rc, force="false"):
     out.write_text("")
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", GITHUB_OUTPUT=str(out), FORCE=force,
                DEV_SHA=DEV, REPO="islanddave/garden-app", GH_TOKEN="t")
-    proc = subprocess.run(["bash", "-c", _lam_step()["run"]], env=env, capture_output=True, text=True)
+    proc = _run_as_runner(tmp_path, _lam_step()["run"], env)
     return proc, out.read_text(), (called.read_text() if called.exists() else "")
 
 
@@ -323,6 +351,13 @@ def _marker_step():
     return steps, next(s for s in steps if (s.get("name") or "").startswith("Record deployed source"))
 
 
+def test_both_executed_steps_run_under_the_shell_the_harness_models():
+    """A declared shell (step, job or workflow `defaults`) changes the runner's command; model it before
+    trusting RUNNER_SHELL for that step."""
+    assert _declared_shell("promote-gate.yml", "promote", _lam_step()) is None
+    assert _declared_shell("deploy-lambda.yml", "deploy", _marker_step()[1]) is None
+
+
 def test_marker_step_is_last_and_cannot_red_a_leg():
     steps, step = _marker_step()
     assert steps[-1] is step
@@ -348,7 +383,7 @@ def _run_marker(tmp_path, live_code=None, get_rc=0, update_rc=0):
     env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", FN="garden-varieties", ZIP=str(zip_path),
                RECIPE_SHA=NEWER, GITHUB_RUN_ID="35274928023", GITHUB_RUN_ATTEMPT="2")
     _, step = _marker_step()
-    proc = subprocess.run(["bash", "-c", step["run"]], env=env, capture_output=True, text=True)
+    proc = _run_as_runner(tmp_path, step["run"], env)
     return proc, (log.read_text() if log.exists() else ""), want
 
 
