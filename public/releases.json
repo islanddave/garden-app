@@ -5,7 +5,7 @@
     "highlights": [
       "Frost warnings now name the night the cold actually arrives (tonight, tomorrow night or the weekday) instead of usually one night late, and the advisory email's subject shows the advisory's own low",
       "The frost email goes out once per night even when two people have plants in the garden, and both of you see the frost line on Today",
-      "Frost warnings no longer count plants that shrug off frost (horseweed, Autumn Fire stonecrop, goldenrod, lamb's ear, yarrow), and Pineapple Sage, Graptosedum and Pachyphytum now get a bring-inside card on cold nights",
+      "Frost warnings no longer count plants that shrug off frost: horseweed, goldenrod, lamb's ear and yarrow",
       "In-ground plants keep their cold card on nights the frost email won't mention them",
       "A Heated checkbox on the location form marks a warm spot like the House, so frost warnings and cold cards skip it",
       "Weather-station alerts now come year-round, at most one a day per problem, including a new one when the outdoor sensors stop reporting",
