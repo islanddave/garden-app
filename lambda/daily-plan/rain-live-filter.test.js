@@ -151,10 +151,11 @@ function outerWhereOf(flat) {
 // ── end of the copy ──────────────────────────────────────────────────────────────────────────────
 
 // SQL comments, as POSTGRES reads them — the one addition to the copied parser. strip() removes a
-// `--` only when a space follows it (it has to: it runs over JavaScript, where `i--` is code), so
-// `--and gn.deleted_at is null` survived it as live-looking text while Postgres ignored the whole
-// line: measured, that mutant ran green before this pass existed. Block comments were never removed
-// at all. Quoted strings are matched first, so a `--` inside a literal stays a literal.
+// `--` only when a space follows it (it has to: it runs over JavaScript, where `i--` is code), and it
+// never removes a block comment. Measured without this pass: `--AND p.deleted_at IS NULL` in the
+// backfill left this file's writer assertions AND rain-roof-rule.test.js green, and the same edit
+// placed after the handler's roof was caught only by accident, by the roof guard's "buried" check.
+// Quoted strings are matched first, so a `--` inside a literal stays a literal.
 const SQL_COMMENT = /'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|\/\*[\s\S]*?\*\//g
 const sqlOnly = (sql) => sql.replace(SQL_COMMENT, (m) => (m.startsWith('--') || m.startsWith('/*') ? ' ' : m))
 
@@ -281,6 +282,7 @@ describe('OPS-RAININSERTLIVEFILTER-001 — the rain autologger credits live plan
       [`ct.deleted_at is null and ${A}`, { live: T, deleted: T, archived: F, deletedAndArchived: F }],
       [`(${D} and ${A}) or (${A} and x)`, { live: T, deleted: T, archived: F, deletedAndArchived: F }],
       [`${A}\n --and ${D}\n and ${R}`, { live: T, deleted: T, archived: F, deletedAndArchived: F }],
+      [`${A} and ${R}\n --and ${D}`, { live: T, deleted: T, archived: F, deletedAndArchived: F }],
       [`${A} /* and ${D} */ and ${R}`, { live: T, deleted: T, archived: F, deletedAndArchived: F }],
       [`${D}\n -- and ${A}\n and ${R}`, { live: T, deleted: F, archived: T, deletedAndArchived: F }],
     ]
