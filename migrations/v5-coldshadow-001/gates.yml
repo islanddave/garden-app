@@ -20,10 +20,15 @@
 #     (more protective), a lower one breaks Dave's decision.
 #   * Apply-window receipts (continuous: false): the exact value 0a wrote, the single-key method, and the
 #     engine's view of the two plantings. A later, deliberate edit of either profile is not a regression.
-#   * Identity receipts and every receipt naming a row id are env: prod. The ids were read on prod; this
-#     lane was cleared to read prod only, so whether staging carries these rows is unverified. 0a is
-#     id-keyed and guarded, so where they are absent it matches nothing, the safe direction, and the
-#     standing gate has no population there.
+#   * EVERY gate that names a prod id is env: prod — the standing invariant included. Its population is
+#     defined by two prod cultivar ids, not by anything this migration mints, so on staging it would be
+#     judging rows 0a cannot have touched: 0a is keyed to prod care_profile row ids, and those rows were
+#     written on prod on 2026-08-23, after the staging branch was cut (2026-08-11). If staging carries
+#     the cultivars with no such row, their plantings do not adopt a database profile at all; if it
+#     carries some other profile without `cold`, 0a matches nothing there and a 'both' gate would red on
+#     a throwaway environment for a row this file never wrote. This lane was cleared to read prod only,
+#     so staging's actual state is unverified. On staging the apply therefore stamps the version and
+#     nothing else, the safe direction (the v4-cadencerefill-001 precedent for prod-id-keyed data).
 #   * No gate names a column this migration adds (it adds none), so every gate parses on an unapplied
 #     database.
 #
@@ -95,11 +100,12 @@ pre:
     value: 1
 
   - name: pre_no_leaf_override_carries_cold
+    env: prod
     note: >
       v_resolved_care merges system || cultivar || leaf, right wins. A leaf-scope row carrying its own
       `cold` on a planting of either cultivar would override what 0a writes on the cultivar row, so the
       fix would not reach that planting. None exists at authoring; if one appears, stop and decide which
-      value is meant before applying. Vacuous where the cultivars are absent.
+      value is meant before applying.
     sql: |
       SELECT lo.id, p.name
         FROM public.care_profile lo
@@ -138,6 +144,7 @@ post:
   # ── STANDING INVARIANT (continuous, self-armed) ────────────────────────────────────────────────────
 
   - name: post_no_db_profile_shadows_the_40F_card
+    env: prod
     note: >
       Dave's decision (2026-09-18) as an invariant: every live planting of Graptosedum or Pachyphytum whose
       care comes from a database profile gets a bring-inside card at 40F. Read through v_resolved_care, the

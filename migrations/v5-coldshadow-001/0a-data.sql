@@ -61,10 +61,12 @@
 -- LANDING ORDER: none. No code change; no column added or removed; nothing reads a key this adds
 -- except coldFor and cadenceTenderFor, which already read it.
 --
--- SAFETY: idempotent and non-clobbering. On a database without these rows (staging, if it does not
--- carry Dave's prod cultivars) both UPDATEs match zero rows and only the stamp is written, the safe
--- direction. On PROD both must print UPDATE 1: an UPDATE 0 there means the wrong host or a changed row —
--- stop and read the pre gates (neon-psql-env-local: a guarded UPDATE 0 reads like "already applied").
+-- SAFETY: idempotent and non-clobbering. On a database without these rows both UPDATEs match zero rows
+-- and only the stamp is written, the safe direction. That is the expected staging result: the two rows
+-- were written on prod on 2026-08-23 and the staging branch was cut from prod on 2026-08-11, so staging
+-- cannot carry these row ids unless they were copied there since (not read: this lane was cleared to
+-- read prod only). On PROD both must print UPDATE 1: an UPDATE 0 there means the wrong host or a changed
+-- row — stop and read the pre gates (a guarded UPDATE 0 reads like "already applied").
 -- ROLLBACK: 0r-rollback.sql.
 
 BEGIN;
