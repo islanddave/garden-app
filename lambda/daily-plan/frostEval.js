@@ -635,8 +635,42 @@ function frostEval(input = {}, opts = {}) {
   };
 }
 
+// ── BUG-INGROUND39FSLIVER-001 — what the frost email does about each at-risk planting tonight ──────────
+// engine.coldFor drops an in-ground planting's bring-in card on the premise "the frost email covers it"
+// (V5-COLDCARDREACHABLE-001; Dave 2026-09-17: a bed cannot be carried inside, so in-ground plantings rely on
+// the email). The premise used to be checked by CLASS only (not hardy, not heated), so the card dropped on
+// nights the email never sent: NWS 39F with Open-Meteo D1 42F trips neither the imminent tier (tonightLow
+// <= 38, NWS) nor the advisory (D1..D3 <= 40, Open-Meteo), and an in-ground potato got no card and no email
+// (real run(), 2026-10-05). This answers the premise from the email's OWN decision, so the two cannot drift.
+// Returns Map(planting id -> standing), over every planting in the exposure the decision was evaluated on:
+//   'named'      its crop is in decision.trippedCrops, whichever tier won the single message (imminent,
+//                advisory or radiative). Per crop, not per night: when the imminent tier fires, a crop that
+//                met only its advisory point is not in the message, and reads 'unnamed' here too.
+//   'above_band' not named, and tonightLow does not meet its crop's own ADVISORY point (evalAdvisoryCrops, the
+//                email's per-crop predicate, run on the card's low): the channel is silent BY DESIGN here —
+//                frostClass.js "THE ACCEPTED COST", which Dave extended to the in-ground card 2026-09-17.
+//   'unnamed'    at or inside its band and not named: the email is silent about a night it covers. The card
+//                is the only message left, so coldFor keeps it.
+// A planting summarize leaves out (hardy by class, heated, dormant) has no entry and keeps its card. A null
+// tonightLow proves nothing is above any band, and a crop whose band carries no trip points (an explicit null
+// via FROST_BAND_THRESHOLDS_JSON) has no band to be above: both read 'unnamed'. No decision -> null.
+function frostCoverage(decision, exposure, tonightLow) {
+  if (!decision) return null;
+  const T = (decision.observability && decision.observability.thresholds) || resolveThresholds();
+  const ids = (c) => (c && Array.isArray(c.ids) ? c.ids : []);
+  const named = new Set((Array.isArray(decision.trippedCrops) ? decision.trippedCrops : []).flatMap(ids));
+  const low = finite(tonightLow);
+  const out = new Map();
+  for (const g of (exposure && Array.isArray(exposure.byCropType) ? exposure.byCropType : [])) {
+    if (!g) continue;
+    const aboveBand = low != null && !!cropThresholds(g, T) && !evalAdvisoryCrops(low, [g], T, null).fires;
+    for (const id of ids(g)) out.set(id, named.has(id) ? 'named' : (aboveBand ? 'above_band' : 'unnamed'));
+  }
+  return out;
+}
+
 module.exports = {
-  frostEval, resolveThresholds, dedupKey, cropDigest,
+  frostEval, frostCoverage, resolveThresholds, dedupKey, cropDigest,
   escalatesBeyond, cropLevels, severityRank, FROST_SEVERITY_RANK,
   evalAdvisory, evalImminent, evalHeat, evalImminentCrops, evalAdvisoryCrops,
   advisoryMessage, imminentMessage, heatMessage, exposurePhrase, cropListPhrase, totalsPhrase, truncate,

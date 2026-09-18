@@ -6,7 +6,7 @@
 const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
 const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, FRESHNESS_MAX_MIN, ARRAY_SILENT_MIN_GAP_MIN } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001; FRESHNESS_MAX_MIN BUG-STATIONSTALESILENT-001; ARRAY_SILENT_MIN_GAP_MIN V5-STATIONHEALTHYEAR-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
-const { frostEval, isFrostSeason, resolveFrostRun, escalatesBeyond } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001
+const { frostEval, frostCoverage, isFrostSeason, resolveFrostRun, escalatesBeyond } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001; frostCoverage BUG-INGROUND39FSLIVER-001
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
 const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
 const drought = require('./droughtSignal');                                      // V5-LEGACYEXCEPTIONCARE-001
@@ -883,6 +883,50 @@ function frostSubject(d) {
   return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);
 }
 
+// Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop
+// types. D6: one coalesced alert naming every crop type that tripped ITS OWN threshold; plantings in a
+// HEATED location are excluded (frostClass.summarize). BUG-INGROUND39FSLIVER-001: returns the decision the
+// frost email publishes AND frostCoverage over that same decision, which engine.coldFor reads to drop an
+// in-ground bring-in card, so the card cannot rely on an email that does not name the planting. Pure (no
+// clock, no I/O); run() calls it once per Space and tests call it to build the coverage the same way.
+function frostForSpace({ rows, weather, hydrology, lowSource, spaceId, today, frostSeason }) {
+  const wx = weather || null;
+  const hy = hydrology || null;
+  // BUG-FROSTDORMANT-001: `rows` is the UNFILTERED per-space planting set. generatePlan
+  // drops dormant plantings internally (engine.js:387 — `p.status==='dormant' || c.dormant_skip`
+  // then `continue`, before the cold bucket at :493), but that guard lives INSIDE the engine and
+  // does not travel with the array. Handing the same `rows` to summarize() let a dormant planting
+  // into the frost exposure set and therefore into a real outbound alert (FROST_ALERT_ENABLED is
+  // "true" in prod; the topic emails Dave). Dave, 2026-08-10: dormant stock is in temp/humidity-
+  // controlled bins and "never need that treatment".
+  // Filtered HERE rather than inside summarize() so summarize stays a pure classifier, and built
+  // from the engine's own predicate (resolveCadence is already imported for cadenceTenderFor) so
+  // the two cannot drift — one `continue` in the engine was the entire defence and a second
+  // consumer walked straight past it.
+  const careRows = rows.filter(p => {
+    const c = resolveCadence(p, cadence);
+    return !(p.status === 'dormant' || (c && c.dormant_skip));
+  });
+  // cadence cold.tender is a PROMOTION-ONLY signal into frostClass (it can lift an unknown slug to tender,
+  // never override an explicit one) — see frostClass.js for the by_variety['Peach'] pepper/peach-tree collision.
+  const cadenceTenderFor = (p) => { const c = resolveCadence(p, cadence); return !!(c && c.cold && c.cold.tender); };
+  const exposure = summarize(careRows, { cadenceTenderFor });
+  const decision = frostEval({
+    tonightLow: wx ? wx.tonightLow : null,
+    highToday: wx ? wx.highToday : null,
+    forecastLows: hy ? hy.forecast_lows : null,          // G5 — index.js:fetchPrecip temperature_2m_min
+    forecastDates: hy ? hy.forecast_dates : null,
+    lowSource: lowSource || (wx ? 'forecast' : 'forecast_absent'),
+    // V5-RADIATIVEFROST-001 — per-night dewpoint/cloud/wind derived from the hourly block
+    // index.js already carries. [] (not null) when the block is absent, which reads downstream as
+    // "no radiative signal for any night" and leaves every existing trip point untouched.
+    radiativeNights: nightsFrom(hy ? hy.hourly_frost : null),
+    exposure, spaceId, eventDate: today,
+  }, { frostSeason });
+  // wx.tonightLow is the value generatePlan hands coldFor as `low` (run() passes the same wxBySpace entry).
+  return { decision, coverage: frostCoverage(decision, exposure, wx ? wx.tonightLow : null) };
+}
+
 // V4-COVEREDNOTMODELLED-001 phase 2 — COVERAGE INHERITED FROM THE NEAREST STATED ANCESTOR.
 //
 // Phase 1 (migration v4-loccovered-001 + the `cov` lateral below) made coverage an editable
@@ -1556,15 +1600,27 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // intraday-pm run may evaluate. resolveFrostRun is pure; index.js supplies the ET hour.
   const frostRun = resolveFrostRun(event, { etHour });
   const frostSeason = isFrostSeason(today);                       // §3-7 Sep 1 – Nov 15
-  // cadence cold.tender is a PROMOTION-ONLY signal into frostClass (it can lift an unknown slug to tender,
-  // never override an explicit one) — see frostClass.js for the by_variety['Peach'] pepper/peach-tree collision.
-  const cadenceTenderFor = (p) => { const c = resolveCadence(p, cadence); return !!(c && c.cold && c.cold.tender); };
   const frostPublished = new Set();       // one publish per dedup key per invocation, across users
   const frostFailures = [];               // §3-7: collected, then THROWN after the plan is durable
   const plans = [];
   const bySpace = {};
   for (const p of plantings) (bySpace[p.workspace_id] ||= []).push(p);
   for (const [spaceId, rows] of Object.entries(bySpace)) {
+    // BUG-INGROUND39FSLIVER-001 — the frost decision is made BEFORE the plan, so the in-ground cold card
+    // can drop only for a planting this decision names (engine.coldFor). The evaluating runs (14-17 ET)
+    // compute it exactly as before: a throw (an invalid FROST_BAND_THRESHOLDS_JSON inside summarize)
+    // still fails the run loud. Every other run computes it only while the alert is on, since coldFor
+    // ignores coverage with the flag off, and never publishes or logs it. There a throw keeps every
+    // in-ground card (coverage null) instead of costing the plan: those runs never evaluated frost before.
+    const frostIn = { rows, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId],
+      lowSource: (stationProvBySpace[spaceId] || {}).low_source, spaceId, today, frostSeason };
+    let frost = null;
+    if (frostRun.evaluate) frost = frostForSpace(frostIn);
+    else if (frostAlertEnabled) {
+      try { frost = frostForSpace(frostIn); } catch (e) {
+        console.error(JSON.stringify({ msg: 'frost coverage FAILED — in-ground cold cards kept', space: spaceId, error: e?.message }));
+      }
+    }
     // V4-WATERMATH-001 F2 — the F1 seam is CONSUMED now: weatherDaily + the per-planting event
     // window + the run instant feed the ledger fold, all behind waterLedgerEnabled. enabled is
     // ANDed with `ledgerEvents != null` so a failed event-window read degrades the run to flag-OFF
@@ -1574,46 +1630,14 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       droughtState: droughtBySpace[spaceId] || null,
       // BUG-INGROUNDOFFSEASONSILENT-001 — engine.coldFor drops an in-ground bring-in card only while the
       // frost alert can publish, so the kill switch above must travel with the plan, not stay handler-local.
-      frostAlertEnabled });
+      frostAlertEnabled, frostCoverage: frost ? frost.coverage : null });
     // V5-DROUGHTSPACE-001 — the garden-wide line, computed ONCE per Space and written onto every user's
     // row in it. null on every day the signal does not fire, which is what keeps the key absent.
     const gardenDrought = drought.gardenDrought(droughtBySpace[spaceId] || null);
-    // Frost is a SITE-level event (§3-3): evaluated once per Space, then annotated with the affected crop
-    // types. D6: one coalesced alert naming every crop type that tripped ITS OWN threshold; plantings
-    // already under cover are excluded (frostClass.summarize's covered filter).
     let frostDecision = null;
     if (frostRun.evaluate) {
-      const wx = wxBySpace[spaceId] || null;
       const hy = hyBySpace[spaceId] || null;
-      const prov = stationProvBySpace[spaceId] || {};
-      // BUG-FROSTDORMANT-001: `rows` is the UNFILTERED per-space planting set. generatePlan above
-      // drops dormant plantings internally (engine.js:387 — `p.status==='dormant' || c.dormant_skip`
-      // then `continue`, before the cold bucket at :493), but that guard lives INSIDE the engine and
-      // does not travel with the array. Handing the same `rows` to summarize() let a dormant planting
-      // into the frost exposure set and therefore into a real outbound alert (FROST_ALERT_ENABLED is
-      // "true" in prod; the topic emails Dave). Dave, 2026-08-10: dormant stock is in temp/humidity-
-      // controlled bins and "never need that treatment".
-      // Filtered HERE rather than inside summarize() so summarize stays a pure classifier, and built
-      // from the engine's own predicate (resolveCadence is already imported for cadenceTenderFor) so
-      // the two cannot drift — one `continue` in the engine was the entire defence and a second
-      // consumer walked straight past it.
-      const careRows = rows.filter(p => {
-        const c = resolveCadence(p, cadence);
-        return !(p.status === 'dormant' || (c && c.dormant_skip));
-      });
-      const exposure = summarize(careRows, { cadenceTenderFor });
-      frostDecision = frostEval({
-        tonightLow: wx ? wx.tonightLow : null,
-        highToday: wx ? wx.highToday : null,
-        forecastLows: hy ? hy.forecast_lows : null,          // G5 — index.js:fetchPrecip temperature_2m_min
-        forecastDates: hy ? hy.forecast_dates : null,
-        lowSource: prov.low_source || (wx ? 'forecast' : 'forecast_absent'),
-        // V5-RADIATIVEFROST-001 — per-night dewpoint/cloud/wind derived from the hourly block
-        // index.js already carries. [] (not null) when the block is absent, which reads downstream as
-        // "no radiative signal for any night" and leaves every existing trip point untouched.
-        radiativeNights: nightsFrom(hy ? hy.hourly_frost : null),
-        exposure, spaceId, eventDate: today,
-      }, { frostSeason });
+      frostDecision = frost.decision;
       // §3-8 — emitted on EVERY evaluation, alert or not. This log is also the 2026 corpus for the 2027
       // learned microclimate offset (G4): nightly station minimum vs NWS forecast low.
       console.log(JSON.stringify({ msg: 'frost-eval', space: spaceId, plan_date: today, run: frostRun.slot,
@@ -1906,7 +1930,7 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   return { dryRun, today, ping: !!(event && event.ping === true), flagOverrides };
 }
 
-module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, frostWeatherFacts, ALERTS_SENT_MAX,
+module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, frostWeatherFacts, frostForSpace, ALERTS_SENT_MAX,
   writeWeatherDaily, readWeatherDaily, weatherWindowStart, WEATHER_DAILY_WINDOW_DAYS,
   readLedgerEvents, LEDGER_OVERRIDABLE_FLAGS, sweepSupersededAnchors,
   COVER_INHERIT_CTE, COVER_INHERIT_JOIN, COVER_INHERIT_ARM,

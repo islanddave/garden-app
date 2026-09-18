@@ -856,7 +856,7 @@ function fertilizeRec(p, c, fm, today){
   return {id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:isHeavyFeeder(c.crop)&&false,status:p.status,weeks_since_pot:wk,phase,interval:iv,never,...rec};
 }
 
-function coldFor(p, cad, low, frostAlertEnabled=false){
+function coldFor(p, cad, low, frostAlertEnabled=false, frostCoverage=null){
   if(low==null) return null;
   const c=resolveCadence(p,cad);
   // BUG-COLDNAMEMATCHNAG-001 — the already-indoors check is HOISTED above the solanaceous band.
@@ -876,18 +876,27 @@ function coldFor(p, cad, low, frostAlertEnabled=false){
   // NULL (an un-located planting, an older caller) means NOT heated, which fails toward a card.
   if(p.heated_resolved===true) return null;
   // V5-COLDCARDREACHABLE-001 (in-ground) — "bring it inside" cannot be done to a plant in the ground
-  // (18 of 61 protect cards 09-01..09-17; also potato, which the genus key put in the band). Scoped
-  // to plantings the frost ALERT names (frostAlertNames), so dropping the card never leaves a planting
-  // with no cold message: that alert counts in-ground plantings and tells Dave to cover them. Only the
-  // two BRING-IN levels are dropped; `optional` ("protect flowering plant") can be done in the ground.
-  // BUG-INGROUNDOFFSEASONSILENT-001 — and only while that alert can SEND. frostAlertNames answers "would
-  // the alert name it", not "is the alert switched on": with FROST_ALERT_ENABLED off (the F6 kill switch,
-  // handler.js) nothing publishes, and dropping the card left an in-ground tender planting with no cold
-  // message on either channel. The handler passes its own flag in; absent means OFF, which fails toward a
-  // card. Deliberately NOT gated on frost season: isFrostSeason gates only the DEGRADED alert and
-  // station_unbound, and the frost alert itself publishes all year (run() on 2027-05-10, 35F: "FROST
+  // (18 of 61 protect cards 09-01..09-17; also potato, which the genus key put in the band), so an
+  // in-ground planting relies on the frost ALERT, which counts in-ground plantings and tells Dave to cover
+  // them. Only the two BRING-IN levels are dropped; `optional` ("protect flowering plant") can be done in
+  // the ground.
+  // BUG-INGROUNDOFFSEASONSILENT-001 — and only while that alert can SEND. With FROST_ALERT_ENABLED off (the
+  // F6 kill switch, handler.js) nothing publishes, and dropping the card left an in-ground tender planting
+  // with no cold message on either channel. The handler passes its own flag in; absent means OFF, which
+  // fails toward a card. Deliberately NOT gated on frost season: isFrostSeason gates only the DEGRADED alert
+  // and station_unbound, and the frost alert itself publishes all year (run() on 2027-05-10, 35F: "FROST
   // PROTECT TONIGHT … potatoes (2)"), so a season gate would put the unactionable card back beside it.
-  const _inGroundAlerted=frostAlertEnabled===true&&likelyInGround(p,c)&&frostAlertNames(p);
+  // BUG-INGROUND39FSLIVER-001 — and only when the alert actually NAMES this planting for this forecast. The
+  // check used to be class-only ("a kind the alert ever names": not hardy, not heated), so the card also
+  // dropped on nights the alert stayed silent: NWS 39F with Open-Meteo D1 42F trips neither the imminent tier
+  // (<= 38 on NWS) nor the advisory (<= 40 on Open-Meteo), and an in-ground potato got no card and no email.
+  // frostCoverage is frostEval.frostCoverage over the handler's OWN frost decision for this Space and run, so
+  // it cannot drift from the email. The card drops only when the planting reads 'named', or 'above_band' —
+  // the low is above its crop's frost band, where the alert is silent by design and Dave accepted the
+  // 41-50F in-ground gap (2026-09-17). 'unnamed', no entry (hardy by class, heated, not in the exposure) and
+  // no coverage at all (an older caller, or the handler could not evaluate) all keep the card.
+  const _cov=frostCoverage&&typeof frostCoverage.get==='function' ? frostCoverage.get(p.id) : undefined;
+  const _inGroundAlerted=frostAlertEnabled===true&&likelyInGround(p,c)&&(_cov==='named'||_cov==='above_band');
   if(isSolanaceous(p)){
     if(low<40) return _inGroundAlerted ? null : {level:'bring_in', text:`bring inside tonight (low ${low}°F)`};
     if(low<45) return ['flowering','fruiting'].includes(p.status) ? {level:'optional', text:`optional: protect flowering plant (low ${low}°F)`} : null;
@@ -937,22 +946,6 @@ function broughtInside(p){
   const in_=p && p.last_brought_inside, out=p && p.last_brought_outside;
   if(!in_) return false;
   return !out || in_>=out;
-}
-
-// V5-COLDCARDREACHABLE-001 — true when the coalesced frost alert (handler.js -> frostClass.summarize)
-// names this planting on a frost night. summarize drops exactly two things, and this mirrors both
-// through frostClass's own exports so the channels cannot drift: a slug banded `hardy`, and a planting
-// in a HEATED location. BUG-FROSTALERTSTABLE-001 (Dave 2026-09-18) moved the second from `covered` to
-// `heated`: a bed in the unheated Stable or under a tunnel is now NAMED by the alert, so its in-ground
-// card is suppressed like any other alerted bed. A hardy-slugged planting with a tender cold profile is
-// a data contradiction the alert resolves toward hardy, so that one keeps its card. Dormant needs no
-// clause: the engine skips it before coldFor, and the handler filters it before summarize.
-// resolvedBands is passed so this never reads the FROST_* env overrides: an invalid one (unknown band,
-// non-numeric value) throws inside resolveBandThresholds, and that must stay confined to the 15:30 frost
-// run, not every run's cold pass. The class verdict does not depend on thresholds, so nothing is lost.
-function frostAlertNames(p){
-  if(fc.frostClassForSlug(p.crop_type_slug, {resolvedBands:fc.BAND_THRESHOLDS}).class==='hardy') return false;
-  return !fc.isHeatedDefault(p);
 }
 
 // ── DRG-NOCALWATER-001 — dormancy/growth-cycle watering suppression ──
@@ -1051,7 +1044,7 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
 // `satOpts` is an OBJECT, not two more positionals: this list is already twelve deep and every caller
 // passes them by position, so a thirteenth and fourteenth boolean would be one transposition away from
 // silently arming a suppression branch. Defaults to {} so every existing caller is byte-identical.
-function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false, droughtState=null, satOpts={}, frostAlertEnabled=false){
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false, droughtState=null, satOpts={}, frostAlertEnabled=false, frostCoverage=null){
   const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[], feedSuppressed=[];
   let overwinterHeld=0, overwinterDeferred=0;
@@ -1334,7 +1327,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     const pw=cad.pest_watch&&cad.pest_watch.cucurbit_beetle;
     if(pw&&pw.active){ const txt=((p.name||'')+' '+(p.variety||'')+' '+(c.crop||'')).toLowerCase();
       if((p.genus&&pw.genera.includes(p.genus))||pw.name_keywords.some(k=>txt.includes(k))) pest.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:likelyInGround(p,c),label:pw.label}); }
-    const cd=coldFor(p,cad,low,frostAlertEnabled); if(cd) cold.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,...cd});
+    const cd=coldFor(p,cad,low,frostAlertEnabled,frostCoverage); if(cd) cold.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,...cd});
   }
   const ovk=a=>a.never?-1:(a.overdue_by??-1);
   const due=water.filter(w=>!w.never).sort((a,b)=>ovk(b)-ovk(a));
@@ -1447,7 +1440,10 @@ function hydrologyStatus(hy){
 // handler threads through (weatherDaily was already passed as the F1 seam; it is consumed now).
 // All default to inert — an un-updated caller is byte-identical, and enabled-without-events stays
 // legacy (the handler passes enabled=false when the event-window read fails).
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null, deferDryEnabled=false, soonAwareEnabled=false, frostAlertEnabled=false}){
+// BUG-INGROUND39FSLIVER-001: frostCoverage is frostEval.frostCoverage over the handler's frost decision for
+// this Space (a Map keyed by planting id, shared by every user in the Space); see coldFor. Default null keeps
+// every in-ground card, so a caller that supplies the flag but no coverage gets cards, not silence.
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null, deferDryEnabled=false, soonAwareEnabled=false, frostAlertEnabled=false, frostCoverage=null}){
   const ledgerOpts = (waterLedgerEnabled && eventsByPlant)
     ? ledger.buildLedgerOpts({ weatherDaily, eventsByPlant, today, nowMs })
     : null;
@@ -1465,7 +1461,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const rainComing = _todayComing || _tomorrowComing;
   const rainHorizon = _todayComing ? 'today' : (_tomorrowComing ? 'tomorrow' : null);
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState,{deferDry:deferDryEnabled,soonAware:soonAwareEnabled},frostAlertEnabled);
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState,{deferDry:deferDryEnabled,soonAware:soonAwareEnabled},frostAlertEnabled,frostCoverage);
     users[u]=up; }
   const lwOut=(hy && Array.isArray(hy.wetness_window)) ? lw.assessLeafWetness(hy.wetness_window, today) : null;
   return {date:today,

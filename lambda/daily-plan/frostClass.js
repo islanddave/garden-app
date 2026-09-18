@@ -470,10 +470,14 @@ function summarize(plantings, opts = {}) {
         slug: r.class === 'unknown' ? null : r.slug,
         label: r.class === 'unknown' ? 'unclassified' : r.label,
         band: r.band, class: r.class, thresholds: r.thresholds,
-        count: 0, containers: 0, fruiting: 0, names: [],
+        count: 0, containers: 0, fruiting: 0, names: [], ids: [],
       };
       byType.set(key, g);
     }
+    // BUG-INGROUND39FSLIVER-001 — every planting id, uncapped (unlike `names`), so frostEval.frostCoverage can
+    // say which plantings a tripped crop covers without re-deriving this grouping. Never reaches the message,
+    // the dedup key or alerts_sent: those read slug/label/count/level only.
+    g.ids.push(p.id);
     g.count++;
     if (container) g.containers++;
     if (fruiting) g.fruiting++;

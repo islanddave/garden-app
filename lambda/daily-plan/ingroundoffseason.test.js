@@ -2,7 +2,8 @@
 // alert can actually SEND.
 //
 // V5-COLDCARDREACHABLE-001 drops an in-ground planting's bring_in/protect card whenever the frost alert
-// would NAME it (engine.frostAlertNames). Naming is not sending: the alert publishes only when
+// would NAME it (since BUG-INGROUND39FSLIVER-001: frostCoverage, the email's own decision for that run, not
+// the class-only engine.frostAlertNames it replaced). Naming is not sending: the alert publishes only when
 // FROST_ALERT_ENABLED === 'true' (handler.js, the F6 kill switch). With the switch off the card was
 // dropped and nothing went out, so a tender bed was silent on both channels. coldFor now takes the
 // handler's own flag and drops the card only when it is on.
@@ -160,24 +161,37 @@ describe('BUG-INGROUNDOFFSEASONSILENT-001 — engine defaults fail toward a card
     plantings: [BED], cadence: cad, fertModel: fm, today: AUTUMN, ownerFallback: 'dave',
     weather: { unit: 'F', tonightLow: 35, highToday: 60 }, ...opts,
   }).users).flatMap((u) => u.tasks.cold).find((c) => c.name === BED.name) || null;
+  // CHANGED 2026-09-18 (BUG-INGROUND39FSLIVER-001): the flag alone no longer drops the card; the email's
+  // coverage must also name the bed. Every case below supplies that coverage, so each still isolates the
+  // FLAG's default — without it they would pass for the wrong reason (no coverage keeps the card anyway).
+  const NAMED = new Map([[BED.id, 'named']]);
 
   it('frostAlertEnabled absent: the card stays (a caller that forgets the flag gets a card, not silence)', () => {
-    expect(card({})).toMatchObject({ level: 'bring_in' });
-    expect(card({ frostAlertEnabled: true })).toBeNull();
+    expect(card({ frostCoverage: NAMED })).toMatchObject({ level: 'bring_in' });
+    expect(card({ frostAlertEnabled: true, frostCoverage: NAMED })).toBeNull();
   });
 
   it('only a real boolean true drops it: the raw env string "false" is truthy and must not', () => {
-    expect(card({ frostAlertEnabled: 'false' })).toMatchObject({ level: 'bring_in' });
+    expect(card({ frostAlertEnabled: 'false', frostCoverage: NAMED })).toMatchObject({ level: 'bring_in' });
   });
 
   it('the same default on both exported layers below generatePlan (coldFor, generatePlanForUser)', () => {
     const p = { ...BED, project: 'Garden' };
-    expect(engine.coldFor(p, cad, 35)).toMatchObject({ level: 'bring_in' });
-    expect(engine.coldFor(p, cad, 35, true)).toBeNull();
+    expect(engine.coldFor(p, cad, 35, undefined, NAMED)).toMatchObject({ level: 'bring_in' });
+    expect(engine.coldFor(p, cad, 35, true, NAMED)).toBeNull();
     const cold = (...flag) => engine.generatePlanForUser([p], cad, fm, AUTUMN, { unit: 'F', tonightLow: 35, highToday: 60 },
       null, false, false, false, null, false, null, {}, ...flag).tasks.cold;
-    expect(cold().map((c) => c.name)).toEqual([BED.name]);
-    expect(cold(true)).toEqual([]);
+    expect(cold(undefined, NAMED).map((c) => c.name)).toEqual([BED.name]);
+    expect(cold(true, NAMED)).toEqual([]);
+  });
+
+  it('BUG-INGROUND39FSLIVER-001 — the coverage defaults to none, and none keeps the card at every layer', () => {
+    const p = { ...BED, project: 'Garden' };
+    expect(card({ frostAlertEnabled: true })).toMatchObject({ level: 'bring_in' });
+    expect(engine.coldFor(p, cad, 35, true)).toMatchObject({ level: 'bring_in' });
+    const cold = (...args) => engine.generatePlanForUser([p], cad, fm, AUTUMN, { unit: 'F', tonightLow: 35, highToday: 60 },
+      null, false, false, false, null, false, null, {}, ...args).tasks.cold;
+    expect(cold(true).map((c) => c.name)).toEqual([BED.name]);
   });
 });
 
