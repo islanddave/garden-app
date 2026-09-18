@@ -716,11 +716,12 @@ export default function SaveSeedSheet({ planting, onClose, onSaved }) {
         ? { message: `Seed lot saved — couldn't ${missed.join(' or ')}`, tone: 'error' }
         : { message: 'Seed lot saved', tone: 'success' })
       // Read BEFORE onClose(): closing unmounts the sheet, whose disarm pops the Back marker
-      // asynchronously, and this has to see the stack as it is at the moment of the tap.
+      // asynchronously — so this is the last moment the stack still shows the sheet's own entry.
       const markerCurrent = typeof window !== 'undefined' && !!window.history && !!readMarker(window.history.state)
       if (onClose) onClose()
       if (onSaved) {
-        onSaved(lot, { stageWritten: stageFailed ? null : stageWritten })
+        // stageWritten is only ever set after the stage POST resolved, so it is null on a failure.
+        onSaved(lot, { stageWritten })
         return
       }
       // WHERE THE ACTION ENDS (hosts without onSaved) — and it depends on whether the lot joined a
