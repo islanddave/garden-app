@@ -453,3 +453,124 @@ describe('GET/PUT/DELETE /api/locations/:slug — an ambiguous slug reference', 
     expect(body.id).toBe(childA)
   })
 })
+
+// V5-LOCHEATEDUI-001 — locations.heated, written through the handler and read back from the table.
+//
+// WRITTEN BUT UNRUN in the lane that authored it, for the same reason as the block above: no
+// ephemeral Neon branch in a worktree. Staging carries the column (migrations/v5-locheated-001,
+// applied 2026-09-18), and this job forks from staging. The handler's exact UPDATE/INSERT text was
+// run against a local Postgres 17 stand-in table in the authoring lane (lane report), and
+// lambda/locations/heated.test.js drives the handler through the stubs — but only this file proves
+// the statements against the real schema.
+//
+// The dangerous error is a false TRUE (it silences every cold card in the location), so the
+// assertions that matter most are the ones where heated must NOT be true afterwards.
+describe('V5-LOCHEATEDUI-001 — heated write + read-back', () => {
+  const heatedOf = async (id) => (await directSql`SELECT heated, covered FROM locations WHERE id = ${id}`)[0]
+
+  it('POST with covered + heated -> 201, stored and returned true', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/locations',
+      body: { name: 'Heated Greenhouse ' + RUN, covered: true, heated: true },
+    })
+    expect(status, JSON.stringify(body)).toBe(201)
+    expect(body.heated).toBe(true)
+    expect(await heatedOf(body.id)).toEqual({ heated: true, covered: true })
+  })
+
+  it('POST without heated -> false, the column default, never NULL', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/locations', body: { name: 'Plain Bed ' + RUN },
+    })
+    expect(status).toBe(201)
+    expect(body.heated).toBe(false)
+    expect((await heatedOf(body.id)).heated).toBe(false)
+  })
+
+  it('POST heated without covered:true -> 400, and no row is written', async () => {
+    setTestUserId(USER)
+    const name = 'Heated Open Sky ' + RUN
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/locations', body: { name, heated: true },
+    })
+    expect(status).toBe(400)
+    expect(body.error).toMatch(/heated location must also be under cover/i)
+    const rows = await directSql`SELECT id FROM locations WHERE name = ${name}`
+    expect(rows).toHaveLength(0)
+  })
+
+  it('POST heated as a string -> 400 naming the field (never cast to TRUE)', async () => {
+    setTestUserId(USER)
+    const name = 'Stringly Heated ' + RUN
+    const { status, body } = await callHandler(handler, {
+      method: 'POST', path: '/api/locations', body: { name, covered: true, heated: 'true' },
+    })
+    expect(status).toBe(400)
+    expect(body.error).toBe('heated must be true or false')
+    const rows = await directSql`SELECT id FROM locations WHERE name = ${name}`
+    expect(rows).toHaveLength(0)
+  })
+
+  it('PUT heated on a covered location; a later PUT without heated leaves it unchanged', async () => {
+    setTestUserId(USER)
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/locations', body: { name: 'Sunroom ' + RUN, covered: true },
+    })
+    const id = created.body.id
+    const tick = await callHandler(handler, {
+      method: 'PUT', path: `/api/locations/${id}`, body: { heated: true },
+    })
+    expect(tick.status, JSON.stringify(tick.body)).toBe(200)
+    expect(tick.body.heated).toBe(true)
+    expect((await heatedOf(id)).heated).toBe(true)
+    // The load-bearing half: every caller that does not know about heated (toggleActive, stale
+    // clients) sends no key, and must not un-heat the room.
+    for (const b of [{ name: 'Sun Room ' + RUN }, { is_active: false }, { is_active: true }]) {
+      const res = await callHandler(handler, { method: 'PUT', path: `/api/locations/${id}`, body: b })
+      expect(res.status, `${JSON.stringify(b)} → ${JSON.stringify(res.body)}`).toBe(200)
+      expect((await heatedOf(id)).heated, JSON.stringify(b)).toBe(true)
+    }
+  })
+
+  it('PUT heated on an open-sky location -> 400, row untouched', async () => {
+    setTestUserId(USER)
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/locations', body: { name: 'Bag Area ' + RUN, covered: false },
+    })
+    const id = created.body.id
+    const { status } = await callHandler(handler, {
+      method: 'PUT', path: `/api/locations/${id}`, body: { heated: true },
+    })
+    expect(status).toBe(400)
+    expect(await heatedOf(id)).toEqual({ heated: false, covered: false })
+  })
+
+  it('PUT covered:false on a heated location -> 400; with heated:false in the same PUT -> 200', async () => {
+    setTestUserId(USER)
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/locations',
+      body: { name: 'Warm Shed ' + RUN, covered: true, heated: true },
+    })
+    const id = created.body.id
+    const refused = await callHandler(handler, {
+      method: 'PUT', path: `/api/locations/${id}`, body: { covered: false },
+    })
+    expect(refused.status).toBe(400)
+    expect(await heatedOf(id)).toEqual({ heated: true, covered: true })
+    const both = await callHandler(handler, {
+      method: 'PUT', path: `/api/locations/${id}`, body: { covered: false, heated: false },
+    })
+    expect(both.status, JSON.stringify(both.body)).toBe(200)
+    expect(await heatedOf(id)).toEqual({ heated: false, covered: false })
+  })
+
+  it('GET list carries heated as a boolean on every row', async () => {
+    setTestUserId(USER)
+    const { status, body } = await callHandler(handler, { method: 'GET', path: '/api/locations' })
+    expect(status).toBe(200)
+    expect(body.locations.length).toBeGreaterThan(0)
+    for (const row of body.locations) expect(typeof row.heated, row.name).toBe('boolean')
+  })
+})

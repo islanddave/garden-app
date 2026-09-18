@@ -44,9 +44,14 @@ const AUDIT_TABLES = ['locations'];
 // (verified 2026-08-20). That is deliberate rather than an oversight: the audit going red is the
 // intended signal if this code somehow reaches prod ahead of migrations/v4-loccovered-001, and it is
 // one more reason the apply must precede the promote rather than follow it.
+//
+// V5-LOCHEATEDUI-001 added `heated`, under the same contract: this line asserts locations.heated
+// EXISTS ON PROD. migrations/v5-locheated-001 was applied to prod and staging on 2026-09-18, before
+// this code was written, so unlike covered's note above the audit should be green on arrival. If it
+// is red, the column is missing from prod and this code must not ship.
 const LIST_COLUMNS = [
   'id', 'name', 'slug', 'level', 'type_label', 'parent_id', 'sort_order',
-  'description', 'is_active', 'covered', 'created_at',
+  'description', 'is_active', 'covered', 'heated', 'created_at',
 ];
 
 // Predicate + ownership columns. Unselected but load-bearing: if `deleted_at` vanished from prod,
@@ -74,7 +79,7 @@ describe('locations SELECT-column contract (L-081 Phase 1)', () => {
   });
 
   it('pins the GET list projection', () => {
-    const m = /SELECT id, name, slug, level, type_label, parent_id, sort_order,\s*\n\s*description, is_active, covered, created_at\s*\n\s*FROM locations\b/.exec(SRC);
+    const m = /SELECT id, name, slug, level, type_label, parent_id, sort_order,\s*\n\s*description, is_active, covered, heated, created_at\s*\n\s*FROM locations\b/.exec(SRC);
     expect(m).not.toBeNull();
   });
 

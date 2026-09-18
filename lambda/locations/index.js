@@ -7,6 +7,7 @@ import { householdScope, loadOwnedLocation, warnRejectedFk } from './household.j
 import { resolvePhotoViewUrl } from './photo-access.js';
 import { validateClear } from './validate.js';
 import { resolveLocationRow, loadLocationRef, AMBIGUOUS_REF_STATUS, AMBIGUOUS_REF_BODY } from './ref.js';
+import { validateHeatedType, heatedCoverError, nextFlagsForPut, nextFlagsForPost } from './heated.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -303,6 +304,24 @@ export const handler = async (event) => {
         if (_cerr) return resp(400, { error: _cerr });
         const clear = Array.isArray(body.clear) ? body.clear : [];
 
+        // V5-LOCHEATEDUI-001 — heated.js carries both rules and why. The heated-implies-covered rule is
+        // judged on the row as it will be WRITTEN, which needs the row's current pair: a body carrying
+        // only covered=false breaks it on a location that is already heated. Read on every PUT, not
+        // only when a flag is sent, so a row that is already inconsistent (hand-written SQL — the
+        // standing gate reports it) answers with this plain 400 rather than the guard's zero-row 404
+        // below.
+        const _herr = validateHeatedType(body);
+        if (_herr) return resp(400, { error: _herr });
+        const [flags] = await sql`
+          SELECT covered, heated FROM locations
+           WHERE id = ${actualLocationId}
+             AND deleted_at IS NULL
+             AND created_by = ANY(${householdIds})
+        `;
+        if (!flags) return resp(404, { error: 'Not found' });
+        const _coverErr = heatedCoverError(nextFlagsForPut(body, flags));
+        if (_coverErr) return resp(400, { error: _coverErr });
+
         const rows = await sql`
           UPDATE locations
           SET
@@ -319,6 +338,9 @@ export const handler = async (event) => {
             -- classified back to the type_label heuristic. Setting it wrong is one more tap to fix;
             -- there is no operation "I no longer know whether this bed is under cover".
             covered     = COALESCE(${body.covered ?? null}, covered),
+            -- V5-LOCHEATEDUI-001. Same grammar as covered: an absent key leaves the column alone.
+            -- NOT NULL, so there is no clear arm and never can be.
+            heated      = COALESCE(${body.heated ?? null}, heated),
             featured_photo_id = CASE
               WHEN ${hasFeatured} THEN ${body.featured_photo_id ?? null}
               ELSE featured_photo_id
@@ -326,6 +348,12 @@ export const handler = async (event) => {
           WHERE id = ${actualLocationId}
             AND deleted_at IS NULL
             AND created_by = ANY(${householdIds})
+            -- V5-LOCHEATEDUI-001. heated implies covered, re-checked on the row being written. The
+            -- read above answers the ordinary case with a 400; this closes the gap between that read
+            -- and this write (two PUTs interleaving, one ticking heated, one clearing covered). A
+            -- write refused here matches no row and takes the 404 below. State stays consistent.
+            AND (COALESCE(${body.heated ?? null}, heated) IS NOT TRUE
+                 OR COALESCE(${body.covered ?? null}, covered) IS TRUE)
           RETURNING *
         `;
         // Still RETURNING-gated even though the row was just resolved: the resolve and the write are
@@ -382,7 +410,7 @@ export const handler = async (event) => {
       const [locRows, pathRows] = await Promise.all([
         sql`
           SELECT id, name, slug, level, type_label, parent_id, sort_order,
-                 description, is_active, covered, created_at
+                 description, is_active, covered, heated, created_at
           FROM locations
           WHERE deleted_at IS NULL AND created_by = ANY(${householdIds})
           ORDER BY level, sort_order, name
@@ -401,6 +429,13 @@ export const handler = async (event) => {
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
       if (!body.name) return resp(400, { error: 'name is required' });
+
+      // V5-LOCHEATEDUI-001 — heated.js. A new row has only this body, so both rules are decided here
+      // with no read: heated:true without covered:true in the same request is refused.
+      const _herr = validateHeatedType(body);
+      if (_herr) return resp(400, { error: _herr });
+      const _coverErr = heatedCoverError(nextFlagsForPost(body));
+      if (_coverErr) return resp(400, { error: _coverErr });
 
       // AUTHZ (BUG-AUTHZFKENUM-001): parent_id was NOT gated here, despite the household-scoped
       // SELECT below looking like a gate. It only ever read the parent's `level`; a foreign or
@@ -431,7 +466,7 @@ export const handler = async (event) => {
 
       const rows = await sql`
         INSERT INTO locations
-          (name, slug, level, type_label, parent_id, sort_order, description, covered, created_by)
+          (name, slug, level, type_label, parent_id, sort_order, description, covered, created_by, heated)
         VALUES (
           ${body.name},
           ${slug},
@@ -445,7 +480,9 @@ export const handler = async (event) => {
           -- rather than asserting the bed is open to the sky. Writing false here would be a claim
           -- nobody made.
           ${body.covered ?? null},
-          ${userId}
+          ${userId},
+          -- V5-LOCHEATEDUI-001. Not sent means the column default, false; never NULL.
+          ${body.heated ?? false}
         )
         RETURNING *
       `;
