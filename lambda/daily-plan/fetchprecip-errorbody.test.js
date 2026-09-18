@@ -325,8 +325,9 @@ describe('consumers — the 09-02 configuration: fresh gauge bound to the Space'
       upcoming_precip_in: null, tomorrow_precip_in: null, tomorrow_pop: null,   // were 0 and 0
       today_observed_in: 0.12, today_remaining_in: 0,
       rain_coming: false, rain_horizon: null,
-      // hydrologyStatus: recent is the gauge's, so it is upcoming == null alone that raises the flag here.
-      status: { ok: false, uncertainty: { flag: true, reason: 'precip data incomplete — watering advice assumes no rain credit' } },
+      // hydrologyStatus: recent is the gauge's, so it is upcoming == null alone that raises the flag here —
+      // and the gauge still credits, so the reason says so (BUG-WXBANNERSHOWERYCOPY-001, lane nextfixes).
+      status: { ok: false, uncertainty: { flag: true, reason: 'precip data incomplete — watering advice still credits recent rain' } },
     });
     expect(prov).toMatchObject({ recent_source: 'station', today_source: 'station', yesterday_actual_source: 'station' });
   });
