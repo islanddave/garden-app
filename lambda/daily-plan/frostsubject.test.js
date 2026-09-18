@@ -13,6 +13,19 @@
 // except where a test says why, so a drift between what the body prints and what the subject prints cannot hide
 // in a fixture. The run() cases capture the SNS publish and the written row. Run under TZ=UTC and
 // TZ=America/New_York: the weekday names must not move with the process zone.
+//
+// MUTATION LOG — 2026-09-18, lane-frostsubject-20260918. 21 mutations of handler.js, each applied alone, this file
+// plus frost-wiring, advisorynight and frostsent run (142 tests) under BOTH zones, file restored and sha256-checked
+// against HEAD. All 21 RED, same tests in both zones; every test in this file is killed by at least one. RED counts
+// over the 142:
+//   advisory tail: reverted to tonightLowF (the defect) 16 · night phrase dropped 16 · low not rounded / floored /
+//     truncated 13 / 13 / 13 · minLowF before lowF 1 · || for ?? 1 · 0F read as missing 2 · null low -> 0F 1 ·
+//     night from dayOffset (the old night bug) 12 · night from the base rate only 5 · no-record guard removed 2 ·
+//     publish site drops the advisory record 4
+//   other tiers: advisory tail on any tier carrying an advisory record 7 · imminent low rounded 4 · heat label 3 ·
+//     radiative imminent label 3
+//   shape: ASCII filter removed / admits control chars / admits non-ASCII 1 / 1 / 1 · 100-char cap removed 1
+// The filter mutations are killed ONLY here: frost-wiring's "strips non-ASCII" case feeds no non-ASCII character.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
 import fe from './frostEval.js';
