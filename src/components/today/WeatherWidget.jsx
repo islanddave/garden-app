@@ -219,11 +219,11 @@ export function incompleteForecastCopy(hydrology) {
 }
 // BUG-WXOUTAGESTAMPCOPY-001 — did the forecast fetch return NOTHING that this snapshot shows? The incomplete
 // banner (incompleteForecastCopy, above) says so in words; this keeps the stamp and the rain line beside it
-// from saying otherwise. On the 2026-09-02 error
-// body (fetchPrecip -> null since BUG-FETCHPRECIPZERO-001) the card still printed "· Open-Meteo" with no gauge,
-// and with one "rain gauge + forecast" plus "none more expected" — the last read off the 0 that
-// station.mergeStationHydrology writes for today's remainder when there is no forecast to subtract from
-// (station.test.js "no forecast to add"). That 0 is an absence, not a forecast of a dry evening.
+// from saying otherwise. On the 2026-09-02 error body (fetchPrecip -> null since BUG-FETCHPRECIPZERO-001)
+// the card still printed "· Open-Meteo" with no gauge bound, and with one "rain gauge + forecast" plus
+// "none more expected" — the last read off the 0 that station.mergeStationHydrology writes for today's
+// remainder when there is no forecast to subtract from (station.test.js "no forecast to add"). That 0 is
+// an absence, not a forecast of a dry evening.
 // Gated on the engine's own incomplete verdict (hydrologyStatus ok:false), so a complete snapshot never moves.
 // Then "nothing" means: none of the fields only a forecast can supply, and no figure the provenance bag credits
 // to the forecast — or, with no bag, no rain figure at all (every one of them would have been Open-Meteo's).
