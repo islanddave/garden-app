@@ -21,6 +21,9 @@
 // 250 live plantings across 80 distinct crop_type_slug values (3 NULL), plus the FULL
 // plant_varieties.crop_type_slug domain (120 values) so a newly-planted variety of an existing crop is
 // already covered. Live-planting query = the daily-plan handler.js WHERE clause verbatim.
+// Re-checked 2026-09-18 against the wider `crop_types` table (163 live, OPS-SLUGUNIVERSESTALE-001): every
+// live crop type is banded, in UNCERTAIN_SLUGS, or in NON_PLANT_FOOD_SLUGS, and
+// src/__tests__/slugUniverseConsistency.test.js holds that in both directions.
 
 const numEnv = (name, fallback) => {
   const v = Number(process.env[name]);
@@ -110,6 +113,11 @@ const SLUGS_BY_BAND = Object.freeze({
     //   aloe    — tender succulent; same overwinter-indoors handling as jade/echeveria.
     //   lantana — tender tropical shrub, overwintered indoors here rather than replaced.
     'ginger', 'aloe', 'lantana',
+    // hoya — OPS-SLUGUNIVERSESTALE-001 (2026-09-18). Crop type minted 2026-08-30 and never banded. The
+    // one live planting is Hoya obovata, a lowland SE-Asian epiphyte in a hanging basket, in the heated
+    // House today (so no alert or card moves for it now). MBG Plant Finder gives H. carnosa, the most
+    // cold-tolerant hoya in cultivation, zone 10-12 and night temperatures down to 50F in winter.
+    'hoya',
   ],
   chill_sensitive: [
     'basil',
@@ -144,6 +152,15 @@ const SLUGS_BY_BAND = Object.freeze({
     // Its bring-it-inside threshold lives on its cultivar care profile, which the same migration
     // corrects: that profile was a clone of garden sage's `cold` block and read tender:false.
     'pineapple_sage',
+    // OPS-SLUGUNIVERSESTALE-001 (2026-09-18). Three crop types minted 2026-09-03, none planted yet, so
+    // no alert moves today; banded now because the day one is planted is the day it would count unseen.
+    //   corn          — 'Golden Bantam' sweet corn. UMN Extension: "A corn killing freeze occurs when
+    //                   temperatures dip to 32 degrees Fahrenheit for four hours or 28 degrees for minutes."
+    //   cosmos        — 'Sensation' (C. bipinnatus): a warm-weather annual that blooms "to frost" (MBG),
+    //                   sown only after the danger of frost is past (NC State).
+    //   summer_savory — Satureja hortensis: sown once any threat of frost is past, "the same for basil
+    //                   seeds" (Herb Society of America); Illinois Extension says the same.
+    'corn', 'cosmos', 'summer_savory',
   ],
   light_frost_tolerant: [
     // still standing the morning after a light frost; a hard freeze finishes them
@@ -197,6 +214,25 @@ const SLUGS_BY_BAND = Object.freeze({
     //   horseweed     — Erigeron canadensis, a native annual weed whose rosettes overwinter to zone 3.
     //                   It already had a crop type of its own (minted 2026-09-07) and was never banded.
     'hylotelephium', 'horseweed',
+    // OPS-SLUGUNIVERSESTALE-001 (2026-09-18) — crop types minted after the guard's 2026-08-17 pin, banded
+    // on the cultivars prod actually holds. The first three have one live planting each, and each was in
+    // the frost email as "unclassified" (counted tender) until this change:
+    //   goldenrod     — 'Canada' = Solidago canadensis, herbaceous perennial, zone 3-9 (MBG).
+    //   lamb_s_ear    — Stachys byzantina, herbaceous perennial, zone 4-8 (MBG). Typed `sage` (hardy) until
+    //                   its own crop type was minted on 2026-09-11, so this restores its old answer.
+    //   yarrow        — 'Summer Pastels' (Achillea millefolium) and 'Terracotta'; A. millefolium is a
+    //                   herbaceous perennial, zone 3-9 (MBG).
+    // Not planted yet:
+    //   blanketflower — typed perennial, i.e. perennial Gaillardia (G. aristata zone 3-8, MBG). The annual
+    //                   G. pulchella would get its own slug, not this one.
+    //   dianthus      — 'Mixed Colors', D. caryophyllus: the species `carnation` already is, zone 5-9 or
+    //                   6-9 by cultivar (MBG); Penn State Extension files Dianthus with the hardy annuals.
+    //   snapdragon    — Antirrhinum majus: Penn State files it with the hardy annuals, and SDSU Extension:
+    //                   "Snapdragons can survive temperatures as low as 25 degrees Fahrenheit", below the
+    //                   30F trip that light_frost_tolerant would fire.
+    //   chamomile     — 'German Chamomile' (Matricaria chamomilla), a hardy annual: UW-Madison Extension
+    //                   sows it direct in FALL, so its seedlings stand through a Wisconsin winter.
+    'goldenrod', 'lamb_s_ear', 'yarrow', 'blanketflower', 'dianthus', 'snapdragon', 'chamomile',
   ],
 });
 
@@ -215,7 +251,26 @@ const SLUGS_BY_BAND = Object.freeze({
 //             sense) but are overwintered indoors here (so not "never alert" either). Marginal by nature.
 //   artichoke — overwinter-marginal; not killed by first frost, not reliably hardy.
 //   flower_mix — an unopened seed blend of unknown composition.
-const UNCERTAIN_SLUGS = ['sedum', 'cactus', 'succulent', 'hibiscus', 'bay', 'rosemary', 'artichoke', 'flower_mix'];
+//   penstemon — OPS-SLUGUNIVERSESTALE-001 (2026-09-18). The genus spans hardy species (most zone 3-8) and
+//             the large-flowered bedding hybrids (P. x gloxinioides / hartwegii: "tender perennial", MSU
+//             Extension; RHS H4). The one live planting is that hybrid, identified by its flower in
+//             lane-penstemon-20260907, in a 3-inch pot: it survives a first frost and is not hardy here,
+//             the bay/rosemary case. Nothing is lost by leaving it unmapped: its cultivar care profile
+//             says cold.tender, so the handler's cadence promotion names it as "penstemons" at the tender
+//             trips, and that profile's own 35F card still fires. A hardy species gets its own slug.
+const UNCERTAIN_SLUGS = ['sedum', 'cactus', 'succulent', 'hibiscus', 'bay', 'rosemary', 'artichoke', 'flower_mix',
+  'penstemon'];
+
+// NOT PLANTS — no frost band exists to decide (OPS-SLUGUNIVERSESTALE-001, 2026-09-18). These crop types
+// are category 'non_plant_food' (migrations/v4-putupfood-001): Put-Up's pantry classes, so a jar or a
+// loaf can be grouped by what it is. None can be a planting's type: the planting query reads the slug
+// through plant_varieties, and that migration's continuous gate post_no_variety_typed_to_a_food_class
+// keeps every variety off a food class. Named one by one rather than skipped by category, the
+// v4-harvhabitgap-001 precedent: a category exemption lets the next food class in with no record.
+// Banding one `hardy` to satisfy a guard would be a false statement about bread; if one ever did reach
+// summarize, it falls through to UNKNOWN_BAND and reads "unclassified", the right loud answer for data
+// that should not exist.
+const NON_PLANT_FOOD_SLUGS = Object.freeze(['bread', 'butter', 'cheese', 'fish', 'meat', 'milk', 'yogurt']);
 
 const BAND_BY_SLUG = Object.freeze(Object.fromEntries(
   BAND_ORDER.flatMap((band) => SLUGS_BY_BAND[band].map((s) => [s, band])),
@@ -257,6 +312,8 @@ const COLD_BY_CROP_TYPE = Object.freeze({
   avocado:       Object.freeze({ tender: true, protect_below_F: 50 }),
   lantana:       Object.freeze({ tender: true, protect_below_F: 50 }),
   // Foliage houseplants — damaged in the mid-40s, and all of them live outdoors only for the summer.
+  // hoya: MBG Plant Finder, Hoya carnosa (the hardiest species grown): night temperatures to 50F in winter.
+  hoya:          Object.freeze({ tender: true, protect_below_F: 50 }),
   pothos:        Object.freeze({ tender: true, protect_below_F: 50 }),
   spider_plant:  Object.freeze({ tender: true, protect_below_F: 45 }),
   dracaena:      Object.freeze({ tender: true, protect_below_F: 50 }),
@@ -312,6 +369,8 @@ const CROP_LABELS = Object.freeze({
   borage: 'borage', thunbergia: 'thunbergia', cobaea: 'cobaea', torenia: 'torenia',
   bitter_melon: 'bitter melon', cucamelon: 'cucamelons', luffa: 'luffa', pineapple: 'pineapple',
   pineapple_sage: 'pineapple sage',
+  // OPS-SLUGUNIVERSESTALE-001: the rule below would say "corns", "cosmoses" and "summer savories".
+  corn: 'corn', cosmos: 'cosmos', summer_savory: 'summer savory',
 });
 function cropLabel(slug) {
   if (!slug) return 'unclassified';
@@ -521,6 +580,6 @@ module.exports = {
   frostClassForSlug, summarize, isContainer, isHeatedDefault, cropLabel,
   resolveBandThresholds, coldProfileForSlug,
   BAND_THRESHOLDS, BAND_BY_SLUG, SLUGS_BY_BAND, BAND_ORDER, UNKNOWN_BAND, TRIP_KEYS,
-  CLASS_BY_SLUG, CLASS_BY_BAND, TENDER_SLUGS, HARDY_SLUGS, UNCERTAIN_SLUGS, CROP_LABELS,
+  CLASS_BY_SLUG, CLASS_BY_BAND, TENDER_SLUGS, HARDY_SLUGS, UNCERTAIN_SLUGS, NON_PLANT_FOOD_SLUGS, CROP_LABELS,
   COLD_BY_CROP_TYPE, COLD_PROFILE_REQUIRED_BANDS,
 };
