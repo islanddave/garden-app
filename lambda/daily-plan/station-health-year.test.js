@@ -162,21 +162,27 @@ describe('arraySilence — the trailing-24 h outdoor gap, pure', () => {
     const s = arraySilence(records(), { nowMs: NOW });
     expect(s.silent).toEqual([]);
     expect(s.records).toBe(288);
-    expect(s.gaps.tempf).toMatchObject({ missing: 0, longestMin: 0, ongoing: false });
-    expect(s.gaps.dailyrainin).toMatchObject({ missing: 0, longestMin: 0, ongoing: false });
+    expect(s.gaps.tempf).toMatchObject({ missing: 0, longestMin: 0, missingNow: false });
+    expect(s.gaps.dailyrainin).toMatchObject({ missing: 0, longestMin: 0, missingNow: false });
   });
 
   it('an overnight dropout that recovered by morning IS silent — the mode a newest-record test misses', () => {
     const s = arraySilence(records({ omit: [OVERNIGHT] }), { nowMs: NOW });
     expect(s.silent).toEqual(['tempf', 'dailyrainin']);
-    expect(s.gaps.tempf).toEqual({ missing: 73, longestMin: 360, fromMs: edt('02:00'), toMs: edt('08:00'), ongoing: false });
+    expect(s.gaps.tempf).toEqual({ missing: 73, longestMin: 360, fromMs: edt('02:00'), toMs: edt('08:00'), missingNow: false });
     expect(s.gaps.dailyrainin.longestMin).toBe(360);
   });
 
-  it('a dropout still running at the check is ongoing', () => {
+  it('a dropout still running at the check is missing now', () => {
     const s = arraySilence(records({ omit: [{ from: edt('12:30'), to: NEWEST, fields: ['tempf'] }] }), { nowMs: NOW });
     expect(s.silent).toEqual(['tempf']);
-    expect(s.gaps.tempf).toMatchObject({ longestMin: 90, ongoing: true });
+    expect(s.gaps.tempf).toMatchObject({ longestMin: 90, missingNow: true });
+  });
+
+  it('missing now is the NEWEST record, not the longest gap: the night recovered, a new short gap is running', () => {
+    const s = arraySilence(records({ omit: [OVERNIGHT, { from: edt('13:40'), to: NEWEST, fields: ['tempf'] }] }), { nowMs: NOW });
+    expect(s.gaps.tempf).toMatchObject({ longestMin: 360, fromMs: edt('02:00'), missingNow: true });
+    expect(s.gaps.dailyrainin).toMatchObject({ longestMin: 360, missingNow: false });
   });
 
   it(`the threshold is ${ARRAY_SILENT_MIN_GAP_MIN} min, first-missing to last-missing record`, () => {
@@ -218,12 +224,12 @@ describe('arraySilence — the trailing-24 h outdoor gap, pure', () => {
     expect(s.gaps.tempf.longestMin).toBe(120);
   });
 
-  it('of two equally long gaps the LATER one is reported, because only it can still be running', () => {
+  it('of two equally long gaps the LATER (more recent) one is reported', () => {
     const s = arraySilence(records({ omit: [
       { from: edt('02:00'), to: edt('03:00'), fields: ['tempf'] },
-      { from: edt('13:00'), to: NEWEST, fields: ['tempf'] },
+      { from: edt('09:00'), to: edt('10:00'), fields: ['tempf'] },
     ] }), { nowMs: NOW });
-    expect(s.gaps.tempf).toMatchObject({ longestMin: 60, fromMs: edt('13:00'), ongoing: true });
+    expect(s.gaps.tempf).toMatchObject({ longestMin: 60, fromMs: edt('09:00'), toMs: edt('10:00'), missingNow: false });
   });
 
   it('unusable input returns null (unknown), never an all-clear', () => {
@@ -263,8 +269,8 @@ describe('station_array_silent — console online, outdoor array quiet: ONE ops 
     expect(call.message).toContain('station_array_silent');
     expect(call.message).toContain(MAC);
     expect(call.message).toContain('newest reading 5 min old');
-    expect(call.message).toContain('outdoor temperature (tempf) missing for 6 h 0 min, 02:00-08:00, since recovered');
-    expect(call.message).toContain('rain gauge (dailyrainin) missing for 6 h 0 min, 02:00-08:00, since recovered');
+    expect(call.message).toContain('outdoor temperature (tempf) missing for 6 h 0 min, 02:00-08:00, and reporting at this check');
+    expect(call.message).toContain('rain gauge (dailyrainin) missing for 6 h 0 min, 02:00-08:00, and reporting at this check');
     expect(call.message).toContain(`${ARRAY_SILENT_MIN_GAP_MIN} min or more in the 24 h`);
     expect(call.message).toMatch(/lithium AAs/);
     expect(call.message).toMatch(/\+10F/);
@@ -281,7 +287,7 @@ describe('station_array_silent — console online, outdoor array quiet: ONE ops 
     quiet();
     const { publishAlert } = await drive({ records: records({ omit: [{ from: edt('11:00'), to: NEWEST, fields: ['tempf', 'dailyrainin'] }] }) });
     expect(callsFor(publishAlert, 'station_array_silent')).toHaveLength(1);
-    expect(publishAlert.mock.calls[0][0].message).toContain('missing for 3 h 0 min, 11:00-14:00, STILL missing now');
+    expect(publishAlert.mock.calls[0][0].message).toContain('missing for 3 h 0 min, 11:00-14:00, and missing at this check');
   });
 
   it('(c) a healthy array -> no alert, and the station line still reports the zero gaps', async () => {

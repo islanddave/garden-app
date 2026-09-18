@@ -277,12 +277,14 @@ function arraySilence(recs, { nowMs } = {}) {
       if (Number.isFinite(r[f])) { run = null; continue; }
       missing += 1;
       if (run) run.toMs = r.dateutc; else run = { fromMs: r.dateutc, toMs: r.dateutc };
-      // >= so the LATER of two equal runs wins: it is the one that can still be ongoing.
+      // >= so the LATER of two equal runs is the one reported: the more recent is the more useful to name.
       if (!longest || run.toMs - run.fromMs >= longest.toMs - longest.fromMs) longest = run;
     }
     const longestMin = longest ? Math.round((longest.toMs - longest.fromMs) / 60000) : 0;
+    // missingNow reads the NEWEST record, not the longest run: a night's long gap can have recovered while a new,
+    // shorter one is already running at the check, and the email must not call the array recovered then.
     gaps[f] = { missing, longestMin, fromMs: longest ? longest.fromMs : null, toMs: longest ? longest.toMs : null,
-      ongoing: !!(longest && last && longest.toMs === last.dateutc && !Number.isFinite(last[f])) };
+      missingNow: !!(last && !Number.isFinite(last[f])) };
     if (longestMin >= ARRAY_SILENT_MIN_GAP_MIN) silent.push(f);
   }
   return { windowMin: ARRAY_SILENT_WINDOW_MIN, records: win.length, gaps, silent };

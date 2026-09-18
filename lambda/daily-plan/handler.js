@@ -1719,7 +1719,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           const parts = sil.silent.map((f) => {
             const g = sil.gaps[f];
             return `${label[f] || f} missing for ${Math.floor(g.longestMin / 60)} h ${g.longestMin % 60} min, ` +
-              `${hm(g.fromMs)}-${hm(g.toMs)}${g.ongoing ? ', STILL missing now' : ', since recovered'}`;
+              `${hm(g.fromMs)}-${hm(g.toMs)}${g.missingNow ? ', and missing at this check' : ', and reporting at this check'}`;
           });
           const lost = [sil.silent.includes('tempf') ? 'tonight\'s low has no station floor and no overnight minimum is recorded' : null,
             sil.silent.includes('dailyrainin') ? 'rain is forecast-only (no gauge truth for watering)' : null].filter(Boolean);
