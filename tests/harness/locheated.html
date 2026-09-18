@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Viewport copied from ./index.html for the same reason it is copied there. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>V5-LOCHEATEDUI-001 — Locations edit form, Heated checkbox, at phone geometry</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #f8f5f0; }
+      /* The verdict strip is an INSTRUMENT, not part of the surface under test: fixed at the bottom,
+         overlaying rather than displacing the layout, so the page header stays readable. */
+      #verdict {
+        position: fixed; bottom: 0; left: 0; right: 0; z-index: 99999;
+        font: 11px/1.4 ui-monospace, monospace; color: #fff; padding: 4px 8px; white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="verdict">booting…</div>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/locheated.jsx"></script>
+  </body>
+</html>
