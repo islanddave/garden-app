@@ -856,8 +856,21 @@ function coldFor(p, cad, low){
   // Hoisting can only ever SUPPRESS a card, never create one, so it cannot widen alert volume; and it
   // now covers both paths identically, which is what the V4-TROPICALCOLD-001 note below always claimed.
   if(broughtInside(p)) return null;
+  // V5-COLDCARDREACHABLE-001 (heated) — a planting whose location is HEATED is already where every
+  // level of this card would send it. `heated_resolved` is locations.heated through the planting's
+  // own location (handler.js; migrations/v5-locheated-001), and is deliberately NOT `covered`: the
+  // Stable is covered and UNHEATED and holds more live plantings than the House (Dave 2026-09-17), so
+  // a covered test would silence the population this card exists for. Strict `=== true`: absent or
+  // NULL (an un-located planting, an older caller) means NOT heated, which fails toward a card.
+  if(p.heated_resolved===true) return null;
+  // V5-COLDCARDREACHABLE-001 (in-ground) — "bring it inside" cannot be done to a plant in the ground
+  // (18 of 61 protect cards 09-01..09-17; also potato, which the genus key put in the band). Scoped
+  // to plantings the frost ALERT names (frostAlertNames), so dropping the card never leaves a planting
+  // with no cold message: that alert counts in-ground plantings and tells Dave to cover them. Only the
+  // two BRING-IN levels are dropped; `optional` ("protect flowering plant") can be done in the ground.
+  const _inGroundAlerted=likelyInGround(p,c)&&frostAlertNames(p);
   if(isSolanaceous(p)){
-    if(low<40) return {level:'bring_in', text:`bring inside tonight (low ${low}°F)`};
+    if(low<40) return _inGroundAlerted ? null : {level:'bring_in', text:`bring inside tonight (low ${low}°F)`};
     if(low<45) return ['flowering','fruiting'].includes(p.status) ? {level:'optional', text:`optional: protect flowering plant (low ${low}°F)`} : null;
     return null;
   }
@@ -895,7 +908,7 @@ function coldFor(p, cad, low){
   const ct=c.cold ? null : fc.coldProfileForSlug(p.crop_type_slug);
   const prof=(c.cold && c.cold.tender) ? c.cold : (ct && ct.tender ? ct : null);
   const pb=prof ? prof.protect_below_F : null;
-  if(pb!=null && low<=pb) return {level:'protect', text:`tender tropical — bring in tonight (low ${low}°F ≤ ${pb}°F)`};
+  if(pb!=null && low<=pb) return _inGroundAlerted ? null : {level:'protect', text:`tender tropical — bring in tonight (low ${low}°F ≤ ${pb}°F)`};
   return null;
 }
 
@@ -905,6 +918,20 @@ function broughtInside(p){
   const in_=p && p.last_brought_inside, out=p && p.last_brought_outside;
   if(!in_) return false;
   return !out || in_>=out;
+}
+
+// V5-COLDCARDREACHABLE-001 — true when the coalesced frost alert (handler.js -> frostClass.summarize)
+// names this planting on a frost night. summarize drops exactly two things, and this mirrors both
+// through frostClass's own exports so the channels cannot drift: a slug banded `hardy`, and a planting
+// under cover. Those are the two in-ground cases that keep their card — a raised bed in the Stable or
+// under a tunnel is `covered` and so absent from the alert, and a hardy-slugged planting with a tender
+// cold profile is a data contradiction the alert resolves toward hardy. Dormant needs no clause: the
+// engine skips it before coldFor, and the handler filters it before summarize.
+// resolvedBands is passed so this never reads the FROST_* env overrides: a malformed one throws inside
+// resolveBandThresholds, and that must stay confined to the 15:30 frost run, not every run's cold pass.
+function frostAlertNames(p){
+  if(fc.frostClassForSlug(p.crop_type_slug, {resolvedBands:fc.BAND_THRESHOLDS}).class==='hardy') return false;
+  return !fc.isCoveredDefault(p);
 }
 
 // ── DRG-NOCALWATER-001 — dormancy/growth-cycle watering suppression ──

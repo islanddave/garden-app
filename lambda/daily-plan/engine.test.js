@@ -704,10 +704,15 @@ describe('BUG-COLDNAMEMATCHNAG-001 — the solanaceous band keys on genus, not o
     // "card below 40F" to "card at or below 50F" — the opposite of the intent, and invisible to a test
     // whose fixture already held the corrected values. Watermelon is the case where tender:true is
     // CORRECT, so it legitimately cards here and its two siblings already do.
+    // RETARGETED 2026-09-18 (V5-COLDCARDREACHABLE-001): this fixture was the live IN-GROUND row, and Dave
+    // ruled 2026-09-17 that in-ground watermelons get no bring-in card ("consistency across all three
+    // watermelons over silencing that one row", ledger). The in-ground rule would now answer before the
+    // profile path this test is about, so the fixture is POTTED to keep the routing claim observable.
+    // The live in-ground row's new outcome is pinned on its own in coldcardreachable.test.js.
     const WATERMELON = {
       name: 'Tender Sweet Orange', variety: 'Tender Sweet Orange', genus: 'Citrullus',
-      crop_type_slug: 'watermelon', container_type: 'in_ground', cadence_scopes: ['cultivar'],
-      db_cadence: { crop: 'watermelon', cold: { tender: true, protect_below_F: 50 }, water_interval_days_inground: 4 },
+      crop_type_slug: 'watermelon', container_type: 'fabric_bag', cadence_scopes: ['cultivar'],
+      db_cadence: { crop: 'watermelon', cold: { tender: true, protect_below_F: 50 }, water_interval_days_container: 2 },
     };
     const row = coldRows(planFor([WATERMELON], { tonightLow: 48, highToday: 62 }))
       .find(r => r.name === 'Tender Sweet Orange');
