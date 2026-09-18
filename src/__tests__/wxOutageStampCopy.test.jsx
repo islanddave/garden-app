@@ -10,8 +10,24 @@
 // The stored shapes are BUILT BY THE REAL CODE (station.deriveStation -> mergeStationHydrology(null, …) ->
 // engine.generatePlan, bag spread as handler.js writes it), as in wxBannerIncomplete.test.jsx.
 //
-// MUTATION LOG — 2026-09-18, lane-outagecopy-20260918: see the lane findings file (outagecopy.md) for the
-// table; every mutation below went RED on this file and the file was restored byte-for-byte (sha256 checked).
+// MUTATION LOG — 2026-09-18, lane-outagecopy-20260918. Each applied alone to WeatherWidget.jsx; this file,
+// WeatherWidget.test.jsx and wxBannerIncomplete.test.jsx run under TZ=UTC; RED observed; source restored
+// byte-for-byte (sha256 checked). 30/30 RED, and every test here is killed by at least one:
+//   * forecastMissing always false (the pre-fix card)                     -> 8 RED
+//   * status gate removed / any status counts                             -> 2 / 1 RED
+//   * one of the four forecast-only fields forgotten (each, x4)           -> 1 RED each
+//   * forecast-only fields or the no-bag recent checked by truthiness     -> 1 / 1 RED (a 0 is a figure)
+//   * bag provenance: recent / today / part of today / hourly ignored     -> 1 RED each
+//   * bag branch always "missing" / every incomplete snapshot "missing"   -> 4 / 12 RED
+//   * no bag: recent or today figure ignored                              -> 1 RED each
+//   * label ignores the option / stamp not told / Open-Meteo kept          -> 5 / 4 / 2 RED
+//   * "none more expected" ungated                                        -> 4 RED
+//   * over-corrections: never "none more expected" / never "+ forecast" /
+//     never Open-Meteo                                                    -> 5 / 7 / 6 RED (incl. WeatherWidget.test.jsx)
+//   * keyed on the banner's stale-gated `incomplete` / on status.ok alone /
+//     on the 'no_hourly' provenance pair                                  -> 3 / 2 / 3 RED
+//   * skipped under the live overlay / on a previous-day snapshot         -> 1 / 1 RED
+//   * an empty forecast credits "rain gauge" to a STALE gauge's bag       -> 1 RED
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
