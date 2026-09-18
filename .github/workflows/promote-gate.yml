@@ -393,8 +393,16 @@ jobs:
       #
       # FAILS CLOSED, and only exit 0 skips. No marker (every function, until the first deploy that writes
       # them), a mismatch, an unreadable function or input, a crash: all deploy all 26 — the pre-v4.137
-      # behaviour, ~6 minutes, idempotent. The step itself never fails: every outcome writes `changed=`,
-      # and `deploy-lambdas` treats a MISSING output as "deploy" too. force_lambda still short-circuits.
+      # behaviour, ~6 minutes, idempotent. force_lambda still short-circuits.
+      #
+      # ERREXIT — keep the `|| RC=$?`. GitHub runs a step with no `shell:` as `bash -e {0}`. The first
+      # version called the script bare and read `RC=$?` on the next line, so exit 1 or 2 (both DEPLOY
+      # answers) ended the step right there, before `changed=`, and failed the promote pre-FF (B1 of the
+      # v4.138.0 pre-ship pass). Its tests passed because they ran this body with `bash -c`; they now run
+      # it as the runner does (`bash -e <file>`, scripts/test_check_lambda_current.py). Every exit code of
+      # the script now ends in `changed=`. If the step fails anyway, the promote job fails with main
+      # untouched and nothing deploys: deploy-lambdas' `!= 'false'` covers a missing output only when this
+      # job succeeded.
       #
       # Still pre-FF on purpose. The answer no longer depends on main, but a defect in THIS step then stops
       # the promote with main untouched rather than after the fast-forward.
@@ -414,8 +422,8 @@ jobs:
           if [ "${FORCE:-false}" = "true" ]; then
             echo "force_lambda=true — deploying Lambdas without consulting the running functions"
           else
-            python3 scripts/check-lambda-current.py --dev-sha "$DEV_SHA" --repo "$REPO" --region us-east-1
-            RC=$?
+            RC=0
+            python3 scripts/check-lambda-current.py --dev-sha "$DEV_SHA" --repo "$REPO" --region us-east-1 || RC=$?
             case "$RC" in
               0) CHANGED=false
                  echo "running Lambdas proven current for $DEV_SHA -> skipping the Lambda deploy (SPA-only promote)" ;;
