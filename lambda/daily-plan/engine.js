@@ -460,10 +460,11 @@ function rainStageFor(status){ const s=(status||'').toLowerCase();
 // identity and the arm stays off — the same answer isSolanaceous gives for absent genus + absent slug.
 // Population: isSolanaceous also admits potato (Solanum) and every Physalis. Wanted for potato — even moisture
 // from tuber initiation (~first flowers) through bulking is what prevents growth cracks and hollow heart.
-// INERT IN PROD: the one caller (generatePlanForUser's ceiling clamp) is gated on CARE_RAIN_MAXDAYS_ENABLED, absent from garden-daily-plan
-// (scripts/lambda-config-expected.json declares it null). Snapshot 2026-09-18 over the handler's live filter: 210
-// plantings, both predicates select the same 80, no live potato — so this closes the gap before a flip, and moves
-// nobody today. isLeafy and isMedHerb below are still free text; a med-herb crop string still pre-empts this arm.
+// INERT IN PROD: the one caller (generatePlanForUser's ceiling clamp) is gated on CARE_RAIN_MAXDAYS_ENABLED,
+// absent from garden-daily-plan (scripts/lambda-config-expected.json declares it null). Snapshot 2026-09-18 over
+// the handler's live filter: 210 plantings, both predicates select the same 80, no live potato — so this closes
+// the gap before a flip and moves nobody today. isLeafy and isMedHerb below are still free text, and a med-herb
+// crop string still pre-empts this arm.
 function rainMaxDays(tier, status, crop, p){
   const stage=rainStageFor(status);
   const base=(RAIN_MAX_DAYS[tier]||RAIN_MAX_DAYS.unknown)[stage];
