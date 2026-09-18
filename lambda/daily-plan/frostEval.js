@@ -429,18 +429,25 @@ function isFrostSeason(planDate, opts = {}) {
 // `event.frostEval === true` forces evaluation (the F5 rehearsal lever, via scripts/rerun-daily-plan.sh);
 // `event.frostEval === false` suppresses it. Neither can force a PUBLISH — that stays behind
 // FROST_ALERT_ENABLED and the dry-run gate in handler.js.
+//
+// V5-STATIONHEALTHYEAR-001 — `firstOfDay` marks the FIRST evaluating run of the ET day (the 14:00 ET run on
+// the hourly schedule, in EDT and EST alike). It is the stateless once-per-day cap for the station-health
+// alerts: the in-invocation dedup store forgets between runs, so a condition that holds all afternoon would
+// otherwise send once per evaluating run. Derived HERE, from the same window as `evaluate`, so the cap hour
+// cannot drift out of the window if FROST_RUN_START_HOUR moves. False for a forced or suppressed run.
 const FROST_RUN_START_HOUR = numEnv('FROST_RUN_START_HOUR', 14);
 const FROST_RUN_END_HOUR = numEnv('FROST_RUN_END_HOUR', 17);
 function resolveFrostRun(event, { etHour } = {}) {
-  if (event && event.frostEval === true) return { evaluate: true, slot: 'forced', reason: 'event_override' };
-  if (event && event.frostEval === false) return { evaluate: false, slot: 'suppressed', reason: 'event_override' };
+  if (event && event.frostEval === true) return { evaluate: true, slot: 'forced', reason: 'event_override', firstOfDay: false };
+  if (event && event.frostEval === false) return { evaluate: false, slot: 'suppressed', reason: 'event_override', firstOfDay: false };
   const h = finite(etHour);
-  if (h == null) return { evaluate: false, slot: 'unknown', reason: 'no_et_hour' };
+  if (h == null) return { evaluate: false, slot: 'unknown', reason: 'no_et_hour', firstOfDay: false };
   const inWindow = h >= FROST_RUN_START_HOUR && h <= FROST_RUN_END_HOUR;
   return {
     evaluate: inWindow,
     slot: inWindow ? 'intraday-pm' : (h < 6 ? 'nightly-or-am' : 'other'),
     reason: inWindow ? 'pm_window' : 'outside_pm_window',
+    firstOfDay: inWindow && h === FROST_RUN_START_HOUR,
   };
 }
 
@@ -633,6 +640,6 @@ module.exports = {
   escalatesBeyond, cropLevels, severityRank, FROST_SEVERITY_RANK,
   evalAdvisory, evalImminent, evalHeat, evalImminentCrops, evalAdvisoryCrops,
   advisoryMessage, imminentMessage, heatMessage, exposurePhrase, cropListPhrase, totalsPhrase, truncate,
-  isFrostSeason, resolveFrostRun,
+  isFrostSeason, resolveFrostRun, FROST_RUN_START_HOUR, FROST_RUN_END_HOUR,
   DEFAULT_THRESHOLDS, HEAT_ENABLED, MAX_NAMED_CROPS, MAX_MESSAGE_CHARS,
 };

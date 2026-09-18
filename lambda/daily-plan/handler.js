@@ -4,7 +4,7 @@
 // Reads Neon (conn from Secrets Manager SECRET_ARN_NEON — NEVER hardcode), resolves weather from each Space's
 // postal_code (zip-driven, not hardcoded), runs ./engine per CARETAKER, idempotent upsert into daily_plan.
 const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
-const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, FRESHNESS_MAX_MIN } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001; FRESHNESS_MAX_MIN BUG-STATIONSTALESILENT-001
+const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, FRESHNESS_MAX_MIN, ARRAY_SILENT_MIN_GAP_MIN } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001; FRESHNESS_MAX_MIN BUG-STATIONSTALESILENT-001; ARRAY_SILENT_MIN_GAP_MIN V5-STATIONHEALTHYEAR-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
 const { frostEval, isFrostSeason, resolveFrostRun, escalatesBeyond } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
@@ -1415,7 +1415,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // be invisible in CloudWatch.
     remainingBasis: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_basis).filter(Boolean),
     remainingFallback: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_fallback).filter(Boolean),
-    coversLookback: station && station.coversLookback, uncertainty: station && station.uncertainty }));
+    coversLookback: station && station.coversLookback, uncertainty: station && station.uncertainty,
+    // V5-STATIONHEALTHYEAR-001: the longest outdoor-field gap in the trailing 24 h, on EVERY run. tempF above is
+    // only the newest record, so without this an overnight array dropout could not be measured from CloudWatch.
+    arraySilent: station && station.arraySilence ? station.arraySilence.silent : null,
+    arrayGapMin: station && station.arraySilence
+      ? Object.fromEntries(Object.entries(station.arraySilence.gaps).map(([f, g]) => [f, g.longestMin])) : null }));
   // BUG-STATIONDEGRADESILENT-001 — a station that is CONFIGURED but bound to no Space. boundSpaces was only ever
   // logged, so a derive throw, a fetch that came back empty and Space coordinates that drifted off the gauge all
   // ended in the same silent place: every Space on forecast-only rain and a tonightLow with no station floor.
@@ -1430,6 +1435,12 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // skipped and the offline nights leave no overnight minimum. boundSpaces > 0 implies a station, and makes this
   // exclusive with stationUnbound, so a run never sends both.
   const stationStale = boundSpaces > 0 && !station.fresh;
+  // V5-STATIONHEALTHYEAR-001 — the third station state: bound AND fresh (the console is online) but the outdoor
+  // array went quiet for >= ARRAY_SILENT_MIN_GAP_MIN in the trailing 24 h (station.js arraySilence: the alkaline
+  // cold dropout, or a dead array). `fresh` makes it exclusive with stationStale and boundSpaces > 0 with
+  // stationUnbound, so the three station conditions can never send two emails from one run.
+  const stationArraySilent = boundSpaces > 0 && station.fresh
+    && !!(station.arraySilence && station.arraySilence.silent.length);
   const owner = process.env.OWNER_FALLBACK_SUB || null;     // unassigned -> Space owner (Dave); NEVER leaks to Jen.
   // DRG-WXWATER-001 coarse-v1: SINGLE flag read-site (spec I2 — plan is computed once nightly, all readers consume
   // the stored plan, so one flag here is inherently consistent). Default OFF; the 3-substrate-tier rain model is
@@ -1536,6 +1547,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // F6 kill switch, default OFF. Flag OFF still EVALUATES and LOGS (§3-8 wants the 2026 corpus started
   // before anything reads it) but never publishes and never writes alerts_sent — so the stored plan is
   // byte-identical to pre-frost. Flipping it is the whole of F6.
+  // It switches the FROST channel and its frost-degrade ops alerts only. The three station-health alerts below
+  // (station_unbound, station_stale, station_array_silent) deliberately do NOT read it: Dave 2026-09-18 chose
+  // "year-round emails, no switch" (V5-STATIONHEALTHYEAR-001), so turning frost alerts off must not also, and
+  // silently, turn off the only signal that the weather station is broken.
   const frostAlertEnabled = process.env.FROST_ALERT_ENABLED === 'true';
   // G3: tonightLow means three different nights depending on which run reads it. Only the 15:30 ET
   // intraday-pm run may evaluate. resolveFrostRun is pure; index.js supplies the ET hour.
@@ -1641,11 +1656,16 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           }
         }
       }
-      // BUG-STATIONDEGRADESILENT-001 — the station_unbound ops alert. The SAME gate and dedup store as
-      // frost_eval_degraded above: evaluating run, frost season, flag on, live, publisher injected, one send
-      // per key per invocation, failure collected and thrown after the plan is durable. Keyed per RUN, not
-      // per Space, because the station is account-level — a multi-Space run still sends exactly one.
-      if (stationUnbound && frostSeason && frostAlertEnabled && !dryRun && publishAlert) {
+      // BUG-STATIONDEGRADESILENT-001 — the station_unbound ops alert. Keyed per RUN, not per Space, because the
+      // station is account-level — a multi-Space run still sends exactly one. Failure collected and thrown after
+      // the plan is durable, like every publish here.
+      // V5-STATIONHEALTHYEAR-001 — the three station-health alerts are YEAR-ROUND (no frostSeason) with no flag
+      // of their own and none borrowed (no frostAlertEnabled; see where it is read), and they send ONLY from the
+      // first evaluating run of the ET day (frostRun.firstOfDay, 14:00 ET). That is the stateless once-per-day
+      // cap: frostPublished forgets between runs, so a fault that holds all afternoon used to send from each of
+      // the four evaluating runs (BUG-DEGRADEDALERTDEDUPE-001), and year-round that would have been a winter of
+      // them. The frost-degrade blocks above are unchanged: still frost-season, still per evaluating run.
+      if (stationUnbound && frostRun.firstOfDay && !dryRun && publishAlert) {
         const dk = `station|${today}|station_unbound`;
         if (!frostPublished.has(dk)) {
           const markers = [stationDegraded ? `station_derive_failed (${stationDegraded})` : null, ...wxDegradeMarkers].filter(Boolean);
@@ -1656,7 +1676,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           try {
             await publishAlert({ topic: 'ops', subject: 'Garden ops - weather station NOT BOUND',
               message: `station_unbound — weather station ${stationCfg.map((c) => c && c.mac).filter(Boolean).join(', ') || '(no mac in AWN_STATIONS_JSON)'} ` +
-                `is configured but bound to 0 of ${spaces.length} Space(s) on ${today} during frost season. Cause: ${cause}. ` +
+                `is configured but bound to 0 of ${spaces.length} Space(s) on ${today}. Cause: ${cause}. ` +
                 `Degrade markers this run: ${markers.length ? markers.join('; ') : 'none'}. ` +
                 'Tonight\'s low is the forecast with no station floor, and rain is forecast-only, until the station binds again.' });
             frostPublished.add(dk);
@@ -1670,13 +1690,13 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       // BUG-STATIONSTALESILENT-001 — station_stale, the sibling of the block above: same gate, same dedup store,
       // keyed per RUN for the same reason. Its own key and subject rather than a wider station_unbound because
       // the remedy differs: stale is the console or WiFi at the house; unbound is config, AWN keys or coordinates.
-      if (stationStale && frostSeason && frostAlertEnabled && !dryRun && publishAlert) {
+      if (stationStale && frostRun.firstOfDay && !dryRun && publishAlert) {
         const dk = `station|${today}|station_stale`;
         if (!frostPublished.has(dk)) {
           try {
             await publishAlert({ topic: 'ops', subject: 'Garden ops - weather station STALE',
               message: `station_stale — weather station ${station.mac} is bound to ${boundSpaces} of ${spaces.length} Space(s) ` +
-                `but its newest reading is ${station.dataAgeMin} min old (limit ${FRESHNESS_MAX_MIN}) on ${today} during frost season. ` +
+                `but its newest reading is ${station.dataAgeMin} min old (limit ${FRESHNESS_MAX_MIN}) on ${today}. ` +
                 'Likely the console or its WiFi is offline. Until it reports again, rain is forecast-only (no gauge truth ' +
                 'for watering), tonight\'s low has no station floor, and no overnight minimum is being recorded.' });
             frostPublished.add(dk);
@@ -1684,6 +1704,39 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           } catch (e) {
             console.error(JSON.stringify({ msg: 'station-stale alert publish FAILED', dedup_key: dk, error: e?.message }));
             frostFailures.push({ kind: 'station_stale_publish_failed', dedupKey: dk, error: e?.message });
+          }
+        }
+      }
+      // V5-STATIONHEALTHYEAR-001 — station_array_silent, the third sibling: the console is online but the outdoor
+      // array went quiet. Same gate and store, keyed per RUN. Own key and subject because the remedy is out at the
+      // ARRAY (batteries first, then range or a dead array), not the console, the WiFi or the config.
+      if (stationArraySilent && frostRun.firstOfDay && !dryRun && publishAlert) {
+        const dk = `station|${today}|station_array_silent`;
+        if (!frostPublished.has(dk)) {
+          const sil = station.arraySilence;
+          const hm = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: station.tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(ms));
+          const label = { tempf: 'outdoor temperature (tempf)', dailyrainin: 'rain gauge (dailyrainin)' };
+          const parts = sil.silent.map((f) => {
+            const g = sil.gaps[f];
+            return `${label[f] || f} missing for ${Math.floor(g.longestMin / 60)} h ${g.longestMin % 60} min, ` +
+              `${hm(g.fromMs)}-${hm(g.toMs)}${g.ongoing ? ', STILL missing now' : ', since recovered'}`;
+          });
+          const lost = [sil.silent.includes('tempf') ? 'tonight\'s low has no station floor and no overnight minimum is recorded' : null,
+            sil.silent.includes('dailyrainin') ? 'rain is forecast-only (no gauge truth for watering)' : null].filter(Boolean);
+          try {
+            await publishAlert({ topic: 'ops', subject: 'Garden ops - weather station ARRAY SILENT',
+              message: `station_array_silent — weather station ${station.mac} is online (newest reading ${station.dataAgeMin} min old) ` +
+                `but its outdoor sensor array went quiet for ${ARRAY_SILENT_MIN_GAP_MIN} min or more in the ${sil.windowMin / 60} h ` +
+                `before this check on ${today}: ${parts.join('; ')}. Most likely the array batteries: alkaline AAs stop working ` +
+                'near +10F, and Ambient specifies lithium AAs (e.g. Energizer Ultimate Lithium) for cold weather. If fresh lithium ' +
+                'batteries do not bring it back, check the array is in range of the console, or it has failed. ' +
+                `While it is quiet, ${lost.join(', and ')}.` });
+            frostPublished.add(dk);
+            console.log(JSON.stringify({ msg: 'station-array-silent alert PUBLISHED', dedup_key: dk, silent: sil.silent,
+              gap_min: Object.fromEntries(sil.silent.map((f) => [f, sil.gaps[f].longestMin])) }));
+          } catch (e) {
+            console.error(JSON.stringify({ msg: 'station-array-silent alert publish FAILED', dedup_key: dk, error: e?.message }));
+            frostFailures.push({ kind: 'station_array_silent_publish_failed', dedupKey: dk, error: e?.message });
           }
         }
       }

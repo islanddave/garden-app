@@ -241,6 +241,53 @@ function overnightMins(recs, tz) {
   return out;
 }
 
+// ── V5-STATIONHEALTHYEAR-001 — the outdoor ARRAY going quiet while the console stays online ─────────
+//
+// WHY THIS EXISTS. `fresh` is decided by the newest record's TIMESTAMP alone, and the indoor console keeps
+// uploading when the outdoor array stops transmitting. A dead or battery-starved array therefore reads fresh
+// and binds, while everything outdoor is gone: `tempf` (the tonightLow floor and the overnight minima above)
+// and `dailyrainin` (every gauge rain figure). Neither station_unbound nor station_stale can see it.
+//
+// WHY A WINDOW, NOT THE NEWEST RECORD. Ambient puts the alkaline-AA limit near +10F, and its FAQ on the
+// symptom is titled "Sensor Array Loses Signal At Night": solar carries the array by day, the batteries fail
+// in the coldest dark hours. The alert is checked once a day at the afternoon run, when such an array is
+// usually transmitting again, so a newest-record test would miss the very failure it exists for. This reads
+// the trailing ARRAY_SILENT_WINDOW_MIN of records the fetch already holds (~72 h). 24 h is the spacing of
+// the daily check, so every dropout is examined by exactly one check.
+//
+// A field is silent when its longest run of consecutive records WITHOUT a finite value spans at least
+// ARRAY_SILENT_MIN_GAP_MIN, measured first-missing to last-missing record (it under-reads a gap by one
+// reporting interval, which errs toward not alerting). An isolated missing sample never counts. Timestamps,
+// not record counts: the 5-minute cadence is AWN's choice, not ours (the samplesBelow rule above).
+const ARRAY_SILENT_WINDOW_MIN = 24 * 60;
+const ARRAY_SILENT_MIN_GAP_MIN = 60;
+const ARRAY_FIELDS = ['tempf', 'dailyrainin'];
+
+function arraySilence(recs, { nowMs } = {}) {
+  if (!Array.isArray(recs) || !Number.isFinite(nowMs)) return null;
+  const since = nowMs - ARRAY_SILENT_WINDOW_MIN * 60000;
+  const win = recs.filter((r) => r && Number.isFinite(r.dateutc) && r.dateutc >= since)
+    .sort((a, b) => a.dateutc - b.dateutc);
+  const last = win[win.length - 1];
+  const gaps = {};
+  const silent = [];
+  for (const f of ARRAY_FIELDS) {
+    let missing = 0; let run = null; let longest = null;
+    for (const r of win) {
+      if (Number.isFinite(r[f])) { run = null; continue; }
+      missing += 1;
+      if (run) run.toMs = r.dateutc; else run = { fromMs: r.dateutc, toMs: r.dateutc };
+      // >= so the LATER of two equal runs wins: it is the one that can still be ongoing.
+      if (!longest || run.toMs - run.fromMs >= longest.toMs - longest.fromMs) longest = run;
+    }
+    const longestMin = longest ? Math.round((longest.toMs - longest.fromMs) / 60000) : 0;
+    gaps[f] = { missing, longestMin, fromMs: longest ? longest.fromMs : null, toMs: longest ? longest.toMs : null,
+      ongoing: !!(longest && last && longest.toMs === last.dateutc && !Number.isFinite(last[f])) };
+    if (longestMin >= ARRAY_SILENT_MIN_GAP_MIN) silent.push(f);
+  }
+  return { windowMin: ARRAY_SILENT_WINDOW_MIN, records: win.length, gaps, silent };
+}
+
 // costs the whole day only when nothing plausible is left to bucket.
 function deriveStation(raw, { nowMs }) {
   if (!raw || !Array.isArray(raw.records) || !raw.records.length) return null;
@@ -351,8 +398,15 @@ function deriveStation(raw, { nowMs }) {
   const todayPrecipIn = Number.isFinite(buckets[D0]) ? round2(buckets[D0]) : null;
   const yesterdayPrecipIn = Number.isFinite(buckets[D1]) ? round2(buckets[D1]) : null;
 
+  // V5-STATIONHEALTHYEAR-001 — its own try/catch, like the covariates: it only feeds an ops alert, and a throw
+  // in here must never cost the gauge (the handler degrades a throwing deriveStation to no station at all).
+  // null = could not be computed, which the handler reads as "no alert", never as "array healthy".
+  let silence = null;
+  try { silence = arraySilence(recs, { nowMs }); } catch { silence = null; }
+
   return { mac: raw.mac, lat: cfg.lat, lng: cfg.lng, tz, fresh, dataAgeMin, tempF, nightMins, recentPrecipIn, coversLookback, buckets, uncertainty,
-    day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn, implausibleDays, negativeDays };
+    day0: D0, day1: D1, day2: D2, hour0: civilHour(nowMs, tz), todayPrecipIn, yesterdayPrecipIn, implausibleDays, negativeDays,
+    arraySilence: silence };
 }
 
 // Gauge totals addressed by CIVIL-DAY LABEL rather than by the fetch instant. deriveStation's D0/D1/D2 are
@@ -591,4 +645,4 @@ function mergeStationWeather(wx, st) {
   return { merged: { ...wx, tonightLow: low }, prov };
 }
 
-module.exports = { stationConfig, deriveStation, overnightMins, OVERNIGHT_MIN_SAMPLES, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, COORD_TOL, NEAR_TERM_WINDOW_H };
+module.exports = { stationConfig, deriveStation, overnightMins, OVERNIGHT_MIN_SAMPLES, arraySilence, ARRAY_SILENT_WINDOW_MIN, ARRAY_SILENT_MIN_GAP_MIN, ARRAY_FIELDS, gaugeWindow, bindStationToSpace, mergeStationHydrology, mergeStationWeather, civilDay, civilHour, dayBefore, remainingHourlyIn, effectiveHour, FRESHNESS_MAX_MIN, RAIN_MAX_DAILY_IN, RAIN_MIN_DAILY_IN, COORD_TOL, NEAR_TERM_WINDOW_H };

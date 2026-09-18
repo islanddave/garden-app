@@ -467,8 +467,9 @@ describe('weather-seam failures degrade loudly and never empty the plan', () => 
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { pg, publishAlert } = await drive({ fetchStation: async () => STATION_RAW, tonightLow: 30 });
     expect(pg.writes.length).toBeGreaterThan(0);                                            // plan survived
-    // frost alert too — asserted by TOPIC, because this run also raises the station_unbound ops alert
-    // (BUG-STATIONDEGRADESILENT-001) and a bare toHaveBeenCalled() stayed green with the frost publish removed.
+    // frost alert too — asserted by TOPIC, because on the 14:00 ET run this failure also raises the station_unbound
+    // ops alert (BUG-STATIONDEGRADESILENT-001; once a day since V5-STATIONHEALTHYEAR-001) and a bare
+    // toHaveBeenCalled() stayed green with the frost publish removed.
     expect(publishAlert.mock.calls.some(([a]) => a.topic === 'frost')).toBe(true);
     expect(logLines(err).some((l) => l.degraded === 'station_derive_failed')).toBe(true);    // and it is NAMED
   });

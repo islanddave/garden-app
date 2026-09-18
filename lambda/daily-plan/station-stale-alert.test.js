@@ -15,7 +15,9 @@ const { run } = h;
 
 const USER = 'user_dave';
 const DATE = '2026-09-20';        // inside the §3-7 Sep 1 – Nov 15 frost season
-const PM_HOUR = 15;               // an evaluating run (G3 window 14:00-17:59 ET)
+// V5-STATIONHEALTHYEAR-001: the FIRST evaluating run (14:00 ET), the only run that may send a station alert.
+// This was 15 (any evaluating run) before the once-a-day cap; at 15 every positive case below now goes red.
+const PM_HOUR = 14;
 const MAC = 'AA:BB:CC:DD:EE:FF';
 const HOME = { id: 'sp1', postal_code: null, weather_lat: 42.5, weather_lng: -72.6 };    // at the gauge
 const HOME2 = { id: 'sp2', postal_code: null, weather_lat: 42.5, weather_lng: -72.6 };   // also at the gauge
@@ -133,12 +135,16 @@ describe('BUG-STATIONSTALESILENT-001 — a bound station that stopped reporting 
   });
 });
 
+// V5-STATIONHEALTHYEAR-001 changed station_unbound's gate on purpose, and this one with it: year-round, flag-free,
+// first evaluating run only. The two cases that used to assert "outside season -> none" and "flag unset -> none"
+// now assert the opposite.
 describe('BUG-STATIONSTALESILENT-001 — the gate is station_unbound\'s gate, clause for clause', () => {
-  it('outside frost season -> no alert', async () => {
+  it('outside frost season -> STILL one alert (year-round)', async () => {
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
     quiet();
     const { publishAlert } = await drive({ today: '2026-07-04' });
-    expect(publishAlert).not.toHaveBeenCalled();
+    expect(publishAlert).toHaveBeenCalledTimes(1);
+    expect(staleCalls(publishAlert)).toHaveLength(1);
   });
 
   it('a non-evaluating run (02:00 ET) -> no alert', async () => {
@@ -148,10 +154,20 @@ describe('BUG-STATIONSTALESILENT-001 — the gate is station_unbound\'s gate, cl
     expect(publishAlert).not.toHaveBeenCalled();
   });
 
-  it('FROST_ALERT_ENABLED unset -> no alert', async () => {
+  it('the later evaluating runs (15, 16, 17 ET) -> no alert: one email per day, from the 14:00 run', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    quiet();
+    for (const etHour of [15, 16, 17]) {
+      const { publishAlert } = await drive({ etHour });
+      expect(publishAlert).not.toHaveBeenCalled();
+    }
+  });
+
+  it('FROST_ALERT_ENABLED unset -> STILL one alert (no switch; turning frost off must not silence the station)', async () => {
     quiet();
     const { publishAlert } = await drive();
-    expect(publishAlert).not.toHaveBeenCalled();
+    expect(publishAlert).toHaveBeenCalledTimes(1);
+    expect(staleCalls(publishAlert)).toHaveLength(1);
   });
 
   it('a dry run -> no alert', async () => {
