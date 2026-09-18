@@ -205,9 +205,12 @@ function previousDay(today) {
 // It carries the SAME `rain_backfill` tag as the migration, deliberately, and this is worth stating
 // because it looks like a copy-paste error and is not: the tag's job is "this rain row was written
 // by a machine from a gauge reading, not by a person", and that is equally true of both. Anything
-// that needs to tell them apart can, without a second tag — the migration's rows all predate
-// 2026-08-28 and carry `backfilled: true`. Two tags for one meaning would mean every future consumer
-// has to remember both, and the one that forgets silently under-counts.
+// that needs to tell them apart can, without a second tag — the autologger's rows carry
+// `auto_logged: true`, and the migration's rows carry NEITHER `auto_logged` NOR `backfilled`
+// (0b-data.sql builds its metadata without either key). Do not key on `backfilled: true`: no
+// production caller passes `{ backfilled: true }`, so as of 2026-09-18 no prod row carries it —
+// verified by a read-only count grouped on both keys. Two tags for one meaning would mean every
+// future consumer has to remember both, and the one that forgets silently under-counts.
 function rainMetadata(amountIn, { backfilled = false } = {}) {
   return {
     rain_backfill: BACKFILL_TAG,

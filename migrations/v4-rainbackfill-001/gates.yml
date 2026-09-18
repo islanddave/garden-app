@@ -180,7 +180,48 @@ post:
   # The roof rule, asserted as an outcome rather than trusted from the predicate. No planting under a
   # roof may carry a backfilled rain row. NOT continuous — it is scoped to this migration's tag, so
   # it stays true forever and costs nothing to keep checking.
+  #
+  # `retired:` ADDED 2026-09-17 (BUG-RAINCOVEREDGATESTATIC-001). THE SENTENCE ABOVE IS THE CLAIM THAT
+  # FAILED. The tag is frozen; the JOIN TARGET IS NOT. This gate joins an immutable event row to
+  # `garden_node.location_id` — the planting's location *now* — so it does not assert "the writer
+  # obeyed the roof rule", it asserts "no plant that ever received rain has since moved indoors". That
+  # is a fact about Dave's gardening, not about the code, and it costs a permanent red every autumn.
+  # The assertion text stands as the record of what was believed; the guard duty is rehomed to
+  # lambda/daily-plan/rain-roof-rule.test.js, which checks the same rule at WRITE time. Retired, not
+  # deleted and not weakened. Full ruling: claude-ops/project-rules/gardening.md
+  # §Rain-Event History Rule.
   - name: post_no_rain_backfilled_onto_a_covered_planting
+    retired: >
+      RETIRED 2026-09-17 as a CENSUS OF AN ACCEPTED STATE, not silenced. The count is real and every
+      row it names is real. Per the Rain-Event History Rule in claude-ops/project-rules/gardening.md:
+      a rain event records weather that fell on a planting AT A PLACE AND TIME, and moving the plant
+      afterwards changes where it is, not where the rain fell.
+      MEASURED 2026-09-17 on live prod: 96 rows across 10 plantings, rain dated 2026-07-21..2026-09-13,
+      all 10 moved into House/Stable between 01:04 and 01:07 on 2026-09-17. BOTH writers applied the
+      roof rule correctly AT WRITE TIME -- 0b-data.sql:224-225 for the backfill, handler.js:1020-1027
+      for the live autologger. Nothing is mis-crediting rain to a covered plant.
+      IT OSCILLATES, IT DOES NOT RATCHET. Unlike the events_to_deleted_plants census, which only ever
+      grows, this number rises each autumn as tropicals come in and FALLS each spring as they go back
+      out. A FALL IS NOT A REPAIR. Do NOT "fix" this in a future integrity sweep, do NOT delete or
+      re-point the events, and do NOT re-scope the predicate by location name -- the exemption is
+      "the planting's location changed after the event", never "House and Stable are exempt", which
+      would mask a genuine mis-credit the day a live bug puts rain on an indoor plant.
+      EVALUATING IT AT EVENT TIME IS NOT AVAILABLE. reparent_event has 0 rows; audit_events covers
+      plants only from 2026-08-27, which postdates 56 of the 96; locations has ZERO audit rows so
+      locations.covered is unversioned; and the three candidate histories DISAGREE -- audit says
+      Ginger sat in Trough all summer while Dave's own brought_inside events (2026-08-18, 2026-09-16)
+      say otherwise, because logging a move does not write location_id. Reconstructing from audit
+      alone returns a confident 0 and hides those 5 rows. That is a schema project, not a predicate fix.
+      SCOPING IT TO THE MIGRATION IS NOT AVAILABLE EITHER. The rain_backfill tag is shared with the
+      live autologger BY DESIGN (rainLog.js:205-210); 40 of the 96 are auto_logged rows, so scoping to
+      the migration's own writes yields 56, not 0, and freezes the gate over a population that can
+      never grow. A recent-created_at window does not work either: measured 2026-09-17, 10 of the 96
+      were written within the last 7 days, so such a gate is born red.
+      GUARD DUTY IS REHOMED, NOT DROPPED. The rain insert's coverage exclusion is now asserted at
+      write time by lambda/daily-plan/rain-roof-rule.test.js, which extracts the recursive predicate
+      from handler.js and evaluates it. Before that file existed the clause had NO test coverage
+      anywhere in the repo and this gate was its only guard -- retiring it bare would have been a
+      disarmed guard.
     sql: |
       SELECT e.id
         FROM public.event_log e
