@@ -284,8 +284,9 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
   // page while a sow is mid-flight.
   //
   // INERT IN PRODUCTION TODAY — say so plainly rather than let the call site imply a guard that is
-  // running. App.jsx registers `/sow` as a plain full-page route with NO `overlayable` flag (unlike
-  // /log, /log/many and /put-up), so no OverlayDirtyProvider is ever mounted above this page and
+  // running. This page renders inside `/seeds` (V5-SEEDSTAB-001; `/sow` is now a redirect there), a
+  // plain full-page route with NO `overlayable` flag (unlike /log, /log/many and /put-up), so no
+  // OverlayDirtyProvider is ever mounted above this page and
   // this hook reports into nothing. It is kept as forward-compat: it costs nothing, it keeps the
   // page in the standard three-guard shape, and adding `overlayable` later then needs no follow-up
   // here. The guard that actually runs on this surface is the reload gate below. The suite's
