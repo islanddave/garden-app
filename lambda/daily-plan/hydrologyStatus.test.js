@@ -56,3 +56,24 @@ describe('hydrologyStatus — snapshot-volatility uncertainty (DRG-WX Phase 2)',
     expect(r.uncertainty.flag).toBe(false);
   });
 });
+
+// BUG-WXBANNERSHOWERYCOPY-001 — the incomplete reason must be TRUE of what the credit path does, so each
+// case asserts the reason and windowPrecip (the function rain credit and every rain skip read) together.
+describe('hydrologyStatus — the incomplete reason says what watering really credits', () => {
+  it('no recent figure (outage, no gauge): "assumes no rain credit", and windowPrecip is null', () => {
+    for (const hy of [null, H({ recent_precip_in: null, upcoming_precip_in: null })]) {
+      expect(hydrologyStatus(hy).uncertainty.reason).toMatch(/assumes no rain credit/);
+      expect(engine.windowPrecip(hy)).toBeNull();
+    }
+  });
+
+  it('gauge-supplied recent with no forecast (the 2026-09-02 shape): says recent rain still credits', () => {
+    const hy = { recent_precip_in: 0.5, today_precip_in: 0.01, today_observed_in: 0.01, today_remaining_in: 0,
+      today_pop: null, upcoming_precip_in: null, tomorrow_precip_in: null, tomorrow_pop: null };
+    const r = hydrologyStatus(hy);
+    expect(r.ok).toBe(false);
+    expect(r.uncertainty.reason).toMatch(/still credits recent rain/);
+    expect(r.uncertainty.reason).not.toMatch(/no rain credit/);
+    expect(engine.windowPrecip(hy)).toBeCloseTo(0.51);
+  });
+});

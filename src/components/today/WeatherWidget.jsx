@@ -196,6 +196,24 @@ export function hydrologySourceLabel(st) {
   if (st.station_uncertainty === 'warmup') return 'forecast · gauge warming up'
   return 'forecast'
 }
+// BUG-WXBANNERSHOWERYCOPY-001 — the caveat for the OTHER thing engine.hydrologyStatus flags. The flag is
+// raised for a showery regime (status.ok true: the figures exist and can still move) AND for missing
+// precip data (status.ok false: some figures do not exist). The banner said "Showery pattern" for both,
+// which on a forecast-outage day asserted a weather pattern nobody had forecast.
+// "The watering call above" is the two lanes, so the sentence is keyed on what THEY read:
+// wateringScale.measuredWater = recent_precip_in + today_observed_in. The gauge is named when it
+// supplied either (station.mergeStationHydrology: recent_source 'station', or today_observed_in, which
+// only a fresh gauge sets); that includes a gauge still warming up, whose today reading the lanes count
+// although the engine's list does not (windowPrecip is null without recent). With neither, the lanes and
+// the engine count no rain at all. "Didn't fully" covers a whole outage and a partial one alike.
+export function incompleteForecastCopy(hydrology) {
+  const lead = 'The rain forecast didn’t fully come through for today’s plan'
+  if (hydrology?.station?.recent_source === 'station' || Number.isFinite(hydrology?.today_observed_in)) {
+    return `${lead}. The watering call above still counts what the rain gauge measured.`
+  }
+  if (Number.isFinite(hydrology?.recent_precip_in)) return `${lead}. The watering call above still counts recent rain.`
+  return `${lead}, so the watering call above doesn’t count on any rain.`
+}
 function isStaleSnapshot(generatedAt, planDate) {
   if (!generatedAt || !planDate) return false
   const d = new Date(generatedAt)
@@ -269,12 +287,18 @@ export default function WeatherWidget({
   // both already OR it with `live`, so the branch it newly reaches was one `live` had covered anyway.
   const stale = isStaleSnapshot(generatedAt, planDate)
   const uncertain = !!(hydrology?.status?.uncertainty?.flag) && !stale
+  // BUG-WXBANNERSHOWERYCOPY-001 — the flag covers two different states, so split it by what it means.
+  // `incomplete` is hydrologyStatus's missing-data verdict (ok:false), `showery` is everything else it
+  // flags. Only showery may drive the "could climb" note or open the rain line on its own: on an
+  // incomplete snapshot there is nothing to hedge, and the line would print a chance floored from null.
+  const incomplete = uncertain && hydrology?.status?.ok === false
+  const showery = uncertain && !incomplete
   // The NOTE's softened phrasing stays live-gated, unlike the banner. That copy restates the STORED
   // snapshot's own figures ("~0.21″ today — could climb") and drops the PoP weighting; applied to the
   // overlay it would swap a hedged number for a raw one while adding a hedging word, and would assert
   // the engine's verdict over figures the engine never saw. Regime-level caveat: shown either way.
   // Number-level caveat: only over the numbers it was computed from.
-  const softenedNote = uncertain && !live
+  const softenedNote = showery && !live
 
   // DRG-WXSTATION-002 — provenance rides on the NIGHTLY hydrology (the live overlay is a client-side
   // Open-Meteo fetch and carries none), so read it off `hydrology` regardless of the live branch.
@@ -474,7 +498,7 @@ export default function WeatherWidget({
           line, costing Dave the one honest thing still known: the probability. The rainNote ternary
           already has a `{pop}% chance of rain {when}` branch for exactly this case; it was simply
           unreachable, because a row with no amount could never open the gate. */}
-      {(rainIn > 0 || uncertain || live || gaugeMeasured || rainPop >= RAIN_POP_DISPLAY_THRESHOLD) && (
+      {(rainIn > 0 || showery || live || gaugeMeasured || rainPop >= RAIN_POP_DISPLAY_THRESHOLD) && (
         <div style={{ marginTop: tokens.space.sm, textAlign: 'center', fontSize: tokens.type.xs, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
           {/* care.rainPct is drawn for this exact line: its registry note calls it "the FORECAST twin
               of event.rain … one drop under a raised cloud reads as 'some chance', three streaks read
@@ -516,7 +540,7 @@ export default function WeatherWidget({
           &#9888; This is an older snapshot &mdash; today&rsquo;s plan hasn&rsquo;t refreshed yet, so the watering call and rain totals may be out of date.
         </div>
       )}
-      {uncertain && (
+      {showery && (
         <div style={{
           marginTop: 6, textAlign: 'center', fontSize: tokens.type.xs, lineHeight: 1.35,
           color: PAL.warnInk, background: PAL.warnBg, border: `1px solid ${PAL.warnBorder}`,
@@ -526,6 +550,17 @@ export default function WeatherWidget({
               generation and false under the hourly schedule. The caveat survives because the showery
               uncertainty is real regardless of when the plan ran; only the provenance claim is gone. */}
           &#9888; Showery pattern &mdash; these amounts can still change through the day. The watering call above already plays it safe.
+        </div>
+      )}
+      {incomplete && (
+        <div style={{
+          marginTop: 6, textAlign: 'center', fontSize: tokens.type.xs, lineHeight: 1.35,
+          color: PAL.warnInk, background: PAL.warnBg, border: `1px solid ${PAL.warnBorder}`,
+          borderRadius: 9, padding: '5px 8px',
+        }}>
+          {/* BUG-WXBANNERSHOWERYCOPY-001 — same slot and precedence as the showery caveat (stale still
+              outranks it), different claim: see incompleteForecastCopy. */}
+          &#9888; {incompleteForecastCopy(hydrology)}
         </div>
       )}
     </div>

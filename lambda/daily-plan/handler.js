@@ -1550,7 +1550,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // (a fold against a falsely-empty window would over-due every planting — see readLedgerEvents).
     const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled, deferDryEnabled, soonAwareEnabled,
       waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now(),
-      droughtState: droughtBySpace[spaceId] || null });
+      droughtState: droughtBySpace[spaceId] || null,
+      // BUG-INGROUNDOFFSEASONSILENT-001 — engine.coldFor drops an in-ground bring-in card only while the
+      // frost alert can publish, so the kill switch above must travel with the plan, not stay handler-local.
+      frostAlertEnabled });
     // V5-DROUGHTSPACE-001 — the garden-wide line, computed ONCE per Space and written onto every user's
     // row in it. null on every day the signal does not fire, which is what keeps the key absent.
     const gardenDrought = drought.gardenDrought(droughtBySpace[spaceId] || null);
