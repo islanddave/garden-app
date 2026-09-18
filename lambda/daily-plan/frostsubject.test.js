@@ -175,6 +175,12 @@ describe('frostSubject — an ADVISORY names its own night and low, the ones its
 
   it('an advisory decision with no advisory record says only "Frost advisory" — it never falls back to tonight\'s low', () => {
     expect(frostSubject({ tier: 'advisory', level: 'advisory', observability: { tonightLowF: 39 } })).toBe('Garden alert - Frost advisory');
+    // a record with no low at all names its night and prints no number — never "(low 0F)" from Number(null)
+    for (const over of [{}, { lowF: null, minLowF: null }, { minLowF: 'n/a' }]) {
+      const advisory = { fires: true, dayOffset: 1, date: '2026-09-19', ...over };
+      expect(frostSubject({ tier: 'advisory', level: 'advisory', advisory, observability: { tonightLowF: 55 } }), JSON.stringify(over))
+        .toBe('Garden alert - Frost advisory tonight');
+    }
   });
 });
 
