@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.139.0",
+    "date": "2026-09-18",
+    "highlights": [
+      "Seeds has one home: More → Seeds holds My seeds (every packet and saved lot, with search, crop filters and sorting), Saved seeds and Sow now, one tap apart",
+      "Seed packets moved off the Inventory list into Seeds; the Inventory list keeps one Seeds row that opens them, and the packet − / + moved with them",
+      "Adding a seed packet goes straight back to where you started, and saving seed from inside Seeds keeps you on the view you were on"
+    ]
+  },
+  {
     "version": "4.138.0",
     "date": "2026-09-18",
     "highlights": [
