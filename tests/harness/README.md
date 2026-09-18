@@ -165,6 +165,35 @@ http://localhost:5311/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=8
 target under 48px. The sheet check is separate from the document one on purpose: a sheet scrolls its
 own content, so a field wider than the panel does **not** show up as document `hscroll`.
 
+## `seeds.*` — the whole Seeds page, added 2026-09-18
+
+V5-SEEDSTAB-001 made `/seeds` one page over three views. This entry mounts the real `<Seeds />` in a
+`MemoryRouter` at `/seeds?view=…`, with stand-ins for the app chrome that is on screen there: a
+sticky top bar of TopChrome's `BAR_H` (52px) and a fixed `<nav aria-label="Main navigation">` of
+`BOTTOM_NAV_HEIGHT_PX` (56px). Without them "how many rows are on the first screen" is answered for
+108px of page the phone never shows.
+
+```
+http://localhost:5311/tests/harness/seeds.html?view=mine
+    view=mine|saved|sow   the view the page opens on (goes into the router URL)
+    topbar=52             the top-bar stand-in's height; the gate passes TopChrome.jsx's BAR_H
+    verdict=0             hide the measurement bar
+```
+
+The fixture is 27 seed rows over 8 crops, including the 44-character "Money Plant (self-saved,
+variety unrecorded)" as a lot fermenting 5 days and archived for the season (two chips on its second
+line, and the ferment line names it), registry vendors, a used-up packet and an identical pair. Sow
+now's candidates are built so the gate's floors rest only on date-independent buckets.
+
+**Every load clears `sessionStorage` first.** The views' scroll restore keys on
+`window.history.state.key`, which `MemoryRouter` never writes, so every load shares the key
+`default` and would restore the previous load's scroll — measured at 591px before the clear existed.
+`seedssaved.jsx` clears it for the same reason.
+
+`scripts/layout-gate/seeds-page-shot.mjs` (`gate:seeds-page`) is the instrument; it writes one PNG
+per view and viewport to `artifacts/layout-gate/`, plus evidence shots of the 44-char row and the
+most-squeezed Sow now card.
+
 ## Limits — what this harness CANNOT prove
 
 State these whenever a number from here is quoted.

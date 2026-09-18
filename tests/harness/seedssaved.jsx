@@ -37,6 +37,11 @@ import Seeds from '../../src/pages/Seeds.jsx'
 const q = new URLSearchParams(location.search)
 const CASE = q.get('case') || 'empty'
 
+// Every load is a first visit. The Seeds page's views restore scroll from sessionStorage under
+// window.history.state.key, which MemoryRouter never writes — so without this every load shares the
+// key 'default' and inherits the previous load's offset (measured on the seeds-page entry: 591px).
+try { window.sessionStorage.clear() } catch { /* private mode: nothing was remembered either */ }
+
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString()
 
 // Real prod names. "Money Plant (self-saved, variety unrecorded)" is 44 chars — the longest
