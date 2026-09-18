@@ -376,17 +376,19 @@ jobs:
       # skipped with it: the declared config ships unverified on a green promote. If deploy-lambda.yml
       # starts reading another file outside lambda/, it belongs in this comparison too.
       #
-      # NOTE (2026-09-16): the lambda/ lookup has never resolved. For a DIRECTORY the contents API
-      # returns a JSON array, and the parser below prints '' for anything that is not an object, so
-      # all 66 runs 2026-08-14..09-15 that got past force_lambda logged `<none>` for both trees and
-      # took the fail-closed branch. Every promote has deployed Lambdas; the comparison and the
-      # SPA-only skip have never executed. Repairing that lookup ACTIVATES the skip for the first
-      # time — re-audit what deploy-lambda.yml reads before doing it.
+      # NOTE (2026-09-17, OPS-LAMCHANGEDBLIND-002): the lambda/ lookup never resolved until now. For
+      # a DIRECTORY the contents API returns a JSON array, and the parser printed '' for anything
+      # that was not an object, so all 66 runs 2026-08-14..09-15 that got past force_lambda logged
+      # `<none>` for both trees and took the fail-closed branch. Every promote deployed Lambdas; the
+      # comparison and the SPA-only skip had never executed. `subtree` now re-asks the Trees API for
+      # any path the contents call cannot resolve, so the skip becomes reachable for the first time.
+      # The compared path list was deliberately NOT widened in that change — re-audit what
+      # deploy-lambda.yml reads before trusting a skip.
       #
       # Fails CLOSED: any error, any missing field => lambda_changed=true. Deploying Lambdas that did
       # not change is a no-op costing ~6 minutes; skipping Lambdas that DID change is the bug this
       # whole change exists to prevent.
-      - name: Detect lambda changes (pre-FF; lambda/ + recipe + config manifest + checker)
+      - name: Detect lambda changes (pre-FF; compares every input listed in PATHS below)
         id: lam
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
@@ -400,39 +402,112 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           api() { curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
-          # tree sha of a path at a ref, or empty string on any failure
+          # .sha of a JSON OBJECT on stdin; empty for an array, an error body, or unparseable input
+          jsha() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('sha','') if isinstance(d,dict) else '')"; }
+          # blob sha of a FILE / tree sha of a DIRECTORY at a ref, or empty string on any failure.
+          # The contents API answers a file with an object carrying .sha but a DIRECTORY with a JSON
+          # array that has no sha of its own — the blindness above. So anything the contents call
+          # cannot resolve is re-asked of the Trees API, which addresses <ref>:<path> directly and
+          # returns that directory's own tree sha in one call at any depth. Trees 404s a missing path
+          # and 422s a file, so neither yields a sha and both still fail CLOSED below.
           subtree() {
-            api "https://api.github.com/repos/$REPO/contents/$2?ref=$1" \
-              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('sha','') if isinstance(d,dict) else '')" 2>/dev/null || echo ""
+            local S
+            S=$(api "https://api.github.com/repos/$REPO/contents/$2?ref=$1" | jsha 2>/dev/null || echo "")
+            if [ -z "$S" ]; then
+              S=$(api "https://api.github.com/repos/$REPO/git/trees/$1:$2" | jsha 2>/dev/null || echo "")
+            fi
+            printf '%s\n' "$S"
           }
-          MAIN_LAM=$(subtree main lambda)
-          DEV_LAM=$(subtree "$DEV_SHA" lambda)
-          MAIN_WF=$(subtree main .github/workflows/deploy-lambda.yml)
-          DEV_WF=$(subtree "$DEV_SHA" .github/workflows/deploy-lambda.yml)
-          MAIN_CFG=$(subtree main scripts/lambda-config-expected.json)
-          DEV_CFG=$(subtree "$DEV_SHA" scripts/lambda-config-expected.json)
-          MAIN_CHK=$(subtree main scripts/check-lambda-config.py)
-          DEV_CHK=$(subtree "$DEV_SHA" scripts/check-lambda-config.py)
-          echo "main lambda/ tree = ${MAIN_LAM:-<none>}"
-          echo "dev  lambda/ tree = ${DEV_LAM:-<none>}"
-          echo "main recipe/manifest/checker blobs = ${MAIN_WF:-<none>} ${MAIN_CFG:-<none>} ${MAIN_CHK:-<none>}"
-          echo "dev  recipe/manifest/checker blobs = ${DEV_WF:-<none>} ${DEV_CFG:-<none>} ${DEV_CHK:-<none>}"
-          if [ -z "$MAIN_LAM" ] || [ -z "$DEV_LAM" ]; then
-            echo "::warning::could not resolve one or both lambda/ tree SHAs — failing CLOSED, deploying Lambdas"
-            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          # A blob that resolves on NEITHER side compares '' = '' below and reads as unchanged, i.e.
-          # fail-OPEN — so each one is guarded explicitly rather than left to the comparison. The
-          # recipe blob went unguarded from OPS-PROMOTERACE-001 until 2026-09-16.
-          if [ -z "$MAIN_WF" ] || [ -z "$DEV_WF" ] || [ -z "$MAIN_CFG" ] || [ -z "$DEV_CFG" ] || [ -z "$MAIN_CHK" ] || [ -z "$DEV_CHK" ]; then
-            echo "::warning::could not resolve the recipe / config manifest / checker blob SHAs — failing CLOSED, deploying Lambdas"
-            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          if [ "$MAIN_LAM" != "$DEV_LAM" ] || [ "$MAIN_WF" != "$DEV_WF" ] || [ "$MAIN_CFG" != "$DEV_CFG" ] || [ "$MAIN_CHK" != "$DEV_CHK" ]; then
-            echo "lambda code, deploy recipe, config manifest or checker changed -> Lambdas will deploy BEFORE the SPA"
+          # CONTENT digest of a package.json-shaped file at a ref: parse the JSON, drop the top-level
+          # `version` key, canonicalise (keys sorted at every level, no whitespace) and sha256 it.
+          #
+          # Why a digest instead of the blob: the version bump rides in the feature commit, so the BLOB
+          # of package.json moves on essentially every release. Measured 2026-09-17 over the last 250
+          # commits touching it — version-only 225, deps-only 8, scripts 16, other 1. Comparing the blob
+          # would pin changed=true forever and the SPA-only skip would never fire while still LOOKING
+          # enabled: the same structural blindness as OPS-LAMCHANGEDBLIND-002, reached another way.
+          #
+          # Why it hashes EVERYTHING EXCEPT `version`, rather than just `scripts`: an allowlist is blind
+          # to a key nobody has added yet. `workspaces` is absent today, and adding it would change how
+          # `npm install` resolves inside lambda/<fn> — changing the bundle with NO edit to
+          # deploy-lambda.yml, so nothing else in this comparison would catch it. Excluding one known-
+          # noisy key covers every other key, present and future. Canonicalising is what makes that
+          # affordable: a reformat or a key reorder does not move the digest, only real content does.
+          #
+          # Empty string on ANY failure — unresolvable path, a non-base64 or oversize response, invalid
+          # JSON, a non-object document, a missing python3, a dead network. Empty lands on the SAME
+          # fail-closed exit as subtree() below. Returning empty and having it read as a comparison
+          # RESULT is precisely what OPS-LAMCHANGEDBLIND-002 was; there is exactly one guard, and both
+          # resolvers feed it.
+          pkgdigest() {
+            api "https://api.github.com/repos/$REPO/contents/$2?ref=$1" | python3 -c "import sys,json,base64,hashlib;d=json.load(sys.stdin);p=json.loads(base64.b64decode(d['content'])) if isinstance(d,dict) and d.get('encoding')=='base64' else None;print(hashlib.sha256(json.dumps({k:v for k,v in p.items() if k!='version'},sort_keys=True,separators=(',',':')).encode()).hexdigest())" 2>/dev/null || echo ""
+          }
+          # The comparison IDENTITY of one input at one ref — a blob sha, a tree sha, or a content
+          # digest. BOTH sides of every comparison go through this function, so an identity can never
+          # be derived one way for main and another way for the dev SHA; a difference in HOW the two
+          # sides were computed would be a pure false-positive generator. (Named `ident`, not
+          # `resolve`, because `resolve` is already a JOB in this workflow.)
+          #
+          # The blank guard is defence in depth against a caller bug, and it closes a real edge:
+          # `?ref=` with an EMPTY value is not an error to the contents API, it silently means the
+          # DEFAULT BRANCH. Verified 2026-09-17 against the live API — `subtree "" package.json`
+          # returns main's blob sha rather than empty, so an empty DEV_SHA would have compared main
+          # against main and read as "unchanged", i.e. fail OPEN. That is pre-existing behaviour, not
+          # something the digest introduced; it was invisible because a blank ref on a DIRECTORY does
+          # fail closed (the Trees fallback 404s) and `lambda` was the path anyone thought to test.
+          # Unreachable today — the `resolve` job hard-fails a dev_sha that is not 40 hex, and `set -u`
+          # aborts on an unset one — but an input this step cannot verify should not be trusted twice.
+          ident() {
+            if [ -z "$1" ] || [ -z "$2" ]; then echo ""; return 0; fi
+            case "$2" in
+              digest:*) pkgdigest "$1" "${2#digest:}" ;;
+              *)        subtree  "$1" "$2" ;;
+            esac
+          }
+          # ADDING A COMPARED PATH IS THIS ONE LINE — the log, the fail-closed guard and the
+          # comparison below all iterate it. deploy-lambda.yml reads the manifest and the checker
+          # from outside lambda/, which is why they are here (OPS-LAMCHANGEDBLIND-001).
+          #
+          # The last two were added 2026-09-17 by the deploy-lambda.yml input audit, under the rule
+          # stated above. deploy-lambda.yml runs `npm run gen:event-types` before zipping (:116); that
+          # executes scripts/gen-lambda-event-types.mjs, which dynamically imports src/lib/eventTypes.js
+          # and WRITES lambda/events/eventTypes.generated.js into the bundle. Both are inputs to the
+          # deployed artifact from outside lambda/. They are also protected by proxy today — ci.yml's
+          # event-types drift guard runs inside build-and-test, which this promote already requires
+          # green, and the generated file is committed under lambda/ — but that chain spans three files
+          # and is annotated as load-bearing in none of them. These entries make the cover structural.
+          #
+          # A `digest:` prefix selects the CONTENT digest above instead of the blob/tree sha. Root
+          # package.json is compared that way because deploy-lambda.yml:116-117 resolves the names
+          # `gen:event-types` / `check:event-types` in its `scripts` block, so it is a genuine input —
+          # but its blob moves on every release for the version bump alone. See pkgdigest above for the
+          # measurements and for why the digest covers every key EXCEPT `version`.
+          PATHS=("lambda" ".github/workflows/deploy-lambda.yml" "scripts/lambda-config-expected.json" "scripts/check-lambda-config.py" "src/lib/eventTypes.js" "scripts/gen-lambda-event-types.mjs" "digest:package.json")
+          CHANGED=false
+          MOVED=""
+          for P in "${PATHS[@]}"; do
+            M=$(ident main "$P")
+            D=$(ident "$DEV_SHA" "$P")
+            echo "$P: main=${M:-<none>} dev=${D:-<none>}"
+            # A path that resolves on NEITHER side would compare '' = '' and read as unchanged, i.e.
+            # fail OPEN — so every path is guarded before any comparison runs, not just the tree.
+            # The recipe blob went unguarded from OPS-PROMOTERACE-001 until 2026-09-16; iterating one
+            # list is what stops the next added path from repeating that.
+            if [ -z "$M" ] || [ -z "$D" ]; then
+              echo "::warning::could not resolve $P on one or both sides — failing CLOSED, deploying Lambdas"
+              echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            if [ "$M" != "$D" ]; then CHANGED=true; MOVED="$MOVED $P"; fi
+          done
+          # Both messages are DERIVED from PATHS rather than enumerating it in prose. The old pair
+          # spelled out "lambda code, deploy recipe, config manifest or checker", which is the same
+          # shape that let the recipe blob go unguarded for a year: a list repeated in a second place
+          # is a list that will disagree with the first one.
+          if [ "$CHANGED" = "true" ]; then
+            echo "changed Lambda inputs:$MOVED -> Lambdas will deploy BEFORE the SPA"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "lambda/, deploy recipe, config manifest and checker identical between main and $DEV_SHA -> skipping Lambda deploy (SPA-only promote)"
+            echo "all ${#PATHS[@]} compared Lambda inputs identical between main and $DEV_SHA -> skipping Lambda deploy (SPA-only promote)"
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -577,6 +652,39 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::error::SPA deploy withheld — Lambda deploy failed. main is advanced; prod still serves the previous SPA. See the run summary."
           exit 1
+
+  # OPS-LAMCHANGEDBLIND-002 — THE SAFETY CHECK THAT SURVIVES THE SKIP. Unconditional by design.
+  #
+  # These assertions used to live ONLY inside deploy-lambda.yml (as `verify-daily-plan`), so the
+  # SPA-only skip above took them with it. They are the repo's only live-AWS check of state that drifts
+  # with NO repo change at all — a console edit, an AWS-side reset, or any of deploy-lambda.yml's many
+  # continue-on-error env steps failing silently. Losing them on the cheap common-case promote is what
+  # blocked activating the skip. Dave's call (2026-09-17) was "move the safety check out first, then
+  # enable"; this job is that move. deploy-lambda.yml still calls the SAME reusable workflow after its
+  # matrix, so a Lambda-carrying promote audits twice — read-only, about a minute, and deliberately
+  # preferred over two `if:` conditions that would have to stay exact complements forever.
+  #
+  # `always()` + an explicit predicate, for the same reason the `deploy` job above needs one: a bare
+  # `needs:` would treat the SKIPPED deploy-lambdas job as unsatisfied and skip THIS job too, which is
+  # precisely the hole it exists to plug. The only precondition is that the promote itself succeeded —
+  # if main never moved, there is nothing to audit.
+  #
+  # IT NEEDS `deploy` DELIBERATELY, i.e. it runs LAST, after the SPA:
+  #   * check-lambda-config.py reads `aws lambda get-function-url-config` and asserts Cors.AllowOrigins
+  #     for the 23 functions whose manifest entry declares cors_origins. deploy.yml's "Restore Lambda
+  #     Function URL CORS" step WRITES that same field for 13 of them on every SPA deploy. Running this
+  #     job beside `deploy` rather than after it would be reading CORS while deploy.yml rewrites it — a
+  #     measure-while-mutating race on a HARD GATE, i.e. an intermittently red promote.
+  #   * Last is also strictly better coverage: the in-deploy-lambda copy runs BEFORE deploy.yml's CORS
+  #     restore, so a restore that writes the WRONG origins is invisible to it until the next promote.
+  # It still cannot withhold the SPA — nothing `needs:` this job, and `deploy` does not depend on it.
+  # That preserves deploy-lambda.yml's deliberate choice to keep these assertions out of deploy_result.
+  verify-lambda-invariants:
+    needs: [resolve, promote, deploy-lambdas, deploy]
+    if: ${{ always() && needs.promote.result == 'success' }}
+    uses: ./.github/workflows/verify-lambda-invariants.yml
+    with:
+      ref: ${{ needs.resolve.outputs.dev_sha }}
 
   # OPS-VERIFY-001 (advisory REPORT-ONLY, per L-147/L-161/L-141) — runs AFTER deploy and
   # gates NOTHING (no job needs it; FF + deploy already happened, so it cannot un-ship).
