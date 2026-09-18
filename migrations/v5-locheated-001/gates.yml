@@ -1,0 +1,168 @@
+# gates.yml
+# V5-COLDCARDREACHABLE-001 — public.locations.heated boolean NOT NULL DEFAULT false, House backfilled.
+#
+# STATUS AT AUTHORING (2026-09-18): AUTHORED, NOT APPLIED. Not applied to staging, not applied to prod.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING — full reasoning in README.md "Landing order".
+#
+#   staging pre -> apply 0a -> staging post -> rehearse 0r -> re-apply 0a -> staging post
+#   -> prod pre -> apply 0a -> prod post -> `--all --phase post --continuous-only` on BOTH envs
+#   -> THEN push the branch to dev -> CI -> promote -> deploy-lambda (daily-plan)
+#
+# The reader (handler.js `l.heated is true as heated_resolved`) is unconditional, so prod must carry
+# the column before the daily-plan Lambda that reads it is deployed, or the nightly plantings query
+# throws and Today is empty for both users.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#
+#   * Every continuous post gate SELF-ARMS on this migration's schema_version row, or is naturally
+#     vacuous over the column's own catalog row, so pushing this directory before the apply cannot red
+#     gate-invariants.yml on either environment.
+#   * PARSE-TIME HAZARD (v5-wxbackfillvars-001): Postgres resolves column references when it PARSES a
+#     statement, before any EXISTS guard is evaluated. Every gate that reads heated VALUES therefore
+#     reads them as `to_jsonb(l) ->> 'heated'` — a string key, which parses on an unapplied database
+#     and yields NULL there — never as `l.heated`, which would ERROR 42703 before the apply.
+#   * The House gates are `env: prod`: the backfill selects prod's House by id, and whether staging's
+#     House shares that id was not verified (the authoring lane was cleared to read prod only).
+#   * The backfill RECEIPTS are `continuous: false`. Which locations are heated is Dave's data, not an
+#     invariant: the House may stop being heated (he is moving by July 2027) or a heated greenhouse may
+#     appear, and a standing gate would red on the feature working.
+#
+# NO `sweep` PHASE: no CHECK and no new NOT NULL over existing data is armed beyond the column's own
+# constant default, so there is no predicate that must already hold before the apply.
+
+pre:
+  - name: pre_heated_column_absent
+    note: >
+      Greenfield. A row here means 0a (or something else) already added the column — stop and diff
+      before re-running. 0a is IF NOT EXISTS and its backfill is first-apply-only, so a re-run is safe,
+      but a heated column that arrived by some OTHER route may not be NOT NULL DEFAULT false.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='locations' AND column_name='heated'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-locheated-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_house_row_is_the_house
+    env: prod
+    note: >
+      The identity receipt for 0a's backfill, which selects by id. Read on prod 2026-09-18: this id is
+      the live, covered, root-level House, the only row named House among all 31 location rows. If this
+      fails the id no longer points at the House (renamed, soft-deleted, moved) — stop; do not edit the
+      id in 0a without re-establishing which location is heated.
+    sql: |
+      SELECT 1 FROM public.locations
+       WHERE id = '7ee03125-2470-4400-a870-d931da1ffb92'
+         AND name = 'House' AND deleted_at IS NULL AND covered IS TRUE AND parent_id IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_house_has_no_child_locations
+    env: prod
+    note: >
+      heated has no ancestor inheritance (0a header), which is only free while the House has no
+      children — true on 2026-09-18. A row here is NOT a correctness failure: plantings in that child
+      keep their cold card (noise, the safe direction). Proceed if that is acceptable, and tell Dave the
+      child needs heated set explicitly if it is warm.
+    sql: |
+      SELECT id, name FROM public.locations
+       WHERE parent_id = '7ee03125-2470-4400-a870-d931da1ffb92' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-locheated-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANTS ──────────────────────────────────────────────────────────────────────────
+
+  - name: post_heated_is_not_null_boolean_default_false
+    note: >
+      The fail-safe shape 0a argues for, pinned so it cannot drift: NOT NULL so an unstated location
+      reads unheated (a false TRUE silences cold cards for plants the frost alert already excludes),
+      DEFAULT false so the deployed locations writer, which never names the column, keeps working.
+      Self-armed: vacuous until the stamp exists, and asserts forever after. Also catches a column
+      that arrived by another route with a different shape, which 0a's IF NOT EXISTS would skip.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-locheated-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='locations'
+                            AND column_name='heated' AND data_type='boolean'
+                            AND is_nullable='NO' AND column_default='false')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_check_constraint_over_heated
+    note: >
+      Arming a CHECK over a column is a deploy, not a migration (v4-loccovered-001). A boolean has no
+      vocabulary to police, so this is a permanent no. pg_catalog rather than
+      information_schema.table_constraints, which is privilege-filtered. Naturally vacuous pre-apply:
+      no column, no pg_attribute row, no join.
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE n.nspname='public' AND t.relname='locations'
+         AND c.contype='c' AND a.attname='heated'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_heated_location_is_covered
+    note: >
+      A heated location that is not stated covered is a contradiction the cold card would act on:
+      engine.coldFor trusts heated ALONE, so heated = true on an open-sky location would silently drop
+      the cold card for everything planted there. Nothing in the app can set heated today, so this
+      guards hand-written SQL. Returns one row per offending live location, naming it. Values read
+      through to_jsonb so the gate parses on an unapplied database (header, PARSE-TIME HAZARD).
+    sql: |
+      SELECT l.id, l.name
+        FROM public.locations l
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-locheated-001')
+         AND l.deleted_at IS NULL
+         AND (to_jsonb(l) ->> 'heated')::boolean IS TRUE
+         AND l.covered IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ────────────────────────────────────────────────────
+
+  - name: post_house_is_heated
+    env: prod
+    continuous: false
+    note: >
+      The only positive gate — the only one that can tell "backfilled" from "matched nothing". Its
+      sibling below bounds the blast radius and cannot.
+    sql: |
+      SELECT 1 FROM public.locations l
+       WHERE l.id = '7ee03125-2470-4400-a870-d931da1ffb92'
+         AND (to_jsonb(l) ->> 'heated')::boolean IS TRUE
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_only_the_house_is_heated
+    continuous: false
+    note: >
+      Blast-radius bound on the backfill: no location other than the House is heated. Runs on both
+      environments — on staging it passes whether or not prod's House id exists there. Window-only
+      because a second heated location is a legitimate future edit, not a regression.
+    sql: |
+      SELECT l.id, l.name FROM public.locations l
+       WHERE (to_jsonb(l) ->> 'heated')::boolean IS TRUE
+         AND l.id <> '7ee03125-2470-4400-a870-d931da1ffb92'
+    expect: rowcount_eq
+    value: 0
