@@ -204,17 +204,22 @@ describe('frostEval — tier precedence, copy split, degraded path', () => {
     expect(r.message).toMatch(/FROST PROTECT TONIGHT/);
   });
 
+  // BUG-FROSTADVISORYNIGHTWORDING-001 — these two used to pin "in 2 days" (D2) and "tomorrow night" (D1),
+  // i.e. the night worded from the CIVIL DAY of the minimum, which named most nights one late. With no
+  // hourly series (none is passed here) the night is the base rate: the one that ENDED on the minimum's
+  // morning. The located cases live in advisorynight.test.js.
   it('ADVISORY fires alone when tonight is mild but the window is cold', () => {
     const r = frostEval({ tonightLow: 55, forecastLows: [50, ADV - 3, 50], forecastDates: dates, exposure });
     expect(r.tier).toBe('advisory');
     expect(r.message).toMatch(/FROST ADVISORY/);
-    expect(r.message).toMatch(/in 2 days/);
+    expect(r.message).toMatch(/frost possible tomorrow night/);
     expect(r.message).toMatch(/2026-09-16/);
   });
 
-  it('advisory at D1 reads "tomorrow night", not "in 1 days"', () => {
+  it('advisory at D1 with no hourly series names TONIGHT (base rate), never "in 1 days"', () => {
     const r = frostEval({ tonightLow: 60, forecastLows: [ADV - 1, 60, 60], forecastDates: dates, exposure });
-    expect(r.message).toMatch(/tomorrow night/);
+    expect(r.message).toMatch(/frost possible tonight \(/);
+    expect(r.message).not.toMatch(/tomorrow night|in 1 days/);
   });
 
   it('PROTECT copy says cover / bring in; HARD FREEZE copy says harvest and that cover will not save it', () => {
@@ -527,7 +532,7 @@ describe('D6 — ONE coalesced alert per frost event, never one per crop', () =>
     expect(r.tier).toBe('advisory');
     expect(r.message).toMatch(/FROST ADVISORY/);
     expect(r.message).toMatch(/At risk: peppers \(58\)/);
-    expect(r.message).toMatch(/in 2 days/);
+    expect(r.message).toMatch(/frost possible tomorrow night/);   // D2, base rate (was "in 2 days")
   });
 
   it('IMMINENT still outranks ADVISORY on the crop path', () => {

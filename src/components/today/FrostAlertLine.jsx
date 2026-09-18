@@ -5,11 +5,12 @@
 // This is the consumer. No threshold is touched and the engine is not rewritten — buildFrostAlertLine
 // words the decision the engine already made and already texted.
 //
-// SCOPE IS THE LEAD TIME, NOT "FROST". Today already speaks about tonight (WeatherCueLine's freeze
-// cue, < 40F). It has never spoken about a night that is not tonight, which is exactly what an
-// advisory is: the coldest night in the D1..D3 window. See src/lib/frostAlertLine.js for the
-// measurement that settles this — the 2026-09-07 plan carried an advisory with tonightLow 55 and a
-// NULL callout, so Today was silent on a night Dave had been texted about.
+// SCOPE IS THE ADVISORY, NOT "FROST". Today already speaks about tonight (WeatherCueLine's freeze
+// cue, < 40F on NWS tonightLow). The advisory is the coldest civil day in the D1..D3 window on
+// Open-Meteo, and BUG-FROSTADVISORYNIGHTWORDING-001 found that its night is usually TONIGHT (a D1
+// minimum falls before dawn on 78% of cold days here). So this line CAN name tonight, beside a cue
+// quoting a different model's number for the same night; it names the night the SNS text named.
+// See src/lib/frostAlertLine.js.
 //
 // VISUAL TREATMENT MIRRORS WeatherCueLine, AND FOR ITS STATED REASON, NOT BY COPYING. That header
 // argues the gold/warn family is a crowded slot — hydrology uncertainty plus StorageDeadlineAlert
@@ -27,7 +28,7 @@
 //
 // It sits directly BELOW WeatherCueLine so that on a night carrying both, the reading order is
 // tonight first, then the days ahead. Same visual family is CORRECT — both are ambient weather
-// notes — and the text is what separates them: this one always names a night that is not tonight.
+// notes — and the text is what separates them: this one always NAMES its night.
 //
 // House rules for an operational alert, unchanged and absolute (§Reward UX names frost warnings as
 // operational alerts, explicitly NOT reward surfaces): no modal, no toast, no snackbar, no banner,
@@ -52,6 +53,7 @@ export default function FrostAlertLine({ alertsSent = null }) {
       data-testid="frost-alert-line"
       data-frost-tier={line.tier}
       data-frost-day-offset={String(line.dayOffset)}
+      data-frost-night-offset={String(line.nightOffset)}
       style={{
         borderLeft: `3px solid ${P.sage}`,
         paddingLeft: 10,

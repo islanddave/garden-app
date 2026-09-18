@@ -101,6 +101,94 @@ function evalAdvisory(forecastLows, forecastDates, T) {
   };
 }
 
+// ── BUG-FROSTADVISORYNIGHTWORDING-001 — WHICH NIGHT the advisory is about ────────────────────────────
+// `dayOffset`/`date` name a CIVIL DAY and `minLowF` is that day's minimum. A civil day holds the END of one
+// night and the START of the next, and here the minimum usually lands at the end of the earlier one: 295 of
+// 380 autumn days (77.6%) bottom out before noon, and 79 of the 101 days whose minimum was <= 40F (78.2%)
+// (ERA5 at this Space's coordinates, Sep 1 - Nov 15 2021-2025, re-measured 2026-09-18). So D1's minimum is
+// usually TONIGHT's, and wording the night from dayOffset ("tomorrow night" for D1) put most advisories one
+// night late: the reader was told he had a day he did not have. The radiative pairing below
+// (`prevDate(advisory.date)`) is the same fact, found first.
+//
+// The hourly series locates it: the hour of that day's minimum before noon -> the night that ENDED that
+// morning (it started the evening before); noon or later -> the night that STARTS that evening. The earliest
+// hour wins a tie. `nightOffset` counts nights from the plan date, 0 = tonight; `nightDate` is the date the
+// night STARTS on, the key radiativeFrost.nightsFrom uses.
+//
+// The hourly figure must VOUCH for the printed one: some hour of that date must hold the advisory's own
+// minimum (Open-Meteo aggregates the daily value from the same hours: equal on 380/380 archive days and
+// 6/6 live forecast days, measured 2026-09-18). Anything
+// else — no series, no hours for the date, a series whose minimum is not the printed figure — takes the base
+// rate, the night that ended that morning. That fallback errs EARLY, the safe direction for frost: a night
+// early costs a cover put out one night too soon, a night late costs the plant.
+const NIGHT_SPLIT_HOUR = 12;
+const NIGHT_MATCH_TOLERANCE_F = 0.05;
+const STAMP_RE = /^(\d{4}-\d{2}-\d{2})T(\d{2}):/;
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// The base-rate night: the one that ended on the minimum's morning. Also the answer for an advisory record
+// that predates this change or was built without an hourly series.
+function baseNight(a) {
+  const d = a && Number.isInteger(a.dayOffset) && a.dayOffset >= 1 ? a.dayOffset : null;
+  if (d == null) return null;
+  const date = a && typeof a.date === 'string' && YMD_RE.test(a.date) ? a.date : null;
+  return { nightOffset: d - 1, nightDate: date ? prevDate(date) : null };
+}
+
+function locateNight(a, hourly) {
+  const base = baseNight(a);
+  if (!base) return { nightOffset: null, nightDate: null, nightBasis: null };
+  const fallback = { ...base, nightBasis: 'base_rate' };
+  const low = finite(a.minLowF);
+  const date = typeof a.date === 'string' && YMD_RE.test(a.date) ? a.date : null;
+  const t = hourly && Array.isArray(hourly.time) ? hourly.time : null;
+  const v = hourly && Array.isArray(hourly.temperature_2m) ? hourly.temperature_2m : null;
+  if (low == null || !date || !t || !v || t.length !== v.length) return fallback;
+  let minV = null; let minHour = null;
+  for (let i = 0; i < t.length; i++) {
+    const m = typeof t[i] === 'string' ? STAMP_RE.exec(t[i]) : null;
+    if (!m || m[1] !== date) continue;
+    const x = finite(v[i]);
+    if (x == null) continue;
+    if (minV == null || x < minV) { minV = x; minHour = Number(m[2]); }
+  }
+  if (minV == null || Math.abs(minV - low) > NIGHT_MATCH_TOLERANCE_F) return fallback;
+  return minHour < NIGHT_SPLIT_HOUR
+    ? { nightOffset: a.dayOffset - 1, nightDate: prevDate(date), nightBasis: 'hourly', minHour }
+    : { nightOffset: a.dayOffset, nightDate: date, nightBasis: 'hourly', minHour };
+}
+
+// The night a record names: its own when it carries one, else the base rate.
+function advisoryNight(a) {
+  if (a && Number.isInteger(a.nightOffset) && a.nightOffset >= 0) {
+    return { nightOffset: a.nightOffset, nightDate: typeof a.nightDate === 'string' && YMD_RE.test(a.nightDate) ? a.nightDate : null };
+  }
+  return baseNight(a);
+}
+
+// Weekday of a YYYY-MM-DD label, read in UTC from a UTC anchor so neither the Lambda's zone nor DST can move
+// it (a local read of the same instant is the PREVIOUS day anywhere west of UTC). The label is the only input.
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function weekdayOf(ymd) {
+  if (typeof ymd !== 'string' || !YMD_RE.test(ymd)) return null;
+  const [y, m, d] = ymd.split('-').map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d));
+  if (at.getUTCFullYear() !== y || at.getUTCMonth() !== m - 1 || at.getUTCDate() !== d) return null;
+  return WEEKDAYS[at.getUTCDay()];
+}
+
+// "tonight" / "tomorrow night" / "Sunday night". src/lib/frostAlertLine.js words the Today line with the same
+// rule from the same persisted fields; advisorynight.test.js holds the two to each other.
+function nightPhrase(night) {
+  if (!night || !Number.isInteger(night.nightOffset) || night.nightOffset < 0) return null;
+  if (night.nightOffset === 0) return 'tonight';
+  if (night.nightOffset === 1) return 'tomorrow night';
+  const wd = weekdayOf(night.nightDate);
+  return wd ? `${wd} night` : `in ${night.nightOffset} days`;
+}
+
+const advisoryWhen = (a) => nightPhrase(advisoryNight(a)) || `in ${a && a.dayOffset} days`;
+
 // ── Tier 2 — IMMINENT (tonight, actionable, §3-3) ─────────────────────────────────────────────────
 // `tonightLow` MUST be the station-adjusted low from station.js:mergeStationWeather, and this MUST be
 // evaluated in the 15:30 ET intraday-pm run only — per G3 `tonightLow` means three different nights
@@ -254,14 +342,19 @@ function truncate(msg, max = MAX_MESSAGE_CHARS) {
   return msg.length <= cap ? msg : `${msg.slice(0, cap - 1).trimEnd()}…`;
 }
 
+// Every crop the message names tripped on radiative grounds alone.
+const radiativeOnlyNamed = (cropResult) => !!(cropResult && Array.isArray(cropResult.tripped)
+  && cropResult.tripped.length && cropResult.tripped.every((c) => c && c.trip === 'radiative'));
+
 function advisoryMessage(a, exposure, cropResult, radiativeNight) {
-  const when = a.dayOffset === 1 ? 'tomorrow night' : `in ${a.dayOffset} days`;
+  // BUG-FROSTADVISORYNIGHTWORDING-001 — the night comes from the record (located by frostEval, else the
+  // base rate); dayOffset alone named most nights one day late.
+  const when = advisoryWhen(a);
   const on = a.date ? `, ${a.date}` : '';
   // V5-RADIATIVEFROST-001 — same rule as imminentMessage: when the ONLY reason this fired is the
   // radiative signal, the forecast low printed here sits ABOVE the trip point and needs its reason
   // stated, or the reader is left to wonder why 42°F produced an advisory.
-  const radOnly = !!(cropResult && Array.isArray(cropResult.tripped) && cropResult.tripped.length
-    && cropResult.tripped.every((c) => c && c.trip === 'radiative'));
+  const radOnly = radiativeOnlyNamed(cropResult);
   const head = radOnly
     ? `FROST ADVISORY — ${when} looks clear and calm (low ${a.lowF ?? a.minLowF}°F${on}` +
       `${radiativeNight && radiativeNight.minDewpointF != null ? `, dewpoint ${radiativeNight.minDewpointF}°F` : ''}), ` +
@@ -467,6 +560,7 @@ function resolveFrostRun(event, { etHour } = {}) {
 //   input.highToday         today's high (heat tier)
 //   input.forecastLows      Open-Meteo temperature_2m_min for D1..D3 (F1 adds this param — G5)
 //   input.forecastDates     parallel YYYY-MM-DD labels (message only)
+//   input.forecastHourly    index.js hourly_temp {time, temperature_2m}: which NIGHT the pick is (message + entry only)
 //   input.lowSource         'forecast' | 'station_floor' | 'forecast_absent' (§3-8 observability)
 //   input.exposure          frostClass.summarize() output; its .byCropType drives the D6 per-crop path
 //   input.spaceId/eventDate identity for the §3-5 dedup key
@@ -507,7 +601,11 @@ function frostEval(input = {}, opts = {}) {
   // STARTS on: 22:00 today and 03:00 tomorrow are the same night, labelled today.
   const radTonight = radNights ? nightFor(radNights, input.eventDate) : null;
 
-  const advisory = evalAdvisory(input.forecastLows, input.forecastDates, T);
+  // BUG-FROSTADVISORYNIGHTWORDING-001 — the pick plus the night it belongs to, located from the hourly
+  // series (input.forecastHourly = index.js hourly_temp). WORDING AND PERSISTENCE ONLY: nothing below reads
+  // nightOffset to decide whether, or at what level, anything fires.
+  const picked = evalAdvisory(input.forecastLows, input.forecastDates, T);
+  const advisory = { ...picked, ...locateNight(picked, input.forecastHourly) };
   // OFF-BY-ONE-NIGHT, and it is not obvious: `advisory.date` is a CIVIL DAY label and
   // `temperature_2m_min[D]` is that day's minimum — which on a radiative night is set shortly after
   // SUNRISE, i.e. by the night that STARTED on D-1. nightsFrom keys a night by the date it starts on.
@@ -568,7 +666,7 @@ function frostEval(input = {}, opts = {}) {
     // a monotone improvement. Carrying the clause keeps ONE outbound message (D6) and loses neither.
     if (imminent.radiativeOnly && advisory.fires && finite(advisory.minLowF) != null
         && finite(imminent.lowF) != null && Number(advisory.minLowF) < Number(imminent.lowF)) {
-      const when = advisory.dayOffset === 1 ? 'tomorrow night' : `in ${advisory.dayOffset} days`;
+      const when = advisoryWhen(advisory);
       message = truncate(`${message} Colder ahead: ${advisory.minLowF}°F ${when}` +
         `${advisory.date ? `, ${advisory.date}` : ''} — harvest ahead and stage row cover.`);
     }
@@ -582,6 +680,11 @@ function frostEval(input = {}, opts = {}) {
     // the feature was dead — every per-crop assertion passed while the tier stayed null. Caught by
     // test, not by reading. The second clause is UNCHANGED, so crop-level agreement is still required
     // and the kale case stays closed.
+    //
+    // BUG-FROSTADVISORYNIGHTWORDING-001 — the radiative-only copy says "<night> looks clear and calm", and
+    // the night whose sky it quotes is radAdvisory, keyed prevDate(advisory.date): the base-rate night. Name
+    // THAT night, so the sentence describes the night it measured, whatever hour the civil-day minimum fell.
+    if (radiativeOnlyNamed(advisoryNamed)) Object.assign(advisory, baseNight(advisory), { nightBasis: 'radiative' });
     tier = 'advisory'; level = 'advisory'; message = advisoryMessage(advisory, exposure, advisoryNamed, radAdvisory);
     trippedCrops = (advisoryNamed && advisoryNamed.tripped) || null;
   } else if (heat.fires) {
@@ -605,6 +708,12 @@ function frostEval(input = {}, opts = {}) {
       highTodayF: heat.highF,
       forecastMinLowF: advisory.minLowF,
       forecastCoveredDays: advisory.coveredDays,
+      // BUG-FROSTADVISORYNIGHTWORDING-001 — which night the advisory names and HOW it knew: 'hourly' (located),
+      // 'base_rate' (the series could not vouch for the figure) or 'radiative'. A rise in base_rate is the
+      // hourly block going missing, visible here rather than as a silent return to guessing.
+      forecastMinHour: advisory.minHour ?? null,
+      advisoryNightOffset: advisory.nightOffset,
+      advisoryNightBasis: advisory.nightBasis,
       tier, level,
       tenderCount: exposure ? Number(exposure.tender || 0) : null,
       unknownCount: exposure ? Number(exposure.unknown || 0) : null,
@@ -712,6 +821,7 @@ module.exports = {
   frostEval, frostCoverage, sentCoverage, resolveThresholds, dedupKey, cropDigest,
   escalatesBeyond, cropLevels, severityRank, FROST_SEVERITY_RANK,
   evalAdvisory, evalImminent, evalHeat, evalImminentCrops, evalAdvisoryCrops,
+  locateNight, advisoryNight, nightPhrase, weekdayOf, NIGHT_SPLIT_HOUR,
   advisoryMessage, imminentMessage, heatMessage, exposurePhrase, cropListPhrase, totalsPhrase, truncate,
   isFrostSeason, resolveFrostRun, FROST_RUN_START_HOUR, FROST_RUN_END_HOUR,
   DEFAULT_THRESHOLDS, HEAT_ENABLED, MAX_NAMED_CROPS, MAX_MESSAGE_CHARS,

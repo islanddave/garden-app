@@ -15,14 +15,19 @@
 // into wallpaper.
 //
 // What has NO surface is the LEAD TIME. frostEval's evalAdvisory scans the D1..D3 forecast window
-// and picks the coldest night in it; the cue keys on tonight alone. They are different nights, and
-// `dayOffset` is `i + 1` there so an advisory can never even refer to tonight. Measured on the night
-// it actually happened: the stored 2026-09-07 plan had tonightLow 55 and callout NULL — Today said
-// nothing — while an advisory fired, because a night inside the window was <= 40F.
+// (Open-Meteo) and picks the coldest civil day in it; the cue keys on NWS tonightLow alone.
+//
+// BUG-FROSTADVISORYNIGHTWORDING-001 — an advisory CAN refer to tonight, and usually does when it picks
+// D1. `dayOffset` (i + 1) is the CIVIL DAY of the minimum, and at this site 78% of cold minima fall
+// before noon, i.e. at the end of the night that starts THIS evening. The line used to word the night
+// from dayOffset and so named most nights one day late ("tomorrow night" for tonight). It now words the
+// night the SNS text named, from `nightOffset` on the entry. (The 2026-09-07 row once cited here as a
+// <= 40F night the cue missed was the F5 rehearsal: ADVISORY_LOW_F raised to 58, run "forced".)
 //
 //   - imminent  -> skipped. Fires at <= 38F, and 38 < 40, so the freeze cue ALWAYS covers it.
 //   - heat      -> skipped. computeCallout renders `high >= 88` already.
-//   - advisory  -> rendered. Nothing else on Today speaks about a night that is not tonight.
+//   - advisory  -> rendered, tonight included: its figure is a second model's, and it is the one
+//                  Dave was texted about.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // AN ENTRY WITHOUT A TEMPERATURE RENDERS NOTHING, DELIBERATELY.
@@ -35,11 +40,59 @@
 
 const SEVERITY = { advisory: 1 };
 
-// "tomorrow night" / "in 3 days" — the exact split frostEval's advisoryMessage uses.
-export function whenPhrase(dayOffset) {
-  const n = Number(dayOffset);
-  if (!Number.isFinite(n) || n < 1) return null;
-  return n === 1 ? 'tomorrow night' : `in ${Math.trunc(n)} days`;
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// THE NIGHT — the same rule as frostEval (advisoryNight + nightPhrase), from the fields the handler
+// persists. lambda/daily-plan/advisorynight.test.js drives both halves with one input and holds them
+// to the same words.
+//   nightOffset  0 = tonight, 1 = tomorrow night, 2+ = the weekday the night STARTS on.
+//   absent       an entry written before the field existed: the base rate, the night that ENDED on the
+//                minimum's morning (dayOffset - 1). It errs a night early, never late.
+// Dates are YYYY-MM-DD labels, shifted and read in UTC from a UTC anchor: the phone's zone and DST
+// cannot move them, and no clock is read.
+const YMD = /^\d{4}-\d{2}-\d{2}$/
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+const intOrNull = (v) => {
+  if (typeof v !== 'number' && !(typeof v === 'string' && v.trim() !== '')) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.trunc(n) : null
+}
+
+function shiftYmd(ymd, n) {
+  if (typeof ymd !== 'string' || !YMD.test(ymd) || !Number.isInteger(n)) return null
+  const [y, m, d] = ymd.split('-').map(Number)
+  const at = new Date(Date.UTC(y, m - 1, d + n))
+  return Number.isNaN(at.getTime()) ? null : at.toISOString().slice(0, 10)
+}
+
+function weekdayOf(ymd) {
+  if (typeof ymd !== 'string' || !YMD.test(ymd)) return null
+  const [y, m, d] = ymd.split('-').map(Number)
+  const at = new Date(Date.UTC(y, m - 1, d))
+  if (at.getUTCFullYear() !== y || at.getUTCMonth() !== m - 1 || at.getUTCDate() !== d) return null
+  return WEEKDAYS[at.getUTCDay()]
+}
+
+// -> { nightOffset, nightDate } or null. nightDate is derived from the minimum's civil date: the plan
+// date is `date - dayOffset`, so the night starting `nightOffset` days after it is date + (n - dayOffset).
+export function resolveNight(a) {
+  if (!a) return null
+  const day = intOrNull(a.dayOffset)
+  const n = intOrNull(a.nightOffset)
+  if (n != null && n >= 0) {
+    return { nightOffset: n, nightDate: day != null && day >= 1 ? shiftYmd(a.date, n - day) : null }
+  }
+  if (day == null || day < 1) return null
+  return { nightOffset: day - 1, nightDate: shiftYmd(a.date, -1) }
+}
+
+// "tonight" / "tomorrow night" / "Sunday night" — frostEval nightPhrase, word for word.
+export function nightPhrase(night) {
+  if (!night || !Number.isInteger(night.nightOffset) || night.nightOffset < 0) return null
+  if (night.nightOffset === 0) return 'tonight'
+  if (night.nightOffset === 1) return 'tomorrow night'
+  const wd = weekdayOf(night.nightDate)
+  return wd ? `${wd} night` : `in ${night.nightOffset} days`
 }
 
 // Picks the alert to render, or null. Most severe wins; among equals the most recently SENT wins,
@@ -51,7 +104,7 @@ export function pickAdvisory(alertsSent) {
   for (const a of alertsSent) {
     if (!a || SEVERITY[a.tier] == null) continue
     if (a.lowF == null || !Number.isFinite(Number(a.lowF))) continue
-    if (whenPhrase(a.dayOffset) == null) continue
+    if (nightPhrase(resolveNight(a)) == null) continue
     if (best == null) { best = a; continue }
     const s = SEVERITY[a.tier] - SEVERITY[best.tier]
     if (s > 0) { best = a; continue }
@@ -60,16 +113,18 @@ export function pickAdvisory(alertsSent) {
   return best
 }
 
-// -> { text, tier, dayOffset, lowF } or null.
+// -> { text, tier, dayOffset, nightOffset, lowF } or null.
 export function buildFrostAlertLine(alertsSent) {
   const a = pickAdvisory(alertsSent)
   if (!a) return null
-  const when = whenPhrase(a.dayOffset)
+  const night = resolveNight(a)
+  const when = nightPhrase(night)
   const low = Math.round(Number(a.lowF))
   return {
     text: `Frost possible ${when} — low ${low}°F. Plan cover for tender plants.`,
     tier: a.tier,
-    dayOffset: Math.trunc(Number(a.dayOffset)),
+    dayOffset: intOrNull(a.dayOffset),
+    nightOffset: night.nightOffset,
     lowF: low,
   }
 }

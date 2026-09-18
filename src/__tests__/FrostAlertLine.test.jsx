@@ -36,12 +36,13 @@ import { P } from '../lib/constants.js'
 const GEN = '2026-09-07T22:05:00.000Z'
 const DAY = '2026-09-07'
 
-// Handler-shaped entry (lambda/daily-plan/handler.js, alertsSent push + frostWeatherFacts).
+// Handler-shaped entry (lambda/daily-plan/handler.js, alertsSent push + frostWeatherFacts). nightOffset 1:
+// D1's minimum located late on 09-08 (BUG-FROSTADVISORYNIGHTWORDING-001), so the night is tomorrow night.
 const ADVISORY = {
   key: 'sp1|2026-09-07|advisory|advisory|d0ew9',
   tier: 'advisory', level: 'advisory',
   at: '2026-09-07T23:27:07.892Z',
-  lowF: 38, dayOffset: 1, date: '2026-09-08',
+  lowF: 38, dayOffset: 1, date: '2026-09-08', nightOffset: 1,
 }
 
 beforeEach(() => { fetchMock.mockClear(); planState.current = null })
@@ -53,6 +54,15 @@ describe('the render', () => {
     expect(el.textContent).toBe('Frost possible tomorrow night — low 38°F. Plan cover for tender plants.')
     expect(el.dataset.frostTier).toBe('advisory')
     expect(el.dataset.frostDayOffset).toBe('1')
+    expect(el.dataset.frostNightOffset).toBe('1')
+  })
+
+  it('names TONIGHT when the advisory\'s night is tonight — the usual case for a D1 minimum', () => {
+    render(<FrostAlertLine alertsSent={[{ ...ADVISORY, nightOffset: 0 }]} />)
+    const el = screen.getByTestId('frost-alert-line')
+    expect(el.textContent).toBe('Frost possible tonight — low 38°F. Plan cover for tender plants.')
+    expect(el.dataset.frostDayOffset).toBe('1')
+    expect(el.dataset.frostNightOffset).toBe('0')
   })
 
   it('renders nothing at all — not an empty strip — when there is no advisory', () => {
@@ -97,11 +107,11 @@ describe('the wiring — Today mounts it from plan.alerts_sent', () => {
     loading: false, error: null,
   })
 
-  // THE REGRESSION CASE, and it is a real night. On 2026-09-07 the stored plan carried tonightLow 55
-  // and NO callout — so the weather cue rendered nothing — while an advisory had been sent, because
-  // a night inside the D1..D3 window was <= 40F. Before this component Today was silent on a night
-  // Dave had already been texted about. tonightLow is 55 here for exactly that reason: it proves the
-  // line does not depend on the cue, and that the two speak about different nights.
+  // THE REGRESSION CASE. On 2026-09-07 the stored plan carried tonightLow 55 and NO callout — so the
+  // weather cue rendered nothing — while an advisory had been sent (it was the F5 rehearsal, with
+  // ADVISORY_LOW_F raised to 58; CloudWatch run "forced"). Before this component Today was silent on
+  // an advisory Dave had already been texted about. tonightLow is 55 here for exactly that reason: it
+  // proves the line does not depend on the cue.
   it('renders the advisory on a night the weather cue is silent', () => {
     planState.current = planWith([ADVISORY])
     render(<Today />)

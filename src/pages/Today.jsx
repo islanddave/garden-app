@@ -118,11 +118,12 @@ export default function Today() {
           {/* BUG-FROSTALERTNOAPP-001 — the frost ADVISORY the engine already texted, which had no
               surface here at all. Directly under the cue because they are both weather statements
               and the order is deliberate: the cue speaks about TONIGHT, this speaks about the
-              coldest night in the next three, so tonight-then-ahead is the reading order. It is not
-              a second copy of the cue — an advisory can never refer to tonight (evalAdvisory's
-              dayOffset starts at 1), and the imminent tier, which does, is excluded precisely
-              because the freeze cue above already covers it. Renders nothing on a day with no
-              advisory, and nothing for entries stored before the handler persisted lowF. */}
+              coldest of the next three civil days, so tonight-then-ahead is the reading order. It is
+              not a second copy of the cue: it quotes the advisory Dave was texted, and it names that
+              advisory's night — which CAN be tonight (BUG-FROSTADVISORYNIGHTWORDING-001: a D1 minimum
+              usually falls before dawn). The imminent tier is excluded because the freeze cue above
+              already covers it. Renders nothing on a day with no advisory, and nothing for entries
+              stored before the handler persisted lowF. */}
           <FrostAlertLine alertsSent={plan.alerts_sent} />
 
           {/* V5-LEGACYEXCEPTIONCARE-001 — the garden-wide drought line. MOUNTED HERE DELIBERATELY:
