@@ -13,7 +13,8 @@
 #   description round-trip, then exercises the two real bug surfaces with
 #   write→read-back asserts (L-108 write-path coverage):
 #     C) events bare-date → NOON-anchored stored date (BUG-12 off-by-one guard)
-#     D) plants variety_id set→clear (the can't-clear COALESCE origin bug)
+#     D) plants variety_id set→clear (the can't-clear COALESCE origin bug), plus the variety
+#        POST's cultivar care_profile, read back through SQL (needs NEON_STAGING_URL + psql)
 #     E) locations create → read-back name
 #     F) inventory-items create → read-back name (durable+tools dodges the L-058 seeds CHECK)
 #     G) favorites toggle → assert favorited on, then off
@@ -484,6 +485,32 @@ else
           else
             echo "❌ FAIL [crud:POST /plants] HTTP $PLANT_HTTP"
             FAIL=$((FAIL+1))
+          fi
+          # D-profile) the variety POST's OTHER write → SQL read-back (OPS-SMOKECAREPROFILE-001, L-108).
+          # Since v4.137 the create also INSERTs a cultivar-scope care_profile in the cultivar's own
+          # transaction (BUG-CULTIVARNOPROFILE-001, NEW_CULTIVAR_PROFILE in lambda/varieties/index.js). No
+          # API route returns that row, so it is read on the staging DSN the workflow's L-058 sweep uses.
+          # Expect exactly one row for THIS variety id, still carrying the 'unresearched' sentinel: "1/1".
+          # "0/0" = the INSERT is gone or bound to another id; "0/1" = the row lost its sentinel. The id
+          # goes in as a psql variable (stdin + :'vid'); psql does not interpolate variables in -c text.
+          # Placed after the plant asserts so the DB round trip sits outside their ~60s token window.
+          # The row itself is hard-deleted by the sweep, before plant_varieties.
+          if [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1; then
+            CP_GOT=$(psql "$NEON_STAGING_URL" -X -At -v ON_ERROR_STOP=1 -v vid="$CREATED_VARIETY_ID" \
+              <<< "SELECT COUNT(*) FILTER (WHERE profile->>'_basis' = 'unresearched') || '/' || COUNT(*) FROM care_profile WHERE scope = 'cultivar' AND scope_id = :'vid'::uuid;") \
+              || CP_GOT="psql-exit-$?"
+            if [[ "$CP_GOT" == "1/1" ]]; then
+              echo "✅ PASS [write:variety-care-profile-readback] one cultivar care_profile for $CREATED_VARIETY_ID, _basis=unresearched"
+              PASS=$((PASS+1))
+            else
+              echo "❌ FAIL [write:variety-care-profile-readback] expected '1/1' (unresearched/all cultivar rows for $CREATED_VARIETY_ID), got '$CP_GOT'"
+              FAIL=$((FAIL+1))
+            fi
+          elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+            echo "❌ FAIL [write:variety-care-profile-readback] NEON_STAGING_URL unset or psql missing — the ship gate may not skip this assert"
+            FAIL=$((FAIL+1))
+          else
+            echo "⚠️  WARN [write:variety-care-profile-readback] NEON_STAGING_URL unset or psql missing — care_profile read-back NOT run"
           fi
         else
           echo "❌ FAIL [crud:POST /varieties] HTTP $VAR_HTTP"
