@@ -73,8 +73,16 @@ async function plantingsSql(flagOverrides) {
 // diffed, and the entire diff was that one column plus its SQL comment — no other column, join, CTE
 // or predicate moved. What the constant proves is unchanged: the flag OFF must emit exactly the
 // approved statement, so any cover-inherit leak is still a RED.
-const PRE_CHANGE_SHA256 = 'ad64ae74123c15cb81f16baadae3b818e6ee55f5d5877d6a72297ac8a9a61b6b';
-const PRE_CHANGE_LENGTH = 13367;
+//
+// RE-BASELINED A SECOND TIME, 2026-09-18 (lane-coldcardreachable-20260918, V5-COLDCARDREACHABLE-001),
+// from ad64ae74123c15cb81f16baadae3b818e6ee55f5d5877d6a72297ac8a9a61b6b / 13367. The SELECT gained
+// `l.heated is true as heated_resolved` plus its SQL comment, directly under frost_covered_resolved.
+// UNCONDITIONAL, like the last_fert change: it is not behind the cover-inherit flag. Same procedure —
+// the emitted statement was captured with this file's harness before and after and diffed: the whole
+// flag-OFF diff is those 9 lines, and the flag-ON diff is the same 9 lines at the same position
+// relative to the SELECT; no column, join, CTE or predicate moved.
+const PRE_CHANGE_SHA256 = '9854ca9fe49cf47206ba5116da96b554bbda40b07dc4c6f78a9c91268898e490';
+const PRE_CHANGE_LENGTH = 14262;
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 
