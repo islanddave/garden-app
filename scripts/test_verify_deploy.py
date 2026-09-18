@@ -1,4 +1,5 @@
 import importlib.util, os, sys
+import pytest
 spec = importlib.util.spec_from_file_location("vd", os.path.join(os.path.dirname(__file__), "verify-deploy.py"))
 vd = importlib.util.module_from_spec(spec); spec.loader.exec_module(vd)
 
@@ -107,11 +108,11 @@ def test_lambda_compare_404_is_indeterminate_not_crash():
 
 def test_verify_combines():
     vd.check_spa = lambda repo, token, sha: (True, "ok")
-    vd.check_lambda_fresh = lambda repo, token, sha: (True, "ok")
+    vd.check_lambda_fresh = lambda repo, token, sha, **kw: (True, "ok")
     assert vd.verify("r", "t", "S")["verified"] is True
-    vd.check_lambda_fresh = lambda repo, token, sha: (False, "stale")
+    vd.check_lambda_fresh = lambda repo, token, sha, **kw: (False, "stale")
     assert vd.verify("r", "t", "S")["verified"] is False
-    vd.check_lambda_fresh = lambda repo, token, sha: (None, "unknown")
+    vd.check_lambda_fresh = lambda repo, token, sha, **kw: (None, "unknown")
     assert vd.verify("r", "t", "S")["verified"] is False
 
 
@@ -153,9 +154,17 @@ def test_lambda_job_state_ignores_unrelated_jobs():
 # BARE name with conclusion='skipped' (live API, promote-gate run 34175616568), and when it runs
 # there is no bare entry at all, only 'deploy-lambdas / ...' children.
 
+# OPS-LAMSKIPVSMAIN-001: a skip is only "not applicable" when the promote job ran the marker-based
+# decision step. The two state-2 fixtures below used to carry a bare `promote` job with no steps and
+# expect NOT_APPLICABLE — i.e. "skip + promote success" alone meant current. That is the claim the
+# ledger row shows false (a skip decided against `main`), so they now carry the step that proves it.
+_PROVEN = {"name": "promote", "status": "completed", "conclusion": "success",
+           "steps": [{"name": vd.LAMBDA_DECISION_STEP, "status": "completed", "conclusion": "success"}]}
+
+
 def test_state2_skipped_with_successful_promote_is_not_applicable():
     # THE SPA-ONLY PROMOTE. Must NOT report unverified.
-    jobs = [{"name": "promote", "status": "completed", "conclusion": "success"},
+    jobs = [_PROVEN,
             {"name": "deploy-lambdas", "status": "completed", "conclusion": "skipped"},
             {"name": "deploy / deploy", "status": "completed", "conclusion": "success"}]
     assert vd._lambda_job_state(jobs) == vd.LAMBDA_NOT_APPLICABLE
@@ -201,7 +210,7 @@ def test_state2_end_to_end_reports_verified_and_says_it_was_a_skip():
         if wf == "promote-gate.yml" else []
     )
     vd._jobs = lambda repo, token, run_id: [
-        {"name": "promote", "status": "completed", "conclusion": "success"},
+        _PROVEN,
         {"name": "deploy-lambdas", "status": "completed", "conclusion": "skipped"}]
     ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", "SHA")
     assert ok is True
@@ -251,3 +260,231 @@ def test_lambda_fresh_falls_through_when_promote_run_has_no_lambda_jobs():
     ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", "SHA")
     assert ok is True
     assert "promote-gate" not in msg
+
+
+# ── OPS-LAMSKIPVSMAIN-001: a skip proves "current" only when the marker-based step decided it ──────
+# Module-level, so these run at import — before any test above has replaced a module attribute.
+_REAL_JOBS = vd._jobs
+_REAL_CHECK_SPA = vd.check_spa
+_REAL_VERIFY = vd.verify
+_REAL_LAMBDA_JOB_STATE = vd._lambda_job_state
+HERE = os.path.dirname(os.path.abspath(__file__))
+OLD_DECISION_STEP = "Detect lambda changes (pre-FF; compares every input listed in PATHS below)"
+
+
+def _fixture(name):
+    import json
+    with open(os.path.join(HERE, "fixtures", name)) as fh:
+        return json.load(fh)
+
+
+def _promote(step_name, conclusion="success"):
+    steps = [] if step_name is None else [{"name": step_name, "status": "completed", "conclusion": conclusion}]
+    return {"name": "promote", "status": "completed", "conclusion": "success", "steps": steps}
+
+
+def _skipped_caller():
+    return {"name": "deploy-lambdas", "status": "completed", "conclusion": "skipped"}
+
+
+def test_skip_decided_by_the_old_main_comparison_is_unverified():
+    # The ledger row's case. The v4.137 step compared dev_sha with main; after a failed leg a plain
+    # re-dispatch (main == dev_sha) skipped every Lambda. That skip must NOT read as "current".
+    assert _REAL_LAMBDA_JOB_STATE([_promote(OLD_DECISION_STEP), _skipped_caller()]) == vd.LAMBDA_UNVERIFIED
+
+
+def test_skip_with_no_step_list_is_unverified():
+    assert _REAL_LAMBDA_JOB_STATE([_promote(None), _skipped_caller()]) == vd.LAMBDA_UNVERIFIED
+    bare = {"name": "promote", "status": "completed", "conclusion": "success"}
+    assert _REAL_LAMBDA_JOB_STATE([bare, _skipped_caller()]) == vd.LAMBDA_UNVERIFIED
+
+
+def test_skip_when_the_decision_step_did_not_succeed_is_unverified():
+    for c in ("failure", "skipped", "cancelled", None):
+        assert _REAL_LAMBDA_JOB_STATE([_promote(vd.LAMBDA_DECISION_STEP, c), _skipped_caller()]) \
+            == vd.LAMBDA_UNVERIFIED
+
+
+def test_skip_decided_by_the_marker_step_is_not_applicable():
+    assert _REAL_LAMBDA_JOB_STATE([_promote(vd.LAMBDA_DECISION_STEP), _skipped_caller()]) \
+        == vd.LAMBDA_NOT_APPLICABLE
+
+
+def _workflow(name):
+    import yaml
+    with open(os.path.join(HERE, "..", ".github", "workflows", name)) as fh:
+        return yaml.safe_load(fh)
+
+
+def test_decision_step_name_is_the_one_promote_gate_runs():
+    """verify-deploy keys on the step NAME; a rename on one side only would silently turn every proven
+    skip into UNVERIFIED (a false alarm) — pin them equal."""
+    steps = _workflow("promote-gate.yml")["jobs"]["promote"]["steps"]
+    lam = [s for s in steps if s.get("id") == "lam"]
+    assert len(lam) == 1 and lam[0]["name"] == vd.LAMBDA_DECISION_STEP
+
+
+def test_deploy_lambdas_skips_only_on_an_explicit_false():
+    """_lambda_job_state reads "promote success + deploy-lambdas skipped" as lambda_changed == 'false'.
+    That is exact only while the job's condition is `!= 'false'`; with `== 'true'` an ABSENT output
+    would also skip — silently, and read here as a decision."""
+    job = _workflow("promote-gate.yml")["jobs"]["deploy-lambdas"]
+    assert job["if"] == "${{ needs.promote.outputs.lambda_changed != 'false' }}"
+    assert job["needs"] == ["resolve", "promote"]
+
+
+def test_real_failed_promote_run_is_unverified():
+    # promote-gate run 34175616568 as recorded: promote=failure, bare deploy-lambdas=skipped.
+    jobs = _fixture("promote-gate-run-34175616568-jobs.json")["pages"][0]["jobs"]
+    assert _REAL_LAMBDA_JOB_STATE(jobs) == vd.LAMBDA_UNVERIFIED
+
+
+# ── OPS-VERIFYINRUNSTALE-001: _jobs paginates; the in-promote call reads its own run ───────────────
+
+def _serve_pages(monkeypatch, pages_by_run, seen=None):
+    def gh(path, token, params=None):
+        rid = path.split("/runs/")[1].split("/")[0]
+        params = params or {}
+        if seen is not None:
+            seen.append((rid, dict(params)))
+        pages = pages_by_run[rid]
+        page = int(params.get("page", 1))
+        return pages[page - 1] if page <= len(pages) else {"total_count": pages[0]["total_count"], "jobs": []}
+    monkeypatch.setattr(vd, "gh", gh)
+    monkeypatch.setattr(vd, "_jobs", _REAL_JOBS)
+
+
+def test_jobs_follows_pages_to_total_count(monkeypatch):
+    # The real v4.136.0 promote, recorded as two pages of 20: 32 jobs. One page of 50 happened to hold
+    # it; ~17 more matrix legs would not have, and nothing noticed truncation.
+    pages = _fixture("promote-gate-run-35274928023-jobs.json")["pages"]
+    seen = []
+    _serve_pages(monkeypatch, {"35274928023": pages}, seen)
+    jobs = vd._jobs("r", "t", "35274928023")
+    assert len(jobs) == 32 == pages[0]["total_count"]
+    assert sum(j["name"].startswith("deploy-lambdas / deploy (") for j in jobs) == 26
+    assert [p["page"] for _, p in seen] == [1, 2]
+    assert all(p["per_page"] == 100 for _, p in seen)
+
+
+def test_jobs_short_read_raises_instead_of_answering(monkeypatch):
+    pages = _fixture("promote-gate-run-35274928023-jobs.json")["pages"]
+    _serve_pages(monkeypatch, {"35274928023": [pages[0], {"total_count": 32, "jobs": []}]})
+    with pytest.raises(vd.IncompleteJobList):
+        vd._jobs("r", "t", "35274928023")
+    _serve_pages(monkeypatch, {"1": [{"jobs": [{"name": "promote"}]}]})  # no total_count at all
+    with pytest.raises(vd.IncompleteJobList):
+        vd._jobs("r", "t", "1")
+
+
+def test_incomplete_job_list_is_indeterminate_not_a_crash(monkeypatch):
+    def short(repo, token, rid):
+        raise vd.IncompleteJobList("short")
+    monkeypatch.setattr(vd, "_jobs", short)
+    monkeypatch.setattr(vd, "_runs", lambda repo, token, wf, **kw: (
+        [{"id": 5, "head_sha": "SHA", "created_at": "2026-09-18T12:00:00Z"}] if wf == "promote-gate.yml" else []))
+    monkeypatch.setattr(vd, "resolve_main", lambda repo, token: "SHA")
+    ok, msg = _REAL_CHECK_SPA("r", "t", "SHA")
+    assert ok is None and "unreadable" in msg
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", "SHA", run_id="5")
+    assert ok is None  # fell through to the (empty) standalone path, did not claim anything
+
+
+def _standalone_history(monkeypatch, completed_promote_runs):
+    """The live shape on 2026-09-18: the newest SUCCESSFUL standalone deploy-lambda.yml run is c509fff4ae
+    from 2026-08-13, and main is 1191 commits ahead of it touching lambda/**."""
+    def runs(repo, token, wf, **kw):
+        if wf == "promote-gate.yml":
+            return completed_promote_runs
+        return [{"id": 9, "head_sha": "c509fff4ae" + "0" * 30, "conclusion": "success",
+                 "created_at": "2026-08-13T00:00:00Z"}]
+    monkeypatch.setattr(vd, "_runs", runs)
+    monkeypatch.setattr(vd, "_compare", lambda repo, token, base, head: {
+        "status": "ahead", "ahead_by": 1191, "files": [{"filename": "lambda/_test-stubs/aws-s3.js"}]})
+
+
+SHA_4136 = "d80fed7abf3123200b2dedba116e8b1a4a99502b"
+
+
+def test_in_run_call_reads_its_own_in_progress_run(monkeypatch):
+    # THE FIX. The in-promote verify job runs inside run 35274928023, which is in_progress, so the
+    # completed-run list does not contain it. With --run-id it reads its own 26 green legs.
+    pages = _fixture("promote-gate-run-35274928023-jobs.json")["pages"]
+    _serve_pages(monkeypatch, {"35274928023": pages})
+    _standalone_history(monkeypatch, completed_promote_runs=[])
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", SHA_4136, run_id="35274928023")
+    assert ok is True, msg
+    assert "this promote-gate run 35274928023" in msg
+
+
+def test_in_run_call_without_run_id_reproduces_the_false_alarm(monkeypatch):
+    # What every promote printed until now (job 105386663819): same run, same history, no run id.
+    pages = _fixture("promote-gate-run-35274928023-jobs.json")["pages"]
+    _serve_pages(monkeypatch, {"35274928023": pages})
+    _standalone_history(monkeypatch, completed_promote_runs=[])
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", SHA_4136)
+    assert ok is False and "STALE LAMBDA" in msg and "c509fff4ae" in msg
+
+
+def _with_failed_leg(pages, leg="deploy-lambdas / deploy (photos)"):
+    import copy
+    pages = copy.deepcopy(pages)
+    for p in pages:
+        for j in p["jobs"]:
+            if j["name"] == leg:
+                j["conclusion"] = "failure"
+    return pages
+
+
+def test_in_run_failed_leg_names_the_leg_not_old_history(monkeypatch):
+    pages = _with_failed_leg(_fixture("promote-gate-run-35274928023-jobs.json")["pages"])
+    _serve_pages(monkeypatch, {"35274928023": pages})
+    _standalone_history(monkeypatch, completed_promote_runs=[])
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", SHA_4136, run_id="35274928023")
+    assert ok is False
+    assert "deploy-lambdas / deploy (photos)=failure" in msg and "c509fff4ae" not in msg
+
+
+def test_in_run_failed_leg_is_excused_by_an_earlier_full_deploy_of_the_same_sha(monkeypatch):
+    # e.g. a force_lambda re-dispatch whose leg failed, after an earlier run deployed all 26 of the SAME
+    # sha: every function still runs this sha's code.
+    real = _fixture("promote-gate-run-35274928023-jobs.json")["pages"]
+    _serve_pages(monkeypatch, {"999": _with_failed_leg(real), "35274928023": real})
+    _standalone_history(monkeypatch, completed_promote_runs=[
+        {"id": 35274928023, "head_sha": SHA_4136, "conclusion": "success", "created_at": "2026-09-17T21:08:00Z"}])
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", SHA_4136, run_id="999")
+    assert ok is True and "promote-gate run 35274928023" in msg
+
+
+def test_in_run_proven_skip_is_not_applicable(monkeypatch):
+    jobs = [{"name": "resolve", "status": "completed", "conclusion": "success"},
+            _promote(vd.LAMBDA_DECISION_STEP), _skipped_caller(),
+            {"name": "deploy / deploy", "status": "completed", "conclusion": "success"},
+            {"name": "verify", "status": "in_progress", "conclusion": None}]
+    _serve_pages(monkeypatch, {"1000": [{"total_count": len(jobs), "jobs": jobs}]})
+    _standalone_history(monkeypatch, completed_promote_runs=[])
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", "SHA", run_id="1000")
+    assert ok is True and "SKIPPED in this promote-gate run 1000" in msg
+
+
+def test_in_run_skip_by_the_old_step_is_not_called_current(monkeypatch):
+    jobs = [_promote(OLD_DECISION_STEP), _skipped_caller(),
+            {"name": "deploy / deploy", "status": "completed", "conclusion": "success"}]
+    _serve_pages(monkeypatch, {"1001": [{"total_count": len(jobs), "jobs": jobs}]})
+    _standalone_history(monkeypatch, completed_promote_runs=[])
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", "SHA", run_id="1001")
+    assert ok is not True and "SKIPPED" not in msg
+
+
+def test_main_passes_run_id_through(monkeypatch):
+    seen = {}
+
+    def fake_verify(repo, token, sha, run_id=None):
+        seen["run_id"] = run_id
+        return {"verified": True, "spa_deploy": {"ok": True, "detail": ""},
+                "lambda_fresh": {"ok": True, "detail": ""}}
+    monkeypatch.setattr(vd, "verify", fake_verify)
+    assert vd.main(["--sha", "S", "--pat", "t", "--run-id", "123"]) == 0
+    assert seen["run_id"] == "123"
+    assert vd.main(["--sha", "S", "--pat", "t"]) == 0
+    assert seen["run_id"] is None

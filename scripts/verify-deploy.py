@@ -76,8 +76,33 @@ def _runs(repo, token, workflow, **params):
     return gh(f"/repos/{repo}/actions/workflows/{workflow}/runs", token, p).get("workflow_runs", [])
 
 
+JOBS_PER_PAGE = 100
+JOBS_MAX_PAGES = 10
+
+
+class IncompleteJobList(Exception):
+    """The jobs API answered with fewer jobs than its own total_count."""
+
+
 def _jobs(repo, token, run_id):
-    return gh(f"/repos/{repo}/actions/runs/{run_id}/jobs", token, {"per_page": 50}).get("jobs", [])
+    """EVERY job of a run, following pages (OPS-VERIFYINRUNSTALE-001).
+
+    This read one page of 50. The v4.136.0 promote had 32 jobs, so ~17 more matrix legs would have
+    silently truncated the list — and a truncated list changes the answer: a missing
+    'deploy-lambdas / ...' child reads as "no Lambda deploy", a missing failed leg reads as green. A
+    short read therefore raises rather than answering; callers treat it like an unreadable run."""
+    jobs, total = [], None
+    for page in range(1, JOBS_MAX_PAGES + 1):
+        body = gh(f"/repos/{repo}/actions/runs/{run_id}/jobs", token,
+                  {"per_page": JOBS_PER_PAGE, "page": page})
+        batch = body.get("jobs") or []
+        total = body.get("total_count")
+        jobs.extend(batch)
+        if not batch or not isinstance(total, int) or len(jobs) >= total:
+            break
+    if not isinstance(total, int) or len(jobs) != total:
+        raise IncompleteJobList(f"run {run_id}: read {len(jobs)} job(s) but the API reports total_count={total!r}")
+    return jobs
 
 
 def _deploy_job_ok(jobs):
@@ -97,6 +122,13 @@ def _deploy_job_ok(jobs):
 
 
 def check_spa(repo, token, sha):
+    try:
+        return _check_spa(repo, token, sha)
+    except IncompleteJobList as e:
+        return None, f"job list unreadable ({e}); SPA deploy unverified"
+
+
+def _check_spa(repo, token, sha):
     pg_runs = sorted(_runs(repo, token, "promote-gate.yml"), key=lambda r: r["created_at"], reverse=True)
     # 1) exact head_sha match — a promote-gate run whose head IS sha (rare; covers a
     #    promote-gate run dispatched on a ref that already equals sha).
@@ -146,6 +178,19 @@ LAMBDA_DEPLOYED = "deployed"
 LAMBDA_NOT_APPLICABLE = "not-applicable"
 LAMBDA_UNVERIFIED = "unverified"
 
+# The promote-gate step that decides the Lambda skip FROM THE RUNNING FUNCTIONS (OPS-LAMSKIPVSMAIN-001).
+# Its name is the only thing in the jobs API that says HOW a skip was decided, so it must match
+# promote-gate.yml exactly — test_verify_deploy.py pins the two equal. The step it replaced,
+# "Detect lambda changes (pre-FF; ...)", compared dev_sha with `main` (approved, not deployed), so a
+# skip it decided proves nothing about the running Lambdas and must never read as NOT_APPLICABLE.
+LAMBDA_DECISION_STEP = "Decide Lambda deploy from deploy markers on the running functions (pre-FF; fail-closed)"
+
+
+def _skip_was_proven(promote_job):
+    """True only when the promote job ran the marker-based decision step to success."""
+    return any(s.get("name") == LAMBDA_DECISION_STEP and s.get("conclusion") == "success"
+               for s in (promote_job.get("steps") or []))
+
 
 def _lambda_job_state(jobs):
     """Which of three states a promote-gate run's Lambda deploy is in. THREE, not two.
@@ -171,8 +216,13 @@ def _lambda_job_state(jobs):
     has a bare `needs: [resolve, promote]`, so it is skipped when the PROMOTE FAILED too — run
     34175616568 is exactly that (promote=failure, deploy-lambdas=skipped). Treating that as "not
     applicable" would report a collapsed promote as verified. Since the job's only other condition is
-    `needs.promote.outputs.lambda_changed == 'true'`, promote=success AND deploy-lambdas=skipped
-    implies lambda_changed was false, which is the state we want to name.
+    `needs.promote.outputs.lambda_changed != 'false'`, promote=success AND deploy-lambdas=skipped
+    means lambda_changed was exactly 'false'.
+
+    OPS-LAMSKIPVSMAIN-001 (2026-09-18): and 'false' must have been decided by the marker-based step
+    (LAMBDA_DECISION_STEP). Until then lambda_changed=false meant only "dev_sha's Lambda inputs equal
+    main's" — and main is APPROVED, not DEPLOYED, so after a failed leg or a re-dispatch that "not
+    applicable" answer called stale Lambdas current. A skip decided any other way is UNVERIFIED.
     """
     lam = [j for j in jobs if j.get("name", "").startswith("deploy-lambdas /")]
     if lam:
@@ -184,12 +234,20 @@ def _lambda_job_state(jobs):
     caller = next((j for j in jobs if j.get("name", "").strip() == "deploy-lambdas"), None)
     promote = next((j for j in jobs if j.get("name", "").strip() == "promote"), None)
     if (caller is not None and caller.get("conclusion") == "skipped"
-            and promote is not None and promote.get("conclusion") == "success"):
+            and promote is not None and promote.get("conclusion") == "success"
+            and _skip_was_proven(promote)):
         return LAMBDA_NOT_APPLICABLE
     return LAMBDA_UNVERIFIED
 
 
-def check_lambda_fresh(repo, token, sha):
+def _not_green_lambda_jobs(jobs):
+    """'name=conclusion' for every Lambda child job that did not finish green — for messages only."""
+    return [f"{j.get('name')}={j.get('conclusion') or j.get('status')}" for j in jobs
+            if j.get("name", "").startswith("deploy-lambdas /")
+            and j.get("conclusion") not in ("success", "skipped")]
+
+
+def check_lambda_fresh(repo, token, sha, run_id=None):
     # OPS-PROMOTERACE-001 (2026-08-14): deploy-lambda.yml lost its `push: main` trigger and is now
     # invoked by promote-gate via `workflow_call`. A called workflow does NOT create its own workflow
     # run — its jobs appear inside the CALLER's run. So polling deploy-lambda.yml's runs alone would
@@ -207,26 +265,44 @@ def check_lambda_fresh(repo, token, sha):
     # cheap case, which is precisely how a report-only check teaches its reader to ignore it.
     #
     # `_lambda_job_state` therefore answers three ways, and the two non-deployed answers are kept
-    # apart on purpose. `not-applicable` is a POSITIVE determination — promote succeeded AND the job
-    # was explicitly skipped, which can only mean lambda_changed=false, which means lambda/, the
-    # deploy recipe, the config manifest, the checker and the event-type inputs are identical between
-    # the previously deployed main and this SHA. The Lambdas in prod were built from an identical
-    # tree, so they ARE current. `unverified` still falls through to the standalone-run path exactly
-    # as before. Collapsing those two would turn a false alarm into a blind spot, which is worse.
+    # apart on purpose. `not-applicable` is a POSITIVE determination — promote succeeded, the job was
+    # explicitly skipped, and the skip was decided by LAMBDA_DECISION_STEP, which proves every release
+    # function runs a marked build whose Lambda inputs equal this SHA's. So they ARE current.
+    # `unverified` still falls through to the standalone-run path exactly as before. Collapsing those
+    # two would turn a false alarm into a blind spot, which is worse. (Until OPS-LAMSKIPVSMAIN-001 the
+    # skip only meant "inputs equal main's", and main is approved, not deployed — see _lambda_job_state.)
+    #
+    # OPS-VERIFYINRUNSTALE-001 (2026-09-18): `run_id` is the promote-gate run this check is running
+    # INSIDE. The list below holds COMPLETED runs only, and a run is never completed while its own
+    # verify job executes, so without run_id the in-promote check never saw its own Lambda legs, fell
+    # through to the last standalone deploy-lambda.yml run (2026-08-13) and reported STALE LAMBDA on
+    # every promote. The current run is read first and without the head_sha filter: it promotes `sha`
+    # by construction, even when dispatched from main (whose head_sha is the pre-FF commit).
+    candidates = [("this promote-gate run", run_id)] if run_id else []
     for r in _runs(repo, token, "promote-gate.yml", status="completed"):
-        if r.get("head_sha") != sha:
-            continue
+        if r.get("head_sha") == sha and str(r.get("id")) != str(run_id):
+            candidates.append(("promote-gate run", r["id"]))
+    current_not_green = None
+    for label, rid in candidates:
         try:
-            state = _lambda_job_state(_jobs(repo, token, r["id"]))
-            if state == LAMBDA_DEPLOYED:
-                return True, f"lambda deployed in promote-gate run {r['id']} on {sha[:10]} (current)"
-            if state == LAMBDA_NOT_APPLICABLE:
-                return True, (f"lambda deploy correctly SKIPPED in promote-gate run {r['id']} on "
-                              f"{sha[:10]}: lambda_changed=false, so every compared Lambda input is "
-                              f"identical to the previously deployed main (SPA-only promote). "
-                              f"NOT a deploy — the running Lambdas are current because nothing moved.")
-        except urllib.error.HTTPError:
-            pass  # fall through to the standalone-run path rather than failing the check
+            jobs = _jobs(repo, token, rid)
+        except (urllib.error.HTTPError, IncompleteJobList):
+            continue  # fall through to the standalone-run path rather than failing the check
+        state = _lambda_job_state(jobs)
+        if state == LAMBDA_DEPLOYED:
+            return True, f"lambda deployed in {label} {rid} on {sha[:10]} (current)"
+        if state == LAMBDA_NOT_APPLICABLE:
+            return True, (f"lambda deploy correctly SKIPPED in {label} {rid} on {sha[:10]}: its decision "
+                          f"step found every release function running a marked build whose Lambda inputs "
+                          f"equal this SHA's (SPA-only promote). NOT a deploy — the running Lambdas are "
+                          f"current because nothing they are built from moved.")
+        if rid == run_id:
+            current_not_green = _not_green_lambda_jobs(jobs)
+    if current_not_green:
+        # This promote's own Lambda deploy did not finish green and no other run for this SHA did. That
+        # is decisive, and it names the real legs instead of an unrelated standalone run's history.
+        return False, (f"Lambda jobs NOT green in this promote-gate run {run_id} on {sha[:10]}: "
+                       f"{', '.join(current_not_green)} — the running Lambdas are not all this SHA's")
 
     runs = _runs(repo, token, "deploy-lambda.yml", status="completed")
     succ = [r for r in runs if r.get("conclusion") == "success"]
@@ -252,9 +328,9 @@ def check_lambda_fresh(repo, token, sha):
                   f"{cmp.get('ahead_by')} commit(s), none touching lambda/** (lambda current)")
 
 
-def verify(repo, token, sha):
+def verify(repo, token, sha, run_id=None):
     spa_ok, spa_msg = check_spa(repo, token, sha)
-    lam_ok, lam_msg = check_lambda_fresh(repo, token, sha)
+    lam_ok, lam_msg = check_lambda_fresh(repo, token, sha, run_id=run_id)
     verified = (spa_ok is True) and (lam_ok is True)
     return {
         "repo": repo,
@@ -275,13 +351,15 @@ def main(argv=None):
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--pat")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--run-id", help="the promote-gate run this check runs INSIDE (in-progress, so absent "
+                                     "from the completed-run list); promote-gate's verify job passes it")
     args = ap.parse_args(argv)
     token = args.pat or _token()
     if not token:
         print("ERROR: no token (--pat / GH_PAT_OPS / GITHUB_PAT / GH_TOKEN)", file=sys.stderr)
         return 2
     sha = args.sha or resolve_main(args.repo, token)
-    res = verify(args.repo, token, sha)
+    res = verify(args.repo, token, sha, run_id=args.run_id)
     if args.json:
         print(json.dumps(res, indent=2))
     else:
