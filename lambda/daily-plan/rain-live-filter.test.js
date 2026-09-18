@@ -50,8 +50,10 @@ const MIGRATION = readFileSync(
 
 // ── COPIED VERBATIM from rain-roof-rule.test.js (code only; its comments explain each piece) ─────
 // Same helper and same reason, which is the house pattern for strip() across these guards. Keep the
-// two copies in step. If a third guard needs this parser, hoist it into a test-only module on the
-// _coverFlags.js pattern instead of copying it again.
+// two copies in step. If a third guard needs this parser, hoist it into a module OUTSIDE this function
+// directory rather than copying it again: deploy-lambda.yml zips lambda/daily-plan/ excluding only
+// *.test.js, so a helper placed here ships to production (noLambdaScratchRunners.test.js names
+// _coverFlags.js as exactly that case).
 const strip = (src) => src.split('\n')
   .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--\s.*$/, '$1'))
   .join('\n')
