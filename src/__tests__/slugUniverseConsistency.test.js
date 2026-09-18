@@ -23,9 +23,14 @@
 // not.
 
 import { describe, it, expect } from 'vitest'
+import { readdirSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { CROP_TYPE_SLUGS, CROP_GUESS_SYNONYMS } from '../lib/parseSowProfile.js'
 import { CUES_BY_CROP_TYPE } from '../lib/ripenessCues.js'
 import fc from '../../lambda/daily-plan/frostClass.js'
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
 // V4-TROPICALCOLD-001 (2026-08-17) — THE UNIVERSE WAS THE BUG, not the invariant.
 //
@@ -45,19 +50,43 @@ import fc from '../../lambda/daily-plan/frostClass.js'
 // claytonia/mache/mizuna/tatsoi overwintering greens), all with zero live plantings, i.e. bought
 // before the planting existed. `chard` is the standing proof the two tables differ: it is a
 // crop_type with zero varieties, and it is why the drift check below runs against THIS list.
-const LIVE_DOMAIN = ('aloe althaea apple apricot artichoke arugula asparagus avocado basil bay bean bee_balm beet '
-  + 'begonia bitter_melon black_raspberry blackberry blackberry_lily blueberry bok_choy borage broccoli '
-  + 'brussels_sprouts bunching_onion cabbage cactus calibrachoa carnation carrot celery chard cherry chervil chives '
-  + 'christmas_cactus chrysanthemum cilantro claytonia cobaea coleus collard columbine cranberry crown_of_thorns '
-  + 'cucamelon cucumber culantro delphinium dill dogwood dracaena echeveria edelweiss eggplant elderberry endive '
-  + 'fittonia flower_mix four_o_clock foxglove garlic geranium ginger grape haworthia helichrysum hibiscus hollyhock '
-  + 'hosta jade japanese_maple kale kohlrabi lantana leek lemon_verbena lemongrass lettuce lithops luffa mache '
-  + 'marigold melon milkweed mint mizuna money_plant morning_glory mustard nasturtium nectarine okra onion oregano '
-  + 'parsley parsnip pea peach pear pepper perilla petunia pineapple plum poppy potato pothos radicchio radish '
-  + 'raspberry rat_tail_radish red_raspberry rhubarb rose rosemary sage sedum sempervivum shallot sour_cherry '
-  + 'spider_plant spinach squash stock strawberry succulent sunflower sweet_potato tarragon tatsoi thunbergia thyme '
-  + 'tomatillo tomato torenia tradescantia tweedia vietnamese_coriander viola watermelon wineberry winter_squash')
+//
+// OPS-SLUGUNIVERSESTALE-001 (2026-09-18) — RE-PINNED, and made to fail when it goes stale. The 08-17
+// snapshot sat still while 21 crop types were added (2026-08-25..09-11), and 19 of them were unbanded
+// and invisible here: five with a live planting (goldenrod, hoya, lamb_s_ear, penstemon, yarrow), seven
+// plants not yet planted, and the seven Put-Up food classes. The exact blindness the paragraph above
+// describes, one pin later. Re-pulled from prod
+// (owner DSN, read-only transaction) as
+//     select slug from crop_types where deleted_at is null order by slug;     -- 163 rows, 0 soft-deleted
+// A snapshot cannot notice the DB moving on, so the guard below now runs BOTH directions: every live
+// slug has a decision, and every decision frostClass holds is a live slug. That second direction is
+// what reds when a slug is dropped from this list or a band carries a typo. To re-pin: run the query,
+// paste the result, move any slug of category 'non_plant_food' into LIVE_NON_PLANT_FOOD as well, and
+// clear MINTED_NOT_YET_ON_PROD of anything that has landed. Mutation log for these guards:
+// lambda/daily-plan/slugbands.test.js (M4, M5, M13-M15, M19 are this file's).
+const LIVE_DOMAIN = ('aloe althaea apple apricot artichoke arugula asparagus avocado basil bay bean bee_balm beet begonia '
+  + 'bitter_melon black_raspberry blackberry blackberry_lily blanketflower blueberry bok_choy borage bread '
+  + 'broccoli brussels_sprouts bunching_onion butter cabbage cactus calibrachoa carnation carrot celery chamomile '
+  + 'chard cheese cherry chervil chives christmas_cactus chrysanthemum cilantro claytonia cobaea coleus collard '
+  + 'columbine corn cosmos cranberry crown_of_thorns cucamelon cucumber culantro delphinium dianthus dill dogwood '
+  + 'dracaena echeveria edelweiss eggplant elderberry endive fish fittonia flower_mix four_o_clock foxglove '
+  + 'garlic geranium ginger goldenrod grape haworthia helichrysum hibiscus hollyhock horseweed hosta hoya jade '
+  + 'japanese_maple kale kohlrabi lamb_s_ear lantana leek lemon_verbena lemongrass lettuce lithops luffa mache '
+  + 'marigold meat melon milk milkweed mint mizuna money_plant morning_glory mustard nasturtium nectarine okra '
+  + 'onion oregano parsley parsnip pea peach pear penstemon pepper perilla petunia pineapple plum poppy potato '
+  + 'pothos radicchio radish raspberry rat_tail_radish red_raspberry rhubarb rose rosemary sage sedum sempervivum '
+  + 'shallot snapdragon sour_cherry spider_plant spinach squash stock strawberry succulent summer_savory '
+  + 'sunflower sweet_potato tarragon tatsoi thunbergia thyme tomatillo tomato torenia tradescantia turnip tweedia '
+  + 'vietnamese_coriander viola watermelon wineberry winter_squash yarrow yogurt')
   .split(' ')
+
+// The rows of that same pull whose category is 'non_plant_food'
+// (select slug from crop_types where deleted_at is null and category = 'non_plant_food').
+const LIVE_NON_PLANT_FOOD = ['bread', 'butter', 'cheese', 'fish', 'meat', 'milk', 'yogurt']
+
+// Crop types a migration in this repo mints that had NOT reached prod at the pin, so frostClass may band
+// them ahead of the data. migrations/v5-frostband-001 mints both (staging apply in flight 2026-09-18).
+const MINTED_NOT_YET_ON_PROD = ['hylotelephium', 'pineapple_sage']
 
 // Every slug the app names in static config, PLUS the live crop-type domain. Union, not intersection:
 // a slug is "known" if ANY surface mentions it, because any one of them can put it in front of the
@@ -75,8 +104,10 @@ describe('V4-SLUGCONSIST-001 — frost band coverage', () => {
   it('every slug the app mentions has a decided frost band, or is explicitly exempt', () => {
     // frostClass.UNCERTAIN_SLUGS is the existing machine-readable "deliberately unmapped" list and
     // carries a per-slug rationale in its own comment. Reuse it rather than starting a second
-    // allowlist that could disagree with it.
-    const exempt = new Set(fc.UNCERTAIN_SLUGS)
+    // allowlist that could disagree with it. NON_PLANT_FOOD_SLUGS (OPS-SLUGUNIVERSESTALE-001) is the
+    // one other declared non-answer, for crop types that are not plants at all; the guard further down
+    // pins it to the DB's own category, so it cannot become a place to park a plant.
+    const exempt = new Set([...fc.UNCERTAIN_SLUGS, ...fc.NON_PLANT_FOOD_SLUGS])
     const unmapped = MENTIONED.filter((s) => !fc.BAND_BY_SLUG[s] && !exempt.has(s))
     expect(
       unmapped,
@@ -84,6 +115,24 @@ describe('V4-SLUGCONSIST-001 — frost band coverage', () => {
         `frost alerts at its thresholds. Add each to SLUGS_BY_BAND in lambda/daily-plan/frostClass.js, ` +
         `or to UNCERTAIN_SLUGS with a stated reason: ${unmapped.join(', ')}`
     ).toEqual([])
+  })
+})
+
+describe('OPS-SLUGUNIVERSESTALE-001 — the Put-Up food classes are exempt as NOT PLANTS, not banded', () => {
+  it('NON_PLANT_FOOD_SLUGS is exactly the live non_plant_food category', () => {
+    // Equality, both ways: a plant parked here to quiet the coverage test reds, and so does a new food
+    // class that the next re-pull brings in without anyone writing it down.
+    expect([...fc.NON_PLANT_FOOD_SLUGS].sort()).toEqual([...LIVE_NON_PLANT_FOOD].sort())
+    for (const s of LIVE_NON_PLANT_FOOD) expect(LIVE_DOMAIN, `${s} must be in the same pull`).toContain(s)
+  })
+
+  it('a food class never carries a frost band and is never filed as "uncertain"', () => {
+    // Uncertain means "a plant whose band we could not decide". Bread is not that, and a band on it
+    // would be a claim about how bread survives a frost.
+    for (const s of fc.NON_PLANT_FOOD_SLUGS) {
+      expect(fc.BAND_BY_SLUG[s], `${s} is not a plant and must not be banded`).toBeUndefined()
+      expect(fc.UNCERTAIN_SLUGS, `${s} is not an undecided plant`).not.toContain(s)
+    }
   })
 })
 
@@ -171,6 +220,42 @@ describe('V4-SLUGCONSIST-001 — the guard itself', () => {
     const behind = [...new Set([...CROP_TYPE_SLUGS, ...Object.keys(CUES_BY_CROP_TYPE)])]
       .filter((s) => !snapshot.has(s)).sort()
     expect(behind, `LIVE_DOMAIN is behind the static surfaces; re-pull it: ${behind.join(', ')}`).toEqual([])
+  })
+
+  it('every slug frostClass decides about is a live crop type (OPS-SLUGUNIVERSESTALE-001)', () => {
+    // The reverse direction of the coverage test. With every live slug decided, the decided set and
+    // LIVE_DOMAIN are the same set, so this reds on a slug dropped from the snapshot, on a band entry
+    // with a typo in it (which also leaves the real slug unbanded), and on a decision about a crop type
+    // that was deleted. The only allowed gap is a crop type a migration in this repo mints that had
+    // not reached prod at the pin, and the next test keeps that list honest.
+    const live = new Set(LIVE_DOMAIN)
+    const decided = [...Object.keys(fc.BAND_BY_SLUG), ...fc.UNCERTAIN_SLUGS, ...fc.NON_PLANT_FOOD_SLUGS]
+    const orphans = decided.filter((s) => !live.has(s) && !MINTED_NOT_YET_ON_PROD.includes(s)).sort()
+    expect(
+      orphans,
+      `frostClass decides about slug(s) that are not live crop types: a typo, a deleted crop type, or ` +
+        `LIVE_DOMAIN is missing a row (re-pull it): ${orphans.join(', ')}`
+    ).toEqual([])
+  })
+
+  it('MINTED_NOT_YET_ON_PROD holds only banded slugs a migration really mints, and none already live', () => {
+    const minted = new Set()
+    const root = join(REPO, 'migrations')
+    for (const d of readdirSync(root, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue
+      for (const f of readdirSync(join(root, d.name)).filter((n) => n.endsWith('.sql'))) {
+        const sql = readFileSync(join(root, d.name, f), 'utf8').replace(/--[^\n]*/g, '')
+        for (const stmt of sql.match(/INSERT INTO public\.crop_types[\s\S]*?;/gi) || []) {
+          for (const m of stmt.matchAll(/'([a-z0-9_]+)'/g)) minted.add(m[1])
+        }
+      }
+    }
+    expect(minted.size, 'the migration scan found no crop_types INSERT at all').toBeGreaterThan(10)
+    for (const s of MINTED_NOT_YET_ON_PROD) {
+      expect(minted.has(s), `${s} is minted by no migration in this repo`).toBe(true)
+      expect(fc.BAND_BY_SLUG[s], `${s} is waiting on a migration but has no band`).toBeTruthy()
+      expect(LIVE_DOMAIN, `${s} is live now: drop it from MINTED_NOT_YET_ON_PROD`).not.toContain(s)
+    }
   })
 
   it('is actually looking at a populated universe', () => {
