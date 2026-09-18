@@ -38,6 +38,7 @@
 //
 // CORS: handler owns CORS — Lambda URL CORS config must be empty (handler sets headers).
 
+import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
@@ -72,6 +73,53 @@ function resp(statusCode, body) {
 }
 
 // Validators live in ./validate.js (pure, unit-testable without runtime deps).
+
+// ── BUG-CULTIVARNOPROFILE-001 — a new cultivar gets a cadence profile ROW, in the same transaction ──
+//
+// This path created the plant_varieties row and nothing else, so every cultivar minted in the app
+// arrived with NO cultivar-scope care_profile. v4-cadencerefill-001's standing guard
+// (post_no_live_planting_lacks_a_cadence_profile) asserts exactly that row exists for every live
+// planting's variety, and this path re-opened it THREE times in seven days (2026-09-10, 09-11,
+// 09-17 — each a misidentification corrected by minting a cultivar and re-pointing the planting).
+// The gate's own note predicted it: "filling it again without a guard just restarts the same clock."
+//
+// WHY THE ROW IS NOT EMPTY. In this data model an EMPTY profile row is a DECISION — Collards' row
+// omits every watering key on purpose, and post_collards_silence_is_still_intact guards that
+// silence. An ABSENT row is a GAP. Writing `{}` here would convert every future gap into a silent
+// false "decided" and destroy the one distinction the guard rests on. `_basis:'unresearched'` is the
+// sentinel that keeps them apart; it follows the _basis:'dave_decision' label that
+// v4-cadencerefill-001 already uses for the same purpose (telling a ratified guess from a measured
+// median), so a reader has one vocabulary, not two.
+//
+// WHY IT CARRIES NO WATERING KEY, AND WHY THAT IS THE POINT. v_resolved_care.cadence_scopes only
+// names a scope that supplied a non-null water_interval_days{,_container,_inground}; engine.js's
+// resolveCadence adopts the DB profile only when that array is non-empty. Omitting all three
+// therefore leaves cadence_scopes = [] and the engine's bundled fallback ladder runs BYTE-IDENTICALLY
+// to today. The create path knows nothing about how often to water a cultivar the user has just
+// invented, and a number here would be a horticultural claim with no evidence behind it — worse than
+// the house default, because it would wear a researched row's clothes.
+//
+// WHAT IS DELIBERATELY ABSENT, each for a reason:
+//   • `crop` — free text, and BUG-WATERIDENTITYFREETEXT-001 is open on exactly that. It is inert
+//     while the row carries no cadence key, but it goes live the moment anyone adds one, and minting
+//     crop strings at app-write rate is the wrong direction for a corpus already carrying 149
+//     distinct ones. The controlled crop_type_slug is on the cultivar row, one join away.
+//   • `genus` — not derivable. crop_types has no genus column (slug/display_name/default_lifecycle/
+//     category/sort_order/dtm_basis/search_aliases), so any slug->genus map would be invention. Note
+//     genus is a plant_varieties column, not a profile key, and v4.136.0's isSolanaceous() already
+//     falls back to crop_type_slug when genus is NULL. The remaining genus-only consumer is
+//     cadence-data-v2.json's by_genus_fallback, which is research's job, not the create path's.
+//   • no_calendar_water / water_rule / no_calendar_feed / soil_moisture_target / _seeded — the keys
+//     engine.js reads off the RAW db_cadence, bypassing the adopt gate. Any of them here would
+//     change a live verdict on day one.
+const NEW_CULTIVAR_PROFILE = {
+  _source: 'cultivar-create',
+  _basis: 'unresearched',
+  notes: 'Auto-created with the cultivar so its variety has a cadence profile row '
+       + '(DRG-CADENCEFLOOR-001). Carries NO watering keys, so cadence still resolves through the '
+       + 'bundled fallback exactly as it did before. _basis:"unresearched" means NOBODY HAS DECIDED '
+       + 'YET — the opposite of a deliberately watering-free row like Collards.',
+};
 
 // Atomic conditional INSERT/UPDATE for rate limiting (per design doc C-S1-C).
 // Returns true if request is allowed; false if limit exceeded.
@@ -892,11 +940,20 @@ export const handler = async (event) => {
         }
       }
 
+      // BUG-CULTIVARNOPROFILE-001 — the id is minted HERE, not by the column default, so the
+      // care_profile INSERT below can bind the same value inside the SAME transaction. The neon HTTP
+      // driver's sql.transaction() takes an array of already-built statements and no statement can
+      // read another's RETURNING, so a client-side uuid is the only way to make the two writes
+      // atomic without a data-modifying CTE — and this repo has three randomUUID() precedents
+      // (events, photos, facebook-share) and zero data-modifying-CTE ones. Atomicity is the whole
+      // point: a post-commit write (the applyDerive idiom below) fails OPEN, which for an existence
+      // invariant means quietly re-creating the exact gap this closes.
+      const newVarietyId = randomUUID();
       const [, insertRows] = await sql.transaction([
         sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
         sql`
           INSERT INTO public.cultivar (
-            display_name, species, genus,
+            id, display_name, species, genus,
             days_to_maturity_min, days_to_maturity_max,
             care_notes, soil_notes, sun_requirements,
             common_diseases, expected_yield_notes,
@@ -908,6 +965,7 @@ export const handler = async (event) => {
             direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
             days_to_germ_min, days_to_germ_max, sow_season, sow_notes
           ) VALUES (
+            ${newVarietyId}::uuid,
             ${body.name.trim()},
             ${body.species ?? null},
             ${body.genus ?? null},
@@ -943,6 +1001,21 @@ export const handler = async (event) => {
             ${body.sow_season ?? null},
             ${body.sow_notes ?? null}
           ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes
+        `,
+        // BUG-CULTIVARNOPROFILE-001 — the cadence-profile row, in the same transaction as the
+        // cultivar it describes. Shape follows lambda/plants/overwinterAttr.js, the only other
+        // Lambda that writes this table: scope_id needs the explicit ::uuid (the parameter arrives
+        // as text and Postgres cannot infer it across the ON CONFLICT arm, L-086 class), and
+        // workspace_id is left to the column DEFAULT sentinel rather than set by hand.
+        // ON CONFLICT DO NOTHING is not reachable on a uuid minted three lines ago; it is here so
+        // that if this INSERT is ever re-pointed at an existing cultivar (a backfill of the rows
+        // created before this shipped is the obvious next use), it can never CLOBBER a researched
+        // profile. The failure mode it forecloses — a well-meaning re-run flattening real cadence
+        // numbers back to 'unresearched' — is worse than the gap this whole change closes.
+        sql`
+          INSERT INTO public.care_profile (scope, scope_id, profile, model_version)
+          VALUES ('cultivar'::care_scope, ${newVarietyId}::uuid, ${JSON.stringify(NEW_CULTIVAR_PROFILE)}::jsonb, 1)
+          ON CONFLICT (scope, scope_id) WHERE scope <> 'system' DO NOTHING
         `,
       ]);
       // V4-TAGSUB-001: post-commit, fail-open derive of type:/lifecycle: tags. Never 500s a variety write.
