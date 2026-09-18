@@ -293,7 +293,7 @@ export default function BottomNav() {
       {/* +LOG create action sheet (Sheet primitive). armsBack (BUG-BACKNAVMORE-001): Android Back
           now closes this sheet instead of navigating the tab beneath. Arming is safe here ONLY
           because every row is a SheetRowLink, which consumes the armed entry on row-navigate —
-          the orphaning that originally justified the exclusion (see SheetRowLink above). */}
+          the orphaning that originally justified the exclusion (see ./SheetRowLink.jsx). */}
       <Sheet open={showCreate} onClose={closeCreate} ariaLabel="Create new" armsBack>
         <div style={{ padding: '6px 24px 8px', fontSize: '0.8rem', color: P.light }}>
           Add to your garden
