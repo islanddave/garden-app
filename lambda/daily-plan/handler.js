@@ -4,7 +4,7 @@
 // Reads Neon (conn from Secrets Manager SECRET_ARN_NEON — NEVER hardcode), resolves weather from each Space's
 // postal_code (zip-driven, not hardcoded), runs ./engine per CARETAKER, idempotent upsert into daily_plan.
 const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
-const { deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather } = require('./station'); // DRG-WXSTATION-001
+const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
 const { frostEval, isFrostSeason, resolveFrostRun, escalatesBeyond } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
@@ -1284,6 +1284,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     console.error(JSON.stringify({ msg: 'station-derive-failed', degraded: 'station_derive_failed', error: stationDegraded }));
   }
   let boundSpaces = 0;
+  // BUG-STATIONDEGRADESILENT-001 — the per-Space fetch degrades below, collected so the station_unbound ops
+  // alert can NAME what fired this run instead of only saying that something did.
+  const wxDegradeMarkers = [];
   // V4-WATERMATH-001 F1 — the ledger flag, read ONCE and used for exactly one thing in F1: whether the
   // weather_daily SELECT happens at all. Default OFF, and OFF is byte-identical — the engine is not
   // wired to this data yet (that is F2), so with the flag off this run issues zero reads against the
@@ -1320,11 +1323,13 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       wx = await weatherForSpace(s, { geocodeZip, fetchNWS });
     } catch (e) {
       console.error(JSON.stringify({ msg: 'weather-fetch-failed', degraded: 'weather_fetch_failed', space: s.id, error: e?.message || String(e) }));
+      wxDegradeMarkers.push(`weather_fetch_failed (space ${s.id})`);
     }
     try {
       hy = await hydrologyForSpace(s, { geocodeZip, fetchPrecip });  // assembled BEFORE suggestions
     } catch (e) {
       console.error(JSON.stringify({ msg: 'hydrology-fetch-failed', degraded: 'hydrology_fetch_failed', space: s.id, error: e?.message || String(e) }));
+      wxDegradeMarkers.push(`hydrology_fetch_failed (space ${s.id})`);
     }
     // Field-granular station merge (B2/B3): station rain overrides recent_precip_in on the hydrology path;
     // station temp calibrates tonightLow on the weather path; forecast fields stay from Open-Meteo/NWS.
@@ -1402,6 +1407,14 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     remainingBasis: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_basis).filter(Boolean),
     remainingFallback: Object.values(stationProvBySpace).map((p) => p && p.today_remaining_fallback).filter(Boolean),
     coversLookback: station && station.coversLookback, uncertainty: station && station.uncertainty }));
+  // BUG-STATIONDEGRADESILENT-001 — a station that is CONFIGURED but bound to no Space. boundSpaces was only ever
+  // logged, so a derive throw, a fetch that came back empty and Space coordinates that drifted off the gauge all
+  // ended in the same silent place: every Space on forecast-only rain and a tonightLow with no station floor.
+  // "Configured" is stationConfig(), the predicate fetchStation and deriveStation already read, so a deployment
+  // with no AWN_STATIONS_JSON never looks like an outage. All-Spaces-unbound only: a Space that is not at the
+  // gauge is correctly unbound, and nothing here can tell it from one whose coordinates drifted.
+  const stationCfg = stationConfig();
+  const stationUnbound = stationCfg.length > 0 && spaces.length > 0 && boundSpaces === 0;
   const owner = process.env.OWNER_FALLBACK_SUB || null;     // unassigned -> Space owner (Dave); NEVER leaks to Jen.
   // DRG-WXWATER-001 coarse-v1: SINGLE flag read-site (spec I2 — plan is computed once nightly, all readers consume
   // the stored plan, so one flag here is inherently consistent). Default OFF; the 3-substrate-tier rain model is
@@ -1587,6 +1600,32 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           } catch (e) {
             console.error(JSON.stringify({ msg: 'frost degraded-alert publish FAILED', space: spaceId, error: e?.message }));
             frostFailures.push({ kind: 'frost_degraded_publish_failed', spaceId, error: e?.message });
+          }
+        }
+      }
+      // BUG-STATIONDEGRADESILENT-001 — the station_unbound ops alert. The SAME gate and dedup store as
+      // frost_eval_degraded above: evaluating run, frost season, flag on, live, publisher injected, one send
+      // per key per invocation, failure collected and thrown after the plan is durable. Keyed per RUN, not
+      // per Space, because the station is account-level — a multi-Space run still sends exactly one.
+      if (stationUnbound && frostSeason && frostAlertEnabled && !dryRun && publishAlert) {
+        const dk = `station|${today}|station_unbound`;
+        if (!frostPublished.has(dk)) {
+          const markers = [stationDegraded ? `station_derive_failed (${stationDegraded})` : null, ...wxDegradeMarkers].filter(Boolean);
+          const cause = stationDegraded ? 'deriveStation threw'
+            : !stationRaw ? 'the station fetch returned nothing (AWN outage, keys, or no records)'
+            : !station ? 'the fetched records were unusable'
+            : 'no Space has weather coordinates within COORD_TOL of the station';
+          try {
+            await publishAlert({ topic: 'ops', subject: 'Garden ops - weather station NOT BOUND',
+              message: `station_unbound — weather station ${stationCfg.map((c) => c && c.mac).filter(Boolean).join(', ') || '(no mac in AWN_STATIONS_JSON)'} ` +
+                `is configured but bound to 0 of ${spaces.length} Space(s) on ${today} during frost season. Cause: ${cause}. ` +
+                `Degrade markers this run: ${markers.length ? markers.join('; ') : 'none'}. ` +
+                'Tonight\'s low is the forecast with no station floor, and rain is forecast-only, until the station binds again.' });
+            frostPublished.add(dk);
+            console.log(JSON.stringify({ msg: 'station-unbound alert PUBLISHED', dedup_key: dk, markers }));
+          } catch (e) {
+            console.error(JSON.stringify({ msg: 'station-unbound alert publish FAILED', dedup_key: dk, error: e?.message }));
+            frostFailures.push({ kind: 'station_unbound_publish_failed', dedupKey: dk, error: e?.message });
           }
         }
       }
