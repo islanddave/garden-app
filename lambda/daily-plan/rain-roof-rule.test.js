@@ -127,7 +127,141 @@ function roofModelOf(sql) {
     aggregatesOverCte: aggAlias === cte,
     aggColumn: aggCol,
     fallback: LITERAL[fallback],
+    ...connectiveOf(flat),
   }
+}
+
+// ── THE CONNECTIVE (OPS-RAINROOFGUARDCONNECTIVE-001, 2026-09-18) ────────────────────────────────
+// Everything above models the exclusion ITSELF; nothing modelled WHERE IT SITS. So a writer that
+// kept the clause byte-for-byte but made it optional ran 8/8 green: `and not coalesce((` ->
+// `or not coalesce((`, a trailing `or gn.deleted_at is null` or `or true`, an OR inside the same
+// parenthesised group, the clause wrapped in a CASE, a double negation (EXCLUSION reads the INNER
+// `not`). Every one of those credits rain to every live planting under every roof.
+//
+// So the statement's own WHERE is parsed into its boolean skeleton — AND / OR / NOT / parentheses
+// over opaque terms, Postgres precedence NOT > AND > OR — and evaluated by truth table, 3-valued as
+// SQL does it. `vetoes`: with the roof COALESCE true, NO assignment of the other terms admits the
+// row. `admits`: with it false, SOME assignment does — the positive control, without which a parser
+// that returned false for everything would score a perfect veto. A property of the predicate, not of
+// its spelling: `(a and not R) or (b and not R)` still vetoes and passes, where a "no OR" regex would
+// red a correct rewrite and teach the next reader to weaken this file. A roof term the parser cannot
+// place (inside a CASE, compared with IS, wrapped in a subquery) THROWS; it is never scored.
+const TOKEN = /'(?:[^']|'')*'|"(?:[^"]|"")*"|[a-z0-9_$.]+|\S/g
+
+function matching(tokens, open) {
+  for (let depth = 0, k = open; k < tokens.length; k += 1) {
+    if (tokens[k] === '(') depth += 1
+    else if (tokens[k] === ')' && --depth === 0) return k
+  }
+  throw new Error(`unbalanced ( at token ${open} of the WHERE`)
+}
+
+// A term runs to the next AND / OR at its own depth, so a function call, a subquery, `is not null`,
+// BETWEEN's own AND and a CASE … END all stay inside the term they belong to.
+function boolTree(tokens) {
+  let i = 0
+  const term = () => {
+    const start = i
+    for (let depth = 0, cases = 0, between = false; i < tokens.length; i += 1) {
+      const t = tokens[i]
+      if (t === '(') depth += 1
+      else if (t === ')' && --depth < 0) throw new Error('unbalanced ) in the WHERE')
+      else if (t === 'case') cases += 1
+      else if (t === 'end') cases -= 1
+      else if (depth === 0 && cases === 0) {
+        if (t === 'between') between = true
+        else if (t === 'and' && between) between = false
+        else if (t === 'and' || t === 'or') break
+      }
+    }
+    const own = tokens.slice(start, i)
+    if (!own.length) throw new Error(`empty term in the WHERE at token ${start}`)
+    const text = own.join(' ')
+    return Object.hasOwn(LITERAL, text) ? { op: 'const', value: LITERAL[text] } : { op: 'term', text, tokens: own }
+  }
+  // A leading ( is a GROUP only when a connective (or the end) follows its close; `(x) is not false`
+  // and `(select …)` are the start of a term.
+  const unary = () => {
+    if (tokens[i] === 'not') { i += 1; return { op: 'not', arg: unary() } }
+    if (tokens[i] === '(') {
+      const close = matching(tokens, i)
+      const after = tokens[close + 1]
+      if (!/^(select|with|values)$/.test(tokens[i + 1]) && (after === undefined || after === 'and' || after === 'or')) {
+        const group = boolTree(tokens.slice(i + 1, close))
+        i = close + 1
+        return group
+      }
+    }
+    return term()
+  }
+  const chain = (op, next) => () => {
+    const args = [next()]
+    while (tokens[i] === op) { i += 1; args.push(next()) }
+    return args.length === 1 ? args[0] : { op, args }
+  }
+  const tree = chain('or', chain('and', unary))()
+  if (i !== tokens.length) throw new Error(`the WHERE did not parse to its end — stopped at "${tokens.slice(i, i + 6).join(' ')}"`)
+  return tree
+}
+
+// Kleene logic, as a WHERE is evaluated: NULL AND FALSE is FALSE, NULL OR TRUE is TRUE, NOT NULL is
+// NULL — and only TRUE admits the row.
+function truth(node, val) {
+  if (node.op === 'const') return node.value
+  if (node.op === 'term') return val(node.text)
+  if (node.op === 'not') { const v = truth(node.arg, val); return v === null ? null : !v }
+  const vs = node.args.map((a) => truth(a, val))
+  const [decides, otherwise] = node.op === 'and' ? [false, true] : [true, false]
+  return vs.includes(decides) ? decides : vs.includes(null) ? null : otherwise
+}
+
+// The statement's OWN where — the one at parenthesis depth 0. The CTE's `where l.id = …` sits two
+// levels down and belongs to the exclusion, not to the connective.
+const CLAUSE_END = new Set(['group', 'order', 'limit', 'offset', 'returning', 'having', 'window', 'union', 'on', ';'])
+
+function outerWhereOf(flat) {
+  const tokens = flat.match(TOKEN) ?? []
+  const at = []
+  let end = tokens.length
+  let depth = 0
+  tokens.forEach((t, k) => {
+    if (t === '(') depth += 1
+    else if (t === ')') depth -= 1
+    else if (depth === 0 && t === 'where') at.push(k)
+    else if (depth === 0 && at.length && end === tokens.length && CLAUSE_END.has(t)) end = k
+  })
+  if (at.length !== 1) throw new Error(`expected exactly 1 top-level WHERE in the rain insert, found ${at.length}`)
+  return tokens.slice(at[0] + 1, end)
+}
+
+// Every term other than the roof is left FREE and enumerated. For the veto that is the conservative
+// reading — whatever gn.deleted_at, the gauge or the re-run guard say, a roof still refuses.
+function connectiveOf(flat) {
+  const expr = boolTree(outerWhereOf(flat))
+  const terms = []
+  const walk = (n) => {
+    if (n.op === 'term') terms.push(n)
+    if (n.arg) walk(n.arg)
+    if (n.args) n.args.forEach(walk)
+  }
+  walk(expr)
+  const roofs = [...new Set(terms.filter((t) => t.text.includes('with recursive')).map((t) => t.text))]
+  if (roofs.length !== 1) throw new Error(`expected the roof exclusion as exactly 1 term of the WHERE, found ${roofs.length}`)
+  const [roof] = roofs
+  const own = terms.find((t) => t.text === roof).tokens
+  if (own[0] !== 'coalesce' || own[1] !== '(' || matching(own, 1) !== own.length - 1) {
+    throw new Error(`the roof exclusion is buried inside a larger expression the guard cannot evaluate: ${roof.slice(0, 90)}…`)
+  }
+  const others = [...new Set(terms.map((t) => t.text))].filter((t) => t !== roof)
+  if (others.length > 12) throw new Error(`the WHERE has ${others.length} free terms — too many to enumerate`)
+  let leak = null
+  let admits = false
+  for (let mask = 0; mask < 2 ** others.length; mask += 1) {
+    const under = (covered) => (t) => (t === roof ? covered : Boolean(mask & (1 << others.indexOf(t))))
+    if (leak === null && truth(expr, under(true)) === true) leak = others.filter((_, k) => mask & (1 << k))
+    if (truth(expr, under(false)) === true) admits = true
+  }
+  return { where: { expr, roof, others }, vetoes: leak === null, admits, leak }
 }
 
 // SQL aggregate semantics, not JS: NULLs are skipped, and an aggregate over an empty set is NULL
@@ -162,7 +296,15 @@ function creditsRain(model, tree, startLoc) {
   if (!agg) throw new Error(`unmodelled aggregate ${model.agg}() — the guard cannot evaluate it`)
   const value = agg(flags)
   const coalesced = value === null ? model.fallback : value
-  return model.negated ? !coalesced : Boolean(coalesced)
+  // The WHOLE outer WHERE decides, with the roof term set to what the climb found and every other
+  // term free: true = SOME planting row at startLoc would be credited, false = NO row would be,
+  // whatever its other terms say. Only that reading makes "refused" a claim about every planting
+  // under the roof — and it is what lets an optional roof show up in every test below.
+  const { expr, roof, others } = model.where
+  for (let mask = 0; mask < 2 ** others.length; mask += 1) {
+    if (truth(expr, (t) => (t === roof ? coalesced : Boolean(mask & (1 << others.indexOf(t))))) === true) return true
+  }
+  return false
 }
 
 const L = (parent, covered) => ({ parent, covered })
@@ -230,6 +372,48 @@ describe('BUG-RAINCOVEREDGATESTATIC-001 — rain autologger roof rule, at write 
     expect(HANDLER_MODEL.fallback, 'unknown coverage no longer resolves to exposed').toBe(false)
   })
 
+  it('the roof is a VETO — a required AND term of the outer WHERE, never an optional disjunct', () => {
+    // OPS-RAINROOFGUARDCONNECTIVE-001. Until this, `or not coalesce((` and a trailing `or true` both
+    // scored 8/8 green. `leak` names the other terms under which a covered planting gets rain.
+    expect(HANDLER_MODEL.admits,
+      'the WHERE admits no planting even under open sky — the writer, or this parser, has gone dead').toBe(true)
+    expect(HANDLER_MODEL.leak, 'rain is credited under a roof whenever these other terms hold').toBeNull()
+    expect(HANDLER_MODEL.vetoes).toBe(true)
+  })
+
+  it('reads the veto from the predicate, not its spelling (synthetic WHEREs)', () => {
+    // The same parser on WHEREs no writer contains, so it is proved to SEPARATE the shapes rather
+    // than merely agree with today's handler. R is a stand-in roof: its CTE body is irrelevant here,
+    // only its place in the boolean skeleton is under test.
+    const R = 'coalesce((with recursive up as (select 1) select bool_or(up.covered) from up), false)'
+    const of = (w) => connectiveOf(`insert into event_log select 1 from garden_node gn where ${w}`)
+    const VETO = [
+      `a and not ${R}`,
+      `a and (b and not ${R})`,
+      `(a and not ${R}) or (b and not ${R})`,                     // an OR, and still a veto
+      `a and not ${R} or false`,
+      `x between 1 and 2 and not ${R}`,                           // BETWEEN's AND is not a connective
+      `not ${R} and not exists (select 1 from t where p or q)`,   // nor is a subquery's OR
+    ]
+    const LEAK = [
+      `a or not ${R}`,
+      `a and not ${R} or b`,
+      `a and (not ${R} or b)`,
+      `not ${R} or true`,
+      `(true or not ${R})`,
+      `a and not (not ${R})`,
+      `a and ${R}`,
+    ]
+    for (const w of VETO) {
+      expect(of(w).vetoes, w).toBe(true)
+      expect(of(w).admits, `positive control: ${w}`).toBe(true)
+    }
+    for (const w of LEAK) expect(of(w).vetoes, w).toBe(false)
+    for (const w of [`a and case when b then true else not ${R} end`, `a and (not ${R}) is not false`]) {
+      expect(() => of(w), w).toThrow(/buried/)
+    }
+  })
+
   it('refuses rain to a planting standing directly under a roof', () => {
     for (const name of ['Stable', 'House', 'Indoor Rack', 'Shelf 1', 'Shelf 3', 'Shelf 5']) {
       expect(creditsRain(HANDLER_MODEL, TREE, name), `${name} is covered`).toBe(false)
@@ -276,7 +460,9 @@ describe('BUG-RAINCOVEREDGATESTATIC-001 — rain autologger roof rule, at write 
     // The claim the retired census rested on, made executable. Both writers judge the roof at write
     // time; if they ever stop agreeing, the backfill and the autologger have silently forked.
     const migration = roofModelOf(rainInsertOf(MIGRATION, ';', '0b-data.sql'))
-    const shape = ({ seedAlias, cte, ...rest }) => rest   // aliases differ by design: gn vs p
+    // Aliases differ by design (gn vs p), and so do the WHERE's other terms — the backfill also
+    // filters on the gauge, the day and its re-run guard. `vetoes` and `admits` must still agree.
+    const shape = ({ seedAlias, cte, where, leak, ...rest }) => rest
     expect(shape(migration)).toEqual(shape(HANDLER_MODEL))
     for (const name of [...Object.keys(LIVE), 'Stable Bench', 'Bench Tray', 'Low Tunnel Bed']) {
       expect(creditsRain(migration, TREE, name), `writers disagree at ${name}`)
