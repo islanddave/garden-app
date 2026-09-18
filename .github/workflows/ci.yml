@@ -334,6 +334,14 @@ jobs:
         #
         # ~96 s locally: six page loads (four states, two of them at both viewports) behind one Vite
         # boot. Placed here rather than last because gate:save-band-stability is still the slow one.
+        #
+        # V5-SEEDSTAB-001 REPOINT (2026-09-18): the harness now mounts the real Seeds page at
+        # /seeds?view=saved (Saved seeds `embedded`, with the shell's header, view switch and frame)
+        # instead of the standalone page no user sees, and the instrument check refuses any other
+        # surface. Every state also runs at 360x640 — ten page loads, ~160 s measured. ONE named
+        # tap-floor exemption: the view switch is the frozen SegmentedControl, drawn at 40px, held to
+        # that floor and printed on every run (scripts/layout-gate/segmented-control-exemption.mjs).
+        # Re-proved non-vacuous: --probe-nothing exits 1 on all ten case/viewport pairs.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-saved

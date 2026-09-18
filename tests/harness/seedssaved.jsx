@@ -1,14 +1,24 @@
-// V4-SEEDSAVEFLOW-001 — real-browser look at /seeds/saved, which shipped in v4.90.0 having never
-// been rendered in a browser at any width.
+// V4-SEEDSAVEFLOW-001 — real-browser look at Saved seeds, which shipped in v4.90.0 (as /seeds/saved)
+// having never been rendered in a browser at any width.
 //
 // Why this entry exists: the page is covered by vitest and was verified in the deployed bundle by
 // string-probe, but jsdom returns zero for every getBoundingClientRect(), so nothing in the suite
 // can falsify "the 44-character variety name overflows its card next to the advance button at
 // 390px". That is the whole question here.
 //
-// The EMPTY case is the important one and is the default. Prod has 0 of 260 seed packets staged
-// (measured against prod Neon 2026-09-01), so on the day this shipped every visit renders the empty
-// state — the populated cases show what the page becomes, not what it currently is.
+// V5-SEEDSTAB-001 — REPOINTED at the surface users actually see. /seeds/saved is now a REPLACE
+// redirect into /seeds?view=saved (App.jsx, LegacySeedsRedirect), and Saved seeds renders there
+// `embedded` inside the Seeds shell: the shell's title and action slot ("+ Save seed" moved up
+// there), its SegmentedControl view switch, its ferment line and question, and ONE frame — max
+// 720px with a 16px inset, where the standalone page had its own 600px/16px column. Mounting
+// <SavedSeeds /> standalone, as this entry did until now, measured a page no user is shown: no
+// switch, no header action, the old frame, and the page's own fetch instead of the shell's store.
+// So the entry mounts the REAL <Seeds /> in a router at /seeds?view=saved, and the page resolves
+// its view from that URL exactly as it does in prod.
+//
+// The EMPTY case is the important one and is the default. Prod had 0 of 260 seed packets staged
+// (measured against prod Neon 2026-09-01), so on the day this shipped every visit rendered the
+// empty state — the populated cases show what the page becomes, not what it was.
 //
 // Fixture names are REAL rows from prod inventory (category=seeds, joined to public.cultivar the way
 // lambda/inventory-items/index.js:581 does it), taken longest-first so the worst case for layout is
@@ -17,7 +27,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { ToastProvider } from '../../src/context/ToastContext.jsx'
-import SavedSeeds from '../../src/pages/SavedSeeds.jsx'
+import Seeds from '../../src/pages/Seeds.jsx'
 
 // The app's global stylesheet (box-sizing, font stack) arrives via the `harness-app-global-style`
 // plugin in vite.harness.config.mjs — see tests/harness/appGlobalStyle.js. This entry injected its
@@ -147,19 +157,40 @@ const PLANTINGS = [
 // untracked is "everything without a stage" — which on that day is all 260.
 const ROWS = CASE === 'empty' ? UNTRACKED : [...TRACKED, ...UNTRACKED]
 
+// The two controlled vocabularies the shell's views read. Crop types label the crop chips (without
+// them the chips fall back to a slug prettifier, a degrade path, not the prod label); sources
+// resolve a candidate's `source_id` to its vendor (no row above carries one — the rows are kept
+// exactly as they were, so the picker's vendor segment stays empty here and the seeds-page entry
+// owns the vendor-width case). Both used to fall through to realFetch and 404 against the harness
+// server, which the hooks swallow by design (non-fatal), so nothing ever said they were missing.
+const CROP_TYPES = [
+  { slug: 'pepper', display_name: 'Pepper' }, { slug: 'tomato', display_name: 'Tomato' },
+  { slug: 'lettuce', display_name: 'Lettuce' }, { slug: 'summer_squash', display_name: 'Summer Squash' },
+  { slug: 'winter_squash', display_name: 'Winter Squash' }, { slug: 'mustard', display_name: 'Mustard' },
+]
+const SOURCES = [{ id: 'src-fedco', name: 'Fedco Seeds' }, { id: 'src-baker', name: 'Baker Creek Heirloom Seeds' }]
+
 // Stub at the network layer, so the REAL page, the REAL useApiFetch and the REAL Sheet all run and
 // only the far side of the wire is faked. Aliasing src/lib/api.js would test the harness instead.
-// Order matters: the POST path also contains "inventory-items".
+// Order matters: every write path, and sow-candidates, also contain "inventory-items".
 const realFetch = window.fetch
 const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } }))
 window.fetch = (url, ...rest) => {
   const u = String(url)
   if (u.includes('/seed-stage')) return json({ ok: true })
   if (u.includes('/source-plant')) return json({ ok: true })
+  // Only the Sow now view fetches these, and this entry never switches to it; stubbed so that a
+  // stray switch measures an empty list rather than a 404 banner.
+  if (u.includes('/sow-candidates')) return json({ items: [] })
+  if (u.includes('/api/projects')) return json([])
   // V4-SEEDLINK-001 put a PlantingSelect in the advance sheet, and it self-fetches this path. Left
   // to fall through to realFetch it 404s against the harness server and the sheet renders its
   // load-failure copy — which would read as a layout finding rather than as a missing stub.
   if (u.includes('/api/plants')) return json(PLANTINGS)
+  if (u.includes('/api/varieties/crop-types')) return json(CROP_TYPES)
+  if (u.includes('/api/varieties/sources')) return json(SOURCES)
+  // The shell's ONE seed fetch (useSeedItems, /api/inventory-items?category=seeds) — Saved seeds
+  // reads the shell's store and issues no copy of its own.
   if (u.includes('inventory-items')) return json(ROWS)
   return realFetch(url, ...rest)
 }
@@ -167,8 +198,10 @@ window.fetch = (url, ...rest) => {
 const settle = () => new Promise((r) => setTimeout(r, 160))
 
 async function run() {
+  // The real route, not a prop: the page resolves its view from `?view=` exactly as prod does, so a
+  // regression in that resolution lands this entry on the wrong view and the gate's view check reds.
   createRoot(document.getElementById('root')).render(
-    <MemoryRouter><ToastProvider><SavedSeeds /></ToastProvider></MemoryRouter>,
+    <MemoryRouter initialEntries={['/seeds?view=saved']}><ToastProvider><Seeds /></ToastProvider></MemoryRouter>,
   )
   await settle()
 
@@ -199,6 +232,8 @@ function measure() {
     .filter((x) => x.h > 0 && x.h < 48)
   return {
     case: CASE,
+    // Which view the shell resolved — the entry exists to measure Saved seeds INSIDE the Seeds page.
+    view: document.querySelector('[data-testid="seeds-view-switch"] [aria-checked="true"]')?.textContent ?? '(no switch)',
     vw: window.innerWidth,
     hscroll: de.scrollWidth > de.clientWidth,
     scrollW: de.scrollWidth,
@@ -245,7 +280,7 @@ function paint() {
   if (m.under48.length) fails.push(`${m.under48.length} tap target(s) <48px: ` + m.under48.map((x) => `${x.t}=${x.h}`).join(', '))
   const el = document.getElementById('verdict')
   el.textContent = [
-    `case=${m.case}  vw=${m.vw}px  scrollW=${m.scrollW}  hscroll=${m.hscroll ? 'YES' : 'no'}  pageH=${m.pageH}`,
+    `case=${m.case}  view=${m.view}  vw=${m.vw}px  scrollW=${m.scrollW}  hscroll=${m.hscroll ? 'YES' : 'no'}  pageH=${m.pageH}`,
     `empty-state=${m.empty}  cards=${m.cards}  sheet=${m.sheetOpen}`,
     fails.length ? 'FAIL: ' + fails.join(' | ') : 'PASS — no overflow, no clipped name, all tap targets >=48px',
   ].join('\n')

@@ -4,9 +4,9 @@
 //   node scripts/layout-gate/seeds-saved-clearance.mjs                  # npm run gate:seeds-saved
 //   node scripts/layout-gate/seeds-saved-clearance.mjs --probe-nothing  # prove the instrument fires
 //
-// MEASURES, in real Chrome at a TRUE 390x844 (and 390x667 for the two sheet cases), across the four
-// states tests/harness/seedssaved.jsx can render — empty / populated list / candidate picker /
-// advance sheet:
+// MEASURES, in real Chrome at a TRUE 390x844 and 360x640 (and 390x667 for the two sheet cases),
+// across the four states tests/harness/seedssaved.jsx can render — empty / populated list /
+// candidate picker / advance sheet — of Saved seeds as the Seeds page shows it (/seeds?view=saved):
 //   (a) TAP HEIGHT — every visible button and form control, as a census rather than a named list,
 //       against T.tapMinHeight read from the token file. A gate that re-checks four named controls
 //       passes the day a fifth is authored short.
@@ -74,6 +74,20 @@
 // permanent, runnable proof that this file can go red, kept because a gate whose failure path has
 // never been executed is a claim, not a guard.
 //
+// V5-SEEDSTAB-001 — REPOINTED AT THE SEEDS PAGE (2026-09-18). /seeds/saved became a redirect into
+// /seeds?view=saved, where Saved seeds renders `embedded` inside the Seeds shell, and the harness
+// entry now mounts the real <Seeds /> at that URL instead of <SavedSeeds /> standalone — a surface
+// no user is shown any more. Three things follow here:
+//   · THE SURFACE IS PART OF THE INSTRUMENT CHECK. The page must be the Seeds page, the switch must
+//     report "Saved seeds" as the checked view, and the embedded view must be in the document —
+//     a harness that regressed to the standalone mount, or a view that resolved elsewhere, fails
+//     before any invariant is read.
+//   · 360x640 BESIDE THE EXISTING VIEWPORTS, on all four states: the narrowest phone the page is
+//     designed for, and the one where the seed-measure column is tightest.
+//   · ONE NAMED TAP-FLOOR EXEMPTION: the shell's view switch is the frozen SegmentedControl, whose
+//     radios are drawn at 40px. See segmented-control-exemption.mjs — exempt radios keep a floor
+//     (the primitive's own) and are printed on every run.
+//
 // TRAPS THESE SIBLINGS ALREADY PAID FOR:
 //   1. macOS Chrome floors an OS window at ~500px, so --window-size=390 lays the page out at ~500
 //      and CROPS the capture. Geometry comes from Emulation.setDeviceMetricsOverride and the run
@@ -91,6 +105,7 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { T } from '../../src/components/forms/formStyles.js'
 import { resolveWebSocket } from './cdp-socket.mjs'
+import { segmentedRadioFloorPx, isExemptSegmentedRadio } from './segmented-control-exemption.mjs'
 
 // Read from the token, never spelled here: a gate carrying its own copy of the floor is a gate that
 // keeps passing after someone lowers the real one.
@@ -111,9 +126,18 @@ const TAP_MIN_HEIGHT_PX = T.tapMinHeight
 // TYPE. Every one of those is a layout decision worth taking deliberately. Raising this number is
 // that decision, and it is only honest after re-measuring the new ceiling; bumping it to whatever
 // the run just printed converts the guard into a record of the regression.
+//
+// RE-DERIVED 2026-09-18 for the Seeds frame (V5-SEEDSTAB-001), not carried over. The number above was
+// measured in the standalone page's 600px/16px column; the Seeds shell's frame is max 720px with the
+// same 16px inset. Below 632px both frames are simply the viewport minus 32, so the column did not
+// move at 390 (230.4px, 2 line boxes, card 199px — identical to the standalone run), and the new
+// 360x640 viewport narrows it to 200.4px where the ceiling string STILL lands on exactly 2 line boxes
+// (167px widest line). So 2 stands at both widths, measured at its boundary, and was not edited.
 const MEASURE_MAX_LINES = 2
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+// The frozen SegmentedControl's own floor, read from its source (see segmented-control-exemption.mjs).
+const SEGMENTED_RADIO_MIN_PX = segmentedRadioFloorPx(ROOT)
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5316)
 const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9426)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
@@ -148,13 +172,19 @@ const tidPrefix = (name) => `[data-testid^="${name}${SUFFIX}"]`
 //     pinning the number would freeze a decision this lane did not make. What must never happen is
 //     zero: a picker offering nothing is indistinguishable from a picker that never rendered.
 // 667 is the same phone with the keyboard up and is the tighter geometry; it is run for the two
-// sheet states, where an 85vh panel cap is what bites.
+// sheet states, where an 85vh panel cap is what bites. 360x640 (V5-SEEDSTAB-001) is the narrowest
+// phone the Seeds page is designed for — the card's text column is 30px narrower there than at 390,
+// so it is the geometry where the seed-measure line and the 44-char name are tightest — and it runs
+// on every state, sheets included.
+const NARROW = [360, 640]
 const CASES = [
-  { name: 'empty', viewports: [[390, 844]], expect: { cards: 0, sections: 0, minCandidates: 0, minControls: 1, measureLines: 0, emptyState: true, sheet: false } },
-  { name: 'list', viewports: [[390, 844]], expect: { cards: 4, sections: 3, minCandidates: 0, advanceBtns: 3, minControls: 4, measureLines: 3, emptyState: false, sheet: false } },
-  { name: 'picker', viewports: [[390, 844], [390, 667]], expect: { cards: 4, sections: 3, minCandidates: 1, minControls: 5, measureLines: 3, emptyState: false, sheet: true } },
-  { name: 'advance', viewports: [[390, 844], [390, 667]], expect: { cards: 4, sections: 3, minCandidates: 0, minControls: 4, measureLines: 3, emptyState: false, sheet: true, primary: 'stage-save' } },
+  { name: 'empty', viewports: [[390, 844], NARROW], expect: { cards: 0, sections: 0, minCandidates: 0, minControls: 1, measureLines: 0, emptyState: true, sheet: false } },
+  { name: 'list', viewports: [[390, 844], NARROW], expect: { cards: 4, sections: 3, minCandidates: 0, advanceBtns: 3, minControls: 4, measureLines: 3, emptyState: false, sheet: false } },
+  { name: 'picker', viewports: [[390, 844], [390, 667], NARROW], expect: { cards: 4, sections: 3, minCandidates: 1, minControls: 5, measureLines: 3, emptyState: false, sheet: true } },
+  { name: 'advance', viewports: [[390, 844], [390, 667], NARROW], expect: { cards: 4, sections: 3, minCandidates: 0, minControls: 4, measureLines: 3, emptyState: false, sheet: true, primary: 'stage-save' } },
 ]
+// The view every case must land on. Read off the switch's checked radio, by its visible label.
+const EXPECT_VIEW_LABEL = 'Saved seeds'
 
 const failures = []
 const fail = m => failures.push(m)
@@ -295,14 +325,24 @@ const MEASURE = (c) => `(() => {
   const panel = d.querySelector('[role="dialog"]')
   const primary = ${c.expect.primary ? `d.querySelector('${tid(c.expect.primary)}')` : 'null'}
 
+  // V5-SEEDSTAB-001 — WHICH SURFACE this is. Read through tid() like every other selector, so the
+  // --probe-nothing arm reds these too.
+  const seedsPage = !!d.querySelector('${tid('seeds-page')}')
+  const savedView = !!d.querySelector('${tid('saved-seeds-view')}')
+  const checkedView = d.querySelector('${tid('seeds-view-switch')} [role="radio"][aria-checked="true"]')
+
   const controls = [...d.querySelectorAll('button, input, select, textarea, [role="button"]')].filter(shown)
   const taps = controls.map(el => {
     const r = box(el)
+    const parent = el.parentElement
     // A control BEHIND an open modal correctly fails to hit-test — the backdrop is over it, by
     // design. Recording which layer each control is on keeps that from reading as an occlusion bug.
     return { label: name(el), w: r.w, h: r.h, hitIsSelf: hitsSelf(el, r),
              inDialog: panel ? panel.contains(el) : true,
-             fitsX: r.l >= -0.5 && r.r <= w.innerWidth + 0.5 }
+             fitsX: r.l >= -0.5 && r.r <= w.innerWidth + 0.5,
+             // For the named SegmentedControl exemption: a radio, and the radiogroup it sits in.
+             role: el.getAttribute('role'),
+             group: parent && parent.getAttribute('role') === 'radiogroup' ? parent.getAttribute('data-testid') : null }
   })
   // REPORTED, not asserted. The card title and "Set parent plant →" are anchors, and WCAG 2.5.8
   // exempts a link inline in a block of text — asserting a 44px floor on them would freeze a design
@@ -393,6 +433,7 @@ const MEASURE = (c) => `(() => {
     docScrollW: de.scrollWidth, docClientW: de.clientWidth,
     sidewaysScroll: de.scrollWidth > de.clientWidth + 1,
     pageH: Math.round(de.scrollHeight),
+    surface: { seedsPage, savedView, view: checkedView ? (checkedView.textContent || '').trim() : null },
     emptyState: !!d.querySelector('${tid('saved-seeds-empty')}'),
     counts: { cards: cards.length, sections: sections.length, candidates: candidates.length,
               controls: taps.length, links: links.length,
@@ -451,6 +492,11 @@ try {
       }
       const e = c.expect
       const mismatch = []
+      // V5-SEEDSTAB-001 — the surface first: every number below is about Saved seeds INSIDE the
+      // Seeds page, and is meaningless measured on any other mount.
+      if (!m.surface.seedsPage) mismatch.push('no Seeds page in the document — the harness is not mounting <Seeds /> (the standalone <SavedSeeds /> is a surface no user is shown)')
+      if (!m.surface.savedView) mismatch.push('the Saved seeds view is not mounted inside the Seeds page')
+      if (m.surface.view !== EXPECT_VIEW_LABEL) mismatch.push(`the view switch reports "${m.surface.view}" as checked, expected "${EXPECT_VIEW_LABEL}" — ?view=saved did not resolve to Saved seeds`)
       if (m.counts.cards !== e.cards) mismatch.push(`cards ${m.counts.cards} != ${e.cards}`)
       if (m.counts.sections !== e.sections) mismatch.push(`stage sections ${m.counts.sections} != ${e.sections}`)
       if (m.counts.candidates < e.minCandidates) mismatch.push(`${m.counts.candidates} candidates offered, expected >=${e.minCandidates} — a picker offering nothing is indistinguishable from a picker that never rendered`)
@@ -482,9 +528,14 @@ try {
       else if (heights.every(h => h === 0)) fail(`${at}: every one of ${heights.length} measured boxes is 0px tall — this is what an unrendered document looks like, not a passing layout`)
       else if (m.docScrollW === 0 || m.docClientW === 0) fail(`${at}: document reports scrollWidth ${m.docScrollW} / clientWidth ${m.docClientW} — nothing was laid out`)
 
-      // ── (a) TAP HEIGHT — census, not a named list.
-      const short = m.taps.filter(t => t.h < TAP_MIN_HEIGHT_PX)
+      // ── (a) TAP HEIGHT — census, not a named list. ONE named exemption: the shell's view switch is
+      //    the frozen SegmentedControl, drawn at 40px (segmented-control-exemption.mjs). Its radios are
+      //    held to the primitive's own floor instead of the tap floor, and listed on every run.
+      const exempt = m.taps.filter(isExemptSegmentedRadio)
+      const short = m.taps.filter(t => !isExemptSegmentedRadio(t) && t.h < TAP_MIN_HEIGHT_PX)
       for (const t of short) fail(`${at}: control "${t.label}" renders ${t.w}x${t.h}, under the ${TAP_MIN_HEIGHT_PX}px tap floor`)
+      for (const t of exempt.filter(t => t.h < SEGMENTED_RADIO_MIN_PX)) fail(`${at}: SegmentedControl radio "${t.label}" (${t.group}) renders ${t.w}x${t.h}, under even the primitive's own ${SEGMENTED_RADIO_MIN_PX}px floor — the named exemption covers 40px, not this`)
+      if (!exempt.length) fail(`${at}: no SegmentedControl radio measured — the view switch did not render, so the named exemption is covering nothing and the shell header was never measured`)
       for (const t of m.taps) {
         // Hit-testing is asserted on the TOP layer only. With a sheet open the backdrop covers the
         // page behind it and every background control correctly fails to hit-test; asserting there
@@ -533,8 +584,10 @@ try {
 
       // ── The record. Printed on pass as well as fail: these are the numbers a redesign has to move,
       //    and a gate that only speaks when it is angry leaves nothing to compare against.
-      const minTap = m.taps.length ? Math.min(...m.taps.map(t => t.h)) : 0
+      const floored = m.taps.filter(t => !isExemptSegmentedRadio(t))
+      const minTap = floored.length ? Math.min(...floored.map(t => t.h)) : 0
       console.log(`[seeds-saved] ${at}: ${m.counts.cards} cards / ${m.counts.sections} sections / ${m.counts.candidates} candidates · ${m.counts.controls} controls, shortest ${minTap}px (floor ${TAP_MIN_HEIGHT_PX}px), ${short.length} under · pageH ${m.pageH}px`)
+      console.log(`[seeds-saved] ${at}: NAMED EXEMPTION — ${exempt.length} SegmentedControl radio(s) held to ${SEGMENTED_RADIO_MIN_PX}px, not ${TAP_MIN_HEIGHT_PX}px: ${exempt.map(t => `"${t.label}"=${t.h}px`).join(', ')}${exempt.length && exempt.every(t => t.h >= TAP_MIN_HEIGHT_PX) ? ' · every one now clears the real floor: the exemption is INERT, delete it' : ''}`)
       if (m.cardMetrics.length) {
         console.log(`[seeds-saved] ${at}: card gap text→advance ${m.cardMetrics.map(cd => cd.hasAdvance ? cd.colToAdvancePx + 'px' : '—').join('/')} · card heights ${m.cardMetrics.map(cd => cd.h).join('/')}px · overflow ${m.cardMetrics.filter(cd => cd.overflowX || cd.colClips).length}`)
         // V5-SEEDCOUNTCARD-001. Every string and box, printed: these are the numbers a wording or

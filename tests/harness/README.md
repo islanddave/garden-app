@@ -138,12 +138,19 @@ together and fails on drift (verified by mutation, not just by passing). **If yo
 `BASELINE-eeb7019.json` and the numbers in the `psheetverify-20260830` and `sheetoverflow-20260831`
 reports were all taken under the old conditions. Re-take rather than diff against them.
 
-## `seedssaved.*` — /seeds/saved, added 2026-09-01
+## `seedssaved.*` — Saved seeds, added 2026-09-01
 
-`SavedSeeds` shipped in v4.90.0 having never been rendered in a browser. This entry mounts the real
-page inside the real `ToastProvider`, stubs `window.fetch` (so the real `useApiFetch` seam runs) and
-fixtures it with **real prod inventory names taken longest-first** — the 44-character "Money Plant
-(self-saved, variety unrecorded)" is the widest name in the seed set and the reason the entry exists.
+`SavedSeeds` shipped in v4.90.0 having never been rendered in a browser. This entry stubs
+`window.fetch` (so the real `useApiFetch` seam runs) and fixtures it with **real prod inventory
+names taken longest-first** — the 44-character "Money Plant (self-saved, variety unrecorded)" is the
+widest name in the seed set and the reason the entry exists.
+
+**Since V5-SEEDSTAB-001 (2026-09-18) it mounts the real `<Seeds />` page at `/seeds?view=saved`**,
+inside a `MemoryRouter` and the real `ToastProvider` — not `<SavedSeeds />` standalone, which no user
+is shown any more (`/seeds/saved` redirects into the Seeds page). Saved seeds renders there
+`embedded`: the shell's title, action slot, view switch and ferment line above it, one 720px/16px
+frame around it, and the shell's single seed fetch feeding it. `gate:seeds-saved` checks that the
+page it measured IS that surface before it reads a single box.
 
 ```
 http://localhost:5311/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=844&page=seedssaved.html&case=empty
