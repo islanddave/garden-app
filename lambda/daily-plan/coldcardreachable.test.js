@@ -15,7 +15,7 @@
 // column's existence and its resolution are NOT proven here — handler-heated.test.js pins the SELECT.
 //
 // MUTATION LOG — see _mainsync_20260918/coldcardreachable.md for the run-by-run record.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import engine from './engine.js';
 import cad from './cadence-data-v2.json';
 import fm from './fertilization-model.json';
@@ -131,6 +131,18 @@ describe('V5-COLDCARDREACHABLE-001 — in-ground keeps its card where the frost 
     // non-vacuity: the suppression actually fired on the uncovered ones, so the alert is what carries them
     expect(card(POTATO, 38)).toBeNull();
     expect(fc.summarize([POTATO]).atRisk).toBe(1);
+  });
+
+  it('an invalid FROST_BAND_THRESHOLDS_JSON cannot break the cold pass on every run', () => {
+    // frostAlertNames classifies through frostClass, whose threshold resolution THROWS on an unknown
+    // band. That throw belongs to the 15:30 frost run; reaching it from coldFor would take down every
+    // run's plan. resolvedBands is what keeps it out.
+    vi.stubEnv('FROST_BAND_THRESHOLDS_JSON', JSON.stringify({ not_a_band: { ADVISORY_LOW_F: 1 } }));
+    try {
+      expect(() => fc.resolveBandThresholds()).toThrow(/unknown band/);   // the override IS invalid
+      expect(card(WATERMELON, 48)).toBeNull();
+      expect(card(potted(WATERMELON), 48)).toMatchObject({ level: 'protect' });
+    } finally { vi.unstubAllEnvs(); }
   });
 });
 

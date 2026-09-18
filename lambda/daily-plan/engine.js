@@ -857,8 +857,8 @@ function coldFor(p, cad, low){
   // now covers both paths identically, which is what the V4-TROPICALCOLD-001 note below always claimed.
   if(broughtInside(p)) return null;
   // V5-COLDCARDREACHABLE-001 (heated) — a planting whose location is HEATED is already where every
-  // level of this card would send it. `heated_resolved` is locations.heated through the planting's
-  // own location (handler.js; migrations/v5-locheated-001), and is deliberately NOT `covered`: the
+  // level of this card would send it. `heated_resolved` is locations.heated off the planting's location,
+  // else its project's (handler.js; migrations/v5-locheated-001), and is deliberately NOT `covered`: the
   // Stable is covered and UNHEATED and holds more live plantings than the House (Dave 2026-09-17), so
   // a covered test would silence the population this card exists for. Strict `=== true`: absent or
   // NULL (an un-located planting, an older caller) means NOT heated, which fails toward a card.
@@ -927,8 +927,9 @@ function broughtInside(p){
 // under a tunnel is `covered` and so absent from the alert, and a hardy-slugged planting with a tender
 // cold profile is a data contradiction the alert resolves toward hardy. Dormant needs no clause: the
 // engine skips it before coldFor, and the handler filters it before summarize.
-// resolvedBands is passed so this never reads the FROST_* env overrides: a malformed one throws inside
-// resolveBandThresholds, and that must stay confined to the 15:30 frost run, not every run's cold pass.
+// resolvedBands is passed so this never reads the FROST_* env overrides: an invalid one (unknown band,
+// non-numeric value) throws inside resolveBandThresholds, and that must stay confined to the 15:30 frost
+// run, not every run's cold pass. The class verdict does not depend on thresholds, so nothing is lost.
 function frostAlertNames(p){
   if(fc.frostClassForSlug(p.crop_type_slug, {resolvedBands:fc.BAND_THRESHOLDS}).class==='hardy') return false;
   return !fc.isCoveredDefault(p);
