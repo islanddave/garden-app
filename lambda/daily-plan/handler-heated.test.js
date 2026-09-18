@@ -10,6 +10,13 @@
 //       run() into the stored plan, so renaming either side reds.
 // WHAT THIS DOES NOT PROVE: there is no Postgres here, so `l.heated` existing and resolving is not
 // executed. The column comes from migrations/v5-locheated-001, which must be applied first (its README).
+//
+// MUTATION LOG — 2026-09-18, lane-coldcardreachable-20260918 (file restored byte-for-byte after each):
+//   * handler alias renamed `as heated`              -> 4 RED (both alias tests, run(), cover-inherit sha256)
+//   * handler projection deleted                     -> 4 RED (same)
+//   * `pj.heated` instead of `l.heated`              -> 3 RED (both alias tests, run())
+//   * engine reads `p.heated` instead                -> 1 RED (run())
+//   * locations join re-pointed at pj.location_id    -> 1 RED (same-row test)
 import { describe, it, expect } from 'vitest';
 import h from './handler.js';
 

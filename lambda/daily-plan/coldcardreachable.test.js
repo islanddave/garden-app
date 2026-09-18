@@ -14,7 +14,19 @@
 // coldFor alone. The `*_resolved` keys are what handler.js selects; the unit suite mocks SQL, so the
 // column's existence and its resolution are NOT proven here — handler-heated.test.js pins the SELECT.
 //
-// MUTATION LOG — see _mainsync_20260918/coldcardreachable.md for the run-by-run record.
+// MUTATION LOG — 2026-09-18, lane-coldcardreachable-20260918. Each applied to engine.js alone, this file
+// run, RED observed, file restored byte-for-byte:
+//   * in-ground suppression removed (`_inGroundAlerted=false`)        -> 4 RED (potato, watermelon, five, invariant)
+//   * frostAlertNames covered clause dropped                          -> 2 RED (under cover keeps card, invariant)
+//   * frostAlertNames hardy clause dropped                            -> 2 RED (hardy slug keeps card, invariant)
+//   * heated check removed                                            -> 3 RED (House pepper, Fittonia, House optional)
+//   * heated check keyed on frost_covered_resolved instead            -> 5 RED (incl. both Stable cases)
+//   * heated check `!==false` (absent/NULL treated as heated)         -> 1 RED (fails toward a card)
+//   * in-ground as an early return (drops `optional` too)             -> 1 RED (optional survives)
+//   * broughtInside check removed                                     -> 1 RED (brought_inside toggle)
+//   * bring_in / protect level no longer suppressed in-ground         -> 2 RED each
+//   * in-ground predicate ignores container_type                      -> 5 RED (incl. the outdoor lantana control)
+//   * frostAlertNames without resolvedBands                           -> 1 RED (invalid FROST override)
 import { describe, it, expect, vi } from 'vitest';
 import engine from './engine.js';
 import cad from './cadence-data-v2.json';
