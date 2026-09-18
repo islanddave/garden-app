@@ -7,8 +7,9 @@
 //   HEATED  — heated_resolved (locations.heated via handler.js) drops every level of the card. NOT
 //             `covered`: the Stable is covered and unheated and holds more plantings than the House.
 //   IN-GROUND — likelyInGround drops the two BRING-IN levels, but only for plantings the frost ALERT
-//             names (frostClass.summarize: not hardy by slug, not covered), so no planting ends up with
-//             no cold message on either channel. `optional` ("protect flowering plant") survives.
+//             names (frostClass.summarize: not hardy by slug, not in a HEATED location — `covered` until
+//             BUG-FROSTALERTSTABLE-001, 2026-09-18), so no planting ends up with no cold message on either
+//             channel. `optional` ("protect flowering plant") survives.
 //
 // Every fixture here is fed through generatePlan, the real call site (engine.js -> tasks.cold), not
 // coldFor alone. The `*_resolved` keys are what handler.js selects; the unit suite mocks SQL, so the
@@ -27,6 +28,12 @@
 //   * bring_in / protect level no longer suppressed in-ground         -> 2 RED each
 //   * in-ground predicate ignores container_type                      -> 5 RED (incl. the outdoor lantana control)
 //   * frostAlertNames without resolvedBands                           -> 1 RED (invalid FROST override)
+// Re-run 2026-09-18, lane-froststable-20260918 (BUG-FROSTALERTSTABLE-001 moved frostAlertNames' second
+// clause from covered to heated, mirroring summarize):
+//   * frostAlertNames clause back on frost_covered_resolved           -> 1 RED (Stable bed is named, card drops)
+//   * frostAlertNames heated clause dropped (`return true`)           -> 0 RED, and CANNOT go red here: the
+//     HEATED narrowing returns null before the in-ground branch, so a heated planting never reaches it. The
+//     clause keeps the mirror faithful to summarize; the INVARIANT test is what binds the two channels.
 import { describe, it, expect, vi } from 'vitest';
 import engine from './engine.js';
 import cad from './cadence-data-v2.json';
@@ -112,11 +119,15 @@ describe('V5-COLDCARDREACHABLE-001 — in-ground: no bring-in card for a plant t
 
 describe('V5-COLDCARDREACHABLE-001 — in-ground keeps its card where the frost alert cannot see it', () => {
   // The brief's safety condition: dropping the card must never leave a tender plant with no cold
-  // message anywhere. frostClass.summarize excludes covered plantings and hardy slugs from the alert,
-  // so an in-ground planting in either class keeps today's card.
-  it('in-ground UNDER COVER (a raised bed in the unheated Stable) keeps its card', () => {
+  // message anywhere. frostClass.summarize excludes hardy slugs and plantings in a HEATED location from
+  // the alert, so an in-ground planting in either class keeps today's card.
+  it('in-ground in the unheated Stable is NAMED by the frost alert, so its bring-in card drops', () => {
+    // Until BUG-FROSTALERTSTABLE-001 (Dave 2026-09-18) summarize dropped every `covered` planting, so a
+    // raised bed in the Stable was invisible to the alert and kept this card. The alert now keys on
+    // heat: the Stable is unheated, so the bed is named there and follows the ordinary in-ground rule.
     const shed = cucurbit('Zephyr Squash', 'Cucurbita', 'squash', { container_type: 'raised_bed', ...STABLE });
-    expect(card(shed, 48)).toMatchObject({ level: 'protect' });
+    expect(fc.summarize([shed]).atRisk).toBe(1);
+    expect(card(shed, 48)).toBeNull();
   });
 
   it('in-ground with a HARDY slug but a tender profile (Jaune du Poitou before its 09-17 fix) keeps its card', () => {

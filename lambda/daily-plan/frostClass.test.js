@@ -195,7 +195,7 @@ describe('live-prod slug coverage (read from Neon 2026-08-04, 250 live plantings
 // ══════════════════════════════════════════════════════════════════════════════════════════════════
 const {
   resolveBandThresholds, BAND_THRESHOLDS, BAND_BY_SLUG, SLUGS_BY_BAND, BAND_ORDER, UNKNOWN_BAND,
-  cropLabel, isCoveredDefault, TENDER_SLUGS,
+  cropLabel, isHeatedDefault, TENDER_SLUGS,
 } = fc;
 
 // The full plant_varieties.crop_type_slug domain, read from live prod Neon 2026-08-04 (120 values).
@@ -344,84 +344,94 @@ describe('D6 band threshold injection', () => {
   });
 });
 
-describe('D6 covered-exclusion — an indoor planting is not named on a frost night', () => {
+describe('D6 indoor-exclusion keys on HEAT, not cover (BUG-FROSTALERTSTABLE-001)', () => {
+  // The House is heated; the Stable is covered but NOT heated (Dave 2026-09-17). Fixtures carry both
+  // flags the handler projects: frost_covered_resolved (from `covered`) and heated_resolved.
   const rows = [
-    p('c1', 'Shelf Pepper', 'pepper', { covered: true }),
-    p('c2', 'House Fittonia', 'fittonia', { covered: true }),
-    p('c3', 'Stable Mystery', null, { covered: true }),
+    p('h1', 'House Fittonia', 'fittonia', { covered: true, heated_resolved: true }),
+    p('h2', 'House Pepper', 'pepper', { covered: true, heated_resolved: true }),
+    p('s1', 'Stable Echeveria', 'echeveria', { covered: true, heated_resolved: false }),
+    p('s2', 'Stable Mystery', null, { covered: true }),
     p('o1', 'Deck Pepper', 'pepper'),
     p('o2', 'Bed Kale', 'kale', { container_type: 'in_ground' }),
-    p('o3', 'Covered Kale', 'kale', { container_type: 'in_ground', covered: true }),
+    p('o3', 'House Kale', 'kale', { container_type: 'in_ground', covered: true, heated_resolved: true }),
   ];
 
-  it('covered at-risk plantings are excluded from every at-risk count', () => {
+  it('only HEATED at-risk plantings are excluded from the at-risk counts', () => {
     const s = summarize(rows);
-    expect(s.tender).toBe(1);
-    expect(s.unknown).toBe(0);
+    expect(s.tender).toBe(2);                // Stable Echeveria + Deck Pepper
+    expect(s.unknown).toBe(1);               // Stable Mystery, no slug
+    expect(s.atRisk).toBe(3);
+    expect(s.tenderContainers).toBe(3);      // counted over every at-risk row, unknown included; all potted
+  });
+
+  it('a covered but UNHEATED planting is named: the Stable regression', () => {
+    // The bug in one assertion. frost_covered_resolved is TRUE for this row (the Stable is covered),
+    // and before the fix that alone dropped it from every frost alert, hard freeze included.
+    const stable = p('s9', 'Stable Spider Plant', 'spider_plant', { covered: true, heated_resolved: false });
+    expect(stable.frost_covered_resolved).toBe(true);
+    const s = summarize([stable]);
     expect(s.atRisk).toBe(1);
-    expect(s.tenderContainers).toBe(1);
+    expect(s.coveredExcluded).toBe(0);
+    expect(s.byCropType.map((c) => c.label)).toEqual(['spider plants']);
   });
 
   it('the exclusion is REPORTED, never silent', () => {
     const s = summarize(rows);
-    expect(s.coveredExcluded).toBe(3);
-    expect(s.coveredExcludedSlugs).toEqual(['fittonia', 'pepper']);   // the NULL-slug row contributes none
+    expect(s.coveredExcluded).toBe(2);
+    expect(s.coveredExcludedSlugs).toEqual(['fittonia', 'pepper']);
   });
 
-  it('a covered HARDY planting is counted hardy, not counted as an exclusion', () => {
+  it('a HARDY planting in the heated House is counted hardy, not counted as an exclusion', () => {
     const s = summarize(rows);
-    expect(s.hardy).toBe(2);                 // both kales, covered or not
+    expect(s.hardy).toBe(2);                 // both kales, heated or not
     expect(s.coveredExcludedSlugs).not.toContain('kale');
   });
 
-  it('covered plantings never appear in the named crop list', () => {
+  it('heated plantings never appear in the named crop list; Stable ones do', () => {
     const s = summarize(rows);
-    expect(s.byCropType.map((c) => c.label)).toEqual(['peppers']);
-    expect(s.byCropType[0].count).toBe(1);
+    expect(s.byCropType.map((c) => c.label).sort()).toEqual(['echeveria', 'peppers', 'unclassified']);
+    expect(s.byCropType.find((c) => c.label === 'peppers').count).toBe(1);   // the Deck Pepper only
   });
 
   it('excludeCovered:false opts out (the pre-D6 behaviour, kept reachable)', () => {
     const s = summarize(rows, { excludeCovered: false });
-    expect(s.atRisk).toBe(4);
+    expect(s.atRisk).toBe(5);
     expect(s.coveredExcluded).toBe(0);
   });
 
-  it('a custom isCovered predicate wins over the default covered column', () => {
+  it('a custom isCovered predicate wins over the default heated check', () => {
     const s = summarize(rows, { isCovered: (x) => x.name === 'Deck Pepper' });
-    // The three `covered` rows now count; Deck Pepper does not. Both kales are hardy either way.
-    expect(s.atRisk).toBe(3);
+    // The two House rows now count; Deck Pepper does not. Both kales are hardy either way.
+    expect(s.atRisk).toBe(4);
     expect(s.coveredExcluded).toBe(1);
   });
 
-  it('isCoveredDefault reads exactly the handler query flag, and only when strictly true', () => {
-    // BUG-NOLOCOUTDOOR-001: the flag is now frost_covered_resolved (SQL `state IS TRUE`), not the
-    // raw `covered` boolean. Strictly-true is still the rule, and it is what makes an unknown
-    // location resolve to NOT covered — i.e. it keeps its seat in the frost alert.
-    expect(isCoveredDefault({ frost_covered_resolved: true })).toBe(true);
+  it('isHeatedDefault reads exactly the handler query flag, and only when strictly true', () => {
+    expect(isHeatedDefault({ heated_resolved: true })).toBe(true);
     for (const v of [false, null, undefined, 'true', 1]) {
-      expect(isCoveredDefault({ frost_covered_resolved: v })).toBe(false);
+      expect(isHeatedDefault({ heated_resolved: v })).toBe(false);
     }
-    expect(isCoveredDefault(null)).toBe(false);
+    expect(isHeatedDefault(null)).toBe(false);
   });
 
-  it('isCoveredDefault does NOT read the retired `covered` field', () => {
-    // The rename is the fix. If this consumer silently fell back to `covered`, an un-located
-    // planting (covered:false, and NO resolved flag at all) would look identical to a genuinely
-    // outdoor one — which is the bug — and every assertion above would still pass.
-    expect(isCoveredDefault({ covered: true })).toBe(false);
+  it('isHeatedDefault does NOT read `covered` or frost_covered_resolved', () => {
+    // Reading either one is the bug: both are true for the unheated Stable.
+    expect(isHeatedDefault({ covered: true })).toBe(false);
+    expect(isHeatedDefault({ frost_covered_resolved: true })).toBe(false);
+    expect(isHeatedDefault({ covered: true, frost_covered_resolved: true, loc_cover_state: true })).toBe(false);
   });
 
   it('an UNKNOWN location is NOT excluded from the frost alert (the fail-safe direction)', () => {
-    // The whole design in one assertion. covered/rain_exposed_resolved/frost_covered_resolved are
-    // ALL false for an unknown location — the two resolved flags are deliberately not complements.
-    // Frost must still name it: suppressing the alert on a plant that turns out to be outdoors is a
-    // freeze with no warning, so unknown resolves to NOT covered here even though the very same
-    // unknown resolves to NOT exposed on the rain side.
+    // An un-located planting reads heated_resolved false (SQL `IS TRUE`), and a row with no flag at all
+    // reads undefined. Frost must still name both: suppressing the alert on a plant that turns out to be
+    // outdoors is a freeze with no warning.
     const unknown = { id: 'u1', name: 'Rescue seedling', crop_type_slug: 'tomato',
       container_type: 'pot', status: 'seedling',
-      rain_exposed_resolved: false, frost_covered_resolved: false };
-    const s = summarize([unknown]);
-    expect(s.atRisk).toBe(1);
+      rain_exposed_resolved: false, frost_covered_resolved: false, heated_resolved: false };
+    const noFlag = { id: 'u2', name: 'Old row', crop_type_slug: 'tomato', container_type: 'pot', status: 'seedling' };
+    const s = summarize([unknown, noFlag]);
+    expect(s.atRisk).toBe(2);
     expect(s.coveredExcluded).toBe(0);
   });
 });
@@ -511,17 +521,22 @@ describe('D6 live-prod gate — the numbers Dave will actually receive (Neon 202
     ['onion', 3, 0, 3], ['oregano', 3, 0, 0], ['potato', 3, 0, 3], ['succulent', 3, 3, 2],
     ['tarragon', 3, 0, 2], ['tomatillo', 3, 0, 3], ['watermelon', 3, 0, 0],
   ];
+  // BUG-FROSTALERTSTABLE-001: of this slice's covered at-risk rows, only the fittonia sit in the heated
+  // House (as of 2026-09-18). The echeveria, the succulents and the covered geranium are in the unheated
+  // Stable, so they are now NAMED rather than excluded.
+  const HEATED_SLUGS = new Set(['fittonia']);
   const rows = LIVE.flatMap(([slug, n, covered, containers]) => Array.from({ length: n }, (_, i) => withCoverFlags({
     id: `${slug}-${i}`, name: `${slug} ${i}`, crop_type_slug: slug,
     container_type: i < containers ? 'pot' : 'in_ground',
-    covered: i < covered, status: 'vegetative',
+    covered: i < covered, heated_resolved: i < covered && HEATED_SLUGS.has(slug), status: 'vegetative',
   })));
 
-  it('covered plantings are excluded — 19 of them across the live garden', () => {
+  it('only the heated plantings are excluded — the Stable ones are named', () => {
     const s = summarize(rows);
-    // covered AND at-risk: geranium 1, echeveria 3, fittonia 3, succulent 3 = 10 in this top-23 slice
-    // (lettuce/broccoli/cabbage/kale are hardy and never counted as exclusions).
-    expect(s.coveredExcluded).toBe(10);
+    // heated AND at-risk: fittonia 3. Covered-but-unheated at-risk rows (geranium 1, echeveria 3,
+    // succulent 3) now count. lettuce/broccoli/cabbage/kale are hardy and never counted as exclusions.
+    expect(s.coveredExcluded).toBe(3);
+    expect(s.coveredExcludedSlugs).toEqual(['fittonia']);
     expect(summarize(rows, { excludeCovered: false }).atRisk).toBe(s.atRisk + s.coveredExcluded);
   });
 

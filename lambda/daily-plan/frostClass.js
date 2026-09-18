@@ -385,31 +385,38 @@ function isContainer(p) {
   return !!(t && String(t).trim() && String(t).trim().toLowerCase() !== 'in_ground');
 }
 
-// D6 covered-exclusion: the daily-plan query resolves coverage from the planting's location.
-// V4-COVEREDNOTMODELLED-001: that is now the editable locations.covered flag, falling back to
-// locations.type_label in (shelf,rack,tray) for a location created since and not yet classified.
-// The locations.name in (Stable,House) arm this note used to describe is GONE. 19 at-risk plantings
-// live indoors today and would otherwise be named on every frost night for no action.
+// D6 indoor-exclusion, keyed on HEAT since BUG-FROSTALERTSTABLE-001 (Dave, 2026-09-18). A planting is
+// left out of the frost alert only when its location is HEATED: locations.heated
+// (migrations/v5-locheated-001), projected by handler.js as `l.heated is true as heated_resolved`.
 //
-// BUG-NOLOCOUTDOOR-001: reads frost_covered_resolved (`state IS TRUE`) rather than the raw boolean.
-// This consumer's fail-safe runs OPPOSITE to rain credit's: excluding a planting here SUPPRESSES its
-// frost alert, so an unknown location must resolve to NOT covered — it keeps its seat in the alert
-// and Dave gets told about it. Excluding it would be a freeze with no warning, which is the same
-// principle handler.js already encodes for a missing tonight-low: silence must never be
-// indistinguishable from safety.
-function isCoveredDefault(p) {
-  return !!(p && p.frost_covered_resolved === true);
+// It used to read frost_covered_resolved, i.e. locations.covered, and that was the bug. `covered`
+// means rain does not reach the plant, not that frost does not. The Stable is covered and UNHEATED
+// (Dave 2026-09-17: "House is heated, Stable is unheated, shelves are all in the Stable"), so every
+// Stable planting was dropped from every frost alert, hard freeze included: 14 frost-tender plantings
+// on 2026-09-18, hurt at 40-55F, in a building that buys a few degrees at most. Dave chose to warn
+// for them at the same trips as the outdoor crops, not at the hard-freeze trip only. The email stops
+// naming a plant once it is moved into the House.
+//
+// Fail-safe unchanged (BUG-NOLOCOUTDOOR-001): excluding a planting SUPPRESSES its frost alert, so
+// only a strict `=== true` excludes. An un-located planting reads heated_resolved false (SQL `IS
+// TRUE`), and a row with no flag at all reads undefined; both keep their seat in the alert. Silence
+// must never be indistinguishable from safety. frost_covered_resolved still exists for its other
+// readers (ledger.js exposureClass) and is deliberately NOT read here.
+function isHeatedDefault(p) {
+  return !!(p && p.heated_resolved === true);
 }
 
 // Classify a list of plantings and produce the exposure summary frostEval's copy consumes.
-// Each planting is expected to carry { id, name, crop_type_slug, container_type, status, covered } — a
-// superset of what the daily-plan query already selects, plus crop_type_slug via the plant_varieties join.
+// Each planting is expected to carry { id, name, crop_type_slug, container_type, status, heated_resolved }
+// — a superset of what the daily-plan query already selects, plus crop_type_slug via the plant_varieties join.
+// `opts.isCovered` / `opts.excludeCovered` and the `coveredExcluded*` outputs keep their D6 names for the
+// callers and frostEval provenance that read them; what they count is now "indoors in a HEATED location".
 function summarize(plantings, opts = {}) {
   const rows = Array.isArray(plantings) ? plantings : [];
   const resolvedBands = opts.resolvedBands || resolveBandThresholds(opts.bandThresholds);
   const cadenceTenderFor = typeof opts.cadenceTenderFor === 'function' ? opts.cadenceTenderFor : () => false;
   const isCovered = typeof opts.isCovered === 'function' ? opts.isCovered
-    : (opts.excludeCovered === false ? () => false : isCoveredDefault);
+    : (opts.excludeCovered === false ? () => false : isHeatedDefault);
   const out = {
     tender: 0, hardy: 0, unknown: 0,
     tenderContainers: 0,
@@ -421,7 +428,8 @@ function summarize(plantings, opts = {}) {
     // D6: named crop types, each carrying ITS OWN trip points. This is what makes one coalesced alert
     // possible — the message names ~10 crop types instead of ~183 plantings.
     byCropType: [],
-    // D6: at-risk plantings suppressed because they are already under cover. Reported (never silent) so a
+    // D6: at-risk plantings suppressed because they sit in a HEATED location (BUG-FROSTALERTSTABLE-001;
+    // an unheated covered building such as the Stable is NOT excluded). Reported (never silent) so a
     // shrinking alert is explainable, but deliberately kept OUT of the SMS body to protect its length.
     coveredExcluded: 0, coveredExcludedSlugs: [],
     bands: resolvedBands,
@@ -433,8 +441,8 @@ function summarize(plantings, opts = {}) {
     if (!p) continue;
     const r = frostClassForSlug(p.crop_type_slug, { cadenceTender: !!cadenceTenderFor(p), resolvedBands });
     if (r.class === 'hardy') { out.hardy++; continue; }
-    // Covered plantings are excluded from every at-risk number AND from the named crop list (D6).
-    // Done AFTER the hardy check so a covered kale is simply hardy, not double-counted.
+    // Plantings in a heated location are excluded from every at-risk number AND from the named crop list
+    // (D6). Done AFTER the hardy check so a kale in the House is simply hardy, not double-counted.
     if (isCovered(p)) {
       out.coveredExcluded++;
       if (r.slug) coveredSlugSet.add(r.slug);
@@ -485,7 +493,7 @@ function summarize(plantings, opts = {}) {
 }
 
 module.exports = {
-  frostClassForSlug, summarize, isContainer, isCoveredDefault, cropLabel,
+  frostClassForSlug, summarize, isContainer, isHeatedDefault, cropLabel,
   resolveBandThresholds, coldProfileForSlug,
   BAND_THRESHOLDS, BAND_BY_SLUG, SLUGS_BY_BAND, BAND_ORDER, UNKNOWN_BAND, TRIP_KEYS,
   CLASS_BY_SLUG, CLASS_BY_BAND, TENDER_SLUGS, HARDY_SLUGS, UNCERTAIN_SLUGS, CROP_LABELS,

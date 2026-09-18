@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.137.1",
+    "date": "2026-09-18",
+    "highlights": [
+      "The frost email now warns about tender plants in the unheated Stable; only plants in the heated House are left out."
+    ]
+  },
+  {
     "version": "4.137.0",
     "date": "2026-09-18",
     "highlights": [
