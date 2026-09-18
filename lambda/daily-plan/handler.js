@@ -6,7 +6,7 @@
 const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
 const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, FRESHNESS_MAX_MIN, ARRAY_SILENT_MIN_GAP_MIN } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001; FRESHNESS_MAX_MIN BUG-STATIONSTALESILENT-001; ARRAY_SILENT_MIN_GAP_MIN V5-STATIONHEALTHYEAR-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
-const { frostEval, frostCoverage, sentCoverage, isFrostSeason, resolveFrostRun, escalatesBeyond } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001; frostCoverage BUG-INGROUND39FSLIVER-001; sentCoverage BUG-INGROUNDPOSTWINDOW-001
+const { frostEval, frostCoverage, sentCoverage, isFrostSeason, resolveFrostRun, escalatesBeyond, advisoryNight, nightPhrase } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001; frostCoverage BUG-INGROUND39FSLIVER-001; sentCoverage BUG-INGROUNDPOSTWINDOW-001; advisoryNight/nightPhrase frostSubject (BUG-FROSTADVISORYNIGHTWORDING-001 F9.1)
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
 const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
 const drought = require('./droughtSignal');                                      // V5-LEGACYEXCEPTIONCARE-001
@@ -915,6 +915,21 @@ function frostWeatherFacts(d) {
 
 // SNS Subject is email-only (SMS ignores it) and is capped at 100 ASCII chars with no newlines, so it is
 // built separately from the message body rather than sliced off it.
+//
+// An ADVISORY names its own night and low: the phrase and figure advisoryMessage printed, from the same
+// record, the low rounded as the Today line rounds it (src/lib/frostAlertLine.js). observability.tonightLowF is
+// the NWS low for TONIGHT, a second model's figure for a night the advisory is often not about, so the
+// subject used to read "Frost advisory (low 55F)" over a body saying "frost possible Monday night (low
+// 34.7°F)" — and the subject is the line the phone notification shows. Imminent IS tonight, and heat keeps
+// its old tail.
+function advisorySubjectTail(a) {
+  if (!a) return '';
+  const when = nightPhrase(advisoryNight(a));
+  const raw = a.lowF ?? a.minLowF;
+  const lowF = raw == null ? null : Number(raw);
+  return `${when ? ` ${when}` : ''}${Number.isFinite(lowF) ? ` (low ${Math.round(lowF)}F)` : ''}`;
+}
+
 function frostSubject(d) {
   // V5-RADIATIVEFROST-001: a radiative-only trip fires ABOVE the trip point, so "Frost protect tonight
   // (low 39F)" would assert a threshold crossing at a number that did not cross it — the same
@@ -924,7 +939,8 @@ function frostSubject(d) {
     ? (d.level === 'hard_freeze' ? 'HARD FREEZE tonight'
       : (radiativeOnly ? 'Frost watch tonight' : 'Frost protect tonight'))
     : (d.tier === 'advisory' ? 'Frost advisory' : 'Heat advisory');
-  const low = d.observability && d.observability.tonightLowF != null ? ` (low ${d.observability.tonightLowF}F)` : '';
+  const low = d.tier === 'advisory' ? advisorySubjectTail(d.advisory)
+    : (d.observability && d.observability.tonightLowF != null ? ` (low ${d.observability.tonightLowF}F)` : '');
   return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);
 }
 
