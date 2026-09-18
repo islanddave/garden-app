@@ -78,9 +78,11 @@
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- LANDING ORDER: NONE REQUIRED against the code, in either direction (README.md "Window").
 --   * new code, old data: the two new bands are inert; today's behaviour, except Horseweed.
---   * old code, new data: the deployed classifier has never heard of either slug, so both count as
---     "unknown", which the alert counts TENDER — Pineapple Sage is warned early, Autumn Fire stays a
---     false alarm until the code lands. No read path 500s: no column is added or removed.
+--   * old code, new data: the deployed classifier has never heard of either slug. Autumn Fire counts
+--     as "unknown" (counted tender), so it stays a false alarm until the code lands. Pineapple Sage is
+--     warned at once: its corrected cold block makes handler.js's cadenceTenderFor promote the unknown
+--     slug to tender, so the email names "pineapple sages" (checked against the base frostClass.js).
+--     No read path 500s: no column is added or removed.
 -- ONE ordering constraint, and it is not about code: migrations/v4-harvhabitgap-001/gates.yml must
 -- already list hylotelephium (this branch does) or post_every_null_habit_is_a_recorded_decision reds
 -- on the next gate run after this apply.

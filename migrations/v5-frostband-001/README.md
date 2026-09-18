@@ -62,9 +62,11 @@ old value, the `v5-heatrespcabbage-001` method; every other key on the row is un
 
 - **New code, old data.** The two new bands are inert until something carries the slugs. Autumn
   Fire stays a false alarm and Pineapple Sage stays unwarned, exactly as today. Horseweed is fixed.
-- **Old code, new data.** The deployed classifier has never heard of either slug, so it counts both
-  as unknown, and unknown counts as tender: Pineapple Sage is named early, as "unclassified", and
-  Autumn Fire stays a false alarm until the code lands. The card change works on old code too.
+- **Old code, new data.** The deployed classifier has never heard of either slug. Autumn Fire counts
+  as unknown (treated as tender), so it stays a false alarm until the code lands. Pineapple Sage is
+  warned at once: its corrected cold block makes the handler's existing cadence promotion lift the
+  unknown slug to tender, so the email names it as "pineapple sages" (checked against the base
+  `frostClass.js`). The card change is data, so it works on old code too.
 - No column is added or removed, so no read path can 500.
 
 **The promote does not wait for this apply, and this apply does not wait for the promote.**
