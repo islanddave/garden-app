@@ -56,7 +56,9 @@ old value, the `v5-heatrespcabbage-001` method; every other key on the row is un
   starting to flower"). `src/lib/ripenessCues.js` forbids unsourced entries, so no cue was copied.
 - Nothing else about either plant changes. `pineapple_sage` copies every harvest and weight column
   from the live `sage` row (cut-and-come-again every 18 days, 20 g per cup), so harvest readiness and
-  weights are as before. Those weights are garden-sage estimates, inherited, not measured.
+  weights are as before. Those weights are garden-sage estimates, inherited, not measured, and they
+  are inert for Pineapple Sage itself: its cultivar row carries its own (cup 18 g, count 0.5 g), which
+  weight resolution reads first.
 
 ## Window — no ordering against the code, either way
 
@@ -155,3 +157,8 @@ a local stand-in for the Neon driver.
   ("wants consistent moisture and moderate feeding"). Left alone here.
 - The planting "Copper Stonecrop" points at the cultivar "Golden Sedum" (S. adolphii). Copper
   Stonecrop is usually S. nussbaumerianum. Both are tender, so the frost answer is the same.
+- KNOWN, NOT FIXED (the v4-cropsplit-001 precedent): `migrations/v4-cal1-refweight-001/0b-seed.sql`
+  sets Pineapple Sage's weights `WHERE crop_type_slug='sage' AND name='Pineapple Sage'`, generated from
+  `src/data/harvest-weights-v3-reference.json`. After this re-type that UPDATE matches nothing. Not a
+  live bug (the values are already applied), but a from-scratch rebuild of that seed would skip the
+  row. Fix when the seed is next regenerated.
