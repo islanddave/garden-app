@@ -64,14 +64,24 @@ can land any time before step 4, and the gap between them can be as long as need
 ## Known gaps, deliberately not closed here
 
 - **No way to set `heated` from the app.** The locations API and UI do not expose it. Marking a second warm
-  location (a heated greenhouse) is SQL-only until a field is added. The follow-up would add a `heated`
-  checkbox beside `covered` in the locations API and Locations screen.
-- **Staging's House.** The lane was cleared to read prod only. If staging's House does not share prod's id,
-  staging gets no heated location. That is the safe direction, and the House gates are `env: prod` for this
-  reason.
-- **The frost alert still excludes every covered planting, the unheated Stable included.** This is a
-  frost-channel issue that predates this work. It is not touched here. `heated` is the column that could fix
-  it.
+  location (a heated greenhouse) is SQL-only until a field is added. The follow-up is ledger
+  V5-LOCHEATEDUI-001 (Dave-approved 2026-09-18): a Heated checkbox coupled to Rain shelter on the location
+  edit form, built on branch `lane-heatedui-20260918`, not yet on dev.
+- **Staging's House.** Resolved at apply time: staging's House shares prod's id (`7ee03125-…`, covered, root),
+  so the staging backfill marked it heated too.
+- **The frost alert used to exclude every covered planting, the unheated Stable included.** Fixed in v4.137.1
+  (BUG-FROSTALERTSTABLE-001): `frostClass.summarize` now excludes only heated plantings.
+
+## Applied 2026-09-18
+- **Staging:** pre gates PASS (2, plus 2 prod-only); `0a` applied; post gates PASS 5 (+1 prod-only); `0r`
+  rehearsed (column and stamp removed); `0a` re-applied; post gates PASS 5 again.
+- **Prod** (Dave approved applying before the dev push): pre gates PASS 4/4, including
+  `pre_house_row_is_the_house`; `0a` applied at 12:46:39Z; post gates PASS 6/6, including `post_house_is_heated`.
+  Only the House is heated.
+- **Whole corpus**, `--all --phase post --continuous-only`: prod PASS 765 and staging PASS 746, with no FAIL or
+  ERROR on either.
+- The reader reached dev in v4.137.0. The "NOT APPLIED" wording in `0a`'s header comment describes authoring
+  time; it was left as written.
 
 ## Verification performed at authoring (2026-09-18)
 

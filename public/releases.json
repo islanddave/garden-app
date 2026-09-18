@@ -11,7 +11,6 @@
     "date": "2026-09-18",
     "highlights": [
       "Cold-protection cards no longer ask you to bring in plants that are already in the heated House, or in-ground plants that the frost email already covers",
-      "A cultivar created in the app now starts with its own care profile, so its watering schedule works from day one",
       "During frost season, an alert email now says when the garden's weather station can't be used for the daily plan - before, that failure was only logged"
     ]
   },
