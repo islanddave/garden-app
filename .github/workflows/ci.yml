@@ -282,12 +282,16 @@ jobs:
         # hit-tests to itself (a control probed as occluded fails, and one never probed fails too:
         # "not measured" is not "not occluded"), that no row wraps or overflows right at the fixture's
         # worst-case 44-char name, and that the document does not scroll sideways. A non-vacuity floor
-        # of 8 rows / 6 sections / >=12 controls is asserted before any of it.
+        # of 5 rows / 5 sections / >=11 controls is asserted before any of it (8 / 6 / >=12 until
+        # V5-SEEDSTAB-001 took seed off this list; the fixture's 3 seed rows must now be counted on the
+        # Seeds pointer row and listed nowhere, and the pointer row is itself in the measured census).
         #
         # It sits at ZERO margin: the smallest measured side is exactly 44px against a 44px floor, so
         # any shrink at all reds it. Verified non-vacuous: T.tapMinHeight 44 -> 40 fails with exit 1
-        # naming six controls ("Add seeds" 99.8x42, "Sow now" 93.5x42, "+ Add" 65.8x40, and the three
-        # 102.7x40 filter selects). Three shallower mutations SURVIVED and are worth knowing about —
+        # naming ten controls ("+ Add" 69.7x40, the three 102.7x40 filter selects, the five 350x40
+        # section headers and "1 need restock" 132.8x40). The Seeds pointer's 64px minHeight is not
+        # T.tapMinHeight, so clamping it to height:40 was proved separately (exit 1, named alone).
+        # Three shallower mutations SURVIVED and are worth knowing about —
         # an inline height:40 on the selects is backstopped by selectChrome's own minHeight, and the
         # quantity steppers are in the probe's selector list but are not rendered by this fixture, so
         # a regression confined to them would not be caught here.
