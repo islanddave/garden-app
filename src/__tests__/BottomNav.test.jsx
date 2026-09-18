@@ -200,28 +200,58 @@ describe('BottomNav — Put-Up is a first-class tab (V4-PUTUPENGINE-001)', () =>
 })
 
 // V4-SOWMOREMENU-001 (BD-067) — Dave could not find Sow Now at all and asked for it as "its own
-// listing in the more menu". Two separate things are pinned here and they fail for different
-// reasons: that the row EXISTS at top level (the thing he asked for), and that adding it did NOT
-// cost the pre-existing doors (the scope guard on the row — he never asked to consolidate).
-describe('BottomNav — Sow now in the More menu', () => {
-  it('lists Sow now as a TOP-LEVEL More row, not nested under Inventory', () => {
+// listing in the more menu". V5-SEEDSTAB-001 (Dave, 2026-09-18: "consolidate Seeds into a single
+// tab", approved by name in design-seedshome-V102 §7) folds that row and the unpinned "Saved seeds"
+// row into ONE "Seeds" row. The scope guard BD-067 carried ("he never asked to consolidate") is
+// retired by his own ask; what survives from it is the placement he asked for — a TOP-LEVEL row,
+// never nested under Inventory. Three things are pinned and they fail for different reasons: the
+// Seeds row exists exactly once at top level, the two rows it replaced are gone (a well-meaning
+// re-add is the regression now), and the FAB's fast door survives, retargeted.
+describe('BottomNav — Seeds in the More menu (V5-SEEDSTAB-001)', () => {
+  it('lists ONE Seeds row to /seeds as a TOP-LEVEL More row, not nested under Inventory', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))
-    const link = screen.getByText('Sow now').closest('a')
-    expect(link).toBeTruthy()
-    expect(link.getAttribute('href')).toBe('/sow')
+    const sheet = screen.getByRole('dialog', { name: 'More navigation options' })
+    // Counted inside the sheet, not found: a second door to /seeds would fail here.
+    const seedsLinks = within(sheet).getAllByRole('link').filter(a => a.getAttribute('href') === '/seeds')
+    expect(seedsLinks).toHaveLength(1)
+    const link = seedsLinks[0]
+    expect(link.getAttribute('data-testid')).toBe('more-seeds')
+    expect(within(link).getByText('Seeds')).toBeTruthy()
+    // The subtitle keeps both old names in the menu, so the words he looks for are still here.
+    expect(within(link).getByText('My seeds · Saved seeds · Sow now')).toBeTruthy()
     // Sibling of the Inventory row, not a descendant of it — "nested under Inventory" is the exact
     // placement Dave rejected, and a nested row would still satisfy a bare getByText.
     const inventory = screen.getByText('Inventory').closest('a')
     expect(inventory.contains(link)).toBe(false)
+    expect(link.contains(inventory)).toBe(false)
   })
 
-  it('keeps the create-sheet Sow from seed action — the More row is additive', () => {
+  it('has NO "Sow now" or "Saved seeds" More row any more — Seeds replaced them, not joined them', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    // Control: the sheet is OPEN, so an absence below is a real absence, not a closed menu.
+    expect(screen.getByText('Sign out')).toBeDefined()
+    // By label: getByText matches an element's OWN text, so the Seeds subtitle (which contains both
+    // phrases) cannot satisfy these — only a row labelled exactly that can.
+    expect(screen.queryByText('Sow now')).toBeNull()
+    expect(screen.queryByText('Saved seeds')).toBeNull()
+    // By row text AND by href, because a re-add could arrive under either a new label or a new URL.
+    const rows = within(screen.getByRole('dialog', { name: 'More navigation options' })).getAllByRole('link')
+    const rowTexts = rows.map(a => a.textContent.trim())
+    expect(rowTexts).not.toContain('Sow now')
+    expect(rowTexts).not.toContain('Saved seeds')
+    const hrefs = rows.map(a => a.getAttribute('href'))
+    expect(hrefs).not.toContain('/sow')
+    expect(hrefs).not.toContain('/seeds/saved')
+  })
+
+  it('keeps the create-sheet Sow from seed action, now landing on Seeds › Sow now', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('Create'))
     const fabSow = screen.getByText('Sow from seed').closest('a')
     expect(fabSow).toBeTruthy()
-    expect(fabSow.getAttribute('href')).toBe('/sow')
+    expect(fabSow.getAttribute('href')).toBe('/seeds?view=sow')
   })
 })
 
@@ -457,7 +487,7 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
     expect(screen.getByText('Log an event').closest('a').getAttribute('href')).toBe('/log')
     expect(screen.getByText('Log many').closest('a').getAttribute('href')).toBe('/log/many')
     expect(screen.getByText('Add a planting').closest('a').getAttribute('href')).toBe('/garden?add=1')
-    expect(screen.getByText('Sow from seed').closest('a').getAttribute('href')).toBe('/sow')
+    expect(screen.getByText('Sow from seed').closest('a').getAttribute('href')).toBe('/seeds?view=sow')
   })
 
   it('opens the log rows as OVERLAYS — not as full-page navigations', () => {

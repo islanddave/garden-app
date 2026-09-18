@@ -79,8 +79,10 @@ describe('flag ON — the /space routes appear', () => {
     // 58 -> 59: V5-ADMINCENTER-001 adds /admin/config, the admin centre (see the flag-OFF
     // counterpart, which moves 56 -> 57 for the same route). Flag-independent, so both sides move
     // together and the delta stays 2.
-    expect(paths).toHaveLength(59)
-    expect(new Set(paths).size).toBe(59)
+    // 59 -> 60: V5-SEEDSTAB-001 adds /seeds (see the flag-OFF counterpart, which moves 57 -> 58 for
+    // the same route). /sow and /seeds/saved stay as redirects, so this is +1, flag-independent.
+    expect(paths).toHaveLength(60)
+    expect(new Set(paths).size).toBe(60)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {

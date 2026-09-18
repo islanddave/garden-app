@@ -38,7 +38,7 @@ const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => 
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 55-route set with no duplicates', () => {
+  it('the page tree has the full 60-route set with no duplicates', () => {
     // 46 → 48: V4-UNSCOPEDROUTES-001 added the canonical un-scoped /plantings/:plantingId and
     // /events/:eventId (the /projects/:id/* forms remain as redirects, still counted).
     // 48 → 50: V4-SPACEPHOTO-001 Lane C adds /space and /space/:spaceId. Counted here because the
@@ -88,8 +88,12 @@ describe('App route table (single source of truth)', () => {
     // /settings/admin would have escaped it and could have shipped with no door in an installed PWA.
     // Registered exactly once; the uniqueness assert below is what proves this bump is a new route
     // rather than a duplicate registration.
-    expect(paths).toHaveLength(59)
-    expect(new Set(paths).size).toBe(59)
+    // 59 -> 60: V5-SEEDSTAB-001 adds /seeds, the ONE Seeds page (My seeds · Saved seeds · Sow now).
+    // +1, not a swap: /sow and /seeds/saved STAY in the table as REPLACE redirects into it
+    // (LegacySeedsRedirect), for the same launcher-cache/bookmark reason /log/voice stayed. Their
+    // redirect behaviour is pinned in LegacySeedsRedirect.test.jsx.
+    expect(paths).toHaveLength(60)
+    expect(new Set(paths).size).toBe(60)
   })
 
   it('/log/voice is a PAGE, never an overlay — a live mic must not mount over another surface', () => {

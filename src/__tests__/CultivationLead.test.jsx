@@ -179,12 +179,13 @@ describe('CultivationLead component', () => {
 
   // V4-SOWMOREMENU-001 — the door itself. Kept separate from the content assertions above so a
   // regression tells you WHICH half broke: the route out, or what it says.
-  it('is a tap target to /sow, at the 44px floor, in every state', async () => {
+  // V5-SEEDSTAB-001 — the door now opens Seeds › Sow now (/seeds?view=sow), the list /sow used to be.
+  it('is a tap target to Seeds › Sow now, at the 44px floor, in every state', async () => {
     fetchMock.mockResolvedValue({ items: [lettuce()] })
     renderLead({ todayISO: TODAY })
     const region = await screen.findByTestId('cultivation-lead')
     expect(region.tagName).toBe('A')
-    expect(region.getAttribute('href')).toBe('/sow')
+    expect(region.getAttribute('href')).toBe('/seeds?view=sow')
     expect(region.style.minHeight).toBe('44px')
     // BUG-LINKICONBLUE-001 — this row shipped in v4.58.0 with no ink of its own, so its sprout
     // inherited the browser's default link blue through Icon's `stroke="currentColor"`. jsdom
@@ -203,7 +204,7 @@ describe('CultivationLead component', () => {
   // payload has been through setItems, and it mounts after the subject, so the subject's own empty
   // payload has already been processed by the time that line appears. Mutation-checked 2026-09-08 by
   // discarding the payload in CultivationLead's .then — this reds, and did NOT before the control.
-  it('keeps the /sow door when the engine yields no content (empty candidates)', async () => {
+  it('keeps the Sow now door when the engine yields no content (empty candidates)', async () => {
     fetchMock.mockResolvedValueOnce({ items: [] })          // subject, mounted first
     fetchMock.mockResolvedValueOnce({ items: [lettuce()] }) // control, mounted second
     render(
@@ -215,7 +216,7 @@ describe('CultivationLead component', () => {
     await screen.findByText('Sow Winter Density by Aug 18.')
     expect(fetchMock).toHaveBeenCalledWith('/api/inventory-items/sow-candidates')
     const [region] = screen.getAllByTestId('cultivation-lead')
-    expect(region.getAttribute('href')).toBe('/sow')
+    expect(region.getAttribute('href')).toBe('/seeds?view=sow')
     // Names its destination when it is the only thing in the row — self-explanatory on a cold open.
     expect(region.textContent).toBe('Sow now')
   })
@@ -241,7 +242,7 @@ describe('CultivationLead component', () => {
     const region = screen.getByTestId('cultivation-lead')
     expect(region.textContent, 'Today invented an imperative for a window 34 days from closing')
       .not.toMatch(/Still Open/)
-    expect(region.getAttribute('href')).toBe('/sow')
+    expect(region.getAttribute('href')).toBe('/seeds?view=sow')
   })
 
   it('swallows a fetch error — degrades to the bare door, never throws onto Today', async () => {
@@ -249,7 +250,7 @@ describe('CultivationLead component', () => {
     renderLead({ todayISO: TODAY })
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const region = screen.getByTestId('cultivation-lead')
-    expect(region.getAttribute('href')).toBe('/sow')
+    expect(region.getAttribute('href')).toBe('/seeds?view=sow')
     expect(region.textContent).toBe('Sow now')
     expect(region.textContent).not.toMatch(/boom|error|failed/i)
   })
@@ -281,7 +282,7 @@ describe('CultivationLead component', () => {
     const region = screen.getByTestId('cultivation-lead')
     expect(region.textContent, 'Today told Dave to sow a packet with nothing in it')
       .not.toMatch(/Winter Density/)
-    expect(region.getAttribute('href')).toBe('/sow')
+    expect(region.getAttribute('href')).toBe('/seeds?view=sow')
   })
 
   // ── The seed-diversion buckets, from Today's side ──────────────────────────────────────────────
