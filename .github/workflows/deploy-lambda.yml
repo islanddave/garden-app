@@ -777,6 +777,56 @@ jobs:
       # latent, not causal. Do not reinstate. The single source of truth for daily-plan scheduling is
       # the `ensure_rule`/`retire_rule` step above.
 
+      # OPS-LAMSKIPVSMAIN-001 (2026-09-18) — THE LAST STEP OF EVERY LEG: stamp the function with what it
+      # now runs, in its Description:
+      #   garden-app lambda-deploy v1 src=<commit built> recipe=<commit this file came from>
+      #                               code=<CodeSha256 of the zip built above> run=<run id>.<attempt>
+      #
+      # promote-gate's `lam` step reads these (scripts/check-lambda-current.py) to decide whether a promote
+      # may skip this workflow. It used to compare the promoted SHA with `main`, but main means APPROVED,
+      # not DEPLOYED: a failed leg, a promote that died after its fast-forward, a revert rollback or a
+      # console upload leaves main naming code that is not running, and a plain re-dispatch (main ==
+      # dev_sha) compared a commit with itself and skipped every Lambda.
+      #
+      # Written ONLY when the live CodeSha256 equals the sha256 of this leg's zip, i.e. once the running
+      # code is provably these bytes; and only if no earlier step of the leg failed outright (default
+      # success(); a failed continue-on-error env step does not stop it — verify-lambda-invariants is what
+      # asserts config, on every promote).
+      # Any later code change from elsewhere moves CodeSha256 off `code=`, and the reader then refuses the
+      # marker — so a stale marker can only cause an unnecessary deploy, never a skip.
+      #
+      # continue-on-error, and every failure path warns and exits 0: no marker means the next promote
+      # redeploys all 26, the pre-v4.137 behaviour. It must never red a leg or withhold the SPA.
+      #
+      # It REPLACES the Description on purpose. Until this step first ran, every prod function carried
+      # 'clerk-key-rotated 2026-08-04T19:2xZ' there — an ad-hoc cold-start nudge that nothing reads. To
+      # force cold starts in future, set the env key FORCE_COLD_START (check-lambda-config.py ignores it);
+      # writing the Description instead only costs one full redeploy.
+      #
+      # RECIPE_SHA is github.sha, which inside a called workflow is the CALLER's commit — the one this file
+      # was loaded from. It differs from the checked-out SRC when promote-gate is dispatched from main.
+      - name: Record deployed source on garden-${{ matrix.function }} (deploy marker read by promote-gate)
+        continue-on-error: true
+        env:
+          FN: garden-${{ matrix.function }}
+          ZIP: lambda/${{ matrix.function }}.zip
+          RECIPE_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          warn() { echo "::warning::$FN: $1 — no deploy marker, so the next promote redeploys every Lambda"; exit 0; }
+          SRC=$(git rev-parse HEAD) || warn "cannot read the checked-out commit"
+          WANT=$(openssl dgst -sha256 -binary "$ZIP" | base64) || warn "cannot hash $ZIP"
+          aws lambda wait function-updated --function-name "$FN" || warn "the function did not settle"
+          LIVE=$(aws lambda get-function-configuration --function-name "$FN" --query CodeSha256 --output text) \
+            || warn "cannot read the live CodeSha256"
+          if [ "$LIVE" != "$WANT" ]; then warn "live CodeSha256 $LIVE is not the zip this leg built ($WANT)"; fi
+          DESC="garden-app lambda-deploy v1 src=${SRC} recipe=${RECIPE_SHA} code=${LIVE} run=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          aws lambda update-function-configuration --function-name "$FN" --description "$DESC" >/dev/null \
+            || warn "the Description write was refused"
+          aws lambda wait function-updated --function-name "$FN" \
+            || echo "::warning::$FN: marker written but the function had not settled when this step ended"
+          echo "deploy marker on $FN: $DESC"
+
   # A0.3 — post-deploy verification (HARD GATE; deliberately NOT continue-on-error).
   #
   # MOVED 2026-09-17 (OPS-LAMCHANGEDBLIND-002) to .github/workflows/verify-lambda-invariants.yml, which

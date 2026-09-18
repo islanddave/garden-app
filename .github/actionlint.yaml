@@ -1,0 +1,12 @@
+# actionlint configuration — read automatically by the "Workflow lint" step in ci.yml (OPS-VERIFYINRUNSTALE-001).
+#
+# Every entry below is a documented FALSE POSITIVE with live evidence. Do not add an ignore without the same:
+# a real run that shows the flagged construct working.
+paths:
+  .github/workflows/deploy-lambda.yml:
+    ignore:
+      # `on.workflow_call.outputs.deploy_result.value: ${{ jobs.deploy.result }}`. GitHub documents
+      # jobs.<job_id>.result for reusable-workflow outputs; actionlint 1.7.12 types the jobs context as
+      # {outputs} only. Live proof it works: promote-gate run 35274928023 (v4.136.0) ran its SPA `deploy`
+      # job, whose predicate needs deploy_result == 'success' — with an empty value `spa-withheld` fires instead.
+      - 'property "result" is not defined in object type \{outputs: \{\}\}'

@@ -52,6 +52,44 @@ jobs:
         # package.json@dev_sha) — this job cannot see the dispatch input.
         run: python3 scripts/check-release-version.py
 
+      - name: Workflow lint (actionlint + shellcheck, pinned and checksum-verified)
+        # OPS-VERIFYINRUNSTALE-001. Nothing checked .github/workflows before a promote EXECUTED it, and a
+        # workflow change governs the promote that ships it when dispatched from dev — so the first real
+        # run of an edited promote-gate.yml was the ship itself. This lints every workflow on every push:
+        # expressions, contexts, needs/outputs wiring, action inputs, and each run: block through shellcheck.
+        #
+        # PINNED and CHECKSUM-VERIFIED, because this job is a required promote check: a floating
+        # "latest" could start redding promotes with no change in this repo. The two sha256 values were
+        # taken 2026-09-18 from each release's own published digest (GitHub release-asset API) and
+        # re-hashed locally; they agreed. To bump, change a version AND its hash together.
+        #
+        # SHELLCHECK_OPTS --severity=warning: info/style findings (SC2086 quoting, SC2129 grouping) exist
+        # in backup.yml, deploy-staging.yml and verify-deploy.yml today and are not defects; warnings and
+        # errors — which include a script that does not parse — are what this is for. -pyflakes= disables
+        # the optional python checker so the result does not depend on what the runner image ships.
+        # False positives are ignored per file in .github/actionlint.yaml, each with its live evidence.
+        # Measured 2026-09-18 at 0d33e919 plus this change: exit 0 with this exact configuration.
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          SHELLCHECK_VERSION: v0.11.0
+          SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+          SHELLCHECK_OPTS: --severity=warning
+        run: |
+          set -euo pipefail
+          T="$RUNNER_TEMP/wflint"
+          mkdir -p "$T"
+          curl -sSfL --retry 3 -o "$T/actionlint.tgz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL --retry 3 -o "$T/shellcheck.tgz" \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $T/actionlint.tgz" | sha256sum -c -
+          echo "${SHELLCHECK_SHA256}  $T/shellcheck.tgz" | sha256sum -c -
+          tar -xzf "$T/actionlint.tgz" -C "$T" actionlint
+          tar -xzf "$T/shellcheck.tgz" -C "$T" "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
+          "$T/actionlint" -version
+          "$T/actionlint" -color -shellcheck="$T/shellcheck-${SHELLCHECK_VERSION}/shellcheck" -pyflakes=
+
       - name: Python script tests (pytest)
         # Retroactively covers the previously-unrun scripts/test_*.py suites
         # (snap, revert-to, restore-verify, verify-deploy) as well as the guard's

@@ -1,0 +1,20 @@
+{
+ "FunctionName": "garden-varieties",
+ "Runtime": "nodejs20.x",
+ "Handler": "index.handler",
+ "CodeSize": 5716856,
+ "Description": "clerk-key-rotated 2026-08-04T19:2xZ",
+ "Timeout": 30,
+ "MemorySize": 256,
+ "LastModified": "2026-09-17T21:15:58.000+0000",
+ "CodeSha256": "oiNNJobnxKWX6oNMdfCtIRhWj8def2FFy+vk+M1xi4g=",
+ "Version": "$LATEST",
+ "State": "Active",
+ "LastUpdateStatus": "Successful",
+ "PackageType": "Zip",
+ "Architectures": [
+  "x86_64"
+ ],
+ "RevisionId": "be6c6783-aea6-4c89-ab91-7c397f9dce71",
+ "_source": "aws lambda get-function-configuration --function-name garden-varieties, recorded 2026-09-18 (prod, deployed by promote run 35274928023). Environment, ARNs and logging config REMOVED."
+}

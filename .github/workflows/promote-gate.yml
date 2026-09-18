@@ -70,7 +70,7 @@ on:
         default: true
         type: boolean
       force_lambda:
-        description: 'Deploy Lambdas even if lambda/ is unchanged vs main. Needed for an IDEMPOTENT RE-PROMOTE: once main == dev_sha the pre-FF diff is vacuous and reports no change, so a re-dispatch after a failed Lambda leg would skip them. Prefer "Re-run failed jobs" on the original run, which resumes the blocked SPA in-place; use this when re-dispatching fresh.'
+        description: 'Deploy all Lambdas without consulting the deploy markers on the running functions. A plain re-dispatch after a failed Lambda leg no longer needs this (any function not provably current redeploys); use it to force a rebuild, e.g. to re-resolve a floating dependency. "Re-run failed jobs" on the original run is still the cheapest recovery.'
         required: false
         default: false
         type: boolean
@@ -358,37 +358,50 @@ jobs:
           fi
           echo "write-path staging smoke green for $DEV_SHA"
 
-      # OPS-PROMOTERACE-001 — decide whether the Lambdas need deploying, while main STILL points at
-      # the old code. This is the last moment the question is answerable: one line below, main == dev
-      # and the comparison is vacuous.
+      # Moved up from after the pg17 steps (2026-09-18, OPS-LAMSKIPVSMAIN-001): the Lambda decision
+      # below reads the running functions with this role, and it must run BEFORE the fast-forward (see
+      # there). Side effect, and a strict improvement: an OIDC or role failure now stops the promote with
+      # main untouched, instead of after the fast-forward with main advanced and no snapshot. snap.py
+      # still uses these credentials; the minute or two this adds to their age is far inside the 1h session.
+      - name: Configure AWS credentials (snap role, OIDC)
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # Moved with it: the decision script and snap.py both come from the promoted commit.
+      - name: Checkout dev_sha (scripts/check-lambda-current.py + scripts/snap.py)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve.outputs.dev_sha }}
+
+      # OPS-LAMSKIPVSMAIN-001 (2026-09-18) — decide whether the Lambdas need deploying by asking THE
+      # RUNNING FUNCTIONS, not `main`.
       #
-      # Compares the git TREE SHA of `lambda/` on each side (plus this workflow's own blob, so a
-      # change to the deploy recipe redeploys). A tree SHA is one non-paginated call per side and is
-      # exact. Deliberately NOT the compare API: its `files` array caps at 300 entries and truncates
-      # silently — scripts/verify-deploy.py:161 already carries that bug, and this train alone
-      # touches 30 lambda files.
+      # Until now this step compared dev_sha's Lambda inputs with main's. main means APPROVED, not
+      # DEPLOYED: this workflow fast-forwards main BEFORE deploy-lambdas runs, so a failed leg, a promote
+      # that died after its FF (snap.py, the pg17 fetch), a revert rollback or a console upload all leave
+      # main naming code that is not running. A plain re-dispatch after a failed leg was the sharp case:
+      # main == dev_sha, all seven inputs compared equal, the step skipped every Lambda and shipped the SPA
+      # onto the stale legs (reproduced by running the old step body with DEV_SHA=main: changed=false).
+      # verify-deploy.py then called that skip "the running Lambdas are current", which was false.
       #
-      # OPS-LAMCHANGEDBLIND-001 — plus the blobs of the two files deploy-lambda.yml reads from OUTSIDE
-      # lambda/: scripts/lambda-config-expected.json (facebook-share timeout/memory, and the manifest
-      # verify-daily-plan asserts) and scripts/check-lambda-config.py (the assertion itself). Without
-      # them a manifest- or checker-only promote reads as unchanged, deploy-lambdas is skipped, and
-      # verify-daily-plan — the only step anywhere that checks the manifest against live AWS — is
-      # skipped with it: the declared config ships unverified on a green promote. If deploy-lambda.yml
-      # starts reading another file outside lambda/, it belongs in this comparison too.
+      # scripts/check-lambda-current.py reads each release function's deploy marker (written by the last
+      # step of every deploy-lambda.yml leg, and bound to the live CodeSha256) and proves CURRENT only when
+      # every function runs a marked build whose Lambda inputs equal dev_sha's. Its docstring is the spec,
+      # and the seven compared inputs (formerly PATHS here) now live there, in one copy.
       #
-      # NOTE (2026-09-17, OPS-LAMCHANGEDBLIND-002): the lambda/ lookup never resolved until now. For
-      # a DIRECTORY the contents API returns a JSON array, and the parser printed '' for anything
-      # that was not an object, so all 66 runs 2026-08-14..09-15 that got past force_lambda logged
-      # `<none>` for both trees and took the fail-closed branch. Every promote deployed Lambdas; the
-      # comparison and the SPA-only skip had never executed. `subtree` now re-asks the Trees API for
-      # any path the contents call cannot resolve, so the skip becomes reachable for the first time.
-      # The compared path list was deliberately NOT widened in that change — re-audit what
-      # deploy-lambda.yml reads before trusting a skip.
+      # FAILS CLOSED, and only exit 0 skips. No marker (every function, until the first deploy that writes
+      # them), a mismatch, an unreadable function or input, a crash: all deploy all 26 — the pre-v4.137
+      # behaviour, ~6 minutes, idempotent. The step itself never fails: every outcome writes `changed=`,
+      # and `deploy-lambdas` treats a MISSING output as "deploy" too. force_lambda still short-circuits.
       #
-      # Fails CLOSED: any error, any missing field => lambda_changed=true. Deploying Lambdas that did
-      # not change is a no-op costing ~6 minutes; skipping Lambdas that DID change is the bug this
-      # whole change exists to prevent.
-      - name: Detect lambda changes (pre-FF; compares every input listed in PATHS below)
+      # Still pre-FF on purpose. The answer no longer depends on main, but a defect in THIS step then stops
+      # the promote with main untouched rather than after the fast-forward.
+      #
+      # verify-deploy.py keys on this step's NAME to tell a proven skip from the old main comparison
+      # (LAMBDA_DECISION_STEP there; test_verify_deploy.py pins the two equal). Rename both together.
+      - name: Decide Lambda deploy from deploy markers on the running functions (pre-FF; fail-closed)
         id: lam
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
@@ -397,119 +410,20 @@ jobs:
           FORCE: ${{ inputs.force_lambda }}
         run: |
           set -uo pipefail
+          CHANGED=true
           if [ "${FORCE:-false}" = "true" ]; then
-            echo "force_lambda=true — deploying Lambdas regardless of diff"
-            echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          api() { curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
-          # .sha of a JSON OBJECT on stdin; empty for an array, an error body, or unparseable input
-          jsha() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('sha','') if isinstance(d,dict) else '')"; }
-          # blob sha of a FILE / tree sha of a DIRECTORY at a ref, or empty string on any failure.
-          # The contents API answers a file with an object carrying .sha but a DIRECTORY with a JSON
-          # array that has no sha of its own — the blindness above. So anything the contents call
-          # cannot resolve is re-asked of the Trees API, which addresses <ref>:<path> directly and
-          # returns that directory's own tree sha in one call at any depth. Trees 404s a missing path
-          # and 422s a file, so neither yields a sha and both still fail CLOSED below.
-          subtree() {
-            local S
-            S=$(api "https://api.github.com/repos/$REPO/contents/$2?ref=$1" | jsha 2>/dev/null || echo "")
-            if [ -z "$S" ]; then
-              S=$(api "https://api.github.com/repos/$REPO/git/trees/$1:$2" | jsha 2>/dev/null || echo "")
-            fi
-            printf '%s\n' "$S"
-          }
-          # CONTENT digest of a package.json-shaped file at a ref: parse the JSON, drop the top-level
-          # `version` key, canonicalise (keys sorted at every level, no whitespace) and sha256 it.
-          #
-          # Why a digest instead of the blob: the version bump rides in the feature commit, so the BLOB
-          # of package.json moves on essentially every release. Measured 2026-09-17 over the last 250
-          # commits touching it — version-only 225, deps-only 8, scripts 16, other 1. Comparing the blob
-          # would pin changed=true forever and the SPA-only skip would never fire while still LOOKING
-          # enabled: the same structural blindness as OPS-LAMCHANGEDBLIND-002, reached another way.
-          #
-          # Why it hashes EVERYTHING EXCEPT `version`, rather than just `scripts`: an allowlist is blind
-          # to a key nobody has added yet. `workspaces` is absent today, and adding it would change how
-          # `npm install` resolves inside lambda/<fn> — changing the bundle with NO edit to
-          # deploy-lambda.yml, so nothing else in this comparison would catch it. Excluding one known-
-          # noisy key covers every other key, present and future. Canonicalising is what makes that
-          # affordable: a reformat or a key reorder does not move the digest, only real content does.
-          #
-          # Empty string on ANY failure — unresolvable path, a non-base64 or oversize response, invalid
-          # JSON, a non-object document, a missing python3, a dead network. Empty lands on the SAME
-          # fail-closed exit as subtree() below. Returning empty and having it read as a comparison
-          # RESULT is precisely what OPS-LAMCHANGEDBLIND-002 was; there is exactly one guard, and both
-          # resolvers feed it.
-          pkgdigest() {
-            api "https://api.github.com/repos/$REPO/contents/$2?ref=$1" | python3 -c "import sys,json,base64,hashlib;d=json.load(sys.stdin);p=json.loads(base64.b64decode(d['content'])) if isinstance(d,dict) and d.get('encoding')=='base64' else None;print(hashlib.sha256(json.dumps({k:v for k,v in p.items() if k!='version'},sort_keys=True,separators=(',',':')).encode()).hexdigest())" 2>/dev/null || echo ""
-          }
-          # The comparison IDENTITY of one input at one ref — a blob sha, a tree sha, or a content
-          # digest. BOTH sides of every comparison go through this function, so an identity can never
-          # be derived one way for main and another way for the dev SHA; a difference in HOW the two
-          # sides were computed would be a pure false-positive generator. (Named `ident`, not
-          # `resolve`, because `resolve` is already a JOB in this workflow.)
-          #
-          # The blank guard is defence in depth against a caller bug, and it closes a real edge:
-          # `?ref=` with an EMPTY value is not an error to the contents API, it silently means the
-          # DEFAULT BRANCH. Verified 2026-09-17 against the live API — `subtree "" package.json`
-          # returns main's blob sha rather than empty, so an empty DEV_SHA would have compared main
-          # against main and read as "unchanged", i.e. fail OPEN. That is pre-existing behaviour, not
-          # something the digest introduced; it was invisible because a blank ref on a DIRECTORY does
-          # fail closed (the Trees fallback 404s) and `lambda` was the path anyone thought to test.
-          # Unreachable today — the `resolve` job hard-fails a dev_sha that is not 40 hex, and `set -u`
-          # aborts on an unset one — but an input this step cannot verify should not be trusted twice.
-          ident() {
-            if [ -z "$1" ] || [ -z "$2" ]; then echo ""; return 0; fi
-            case "$2" in
-              digest:*) pkgdigest "$1" "${2#digest:}" ;;
-              *)        subtree  "$1" "$2" ;;
-            esac
-          }
-          # ADDING A COMPARED PATH IS THIS ONE LINE — the log, the fail-closed guard and the
-          # comparison below all iterate it. deploy-lambda.yml reads the manifest and the checker
-          # from outside lambda/, which is why they are here (OPS-LAMCHANGEDBLIND-001).
-          #
-          # The last two were added 2026-09-17 by the deploy-lambda.yml input audit, under the rule
-          # stated above. deploy-lambda.yml runs `npm run gen:event-types` before zipping (:116); that
-          # executes scripts/gen-lambda-event-types.mjs, which dynamically imports src/lib/eventTypes.js
-          # and WRITES lambda/events/eventTypes.generated.js into the bundle. Both are inputs to the
-          # deployed artifact from outside lambda/. They are also protected by proxy today — ci.yml's
-          # event-types drift guard runs inside build-and-test, which this promote already requires
-          # green, and the generated file is committed under lambda/ — but that chain spans three files
-          # and is annotated as load-bearing in none of them. These entries make the cover structural.
-          #
-          # A `digest:` prefix selects the CONTENT digest above instead of the blob/tree sha. Root
-          # package.json is compared that way because deploy-lambda.yml:116-117 resolves the names
-          # `gen:event-types` / `check:event-types` in its `scripts` block, so it is a genuine input —
-          # but its blob moves on every release for the version bump alone. See pkgdigest above for the
-          # measurements and for why the digest covers every key EXCEPT `version`.
-          PATHS=("lambda" ".github/workflows/deploy-lambda.yml" "scripts/lambda-config-expected.json" "scripts/check-lambda-config.py" "src/lib/eventTypes.js" "scripts/gen-lambda-event-types.mjs" "digest:package.json")
-          CHANGED=false
-          MOVED=""
-          for P in "${PATHS[@]}"; do
-            M=$(ident main "$P")
-            D=$(ident "$DEV_SHA" "$P")
-            echo "$P: main=${M:-<none>} dev=${D:-<none>}"
-            # A path that resolves on NEITHER side would compare '' = '' and read as unchanged, i.e.
-            # fail OPEN — so every path is guarded before any comparison runs, not just the tree.
-            # The recipe blob went unguarded from OPS-PROMOTERACE-001 until 2026-09-16; iterating one
-            # list is what stops the next added path from repeating that.
-            if [ -z "$M" ] || [ -z "$D" ]; then
-              echo "::warning::could not resolve $P on one or both sides — failing CLOSED, deploying Lambdas"
-              echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0
-            fi
-            if [ "$M" != "$D" ]; then CHANGED=true; MOVED="$MOVED $P"; fi
-          done
-          # Both messages are DERIVED from PATHS rather than enumerating it in prose. The old pair
-          # spelled out "lambda code, deploy recipe, config manifest or checker", which is the same
-          # shape that let the recipe blob go unguarded for a year: a list repeated in a second place
-          # is a list that will disagree with the first one.
-          if [ "$CHANGED" = "true" ]; then
-            echo "changed Lambda inputs:$MOVED -> Lambdas will deploy BEFORE the SPA"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "force_lambda=true — deploying Lambdas without consulting the running functions"
           else
-            echo "all ${#PATHS[@]} compared Lambda inputs identical between main and $DEV_SHA -> skipping Lambda deploy (SPA-only promote)"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+            python3 scripts/check-lambda-current.py --dev-sha "$DEV_SHA" --repo "$REPO" --region us-east-1
+            RC=$?
+            case "$RC" in
+              0) CHANGED=false
+                 echo "running Lambdas proven current for $DEV_SHA -> skipping the Lambda deploy (SPA-only promote)" ;;
+              1) echo "running Lambdas are not current for $DEV_SHA -> Lambdas will deploy BEFORE the SPA" ;;
+              *) echo "::warning::check-lambda-current exited $RC (could not decide) — failing CLOSED, deploying Lambdas" ;;
+            esac
           fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Fast-forward main -> dev SHA
         env:
@@ -555,17 +469,6 @@ jobs:
       - name: Verify pg17 client
         run: /usr/lib/postgresql/17/bin/pg_dump --version
 
-      - name: Configure AWS credentials (snap role, OIDC)
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
-        with:
-          role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
-          aws-region: us-east-1
-
-      - name: Checkout dev (scripts/snap.py)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ needs.resolve.outputs.dev_sha }}
-
       - name: Install python deps
         run: pip install boto3 requests --quiet
 
@@ -597,9 +500,13 @@ jobs:
   # Lambda set instead of a torn mix.
   #
   # Skipped entirely on an SPA-only promote — that is the common case and must stay cheap.
+  #
+  # `!= 'false'`, not `== 'true'` (OPS-LAMSKIPVSMAIN-001): only an explicit "false" from the proven
+  # decision above skips. An ABSENT output now deploys instead of silently skipping, which also makes
+  # verify-deploy.py's reading of "promote succeeded + deploy-lambdas skipped" exact, not inferred.
   deploy-lambdas:
     needs: [resolve, promote]
-    if: ${{ needs.promote.outputs.lambda_changed == 'true' }}
+    if: ${{ needs.promote.outputs.lambda_changed != 'false' }}
     uses: ./.github/workflows/deploy-lambda.yml
     with:
       ref: ${{ needs.resolve.outputs.dev_sha }}
@@ -689,15 +596,17 @@ jobs:
   # OPS-VERIFY-001 (advisory REPORT-ONLY, per L-147/L-161/L-141) — runs AFTER deploy and
   # gates NOTHING (no job needs it; FF + deploy already happened, so it cannot un-ship).
   # It mechanizes the post-promote read of the SPA deploy JOB conclusion (L-161 — a green
-  # run can mask a failed deploy job). It NEVER fails the promote: exit code becomes an
-  # annotation (notice/warning/error) + a step-summary line, and the job always exits 0.
-  # WHY report-only: deploy-lambda.yml is a SEPARATE push:main workflow with its OWN
-  # environment:production binding (L-141), so when this step runs the Lambda deploy may still be
-  # queued or mid-flight — a hard red here would be a false alarm on every lambda-carrying
-  # promote. (Corrected 2026-08-06: that binding is a ref policy, NOT an approval — it does not
-  # "await approval", since production carries no required reviewer. The race is scheduling, not
-  # a human tap.) The authoritative Lambda-freshness check is the on-demand verify-deploy
-  # workflow re-run on this SHA AFTER the deploy-lambda run settles.
+  # run can mask a failed deploy job) and of the Lambda legs. It NEVER fails the promote: exit code
+  # becomes an annotation (notice/warning/error) + a step-summary line, and the job always exits 0.
+  #
+  # OPS-VERIFYINRUNSTALE-001 (2026-09-18): it now passes --run-id, so verify-deploy.py reads THIS run's
+  # own jobs. It used to list only COMPLETED promote-gate runs, which can never include the in-progress
+  # run it sits in, so it fell back to the last standalone deploy-lambda.yml run (2026-08-13, c509fff4ae)
+  # and printed "STALE LAMBDA ... NOT VERIFIED" on every promote — including the three before this
+  # change, whose 26 legs all succeeded. By the time this job starts deploy-lambdas is final (`deploy`
+  # needs it and this job needs `deploy`), so this run's Lambda legs are settled. The older rationale
+  # here ("deploy-lambda.yml is a SEPARATE push:main workflow ... may still be mid-flight") has been
+  # false since OPS-PROMOTERACE-001 made it a nested job.
   verify:
     needs: [resolve, deploy]
     if: ${{ always() }}
@@ -709,13 +618,14 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.resolve.outputs.dev_sha }}
-      - name: Verify deploy success (advisory report-only — never gates)
+      - name: Verify deploy success incl. this run's own Lambda legs (advisory report-only — never gates)
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.resolve.outputs.dev_sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set +e
-          python3 scripts/verify-deploy.py --sha "$SHA" | tee /tmp/verify.out
+          python3 scripts/verify-deploy.py --sha "$SHA" --run-id "$RUN_ID" | tee /tmp/verify.out
           rc=${PIPESTATUS[0]}
           {
             echo "### OPS-VERIFY-001 — deploy verification for ${SHA}"
@@ -724,11 +634,11 @@ jobs:
             cat /tmp/verify.out
             echo '```'
             echo
-            echo "_Advisory only — never fails the promote. The Lambda-freshness check (L-141) is authoritative only AFTER the separately-gated deploy-lambda.yml run is approved; re-run the verify-deploy workflow on this SHA once that settles._"
+            echo "_Advisory only — never fails the promote. Read this promote's own job list (run ${RUN_ID}); dispatch verify-deploy.yml on this SHA for a second opinion after the fact._"
           } >> "$GITHUB_STEP_SUMMARY"
           case "$rc" in
             0) echo "::notice::OPS-VERIFY-001: deploy VERIFIED for $SHA" ;;
-            2) echo "::warning::OPS-VERIFY-001: indeterminate (exit 2) — not verified; re-run after deploy-lambda settles" ;;
+            2) echo "::warning::OPS-VERIFY-001: indeterminate (exit 2) — not verified; see the step summary" ;;
             *) echo "::error::OPS-VERIFY-001: NOT verified (exit $rc) — inspect SPA deploy job / Lambda freshness for $SHA" ;;
           esac
           exit 0
