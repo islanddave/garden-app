@@ -13,7 +13,27 @@
 // Everything that says "the email" drives the real run() and reads what publishAlert received. No Postgres:
 // decisions and the stored plan only, not DB behaviour.
 //
-// MUTATION LOG — see the lane findings (_mainsync3_20260918/ingroundsliver.md); summarized after the run.
+// MUTATION LOG — 2026-09-18, lane-ingroundsliver-20260918. Each applied alone, this file plus
+// coldcardreachable.test.js and ingroundoffseason.test.js run, RED observed, file restored (sha256 checked).
+// RED counts are over all three files (46 tests):
+//   * coldFor drops on class alone (the pre-fix semantics)                 -> 6 RED (matrix, boundary, cloudy, supersede, 09/20 ET)
+//   * coldFor drops on the card's own `low < 40` instead of the decision   -> 5 RED
+//   * accepted gap closed (only 'named' drops)                             -> 6 RED (41F boundary, 48F pins, 50F-profile beds)
+//   * no coverage / no entry also drops                                    -> 5 RED (hardy leek, invalid override x2, defaults)
+//   * band judged on Open-Meteo D1 instead of the NWS low (source swap)     -> 8 RED
+//   * named = message crops UNION all advisory-tripped crops               -> 1 RED (single-message supersede)
+//   * named from the imminent tier only                                    -> 3 RED (matrix, 41/39 unit, supersede)
+//   * frostCoverage: null-low branch / no-decision branch / null-band
+//     branch dropped                                                       -> 1 RED each (their unit tests)
+//   * above_band restated as `low > 40`                                    -> 2 RED (the light_frost_tolerant marigold)
+//   * summarize stops recording ids                                        -> 23 RED
+//   * handler: non-evaluating runs never compute coverage                  -> 3 RED; compute it with the flag off -> 1 RED;
+//     no try/catch there -> 1 RED; evaluating runs swallow the throw too   -> 1 RED
+//   * handler hands no coverage / engine stops forwarding it (x2)          -> 12 / 19 / 18 RED
+//   * coverage from a second, threshold-only evaluation (no radiative)     -> 1 RED (the FROST WATCH case)
+//   * coverage looked up by name instead of id                             -> 7 RED
+//   * flag defaults true at coldFor / generatePlanForUser / generatePlan,
+//     `!!flag` for `=== true`                                              -> 1 RED each (ingroundoffseason defaults)
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import h from './handler.js';
 import fe from './frostEval.js';

@@ -34,6 +34,13 @@
 //   * frostAlertNames heated clause dropped (`return true`)           -> 0 RED, and CANNOT go red here: the
 //     HEATED narrowing returns null before the in-ground branch, so a heated planting never reaches it. The
 //     clause keeps the mirror faithful to summarize; the INVARIANT test is what binds the two channels.
+// 2026-09-18, lane-ingroundsliver-20260918 (BUG-INGROUND39FSLIVER-001): frostAlertNames is GONE. It was
+// class-only, so the bed card dropped on nights the email never sent (NWS 39 / Open-Meteo 42). coldFor now reads
+// frostCoverage over the handler's own decision; planFor builds it via handler.frostForSpace. The forecast-matrix
+// INVARIANT below is killed by: class-only drop, `low < 40` drop, Open-Meteo/NWS source swap, imminent-only
+// naming, ids not recorded, coverage not handed over or not forwarded (x2), lookup by name. The 40/41F boundary
+// pair by: class-only drop, accepted gap closed, source swap, and the same plumbing breaks. Full log in
+// ingroundsliver.test.js.
 import { describe, it, expect, vi } from 'vitest';
 import engine from './engine.js';
 import h from './handler.js';

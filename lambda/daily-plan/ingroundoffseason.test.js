@@ -35,6 +35,9 @@
 //   * generatePlanForUser stops forwarding to coldFor               -> 14 RED (incl. 6 in coldcardreachable.test.js)
 //   * generatePlan stops forwarding to generatePlanForUser          -> 13 RED
 //   * the 41-50F gap closed (drop only at <= 40F)                   -> 6 RED (both gap pins, 4 in coldcardreachable)
+// Re-run 2026-09-18, lane-ingroundsliver-20260918, after the default cases gained a coverage naming the bed
+// (without it they passed for the wrong reason): flag default true at coldFor / generatePlanForUser /
+// generatePlan and `!!flag` -> 1 RED each; "no coverage also drops" -> 1 RED (the new coverage-default case).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import h from './handler.js';
 import engine from './engine.js';
