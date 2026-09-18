@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useId } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, LOCATION_TYPE_LABELS } from '../lib/constants.js'
+import { T } from '../lib/tokens.js'
 import { Field, Input, Select, Button, ErrorBanner } from '../components/forms'
 import SharedEmptyState from '../components/forms/EmptyState.jsx'
 import Icon from '../components/Icon.jsx'
@@ -78,7 +79,10 @@ export default function Locations() {
     // block's own rule: drift between the two reads as permanently dirty. `== null` catches both
     // null and undefined, which matters because the GET omitted this column until this row shipped
     // and a cached client can still be holding a row that has no `covered` key at all.
-    editForm.covered     !== (editingLoc.covered == null ? '' : String(editingLoc.covered))
+    editForm.covered     !== (editingLoc.covered == null ? '' : String(editingLoc.covered)) ||
+    // V5-LOCHEATEDUI-001. Same rule, same reason: mirrors the `loc.heated === true` seed below, so a
+    // row with no heated key (a response cached before the column joined the GET) reads clean.
+    editForm.heated      !== (editingLoc.heated === true)
   )
 
   // The two ADD forms start empty, so `name` is the whole of their typed content: `slug` is derived
@@ -155,6 +159,12 @@ export default function Locations() {
           // — so a location nobody has classified stays unclassified rather than being asserted
           // open-to-the-sky by the act of editing its name.
           covered:     editForm.covered === '' ? null : editForm.covered === 'true',
+          // V5-LOCHEATEDUI-001. Sent when the row told us its value, or when the box is ticked. A row
+          // from a response cached before heated joined the GET has no key and seeds unticked;
+          // sending that false would un-heat the House on an unrelated rename. An absent key is
+          // left alone by the server's COALESCE.
+          ...(typeof loc.heated === 'boolean' || editForm.heated === true
+            ? { heated: editForm.heated === true } : {}),
           // BUG-COALESCECLEAR-001. `|| null` above is the bug: the server binds these through
           // COALESCE, where null and absent are one token, so emptying the description box
           // returned 200 and kept the old text. `clear` is the only way to say NULL.
@@ -398,7 +408,7 @@ function LocationCard({ loc, depth, hasChildren,
                 canAddChild={loc.level < 3}
                 onEdit={() => {
                   setEditingId(loc.id)
-                  setEditForm({ name: loc.name, type_label: loc.type_label || '', sort_order: String(loc.sort_order ?? 0), description: loc.description || '', covered: loc.covered == null ? '' : String(loc.covered) })
+                  setEditForm({ name: loc.name, type_label: loc.type_label || '', sort_order: String(loc.sort_order ?? 0), description: loc.description || '', covered: loc.covered == null ? '' : String(loc.covered), heated: loc.heated === true })
                   setMenuOpenId(null)
                 }}
                 onAddChild={() => {
@@ -546,7 +556,12 @@ function InlineEditForm({ form, setForm, onSave, onCancel }) {
           <Select
             id="inline-edit-covered"
             value={form.covered}
-            onChange={e => setForm(f => ({ ...f, covered: e.target.value }))}
+            onChange={e => {
+              // V5-LOCHEATEDUI-001: leaving "Under cover" unticks Heated in the same gesture — the
+              // server refuses a heated location that is not under cover.
+              const v = e.target.value
+              setForm(f => ({ ...f, covered: v, heated: v === 'true' ? f.heated : false }))
+            }}
             placeholder="— not set —"
             options={[
               { value: 'true',  label: 'Under cover — rain does not reach it' },
@@ -556,6 +571,38 @@ function InlineEditForm({ form, setForm, onSave, onCancel }) {
         </Field>
         <div style={{ fontSize: '0.71rem', color: P.light, marginTop: 4 }}>
           Under cover means watering never counts rainfall here — a low tunnel, a cold frame, a shelf indoors.
+        </div>
+        {/* V5-LOCHEATEDUI-001 — locations.heated, the only warmth fact the care engine has. A heated
+            location gets NO cold cards (daily-plan coldFor), and being under cover it is already out
+            of the frost alert, so a wrong tick silences every cold warning for the plants in it.
+            A CHECKBOX, unlike Rain shelter above: heated is NOT NULL, so there is no "not stated" for
+            a checkbox to misrender — unticked says exactly what the column means.
+            Placed directly under Rain shelter because the two are coupled, and the coupling has to be
+            visible: ticking Heated sets Rain shelter to Under cover; leaving Under cover unticks it.
+            Edit-only, like Rain shelter and for the same reason — and on an add form, which has no
+            Rain shelter, the cover a tick implies would be invisible. */}
+        <label
+          htmlFor="inline-edit-heated"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, minHeight: T.tapMinHeight, marginTop: 6,
+            fontSize: '0.8rem', fontWeight: 600, color: P.mid, cursor: 'pointer',
+          }}
+        >
+          <input
+            id="inline-edit-heated"
+            type="checkbox"
+            checked={form.heated === true}
+            onChange={e => {
+              const on = e.target.checked
+              setForm(f => ({ ...f, heated: on, covered: on ? 'true' : f.covered }))
+            }}
+            aria-describedby="inline-edit-heated-hint"
+            style={{ width: 20, height: 20, margin: 0, flexShrink: 0, cursor: 'pointer', accentColor: P.green }}
+          />
+          Heated
+        </label>
+        <div id="inline-edit-heated-hint" style={{ fontSize: '0.71rem', color: P.light }}>
+          Kept warm in winter, like the House. Plants here get no cold warnings.
         </div>
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
