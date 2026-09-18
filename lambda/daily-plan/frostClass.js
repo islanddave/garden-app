@@ -156,8 +156,8 @@ const SLUGS_BY_BAND = Object.freeze({
     // no alert moves today; banded now because the day one is planted is the day it would count unseen.
     //   corn          — 'Golden Bantam' sweet corn. UMN Extension: "A corn killing freeze occurs when
     //                   temperatures dip to 32 degrees Fahrenheit for four hours or 28 degrees for minutes."
-    //   cosmos        — 'Sensation' (C. bipinnatus): a warm-weather annual that blooms "to frost" (MBG),
-    //                   sown only after the danger of frost is past (NC State).
+    //   cosmos        — 'Sensation' (C. bipinnatus): a "warm weather annual" that blooms "to frost" (MBG);
+    //                   NC State sows it after the danger of frost is past.
     //   summer_savory — Satureja hortensis: sown once any threat of frost is past, "the same for basil
     //                   seeds" (Herb Society of America); Illinois Extension says the same.
     'corn', 'cosmos', 'summer_savory',
