@@ -6,7 +6,7 @@
 const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
 const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, FRESHNESS_MAX_MIN, ARRAY_SILENT_MIN_GAP_MIN } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001; FRESHNESS_MAX_MIN BUG-STATIONSTALESILENT-001; ARRAY_SILENT_MIN_GAP_MIN V5-STATIONHEALTHYEAR-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
-const { frostEval, frostCoverage, isFrostSeason, resolveFrostRun, escalatesBeyond } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001; frostCoverage BUG-INGROUND39FSLIVER-001
+const { frostEval, frostCoverage, sentCoverage, isFrostSeason, resolveFrostRun, escalatesBeyond } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001; frostCoverage BUG-INGROUND39FSLIVER-001; sentCoverage BUG-INGROUNDPOSTWINDOW-001
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
 const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
 const drought = require('./droughtSignal');                                      // V5-LEGACYEXCEPTIONCARE-001
@@ -832,6 +832,49 @@ async function readAlertsSent(pg, userId, planDate) {
   }
 }
 
+// BUG-FROSTDUPTWOUSERS-001 — the store above is per ROW and a row is per USER, while a frost email is per SPACE.
+// With one Space holding plantings for two users (prod, 2026-09-18) the send was recorded only on the row of
+// the user whose loop published it, so the next evaluating run read the other user's empty row and sent the same
+// email again (real run(): 14 ET AND 15 ET). This reads the Space's sends off EVERY row for the date.
+// daily_plan has no space column; the Space is the dedup key's own first field (frostEval.dedupKey:
+// space|event_date|tier|level[|crops]), which also keeps the row of a user who has since left the Space in
+// scope. Same fail-open posture as readAlertsSent: [] may re-send, never suppress.
+async function readSpaceAlertsSent(pg, spaceId, planDate) {
+  try {
+    const { rows } = await pg.query(
+      `select items->'alerts_sent' as alerts_sent from daily_plan where plan_date = $1`, [planDate]);
+    const prefix = `${spaceId}|`;
+    const out = [];
+    for (const r of rows) {
+      const sent = r && r.alerts_sent;
+      if (!Array.isArray(sent)) continue;
+      for (const a of sent) if (a && typeof a.key === 'string' && a.key.startsWith(prefix)) out.push(a);
+    }
+    return mergeAlertsSent(out);
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'space alerts_sent read failed — continuing (may re-send)', space: spaceId, error: e?.message }));
+    return [];
+  }
+}
+
+// Union of alerts_sent lists: first occurrence wins and order is kept, so a row whose own list already holds
+// the Space's sends is written back unchanged. An entry is its key AND its send time, so two real sends of one
+// key (the duplicates this row closes, already stored on prod rows) both survive as the record of what went out.
+function mergeAlertsSent(...lists) {
+  const seen = new Set();
+  const out = [];
+  for (const list of lists) {
+    for (const a of (Array.isArray(list) ? list : [])) {
+      if (!a) continue;
+      const id = typeof a.key === 'string' ? JSON.stringify([a.key, a.at ?? null]) : JSON.stringify(a);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(a);
+    }
+  }
+  return out;
+}
+
 // BUG-FROSTALERTNOAPP-001 — the WHEN and HOW COLD, persisted so a client can word the alert.
 //
 // Until now an alerts_sent entry carried key/tier/level/at only. Every one of those is about the
@@ -1614,11 +1657,32 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // in-ground card (coverage null) instead of costing the plan: those runs never evaluated frost before.
     const frostIn = { rows, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId],
       lowSource: (stationProvBySpace[spaceId] || {}).low_source, spaceId, today, frostSeason };
+    // BUG-FROSTDUPTWOUSERS-001 — this Space's frost sends so far today, off every user's row (readSpaceAlertsSent),
+    // read ONCE and before anything in the Space is written. The per-user gate below adds it to the row's own list,
+    // and every row is written back with it, so one send dedups the whole Space whichever user's loop made it.
+    const spaceSent = frostAlertEnabled ? await readSpaceAlertsSent(pg, spaceId, today) : [];
     let frost = null;
     if (frostRun.evaluate) frost = frostForSpace(frostIn);
     else if (frostAlertEnabled) {
       try { frost = frostForSpace(frostIn); } catch (e) {
         console.error(JSON.stringify({ msg: 'frost coverage FAILED — in-ground cold cards kept', space: spaceId, error: e?.message }));
+      }
+    }
+    // BUG-INGROUNDPOSTWINDOW-001 — a run AFTER the window (or one that cannot place itself before it) has no later
+    // evaluation that night, so an in-ground card may drop only for an email that actually went out: sentCoverage
+    // keeps a planting 'named' only when today's sends named its crop at least as severely as this run's own
+    // decision. The evaluating runs keep the decision's coverage (that decision is the email), and so do the runs
+    // before the window, which the evaluating runs still follow. Flag off: no frost here, no coverage, card kept.
+    let coverage = frost ? frost.coverage : null;
+    if (coverage && !frostRun.evaluate && !frostRun.beforeWindow) {
+      const predicted = coverage;
+      coverage = sentCoverage(frost.decision, predicted, spaceSent);
+      const kept = [...predicted].filter(([id, s]) => s === 'named' && coverage.get(id) !== 'named').length;
+      // `plantings` counts every planting the forecast names and no sent email covers; only the in-ground ones among
+      // them change (coldFor reads coverage for nothing else), so this is the ceiling on the cards it kept.
+      if (kept) {
+        console.log(JSON.stringify({ msg: 'frost coverage — post-window: named by the forecast, by no email sent today',
+          space: spaceId, plan_date: today, run: frostRun.slot, plantings: kept, sent: spaceSent.length }));
       }
     }
     // V4-WATERMATH-001 F2 — the F1 seam is CONSUMED now: weatherDaily + the per-planting event
@@ -1630,7 +1694,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       droughtState: droughtBySpace[spaceId] || null,
       // BUG-INGROUNDOFFSEASONSILENT-001 — engine.coldFor drops an in-ground bring-in card only while the
       // frost alert can publish, so the kill switch above must travel with the plan, not stay handler-local.
-      frostAlertEnabled, frostCoverage: frost ? frost.coverage : null });
+      frostAlertEnabled, frostCoverage: coverage });
     // V5-DROUGHTSPACE-001 — the garden-wide line, computed ONCE per Space and written onto every user's
     // row in it. null on every day the signal does not fire, which is what keeps the key absent.
     const gardenDrought = drought.gardenDrought(droughtBySpace[spaceId] || null);
@@ -1768,6 +1832,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
         }
       }
     }
+    const spaceNew = [];   // BUG-FROSTDUPTWOUSERS-001 — this invocation's sends for this Space, for the users after the sender
     for (const [user_id, userPlan] of Object.entries(plan.users)) {
       // hydrology rides along for the A0.3-DRY-PLANS dry-replay diff (rerun-daily-plan.sh --diff needs the
       // decision inputs, not just the verdicts). Additive: live-path consumers read res.rows only.
@@ -1789,7 +1854,11 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
         // Carried forward even on a non-evaluating run so an earlier pm send is never wiped by a re-run.
         let alertsSent = null;
         if (frostAlertEnabled) {
-          alertsSent = await readAlertsSent(pg, user_id, today);
+          // BUG-FROSTDUPTWOUSERS-001 — this row's list plus the Space's (every other row today, and a send made
+          // earlier in this loop), so both gates below see what ANY user's loop sent, and the row is written back
+          // carrying it: the other user's row can no longer read as "nothing sent tonight". Order-independent
+          // within the loop too — a row written before a later user's successful retry is healed by the next run.
+          alertsSent = mergeAlertsSent(await readAlertsSent(pg, user_id, today), spaceSent, spaceNew);
           const dk = frostDecision && frostDecision.dedupKey;
           // OPS-PLANHOURLY-001 — two gates now, and they answer different questions. The key answers
           // "have I sent EXACTLY this?"; escalatesBeyond answers "is this WORSE than anything I have
@@ -1815,7 +1884,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
                 // `crops` (OPS-PLANHOURLY-001) is what makes the NEXT run's escalation gate able to
                 // compare per-crop instead of only on the headline level. Omitted when null so the
                 // stored shape is unchanged on the legacy no-breakdown path.
-                alertsSent = [...alertsSent, { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString(), ...(frostDecision.cropLevels ? { crops: frostDecision.cropLevels } : {}), ...frostWeatherFacts(frostDecision) }].slice(-ALERTS_SENT_MAX);
+                const entry = { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString(), ...(frostDecision.cropLevels ? { crops: frostDecision.cropLevels } : {}), ...frostWeatherFacts(frostDecision) };
+                spaceNew.push(entry);
+                alertsSent = [...alertsSent, entry];
                 console.log(JSON.stringify({ msg: 'frost alert PUBLISHED', space: spaceId, user: user_id, dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level }));
               } catch (e) {
                 // §3-7: a swallowed frost alert is the failure mode this feature exists to prevent. Log at
@@ -1837,6 +1908,8 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
               crops: frostDecision.cropLevels || null,
               already_sent: alertsSent.map((a) => (a && { level: a.level, crops: a.crops || null })).filter(Boolean) }));
           }
+          // Capped here rather than only on a send: the merged list can pass the cap with no send this run.
+          alertsSent = alertsSent.slice(-ALERTS_SENT_MAX);
         }
         await pg.query(
           `insert into daily_plan (user_id, plan_date, items, generated_at)
@@ -1930,7 +2003,7 @@ function resolveInvokeOptions(event, { envDryRun, todayDefault }) {
   return { dryRun, today, ping: !!(event && event.ping === true), flagOverrides };
 }
 
-module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, frostSubject, frostWeatherFacts, frostForSpace, ALERTS_SENT_MAX,
+module.exports = { run, weatherForSpace, hydrologyForSpace, coordsForSpace, resolveInvokeOptions, readPriorRuns, PRIOR_RUNS_MAX, backfillYesterdayActual, prevPlanDate, readAlertsSent, readSpaceAlertsSent, mergeAlertsSent, frostSubject, frostWeatherFacts, frostForSpace, ALERTS_SENT_MAX,
   writeWeatherDaily, readWeatherDaily, weatherWindowStart, WEATHER_DAILY_WINDOW_DAYS,
   readLedgerEvents, LEDGER_OVERRIDABLE_FLAGS, sweepSupersededAnchors,
   COVER_INHERIT_CTE, COVER_INHERIT_JOIN, COVER_INHERIT_ARM,

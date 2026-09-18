@@ -367,6 +367,10 @@ function dedupKey({ spaceId, eventDate, tier, level, crops }) {
 const FROST_SEVERITY_RANK = { advisory: 1, protect: 2, hard_freeze: 3 };
 function severityRank(level) { return FROST_SEVERITY_RANK[level] || 0; }
 
+// A crop's identity in a persisted `crops` map: the same slug||label fallback as cropDigest, named once so
+// sentCoverage (BUG-INGROUNDPOSTWINDOW-001) reads the map with exactly the key cropLevels wrote it with.
+const cropKey = (c) => c.slug || c.label;
+
 // Compact {slug: level} map persisted on each alerts_sent entry so a later run can compare per-crop
 // rather than re-deriving from a hash. Uses the same slug||label fallback as cropDigest so the two
 // cannot disagree about a crop's identity.
@@ -375,7 +379,7 @@ function cropLevels(trippedCrops) {
   if (!rows.length) return null;
   const out = {};
   for (const c of rows) {
-    const k = c.slug || c.label;
+    const k = cropKey(c);
     if (!k) continue;
     if (severityRank(c.level) > severityRank(out[k])) out[k] = c.level;
   }
@@ -435,19 +439,25 @@ function isFrostSeason(planDate, opts = {}) {
 // alerts: the in-invocation dedup store forgets between runs, so a condition that holds all afternoon would
 // otherwise send once per evaluating run. Derived HERE, from the same window as `evaluate`, so the cap hour
 // cannot drift out of the window if FROST_RUN_START_HOUR moves. False for a forced or suppressed run.
+//
+// BUG-INGROUNDPOSTWINDOW-001 — `beforeWindow` marks a run EARLIER in the ET day than the window: the evaluating
+// runs still follow it on the same plan date and re-decide, so its in-ground coverage may stay a prediction
+// (handler.js). Every other run that does not evaluate — after the window, forced off, or with no ET hour — has
+// no later evaluation that night and reads what was actually sent. False unless the hour is known to be earlier.
 const FROST_RUN_START_HOUR = numEnv('FROST_RUN_START_HOUR', 14);
 const FROST_RUN_END_HOUR = numEnv('FROST_RUN_END_HOUR', 17);
 function resolveFrostRun(event, { etHour } = {}) {
-  if (event && event.frostEval === true) return { evaluate: true, slot: 'forced', reason: 'event_override', firstOfDay: false };
-  if (event && event.frostEval === false) return { evaluate: false, slot: 'suppressed', reason: 'event_override', firstOfDay: false };
+  if (event && event.frostEval === true) return { evaluate: true, slot: 'forced', reason: 'event_override', firstOfDay: false, beforeWindow: false };
+  if (event && event.frostEval === false) return { evaluate: false, slot: 'suppressed', reason: 'event_override', firstOfDay: false, beforeWindow: false };
   const h = finite(etHour);
-  if (h == null) return { evaluate: false, slot: 'unknown', reason: 'no_et_hour', firstOfDay: false };
+  if (h == null) return { evaluate: false, slot: 'unknown', reason: 'no_et_hour', firstOfDay: false, beforeWindow: false };
   const inWindow = h >= FROST_RUN_START_HOUR && h <= FROST_RUN_END_HOUR;
   return {
     evaluate: inWindow,
     slot: inWindow ? 'intraday-pm' : (h < 6 ? 'nightly-or-am' : 'other'),
     reason: inWindow ? 'pm_window' : 'outside_pm_window',
     firstOfDay: inWindow && h === FROST_RUN_START_HOUR,
+    beforeWindow: h < FROST_RUN_START_HOUR,
   };
 }
 
@@ -669,8 +679,37 @@ function frostCoverage(decision, exposure, tonightLow) {
   return out;
 }
 
+// ── BUG-INGROUNDPOSTWINDOW-001 — after the window, 'named' must be an email that WENT OUT ──────────────────
+// frostCoverage asks "does THIS decision name the planting?". In a 14-17 ET run that decision IS the email: it
+// is published, or held because an earlier send already said as much. A run after the window makes the same
+// decision from its own forecast and publishes nothing, so there 'named' predicted an email nobody sends: a low
+// that crossed the trip after 17:59 dropped the bed's card and no email followed (real run(): 16 ET NWS 39 /
+// OM 42 carded, 20 ET NWS 38 / OM 45 no card, 0 emails).
+// So only the 'named' entries are restated, against `sent` — the alerts_sent entries recorded for this Space
+// today (handler.readSpaceAlertsSent). A planting stays 'named' only when a sent email named its crop at least
+// as severely as this decision does, the same per-crop comparison escalatesBeyond makes before it re-sends; a
+// crop that got worse after the window, or was never named, reads 'unnamed' and coldFor keeps its card.
+// 'above_band' and 'unnamed' are returned as they are: neither ever relied on an email. An entry with no
+// `crops` (a send with no crop breakdown) names nothing. No coverage -> null.
+function sentCoverage(decision, coverage, sent) {
+  if (!coverage) return null;
+  const sentRank = {};
+  for (const a of (Array.isArray(sent) ? sent : [])) {
+    if (!a || !a.crops || typeof a.crops !== 'object') continue;
+    for (const [k, lv] of Object.entries(a.crops)) sentRank[k] = Math.max(sentRank[k] || 0, severityRank(lv));
+  }
+  const out = new Map(coverage);
+  for (const c of (decision && Array.isArray(decision.trippedCrops) ? decision.trippedCrops : [])) {
+    if (!c) continue;
+    const s = sentRank[cropKey(c)] || 0;
+    if (s > 0 && s >= severityRank(c.level)) continue;
+    for (const id of (Array.isArray(c.ids) ? c.ids : [])) out.set(id, 'unnamed');
+  }
+  return out;
+}
+
 module.exports = {
-  frostEval, frostCoverage, resolveThresholds, dedupKey, cropDigest,
+  frostEval, frostCoverage, sentCoverage, resolveThresholds, dedupKey, cropDigest,
   escalatesBeyond, cropLevels, severityRank, FROST_SEVERITY_RANK,
   evalAdvisory, evalImminent, evalHeat, evalImminentCrops, evalAdvisoryCrops,
   advisoryMessage, imminentMessage, heatMessage, exposurePhrase, cropListPhrase, totalsPhrase, truncate,

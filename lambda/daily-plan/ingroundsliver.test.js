@@ -206,18 +206,32 @@ describe('BUG-INGROUND39FSLIVER-001 — the runs that do not evaluate frost', ()
   // 18 of the 19 hourly runs a day fall outside 14-17 ET or before it; their plan is what Today shows for
   // most of the day. They compute the same decision from their own forecast and use only its coverage: no
   // publish, no frost-eval log. Without that the in-ground card would return every frost morning.
-  for (const etHour of [9, 20]) {
-    it(`${etHour}:00 ET, flag on: 38F drops the bed (the email's predicate names it), 39/42 keeps it; nothing is sent`, async () => {
-      vi.stubEnv('FROST_ALERT_ENABLED', 'true');
-      const cold = await drive({ rows: [BED, BAG], nws: 38, om: 45, etHour });
-      expect(cold.frost).toHaveLength(0);
-      expect(cold.card(BED)).toBeNull();
-      expect(cold.card(BAG)).toMatchObject({ level: 'bring_in' });
-      const sliver = await drive({ rows: [BED, BAG], nws: 39, om: 42, etHour });
-      expect(sliver.frost).toHaveLength(0);
-      expect(sliver.card(BED)).toMatchObject({ level: 'bring_in' });
-    });
-  }
+  // CHANGED by BUG-INGROUNDPOSTWINDOW-001 (lane frostsent, 2026-09-18): this was one loop over [9, 20] asserting
+  // the 20:00 run ALSO drops the 38F bed "because the email's predicate names it" — with nothing sent. That is
+  // the post-window silence the row closes (no card, no email). The 09:00 half is unchanged: the evaluating runs
+  // still follow a morning run on the same plan date. The 20:00 half now asserts the card is kept, and
+  // frostsent.test.js carries the post-window cases with an email that WAS sent.
+  it('09:00 ET, flag on: 38F drops the bed (the email\'s predicate names it), 39/42 keeps it; nothing is sent', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    const cold = await drive({ rows: [BED, BAG], nws: 38, om: 45, etHour: 9 });
+    expect(cold.frost).toHaveLength(0);
+    expect(cold.card(BED)).toBeNull();
+    expect(cold.card(BAG)).toMatchObject({ level: 'bring_in' });
+    const sliver = await drive({ rows: [BED, BAG], nws: 39, om: 42, etHour: 9 });
+    expect(sliver.frost).toHaveLength(0);
+    expect(sliver.card(BED)).toMatchObject({ level: 'bring_in' });
+  });
+
+  it('20:00 ET, flag on, nothing sent today: 38F KEEPS the bed (no email went out to cover it), and so does 39/42', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    const cold = await drive({ rows: [BED, BAG], nws: 38, om: 45, etHour: 20 });
+    expect(cold.frost).toHaveLength(0);
+    expect(cold.card(BED)).toMatchObject({ level: 'bring_in' });
+    expect(cold.card(BAG)).toMatchObject({ level: 'bring_in' });
+    const sliver = await drive({ rows: [BED, BAG], nws: 39, om: 42, etHour: 20 });
+    expect(sliver.frost).toHaveLength(0);
+    expect(sliver.card(BED)).toMatchObject({ level: 'bring_in' });
+  });
 
   it('an invalid FROST_BAND_THRESHOLDS_JSON: a non-evaluating run still writes its plan and KEEPS the bed card', async () => {
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
