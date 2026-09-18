@@ -1419,9 +1419,14 @@ function computeCallout(weather, hy){
 // METADATA ONLY — no watering recommendation reads this flag (presentation honesty for the Today widget;
 // the conservative watering model is unchanged). DRG-WX Phase 2.
 const SHOWERY_POP = 50;
+// BUG-WXBANNERSHOWERYCOPY-001 — "assumes no rain credit" is true only while recent_precip_in is null
+// (windowPrecip/creditPrecip return null, so nothing is credited). With a bound gauge and no forecast
+// (the 2026-09-02 shape) recent is the gauge's and still credits, so that case says so instead.
 function hydrologyStatus(hy){
   if(!hy || hy.recent_precip_in==null || hy.upcoming_precip_in==null)
-    return {ok:false, uncertainty:{flag:true, reason:'precip data incomplete — watering advice assumes no rain credit'}};
+    return {ok:false, uncertainty:{flag:true, reason: (hy && hy.recent_precip_in!=null)
+      ? 'precip data incomplete — watering advice still credits recent rain'
+      : 'precip data incomplete — watering advice assumes no rain credit'}};
   const tPop=hy.today_pop, mPop=hy.tomorrow_pop;
   const tIn=hy.today_precip_in??0, mIn=hy.tomorrow_precip_in??0;
   let reason=null;
