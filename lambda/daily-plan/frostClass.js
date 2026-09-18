@@ -135,6 +135,15 @@ const SLUGS_BY_BAND = Object.freeze({
     // Kept at the tender baseline rather than light_frost_tolerant: foliage blackens around 31°F, so 38
     // is an early warning rather than a wrong one, and over-alerting a potato is cheap.
     'potato',
+    // pineapple_sage — BUG-PINEAPPLESAGEBAND-001. Salvia elegans, zone 8-10, top-killed by the first
+    // frost. It was typed `sage`, which is banded hardy for GARDEN sage (S. officinalis), so no frost
+    // alert could ever name it. Genus cannot tell them apart (both Salvia, as is rosemary) and a name
+    // is not an identity, so it gets a crop type of its own: migrations/v5-frostband-001 mints it and
+    // re-points the one cultivar by id. `tender`, not `tropical`: frost kills it, the 50s do not chill-
+    // injure it, and the tender band carries no crop-type cold profile (COLD_PROFILE_REQUIRED_BANDS).
+    // Its bring-it-inside threshold lives on its cultivar care profile, which the same migration
+    // corrects: that profile was a clone of garden sage's `cold` block and read tender:false.
+    'pineapple_sage',
   ],
   light_frost_tolerant: [
     // still standing the morning after a light frost; a hard freeze finishes them
@@ -180,15 +189,26 @@ const SLUGS_BY_BAND = Object.freeze({
     // 38F would be the clearest possible false positive: surviving hard frost is the entire reason
     // they are sown in August here.
     'claytonia', 'mache', 'mizuna', 'tatsoi',
+    // BUG-STABLEUNKNOWNSLUGS-001 (2026-09-18). The two false alarms the Stable exposed once the alert
+    // stopped skipping it (BUG-FROSTALERTSTABLE-001). Both are banded by their own controlled slug:
+    //   hylotelephium — showy stonecrop, the plant sold as "Sedum spectabile" (Autumn Fire), zone 3.
+    //                   Minted by migrations/v5-frostband-001, which re-points that one cultivar off
+    //                   `sedum` by id. `sedum` itself stays UNCERTAIN: what is left under it is tender.
+    //   horseweed     — Erigeron canadensis, a native annual weed whose rosettes overwinter to zone 3.
+    //                   It already had a crop type of its own (minted 2026-09-07) and was never banded.
+    'hylotelephium', 'horseweed',
   ],
 });
 
 // DELIBERATELY UNMAPPED. These fall through to `unknown` (counted in the tender band, reported separately)
 // rather than being guessed. Documented so a future reader knows the omission is a decision, not a gap.
 //   sedum   — genus spans hardy stonecrop AND tender species; the two LIVE rows are Sedum adolphii (tender),
-//             so a slug-level "hardy" guess would have been WRONG in prod today.
+//             so a slug-level "hardy" guess would have been WRONG in prod today. The hardy one that turned
+//             up later (Autumn Fire, a Hylotelephium) was moved to its own `hylotelephium` slug instead
+//             (BUG-STABLEUNKNOWNSLUGS-001); banding `sedum` hardy would have silenced both S. adolphii.
 //   cactus / succulent — generic buckets; live rows are tender (Gymnocalycium, Graptosedum, Pachyphytum,
-//             Echeveria agavoides) but hardy Opuntia/Sempervivum would share the same slug.
+//             Echeveria agavoides) but hardy Opuntia/Sempervivum would share the same slug. A hardy one
+//             gets its own slug, as `sempervivum` and `hylotelephium` did — never a hardy bucket.
 //   hibiscus — tropical (tender) and H. moscheutos (hardy) share the slug; live row is the tender
 //             'Mahogany Splendor' (H. acetosella).
 //   bay / rosemary — zone-8-ish woody herbs: they SURVIVE a first frost (so not "tender" in this feature's
@@ -291,6 +311,7 @@ const CROP_LABELS = Object.freeze({
   four_o_clock: "four o'clocks", morning_glory: 'morning glories', helichrysum: 'helichrysum',
   borage: 'borage', thunbergia: 'thunbergia', cobaea: 'cobaea', torenia: 'torenia',
   bitter_melon: 'bitter melon', cucamelon: 'cucamelons', luffa: 'luffa', pineapple: 'pineapple',
+  pineapple_sage: 'pineapple sage',
 });
 function cropLabel(slug) {
   if (!slug) return 'unclassified';
