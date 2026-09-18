@@ -169,6 +169,13 @@ post:
   # instead. Recorded in not_harvest_tracked.slugs AND in the copied list in src/lib/harvestTracked.js
   # in the same change — the horseweed registration updated only this file and the JSON and needed a
   # follow-up commit to sync the copy. Projection untouched (nothing added to by_crop_type).
+  #
+  # 2026-09-18 (BUG-STABLEUNKNOWNSLUGS-001): hylotelephium added BEFORE it exists. It is minted with a
+  # NULL harvest_habit by migrations/v5-frostband-001 (Autumn Fire, a hardy showy stonecrop, moved off
+  # `sedum` so the frost alert can band it hardy), and it carries over sedum's no-harvest decision
+  # unchanged. Listing it here first is what keeps that apply from turning this gate red on the next
+  # run, the lamb_s_ear failure above; a slug in NOT IN that does not exist yet excuses nothing.
+  # Recorded in not_harvest_tracked.slugs and src/lib/harvestTracked.js in the same change.
   - name: post_every_null_habit_is_a_recorded_decision
     sql: |
       SELECT count(*) FROM public.crop_types c
@@ -190,7 +197,7 @@ post:
            'radish','raspberry','rhubarb','rose','sedum','sempervivum','sour_cherry','spider_plant',
            'spinach','stock','succulent','summer_savory','sunflower','thunbergia','torenia',
            'tradescantia','turnip','tweedia',
-           'horseweed',
+           'horseweed','hylotelephium',
            'vietnamese_coriander','viola','yarrow','yogurt')
     expect: scalar_eq
     value: 0
