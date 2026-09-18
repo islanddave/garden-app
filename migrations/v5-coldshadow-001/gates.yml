@@ -1,0 +1,235 @@
+# gates.yml
+# v5-coldshadow-001 — BUG-COLDPROFILESHADOWSBUNDLED-001. Adds the `cold` key to two cultivar
+# care_profile rows (Graptosedum, Pachyphytum) with the value the bundled cadence data carries. Data-only.
+#
+# STATUS AT AUTHORING (2026-09-18): AUTHORED, NOT APPLIED on staging or prod.
+#
+# SEQUENCING — README.md. Per environment, staging first:
+#   --phase pre -> apply 0a -> --phase post
+# then `gate_runner.py --all --phase post --continuous-only` on BOTH envs.
+# Pushing this directory before the apply cannot red gate-invariants.yml: the one continuous post gate
+# self-arms on this migration's schema_version row. Measured read-only on prod at authoring.
+#
+# GATE CLASSIFICATION (decided at authoring, not after the first false red)
+#   * Standing invariant (continuous, self-armed): the failure shape this migration exists to undo —
+#     a database profile adopted by the engine for one of these two cultivars that no longer yields a
+#     card at 40F (the key dropped again by a future whole-profile backfill, a hardy clone, a lowered
+#     threshold, or a leaf-scope override). ONE gate, read through v_resolved_care, because that view
+#     is what the daily-plan handler selects: judging the view covers the cultivar row AND any leaf
+#     override with one assertion. A floor, not an equality: a higher threshold still cards at 40F
+#     (more protective), a lower one breaks Dave's decision.
+#   * Apply-window receipts (continuous: false): the exact value 0a wrote, the single-key method, and the
+#     engine's view of the two plantings. A later, deliberate edit of either profile is not a regression.
+#   * Identity receipts and every receipt naming a row id are env: prod. The ids were read on prod; this
+#     lane was cleared to read prod only, so whether staging carries these rows is unverified. 0a is
+#     id-keyed and guarded, so where they are absent it matches nothing, the safe direction, and the
+#     standing gate has no population there.
+#   * No gate names a column this migration adds (it adds none), so every gate parses on an unapplied
+#     database.
+#
+# NO `sweep` PHASE: nothing is constrained, so there is no predicate that must hold before the apply.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-coldshadow-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_graptosedum_cultivar_is_the_row_read_at_authoring
+    env: prod
+    note: >
+      Identity receipt for the cultivar whose care profile 0a edits. Read on prod 2026-09-18: variety row
+      "Graptosedum", typed succulent, no genus recorded, live; one planting, in the Stable. The name is
+      checked here once, as a receipt; it is never the selector.
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = 'f4919a6f-eb7e-4c03-bc0f-b158f8ef51fd'
+         AND name = 'Graptosedum' AND crop_type_slug = 'succulent' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_pachyphytum_cultivar_is_the_row_read_at_authoring
+    env: prod
+    note: >
+      Identity receipt. Read on prod 2026-09-18: variety row "Pachyphytum", typed succulent, no genus
+      recorded, live; one planting, in the Stable.
+    sql: |
+      SELECT 1 FROM public.plant_varieties
+       WHERE id = 'b3666254-9b71-478b-bf9e-2f2bb97dd8a9'
+         AND name = 'Pachyphytum' AND crop_type_slug = 'succulent' AND deleted_at IS NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_graptosedum_profile_is_the_backfill_clone_without_cold
+    env: prod
+    note: >
+      The exact starting state 0a matches: the cultivar row written by cadence-backfill-20260823, with no
+      `cold` key, byte-identical to what was reviewed (md5 of the whole profile, read on prod 2026-09-18).
+      If this fails the row changed since authoring: re-read it before applying. A cold key already
+      present makes 0a match nothing; any other change would ride along under the post md5 receipt and
+      turn it red.
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE id = 'bdbf05dd-0239-4ac0-b0d1-b0cbc816a62c'
+         AND scope = 'cultivar' AND scope_id = 'f4919a6f-eb7e-4c03-bc0f-b158f8ef51fd'
+         AND NOT (profile ? 'cold')
+         AND profile->>'_source' = 'cadence-backfill-20260823'
+         AND md5(profile::text) = '5a9cf94b4257eaed1cbf17042cc9387a'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_pachyphytum_profile_is_the_backfill_clone_without_cold
+    env: prod
+    note: >
+      As above, for Pachyphytum. The two rows are byte-identical clones of the succulent baseline, so the
+      md5 is the same.
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE id = '5a179436-7feb-4e3d-9f29-bbf5272b9414'
+         AND scope = 'cultivar' AND scope_id = 'b3666254-9b71-478b-bf9e-2f2bb97dd8a9'
+         AND NOT (profile ? 'cold')
+         AND profile->>'_source' = 'cadence-backfill-20260823'
+         AND md5(profile::text) = '5a9cf94b4257eaed1cbf17042cc9387a'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_no_leaf_override_carries_cold
+    note: >
+      v_resolved_care merges system || cultivar || leaf, right wins. A leaf-scope row carrying its own
+      `cold` on a planting of either cultivar would override what 0a writes on the cultivar row, so the
+      fix would not reach that planting. None exists at authoring; if one appears, stop and decide which
+      value is meant before applying. Vacuous where the cultivars are absent.
+    sql: |
+      SELECT lo.id, p.name
+        FROM public.care_profile lo
+        JOIN public.plants p ON p.id = lo.scope_id
+       WHERE lo.scope = 'leaf'
+         AND p.variety_id IN ('f4919a6f-eb7e-4c03-bc0f-b158f8ef51fd', 'b3666254-9b71-478b-bf9e-2f2bb97dd8a9')
+         AND p.deleted_at IS NULL
+         AND lo.profile ? 'cold'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_engine_adopts_a_profile_without_cold
+    env: prod
+    note: >
+      The premise, as the engine sees it: both plantings adopt their cultivar profile (cadence_scopes
+      {cultivar}, so resolveCadence returns it whole) and it carries no `cold`. If this fails, the defect
+      is gone or has changed shape — the bundled threshold may already reach the engine — so find out why
+      before applying.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM public.v_resolved_care vrc
+       WHERE vrc.leaf_id IN ('931f80a6-9262-483f-9a38-e1a98144194a', 'fdeb1317-6b11-4ac9-8289-75f3ac758a56')
+         AND vrc.cadence_scopes = ARRAY['cultivar']
+         AND NOT (vrc.resolved_profile ? 'cold')
+    expect: rowcount_eq
+    value: 2
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-coldshadow-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANT (continuous, self-armed) ────────────────────────────────────────────────────
+
+  - name: post_no_db_profile_shadows_the_40F_card
+    note: >
+      Dave's decision (2026-09-18) as an invariant: every live planting of Graptosedum or Pachyphytum whose
+      care comes from a database profile gets a bring-inside card at 40F. Read through v_resolved_care, the
+      view the daily-plan handler selects, so a leaf-scope override is judged too. Only plantings with a
+      non-empty cadence_scopes are judged, because only those adopt the database profile whole; the others
+      resolve the bundled entry, which lambda/daily-plan/coldshadow.test.js pins at 40F. Returns one row
+      per offending planting. `IS NOT TRUE` so an ABSENT cold block (NULL) is a finding, not a pass — that
+      absence is the defect this undoes. Numeric cast only under jsonb_typeof = number, so an odd value
+      cannot ERROR the gate. Self-armed: vacuous until the stamp exists.
+    sql: |
+      SELECT p.id, p.name, vrc.resolved_profile->'cold' AS cold
+        FROM public.plants p
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = p.id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-coldshadow-001')
+         AND p.variety_id IN ('f4919a6f-eb7e-4c03-bc0f-b158f8ef51fd', 'b3666254-9b71-478b-bf9e-2f2bb97dd8a9')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND cardinality(vrc.cadence_scopes) > 0
+         AND (    vrc.resolved_profile->'cold'->'tender' = 'true'::jsonb
+              AND CASE WHEN jsonb_typeof(vrc.resolved_profile->'cold'->'protect_below_F') = 'number'
+                       THEN (vrc.resolved_profile->'cold'->>'protect_below_F')::numeric >= 40
+                       ELSE false END
+             ) IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ─────────────────────────────────────────────────────
+
+  - name: post_graptosedum_cold_is_the_bundled_value
+    env: prod
+    continuous: false
+    note: >
+      The only positive gate that can tell "wrote the key" from "matched the row" (jsonb_set with
+      create_missing false would match and write nothing). The value is cadence-data-v2.json
+      by_variety["Graptosedum"].cold; coldshadow.test.js fails if this literal drifts from it.
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE id = 'bdbf05dd-0239-4ac0-b0d1-b0cbc816a62c'
+         AND scope = 'cultivar' AND scope_id = 'f4919a6f-eb7e-4c03-bc0f-b158f8ef51fd'
+         AND profile->'cold' = '{"tender": true, "protect_below_F": 40}'::jsonb
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_pachyphytum_cold_is_the_bundled_value
+    env: prod
+    continuous: false
+    note: >
+      As above; the value is cadence-data-v2.json by_variety["Pachyphytum"].cold.
+    sql: |
+      SELECT 1 FROM public.care_profile
+       WHERE id = '5a179436-7feb-4e3d-9f29-bbf5272b9414'
+         AND scope = 'cultivar' AND scope_id = 'b3666254-9b71-478b-bf9e-2f2bb97dd8a9'
+         AND profile->'cold' = '{"tender": true, "protect_below_F": 40}'::jsonb
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_cold_fix_was_single_key_not_a_full_replace
+    env: prod
+    continuous: false
+    note: >
+      THE METHOD GUARD (v5-heatrespcabbage-001). Each corrected row has exactly one key more than before (14)
+      and, with that key taken away, is byte-identical to the row reviewed at authoring: md5 of the profile
+      minus `cold` equals the pre gates' md5 of the whole profile. A whole-object rewrite — even one that
+      carries the same `cold` — changes that hash; so does dropping the _source marker the seededgate
+      resolver reads.
+    sql: |
+      SELECT cp.id
+        FROM public.care_profile cp
+       WHERE cp.id IN ('bdbf05dd-0239-4ac0-b0d1-b0cbc816a62c', '5a179436-7feb-4e3d-9f29-bbf5272b9414')
+         AND (SELECT count(*) FROM jsonb_object_keys(cp.profile)) = 14
+         AND md5((cp.profile - 'cold')::text) = '5a9cf94b4257eaed1cbf17042cc9387a'
+         AND cp.profile->>'_source' = 'cadence-backfill-20260823'
+    expect: rowcount_eq
+    value: 2
+
+  - name: post_engine_view_of_both_plantings_carries_the_cold_block
+    env: prod
+    continuous: false
+    note: >
+      End to end, as the handler reads it: both plantings still adopt their cultivar profile (cadence_scopes
+      {cultivar}, so the watering the engine computes is unchanged — 14 days in a container) and the
+      resolved profile now carries the corrected cold block. The receipt that the fix reaches the engine
+      rather than stopping at the row.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM public.v_resolved_care vrc
+       WHERE vrc.leaf_id IN ('931f80a6-9262-483f-9a38-e1a98144194a', 'fdeb1317-6b11-4ac9-8289-75f3ac758a56')
+         AND vrc.cadence_scopes = ARRAY['cultivar']
+         AND vrc.resolved_profile->'cold' = CASE vrc.leaf_id
+               WHEN '931f80a6-9262-483f-9a38-e1a98144194a'::uuid THEN '{"tender": true, "protect_below_F": 40}'::jsonb
+               WHEN 'fdeb1317-6b11-4ac9-8289-75f3ac758a56'::uuid THEN '{"tender": true, "protect_below_F": 40}'::jsonb
+             END
+         AND vrc.resolved_profile->>'water_interval_days_container' = '14'
+    expect: rowcount_eq
+    value: 2
