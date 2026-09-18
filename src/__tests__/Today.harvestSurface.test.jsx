@@ -108,14 +108,15 @@ describe('Today composition (panel Q1, re-anchored post-BD-008)', () => {
     await waitFor(() => expect(lead.textContent).toMatch(/^Sow Winter Density by /))
   })
 
-  it('keeps a /sow door in the lead region when the engine yields no content', async () => {
+  // V5-SEEDSTAB-001 — the door opens Seeds › Sow now (/seeds?view=sow), the list /sow used to be.
+  it('keeps a Sow now door in the lead region when the engine yields no content', async () => {
     engineState.closing = []
     wire({ sowItems: [{ variety_name: 'X' }] })
     render(<Today />)
     await screen.findByRole('region', { name: /Worth checking soon/i })
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(SOW))
     const lead = screen.getByTestId('cultivation-lead')
-    expect(lead.getAttribute('href')).toBe('/sow')
+    expect(lead.getAttribute('href')).toBe('/seeds?view=sow')
     // Still invents no cue — the engine said nothing, so the row says only where it goes.
     expect(lead.textContent).toBe('Sow now')
   })
