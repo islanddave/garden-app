@@ -62,7 +62,8 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 // slug has a decision, and every decision frostClass holds is a live slug. That second direction is
 // what reds when a slug is dropped from this list or a band carries a typo. To re-pin: run the query,
 // paste the result, move any slug of category 'non_plant_food' into LIVE_NON_PLANT_FOOD as well, and
-// clear MINTED_NOT_YET_ON_PROD of anything that has landed.
+// clear MINTED_NOT_YET_ON_PROD of anything that has landed. Mutation log for these guards:
+// lambda/daily-plan/slugbands.test.js (M4, M5, M13-M15, M19 are this file's).
 const LIVE_DOMAIN = ('aloe althaea apple apricot artichoke arugula asparagus avocado basil bay bean bee_balm beet begonia '
   + 'bitter_melon black_raspberry blackberry blackberry_lily blanketflower blueberry bok_choy borage bread '
   + 'broccoli brussels_sprouts bunching_onion butter cabbage cactus calibrachoa carnation carrot celery chamomile '

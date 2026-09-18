@@ -13,7 +13,36 @@
 // What moves for Dave: Goldenrod, Lamb's Ear and Summer Pastels Yarrow leave the frost email, where each
 // was counted as "unclassified"; Penstemon stays named as "penstemons" (its care profile's cold.tender,
 // through the cadence promotion); Hoya Obovata is in the heated House and gets neither channel, before
-// or after. Replay of all 209 live plantings: 15 unclassified before, 12 after, no card added or lost.
+// or after. Replayed 2026-09-18 over all 209 live plantings through handler.frostForSpace and
+// generatePlan: 15 unclassified before, 12 after; no cold card added or lost at any low from 60F to 20F.
+//
+// MUTATION LOG — 2026-09-18, lane-slugbands-20260918. Each applied to ONE file; the five frost test files
+// run (slugUniverseConsistency, slugbands, frostClass, frostband, coldcardreachable: 217 green at
+// baseline); RED observed; file restored byte-for-byte (sha256 checked), 217 green again.
+//   frostClass.js
+//   M1  goldenrod dropped from hardy                        -> 7 RED (coverage guard, pin, one-decision, email x4)
+//   M2  goldenrod moved hardy -> tender                     -> 5 RED (pin, email x4)
+//   M3  hoya moved tropical -> hardy, cold profile kept     -> 6 RED (pin, email x3, agreement, stray-profile guard)
+//   M6  bread banded hardy                                  -> 3 RED (food-class guard, pin, one-decision)
+//   M7  goldenrod parked in NON_PLANT_FOOD_SLUGS            -> 6 RED (category equality, pin, email x4)
+//   M8  band typo 'yarow'                                   -> 8 RED (both guard directions, pin, one-decision, email x4)
+//   M9  hoya cold profile removed                           -> 3 RED (cold-profile coverage, pin, card)
+//   M10 hoya cold profile 50F -> 40F                        -> 2 RED (pin, card)
+//   M11 penstemon banded hardy                              -> 6 RED (pin, email x4, agreement)
+//   M12 corn label dropped                                  -> 1 RED
+//   M16 frostClassForSlug cadence promotion removed         -> 5 RED (2 here: Penstemon falls to "unclassified")
+//   M17 snapdragon hardy -> light_frost_tolerant            -> 1 RED (pin)
+//   M18 corn tender -> hardy                                -> 1 RED (pin)
+//   M20 chamomile light_frost_tolerant -> hardy             -> 1 RED (pin)
+//   src/__tests__/slugUniverseConsistency.test.js
+//   M4  hoya dropped from LIVE_DOMAIN                       -> 1 RED (reverse direction)
+//   M5  yogurt dropped from LIVE_DOMAIN                     -> 2 RED (reverse direction, category equality)
+//   M13 a live slug parked in MINTED_NOT_YET_ON_PROD        -> 1 RED
+//   M13b a slug no migration mints parked there             -> 1 RED
+//   M14 coverage exempt set without NON_PLANT_FOOD_SLUGS    -> 1 RED (names the seven food classes)
+//   M15 MINTED_NOT_YET_ON_PROD emptied                      -> 1 RED (reverse direction)
+//   M19 'eggs' in LIVE_NON_PLANT_FOOD with no decision      -> 1 RED (category equality)
+// The unplanted slugs (M17, M18, M20) are held by their pin alone: no planting exercises them yet.
 import { describe, it, expect } from 'vitest';
 import engine from './engine.js';
 import cad from './cadence-data-v2.json';
