@@ -153,6 +153,18 @@ describe('Seeds — the default view is settled once, in the URL, before a body 
   })
 })
 
+describe('Seeds — a bare /seeds while the page is already mounted', () => {
+  it('More → Seeds from inside Seeds settles the view again instead of loading forever', async () => {
+    seedRows = [BOUGHT]
+    const router = mount(['/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByTestId('sow-now-view')).toBeTruthy())
+    // The More row's href is the bare path; the page stays mounted across it.
+    await act(async () => { router.navigate('/seeds') })
+    await waitFor(() => expect(search(router)).toBe('?view=mine'))
+    await waitFor(() => expect(screen.getByTestId('my-seeds-view')).toBeTruthy())
+  })
+})
+
 describe('Seeds — switching views', () => {
   it('writes ?view with REPLACE, so after three switches one Back leaves the page', async () => {
     seedRows = [BOUGHT]

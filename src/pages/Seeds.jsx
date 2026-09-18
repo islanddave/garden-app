@@ -64,13 +64,13 @@ export default function Seeds() {
   const view = resolveView(params.get('view'))
   const store = useSeedItems()
 
-  // Settle a bare (or unrecognised) view once the rows are in, before any body mounts.
-  const settledRef = useRef(false)
+  // Settle a bare (or unrecognised) view once the rows are in, before any body mounts. Keyed on the
+  // URL, not on the mount: More → Seeds while already on Seeds lands on a bare /seeds with this page
+  // still mounted, and a once-per-mount guard left that visit on the loading state forever.
   useEffect(() => {
-    if (view || settledRef.current) return
+    if (view) return
     const next = defaultSeedsView(store.items, store.error)
     if (!next) return
-    settledRef.current = true
     setParams((prev) => {
       const p = new URLSearchParams(prev)
       p.set('view', next)
