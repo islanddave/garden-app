@@ -291,7 +291,10 @@ describe('D6 bands — the per-crop-type threshold table', () => {
     for (const s of TENDER_SLUGS) expect(BAND_BY_SLUG[s]).not.toBe('hardy');
   });
 
-  it('the map still covers the WHOLE live crop_type_slug domain except the deliberate 8', () => {
+  // Title said "the deliberate 8" until OPS-SLUGUNIVERSESTALE-001 made penstemon the ninth UNCERTAIN slug.
+  // This domain is the NARROWER 2026-08-04 plant_varieties pin; the crop_types-wide guard, re-pinned
+  // 2026-09-18, is src/__tests__/slugUniverseConsistency.test.js.
+  it('the map still covers the WHOLE live crop_type_slug domain except the deliberate UNCERTAIN_SLUGS', () => {
     const gaps = LIVE_DOMAIN.filter((s) => !BAND_BY_SLUG[s] && !UNCERTAIN_SLUGS.includes(s));
     expect(gaps).toEqual([]);
   });
