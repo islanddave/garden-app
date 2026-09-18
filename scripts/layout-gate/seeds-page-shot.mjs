@@ -36,8 +36,8 @@
 // "height <= 1.5 x its line-height" would fail every row that carries a chip while it sits on one
 // line. The one-line height used here is the TALLEST ONE-LINE BOX AMONG ITS ITEMS (each item's used
 // line-height — `normal` resolved to the height of its own text run — plus its padding and border).
-// And because a wrap INSIDE the facts span would raise the row by only ~6px (well under 1.5x a
-// chip), the ratio is paired with a direct count of visual lines: text runs clustered by vertical
+// And because a two-line wrap INSIDE the facts span takes a chip row only from 22px to 30px (x1.36,
+// under 1.5), the ratio is paired with a direct count of visual lines: text runs clustered by vertical
 // overlap. Either one alone has a hole; together they catch a flex-wrap and a text wrap.
 //
 // WHY IT CANNOT BE A VITEST TEST: jsdom returns 0 from every getBoundingClientRect(). The Seeds
