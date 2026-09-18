@@ -28,7 +28,7 @@ const planting = (id, slug, extra = {}) => withCoverFlags({
 const PLANTINGS = [
   planting('p1', 'pepper'), planting('p2', 'pepper'), planting('p3', 'tomato'),
   planting('p4', 'basil'), planting('p5', 'kale', { container_type: 'in_ground' }),
-  planting('p6', 'pepper', { covered: true }),          // indoors — D6 says do not name it
+  planting('p6', 'pepper', { covered: true, heated_resolved: true }),   // in the heated House — D6 says do not name it
 ];
 
 // A pg stub that routes by SQL text and records what was written.
@@ -222,7 +222,7 @@ describe('G3 run identity — only the 15:30 ET pass may evaluate', () => {
   });
 });
 
-describe('D6 at the seam — one coalesced alert, covered plantings excluded', () => {
+describe('D6 at the seam — one coalesced alert, heated-House plantings excluded', () => {
   it('sends ONE message naming the crop types, not one message per crop', async () => {
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -234,12 +234,32 @@ describe('D6 at the seam — one coalesced alert, covered plantings excluded', (
     expect(message).toMatch(/basil \(1\)/);
   });
 
-  it('the covered pepper is excluded from the count — 2 named, not 3', async () => {
+  it('the pepper in the heated House is excluded from the count — 2 named, not 3', async () => {
     vi.stubEnv('FROST_ALERT_ENABLED', 'true');
     vi.spyOn(console, 'log').mockImplementation(() => {});
     const { publishAlert } = await drive({ tonightLow: 30 });
     expect(publishAlert.mock.calls[0][0].message).toMatch(/peppers \(2\)/);
     expect(publishAlert.mock.calls[0][0].message).not.toMatch(/peppers \(3\)/);
+  });
+
+  it('BUG-FROSTALERTSTABLE-001: a plant in the covered but UNHEATED Stable IS named', async () => {
+    // Through the real handler: the row reaches summarize() exactly as the plantings query shapes it,
+    // with frost_covered_resolved TRUE (the Stable is covered) and heated_resolved FALSE. Before the
+    // fix the covered flag alone dropped it, so a Stable-only garden got no frost alert at all.
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const plantings = [
+      planting('s1', 'echeveria', { covered: true, heated_resolved: false }),
+      planting('s2', 'spider_plant', { covered: true, heated_resolved: false }),
+      planting('h1', 'pothos', { covered: true, heated_resolved: true }),
+    ];
+    expect(plantings[0].frost_covered_resolved).toBe(true);
+    const { publishAlert } = await drive({ tonightLow: 30, pgOpts: { plantings } });
+    expect(publishAlert).toHaveBeenCalledTimes(1);
+    const { message } = publishAlert.mock.calls[0][0];
+    expect(message).toMatch(/echeveria \(1\)/);
+    expect(message).toMatch(/spider plants \(1\)/);
+    expect(message).not.toMatch(/pothos/);
   });
 
   it('the hardy kale is never named', async () => {
@@ -391,7 +411,7 @@ describe('§3-8 observability — logged on EVERY evaluation, alert or not', () 
     await drive({ tonightLow: 60, forecastLows: [58, 59, 60] });
     const ev = logLines(spy).find((l) => l.msg === 'frost-eval');
     expect(ev).toMatchObject({ alert: false, tier: null, tonightLowF: 60, season: true, space: SPACE, plan_date: DATE });
-    expect(ev.cropTypesAtRisk).toBe(3);          // pepper, tomato, basil (kale hardy, covered pepper excluded)
+    expect(ev.cropTypesAtRisk).toBe(3);          // pepper, tomato, basil (kale hardy, heated-House pepper excluded)
     expect(ev.coveredExcluded).toBe(1);
     expect(ev.thresholds.IMMINENT_LOW_F).toBe(38);
   });

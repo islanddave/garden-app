@@ -935,16 +935,17 @@ function broughtInside(p){
 // V5-COLDCARDREACHABLE-001 — true when the coalesced frost alert (handler.js -> frostClass.summarize)
 // names this planting on a frost night. summarize drops exactly two things, and this mirrors both
 // through frostClass's own exports so the channels cannot drift: a slug banded `hardy`, and a planting
-// under cover. Those are the two in-ground cases that keep their card — a raised bed in the Stable or
-// under a tunnel is `covered` and so absent from the alert, and a hardy-slugged planting with a tender
-// cold profile is a data contradiction the alert resolves toward hardy. Dormant needs no clause: the
-// engine skips it before coldFor, and the handler filters it before summarize.
+// in a HEATED location. BUG-FROSTALERTSTABLE-001 (Dave 2026-09-18) moved the second from `covered` to
+// `heated`: a bed in the unheated Stable or under a tunnel is now NAMED by the alert, so its in-ground
+// card is suppressed like any other alerted bed. A hardy-slugged planting with a tender cold profile is
+// a data contradiction the alert resolves toward hardy, so that one keeps its card. Dormant needs no
+// clause: the engine skips it before coldFor, and the handler filters it before summarize.
 // resolvedBands is passed so this never reads the FROST_* env overrides: an invalid one (unknown band,
 // non-numeric value) throws inside resolveBandThresholds, and that must stay confined to the 15:30 frost
 // run, not every run's cold pass. The class verdict does not depend on thresholds, so nothing is lost.
 function frostAlertNames(p){
   if(fc.frostClassForSlug(p.crop_type_slug, {resolvedBands:fc.BAND_THRESHOLDS}).class==='hardy') return false;
-  return !fc.isCoveredDefault(p);
+  return !fc.isHeatedDefault(p);
 }
 
 // ── DRG-NOCALWATER-001 — dormancy/growth-cycle watering suppression ──
