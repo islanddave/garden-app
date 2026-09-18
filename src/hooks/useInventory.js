@@ -18,8 +18,9 @@
 //     durables update `quantity` (P4, V1.2a-3 Increment C / PR-C1, 2026-05-18).
 //   - lowStockCount = consumables where quantity_on_hand <= reorder_threshold AND threshold is set.
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
+import { createQuantityAdjuster } from '../lib/quantityAdjuster.js'
 
 const TOAST_MS = 5000
 
@@ -152,61 +153,20 @@ export function useInventory() {
   // one session, which is the inventory size at worst.
   const putSeqRef = useRef(new Map())
 
-  const adjustQuantity = useCallback(async (id, delta) => {
-    const current = itemsRef.current.find(i => i.id === id)
-    if (!current) return
-    // Type-aware column selection (P4, 2026-05-18): consumables track quantity_on_hand,
-    // durables track quantity. Both are numeric(N,3) on the server.
-    const col = current.type === 'durable' ? 'quantity' : 'quantity_on_hand'
-    const prevValue = Number(current[col] ?? 0)
-    const newValue = Math.max(0, prevValue + Number(delta))
-    if (newValue === prevValue) return
-
-    // BUG-INVPUTREORDER-001 — claim this write's place in the order BEFORE issuing it, so the
-    // comparison below is against every write issued after this one, whenever they land.
-    const seq = (putSeqRef.current.get(id) ?? 0) + 1
-    putSeqRef.current.set(id, seq)
-    const superseded = () => putSeqRef.current.get(id) !== seq
-
-    // Optimistic update. Through commitItems, so a second tap landing in this same commit reads
-    // newValue rather than the pre-tap row and increments from it.
-    commitItems(prev => prev.map(i => i.id === id ? { ...i, [col]: newValue } : i))
-
-    try {
-      const updated = await fetch('/api/inventory-items/' + id, {
-        method: 'PUT',
-        body: JSON.stringify({ ...current, [col]: newValue }),
-      })
-      // A newer tap has been issued since; its optimistic value is on screen and its own response is
-      // authoritative. Returning here drops BOTH the commit and the toast — a toast naming this
-      // request's number would be as wrong as the row it would have written, and its undo closure
-      // would reverse a delta the user can no longer see.
-      if (superseded()) return
-      commitItems(prev => prev.map(i => i.id === id ? updated : i))
-      showToast({
-        msg: `Quantity changed to ${newValue}`,
-        onUndo: () => {
-          // Reverse delta, re-entering adjustQuantity. `adjustQuantity` here resolves to THIS
-          // render's instance, so the reverse delta is only correct because the `current`
-          // lookup at the top of this callback reads itemsRef.current (the post-change row)
-          // rather than this closure's `items` (the pre-change row). Reading the closure
-          // applied the delta twice — BUG-INVUNDOQTY-001, measured 2 -> +1 -> 3 -> undo -> 1,
-          // and persisted by the PUT above.
-          adjustQuantity(id, prevValue - newValue)
-        },
-      })
-    } catch (err) {
-      // BUG-INVPUTREORDER-001 — the error path needs the SAME guard, and it is the more damaging of
-      // the two. `prevValue` is this request's pre-tap number; reverting to it after a later tap has
-      // already moved the row would not merely show a stale value, it would discard a change the
-      // user made and can still see. A failed superseded write is the newer request's problem: if it
-      // also fails it will revert to ITS own prevValue, which is the correct place to land.
-      if (superseded()) return
-      // Revert optimistic change
-      commitItems(prev => prev.map(i => i.id === id ? { ...i, [col]: prevValue } : i))
-      showToast({ msg: "Couldn't save — please try again" })
-    }
-  }, [fetch, showToast, commitItems])
+  // V5-SEEDSTAB-001 — the stepper itself now lives in lib/quantityAdjuster.js, so My seeds can run
+  // the same logic over its own store. Both guards above travel with it; this hook supplies the
+  // three things it no longer owns — the row as it is NOW (itemsRef), the commit that assigns that
+  // ref synchronously (commitItems), and its own toast. The body and the success commit are the
+  // shipped defaults, so this page's write is byte-identical to what it was.
+  const getRow = useCallback(id => itemsRef.current.find(i => i.id === id), [])
+  const commitRow = useCallback(
+    (id, next) => commitItems(prev => prev.map(i => (i.id === id ? next(i) : i))),
+    [commitItems],
+  )
+  const adjustQuantity = useMemo(
+    () => createQuantityAdjuster({ fetch, getRow, commitRow, showToast, putSeq: putSeqRef.current }),
+    [fetch, getRow, commitRow, showToast],
+  )
 
   const deleteItem = useCallback(async (id) => {
     try {

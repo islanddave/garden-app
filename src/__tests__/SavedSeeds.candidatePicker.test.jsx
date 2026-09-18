@@ -27,7 +27,9 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: (...a) => fetchSpy(...a),
 }))
 vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  Link: ({ children, to, state, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  // V5-SEEDSTAB-001 — the track sheet's "Add the packet" is a SheetRowLink now, which navigates.
+  useNavigate: () => () => {},
 }))
 
 import SavedSeeds from '../pages/SavedSeeds.jsx'
@@ -47,13 +49,21 @@ const packet = (over = {}) => ({
 // same rendered name, differing in count and vendor. Two of them (dup-c / dup-d) are identical in
 // EVERY recorded fact, which is the residue the facts line cannot separate — the case the ordinal
 // exists for, and the one that would otherwise leave the criterion with an exception.
+// V5-SEEDSTAB-001 — the vendor is the source REGISTRY row (`source_id`), not the free-text `source`
+// column, which on prod holds order references. Each packet here carries an order reference too, so
+// the tests below can prove the facts line names the shop and never the order text.
+const SOURCES = [
+  { id: 'src-fedco', name: 'Fedco' },
+  { id: 'src-johnnys', name: 'Johnny’s' },
+  { id: 'src-baker', name: 'Baker Creek' },
+]
 const COLLIDING = [
-  packet({ id: 'dup-a', quantity_on_hand: 3, source: 'Fedco' }),
-  packet({ id: 'dup-b', quantity_on_hand: 1, source: 'Johnny’s' }),
-  packet({ id: 'dup-c', quantity_on_hand: 2, source: 'Baker Creek', purchase_date: '2026-01-14' }),
-  packet({ id: 'dup-d', quantity_on_hand: 2, source: 'Baker Creek', purchase_date: '2026-01-14' }),
+  packet({ id: 'dup-a', quantity_on_hand: 3, source_id: 'src-fedco', source: 'Order #4411' }),
+  packet({ id: 'dup-b', quantity_on_hand: 1, source_id: 'src-johnnys', source: 'Order #1200' }),
+  packet({ id: 'dup-c', quantity_on_hand: 2, source_id: 'src-baker', purchase_date: '2026-01-14' }),
+  packet({ id: 'dup-d', quantity_on_hand: 2, source_id: 'src-baker', purchase_date: '2026-01-14' }),
   packet({ id: 'other', name: 'Cherokee Purple', variety_name: 'Cherokee Purple',
-           quantity_on_hand: 5, source: 'Fedco' }),
+           quantity_on_hand: 5, source_id: 'src-fedco' }),
 ]
 
 const mount = async (items) => {
@@ -61,6 +71,7 @@ const mount = async (items) => {
     const p = String(path)
     if (opts?.method) return Promise.resolve({ ok: true })
     if (p.startsWith('/api/plants?view=picker')) return Promise.resolve([])
+    if (p.startsWith('/api/varieties/sources')) return Promise.resolve(SOURCES)
     if (p.startsWith('/api/inventory-items')) return Promise.resolve(items)
     return Promise.resolve([])
   })
@@ -100,12 +111,16 @@ describe('BUG-SEEDCANDIDATEAMBIG-001 — no two rows in the picker read alike', 
   it('separates them on facts a person can act on — count, vendor, purchase date', async () => {
     await mount(COLLIDING)
     await openPicker()
-    const texts = rowText()
     // Not "a second line exists": the specific facts, because a disambiguator made of an opaque id
     // would satisfy distinctness and tell the user nothing about which jar to reach for.
-    expect(texts.some(t => t.includes('3 packet') && t.includes('Fedco'))).toBe(true)
+    // The vendor resolves from the registry after the sheet opens, so wait for it rather than
+    // reading the first paint.
+    await waitFor(() => expect(rowText().some(t => t.includes('3 packet') && t.includes('Fedco'))).toBe(true))
+    const texts = rowText()
     expect(texts.some(t => t.includes('1 packet') && t.includes('Johnny’s'))).toBe(true)
     expect(texts.some(t => t.includes('Jan 14, 2026'))).toBe(true)
+    // The order reference is NOT the vendor, and is never printed as one.
+    expect(texts.some(t => t.includes('Order #4411'))).toBe(false)
   })
 
   it('says so out loud when two packets are identical in every recorded fact', async () => {
@@ -122,14 +137,13 @@ describe('BUG-SEEDCANDIDATEAMBIG-001 — no two rows in the picker read alike', 
     // 60 packets over 12 cultivars, five each, with counts and vendors that repeat on purpose so
     // roughly a fifth of them are fully identical rows. If distinctness only held for hand-picked
     // inputs it would not be a property.
-    const vendors = ['Fedco', 'Baker Creek', 'Johnny’s']
     const bulk = []
     for (let c = 0; c < 12; c++) {
       for (let n = 0; n < 5; n++) {
         bulk.push(packet({
           id: `bulk-${c}-${n}`,
           name: `Cultivar ${c}`, variety_name: `Cultivar ${c}`,
-          quantity_on_hand: n % 3, source: vendors[n % 3],
+          quantity_on_hand: n % 3, source_id: SOURCES[n % 3].id,
         }))
       }
     }

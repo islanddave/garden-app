@@ -16,7 +16,7 @@
 // lot fermented and went out to dry before any of this shipped. A stage history that could only be
 // written in the present tense could not record what actually happened, so the advance form carries
 // a date field seeded to today and the Lambda accepts entered_at.
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useCachedFetch } from '../hooks/useCachedFetch.js'
@@ -24,18 +24,31 @@ import { P } from '../lib/tokens.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { Sheet, PlantingSelect, Badge } from '../components/forms'
 import FilterChipRow from '../components/forms/FilterChipRow.jsx'
-import { useCropTypes } from '../hooks/useCropTypes.js'
+import AsyncRegion from '../components/forms/AsyncRegion.jsx'
+import { useCropFacetOptions } from '../hooks/useCropFacetOptions.js'
+import { useSources } from '../hooks/useSources.js'
+import useScrollRestore from '../hooks/useScrollRestore.js'
 import Icon from '../components/Icon.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
+import SheetRowLink from '../components/SheetRowLink.jsx'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { T } from '../components/forms/formStyles.js'
 import { SEED_STAGES } from '../components/seed/seedStages.js'
+// V5-SEEDSTAB-001 — the lot vocabulary moved to a leaf module this page shares with My seeds; see
+// seedLots.js for the vendor and calendar-day fixes that landed with the move.
+import {
+  prettySlug, candidateFacts, labelCandidates, lotMeasure, elapsedLabel, fermentUrgency,
+} from '../components/seed/seedLots.js'
+import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
+import { useLotOutline, outlineStyle } from '../components/seed/useLotOutline.js'
 // SeedCountBasis alongside the sheet itself: V5-SEEDESTTOGGLE-001's control is shared by the two
 // writers of the seed-measure columns, and this page already depended on that module, so the shared
 // control adds no edge to the import graph and cannot close a cycle.
 import SaveSeedSheet, { SeedCountBasis } from '../components/planting/SaveSeedSheet.jsx'
 import { looseIncludes } from '../lib/comboboxInput.js'
-import { formatQty, formatDate, formatSeedWeight } from '../lib/format.js'
+
+// Re-exported so the suites (and scripts) that imported them from this page keep resolving.
+export { lotMeasure, labelCandidates }
 
 // Process order, and it is an ORDER not a set: "advance" means one step right, and `stored` is
 // terminal. Kept in one place so the section list, the next-stage arrow and the advance button copy
@@ -63,6 +76,9 @@ const STAGE_META = {
   stored:     { label: 'Stored',     sub: 'Dry, packeted and put away' },
 }
 const nextStage = (s) => STAGES[STAGES.indexOf(s) + 1] ?? null
+
+// useCropFacetOptions requires a referentially stable accessor; module scope is the simplest one.
+const cropSlugOf = (i) => i.crop_slug
 
 // ── BUG-SEEDZEROSOWABLE-001 — the count, asked at EVERY stage ─────────────────────────────────────
 // Dave 2026-09-02, verbatim: "ensure I can enter/update the count along the entire process. I might
@@ -186,7 +202,11 @@ const PICKER_PATH = '/api/plants?view=picker'
 // The params carry the two facts the general Add-item form would otherwise make him re-derive (a
 // seed packet is a `consumable` in category `seeds`) plus a return leg, so saving lands him back
 // HERE — where the tracking control is — instead of on the Inventory list.
-const ADD_PACKET_HREF = '/inventory/add?type=consumable&category=seeds&return=%2Fseeds%2Fsaved'
+// V5-SEEDSTAB-001 — returns to Seeds › Saved seeds, the view this page is now. Built by the shared URL
+// module rather than spelled here: the add-a-packet URL had three spellings before.
+const SAVED_VIEW_HREF = seedsHref('saved')
+const ADD_PACKET_HREF = addPacketHref(SAVED_VIEW_HREF)
+const ADD_PACKET_STATE = seedsReturnState(SAVED_VIEW_HREF)
 
 // ── BUG-SEEDCANDIDATEAMBIG-001 — the untracked-packet picker ──────────────────────────────────────
 // Measured against prod: ~260 untracked seed rows, roughly 41 phone-screens of unbroken scroll, and
@@ -208,185 +228,10 @@ const ADD_PACKET_HREF = '/inventory/add?type=consumable&category=seeds&return=%2
 // mechanism is identical, only the number is surface-specific.
 const MAX_CANDIDATES = 25
 
-// Last-resort chip label when the crop-type vocabulary has no row for a slug the packets DO carry.
-// Reachable in two real ways, so it is not defensive padding: useCropTypes resolves to an empty list
-// on any fetch failure (documented, non-fatal), and a variety can be typed to a crop_type that was
-// later renamed or scoped out of the 'garden' vocabulary. A raw `winter_squash` on a chip is worse
-// than an imperfect "Winter squash", and an unlabelled chip is worse than both.
-const prettySlug = (s) => {
-  const t = String(s ?? '').replace(/_/g, ' ').trim()
-  return t ? t[0].toUpperCase() + t.slice(1) : ''
-}
-
-// The row's first line: what the seed IS. Unchanged from the shipped behaviour.
-const candidateTitle = (i) => i.variety_name || i.name || ''
-
-// V5-SEEDQTY-001 — "how many SEEDS", as its own fact. `seed_count` is a nullable integer, so absent
-// and zero are finally different things: null is "nobody has counted this", 0 is a lot that was
-// counted and yielded nothing. Both are worth knowing before you commit a permanent stage-log row to
-// a packet, and only one of them is worth hiding — so 0 renders.
-//
-// "seeds" is a UI LABEL and never a `unit` value. inventory_items_unit_check is untouched by this
-// change on purpose: with a seed_count column in place, a `unit='seeds'` token would make two
-// encodings of one jar legal (qoh=1 packet + seed_count=185, or qoh=185 seeds) with nothing forcing
-// them to agree. The word belongs on the screen, not in the row.
-//
-// V5-SEEDCOUNTCARD-001 adds the `estimated` arm, and it is a WORD rather than a glyph. `≈` is what
-// CropWeightLine uses for an estimated harvest total, but that number sits alone in a big figure
-// where the symbol has room to be noticed; this one rides a 0.78rem line between a packet count and
-// a vendor name, where a leading `≈` is a smudge. "approx." is also the vocabulary this file already
-// uses for the concept in prose ("a vendor's `approx. 25 seeds` off the back of a packet", below) and
-// the one lambda/plants reached for when it declined to project the column at all. Spelled out, it
-// survives being read aloud and being read on a phone in a shed.
-//
-// Second parameter rather than a second helper: this label is now rendered on TWO surfaces (the
-// candidate picker and the tracked card) and a lot that is estimated on one is estimated on both.
-// Default-absent behaves exactly as before, so a caller that does not know about the flag renders
-// what it always did rather than silently asserting "hand-counted".
-const seedCountLabel = (n, estimated) => {
-  if (n == null || n === '') return ''
-  const c = Number(n)
-  if (!Number.isFinite(c)) return ''
-  const shown = formatQty(c)
-  const counted = `${shown} ${shown === '1' ? 'seed' : 'seeds'}`
-  return estimated ? `approx. ${counted}` : counted
-}
-
-// The second line, and the whole fix. Facts that actually separate two packets of one cultivar, in
-// the order they separate them: how much is in the jar, where it came from, when it was bought.
-// Absent facts are DROPPED rather than rendered as a dash — "Brandywine · — · —" is noise, and the
-// ordinal below is what covers a row with nothing left to say.
-//
-// THE SEED COUNT LEADS, and the packet count keeps its place behind it. Until V5-SEEDQTY-001 a saved
-// lot put its seed count into `quantity_on_hand` and left `unit='packet'`, so this line read
-// "185 packet" — one number wearing the wrong noun. `quantity_on_hand` means CONTAINERS again, which
-// makes the same row read "1 packet", so without a seed segment here the count Dave typed simply
-// stops being on screen. Two segments rather than one merged string because they answer two
-// questions ("how many jars" / "how much seed") and either can be absent independently.
-function candidateFacts(i) {
-  const parts = []
-  const seeds = seedCountLabel(i.seed_count, i.seed_count_estimated)
-  if (seeds) parts.push(seeds)
-  // formatSeedWeight, NEVER formatQty. formatQty is String(Math.round(n)) with no unit, so a 0.5 g
-  // lot would render as the bare "1" — a wrong number wearing no noun, next to a count. Imported
-  // from lib/format rather than re-spelled here so this page and the planting surfaces cannot start
-  // disagreeing about what a gram looks like.
-  const weight = formatSeedWeight(i.seed_weight_g)
-  if (weight) parts.push(weight)
-  const qty = formatQty(i.quantity_on_hand)
-  if (qty !== '') parts.push(i.unit ? `${qty} ${i.unit}` : qty)
-  if (i.source) parts.push(String(i.source))
-  const bought = formatDate(i.purchase_date)
-  if (bought) parts.push(bought)
-  return parts.join(' · ')
-}
-
-/**
- * V5-SEEDCOUNTCARD-001 — the same measurement, on the card of a lot that is already TRACKED. Pure,
- * exported for test.
- *
- * THE GAP THIS CLOSES. V5-SEEDQTY-001 put the count on screen in exactly one place: candidateFacts
- * above, which renders on the picker — and the picker lists UNTRACKED lots only (`seed_stage` null
- * is what makes a row a candidate). The moment a lot is tracked it leaves that list forever and
- * renders through the card below, which showed the stage, the elapsed days, the process, the parent
- * plant and no quantity of any kind. Every saved lot Dave holds is at `stored`, so on the surface he
- * actually opens, the number the stage sheet REQUIRED him to type was visible nowhere. Worse than a
- * wrong number: an absent one, on the page whose whole job is to say what a lot is.
- *
- * SAME VOCABULARY, deliberately shared rather than re-spelled. seedCountLabel and formatSeedWeight
- * are the picker's, so "185 seeds" and "0.5 g" cannot start meaning different things on two surfaces
- * one tap apart. The two segments and their order match candidateFacts for the same reason.
- *
- * `quantity_on_hand` is NOT on this line, and that is the one deliberate divergence from the picker.
- * It means CONTAINERS, and it earns its place over there because the picker's job is to tell 260
- * near-identical packets apart — "1 packet" is a disambiguator. Here there is nothing to
- * disambiguate: the card names one known lot, every saved lot reads "1 packet" after the backfill,
- * and a second number wearing a different noun beside the seed count is the exact confusion
- * V5-SEEDQTY-001 exists to end. A reader who wants it has /inventory/:id one tap away.
- *
- * Returns '' when nothing has been measured, and the caller renders no line at all — absent is
- * "nobody has counted this", never zero (a measured 0 is a real answer and DOES render).
- */
-export function lotMeasure(i) {
-  const parts = []
-  const seeds = seedCountLabel(i?.seed_count, i?.seed_count_estimated)
-  if (seeds) parts.push(seeds)
-  const weight = formatSeedWeight(i?.seed_weight_g)
-  if (weight) parts.push(weight)
-  return parts.join(' · ')
-}
-
-/**
- * Decorate the rows about to be rendered so that NO TWO READ ALIKE. Exported for test.
- *
- * The facts line separates the real prod collisions, but nothing guarantees it separates ALL of
- * them: two packets of one cultivar with the same count, the same vendor and the same purchase date
- * are identical in everything a row records. The honest answer is to SAY so rather than print the
- * same string twice, so a group that still collides gets an ordinal naming its size — the user
- * learns the list is not repeating itself, which is the actual question a duplicated row raises.
- *
- * Computed over the RENDERED rows, not over the whole untracked set: the property being kept is
- * "nothing on this screen reads the same", and it re-derives as the filter narrows.
- *
- * Two passes. The second exists because the first is not TOTAL — a vendor string that happened to
- * read like the ordinal would re-collide — and a uniqueness rule with an exception is not one. The
- * row id is the only thing guaranteed distinct, so it is the backstop, and only ever the backstop.
- */
-export function labelCandidates(rows) {
-  const base = rows.map((i) => ({ item: i, title: candidateTitle(i), facts: candidateFacts(i) }))
-  const size = new Map()
-  for (const r of base) {
-    const k = `${r.title}\n${r.facts}`
-    size.set(k, (size.get(k) ?? 0) + 1)
-  }
-
-  const nth = new Map()
-  const labelled = base.map(({ item, title, facts }) => {
-    const k = `${title}\n${facts}`
-    const total = size.get(k)
-    if (total < 2) return { item, title, detail: facts }
-    const n = (nth.get(k) ?? 0) + 1
-    nth.set(k, n)
-    const ord = `${n} of ${total} with identical details`
-    return { item, title, detail: facts ? `${facts} · ${ord}` : ord }
-  })
-
-  const used = new Set()
-  return labelled.map((r) => {
-    const full = `${r.title}\n${r.detail}`
-    if (!used.has(full)) { used.add(full); return r }
-    const tail = `#${String(r.item.id ?? '')}`
-    return { ...r, detail: r.detail ? `${r.detail} · ${tail}` : tail }
-  })
-}
-
-// Elapsed whole days, floor. Null when there is no timestamp or it does not parse. Split out of
-// elapsed() so the ferment thresholds below compare the SAME number the card renders — deriving it
-// twice is two places for the badge and the text to disagree.
-function elapsedDays(iso) {
-  if (!iso) return null
-  const then = new Date(iso)
-  if (Number.isNaN(then.getTime())) return null
-  return Math.floor((Date.now() - then.getTime()) / 86400000)
-}
-
-// Same-day reads "today" rather than "0 days", because 0 of anything looks like missing data.
-function elapsed(iso) {
-  const days = elapsedDays(iso)
-  if (days == null) return null
-  if (days <= 0) return 'today'
-  return days === 1 ? '1 day' : `${days} days`
-}
-
-// A ferment is DONE at two to four days. Past about five the seed germinates in the jar and the lot
-// is finished — not degraded, finished. Until now an eight-day ruined ferment rendered in the same
-// grey as a healthy two-day one, so the number was on screen and its meaning was not, on a page
-// whose entire job is to say what needs checking.
-//
-// `fermenting` ONLY. Drying has no equivalent cliff — a lot that has sat on a screen for three
-// weeks is dry, not spoiled — and firing this on every stage would make it background noise.
-const FERMENT_WARN_DAYS  = 4
-const FERMENT_ALARM_DAYS = 5
+// V5-SEEDSTAB-001 — prettySlug, candidateTitle, seedCountLabel, candidateFacts, lotMeasure,
+// labelCandidates, elapsedDays and fermentUrgency moved to src/components/seed/seedLots.js, shared
+// with My seeds. What stays here is presentation only: how an urgent ferment LOOKS on this card.
+// The thresholds (day 4 check it, day 5 overdue) live with fermentUrgency.
 const FERMENT_URGENCY = {
   warn: {
     tone: 'warn', ink: P.statusInkGold, border: P.warnBorder,
@@ -396,14 +241,6 @@ const FERMENT_URGENCY = {
     tone: 'danger', ink: P.severityUrgent, border: P.alertBorder,
     badge: 'Overdue', note: 'Past 5 days the seed can sprout in the jar.',
   },
-}
-function fermentUrgency(item) {
-  if (item.seed_stage !== 'fermenting') return null
-  const days = elapsedDays(item.stage_entered_at)
-  if (days == null) return null
-  if (days >= FERMENT_ALARM_DAYS) return 'alarm'
-  if (days >= FERMENT_WARN_DAYS) return 'warn'
-  return null
 }
 
 // ── V4-SEEDSTOREDQTY-001 — the wide PUT this page still opens, and what is left in it ─────────────
@@ -576,12 +413,30 @@ export function parseCountInput(raw, toStage) {
   return { value: n, error: null }
 }
 
-export default function SavedSeeds() {
+// V5-SEEDSTAB-001 — the Saved seeds view of the Seeds page.
+//
+// `embedded` drops what the Seeds shell now supplies: the H1, the subtitle, the "Sow now →" link (the
+// view switch replaces it), the full-width "+ Save seed" button (it moved into the shell's action
+// slot) and this page's own frame. Omitted, the standalone render is unchanged — the layout harness
+// and this page's suites mount it.
+//
+// `store` is the shell's useSeedItems(): the rows this page used to fetch for itself, shared with My
+// seeds and the ferment line so a stage moved here shows there at once. Omitted, the page fetches its
+// own, exactly as before.
+//
+// `highlight` ({ id, seq }) names one lot to bring into sight and outline once (a freshly-tracked lot,
+// the ferment line, "Change stage in Saved seeds →"); `onHighlight(id)` asks the shell to outline the
+// card this page just wrote to, so the confirmation of a write is the card itself, not only a toast.
+export default function SavedSeeds({ embedded = false, store = null, highlight = null, onHighlight } = {}) {
   const { fetch } = useApiFetch()
   const { show } = useToast()
 
-  const [items, setItems]     = useState(null)
-  const [loadErr, setLoadErr] = useState(null)
+  const [ownItems, setOwnItems] = useState(null)
+  const [ownErr, setOwnErr]     = useState(null)
+  const items = store ? store.items : ownItems
+  // A reload that fails after the rows landed keeps the rows on screen (the shell says so); only a
+  // FIRST load that failed replaces the page with the error.
+  const loadErr = store ? (store.items === null ? store.error : null) : ownErr
   const [advancing, setAdvancing] = useState(null)   // the lot whose advance sheet is open
   const [starting, setStarting]   = useState(false)  // the "track a lot" picker sheet
   // BUG-SEEDPROCFORCED-001 — the packet picked in step 1, waiting on its process in step 2. Held
@@ -635,16 +490,24 @@ export default function SavedSeeds() {
   const [stagePlantFailed, setStagePlantFailed] = useState(false)
 
   const [intakeOpen, setIntakeOpen] = useState(false)
-  const load = useCallback(() => {
-    setLoadErr(null)
+  const ownLoad = useCallback(() => {
+    setOwnErr(null)
     // ?category=seeds is a server-side filter (V4-TREATLOG-001), so the 260-row seed set arrives
     // without the rest of inventory. seed_stage / seed_process ride along on `i.*`.
     fetch('/api/inventory-items?category=seeds')
-      .then((rows) => setItems(Array.isArray(rows) ? rows : []))
-      .catch((e) => setLoadErr(e?.message ?? 'Could not load your seed inventory.'))
+      .then((rows) => setOwnItems(Array.isArray(rows) ? rows : []))
+      .catch((e) => setOwnErr(e?.message ?? 'Could not load your seed inventory.'))
   }, [fetch])
 
-  useEffect(() => { load() }, [load])
+  // With a store the shell owns the fetch; this page never issues a second copy of it.
+  const hasStore = !!store
+  useEffect(() => { if (!hasStore) ownLoad() }, [hasStore, ownLoad])
+  const load = store ? store.reload : ownLoad
+
+  // Best-effort Back restore for the embedded view (V5-SEEDSTAB-001). Also answers whether this mount
+  // is a RETURN to a position the user had: a lot anchor must not yank a restored scroll elsewhere.
+  const { restoredState, saveState } = useScrollRestore({ id: 'seeds-saved', ready: items != null })
+  useEffect(() => { saveState({ v: 1 }) }, [saveState])
 
   // Tracked = has a stage. Everything else is ordinary bought seed and belongs on Inventory, not
   // here: showing all 260 packets would bury the four things actually in flight.
@@ -670,32 +533,25 @@ export default function SavedSeeds() {
   // puts the reachable answers where the thumb already is. FilterChipRow's pinned-first re-sort is
   // stable, so this order survives into the tray (FilterChipRow.jsx:55-63).
   //
-  // Labels come from useCropTypes, the app's controlled vocabulary, rather than a slug prettifier
-  // written here: a second naming authority for crop names is how two surfaces start disagreeing
-  // about what a crop is called. The hook is non-fatal by design and resolves to an empty list on
-  // any failure, so the fallback below is its documented degrade path, not a guess.
-  const { cropTypes } = useCropTypes()
-  const cropLabelBySlug = useMemo(() => {
-    const m = new Map()
-    for (const t of cropTypes ?? []) if (t?.slug) m.set(t.slug, t.display_name || prettySlug(t.slug))
-    return m
-  }, [cropTypes])
-  const cropOptions = useMemo(() => {
-    const counts = new Map()
-    for (const i of untracked) {
-      if (!i.crop_slug) continue
-      counts.set(i.crop_slug, (counts.get(i.crop_slug) ?? 0) + 1)
-    }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([slug]) => ({ value: slug, label: cropLabelBySlug.get(slug) || prettySlug(slug) }))
-  }, [untracked, cropLabelBySlug])
-  // DERIVED, not the literal ['pepper','tomato'] the measurement suggests. Those two are 51% of the
-  // collection TODAY; hardcoding them would freeze a fact about one September into the source, and
-  // this page exists to serve a collection that is actively growing — the whole point of the autumn
-  // seed-save is that these counts move. Because cropOptions is already count-descending, the top
-  // two ARE the two worth pinning, whatever they turn out to be next year.
-  const cropPinned = useMemo(() => cropOptions.slice(0, 2).map((o) => o.value), [cropOptions])
+  // Labels come from the app's controlled crop vocabulary, never a slug prettifier written here.
+  //
+  // V5-SEEDSTAB-001 — through useCropFacetOptions, the shared derivation, instead of the two private
+  // copies this page held (this one and the page filter below). My seeds renders its crop chips from
+  // the same hook one tap away, and two copies of "count-descending, top two pinned" are how the two
+  // views would start disagreeing about a chip's label or order. The picker's instance waits for the
+  // sheet (`enabled: starting`), so the page still issues one vocabulary GET on mount, not two.
+  const pickerFacet = useCropFacetOptions(untracked, cropSlugOf, { enabled: starting })
+  const cropOptions = pickerFacet.options
+  const cropLabelBySlug = pickerFacet.labelBySlug
+  // DERIVED, never a literal pair: whichever two crops dominate the packets ARE the two worth pinning.
+  const cropPinned = pickerFacet.pinned
+  // V5-SEEDSTAB-001 — the vendor behind each packet, for the picker's facts line. `source` holds order
+  // references, not the shop; `source_id` names the registry row. Fetched only while the sheet is open.
+  const { sources } = useSources({ enabled: starting })
+  const vendorOf = useMemo(() => {
+    const byId = new Map((sources ?? []).map((src) => [String(src.id), src.name]))
+    return (i) => (i?.source_id != null ? byId.get(String(i.source_id)) ?? '' : '')
+  }, [sources])
 
   // matched -> visible -> hiddenCount, the VarietyPicker/PlantingSelect idiom. `matched` is the FULL
   // result set and `visible` is what renders, so the footer can say how much is being held back
@@ -715,11 +571,12 @@ export default function SavedSeeds() {
       : untracked
     if (!q) return byCrop
     return byCrop.filter((i) =>
-      looseIncludes(i.variety_name, q) || looseIncludes(i.name, q) || looseIncludes(i.source, q))
-  }, [untracked, candidateQuery, cropSel])
+      looseIncludes(i.variety_name, q) || looseIncludes(i.name, q) || looseIncludes(i.source, q)
+      || looseIncludes(vendorOf(i), q))
+  }, [untracked, candidateQuery, cropSel, vendorOf])
   const visibleCandidates = useMemo(
-    () => labelCandidates(matchedCandidates.slice(0, MAX_CANDIDATES)),
-    [matchedCandidates],
+    () => labelCandidates(matchedCandidates.slice(0, MAX_CANDIDATES), (i) => candidateFacts(i, vendorOf)),
+    [matchedCandidates, vendorOf],
   )
   const hiddenCandidates = matchedCandidates.length - visibleCandidates.length
   // V4-SEEDLINK-001 — parent-plant NAMES for the cards. The list endpoint returns source_plant_id
@@ -745,18 +602,9 @@ export default function SavedSeeds() {
   // list grow, and a filter that only appears once the list is already unmanageable is a filter that
   // arrives late. It renders whenever it can actually DO something (more than one crop among the
   // lots) and is otherwise absent — which is a statement about capability, not about a tap budget.
-  const trackedCropOptions = useMemo(() => {
-    const counts = new Map()
-    for (const i of tracked) {
-      if (!i.crop_slug) continue
-      counts.set(i.crop_slug, (counts.get(i.crop_slug) ?? 0) + 1)
-    }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([slug]) => ({ value: slug, label: cropLabelBySlug.get(slug) || prettySlug(slug) }))
-  }, [tracked, cropLabelBySlug])
-  const trackedCropPinned = useMemo(
-    () => trackedCropOptions.slice(0, 2).map((o) => o.value), [trackedCropOptions])
+  const trackedFacet = useCropFacetOptions(tracked, cropSlugOf)
+  const trackedCropOptions = trackedFacet.options
+  const trackedCropPinned = trackedFacet.pinned
 
   // THE ONE ROW A FILTER MAY NEVER HIDE. `fermentUrgency` is the only overdue-ferment warning in the
   // app — past day 5 the seed sprouts in the jar and the lot is finished — and it is computed per
@@ -960,6 +808,8 @@ export default function SavedSeeds() {
       show({ message: linkErr ?? qtyWriteErr ?? yearWriteErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
       setAdvancing(null)
       load()
+      // V5-SEEDSTAB-001 — the card moves section on a stage change; the outline says where it went.
+      onHighlight?.(advancing.item.id)
     } catch (e) {
       show({ message: e?.message ?? 'Could not save that.' })
     } finally {
@@ -967,11 +817,42 @@ export default function SavedSeeds() {
     }
   }
 
+  // V5-SEEDSTAB-001 — a lot the shell asked to show must be ON SCREEN, so a page crop filter that
+  // would hide it is cleared, and the page says why its filter just changed.
+  const [clearedFor, setClearedFor] = useState(null)
+  const highlightLot = highlight?.id != null
+    ? tracked.find((i) => String(i.id) === String(highlight.id)) ?? null
+    : null
+  // Once per highlight: a filter the user picks AFTER the outline is theirs, and a later reload of the
+  // rows must not clear it again on the strength of an old request.
+  const clearedKeyRef = useRef(null)
+  useEffect(() => {
+    if (!highlightLot) return
+    const key = `${highlight.id}|${highlight.seq ?? 0}`
+    if (clearedKeyRef.current === key) return
+    clearedKeyRef.current = key
+    if (!trackedCropSel.size) return
+    if (trackedCropSel.has(highlightLot.crop_slug) || fermentUrgency(highlightLot)) return
+    setTrackedCropSel(new Set())
+    setClearedFor(highlightLot.variety_name || highlightLot.name || 'that lot')
+  }, [highlightLot, highlight?.seq])  // eslint-disable-line react-hooks/exhaustive-deps
+  const outlined = useLotOutline(highlight, { ready: items != null, skipArrival: restoredState !== undefined })
+
+  if (embedded && (items === null || loadErr)) {
+    return (
+      <div data-testid="saved-seeds-view">
+        <AsyncRegion loading={items === null && !loadErr} error={loadErr} onRetry={load} />
+      </div>
+    )
+  }
   if (items === null && !loadErr) return <Shell><Spinner block /></Shell>
   if (loadErr) return <Shell><p style={{ color: P.mid }}>{loadErr}</p></Shell>
 
+  const Frame = embedded ? EmbeddedFrame : Shell
+
   return (
-    <Shell>
+    <Frame>
+      {!embedded && (<>
       {/* BUG-SEEDTAPTARGET-001 — `center`, not `baseline`. The cross-link below is now a 44px box
           rather than a 16px line of text, and baseline alignment would hang that box off the
           heading's baseline instead of centring it against the heading. */}
@@ -980,7 +861,7 @@ export default function SavedSeeds() {
           Saved seeds
         </h1>
         <Link
-          to="/sow"
+          to={seedsHref('sow')}
           data-testid="sow-now-link"
           style={{
             display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
@@ -1018,6 +899,14 @@ export default function SavedSeeds() {
       {/* Opened with NO planting, which is the whole point — the sheet asks where the seed came from
           and offers both answers, instead of requiring the caller to already know. */}
       {intakeOpen && <SaveSeedSheet onClose={() => { setIntakeOpen(false); load() }} />}
+      </>)}
+
+      {clearedFor && (
+        <p data-testid="saved-filter-cleared" role="status"
+           style={{ margin: '0 0 10px', color: P.mid, fontSize: '0.8rem' }}>
+          Showing all · {clearedFor}
+        </p>
+      )}
 
       {tracked.length === 0 && (
         // The empty state does the teaching, because on the day this ships EVERY visit is empty —
@@ -1060,6 +949,7 @@ export default function SavedSeeds() {
               empty state, on the first screen a new user sees, reached with wet hands. */}
           <Link
             to={ADD_PACKET_HREF}
+            state={ADD_PACKET_STATE}
             data-testid="empty-add-packet"
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1131,8 +1021,14 @@ export default function SavedSeeds() {
               return (
                 <div
                   key={item.id} data-testid="seed-lot-card"
+                  data-lot-id={item.id}
                   data-ferment={urgencyKey ?? undefined}
-                  style={urgency ? { ...cardStyle, borderColor: urgency.border } : cardStyle}
+                  data-outlined={outlined === String(item.id) ? 'true' : undefined}
+                  style={{
+                    ...cardStyle,
+                    ...(urgency ? { borderColor: urgency.border } : null),
+                    ...(outlined === String(item.id) ? outlineStyle(P.green) : null),
+                  }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <Link to={`/inventory/${item.id}`} style={{ color: P.green, fontWeight: 600, textDecoration: 'none' }}>
@@ -1152,8 +1048,8 @@ export default function SavedSeeds() {
                         which repainted P.light to #707070 at 4.952:1 on white. P.light now passes;
                         P.mid is still right here on emphasis grounds, not contrast grounds.) */}
                     <div style={{ color: urgency ? urgency.ink : P.mid, fontSize: '0.78rem', marginTop: 3, fontWeight: urgency ? 600 : 400 }}>
-                      {elapsed(item.stage_entered_at)
-                        ? `${elapsed(item.stage_entered_at)} in ${STAGE_META[s].label.toLowerCase()}`
+                      {elapsedLabel(item.stage_entered_at)
+                        ? `${elapsedLabel(item.stage_entered_at)} in ${STAGE_META[s].label.toLowerCase()}`
                         : `In ${STAGE_META[s].label.toLowerCase()}`}
                       {item.seed_process ? ` · ${item.seed_process} process` : ''}
                     </div>
@@ -1306,6 +1202,10 @@ export default function SavedSeeds() {
       {advancing && (
         <Sheet
           open busy={busy} onClose={() => setAdvancing(null)}
+          // V5-SEEDSTAB-001 — Android Back closes this sheet in place. Unarmed, Back fell through to
+          // a history pop and, inside the Seeds page, left the page with the form half-filled. Safe
+          // to arm: nothing in this sheet navigates.
+          armsBack
           title={advancing.correction
             ? 'Change stage'
             : `${advancing.process ? 'Start in' : 'Move to'} ${STAGE_META[advancing.toStage].label.toLowerCase()}`}
@@ -1505,6 +1405,10 @@ export default function SavedSeeds() {
       {starting && (
         <Sheet
           open
+          // V5-SEEDSTAB-001 — armed like the advance sheet. Its one navigating link ("Add the packet")
+          // is a SheetRowLink, which consumes the marker on the way out (backNav.js:57-58 — the only
+          // two safe options are that or leaving the sheet unarmed).
+          armsBack
           onClose={() => {
             setStarting(false); setStartItem(null); setCandidateQuery(''); setCropSel(new Set())
           }}
@@ -1636,8 +1540,9 @@ export default function SavedSeeds() {
                   exactly the moment the list has failed to help. Always present rather than shown
                   only on an empty result — the seed in hand is new, so the packet is missing on the
                   FIRST visit too, before any search has been typed. */}
-              <Link
+              <SheetRowLink
                 to={ADD_PACKET_HREF}
+                state={ADD_PACKET_STATE}
                 data-testid="add-seed-packet"
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1647,13 +1552,17 @@ export default function SavedSeeds() {
                 }}
               >
                 Seed not in the list? Add the packet →
-              </Link>
+              </SheetRowLink>
             </>
           )}
         </Sheet>
       )}
-    </Shell>
+    </Frame>
   )
+}
+
+function EmbeddedFrame({ children }) {
+  return <div data-testid="saved-seeds-view">{children}</div>
 }
 
 function Shell({ children }) {

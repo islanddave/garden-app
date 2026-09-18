@@ -19,6 +19,11 @@ import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 import { Sheet, Badge } from '../components/forms'
 import PlantingEditor from '../components/PlantingEditor.jsx'
+import useScrollRestore from '../hooks/useScrollRestore.js'
+import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
+
+// V5-SEEDSTAB-001 — where this view sends the add form and a packet's detail page back to.
+const SOW_VIEW_HREF = seedsHref('sow')
 
 // V4-RELOADGATEWIRE-001 — this page's draft-stash route key.
 const DRAFT_KEY = 'sow-now'
@@ -122,7 +127,16 @@ function localTodayISO() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-export default function SowNow({ todayISO = localTodayISO() }) {
+// V5-SEEDSTAB-001 — `embedded` renders this as the Sow now view of the Seeds page: no breadcrumb, no
+// H1 and no page frame, because the Seeds shell owns the title, the switch and one frame for all three
+// views. Omitted, the standalone render is unchanged — the harness and this page's suites mount it.
+// The engine, the buckets and the Sow sheet are untouched either way.
+//
+// `sownIds` / `onSown` lift the "Sown ✓" confirmations into the shell. Switching views unmounts this
+// body, and a confirmation held here died with it — so a packet sown seconds ago was offered again on
+// the way back, and switching views is a lighter gesture than leaving a page. `onArchived(id, season)`
+// lets the shell patch its seed rows so My seeds' "Archived for this season" chip agrees at once.
+export default function SowNow({ todayISO = localTodayISO(), embedded = false, sownIds: sownIdsProp, onSown, onArchived }) {
   const navigate = useNavigate()
   const { fetch } = useApiFetch()
   const { show } = useToast()
@@ -130,11 +144,16 @@ export default function SowNow({ todayISO = localTodayISO() }) {
   const [candidates, setCandidates] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [sownIds, setSownIds] = useState(() => new Set())
+  const [localSownIds, setLocalSownIds] = useState(() => new Set())
+  const sownIds = sownIdsProp ?? localSownIds
+  // Best-effort Back restore (V5-SEEDSTAB-001). The open disclosures ride with the offset: a restored
+  // position measured against sections that have since collapsed lands somewhere else entirely.
+  const { restoredState, saveState } = useScrollRestore({ id: 'seeds-sow', ready: !loading })
   // Which COLLAPSED sections are expanded, keyed by bucket. One Set rather than a boolean per
   // section: V4-SEEDZEROVIEW-001 made this a third disclosure, and a per-key ternary in
   // renderSection is exactly the drift vector the shared COLLAPSED set exists to close.
-  const [openSections, setOpenSections] = useState(() => new Set())
+  const [openSections, setOpenSections] = useState(() => new Set(restoredState?.open ?? []))
+  useEffect(() => { saveState({ open: [...openSections] }) }, [openSections, saveState])
   // In-flight archive PATCHes, by inventory_item_id — disables the button so a double-tap on a
   // slow phone connection cannot fire two writes.
   const [archiveBusy, setArchiveBusy] = useState(() => new Set())
@@ -338,6 +357,9 @@ export default function SowNow({ todayISO = localTodayISO() }) {
       // which is the thing that isn't obvious the first time a card disappears from under your
       // thumb. (It also kept colliding with the heading in the DOM.)
       show({ message: archived ? 'Archived — moved to the bottom' : 'Back on the list' })
+      // Only once the PATCH landed: the shell's copy of the row must never hold a stamp the server
+      // refused. Patched in place — an archive changes one column, not worth refetching 330 rows for.
+      onArchived?.(id, nextSeason)
     } catch (err) {
       setCandidates((prev) => prev?.map((c) => (
         c.inventory_item_id === id ? { ...c, sow_archived_season: prevSeason } : c
@@ -346,7 +368,14 @@ export default function SowNow({ todayISO = localTodayISO() }) {
     } finally {
       setArchiveBusy((b) => { const n = new Set(b); n.delete(id); return n })
     }
-  }, [fetch, show, todayISO])
+  }, [fetch, show, todayISO, onArchived])
+
+  // V5-SEEDSTAB-001 — a packet's detail page, pushed. Embedded, the push carries the Seeds URL so the
+  // detail page's Cancel can go back to it with one Back instead of pushing the page again.
+  const openPacket = useCallback((id) => {
+    if (embedded) navigate(`/inventory/${id}`, { state: seedsReturnState(SOW_VIEW_HREF) })
+    else navigate(`/inventory/${id}`)
+  }, [embedded, navigate])
 
   function renderCard(entry, bucketKey) {
     const c = entry.candidate
@@ -499,7 +528,7 @@ export default function SowNow({ todayISO = localTodayISO() }) {
         {bucketKey === 'needs_profile' && (
           <button
             type="button"
-            onClick={() => navigate(`/inventory/${c.inventory_item_id}`)}
+            onClick={() => openPacket(c.inventory_item_id)}
             aria-label={`Add sow details for ${title}`}
             style={profileBtn}
           >
@@ -513,7 +542,7 @@ export default function SowNow({ todayISO = localTodayISO() }) {
         {bucketKey === 'sowed_previously' && (
           <button
             type="button"
-            onClick={() => navigate(`/inventory/${c.inventory_item_id}`)}
+            onClick={() => openPacket(c.inventory_item_id)}
             aria-label={`View details for ${title}`}
             style={profileBtn}
           >
@@ -588,19 +617,21 @@ export default function SowNow({ todayISO = localTodayISO() }) {
 
   const totalCount = candidates?.length ?? 0
 
-  return (
-    <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 80px' }}>
+  const body = (
+      <>
+        {!embedded && (
+          <>
+            {/* Breadcrumb */}
+            <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
+              <Link to="/inventory" style={{ color: P.green, textDecoration: 'none' }}>Inventory</Link>
+              {' › Sow now'}
+            </div>
 
-        {/* Breadcrumb */}
-        <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
-          <Link to="/inventory" style={{ color: P.green, textDecoration: 'none' }}>Inventory</Link>
-          {' › Sow now'}
-        </div>
-
-        <h1 style={{ margin: '0 0 20px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
-          What can I sow now?
-        </h1>
+            <h1 style={{ margin: '0 0 20px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
+              What can I sow now?
+            </h1>
+          </>
+        )}
 
         {loading && (
           <div style={{ padding: 48, textAlign: 'center', color: P.light }}>Loading&hellip;</div>
@@ -618,17 +649,21 @@ export default function SowNow({ todayISO = localTodayISO() }) {
             <p style={{ margin: '0 0 20px', color: P.light, fontSize: '0.875rem' }}>
               Add seed packets to your inventory and this page will tell you what to sow when.
             </p>
-            <Link to="/inventory/add-seeds" style={ctaLink}>Add seeds</Link>
+            {/* V5-SEEDSTAB-001 — straight to the seed-mode add form, returning to this view. The old
+                /inventory/add-seeds hop was a pass-through with its extraction flag off. */}
+            <Link to={addPacketHref(SOW_VIEW_HREF)} state={seedsReturnState(SOW_VIEW_HREF)} style={ctaLink}>Add seeds</Link>
           </div>
         )}
 
         {!loading && !error && buckets && totalCount > 0 && (
           BUCKET_META.map(([key, label, subtitle]) => renderSection(key, label, subtitle))
         )}
-      </div>
+      </>
+  )
 
-      {/* Sow sheet — hosts the canonical PlantingEditor (add-from-packet): required place
-          picker + location + full details, pre-seeded seed/today/seed_packet. Orphan-safe. */}
+  const sheet = (
+      /* Sow sheet — hosts the canonical PlantingEditor (add-from-packet): required place
+          picker + location + full details, pre-seeded seed/today/seed_packet. Orphan-safe. */
       <Sheet
         armsBack
         open={!!sowTarget}
@@ -664,7 +699,9 @@ export default function SowNow({ todayISO = localTodayISO() }) {
               varietyId={sowTarget.candidate.variety_id}
               addDefaults={{ status: 'seed', sown_at: todayISO, source_type: 'seed_packet' }}
               onCreated={() => {
-                setSownIds((prev) => new Set(prev).add(sowTarget.candidate.inventory_item_id))
+                const sownId = sowTarget.candidate.inventory_item_id
+                if (onSown) onSown(sownId)
+                else setLocalSownIds((prev) => new Set(prev).add(sownId))
                 show({ message: 'Planted!' })
                 closeSowSheet()
               }}
@@ -679,6 +716,15 @@ export default function SowNow({ todayISO = localTodayISO() }) {
           </div>
         )}
       </Sheet>
+  )
+
+  // V5-SEEDSTAB-001 — embedded, the Seeds shell supplies the page and its frame (one max-width and
+  // inset for all three views); standalone keeps the frame this page always had, DOM unchanged.
+  if (embedded) return <div data-testid="sow-now-view">{body}{sheet}</div>
+  return (
+    <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '28px 20px 80px' }}>{body}</div>
+      {sheet}
     </div>
   )
 }
