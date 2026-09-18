@@ -372,7 +372,8 @@ describe('V5-SEEDQTY-001 — a failed measure does not fail the save', () => {
     await waitFor(() => expect(toastSpy).toHaveBeenCalled())
     expect(apiFetchSpy.mock.calls.filter(([p]) => String(p).endsWith('/seed-stage'))).toHaveLength(1)
     // The stage landed, so the lot joined a queue and the routing follows the stage, not the count.
-    expect(navigateSpy.mock.calls[0][0]).toBe('/seeds/saved')
+    // V5-SEEDSTAB-001 — that queue is Seeds › Saved seeds, opened on the lot.
+    expect(navigateSpy.mock.calls[0][0]).toBe('/seeds?view=saved&lot=inv-9')
   })
 
   it('when BOTH follow-ups miss, the message names both', async () => {
