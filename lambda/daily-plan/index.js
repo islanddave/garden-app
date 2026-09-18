@@ -191,8 +191,15 @@ async function fetchPrecip(lat, lng) {
     // fixed trip point, and a grid cell cannot represent radiational frost at this site — the
     // documented ERA5 error is ~+8F on sub-32F minima, missing ~62% of real frost nights
     // (src/lib/sowEngine.js:63-68). See lambda/daily-plan/radiativeFrost.js for what is derived.
+    // BUG-FROSTADVISORYNIGHTWORDING-001 — temperature_2m APPENDED LAST to the `hourly=` list, same discipline
+    // and same structural argument as the three above: `hourly` is a separate response object, so nothing in
+    // `daily` moves. It says WHICH NIGHT the advisory's civil-day minimum belongs to (frostEval.locateNight):
+    // the daily figure alone cannot, because a civil day holds the end of one night and the start of the next.
+    // UNITS ARE NOT ASSUMED. Verified against the live endpoint at this Space's coordinates on 2026-09-18:
+    // hourly_units reported temperature_2m = "°F" (it honours temperature_unit), 144 stamps (6 x 24), and the
+    // daily temperature_2m_min equalled the minimum of that local day's hourly temperature_2m on 6 of 6 days.
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max,daylight_duration,sunshine_duration,shortwave_radiation_sum,wind_speed_10m_max,precipitation_hours&hourly=precipitation,dew_point_2m,cloud_cover,wind_speed_10m&temperature_unit=fahrenheit&precipitation_unit=inch&wind_speed_unit=mph&timezone=America/New_York&past_days=2&forecast_days=4`;
+      `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max,daylight_duration,sunshine_duration,shortwave_radiation_sum,wind_speed_10m_max,precipitation_hours&hourly=precipitation,dew_point_2m,cloud_cover,wind_speed_10m,temperature_2m&temperature_unit=fahrenheit&precipitation_unit=inch&wind_speed_unit=mph&timezone=America/New_York&past_days=2&forecast_days=4`;
     // BUG-FETCHPRECIPZERO-001 — an Open-Meteo ERROR is JSON, so `.json()` succeeds on it. Measured live
     // 2026-09-18: an invalid daily variable answers HTTP 400 with {"error":true,"reason":"Cannot initialize
     // ForecastVariableDaily from invalid String value ..."} — no `daily`, no `hourly`. With neither r.ok nor
@@ -316,6 +323,14 @@ async function fetchPrecip(lat, lng) {
           wind_speed_10m: j.hourly.wind_speed_10m,
           timezone: j.timezone || null,
         }
+        : null,
+      // BUG-FROSTADVISORYNIGHTWORDING-001 — the hourly temperature, carried VERBATIM with its local stamps so
+      // frostEval.locateNight can find the hour of the advisory day's minimum by string arithmetic (the same
+      // DST-safe method as hourly_frost). Its OWN key, guarded on its OWN array, deliberately NOT folded into
+      // hourly_frost: that block is null unless all three radiative arrays arrive, and a missing dewpoint must
+      // not cost the advisory its night. null (never {}) when absent -> the advisory names the base-rate night.
+      hourly_temp: (j.hourly && Array.isArray(j.hourly.time) && Array.isArray(j.hourly.temperature_2m))
+        ? { time: j.hourly.time, temperature_2m: j.hourly.temperature_2m, timezone: j.timezone || null }
         : null,
       // V4-WATERMATH-001 F1 — the COMPLETED days in this response, as the rows weather_daily will hold.
       // Indices 0 and 1 are D-2 and D-1; index 2 is D0, which is deliberately EXCLUDED. Today is still

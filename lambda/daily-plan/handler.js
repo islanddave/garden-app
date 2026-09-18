@@ -883,15 +883,16 @@ function mergeAlertsSent(...lists) {
 // and they were being discarded one line later.
 //
 // WHY THIS IS NOT REDUNDANT WITH THE WEATHER CUE ON TODAY, which does render a freeze line: the cue
-// keys on `weather.tonightLow` and speaks ONLY about tonight, while an advisory is the coldest night
-// in the D1..D3 window (frostEval evalAdvisory). They are different nights. Measured: on 2026-09-07
-// the stored plan had tonightLow 55 and callout NULL — Today said nothing — and an advisory fired
-// anyway, because a night inside the window was <= 40F. The lead time IS the advisory's whole value
-// and it had no surface at all.
+// keys on `weather.tonightLow` (NWS) and speaks ONLY about tonight, while an advisory is the coldest
+// civil day in the D1..D3 window (frostEval evalAdvisory, Open-Meteo). The lead time IS the advisory's
+// whole value and it had no surface at all. (The 2026-09-07 row once cited here as "a <= 40F night the
+// cue missed" was the F5 rehearsal: CloudWatch shows run "forced" with ADVISORY_LOW_F raised to 58.)
 //
-// `dayOffset` is 0 for an imminent (tonight) alert and 1..3 for an advisory, matching the offsets
-// advisoryMessage already words as "tomorrow night" / "in N days" — same vocabulary, so the SNS text
-// and the in-app line cannot drift apart.
+// `dayOffset` is 0 for an imminent (tonight) alert and 1..3 for an advisory: the CIVIL DAY of the minimum.
+// BUG-FROSTADVISORYNIGHTWORDING-001 — `nightOffset` is the NIGHT advisoryMessage named (0 = tonight, which
+// an advisory can be: D1's minimum usually falls before dawn, at the end of tonight). The client words the
+// Today line from nightOffset so the SNS text and the in-app line name the same night; an entry written
+// before this field falls back to the base rate (dayOffset - 1) on both sides.
 function frostWeatherFacts(d) {
   if (!d) return {};
   if (d.tier === 'imminent') {
@@ -904,9 +905,10 @@ function frostWeatherFacts(d) {
       : { lowF, dayOffset: 0, ...(d.imminent && d.imminent.radiativeOnly ? { trip: 'radiative' } : {}) };
   }
   if (d.tier === 'advisory' && d.advisory) {
-    const { minLowF, dayOffset, date } = d.advisory;
+    const { minLowF, dayOffset, date, nightOffset } = d.advisory;
     if (minLowF == null) return {};
-    return { lowF: minLowF, ...(dayOffset != null ? { dayOffset } : {}), ...(date ? { date } : {}) };
+    return { lowF: minLowF, ...(dayOffset != null ? { dayOffset } : {}), ...(date ? { date } : {}),
+      ...(Number.isInteger(nightOffset) && nightOffset >= 0 ? { nightOffset } : {}) };
   }
   return {};   // heat carries no low; its cue is already on Today (computeCallout high >= 88)
 }
@@ -959,6 +961,9 @@ function frostForSpace({ rows, weather, hydrology, lowSource, spaceId, today, fr
     highToday: wx ? wx.highToday : null,
     forecastLows: hy ? hy.forecast_lows : null,          // G5 — index.js:fetchPrecip temperature_2m_min
     forecastDates: hy ? hy.forecast_dates : null,
+    // BUG-FROSTADVISORYNIGHTWORDING-001 — which night the advisory's civil-day minimum belongs to. null (no
+    // block) names the base-rate night; nothing in the trigger reads it.
+    forecastHourly: hy ? hy.hourly_temp : null,
     lowSource: lowSource || (wx ? 'forecast' : 'forecast_absent'),
     // V5-RADIATIVEFROST-001 — per-night dewpoint/cloud/wind derived from the hourly block
     // index.js already carries. [] (not null) when the block is absent, which reads downstream as
