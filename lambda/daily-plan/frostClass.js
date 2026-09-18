@@ -114,9 +114,9 @@ const SLUGS_BY_BAND = Object.freeze({
     //   lantana — tender tropical shrub, overwintered indoors here rather than replaced.
     'ginger', 'aloe', 'lantana',
     // hoya — OPS-SLUGUNIVERSESTALE-001 (2026-09-18). Crop type minted 2026-08-30 and never banded. The
-    // one live planting is Hoya obovata, a lowland SE-Asian epiphyte in a hanging basket, in the heated
-    // House today (so no alert or card moves for it now). MBG Plant Finder gives H. carnosa, the most
-    // cold-tolerant hoya in cultivation, zone 10-12 and night temperatures down to 50F in winter.
+    // one live planting is Hoya obovata, a tropical epiphyte in a hanging basket, in the heated House
+    // today (so no alert or card moves for it now). MBG Plant Finder gives the common wax plant, Hoya
+    // carnosa: winter hardy to zone 10-12, tolerating night temperatures down to 50F in winter.
     'hoya',
   ],
   chill_sensitive: [
@@ -165,6 +165,11 @@ const SLUGS_BY_BAND = Object.freeze({
   light_frost_tolerant: [
     // still standing the morning after a light frost; a hard freeze finishes them
     'marigold', 'petunia', 'sunflower', 'borage',
+    // chamomile — OPS-SLUGUNIVERSESTALE-001 (2026-09-18); minted 2026-09-03, not planted yet. 'German
+    // Chamomile' (Matricaria chamomilla) is sown before the last spring frost (MBG, UW-Madison Extension),
+    // so it takes a light frost; no source found says it takes a hard one, and its flowers, the harvest,
+    // run "until frost" (UW-Madison). Borage's band, the other self-seeding annual herb, not hardy.
+    'chamomile',
   ],
   hardy: [
     // §3-4 named
@@ -230,9 +235,7 @@ const SLUGS_BY_BAND = Object.freeze({
     //   snapdragon    — Antirrhinum majus: Penn State files it with the hardy annuals, and SDSU Extension:
     //                   "Snapdragons can survive temperatures as low as 25 degrees Fahrenheit", below the
     //                   30F trip that light_frost_tolerant would fire.
-    //   chamomile     — 'German Chamomile' (Matricaria chamomilla), a hardy annual: UW-Madison Extension
-    //                   sows it direct in FALL, so its seedlings stand through a Wisconsin winter.
-    'goldenrod', 'lamb_s_ear', 'yarrow', 'blanketflower', 'dianthus', 'snapdragon', 'chamomile',
+    'goldenrod', 'lamb_s_ear', 'yarrow', 'blanketflower', 'dianthus', 'snapdragon',
   ],
 });
 
@@ -312,7 +315,7 @@ const COLD_BY_CROP_TYPE = Object.freeze({
   avocado:       Object.freeze({ tender: true, protect_below_F: 50 }),
   lantana:       Object.freeze({ tender: true, protect_below_F: 50 }),
   // Foliage houseplants — damaged in the mid-40s, and all of them live outdoors only for the summer.
-  // hoya: MBG Plant Finder, Hoya carnosa (the hardiest species grown): night temperatures to 50F in winter.
+  // hoya: MBG Plant Finder, Hoya carnosa, "tolerate night temperatures to 50F" in winter.
   hoya:          Object.freeze({ tender: true, protect_below_F: 50 }),
   pothos:        Object.freeze({ tender: true, protect_below_F: 50 }),
   spider_plant:  Object.freeze({ tender: true, protect_below_F: 45 }),
@@ -369,8 +372,8 @@ const CROP_LABELS = Object.freeze({
   borage: 'borage', thunbergia: 'thunbergia', cobaea: 'cobaea', torenia: 'torenia',
   bitter_melon: 'bitter melon', cucamelon: 'cucamelons', luffa: 'luffa', pineapple: 'pineapple',
   pineapple_sage: 'pineapple sage',
-  // OPS-SLUGUNIVERSESTALE-001: the rule below would say "corns", "cosmoses" and "summer savories".
-  corn: 'corn', cosmos: 'cosmos', summer_savory: 'summer savory',
+  // OPS-SLUGUNIVERSESTALE-001: the rule below would say "corns", "cosmoses", "summer savories", "chamomiles".
+  corn: 'corn', cosmos: 'cosmos', summer_savory: 'summer savory', chamomile: 'chamomile',
 });
 function cropLabel(slug) {
   if (!slug) return 'unclassified';

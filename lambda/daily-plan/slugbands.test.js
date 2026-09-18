@@ -32,7 +32,7 @@ const DECIDED = [
   ['goldenrod', 'hardy'], ['lamb_s_ear', 'hardy'], ['yarrow', 'hardy'], ['hoya', 'tropical'],
   ['penstemon', 'uncertain'],
   // crop types with no planting yet
-  ['blanketflower', 'hardy'], ['dianthus', 'hardy'], ['snapdragon', 'hardy'], ['chamomile', 'hardy'],
+  ['blanketflower', 'hardy'], ['dianthus', 'hardy'], ['snapdragon', 'hardy'], ['chamomile', 'light_frost_tolerant'],
   ['corn', 'tender'], ['cosmos', 'tender'], ['summer_savory', 'tender'],
   // category non_plant_food — not plants
   ...['bread', 'butter', 'cheese', 'fish', 'meat', 'milk', 'yogurt'].map((s) => [s, 'not_a_plant']),
@@ -63,8 +63,8 @@ describe('OPS-SLUGUNIVERSESTALE-001 — the decision for each crop type minted s
   });
 
   it('the new alerting crop types read as English in the email', () => {
-    expect(['corn', 'cosmos', 'summer_savory', 'hoya', 'penstemon'].map(cropLabel))
-      .toEqual(['corn', 'cosmos', 'summer savory', 'hoyas', 'penstemons']);
+    expect(['corn', 'cosmos', 'summer_savory', 'chamomile', 'hoya', 'penstemon'].map(cropLabel))
+      .toEqual(['corn', 'cosmos', 'summer savory', 'chamomile', 'hoyas', 'penstemons']);
   });
 });
 
