@@ -750,6 +750,10 @@ jobs:
           # With this set, a missing Clerk secret or a failed session mint FAILS the job
           # (fail-closed) instead of vacuously passing on Phase-1 reachability alone.
           SMOKE_REQUIRE_AUTH: "1"
+          # OPS-SMOKECAREPROFILE-001: the same staging DSN the L-058 sweep below uses. Block D reads back,
+          # through SQL, the cultivar care_profile that POST /api/varieties writes, because no API route
+          # returns that row. Under SMOKE_REQUIRE_AUTH a missing value FAILS that assert, never skips it.
+          NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
 
       - name: L-058 smoke-test row hygiene cleanup
         # Hard-delete any rows matching '%smoke%' in staging plant_projects.
@@ -804,6 +808,18 @@ jobs:
         # sweep is psql-only, so there is nothing to install — psql, unlike pg_dump/pg_restore,
         # carries no major-version match requirement against the PG 17 staging branch. They
         # were also `>/dev/null 2>&1`-silenced, so an apt flake failed this step with no output.
+        #
+        # 2026-09-18 (OPS-SMOKECAREPROFILE-001): since v4.137 (BUG-CULTIVARNOPROFILE-001) the smoke's
+        # variety POST also writes a cultivar-scope care_profile in the same transaction. care_profile.scope_id
+        # has NO foreign key, so the plant_varieties delete neither cascades nor blocks. It just orphans the
+        # profile, and an orphan keyed to block D's re-keyed variety is exactly what v5-rekeystrand-001's
+        # guard counts. The care_profile delete therefore runs BEFORE plant_varieties: afterwards the smoke name
+        # no longer links a profile to anything. For the same reason the residue check cannot find a leftover
+        # profile by name. It checks the smoke variety ids captured before the sweep instead; a name-joined
+        # term would read 0 with every profile left behind. A global orphan count is not usable either: staging
+        # carries 145 orphan cultivar profiles from care-cadence-001-seed.sql (`_seeded: true`, 2026-06-18). Their
+        # scope_ids match no plant_varieties row and no audited delete (measured 2026-09-18). Those are not
+        # smoke rows, and a global count would red on its first run.
         if: always()
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
@@ -813,6 +829,7 @@ jobs:
             exit 0
           fi
           echo "🧹 L-058 cleanup sweep starting against staging Neon (FK-safe order)..."
+          SMOKE_VARIETY_IDS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT COALESCE(string_agg(id::text, ','), '') FROM plant_varieties WHERE name ILIKE '%smoke%';")
           psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \
             -c "DELETE FROM harvest_log    WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM harvest_log    WHERE event_id IN (SELECT id FROM event_log WHERE plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')));" \
@@ -830,17 +847,18 @@ jobs:
             -c "DELETE FROM plants         WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM inventory_items WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM entity         WHERE entity_type='cultivar' AND cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%');" \
+            -c "DELETE FROM care_profile   WHERE scope='cultivar' AND scope_id IN (SELECT id FROM plant_varieties WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM plant_varieties WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM locations      WHERE name ILIKE '%smoke%';" \
             -c "DELETE FROM garden_shared_state WHERE natural_key ILIKE '%smoke%';" \
             -c "DELETE FROM plant_projects  WHERE name ILIKE '%smoke%';"
-          echo "  swept: harvest_log, event_log, entity_memory, favorites, event_batches, plants, inventory_items, plant_varieties, locations, plant_projects"
-          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM locations WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM inventory_items WHERE name ILIKE '%smoke%');")
+          echo "  swept: harvest_log, event_log, entity_memory, favorites, event_batches, plants, inventory_items, care_profile, plant_varieties, locations, plant_projects"
+          REMAINING=$(psql "$NEON_STAGING_URL" -At -c "SELECT (SELECT COUNT(*) FROM plant_projects WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plant_varieties WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM plants WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM locations WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM inventory_items WHERE name ILIKE '%smoke%') + (SELECT COUNT(*) FROM care_profile WHERE scope='cultivar' AND scope_id = ANY('{$SMOKE_VARIETY_IDS}'::uuid[]));")
           if [[ "$REMAINING" != "0" ]]; then
             echo "⚠ WARN: $REMAINING smoke residue row(s) remain after sweep — possible FK constraint preventing delete"
             exit 1
           fi
-          echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants)"
+          echo "✅ L-058 cleanup complete — 0 smoke residue rows (plant_projects + plant_varieties + plants + locations + inventory_items + care_profile)"
 
   # ── E2E advisory (non-blocking) ───────────────────────────────────────────
   # Playwright rejected as merge gate: 250MB browser binaries per cold runner,
