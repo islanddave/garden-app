@@ -96,6 +96,15 @@ gated to parity hash `8a3d78f098e55ff2` by `npm run parity:garden-render`, wired
 `ci.yml`. Before 2026-08-26 that claim existed only as a source comment with nothing
 executing it.
 
+## Shared navigation primitive outside the barrel
+
+Registered 2026-09-18 (V5-SEEDSTAB-001). Lives in `src/components/`, not `forms/`, and is imported by
+path — it is a router-aware link, not a form primitive.
+
+| Primitive | Role | State |
+|---|---|---|
+| **SheetRowLink** | A link inside an Android-Back-ARMED sheet. At click time, if the current history entry is the session Back marker (`readMarker`), it navigates with REPLACE — collapsing the marker into the destination so one Back lands on the page under the sheet; otherwise it is the plain Link push. Forwards `state` on both paths; `overlay` selects OverlayLink. The only safe way to navigate out of an armed sheet (backNav.js:57-58). | Shipped. Moved out of BottomNav.jsx (BUG-BACKNAVMORE-001) when Saved seeds' track sheet armed Back. Consumers: BottomNav (both sheets), SavedSeeds (track sheet). |
+
 ## Intentionally deferred slot
 
 - **MediaTile** — a canonical image/photo thumbnail tile (tap-to-zoom, lazy, fallback).

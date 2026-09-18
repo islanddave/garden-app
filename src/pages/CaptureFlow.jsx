@@ -295,7 +295,9 @@ export default function CaptureFlow() {
     if (draft.kbBrine)  setKbBrine(draft.kbBrine)
     if (draft.invName)  setInvName(draft.invName)
     if (draft.invType)  setInvType(draft.invType)
-    if (draft.invCat)   setInvCat(draft.invCat)
+    // V5-SEEDSTAB-001 — a draft stashed as Seeds before that option left this form restores as the
+    // default instead of a value the select no longer offers (and the save would refuse).
+    if (draft.invCat && draft.invCat !== 'seeds') setInvCat(draft.invCat)
     if (draft.invQty)   setInvQty(draft.invQty)
     if (draft.invUnit)  setInvUnit(draft.invUnit)
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -900,7 +902,10 @@ export default function CaptureFlow() {
                 </Field>
                 <Field label="Category">
                   <Select value={invCat} onChange={e => setInvCat(e.target.value)}>
-                    {INVENTORY_CATEGORIES.filter(c => c.types.includes(invType)).map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
+                    {/* V5-SEEDSTAB-001 — no Seeds here: this form has no variety field and a seed row must name one
+                        (validateCreate 400s every such save — BUG-SNAPSEEDNOVARIETY-001). Seed is added from
+                        Seeds › My seeds, where the form asks for the variety. */}
+                    {INVENTORY_CATEGORIES.filter(c => c.types.includes(invType) && c.v !== 'seeds').map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
                   </Select>
                 </Field>
                 <div style={{ display: 'flex', gap: 8 }}>

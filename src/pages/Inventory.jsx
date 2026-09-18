@@ -15,6 +15,7 @@ import {
   INVENTORY_CATEGORY_LABELS,
   INVENTORY_CATEGORIES,
 } from '../lib/inventoryEnums.js'
+import { seedsHref } from '../lib/seedsRoutes.js'
 
 // HG-4.2 Inventory-list redesign (V4-DESIGNSYS / Tranche 0). The list was the last "raw"
 // surface — a database-table of text rows. Same data + logic (useInventory), re-executed
@@ -26,8 +27,15 @@ import {
 // the 3 without (amendment/shelving/climate_control) use a monogram in the same coin frame
 // (interim per Dave 2026-07; mint 5 category anchors as a fast-follow).
 
-const CATEGORY_OPTIONS = INVENTORY_CATEGORY_OPTIONS
-const CATEGORY_ORDER = INVENTORY_CATEGORIES.map(c => c.v)
+// V5-SEEDSTAB-001 — SEED LEFT THIS LIST. Seed packets and saved lots live on the Seeds page
+// (My seeds · Saved seeds · Sow now), which Dave approved by name as part of consolidating seed into
+// one home (design-seedshome-V102 §7, D2): the Seeds section here becomes ONE pointer row, "Seeds"
+// leaves the Category filter, and the cost totals cover non-seed items only. The packet − / + moved
+// with the rows (My seeds, re-plumbed through lib/quantityAdjuster.js).
+const SEED_CATEGORY = 'seeds'
+const CATEGORY_OPTIONS = INVENTORY_CATEGORY_OPTIONS.filter(([v]) => v !== SEED_CATEGORY)
+const CATEGORY_ORDER = INVENTORY_CATEGORIES.map(c => c.v).filter(v => v !== SEED_CATEGORY)
+const SEEDS_MINE = seedsHref('mine')
 
 // Translucent white rules/ink for the DARK toast surface. Named here rather than left as
 // anonymous inline rgba() per the constants.js scrim convention: the palette token holds the
@@ -56,7 +64,11 @@ const catStyle = cat => CATEGORY_STYLE[cat] ?? CATEGORY_STYLE.other
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
-  const { items, loading, error, toast, dismissToast, adjustQuantity } = useInventory()
+  const { items: allItems, loading, error, toast, dismissToast, adjustQuantity } = useInventory()
+  // Seed rows are counted for the pointer row and otherwise kept out of everything on this page —
+  // list, filters, cost totals and the restock count alike.
+  const seedRows = allItems.filter(i => i.category === SEED_CATEGORY)
+  const items = allItems.filter(i => i.category !== SEED_CATEGORY)
 
   const [filterType,     setFilterType]     = useState('all')
   const [filterCategory, setFilterCategory] = useState('all')
@@ -133,6 +145,9 @@ export default function Inventory() {
   const duraCost   = withCost.filter(i => i.type === 'durable')   .reduce((sum, i) => sum + i.unit_cost * i.quantity_purchased, 0)
   const noCostCount = items.filter(i => i.unit_cost == null || i.quantity_purchased == null).length
 
+  const seedCount = seedRows.filter(i => filterStatus === 'all' || i.status === filterStatus).length
+  const showSeedsPointer = (filterType === 'all' || filterType === 'consumable') && filterCategory === 'all'
+
   const lowStockItems = items.filter(i =>
     i.type === 'consumable' &&
     i.reorder_threshold !== null &&
@@ -151,29 +166,6 @@ export default function Inventory() {
             Inventory
           </h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {/* V4-SEEDINV-001 / DRG-SOWNOW-001 entry points — compact icon chips, all three kept.
-                V5-SEEDSAVEDFILTER-001 adds the fourth, and the ORDER is the seed's life: acquire it,
-                save your own, sow it. Before this, /seeds/saved had exactly ONE inbound link in the
-                whole frontend — a row inside BottomNav's collapsed More sheet — so nothing in the app
-                predicted the page existed, least of all the page holding all 263 seed rows. The icon
-                is the one the destination uses on its own primary action, so the chip and the button
-                it leads to read as the same thing.
-                This makes four chips in a row that wraps at 390px. Accepted deliberately: a second
-                line of chips costs a few pixels, and the alternative costs the discoverability this
-                change exists to buy. Unconditional, NOT gated on having saved lots — gating
-                discovery on prior use is backwards. */}
-            <Link to="/inventory/add-seeds" style={chipActionStyle}>
-              <Icon name="status.seed" size={16} decorative style={{ marginRight: 6, flexShrink: 0 }} />
-              Add seeds
-            </Link>
-            <Link to="/seeds/saved" style={chipActionStyle} data-testid="inv-saved-seeds-link">
-              <Icon name="event.seed_saved" size={16} decorative style={{ marginRight: 6, flexShrink: 0 }} />
-              Saved seeds
-            </Link>
-            <Link to="/sow" style={chipActionStyle}>
-              <Icon name="event.sowing" size={16} decorative style={{ marginRight: 6, flexShrink: 0 }} />
-              Sow now
-            </Link>
             <Link to="/inventory/add" style={addBtnStyle}>
               + Add
             </Link>
@@ -216,9 +208,25 @@ export default function Inventory() {
           </div>
         </div>
 
+        {/* ── Seeds pointer (V5-SEEDSTAB-001) ── one row where the Seeds section was, FIRST as that
+            section was. Shown when the list could have held seed at all: Type All or Consumable, no
+            specific category chosen. Counts the seed rows passing the Status filter, the same rule
+            the section's rows followed. */}
+        {showSeedsPointer && (
+          <Link to={SEEDS_MINE} data-testid="inv-seeds-pointer" style={seedsPointerStyle}>
+            <CategoryCoin cat={SEED_CATEGORY} />
+            <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.95rem' }}>Seeds</span>
+              <span style={{ fontSize: '0.8rem', color: P.light }}>
+                {seedCount ? `${seedCount} packets and saved lots` : 'None yet'} · open →
+              </span>
+            </span>
+          </Link>
+        )}
+
         {/* ── Grouped item list ── */}
         {groups.length === 0 ? (
-          items.length === 0 ? <EmptyState /> : (
+          items.length === 0 ? (seedRows.length ? null : <EmptyState />) : (
             <div style={{
               textAlign: 'center', color: P.light, padding: '36px 20px',
               backgroundColor: P.white, border: `1px solid ${P.border}`,
@@ -672,15 +680,12 @@ const addBtnStyle = {
   padding: '0 15px', height: T.tapMinHeight, fontSize: '0.86rem', fontWeight: 700,
 }
 
-// Compact icon-chip variant for the "Add seeds" / "Sow now" header entries. Height is the
-// tap floor, not the visual weight: these were 38px, under SC 2.5.8's target, while reading
-// as secondary next to the terra "+ Add". Muted fill keeps the hierarchy; the box is tappable.
-const chipActionStyle = {
-  display: 'inline-flex', alignItems: 'center',
-  backgroundColor: P.white, color: P.mid,
-  border: `1px solid ${P.border}`,
-  textDecoration: 'none', borderRadius: 9,
-  padding: '0 11px', height: T.tapMinHeight, fontSize: '0.78rem', fontWeight: 600,
+// The Seeds pointer row wears the inventory row's shape (coin, name, meta line) so it reads as the
+// place the seed went rather than as a banner; the whole row is the tap target.
+const seedsPointerStyle = {
+  display: 'flex', alignItems: 'center', gap: 12, minHeight: 64, padding: '12px 14px',
+  marginBottom: 8, backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 12,
+  textDecoration: 'none', color: P.dark,
 }
 
 const clearFiltersStyle = {

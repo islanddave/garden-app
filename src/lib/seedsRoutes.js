@@ -62,3 +62,31 @@ export function seedsReturnOf(state) {
   const v = state && state[SEEDS_RETURN_KEY]
   return typeof v === 'string' && v.startsWith(SEEDS_PATH) ? v : null
 }
+
+// The same answer read straight off the history entry, where BrowserRouter keeps location.state
+// ({usr, key, idx}). For pages whose suites stub the router without useLocation — the value read is
+// the one react-router wrote, as useScrollRestore also relies on. Read it once, at mount: it describes
+// the entry the page arrived on.
+export function seedsReturnFromHistory() {
+  try { return seedsReturnOf(window.history?.state?.usr) } catch { return null }
+}
+
+// The add form leaves with navigate(-1), which can carry nothing back — so the id of the row it just
+// created rides in sessionStorage, and the Seeds page takes it (once) on the way in and outlines that
+// row. Best-effort by design: a lost note costs an outline, never a row.
+const ADDED_KEY = 'seeds.justAdded.v1'
+
+export function noteSeedAdded(id) {
+  if (id == null) return
+  try { window.sessionStorage.setItem(ADDED_KEY, String(id)) } catch { /* private mode */ }
+}
+
+// Read and clear are separate on purpose: the page reads in a state initialiser, which StrictMode
+// runs twice, and a read that also cleared would hand the second run nothing.
+export function peekSeedAdded() {
+  try { return window.sessionStorage.getItem(ADDED_KEY) || null } catch { return null }
+}
+
+export function clearSeedAdded() {
+  try { window.sessionStorage.removeItem(ADDED_KEY) } catch { /* private mode */ }
+}
