@@ -11,6 +11,17 @@
 // (the JSONB store and the read API). Premise measured against the REAL fetchNWS source (compiled, fetch
 // stubbed) on 2026-09-18: timeout / network error / HTML 503 / `daily: null` -> code null -> sun; a JSON
 // error body -> key absent -> overcast.
+//
+// MUTATION LOG — 2026-09-18, lane-outagecopy-20260918. Each applied alone to WeatherWidget.jsx; this file and
+// the three other widget test files run under TZ=UTC; RED observed; source restored byte-for-byte (sha256
+// checked). 14/14 RED, and every test here is killed by at least one:
+//   * the pre-fix `{ code = 3 }` + Number(code)                        -> 2 RED (null; null == absent)
+//   * unknown defaults to clear (?? 0) / to partly cloudy (?? 2)        -> 2 / 2 RED
+//   * the call site coerces null to 0                                    -> 2 RED
+//   * over-reach: `code || 3` / `Number(code) || 3` (a real 0 lost)      -> 1 / 1 RED
+//   * clear bucket loses 0 / loses 1                                     -> 1 / 1 RED
+//   * partly cloudy moved / 3 no longer overcast                         -> 1 / 3 RED
+//   * fog loses 45 / snow loses 71 / rain loses 61 / showers lose 81     -> 1 each
 import React from 'react'
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
