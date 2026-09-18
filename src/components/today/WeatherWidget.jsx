@@ -180,14 +180,17 @@ export function asOfLabel(generatedAt) {
 // Forecast is ALWAYS part of the picture when the gauge is contributing — a rain gauge cannot report
 // tomorrow_/upcoming_ (V200 B2) and those fields drive both the rain note and the lanes — so the gauge case
 // is "rain gauge + forecast", never a bare "rain gauge" that would over-claim the forecast half.
+// BUG-WXOUTAGESTAMPCOPY-001 — except when the forecast came back EMPTY (see forecastMissing). Then there is
+// no forecast half to claim: tomorrow_/upcoming_ are null and no figure in the snapshot came from a forecast,
+// so the caller passes `forecast: false` and the gauge is named alone.
 //
 // Deliberately NOT surfaced here (Jen-invisible rule): station_mac, station_age_min, station_fresh,
 // today_remaining_basis/_from_hour/_fallback, station_temp_f, microclimate_offset, low_source, and the raw
 // enum values themselves. Those are engine internals and belong in the admin-gated Garden Activity view.
-export function hydrologySourceLabel(st) {
+export function hydrologySourceLabel(st, { forecast = true } = {}) {
   if (!st) return null
   const gauged = st.recent_source === 'station' || st.today_source === 'station' || st.today_source === 'station+forecast'
-  if (gauged) return 'rain gauge + forecast'
+  if (gauged) return forecast ? 'rain gauge + forecast' : 'rain gauge'
   // No gauge contribution. Say so, and say why — a silent fallback is the defect this exists to remove.
   // 'stale' means the station stopped reporting; 'warmup' means it is reporting but has no lookback yet.
   // Calling warmup "offline" would be a false statement about the hardware, so the two do not share copy.
@@ -213,6 +216,30 @@ export function incompleteForecastCopy(hydrology) {
   }
   if (Number.isFinite(hydrology?.recent_precip_in)) return `${lead}. The watering call above still counts recent rain.`
   return `${lead}, so the watering call above doesn’t count on any rain.`
+}
+// BUG-WXOUTAGESTAMPCOPY-001 — did the forecast fetch return NOTHING that this snapshot shows? The incomplete
+// banner (incompleteForecastCopy, above) says so in words; this keeps the stamp and the rain line beside it
+// from saying otherwise. On the 2026-09-02 error
+// body (fetchPrecip -> null since BUG-FETCHPRECIPZERO-001) the card still printed "· Open-Meteo" with no gauge,
+// and with one "rain gauge + forecast" plus "none more expected" — the last read off the 0 that
+// station.mergeStationHydrology writes for today's remainder when there is no forecast to subtract from
+// (station.test.js "no forecast to add"). That 0 is an absence, not a forecast of a dry evening.
+// Gated on the engine's own incomplete verdict (hydrologyStatus ok:false), so a complete snapshot never moves.
+// Then "nothing" means: none of the fields only a forecast can supply, and no figure the provenance bag credits
+// to the forecast — or, with no bag, no rain figure at all (every one of them would have been Open-Meteo's).
+// A PARTIAL forecast is not missing: whatever did arrive keeps its source, as it did before.
+// Keyed on the figures, never on today_remaining_basis/_fallback: a complete snapshot with no hourly block
+// carries the same 'wholeday'/'no_hourly' pair, and its "none more expected" is a real forecast statement.
+const FORECAST_ONLY = ['today_pop', 'tomorrow_precip_in', 'tomorrow_pop', 'upcoming_precip_in']
+export function forecastMissing(hydrology) {
+  if (hydrology?.status?.ok !== false) return false
+  if (FORECAST_ONLY.some((k) => Number.isFinite(hydrology[k]))) return false
+  const st = hydrology.station
+  if (st && typeof st === 'object') {
+    return !(st.recent_source === 'forecast' || st.today_source === 'forecast' || st.today_source === 'station+forecast'
+      || st.today_remaining_basis === 'hourly')
+  }
+  return !Number.isFinite(hydrology.recent_precip_in) && !Number.isFinite(hydrology.today_precip_in)
 }
 function isStaleSnapshot(generatedAt, planDate) {
   if (!generatedAt || !planDate) return false
@@ -304,7 +331,11 @@ export default function WeatherWidget({
   // Open-Meteo fetch and carries none), so read it off `hydrology` regardless of the live branch.
   // Absent bag -> the pre-existing hardcoded copy, unchanged; present bag -> whatever it actually says.
   const stationProv = (hydrology && typeof hydrology.station === 'object' && hydrology.station) || null
-  const sourceLabel = stationProv ? hydrologySourceLabel(stationProv) : 'Open-Meteo'
+  // BUG-WXOUTAGESTAMPCOPY-001 — an empty forecast is named by nobody: the gauge alone when it contributed,
+  // otherwise nothing (DRG-WXSTATION-002's "claims no source at all"). Not gated on `stale` or `live`: a
+  // previous-day snapshot names its sources as truly as today's does, and the live stamp never shows this.
+  const noForecast = forecastMissing(hydrology)
+  const sourceLabel = stationProv ? hydrologySourceLabel(stationProv, { forecast: !noForecast }) : (noForecast ? null : 'Open-Meteo')
 
   // BUG-LIVEWEATHERNUMOR0-001 — the rain AMOUNT is nullable and is kept nullable to the point of use.
   // src/lib/liveWeather.js used to coerce a missing precipitation_sum to 0, which put a confident
@@ -372,10 +403,12 @@ export default function WeatherWidget({
   const measuredPop = hydrology?.today_pop ?? 0
   const fallenSuffix = measuredAt ? ` as of ${measuredAt}` : ''
 
+  // BUG-WXOUTAGESTAMPCOPY-001 — "none more expected" is a forecast statement. With no forecast behind it the
+  // remainder is the merge's placeholder 0, so the measurement stands alone.
   const rainNote = gaugeMeasured
     ? (remainingToday != null && remainingToday > 0
         ? `${measuredToday.toFixed(2)}″ fallen${fallenSuffix} · ${remainingToday.toFixed(2)}″ more expected · ${measuredPop}%`
-        : `${measuredToday.toFixed(2)}″ fallen${fallenSuffix || ' today'} · none more expected`)
+        : `${measuredToday.toFixed(2)}″ fallen${fallenSuffix || ' today'}${noForecast ? '' : ' · none more expected'}`)
     : softenedNote
     ? (rainAmtKnown && rainIn >= 0.1
         ? `~${rainIn.toFixed(2)}″ ${rainWhen} · ${rainPop}% — could climb`
