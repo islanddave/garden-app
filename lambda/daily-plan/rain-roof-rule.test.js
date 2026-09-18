@@ -412,6 +412,11 @@ describe('BUG-RAINCOVEREDGATESTATIC-001 — rain autologger roof rule, at write 
     for (const w of [`a and case when b then true else not ${R} end`, `a and (not ${R}) is not false`]) {
       expect(() => of(w), w).toThrow(/buried/)
     }
+    // creditsRain evaluates the same skeleton: grafted onto the real exclusion, an optional roof
+    // credits the Stable. Without this, creditsRain could drop back to reading the atom alone.
+    const optional = { ...HANDLER_MODEL, ...of(`gn.deleted_at is null or not ${R}`) }
+    expect(creditsRain(optional, TREE, 'Stable'), 'creditsRain ignored the WHERE around the roof').toBe(true)
+    expect(creditsRain(HANDLER_MODEL, TREE, 'Stable')).toBe(false)
   })
 
   it('refuses rain to a planting standing directly under a roof', () => {
@@ -460,6 +465,7 @@ describe('BUG-RAINCOVEREDGATESTATIC-001 — rain autologger roof rule, at write 
     // The claim the retired census rested on, made executable. Both writers judge the roof at write
     // time; if they ever stop agreeing, the backfill and the autologger have silently forked.
     const migration = roofModelOf(rainInsertOf(MIGRATION, ';', '0b-data.sql'))
+    expect(migration.leak, 'the backfill credits rain under a roof whenever these other terms hold').toBeNull()
     // Aliases differ by design (gn vs p), and so do the WHERE's other terms — the backfill also
     // filters on the gauge, the day and its re-run guard. `vetoes` and `admits` must still agree.
     const shape = ({ seedAlias, cte, where, leak, ...rest }) => rest
