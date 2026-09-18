@@ -467,10 +467,11 @@ describe('Inventory list — seed left for the Seeds page (V5-SEEDSTAB-001)', ()
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'all' } })
     expect(pointerLine()).toBe('3 packets and saved lots · open →')
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'depleted' } })
-    expect(pointerLine()).toMatch(/^1 packets? and saved lots · open →$/)
-    // Zero passing the filter reads as the 0-state, even though seed rows exist in other statuses.
+    expect(pointerLine()).toBe('1 packet or saved lot · open →')
+    // Zero passing the filter, while seed exists in other statuses, says so — never "None yet",
+    // which on a filtered view would read as "you have no seed".
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'retired' } })
-    expect(pointerLine()).toBe('None yet · open →')
+    expect(pointerLine()).toBe('None with this status · open →')
     // Type never moves the count: it only decides whether the row shows at all (next case).
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'active' } })
     fireEvent.click(screen.getByRole('radio', { name: 'Consumable' }))

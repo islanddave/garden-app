@@ -62,6 +62,14 @@ const CATEGORY_STYLE = {
 }
 const catStyle = cat => CATEGORY_STYLE[cat] ?? CATEGORY_STYLE.other
 
+// The pointer's count line. Singular at one; and "none with this status" when seed exists but the
+// Status filter excludes all of it, so a filtered view never reads as "you have no seed".
+export function seedPointerCopy(count, total) {
+  if (count === 1) return '1 packet or saved lot'
+  if (count > 1) return `${count} packets and saved lots`
+  return total > 0 ? 'None with this status' : 'None yet'
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Inventory() {
   const { items: allItems, loading, error, toast, dismissToast, adjustQuantity } = useInventory()
@@ -218,7 +226,7 @@ export default function Inventory() {
             <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
               <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.95rem' }}>Seeds</span>
               <span style={{ fontSize: '0.8rem', color: P.light }}>
-                {seedCount ? `${seedCount} packets and saved lots` : 'None yet'} · open →
+                {seedPointerCopy(seedCount, seedRows.length)} · open →
               </span>
             </span>
           </Link>
@@ -630,7 +638,7 @@ function EmptyState() {
     <SharedEmptyState
       iconName="nav.inventory"
       title="Nothing here yet"
-      body="Add your first item to start tracking seeds, supplies and tools."
+      body="Add your first item to start tracking supplies and tools. Seed has its own page, under Seeds."
       action={<Link to="/inventory/add" style={addBtnStyle}>+ Add item</Link>}
     />
   )
