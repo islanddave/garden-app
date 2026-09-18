@@ -42,12 +42,16 @@ import fc from './frostClass.js';
 
 const { generatePlan } = engine;
 
+// frostAlertEnabled: prod's live value (FROST_ALERT_ENABLED="true", scripts/lambda-config-expected.json).
+// BUG-INGROUNDOFFSEASONSILENT-001 made the in-ground drop conditional on it; with it off the card stays,
+// which ingroundoffseason.test.js pins through the real run().
 const planFor = (ps, weather) => generatePlan({
   plantings: ps.map((p, i) => ({
     id: 'cr-' + i, project: 'Garden', project_id: 'pg', status: 'vegetative',
     substrate_start: '2026-05-01', last_water: '2026-09-17', last_fert: null, db_cadence: null, ...p,
   })),
   cadence: cad, fertModel: fm, today: '2026-09-18', weather: { unit: 'F', ...weather }, ownerFallback: 'dave',
+  frostAlertEnabled: true,
 });
 const card = (p, low) => Object.values(planFor([p], { tonightLow: low, highToday: low + 20 }).users)
   .flatMap((u) => u.tasks.cold).find((r) => r.name === p.name) || null;

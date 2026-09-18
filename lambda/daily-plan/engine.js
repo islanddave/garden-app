@@ -856,7 +856,7 @@ function fertilizeRec(p, c, fm, today){
   return {id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:isHeavyFeeder(c.crop)&&false,status:p.status,weeks_since_pot:wk,phase,interval:iv,never,...rec};
 }
 
-function coldFor(p, cad, low){
+function coldFor(p, cad, low, frostAlertEnabled=false){
   if(low==null) return null;
   const c=resolveCadence(p,cad);
   // BUG-COLDNAMEMATCHNAG-001 — the already-indoors check is HOISTED above the solanaceous band.
@@ -880,7 +880,14 @@ function coldFor(p, cad, low){
   // to plantings the frost ALERT names (frostAlertNames), so dropping the card never leaves a planting
   // with no cold message: that alert counts in-ground plantings and tells Dave to cover them. Only the
   // two BRING-IN levels are dropped; `optional` ("protect flowering plant") can be done in the ground.
-  const _inGroundAlerted=likelyInGround(p,c)&&frostAlertNames(p);
+  // BUG-INGROUNDOFFSEASONSILENT-001 — and only while that alert can SEND. frostAlertNames answers "would
+  // the alert name it", not "is the alert switched on": with FROST_ALERT_ENABLED off (the F6 kill switch,
+  // handler.js) nothing publishes, and dropping the card left an in-ground tender planting with no cold
+  // message on either channel. The handler passes its own flag in; absent means OFF, which fails toward a
+  // card. Deliberately NOT gated on frost season: isFrostSeason gates only the DEGRADED alert and
+  // station_unbound, and the frost alert itself publishes all year (run() on 2027-05-10, 35F: "FROST
+  // PROTECT TONIGHT … potatoes (2)"), so a season gate would put the unactionable card back beside it.
+  const _inGroundAlerted=frostAlertEnabled===true&&likelyInGround(p,c)&&frostAlertNames(p);
   if(isSolanaceous(p)){
     if(low<40) return _inGroundAlerted ? null : {level:'bring_in', text:`bring inside tonight (low ${low}°F)`};
     if(low<45) return ['flowering','fruiting'].includes(p.status) ? {level:'optional', text:`optional: protect flowering plant (low ${low}°F)`} : null;
@@ -1044,7 +1051,7 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
 // `satOpts` is an OBJECT, not two more positionals: this list is already twelve deep and every caller
 // passes them by position, so a thirteenth and fourteenth boolean would be one transposition away from
 // silently arming a suppression branch. Defaults to {} so every existing caller is byte-identical.
-function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false, droughtState=null, satOpts={}){
+function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, ledgerOpts=null, measuredCreditEnabled=false, droughtState=null, satOpts={}, frostAlertEnabled=false){
   const _ledgerOn = !!(ledgerOpts && ledgerOpts.enabled && ledgerOpts.eventsByPlant);
   const water=[], fertilize=[], pest=[], cold=[], dormant=[], rainSkipped=[], waterSuppressed=[], overwintering=[], feedSuppressed=[];
   let overwinterHeld=0, overwinterDeferred=0;
@@ -1327,7 +1334,7 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     const pw=cad.pest_watch&&cad.pest_watch.cucurbit_beetle;
     if(pw&&pw.active){ const txt=((p.name||'')+' '+(p.variety||'')+' '+(c.crop||'')).toLowerCase();
       if((p.genus&&pw.genera.includes(p.genus))||pw.name_keywords.some(k=>txt.includes(k))) pest.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,in_ground:likelyInGround(p,c),label:pw.label}); }
-    const cd=coldFor(p,cad,low); if(cd) cold.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,...cd});
+    const cd=coldFor(p,cad,low,frostAlertEnabled); if(cd) cold.push({id:p.id,name:p.name,crop:c.crop,project:p.project,project_id:p.project_id,...cd});
   }
   const ovk=a=>a.never?-1:(a.overdue_by??-1);
   const due=water.filter(w=>!w.never).sort((a,b)=>ovk(b)-ovk(a));
@@ -1435,7 +1442,7 @@ function hydrologyStatus(hy){
 // handler threads through (weatherDaily was already passed as the F1 seam; it is consumed now).
 // All default to inert — an un-updated caller is byte-identical, and enabled-without-events stays
 // legacy (the handler passes enabled=false when the event-window read fails).
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null, deferDryEnabled=false, soonAwareEnabled=false}){
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null, deferDryEnabled=false, soonAwareEnabled=false, frostAlertEnabled=false}){
   const ledgerOpts = (waterLedgerEnabled && eventsByPlant)
     ? ledger.buildLedgerOpts({ weatherDaily, eventsByPlant, today, nowMs })
     : null;
@@ -1453,7 +1460,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const rainComing = _todayComing || _tomorrowComing;
   const rainHorizon = _todayComing ? 'today' : (_tomorrowComing ? 'tomorrow' : null);
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState,{deferDry:deferDryEnabled,soonAware:soonAwareEnabled});
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState,{deferDry:deferDryEnabled,soonAware:soonAwareEnabled},frostAlertEnabled);
     users[u]=up; }
   const lwOut=(hy && Array.isArray(hy.wetness_window)) ? lw.assessLeafWetness(hy.wetness_window, today) : null;
   return {date:today,
