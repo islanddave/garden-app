@@ -22,6 +22,13 @@
 # cannot hold a cultivar-scoped profile because there is no cultivar to scope it to. They are a
 # data-entry gap for Dave, not a cadence-resolution gap, and folding them in here would make this
 # gate un-closable by any amount of care-profile work. Tracked on the ledger row instead.
+#
+# AND, SINCE v4.137.0, A PLACEHOLDER. The create-cultivar path now writes a watering-free
+# `_basis:'unresearched'` row with every new cultivar (BUG-CULTIVARNOPROFILE-001), which this gate
+# cannot tell from a decision because by design it only asks whether a row exists. The sibling
+# post_no_live_planting_rests_on_an_unresearched_placeholder asks the question this gate can no
+# longer reach (OPS-CADENCEGUARDPLACEHOLDER-001). The two partition one population: no row at all
+# is this gate's, the placeholder is the sibling's.
 
 pre:
   - name: pre_cadence_gap_exists_before_fix
@@ -53,6 +60,35 @@ post:
        WHERE p.deleted_at IS NULL AND p.archived_at IS NULL AND p.variety_id IS NOT NULL
          AND NOT EXISTS (SELECT 1 FROM public.care_profile cp
                           WHERE cp.scope = 'cultivar' AND cp.scope_id = p.variety_id)
+         AND EXISTS (SELECT 1 FROM public.schema_version
+                      WHERE version = '4.89.0-cadencerefill-20260901')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_live_planting_rests_on_an_unresearched_placeholder
+    note: >
+      THE GUARD'S SIBLING (OPS-CADENCEGUARDPLACEHOLDER-001). The placeholder row v4.137 writes with
+      every new cultivar satisfies the gate above by construction, so its own case — a new
+      cultivar's planting silently watered on the bundled fallback — went invisible the day that fix
+      shipped. This counts exactly that case: a live planting whose cultivar row carries
+      _basis 'unresearched' AND for which the database supplies no cadence at all
+      (v_resolved_care.cadence_scopes empty, the signal engine.js adopts on; read from the view so
+      the watering-key list is not copied here). It clears when the placeholder gets a researched
+      cadence, when _basis is relabelled for a deliberate watering-free decision (Collards' row has
+      no _basis at all), or when the planting gets its own leaf cadence. Keyed on _basis, the
+      meaning, not _source, the writer, so a backfilled placeholder counts too. Same population and
+      same arm as the gate above. RED ON ROUTINE DATA ENTRY IS THE CONTRACT, inherited from that
+      gate: of the 49 cultivars created on prod between its arming and v4.137, the 5 that any
+      planting reached all got a decided profile 6-137h later, and the three the ledger records as
+      reds were all true positives. Not a promote check — see the README for the evidence and why
+      this is a gate and not a census.
+    sql: |
+      SELECT 1 FROM public.plants p
+        JOIN public.care_profile cp ON cp.scope = 'cultivar' AND cp.scope_id = p.variety_id
+        JOIN public.v_resolved_care r ON r.leaf_id = p.id
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND cp.profile->>'_basis' = 'unresearched'
+         AND cardinality(r.cadence_scopes) = 0
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '4.89.0-cadencerefill-20260901')
     expect: rowcount_eq
