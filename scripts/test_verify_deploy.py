@@ -456,6 +456,18 @@ def test_in_run_failed_leg_is_excused_by_an_earlier_full_deploy_of_the_same_sha(
     assert ok is True and "promote-gate run 35274928023" in msg
 
 
+def test_in_run_failed_promote_says_the_lambdas_never_ran(monkeypatch):
+    # The post-FF strand (snap.py or the pg17 fetch failing after the fast-forward): verify still runs
+    # (if: always()), and must say THIS run never deployed, not cite the 2026-08-13 standalone run.
+    # Real job list of promote-gate run 34175616568 (promote=failure, deploy-lambdas skipped).
+    pages = _fixture("promote-gate-run-34175616568-jobs.json")["pages"]
+    _serve_pages(monkeypatch, {"34175616568": pages})
+    _standalone_history(monkeypatch, completed_promote_runs=[])
+    ok, msg = _REAL_CHECK_LAMBDA_FRESH("r", "t", SHA_4136, run_id="34175616568")
+    assert ok is False
+    assert "promote=failure (deploy-lambdas never ran)" in msg and "c509fff4ae" not in msg
+
+
 def test_in_run_proven_skip_is_not_applicable(monkeypatch):
     jobs = [{"name": "resolve", "status": "completed", "conclusion": "success"},
             _promote(vd.LAMBDA_DECISION_STEP), _skipped_caller(),

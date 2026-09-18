@@ -240,11 +240,19 @@ def _lambda_job_state(jobs):
     return LAMBDA_UNVERIFIED
 
 
-def _not_green_lambda_jobs(jobs):
-    """'name=conclusion' for every Lambda child job that did not finish green — for messages only."""
-    return [f"{j.get('name')}={j.get('conclusion') or j.get('status')}" for j in jobs
-            if j.get("name", "").startswith("deploy-lambdas /")
-            and j.get("conclusion") not in ("success", "skipped")]
+def _why_not_deployed(jobs):
+    """Why a run's Lambda deploy is not a clean one, as 'name=conclusion' strings; [] if nothing is
+    visibly wrong. For messages only — the verdict is _lambda_job_state's."""
+    bad = [f"{j.get('name')}={j.get('conclusion') or j.get('status')}" for j in jobs
+           if j.get("name", "").startswith("deploy-lambdas /")
+           and j.get("conclusion") not in ("success", "skipped")]
+    if not bad:
+        promote = next((j for j in jobs if j.get("name", "").strip() == "promote"), None)
+        if promote is not None and promote.get("conclusion") not in ("success", None):
+            # e.g. snap.py or the pg17 fetch failing AFTER the fast-forward: main moved, and the bare
+            # `needs:` then skipped deploy-lambdas, so nothing was deployed for this SHA.
+            bad = [f"promote={promote.get('conclusion')} (deploy-lambdas never ran)"]
+    return bad
 
 
 def check_lambda_fresh(repo, token, sha, run_id=None):
@@ -297,11 +305,11 @@ def check_lambda_fresh(repo, token, sha, run_id=None):
                           f"equal this SHA's (SPA-only promote). NOT a deploy — the running Lambdas are "
                           f"current because nothing they are built from moved.")
         if rid == run_id:
-            current_not_green = _not_green_lambda_jobs(jobs)
+            current_not_green = _why_not_deployed(jobs)
     if current_not_green:
         # This promote's own Lambda deploy did not finish green and no other run for this SHA did. That
-        # is decisive, and it names the real legs instead of an unrelated standalone run's history.
-        return False, (f"Lambda jobs NOT green in this promote-gate run {run_id} on {sha[:10]}: "
+        # is decisive, and it names the real cause instead of an unrelated standalone run's history.
+        return False, (f"Lambda deploy NOT green in this promote-gate run {run_id} on {sha[:10]}: "
                        f"{', '.join(current_not_green)} — the running Lambdas are not all this SHA's")
 
     runs = _runs(repo, token, "deploy-lambda.yml", status="completed")
