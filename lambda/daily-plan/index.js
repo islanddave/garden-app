@@ -193,7 +193,28 @@ async function fetchPrecip(lat, lng) {
     // (src/lib/sowEngine.js:63-68). See lambda/daily-plan/radiativeFrost.js for what is derived.
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
       `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_min,et0_fao_evapotranspiration,temperature_2m_max,daylight_duration,sunshine_duration,shortwave_radiation_sum,wind_speed_10m_max,precipitation_hours&hourly=precipitation,dew_point_2m,cloud_cover,wind_speed_10m&temperature_unit=fahrenheit&precipitation_unit=inch&wind_speed_unit=mph&timezone=America/New_York&past_days=2&forecast_days=4`;
-    const j = await (await fetch(url, { signal: AbortSignal.timeout(6000) })).json();
+    // BUG-FETCHPRECIPZERO-001 — an Open-Meteo ERROR is JSON, so `.json()` succeeds on it. Measured live
+    // 2026-09-18: an invalid daily variable answers HTTP 400 with {"error":true,"reason":"Cannot initialize
+    // ForecastVariableDaily from invalid String value ..."} — no `daily`, no `hourly`. With neither r.ok nor
+    // the block checked, that body mapped to a NON-null hydrology whose four rain fields were fabricated
+    // zeros (the `|| 0` defaults below, now gone), hydrologyStatus reported the data complete, and nothing
+    // was logged: 2026-09-02 19:30Z had exactly this shape (no WARN, no weather-daily-write, no_hourly).
+    // Both cases now THROW into the catch below, so they take the same path an HTML 503 always took —
+    // the existing WARN, then null, which every consumer already handles as "Open-Meteo down" (see
+    // station.mergeStationHydrology's null base and engine.hydrologyStatus's incomplete flag). A body with
+    // no `daily` block is refused whole rather than mapped field by field: every rain field, PoP, low,
+    // ET0, Tmax, the wetness window and settled_days derive from it, and a non-null hydrology carrying
+    // none of them is the shape that let 09-02 read as healthy. Partial DAILY data is still kept below,
+    // field by field. The reason is capped: it is Open-Meteo's free text and can echo a parameter.
+    const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const reasonOf = (b) => (b && typeof b.reason === 'string' ? `: ${b.reason.slice(0, 200)}` : '');
+    if (!r.ok) {
+      let why = '';
+      try { why = reasonOf(await r.json()); } catch (_) { /* HTML or empty error body: the status says enough */ }
+      throw new Error(`Open-Meteo HTTP ${r.status}${why}`);
+    }
+    const j = await r.json();
+    if (!j || !j.daily || typeof j.daily !== 'object') throw new Error(`Open-Meteo body has no daily block${reasonOf(j)}`);
     const ps = (j.daily && j.daily.precipitation_sum) || [];   // [D-2, D-1, D0, D1, D2, D3]
     const pop = (j.daily && j.daily.precipitation_probability_max) || [];
     const tmin = (j.daily && j.daily.temperature_2m_min) || [];  // same indexing as ps
@@ -205,7 +226,17 @@ async function fetchPrecip(lat, lng) {
     const windmax = (j.daily && j.daily.wind_speed_10m_max) || [];      // same indexing as ps
     const preciph = (j.daily && j.daily.precipitation_hours) || [];     // same indexing as ps
     const times = (j.daily && j.daily.time) || [];
-    const tomorrow = ps[3] || 0;
+    // BUG-FETCHPRECIPZERO-001 — the rain amounts take the null-never-0 rule every other field in this
+    // return already follows. 0 in. is a real dry day, so an absent entry must not read as one: the
+    // `|| 0` form did exactly that. Same semantics as the client mirror, src/lib/liveWeather.js
+    // (BUG-LIVEWEATHERNUMOR0-001), including the sum rule — D-2 + D-1 with one day missing is an
+    // understatement that reads like a measurement, so a sum is null unless every term is known.
+    // round2 is guarded because round2(null) is 0. A healthy body has all six entries finite
+    // (measured 2026-09-18, past days included), so healthy runs are byte-identical.
+    const numOrNull = (v) => (Number.isFinite(v) ? v : null);
+    const sumOrNull = (...vs) => (vs.some((v) => v == null) ? null : vs.reduce((a, v) => a + v, 0));
+    const round2OrNull = (v) => (v == null ? null : round2(v));
+    const tomorrow = numOrNull(ps[3]);
     // Absence is NEVER coerced to a temperature: a missing entry stays null so evalAdvisory skips it
     // rather than reading it as 0°F. Same rule as yesterday_precip_actual_in below.
     const lowOrNull = (v) => (Number.isFinite(v) ? v : null);
@@ -215,11 +246,11 @@ async function fetchPrecip(lat, lng) {
       // enters the stored plan payload (flag-OFF byte-parity holds).
       forecast_lows: [lowOrNull(tmin[3]), lowOrNull(tmin[4]), lowOrNull(tmin[5])],
       forecast_dates: [times[3] || null, times[4] || null, times[5] || null],
-      recent_precip_in: round2((ps[0] || 0) + (ps[1] || 0)),
-      today_precip_in: round2(ps[2] || 0),                 // D0 — rain falling TODAY (was fetched but dropped; DRG-WX-TODAY-FIX)
+      recent_precip_in: round2OrNull(sumOrNull(numOrNull(ps[0]), numOrNull(ps[1]))),   // D-2 + D-1
+      today_precip_in: round2OrNull(numOrNull(ps[2])),       // D0 — rain falling TODAY (was fetched but dropped; DRG-WX-TODAY-FIX)
       today_pop: pop[2] != null ? pop[2] : null,
-      upcoming_precip_in: round2(tomorrow + (ps[4] || 0)),
-      tomorrow_precip_in: round2(tomorrow),
+      upcoming_precip_in: round2OrNull(sumOrNull(tomorrow, numOrNull(ps[4]))),        // D1 + D2
+      tomorrow_precip_in: round2OrNull(tomorrow),
       tomorrow_pop: pop[3] != null ? pop[3] : null,
       // D+2's PROBABILITY. `pop[4]` has been in every response this Lambda has ever parsed and was never
       // read, which is the whole reason `upcoming_precip_in` (D1+D2, two lines up) gates nothing: the
