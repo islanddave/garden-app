@@ -137,14 +137,17 @@ describe('lineText — the second line as the eye reads it (and as uniqueness is
 
 describe('heat (V5-SEEDCARDS-001)', () => {
   it('heatOf keys a range by its top, falls back to one end, and is null with no figure', () => {
-    expect(heatOf(bought({ scoville_min: 100000, scoville_max: 350000 }))).toEqual({ min: 100000, max: 350000, key: 350000, estimate: false })
-    expect(heatOf(bought({ scoville_min: 5000, scoville_max: null }))).toEqual({ min: 5000, max: 5000, key: 5000, estimate: false })
+    expect(heatOf(bought({ scoville_min: 100000, scoville_max: 350000 }))).toEqual({ min: 100000, max: 350000, key: 350000 })
+    expect(heatOf(bought({ scoville_min: 5000, scoville_max: null }))).toEqual({ min: 5000, max: 5000, key: 5000 })
     expect(heatOf(bought({ scoville_min: 0, scoville_max: 0 }))?.key).toBe(0)
     expect(heatOf(bought())).toBeNull()
-    expect(heatOf(bought({ scoville_min: 1, scoville_max: 2, scoville_source: 'inference' })).estimate).toBe(true)
+    // A best guess sorts by the same key as a stated figure; it is marked where it is shown (heatLabel).
+    expect(heatOf(bought({ scoville_min: 1, scoville_max: 2, scoville_source: 'inference' }))).toEqual({ min: 1, max: 2, key: 2 })
   })
   it('heatLabel reuses the one SHU formatter (varietySpec.shuLabel)', () => {
     expect(heatLabel(bought({ scoville_min: 100000, scoville_max: 350000 }))).toBe('100K–350K SHU')
+    // …which marks a best guess with the word, as the row, the card and the detail page all read it.
+    expect(heatLabel(bought({ scoville_min: 100000, scoville_max: 350000, scoville_source: 'inference' }))).toBe('est. 100K–350K SHU')
     expect(heatLabel(bought({ scoville_min: 0, scoville_max: 0 }))).toBe('Sweet · 0 SHU')
     expect(heatLabel(bought())).toBe('')
   })

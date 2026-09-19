@@ -42,7 +42,9 @@ const pkt = (over = {}) => ({
   purchase_date: null, year_harvested: null, stage_entered_at: null, seed_count: null, seed_weight_g: null,
   seed_count_estimated: null, sow_archived_season: null, created_at: '2026-07-01T12:00:00Z',
   hero_photo_id: null, featured_photo_id: null, featured_photo_view_url: null, featured_photo_thumb_url: null,
-  scoville_min: null, scoville_max: null, origin_country: null, origin_region: null, species: null,
+  // scoville_source is on every real list row (the SELECT names it), null when nobody recorded where the
+  // figure came from — 55 of 103 prod peppers. Present-and-null is the branch production takes.
+  scoville_min: null, scoville_max: null, scoville_source: null, origin_country: null, origin_region: null, species: null,
   days_to_maturity_min: null, days_to_maturity_max: null, dtm_basis: null, source_url: null, variety_source_url: null,
   ...over,
 })
@@ -132,6 +134,13 @@ describe('My seeds — what each card says', () => {
     const sa = within(lineOf('sa')).getByTestId('my-seed-supplier')
     expect(sa.textContent).toBe('Sandia')
     expect(hex(sa.style.backgroundColor)).not.toBe(hex(bi.style.backgroundColor))
+    // The card's stripe is each supplier's OWN primary, not one accent for every card (normalised
+    // through a probe element, as the detail page's stripe test does).
+    for (const [id, name] of [['bi', 'Botanical Interests'], ['sa', 'Sandia Seed Company']]) {
+      const probe = document.createElement('div')
+      probe.style.color = supplierColors(name).primary
+      expect(rowFor(id).style.borderLeftColor).toBe(probe.style.color)
+    }
   })
 
   it('"1 packet" is not printed — every other amount is', async () => {
@@ -204,7 +213,11 @@ describe('My seeds — what each card says', () => {
     expect(seen.sort()).toEqual(['1 of 2 identical', '2 of 2 identical'])
   })
 
-  it('the amount is its own span after the chips, so a crowded line cuts chips and the tail, never the amount', async () => {
+  // Line 2's shrink order (UX spec §1.3) is geometry, measured by gate:seeds-page (g)(k)(n); these pin the
+  // structure it rests on. Replaces the pins of "the amount is its own span after the chips" (V102 §12): the
+  // amount outside any chip, the neutral chip in a box that shrinks (not an item of the line), and the order
+  // chips box → amount → tail — plus what changed on purpose: the LIVE chip is now the line's own rigid item.
+  it('line 2 gives way in order: a live chip is a rigid item of the line; neutral chips, amount and tail share the give-way flow', async () => {
     rows = [pkt({
       id: 'crowd', name: 'Big Boy — saved 2026', variety_name: 'Big Boy', seed_stage: 'fermenting', source_plant_id: 'pl',
       seed_count: 120, seed_count_estimated: true, year_harvested: 2026, stage_entered_at: new Date().toISOString(),
@@ -213,14 +226,71 @@ describe('My seeds — what each card says', () => {
     await mount()
     await openAll()
     const line = lineOf('crowd')
-    const parts = [...line.children]
     const amount = within(line).getByTestId('my-seed-amount')
+    const chips = within(line).getAllByTestId('my-seed-chip')
     expect(amount.textContent).toBe('approx. 120 seeds')
-    expect(within(line).getAllByTestId('my-seed-chip').length).toBe(2)
-    expect(within(line).getAllByTestId('my-seed-chip').every((c) => !c.contains(amount) && c.parentElement !== line)).toBe(true)
-    expect(parts.indexOf(amount)).toBe(1)
-    expect(parts[2]).toBe(within(line).getByTestId('my-seed-rest'))
+    expect(chips.length).toBe(2)
+    expect(chips.every((c) => !c.contains(amount))).toBe(true)
+    // "Ferment · today" is the lot's live state: an item of the line itself, rigid, and it says so on the chip
+    // (data-tone — what the gate's (n) reads to know which chip may never be cut).
+    const [liveChip, neutralChip] = chips
+    expect(liveChip.textContent).toBe('Ferment · today')
+    expect(liveChip.getAttribute('data-tone')).toBe('info')
+    expect(liveChip.parentElement).toBe(line)
+    expect(liveChip.style.flex).toBe('0 0 auto')
+    // "Archived for this season" gives way: in a box with a 0 basis that shrinks, inside the same flow as the
+    // facts, straight before the amount; the tail follows the amount (a tomato has no heat).
+    expect(neutralChip.getAttribute('data-tone')).toBe('neutral')
+    expect(neutralChip.parentElement).not.toBe(line)
+    const box = neutralChip.parentElement
+    expect(box.style.flexShrink).toBe('1')
+    expect(box.style.flexBasis).toBe('0px')
+    expect(box.nextElementSibling).toBe(amount)
+    expect(amount.nextElementSibling).toBe(within(line).getByTestId('my-seed-rest'))
+    expect(amount.parentElement).toBe(box.parentElement)
     expect(amount.style.flex).toBe('0 0 auto')
+  })
+
+  it('a heat that cannot fit drops WHOLE: it follows the amount in a wrapping flow and carries its own " · " — the tail goes with it', async () => {
+    rows = [pepper({
+      id: 'lantern', name: 'Hot Paper Lantern — saved 2026', variety_name: 'Hot Paper Lantern', seed_stage: 'drying',
+      source_plant_id: 'pl', seed_count: 1200, seed_count_estimated: true, seed_weight_g: 12.5,
+      scoville_min: 150000, scoville_max: 325000, stage_entered_at: new Date().toISOString(),
+    })]
+    await mount()
+    await openAll()
+    const line = lineOf('lantern')
+    const amount = within(line).getByTestId('my-seed-amount')
+    const heat = within(line).getByTestId('my-seed-heat')
+    const rest = within(line).getByTestId('my-seed-rest')
+    expect(amount.textContent).toBe('approx. 1200 seeds · 12.5 g')
+    expect(heat.textContent).toBe(' · est. 150K–325K SHU')
+    expect(rest.textContent.startsWith(' · ')).toBe(true)
+    // amount → heat → tail, in one flow that WRAPS (what does not fit goes to a hidden second line, whole),
+    // and the flow's box clips.
+    expect([amount.nextElementSibling, heat.nextElementSibling]).toEqual([heat, rest])
+    const flow = heat.parentElement
+    expect(flow).toBe(amount.parentElement)
+    expect(flow.style.flexWrap).toBe('wrap')
+    expect(flow.style.position).toBe('absolute')
+    expect(flow.parentElement.style.overflow).toBe('clip')
+    expect(heat.style.flex).toBe('0 0 auto')
+    // The Drying chip sits outside that flow: nothing the flow drops can take it.
+    const live = within(line).getByTestId('my-seed-chip')
+    expect(live.textContent).toBe('Drying')
+    expect(live.parentElement).toBe(line)
+    expect(flow.contains(live)).toBe(false)
+    // The line's height comes from an invisible stand-in that adds no text.
+    expect(line.lastElementChild.getAttribute('aria-hidden')).toBe('true')
+    expect(line.lastElementChild.textContent).toBe('')
+  })
+
+  it('a line with nothing to print stays EMPTY — no stand-in, so the row keeps its height', async () => {
+    rows = [pkt({ id: 'bare' })]
+    await mount()
+    await openAll()
+    expect(lineOf('bare').children.length).toBe(0)
+    expect(lineOf('bare').textContent).toBe('')
   })
 
   it('two cards that would read alike are told apart on screen', async () => {
@@ -358,8 +428,10 @@ describe('My seeds — folding groups', () => {
     expect(headerFor('Tomato').getAttribute('aria-expanded')).toBe('true')
     await act(async () => { fireEvent.click(headerFor('Tomato')) })
     expect(headerFor('Tomato').getAttribute('aria-expanded')).toBe('false')
-    await act(async () => { fireEvent.change(box, { target: { value: 'or' } }) })
-    expect(headerFor('Tomato')?.getAttribute('aria-expanded') ?? 'true').toBe('true')
+    // A new search that still finds a tomato ("go": Sungold, and Gong Bao) — so the Tomato header is
+    // on the page to be read, and the hand fold must have been cleared by the change.
+    await act(async () => { fireEvent.change(box, { target: { value: 'go' } }) })
+    expect(headerFor('Tomato').getAttribute('aria-expanded')).toBe('true')
   })
 })
 
@@ -520,9 +592,15 @@ describe('My seeds — the expanded card (no "On hand", the seed\'s facts)', () 
       }),
       pepper({ id: 'bare', name: 'Mystery', variety_name: 'Mystery', breeding_system: 'unknown' }),
       pkt({ id: 'tom' }),
+      // A figure nobody recorded the source of (the fixture's scoville_source: null, as prod sends it).
+      pepper({ id: 'unk', name: 'Hungarian Hot Wax', variety_name: 'Hungarian Hot Wax', scoville_min: 5000, scoville_max: 15000 }),
     ]
     await mount()
     await openAll()
+    await expandRow('unk')
+    expect(within(rowFor('unk')).getByTestId('my-seed-facts').querySelector('[data-fact="Heat"]').textContent)
+      .toBe('5,000–15,000 SHU · source not recorded')
+    expect(within(lineOf('unk')).getByTestId('my-seed-heat').textContent).toBe('5K–15K SHU')
     await expandRow('hab')
     const facts = within(rowFor('hab')).getByTestId('my-seed-facts')
     expect([...facts.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['From', 'Heat', 'Country of origin', 'Species', 'Days to maturity', 'Breeding'])
@@ -547,6 +625,10 @@ describe('My seeds — the expanded card (no "On hand", the seed\'s facts)', () 
       pkt({ id: 'own', source_url: 'https://sandiaseed.com/products/fresno' }),
       pkt({ id: 'ref', name: 'Stupice', variety_name: 'Stupice', variety_source_url: 'https://www.johnnyseeds.com/stupice' }),
       pkt({ id: 'none', name: 'Plain', variety_name: 'Plain' }),
+      // Only http(s) ever becomes a link: a `javascript:` packet URL falls through to the variety page, or
+      // to no link at all.
+      pkt({ id: 'js', name: 'Script', variety_name: 'Script', source_url: 'javascript:alert(1)', variety_source_url: 'https://www.johnnyseeds.com/script' }),
+      pkt({ id: 'jsonly', name: 'Script Only', variety_name: 'Script Only', source_url: 'javascript:alert(1)', variety_source_url: 'javascript:alert(2)' }),
     ]
     await mount()
     await openAll()
@@ -565,6 +647,13 @@ describe('My seeds — the expanded card (no "On hand", the seed\'s facts)', () 
     expect(ref.textContent).not.toMatch(/supplier/i)
     await expandRow('none')
     expect(within(rowFor('none')).queryByTestId('my-seed-packet-link')).toBeNull()
+    await expandRow('js')
+    const js = within(rowFor('js')).getByTestId('my-seed-packet-link')
+    expect(js.getAttribute('href')).toBe('https://www.johnnyseeds.com/script')
+    expect(js.querySelector('[aria-hidden="true"]').textContent).toBe('About this variety · johnnyseeds.com ↗')
+    await expandRow('jsonly')
+    expect(within(rowFor('jsonly')).queryByTestId('my-seed-packet-link')).toBeNull()
+    expect([...document.querySelectorAll('a[href]')].some((a) => /^javascript:/i.test(a.getAttribute('href')))).toBe(false)
   })
 
   it('offers "Change stage in Saved seeds →" only for a lot in process, and hands the lot to the shell', async () => {

@@ -46,26 +46,44 @@
 //   (f) ONE-LINE ROWS — every row's line 1 (title, ordinal, chevron) and line 2 ([data-testid=
 //       "my-seed-line"]) is ONE line: its height <= ONE_LINE_RATIO x its one-line height, AND its text
 //       runs share one horizontal band. The title is one line too, and the fixture's 44-character
-//       name is TRUNCATED with an ellipsis rather than wrapped.
+//       name is TRUNCATED with an ellipsis rather than wrapped. Line 2's bands count only the text a
+//       phone SHOWS: My seeds drops a fact by wrapping it onto a hidden second line of its give-way
+//       flow, which is in the DOM and is not a line anyone sees (see WHAT IS PAINTED in MEASURE) —
+//       and none of what it shows may be sliced by the line's top or bottom edge, the shape a wrap
+//       takes inside that absolutely positioned flow, which never makes the line taller.
 //   (g) THE AMOUNT IS NEVER CUT — every row that states an amount ([data-testid="my-seed-amount"])
-//       shows ALL of it: the span is inside its line's box, has width, and its text is not
-//       ellipsised. Promoted from a REPORTED finding (2026-09-18: at 360px the 44-char row's two
-//       chips squeezed a single facts span to 0px, and the amount went with it).
+//       shows ALL of it: the span is inside its line's box on BOTH axes and inside everything that
+//       clips it, has width, and its text is not ellipsised — an amount wrapped out of sight below
+//       its line is as cut as one squeezed at its right edge. Promoted from a REPORTED finding
+//       (2026-09-18: at 360px the 44-char row's two chips squeezed a single facts span to 0px, and
+//       the amount went with it).
 //   (i) THE ORDINAL IS NEVER CUT — on each row of an identical pair, "1 of 2 identical"
 //       ([data-testid="my-seed-ordinal"], on LINE 1 since V5-SEEDCARDS-001) shows whole, like (g): it
 //       is the only fact that tells the two apart, and the title beside it has to give way instead.
-//   (j) THE SUPPLIER CHIP IS WHOLE — every [data-testid="my-seed-supplier"] sits inside its line, has
-//       width and is not ellipsised (scrollWidth <= clientWidth + 1): it leads the line and carries
-//       the supplier's name, the cue that never depends on colour.
-//   (k) THE HEAT IS WHOLE — every [data-testid="my-seed-heat"] sits inside its line and is not
-//       ellipsised: a cut Scoville number is a wrong number.
+//   (j) THE SUPPLIER CHIP IS WHOLE — every [data-testid="my-seed-supplier"] sits inside its line (both
+//       axes, as (g)), has width and is not ellipsised (scrollWidth <= clientWidth + 1): it leads the
+//       line and carries the supplier's name, the cue that never depends on colour.
+//   (k) THE HEAT IS WHOLE OR DROPPED WHOLE — every [data-testid="my-seed-heat"] either sits wholly
+//       inside its line, text and box, not ellipsised, or has NOTHING of it painted (a line with no
+//       room drops it); partly shown is red: a cut Scoville number is a wrong number. Two fixture rows
+//       force both halves and the order between them (UX spec §1.3) at both widths: HEAT_DROPPED_ROW
+//       must drop its heat, and NEUTRAL_GIVES_ROW must keep its heat whole while its neutral chip
+//       ellipsises — a heat dropped there, while the neutral chip had room to give, is red.
+//   (n) A LIVE STATE CHIP IS NEVER CUT — the first chip of a lot in process (a ferment, a drying lot:
+//       the row states data-tone info / warn / danger on the chip) is whole, as (g). Neutral chips
+//       ("Archived for this season", a status) are meant to give way and are only REPORTED.
 //   (l) THE THUMBNAIL BOX HOLDS — every row's [data-testid="my-seed-thumb"] is THUMB_PX x THUMB_PX
 //       (±BOX_TOL_PX) at one left x (±BOX_TOL_PX), striped (a supplier) or not — measured BEFORE any
 //       packet image has landed and AGAIN after every one has loaded or failed. "Before" is made, not
 //       hoped for: the packet-image requests are HELD at the network layer (CDP Fetch) until the
 //       first measurement is read, and every mounted <img> must still be loading when it is; "after"
-//       releases them, scrolls the image window open to the last row, and waits for each image to
-//       load or to end on its placeholder (the fixture's broken URL).
+//       releases them, scrolls to the last row (which brings the tail's rows within reach), and waits
+//       for each image to load or to end on its placeholder (the fixture's broken URL).
+//   (o) THE IMAGE REACH — on its OWN page load (the harness's ?bulk variant: 64 more photo rows in
+//       Pepper), tapped open and scrolled to mid-group, far above the document's bottom: every row on
+//       screen has its packet image loaded; nothing is mounted beyond the first IMAGE_WINDOW_PAGE plus
+//       the rows within useNearViewport's REACH_PX (both read from the hooks); and — a ceiling that does
+//       not move with REACH_PX — nothing past the first page mounts more than two screens below.
 //   (h) SOW NOW NAMES ARE NOT SQUEEZED — every open Sow now card's title column is at least
 //       SowNow.jsx's TITLE_COL_MIN_PX (read from the source); wider action pairs wrap under the name.
 //       Promoted from a REPORTED finding (a needs-profile card left its name 76px, five lines).
@@ -141,6 +159,16 @@ function sowTitleColMinPx() {
   return found[0]
 }
 const SOW_TITLE_COL_MIN_PX = sowTitleColMinPx()
+// (o): the first image page every surface mounts at once, and how far from the viewport My seeds reaches
+// for a row's thumbnail — both read from the hooks that own them.
+function exportedNumber(file, name) {
+  const src = readFileSync(resolve(ROOT, file), 'utf8')
+  const found = [...src.matchAll(new RegExp(`export const ${name} = (\\d+)`, 'g'))].map(m => Number(m[1]))
+  if (found.length !== 1) throw new Error(`${file} exports ${name} ${found.length} times; expected exactly 1 — (o) has no bound to hold the page to`)
+  return found[0]
+}
+const IMAGE_PAGE = exportedNumber('src/hooks/useImageWindow.js', 'IMAGE_WINDOW_PAGE')
+const REACH_PX = exportedNumber('src/hooks/useNearViewport.js', 'REACH_PX')
 
 // Tolerances. 2px is "the same line" for boxes whose centres a flex row aligns exactly; 1.5 is the
 // brief's own one-line ratio (a second line of any of this text at least doubles the box).
@@ -190,26 +218,37 @@ const LONG_NAME = 'Money Plant (self-saved, variety unrecorded)'
 // Saved seeds →" and "Open details →" — and it is the first row of the first group, so it is in the
 // band at scrollTop 0.
 const EXPAND_ROW = 'Aji Charapita'
+// (k)'s two halves and the shrink order behind them (UX spec §1.3), each forced by one fixture row at
+// BOTH widths (tests/harness/seeds.jsx): a drying lot whose live chip and amount leave no room, so its
+// heat must be DROPPED WHOLE; and an archived packet whose heat fits only once the neutral "Archived for
+// this season" chip gives way, so that chip must ELLIPSISE and the heat stay whole.
+const HEAT_DROPPED_ROW = 'Hot Paper Lantern'
+const NEUTRAL_GIVES_ROW = 'Hungarian Hot Wax'
+const LIVE_TONES = ['info', 'warn', 'danger']
 const VIEWS = [
   { view: 'mine', label: 'My seeds', body: 'my-seeds-view', expect: {
     actions: 2,
     // Folded, fresh session: the fixture's eight crops, Sowed previously (the used-up Salad Bowl Blend),
     // the two most-counted crops and suppliers pinned in their chip rows.
     cropHeaders: 8, sowedHeaders: 1, pinnedCrops: ['Pepper', 'Tomato'], pinnedSuppliers: ['Botanical', 'Bentley'],
-    // Every group open: 28 rows. The amount shows on 8 (every "1 packet" row prints none: Hot Portugal,
-    // Shishito and Amish Paste's 2-3 packets, the Reaper's 25 seeds, the bean's 2 oz, the used-up 0
-    // packets, and the two COUNTED saved lots — 1884's 185 and the Money Plant's approx. 120).
-    rows: 28, longRowChips: 2, ordinalRows: 2, amountRows: 8, stripeless: 5, expandedControls: 3,
+    // Every group open: 30 rows. The amount shows on 10 (every "1 packet" row prints none: Hot Portugal,
+    // Shishito, Amish Paste and Hungarian Hot Wax's 2-3 packets, the Reaper's 25 seeds, the bean's 2 oz,
+    // the used-up 0 packets, and the three MEASURED saved lots — 1884's 185, the Money Plant's approx.
+    // 120 and Hot Paper Lantern's approx. 1200 seeds · 12.5 g).
+    rows: 30, longRowChips: 2, ordinalRows: 2, amountRows: 10, stripeless: 6, expandedControls: 3,
     // One chip per bought packet, by short label — Fedco is the one supplier the palette does not know.
-    suppliers: { Botanical: 8, Bentley: 6, "Johnny's": 4, Fedco: 4, Sandia: 1 },
-    // Ten of the eleven peppers carry heat (Lemon Drop has no figure on record); these four labels are
-    // the shapes that have to be on screen: sweet, the longest, a single bound, the saved lot's estimate.
-    heatRows: 10, heatLabels: ['Sweet · 0 SHU', '1.2M–2M SHU', '23K SHU', 'est. 30K–50K SHU'],
-    // 13 rows carry a packet photo (one of them the broken URL). 11 fall inside the first image-window
-    // page (useImageWindow, 24 rows); the two tail photos mount only once the page is scrolled.
+    suppliers: { Botanical: 8, Bentley: 6, "Johnny's": 4, Fedco: 4, Sandia: 2 },
+    // Twelve of the thirteen peppers carry heat (Lemon Drop has no figure on record); these four labels
+    // are the shapes that have to be on screen: sweet, the longest, a single bound, the saved lot's estimate.
+    heatRows: 12, heatLabels: ['Sweet · 0 SHU', '1.2M–2M SHU', '23K SHU', 'est. 30K–50K SHU'],
+    // (n): a LIVE first chip (tone info/warn/danger) on four lots in process — the Money Plant's ferment
+    // (day 5, danger), Cherokee Purple's (day 1, info), and two drying lots (Aji Charapita, Hot Paper Lantern).
+    liveChips: 4,
+    // 13 rows carry a packet photo (one of them the broken URL). 11 are among the first IMAGE_WINDOW_PAGE
+    // (24) rows on screen; the two tail photos mount only once the page is scrolled near them.
     photoRows: 13, brokenPhotos: 1, firstPagePhotos: 11,
   } },
-  { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 4, sections: 3 } },
+  { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 5, sections: 3 } },
   { view: 'sow', label: 'Sow now', body: 'sow-now-view', expect: { actions: 0, minSowButtons: 10, minSowHeadings: 2 } },
 ]
 const VIEWPORTS = [[360, 640], [390, 844]]
@@ -333,34 +372,65 @@ const MEASURE = (v) => `(() => {
   // instrument. Per text node and not one Range over the element, because a Range's rects include
   // the BORDER BOX of every element it selects — a two-line facts span's own 30px box then spans both
   // of its lines and merges them into one (measured: a GATE_MUTATE_CSS wrap read "1 visual line").
-  const textRects = el => { const out = [], tw = d.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  const runsOf = el => { const out = [], tw = d.createTreeWalker(el, NodeFilter.SHOW_TEXT)
     for (let t = tw.nextNode(); t; t = tw.nextNode()) {
       if (!t.textContent.trim()) continue
       const rg = d.createRange(); rg.selectNodeContents(t)
-      for (const r of rg.getClientRects()) if (r.width > 0.5 && r.height > 0.5) out.push(r)
+      for (const r of rg.getClientRects()) if (r.width > 0.5 && r.height > 0.5) out.push({ r, host: t.parentElement })
     }
     return out }
+  const textRects = el => runsOf(el).map(x => x.r)
+  // WHAT IS PAINTED. My seeds' line 2 drops a fact by WRAPPING it onto a second line of an absolutely
+  // positioned flow, far below a box that clips (MySeeds.jsx giveWayBox): in the DOM, laid out, and
+  // invisible. So "where is it" and "can anyone see it" are different questions. The visible region of
+  // a node is the intersection of every CLIPPING box (overflow other than visible) from the node up to
+  // its row card; a box or a text run that meets none of that region is not shown.
+  const clipOf = (from, stop) => { let c = { l: -Infinity, t: -Infinity, r: Infinity, b: Infinity }
+    for (let a = from; a; a = a.parentElement) {
+      const cs = w.getComputedStyle(a)
+      if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') { const r = a.getBoundingClientRect()
+        c = { l: Math.max(c.l, r.left), t: Math.max(c.t, r.top), r: Math.min(c.r, r.right), b: Math.min(c.b, r.bottom) } }
+      if (a === stop) break
+    }
+    return c }
+  const meets = (r, c) => r.right > c.l + 0.5 && r.left < c.r - 0.5 && r.bottom > c.t + 0.5 && r.top < c.b - 0.5
+  const within = (r, c) => r.left >= c.l - 0.5 && r.right <= c.r + 0.5 && r.top >= c.t - 0.5 && r.bottom <= c.b + 0.5
+  const boxOf = el => { const r = el.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } }
+  // A text run clips to its own element too (an ellipsised tail), so its region starts at its host.
+  const shownRuns = (el, stop) => runsOf(el).filter(x => meets(x.r, clipOf(x.host, stop)))
+  const shownRects = (el, stop) => shownRuns(el, stop).map(x => x.r)
   // VISUAL LINES: text runs clustered by vertical OVERLAP. A chip's text sits a few px lower than the
   // facts beside it on the same line, so counting distinct tops (right for one text node, as in
   // seeds-saved-clearance.mjs) would call a one-line row three lines.
   // Each band keeps its widest run: an ellipsized text node hands back TWO rects on its one line (the
   // full run and the painted one — measured 327px + 270px for the 44-char name), so a sum of rects
   // double-counts and a per-band max does not.
-  const bandsOf = el => { const rs = textRects(el).sort((a, b) => a.top - b.top); const out = []
+  const bands = rects => { const rs = [...rects].sort((a, b) => a.top - b.top); const out = []
     for (const r of rs) { const last = out[out.length - 1]
       if (last && r.top < last.bottom - 1) { last.bottom = Math.max(last.bottom, r.bottom); last.w = Math.max(last.w, r.width) }
       else out.push({ top: r.top, bottom: r.bottom, w: r.width }) }
     return out }
+  const bandsOf = el => bands(textRects(el))
   const lines = el => bandsOf(el).length
+  // (f) on line 2 counts the lines a phone SHOWS: a fact dropped onto the hidden second line of the
+  // give-way flow is not a wrap anyone sees. Line 1 and the title keep every run — the title's ink
+  // width is meant to include what its ellipsis hides.
+  const shownLines = (el, stop) => bands(shownRects(el, stop)).length
   // ONE LINE of an element's own content: its used line-height (px; 'normal' resolved to the height
   // of its own text run, which is what normal means for that font) + vertical padding + border.
   const oneLine = el => { const cs = w.getComputedStyle(el); let lh = parseFloat(cs.lineHeight)
     if (!Number.isFinite(lh)) { const rs = textRects(el); lh = rs.length ? Math.min(...rs.map(r => r.height)) : px(cs.fontSize) * 1.2 }
     return lh + px(cs.paddingTop) + px(cs.paddingBottom) + px(cs.borderTopWidth) + px(cs.borderBottomWidth) }
-  // A never-cut item, read against the line that holds it: inside its box, with width, not ellipsised.
-  const whole = (el, lb) => { const b = el.getBoundingClientRect(); return { text: (el.textContent || '').trim(),
-    w: R(b.width), l: R(b.left), r: R(b.right), inLine: b.left >= lb.left - 0.5 && b.right <= lb.right + 0.5,
-    cut: el.scrollWidth > el.clientWidth + 1 } }
+  // A never-cut item, read against the line that holds it: its box inside that line's box AND inside
+  // everything that clips it up to the row — both axes, so an item hidden BELOW its line (dropped onto
+  // the give-way flow's second line) is not "inside the line" just because its x range is — with width,
+  // and not ellipsised. "shown": is any of it painted, box or text (what tells a heat dropped whole from
+  // a sliced one). "inkIn": does all of its text lie inside the line and the clip.
+  const whole = (el, lineEl, stop) => { const b = el.getBoundingClientRect(), lb = boxOf(lineEl)
+    const c = clipOf(el.parentElement, stop), ink = textRects(el)
+    return { text: (el.textContent || '').trim(), w: R(b.width), l: R(b.left), r: R(b.right), t: R(b.top), b: R(b.bottom),
+      inLine: within(b, lb) && within(b, c), cut: el.scrollWidth > el.clientWidth + 1,
+      shown: meets(b, c) || ink.some(k => meets(k, c)), inkIn: ink.every(k => within(k, lb) && within(k, c)) } }
 
   const topBar = d.querySelector('header[data-app-chrome="top"]')
   const nav = d.querySelector('nav[aria-label="Main navigation"]')
@@ -433,6 +503,9 @@ const MEASURE = (v) => `(() => {
     if (line) {
       const items = [...line.children]
       const chips = [...line.querySelectorAll('${tid('my-seed-chip')}')]
+      // A LIVE chip is a lot in process (UX spec §1.3's info / warn / danger tones), by the tone the
+      // row itself states on the chip — never by where the chip sits, which is the thing under test.
+      const live = chips.filter(c => ${JSON.stringify(LIVE_TONES)}.includes(c.getAttribute('data-tone')))
       const amount = line.querySelector('${tid('my-seed-amount')}')
       const supplier = line.querySelector('${tid('my-seed-supplier')}')
       const heat = line.querySelector('${tid('my-seed-heat')}')
@@ -442,24 +515,43 @@ const MEASURE = (v) => `(() => {
       // measured against the direct children only, a 22px Badge row read as x1.58 of a 14px line on
       // CI's fonts (x1.47 on the Mac) — a one-line row failing (f) because of where its chips live.
       const one = Math.max(oneLine(line), ...items.map(oneLine), ...chips.map(oneLine))
-      // THE LINE'S MARGIN: from the right edge of the last item that never gives way (the supplier,
-      // a live state chip, the amount, the heat) to the line's own right edge. Printed, because CI's
-      // wider fonts spend it first.
-      const fixed = [supplier, amount, heat, chips[0]].filter(Boolean).map(e => e.getBoundingClientRect().right)
+      const H = heat ? whole(heat, line, row) : null
+      // THE LINE'S MARGIN: how much wider CI's fonts can make this line before an item that never gives
+      // way (the supplier, a live state chip, the amount) or a shown heat is touched — the room from the
+      // last of them to the line's right edge (where the tail lives), plus whatever the neutral chips'
+      // box before them is still wide enough to give. Printed, because CI's wider fonts spend it first.
+      const fixed = [supplier, amount, ...live, H && H.shown ? heat : null].filter(Boolean).map(e => e.getBoundingClientRect().right)
+      const firstNeutral = chips.find(c => !live.includes(c))
+      const gives = firstNeutral && firstNeutral.parentElement !== line ? firstNeutral.parentElement.getBoundingClientRect().width : 0
+      const restShown = rest ? whole(rest, line, row).shown : false
       L = { text: (line.textContent || '').trim().replace(/\\s+/g, ' '), h: R(lb.height), oneLineH: R(one),
-        ratio: Math.round(lb.height / one * 100) / 100, lines: lines(line), chips: chips.length,
+        ratio: Math.round(lb.height / one * 100) / 100, lines: shownLines(line, row), domLines: lines(line), chips: chips.length,
         chipLabels: chips.map(c => (c.textContent || '').trim()),
-        amount: amount ? whole(amount, lb) : null,
-        supplier: supplier ? { ...whole(supplier, lb), name: supplier.getAttribute('data-supplier') } : null,
-        heat: heat ? whole(heat, lb) : null,
-        lineL: R(lb.left), lineR: R(lb.right), slack: fixed.length ? R(lb.right - Math.max(...fixed)) : null,
+        amount: amount ? whole(amount, line, row) : null,
+        supplier: supplier ? { ...whole(supplier, line, row), name: supplier.getAttribute('data-supplier') } : null,
+        heat: H,
+        liveChips: live.map(c => whole(c, line, row)),
+        // A run the phone shows must show WHOLE top to bottom. The give-way flow is absolutely positioned,
+        // so a wrap inside it never makes the line taller (the ratio cannot see it), and a chip's run can
+        // bridge its two text lines into one band: what it does show is text sliced by the line's edge.
+        sliced: shownRuns(line, row).filter(x => { const c = clipOf(x.host, row)
+          return x.r.top < Math.max(c.t, lb.top) - 0.5 || x.r.bottom > Math.min(c.b, lb.bottom) + 0.5 })
+          .map(x => ({ text: (x.host.textContent || '').trim(), t: R(x.r.top), b: R(x.r.bottom) })),
+        // The neutral chips, and whether each GAVE WAY: ellipsised inside itself, or cut by the box
+        // that holds it. "full" is the chip's whole width, border included, so it compares with "w".
+        neutral: chips.filter(c => !live.includes(c)).map(c => ({ text: (c.textContent || '').trim(),
+          w: R(c.getBoundingClientRect().width), full: c.scrollWidth + c.offsetWidth - c.clientWidth,
+          cut: c.scrollWidth > c.clientWidth + 1 || !within(c.getBoundingClientRect(), clipOf(c.parentElement, row)) })),
+        lineL: R(lb.left), lineR: R(lb.right), lineT: R(lb.top), lineB: R(lb.bottom),
+        slack: fixed.length ? R(lb.right - Math.max(...fixed) + gives) : null,
         // REPORTED: what gives way on a crowded line, by design — chips ellipsised, then where-from/how-old.
         // By name: a NEUTRAL chip ("Archived for this season", a status) is meant to give way; the first
         // chip of a lot in process is not (UX spec §1.3) — printed so the difference is visible. A chip
         // clipped by the shrinking box that holds the chips counts as cut, even when it did not shrink.
         chipsCutLabels: chips.filter(c => c.scrollWidth > c.clientWidth + 1 || c.getBoundingClientRect().right > lb.right + 0.5
           || c.getBoundingClientRect().right > c.parentElement.getBoundingClientRect().right + 0.5).map(c => (c.textContent || '').trim()),
-        restW: rest ? R(rest.getBoundingClientRect().width) : null,
+        // A tail dropped with its heat onto the hidden line still has a box there; it SHOWS nothing.
+        restW: rest ? (restShown ? R(rest.getBoundingClientRect().width) : 0) : null,
         restInkW: rest ? R(rest.scrollWidth) : null,
         clipsContent: line.scrollWidth > line.clientWidth + 1 }
     }
@@ -468,7 +560,7 @@ const MEASURE = (v) => `(() => {
       const ordinal = line1.querySelector('${tid('my-seed-ordinal')}')
       const one1 = Math.max(oneLine(line1), ...[...line1.children].map(oneLine))
       L1 = { h: R(l1b.height), oneLineH: R(one1), ratio: Math.round(l1b.height / one1 * 100) / 100, lines: lines(line1),
-        l: R(l1b.left), r: R(l1b.right), ordinal: ordinal ? whole(ordinal, l1b) : null,
+        l: R(l1b.left), r: R(l1b.right), t: R(l1b.top), b: R(l1b.bottom), ordinal: ordinal ? whole(ordinal, line1, row) : null,
         slack: ordinal ? R(l1b.right - ordinal.getBoundingClientRect().right) : null }
     }
     if (title) {
@@ -660,7 +752,7 @@ async function pepperOpened(at, vw, vh, m0) {
   console.log(`${P}: screenshot ${await shoot(join(OUTDIR, `seeds-page-mine-${vw}x${vh}-pepper-open.png`))}`)
 }
 
-// ── EVERY GROUP OPEN: (c), (d), (f), (g), (i), (j), (k), (l) ─────────────────────────────────────────
+// ── EVERY GROUP OPEN: (c), (d), (f), (g), (i), (j), (k), (n), (l) ────────────────────────────────────
 async function allOpened(v, at, vw, vh) {
   const e = v.expect
   const P = `[seeds-page] ${at}`
@@ -719,13 +811,22 @@ async function allOpened(v, at, vw, vh) {
   if (heats.length !== e.heatRows) mismatch.push(`${heats.length} row(s) show a heat figure, expected ${e.heatRows} (every pepper but the one with no figure on record)`)
   const missingHeat = e.heatLabels.filter(h => !heats.includes(h))
   if (missingHeat.length) mismatch.push(`no row shows the heat label(s) ${missingHeat.map(h => `"${h}"`).join(', ')} (shown: ${heats.join(' | ')})`)
+  // Non-vacuity for (n): the live chips, found by the tone each row states on its chip.
+  const liveCount = m.rows.reduce((s, r) => s + (r.line ? r.line.liveChips.length : 0), 0)
+  if (liveCount !== e.liveChips) mismatch.push(`${liveCount} live state chip(s) (tone ${LIVE_TONES.join('/')}), expected ${e.liveChips} — (n) would be holding the wrong chips whole`)
+  // The two shrink-order rows, with the facts that crowd them. Whether they ARE crowded at this width is
+  // read after the assertions, so a real shrink-order defect is never reported as a fixture fault.
+  const dropRow = m.rows.find(r => r.title && r.title.text === HEAT_DROPPED_ROW)
+  const giveRow = m.rows.find(r => r.title && r.title.text === NEUTRAL_GIVES_ROW)
+  if (!dropRow || !dropRow.line || !dropRow.line.heat || !dropRow.line.amount || dropRow.line.liveChips.length !== 1) mismatch.push(`"${HEAT_DROPPED_ROW}" is not on the page as a lot in process with an amount and a heat — (k) has no row that drops a heat`)
+  if (!giveRow || !giveRow.line || !giveRow.line.heat || giveRow.line.neutral.length !== 1 || giveRow.line.liveChips.length) mismatch.push(`"${NEUTRAL_GIVES_ROW}" is not on the page with a heat and one neutral chip — no row makes a neutral chip give way to a heat`)
   // Non-vacuity for (l): a box on every row, both kinds of row edge, and images that are still loading.
   const thumbs = m.rows.filter(r => r.thumb)
   if (thumbs.length !== m.rows.length) mismatch.push(`${thumbs.length} of ${m.rows.length} rows have a thumbnail box`)
   const stripeless = m.rows.filter(r => r.stripe < 2).length
   if (stripeless !== e.stripeless) mismatch.push(`${stripeless} row(s) without a supplier stripe, expected ${e.stripeless} — (l)'s "with or without a stripe" needs both`)
   const mounted = thumbs.filter(r => r.thumb.photo && r.thumb.photo.img)
-  if (mounted.length !== e.firstPagePhotos) mismatch.push(`${mounted.length} packet image(s) mounted on the first image-window page, expected ${e.firstPagePhotos}`)
+  if (mounted.length !== e.firstPagePhotos) mismatch.push(`${mounted.length} packet image(s) mounted at scrollTop 0 (the first IMAGE_WINDOW_PAGE rows and those within reach), expected ${e.firstPagePhotos}`)
   const landed = mounted.filter(r => r.thumb.photo.complete || r.thumb.photo.nw > 0)
   if (landed.length) mismatch.push(`${landed.length} packet image(s) had already landed when the boxes were first measured (held ${imageHold.held.length}, requested ${imageHold.seen}) — the "before images load" state was not before`)
   // (d)'s non-vacuity with everything open: every header, and the expanded row's controls.
@@ -744,11 +845,17 @@ async function allOpened(v, at, vw, vh) {
   // ── (f) ONE-LINE ROWS. An EMPTY second line is not a wrap: a packet with no supplier, no date and no
   // heat, holding exactly one packet, has nothing left to print there (absent facts are dropped and
   // "1 packet" is not printed) — it is reported below, not failed. A line that HAS text must read as
-  // exactly one band of it; text with no measurable band is an instrument fault, and fails too.
+  // exactly one band of it; text with no measurable band is an instrument fault, and fails too. Bands
+  // are counted over the text a phone SHOWS (shownLines): a heat dropped onto the give-way flow's
+  // hidden second line is in the DOM but is not a second line anyone sees; one that shows is. And no
+  // text it shows may be SLICED by the line's top or bottom edge: that flow is absolutely positioned,
+  // so a wrap inside it never makes the line taller — it shows up as half a line of text instead.
   for (const r of m.rows) {
     const L = r.line, L1 = r.line1, TT = r.title
     const name = TT ? TT.text : r.id
     if (L && L.text && (L.ratio > ONE_LINE_RATIO || L.lines !== 1)) fail(`${at}: (f) "${name}": its second line is ${L.h}px against a one-line ${L.oneLineH}px (x${L.ratio}) across ${L.lines} visual line(s) — ${L.lines ? 'it wrapped' : 'it has text and no measurable line'}`)
+    // One entry per run and position: an ellipsised text node hands back more than one rect for one run.
+    if (L && L.sliced.length) fail(`${at}: (f) "${name}": its second line shows text cut by the line's edge — ${[...new Set(L.sliced.map(s => `"${s.text}" at y${s.t}-${s.b}`))].join(', ')} in a line spanning y${L.lineT}-${L.lineB} — it wrapped inside the line`)
     if (L1 && (L1.ratio > ONE_LINE_RATIO || L1.lines !== 1)) fail(`${at}: (f) "${name}": its first line is ${L1.h}px against a one-line ${L1.oneLineH}px (x${L1.ratio}) across ${L1.lines} visual line(s) — ${L1.lines ? 'it wrapped' : 'it has no measurable line'}`)
     if (TT && (TT.lines !== 1 || TT.h > ONE_LINE_RATIO * TT.oneLineH)) fail(`${at}: (f) title "${TT.text}" occupies ${TT.lines} line(s), ${TT.h}px against a one-line ${TT.oneLineH}px — it wrapped instead of truncating`)
     if (TT && TT.truncated && !TT.ellipsis) fail(`${at}: (f) title "${TT.text}" is cut off without an ellipsis`)
@@ -756,32 +863,47 @@ async function allOpened(v, at, vw, vh) {
   // The brief's own words for (f): the long name truncates with an ellipsis instead of wrapping.
   if (!(long.title.truncated && long.title.ellipsis)) fail(`${at}: (f) the 44-character name is not truncated with an ellipsis (truncated ${long.title.truncated}, ellipsis ${long.title.ellipsis}, ${long.title.lines} line(s))`)
 
-  // ── (g) THE AMOUNT, (i) THE ORDINAL, (j) THE SUPPLIER CHIP, (k) THE HEAT — each whole.
-  const cutMsg = (X, lineL, lineR) => `${X.w}px wide at x${X.l}-${X.r} in a line spanning x${lineL}-${lineR}${X.cut ? ', ellipsised' : ''}`
+  // ── (g) THE AMOUNT, (i) THE ORDINAL, (j) THE SUPPLIER CHIP, (n) A LIVE STATE CHIP — each WHOLE: inside
+  // its line on both axes and inside whatever clips it, with width, not ellipsised — so an item hidden
+  // below its line fails as surely as one cut at the line's right edge. (k) THE HEAT — whole the same
+  // way, or DROPPED whole, nothing of it painted (UX spec §1.3): a heat partly shown is a wrong number.
+  const cutMsg = (X, box) => `${X.w}px wide at x${X.l}-${X.r} y${X.t}-${X.b} in a line spanning x${box.l}-${box.r} y${box.t}-${box.b}${X.cut ? ', ellipsised' : ''}`
+  const notWhole = X => !(X.w > 0) || !X.inLine || X.cut
   for (const r of m.rows) {
     const L = r.line, L1 = r.line1, name = r.title ? r.title.text : r.id
-    if (L && L.amount && (!(L.amount.w > 0) || !L.amount.inLine || L.amount.cut)) fail(`${at}: (g) "${name}": its amount "${L.amount.text}" is cut — ${cutMsg(L.amount, L.lineL, L.lineR)}`)
-    if (L1 && L1.ordinal && (!(L1.ordinal.w > 0) || !L1.ordinal.inLine || L1.ordinal.cut)) fail(`${at}: (i) "${name}": its ordinal "${L1.ordinal.text}" is cut — ${cutMsg(L1.ordinal, L1.l, L1.r)}`)
-    if (L && L.supplier && (!(L.supplier.w > 0) || !L.supplier.inLine || L.supplier.cut)) fail(`${at}: (j) "${name}": its supplier chip "${L.supplier.text}" is not whole — ${cutMsg(L.supplier, L.lineL, L.lineR)}`)
-    if (L && L.heat && (!(L.heat.w > 0) || !L.heat.inLine || L.heat.cut)) fail(`${at}: (k) "${name}": its heat "${L.heat.text}" is not whole — ${cutMsg(L.heat, L.lineL, L.lineR)}`)
+    const lb = L ? { l: L.lineL, r: L.lineR, t: L.lineT, b: L.lineB } : null
+    if (L && L.amount && notWhole(L.amount)) fail(`${at}: (g) "${name}": its amount "${L.amount.text}" is cut — ${cutMsg(L.amount, lb)}`)
+    if (L1 && L1.ordinal && notWhole(L1.ordinal)) fail(`${at}: (i) "${name}": its ordinal "${L1.ordinal.text}" is cut — ${cutMsg(L1.ordinal, L1)}`)
+    if (L && L.supplier && notWhole(L.supplier)) fail(`${at}: (j) "${name}": its supplier chip "${L.supplier.text}" is not whole — ${cutMsg(L.supplier, lb)}`)
+    if (L) for (const c of L.liveChips) if (notWhole(c)) fail(`${at}: (n) "${name}": its live state chip "${c.text}" is cut — ${cutMsg(c, lb)}; a lot in process shows its state whole`)
+    if (L && L.heat && L.heat.shown && (notWhole(L.heat) || !L.heat.inkIn)) fail(`${at}: (k) "${name}": its heat "${L.heat.text}" is partly shown — ${cutMsg(L.heat, lb)}; a heat is whole on its line or dropped whole, never sliced`)
   }
+  // (k) and the order behind it, on the two rows built to force them at this width. A row that fits
+  // whole forces nothing: that is said as a fixture fault, never passed as a pass.
+  const dL = dropRow.line, gL = giveRow.line, gN = gL.neutral[0]
+  if (dL.heat.shown) fail(`${at}: (k) non-vacuity — "${HEAT_DROPPED_ROW}" still shows its heat "${dL.heat.text}" at ${vw}px (line "${dL.text}"), so no row drops a heat and that half of (k) checks nothing`)
+  if (!gL.heat.shown) fail(`${at}: (k) shrink order — "${NEUTRAL_GIVES_ROW}" dropped its heat "${gL.heat.text}" while its neutral chip "${gN.text}" showed ${gN.w}px of ${gN.full}px — a neutral chip gives way before the heat does (UX spec §1.3)`)
+  else if (!gN.cut) fail(`${at}: (k) non-vacuity — "${NEUTRAL_GIVES_ROW}"'s "${gN.text}" fits whole beside its heat at ${vw}px, so no row makes a neutral chip give way to a heat`)
 
   // ── (l) THE THUMBNAIL BOX — before any image has landed.
   const before = thumbBoxes(at, m, 'before any packet image landed')
 
   // ── The record. Printed on pass as well as fail: the numbers a redesign has to move.
   const lr = m.rows.filter(r => r.line), l1r = m.rows.filter(r => r.line1)
-  const tight = (list, pick) => list.filter(pick).sort((a, b) => pick(a) - pick(b))[0]
+  // `!= null`, not truthiness: a line with 0px to spare is the tightest one there is, not a missing one.
+  const tight = (list, pick) => list.filter(r => pick(r) != null).sort((a, b) => pick(a) - pick(b))[0]
   const line2Tight = tight(lr, r => r.line.slack), line1Tight = tight(l1r, r => r.line1.slack)
   const emptyLine2 = lr.filter(r => !r.line.text)
   console.log(`${P}: EVERY GROUP OPEN — ${m.rows.length} rows under ${m.mine.headers.length} headers · row heights ${[...new Set(m.rows.filter(r => !r.expanded).map(r => r.h))].join('/')}px · pageH ${m.doc.scrollH}px · doc ${m.doc.scrollW}/${m.doc.clientW}`)
   console.log(`${P}: ${m.taps.length} controls in the census (${censusHeaders} headers, ${m.taps.filter(t => t.supplierChip).length} supplier-row chips, ${censusExpanded} in the expanded row), shortest ${Math.min(...m.taps.filter(t => !isExemptSegmentedRadio(t)).map(t => t.h))}px (floor ${TAP_MIN_HEIGHT_PX}px)`)
   console.log(`${P}: line 2 max x${Math.max(...lr.map(r => r.line.ratio))} / line 1 max x${Math.max(...l1r.map(r => r.line1.ratio))} of one line (limit ${ONE_LINE_RATIO}), ${lr.filter(r => r.line.lines > 1).length + l1r.filter(r => r.line1.lines > 1).length} multi-line · titles truncated ${m.rows.filter(r => r.title && r.title.truncated).length}/${m.rows.length} · [REPORTED] ${emptyLine2.length} row(s) with nothing to print on line 2: ${emptyLine2.map(r => `"${r.title.text}"`).join(', ') || 'none'}`)
-  console.log(`${P}: MARGINS — tightest line 2: "${line2Tight ? line2Tight.title.text : '—'}" ${line2Tight ? line2Tight.line.slack : '—'}px between its last never-cut item and the line's end ("${line2Tight ? line2Tight.line.text : ''}") · line 1: the ordinal ends ${line1Tight ? line1Tight.line1.slack : '—'}px before the line's end (the chevron's room; the title gives way, "${line1Tight ? line1Tight.title.text : '—'}" shows ${line1Tight ? line1Tight.title.w : '—'}px of ${line1Tight ? line1Tight.title.inkW : '—'}px)`)
-  console.log(`${P}: (j) supplier chips ${Object.entries(chipCount).map(([k, n]) => `${k}×${n}`).join(', ')}, widths ${[...new Set(lr.filter(r => r.line.supplier).map(r => `${r.line.supplier.text} ${r.line.supplier.w}px`))].join(', ')} · (k) heat ${lr.filter(r => r.line.heat).map(r => `"${r.line.heat.text.replace(/^·\s*/, '')}" ${r.line.heat.w}px`).join(', ')} · (i) ordinals ${ordinals.map(r => `"${r.line1.ordinal.text}" ${r.line1.ordinal.w}px beside a ${r.title.w}px title`).join(', ')}`)
+  console.log(`${P}: MARGINS — tightest line 2: "${line2Tight ? line2Tight.title.text : '—'}" ${line2Tight ? line2Tight.line.slack : '—'}px a wider font can take before a never-cut item or a shown heat is touched (the tail's room plus what the neutral chips can still give) ("${line2Tight ? line2Tight.line.text : ''}") · line 1: the ordinal ends ${line1Tight ? line1Tight.line1.slack : '—'}px before the line's end (the chevron's room; the title gives way, "${line1Tight ? line1Tight.title.text : '—'}" shows ${line1Tight ? line1Tight.title.w : '—'}px of ${line1Tight ? line1Tight.title.inkW : '—'}px)`)
+  console.log(`${P}: (j) supplier chips ${Object.entries(chipCount).map(([k, n]) => `${k}×${n}`).join(', ')}, widths ${[...new Set(lr.filter(r => r.line.supplier).map(r => `${r.line.supplier.text} ${r.line.supplier.w}px`))].join(', ')} · (k) heat ${lr.filter(r => r.line.heat).map(r => `"${r.line.heat.text.replace(/^·\s*/, '')}" ${r.line.heat.shown ? `${r.line.heat.w}px` : 'DROPPED'}`).join(', ')} · (i) ordinals ${ordinals.map(r => `"${r.line1.ordinal.text}" ${r.line1.ordinal.w}px beside a ${r.title.w}px title`).join(', ')}`)
   console.log(`${P}: the 44-char row: title ${long.title.w}px column, ink ${long.title.inkW}px, ellipsis ${long.title.ellipsis} · line "${long.line.text}" ${long.line.h}px/${long.line.oneLineH}px, chips [${long.line.chipLabels.join(' | ')}], amount "${long.line.amount.text}" ${long.line.amount.w}px (whole: ${!!(long.line.amount.inLine && !long.line.amount.cut)}), rest ${long.line.restW}px of ${long.line.restInkW}px ink`)
   const gave = lr.filter(r => r.line.chipsCutLabels.length > 0 || (r.line.restW != null && r.line.restInkW > r.line.restW + 1))
-  console.log(`${P}: [REPORTED — gives way by design, the never-cut items asserted whole in (g)(i)(j)(k)] ${gave.length} row(s) whose chips or where-from/how-old are cut at this width: ${gave.map(r => `"${r.title.text}" (${r.line.chipsCutLabels.length ? `chip(s) cut: ${r.line.chipsCutLabels.map(c => `"${c}"`).join(', ')}` : 'no chip cut'}, rest ${r.line.restW}px of ${r.line.restInkW}px)`).join('; ') || 'none'}`)
+  console.log(`${P}: [REPORTED — gives way by design, the never-cut items asserted whole in (g)(i)(j)(n), the heat whole or dropped in (k)] ${gave.length} row(s) whose chips or where-from/how-old are cut at this width: ${gave.map(r => `"${r.title.text}" (${r.line.chipsCutLabels.length ? `chip(s) cut: ${r.line.chipsCutLabels.map(c => `"${c}"`).join(', ')}` : 'no chip cut'}, rest ${r.line.restW}px of ${r.line.restInkW}px)`).join('; ') || 'none'}`)
+  const hiddenWrap = lr.filter(r => r.line.domLines > r.line.lines)
+  console.log(`${P}: (k)/(n) SHRINK ORDER — "${HEAT_DROPPED_ROW}": live chip ${dL.liveChips.map(c => `"${c.text}" ${c.w}px`).join(', ')}, amount "${dL.amount.text}" ${dL.amount.w}px, heat "${dL.heat.text.replace(/^·\s*/, '')}" ${dL.heat.shown ? `SHOWN ${dL.heat.w}px` : 'dropped whole'}, ${dL.slack}px to spare · "${NEUTRAL_GIVES_ROW}": "${gN.text}" ${gN.cut ? `ellipsised to ${gN.w}px of ${gN.full}px` : `whole, ${gN.w}px`}, heat "${gL.heat.text.replace(/^·\s*/, '')}" ${gL.heat.shown ? `whole, ${gL.heat.w}px` : 'DROPPED'}, ${gL.slack}px to spare · ${liveCount} live chips · [REPORTED] ${hiddenWrap.length} row(s) whose facts wrapped out of sight (in the DOM on ${hiddenWrap.map(r => r.line.domLines).join('/') || '-'} bands; (f) reads the one line shown): ${hiddenWrap.map(r => `"${r.title.text}"`).join(', ') || 'none'}`)
 
   // ── (l) again — once every packet image has loaded or failed. Released, then the page is scrolled
   // to its end so the image window (24 rows a page) mounts the tail's photos too.
@@ -818,6 +940,99 @@ async function allOpened(v, at, vw, vh) {
   await evalSettled('(() => { window.scrollTo(0, 0); return 1 })()')
   await waitSettled('window.scrollY === 0', 3000)
   console.log(`${P}: screenshot ${await shoot(join(OUTDIR, `seeds-page-mine-${vw}x${vh}-all-open.png`))}`)
+}
+
+// ── (o) THE IMAGE REACH — its own page load, on the harness's ?bulk variant ────────────────────────────
+// A packet thumbnail mounts when ITS ROW comes near the viewport, and not before. The default fixture's
+// 30 rows fit one first image page, so it cannot tell a window that tracks the scroll from one that waits
+// for the document's bottom (the QA pre-promote BLOCKING finding: the old window left rows 25+ of an open
+// group grey while they were scrolled through, then mounted every one at once near the bottom). The bulk
+// load puts REACH_BULK more photo rows in Pepper; the gate taps Pepper open, jumps to the middle of the
+// group — more than REACH_ASK_PX above the document's bottom, so a bottom-of-document trigger cannot fire —
+// and holds the page to three things:
+//   (o1) every row that intersects the viewport has its packet image, LOADED;
+//   (o2) nothing is mounted past what reach allows: at most IMAGE_PAGE (the first page, mounted when the
+//        group opens) plus the rows within REACH_PX of the viewport, and no row past the first page that
+//        is out of reach;
+//   (o3) no burst, by a ceiling that does not move with REACH_PX: no row past the first page starting
+//        more than two screens below the viewport has its image mounted.
+const REACH_BULK = 64
+const REACH_ASK_PX = 800
+const REACH_MEASURE = `(() => {
+  const rows = [...document.querySelectorAll('${tid('my-seed-row')}')]
+  return { vh: innerHeight, vw: innerWidth, scrollY: Math.round(scrollY), docH: document.documentElement.scrollHeight,
+    errors: window.__h && window.__h.errors ? window.__h.errors() : ['harness never exposed __h'],
+    rows: rows.map((r, rank) => {
+      const b = r.getBoundingClientRect(), img = r.querySelector('${tid('my-seed-photo')}')
+      const line = r.querySelector('${tid('my-seed-line')}'), t = line && line.previousElementSibling && line.previousElementSibling.firstElementChild
+      const sec = r.closest('[data-group-slug]')
+      return { rank, t: Math.round(b.top * 10) / 10, b: Math.round(b.bottom * 10) / 10, title: t ? (t.textContent || '').trim() : '',
+        slug: sec ? sec.getAttribute('data-group-slug') : null,
+        img: img ? (img.tagName === 'IMG' ? { done: img.complete && img.naturalWidth > 0 } : 'placeholder') : null }
+    }) }
+})()`
+
+async function imageReach(vw, vh) {
+  const at = `mine-reach@${vw}x${vh}`
+  const P = `[seeds-page] ${at}`
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: vw, height: vh, deviceScaleFactor: 2, mobile: true }, cdp.sessionId)
+  const url = `http://localhost:${PORT}/tests/harness/seeds.html?view=mine&topbar=${TOP_CHROME_PX}&vp=${vw}x${vh}-reach&verdict=0&bulk=${REACH_BULK}`
+  const nav = await cdp.send('Page.navigate', { url }, cdp.sessionId)
+  if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
+  await sleep(200)
+  await evalSettled(`(async()=>{for(let i=0;i<200;i++){if(window.__h&&window.__h.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('harness never reached ready() on the reach load')})()`)
+  await evalSettled('new Promise(r=>setTimeout(r,400))')
+  if (MUTATE_CSS) await evalSettled(`(() => { const s = document.createElement('style'); s.textContent = ${JSON.stringify(MUTATE_CSS)}; document.head.appendChild(s); return 1 })()`)
+  if (MUTATE_JS) await evalSettled(`(async () => { ${MUTATE_JS}\n; return 1 })()`)
+  const why = await tap(`document.querySelector('${headerSel('pepper')}')`, 'the Pepper header')
+  if (why) { fail(`${at}: (o) ${why}`); return }
+  const opened = await waitSettled(`document.querySelectorAll('${tid('my-seeds-group')}[data-group-slug="pepper"] ${tid('my-seed-row')}').length >= ${REACH_BULK}`)
+  // The middle of the group: the row IMAGE_PAGE + 10 down the list, centred.
+  const target = await evalSettled(`(() => { const r = document.querySelectorAll('${tid('my-seed-row')}')[${IMAGE_PAGE + 10}]; if (!r) return null
+    const b = r.getBoundingClientRect(); return Math.max(0, Math.round(scrollY + b.top + b.height / 2 - innerHeight / 2)) })()`)
+  if (target != null) {
+    await evalSettled(`(() => { window.scrollTo(0, ${target}); return 1 })()`)
+    await waitSettled('true')
+  }
+  // Up to 10s for the images on screen to arrive — they are local files; a row that never gets one is (o1).
+  await evalSettled(`(async () => { const t0 = performance.now()
+    while (performance.now() - t0 < 10000) {
+      const vh = innerHeight, rows = [...document.querySelectorAll('${tid('my-seed-row')}')].filter(r => { const b = r.getBoundingClientRect(); return b.bottom > 0 && b.top < vh })
+      if (rows.length && rows.every(r => { const i = r.querySelector('${tid('my-seed-photo')}'); return i && i.tagName === 'IMG' && i.complete && i.naturalWidth > 0 })) return 1
+      await new Promise(r => setTimeout(r, 100))
+    }
+    return 0 })()`)
+  const m = await evalSettled(REACH_MEASURE)
+
+  // ── INSTRUMENT CHECK: the page, the bulk group, and a scroll that is really mid-group.
+  const mismatch = []
+  if (m.vw !== vw || m.vh !== vh) mismatch.push(`the page self-reports ${m.vw}x${m.vh}, not ${vw}x${vh}`)
+  if (m.errors.length) mismatch.push(`the page raised ${m.errors.length} error(s): ${m.errors.join(' | ')}`)
+  const pepper = m.rows.filter(r => r.slug === 'pepper')
+  if (!opened || pepper.length < REACH_BULK) mismatch.push(`tapping Pepper on the ?bulk=${REACH_BULK} load opened ${pepper.length} row(s), expected at least ${REACH_BULK}`)
+  const onScreen = m.rows.filter(r => r.b > 0 && r.t < m.vh)
+  const below = m.docH - (m.scrollY + m.vh)
+  if (target == null) mismatch.push(`there is no row ${IMAGE_PAGE + 10} to centre`)
+  if (onScreen.length < 5) mismatch.push(`${onScreen.length} row(s) intersect the viewport — too few to say anything`)
+  if (!onScreen.some(r => r.rank >= IMAGE_PAGE)) mismatch.push(`no row on screen is past the first ${IMAGE_PAGE}, so the first page alone would satisfy (o1)`)
+  if (!(below > REACH_ASK_PX)) mismatch.push(`the viewport ends ${below}px above the document's bottom, not more than ${REACH_ASK_PX} — a bottom-of-document trigger could fire`)
+  if (!pepper.some(r => r.t >= m.vh) || !pepper.some(r => r.b <= 0)) mismatch.push('the viewport is not inside the Pepper group (rows of it above AND below)')
+  if (mismatch.length) { fail(`${at}: (o) the reach load did not produce what this gate measures — ${mismatch.join('; ')}`); return }
+
+  // (o1) every row on screen has its image, loaded.
+  const missing = onScreen.filter(r => !(r.img && r.img !== 'placeholder' && r.img.done))
+  if (missing.length) fail(`${at}: (o1) ${missing.length} of ${onScreen.length} row(s) on screen have no loaded packet image, scrolled to ${m.scrollY}px of a ${m.docH}px page: ${missing.map(r => `"${r.title}" (row ${r.rank + 1}, ${r.img === 'placeholder' ? 'placeholder' : r.img ? 'still loading' : 'not mounted'})`).join(', ')}`)
+  // (o2) nothing past what reach allows.
+  const mounted = m.rows.filter(r => r.img && r.img !== 'placeholder')
+  const inReach = m.rows.filter(r => r.b > -REACH_PX && r.t < m.vh + REACH_PX)
+  const outOfReach = mounted.filter(r => r.rank >= IMAGE_PAGE && !(r.b > -REACH_PX && r.t < m.vh + REACH_PX))
+  if (mounted.length > IMAGE_PAGE + inReach.length || outOfReach.length) fail(`${at}: (o2) ${mounted.length} packet <img> mounted, over the ${IMAGE_PAGE} of the first page + the ${inReach.length} row(s) within ${REACH_PX}px of the viewport${outOfReach.length ? ` — out of reach and past the first page: ${outOfReach.slice(0, 6).map(r => `"${r.title}" (row ${r.rank + 1}, y${r.t})`).join(', ')}${outOfReach.length > 6 ? ` and ${outOfReach.length - 6} more` : ''}` : ''}`)
+  // (o3) no burst, whatever REACH_PX says.
+  const burst = mounted.filter(r => r.rank >= IMAGE_PAGE && r.t > 3 * m.vh)
+  if (burst.length) fail(`${at}: (o3) ${burst.length} packet image(s) mounted more than two screens below the viewport (past y${3 * m.vh}) — the burst: ${burst.slice(0, 6).map(r => `"${r.title}" (row ${r.rank + 1}, y${r.t})`).join(', ')}`)
+  const ranks = onScreen.map(r => r.rank + 1)
+  console.log(`${P}: (o) IMAGE REACH — ${m.rows.length} rows (${pepper.length} in Pepper) · scrolled to ${m.scrollY}px of ${m.docH}px, ${below}px above the bottom · rows ${Math.min(...ranks)}-${Math.max(...ranks)} on screen, ${onScreen.length - missing.length}/${onScreen.length} with a loaded image · ${mounted.length} <img> mounted (bound ${IMAGE_PAGE} + ${inReach.length} within ${REACH_PX}px = ${IMAGE_PAGE + inReach.length}) · ${m.rows.filter(r => !r.img).length} row(s) waiting unmounted, the nearest ${(() => { const w = m.rows.filter(r => !r.img && r.t >= m.vh); return w.length ? `${Math.round(Math.min(...w.map(r => r.t)) - m.vh)}px below the viewport` : '—' })()}`)
+  console.log(`${P}: screenshot ${await shoot(join(OUTDIR, `seeds-page-mine-${vw}x${vh}-reach.png`))}`)
 }
 
 // (l)'s invariant over one measurement; returns the boxes, keyed by row, for the before/after compare.
@@ -1066,7 +1281,9 @@ try {
       }
     }
   }
+  // (o) on its own load, with nothing held at the network layer.
   await stopImageHold()
+  for (const [vw, vh] of VIEWPORTS) await imageReach(vw, vh)
 } catch (err) {
   fail(`gate could not complete: ${err.message}`)
 } finally {

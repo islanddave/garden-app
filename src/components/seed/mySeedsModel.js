@@ -147,13 +147,13 @@ export const SORTS = [
 // ── Heat (V5-SEEDCARDS-001) ────────────────────────────────────────────────────────────────────────
 // A cultivar's expected Scoville range, from the list row's cultivar facts. The SORT KEY is the top of
 // the range (a "hottest first" list ranks a 100k-350k habanero above a 100k-150k one), falling back
-// to the bottom when only one end is known. `estimate` is true when the figure is a best guess from
-// the pepper's type rather than a supplier or reference figure (scoville_source 'inference') — the
-// label carries "≈" for it (varietySpec.shuLabel), so a guess never reads as a stated number.
+// to the bottom when only one end is known. A best guess (scoville_source 'inference') is marked where
+// it is SHOWN, never here: heatLabel's formatter (varietySpec.shuLabel) prefixes the WORD "est.", so a
+// guess never reads as a stated number; Hottest ranks it by the same key as any other figure.
 export function heatOf(i) {
   const mn = i?.scoville_min, mx = i?.scoville_max
   if (mn == null && mx == null) return null
-  return { min: mn ?? mx, max: mx ?? mn, key: Number(mx ?? mn), estimate: i?.scoville_source === 'inference' }
+  return { min: mn ?? mx, max: mx ?? mn, key: Number(mx ?? mn) }
 }
 
 export function heatLabel(i) {

@@ -257,9 +257,10 @@ function ViewFallback({ retry }) {
 }
 
 // ── Styles ─────────────────────────────────────────────────────────────────────────────────────────
-// Spacing above the list is budgeted, not guessed: at 360x640, with the ferment line showing, the DoD
-// wants >= 3 My seeds rows between the top bar and the nav (gate:seeds-page (e)), and every px here
-// comes out of that.
+// Spacing above the list is budgeted, not guessed: at 360x640, with the ferment line showing, My seeds'
+// FOLDED first screen must hold >= 3 crop-group HEADERS fully between the top bar and the nav
+// (gate:seeds-page (e), UX spec §10 — it was ">= 3 rows" before the groups folded), and every px here
+// comes out of that. Measured 2026-09-19: Pepper, Tomato and Bean, the third ending 16px above the nav.
 const frameStyle = { maxWidth: 720, margin: '0 auto', padding: '12px 16px 90px' }
 // Identical height on every view: the action slot is always there, empty on Sow now, so the switch
 // and everything under it sit at the same place whichever view is showing.

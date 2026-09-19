@@ -24,7 +24,7 @@
 //     edited on its detail page ("Qty on hand"); the Inventory page keeps its own stepper.
 import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { P } from '../lib/constants.js'
+import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import { T, selectChrome } from '../components/forms/formStyles.js'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import Badge from '../components/forms/Badge.jsx'
@@ -39,7 +39,8 @@ import { supplierColors, NO_SUPPLIER } from '../lib/supplierPalette.js'
 import { useCropFacetOptions } from '../hooks/useCropFacetOptions.js'
 import { useSources } from '../hooks/useSources.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
-import useImageWindow from '../hooks/useImageWindow.js'
+import { IMAGE_WINDOW_PAGE } from '../hooks/useImageWindow.js'
+import useNearViewport from '../hooks/useNearViewport.js'
 import { looseIncludes } from '../lib/comboboxInput.js'
 import { labelCandidates, isSavedLot } from '../components/seed/seedLots.js'
 import {
@@ -55,9 +56,15 @@ import { isInProcess } from '../lib/sowEngine.js'
 const MINE_HREF = seedsHref('mine')
 const RETURN_HERE = seedsReturnState(MINE_HREF)
 const cropSlugOf = (i) => i.crop_slug
+const lotIdOf = (el) => el.getAttribute('data-lot-id')
 const GROUPED_SORTS = new Set(['name', 'heat'])
 // The sticky offset: headers of OPEN groups stick under the 52px top bar (TopChrome BAR_H).
 const STICKY_TOP = 52
+// How much of a just-opened group's SECOND row has to show above the bottom nav: the card's top edge
+// (1px border, 6px padding) and its title line down past the baseline — enough to read which packet
+// comes next, so the tap visibly opened a list. A thinner sliver reads as a stray border; asking for
+// the whole 54-58px row is what scrolled the tapped header out from under the thumb.
+const OPEN_PEEK_PX = 24
 
 // ── The view's shape survives the visit, not the history entry ───────────────────────────────────────
 // sessionStorage per PAGE, never the URL: any post-mount replace write re-keys useScrollRestore's
@@ -242,8 +249,16 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
 
   // Images are windowed, rows are not: search, counts, the outline and Back-restore all need every row
   // in the DOM, but 103 peppers mounting 103 thumbnails at once is the eager-image freeze
-  // (BUG-PHOTOTHUMB-001). Rows past the window keep their reserved box until scrolling reaches them.
-  const imageWindow = useImageWindow(onScreen.length, { resetKey: `${signature}|${[...openGroups].sort()}|${sowedOpen}` })
+  // (BUG-PHOTOTHUMB-001). A row's thumbnail mounts when it is one of the first IMAGE_WINDOW_PAGE rows on
+  // screen, or once the row comes within reach of the viewport, and then stays (useNearViewport). Not
+  // useImageWindow: its growth waits for the DOCUMENT's bottom, and this page never grows — every row is
+  // a fixed box — so rows 25+ of an open group stayed grey while scrolled through, then all mounted at
+  // once near the bottom. Rows waiting keep their reserved box. A filter or fold change starts over.
+  const viewRef = useRef(null)
+  const inReach = useNearViewport(viewRef, {
+    selector: '[data-testid="my-seed-row"]', keyOf: lotIdOf,
+    resetKey: `${signature}|${[...openGroups].sort()}|${[...closedByUser].sort()}|${sowedOpen}`,
+  })
   const imageRank = useMemo(() => {
     const m = new Map()
     onScreen.forEach((i, n) => m.set(i.id, n))
@@ -273,8 +288,11 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
 
   // ── Folding ────────────────────────────────────────────────────────────────────────────────────────
   // Folding a group from its STUCK header re-anchors, so the header the thumb just tapped stays at the
-  // top instead of the page stranding thousands of pixels down in unrelated groups. Opening a group
-  // near the bottom scrolls just enough to show its first two rows.
+  // top instead of the page stranding thousands of pixels down in unrelated groups. Opening one keeps
+  // the header still (UX spec §3.3): the page scrolls only when the group's first row would be cut by
+  // the bottom nav or less than OPEN_PEEK_PX of its second row would show, and then by the least
+  // distance that shows both. The old rule wanted row 2 WHOLE, 8px clear of the nav — on a 360x640
+  // first screen that moved the header a thumb had just tapped by 24px (gate:seeds-page (e2)).
   const anchorRef = useRef(null)
   const toggleGroup = useCallback((slug) => {
     const open = isOpen(slug)
@@ -302,12 +320,14 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
       if (top < STICKY_TOP) window.scrollBy?.(0, top - STICKY_TOP)
       return
     }
-    const rowsEl = el.querySelectorAll('[data-testid="my-seed-row"]')
-    const second = rowsEl[Math.min(1, rowsEl.length - 1)]
-    if (!second) return
-    const bottom = second.getBoundingClientRect().bottom
-    const limit = window.innerHeight - 64 // the bottom nav
-    if (bottom > limit) window.scrollBy?.({ top: bottom - limit, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    const [first, second] = el.querySelectorAll('[data-testid="my-seed-row"]')
+    if (!first) return
+    const bandBottom = window.innerHeight - BOTTOM_NAV_HEIGHT_PX
+    const need = Math.max(
+      first.getBoundingClientRect().bottom - bandBottom,
+      second ? second.getBoundingClientRect().top + OPEN_PEEK_PX - bandBottom : 0,
+    )
+    if (need > 0) window.scrollBy?.({ top: need, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
   })
 
   const sectionSlugs = grouped ? groups.map((g) => g.slug) : []
@@ -333,7 +353,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
       title={labels.get(i.id)?.title ?? rowTitle(i)}
       ordinal={ordinalOf(i)}
       vendor={vendorOf(i)}
-      withPhoto={(imageRank.get(i.id) ?? Infinity) < imageWindow.shown}
+      withPhoto={(imageRank.get(i.id) ?? Infinity) < IMAGE_WINDOW_PAGE || inReach.has(String(i.id))}
       expanded={expanded === i.id}
       outlined={outlined === String(i.id)}
       onToggle={() => setExpanded((cur) => (cur === i.id ? null : i.id))}
@@ -419,7 +439,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   const sortOptions = SORTS.filter((s) => s.value !== 'heat' || heatOffered)
 
   return (
-    <div data-testid="my-seeds-view">
+    <div data-testid="my-seeds-view" ref={viewRef}>
       {/* The view's question, with Expand all / Collapse all on the same line (UX spec §3.4) — the
           Garden pattern Dave approved for collapsed-by-default sections, at a 44px tap floor. */}
       <div style={questionRow}>
@@ -569,12 +589,18 @@ function hostOf(url) {
 // One packet or lot. Tap expands in place, as Inventory rows did.
 function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, onToggle, onGoToLot }) {
   const chips = stateChips(item)
-  // Line 2, in order: the supplier chip (never cut), the state chips (the first one, a lot's live
-  // state, stays whole; later ones ellipsise), the amount (never cut; "1 packet" is not printed), the
-  // heat (whole or absent), then the tail — origin words and how old — which is cut first.
+  // Line 2, in order: the supplier chip, the state chips, the amount ("1 packet" is not printed), the
+  // heat, then the tail — origin words and how old. What gives way first on a crowded line is set by
+  // the styles below (giveWayBox), not by this order. The FIRST chip is a lot's live state when its
+  // tone says so (fermenting, drying) and never gives way; every later chip is neutral bookkeeping.
+  const live = chips[0] && chips[0].tone !== 'neutral' ? chips[0] : null
+  const neutral = live ? chips.slice(1) : chips
   const amount = howMuch(item)
   const heat = rowHeat(item)
   const tail = [originNote(item), howOld(item)].filter(Boolean).join(' · ')
+  // A chip anywhere on the line makes it one chip tall; a line with nothing to print stays empty.
+  const chipTall = !!vendor || chips.length > 0
+  const hasLine = chipTall || !!(amount || heat || tail)
   const inProcess = isInProcess(item)
   const colors = vendor ? supplierColors(vendor) : null
   const photo = useMemo(
@@ -616,19 +642,30 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
             <span aria-hidden="true" style={chevronStyle}>{expanded ? '▾' : '▸'}</span>
           </span>
           <span data-testid="my-seed-line" style={lineStyle}>
-            {vendor && <SupplierChip name={vendor} data-testid="my-seed-supplier" style={{ marginRight: 6 }} />}
-            {chips.length > 0 && (
-              <span style={chipsBox}>
-                {chips.map((c, n) => (
-                  <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" style={n === 0 && c.tone !== 'neutral' ? firstChipStyle : chipStyle}>
-                    {c.label}
-                  </Badge>
-                ))}
-              </span>
+            {hasLine && (
+              <>
+                {vendor && <SupplierChip name={vendor} data-testid="my-seed-supplier" style={{ marginRight: 6 }} />}
+                {live && (
+                  <Badge tone={live.tone} data-testid="my-seed-chip" data-tone={live.tone} style={liveChipStyle}>{live.label}</Badge>
+                )}
+                <span style={giveWayBox}>
+                  <span style={giveWayFlow}>
+                    <LineStrut chip={chipTall} />
+                    {neutral.length > 0 && (
+                      <span style={chipsBox}>
+                        {neutral.map((c) => (
+                          <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" data-tone={c.tone} style={chipStyle}>{c.label}</Badge>
+                        ))}
+                      </span>
+                    )}
+                    {amount && <span data-testid="my-seed-amount" style={amountStyle}>{amount}</span>}
+                    {heat && <span data-testid="my-seed-heat" style={heatStyle}>{sep(!!amount)}{heat}</span>}
+                    {tail && <span data-testid="my-seed-rest" style={restStyle}>{sep(!!(amount || heat))}{tail}</span>}
+                  </span>
+                </span>
+                <LineStrut chip={chipTall} />
+              </>
             )}
-            {amount && <span data-testid="my-seed-amount" style={amountStyle}>{amount}</span>}
-            {heat && <span data-testid="my-seed-heat" style={heatStyle}>{sep(!!amount)}{heat}</span>}
-            {tail && <span data-testid="my-seed-rest" style={restStyle}>{sep(!!(amount || heat))}{tail}</span>}
           </span>
         </span>
       </button>
@@ -650,6 +687,20 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
         </div>
       )}
     </div>
+  )
+}
+
+// What holds line 2 open: the facts that give way sit in an absolutely positioned flow that adds no
+// height, so the line gets it from an invisible stand-in. With a chip on the row, that is the chips'
+// own Badge with its sideways padding and border taken off and an empty 1lh body — a chip's height by
+// construction, zero wide, no text (the line's textContent is untouched). Without one, it is one text
+// line. Either way the row keeps the height it had: 58px with a chip, 54 without.
+function LineStrut({ chip }) {
+  if (!chip) return <span aria-hidden="true" style={textStrut} />
+  return (
+    <Badge aria-hidden="true" style={chipStrut}>
+      <span style={oneLineTall} />
+    </Badge>
   )
 }
 
@@ -734,18 +785,44 @@ const lineStyle = {
   display: 'flex', alignItems: 'center', minWidth: 0, fontSize: T.type.xs2, color: P.mid,
   whiteSpace: 'nowrap', overflow: 'hidden',
 }
-// Shrink order on a crowded line: `rest` has a 0 basis, so it only ever gets what is left over and is
-// the first thing cut; then the later chips (ellipsised); the supplier chip, a live state chip, the
-// amount and the heat never shrink. No flex gap on the line: the chips carry their own margin, and the
-// facts open with a NON-BREAKING space so "2 packets · 30K–50K SHU" reads as one phrase.
-const chipsBox = { display: 'flex', gap: 6, minWidth: 0, flex: '0 1 auto', overflow: 'hidden', marginRight: 6 }
+// LINE 2 GIVES WAY IN A FIXED ORDER (UX spec §1.3), from never cut to cut first:
+//   1. never cut: the supplier chip, the amount, and the first state chip when it is a lot's LIVE
+//      state (tone info, warn or danger: fermenting, drying) — and the ordinal, on line 1;
+//   2. then the heat, dropped WHOLE — never partly shown: a cut Scoville number is a wrong number;
+//   3. then the neutral chips ("Archived for this season", a status, "Not started"), ellipsised;
+//   4. cut first: the tail (where from · how old).
+// The supplier and live chips are the line's own rigid items. Everything else sits in giveWayBox: a
+// clipped box whose absolutely positioned child is a WRAPPING flex row with a huge row gap, so an item
+// that does not fit on the first line wraps to a second one far below the clip — hidden whole, never
+// sliced. In that row the neutral chips' box has a 0 basis, so it never pushes the heat off the line,
+// and a 1000 grow capped at its own content, so it takes the free space before the tail does; the
+// amount and the heat are rigid; the tail has a 0 basis and ellipsises. The ORDER does the rest: the
+// amount comes before the heat, so the heat wraps first, and the tail after the heat, so a dropped heat
+// takes its " · " and the tail with it — no separator is ever left dangling. `clip`, not `hidden`, so
+// nothing (find-in-page, a focus) can scroll the wrapped line into view. No flex gap on either row:
+// the chips carry their own margin, and the facts open with a NON-BREAKING space so "2 packets ·
+// 30K–50K SHU" reads as one phrase. The flow adds no height; LineStrut holds the line.
+const giveWayBox = { flex: '1 1 0', minWidth: 0, alignSelf: 'stretch', position: 'relative', overflow: 'clip' }
+const giveWayFlow = {
+  position: 'absolute', inset: 0, display: 'flex', flexWrap: 'wrap', alignContent: 'flex-start', alignItems: 'center',
+  rowGap: 100, columnGap: 0,
+}
+const chipsBox = { display: 'flex', gap: 6, flex: '1000 1 0', minWidth: 0, maxWidth: 'max-content', overflow: 'hidden', marginRight: 6 }
 const chipStyle = {
   display: 'block', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: T.type.xs,
 }
-const firstChipStyle = { ...chipStyle, flex: '0 0 auto', maxWidth: '100%' }
+const liveChipStyle = { ...chipStyle, flex: '0 0 auto', maxWidth: '100%', marginRight: 6 }
 const amountStyle = { flex: '0 0 auto', whiteSpace: 'nowrap' }
 const heatStyle = { flex: '0 0 auto', whiteSpace: 'nowrap', color: P.dark }
 const restStyle = { flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+// LineStrut's pieces. `1lh` is one line box of the element's own font and line-height — Badge's 1.4 at
+// the chips' size for the chip stand-in, the line's own for the text one.
+const oneLineTall = { display: 'block', width: 0, height: '1lh' }
+const textStrut = { ...oneLineTall, flex: '0 0 auto' }
+const chipStrut = {
+  flex: '0 0 auto', width: 0, paddingLeft: 0, paddingRight: 0, borderLeftWidth: 0, borderRightWidth: 0,
+  fontSize: T.type.xs, visibility: 'hidden',
+}
 const expandedStyle = {
   padding: '10px 12px 12px', borderTop: `1px solid ${P.border}`, display: 'flex', flexDirection: 'column', gap: 10,
 }
