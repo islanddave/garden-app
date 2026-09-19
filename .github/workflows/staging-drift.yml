@@ -70,8 +70,9 @@ jobs:
           # now a MISCONFIGURATION (a rotated-away or renamed secret), not a not-yet-set-up state.
           # It therefore fails LOUD. This is the same shape as the schema-audit waiver that
           # hard-fails once its precondition lapses: the escape hatch demands its own removal.
-          # Note this is the only hard failure here — the drift REPORT stays advisory by design
-          # (staging legitimately leads prod between a staging apply and its prod apply).
+          # Note the drift REPORT stays advisory by design (staging legitimately leads prod between
+          # a staging apply and its prod apply). The only hard failures are "could not run": this
+          # branch, and the checker crashing (below).
           if [[ -z "${NEON_DATABASE_URL:-}" || -z "${NEON_STAGING_URL:-}" ]]; then
             echo "::error title=Staging drift UNVERIFIED::A Neon URL secret is missing; the comparison did NOT run. Both secrets have existed since 2026-05, so this is a misconfiguration, not first-time setup."
             {
@@ -82,10 +83,23 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          python3 scripts/check-staging-drift.py
-          RC=$?
+          # ERREXIT — keep the `|| RC=$?`. GitHub runs a step with no `shell:` as `bash -e {0}`, so a
+          # bare call that exits non-zero ends the step on that line. The first version read `RC=$?`
+          # on the next line: an unreachable database (exit 2) went red with no annotation instead of
+          # the warning below (OPS-STAGINGDRIFTERREXIT-001; the same defect as B1 of the v4.138.0
+          # pre-ship pass, in promote-gate.yml's Lambda decision step). scripts/test_workflow_steps.py
+          # runs this body the runner's way.
+          RC=0
+          python3 scripts/check-staging-drift.py || RC=$?
           if [[ "$RC" -eq 2 ]]; then
             echo "::warning title=Staging drift UNKNOWN::A database was unreachable — drift is UNKNOWN, not absent."
             exit 0
+          fi
+          # Anything else non-zero is the checker crashing: --strict is not passed, so exit 1 here is an
+          # uncaught exception, and 127 a missing python3. The comparison did not finish. It was red
+          # before this fix too (errexit), just unnamed; a silent green would verify nothing.
+          if [[ "$RC" -ne 0 ]]; then
+            echo "::error title=Staging drift UNVERIFIED::check-staging-drift.py exited $RC before finishing; the comparison did NOT complete, so drift is UNKNOWN. See its output above."
+            exit "$RC"
           fi
           exit 0
