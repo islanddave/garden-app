@@ -18,6 +18,7 @@
 //                           resolves it exactly as prod does (Seeds.jsx resolveView)
 //     topbar=52             height of the top-chrome stand-in; the gate passes TopChrome.jsx's BAR_H
 //     verdict=0             hide the measurement bar, for a screenshot of the surface alone
+//     bulk=64               gate (o) only: 64 more pepper packets with photos (see BULK below)
 //
 // THE APP'S CHROME IS MOUNTED, because on /seeds it is on screen. App.jsx renders TopChrome — a
 // sticky 52px bar (TopChrome.jsx BAR_H) — above every signed-in route, and <BottomNav /> fixed at
@@ -188,7 +189,7 @@ const annuum = { species: 'Capsicum annuum' }
 
 const LONG_NAME = 'Money Plant (self-saved, variety unrecorded)'   // 44 characters
 const IDENTICAL = 'Megatron F1 (jumbo jalapeno)'
-const ROWS = [
+const BASE_ROWS = [
   // pepper — the dominant crop: every heat shape, the identical pair, the broken photo.
   bought('Serrano', 'pepper', 'src-fedco', '2026-01-14', { ...heat(null, 23000), ...annuum, ...photo('square') }),
   bought(IDENTICAL, 'pepper', 'src-johnny', '2026-02-11', { ...heat(2500, 8000), ...annuum, ...photo('tall') }),
@@ -239,7 +240,7 @@ const ROWS = [
   bought('Winter Density', 'lettuce', 'src-fedco', '2026-01-14', photo('wide')),
   bought('Buttercrunch', 'lettuce', 'src-botanical', '2026-06-09'),
   bought('Salad Bowl Blend', 'lettuce', 'src-botanical', '2025-02-01', { quantity_on_hand: 0 }),
-  // the tail — its photos sit past the first image-window page (useImageWindow, 24 rows), so they
+  // the tail — its photos sit past the first image page (IMAGE_WINDOW_PAGE, 24 rows), so they
   // only mount once the page is scrolled toward them.
   bought("Cinderella (Rouge Vif d'Etampes)", 'winter_squash', 'src-bentley', '2025-12-30', photo('square')),
   seed(LONG_NAME, 'money_plant', {                                          // THE WORST ROW — see the header
@@ -251,6 +252,19 @@ const ROWS = [
   bought('Early Prolific Straightneck', 'summer_squash', 'src-fedco', '2026-01-14'),
   bought('Red Mustard (heirloom, unspecified variety)', 'mustard', 'src-botanical', '2026-01-14'),
   bought('Provider Bush Bean', 'bean', 'src-johnny', '2026-03-01', { unit: 'oz', quantity_on_hand: 2 }),
+]
+// ?bulk=N — gate:seeds-page (o) ONLY, on its own page load: N more pepper packets, each with its own
+// packet photo, so one open group holds well over a first image page (IMAGE_WINDOW_PAGE) and runs far
+// past the viewport — the shape of prod's 103-row Pepper group, where the old window never mounted a
+// thumbnail past the 24th row while scrolling and then mounted every one at once near the bottom. They
+// sort between the identical pair and Serrano. The default fixture above, and every count the gate
+// holds it to, is untouched without the parameter.
+const BULK = Math.max(0, Math.min(200, Math.floor(Number(q.get('bulk')) || 0)))
+const ROWS = [
+  ...BASE_ROWS,
+  ...Array.from({ length: BULK }, (_, k) => bought(`Pepper Trial ${String(k + 1).padStart(3, '0')}`, 'pepper', 'src-botanical', '2026-01-14', {
+    ...heat(2500, 8000), ...annuum, ...photo(['square', 'tall', 'wide'][k % 3]),
+  })),
 ]
 
 // The parents the saved lots came off, for Saved seeds' "Saved from …" line (its picker projection).

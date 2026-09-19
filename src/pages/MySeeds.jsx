@@ -39,7 +39,8 @@ import { supplierColors, NO_SUPPLIER } from '../lib/supplierPalette.js'
 import { useCropFacetOptions } from '../hooks/useCropFacetOptions.js'
 import { useSources } from '../hooks/useSources.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
-import useImageWindow from '../hooks/useImageWindow.js'
+import { IMAGE_WINDOW_PAGE } from '../hooks/useImageWindow.js'
+import useNearViewport from '../hooks/useNearViewport.js'
 import { looseIncludes } from '../lib/comboboxInput.js'
 import { labelCandidates, isSavedLot } from '../components/seed/seedLots.js'
 import {
@@ -55,6 +56,7 @@ import { isInProcess } from '../lib/sowEngine.js'
 const MINE_HREF = seedsHref('mine')
 const RETURN_HERE = seedsReturnState(MINE_HREF)
 const cropSlugOf = (i) => i.crop_slug
+const lotIdOf = (el) => el.getAttribute('data-lot-id')
 const GROUPED_SORTS = new Set(['name', 'heat'])
 // The sticky offset: headers of OPEN groups stick under the 52px top bar (TopChrome BAR_H).
 const STICKY_TOP = 52
@@ -247,8 +249,16 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
 
   // Images are windowed, rows are not: search, counts, the outline and Back-restore all need every row
   // in the DOM, but 103 peppers mounting 103 thumbnails at once is the eager-image freeze
-  // (BUG-PHOTOTHUMB-001). Rows past the window keep their reserved box until scrolling reaches them.
-  const imageWindow = useImageWindow(onScreen.length, { resetKey: `${signature}|${[...openGroups].sort()}|${sowedOpen}` })
+  // (BUG-PHOTOTHUMB-001). A row's thumbnail mounts when it is one of the first IMAGE_WINDOW_PAGE rows on
+  // screen, or once the row comes within reach of the viewport, and then stays (useNearViewport). Not
+  // useImageWindow: its growth waits for the DOCUMENT's bottom, and this page never grows — every row is
+  // a fixed box — so rows 25+ of an open group stayed grey while scrolled through, then all mounted at
+  // once near the bottom. Rows waiting keep their reserved box. A filter or fold change starts over.
+  const viewRef = useRef(null)
+  const inReach = useNearViewport(viewRef, {
+    selector: '[data-testid="my-seed-row"]', keyOf: lotIdOf,
+    resetKey: `${signature}|${[...openGroups].sort()}|${[...closedByUser].sort()}|${sowedOpen}`,
+  })
   const imageRank = useMemo(() => {
     const m = new Map()
     onScreen.forEach((i, n) => m.set(i.id, n))
@@ -343,7 +353,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
       title={labels.get(i.id)?.title ?? rowTitle(i)}
       ordinal={ordinalOf(i)}
       vendor={vendorOf(i)}
-      withPhoto={(imageRank.get(i.id) ?? Infinity) < imageWindow.shown}
+      withPhoto={(imageRank.get(i.id) ?? Infinity) < IMAGE_WINDOW_PAGE || inReach.has(String(i.id))}
       expanded={expanded === i.id}
       outlined={outlined === String(i.id)}
       onToggle={() => setExpanded((cur) => (cur === i.id ? null : i.id))}
@@ -429,7 +439,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   const sortOptions = SORTS.filter((s) => s.value !== 'heat' || heatOffered)
 
   return (
-    <div data-testid="my-seeds-view">
+    <div data-testid="my-seeds-view" ref={viewRef}>
       {/* The view's question, with Expand all / Collapse all on the same line (UX spec §3.4) — the
           Garden pattern Dave approved for collapsed-by-default sections, at a 44px tap floor. */}
       <div style={questionRow}>

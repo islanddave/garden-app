@@ -77,8 +77,13 @@
 //       packet image has landed and AGAIN after every one has loaded or failed. "Before" is made, not
 //       hoped for: the packet-image requests are HELD at the network layer (CDP Fetch) until the
 //       first measurement is read, and every mounted <img> must still be loading when it is; "after"
-//       releases them, scrolls the image window open to the last row, and waits for each image to
-//       load or to end on its placeholder (the fixture's broken URL).
+//       releases them, scrolls to the last row (which brings the tail's rows within reach), and waits
+//       for each image to load or to end on its placeholder (the fixture's broken URL).
+//   (o) THE IMAGE REACH — on its OWN page load (the harness's ?bulk variant: 64 more photo rows in
+//       Pepper), tapped open and scrolled to mid-group, far above the document's bottom: every row on
+//       screen has its packet image loaded; nothing is mounted beyond the first IMAGE_WINDOW_PAGE plus
+//       the rows within useNearViewport's REACH_PX (both read from the hooks); and — a ceiling that does
+//       not move with REACH_PX — nothing past the first page mounts more than two screens below.
 //   (h) SOW NOW NAMES ARE NOT SQUEEZED — every open Sow now card's title column is at least
 //       SowNow.jsx's TITLE_COL_MIN_PX (read from the source); wider action pairs wrap under the name.
 //       Promoted from a REPORTED finding (a needs-profile card left its name 76px, five lines).
@@ -154,6 +159,16 @@ function sowTitleColMinPx() {
   return found[0]
 }
 const SOW_TITLE_COL_MIN_PX = sowTitleColMinPx()
+// (o): the first image page every surface mounts at once, and how far from the viewport My seeds reaches
+// for a row's thumbnail — both read from the hooks that own them.
+function exportedNumber(file, name) {
+  const src = readFileSync(resolve(ROOT, file), 'utf8')
+  const found = [...src.matchAll(new RegExp(`export const ${name} = (\\d+)`, 'g'))].map(m => Number(m[1]))
+  if (found.length !== 1) throw new Error(`${file} exports ${name} ${found.length} times; expected exactly 1 — (o) has no bound to hold the page to`)
+  return found[0]
+}
+const IMAGE_PAGE = exportedNumber('src/hooks/useImageWindow.js', 'IMAGE_WINDOW_PAGE')
+const REACH_PX = exportedNumber('src/hooks/useNearViewport.js', 'REACH_PX')
 
 // Tolerances. 2px is "the same line" for boxes whose centres a flex row aligns exactly; 1.5 is the
 // brief's own one-line ratio (a second line of any of this text at least doubles the box).
@@ -229,8 +244,8 @@ const VIEWS = [
     // (n): a LIVE first chip (tone info/warn/danger) on four lots in process — the Money Plant's ferment
     // (day 5, danger), Cherokee Purple's (day 1, info), and two drying lots (Aji Charapita, Hot Paper Lantern).
     liveChips: 4,
-    // 13 rows carry a packet photo (one of them the broken URL). 11 fall inside the first image-window
-    // page (useImageWindow, 24 rows); the two tail photos mount only once the page is scrolled.
+    // 13 rows carry a packet photo (one of them the broken URL). 11 are among the first IMAGE_WINDOW_PAGE
+    // (24) rows on screen; the two tail photos mount only once the page is scrolled near them.
     photoRows: 13, brokenPhotos: 1, firstPagePhotos: 11,
   } },
   { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 5, sections: 3 } },
@@ -811,7 +826,7 @@ async function allOpened(v, at, vw, vh) {
   const stripeless = m.rows.filter(r => r.stripe < 2).length
   if (stripeless !== e.stripeless) mismatch.push(`${stripeless} row(s) without a supplier stripe, expected ${e.stripeless} — (l)'s "with or without a stripe" needs both`)
   const mounted = thumbs.filter(r => r.thumb.photo && r.thumb.photo.img)
-  if (mounted.length !== e.firstPagePhotos) mismatch.push(`${mounted.length} packet image(s) mounted on the first image-window page, expected ${e.firstPagePhotos}`)
+  if (mounted.length !== e.firstPagePhotos) mismatch.push(`${mounted.length} packet image(s) mounted at scrollTop 0 (the first IMAGE_WINDOW_PAGE rows and those within reach), expected ${e.firstPagePhotos}`)
   const landed = mounted.filter(r => r.thumb.photo.complete || r.thumb.photo.nw > 0)
   if (landed.length) mismatch.push(`${landed.length} packet image(s) had already landed when the boxes were first measured (held ${imageHold.held.length}, requested ${imageHold.seen}) — the "before images load" state was not before`)
   // (d)'s non-vacuity with everything open: every header, and the expanded row's controls.
@@ -925,6 +940,99 @@ async function allOpened(v, at, vw, vh) {
   await evalSettled('(() => { window.scrollTo(0, 0); return 1 })()')
   await waitSettled('window.scrollY === 0', 3000)
   console.log(`${P}: screenshot ${await shoot(join(OUTDIR, `seeds-page-mine-${vw}x${vh}-all-open.png`))}`)
+}
+
+// ── (o) THE IMAGE REACH — its own page load, on the harness's ?bulk variant ────────────────────────────
+// A packet thumbnail mounts when ITS ROW comes near the viewport, and not before. The default fixture's
+// 30 rows fit one first image page, so it cannot tell a window that tracks the scroll from one that waits
+// for the document's bottom (the QA pre-promote BLOCKING finding: the old window left rows 25+ of an open
+// group grey while they were scrolled through, then mounted every one at once near the bottom). The bulk
+// load puts REACH_BULK more photo rows in Pepper; the gate taps Pepper open, jumps to the middle of the
+// group — more than REACH_ASK_PX above the document's bottom, so a bottom-of-document trigger cannot fire —
+// and holds the page to three things:
+//   (o1) every row that intersects the viewport has its packet image, LOADED;
+//   (o2) nothing is mounted past what reach allows: at most IMAGE_PAGE (the first page, mounted when the
+//        group opens) plus the rows within REACH_PX of the viewport, and no row past the first page that
+//        is out of reach;
+//   (o3) no burst, by a ceiling that does not move with REACH_PX: no row past the first page starting
+//        more than two screens below the viewport has its image mounted.
+const REACH_BULK = 64
+const REACH_ASK_PX = 800
+const REACH_MEASURE = `(() => {
+  const rows = [...document.querySelectorAll('${tid('my-seed-row')}')]
+  return { vh: innerHeight, vw: innerWidth, scrollY: Math.round(scrollY), docH: document.documentElement.scrollHeight,
+    errors: window.__h && window.__h.errors ? window.__h.errors() : ['harness never exposed __h'],
+    rows: rows.map((r, rank) => {
+      const b = r.getBoundingClientRect(), img = r.querySelector('${tid('my-seed-photo')}')
+      const line = r.querySelector('${tid('my-seed-line')}'), t = line && line.previousElementSibling && line.previousElementSibling.firstElementChild
+      const sec = r.closest('[data-group-slug]')
+      return { rank, t: Math.round(b.top * 10) / 10, b: Math.round(b.bottom * 10) / 10, title: t ? (t.textContent || '').trim() : '',
+        slug: sec ? sec.getAttribute('data-group-slug') : null,
+        img: img ? (img.tagName === 'IMG' ? { done: img.complete && img.naturalWidth > 0 } : 'placeholder') : null }
+    }) }
+})()`
+
+async function imageReach(vw, vh) {
+  const at = `mine-reach@${vw}x${vh}`
+  const P = `[seeds-page] ${at}`
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: vw, height: vh, deviceScaleFactor: 2, mobile: true }, cdp.sessionId)
+  const url = `http://localhost:${PORT}/tests/harness/seeds.html?view=mine&topbar=${TOP_CHROME_PX}&vp=${vw}x${vh}-reach&verdict=0&bulk=${REACH_BULK}`
+  const nav = await cdp.send('Page.navigate', { url }, cdp.sessionId)
+  if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
+  await sleep(200)
+  await evalSettled(`(async()=>{for(let i=0;i<200;i++){if(window.__h&&window.__h.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('harness never reached ready() on the reach load')})()`)
+  await evalSettled('new Promise(r=>setTimeout(r,400))')
+  if (MUTATE_CSS) await evalSettled(`(() => { const s = document.createElement('style'); s.textContent = ${JSON.stringify(MUTATE_CSS)}; document.head.appendChild(s); return 1 })()`)
+  if (MUTATE_JS) await evalSettled(`(async () => { ${MUTATE_JS}\n; return 1 })()`)
+  const why = await tap(`document.querySelector('${headerSel('pepper')}')`, 'the Pepper header')
+  if (why) { fail(`${at}: (o) ${why}`); return }
+  const opened = await waitSettled(`document.querySelectorAll('${tid('my-seeds-group')}[data-group-slug="pepper"] ${tid('my-seed-row')}').length >= ${REACH_BULK}`)
+  // The middle of the group: the row IMAGE_PAGE + 10 down the list, centred.
+  const target = await evalSettled(`(() => { const r = document.querySelectorAll('${tid('my-seed-row')}')[${IMAGE_PAGE + 10}]; if (!r) return null
+    const b = r.getBoundingClientRect(); return Math.max(0, Math.round(scrollY + b.top + b.height / 2 - innerHeight / 2)) })()`)
+  if (target != null) {
+    await evalSettled(`(() => { window.scrollTo(0, ${target}); return 1 })()`)
+    await waitSettled('true')
+  }
+  // Up to 10s for the images on screen to arrive — they are local files; a row that never gets one is (o1).
+  await evalSettled(`(async () => { const t0 = performance.now()
+    while (performance.now() - t0 < 10000) {
+      const vh = innerHeight, rows = [...document.querySelectorAll('${tid('my-seed-row')}')].filter(r => { const b = r.getBoundingClientRect(); return b.bottom > 0 && b.top < vh })
+      if (rows.length && rows.every(r => { const i = r.querySelector('${tid('my-seed-photo')}'); return i && i.tagName === 'IMG' && i.complete && i.naturalWidth > 0 })) return 1
+      await new Promise(r => setTimeout(r, 100))
+    }
+    return 0 })()`)
+  const m = await evalSettled(REACH_MEASURE)
+
+  // ── INSTRUMENT CHECK: the page, the bulk group, and a scroll that is really mid-group.
+  const mismatch = []
+  if (m.vw !== vw || m.vh !== vh) mismatch.push(`the page self-reports ${m.vw}x${m.vh}, not ${vw}x${vh}`)
+  if (m.errors.length) mismatch.push(`the page raised ${m.errors.length} error(s): ${m.errors.join(' | ')}`)
+  const pepper = m.rows.filter(r => r.slug === 'pepper')
+  if (!opened || pepper.length < REACH_BULK) mismatch.push(`tapping Pepper on the ?bulk=${REACH_BULK} load opened ${pepper.length} row(s), expected at least ${REACH_BULK}`)
+  const onScreen = m.rows.filter(r => r.b > 0 && r.t < m.vh)
+  const below = m.docH - (m.scrollY + m.vh)
+  if (target == null) mismatch.push(`there is no row ${IMAGE_PAGE + 10} to centre`)
+  if (onScreen.length < 5) mismatch.push(`${onScreen.length} row(s) intersect the viewport — too few to say anything`)
+  if (!onScreen.some(r => r.rank >= IMAGE_PAGE)) mismatch.push(`no row on screen is past the first ${IMAGE_PAGE}, so the first page alone would satisfy (o1)`)
+  if (!(below > REACH_ASK_PX)) mismatch.push(`the viewport ends ${below}px above the document's bottom, not more than ${REACH_ASK_PX} — a bottom-of-document trigger could fire`)
+  if (!pepper.some(r => r.t >= m.vh) || !pepper.some(r => r.b <= 0)) mismatch.push('the viewport is not inside the Pepper group (rows of it above AND below)')
+  if (mismatch.length) { fail(`${at}: (o) the reach load did not produce what this gate measures — ${mismatch.join('; ')}`); return }
+
+  // (o1) every row on screen has its image, loaded.
+  const missing = onScreen.filter(r => !(r.img && r.img !== 'placeholder' && r.img.done))
+  if (missing.length) fail(`${at}: (o1) ${missing.length} of ${onScreen.length} row(s) on screen have no loaded packet image, scrolled to ${m.scrollY}px of a ${m.docH}px page: ${missing.map(r => `"${r.title}" (row ${r.rank + 1}, ${r.img === 'placeholder' ? 'placeholder' : r.img ? 'still loading' : 'not mounted'})`).join(', ')}`)
+  // (o2) nothing past what reach allows.
+  const mounted = m.rows.filter(r => r.img && r.img !== 'placeholder')
+  const inReach = m.rows.filter(r => r.b > -REACH_PX && r.t < m.vh + REACH_PX)
+  const outOfReach = mounted.filter(r => r.rank >= IMAGE_PAGE && !(r.b > -REACH_PX && r.t < m.vh + REACH_PX))
+  if (mounted.length > IMAGE_PAGE + inReach.length || outOfReach.length) fail(`${at}: (o2) ${mounted.length} packet <img> mounted, over the ${IMAGE_PAGE} of the first page + the ${inReach.length} row(s) within ${REACH_PX}px of the viewport${outOfReach.length ? ` — out of reach and past the first page: ${outOfReach.slice(0, 6).map(r => `"${r.title}" (row ${r.rank + 1}, y${r.t})`).join(', ')}${outOfReach.length > 6 ? ` and ${outOfReach.length - 6} more` : ''}` : ''}`)
+  // (o3) no burst, whatever REACH_PX says.
+  const burst = mounted.filter(r => r.rank >= IMAGE_PAGE && r.t > 3 * m.vh)
+  if (burst.length) fail(`${at}: (o3) ${burst.length} packet image(s) mounted more than two screens below the viewport (past y${3 * m.vh}) — the burst: ${burst.slice(0, 6).map(r => `"${r.title}" (row ${r.rank + 1}, y${r.t})`).join(', ')}`)
+  const ranks = onScreen.map(r => r.rank + 1)
+  console.log(`${P}: (o) IMAGE REACH — ${m.rows.length} rows (${pepper.length} in Pepper) · scrolled to ${m.scrollY}px of ${m.docH}px, ${below}px above the bottom · rows ${Math.min(...ranks)}-${Math.max(...ranks)} on screen, ${onScreen.length - missing.length}/${onScreen.length} with a loaded image · ${mounted.length} <img> mounted (bound ${IMAGE_PAGE} + ${inReach.length} within ${REACH_PX}px = ${IMAGE_PAGE + inReach.length}) · ${m.rows.filter(r => !r.img).length} row(s) waiting unmounted, the nearest ${(() => { const w = m.rows.filter(r => !r.img && r.t >= m.vh); return w.length ? `${Math.round(Math.min(...w.map(r => r.t)) - m.vh)}px below the viewport` : '—' })()}`)
+  console.log(`${P}: screenshot ${await shoot(join(OUTDIR, `seeds-page-mine-${vw}x${vh}-reach.png`))}`)
 }
 
 // (l)'s invariant over one measurement; returns the boxes, keyed by row, for the before/after compare.
@@ -1173,7 +1281,9 @@ try {
       }
     }
   }
+  // (o) on its own load, with nothing held at the network layer.
   await stopImageHold()
+  for (const [vw, vh] of VIEWPORTS) await imageReach(vw, vh)
 } catch (err) {
   fail(`gate could not complete: ${err.message}`)
 } finally {

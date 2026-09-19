@@ -1,8 +1,9 @@
 // V5-SEEDCARDS-001 — My seeds windows its THUMBNAILS, not its rows. Every card stays in the DOM (search,
 // counts, the outline and Back-restore need them), but only the first page of on-screen cards mounts a
-// PhotoView: 103 peppers opening at once is the eager-image freeze (BUG-PHOTOTHUMB-001). jsdom has no
-// layout, so useImageWindow's scroll growth cannot be driven here; it is replaced by a fixed window of 2
-// and the test pins that the view honours it. Mutation: render a PhotoView for every row -> red.
+// PhotoView: 103 peppers opening at once is the eager-image freeze (BUG-PHOTOTHUMB-001). The first page
+// is IMAGE_WINDOW_PAGE, mocked here to 2; jsdom has no layout, so no row is ever within reach of the
+// viewport and the page alone decides. What mounts as rows come near the viewport is
+// MySeeds.imageReach.test.jsx's. Mutation: render a PhotoView for every row -> red.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, fireEvent, cleanup } from '@testing-library/react'
@@ -18,7 +19,7 @@ vi.mock('../components/photo/PhotoView.jsx', () => ({
 }))
 vi.mock('../hooks/useImageWindow.js', () => ({
   default: (total) => ({ shown: 2, showMore: () => {}, hasMore: total > 2, remaining: Math.max(0, total - 2) }),
-  IMAGE_WINDOW_PAGE: 24,
+  IMAGE_WINDOW_PAGE: 2,
 }))
 
 import { MemoryRouter } from 'react-router-dom'

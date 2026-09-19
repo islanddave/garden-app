@@ -432,6 +432,10 @@ jobs:
         # 40x40 at one x, with a supplier stripe or without, measured with the packet-image requests
         # HELD at the network layer and again after every image loaded or failed; (d) and (c) again.
         # (h) every open Sow now card keeps its name column at least SowNow.jsx's TITLE_COL_MIN_PX.
+        # (o) on its own load (?bulk=64: 64 more photo rows in Pepper), Pepper tapped open and scrolled
+        # to mid-group, far above the document's bottom: every row on screen has its packet image
+        # loaded, nothing mounts past the first image page plus the rows within useNearViewport's
+        # reach, and nothing past the first page mounts more than two screens below the viewport.
         # It refuses to measure a view whose innerWidth or innerHeight is not the one requested, that
         # is not at scrollTop 0, or where a tap did not take.
         #
@@ -449,8 +453,10 @@ jobs:
         # stripeless rows shifted 3px, (h) the Sow now card kept from wrapping. GATE_MUTATE_JS (a page
         # script) covers what no stylesheet reaches: a group opened on the first screen reds (e)'s
         # folded and no-row checks, disabling the page's own open-scroll isolates (e2)'s row checks,
-        # and stripping the chips' data-tone reds (n)'s live-chip count.
-        # NO continue-on-error, per the policy note above. ~15 s locally.
+        # stripping the chips' data-tone reds (n)'s live-chip count, and swallowing scroll events reds
+        # (o)'s rows on screen. (o) also reds on the pre-fix window (rows 30-40 on screen, 0 images),
+        # on every row mounting at once, and — the ceiling alone — on a reach of 100000px.
+        # NO continue-on-error, per the policy note above. ~20 s locally (the (o) load included).
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-page
