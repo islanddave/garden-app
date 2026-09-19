@@ -1,10 +1,12 @@
 {
-  "version": "4.139.1",
+  "version": "4.140.0",
   "date": "2026-09-19",
   "highlights": [
-    "If a frost email has already gone out and a newer forecast moves the cold to an earlier night, a new frost email names the earlier night, once for each earlier night; a night that moves later sends nothing new",
-    "Clear-and-calm frost warnings now check the sky on the night the cold actually arrives, and when that is the only reason for a warning the email is titled Frost watch; a second forecast's colder low for the same night is no longer called \"ahead\", and a forecast-service outage no longer stops the afternoon frost check",
-    "On nights the frost line warns about tonight, the forecast card, the weather line and the Protect cards use the same low, so Today no longer shows two different lows for one night; the weather line may switch to freeze wording to match",
-    "Rain from the weather station is no longer logged on plantings you've marked Ended or Failed, or on plants in a deleted or archived container; Dormant plantings still get it"
+    "My seeds folds each crop into a group that starts closed: tap a crop to open it, or use Expand all. A search or filter opens the groups it matches",
+    "Seed cards lead with the supplier as a coloured chip, with a matching stripe down the card (each supplier has its own colours), plus a small packet picture from the supplier; a new supplier filter narrows the list",
+    "A Hottest sort lists peppers by Scoville range, hottest first, using the seller's figure where one is published and a best guess marked \"est.\" where it isn't",
+    "Opening a seed shows its packet picture large (tap to enlarge) with its heat, country of origin, species, days to maturity, breeding and a link to the packet's page; on a seed's form, Origin now reads Supplier and Source URL reads Packet page (URL)",
+    "The − / + count is gone from the seed cards; change a packet's count as Qty on hand on its own page",
+    "The variety list and picker now show all your cultivars; they stopped at 500"
   ]
 }

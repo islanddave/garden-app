@@ -1,5 +1,17 @@
 [
   {
+    "version": "4.140.0",
+    "date": "2026-09-19",
+    "highlights": [
+      "My seeds folds each crop into a group that starts closed: tap a crop to open it, or use Expand all. A search or filter opens the groups it matches",
+      "Seed cards lead with the supplier as a coloured chip, with a matching stripe down the card (each supplier has its own colours), plus a small packet picture from the supplier; a new supplier filter narrows the list",
+      "A Hottest sort lists peppers by Scoville range, hottest first, using the seller's figure where one is published and a best guess marked \"est.\" where it isn't",
+      "Opening a seed shows its packet picture large (tap to enlarge) with its heat, country of origin, species, days to maturity, breeding and a link to the packet's page; on a seed's form, Origin now reads Supplier and Source URL reads Packet page (URL)",
+      "The − / + count is gone from the seed cards; change a packet's count as Qty on hand on its own page",
+      "The variety list and picker now show all your cultivars; they stopped at 500"
+    ]
+  },
+  {
     "version": "4.139.1",
     "date": "2026-09-19",
     "highlights": [
