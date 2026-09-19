@@ -36,7 +36,9 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: (...a) => fetchSpy(...a),
 }))
 vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  Link: ({ children, to, state, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  // V5-SEEDSTAB-001 — the track sheet's "Add the packet" is a SheetRowLink now, which navigates.
+  useNavigate: () => () => {},
 }))
 
 import SavedSeeds from '../pages/SavedSeeds.jsx'

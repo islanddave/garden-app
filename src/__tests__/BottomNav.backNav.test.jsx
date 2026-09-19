@@ -69,11 +69,14 @@ const atFloor = () => !armed() && window.history.state?.__floor === 1
 // The page tree is irrelevant here — chrome only. The probe exposes the router's location so
 // "navigated" and "overlay background preserved" are asserted from the router's view, not from
 // react-router's internal history.state.usr shape.
+// data-search (V5-SEEDSTAB-001): a Seeds door names its view in the query, so a pathname alone can
+// no longer tell Sow now from the other two views.
 function Probe() {
   const loc = useLocation()
-  return <span data-testid="path" data-bg={loc.state?.background?.pathname}>{loc.pathname}</span>
+  return <span data-testid="path" data-search={loc.search} data-bg={loc.state?.background?.pathname}>{loc.pathname}</span>
 }
 const path = () => screen.getByTestId('path').textContent
+const search = () => screen.getByTestId('path').getAttribute('data-search')
 
 // Provider nesting mirrors App.jsx: DismissRegistryProvider wraps OverlayProvider.
 function renderNav() {
@@ -204,11 +207,15 @@ describe('ACCEPTANCE 3 — the second sheet (+LOG create) gets identical treatme
     await settle()
     fireEvent.click(screen.getByText('Sow from seed'))
     await settle()
-    expect(path()).toBe('/sow')
+    // V5-SEEDSTAB-001 — the row lands on Seeds › Sow now (was /sow), as a page: no background.
+    expect(path()).toBe('/seeds')
+    expect(search()).toBe('?view=sow')
+    expect(screen.getByTestId('path').getAttribute('data-bg')).toBeNull()
     expect(createIsOpen()).toBe(false)
 
     await back()
     expect(path()).toBe('/today')
+    expect(search()).toBe('')
     expect(atFloor()).toBe(true)
   })
 

@@ -331,12 +331,16 @@ jobs:
         # hit-tests to itself (a control probed as occluded fails, and one never probed fails too:
         # "not measured" is not "not occluded"), that no row wraps or overflows right at the fixture's
         # worst-case 44-char name, and that the document does not scroll sideways. A non-vacuity floor
-        # of 8 rows / 6 sections / >=12 controls is asserted before any of it.
+        # of 5 rows / 5 sections / >=11 controls is asserted before any of it (8 / 6 / >=12 until
+        # V5-SEEDSTAB-001 took seed off this list; the fixture's 3 seed rows must now be counted on the
+        # Seeds pointer row and listed nowhere, and the pointer row is itself in the measured census).
         #
         # It sits at ZERO margin: the smallest measured side is exactly 44px against a 44px floor, so
         # any shrink at all reds it. Verified non-vacuous: T.tapMinHeight 44 -> 40 fails with exit 1
-        # naming six controls ("Add seeds" 99.8x42, "Sow now" 93.5x42, "+ Add" 65.8x40, and the three
-        # 102.7x40 filter selects). Three shallower mutations SURVIVED and are worth knowing about —
+        # naming ten controls ("+ Add" 69.7x40, the three 102.7x40 filter selects, the five 350x40
+        # section headers and "1 need restock" 132.8x40). The Seeds pointer's 64px minHeight is not
+        # T.tapMinHeight, so clamping it to height:40 was proved separately (exit 1, named alone).
+        # Three shallower mutations SURVIVED and are worth knowing about —
         # an inline height:40 on the selects is backstopped by selectChrome's own minHeight, and the
         # quantity steppers are in the probe's selector list but are not rendered by this fixture, so
         # a regression confined to them would not be caught here.
@@ -383,9 +387,47 @@ jobs:
         #
         # ~96 s locally: six page loads (four states, two of them at both viewports) behind one Vite
         # boot. Placed here rather than last because gate:save-band-stability is still the slow one.
+        #
+        # V5-SEEDSTAB-001 REPOINT (2026-09-18): the harness now mounts the real Seeds page at
+        # /seeds?view=saved (Saved seeds `embedded`, with the shell's header, view switch and frame)
+        # instead of the standalone page no user sees, and the instrument check refuses any other
+        # surface. Every state also runs at 360x640 — ten page loads, ~99 s measured, of which PASS
+        # prints at ~9 s and the rest is node idling on its armed 90 s CDP timeouts (the same was true
+        # of the six-load run: 1:38). ONE named
+        # tap-floor exemption: the view switch is the frozen SegmentedControl, drawn at 40px, held to
+        # that floor and printed on every run (scripts/layout-gate/segmented-control-exemption.mjs).
+        # Re-proved non-vacuous: --probe-nothing exits 1 on all ten case/viewport pairs.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-saved
+
+      - name: Seeds page layout, all three views (V5-SEEDSTAB-001)
+        # The whole Seeds page — title and per-view actions, the SegmentedControl view switch, the
+        # ferment line, and ONE view body — on ?view=mine, ?view=saved and ?view=sow at a TRUE 360x640
+        # and 390x844, mounted by tests/harness/seeds.{html,jsx} with the app's 52px top bar and 56px
+        # bottom nav in place (their heights are read from TopChrome.jsx and constants.js and checked).
+        # Fixture: 27 seed rows over 8 crops, the 44-char "Money Plant (self-saved, variety
+        # unrecorded)" as a lot fermenting 5 days AND archived (two chips; the ferment line names it),
+        # registry vendors, an order-reference `source`, a used-up packet and an identical pair.
+        # Asserts: (a) the view switch is one line; (b) the header's title and actions share one line
+        # and nothing overflows it; (c) no sideways scroll; (d) every visible button, link, radio and
+        # field is >= T.tapMinHeight, except the frozen SegmentedControl's 40px radios — ONE named
+        # exemption, shared with gate:seeds-saved; (e) at 360x640 on My seeds, >= 3 rows fully on the
+        # first screen between the bars; (f) every My seeds row's second line and title are ONE line,
+        # the 44-char name truncating with an ellipsis; (g) every row's amount shows whole (the chips
+        # and vendor give way first); (h) every open Sow now card keeps its name column at least
+        # SowNow.jsx's TITLE_COL_MIN_PX. It refuses to measure a view whose innerWidth or innerHeight
+        # is not the one requested, or that is not at scrollTop 0.
+        #
+        # Verified non-vacuous: `npm run gate:seeds-page:probe-nothing` exits 1 on all six
+        # view/viewport pairs; and GATE_MUTATE_CSS (CSS injected before measuring, src/** untouched)
+        # reds each assertion by name — (a) switch forced to wrap, (b) actions stacked, (c) page forced
+        # to 480px, (d) Save seed forced to 30px, (f) line flex-wrap / facts wrap / title wrap,
+        # (g) the amount span allowed to shrink, (h) the Sow now card kept from wrapping.
+        # NO continue-on-error, per the policy note above. ~10 s locally.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:seeds-page
 
       - name: Kitchen-batch close-out layout and band clearance (V5-KBCLOSE-001)
         # RE-WIRED 2026-09-07 after its first CI run went red and the finding was triaged to TWO

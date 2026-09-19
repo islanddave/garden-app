@@ -13,6 +13,11 @@
 // a 44-character item name, a four-digit quantity, both low-stock states, a durable with a
 // condition, and an item with no cost at all — plus enough categories that the section headers
 // and the canonical ordering are both visible in one frame.
+//
+// V5-SEEDSTAB-001: the three seed rows STAY in the fixture although the page no longer lists them.
+// They are what makes this a seed-exclusion check in real Chrome — the page must count all three on
+// the Seeds pointer row (proving they were fetched) and list none of them (proving they were
+// dropped), and the gate pins both halves.
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
@@ -81,6 +86,14 @@ window.__h = {
   // down the page. That is a false positive of exactly the kind these gates exist to catch, so
   // the fix is to measure each control where the user actually meets it — centred in the
   // viewport, clear of the fixed verdict strip at the top.
+  //
+  // V5-SEEDSTAB-001 changed the list: the Add seeds / Saved seeds / Sow now chips left with the seed
+  // rows, so 'a[href="/sow"]' matched nothing and is gone ('a[href^="/inventory"]' now reaches only
+  // "+ Add"; it used to reach "Add seeds" too), and 'a[href^="/seeds"]' measures the Seeds pointer
+  // row, the whole of which is one tap target. The restock button is reached by its TEXT: it has no
+  // aria-label, so the 'button[aria-label*="need restock"]' selector this list carried matched
+  // nothing and the button was never measured. Measured at 1408ca04: 12 controls = 6 sections + 3
+  // selects + 2 /inventory links + 1 /sow link, while a "3 need restock" button sat on the page.
   tapTargets() {
     const vw = window.innerWidth
     const sel = [
@@ -89,10 +102,12 @@ window.__h = {
       'button[aria-label="Increase quantity"]',
       'select',
       'a[href^="/inventory"]',
-      'a[href="/sow"]',
-      'button[aria-label*="need restock"]',
+      'a[href^="/seeds"]',
     ].join(',')
-    const els = [...document.querySelectorAll(sel)]
+    const els = [
+      ...document.querySelectorAll(sel),
+      ...[...document.querySelectorAll('button')].filter(b => /need restock/.test(b.textContent)),
+    ]
     const out = els.map(el => {
       el.scrollIntoView({ block: 'center', behavior: 'instant' })
       const r = el.getBoundingClientRect()
@@ -101,6 +116,7 @@ window.__h = {
       const hit = (cy >= 0 && cy <= window.innerHeight) ? document.elementFromPoint(cx, cy) : null
       return {
         id: (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 34),
+        href: el.getAttribute('href'),
         w: +r.width.toFixed(1), h: +r.height.toFixed(1),
         fits: r.left >= -0.5 && r.right <= vw + 0.5,
         visible: el.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true }),
@@ -136,10 +152,18 @@ window.__h = {
     return [...document.querySelectorAll('[data-testid="inv-section"]')].map(s => s.dataset.category)
   },
 
-  // The header holds an h1 and three actions on one flex row. At 390px they do not all fit, so
-  // the action group wraps — measured here rather than eyeballed, because raising the two chips
-  // from 38 to 44px needed to be shown NOT to have caused that wrap (it is width-driven; the
-  // chips are the same width at either height, so the only delta is the block's own height).
+  // V5-SEEDSTAB-001 — the one row the fixture's three seed rows still produce. Its count line is
+  // read so the gate can show those rows were FETCHED (counted here) and still not LISTED.
+  seedsPointer() {
+    const a = document.querySelector('[data-testid="inv-seeds-pointer"]')
+    if (!a) return null
+    return { href: a.getAttribute('href'), text: a.textContent.trim(), h: +a.getBoundingClientRect().height.toFixed(1) }
+  },
+
+  // The header holds an h1 and its actions on one flex row. With three seed chips beside "+ Add"
+  // the action group wrapped to a second line at 390px (h1 92.8px + actions 402.8px against 350px,
+  // measured at 1408ca04); since V5-SEEDSTAB-001 took the chips away it is h1 + "+ Add" on one
+  // line. Measured here rather than eyeballed, and reported by the gate rather than asserted.
   header() {
     const h1 = document.querySelector('h1')
     const wrap = h1?.parentElement

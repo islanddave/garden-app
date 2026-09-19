@@ -128,6 +128,8 @@ import { useOptionalToast } from '../../context/ToastContext.jsx'
 import { todayLocalISO } from '../../lib/dateLocal.js'
 import { P } from '../../lib/constants.js'
 import { PUTUP_SOURCE_OPTIONS } from '../../lib/dropdownRegistry.js'
+import { readMarker } from '../../lib/backNav.js'
+import { seedsHref } from '../../lib/seedsRoutes.js'
 
 
 // MIRRORS src/pages/SavedSeeds.jsx's PROCESS_ENTRY, deliberately rather than importing it: that is
@@ -474,7 +476,13 @@ const NON_GARDEN_KINDS = PUTUP_SOURCE_OPTIONS.filter((o) => (o.value ?? o) !== '
  * exactly as it is on /inventory/add, and the venue is disclosed under it for the genuine
  * bought-a-Fedco-packet-at-the-co-op case.
  */
-export default function SaveSeedSheet({ planting, onClose }) {
+// V5-SEEDSTAB-001 — `onSaved(lot, { stageWritten })`, optional. A host that passes it takes over the
+// ending: the sheet closes and navigates NOWHERE, and the host confirms the save in place. The Seeds
+// page is that host — a push from inside it would remount the page it is already on (the old
+// /seeds/saved target redirects back to it), refetch the whole seed list, drop the filters and stack
+// a duplicate history entry. Without it the sheet keeps its navigating ending for the planting page
+// and the event menu.
+export default function SaveSeedSheet({ planting, onClose, onSaved }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const navigate = useNavigate()
@@ -707,28 +715,46 @@ export default function SaveSeedSheet({ planting, onClose }) {
       toast.show(missed.length
         ? { message: `Seed lot saved — couldn't ${missed.join(' or ')}`, tone: 'error' }
         : { message: 'Seed lot saved', tone: 'success' })
+      // Read BEFORE onClose(): closing unmounts the sheet, whose disarm pops the Back marker
+      // asynchronously — so this is the last moment the stack still shows the sheet's own entry.
+      const markerCurrent = typeof window !== 'undefined' && !!window.history && !!readMarker(window.history.state)
       if (onClose) onClose()
-      // WHERE THE ACTION ENDS — and it now depends on whether the lot joined a QUEUE.
+      if (onSaved) {
+        // stageWritten is only ever set after the stage POST resolved, so it is null on a failure.
+        onSaved(lot, { stageWritten })
+        return
+      }
+      // WHERE THE ACTION ENDS (hosts without onSaved) — and it depends on whether the lot joined a
+      // QUEUE.
       //
       // Until V5-SEEDSAVEDFILTER-001 this always went to /inventory/:id, with a good reason: that is
       // where "Saved from" renders, so the user lands looking at the provenance they just created.
       // The reason is still good, but it only covers the lot that has no stage. A lot that DID get a
-      // process is now sitting in the fermenting or drying queue on /seeds/saved with a clock
-      // running on it — and that page had no entry point from anywhere the user had just been. It
-      // holds the only overdue-ferment warning in the app (past day 5 the seed sprouts in the jar and
-      // the lot is finished), so the queue is exactly what a freshly-tracked lot should be shown, and
-      // showing it once here is what teaches the page exists at all.
+      // process is sitting in the fermenting or drying queue — Seeds › Saved seeds since
+      // V5-SEEDSTAB-001 — with a clock running on it. That view holds the app's only overdue-ferment
+      // warning (past day 5 the seed sprouts in the jar and the lot is finished), so the queue is
+      // exactly what a freshly-tracked lot should be shown.
       //
-      // Split rather than switched wholesale: an untracked lot has no row on /seeds/saved, so sending
-      // it there would land the user on a page that does not mention the thing they just saved.
+      // Split rather than switched wholesale: an untracked lot has no card in Saved seeds, so sending
+      // it there would land the user on a view that does not mention the thing they just saved.
       //
       // `stageFailed` deliberately routes to the lot page too. The toast already says tracking did
       // not start; dropping the user into a queue their lot is NOT in would contradict it.
       //
       // A PLAIN navigate, not useOverlayNavigate — neither route is registered `overlayable`, so a
       // background in route state would leave the page tree on this planting and render nothing.
-      if (stageWritten && !stageFailed) navigate('/seeds/saved')
-      else if (lot?.id) navigate(`/inventory/${lot.id}`)
+      //
+      // V5-SEEDSTAB-001 — the queue is Seeds › Saved seeds now, opened ON the new lot, and the
+      // navigation REPLACES while this sheet's Back marker is the current entry. A push from an
+      // armed sheet strands that marker mid-stack ([planting, planting+marker, dest]): the first
+      // Back from the queue landed on the marker, which is the planting page again at the same URL —
+      // a Back press that visibly did nothing, on all three hosts. Replacing collapses the marker into
+      // the destination, so one Back returns to the planting (SheetRowLink's rule). With no marker
+      // current (flags off, no provider) it is the plain push it always was.
+      const opts = markerCurrent ? { replace: true } : undefined
+      const go = (to) => (opts ? navigate(to, opts) : navigate(to))
+      if (stageWritten && !stageFailed) go(seedsHref('saved', { lot: lot?.id }))
+      else if (lot?.id) go(`/inventory/${lot.id}`)
     } catch (err) {
       setError(err?.message || "Couldn't save the seed lot")
     } finally {
@@ -969,7 +995,9 @@ export default function SaveSeedSheet({ planting, onClose }) {
           new place. "Not yet" leaves the lot un-staged, exactly as /inventory/add would. */}
       <div style={fieldLabelStyle} id="save-seed-process-label">Start tracking it?</div>
       <div role="group" aria-labelledby="save-seed-process-label" style={{ marginBottom: 14 }}>
-        {[['none', 'Not yet — just save the lot', 'It sits in Inventory until you start the process'],
+        {/* V5-SEEDSTAB-001 — "sits in Inventory" stopped being true when seed left the Inventory
+            list; an unstaged lot is a row in Seeds › My seeds. */}
+        {[['none', 'Not yet — just save the lot', 'It waits in Seeds › My seeds until you start the process'],
           ...Object.entries(PROCESS_ENTRY).map(([k, m]) => [k, m.label, m.sub])].map(([key, label, sub]) => {
           const selected = key === 'none' ? seedProcess === null : seedProcess === key
           return (

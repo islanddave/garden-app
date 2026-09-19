@@ -1,7 +1,9 @@
 import React, { useState, useLayoutEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { useOverlayLocation, OverlayLink, useOverlayNavigate } from '../context/OverlayContext.jsx'
+import { useOverlayLocation } from '../context/OverlayContext.jsx'
 import { readMarker } from '../lib/backNav.js'
+import SheetRowLink from './SheetRowLink.jsx'
+import { SEEDS_PATH, seedsHref } from '../lib/seedsRoutes.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
 import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
@@ -93,7 +95,8 @@ const CREATE_ACTIONS = [
   // V4-PROJHIDE-001: project-neutral sub-label when "project" is not a user-facing concept. Flag OFF
   // keeps the original copy — module-const evaluated once at load, so behavior is byte-identical.
   { to: '/garden?add=1', iconName: 'lifecycle.sprout', label: 'Add a planting', sub: PROJECTS_HIDDEN ? "Something you're growing" : 'A plant growing in a project' },
-  { to: '/sow',          iconName: 'lifecycle.sprout', label: 'Sow from seed',  sub: 'Start something from your seed inventory' },
+  // V5-SEEDSTAB-001 — lands on Seeds › Sow now, the same list /sow used to be, one Back from the tab.
+  { to: seedsHref('sow'), iconName: 'lifecycle.sprout', label: 'Sow from seed',  sub: 'Start something from your seed inventory' },
   // V5-HARVESTONEDOOR-001 — THE 'Harvest by voice' ROW IS GONE, AND THE CAP IS BACK TO 4.
   //
   // V5-HARVESTVOICEFLOW-001 added it here on 2026-08-30 as a deliberate fifth row, breaking the
@@ -133,38 +136,10 @@ const menuRowStyle = {
   fontFamily: 'inherit', minHeight: 48,
 }
 
-// BUG-BACKNAVMORE-001 (BD-009) — a nav-sheet row that CONSUMES the armed Back entry when it
-// navigates. The two BottomNav sheets were deliberately excluded from V4-BACKNAV-001's arming
-// (armsBack=false — see lib/backNav.js and Sheet.jsx) because every row here closes the sheet AND
-// navigates: a plain push from an armed sheet strands the marker entry MID-STACK
-// ([tab, tab+marker, dest]) — a permanent dead Back press on the app's most frequent path, and no
-// browser API can remove a mid-stack entry. The cost of NOT arming was the shipped bug: Android
-// Back over an open sheet navigated the tab underneath instead of closing the sheet.
-// This wrapper resolves the orphaning from the NAVIGATION side so the sheets can finally arm: at
-// click time, if the CURRENT history entry is the session marker (readMarker — the same predicate
-// disarm() guards on), the row REPLACE-navigates instead of pushing, collapsing the marker entry
-// into the destination ([tab, dest]). One Back from the destination lands on the ORIGINAL tab.
-// The registry needs no edit: disarm() already treats a replace-while-armed as "marker deleted,
-// do nothing" (react-router's replace writes fresh {usr,key,idx} — that guard predates this).
-// When the marker is NOT current — flags off, no provider (isolated tests/jsdom without arming),
-// or any other reason — the row falls through to the Link's normal push, byte-identical to the
-// pre-arming behavior. Modified/non-primary clicks (new tab) also fall through untouched.
-function SheetRowLink({ to, overlay = false, onClick, children, ...rest }) {
-  const navigate = useNavigate()
-  const overlayNavigate = useOverlayNavigate()
-  const Comp = overlay ? OverlayLink : Link
-  function handleClick(e) {
-    onClick?.(e)
-    if (e.defaultPrevented) return
-    // Mirror Link's own navigation guards: only a plain primary-button click navigates in-tab.
-    if (e.button !== 0 || e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) return
-    if (typeof window === 'undefined' || !window.history) return
-    if (!readMarker(window.history.state)) return
-    e.preventDefault()
-    ;(overlay ? overlayNavigate : navigate)(to, { replace: true })
-  }
-  return <Comp to={to} onClick={handleClick} {...rest}>{children}</Comp>
-}
+// BUG-BACKNAVMORE-001 (BD-009) — every navigating row in both sheets below is a SheetRowLink, which
+// CONSUMES the armed Back entry when it navigates; that is what lets these sheets arm at all. The
+// component moved to ./SheetRowLink.jsx in V5-SEEDSTAB-001 (Saved seeds' track sheet needed it too),
+// where the full reasoning now lives.
 
 function SectionLabel({ children }) {
   return (
@@ -318,14 +293,14 @@ export default function BottomNav() {
       {/* +LOG create action sheet (Sheet primitive). armsBack (BUG-BACKNAVMORE-001): Android Back
           now closes this sheet instead of navigating the tab beneath. Arming is safe here ONLY
           because every row is a SheetRowLink, which consumes the armed entry on row-navigate —
-          the orphaning that originally justified the exclusion (see SheetRowLink above). */}
+          the orphaning that originally justified the exclusion (see ./SheetRowLink.jsx). */}
       <Sheet open={showCreate} onClose={closeCreate} ariaLabel="Create new" armsBack>
         <div style={{ padding: '6px 24px 8px', fontSize: '0.8rem', color: P.light }}>
           Add to your garden
         </div>
         {CREATE_ACTIONS.map(action => {
-          // V4-OVERLAY-001 Slice 2: /log + /log/many open as flyovers over the current page; /sow and
-          // /garden?add=1 stay plain page navigations (§6 — /sow is a page, add-planting is Slice 3).
+          // V4-OVERLAY-001 Slice 2: /log + /log/many open as flyovers over the current page; Seeds and
+          // /garden?add=1 stay plain page navigations (§6 — Seeds is a page, add-planting is Slice 3).
           // BUG-BACKNAVMORE-001: SheetRowLink keeps that split via `overlay` and consumes the armed
           // Back entry on tap.
           return (
@@ -425,39 +400,30 @@ export default function BottomNav() {
         <SheetRowLink to="/inventory" onClick={closeMore} style={menuRowStyle}>
           <Icon name="nav.inventory" size={22} decorative />Inventory
         </SheetRowLink>
-        {/* V4-SOWMOREMENU-001 (BD-067) — Dave: "we seem to have lost the sow now tab, I can't find
-            it anywhere", and on where he wants it: "preferably that is just its own listing in the
-            more menu, that would be where I'd want it." So: TOP-LEVEL here, directly under Inventory
-            rather than nested inside it.
-            THIS IS NOT A REGRESSION FIX, and the distinction matters for anyone reading the row.
-            Verified on dev/prod v4.57.0 (1c6cf21f71) before building: all three historical entry
-            points are alive — the /sow route (App.jsx), the "Sow from seed" action in the create
-            sheet (V4-SOWFAB-001, above in this file), and a Sow chip on the Inventory page
-            (Inventory.jsx). Nothing was removed. What was missing is a door in the place Dave
-            actually looks, and what made it feel VANISHED is that the one sow affordance on his
-            highest-traffic screen was plain text with no tap target at all (CultivationLead, now
-            fixed). Findability, not restoration.
-            ADDITIVE BY SCOPE GUARD: Dave did not ask to consolidate entry points, so the FAB action
-            and the Inventory chip both STAY. This is a fourth door, not a replacement — do not
-            "tidy" the others away without asking him. That makes it a deliberate exception to the
-            redundant-door-pair merging V4-NAVHARVEST-001 does two rows below; the difference is
-            that those were two doors to one destination from the SAME surface, while these are one
-            door each from four different starting points. */}
-        <SheetRowLink to="/sow" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="lifecycle.sprout" size={22} decorative />Sow now
-        </SheetRowLink>
-        {/* V4-SEEDSAVEFLOW-001 — Saved seeds. Placed HERE, beside Sow now, rather than in
-            CREATE_ACTIONS: that array is create affordances and carries a hard 5-cap with a test
-            asserting it, and this is a VIEW surface. The two belong adjacent because they are the
-            two ends of one loop — seed you saved is seed you sow.
-
-            ITS OWN ROW RATHER THAN A FILTER INSIDE INVENTORY (design Q2). The alternative was fewer
-            places to look, but it buries the surface exactly the way Sow now was buried — which is
-            the complaint the four-door note above exists to answer. Dave could not find the
-            seed_saved event type at all, and prod has ZERO seed_saved events ever logged; putting
-            the answer behind one more filter would repeat the fault rather than fix it. */}
-        <SheetRowLink to="/seeds/saved" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="event.seed_saved" size={22} decorative />Saved seeds
+        {/* V5-SEEDSTAB-001 — ONE "Seeds" row where "Sow now" (V4-SOWMOREMENU-001) and "Saved seeds"
+            (V4-SEEDSAVEFLOW-001) used to sit, opening the Seeds page that holds both plus the seed he
+            owns. The scope guard that stood here ("ADDITIVE … do not 'tidy' the others away without
+            asking him") is RETIRED by the thing it asked for: Dave asked to consolidate on
+            2026-09-18 ("consolidate Seeds into a single tab - save seeds, sow now, inventory seeds,
+            etc should have a home properly in the app") and, shown the change list, approved this
+            merge by name (design-seedshome-V102 §7, D1 = a More row, D2 = approved as listed).
+            A More row rather than a seventh bar tab (D1): seed work is seasonal, 2027 sowing is
+            frozen, and the bar is shared with Jen. The subtitle keeps both old names in the menu, so
+            the words he looks for are still here even though the direct rows are not. The fast doors
+            stay direct: ＋ → Sow from seed and Today's Sow now band open Seeds › Sow now.
+            Two-line row in the Critters style, and lifecycle.sprout — the colour glyph the Sow now
+            row already carried (event.seed_saved is mono). */}
+        <SheetRowLink
+          to={SEEDS_PATH}
+          onClick={closeMore}
+          data-testid="more-seeds"
+          style={{ ...menuRowStyle, alignItems: 'flex-start' }}
+        >
+          <Icon name="lifecycle.sprout" size={22} decorative style={{ lineHeight: 1.2 }} />
+          <span style={{ display: 'flex', flexDirection: 'column' }}>
+            <span style={{ fontSize: '1rem', fontWeight: 500 }}>Seeds</span>
+            <span style={{ fontSize: '0.78rem', color: P.light }}>My seeds · Saved seeds · Sow now</span>
+          </span>
         </SheetRowLink>
         {/* V4-NAVHARVEST-001 / V4-PUTUPENGINE-001 — BOTH the Harvests row and the Put-Up row that
             lived here were PROMOTED to the tab bar, not duplicated: two doors to one destination is

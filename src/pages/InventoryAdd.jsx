@@ -12,6 +12,11 @@ import { setReloadBlocked } from '../lib/reloadGate.js'
 import { INVENTORY_TYPES as TYPES, INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY_CONDITIONS as CONDITIONS } from '../lib/inventoryEnums.js'
 import { EnumSelect, Field, Input, Textarea, Button, SourcePicker } from '../components/forms'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
+import { seedsHref, seedsReturnFromHistory, noteSeedAdded } from '../lib/seedsRoutes.js'
+
+// V5-SEEDSTAB-001 — seed left the Inventory list, so a seed packet saved here goes home to
+// Seeds › My seeds unless the door that opened this form named somewhere else.
+const SEEDS_MINE = seedsHref('mine')
 
 // V4-DIRTYGUARDSWEEP-001 — draft-stash route key (siblings: 'logone', 'logmany').
 const DRAFT_KEY = 'inventoryadd'
@@ -73,6 +78,14 @@ export default function InventoryAdd() {
   // if the user deliberately cleared them; the params describe where the user CAME FROM, which is a
   // fact about this mount and does not change during it.
   const [returnTo] = useState(() => searchParams.get('return'))
+  // V5-SEEDSTAB-001 — the Seeds URL that PUSHED this form, when a Seeds door did. If it is also the
+  // return target, leaving is a Back (navigate(-1)) rather than a fresh push of the page underneath,
+  // so N packets added from My seeds and then one Back leaves Seeds instead of walking through N
+  // copies of it. Read once: it describes the entry this form arrived on.
+  const [pushedFromSeeds] = useState(seedsReturnFromHistory)
+  // Set on a successful save and never cleared: the submit stays disabled from success until the
+  // page is gone. The old 2.5 s toast window let a second tap create a duplicate row.
+  const [done, setDone] = useState(false)
   const [form, setForm] = useState({
     name:             '',
     type:             '',
@@ -272,7 +285,7 @@ export default function InventoryAdd() {
     setSaving(true)
     try {
       const payload = buildPayload()
-      const { error } = await createItem(payload)
+      const { item: created, error } = await createItem(payload)
       setSaving(false)
 
       if (error) {
@@ -281,6 +294,17 @@ export default function InventoryAdd() {
       }
 
       clearDraft(DRAFT_KEY)   // the item exists — the working draft is spent
+      setDone(true)
+
+      // V5-SEEDSTAB-001 — a seed packet goes home NOW, not after the toast: the toast is the global
+      // layer and survives the navigation, and waiting 2.5 s on a form that is already saved only
+      // bought the double-tap duplicate. The Seeds page outlines the new row on the way in.
+      if (payload.category === 'seeds') {
+        show({ message: '✓ Seeds added' })
+        noteSeedAdded(created?.id)
+        leaveSeedMode()
+        return
+      }
 
       // Operational confirmation via the GLOBAL toast layer (2500ms), then navigate.
       show({ message: '✓ Item added' })
@@ -297,6 +321,17 @@ export default function InventoryAdd() {
       setErrors({ _form: err?.message || 'Unexpected error — please try again.' })
     }
   }
+
+  // V5-SEEDSTAB-001 — how a seed-mode form leaves, saved or cancelled. Back when the page underneath
+  // IS where we are going; otherwise a REPLACE, so the form does not stay in the stack behind the
+  // page it returned to.
+  function leaveSeedMode() {
+    const target = safeReturnTo(returnTo, SEEDS_MINE)
+    if (pushedFromSeeds && pushedFromSeeds === target) navigate(-1)
+    else navigate(target, { replace: true })
+  }
+
+  const seedMode = form.category === 'seeds'
 
   function buildPayload() {
     const base = {
@@ -353,14 +388,16 @@ export default function InventoryAdd() {
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 80px' }}>
 
-        {/* Breadcrumb */}
+        {/* Breadcrumb — V5-SEEDSTAB-001: a seed packet belongs to Seeds, not the Inventory list. */}
         <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
-          <Link to="/inventory" style={{ color: P.green, textDecoration: 'none' }}>Inventory</Link>
-          {' › Add item'}
+          {seedMode
+            ? <Link to={SEEDS_MINE} style={{ color: P.green, textDecoration: 'none' }}>Seeds</Link>
+            : <Link to="/inventory" style={{ color: P.green, textDecoration: 'none' }}>Inventory</Link>}
+          {seedMode ? ' › Add seeds' : ' › Add item'}
         </div>
 
         <h1 style={{ margin: '0 0 24px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>
-          Add item
+          {seedMode ? 'Add seeds' : 'Add item'}
         </h1>
 
         {/* Type switch confirmation */}
@@ -686,12 +723,25 @@ export default function InventoryAdd() {
 
           {/* ── Actions ── */}
           <div style={{ display: 'flex', gap: 14, alignItems: 'center', paddingTop: 4 }}>
-            <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
-              Add item
+            <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…" disabled={done}>
+              {seedMode ? 'Add seeds' : 'Add item'}
             </Button>
-            <Link to="/inventory" style={{ color: P.mid, textDecoration: 'none', fontSize: '0.88rem' }}>
-              Cancel
-            </Link>
+            {/* V5-SEEDSTAB-001 — Cancel in seed mode follows the save's rule (Back to the Seeds view
+                that opened this form, else to My seeds); every other category is unchanged. */}
+            {seedMode ? (
+              <button
+                type="button"
+                onClick={leaveSeedMode}
+                data-testid="inventory-add-cancel"
+                style={{ color: P.mid, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '0.88rem', fontFamily: 'inherit', minHeight: 44 }}
+              >
+                Cancel
+              </button>
+            ) : (
+              <Link to="/inventory" style={{ color: P.mid, textDecoration: 'none', fontSize: '0.88rem' }}>
+                Cancel
+              </Link>
+            )}
           </div>
 
         </form>

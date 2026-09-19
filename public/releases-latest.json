@@ -1,13 +1,9 @@
 {
-  "version": "4.138.0",
-  "date": "2026-09-18",
+  "version": "4.139.0",
+  "date": "2026-09-19",
   "highlights": [
-    "Frost warnings now name the night the cold actually arrives (tonight, tomorrow night or the weekday) instead of usually one night late, and the advisory email's subject shows the advisory's own low",
-    "The frost email goes out once per night even when two people have plants in the garden, and both of you see the frost line on Today",
-    "Frost warnings no longer count plants that shrug off frost: horseweed, goldenrod, lamb's ear and yarrow",
-    "In-ground plants keep their cold card on nights the frost email won't mention them",
-    "A Heated checkbox on the location form marks a warm spot like the House, so frost warnings and cold cards skip it",
-    "Weather-station alerts now come year-round, at most one a day per problem, including a new one when the outdoor sensors stop reporting",
-    "When the rain forecast fails to load, Today says so plainly instead of counting it, and a missing weather icon shows a cloud instead of a sun"
+    "Seeds has one home: More → Seeds holds My seeds (every packet and saved lot, with search, crop filters and sorting), Saved seeds and Sow now, one tap apart",
+    "Seed packets moved off the Inventory list into Seeds; the Inventory list keeps one Seeds row that opens them, and the packet − / + moved with them",
+    "Adding a seed packet goes straight back to where you started, and saving seed from inside Seeds keeps you on the view you were on"
   ]
 }

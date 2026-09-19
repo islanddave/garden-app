@@ -22,7 +22,9 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: (...a) => fetchSpy(...a),
 }))
 vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  Link: ({ children, to, state, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  // V5-SEEDSTAB-001 — the track sheet's "Add the packet" is a SheetRowLink now, which navigates.
+  useNavigate: () => () => {},
 }))
 
 import SavedSeeds from '../pages/SavedSeeds.jsx'
@@ -89,7 +91,7 @@ describe('S3b — a ferment past its window does not look like a healthy one', (
     // The defect was a duration rendered without its meaning. Colour alone repeats that for anyone
     // who cannot see it, so the reason has to be readable text.
     await mount([ferment('alarmed', 8)])
-    expect(cardFor('alarmed').textContent).toContain('Past 5 days the seed can sprout in the jar.')
+    expect(cardFor('alarmed').textContent).toContain('By day 5 the seed can sprout in the jar.')
   })
 
   it('paints the three states with three different borders', async () => {

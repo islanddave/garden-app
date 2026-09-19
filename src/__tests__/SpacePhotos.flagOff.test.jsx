@@ -89,7 +89,7 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
   // present in both tables; the flag's delta stays exactly the two space routes.
   // 49 → 50: W-RESTORE's /photos/deleted is likewise not flag-gated — same reasoning, and the same
   // delta invariant: the flag still adds exactly two routes and nothing else.
-  it('restores the shipped 53-route table exactly, with no duplicates', async () => {
+  it('restores the shipped 58-route table exactly, with no duplicates', async () => {
     const { renderRoutes } = await import('../App.jsx')
     const paths = renderRoutes({ overlay: false, user: true }).map(r => r.props.path)
     // 50 → 51: BUG-VOICEDUPE-002 added /admin/voice-debug (flag-independent — not a /space route)
@@ -113,8 +113,11 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
     // flag-independent (it has nothing to do with SPACE_PHOTOS_ENABLED), so it moves the flag-OFF
     // count by one exactly as it moves the flag-ON count and the "exactly 2 below the flag-ON pin"
     // delta this file exists to protect is untouched.
-    expect(paths).toHaveLength(57)
-    expect(new Set(paths).size).toBe(57)
+    // 57 -> 58: V5-SEEDSTAB-001 adds /seeds, the ONE Seeds page — unconditional, so it moves the
+    // flag-OFF count by one exactly as it moves the flag-ON count. /sow and /seeds/saved stay in
+    // the table as redirects into it, so this is +1, not a swap.
+    expect(paths).toHaveLength(58)
+    expect(new Set(paths).size).toBe(58)
   })
 
   it('adds NO route to the overlay tree either', async () => {

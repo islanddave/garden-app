@@ -49,6 +49,7 @@ import { Link } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
 import { bucketize } from '../../lib/sowEngine.js'
+import { seedsHref } from '../../lib/seedsRoutes.js'
 import Icon from '../Icon.jsx'
 
 export const CULTIVATION_LEAD_CAP = 2
@@ -108,8 +109,10 @@ export default function CultivationLead({ todayISO = null }) {
   // it is about (well, to the page listing it), which is what a line saying "Sow X by Aug 18" makes
   // you want to do. A separate link underneath would read as a second, unrelated control.
   return (
+    // V5-SEEDSTAB-001 — Seeds › Sow now, the same list /sow used to be. The band itself is left as
+    // it is until Dave's Today redesign settles (design-seedshome-V102 §13, D3).
     <Link
-      to="/sow"
+      to={seedsHref('sow')}
       data-testid="cultivation-lead"
       style={{
         display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none',

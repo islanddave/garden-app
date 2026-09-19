@@ -9,7 +9,10 @@
 //   (b) every control hit-tests to itself and sits inside the viewport;
 //   (c) no row wraps or overflows to the right at the fixture's worst-case 44-char name;
 //   (d) the document does not scroll sideways;
-//   (e) the page raised no error while mounting.
+//   (e) the page raised no error while mounting;
+//   (f) V5-SEEDSTAB-001: the fixture's seed rows are COUNTED on the Seeds pointer row (so they were
+//       fetched) and LISTED nowhere (no seeds section, and they are not in the row count), and the
+//       pointer row itself is in the tap census, so its height is measured, not assumed.
 //
 // TWO MEASUREMENT TRAPS THIS AVOIDS (both produce a confident wrong answer):
 //   1. macOS Chrome floors an OS window at ~500px wide, so `--window-size=390` lays the page out
@@ -47,7 +50,14 @@ const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).fi
 // sibling gates in this directory already measure at.
 const VIEWPORT = { w: 390, h: 844 }
 const TAP_FLOOR = 44                 // SC 2.5.8 design target, = T.tapMinHeight
-const EXPECT = { rows: 8, sections: 6, controls: 12 }   // what the harness fixture must yield
+// What the harness fixture must yield. Re-derived for V5-SEEDSTAB-001 from a measured run, not
+// edited until green: 5 rows and 5 sections (the 3 seed rows no longer list, and their section went
+// with them), 11 controls (a FLOOR, not exact: a new control gets measured, not refused) = "+ Add",
+// 3 filter selects, the Seeds pointer row, 5 section headers and the restock button. It was
+// 8 / 6 / 12, the 12 being 6 sections + 3 selects + Add seeds + "+ Add" + Sow now; the restock
+// button was never in it (see tapTargets in tests/harness/inventory.jsx).
+const EXPECT = { rows: 5, sections: 5, controls: 11, seedsCounted: 3 }
+const SEEDS_HREF = '/seeds?view=mine'   // seedsHref('mine'), where the Seeds pointer row leads
 
 // REPO-RELATIVE default, not the authoring machine's scratch dir. The old default was an absolute
 // /Users/davenichols/... path; on a Linux runner /Users does not exist and cannot be created at /,
@@ -169,7 +179,7 @@ try {
     vw: innerWidth, vh: innerHeight, scrollW: document.documentElement.scrollWidth,
     err: window.__h.error(), taps: window.__h.tapTargets(), rows: window.__h.rows(),
     sections: window.__h.sections(), sideways: window.__h.docOverflows(),
-    header: window.__h.header(),
+    header: window.__h.header(), pointer: window.__h.seedsPointer(),
   })`)
 
   // ── Instrument first: an unproven viewport voids every number below it ──
@@ -177,11 +187,30 @@ try {
   if (m.err) fail(`the page raised an error while mounting: ${m.err}`)
 
   // ── Non-vacuity: assert the fixture actually produced something to measure ──
-  if (m.rows.length !== EXPECT.rows) fail(`${m.rows.length} rows rendered, expected ${EXPECT.rows} — the fixture did not fully mount`)
+  // Too MANY rows is a failure of its own since the fixture's seed rows stopped listing: it is what a
+  // seed leak looks like, and "did not fully mount" would send the reader the wrong way.
+  if (m.rows.length !== EXPECT.rows) fail(m.rows.length > EXPECT.rows
+    ? `${m.rows.length} rows rendered, expected ${EXPECT.rows} — more than the fixture's listable items, so a row that must not list did (seed?)`
+    : `${m.rows.length} rows rendered, expected ${EXPECT.rows} — the fixture did not fully mount`)
   if (m.sections.length !== EXPECT.sections) fail(`${m.sections.length} sections rendered, expected ${EXPECT.sections}`)
   if (m.taps.length < EXPECT.controls) fail(`only ${m.taps.length} controls found, expected >=${EXPECT.controls} — "all targets pass" would be true of almost nothing`)
 
   console.log(`[inventory-list-shot] ${m.vw}x${m.vh} (page self-reports) · ${m.rows.length} rows in ${m.sections.length} sections: ${m.sections.join(' > ')}`)
+
+  // ── (f) seed left this list (V5-SEEDSTAB-001) ──
+  // Counted on the pointer proves the seed rows reached the page; the exact row/section counts above
+  // and the no-seeds-section check below prove none of them was listed. Either half alone is weaker:
+  // a fixture that simply lost its seed rows would also list none.
+  if (m.sections.includes('seeds')) fail(`a seeds section rendered — seed rows must not list on Inventory`)
+  const P = m.pointer
+  if (!P) fail(`the Seeds pointer row did not render`)
+  else {
+    if (P.href !== SEEDS_HREF) fail(`the Seeds pointer links to ${P.href}, expected ${SEEDS_HREF}`)
+    // (^|\D): the label runs straight into the number ("Seeds3 packets…"), and 13 must not pass for 3.
+    if (!new RegExp(`(^|\\D)${EXPECT.seedsCounted} packets and saved lots`).test(P.text)) fail(`the Seeds pointer reads "${P.text}" — expected the fixture's ${EXPECT.seedsCounted} seed rows counted`)
+    if (!m.taps.some(t => t.href === P.href)) fail(`the Seeds pointer row is not in the tap census — its height was never measured`)
+    console.log(`[inventory-list-shot] seeds pointer: "${P.text}" -> ${P.href}, ${P.h}px tall`)
+  }
 
   // ── (a)/(b) tap targets, AS RENDERED ──
   for (const t of m.taps) {
@@ -196,6 +225,8 @@ try {
   const minTap = Math.min(...m.taps.map(t => Math.min(t.w, t.h)))
   const probed = m.taps.filter(t => t.hitIsSelf !== null).length
   console.log(`[inventory-list-shot] ${m.taps.length} controls measured, smallest side ${minTap}px (floor ${TAP_FLOOR}px), ${probed}/${m.taps.length} hit-tested to themselves`)
+  // The census by name, so a changed count says WHICH control came or went without a re-run.
+  console.log(`[inventory-list-shot] census: ${m.taps.map(t => `${t.id} ${t.w}x${t.h}`).join(' | ')}`)
 
   // ── (c)/(d) the row holds together at 390 ──
   for (const r of m.rows) {
@@ -207,10 +238,10 @@ try {
   const badged = m.rows.filter(r => r.badge)
   console.log(`[inventory-list-shot] row heights ${m.rows.map(r => r.h).join('/')}px · coins ${m.rows[0].coin}px · low-stock badges: ${badged.map(b => b.badge).join(', ') || 'none'}`)
 
-  // Reported, NOT asserted. The header's action group wraps to 2 lines at 390px because the h1
-  // plus three actions are wider than the column; that is a pre-existing layout call, not a
-  // regression from the tap-target change, and pinning a number here would freeze a design
-  // decision this lane did not make. Printed so the next session sees it without re-measuring.
+  // Reported, NOT asserted. With three seed chips beside "+ Add" the header's action group wrapped
+  // to 2 lines at 390px; since V5-SEEDSTAB-001 took the chips away it is one line. Either way that
+  // is a layout call, and pinning a number here would freeze a design decision no gate lane made.
+  // Printed so the next session sees it without re-measuring.
   const H = m.header
   console.log(`[inventory-list-shot] header: h1 ${H.h1Width}px + actions ${H.totalActionWidth}px vs ${H.availableWidth}px available -> ${H.actionLines} action line(s), chip ${H.chipH}px, block ${H.blockH}px`)
 

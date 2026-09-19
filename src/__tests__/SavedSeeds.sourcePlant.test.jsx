@@ -22,7 +22,9 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: (...a) => fetchSpy(...a),
 }))
 vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  Link: ({ children, to, state, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  // V5-SEEDSTAB-001 — the track sheet's "Add the packet" is a SheetRowLink now, which navigates.
+  useNavigate: () => () => {},
 }))
 
 import SavedSeeds from '../pages/SavedSeeds.jsx'
@@ -86,7 +88,8 @@ describe('SavedSeeds — provenance (V4-SEEDLINK-001)', () => {
     expect(href).toContain('/inventory/add')
     expect(href).toContain('type=consumable')
     expect(href).toContain('category=seeds')
-    expect(decodeURIComponent(href)).toContain('return=/seeds/saved')
+    // V5-SEEDSTAB-001 — back to Seeds › Saved seeds, the view this page is now.
+    expect(decodeURIComponent(href)).toContain('return=/seeds?view=saved')
   })
 
   it('names the parent on a linked lot’s card', async () => {

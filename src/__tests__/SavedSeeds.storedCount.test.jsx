@@ -64,7 +64,9 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: (...a) => fetchSpy(...a),
 }))
 vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  Link: ({ children, to, state, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  // V5-SEEDSTAB-001 — the track sheet's "Add the packet" is a SheetRowLink now, which navigates.
+  useNavigate: () => () => {},
 }))
 
 import SavedSeeds, { listRowPutBody, parseCountInput } from '../pages/SavedSeeds.jsx'
@@ -446,7 +448,10 @@ describe('V5-SEEDQTY-001 — the count stays ON SCREEN once it leaves quantity_o
     // The green control on the same string: the packet count is still there, so this is a widening
     // and not a swap. "1 packet" is the post-backfill truth and it is worth saying out loud.
     expect(text).toContain('1 packet')
-    expect(text).toContain('Gardens at Mathews')
+    // V5-SEEDSTAB-001 — the free-text `source` column is an order reference on prod, not a vendor,
+    // and the facts line no longer prints it as one. The vendor comes from the registry (`source_id`),
+    // which this row does not name — so nothing is printed in that slot.
+    expect(text).not.toContain('Gardens at Mathews')
   })
 
   it('says nothing at all about seeds when nobody has counted them', async () => {

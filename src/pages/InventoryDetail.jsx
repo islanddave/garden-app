@@ -19,6 +19,10 @@ import SeedStageHistory from '../components/seed/SeedStageHistory.jsx'
 // canonical; the migration's post_vocabulary_exact gate pins the DB against it.
 import { PUTUP_SOURCE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { formatQtyExact } from '../lib/format.js'
+import { seedsHref, seedsReturnFromHistory } from '../lib/seedsRoutes.js'
+
+// V5-SEEDSTAB-001 — seed left the Inventory list, so a seed row's exits go to Seeds › My seeds.
+const SEEDS_MINE = seedsHref('mine')
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
 // the former local duplicates here were removed (Lane D dedup).
@@ -27,6 +31,9 @@ import { formatQtyExact } from '../lib/format.js'
 export default function InventoryDetail() {
   const { id }       = useParams()
   const navigate     = useNavigate()
+  // V5-SEEDSTAB-001 — set when a Seeds view pushed this page; Cancel then goes BACK to that view
+  // (same filters, same scroll) instead of pushing a fresh copy of it.
+  const [pushedFromSeeds] = useState(seedsReturnFromHistory)
   const { updateItem, deleteItem } = useInventory()
   const { fetch } = useApiFetch()
   const { show } = useToast()
@@ -332,6 +339,13 @@ export default function InventoryDetail() {
     if (error) {
       setErrors({ _form: error })
       setConfirmDelete(false)
+    } else if (item?.category === 'seeds') {
+      // V5-SEEDSTAB-001 — Back never reopens the lot just removed. Pushed by a Seeds view: go BACK to
+      // it (Seeds remounts and refetches, so the row is gone). A replace there left two identical
+      // Seeds entries in a row, and the next Back was a press that did nothing (pre-promote review).
+      // Any other arrival has nothing under it to go back to: REPLACE onto My seeds.
+      if (pushedFromSeeds) navigate(-1)
+      else navigate(SEEDS_MINE, { replace: true })
     } else {
       navigate('/inventory')
     }
@@ -387,9 +401,12 @@ export default function InventoryDetail() {
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 600, margin: '0 auto', padding: '28px 16px 80px' }}>
 
-        {/* Breadcrumb */}
+        {/* Breadcrumb — V5-SEEDSTAB-001: a seed row belongs to Seeds, which the Inventory list no
+            longer shows. */}
         <div style={{ fontSize: '0.82rem', color: P.light, marginBottom: 8 }}>
-          <Link to="/inventory" style={{ color: P.green, textDecoration: 'none' }}>Inventory</Link>
+          {item.category === 'seeds'
+            ? <Link to={SEEDS_MINE} style={{ color: P.green, textDecoration: 'none' }}>Seeds</Link>
+            : <Link to="/inventory" style={{ color: P.green, textDecoration: 'none' }}>Inventory</Link>}
           {' › '}{item.name}
         </div>
 
@@ -602,14 +619,14 @@ export default function InventoryDetail() {
                 44px box for the reason SavedSeeds.jsx gives about `set-source-plant`: this is a
                 card action, not a link inside a sentence. */}
             <Link
-              to="/seeds/saved"
+              to={seedsHref('saved', { lot: item.id })}
               data-testid="seed-stage-change-link"
               style={{
                 display: 'inline-flex', alignItems: 'center', alignSelf: 'flex-start',
                 minHeight: 44, paddingRight: 8, color: P.green, fontSize: '0.82rem',
               }}
             >
-              Change this lot&apos;s stage on Saved seeds →
+              Change stage in Saved seeds →
             </Link>
             <SeedStageHistory
               itemId={item.id}
@@ -906,9 +923,21 @@ export default function InventoryDetail() {
               <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…">
                 Save changes
               </Button>
-              <Link to="/inventory" style={{ color: P.mid, textDecoration: 'none', fontSize: '0.88rem' }}>
-                Cancel
-              </Link>
+              {item.category === 'seeds' ? (
+                // V5-SEEDSTAB-001 — Back to the Seeds view that opened this page, else to My seeds.
+                <button
+                  type="button"
+                  data-testid="inventory-detail-cancel"
+                  onClick={() => (pushedFromSeeds ? navigate(-1) : navigate(SEEDS_MINE))}
+                  style={{ color: P.mid, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '0.88rem', fontFamily: 'inherit', minHeight: 44 }}
+                >
+                  Cancel
+                </button>
+              ) : (
+                <Link to="/inventory" style={{ color: P.mid, textDecoration: 'none', fontSize: '0.88rem' }}>
+                  Cancel
+                </Link>
+              )}
             </div>
             <button
               type="button"

@@ -33,12 +33,26 @@ vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
 }))
 
 import { renderRoutes } from '../App.jsx'
+import Seeds from '../pages/Seeds.jsx'
+import SavedSeeds from '../pages/SavedSeeds.jsx'
+import SowNow from '../pages/SowNow.jsx'
+import LegacySeedsRedirect from '../components/LegacySeedsRedirect.jsx'
 
 const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => r.props.path)
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
 
+// Every React element in a route's element tree — the element, its children, and any element-valued
+// prop (an ErrorBoundary `fallback`, say). A static walk of the JSX the table returns; nothing renders.
+function elementsIn(node, out = []) {
+  if (Array.isArray(node)) { for (const n of node) elementsIn(n, out); return out }
+  if (!node || typeof node !== 'object' || !('type' in node) || !('props' in node)) return out
+  out.push(node)
+  for (const v of Object.values(node.props ?? {})) elementsIn(v, out)
+  return out
+}
+
 describe('App route table (single source of truth)', () => {
-  it('the page tree has the full 55-route set with no duplicates', () => {
+  it('the page tree has the full 60-route set with no duplicates', () => {
     // 46 → 48: V4-UNSCOPEDROUTES-001 added the canonical un-scoped /plantings/:plantingId and
     // /events/:eventId (the /projects/:id/* forms remain as redirects, still counted).
     // 48 → 50: V4-SPACEPHOTO-001 Lane C adds /space and /space/:spaceId. Counted here because the
@@ -88,8 +102,12 @@ describe('App route table (single source of truth)', () => {
     // /settings/admin would have escaped it and could have shipped with no door in an installed PWA.
     // Registered exactly once; the uniqueness assert below is what proves this bump is a new route
     // rather than a duplicate registration.
-    expect(paths).toHaveLength(59)
-    expect(new Set(paths).size).toBe(59)
+    // 59 -> 60: V5-SEEDSTAB-001 adds /seeds, the ONE Seeds page (My seeds · Saved seeds · Sow now).
+    // +1, not a swap: /sow and /seeds/saved STAY in the table as REPLACE redirects into it
+    // (LegacySeedsRedirect), for the same launcher-cache/bookmark reason /log/voice stayed. Their
+    // redirect behaviour is pinned in LegacySeedsRedirect.test.jsx.
+    expect(paths).toHaveLength(60)
+    expect(new Set(paths).size).toBe(60)
   })
 
   it('/log/voice is a PAGE, never an overlay — a live mic must not mount over another surface', () => {
@@ -213,5 +231,25 @@ describe('App route table (single source of truth)', () => {
     const page = renderRoutes({ overlay: false, user: true }).find((r) => r.props.path === '/today')
     expect(page).toBeTruthy()
     expect(overlayPaths()).not.toContain('/today') // never appears in the overlay tree
+  })
+
+  // V5-SEEDSTAB-001 — Saved seeds and Sow now exist ONLY as views inside the Seeds page. /sow and
+  // /seeds/saved stay in the table (see the 59 -> 60 note above) but as REPLACE redirects into it. A
+  // route that rendered either page standalone again would bring back a render the shell no longer
+  // draws around it — and the 200-odd suites that mount the standalone page could not tell.
+  it('no route renders SavedSeeds or SowNow directly — /seeds renders the shell, the old paths redirect into it', () => {
+    const routes = [...renderRoutes({ overlay: false, user: true }), ...renderRoutes({ overlay: true, user: true })]
+    const offenders = routes
+      .filter((r) => elementsIn(r.props.element).some((el) => el.type === SavedSeeds || el.type === SowNow))
+      .map((r) => r.props.path)
+    expect(offenders).toEqual([])
+    // Non-vacuity: the same walk DOES find what is there, one level under Protected and ErrorBoundary.
+    const at = (p) => elementsIn(routes.find((r) => r.props.path === p).props.element)
+    expect(at('/seeds').some((el) => el.type === Seeds)).toBe(true)
+    for (const [p, view] of [['/sow', 'sow'], ['/seeds/saved', 'saved']]) {
+      const redirect = at(p).find((el) => el.type === LegacySeedsRedirect)
+      expect(redirect, `${p} is not a LegacySeedsRedirect any more`).toBeTruthy()
+      expect(redirect.props.view).toBe(view)
+    }
   })
 })
