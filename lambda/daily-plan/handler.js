@@ -934,11 +934,13 @@ function frostSubject(d) {
   // V5-RADIATIVEFROST-001: a radiative-only trip fires ABOVE the trip point, so "Frost protect tonight
   // (low 39F)" would assert a threshold crossing at a number that did not cross it — the same
   // copy-that-lies failure imminentMessage guards against, in the one place that does not read from it.
+  // V5-RADIATIVESUBJECTCOPY-001: the advisory tier's radiative-only case is a watch too ("Frost advisory tonight
+  // (low 42F)" read as a 42F frost forecast); frostEval marks it on the record, from the predicate its body used.
   const radiativeOnly = !!(d.imminent && d.imminent.radiativeOnly);
   const label = d.tier === 'imminent'
     ? (d.level === 'hard_freeze' ? 'HARD FREEZE tonight'
       : (radiativeOnly ? 'Frost watch tonight' : 'Frost protect tonight'))
-    : (d.tier === 'advisory' ? 'Frost advisory' : 'Heat advisory');
+    : (d.tier === 'advisory' ? (d.advisory && d.advisory.radiativeOnly ? 'Frost watch' : 'Frost advisory') : 'Heat advisory');
   const low = d.tier === 'advisory' ? advisorySubjectTail(d.advisory)
     : (d.observability && d.observability.tonightLowF != null ? ` (low ${d.observability.tonightLowF}F)` : '');
   return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);
@@ -978,7 +980,8 @@ function frostForSpace({ rows, weather, hydrology, lowSource, spaceId, today, fr
     forecastLows: hy ? hy.forecast_lows : null,          // G5 — index.js:fetchPrecip temperature_2m_min
     forecastDates: hy ? hy.forecast_dates : null,
     // BUG-FROSTADVISORYNIGHTWORDING-001 — which night the advisory's civil-day minimum belongs to. null (no
-    // block) names the base-rate night; nothing in the trigger reads it.
+    // block) names the base-rate night. The threshold trigger never reads it; the radiative one judges that
+    // night's sky, or both candidates' when it is null (BUG-RADIATIVEPAIRINGNIGHT-001).
     forecastHourly: hy ? hy.hourly_temp : null,
     lowSource: lowSource || (wx ? 'forecast' : 'forecast_absent'),
     // V5-RADIATIVEFROST-001 — per-night dewpoint/cloud/wind derived from the hourly block

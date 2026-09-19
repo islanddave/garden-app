@@ -17,7 +17,7 @@
 // Env override lets F5's forced-trigger rehearsal raise/lower a trip point on a deployed Lambda without a
 // code change (design §5 F5: "a prod dry-run with the threshold temporarily raised to a value today's
 // forecast exceeds"). For the per-crop bands the equivalent lever is FROST_THRESHOLD_OFFSET_F (frostClass).
-const { radiativeTrips, nightFor, prevDate, RADIATIVE_ENABLED } = require('./radiativeFrost');
+const { radiativeTrips, nightFor, mostPermissiveNight, prevDate, RADIATIVE_ENABLED } = require('./radiativeFrost');
 
 const numEnv = (name, fallback) => {
   const v = Number(process.env[name]);
@@ -107,8 +107,8 @@ function evalAdvisory(forecastLows, forecastDates, T) {
 // 380 autumn days (77.6%) bottom out before noon, and 79 of the 101 days whose minimum was <= 40F (78.2%)
 // (ERA5 at this Space's coordinates, Sep 1 - Nov 15 2021-2025, re-measured 2026-09-18). So D1's minimum is
 // usually TONIGHT's, and wording the night from dayOffset ("tomorrow night" for D1) put most advisories one
-// night late: the reader was told he had a day he did not have. The radiative pairing below
-// (`prevDate(advisory.date)`) is the same fact, found first.
+// night late: the reader was told he had a day he did not have. The radiative trigger has to know the same
+// fact: whose SKY to judge (radiativeAdvisoryPairing, BUG-RADIATIVEPAIRINGNIGHT-001).
 //
 // The hourly series locates it: the hour of that day's minimum before noon -> the night that ENDED that
 // morning (it started the evening before); noon or later -> the night that STARTS that evening. The earliest
@@ -188,6 +188,38 @@ function nightPhrase(night) {
 }
 
 const advisoryWhen = (a) => nightPhrase(advisoryNight(a)) || `in ${a && a.dayOffset} days`;
+
+// ── BUG-RADIATIVEPAIRINGNIGHT-001 — WHOSE SKY the radiative advisory trigger judges ──────────────────────────
+// The radiative test asks whether the night that makes the pick's minimum is clear and calm enough to fall below
+// its forecast. It used to judge the night keyed D-1 (the one that ENDED on D's morning) whatever hour the
+// minimum fell: right for a morning minimum, the wrong night's sky for an evening one (~22% of days here), where
+// it could miss the minimum's own clear night or fire on the previous night's. Now:
+//   'hourly'    the series located the minimum (locateNight): judge THAT night, and only that night. When the
+//               forecast window holds too few of its hours (a D3 evening minimum needs night D3, which runs
+//               past the last forecast day), there is no sky to judge and, as everywhere in radiativeFrost.js,
+//               absence is no signal — never another night's. The next day's run sees it as night D2.
+//   'base_rate' the series could not vouch (no block, misaligned, no hours for the date): the night is one of
+//               two, the one keyed D-1 or the one keyed D. Judge BOTH and trip if either would
+//               (mostPermissiveNight). Either single guess can miss when the minimum belongs to the other
+//               night; the union can only add a false alarm, and it is a superset of the old D-1 pairing, so a
+//               missing hourly block can never cost an alert this trigger used to send.
+// `nightOffset` is the judged night counted from the plan date (as advisoryNight counts), so the radiative-only
+// copy can name the night whose sky it quotes. No valid pick date -> nothing to pair (and nothing to throw on:
+// the old `prevDate(advisory.date)` threw on the no-lows record whenever radiative was on).
+function radiativeAdvisoryPairing(nights, a) {
+  const date = a && typeof a.date === 'string' && YMD_RE.test(a.date) ? a.date : null;
+  const day = a && Number.isInteger(a.dayOffset) && a.dayOffset >= 1 ? a.dayOffset : null;
+  if (!date || day == null) return { night: null, nightDate: null, nightOffset: null, basis: null };
+  const located = a.nightBasis === 'hourly' && typeof a.nightDate === 'string' && YMD_RE.test(a.nightDate);
+  const night = located ? nightFor(nights, a.nightDate)
+    : mostPermissiveNight([nightFor(nights, prevDate(date)), nightFor(nights, date)]);
+  return {
+    night,
+    nightDate: night ? night.date : null,
+    nightOffset: night ? (night.date === date ? day : day - 1) : null,
+    basis: located ? 'hourly' : 'base_rate',
+  };
+}
 
 // ── Tier 2 — IMMINENT (tonight, actionable, §3-3) ─────────────────────────────────────────────────
 // `tonightLow` MUST be the station-adjusted low from station.js:mergeStationWeather, and this MUST be
@@ -354,9 +386,12 @@ function advisoryMessage(a, exposure, cropResult, radiativeNight) {
   // V5-RADIATIVEFROST-001 — same rule as imminentMessage: when the ONLY reason this fired is the
   // radiative signal, the forecast low printed here sits ABOVE the trip point and needs its reason
   // stated, or the reader is left to wonder why 42°F produced an advisory.
+  // V5-RADIATIVESUBJECTCOPY-001 — and it is a WATCH, the name the imminent tier already gives the same case: a
+  // low above the trip point under "FROST ADVISORY" reads as a forecast crossing that did not happen. Copy only:
+  // tier, level and dedup key stay 'advisory'. The email subject says the same (handler.frostSubject).
   const radOnly = radiativeOnlyNamed(cropResult);
   const head = radOnly
-    ? `FROST ADVISORY — ${when} looks clear and calm (low ${a.lowF ?? a.minLowF}°F${on}` +
+    ? `FROST WATCH — ${when} looks clear and calm (low ${a.lowF ?? a.minLowF}°F${on}` +
       `${radiativeNight && radiativeNight.minDewpointF != null ? `, dewpoint ${radiativeNight.minDewpointF}°F` : ''}), ` +
       'so it can fall further than the forecast.'
     : `FROST ADVISORY — frost possible ${when} (low ${a.lowF ?? a.minLowF}°F${on}).`;
@@ -629,21 +664,24 @@ function frostEval(input = {}, opts = {}) {
   const radTonight = radNights ? nightFor(radNights, input.eventDate) : null;
 
   // BUG-FROSTADVISORYNIGHTWORDING-001 — the pick plus the night it belongs to, located from the hourly
-  // series (input.forecastHourly = index.js hourly_temp). WORDING AND PERSISTENCE ONLY: nothing below reads
-  // nightOffset to decide whether, or at what level, anything fires.
+  // series (input.forecastHourly = index.js hourly_temp). The threshold trigger never reads it: whether, and at
+  // what level, the advisory fires on its trip point is the same located or not. The RADIATIVE trigger does
+  // (BUG-RADIATIVEPAIRINGNIGHT-001, below): the night is whose sky it judges.
   const picked = evalAdvisory(input.forecastLows, input.forecastDates, T);
   const advisory = { ...picked, ...locateNight(picked, input.forecastHourly) };
   // OFF-BY-ONE-NIGHT, and it is not obvious: `advisory.date` is a CIVIL DAY label and
-  // `temperature_2m_min[D]` is that day's minimum — which on a radiative night is set shortly after
-  // SUNRISE, i.e. by the night that STARTED on D-1. nightsFrom keys a night by the date it starts on.
-  // So the night that produces the D minimum is keyed D-1, not D.
+  // `temperature_2m_min[D]` is that day's minimum — usually set shortly after SUNRISE, i.e. by the night
+  // that STARTED on D-1 (nightsFrom keys a night by the date it starts on), but on an evening-minimum day
+  // by the night that starts on D.
   //
   // Measured at this Space's coordinates over 5 autumns (380 nights): the daily minimum falls at hour
   // <=08:00 on 295/380 = 77.6% of days, and the `radiative` verdict of night(D) vs night(D-1)
-  // DISAGREES on 137/380 = 36.1% of pairs — 68 false alarms and 69 misses. The wrong pairing also made
-  // D3 unresolvable (nightsFrom can only key D-2..D2 from this URL), which looked like a coverage gap
-  // and was really this bug wearing a disguise: D3's advisory needs night D2, which exists.
-  const radAdvisory = radNights ? nightFor(radNights, prevDate(advisory.date)) : null;
+  // DISAGREES on 137/380 = 36.1% of pairs — 68 false alarms and 69 misses. So the pairing is not a
+  // constant: radiativeAdvisoryPairing judges the night the hours put the minimum in, and judges both
+  // candidates when they cannot say. `pairing` is resolved from `allNights` so the frost-eval line records
+  // it flag-off too (the corpus rule above); only the flag-gated view can trip.
+  const pairing = radiativeAdvisoryPairing(allNights, advisory);
+  const radAdvisory = radNights ? pairing.night : null;
   const advisoryCrops = crops ? evalAdvisoryCrops(advisory.minLowF, crops, T, radAdvisory) : null;
   const imminentGlobal = evalImminent(input.tonightLow, T);
   const imminent = crops ? evalImminentCrops(input.tonightLow, crops, T, radTonight) : imminentGlobal;
@@ -694,7 +732,11 @@ function frostEval(input = {}, opts = {}) {
     if (imminent.radiativeOnly && advisory.fires && finite(advisory.minLowF) != null
         && finite(imminent.lowF) != null && Number(advisory.minLowF) < Number(imminent.lowF)) {
       const when = advisoryWhen(advisory);
-      message = truncate(`${message} Colder ahead: ${advisory.minLowF}°F ${when}` +
+      // V5-RADIATIVESUBJECTCOPY-001 — this message is about TONIGHT. An advisory whose night is tonight too is
+      // not "ahead": it is the second forecast's lower low for the same night (Open-Meteo vs the NWS low above).
+      const night = advisoryNight(advisory);
+      const lead = night && night.nightOffset === 0 ? 'Colder on a second forecast:' : 'Colder ahead:';
+      message = truncate(`${message} ${lead} ${advisory.minLowF}°F ${when}` +
         `${advisory.date ? `, ${advisory.date}` : ''} — harvest ahead and stage row cover.`);
     }
   } else if ((advisory.fires || advisoryRadiative) && (!crops || (advisoryCrops && advisoryCrops.fires))) {
@@ -708,10 +750,18 @@ function frostEval(input = {}, opts = {}) {
     // test, not by reading. The second clause is UNCHANGED, so crop-level agreement is still required
     // and the kale case stays closed.
     //
-    // BUG-FROSTADVISORYNIGHTWORDING-001 — the radiative-only copy says "<night> looks clear and calm", and
-    // the night whose sky it quotes is radAdvisory, keyed prevDate(advisory.date): the base-rate night. Name
-    // THAT night, so the sentence describes the night it measured, whatever hour the civil-day minimum fell.
-    if (radiativeOnlyNamed(advisoryNamed)) Object.assign(advisory, baseNight(advisory), { nightBasis: 'radiative' });
+    // BUG-FROSTADVISORYNIGHTWORDING-001 — the radiative-only copy says "<night> looks clear and calm", and it
+    // must name the night whose sky it quotes, radAdvisory. BUG-RADIATIVEPAIRINGNIGHT-001: when the hours
+    // located the minimum that IS the located night, already named ('hourly' stays). Otherwise it is whichever
+    // candidate night tripped, which can be the later one: name that, basis 'radiative'.
+    // V5-RADIATIVESUBJECTCOPY-001 — `radiativeOnly` marks the record the way imminent.radiativeOnly marks that tier,
+    // so the email subject labels it a watch from the same predicate the body used. Absent otherwise.
+    if (radiativeOnlyNamed(advisoryNamed)) {
+      if (pairing.basis !== 'hourly') {
+        Object.assign(advisory, { nightOffset: pairing.nightOffset, nightDate: pairing.nightDate, nightBasis: 'radiative' });
+      }
+      advisory.radiativeOnly = true;
+    }
     tier = 'advisory'; level = 'advisory'; message = advisoryMessage(advisory, exposure, advisoryNamed, radAdvisory);
     trippedCrops = (advisoryNamed && advisoryNamed.tripped) || null;
   } else if (heat.fires) {
@@ -741,6 +791,12 @@ function frostEval(input = {}, opts = {}) {
       forecastMinHour: advisory.minHour ?? null,
       advisoryNightOffset: advisory.nightOffset,
       advisoryNightBasis: advisory.nightBasis,
+      // BUG-RADIATIVEPAIRINGNIGHT-001 — whose sky the radiative advisory trigger judged, in the same vocabulary:
+      // 'hourly' = the night the hours located (null date: that night has no sky in the window, so no radiative
+      // verdict), 'base_rate' = the hours could not say, so both candidate nights were judged and this is the one
+      // that counted. Resolved flag-off too; null basis = no pick to pair.
+      radiativeAdvisoryNight: pairing.nightDate,
+      radiativeAdvisoryNightBasis: pairing.basis,
       tier, level,
       tenderCount: exposure ? Number(exposure.tender || 0) : null,
       unknownCount: exposure ? Number(exposure.unknown || 0) : null,
@@ -848,7 +904,7 @@ module.exports = {
   frostEval, frostCoverage, sentCoverage, resolveThresholds, dedupKey, cropDigest,
   escalatesBeyond, sentNight, cropLevels, severityRank, FROST_SEVERITY_RANK,
   evalAdvisory, evalImminent, evalHeat, evalImminentCrops, evalAdvisoryCrops,
-  locateNight, advisoryNight, nightPhrase, weekdayOf, NIGHT_SPLIT_HOUR,
+  locateNight, advisoryNight, nightPhrase, weekdayOf, NIGHT_SPLIT_HOUR, radiativeAdvisoryPairing,
   advisoryMessage, imminentMessage, heatMessage, exposurePhrase, cropListPhrase, totalsPhrase, truncate,
   isFrostSeason, resolveFrostRun, FROST_RUN_START_HOUR, FROST_RUN_END_HOUR,
   DEFAULT_THRESHOLDS, HEAT_ENABLED, MAX_NAMED_CROPS, MAX_MESSAGE_CHARS,
