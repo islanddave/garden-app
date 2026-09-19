@@ -11,6 +11,7 @@
 // across the two surfaces that answer it from two different inputs — this file reads the daily
 // plan's `interval`, CareStatus reads entity_memory's `watering_interval_days` — and cannot drift.
 import { isDailyCadence } from './waterDue.js'
+import { agreedTonightLow, withoutLowClause } from './tonightLow.js'
 
 // Bucket -> the event_type a one-tap log writes (identical to the Log form's write path so the
 // events Lambda side effects — critter award + entity_memory.next_water_at — fire). dormant: none.
@@ -138,6 +139,13 @@ export function bedWaitActive(plan) {
 // (water is pre-sorted most-overdue-first by the engine). This is the regression-locked output.
 export function buildCareNeeded(plan) {
   if (!plan) return []
+  // V5-FROSTTWOMODELS-001 — on a night the frost line names as tonight, Today prints ONE low for the
+  // night (src/lib/tonightLow.js). A Protect card's reason ends in the ENGINE's plan low ("bring
+  // inside tonight (low 43°F)"), which on those nights can be a second number for the same night, so
+  // it drops that trailing clause and keeps the instruction. WHICH cards appear, and their words, are
+  // untouched: that is the engine's care decision (coldFor), and a display rule must not move it.
+  // Keyed on this plan's own alerts_sent, so a household plan follows its own night.
+  const dropColdLow = agreedTonightLow(plan) != null
   const rows = []
   for (const need of NEED_ORDER) {
     const items = Array.isArray(plan[need]) ? plan[need] : []
@@ -158,7 +166,7 @@ export function buildCareNeeded(plan) {
         projectId: it.project_id || null,
         need,
         eventType: NEED_EVENT_TYPE[need],
-        reason: needReason(need, it),
+        reason: (need === 'cold' && dropColdLow) ? withoutLowClause(needReason(need, it)) : needReason(need, it),
         tier: needTier(need, it),
         interval: typeof it.interval === 'number' ? it.interval : null,
         overdueBy: (!daily && typeof it.overdue_by === 'number') ? it.overdue_by : null,

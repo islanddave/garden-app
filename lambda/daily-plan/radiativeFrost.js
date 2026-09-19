@@ -162,7 +162,28 @@ function radiativeTrips(night, lowF, tripF, opts) {
   return dew <= trip && low <= trip + prox;
 }
 
+// BUG-RADIATIVEPAIRINGNIGHT-001 — the one night that trips whenever ANY of `candidates` would, for every trip
+// point at once. For a caller that cannot tell which of several nights a minimum belongs to, "trip if any
+// candidate trips" is the only answer that can add a false alarm but never lose a trip, whichever night is real.
+// radiativeTrips reads the NIGHT only through `radiative` and `minDewpointF` (the proximity term reads the low
+// and the trip point), so that union is exactly "the radiative candidate with the LOWEST dewpoint trips": one
+// night, so every caller keeps its single-night signature, and the dewpoint the copy quotes is the one that
+// justified every trip. If radiativeTrips ever reads another night field, this equivalence breaks — the union
+// grid in radiativepairing.test.js checks it against radiativeTrips itself. A tie keeps the EARLIER candidate
+// (callers pass them in date order). No candidate that can trip -> the first one present; its verdict is false
+// for every trip point, like the rest.
+function mostPermissiveNight(candidates) {
+  const rows = (Array.isArray(candidates) ? candidates : []).filter(Boolean);
+  let best = null;
+  for (const n of rows) {
+    const dew = finite(n.minDewpointF);
+    if (!n.radiative || dew == null) continue;
+    if (best == null || dew < finite(best.minDewpointF)) best = n;
+  }
+  return best || rows[0] || null;
+}
+
 module.exports = {
-  nightsFrom, nightFor, radiativeTrips, nightKeyFor, prevDate,
+  nightsFrom, nightFor, radiativeTrips, mostPermissiveNight, nightKeyFor, prevDate,
   DEFAULTS, RADIATIVE_ENABLED, NIGHT_START_HOUR, NIGHT_END_HOUR, MIN_HOURS,
 };

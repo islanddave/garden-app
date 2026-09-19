@@ -97,9 +97,10 @@ const decide = (days, { tonightLow = 55, withTemp = true } = {}) => {
   });
 };
 
-// What the BODY says, in either advisory shape: the night phrase and the printed low.
+// What the BODY says, in either advisory shape: the night phrase and the printed low. Each shape under its own
+// label (V5-RADIATIVESUBJECTCOPY-001: the radiative-only shape is a FROST WATCH).
 const bodyNightLow = (msg) => {
-  const m = /^FROST ADVISORY — (?:frost possible (.+?)|(.+?) looks clear and calm) \(low (-?\d+(?:\.\d+)?)°F/.exec(msg);
+  const m = /^FROST (?:ADVISORY — frost possible (.+?)|WATCH — (.+?) looks clear and calm) \(low (-?\d+(?:\.\d+)?)°F/.exec(msg);
   return m ? { night: m[1] || m[2], low: Number(m[3]) } : null;
 };
 // What the SUBJECT says for an advisory.
@@ -157,20 +158,22 @@ describe('frostSubject — an ADVISORY names its own night and low, the ones its
     expect(frostSubject(d)).toBe('Garden alert - Frost advisory in 2 days (low 35F)');
   });
 
-  it('the radiative-only advisory names the night whose SKY the body quotes, not the one the hours alone would pick', () => {
-    // advisorynight.test.js case: the D1 minimum (42F) falls at 23:00, which alone says "tomorrow night"; the body
-    // is about the clear, calm night radAdvisory measured (keyed prevDate(date) = tonight) and says so.
+  it('the radiative-only advisory names the night whose SKY the body quotes — the night the hours put the minimum in', () => {
+    // CHANGED by BUG-RADIATIVEPAIRINGNIGHT-001 (lane radiativefix, 2026-09-19): the D1 minimum (42F) falls at 23:00,
+    // in the night that STARTS 10-10 ("tomorrow night"). This case used to pin the old pairing, which judged night
+    // 10-09's sky and called it "tonight"; the judged night is now the minimum's own, and subject and body name it.
     const T = { ADVISORY_LOW_F: 40, IMMINENT_LOW_F: 38, HARD_FREEZE_LOW_F: 33 };
     const tender = { slug: 'pepper', label: 'peppers', band: 'tender', count: 5, containers: 1, thresholds: T };
     const d = frostEval({
       tonightLow: 55, highToday: 60, forecastLows: [42, 50, 51], forecastDates: ['2026-10-10', '2026-10-11', '2026-10-12'],
       forecastHourly: { time: stamps('2026-10-10'), temperature_2m: dayCurve(42, 23) }, lowSource: 'forecast',
-      radiativeNights: [{ date: '2026-10-09', minDewpointF: 34, meanCloudPct: 5, meanWindMph: 2, radiative: true }],
+      radiativeNights: [{ date: '2026-10-10', minDewpointF: 34, meanCloudPct: 5, meanWindMph: 2, radiative: true }],
       exposure: { tender: 5, unknown: 0, tenderContainers: 1, atRisk: 5, byCropType: [tender] }, spaceId: 'S1', eventDate: '2026-10-09',
     }, { frostSeason: true, radiativeEnabled: true });
     expect(d.tier).toBe('advisory');
-    expect(bodyNightLow(d.message)).toEqual({ night: 'tonight', low: 42 });
-    expect(frostSubject(d)).toBe('Garden alert - Frost advisory tonight (low 42F)');
+    expect(bodyNightLow(d.message)).toEqual({ night: 'tomorrow night', low: 42 });
+    // V5-RADIATIVESUBJECTCOPY-001: a watch, as the body says — 42F is above the 40F trip point.
+    expect(frostSubject(d)).toBe('Garden alert - Frost watch tomorrow night (low 42F)');
   });
 
   it('a record carrying its own lowF is quoted the way the body quotes it: lowF first, minLowF only when lowF is absent', () => {
@@ -261,7 +264,9 @@ describe('frostSubject — IMMINENT and HEAT subjects are byte-identical to befo
       exposure: { tender: 5, unknown: 0, tenderContainers: 1, atRisk: 5, byCropType: [tender] }, spaceId: 'S1', eventDate: '2026-10-09',
     }, { frostSeason: true, radiativeEnabled: true });
     expect(d.tier).toBe('imminent');
-    expect(d.message).toMatch(/Colder ahead: 35°F tonight/);           // the advisory is in the body...
+    // CHANGED by V5-RADIATIVESUBJECTCOPY-001 (lane radiativefix, 2026-09-19): was /Colder ahead: 35°F tonight/ —
+    // the same night is not "ahead"; the clause now names the second forecast's lower low for tonight.
+    expect(d.message).toMatch(/Colder on a second forecast: 35°F tonight/);   // the advisory is in the body...
     expect(frostSubject(d)).toBe('Garden alert - Frost watch tonight (low 39F)');   // ...and not in the subject
     expect(frostSubject(d)).toBe(legacySubject(d));
   });

@@ -44,6 +44,14 @@
 # and the remaining weather warn-paths (fetchNWS / fetchPrecip / fetchStation / AWN-secret /
 # weather_daily read) are transient degradation that is expected to blip on a provider hiccup.
 # Metering them would add spend and train dismissal without adding a signal anyone would act on.
+#
+# OPS-SPACEALERTSREADLOG-001 — ONE metric on the FROST path rides this script as the exception, because it is
+# the same log group and the same provisioning discipline, and because nothing else would ever see it.
+# handler.js readAlertsSent and readSpaceAlertsSent fail OPEN: a failed read returns [] and the run carries
+# on, so a broken frost dedup read is invisible to the Errors metric as well, and its only symptom is a
+# duplicate frost email to Dave and Jen. Both reads WARN with the phrase "alerts_sent read failed" (the
+# per-Space read prefixes "space "), so one filter counts both. Liveness is not metered: every frost-eval
+# line carries `space_sent`, which proves the per-Space read ran on that evaluation.
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
@@ -77,6 +85,10 @@ provision() {
   # continues "— plan unaffected" with an em dash, and there is no reason to put a non-ASCII
   # character inside a filter pattern.
   emit_filter weather-daily-write-failed  '"weather_daily write failed"' WeatherDailyWriteFailed
+  # FAILURE (frost path, OPS-SPACEALERTSREADLOG-001). handler.js readAlertsSent and readSpaceAlertsSent catches:
+  # the frost dedup store could not be read, so the next frost email may go out twice. ASCII phrase only, for
+  # the same em-dash reason as above.
+  emit_filter frost-dedup-read-failed     '"alerts_sent read failed"'    FrostDedupReadFailed
   echo "filters provisioned. Run '$0 test-patterns' next (needs no traffic), then '$0 alarm'."
 }
 
@@ -109,12 +121,20 @@ test_patterns() {
   local L_WDOK="${PFX}INFO${T}{\"msg\":\"weather-daily-write\",\"space\":\"x\",\"rows\":3,\"null_et0\":0,\"null_precip\":0,\"gauge_yesterday\":true}"
   local L_WDREAD="${PFX}WARN${T}{\"msg\":\"weather_daily read failed — ledger degrades to demand 1.0\",\"space\":\"x\",\"error\":\"boom\"}"
   local L_FROST="${PFX}ERROR${T}{\"msg\":\"frost alert publish FAILED\",\"space\":\"x\",\"user\":\"u\",\"dedup_key\":\"k\",\"error\":\"boom\"}"
+  # OPS-SPACEALERTSREADLOG-001 — the two fail-open frost dedup reads, and the healthy frost lines around them.
+  local L_SPACEFAIL="${PFX}WARN${T}{\"msg\":\"space alerts_sent read failed — continuing (may re-send)\",\"space\":\"00000000-0000-0000-0000-000000000001\",\"error\":\"boom\"}"
+  local L_USERFAIL="${PFX}WARN${T}{\"msg\":\"alerts_sent read failed — continuing (may re-send)\",\"error\":\"boom\"}"
+  local L_FROSTEVAL="${PFX}INFO${T}{\"msg\":\"frost-eval\",\"space\":\"x\",\"plan_date\":\"2026-10-05\",\"run\":\"intraday-pm\",\"enabled\":true,\"dry_run\":false,\"season\":true,\"alert\":true,\"degraded\":false,\"dedup_key\":\"k\",\"space_sent\":1}"
+  local L_HELD="${PFX}INFO${T}{\"msg\":\"frost alert HELD — not an escalation\",\"space\":\"x\",\"user\":\"u\",\"dedup_key\":\"k\",\"tier\":\"advisory\",\"level\":\"advisory\",\"crops\":null,\"night\":1,\"already_sent\":[{\"level\":\"advisory\",\"crops\":null,\"night\":0}]}"
+  local L_PRIORFAIL="${PFX}WARN${T}{\"msg\":\"prior-runs read failed — continuing without history\",\"error\":\"boom\"}"
 
   echo "positive: each pattern matches the string handler.js emits"
   check "runs ~ healthy rain-log"      '"rain-log"'                   "$L_OK"      1
   check "runs ~ failed rain-log"       '"rain-log"'                   "$L_ERR"     1
   check "failures ~ rain-log ERROR"    '"rain-log ERROR"'             "$L_ERR"     1
   check "wd-write ~ write failed"      '"weather_daily write failed"' "$L_WDFAIL"  1
+  check "frost-dedup ~ space read"     '"alerts_sent read failed"'    "$L_SPACEFAIL" 1
+  check "frost-dedup ~ per-user read"  '"alerts_sent read failed"'    "$L_USERFAIL"  1
 
   # NEGATIVE CONTROLS. A pattern that matches everything is worse than no pattern: every metric
   # moves together and none of them means anything.
@@ -125,6 +145,14 @@ test_patterns() {
   check "wd-write !~ read failed"      '"weather_daily write failed"' "$L_WDREAD"  0
   check "runs !~ weather-daily-write"  '"rain-log"'                   "$L_WDOK"    0
   check "runs !~ frost failure"        '"rain-log"'                   "$L_FROST"   0
+  check "frost-dedup !~ frost-eval"    '"alerts_sent read failed"'    "$L_FROSTEVAL" 0
+  check "frost-dedup !~ frost HELD"    '"alerts_sent read failed"'    "$L_HELD"      0
+  check "frost-dedup !~ frost failure" '"alerts_sent read failed"'    "$L_FROST"     0
+  check "frost-dedup !~ wd read failed" '"alerts_sent read failed"'   "$L_WDREAD"    0
+  check "frost-dedup !~ prior-runs"    '"alerts_sent read failed"'    "$L_PRIORFAIL" 0
+  check "failures !~ frost-dedup"      '"rain-log ERROR"'             "$L_SPACEFAIL" 0
+  check "wd-write !~ frost-dedup"      '"weather_daily write failed"' "$L_SPACEFAIL" 0
+  check "runs !~ frost-dedup"          '"rain-log"'                   "$L_USERFAIL"  0
 
   if [ "$fails" -ne 0 ]; then
     echo "FAIL: $fails pattern check(s) wrong — do NOT trust these metrics until fixed." >&2
@@ -197,6 +225,19 @@ alarm() {
     --treat-missing-data notBreaching \
     --alarm-actions "$SNS_TOPIC"
   echo "  ok  garden-weather-daily-write-failed"
+
+  # OPS-SPACEALERTSREADLOG-001. Same shape as the two above, for the same reasons: one failed read is the whole
+  # event (the dedup of that run's frost email is gone), and notBreaching keeps the hours with no failure green.
+  aws cloudwatch put-metric-alarm \
+    --region "$REGION" \
+    --alarm-name "garden-frost-dedup-read-failed" \
+    --alarm-description "A frost dedup read failed open ('alerts_sent read failed', handler.js readAlertsSent / readSpaceAlertsSent). That run could not see which frost emails already went out, so it may send one again. The Lambda Errors metric cannot see this: both reads return [] and the run continues by design." \
+    --namespace "$NS" --metric-name FrostDedupReadFailed \
+    --statistic Sum --period 3600 --evaluation-periods 1 --threshold 0 \
+    --comparison-operator GreaterThanThreshold \
+    --treat-missing-data notBreaching \
+    --alarm-actions "$SNS_TOPIC"
+  echo "  ok  garden-frost-dedup-read-failed"
   echo "armed. Run '$0 alarm-liveness' once '$0 verify' passes."
 }
 
@@ -222,12 +263,13 @@ alarm_liveness() {
 # Everything this script creates, removed. Nothing here touches app behaviour, so the teardown is
 # complete and leaves no residue beyond the metrics' own retention.
 teardown() {
-  for f in weather-rainlog-runs weather-rainlog-failed weather-daily-write-failed; do
+  for f in weather-rainlog-runs weather-rainlog-failed weather-daily-write-failed frost-dedup-read-failed; do
     aws logs delete-metric-filter --region "$REGION" --log-group-name "$LOG_GROUP" --filter-name "$f" \
       && echo "  removed filter $f"
   done
   aws cloudwatch delete-alarms --region "$REGION" --alarm-names \
     garden-weather-rainlog-failures garden-weather-daily-write-failed garden-weather-rainlog-missing-run \
+    garden-frost-dedup-read-failed \
     && echo "  removed alarms"
 }
 

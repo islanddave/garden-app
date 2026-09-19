@@ -69,6 +69,21 @@ jobs:
         # the optional python checker so the result does not depend on what the runner image ships.
         # False positives are ignored per file in .github/actionlint.yaml, each with its live evidence.
         # Measured 2026-09-18 at 0d33e919 plus this change: exit 0 with this exact configuration.
+        #
+        # NON-VACUITY (OPS-WORKFLOWLINTCANARY-001). A clean run proves nothing unless this lint can fail here,
+        # and two ways for it to go quiet were measured with this actionlint + shellcheck pair: -shellcheck=
+        # naming a missing file makes actionlint DISABLE shellcheck and still exit 0 (only -verbose says so),
+        # and a blanket ignore in .github/actionlint.yaml silences every finding. (No workflow files at all is
+        # not one: actionlint exits 3.) So first the same binaries, flags and config must REJECT a known-bad
+        # fixture with one actionlint finding ([job-needs]) and one shellcheck finding at the configured
+        # severity (SC2034, a warning); then the real run must cover every workflow file on disk with
+        # shellcheck enabled, and says how many.
+        #
+        # BLIND SPOT, by construction: an exit status read after errexit already acted (`cmd` then `RC=$?`,
+        # B1 of the v4.138.0 pre-ship pass). shellcheck reports nothing on it at ANY severity, because the
+        # body carries no -e; the runner adds it. SC2181 (style) fires only on `[ $? ... ]`, not on `RC=$?`,
+        # has 0 hits here, and lowering the severity for it would red on 5 unrelated info/style findings.
+        # scripts/test_workflow_steps.py guards that class instead (a scan of every run: body).
         env:
           ACTIONLINT_VERSION: 1.7.12
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -88,7 +103,41 @@ jobs:
           tar -xzf "$T/actionlint.tgz" -C "$T" actionlint
           tar -xzf "$T/shellcheck.tgz" -C "$T" "shellcheck-${SHELLCHECK_VERSION}/shellcheck"
           "$T/actionlint" -version
-          "$T/actionlint" -color -shellcheck="$T/shellcheck-${SHELLCHECK_VERSION}/shellcheck" -pyflakes=
+          SC="$T/shellcheck-${SHELLCHECK_VERSION}/shellcheck"
+          # Canary: rejected by actionlint AND by shellcheck, under this repo's own config, or nothing below counts.
+          mkdir -p "$T/canary/.github/workflows"
+          [ ! -f .github/actionlint.yaml ] || cp .github/actionlint.yaml "$T/canary/.github/"
+          git -C "$T/canary" init -q
+          cat > "$T/canary/.github/workflows/canary.yml" <<'CANARY'
+          on: push
+          jobs:
+            canary:
+              needs: no-such-job
+              runs-on: ubuntu-latest
+              steps:
+                - run: unused=1
+          CANARY
+          RC=0
+          (cd "$T/canary" && "$T/actionlint" -oneline -shellcheck="$SC" -pyflakes=) > "$T/canary.out" 2>&1 || RC=$?
+          if [ "$RC" -ne 1 ] || ! grep -q '\[job-needs\]' "$T/canary.out" || ! grep -q 'SC2034:warning' "$T/canary.out"; then
+            cat "$T/canary.out"
+            echo "::error title=Workflow lint canary::the lint did not reject its known-bad fixture (exit $RC; want 1 with a [job-needs] and an SC2034 warning). A clean run would verify nothing."
+            exit 1
+          fi
+          RC=0
+          "$T/actionlint" -color -verbose -shellcheck="$SC" -pyflakes= 2> "$T/lint.err" || RC=$?
+          if [ "$RC" -ne 0 ]; then
+            [ "$RC" -eq 1 ] || cat "$T/lint.err"  # 1 = findings, printed above; anything else is fatal
+            exit "$RC"
+          fi
+          LINTED=$(awk '/Linting [0-9]+ files/ { for (i = 1; i < NF; i++) if ($i == "Linting") { print $(i + 1); exit } }' "$T/lint.err")
+          ONDISK=$(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | wc -l | tr -d ' ')
+          if [ "${LINTED:-0}" -ne "$ONDISK" ] || grep -q 'Rule "shellcheck" was disabled' "$T/lint.err"; then
+            cat "$T/lint.err"
+            echo "::error title=Workflow lint vacuous::linted ${LINTED:-0} of $ONDISK workflow files, or shellcheck was disabled (verbose log above)."
+            exit 1
+          fi
+          echo "Workflow lint: $LINTED of $ONDISK workflow files clean under actionlint + shellcheck; the canary was rejected as required."
 
       - name: Python script tests (pytest)
         # Retroactively covers the previously-unrun scripts/test_*.py suites

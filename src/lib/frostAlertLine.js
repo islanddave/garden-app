@@ -15,7 +15,9 @@
 // into wallpaper.
 //
 // What has NO surface is the LEAD TIME. frostEval's evalAdvisory scans the D1..D3 forecast window
-// (Open-Meteo) and picks the coldest civil day in it; the cue keys on NWS tonightLow alone.
+// (Open-Meteo) and picks the coldest civil day in it; the engine's cue keys on the NWS plan low alone.
+// (V5-FROSTTWOMODELS-001: on a night THIS line names as tonight, Today re-keys the card and a
+// freeze/cold cue on the colder of the two lows — see src/lib/tonightLow.js.)
 //
 // BUG-FROSTADVISORYNIGHTWORDING-001 — an advisory CAN refer to tonight, and usually does when it picks
 // D1. `dayOffset` (i + 1) is the CIVIL DAY of the minimum, and at this site 78% of cold minima fall
@@ -27,7 +29,10 @@
 //   - imminent  -> skipped. Fires at <= 38F, and 38 < 40, so the freeze cue ALWAYS covers it.
 //   - heat      -> skipped. computeCallout renders `high >= 88` already.
 //   - advisory  -> rendered, tonight included: its figure is a second model's, and it is the one
-//                  Dave was texted about.
+//                  Dave was texted about. When it names tonight, Today prints ONE low for the night
+//                  on the card, the cue and this line — the colder of this figure and the plan low
+//                  (V5-FROSTTWOMODELS-001, src/lib/tonightLow.js) — so this line's number can be the
+//                  plan's. Any other night keeps this line's own figure.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // AN ENTRY WITHOUT A TEMPERATURE RENDERS NOTHING, DELIBERATELY.
@@ -114,12 +119,17 @@ export function pickAdvisory(alertsSent) {
 }
 
 // -> { text, tier, dayOffset, nightOffset, lowF } or null.
-export function buildFrostAlertLine(alertsSent) {
+// V5-FROSTTWOMODELS-001 — `lowShown`, when a finite number, is the figure the line prints (and returns
+// as lowF) instead of its own rounded low. Today passes it only on a night this line names TONIGHT —
+// src/lib/tonightLow.js agreedTonightLow decides that, here nothing does — so the card, the cue and this
+// line print one number. Without it the output is the one-argument output, byte for byte: the server's
+// PARITY suites (lambda/daily-plan/advisorynight.test.js, frostsubject.test.js) call it that way.
+export function buildFrostAlertLine(alertsSent, { lowShown } = {}) {
   const a = pickAdvisory(alertsSent)
   if (!a) return null
   const night = resolveNight(a)
   const when = nightPhrase(night)
-  const low = Math.round(Number(a.lowF))
+  const low = Number.isFinite(lowShown) ? lowShown : Math.round(Number(a.lowF))
   return {
     text: `Frost possible ${when} — low ${low}°F. Plan cover for tender plants.`,
     tier: a.tier,

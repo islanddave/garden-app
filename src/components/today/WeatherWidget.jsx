@@ -299,7 +299,11 @@ export default function WeatherWidget({
   liveHydrology = null,
   refreshedAt = null,
   waterDueCount = 0,
+  lowShown = null,
 }) {
+  // V5-FROSTTWOMODELS-001 — `lowShown` is DISPLAY ONLY: the night-low figure below prints it when set
+  // (Today passes the one low it prints for tonight, src/lib/tonightLow.js). It never reaches the
+  // watering scale — the lanes are the nightly plan's verdict, and a display change must not move care.
   const scale = computeWateringScale(hydrology, weather)
 
   // DRG-WXROLL-001 — intraday freshness (unchanged). Live precip overlays the INFORMATIONAL rain figure +
@@ -492,7 +496,7 @@ export default function WeatherWidget({
           <Icon name="care.sun" size={16} title="day high" style={{ marginTop: 3 }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 1, lineHeight: 1, marginLeft: 2 }}>
-          <span style={{ fontWeight: 600, letterSpacing: '-0.02em', fontSize: 23, color: PAL.tempLo }}>{weather.tonightLow}&deg;</span>
+          <span data-testid="weather-night-low" style={{ fontWeight: 600, letterSpacing: '-0.02em', fontSize: 23, color: PAL.tempLo }}>{lowShown ?? weather.tonightLow}&deg;</span>
           {/* Crescent moon — the one glyph in this file with NO registry twin of any kind. care.tempLow
               is the nearest key by meaning and it is a thermometer with a falling arrow, a different
               object entirely, so pointing at it would be a redraw wearing a swap's clothes. Kept

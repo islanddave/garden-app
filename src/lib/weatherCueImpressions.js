@@ -50,7 +50,8 @@ export async function sendCueImpression(apiFetch, line, planGeneratedAt = null) 
       body: JSON.stringify({
         cue: line.cue,
         form: line.form,
-        model_version: WX_CUE_MODEL_VERSION,
+        // V5-FROSTTWOMODELS-001 — a cue Today re-worded names its own model (src/lib/tonightLow.js).
+        model_version: line.modelVersion ?? WX_CUE_MODEL_VERSION,
         plan_generated_at: planGeneratedAt ?? null,
       }),
       keepalive: true,
