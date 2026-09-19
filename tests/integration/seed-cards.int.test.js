@@ -28,6 +28,9 @@ const { handler } = await import('../../lambda/inventory-items/index.js')
 const RUN = testRunId()
 const USER = `user_int_seedcards_${RUN}`
 
+// Built OUTSIDE the SQL template: sql-comment-hygiene.test.js forbids '//' inside one.
+const VARIETY_URL = `https://example.test/${RUN}`
+
 let varietyId
 let lotId
 let livePhotoId
@@ -56,7 +59,7 @@ beforeAll(async () => {
     VALUES (
       ${'variety-seedcards-' + RUN}, ${USER}, 'Capsicum chinense', 'Mexico', 'Yucatán',
       100000, 350000, 'inference',
-      'f1', 'vendor_catalog', 90, 100, 'from-transplant', ${'https://example.test/' + RUN})
+      'f1', 'vendor_catalog', 90, 100, 'from-transplant', ${VARIETY_URL})
     RETURNING id`
   varietyId = v[0].id
 
@@ -116,7 +119,7 @@ describe('the seed list row, read from a real database', () => {
       species: 'Capsicum chinense', origin_country: 'Mexico', origin_region: 'Yucatán',
       scoville_min: 100000, scoville_max: 350000, scoville_source: 'inference',
       breeding_system: 'f1', days_to_maturity_min: 90, days_to_maturity_max: 100,
-      dtm_basis: 'from-transplant', variety_source_url: `https://example.test/${RUN}`,
+      dtm_basis: 'from-transplant', variety_source_url: VARIETY_URL,
     })
   })
 
