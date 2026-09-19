@@ -59,11 +59,16 @@ const HANDLERS = readdirSync(__dirname)
 // these was read from information_schema.columns WHERE table_name='cultivar' on live prod the same
 // day (the VIEW, not the base table): breeding_system, days_to_maturity_min/max, dtm_basis,
 // origin_country, origin_region, scoville_min/max, source_url, species.
+// V5-SEEDCARDS-001 (2026-09-19) — scoville_source added beside the two numbers, so an estimated
+// figure renders as "est. ... SHU". NOT YET ON PROD: it arrives with migrations/v5-scovillesource-001,
+// which appends it to the cultivar VIEW (not only to plant_varieties) and must be applied to staging
+// and prod before this reaches dev. Until then dev-main-schema-audit.py reports exactly this one
+// column missing from prod, and that report is the ordering guard working.
 const AUDIT_COLUMNS = {
   cultivar: [
     'breeding_system', 'crop_type_slug', 'days_to_maturity_max', 'days_to_maturity_min', 'display_name',
-    'dtm_basis', 'id', 'origin_country', 'origin_region', 'scoville_max', 'scoville_min', 'source_url',
-    'species',
+    'dtm_basis', 'id', 'origin_country', 'origin_region', 'scoville_max', 'scoville_min', 'scoville_source',
+    'source_url', 'species',
   ],
 };
 
@@ -143,6 +148,18 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     // Both directions. Extra columns are not harmless padding: the contract is what Phase 1 audits
     // against prod, so a column nothing reads makes the audit assert something the code never does.
     expect(referenced).toEqual([...CULTIVAR_COLUMNS].sort());
+  });
+
+  it('projects scoville_source in every statement that projects the scoville numbers', () => {
+    // The contract above is a UNION over the directory, so it stays green if one of the three reads
+    // drops the source while the other two keep it — and that read would then hand an estimated
+    // figure to a card with nothing saying it is one (v5-scovillesource-001). Pinned per statement.
+    const withNumbers = STATEMENTS.filter(({ sql }) => /\bpv\.scoville_(?:min|max)\b/.test(sql));
+    expect(withNumbers).toHaveLength(3);
+    for (const { file, sql } of withNumbers) {
+      expect(sql, `${file}: a read projects the scoville numbers without their source`)
+        .toMatch(/\bpv\.scoville_source\b/);
+    }
   });
 
   it('never reaches for a column that belongs to another table', () => {
