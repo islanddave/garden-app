@@ -55,8 +55,16 @@ const HANDLERS = readdirSync(__dirname)
 // `plant_varieties` base table underneath it. That is the whole point of this contract — a column
 // that exists on the base table and not on the view is a runtime 500 that nothing catches at deploy
 // (BUG-SEEDDETAIL500-001, whose three columns are named at the bottom of this file).
+// V5-SEEDCARDS-001 (2026-09-19) — the seed list now projects the facts a seed card shows. Each of
+// these was read from information_schema.columns WHERE table_name='cultivar' on live prod the same
+// day (the VIEW, not the base table): breeding_system, days_to_maturity_min/max, dtm_basis,
+// origin_country, origin_region, scoville_min/max, source_url, species.
 const AUDIT_COLUMNS = {
-  cultivar: ['crop_type_slug', 'display_name', 'id'],
+  cultivar: [
+    'breeding_system', 'crop_type_slug', 'days_to_maturity_max', 'days_to_maturity_min', 'display_name',
+    'dtm_basis', 'id', 'origin_country', 'origin_region', 'scoville_max', 'scoville_min', 'source_url',
+    'species',
+  ],
 };
 
 const CULTIVAR_COLUMNS = AUDIT_COLUMNS.cultivar;

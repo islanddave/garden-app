@@ -99,7 +99,9 @@ describe('W-HERO — every hero-resolving read DERIVES the effective hero', () =
       'plants/index.js': 4,
       'projects/index.js': 1,
       'locations/index.js': 1,
-      'inventory-items/index.js': 1,
+      // V5-SEEDCARDS-001: the by-id read plus BOTH list templates (?category= and bare), which
+      // derive the seed card's packet photo the same way.
+      'inventory-items/index.js': 3,
       'photos/index.js': 1,
     });
   });

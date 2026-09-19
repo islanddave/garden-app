@@ -19,6 +19,10 @@ import { resolveStageEnteredAt } from './seed-stage-date.js';
 // lambda/provenance-copies-sync.test.js guards the values, and also checks the migration's DB CHECK
 // membership against them.
 import { VALID_SOURCE_KINDS } from './source-kinds.js';
+// V5-SEEDCARDS-001 — the seed list now carries a packet photo per row (two presigned URLs each), so
+// it adopts the negotiated-gzip responder the plants list uses (V4-APIGZIP-001). Per-dir copy for the
+// packaging reason lambda/http-response.js gives; http-response-copies-sync.test.js guards the bytes.
+import { jsonResponder } from './http-response.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -49,14 +53,6 @@ async function getSecrets() {
 }
 
 const CORS = {}; // Lambda URL config owns CORS — handler must not duplicate (matches lambda/plants pattern)
-
-function resp(statusCode, body) {
-  return {
-    statusCode,
-    headers: { 'Content-Type': 'application/json', ...CORS },
-    body: JSON.stringify(body),
-  };
-}
 
 // V4-SEEDLINK-001. The /source-plant gate does its ownership check INLINE (see the route for why),
 // so it needs the same malformed-id short-circuit every shared loader carries (V4-AUTHZRESIDUE-001):
@@ -333,6 +329,10 @@ export function validateUpdate(body) {
 }
 
 export const handler = async (event) => {
+  // Bound per invocation: the encoding is negotiated from THIS request's Accept-Encoding. Bodies
+  // under the responder's threshold (every error path) take the byte-identical identity branch.
+  const resp = jsonResponder(event, CORS);
+
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
   }
@@ -900,7 +900,13 @@ export const handler = async (event) => {
                  COALESCE(fp.id, fb.id) AS effective_featured_photo_id,
                  (fp.id IS NOT NULL) AS featured_is_explicit,
                  COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path,
-                 pv.display_name AS variety_name
+                 pv.display_name AS variety_name,
+                 -- V5-SEEDCARDS-001: the same cultivar facts the seed list projects, for the
+                 -- seed's detail page (heat, origin, species, the cultivar's reference URL).
+                 pv.crop_type_slug AS crop_slug,
+                 pv.scoville_min, pv.scoville_max, pv.origin_country, pv.origin_region, pv.species,
+                 pv.breeding_system, pv.days_to_maturity_min, pv.days_to_maturity_max, pv.dtm_basis,
+                 pv.source_url AS variety_source_url
           FROM inventory_items i
           -- BUG-PHOTOHEROMOVE-001 / INV-HERO — the hero is DERIVED here, never trusted from the
           -- stored pointer. Same shape as fetchSpaceHero (lambda/photos/index.js:~314); read its
@@ -1270,10 +1276,30 @@ export const handler = async (event) => {
       // the `cultivar` VIEW, not merely present on the `plant_varieties` base table — the distinction
       // that made unit_weights/weight_confidence a runtime 500 (BUG-SEEDDETAIL500-001) with nothing
       // failing at deploy time.
+      //
+      // V5-SEEDCARDS-001 — each row now carries what a seed card shows without a second fetch:
+      //   • its PACKET PHOTO: the effective hero, derived exactly as the single-item GET derives it
+      //     (explicit featured_photo_id, alive and still a member of this item's gallery, else the
+      //     item's newest live photo) — hero-read-derivation.test.js holds both reads to that one
+      //     contract. Returned as a presigned view URL plus the 800px thumb URL, the pair
+      //     lambda/plants featuredPhotoUrls() returns, so PhotoView's thumb→original degrade needs no
+      //     round trip. The fallback LATERAL is GATED on `fp.id IS NULL`: with a valid explicit hero
+      //     (the common case once packets are attached) it returns nothing without touching photos.
+      //   • the cultivar facts a card and its Heat sort read: scoville, origin, species, breeding
+      //     system, days to maturity and the cultivar's own reference URL. All come from the
+      //     `cultivar` view already joined here (no new relation); cultivar-columns.test.js lists them.
+      // The payload grows by the two URLs per row, which is why this handler now answers through the
+      // negotiated-gzip responder (api-gzip-wiring.test.js).
       const rows = cats && cats.length
         ? await sql`
             SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
-                   se.entered_at AS stage_entered_at
+                   se.entered_at AS stage_entered_at,
+                   pv.scoville_min, pv.scoville_max, pv.origin_country, pv.origin_region, pv.species,
+                   pv.breeding_system, pv.days_to_maturity_min, pv.days_to_maturity_max, pv.dtm_basis,
+                   pv.source_url AS variety_source_url,
+                   COALESCE(fp.id, fb.id) AS effective_featured_photo_id,
+                   (fp.id IS NOT NULL) AS featured_is_explicit,
+                   COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path
             FROM inventory_items i
             LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
             LEFT JOIN LATERAL (
@@ -1285,6 +1311,21 @@ export const handler = async (event) => {
                     ORDER BY sl.created_at DESC, sl.entered_at DESC, sl.id DESC
                     LIMIT 1
                  ) se ON TRUE
+            LEFT JOIN photos fp
+                   ON fp.id = i.featured_photo_id
+                  AND fp.deleted_at IS NULL
+                  AND fp.created_by = ANY(${householdIds})
+                  AND fp.inventory_item_id = i.id
+            LEFT JOIN LATERAL (
+                   SELECT ph.id, ph.storage_path
+                     FROM photos ph
+                    WHERE fp.id IS NULL
+                      AND ph.inventory_item_id = i.id
+                      AND ph.deleted_at IS NULL
+                      AND ph.created_by = ANY(${householdIds})
+                    ORDER BY ph.created_at DESC, ph.id DESC
+                    LIMIT 1
+                 ) fb ON TRUE
             WHERE i.created_by = ANY(${householdIds})
               AND i.deleted_at IS NULL
               AND i.category = ANY(${cats})
@@ -1292,7 +1333,13 @@ export const handler = async (event) => {
           `
         : await sql`
             SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
-                   se.entered_at AS stage_entered_at
+                   se.entered_at AS stage_entered_at,
+                   pv.scoville_min, pv.scoville_max, pv.origin_country, pv.origin_region, pv.species,
+                   pv.breeding_system, pv.days_to_maturity_min, pv.days_to_maturity_max, pv.dtm_basis,
+                   pv.source_url AS variety_source_url,
+                   COALESCE(fp.id, fb.id) AS effective_featured_photo_id,
+                   (fp.id IS NOT NULL) AS featured_is_explicit,
+                   COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path
             FROM inventory_items i
             LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
             LEFT JOIN LATERAL (
@@ -1304,11 +1351,45 @@ export const handler = async (event) => {
                     ORDER BY sl.created_at DESC, sl.entered_at DESC, sl.id DESC
                     LIMIT 1
                  ) se ON TRUE
+            LEFT JOIN photos fp
+                   ON fp.id = i.featured_photo_id
+                  AND fp.deleted_at IS NULL
+                  AND fp.created_by = ANY(${householdIds})
+                  AND fp.inventory_item_id = i.id
+            LEFT JOIN LATERAL (
+                   SELECT ph.id, ph.storage_path
+                     FROM photos ph
+                    WHERE fp.id IS NULL
+                      AND ph.inventory_item_id = i.id
+                      AND ph.deleted_at IS NULL
+                      AND ph.created_by = ANY(${householdIds})
+                    ORDER BY ph.created_at DESC, ph.id DESC
+                    LIMIT 1
+                 ) fb ON TRUE
             WHERE i.created_by = ANY(${householdIds})
               AND i.deleted_at IS NULL
             ORDER BY i.created_at DESC
           `;
-      return resp(200, rows);
+      // Same override the single-item GET makes (INV-HERO): `i.*` carried the RAW pointer; the row
+      // leaves with the derived effective hero so its id and its URLs can never disagree. Presigning
+      // is signature math, not an S3 call, so this adds no round trips; a thumb URL is a HINT (the
+      // object may not exist) and the client degrades to the original it already holds.
+      const listRows = await Promise.all(rows.map(async (row) => {
+        const {
+          featured_photo_storage_path: storagePath,
+          effective_featured_photo_id: effectiveId,
+          ...rest
+        } = row;
+        const [featured_photo_view_url, featured_photo_thumb_url] = storagePath
+          ? await Promise.all([
+              resolvePhotoViewUrl(storagePath, { presign: getFeaturedPhotoViewUrl, sm }),
+              resolvePhotoViewUrl(`thumbs/${storagePath}`, { presign: getFeaturedPhotoViewUrl, sm })
+                .catch(() => null),
+            ])
+          : [null, null];
+        return { ...rest, featured_photo_id: effectiveId ?? null, featured_photo_view_url, featured_photo_thumb_url };
+      }));
+      return resp(200, listRows);
     }
 
     if (method === 'POST') {

@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 // Staged rollout: plants is the proof case (largest measured payload). Add a dir here in the same
 // commit that adds its copy — the enumeration guard below is what makes that non-optional.
-const DIRS = ['plants'];
+const DIRS = ['inventory-items', 'plants'];
 
 describe('http-response.js per-Lambda copies stay in sync with canonical', () => {
   const canonical = readFileSync(join(here, 'http-response.js'), 'utf8');
