@@ -1114,7 +1114,8 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
     // (the events feed drops a deleted or archived container's events; the plants API 404s a planting
     // whose container is deleted) and resurfaces, one per rain day, on restore or unarchive. The
     // predicate is the anchor re-derivation target's (REDERIVE_CTE, pj there); `ct.id is null` is the
-    // project-less arm. The v4-rainbackfill-001 backfill predates this and has no container filter.
+    // project-less arm. Guarded at write time by rain-live-filter.test.js, which parses it out of this
+    // statement. The v4-rainbackfill-001 backfill predates this and has no container filter.
     const { rowCount: inserted } = await pg.query(
       `insert into event_log
          (project_id, location_id, plant_id, event_type, event_date, is_public,
