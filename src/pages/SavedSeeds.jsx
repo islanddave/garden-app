@@ -507,6 +507,12 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   const hasStore = !!store
   useEffect(() => { if (!hasStore) ownLoad() }, [hasStore, ownLoad])
   const load = store ? store.reload : ownLoad
+  // A stage move asks for its outline only after the reload lands; if the user has left this view by
+  // then, the outline belongs to nobody — delivered late, it made My seeds clear a search the user had
+  // just typed (pre-promote regression pass #2, finding C).
+  const aliveRef = useRef(true)
+  // Set true in the body, not only at init: StrictMode's mount → unmount → mount would otherwise leave it false.
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
 
   // Best-effort Back restore for the embedded view (V5-SEEDSTAB-001). Also answers whether this mount
   // is a RETURN to a position the user had: a lot anchor must not yank a restored scroll elsewhere.
@@ -815,7 +821,8 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       // AFTER the reload: the card is already on the page in its OLD section, so an outline asked for
       // now would scroll there and then watch the card jump away.
       const movedId = advancing.item.id
-      Promise.resolve(load()).then(() => onHighlight?.(movedId), () => onHighlight?.(movedId))
+      const outlineMoved = () => { if (aliveRef.current) onHighlight?.(movedId) }
+      Promise.resolve(load()).then(outlineMoved, outlineMoved)
     } catch (e) {
       show({ message: e?.message || 'Could not save that.' })
     } finally {

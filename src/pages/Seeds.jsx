@@ -110,6 +110,14 @@ export default function Seeds() {
     if (view !== 'saved') switchView('saved')
     outline(id)
   }, [view, switchView, outline])
+  // A switch the USER makes ends the last highlight: a view mounts fresh on every switch, and one still
+  // holding an old highlight cleared the filters the user had set there and scrolled back to the lot,
+  // on every return (pre-promote regression pass #2, finding D).
+  const userSwitch = useCallback((next) => {
+    if (next === view) return
+    setHighlight(null)
+    switchView(next)
+  }, [view, switchView])
 
   const [sownIds, setSownIds] = useState(() => new Set())
   const onSown = useCallback((id) => setSownIds((prev) => new Set(prev).add(id)), [])
@@ -157,7 +165,7 @@ export default function Seeds() {
             small
             options={SEEDS_VIEWS}
             value={view ?? undefined}
-            onChange={switchView}
+            onChange={userSwitch}
             ariaLabel="Which seeds"
             data-testid="seeds-view-switch"
           />

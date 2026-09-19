@@ -617,3 +617,91 @@ describe('Seeds — every view sees the others’ writes without a reload', () =
     await waitFor(() => expect(screen.getByRole('dialog', { name: /Sow Sungold/ })).toBeTruthy())
   })
 })
+
+// Pre-promote regression pass #2 (build-20260918/prepromote-regression-2.md, IMPORTANT A-D): the shell's
+// last highlight used to be re-applied long after the write it confirmed — every time a view's `ready`
+// rose again, every time a view remounted, and when a stage move's reload landed after the user had
+// left Saved seeds. An outline is an answer to one write: it happens once, where the user is.
+describe('Seeds — an outline happens once, for the write it confirms', () => {
+  const PKT2 = lot({ id: 'pkt-2', name: 'Jalapeno', variety_name: 'Jalapeno', crop_slug: 'pepper', quantity_on_hand: 3 })
+  const wait = (ms) => act(async () => { await new Promise((r) => setTimeout(r, ms)) })
+  let calls, restoreScroll
+  beforeEach(() => {
+    calls = []
+    const had = Object.prototype.hasOwnProperty.call(Element.prototype, 'scrollIntoView')
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function () { calls.push(this.getAttribute('data-lot-id')) }
+    restoreScroll = () => { if (had) Element.prototype.scrollIntoView = orig; else delete Element.prototype.scrollIntoView }
+  })
+  afterEach(() => restoreScroll())
+
+  it('Saved seeds: a crop chip that hides and then shows the lot again does not scroll back to it', async () => {
+    seedRows = [DRYING, FERMENTING]
+    mount(['/seeds?view=saved&lot=lot-dry'])
+    await waitFor(() => expect(calls).toEqual(['lot-dry']))
+    await wait(2100)   // the outline has run its course
+    const tomato = within(screen.getByTestId('tracked-crop-filter')).getAllByRole('button').find((b) => /tomato/i.test(b.textContent))
+    await act(async () => { fireEvent.click(tomato) })
+    expect(document.querySelector('[data-lot-id="lot-dry"]')).toBeNull()
+    await act(async () => { fireEvent.click(tomato) })
+    await waitFor(() => expect(document.querySelector('[data-lot-id="lot-dry"]')).toBeTruthy())
+    await wait(100)
+    expect(calls).toEqual(['lot-dry'])
+    expect(document.querySelector('[data-lot-id="lot-dry"]').getAttribute('data-outlined')).toBeNull()
+  })
+
+  it('My seeds: clearing a search that had hidden the row does not scroll back to it', async () => {
+    seedRows = [BOUGHT, PKT2]
+    mount(['/seeds?view=mine&lot=pkt-1'])
+    await waitFor(() => expect(calls).toEqual(['pkt-1']))
+    await wait(2100)
+    const box = screen.getByTestId('my-seeds-search')
+    await act(async () => { fireEvent.change(box, { target: { value: 'Jalap' } }) })
+    expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeNull()
+    await act(async () => { fireEvent.change(box, { target: { value: '' } }) })
+    await wait(100)
+    expect(calls).toEqual(['pkt-1'])
+  })
+
+  it('a stage move whose reload lands after the user switched to My seeds leaves their search alone', async () => {
+    seedRows = [DRYING, BOUGHT]
+    mount(['/seeds?view=saved'])
+    await waitFor(() => expect(screen.getByTestId('advance-stage')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('advance-stage')) })
+    await act(async () => { fireEvent.change(screen.getByTestId('seed-count-input'), { target: { value: '40' } }) })
+    let release
+    seedResponse = () => new Promise((r) => { release = r })
+    await act(async () => { fireEvent.click(screen.getByTestId('stage-save')) })
+    await wait(30)
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'My seeds' })) })
+    await waitFor(() => expect(screen.getByTestId('my-seeds-search')).toBeTruthy())
+    await act(async () => { fireEvent.change(screen.getByTestId('my-seeds-search'), { target: { value: 'Sungold' } }) })
+    await act(async () => { release([{ ...DRYING, seed_stage: 'stored', seed_count: 40 }, BOUGHT]) })
+    await wait(100)
+    expect(screen.getByTestId('my-seeds-search').value).toBe('Sungold')
+    expect(screen.queryByTestId('my-seeds-notice')).toBeNull()
+    expect(calls).toEqual([])
+  })
+
+  it('switching away and back keeps the filters the user chose after an outline', async () => {
+    seedRows = [BOUGHT, PKT2]
+    mount(['/seeds?view=mine'])
+    await waitFor(() => expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('seeds-save-seed')) })
+    await act(async () => { saveSheetProps.current.onClose(); saveSheetProps.current.onSaved({ id: 'pkt-1' }, {}) })
+    await waitFor(() => expect(calls).toEqual(['pkt-1']))
+    await wait(2200)
+    const pepper = () => within(screen.getByTestId('my-seeds-crop-filter')).getAllByRole('button').find((b) => /pepper/i.test(b.textContent))
+    await act(async () => { fireEvent.click(pepper()) })
+    expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeNull()
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'Saved seeds' })) })
+    await waitFor(() => expect(screen.getByTestId('saved-seeds-view')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'My seeds' })) })
+    await waitFor(() => expect(screen.getByTestId('my-seeds-view')).toBeTruthy())
+    await wait(100)
+    expect(pepper().getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByTestId('my-seeds-notice')).toBeNull()
+    expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeNull()
+    expect(calls).toEqual(['pkt-1'])
+  })
+})

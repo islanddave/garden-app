@@ -111,6 +111,23 @@ describe('My seeds — what each row says', () => {
     await waitFor(() => expect(lineOf('arch')).toContain('Archived for this season'))
   })
 
+  it('the identical-pair ordinal is its own non-shrinking span right after the amount — the shared facts are what gets cut', async () => {
+    // Identical rows share where-from and how-old by definition, so the ordinal is the ONLY fact that
+    // tells them apart; at the tail of the ellipsised facts it was the first thing a phone cut.
+    rows = [pkt({ id: 'd1', source_id: 'src-fedco', purchase_date: '2026-01-14' }), pkt({ id: 'd2', source_id: 'src-fedco', purchase_date: '2026-01-14' })]
+    await mount()
+    await waitFor(() => expect(rowFor('d2')).toBeTruthy())
+    for (const id of ['d1', 'd2']) {
+      const line = within(rowFor(id)).getByTestId('my-seed-line')
+      const parts = [...line.children]
+      const ordinal = within(line).getByTestId('my-seed-ordinal')
+      expect(ordinal.textContent).toMatch(/^ · [12] of 2 with identical details$/)
+      expect(parts.indexOf(ordinal)).toBe(parts.indexOf(within(line).getByTestId('my-seed-amount')) + 1)
+      expect(ordinal.style.flex).toBe('0 0 auto')
+      expect(within(line).getByTestId('my-seed-rest').textContent).not.toContain('identical details')
+    }
+  })
+
   it('the amount is its own span after the chips, so a crowded line cuts chips and vendor, never the amount', async () => {
     // Geometry is gate:seeds-page's (g) (jsdom has no layout); this pins the structure it relies on:
     // at 360px one facts span holding the amount was squeezed to 0px behind two chips.

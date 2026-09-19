@@ -36,6 +36,9 @@
 //   (h) SOW NOW NAMES ARE NOT SQUEEZED — every open Sow now card's title column is at least
 //       SowNow.jsx's TITLE_COL_MIN_PX (read from the source); wider action pairs wrap under the name.
 //       Promoted from a REPORTED finding (a needs-profile card left its name 76px, five lines).
+//   (i) THE ORDINAL IS NEVER CUT — on each row of an identical pair, "1 of 2 with identical details"
+//       ([data-testid="my-seed-ordinal"]) shows whole, like (g): it is the only fact that tells the two
+//       apart, and at the tail of the ellipsised facts it was the first thing a phone cut.
 //
 // "ITS LINE-HEIGHT", MADE PRECISE, because the literal reading is wrong for this element. The second
 // line is a flex row of Badges and a facts span; its own computed line-height is `normal` at 12px
@@ -318,6 +321,8 @@ const MEASURE = (v) => `(() => {
       const items = [...line.children]
       const chips = [...line.querySelectorAll('${tid('my-seed-chip')}')]
       const amount = line.querySelector('${tid('my-seed-amount')}')
+      const ordinal = line.querySelector('${tid('my-seed-ordinal')}')
+      const ob = ordinal ? ordinal.getBoundingClientRect() : null
       const rest = line.querySelector('${tid('my-seed-rest')}')
       const lb = line.getBoundingClientRect()
       // The chips count as items even though they now sit one level down, in their own shrinking box:
@@ -331,6 +336,8 @@ const MEASURE = (v) => `(() => {
         // (g): the amount, whole — inside the line's box, with width, not ellipsised.
         amount: amount ? { text: (amount.textContent || '').trim(), w: R(ab.width), l: R(ab.left), r: R(ab.right),
           inLine: ab.left >= lb.left - 0.5 && ab.right <= lb.right + 0.5, cut: amount.scrollWidth > amount.clientWidth + 1 } : null,
+        ordinal: ordinal ? { text: (ordinal.textContent || '').trim(), w: R(ob.width), l: R(ob.left), r: R(ob.right),
+          inLine: ob.left >= lb.left - 0.5 && ob.right <= lb.right + 0.5, cut: ordinal.scrollWidth > ordinal.clientWidth + 1 } : null,
         lineL: R(lb.left), lineR: R(lb.right),
         // REPORTED: what gives way on a crowded line, by design — chips ellipsised, then where-from/how-old.
         chipsCut: chips.filter(c => c.scrollWidth > c.clientWidth + 1 || c.getBoundingClientRect().right > lb.right + 0.5).length,
@@ -494,6 +501,9 @@ try {
         if (withAmount !== e.amountRows) mismatch.push(`${withAmount} of ${m.rows.length} rows state an amount, expected ${e.amountRows} (every row but the two uncounted saved lots, Aji Charapita and Cherokee Purple)`)
         const ordinal = m.rows.filter(r => r.line && /with identical details/.test(r.line.text)).length
         if (ordinal !== e.ordinalRows) mismatch.push(`${ordinal} row(s) carry the identical-details ordinal, expected ${e.ordinalRows}`)
+        // Non-vacuity for (i): the ordinal must be in its own span on exactly those rows.
+        const ordinalSpans = m.rows.filter(r => r.line && r.line.ordinal).length
+        if (ordinalSpans !== e.ordinalRows) mismatch.push(`${ordinalSpans} row(s) render the ordinal in its own span, expected ${e.ordinalRows} — (i) would be checking nothing`)
       }
       if (v.view === 'saved') {
         if (m.cards !== e.cards) mismatch.push(`${m.cards} seed-lot cards, expected ${e.cards}`)
@@ -578,6 +588,13 @@ try {
         const A = r.line && r.line.amount
         if (!A) continue
         if (!(A.w > 0) || !A.inLine || A.cut) fail(`${at}: (g) "${r.title ? r.title.text : '?'}": its amount "${A.text}" is cut — ${A.w}px wide at x${A.l}-${A.r} in a line spanning x${r.line.lineL}-${r.line.lineR}${A.cut ? ', ellipsised' : ''}`)
+      }
+
+      // ── (i) THE ORDINAL IS NEVER CUT.
+      for (const r of m.rows) {
+        const O = r.line && r.line.ordinal
+        if (!O) continue
+        if (!(O.w > 0) || !O.inLine || O.cut) fail(`${at}: (i) "${r.title ? r.title.text : '?'}": its ordinal "${O.text}" is cut — ${O.w}px wide at x${O.l}-${O.r} in a line spanning x${r.line.lineL}-${r.line.lineR}${O.cut ? ', ellipsised' : ''}`)
       }
 
       // ── (h) SOW NOW NAMES ARE NOT SQUEEZED.

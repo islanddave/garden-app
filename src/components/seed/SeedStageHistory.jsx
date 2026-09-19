@@ -65,7 +65,8 @@ export default function SeedStageHistory({
       })
       .catch(err => {
         if (!mounted) return
-        setError(err?.message ?? 'Could not load this lot’s history.')
+        // `||`: api.js can throw Error(''), and '' here rendered a failed load as "nothing recorded".
+        setError(err?.message || 'Could not load this lot’s history.')
         setLoading(false)
       })
     return () => { mounted = false }

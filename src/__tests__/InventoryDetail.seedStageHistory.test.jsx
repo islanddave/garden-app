@@ -288,6 +288,15 @@ describe('InventoryDetail — seed stage history (V4-SEEDHISTORY-001)', () => {
     expect(screen.queryByText(/No processing stages recorded yet/)).toBeNull()
   })
 
+  it('…including a failure whose message is EMPTY (api.js throws Error(\'\') on an empty statusText)', async () => {
+    // `??` kept the '' and the panel read it as "no error": the failed load rendered as an empty history.
+    historyRef.current = new Error('')
+    await renderPage()
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+    expect(screen.getByRole('alert').textContent).toContain('Could not load this lot’s history.')
+    expect(screen.queryByText(/No processing stages recorded yet/)).toBeNull()
+  })
+
   it('retries on demand rather than stranding the user on the error', async () => {
     historyRef.current = new Error('Network unreachable')
     await renderPage()

@@ -361,7 +361,10 @@ function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, kept, onTo
   // amount — the fact this line exists to show — went with it. Now the chips give way first (each
   // ellipsised), then where-from/how-old; the amount stays whole.
   const amount = howMuch(item)
-  const rest = [whereFrom(item, vendorOf), howOld(item), suffix].filter(Boolean).join(' · ')
+  // The ordinal ("1 of 2 with identical details") is how a thumb tells two identical packets apart,
+  // and identical rows share where-from and how-old by definition — so it follows the amount and never
+  // shrinks, and the shared facts are what the ellipsis cuts (pre-promote regression pass #2).
+  const rest = [whereFrom(item, vendorOf), howOld(item)].filter(Boolean).join(' · ')
   const inProcess = isInProcess(item)
   const qty = Number(item.quantity_on_hand ?? 0)
   const shownQty = Number.isFinite(qty) ? Math.round(qty) : 0
@@ -397,7 +400,8 @@ function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, kept, onTo
               </span>
             )}
             {amount && <span data-testid="my-seed-amount" style={amountStyle}>{amount}</span>}
-            {rest && <span data-testid="my-seed-rest" style={restStyle}>{amount ? `\u00a0· ${rest}` : rest}</span>}
+            {suffix && <span data-testid="my-seed-ordinal" style={amountStyle}>{amount ? `\u00a0· ${suffix}` : suffix}</span>}
+            {rest && <span data-testid="my-seed-rest" style={restStyle}>{(amount || suffix) ? `\u00a0· ${rest}` : rest}</span>}
           </span>
         </span>
         <span aria-hidden="true" style={{ color: P.light, fontSize: T.type.xs2, flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>
@@ -418,7 +422,7 @@ function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, kept, onTo
           )}
           {kept && (
             <p data-testid="my-seed-kept-note" style={{ margin: 0, fontSize: T.type.xs2, color: P.mid }}>
-              None left — it moves to Sowed previously next time you open Seeds.
+              None left — it moves to Sowed previously next time you open My seeds.
             </p>
           )}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>

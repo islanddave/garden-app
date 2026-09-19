@@ -10,7 +10,7 @@
 // fire again. `seq === 0` is the ARRIVAL hint from the URL (`?lot=`); `skipArrival` drops it when the
 // view restored a scroll position, so Back to a list the user had scrolled does not yank them to the
 // lot the page was first opened on.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export const OUTLINE_MS = 2000
 
@@ -18,29 +18,41 @@ function prefersReducedMotion() {
   try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches } catch { return false }
 }
 
+// ONCE per highlight ({id, seq}), not once per time `ready` turns true. A view's `ready` falls and
+// rises whenever the lot is filtered out and back in, and each rise used to scroll the page back to a
+// lot outlined long ago (pre-promote regression pass #2, finding A/B).
 export function useLotOutline(highlight, { ready, skipArrival = false } = {}) {
-  const [outlined, setOutlined] = useState(null)
+  // An object, not the id: a second highlight of the SAME lot must restart the timer and scroll again.
+  const [shown, setShown] = useState(null)
+  const firedRef = useRef(null)
   const id = highlight?.id != null ? String(highlight.id) : null
   const seq = highlight?.seq ?? 0
 
   useEffect(() => {
-    if (!ready || !id) return undefined
-    if (seq === 0 && skipArrival) return undefined
-    setOutlined(id)
-    const t = setTimeout(() => setOutlined(null), OUTLINE_MS)
-    return () => clearTimeout(t)
+    if (!ready || !id) return
+    if (seq === 0 && skipArrival) return
+    const key = `${id}|${seq}`
+    if (firedRef.current === key) return
+    firedRef.current = key
+    setShown({ id, key })
     // skipArrival is read once per highlight; a later restore must not re-fire an old one.
   }, [ready, id, seq])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The outline's own life: scroll to it once and clear it after OUTLINE_MS, independent of `ready`,
+  // so a lot filtered out mid-outline does not keep its outline forever.
   useEffect(() => {
-    if (!outlined || typeof document === 'undefined') return
-    const el = document.querySelector(`[data-lot-id="${outlined}"]`)
-    if (el && typeof el.scrollIntoView === 'function') {
-      el.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    if (!shown) return undefined
+    if (typeof document !== 'undefined') {
+      const el = document.querySelector(`[data-lot-id="${shown.id}"]`)
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+      }
     }
-  }, [outlined])
+    const t = setTimeout(() => setShown(null), OUTLINE_MS)
+    return () => clearTimeout(t)
+  }, [shown])
 
-  return outlined
+  return shown?.id ?? null
 }
 
 // The outline itself, shared so every view draws the same one. P.green on the white card is well past
