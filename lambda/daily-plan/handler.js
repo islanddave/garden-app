@@ -1107,6 +1107,24 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
     // Column list, join shape and NULL semantics mirror lambda/events/index.js's batch INSERT, and
     // the roof rule mirrors migrations/v4-rainbackfill-001. LEFT JOIN container, never INNER
     // (BUG-LOGMANYPROJECTLESS-001): a project-less planting must still get its row.
+    //
+    // OPS-RAININSERTCONTAINERFILTER-001: a planting whose CONTAINER is soft-deleted or archived gets
+    // none. Neither state cascades to the plantings (lambda/projects/index.js sets the container's own
+    // column and nothing else), so gn's filter cannot see it. A row written there is hidden on arrival
+    // (the events feed drops a deleted or archived container's events; the plants API 404s a planting
+    // whose container is deleted) and resurfaces, one per rain day, on restore or unarchive. The
+    // predicate is the anchor re-derivation target's (REDERIVE_CTE, pj there); `ct.id is null` is the
+    // project-less arm. Guarded at write time by rain-live-filter.test.js, which parses it out of this
+    // statement. The v4-rainbackfill-001 backfill predates this and has no container filter.
+    //
+    // BUG-RAINONENDEDPLANTINGS-001 (Dave, 2026-09-19): rain goes where the plan looks. The status test
+    // is the plantings query's own, word for word (the ANCHOR vocabulary in
+    // lambda/live-planting-predicate-sync.test.js), so an ended or failed planting stops collecting rain
+    // rows — they only ever reached display surfaces, where a dug crop showed "Next watering" after each
+    // rain. Dormant and every growing status (Harvesting included) are credited as before: a dormant
+    // perennial is still in the ground, and its rain becomes last_water when it is resumed. Existing
+    // rows are left alone. The backfill has no status filter either. rain-live-filter.test.js pins
+    // the set and compares it, status by status, with the plantings query's.
     const { rowCount: inserted } = await pg.query(
       `insert into event_log
          (project_id, location_id, plant_id, event_type, event_date, is_public,
@@ -1132,7 +1150,9 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
                   union all
                   select l.id, l.parent_id, l.covered from up
                     join locations l on l.id = up.parent_id and l.deleted_at is null
-                ) select bool_or(up.covered) from up), false)`,
+                ) select bool_or(up.covered) from up), false)
+          and (ct.id is null or (ct.deleted_at is null and ct.archived_at is null))
+          and (gn.status is null or gn.status not in ('ended','failed','dead','archived'))`,
       [day, d.amountIn, JSON.stringify(rainMetadata(d.amountIn))]);
 
     // Care cache, FORWARD ONLY (GREATEST), recomputed FROM event_log rather than from the amount
