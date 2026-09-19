@@ -1,5 +1,6 @@
 // OPS-RAININSERTLIVEFILTER-001 — the rain autologger credits LIVE plantings only, guarded at WRITE TIME.
 // OPS-RAININSERTCONTAINERFILTER-001 — and only in a live container, or in none.
+// BUG-RAINONENDEDPLANTINGS-001 — and never an ended or failed one: exactly the plan's status set.
 //
 // WHAT IS GUARDED. The rain INSERT in handler.js (logRainEvents) writes one event row per planting.
 // Its outer WHERE carries `gn.deleted_at is null and gn.archived_at is null`, and this file proves
@@ -7,7 +8,10 @@
 // the roof, or any term added later, says. It also carries
 // `(ct.id is null or (ct.deleted_at is null and ct.archived_at is null))`, and this file proves that a
 // live planting in a soft-deleted container and one in an archived container are each refused, while
-// a project-less planting (no container row at all) is still credited.
+// a project-less planting (no container row at all) is still credited. And it carries
+// `(gn.status is null or gn.status not in ('ended','failed','dead','archived'))`, and this file proves
+// that exactly those statuses are refused, that NULL, dormant and every growing status are credited,
+// and that the set is the one the daily plan's own plantings query refuses.
 //
 // WHY BOTH EXCLUSIONS ARE RIGHT (claude-ops/project-rules/gardening.md):
 //   * deleted — Deleted-Planting History Rule: a soft-deleted planting retracts the RECORD, not the
@@ -31,6 +35,12 @@
 // Same two axes, same separate observation. `none` — the project-less planting the LEFT JOIN exists for
 // (BUG-LOGMANYPROJECTLESS-001) — must still be credited, so it is a POSITIVE control, not a gap.
 //
+// AND THE STATUS — Dave's decision 2026-09-19 (BUG-RAINONENDEDPLANTINGS-001, Option 1): rain goes
+// where the plan looks. Rain on an ended or failed planting reached only display surfaces, where
+// a dug crop showed "Next watering" after every rain; the plan itself never selects them. Dormant stays
+// credited: a dormant perennial is still in the ground, and its rain becomes last_water on Resume.
+// Tied to the plan's query rather than restated, so the writer and that reader cannot drift apart.
+//
 // WHY THIS FILE EXISTS. Measured 2026-09-18 at 1408ca04: deleting either term, or both, from the rain
 // insert left lambda/daily-plan 78/78 files green, and 690/690 tests green in the 65 files outside it
 // that reference the daily-plan handler (lambda-level guards, the SQL-comment guards, the daily-plan
@@ -53,10 +63,14 @@
 // statement like the planting's, and so is its join: only a LEFT JOIN lets a project-less planting
 // reach the WHERE at all, so under any other join `none` is refused before the WHERE is consulted.
 //
-// DELIBERATELY NOT DECIDED HERE. Planting STATUS: this writer credits ended/failed plantings too,
-// unlike the plantings query, and whether rain belongs on them is a separate product decision
-// (BUG-RAINONENDEDPLANTINGS-001). Any status term added later is FREE here, so closing it cannot red
-// this file.
+// The status is a third pass: planting live, container live and none, and the status pinned by VALUE
+// — every PLANT_STATUSES entry, NULL, and the list's two out-of-vocabulary terms — through `is [not]
+// null`, `[not] in (...)`, `=` and `<>`, with SQL's NULL for a NULL status. The plantings query's WHERE
+// is parsed the same way from the same handler, and the two are compared status by status.
+//
+// DELIBERATELY NOT DECIDED HERE. A planting whose record was created after the rain day it is
+// credited for (seen in the BUG-RAINONENDEDPLANTINGS-001 recon; the live writer can only do it at the
+// 02:00 edge). Any term added for that is FREE here.
 //
 // LIMIT, unchanged from its sibling: a source-text guard. The Lambda unit suite mocks SQL, so nothing
 // here executes the statement against Postgres.
@@ -185,6 +199,11 @@ function outerWhereOf(flat) {
 const SQL_COMMENT = /'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|\/\*[\s\S]*?\*\//g
 const sqlOnly = (sql) => sql.replace(SQL_COMMENT, (m) => (m.startsWith('--') || m.startsWith('/*') ? ' ' : m))
 
+// One statement, comments gone, on one line, lower-cased EXCEPT inside string literals: keywords and
+// identifiers are case-blind in Postgres, and `'Ended'` is not `'ended'` to a status column.
+const sqlFlat = (sql) => sqlOnly(sql).replace(/\s+/g, ' ')
+  .replace(/'(?:[^']|'')*'|[^']+/g, (m) => (m.startsWith("'") ? m : m.toLowerCase()))
+
 const AXES = ['deleted_at', 'archived_at']
 
 // The four states a planting can be in on these two axes. `true` = that column is set.
@@ -211,12 +230,67 @@ const CONTAINER_STATES = {
 // For a LIVE planting: credited in a live container or in none, never in a retired one.
 const CONTAINER_REFUSED = { none: true, live: true, deleted: false, archived: false, deletedAndArchived: false }
 
-// Evaluate the WHERE for each state. A state pins columns, `true` = set; the two spellings the model
-// knows for a pinned column are `<col> is null` and `<col> is not null`, and any other term that names
-// one throws. Every remaining term is enumerated TRUE/FALSE — NULL needs no case of its own, because
-// three-valued logic is monotone: if NULL admits the row, TRUE and FALSE both do too. `leak` records,
-// for each state outside `credited`, the free terms under which it is admitted anyway.
-function admitsByState(flat, states, credited) {
+// The planting STATUSES rain is refused for — exactly the set the plantings query refuses. `dead`
+// and `archived` are not legal values today (chk_plants_status), but both lists carry them.
+const REFUSED_STATUSES = ['archived', 'dead', 'ended', 'failed']
+
+// Every status the model evaluates: NULL, the vocabulary of record (src/lib/constants.js, the same
+// read live-planting-predicate-sync.test.js makes) and the two out-of-vocabulary terms above. A status
+// added to the vocabulary later is evaluated with no edit here, and expected to be credited, as the
+// plan credits it.
+const STATUSES = (() => {
+  const src = readFileSync(join(here, '..', '..', 'src', 'lib', 'constants.js'), 'utf8')
+  const m = src.match(/export const PLANT_STATUSES = \[([^\]]*)\]/)
+  if (!m) throw new Error('PLANT_STATUSES not found in src/lib/constants.js — the status vocabulary moved')
+  return [null, ...new Set([...[...m[1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]), ...REFUSED_STATUSES])]
+})()
+const statusName = (s) => s ?? 'null'
+
+// The decided answer for a live planting, keyed `<status>/<container>`: refused for the four above,
+// credited for every other status and for NULL, in a live container and in none alike.
+const STATUS_TABLE = (refused) => Object.fromEntries(STATUSES.flatMap((s) =>
+  ['none', 'live'].map((c) => [`${statusName(s)}/${c}`, !refused.includes(s)])))
+
+// `<col> is null` / `<col> is not null`, for a column the state gives as SET (true) or NULL (false).
+function nullTest(text, col) {
+  if (text === `${col} is null`) return (isSet) => !isSet
+  if (text === `${col} is not null`) return (isSet) => isSet
+  return null
+}
+
+// For a column the state gives as a VALUE — the planting's status, or null: the two null tests, plus
+// the comparisons the fleet writes, `[not] in (<literals>)` and `=` / `<>` / `!=` a literal. Compared
+// with a NULL value they are NULL, as in SQL, so `status not in (...)` alone does NOT admit a NULL
+// status. Any other spelling returns null, and the caller throws.
+function valueTest(tokens, col) {
+  if (tokens[0] !== col) return null
+  const rest = tokens.slice(1)
+  if (rest.join(' ') === 'is null') return (v) => v === null
+  if (rest.join(' ') === 'is not null') return (v) => v !== null
+  const lit = (s) => (/^'(?:[^']|'')*'$/.test(s) ? s.slice(1, -1).replaceAll("''", "'") : null)
+  const sql = (test) => (v) => (v === null ? null : test(v))
+  const negated = rest[0] === 'not'
+  const body = negated ? rest.slice(1) : rest
+  if (body[0] === 'in' && body[1] === '(' && body.at(-1) === ')') {
+    const inner = body.slice(2, -1)
+    const list = inner.filter((_, k) => k % 2 === 0).map(lit)
+    if (!list.length || list.includes(null) || inner.some((s, k) => k % 2 === 1 && s !== ',')) return null
+    return sql((v) => list.includes(v) !== negated)
+  }
+  const value = rest.length >= 2 && !negated ? lit(rest.at(-1)) : null
+  const op = rest.slice(0, -1).join('')
+  if (value !== null && op === '=') return sql((v) => v === value)
+  if (value !== null && (op === '<>' || op === '!=')) return sql((v) => v !== value)
+  return null
+}
+
+// Evaluate the WHERE for each state. A state pins columns — `true` = set, or for a column in
+// `valueCols` the column's value — and a pinned column is read only through nullTest / valueTest; any
+// other term that names one throws. Every remaining term is enumerated TRUE/FALSE — NULL needs no case
+// of its own, because three-valued logic is monotone: if NULL admits the row, TRUE and FALSE both do
+// too. `leak` records, for each state outside `credited`, the free terms under which it is admitted
+// anyway.
+function admitsByState(flat, states, credited, valueCols = new Set()) {
   const expr = boolTree(outerWhereOf(flat))
   const terms = []
   const walk = (n) => {
@@ -229,8 +303,8 @@ function admitsByState(flat, states, credited) {
   const pinned = new Map()
   for (const t of terms) {
     for (const col of cols) {
-      if (t.text === `${col} is null`) pinned.set(t.text, { col, whenSet: false })
-      else if (t.text === `${col} is not null`) pinned.set(t.text, { col, whenSet: true })
+      const of = valueCols.has(col) ? valueTest(t.tokens, col) : nullTest(t.text, col)
+      if (of) pinned.set(t.text, { col, of })
       else if (t.tokens.includes(col)) {
         throw new Error(`the ${col} filter is buried inside a larger expression the guard cannot evaluate: ${t.text.slice(0, 90)}…`)
       }
@@ -245,7 +319,7 @@ function admitsByState(flat, states, credited) {
     for (let mask = 0; mask < 2 ** others.length && !admits[state]; mask += 1) {
       const val = (t) => {
         const p = pinned.get(t)
-        return p ? (set[p.col] ? p.whenSet : !p.whenSet) : Boolean(mask & (1 << others.indexOf(t)))
+        return p ? p.of(set[p.col]) : Boolean(mask & (1 << others.indexOf(t)))
       }
       if (truth(expr, val) === true) {
         admits[state] = true
@@ -274,18 +348,54 @@ function containerModelOf(flat, alias) {
   return { alias: calias, left, ...model }
 }
 
+// The status pass. The planting pinned live, its container pinned to each state that is credited
+// (`none` only under a LEFT JOIN, the only join a project-less planting reaches the WHERE through),
+// and the status pinned by VALUE; the roof and anything else stay FREE. Keyed `<status>/<container>`.
+function statusModelOf(flat, alias, container) {
+  const reach = container?.left ? ['none', 'live'] : ['live']
+  const states = {}
+  for (const s of STATUSES) {
+    for (const c of reach) {
+      states[`${statusName(s)}/${c}`] = {
+        ...Object.fromEntries(AXES.map((a) => [`${alias}.${a}`, false])),
+        ...(container && Object.fromEntries(Object.entries(CONTAINER_STATES[c])
+          .map(([col, isSet]) => [`${container.alias}.${col}`, isSet]))),
+        [`${alias}.status`]: s,
+      }
+    }
+  }
+  const credited = Object.keys(states).filter((k) => !REFUSED_STATUSES.includes(k.split('/')[0]))
+  return admitsByState(flat, states, credited, new Set([`${alias}.status`]))
+}
+
+// The reader rain now follows: the daily plan's plantings query, in the same handler. Its WHERE is
+// found by the phrase archived-exclusion.test.js anchors on (the rain INSERT is aliased gn/ct so that
+// it never matches), required exactly once, and evaluated per status the same way. Keyed `<status>`.
+function planStatusOf(src) {
+  const flat = strip(src)
+  const PHRASE = 'where p.deleted_at is null and p.archived_at is null'
+  const at = flat.indexOf(PHRASE)
+  const end = flat.indexOf('`', at)
+  if (at < 0 || end < 0 || flat.includes(PHRASE, at + 1)) throw new Error('the plantings query WHERE is not anchored exactly once')
+  const where = sqlFlat(flat.slice(at, end))
+  const states = Object.fromEntries(STATUSES.map((s) =>
+    [statusName(s), { 'p.deleted_at': false, 'p.archived_at': false, 'p.status': s }]))
+  return admitsByState(where, states, Object.keys(states), new Set(['p.status']))
+}
+
 // Which alias the statement's rows come from is READ, not assumed — `gn` in the handler, `p` in the
 // migration — so the pinned terms are the PLANTING's columns, and `ct.deleted_at is null` is just
 // another free term in the planting pass. Bound more than once would make "the planting" ambiguous,
 // so that throws.
 function liveModelOf(stmt) {
-  const flat = sqlOnly(stmt).replace(/\s+/g, ' ').toLowerCase()
+  const flat = sqlFlat(stmt)
   const bound = [...flat.matchAll(/(?:from|join)\s+(?:\w+\.)?garden_node\s+(?:as\s+)?(\w+)\b/g)].map((b) => b[1])
   if (bound.length !== 1) throw new Error(`expected garden_node bound exactly once in the rain insert, found ${bound.length}`)
   const [alias] = bound
   const planting = Object.fromEntries(Object.entries(STATES).map(([state, set]) =>
     [state, Object.fromEntries(AXES.map((a) => [`${alias}.${a}`, set[a]]))]))
-  return { alias, ...admitsByState(flat, planting, ['live']), container: containerModelOf(flat, alias) }
+  const container = containerModelOf(flat, alias)
+  return { alias, ...admitsByState(flat, planting, ['live']), container, status: statusModelOf(flat, alias, container) }
 }
 
 const HANDLER_STMT = rainInsertOf(HANDLER, '`', 'handler.js')
@@ -309,6 +419,9 @@ describe('OPS-RAININSERTLIVEFILTER-001 / OPS-RAININSERTCONTAINERFILTER-001 — t
     expect(c.left, 'container is no longer LEFT JOINed — a project-less planting gets no rain').toBe(true)
     const ccols = new Set(c.where.pinned.map((t) => t.split(' ')[0]))
     for (const a of AXES) expect(ccols.has(`${c.alias}.${a}`), `the WHERE carries no container ${a} term`).toBe(true)
+    // And the planting's status.
+    expect(HANDLER_MODEL.status.where.pinned.some((t) => t.startsWith(`${HANDLER_MODEL.alias}.status `)),
+      'the WHERE carries no planting-status term').toBe(true)
   })
 
   it('refuses rain to a soft-deleted planting and to an archived one, whatever every other term says', () => {
@@ -327,6 +440,25 @@ describe('OPS-RAININSERTLIVEFILTER-001 / OPS-RAININSERTCONTAINERFILTER-001 — t
     // `leak` names the container state and the free terms under which a live planting in it gets rain.
     expect(c.leak, 'a live planting in a retired container is credited rain whenever these other terms hold').toEqual({})
     expect(c.admits).toEqual(CONTAINER_REFUSED)
+  })
+
+  it('refuses rain to an ended or failed planting and credits a dormant or growing one', () => {
+    const s = HANDLER_MODEL.status
+    expect(s.admits['dormant/live'], 'a dormant planting is refused rain — its resume reads last_water').toBe(true)
+    expect(s.admits['null/none'], 'a planting with no status is refused rain').toBe(true)
+    // `leak` names the status/container and the free terms under which an ended or failed planting gets rain.
+    expect(s.leak, 'an ended or failed planting is credited rain whenever these other terms hold').toEqual({})
+    expect(s.admits).toEqual(STATUS_TABLE(REFUSED_STATUSES))
+  })
+
+  it('refuses exactly the statuses the daily plan refuses — rain goes where the plan looks', () => {
+    // The writer and its one reader that acts on rain, compared status by status, so the two sets
+    // cannot drift apart without this file saying which status moved.
+    const plan = planStatusOf(HANDLER).admits
+    const rain = Object.fromEntries(STATUSES.map((s) =>
+      [statusName(s), HANDLER_MODEL.status.admits[`${statusName(s)}/live`]]))
+    expect(Object.values(plan).some(Boolean), 'the plantings query admits no status at all — the parser has gone dead').toBe(true)
+    expect(rain, 'the rain writer and the plantings query disagree about these statuses').toEqual(plan)
   })
 
   it('reads the filter from the predicate, not its spelling (synthetic WHEREs)', () => {
@@ -431,6 +563,50 @@ describe('OPS-RAININSERTLIVEFILTER-001 / OPS-RAININSERTCONTAINERFILTER-001 — t
     }
   })
 
+  it('reads the status test from the predicate, not its spelling (synthetic WHEREs)', () => {
+    // Same bench for the status pass. L is the planting and container filter, Q the plan's list.
+    const L = 'gn.deleted_at is null and gn.archived_at is null and (ct.id is null or (ct.deleted_at is null and ct.archived_at is null))'
+    const Q = "('ended','failed','dead','archived')"
+    const of = (w) => liveModelOf(
+      `insert into event_log select 1 from garden_node gn left join container ct on ct.id = gn.container_id\n where ${w}`).status
+    const DECIDED = STATUS_TABLE(REFUSED_STATUSES)
+    const SAME = [
+      `${L} and (gn.status is null or gn.status not in ${Q})`,                               // the handler's shape
+      `${L} and (gn.status is null or gn.status not in ('failed','archived','ended','dead'))`,  // order is not meaning
+      `${L} and (gn.status is null or not gn.status in ${Q})`,                               // NOT IN as NOT (IN)
+      `${L} and not (gn.status is not null and gn.status in ${Q})`,                          // De Morgan
+      `${L} and (gn.status is null or (gn.status <> 'ended' and gn.status != 'failed' and gn.status <> 'dead' and gn.status <> 'archived'))`,
+      `${L} AND (GN.STATUS IS NULL OR GN.STATUS NOT IN ${Q})`,                               // keywords are case-blind
+      `${L} and (gn.status is null or not (gn.status = 'ended' or gn.status = 'failed' or gn.status = 'dead' or gn.status = 'archived'))`,
+    ]
+    for (const w of SAME) expect(of(w).admits, w).toEqual(DECIDED)
+    const without = (s) => REFUSED_STATUSES.filter((x) => x !== s)
+    const LEAKS = [
+      [L, STATUS_TABLE([])],                                                                 // dropped
+      ...REFUSED_STATUSES.map((s) => [                                                       // one status removed, each
+        `${L} and (gn.status is null or gn.status not in (${without(s).map((x) => `'${x}'`).join(',')}))`,
+        STATUS_TABLE(without(s))]),
+      [`${L} and not (gn.status is null or gn.status not in ${Q})`,                          // inverted
+        Object.fromEntries(Object.entries(DECIDED).map(([k, v]) => [k, !v]))],
+      [`${L} and gn.status not in ${Q}`, { ...DECIDED, 'null/none': false, 'null/live': false }],  // no NULL arm
+      [`${L} and (gn.status is null or gn.status not in ('failed','ended','dormant'))`,       // the LIVE list
+        STATUS_TABLE(['dormant', 'ended', 'failed'])],
+      [`${L} and (gn.status is null or gn.status not in ${Q.toUpperCase()})`, STATUS_TABLE([])],  // literals are not
+      [`${L} and (gn.status is null or gn.status not in ${Q}) and (gn.status <> 'dormant' or ct.id is null)`,  // why the
+        { ...DECIDED, 'dormant/live': false, 'null/live': false }],                          // container is pinned (and NULL <> x is NULL)
+      [`${L} and (gn.status is null or gn.status not in ${Q}) or x`, STATUS_TABLE([])],      // made optional
+      [`${L}\n --and (gn.status is null or gn.status not in ${Q})`, STATUS_TABLE([])],      // a comment
+    ]
+    for (const [w, admits] of LEAKS) expect(of(w).admits, w).toEqual(admits)
+    for (const w of [
+      `${L} and coalesce(gn.status, 'none') not in ${Q}`,
+      `${L} and (gn.status is null or lower(gn.status) not in ${Q})`,
+      `${L} and (gn.status is null or gn.status not in (select s from gone))`,
+    ]) {
+      expect(() => of(w), w).toThrow(/buried/)
+    }
+  })
+
   it('the v4-rainbackfill-001 backfill applied the same live filter', () => {
     // History, not a live writer — the migration is applied and is never edited. Read here for the
     // same reason rain-roof-rule.test.js reads it: the two writers must not have forked, and a second,
@@ -448,5 +624,7 @@ describe('OPS-RAININSERTLIVEFILTER-001 / OPS-RAININSERTCONTAINERFILTER-001 — t
     expect(migration.container.left).toBe(true)
     expect(migration.container.admits)
       .toEqual({ none: true, live: true, deleted: true, archived: true, deletedAndArchived: true })
+    // Nor any status (BUG-RAINONENDEDPLANTINGS-001 postdates it too) — characterised the same way.
+    expect(migration.status.admits).toEqual(STATUS_TABLE([]))
   })
 })

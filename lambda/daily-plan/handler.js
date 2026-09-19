@@ -1123,7 +1123,8 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
     // rows — they only ever reached display surfaces, where a dug crop showed "Next watering" after each
     // rain. Dormant and every growing status (Harvesting included) are credited as before: a dormant
     // perennial is still in the ground, and its rain becomes last_water when it is resumed. Existing
-    // rows are left alone. The backfill has no status filter either.
+    // rows are left alone. The backfill has no status filter either. rain-live-filter.test.js pins
+    // the set and compares it, status by status, with the plantings query's.
     const { rowCount: inserted } = await pg.query(
       `insert into event_log
          (project_id, location_id, plant_id, event_type, event_date, is_public,
