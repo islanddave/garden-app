@@ -18,6 +18,25 @@
 // sees what the earlier ones wrote. Each run sets the clock to its own ET hour, so every send carries a distinct
 // `at` as it does in prod (mergeAlertsSent's identity is key + at). The unit suite mocks SQL: none of this proves
 // what Postgres does.
+//
+// Also here: OPS-FROSTREHEARSALMARK-001 (every send stores the run slot that made it) and OPS-SPACEALERTSREADLOG-001
+// (frost-eval logs space_sent; scripts/weather-observability.sh meters the fail-open dedup-read WARN).
+//
+// MUTATION LOG — 2026-09-19, lane-frostnightmove-20260919 (harness mutate.py in the lane scratch; each mutation
+// applied alone, 8 files run under TZ=UTC, file restored and sha256 + git status verified). 33/33 RED; every test
+// in this file is killed by at least one. RED counts over the run (this file's share in brackets), at HEAD:
+//   night: axis removed 10 · same night counts (<=) 8 · later escalates 12 · no-night history never escalates 2 ·
+//          latest not earliest 2 · imminent has no night 5 · sentNight reads dayOffset 15 · any non-null nightOffset 1 ·
+//          key-only identity (pre-fix) 8 · night compared for every tier 1 [0; frost-wiring "does NOT re-send when the
+//          same key is already stored"] · night not passed 7 · decision night from dayOffset 7 · entry drops its night
+//          18 [11] · HELD drops night 2 · HELD drops sent nights 1 · HELD identity key-only 2 · guard loosened 1 ·
+//          axis with no night 1
+//   run:   field dropped 3 · constant slot 2 · only on forced 1 · gate reads it 2 · Today client reads it 1 ·
+//          merge identity reads it 1
+//   log:   space_sent dropped 3 · 0 with the flag off 1 · per-Space WARN loses the phrase 2 · per-user WARN loses it 1 ·
+//          filter narrowed 1 · filter broadened 1 · filter removed 2 · sample line drifts 1 · failed read goes silent 2
+// The script's own test-patterns controls were mutated separately (bash -e, a fake aws that emulates a quoted
+// phrase as a substring and touches nothing): 4/4 fail the run, the unmutated control passes.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
