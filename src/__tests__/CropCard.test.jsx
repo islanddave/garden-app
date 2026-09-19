@@ -150,6 +150,34 @@ describe('CropCard — crop-mechanic breadth and derived-cue honesty (V4-RIPECUE
   })
 })
 
+// V5-SEEDCARDS-001 / v5-scovillesource-001 — the SHU chip as it actually paints. CropCard hands the
+// whole variety_ref to shuLabel, so scoville_source reaches the label with no card-side plumbing;
+// these pin that handoff end to end (the formatter's own cases live in varietySpec.test.js).
+describe('CropCard — SHU chip labels an estimate (V5-SEEDCARDS-001)', () => {
+  const pepper = (source) => ({
+    id: 'p',
+    variety_ref: {
+      name: 'Habanero', crop_type_slug: 'pepper', scoville_min: 100000, scoville_max: 350000,
+      ...(source === undefined ? {} : { scoville_source: source }),
+    },
+  })
+
+  it("an 'inference' figure paints as est. … SHU", () => {
+    render(<CropCard planting={pepper('inference')} />)
+    expect(screen.getByText('est. 100K–350K SHU')).toBeTruthy()
+    expect(screen.queryByText('100K–350K SHU')).toBeNull()
+  })
+
+  it('a vendor figure, and a figure with no source at all, paint exactly as before', () => {
+    for (const source of ['vendor_catalog', null, undefined]) {
+      const { unmount } = render(<CropCard planting={pepper(source)} />)
+      expect(screen.getByText('100K–350K SHU')).toBeTruthy()
+      expect(screen.queryByText(/^est\. /)).toBeNull()
+      unmount()
+    }
+  })
+})
+
 // V4-MATURITYREPEAT-001 (BD-024) — the maturity band as it actually paints for the row this item
 // was filed against. computeMaturity() is called with no `today` here, so the clock is pinned:
 // only `Date` is faked, leaving testing-library's own timers alone.
