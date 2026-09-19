@@ -454,7 +454,11 @@ const MEASURE = (v) => `(() => {
         heat: heat ? whole(heat, lb) : null,
         lineL: R(lb.left), lineR: R(lb.right), slack: fixed.length ? R(lb.right - Math.max(...fixed)) : null,
         // REPORTED: what gives way on a crowded line, by design — chips ellipsised, then where-from/how-old.
-        chipsCut: chips.filter(c => c.scrollWidth > c.clientWidth + 1 || c.getBoundingClientRect().right > lb.right + 0.5).length,
+        // By name: a NEUTRAL chip ("Archived for this season", a status) is meant to give way; the first
+        // chip of a lot in process is not (UX spec §1.3) — printed so the difference is visible. A chip
+        // clipped by the shrinking box that holds the chips counts as cut, even when it did not shrink.
+        chipsCutLabels: chips.filter(c => c.scrollWidth > c.clientWidth + 1 || c.getBoundingClientRect().right > lb.right + 0.5
+          || c.getBoundingClientRect().right > c.parentElement.getBoundingClientRect().right + 0.5).map(c => (c.textContent || '').trim()),
         restW: rest ? R(rest.getBoundingClientRect().width) : null,
         restInkW: rest ? R(rest.scrollWidth) : null,
         clipsContent: line.scrollWidth > line.clientWidth + 1 }
@@ -776,8 +780,8 @@ async function allOpened(v, at, vw, vh) {
   console.log(`${P}: MARGINS — tightest line 2: "${line2Tight ? line2Tight.title.text : '—'}" ${line2Tight ? line2Tight.line.slack : '—'}px between its last never-cut item and the line's end ("${line2Tight ? line2Tight.line.text : ''}") · line 1: the ordinal ends ${line1Tight ? line1Tight.line1.slack : '—'}px before the line's end (the chevron's room; the title gives way, "${line1Tight ? line1Tight.title.text : '—'}" shows ${line1Tight ? line1Tight.title.w : '—'}px of ${line1Tight ? line1Tight.title.inkW : '—'}px)`)
   console.log(`${P}: (j) supplier chips ${Object.entries(chipCount).map(([k, n]) => `${k}×${n}`).join(', ')}, widths ${[...new Set(lr.filter(r => r.line.supplier).map(r => `${r.line.supplier.text} ${r.line.supplier.w}px`))].join(', ')} · (k) heat ${lr.filter(r => r.line.heat).map(r => `"${r.line.heat.text.replace(/^·\s*/, '')}" ${r.line.heat.w}px`).join(', ')} · (i) ordinals ${ordinals.map(r => `"${r.line1.ordinal.text}" ${r.line1.ordinal.w}px beside a ${r.title.w}px title`).join(', ')}`)
   console.log(`${P}: the 44-char row: title ${long.title.w}px column, ink ${long.title.inkW}px, ellipsis ${long.title.ellipsis} · line "${long.line.text}" ${long.line.h}px/${long.line.oneLineH}px, chips [${long.line.chipLabels.join(' | ')}], amount "${long.line.amount.text}" ${long.line.amount.w}px (whole: ${!!(long.line.amount.inLine && !long.line.amount.cut)}), rest ${long.line.restW}px of ${long.line.restInkW}px ink`)
-  const gave = lr.filter(r => r.line.chipsCut > 0 || (r.line.restW != null && r.line.restInkW > r.line.restW + 1))
-  console.log(`${P}: [REPORTED — gives way by design, the never-cut items asserted whole in (g)(i)(j)(k)] ${gave.length} row(s) whose chips or where-from/how-old are ellipsised at this width: ${gave.map(r => `"${r.title.text}" (${r.line.chipsCut} chip(s) cut, rest ${r.line.restW}px of ${r.line.restInkW}px)`).join('; ') || 'none'}`)
+  const gave = lr.filter(r => r.line.chipsCutLabels.length > 0 || (r.line.restW != null && r.line.restInkW > r.line.restW + 1))
+  console.log(`${P}: [REPORTED — gives way by design, the never-cut items asserted whole in (g)(i)(j)(k)] ${gave.length} row(s) whose chips or where-from/how-old are cut at this width: ${gave.map(r => `"${r.title.text}" (${r.line.chipsCutLabels.length ? `chip(s) cut: ${r.line.chipsCutLabels.map(c => `"${c}"`).join(', ')}` : 'no chip cut'}, rest ${r.line.restW}px of ${r.line.restInkW}px)`).join('; ') || 'none'}`)
 
   // ── (l) again — once every packet image has loaded or failed. Released, then the page is scrolled
   // to its end so the image window (24 rows a page) mounts the tail's photos too.
