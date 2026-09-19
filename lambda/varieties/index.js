@@ -135,6 +135,13 @@ async function checkRateLimit(sql, actor, bucketKey, limit) {
   return rows.length > 0;
 }
 
+// BUG-VARIETIESLIMIT500-001 — the list cap, shared by both GET list branches. It was LIMIT 500 against
+// 495 live cultivars (2026-09-18): the unsearched list is what VarietyPicker and header Search filter
+// client-side, so the alphabetically-last cultivars would have vanished from both with no error.
+// 2000 leaves years of headroom and keeps a full page (~1.3 kB/row projected) far under Lambda's
+// 6 MB response limit. Hitting it logs to CloudWatch rather than truncating in silence.
+export const VARIETY_LIST_CAP = 2000
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
@@ -792,7 +799,7 @@ export const handler = async (event) => {
     }
 
     if (method === 'GET') {
-      // List + search. ?q= → ILIKE on name. Max 50 results.
+      // List + search. ?q= → ILIKE on name, both capped at VARIETY_LIST_CAP.
       // Globally readable — no created_by filter.
       const q = event.queryStringParameters?.q ?? null;
       const rows = q
@@ -824,7 +831,7 @@ export const handler = async (event) => {
             WHERE deleted_at IS NULL
               AND LOWER(display_name) LIKE ${'%' + q.toLowerCase() + '%'}
             ORDER BY display_name ASC
-            LIMIT 500
+            LIMIT ${VARIETY_LIST_CAP}::int
           `
         : await sql`
             SELECT id, display_name AS name, species, genus,
@@ -845,8 +852,11 @@ export const handler = async (event) => {
             FROM public.cultivar
             WHERE deleted_at IS NULL
             ORDER BY display_name ASC
-            LIMIT 500
+            LIMIT ${VARIETY_LIST_CAP}::int
           `;
+      // A full page means rows may have been dropped: the unsearched list is what the variety picker
+      // and header Search filter on the client, so a cultivar past the cap is simply missing there.
+      if (rows.length >= VARIETY_LIST_CAP) console.error('varieties list hit VARIETY_LIST_CAP', VARIETY_LIST_CAP, q ? '(search)' : '(unsearched)');
       return resp(200, rows);
     }
 
