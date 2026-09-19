@@ -186,11 +186,20 @@ describe('GET /api/plants — the DEFAULT response shape is unchanged (V4-PLANTS
     expect(apiKeys(SCOPED_SQL).sort()).toEqual([...DEFAULT_KEYS].sort());
   });
 
-  it('both default branches still carry all 21 variety_ref subfields, prose included', () => {
+  // 21 -> 22 (V5-SEEDCARDS-001, v5-scovillesource-001): scoville_source joins the two scoville
+  // numbers, because CropCard's SHU chip reads all three off this object and labels an inference
+  // figure "est. ... SHU". A DELIBERATE widening of the two default branches only — grid and picker
+  // carry no scoville numbers, so they gain no source, and their exact-set pins below keep that true.
+  it('both default branches still carry all 22 variety_ref subfields, prose included', () => {
     for (const [label, q] of [['unscoped', UNSCOPED_SQL], ['scoped', SCOPED_SQL]]) {
       const keys = varietyRefKeys(q);
-      expect(keys, `${label} variety_ref subfield count changed`).toHaveLength(21);
+      expect(keys, `${label} variety_ref subfield count changed`).toHaveLength(22);
       for (const k of ['care_notes', 'soil_notes', 'common_diseases', 'expected_yield_notes', 'growth_habit', 'source_url']) {
+        expect(keys, `${label} variety_ref lost ${k} from the DEFAULT shape`).toContain(k);
+      }
+      // The pair travels together: numbers without their source would put an estimate on screen
+      // with the authority of a supplier figure.
+      for (const k of ['scoville_min', 'scoville_max', 'scoville_source']) {
         expect(keys, `${label} variety_ref lost ${k} from the DEFAULT shape`).toContain(k);
       }
     }
@@ -223,7 +232,7 @@ describe('GET /api/plants?view=grid — exactly the grid field set (V4-PLANTSPAY
     }
   });
 
-  it('variety_ref carries exactly name + crop_type_slug — 2 of the 21 subfields', () => {
+  it('variety_ref carries exactly name + crop_type_slug — 2 of the 22 subfields', () => {
     // 43.4% of the DB body is variety_ref and 25.1% of it is the six prose fields, none of which is
     // reachable from a tile. This is the single largest term the projection removes.
     expect(varietyRefKeys(GRID_SQL).sort()).toEqual(['crop_type_slug', 'name']);

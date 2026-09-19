@@ -53,11 +53,17 @@ const HANDLERS = readdirSync(__dirname)
 // here. This is a COLUMN added to an existing keyed relation, not a new relation: the L-081 ratchet
 // says a new relation gets its own contract file and the baseline is never raised, and neither of
 // those applies to widening the cultivar list this file already owns.
+// 2026-09-19 (V5-SEEDCARDS-001): scoville_source added, carried in the three variety_ref blocks
+// that carry scoville_min/max so CropCard can label an estimated figure "est. ... SHU". Same kind of
+// widening as breeding_system above, with one difference that matters: it is NOT YET ON PROD. It
+// arrives with migrations/v5-scovillesource-001, which appends it to the cultivar VIEW and must be
+// applied to staging and prod before this reaches dev; until then dev-main-schema-audit.py reports
+// exactly this column missing from prod, which is the ordering guard working.
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  cultivar: ['breeding_system', 'care_notes', 'common_diseases', 'crop_type_slug', 'days_to_maturity_max', 'days_to_maturity_min', 'deleted_at', 'display_name', 'dtm_basis', 'expected_yield_notes', 'genus', 'growth_habit', 'id', 'lifecycle', 'photo_id', 'scoville_max', 'scoville_min', 'soil_notes', 'source_url', 'species', 'sun_requirements'],
+  cultivar: ['breeding_system', 'care_notes', 'common_diseases', 'crop_type_slug', 'days_to_maturity_max', 'days_to_maturity_min', 'deleted_at', 'display_name', 'dtm_basis', 'expected_yield_notes', 'genus', 'growth_habit', 'id', 'lifecycle', 'photo_id', 'scoville_max', 'scoville_min', 'scoville_source', 'soil_notes', 'source_url', 'species', 'sun_requirements'],
 };
 
 const CULTIVAR_COLUMNS = AUDIT_COLUMNS.cultivar;

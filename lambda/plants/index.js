@@ -656,7 +656,11 @@ export const handler = async (event) => {
                      'sun_requirements', pv.sun_requirements,
                      'common_diseases', pv.common_diseases,
                      'expected_yield_notes', pv.expected_yield_notes,
-                     'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', COALESCE(pv.dtm_basis, ct.dtm_basis), 'default_unit', ct.default_unit, 'harvest_habit', ct.harvest_habit,
+                     -- scoville_source (v5-scovillesource-001) rides WITH the two numbers in every block that
+                     -- carries them: the CropCard SHU chip labels an inference figure est. ... SHU so a best
+                     -- guess never reads as a supplier figure. One short enum string, and unlike
+                     -- breeding_source below it has a renderer, so it earns its bytes on this object.
+                     'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'scoville_source', pv.scoville_source, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', COALESCE(pv.dtm_basis, ct.dtm_basis), 'default_unit', ct.default_unit, 'harvest_habit', ct.harvest_habit,
                      -- V5-VARIETYHYBRIDFLAG-001 reader half. SaveSeedSheet warns before saving seed
                      -- from an F1, and variety_ref is what it has in hand at save time (design
                      -- V101 section 7.3). breeding_system ONLY: the sheet reads no other breeding
@@ -1653,7 +1657,7 @@ export const handler = async (event) => {
                        'sun_requirements', pv.sun_requirements,
                        'common_diseases', pv.common_diseases,
                        'expected_yield_notes', pv.expected_yield_notes,
-                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', COALESCE(pv.dtm_basis, ct.dtm_basis), 'default_unit', ct.default_unit, 'harvest_habit', ct.harvest_habit
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'scoville_source', pv.scoville_source, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', COALESCE(pv.dtm_basis, ct.dtm_basis), 'default_unit', ct.default_unit, 'harvest_habit', ct.harvest_habit
                      )
                    ELSE NULL END AS variety_ref
             FROM public.garden_node p
@@ -1764,7 +1768,7 @@ export const handler = async (event) => {
                        'sun_requirements', pv.sun_requirements,
                        'common_diseases', pv.common_diseases,
                        'expected_yield_notes', pv.expected_yield_notes,
-                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', COALESCE(pv.dtm_basis, ct.dtm_basis), 'default_unit', ct.default_unit, 'harvest_habit', ct.harvest_habit
+                       'photo_id', pv.photo_id, 'source_url', pv.source_url, 'scoville_min', pv.scoville_min, 'scoville_max', pv.scoville_max, 'scoville_source', pv.scoville_source, 'growth_habit', pv.growth_habit, 'lifecycle', pv.lifecycle, 'crop_type_slug', pv.crop_type_slug, 'dtm_basis', COALESCE(pv.dtm_basis, ct.dtm_basis), 'default_unit', ct.default_unit, 'harvest_habit', ct.harvest_habit
                      )
                    ELSE NULL END AS variety_ref
             FROM public.garden_node p
