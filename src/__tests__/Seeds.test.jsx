@@ -416,6 +416,55 @@ describe('Seeds — the view is the URL, so it survives a trip away and back', (
   })
 })
 
+// §5.2 / §4.3 / §4.6 on the Saved seeds view. Two arrivals put a lot on screen and outline it: the URL's
+// `?lot=` (Planting → Save seed with a stage, and the detail page's stage link, both land here), and a
+// save made from the shell's + Save seed. The second one can land under a crop chip that hides it.
+describe('Seeds › Saved seeds — a lot the page is told about is brought into sight and outlined', () => {
+  const outlined = (id) => document.querySelector(`[data-lot-id="${id}"]`)?.getAttribute('data-outlined')
+
+  it('arriving at ?view=saved&lot=<id> outlines that card', async () => {
+    seedRows = [DRYING, STORED]
+    mount(['/today', '/seeds?view=saved&lot=lot-dry'])
+    await waitFor(() => expect(screen.getByTestId('saved-seeds-view')).toBeTruthy())
+    await waitFor(() => expect(outlined('lot-dry')).toBe('true'))
+    // Only that card: the other lot on the page is not.
+    expect(outlined('lot-stored')).toBeNull()
+  })
+
+  it('a save whose lot a crop chip hides clears the chip, says so, and outlines the lot', async () => {
+    // Two crops among the tracked lots, so the chip row renders. FERMENTING is day 1 — not urgent, so
+    // the pepper chip really does hide it (an overdue ferment survives any filter by design).
+    seedRows = [DRYING, FERMENTING]
+    mount(['/seeds?view=saved'])
+    await waitFor(() => expect(screen.getByTestId('tracked-crop-filter')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(within(screen.getByTestId('tracked-crop-filter')).getByRole('button', { name: /Pepper/ }))
+    })
+    expect(document.querySelector('[data-lot-id="lot-ferm"]')).toBeNull()
+    expect(screen.queryByTestId('saved-filter-cleared')).toBeNull()
+
+    // + Save seed from the header, and the new lot is a tomato the chip would hide.
+    await act(async () => { fireEvent.click(screen.getByTestId('seeds-save-seed')) })
+    const NEW = lot({
+      id: 'lot-new', name: 'Cherokee Purple — saved 2026', variety_name: 'Cherokee Purple', crop_slug: 'tomato',
+      seed_stage: 'fermenting', seed_process: 'wet', stage_entered_at: daysAgo(0),
+    })
+    seedRows = [DRYING, FERMENTING, NEW]
+    await act(async () => { saveSheetProps.current.onClose(); saveSheetProps.current.onSaved(NEW, { stageWritten: 'fermenting' }) })
+
+    await waitFor(() => expect(screen.getByTestId('saved-filter-cleared').textContent).toBe('Showing all · Cherokee Purple'))
+    await waitFor(() => expect(outlined('lot-new')).toBe('true'))
+    // The chip was cleared, not the lot let through alone: the other tomato is back too.
+    expect(document.querySelector('[data-lot-id="lot-ferm"]')).toBeTruthy()
+  })
+
+  // Found by lane T4 (report: _crucible_seedstab_20260918/build-20260918/lane-t4-report.md). Kept out as
+  // a todo because the fix is in SavedSeeds.jsx: its useLotOutline `ready` is `items != null`, so after a
+  // save the outline (and its one scrollIntoView) fires BEFORE the reload brings the new card in, and
+  // nothing scrolls to it when it lands. My seeds waits for the row (`ready` includes it) and does scroll.
+  it.todo('Saved seeds scrolls a just-saved lot into view once a SLOW reload lands (§4.6) — DEFECT, SavedSeeds.jsx useLotOutline ready')
+})
+
 describe('Seeds — every view sees the others’ writes without a reload', () => {
   it('a stage moved in Saved seeds is what My seeds shows next', async () => {
     seedRows = [DRYING]
@@ -445,6 +494,47 @@ describe('Seeds — every view sees the others’ writes without a reload', () =
       const line = document.querySelector('[data-lot-id="pkt-1"] [data-testid="my-seed-line"]')
       expect(line?.textContent).toContain('Archived for this season')
     })
+    expect(seedGets()).toBe(1)
+  })
+
+  it('a sow on Sow now is still "Sown ✓" after a trip to My seeds and back, and does not refetch the seed rows', async () => {
+    // §5.3: "Sown ✓" lives in the shell, because switching views unmounts Sow now and a confirmation
+    // held there died with it — the packet sown seconds ago was offered again. And §12: a sow changes
+    // no inventory row, so it must not reload the ~330-row seed list.
+    seedRows = [BOUGHT]
+    // start_method indoors_only is sowable inside on any date, so the card carries Sow whatever day
+    // this runs (sowEngine: the indoor-only overlay → sow_inside_anytime, an actionable bucket).
+    candidates = [{
+      inventory_item_id: 'pkt-1', item_name: 'Sungold', variety_name: 'Sungold', variety_id: 'v-b',
+      quantity_on_hand: '1', unit: 'packet', crop_type_slug: 'tomato', lifecycle: 'annual',
+      start_method: 'indoors_only', sun_requirements: 'full_sun',
+    }]
+    const base = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((path, opts) => {
+      const p = String(path)
+      // The Sow sheet's editor reads the packet (its name fills the required Name field) and the places.
+      if (!opts?.method && p === '/api/inventory-items/pkt-1') return Promise.resolve({ id: 'pkt-1', name: 'Sungold', metadata: {} })
+      if (!opts?.method && p === '/api/projects') return Promise.resolve([{ id: 'proj-1', name: 'Garden' }])
+      if (opts?.method === 'POST' && p === '/api/plants') return Promise.resolve({ id: 'plant-1' })
+      return base(path, opts)
+    })
+    mount(['/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sow Sungold' })).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Sow Sungold' })) })
+    const sheet = screen.getByRole('dialog', { name: /Sow Sungold/ })
+    await waitFor(() => expect(within(sheet).getByDisplayValue('Sungold')).toBeTruthy())
+    await act(async () => { fireEvent.click(within(sheet).getByRole('button', { name: /Add planting/i })) })
+    await waitFor(() => expect(fetchSpy.mock.calls.some(([p, o]) => p === '/api/plants' && o?.method === 'POST')).toBe(true))
+    await waitFor(() => expect(screen.getByText('Sown ✓')).toBeTruthy())
+
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'My seeds' })) })
+    await waitFor(() => expect(screen.getByTestId('my-seeds-view')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'Sow now' })) })
+    await waitFor(() => expect(screen.getByTestId('sow-now-view')).toBeTruthy())
+    // Sow now refetched its own candidates on remount (parity) — wait for the card, then read it.
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
+    expect(screen.getByText('Sown ✓')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Sow Sungold' })).toBeNull()
     expect(seedGets()).toBe(1)
   })
 
