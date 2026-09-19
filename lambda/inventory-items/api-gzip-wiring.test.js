@@ -36,10 +36,17 @@ describe('/api/inventory-items responds through the shared negotiated-gzip respo
   });
 
   it('resp is bound inside the handler before its first use, including the OPTIONS short-circuit', () => {
+    // The first use is searched from the START of the handler, not from the binding: searching after
+    // the binding can never find a use that comes before it (a binding moved below the auth block
+    // passes that way while every 401 path throws in the temporal dead zone — QA mutant L15).
+    const handlerAt = SRC.indexOf('export const handler');
     const bind = SRC.indexOf('const resp = jsonResponder(event, CORS);');
-    const firstUse = SRC.indexOf('resp(', bind + 1);
+    const use = /\bresp\(/g;
+    use.lastIndex = handlerAt;
+    const firstUse = use.exec(SRC)?.index ?? -1;
     expect(bind, 'jsonResponder binding must exist').toBeGreaterThan(-1);
+    expect(firstUse, 'the handler never calls resp(').toBeGreaterThan(-1);
     expect(bind).toBeLessThan(firstUse);
-    expect(bind).toBeGreaterThan(SRC.indexOf('export const handler'));
+    expect(bind).toBeGreaterThan(handlerAt);
   });
 });

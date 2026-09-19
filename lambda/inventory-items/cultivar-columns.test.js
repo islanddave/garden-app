@@ -162,6 +162,24 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/inventory-items cultivar column con
     }
   });
 
+  it('projects EVERY seed-card fact in each of the three reads (both list templates and by-id)', () => {
+    // V5-SEEDCARDS-001. The same union blind spot, for the rest of the facts My seeds' expanded row
+    // and the packet card show: a fact dropped from ONE read stays green above while that surface
+    // shows it as absent. Pinned per statement (the pre-promote QA pass's mutants L6-L8 survived
+    // the whole lambda/ suite without this).
+    const FACTS = [
+      /\bpv\.scoville_min\b/, /\bpv\.scoville_max\b/, /\bpv\.scoville_source\b/,
+      /\bpv\.origin_country\b/, /\bpv\.origin_region\b/, /\bpv\.species\b/, /\bpv\.breeding_system\b/,
+      /\bpv\.days_to_maturity_min\b/, /\bpv\.days_to_maturity_max\b/, /\bpv\.dtm_basis\b/,
+      /\bpv\.source_url\s+AS\s+variety_source_url\b/, /\bpv\.crop_type_slug\s+AS\s+crop_slug\b/,
+    ];
+    const withNumbers = STATEMENTS.filter(({ sql }) => /\bpv\.scoville_(?:min|max)\b/.test(sql));
+    expect(withNumbers).toHaveLength(3);
+    for (const { file, sql } of withNumbers) {
+      for (const re of FACTS) expect(sql, `${file}: a seed read is missing ${re}`).toMatch(re);
+    }
+  });
+
   it('never reaches for a column that belongs to another table', () => {
     // cultivar is a VIEW over plant_varieties (verified against prod: pg_get_viewdef reads
     // `SELECT id, name AS display_name, ... FROM plant_varieties`), and these five are exactly the

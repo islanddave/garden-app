@@ -141,6 +141,16 @@ describe('W-HERO — every hero-resolving read DERIVES the effective hero', () =
       // would blank a cover photo instead of healing it.
       expect(sql, `hero read with no fallback LATERAL:\n${sql}`)
         .toMatch(/LEFT JOIN LATERAL[\s\S]*\)\s*fb\s+ON\s+TRUE/i);
+
+      // (e) NEWEST FIRST. The fallback is "the parent's newest live photo"; an ORDER BY flipped to
+      // ASC, or keyed on another column, silently changes which photo every parent without an
+      // explicit pointer shows (306 of 327 seed lots on 2026-09-19). QA mutant L12 survived the
+      // whole lambda/ suite before this clause. "Newest" is upload time, or capture time falling back
+      // to upload time (fetchSpaceHero) — both are newest-first; anything else is not.
+      const newestFirst = photoAliasesOf(sql).some((a) => new RegExp(
+        `ORDER BY\\s+(?:${a}\\.created_at|COALESCE\\(\\s*${a}\\.taken_at\\s*,\\s*${a}\\.created_at\\s*\\))\\s+DESC`,
+      ).test(sql));
+      expect(newestFirst, `hero read whose fallback is not newest-first:\n${sql}`).toBe(true);
     }
   });
 
