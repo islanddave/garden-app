@@ -19,6 +19,16 @@
 // the old pairing line took down every evaluating run during an Open-Meteo outage, imminent tier included).
 //
 // Run under TZ=UTC and TZ=America/New_York. Every date here is a label; nothing should move with the zone.
+//
+// MUTATION LOG — 2026-09-19, lane-radiativefix-20260919. Each applied alone to frostEval.js / radiativeFrost.js; the
+// 11 frost test files (362 tests) run under BOTH zones; file restored and sha256-checked against HEAD. All RED, same
+// tests in both zones; every test in this file is killed by at least one. RED counts over the 362:
+//   pairing reverted to night D-1 (the defect) 15 · located ignored, always the fallback 13 · fallback judges only D-1
+//   6 / only D 9 · located also unions 10 · mostPermissiveNight: highest dewpoint 3 / tie -> later 1 / ignores
+//   `radiative` 5 / first candidate always 7 / nothing trippable -> null 2 · candidates reversed 2 · fallback names the
+//   base-rate night 3 · located copy re-based 'radiative' 4 · nightOffset always day-1 4 · line drops the night 10 /
+//   constant basis 7 · no-date guard removed (the crash) 48 · flag gate removed 1 · pairing from the gated view 1 ·
+//   threshold branch reads the night first 7.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import fe from './frostEval.js';
 import rf from './radiativeFrost.js';

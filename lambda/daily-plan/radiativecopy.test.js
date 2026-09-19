@@ -15,6 +15,14 @@
 //
 // Every decision here comes out of the real frostEval, and every subject out of the real handler.frostSubject.
 // Run under TZ=UTC and TZ=America/New_York.
+//
+// MUTATION LOG — 2026-09-19, lane-radiativefix-20260919. Each applied alone to frostEval.js / handler.js; the 11 frost
+// test files (362 tests) run under BOTH zones; restored and sha256-checked against HEAD. All RED, same tests in both
+// zones; every test in this file is killed by at least one. RED counts over the 362:
+//   body label reverted 16 · subject label reverted 7 · subject "watch" for every advisory 19 · subject reads the flag
+//   before the tier 1 · record never flagged 8 · every advisory flagged 17 · flag from the unfiltered set 1 · the watch
+//   changes the level 2 · same-night wording never used 6 / always used 3 / keyed on dayOffset 3 / keyed on the
+//   base-rate night 3.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import fe from './frostEval.js';
 import h from './handler.js';
