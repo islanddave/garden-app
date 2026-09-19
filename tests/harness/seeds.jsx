@@ -28,7 +28,7 @@
 // putupclose.jsx), no controls, and exactly the real heights, and the gate checks those heights.
 //
 // FIXTURE — the brief's shape, and each property is here to exercise a named check:
-//   · 28 seed rows over 8 crops, pepper-dominant then tomato, with a tail — the prod distribution's
+//   · 30 seed rows over 8 crops, pepper-dominant then tomato, with a tail — the prod distribution's
 //     shape (pepper 103 and tomato 52 of 327 on 2026-09-19), scaled down. Pepper and Tomato are the
 //     two most-counted crops, so they are the crop chips pinned in the chip row AND the first two
 //     folded headers (UX spec §3.2: pinned crops first, then A→Z).
@@ -61,10 +61,23 @@
 //   · A used-up packet (quantity 0), which My seeds files under "Sowed previously".
 //   · An identical pair (same cultivar, vendor, year and count) with a LONG name, so line 1 carries
 //     the ordinal ("1 of 2 identical") beside a title that has to ellipsise to make room for it.
+//   · THE SHRINK ORDER (UX spec §1.3: the supplier chip, the amount and a live state chip are never
+//     cut; then the heat is dropped whole; then neutral chips ellipsise; the tail is cut first) —
+//     one row per step that a crowded line takes, both peppers, both forced at 360 AND 390:
+//       "Hot Paper Lantern", a saved lot DRYING with "approx. 1200 seeds · 12.5 g" and an estimated
+//       heat: the live "Drying" chip and the amount fill the line, so the heat must go, whole (the
+//       lane brief counted four such lots on prod, 2026-09-19: drying peppers with a seed measure
+//       and a heat figure, whose "Drying" chip the old line clipped);
+//       "Hungarian Hot Wax", an ARCHIVED Sandia packet, 2 packets, with a heat figure: the heat fits
+//       only if "Archived for this season" gives way — so the chip ellipsises and the heat stays. Its
+//       heat is a SHORT one on purpose ("5K–15K SHU"): the row keeps ~45px of the chip at 360 on the
+//       Mac, so a font ~20% wider still fits the heat, and a CI run can never drop it for width alone
+//       (a "100K–350K SHU" there left 23.5px — gone at ~10% wider text, a false shrink-order red).
 //   · A retired packet (status chip), a seeds-each packet, an ounce-unit packet, a drying lot, a
 //     second fermenting lot at day 1 (under the warn threshold, so exactly ONE ferment is due), and
-//     a stored saved lot with a counted yield. Saved seeds counts four saved lots in three stages;
-//     no saved lot is added here, so that view's own expectations do not move.
+//     a stored saved lot with a counted yield. Saved seeds counts FIVE saved lots in three stages
+//     (the drying Hot Paper Lantern is the fifth); gate:seeds-saved has its own harness and does
+//     not move.
 //
 // DATES are relative to the run, like seedssaved.jsx, and stage dates are pinned to MID-DAY Eastern:
 // elapsedDays() counts CALENDAR days in Eastern (seedLots.js), so an instant 5x24h ago read at 00:30
@@ -197,6 +210,16 @@ const ROWS = [
     days_to_maturity_min: 90, days_to_maturity_max: 100,
     variety_source_url: 'https://en.wikipedia.org/wiki/Aji_charapita', ...photo('square'),
   }),
+  // THE TWO SHRINK-ORDER ROWS (UX spec §1.3) — each forces one step of how line 2 gives way:
+  seed('Hot Paper Lantern', 'pepper', {                                     // drying, counted AND weighed: no room for its heat
+    name: 'Hot Paper Lantern — saved 2026', seed_stage: 'drying', seed_process: 'wet',
+    stage_entered_at: stageDaysAgo(2), source_plant_id: 'pl-lantern',
+    seed_count: 1200, seed_count_estimated: true, seed_weight_g: 12.5,
+    ...heat(150000, 325000), species: 'Capsicum chinense',
+  }),
+  bought('Hungarian Hot Wax', 'pepper', 'src-sandia', '2026-02-11', {       // archived, 2 packets, with heat
+    quantity_on_hand: 2, sow_archived_season: YEAR, ...heat(5000, 15000), ...annuum,
+  }),
   // tomato
   seed('1884', 'tomato', {                                                  // stored, with its counted yield
     name: 'Porch 1884, big jar', seed_stage: 'stored', stage_entered_at: stageDaysAgo(20),
@@ -235,6 +258,7 @@ const PLANTINGS = [
   { id: 'pl-money', name: 'Money Plant by the porch', quantity: 1, variety_id: null, variety_ref: null, sown_at: null, succession_order: null },
   { id: 'pl-cherokee', name: 'Cherokee Purple, bed 3', quantity: 2, variety_id: null, variety_ref: null, sown_at: '2026-04-20', succession_order: 1 },
   { id: 'pl-charapita', name: 'Aji Charapita pot', quantity: 1, variety_id: null, variety_ref: null, sown_at: '2026-03-02', succession_order: null },
+  { id: 'pl-lantern', name: 'Hot Paper Lantern, bed 2', quantity: 1, variety_id: null, variety_ref: null, sown_at: '2026-03-02', succession_order: null },
 ]
 
 // v_sow_candidates rows for the Sow now view: the ACTIVE rows, keyed the way the view keys them, with

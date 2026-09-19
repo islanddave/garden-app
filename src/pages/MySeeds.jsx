@@ -579,12 +579,18 @@ function hostOf(url) {
 // One packet or lot. Tap expands in place, as Inventory rows did.
 function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, onToggle, onGoToLot }) {
   const chips = stateChips(item)
-  // Line 2, in order: the supplier chip (never cut), the state chips (the first one, a lot's live
-  // state, stays whole; later ones ellipsise), the amount (never cut; "1 packet" is not printed), the
-  // heat (whole or absent), then the tail — origin words and how old — which is cut first.
+  // Line 2, in order: the supplier chip, the state chips, the amount ("1 packet" is not printed), the
+  // heat, then the tail — origin words and how old. What gives way first on a crowded line is set by
+  // the styles below (giveWayBox), not by this order. The FIRST chip is a lot's live state when its
+  // tone says so (fermenting, drying) and never gives way; every later chip is neutral bookkeeping.
+  const live = chips[0] && chips[0].tone !== 'neutral' ? chips[0] : null
+  const neutral = live ? chips.slice(1) : chips
   const amount = howMuch(item)
   const heat = rowHeat(item)
   const tail = [originNote(item), howOld(item)].filter(Boolean).join(' · ')
+  // A chip anywhere on the line makes it one chip tall; a line with nothing to print stays empty.
+  const chipTall = !!vendor || chips.length > 0
+  const hasLine = chipTall || !!(amount || heat || tail)
   const inProcess = isInProcess(item)
   const colors = vendor ? supplierColors(vendor) : null
   const photo = useMemo(
@@ -626,19 +632,30 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
             <span aria-hidden="true" style={chevronStyle}>{expanded ? '▾' : '▸'}</span>
           </span>
           <span data-testid="my-seed-line" style={lineStyle}>
-            {vendor && <SupplierChip name={vendor} data-testid="my-seed-supplier" style={{ marginRight: 6 }} />}
-            {chips.length > 0 && (
-              <span style={chipsBox}>
-                {chips.map((c, n) => (
-                  <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" style={n === 0 && c.tone !== 'neutral' ? firstChipStyle : chipStyle}>
-                    {c.label}
-                  </Badge>
-                ))}
-              </span>
+            {hasLine && (
+              <>
+                {vendor && <SupplierChip name={vendor} data-testid="my-seed-supplier" style={{ marginRight: 6 }} />}
+                {live && (
+                  <Badge tone={live.tone} data-testid="my-seed-chip" data-tone={live.tone} style={liveChipStyle}>{live.label}</Badge>
+                )}
+                <span style={giveWayBox}>
+                  <span style={giveWayFlow}>
+                    <LineStrut chip={chipTall} />
+                    {neutral.length > 0 && (
+                      <span style={chipsBox}>
+                        {neutral.map((c) => (
+                          <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" data-tone={c.tone} style={chipStyle}>{c.label}</Badge>
+                        ))}
+                      </span>
+                    )}
+                    {amount && <span data-testid="my-seed-amount" style={amountStyle}>{amount}</span>}
+                    {heat && <span data-testid="my-seed-heat" style={heatStyle}>{sep(!!amount)}{heat}</span>}
+                    {tail && <span data-testid="my-seed-rest" style={restStyle}>{sep(!!(amount || heat))}{tail}</span>}
+                  </span>
+                </span>
+                <LineStrut chip={chipTall} />
+              </>
             )}
-            {amount && <span data-testid="my-seed-amount" style={amountStyle}>{amount}</span>}
-            {heat && <span data-testid="my-seed-heat" style={heatStyle}>{sep(!!amount)}{heat}</span>}
-            {tail && <span data-testid="my-seed-rest" style={restStyle}>{sep(!!(amount || heat))}{tail}</span>}
           </span>
         </span>
       </button>
@@ -660,6 +677,20 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
         </div>
       )}
     </div>
+  )
+}
+
+// What holds line 2 open: the facts that give way sit in an absolutely positioned flow that adds no
+// height, so the line gets it from an invisible stand-in. With a chip on the row, that is the chips'
+// own Badge with its sideways padding and border taken off and an empty 1lh body — a chip's height by
+// construction, zero wide, no text (the line's textContent is untouched). Without one, it is one text
+// line. Either way the row keeps the height it had: 58px with a chip, 54 without.
+function LineStrut({ chip }) {
+  if (!chip) return <span aria-hidden="true" style={textStrut} />
+  return (
+    <Badge aria-hidden="true" style={chipStrut}>
+      <span style={oneLineTall} />
+    </Badge>
   )
 }
 
@@ -744,18 +775,44 @@ const lineStyle = {
   display: 'flex', alignItems: 'center', minWidth: 0, fontSize: T.type.xs2, color: P.mid,
   whiteSpace: 'nowrap', overflow: 'hidden',
 }
-// Shrink order on a crowded line: `rest` has a 0 basis, so it only ever gets what is left over and is
-// the first thing cut; then the later chips (ellipsised); the supplier chip, a live state chip, the
-// amount and the heat never shrink. No flex gap on the line: the chips carry their own margin, and the
-// facts open with a NON-BREAKING space so "2 packets · 30K–50K SHU" reads as one phrase.
-const chipsBox = { display: 'flex', gap: 6, minWidth: 0, flex: '0 1 auto', overflow: 'hidden', marginRight: 6 }
+// LINE 2 GIVES WAY IN A FIXED ORDER (UX spec §1.3), from never cut to cut first:
+//   1. never cut: the supplier chip, the amount, and the first state chip when it is a lot's LIVE
+//      state (tone info, warn or danger: fermenting, drying) — and the ordinal, on line 1;
+//   2. then the heat, dropped WHOLE — never partly shown: a cut Scoville number is a wrong number;
+//   3. then the neutral chips ("Archived for this season", a status, "Not started"), ellipsised;
+//   4. cut first: the tail (where from · how old).
+// The supplier and live chips are the line's own rigid items. Everything else sits in giveWayBox: a
+// clipped box whose absolutely positioned child is a WRAPPING flex row with a huge row gap, so an item
+// that does not fit on the first line wraps to a second one far below the clip — hidden whole, never
+// sliced. In that row the neutral chips' box has a 0 basis, so it never pushes the heat off the line,
+// and a 1000 grow capped at its own content, so it takes the free space before the tail does; the
+// amount and the heat are rigid; the tail has a 0 basis and ellipsises. The ORDER does the rest: the
+// amount comes before the heat, so the heat wraps first, and the tail after the heat, so a dropped heat
+// takes its " · " and the tail with it — no separator is ever left dangling. `clip`, not `hidden`, so
+// nothing (find-in-page, a focus) can scroll the wrapped line into view. No flex gap on either row:
+// the chips carry their own margin, and the facts open with a NON-BREAKING space so "2 packets ·
+// 30K–50K SHU" reads as one phrase. The flow adds no height; LineStrut holds the line.
+const giveWayBox = { flex: '1 1 0', minWidth: 0, alignSelf: 'stretch', position: 'relative', overflow: 'clip' }
+const giveWayFlow = {
+  position: 'absolute', inset: 0, display: 'flex', flexWrap: 'wrap', alignContent: 'flex-start', alignItems: 'center',
+  rowGap: 100, columnGap: 0,
+}
+const chipsBox = { display: 'flex', gap: 6, flex: '1000 1 0', minWidth: 0, maxWidth: 'max-content', overflow: 'hidden', marginRight: 6 }
 const chipStyle = {
   display: 'block', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: T.type.xs,
 }
-const firstChipStyle = { ...chipStyle, flex: '0 0 auto', maxWidth: '100%' }
+const liveChipStyle = { ...chipStyle, flex: '0 0 auto', maxWidth: '100%', marginRight: 6 }
 const amountStyle = { flex: '0 0 auto', whiteSpace: 'nowrap' }
 const heatStyle = { flex: '0 0 auto', whiteSpace: 'nowrap', color: P.dark }
 const restStyle = { flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+// LineStrut's pieces. `1lh` is one line box of the element's own font and line-height — Badge's 1.4 at
+// the chips' size for the chip stand-in, the line's own for the text one.
+const oneLineTall = { display: 'block', width: 0, height: '1lh' }
+const textStrut = { ...oneLineTall, flex: '0 0 auto' }
+const chipStrut = {
+  flex: '0 0 auto', width: 0, paddingLeft: 0, paddingRight: 0, borderLeftWidth: 0, borderRightWidth: 0,
+  fontSize: T.type.xs, visibility: 'hidden',
+}
 const expandedStyle = {
   padding: '10px 12px 12px', borderTop: `1px solid ${P.border}`, display: 'flex', flexDirection: 'column', gap: 10,
 }

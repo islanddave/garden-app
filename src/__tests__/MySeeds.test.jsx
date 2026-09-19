@@ -204,7 +204,11 @@ describe('My seeds — what each card says', () => {
     expect(seen.sort()).toEqual(['1 of 2 identical', '2 of 2 identical'])
   })
 
-  it('the amount is its own span after the chips, so a crowded line cuts chips and the tail, never the amount', async () => {
+  // Line 2's shrink order (UX spec §1.3) is geometry, measured by gate:seeds-page (g)(k)(n); these pin the
+  // structure it rests on. Replaces the pins of "the amount is its own span after the chips" (V102 §12): the
+  // amount outside any chip, the neutral chip in a box that shrinks (not an item of the line), and the order
+  // chips box → amount → tail — plus what changed on purpose: the LIVE chip is now the line's own rigid item.
+  it('line 2 gives way in order: a live chip is a rigid item of the line; neutral chips, amount and tail share the give-way flow', async () => {
     rows = [pkt({
       id: 'crowd', name: 'Big Boy — saved 2026', variety_name: 'Big Boy', seed_stage: 'fermenting', source_plant_id: 'pl',
       seed_count: 120, seed_count_estimated: true, year_harvested: 2026, stage_entered_at: new Date().toISOString(),
@@ -213,14 +217,71 @@ describe('My seeds — what each card says', () => {
     await mount()
     await openAll()
     const line = lineOf('crowd')
-    const parts = [...line.children]
     const amount = within(line).getByTestId('my-seed-amount')
+    const chips = within(line).getAllByTestId('my-seed-chip')
     expect(amount.textContent).toBe('approx. 120 seeds')
-    expect(within(line).getAllByTestId('my-seed-chip').length).toBe(2)
-    expect(within(line).getAllByTestId('my-seed-chip').every((c) => !c.contains(amount) && c.parentElement !== line)).toBe(true)
-    expect(parts.indexOf(amount)).toBe(1)
-    expect(parts[2]).toBe(within(line).getByTestId('my-seed-rest'))
+    expect(chips.length).toBe(2)
+    expect(chips.every((c) => !c.contains(amount))).toBe(true)
+    // "Ferment · today" is the lot's live state: an item of the line itself, rigid, and it says so on the chip
+    // (data-tone — what the gate's (n) reads to know which chip may never be cut).
+    const [liveChip, neutralChip] = chips
+    expect(liveChip.textContent).toBe('Ferment · today')
+    expect(liveChip.getAttribute('data-tone')).toBe('info')
+    expect(liveChip.parentElement).toBe(line)
+    expect(liveChip.style.flex).toBe('0 0 auto')
+    // "Archived for this season" gives way: in a box with a 0 basis that shrinks, inside the same flow as the
+    // facts, straight before the amount; the tail follows the amount (a tomato has no heat).
+    expect(neutralChip.getAttribute('data-tone')).toBe('neutral')
+    expect(neutralChip.parentElement).not.toBe(line)
+    const box = neutralChip.parentElement
+    expect(box.style.flexShrink).toBe('1')
+    expect(box.style.flexBasis).toBe('0px')
+    expect(box.nextElementSibling).toBe(amount)
+    expect(amount.nextElementSibling).toBe(within(line).getByTestId('my-seed-rest'))
+    expect(amount.parentElement).toBe(box.parentElement)
     expect(amount.style.flex).toBe('0 0 auto')
+  })
+
+  it('a heat that cannot fit drops WHOLE: it follows the amount in a wrapping flow and carries its own " · " — the tail goes with it', async () => {
+    rows = [pepper({
+      id: 'lantern', name: 'Hot Paper Lantern — saved 2026', variety_name: 'Hot Paper Lantern', seed_stage: 'drying',
+      source_plant_id: 'pl', seed_count: 1200, seed_count_estimated: true, seed_weight_g: 12.5,
+      scoville_min: 150000, scoville_max: 325000, stage_entered_at: new Date().toISOString(),
+    })]
+    await mount()
+    await openAll()
+    const line = lineOf('lantern')
+    const amount = within(line).getByTestId('my-seed-amount')
+    const heat = within(line).getByTestId('my-seed-heat')
+    const rest = within(line).getByTestId('my-seed-rest')
+    expect(amount.textContent).toBe('approx. 1200 seeds · 12.5 g')
+    expect(heat.textContent).toBe(' · est. 150K–325K SHU')
+    expect(rest.textContent.startsWith(' · ')).toBe(true)
+    // amount → heat → tail, in one flow that WRAPS (what does not fit goes to a hidden second line, whole),
+    // and the flow's box clips.
+    expect([amount.nextElementSibling, heat.nextElementSibling]).toEqual([heat, rest])
+    const flow = heat.parentElement
+    expect(flow).toBe(amount.parentElement)
+    expect(flow.style.flexWrap).toBe('wrap')
+    expect(flow.style.position).toBe('absolute')
+    expect(flow.parentElement.style.overflow).toBe('clip')
+    expect(heat.style.flex).toBe('0 0 auto')
+    // The Drying chip sits outside that flow: nothing the flow drops can take it.
+    const live = within(line).getByTestId('my-seed-chip')
+    expect(live.textContent).toBe('Drying')
+    expect(live.parentElement).toBe(line)
+    expect(flow.contains(live)).toBe(false)
+    // The line's height comes from an invisible stand-in that adds no text.
+    expect(line.lastElementChild.getAttribute('aria-hidden')).toBe('true')
+    expect(line.lastElementChild.textContent).toBe('')
+  })
+
+  it('a line with nothing to print stays EMPTY — no stand-in, so the row keeps its height', async () => {
+    rows = [pkt({ id: 'bare' })]
+    await mount()
+    await openAll()
+    expect(lineOf('bare').children.length).toBe(0)
+    expect(lineOf('bare').textContent).toBe('')
   })
 
   it('two cards that would read alike are told apart on screen', async () => {

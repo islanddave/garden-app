@@ -406,12 +406,14 @@ jobs:
         # ferment line, and ONE view body — on ?view=mine, ?view=saved and ?view=sow at a TRUE 360x640
         # and 390x844, mounted by tests/harness/seeds.{html,jsx} with the app's 52px top bar and 56px
         # bottom nav in place (their heights are read from TopChrome.jsx and constants.js and checked).
-        # Fixture: 28 seed rows over 8 crops, the 44-char "Money Plant (self-saved, variety
+        # Fixture: 30 seed rows over 8 crops, the 44-char "Money Plant (self-saved, variety
         # unrecorded)" as a lot fermenting 5 days AND archived (two chips; the ferment line names it),
         # registry suppliers that hit the colour palette plus one it does not know, pepper heat (sweet,
         # ranges, one bound, none, a saved lot's estimate), 13 packet photos on three small committed
-        # PNGs with distinct per-photo URLs (one broken), an order-reference `source`, a used-up packet
-        # and an identical pair.
+        # PNGs with distinct per-photo URLs (one broken), an order-reference `source`, a used-up packet,
+        # an identical pair, and two rows that force line 2's shrink order (UX spec §1.3): a drying lot
+        # whose chip and measured amount leave no room for its heat, and an archived packet whose heat
+        # fits only once its neutral chip gives way.
         # Asserts: (a) the view switch is one line; (b) the header's title and actions share one line
         # and nothing overflows it; (c) no sideways scroll; (d) every visible button, link, radio,
         # field and role=button (the folding crop headers) is >= T.tapMinHeight, except the frozen
@@ -422,8 +424,11 @@ jobs:
         # pinned crops first, and at 360x640 >= 3 headers fully in the band; (e2) the Pepper header
         # tapped — it does not move (+-1px), its first row is fully in the band and its second row
         # starts in it; then Expand all and one row opened, over every row: (f) line 1 and line 2 are
-        # ONE line each, the 44-char name ellipsising; (g) the amount, (i) the identical-pair ordinal
-        # (line 1), (j) the supplier chip and (k) the heat each show whole; (l) every thumbnail box is
+        # ONE line each, counting only text that shows, none of it sliced by the line's edge, the
+        # 44-char name ellipsising; (g) the amount, (i) the identical-pair ordinal (line 1), (j) the
+        # supplier chip and (n) a lot-in-process state chip each show whole, inside the line on both
+        # axes; (k) the heat shows whole or is dropped whole, never sliced, and on the two shrink-order
+        # rows one heat is dropped and one neutral chip gives way first; (l) every thumbnail box is
         # 40x40 at one x, with a supplier stripe or without, measured with the packet-image requests
         # HELD at the network layer and again after every image loaded or failed; (d) and (c) again.
         # (h) every open Sow now card keeps its name column at least SowNow.jsx's TITLE_COL_MIN_PX.
@@ -436,12 +441,15 @@ jobs:
         # opened rows forced to 480px, (d) Save seed, the headers, the supplier chips, Expand all and
         # an expanded row's link forced short, (e) the controls pushed under the nav, a chip row
         # narrowed until it wraps, Tomato moved below Bean, headers made 90px, (e2) the header padded
-        # on open, row 1 made taller than the band, row 2 pushed out, (f) line 1 / line 2 wrap, (g) the
-        # amount, (i) the ordinal, (j) the supplier chip, (k) the heat squeezed or pushed out of the
-        # line, (l) the box sized by its image or the stripeless rows shifted 3px, (h) the Sow now card
-        # kept from wrapping. GATE_MUTATE_JS (a page script) covers what no stylesheet reaches: a group
-        # opened on the first screen reds (e)'s folded and no-row checks, and disabling the page's own
-        # open-scroll isolates (e2)'s row checks.
+        # on open, row 1 made taller than the band, row 2 pushed out, (f) line 1 wraps, the give-way
+        # flow put in flow, the tail wrapped or nudged below the line, (g) the amount, (i) the ordinal,
+        # (j) the supplier chip, (n) a live chip — each ellipsised or moved off its line — (k) the heat
+        # ellipsised, half below the line, past its end, or pushed off by a neutral chip that would not
+        # give way, and each shrink-order row made to fit, (l) the box sized by its image or the
+        # stripeless rows shifted 3px, (h) the Sow now card kept from wrapping. GATE_MUTATE_JS (a page
+        # script) covers what no stylesheet reaches: a group opened on the first screen reds (e)'s
+        # folded and no-row checks, disabling the page's own open-scroll isolates (e2)'s row checks,
+        # and stripping the chips' data-tone reds (n)'s live-chip count.
         # NO continue-on-error, per the policy note above. ~15 s locally.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
