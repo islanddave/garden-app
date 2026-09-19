@@ -1116,6 +1116,14 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
     // predicate is the anchor re-derivation target's (REDERIVE_CTE, pj there); `ct.id is null` is the
     // project-less arm. Guarded at write time by rain-live-filter.test.js, which parses it out of this
     // statement. The v4-rainbackfill-001 backfill predates this and has no container filter.
+    //
+    // BUG-RAINONENDEDPLANTINGS-001 (Dave, 2026-09-19): rain goes where the plan looks. The status test
+    // is the plantings query's own, word for word (the ANCHOR vocabulary in
+    // lambda/live-planting-predicate-sync.test.js), so an ended or failed planting stops collecting rain
+    // rows — they only ever reached display surfaces, where a dug crop showed "Next watering" after each
+    // rain. Dormant and every growing status (Harvesting included) are credited as before: a dormant
+    // perennial is still in the ground, and its rain becomes last_water when it is resumed. Existing
+    // rows are left alone. The backfill has no status filter either.
     const { rowCount: inserted } = await pg.query(
       `insert into event_log
          (project_id, location_id, plant_id, event_type, event_date, is_public,
@@ -1142,7 +1150,8 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
                   select l.id, l.parent_id, l.covered from up
                     join locations l on l.id = up.parent_id and l.deleted_at is null
                 ) select bool_or(up.covered) from up), false)
-          and (ct.id is null or (ct.deleted_at is null and ct.archived_at is null))`,
+          and (ct.id is null or (ct.deleted_at is null and ct.archived_at is null))
+          and (gn.status is null or gn.status not in ('ended','failed','dead','archived'))`,
       [day, d.amountIn, JSON.stringify(rainMetadata(d.amountIn))]);
 
     // Care cache, FORWARD ONLY (GREATEST), recomputed FROM event_log rather than from the amount
