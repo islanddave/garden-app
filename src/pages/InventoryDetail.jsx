@@ -12,6 +12,15 @@ import { INVENTORY_CATEGORIES as CATEGORIES, INVENTORY_UNITS as UNITS, INVENTORY
 import { EnumSelect, Field, Input, Select, Textarea, Button, PlantingSelect, SourcePicker } from '../components/forms'
 import Spinner from '../components/forms/Spinner.jsx'
 import SeedStageHistory from '../components/seed/SeedStageHistory.jsx'
+import SupplierChip from '../components/seed/SupplierChip.jsx'
+import { lotPhoto } from '../components/seed/lotPhoto.js'
+import PhotoView from '../components/photo/PhotoView.jsx'
+import Lightbox from '../components/Lightbox.jsx'
+import Icon from '../components/Icon.jsx'
+import { useSources } from '../hooks/useSources.js'
+import { TIER } from '../lib/photoModel.js'
+import { supplierColors } from '../lib/supplierPalette.js'
+import { shuLabel } from '../lib/varietySpec.js'
 // V4-SEEDORIGIN-001 — the SAME eight values preservation_log uses, deliberately. This registry is
 // one of the four synchronised homes of that vocabulary (the others: lambda/preservation/
 // provenance.js, the per-Lambda copy in lambda/inventory-items/source-kinds.js, and the DB CHECK
@@ -50,7 +59,8 @@ export default function InventoryDetail() {
   // separately from `item` because handleSave deliberately does NOT re-set `item` (the breadcrumb
   // and heading keep showing the loaded name until a reload), so diffing against `item` would leave
   // this page reporting dirty forever after a SUCCESSFUL save — the same post-save pin EventNew
-  // hit. Re-baselining here is additive: nothing rendered reads it.
+  // hit. Re-baselining here is additive. V5-SEEDCARDS-001: the packet card is its one reader — it
+  // shows the supplier and packet link AS SAVED, which is exactly what this holds and `item` does not.
   const [baseline,     setBaseline]     = useState(null)
 
   // ── V4-SEEDLINK-001 — seed-lot provenance ("Saved from") ───────────────────
@@ -82,6 +92,13 @@ export default function InventoryDetail() {
   const [sourceKind,     setSourceKind]     = useState('')
   const [sourceKindBusy, setSourceKindBusy] = useState(false)
   const [sourceKindErr,  setSourceKindErr]  = useState(null)
+
+  // ── V5-SEEDCARDS-001 — the packet card's supplier, by name ─────────────────────────────────
+  // The registry is what turns `source_id` into a name (and the name into the supplier's colours).
+  // Enabled only once the item has loaded AS A SEED: that is the same commit the form's SourcePicker
+  // mounts in, so this joins its request inside useSources' dedupe window instead of issuing a
+  // second GET — and a tool or an amendment never asks at all.
+  const { sources } = useSources({ enabled: item?.category === 'seeds' })
 
   // ── Load item ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -331,6 +348,18 @@ export default function InventoryDetail() {
     }
   }
 
+  // ── V5-SEEDCARDS-001 — after an upload, ask the server what the packet box should show ──────
+  // The photos Lambda features a lot's FIRST photo and GET /:id derives the hero from that, so the
+  // upload's own response cannot say whether the box changed; a re-read can. Only the photo fields
+  // are adopted (adoptPacketPhoto): nothing else on `item` moves because a photo landed. A failed
+  // re-read is left silent on purpose — the upload itself succeeded and PhotoUpload's preview already
+  // shows it; the box simply catches up on the next load.
+  function refetchPacketPhoto() {
+    fetch('/api/inventory-items/' + id)
+      .then(data => setItem(prev => adoptPacketPhoto(prev, data)))
+      .catch(() => {})
+  }
+
   // ── Delete (soft) ──────────────────────────────────────────────────────────
   async function handleDelete() {
     setDeleting(true)
@@ -396,6 +425,15 @@ export default function InventoryDetail() {
   const isConsumable = form.type === 'consumable'
   const visibleCats  = CATEGORIES.filter(c => c.types.includes(form.type))
     .slice().sort((a, b) => a.label.localeCompare(b.label))
+  // V5-SEEDCARDS-001 — the seed wording on the form follows the form's own category, like the seed
+  // harvest year below does.
+  const isSeedForm = form.category === 'seeds'
+  // The supplier as last SAVED, named from the registry. Null while the registry loads, for a lot
+  // with no supplier, and for an id the registry no longer lists — the card then draws no stripe.
+  const savedSourceId = baseline?.source_id || null
+  const supplierName = savedSourceId
+    ? (sources.find(s => String(s.id) === String(savedSourceId))?.name ?? null)
+    : null
 
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
@@ -416,6 +454,19 @@ export default function InventoryDetail() {
           </h1>
           <FavoriteToggle entityType="inventory_item" entityId={id} />
         </div>
+
+        {/* ── V5-SEEDCARDS-001 — the packet card: the seed's picture, big, and its facts ──────────
+            Dave, 2026-09-19: the seed-packet image "also a bigger version of it on the seed's detail
+            page", with the details filled in. SEEDS ONLY; it also takes over the Photo card below
+            (one upload control on this page, inside this card). */}
+        {item.category === 'seeds' && (
+          <PacketCard
+            item={item}
+            supplierName={supplierName}
+            packetUrl={baseline?.source_url}
+            onUploadComplete={refetchPacketPhoto}
+          />
+        )}
 
         {/* Plant-from-packet CTA — VARIETY-REF S4b.
             Visible only for seed packets with stock on hand. Tap-target ≥44px (Jen iPhone-primary).
@@ -639,23 +690,27 @@ export default function InventoryDetail() {
 
         {/* V2-PHOTO-F1 Session 2: inventory item photo upload.
             Belongs just below the S4b Plant-from-packet CTA per Session 2 spec.
-            Useful for capturing seed-packet photos, durable-tool photos, etc. */}
-        <div style={{
-          marginBottom: 20, padding: '14px 16px',
-          backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
-        }}>
-          <div style={{ fontSize: '0.78rem', fontWeight: 700, color: P.mid, marginBottom: 10,
-                        letterSpacing: '0.3px', textTransform: 'uppercase' }}>
-            Photo
+            Useful for capturing seed-packet photos, durable-tool photos, etc.
+            V5-SEEDCARDS-001: not for seeds — their upload lives in the packet card above, so the
+            page never carries two. Every other category renders this card exactly as before. */}
+        {item.category !== 'seeds' && (
+          <div style={{
+            marginBottom: 20, padding: '14px 16px',
+            backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
+          }}>
+            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: P.mid, marginBottom: 10,
+                          letterSpacing: '0.3px', textTransform: 'uppercase' }}>
+              Photo
+            </div>
+            <PhotoUpload
+              keyPrefix="inventory"
+              parentId={item.id}
+              linkage={{ inventory_item_id: item.id }}
+              errorMode="surface"
+              inputId={`inventory-photo-${item.id}`}
+            />
           </div>
-          <PhotoUpload
-            keyPrefix="inventory"
-            parentId={item.id}
-            linkage={{ inventory_item_id: item.id }}
-            errorMode="surface"
-            inputId={`inventory-photo-${item.id}`}
-          />
-        </div>
+        )}
 
         {errors._form && (
           <div style={{
@@ -712,7 +767,10 @@ export default function InventoryDetail() {
                     the step the column actually has removes the dependence on that one attribute.
                     The durable Quantity box below keeps step="1": inventory_items.quantity is an
                     integer column. */}
-                <Field label="Qty on hand" error={errors.quantity_on_hand}>
+                {/* V5-SEEDCARDS-001 — for a packet this is now the ONE place its quantity is
+                    written, so the rule that used to sit beside the My seeds stepper sits here. */}
+                <Field label="Qty on hand" error={errors.quantity_on_hand}
+                  help={isSeedForm ? 'Set to 0 when the packet is used up — it moves to Sowed previously.' : undefined}>
                   <Input
                     type="number" min="0" step="any"
                     value={form.quantity_on_hand}
@@ -824,10 +882,14 @@ export default function InventoryDetail() {
                 Both halves or neither: the add form alone would leave every existing item stranded
                 on free text, which is where the 73 spellings of 35 places came from. `source` stays
                 and is relabelled to the order/lot reference it actually holds — 567 rows carry text
-                with no other column in this design and it was deliberately never overwritten. */}
-            <Field label="Origin" help="Who grew, bred, packed or gave it.">
+                with no other column in this design and it was deliberately never overwritten.
+                V5-SEEDCARDS-001: a seed's is "Supplier" — the packet card beside it now shows a
+                "Country of origin", and two different "Origin"s on one page is a labelling defect.
+                Same column, same picker, same testid; every other category keeps "Origin". */}
+            <Field label={isSeedForm ? 'Supplier' : 'Origin'}
+              help={isSeedForm ? 'Who sold, packed or gave it.' : 'Who grew, bred, packed or gave it.'}>
               <SourcePicker
-                label="Origin"
+                label={isSeedForm ? 'Supplier' : 'Origin'}
                 value={form.source_id}
                 onChange={(sid) => {
                   // Clearing the origin clears the venue with it — acquired_from means "the shop
@@ -866,7 +928,9 @@ export default function InventoryDetail() {
               />
             </Field>
 
-            <Field label="Source URL">
+            {/* V5-SEEDCARDS-001 — Dave's words for it on a seed ("url of the packet"); the packet
+                card's "Packet page" link reads this field. */}
+            <Field label={isSeedForm ? 'Packet page (URL)' : 'Source URL'}>
               <Input
                 type="url"
                 value={form.source_url}
@@ -1039,6 +1103,214 @@ function PlantFromPacketCTA({ item, onClick }) {
       <span aria-hidden="true" style={{ color: P.green, fontSize: '1.1rem' }}>›</span>
     </button>
   )
+}
+
+// ── V5-SEEDCARDS-001 — the packet card (UX spec §7.2) ─────────────────────────────────────────────
+// The row Dave tapped on My seeds, continued: the same 4px supplier stripe, the same chip, the same
+// fact words. NOT a hero — no scrim, no floating Back/Share; PhotoHero stays the app's one hero shell.
+//
+// THE IMAGE BOX is 3:4 portrait and CONTAIN on white, so a packet's printed name is never cropped.
+// FULL tier because the by-id GET signs only the original, and the viewer then opens on the same bytes.
+// It is a button onto the app's Lightbox, which registers with the dismiss registry at armsBack, so
+// Android Back closes the viewer and leaves the page where it was. The photo object comes from
+// lotPhoto(), whose id is the PHOTO's (hero_photo_id): PhotoImg re-mints an expired URL by that id,
+// and the lot's own id there would 404 into a permanent blank.
+//
+// WITH NO IMAGE the box is the upload trigger: it clicks the file input of the one PhotoUpload below
+// it, by the `inventory-photo-<id>` id that automated bulk-attach sessions also drive — so there is
+// still exactly one input, one upload path and one contract.
+function PacketCard({ item, supplierName, packetUrl, onUploadComplete }) {
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const photo = lotPhoto(item)
+  // No stripe without a supplier: a grey one would read as a disabled supplier (supplierPalette.js).
+  const stripe = supplierColors(supplierName)?.primary ?? null
+  const facts = packetFacts(item)
+  // The lot's own packet page first. Only without one does the cultivar's reference URL stand in, and
+  // then it is named for where it goes — it usually points at another seller (UX spec P6).
+  const packet = linkTarget(packetUrl)
+  const about = packet ? null : linkTarget(item.variety_source_url)
+  const link = packet ? { ...packet, words: 'Packet page' }
+    : about ? { ...about, words: 'About this variety' }
+    : null
+  const inputId = `inventory-photo-${item.id}`
+
+  return (
+    <>
+      <div data-testid="packet-card" style={{
+        display: 'flex', alignItems: 'flex-start', gap: 12,
+        marginBottom: 20, padding: 14,
+        backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
+        // 3px of padding stands in for a missing stripe, so nothing shifts when the registry loads.
+        ...(stripe ? { borderLeft: `4px solid ${stripe}` } : { paddingLeft: 17 }),
+      }}>
+        <div style={{ flex: '0 0 auto', width: 'clamp(120px, 33vw, 160px)' }}>
+          {photo ? (
+            <button
+              type="button"
+              onClick={() => setViewerOpen(true)}
+              aria-label={`Enlarge packet photo of ${item.name}`}
+              data-testid="packet-photo-open"
+              style={{ ...PACKET_BOX, backgroundColor: P.white }}
+            >
+              <PhotoView
+                photo={photo}
+                tier={TIER.FULL}
+                alt=""
+                decoding="async"
+                data-testid="packet-photo"
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+              />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => document.getElementById(inputId)?.click()}
+              data-testid="packet-photo-add"
+              style={{
+                ...PACKET_BOX, backgroundColor: P.greenPale,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              <Icon name="lifecycle.sprout" size={32} decorative />
+              <span style={{ fontSize: '0.75rem', color: P.mid }}>Add packet photo</span>
+            </button>
+          )}
+          <PhotoUpload
+            keyPrefix="inventory"
+            parentId={item.id}
+            linkage={{ inventory_item_id: item.id }}
+            errorMode="surface"
+            inputId={inputId}
+            buttonLabel="Add photo"
+            buttonStyle={ADD_PHOTO_BTN}
+            onUploadComplete={onUploadComplete}
+          />
+        </div>
+
+        {/* Read-only: cultivar facts, edited in the variety editor, never here. */}
+        <div data-testid="packet-facts" style={{
+          flex: 1, minWidth: 0,
+          display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8,
+        }}>
+          {supplierName && <SupplierChip name={supplierName} full />}
+          {facts.map(f => (
+            <div key={f.key} data-testid="packet-fact" data-fact={f.key}>
+              <div style={{ fontSize: '0.72rem', color: P.mid }}>{f.label}</div>
+              <div style={{
+                fontSize: '0.88rem', color: P.dark, overflowWrap: 'anywhere',
+                fontStyle: f.italic ? 'italic' : undefined,
+              }}>
+                {f.value}
+              </div>
+            </div>
+          ))}
+          {link && (
+            <a
+              href={link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="packet-link"
+              style={{
+                position: 'relative', display: 'inline-flex', alignItems: 'center', minHeight: 44,
+                color: P.green, fontSize: '0.82rem', fontWeight: 600,
+                textDecoration: 'none', overflowWrap: 'anywhere',
+              }}
+            >
+              {/* Named by its CONTENT — the sentence a screen reader should hear — with the glyph
+                  line hidden from it. Not aria-label: the a11y gate's static layer rebuilds an <a>
+                  without its href, where a name is prohibited, so the label would read as a defect. */}
+              <span aria-hidden="true">{link.words} · {link.domain} ↗</span>
+              <span style={SR_ONLY}>{`${link.words} on ${link.domain}, opens in browser`}</span>
+            </a>
+          )}
+        </div>
+      </div>
+
+      {photo && (
+        <Lightbox
+          open={viewerOpen}
+          images={[{ id: photo.id, src: photo.featured_photo_view_url, alt: `Packet photo of ${item.name}`, caption: null }]}
+          index={0}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
+    </>
+  )
+}
+
+const PACKET_BOX = {
+  position: 'relative', display: 'block', width: '100%', aspectRatio: '3 / 4',
+  padding: 0, margin: 0, overflow: 'hidden', cursor: 'pointer', fontFamily: 'inherit',
+  border: `1px solid ${P.border}`, borderRadius: 10,
+}
+// LiveRegion.jsx's visually-hidden recipe.
+const SR_ONLY = {
+  position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)', whiteSpace: 'nowrap', border: 0,
+}
+// A text button, full column width so its target is the column and not the word.
+const ADD_PHOTO_BTN = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  width: '100%', minHeight: 44, padding: '0 4px',
+  background: 'none', border: 'none', color: P.green,
+  fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer',
+}
+
+// The facts, in the fixed order and with the words My seeds' expanded row uses (UX spec §6.3: one
+// vocabulary). An absent fact is LEFT OUT, never dashed. Heat is the one fact whose absence is stated,
+// and only on a pepper: it is the fact looked for there, so "not recorded" goes where the eye goes.
+// Heat is shuLabel's, unchanged, so a number reads the same here as on the planting's CropCard.
+const BREEDING_LABEL = new Map([['f1', 'F1 hybrid'], ['open_pollinated', 'Open-pollinated'], ['landrace', 'Landrace']])
+// dtm_basis is the cultivar's own override (NULL = inherit the crop's), so a NULL states no basis
+// rather than guessing one.
+const DTM_BASIS_SUFFIX = new Map([['from-transplant', ' from transplant'], ['from-sow', ' from sowing']])
+function packetFacts(i) {
+  const text = (v) => (typeof v === 'string' ? v.trim() : '')
+  const days = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
+  const out = []
+  const heat = shuLabel(i)
+  if (heat) out.push({ key: 'heat', label: 'Heat', value: heat })
+  else if (i?.crop_slug === 'pepper') out.push({ key: 'heat', label: 'Heat', value: 'not recorded' })
+  const origin = [text(i?.origin_country), text(i?.origin_region)].filter(Boolean).join(' · ')
+  if (origin) out.push({ key: 'origin', label: 'Country of origin', value: origin })
+  const species = text(i?.species)
+  if (species) out.push({ key: 'species', label: 'Species', value: species, italic: true })
+  const lo = days(i?.days_to_maturity_min) ?? days(i?.days_to_maturity_max)
+  const hi = days(i?.days_to_maturity_max) ?? lo
+  if (lo != null) {
+    out.push({
+      key: 'dtm', label: 'Days to maturity',
+      value: `${lo === hi ? lo : `${lo}–${hi}`} days${DTM_BASIS_SUFFIX.get(i?.dtm_basis) ?? ''}`,
+    })
+  }
+  // 'unknown' is a researched answer ("could not tell"), not a fact to show on a card.
+  const breeding = BREEDING_LABEL.get(i?.breeding_system)
+  if (breeding) out.push({ key: 'breeding', label: 'Breeding', value: breeding })
+  return out
+}
+
+// A stored URL as a link: http(s) only — these are free-text columns, and one holding `javascript:`
+// must never become an href — labelled by the host it actually opens, minus a leading "www.".
+function linkTarget(raw) {
+  const href = typeof raw === 'string' ? raw.trim() : ''
+  if (!href) return null
+  let u
+  try { u = new URL(href) } catch { return null }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+  return { href, domain: u.hostname.replace(/^www\./i, '') }
+}
+
+// What an after-upload re-read may change on the loaded item: the photo fields, nothing else. A
+// response with no URL never blanks a box that has one (a presign that failed on the re-read is not
+// news about the packet), and an unchanged hero keeps the URL already rendering — a re-signed URL for
+// the same photo would make the box download the full original again for nothing.
+const PACKET_PHOTO_KEYS = ['featured_photo_id', 'hero_photo_id', 'featured_photo_view_url']
+function adoptPacketPhoto(prev, next) {
+  if (!prev || !next?.featured_photo_view_url) return prev
+  if (prev.featured_photo_view_url && prev.hero_photo_id === next.hero_photo_id) return prev
+  const out = { ...prev }
+  for (const k of PACKET_PHOTO_KEYS) out[k] = next[k] ?? null
+  return out
 }
 
 function Shell({ children }) {

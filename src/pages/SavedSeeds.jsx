@@ -318,11 +318,23 @@ const FERMENT_URGENCY = {
 // list row re-asserting a value nobody edited — and the year's case is the one with a live victim
 // (4 curated rows, one of them a hand-entered 1986). Dropping either side's entries restores that
 // side's bug silently, with a 200.
+//
+// V5-SEEDCARDS-001 adds the seed card's projections, all LIST-ONLY like `crop_slug`: the packet
+// photo's thumb URL and `hero_photo_id` (the derived hero, which leaves the list under its own name
+// precisely so it never overrides `featured_photo_id`), and the cultivar's facts — scoville range and
+// its provenance, country and region of origin, species, breeding system, days to maturity and their
+// basis, and the cultivar's reference URL. That last one is `pv.source_url` ALIASED to
+// `variety_source_url` because `i.*` already carries the lot's own `source_url`, which the wide PUT
+// assigns bare. None names a column on inventory_items and the SET list mentions none, so each rides
+// inert today — the delay fuse above, stripped before anything can arm it.
 const LIST_ROW_PUT_STRIP = [
   'variety_name', 'stage_entered_at', 'crop_slug', 'featured_photo_view_url', 'featured_is_explicit',
   'germination', 'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id',
   'source_kind', 'source_id', 'acquired_from_source_id', 'year_harvested',
   'seed_count', 'seed_weight_g', 'seed_count_estimated',
+  'featured_photo_thumb_url', 'hero_photo_id', 'scoville_min', 'scoville_max', 'scoville_source',
+  'origin_country', 'origin_region', 'species', 'breeding_system', 'days_to_maturity_min',
+  'days_to_maturity_max', 'dtm_basis', 'variety_source_url',
 ]
 
 /**

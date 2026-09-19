@@ -102,7 +102,25 @@ const LOT = {
   seed_stage: 'drying', seed_process: 'wet', featured_photo_id: 'ph-1',
   variety_name: 'Green Flesh', stage_entered_at: '2026-08-25T12:00:00Z', crop_slug: 'melon',
   updated_at: '2026-08-30T12:00:00Z',
+  // V5-SEEDCARDS-001 — the seed card's list-only projections (the lot's packet photo and its
+  // cultivar's facts). SHAPE, not lifted from prod like the scalars above: what the wide-PUT
+  // assertions need is each KEY on the row. A null is still a key — JSON keeps it — so a null-valued
+  // projection rides into a body that spreads the row exactly as a filled one does.
+  featured_photo_view_url: 'https://photos.example.test/inventory/inv-1/ph-1.jpg',
+  featured_photo_thumb_url: 'https://photos.example.test/thumbs/inventory/inv-1/ph-1.jpg',
+  hero_photo_id: 'ph-1',
+  scoville_min: null, scoville_max: null, scoville_source: null,
+  origin_country: 'United States', origin_region: null, species: 'Cucumis melo',
+  breeding_system: 'open_pollinated', days_to_maturity_min: 90, days_to_maturity_max: 100,
+  dtm_basis: 'from-sow', variety_source_url: 'https://www.rareseeds.com/green-flesh-honeydew',
 }
+// Every list-only key V5-SEEDCARDS-001 put on the seed list's rows. None names a column on
+// inventory_items, so none may reach the wide PUT this page opens.
+const CARD_PROJECTIONS = [
+  'featured_photo_view_url', 'featured_photo_thumb_url', 'hero_photo_id',
+  'scoville_min', 'scoville_max', 'scoville_source', 'origin_country', 'origin_region', 'species',
+  'breeding_system', 'days_to_maturity_min', 'days_to_maturity_max', 'dtm_basis', 'variety_source_url',
+]
 // The same lot before anyone has counted it. NULL, not 0 — that distinction is the entire reason
 // `seed_count` is a new nullable column rather than a re-reading of `quantity_on_hand`, which is NOT
 // NULL for a consumable and could therefore only say "uncounted" by saying 0.
@@ -379,6 +397,14 @@ describe('BUG-SEEDZEROSOWABLE-001 — the advance sheet asks at every stage', ()
     expect(body).not.toHaveProperty('variety_name')
     expect(body).not.toHaveProperty('stage_entered_at')
     expect(body).not.toHaveProperty('crop_slug')
+    // V5-SEEDCARDS-001's projections. The fixture check comes FIRST: an absent-from-the-body assertion
+    // over a key the row never carried passes against any strip list, including an empty one.
+    for (const k of CARD_PROJECTIONS) {
+      expect(Object.prototype.hasOwnProperty.call(LOT, k),
+        `${k} is not on the fixture row — its absence below would prove nothing`).toBe(true)
+      expect(Object.prototype.hasOwnProperty.call(body, k),
+        `${k} is a list-only projection and rode into the wide PUT`).toBe(false)
+    }
   })
 
   it('a failed COUNT does not report the stage move as failed', async () => {
@@ -642,7 +668,7 @@ describe('listRowPutBody — the strip list, and its agreement with the handler'
     // (it reads only the keys it names), stripped because a PUT body carrying a germination summary
     // or a cultivar join is an invitation to wire one of them up.
     for (const k of ['germination', 'featured_photo_view_url', 'variety_name', 'featured_is_explicit',
-                     'stage_entered_at', 'crop_slug']) {
+                     'stage_entered_at', 'crop_slug', ...CARD_PROJECTIONS]) {
       expect(ours, `${k} must stay in LIST_ROW_PUT_STRIP`).toContain(k)
     }
   })
