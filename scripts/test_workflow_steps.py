@@ -253,6 +253,8 @@ def test_lint_step_passes_only_after_the_canary_is_rejected_and_every_file_is_li
     (CANARY_FINDINGS.splitlines()[0] + "\n", 1),            # actionlint only: shellcheck disabled or filtered
     (CANARY_FINDINGS.splitlines()[1] + "\n", 1),            # shellcheck only
     ("fatal error while checking .github/workflows/canary.yml\n", 3),
+    (CANARY_FINDINGS, 3),                                    # both found, then a fatal: not a clean rejection
+    (CANARY_FINDINGS, 0),                                    # the exit must say "findings" too
 ])
 def test_lint_step_fails_when_the_canary_is_not_rejected_by_both_linters(tmp_path, canary_out, canary_rc):
     proc, calls, _ = _run_lint(tmp_path, canary_out=canary_out, canary_rc=canary_rc)
