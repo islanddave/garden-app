@@ -66,7 +66,9 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-function mount(entries = ['/seeds'], initialIndex = entries.length - 1) {
+// `beforeRender(router)` runs before the first render — the one place a router.subscribe can go and be
+// sure it runs ahead of the RouterProvider's own subscription (which re-renders the page).
+function mount(entries = ['/seeds'], initialIndex = entries.length - 1, { beforeRender } = {}) {
   const router = createMemoryRouter(
     [
       { path: '/seeds', element: <ToastProvider><Seeds /></ToastProvider> },
@@ -76,11 +78,13 @@ function mount(entries = ['/seeds'], initialIndex = entries.length - 1) {
     ],
     { initialEntries: entries, initialIndex },
   )
+  beforeRender?.(router)
   render(<RouterProvider router={router} />)
   return router
 }
 const search = (router) => router.state.location.search
 const seedGets = () => fetchSpy.mock.calls.filter(([p, o]) => String(p).startsWith('/api/inventory-items?category=seeds') && !o?.method).length
+const VIEW_BODY = '[data-testid="my-seeds-view"],[data-testid="saved-seeds-view"],[data-testid="sow-now-view"]'
 
 describe('defaultSeedsView — the rule a bare /seeds lands by (§4.2)', () => {
   it('is Saved seeds while any lot is fermenting OR drying, else My seeds; never Sow now', () => {
@@ -133,6 +137,31 @@ describe('Seeds — the default view is settled once, in the URL, before a body 
     await waitFor(() => expect(search(router)).toBe('?view=saved'))
     await waitFor(() => expect(screen.getByTestId('saved-seeds-view')).toBeTruthy())
   })
+
+  // The case above watches the loading window, where a page that rendered the body from the computed
+  // default at once and wrote the URL in an effect afterwards ALSO mounts nothing — so it cannot tell
+  // the two apart. The difference only exists at the moment the replace lands: the router's own
+  // subscription records, for every state it publishes, whether a view body was already in the DOM.
+  for (const [name, rows, view, body] of [
+    ['one lot fermenting', [FERMENTING], 'saved', 'saved-seeds-view'],
+    ['bought packets only', [BOUGHT], 'mine', 'my-seeds-view'],
+  ]) {
+    it(`${name}: ?view=${view} is in the URL before any view body is in the DOM`, async () => {
+      seedRows = rows
+      const log = []
+      mount(['/today', '/seeds'], 1, {
+        beforeRender: (r) => r.subscribe((state) => log.push({
+          action: state.historyAction,
+          search: state.location.search,
+          bodyInDom: !!document.querySelector(VIEW_BODY),
+        })),
+      })
+      await waitFor(() => expect(screen.getByTestId(body)).toBeTruthy())
+      const settled = log.find((e) => e.search.startsWith('?view='))
+      expect(settled, 'the router never published a ?view= state').toBeTruthy()
+      expect(settled).toEqual({ action: 'REPLACE', search: `?view=${view}`, bodyInDom: false })
+    })
+  }
 
   it('a door that names a view wins over the ferment rule, and nothing rewrites it', async () => {
     seedRows = [FERMENTING]
