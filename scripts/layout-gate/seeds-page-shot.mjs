@@ -320,7 +320,10 @@ const MEASURE = (v) => `(() => {
       const amount = line.querySelector('${tid('my-seed-amount')}')
       const rest = line.querySelector('${tid('my-seed-rest')}')
       const lb = line.getBoundingClientRect()
-      const one = Math.max(oneLine(line), ...items.map(oneLine))
+      // The chips count as items even though they now sit one level down, in their own shrinking box:
+      // measured against the direct children only, a 22px Badge row read as x1.58 of a 14px line on
+      // CI's fonts (x1.47 on the Mac) — a one-line row failing (f) because of where its chips live.
+      const one = Math.max(oneLine(line), ...items.map(oneLine), ...chips.map(oneLine))
       const ab = amount ? amount.getBoundingClientRect() : null
       L = { text: (line.textContent || '').trim().replace(/\\s+/g, ' '), h: R(lb.height), oneLineH: R(one),
         ratio: Math.round(lb.height / one * 100) / 100, lines: lines(line), chips: chips.length,
