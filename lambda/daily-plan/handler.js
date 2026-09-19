@@ -1916,7 +1916,13 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
                 // `crops` (OPS-PLANHOURLY-001) is what makes the NEXT run's escalation gate able to
                 // compare per-crop instead of only on the headline level. Omitted when null so the
                 // stored shape is unchanged on the legacy no-breakdown path.
-                const entry = { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString(), ...(frostDecision.cropLevels ? { crops: frostDecision.cropLevels } : {}), ...facts };
+                // OPS-FROSTREHEARSALMARK-001 — `run` is the slot that sent it: 'intraday-pm' (the schedule) or
+                // 'forced' (event.frostEval, the F5 rehearsal lever, whose trip points may be raised). The
+                // 2026-09-07 rehearsal was stored as key/tier/level/at alone and was read as a real <= 40F night
+                // in four code comments; only CloudWatch (30-day retention) showed run "forced" at 58F. Written on
+                // every send, so an entry without it was stored before this field existed. Nothing reads it to
+                // decide anything: a forced send still dedups later runs exactly as before.
+                const entry = { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString(), run: frostRun.slot, ...(frostDecision.cropLevels ? { crops: frostDecision.cropLevels } : {}), ...facts };
                 spaceNew.push(entry);
                 alertsSent = [...alertsSent, entry];
                 console.log(JSON.stringify({ msg: 'frost alert PUBLISHED', space: spaceId, user: user_id, dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level }));

@@ -19,11 +19,13 @@
 // `at` as it does in prod (mergeAlertsSent's identity is key + at). The unit suite mocks SQL: none of this proves
 // what Postgres does.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createRequire } from 'node:module';
 import h from './handler.js';
 import fe from './frostEval.js';
+import { buildFrostAlertLine } from '../../src/lib/frostAlertLine.js';
 
-const { run } = h;
-const { escalatesBeyond, sentNight, advisoryNight, nightPhrase } = fe;
+const { run, mergeAlertsSent } = h;
+const { escalatesBeyond, sentNight, sentCoverage, advisoryNight, nightPhrase } = fe;
 
 const SPACE = 'sp1';
 const DAVE = 'user_dave';
@@ -90,13 +92,13 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); 
 // One run. NWS 45F by default, so the imminent tier is silent and the advisory is the whole story. `minHours` is the
 // hour of each day's minimum; D1 at 23:00 is "tomorrow night", at 05:00 "tonight". The clock is the run's own ET
 // hour (EDT = UTC-4), so each send's `at` is distinct, as in prod.
-async function once(t, pub, { etHour, nws = 45, lows = [38, 46, 50], minHours = [23, 6, 6], event = {} }) {
+async function once(t, pub, { etHour, nws = 45, lows = [38, 46, 50], minHours = [23, 6, 6], event = {}, runFn = run }) {
   pub.at(etHour);
   vi.setSystemTime(new Date(Date.UTC(2026, 9, 5, etHour + 4, 0, 0)));
   const from = logSpy.mock.calls.length;
   let error = null;
   try {
-    await run({
+    await runFn({
       pg: t.pg, today: TODAY, dryRun: false, etHour, event, geocodeZip: async () => ({ lat: 42.5, lng: -72.6 }),
       fetchNWS: async () => ({ tonightLow: nws, highToday: nws + 20, code: 1, unit: 'F', short: 'Clear' }),
       fetchPrecip: async () => ({ forecast_lows: lows, forecast_dates: DATES, recent_precip_in: 0, today_precip_in: 0,
@@ -289,5 +291,72 @@ describe('BUG-FROSTESCALATENIGHTMOVE-001 — the night moves between hourly runs
     const pub = publisher();
     for (const hr of [14, 15, 16, 17]) await once(t, pub, { etHour: hr, ...TONIGHT });
     expect(pub.frost().map((c) => c.hour)).toEqual([14]);
+  });
+});
+
+// ── OPS-FROSTREHEARSALMARK-001 ───────────────────────────────────────────────────────────────────────────────────
+// The only advisory prod has ever sent (2026-09-07, key ...|advisory|advisory|d0ew9) was the F5 rehearsal: a
+// forced run (event.frostEval) with FROST_ADVISORY_LOW_F raised to 58. Its entry was key/tier/level/at, the same
+// as a real send, so four code comments read it as a real <= 40F night; only the frost-eval CloudWatch line (run
+// "forced", thresholds.ADVISORY_LOW_F 58; 30-day retention) could tell. Every send now stores the slot that made it.
+describe('OPS-FROSTREHEARSALMARK-001 — the stored entry says which run sent it', () => {
+  it('a scheduled send records run "intraday-pm"', async () => {
+    const t = planTable({ rows: TOMATO });
+    await once(t, publisher(), { etHour: 15, ...TONIGHT });
+    expect(t.sent()).toHaveLength(1);
+    expect(t.sent()[0].run).toBe('intraday-pm');
+  });
+
+  it('a forced send (event.frostEval, the rehearsal lever) records run "forced", after the window as well', async () => {
+    const t = planTable({ rows: TOMATO });
+    const pub = publisher();
+    await once(t, pub, { etHour: 20, nws: 35, ...TONIGHT, event: { frostEval: true } });
+    await once(t, pub, { etHour: 21, ...TONIGHT, event: { frostEval: true } });
+    expect(pub.frost().map((c) => c.hour)).toEqual([20]);
+    expect(t.sent()).toHaveLength(1);
+    expect(t.sent()[0]).toMatchObject({ tier: 'imminent', run: 'forced' });
+  });
+
+  it('THE 2026-09-07 SHAPE: ADVISORY_LOW_F raised to 58, forced at 19 ET, a 55.7F forecast -> the entry is marked forced', async () => {
+    // Trip points are read at MODULE LOAD (frostEval DEFAULT_THRESHOLDS, frostClass BAND_THRESHOLDS), exactly as the
+    // rehearsal lever works on a deployed Lambda, so this case loads a fresh handler with the env set.
+    vi.stubEnv('FROST_ADVISORY_LOW_F', '58');
+    const req = createRequire(import.meta.url);
+    const drop = () => { for (const f of ['./handler.js', './frostEval.js', './frostClass.js']) delete req.cache[req.resolve(f)]; };
+    drop();
+    try {
+      const rehearsal = req('./handler.js');
+      const t = planTable({ rows: TOMATO });
+      const pub = publisher();
+      await once(t, pub, { etHour: 19, lows: [55.7, 57, 60], minHours: [7, 6, 6], event: { frostEval: true }, runFn: rehearsal.run });
+      expect(pub.frost()).toHaveLength(1);
+      expect(pub.frost()[0].message).toMatch(/^FROST ADVISORY — frost possible tonight \(low 55\.7°F/);
+      expect(t.sent()[0]).toMatchObject({ tier: 'advisory', level: 'advisory', lowF: 55.7, nightOffset: 0, run: 'forced' });
+    } finally { drop(); }
+  });
+
+  it('an entry stored before the field (no `run`) reads exactly as before, in every reader of the entry', () => {
+    const withRun = { key: 'sp1|2026-10-05|advisory|advisory|s51rcs', tier: 'advisory', level: 'advisory',
+      at: '2026-10-05T19:00:00.000Z', run: 'forced', crops: { tomato: 'advisory' },
+      lowF: 38, dayOffset: 1, date: '2026-10-06', nightOffset: 0 };
+    const { run: _dropped, ...without } = withRun;
+    expect(without).not.toHaveProperty('run');
+    // the escalation gate and the night on record
+    for (const d of [{ level: 'advisory', crops: { tomato: 'advisory' }, night: 0 }, { level: 'advisory', crops: { tomato: 'advisory' }, night: 1 },
+      { level: 'advisory', crops: { pepper: 'advisory' }, night: 0 }, { level: 'protect', crops: { tomato: 'protect' }, night: 0 }]) {
+      expect(escalatesBeyond([withRun], d)).toBe(escalatesBeyond([without], d));
+    }
+    expect(escalatesBeyond([withRun], { level: 'advisory', crops: { tomato: 'advisory' }, night: 0 })).toBe(false);
+    expect(sentNight(withRun)).toBe(0);
+    expect(sentNight(without)).toBe(0);
+    // the post-window in-ground coverage (BUG-INGROUNDPOSTWINDOW-001)
+    const decision = { trippedCrops: [{ slug: 'tomato', label: 'Tomatoes', level: 'advisory', ids: ['p1'] }] };
+    const cov = new Map([['p1', 'named']]);
+    expect([...sentCoverage(decision, cov, [withRun])]).toEqual([...sentCoverage(decision, cov, [without])]);
+    // the per-Space merge: same key and `at` is the same send, with or without the field
+    expect(mergeAlertsSent([without], [withRun])).toEqual([without]);
+    // the client that words the Today line (src/lib/frostAlertLine.js)
+    expect(buildFrostAlertLine([withRun])).toEqual(buildFrostAlertLine([without]));
+    expect(buildFrostAlertLine([without]).text).toBe('Frost possible tonight — low 38°F. Plan cover for tender plants.');
   });
 });
