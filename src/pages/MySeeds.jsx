@@ -716,18 +716,27 @@ function PacketLink({ item }) {
   const host = hostOf(href)
   const label = packet ? `Packet page · ${host} ↗` : `About this variety · ${host} ↗`
   const name = packet ? `Packet page on ${host}, opens in browser` : `About this variety on ${host}, opens in browser`
+  // Named by its CONTENT, not aria-label: the a11y gate's static layer rebuilds an <a> without its
+  // href, where a name is prohibited — the same fix the detail page's packet link carries. The glyph
+  // line is hidden from a screen reader, which hears the sentence instead.
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={name}
       data-testid="my-seed-packet-link"
-      style={secondaryLink}
+      style={{ ...secondaryLink, position: 'relative' }}
     >
-      {label}
+      <span aria-hidden="true">{label}</span>
+      <span style={SR_ONLY}>{name}</span>
     </a>
   )
+}
+
+// LiveRegion.jsx's visually-hidden recipe.
+const SR_ONLY = {
+  position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)', whiteSpace: 'nowrap', border: 0,
 }
 
 // ── Styles — from T tokens, matching the Saved seeds card (48px buttons, 44px taps) ──────────────────
