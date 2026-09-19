@@ -1107,6 +1107,14 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
     // Column list, join shape and NULL semantics mirror lambda/events/index.js's batch INSERT, and
     // the roof rule mirrors migrations/v4-rainbackfill-001. LEFT JOIN container, never INNER
     // (BUG-LOGMANYPROJECTLESS-001): a project-less planting must still get its row.
+    //
+    // OPS-RAININSERTCONTAINERFILTER-001: a planting whose CONTAINER is soft-deleted or archived gets
+    // none. Neither state cascades to the plantings (lambda/projects/index.js sets the container's own
+    // column and nothing else), so gn's filter cannot see it. A row written there is hidden on arrival
+    // (the events feed drops a deleted or archived container's events; the plants API 404s a planting
+    // whose container is deleted) and resurfaces, one per rain day, on restore or unarchive. The
+    // predicate is the anchor re-derivation target's (REDERIVE_CTE, pj there); `ct.id is null` is the
+    // project-less arm. The v4-rainbackfill-001 backfill predates this and has no container filter.
     const { rowCount: inserted } = await pg.query(
       `insert into event_log
          (project_id, location_id, plant_id, event_type, event_date, is_public,
@@ -1132,7 +1140,8 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
                   union all
                   select l.id, l.parent_id, l.covered from up
                     join locations l on l.id = up.parent_id and l.deleted_at is null
-                ) select bool_or(up.covered) from up), false)`,
+                ) select bool_or(up.covered) from up), false)
+          and (ct.id is null or (ct.deleted_at is null and ct.archived_at is null))`,
       [day, d.amountIn, JSON.stringify(rainMetadata(d.amountIn))]);
 
     // Care cache, FORWARD ONLY (GREATEST), recomputed FROM event_log rather than from the amount
