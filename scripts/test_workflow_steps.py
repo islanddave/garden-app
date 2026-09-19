@@ -7,12 +7,15 @@ bare `cmd` followed by `RC=$?` on the next line never reads a non-zero status: t
 shipped in promote-gate.yml's Lambda decision step (B1 of the v4.138.0 pre-ship pass; tested in
 test_check_lambda_current.py, whose harness this one mirrors) and in staging-drift.yml
 (OPS-STAGINGDRIFTERREXIT-001). shellcheck cannot see it at any severity, because the body carries no `-e` of its
-own; the runner adds it. Only executing the body the runner's way finds it. Never switch this harness to `bash -c`.
+own; the runner adds it. Executing a body the runner's way finds it in that step; the textual scan at the end of
+this file finds the shape in every step of every workflow. Never switch this harness to `bash -c`.
 
 The fallible command is a python3 stub on PATH. Bodies run in tmp_path, so relative paths they write
 (schema-audit's `tee audit-output.txt`) land there, not in the checkout.
 """
+import glob
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -169,3 +172,134 @@ def test_audit_step_without_the_secret_warns_and_checks_nothing(tmp_path):
     assert proc.returncode == 0 and called == ""
     assert "::warning title=L-081 audit UNVERIFIED::" in proc.stdout
     assert "UNVERIFIED — L-081 schema audit did not run" in summary
+
+
+# ── every step of every workflow: no exit-status read that errexit has already decided ─────────────────────
+# The steps above are guarded one at a time. This scans every bash/sh `run:` body for the shape itself, so a new
+# step cannot reintroduce it unnoticed. Under errexit, `$?` read on its own is always 0 (any non-zero ended the
+# step one command earlier), so it only counts in the same list as the command (`cmd || RC=$?`) or as the first
+# command of an `else` (the failed condition's status). A PIPESTATUS read after `a | b` is live only while pipefail
+# is off. The scan is textual and linear: `set +e` / `set +o pipefail` count from where they appear in the text,
+# branches are not followed, heredoc bodies and `trap` lines are skipped. To read a status legitimately:
+# `RC=0; cmd || RC=$?`, or `set +e` before the command.
+
+_SET = re.compile(r"(?:^|[\s&|({])set\s+(.*)$")
+_HEREDOC = re.compile(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?")
+
+
+def _segments(line):
+    """The line's commands split on `;` outside quotes, its comment (a `#` starting a word) dropped."""
+    segs, cur, quote, escaped = [], [], None, False
+    for i, ch in enumerate(line):
+        if escaped:
+            escaped = False
+        elif ch == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            break
+        elif ch == ";":
+            segs.append("".join(cur))
+            cur = []
+            continue
+        cur.append(ch)
+    segs.append("".join(cur))
+    return [s.strip() for s in segs if s.strip()]
+
+
+def _apply_set(args, state):
+    words = args.split()
+    i = 0
+    while i < len(words) and words[i][:1] in "-+" and words[i] != "--":
+        on, flags = words[i][0] == "-", words[i][1:]
+        for ch in flags:
+            if ch == "e":
+                state["errexit"] = on
+            elif ch == "o" and i + 1 < len(words):
+                i += 1
+                if words[i] in ("errexit", "pipefail"):
+                    state[words[i]] = on
+        i += 1
+
+
+def _decided_status_reads(body, shell=None):
+    """1-based body lines holding a `$?` / PIPESTATUS read whose value errexit has already decided."""
+    state = {"errexit": True, "pipefail": shell == "bash"}  # `shell: bash` runs as bash -eo pipefail {0}
+    bad, heredoc, carry, previous = [], None, None, ""
+    for n, raw in enumerate(body.splitlines(), 1):
+        if heredoc:
+            heredoc = None if raw.strip() == heredoc else heredoc
+            continue
+        parts = _segments(raw)
+        if not parts:
+            continue
+        segments = [[n, s] for s in parts]
+        if carry:  # the first command continues the line above
+            segments[0] = [carry[0], carry[1] + " " + segments[0][1]]
+            carry = None
+        if segments[-1][1].endswith(("\\", "|", "&&")):  # ...and this line's last one continues below
+            line, text = segments.pop()
+            carry = (line, text.rstrip("\\").rstrip())
+        for line, segment in segments:
+            if not re.match(r"trap\s", segment):
+                m = _SET.search(segment)
+                if m:
+                    _apply_set(m.group(1), state)
+                after_else = previous == "else" or segment.startswith("else ")
+                for read in re.finditer(r"\$\?|\bPIPESTATUS\b", segment):
+                    if not state["errexit"] or after_else or "||" in segment[:read.start()]:
+                        continue
+                    if read.group() == "$?" or state["pipefail"]:
+                        bad.append(line)
+            previous = segment
+        m = _HEREDOC.search(" ; ".join(parts))
+        if m and not carry:
+            heredoc = m.group(1)
+    return sorted(set(bad))
+
+
+@pytest.mark.parametrize("body,shell,want", [
+    ("python3 x.py\nRC=$?\n", None, [2]),                                   # B1 / staging-drift exactly
+    ("python3 x.py\nif [ $? -ne 0 ]; then exit 1; fi\n", None, [2]),
+    ("python3 x.py; RC=$?\n", None, [1]),
+    ("if python3 x.py; then\n  RC=$?\nfi\n", None, [2]),
+    ("RC=0\npython3 x.py || RC=$?\n", None, []),                            # the fix
+    ("python3 x.py || { RC=$?; echo \"$RC\"; }\n", None, []),
+    ("python3 x.py ||\n  RC=$?\n", None, []),
+    ("python3 x.py \\\n  --flag || RC=$?\n", None, []),
+    ("python3 x.py || echo \"failed; exit $?\"\n", None, []),
+    ("if python3 x.py; then\n  :\nelse\n  RC=$?\nfi\n", None, []),          # else sees the condition's status
+    ("set +e\npython3 x.py\nRC=$?\nset -e\n", None, []),
+    ("set -euo pipefail\nset +e\npython3 x.py\nrc=$?\n", None, []),
+    ("set +e\nset -e\npython3 x.py\nrc=$?\n", None, [4]),
+    ("a | tee o\nX=${PIPESTATUS[0]}\n", None, []),                          # pipefail off: the status is tee's
+    ("set -euo pipefail\na | tee o\nX=${PIPESTATUS[0]}\n", None, [3]),
+    ("a | tee o\nX=${PIPESTATUS[0]}\n", "bash", [2]),
+    ("set -euo pipefail\nset +o pipefail\na | tee o\nX=${PIPESTATUS[0]}\n", None, []),
+    ("echo ok  # RC=$? only in a comment\n", None, []),
+    ("cat > s.sh <<'EOF'\npython3 x.py\nRC=$?\nEOF\n", None, []),
+    ("trap 'rc=$?; echo \"exit $rc\"' EXIT\n", None, []),
+])
+def test_the_status_read_scan_flags_the_shape_and_only_the_shape(body, shell, want):
+    assert _decided_status_reads(body, shell) == want
+
+
+def test_no_workflow_reads_an_exit_status_errexit_has_already_decided():
+    files = sorted(glob.glob(os.path.join(HERE, "..", ".github", "workflows", "*.y*ml")))
+    hits, scanned = [], 0
+    for path in files:
+        with open(path) as fh:
+            wf = yaml.safe_load(fh)
+        for job_id, job in (wf.get("jobs") or {}).items():
+            for i, step in enumerate(job.get("steps") or []):
+                shell = _declared_shell(wf, job_id, step)
+                if "run" not in step or shell not in (None, "bash", "sh"):
+                    continue
+                scanned += 1
+                for n in _decided_status_reads(step["run"], shell):
+                    hits.append(f"{os.path.basename(path)} job {job_id} step {step.get('name') or i!r} body line {n}")
+    assert files and scanned, "scanned no run: step: the workflow glob or loader is broken"
+    assert not hits, "exit status read after errexit already acted (use `RC=0; cmd || RC=$?`):\n" + "\n".join(hits)
