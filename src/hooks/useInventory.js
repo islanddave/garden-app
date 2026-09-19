@@ -153,8 +153,9 @@ export function useInventory() {
   // one session, which is the inventory size at worst.
   const putSeqRef = useRef(new Map())
 
-  // V5-SEEDSTAB-001 — the stepper itself now lives in lib/quantityAdjuster.js, so My seeds can run
-  // the same logic over its own store. Both guards above travel with it; this hook supplies the
+  // V5-SEEDSTAB-001 — the stepper itself lives in lib/quantityAdjuster.js (extracted so a second
+  // store could run it; My seeds did until V5-SEEDCARDS-001 removed its row stepper). Both guards
+  // above travel with it; this hook supplies the
   // three things it no longer owns — the row as it is NOW (itemsRef), the commit that assigns that
   // ref synchronously (commitItems), and its own toast. The body and the success commit are the
   // shipped defaults, so this page's write is byte-identical to what it was.

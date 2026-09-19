@@ -37,11 +37,16 @@ const plural = (n, one, many) => (String(n) === '1' ? one : many)
 // How much. A saved lot is measured in SEED (count or weight) — every saved lot is "1 packet", which
 // says nothing — and says nothing at all when nobody has counted it. A bought packet is measured in
 // what the shelf holds: packets, or seeds when the unit is `each`.
+//
+// EXACTLY "1 packet" says nothing and is left out (V5-SEEDCARDS-001, UX spec §1.3): 304 of 327 rows
+// printed the same 11 characters — 68px of a 255px line — for a fact the eye had to skip on every row.
+// Every other amount ("2 packets", "272 seeds", "0.5 oz", a saved lot's count) still shows, whole.
 export function howMuch(i) {
   if (isSavedLot(i)) return lotMeasure(i)
   const qty = formatQty(i?.quantity_on_hand)
   if (qty === '') return ''
   const unit = String(i?.unit ?? '').trim()
+  if ((unit === 'packet' || unit === '') && qty === '1') return ''
   if (unit === 'packet' || unit === '') return `${qty} ${plural(qty, 'packet', 'packets')}`
   if (unit === 'each') return `${qty} ${plural(qty, 'seed', 'seeds')}`
   return `${qty} ${unit}`
@@ -90,7 +95,9 @@ export function stateChips(i, { now = new Date(), year = now.getFullYear() } = {
       const level = fermentUrgency(i, now)
       chips.push({
         key: 'fermenting',
-        label: d == null ? 'Fermenting' : d <= 0 ? 'Fermenting · today' : `Fermenting · day ${d}`,
+        // "Ferment", the ferment line's own word (V5-SEEDCARDS-001): ~20px back on a line that now
+        // leads with a supplier chip, which is the margin the worst row needs on CI's wider fonts.
+        label: d == null ? 'Ferment' : d <= 0 ? 'Ferment · today' : `Ferment · day ${d}`,
         tone: level === 'alarm' ? 'danger' : level === 'warn' ? 'warn' : 'info',
       })
     } else {
@@ -105,12 +112,20 @@ export function stateChips(i, { now = new Date(), year = now.getFullYear() } = {
   return chips
 }
 
-// Line 2 as one string: the chips' words, then the facts. Also what row uniqueness is computed over,
+// Where from, for the TAIL of line 2: a saved lot's origin words. A bought packet's vendor is not
+// repeated here — the supplier chip that leads the line already names it (V5-SEEDCARDS-001).
+export function originNote(i) {
+  return whereFrom(i, null)
+}
+
+// Line 2 as one string, in the order it renders: the supplier chip's label, the state chips, the
+// amount, the heat, then the tail (origin words, how old). Also what row uniqueness is computed over,
 // because it is what the eye reads.
 export function lineText(i, { vendorOf, now, year } = {}) {
+  const vendor = vendorOf ? String(vendorOf(i) ?? '').trim() : ''
   const chips = stateChips(i, { now, year }).map((c) => c.label)
-  const facts = [howMuch(i), whereFrom(i, vendorOf), howOld(i)].filter(Boolean)
-  return [...chips, ...facts].join(' · ')
+  const facts = [howMuch(i), heatLabel(i), originNote(i), howOld(i)].filter(Boolean)
+  return [vendor ? supplierLabel(vendor) : '', ...chips, ...facts].filter(Boolean).join(' · ')
 }
 
 // Sowed previously — Dave's term, and Sow now's section — is a packet there is none of left. Never a
@@ -209,30 +224,54 @@ export function sortRows(rows, sort) {
       String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')) || String(a.id).localeCompare(String(b.id)))
   }
   if (sort === 'heat') {
-    // Hottest first; rows with no figure keep their A→Z order after every row that has one. A sort
-    // never hides a row.
+    // Hottest first — by the top of the range, then the bottom (so the right-hand number never rises
+    // going down the list); rows with no figure keep their A→Z order after every row that has one. A
+    // sort never hides a row.
     return out.sort((a, b) => {
-      const A = heatOf(a)?.key, B = heatOf(b)?.key
-      if (A == null && B == null) return byTitle(a, b)
-      if (A == null) return 1
-      if (B == null) return -1
-      return B - A || byTitle(a, b)
+      const A = heatOf(a), B = heatOf(b)
+      if (!A && !B) return byTitle(a, b)
+      if (!A) return 1
+      if (!B) return -1
+      return B.key - A.key || B.min - A.min || byTitle(a, b)
     })
   }
   return out.sort(byTitle)
 }
 
-// Crop groups for the Name sort, in the order the crops' labels sort, with rows that name no crop in
-// their own group LAST rather than dropped (prod has none today; a row must never vanish for it).
+// Crop groups for the grouped sorts, with rows that name no crop in their own group LAST rather than
+// dropped (prod has none today; a row must never vanish for it).
+//
+// ORDER (V5-SEEDCARDS-001, UX spec §3.2): the crops PINNED in the chip row first, in pin order, then
+// every other crop A→Z. Once groups are collapsed the list IS the overview, and A→Z put Pepper (103
+// rows) 53rd and Tomato (52) 68th of 73 headers. `leadSlug` (the Hottest sort's pepper) goes first.
 export const NO_CROP = '__none__'
-export function groupByCrop(rows, labelOf) {
+export function groupByCrop(rows, labelOf, { pinned = [], leadSlug = null } = {}) {
   const groups = new Map()
   for (const r of rows) {
     const k = r.crop_slug || NO_CROP
     if (!groups.has(k)) groups.set(k, [])
     groups.get(k).push(r)
   }
+  const rank = (slug) => {
+    if (leadSlug && slug === leadSlug) return -1
+    const p = pinned.indexOf(slug)
+    return p === -1 ? Number.MAX_SAFE_INTEGER : p
+  }
   return [...groups.entries()]
     .map(([slug, list]) => ({ slug, label: slug === NO_CROP ? 'No crop recorded' : labelOf(slug), rows: list }))
-    .sort((a, b) => (a.slug === NO_CROP) - (b.slug === NO_CROP) || collator.compare(a.label, b.label))
+    .sort((a, b) => (a.slug === NO_CROP) - (b.slug === NO_CROP)
+      || rank(a.slug) - rank(b.slug)
+      || collator.compare(a.label, b.label))
+}
+
+// ── Which crop groups are open (V5-SEEDCARDS-001, UX spec §3.5–§3.6) ───────────────────────────────
+// Collapsed by default. A group is open when the user did not close it AND (they opened it, OR a rule
+// opens it): any active filter opens every group that still has rows (a filter means "show me the
+// seeds"; no filter means "show me the kinds"); the Hottest sort opens the pepper group.
+export function groupIsOpen(slug, { openGroups, closedByUser, filterActive, sort }) {
+  if (closedByUser?.has(slug)) return false
+  if (openGroups?.has(slug)) return true
+  if (filterActive) return true
+  if (sort === 'heat' && slug === 'pepper') return true
+  return false
 }

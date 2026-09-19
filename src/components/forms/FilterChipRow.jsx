@@ -24,7 +24,10 @@ import { P } from '../../lib/constants.js'
 const EMPTY_SET = new Set()
 
 export default function FilterChipRow({
-  // [{ value, label }] in display order (pinned values are re-grouped first below).
+  // [{ value, label, leading? }] in display order (pinned values are re-grouped first below).
+  // `leading` (V5-SEEDCARDS-001) is an OPTIONAL node drawn before the label — My seeds' supplier chips
+  // carry a colour swatch that doubles as the legend for the card stripes. Absent ⇒ the chip renders
+  // byte-identically to before (FilterChipRow.leading.test.jsx pins both arms).
   options = [],
   // Set of selected values — consumer-owned state (session-ephemeral by design: never persisted).
   selected,
@@ -118,7 +121,9 @@ export default function FilterChipRow({
               color: active ? P.green : P.mid,
             }}
           >
-            {o.label}
+            {o.leading != null
+              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>{o.leading}{o.label}</span>
+              : o.label}
           </button>
         )
       })}

@@ -7,7 +7,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   rowTitle, howMuch, whereFrom, howOld, ageOf, stateChips, lineText, isSowedPreviously,
-  sortRows, groupByCrop, NO_CROP,
+  sortRows, groupByCrop, NO_CROP, heatOf, heatLabel, SORTS, supplierOptions, matchesSuppliers,
+  isFilterActive, groupIsOpen, originNote, NO_SUPPLIER_VALUE,
 } from '../components/seed/mySeedsModel.js'
 
 const NOW = new Date('2026-09-18T12:00:00Z')
@@ -36,7 +37,10 @@ describe('rowTitle', () => {
 
 describe('howMuch — seed for a saved lot, containers for a bought packet', () => {
   it.each([
-    [bought({ quantity_on_hand: 1 }), '1 packet'],
+    // EXACTLY "1 packet" is not printed (V5-SEEDCARDS-001): 304 of 327 rows said the same thing.
+    [bought({ quantity_on_hand: 1 }), ''],
+    [bought({ quantity_on_hand: '1.000' }), ''],
+    [bought({ unit: 'each', quantity_on_hand: 1 }), '1 seed'],
     [bought({ quantity_on_hand: '3.000' }), '3 packets'],
     [bought({ unit: 'each', quantity_on_hand: 272 }), '272 seeds'],
     [bought({ unit: 'oz', quantity_on_hand: 2 }), '2 oz'],
@@ -71,15 +75,16 @@ describe('howOld / ageOf', () => {
 
 describe('stateChips — the engine’s predicates, the engine’s order', () => {
   it('fermenting shows its calendar day; drying is named; stored carries no stage chip', () => {
-    expect(labels(saved({ seed_stage: 'fermenting', stage_entered_at: '2026-09-15' }))).toEqual(['Fermenting · day 3'])
-    expect(labels(saved({ seed_stage: 'fermenting', stage_entered_at: '2026-09-18T11:00:00Z' }))).toEqual(['Fermenting · today'])
+    // "Ferment", the ferment line's own word (V5-SEEDCARDS-001).
+    expect(labels(saved({ seed_stage: 'fermenting', stage_entered_at: '2026-09-15' }))).toEqual(['Ferment · day 3'])
+    expect(labels(saved({ seed_stage: 'fermenting', stage_entered_at: '2026-09-18T11:00:00Z' }))).toEqual(['Ferment · today'])
     expect(labels(saved({ seed_stage: 'drying' }))).toEqual(['Drying'])
     expect(labels(saved())).toEqual([])
   })
 
   it('OVERLAP: a fermenting jar at quantity 0 is in process, never Sowed previously', () => {
     const jar = saved({ seed_stage: 'fermenting', stage_entered_at: '2026-09-17', quantity_on_hand: 0 })
-    expect(labels(jar)).toEqual(['Fermenting · day 1'])
+    expect(labels(jar)).toEqual(['Ferment · day 1'])
     expect(isSowedPreviously(jar)).toBe(false)
   })
 
@@ -118,6 +123,78 @@ describe('lineText — the second line as the eye reads it (and as uniqueness is
     const lot = saved({ seed_stage: 'drying', seed_count: 40, stage_entered_at: '2026-09-10T12:00:00Z' })
     expect(lineText(lot, { now: NOW, year: 2026 })).toBe('Drying · 40 seeds · Saved from my plant · harvested 2026')
   })
+  it('a bought packet leads with the supplier chip\'s SHORT label, then amount, heat and tail — the full vendor name is not repeated', () => {
+    const vendorOf = () => 'Botanical Interests'
+    const pkt = bought({ quantity_on_hand: 2, purchase_date: '2025-01-01', scoville_min: 2500, scoville_max: 8000 })
+    expect(lineText(pkt, { vendorOf, now: NOW, year: 2026 })).toBe('Botanical · 2 packets · 2.5K–8K SHU · bought 2025')
+    expect(lineText(pkt, { vendorOf, now: NOW, year: 2026 })).not.toContain('Interests')
+  })
+  it('originNote names a saved lot\'s origin and never a bought packet\'s vendor', () => {
+    expect(originNote(saved())).toBe('Saved from my plant')
+    expect(originNote(bought({ source_id: 'src-fedco' }))).toBe('')
+  })
+})
+
+describe('heat (V5-SEEDCARDS-001)', () => {
+  it('heatOf keys a range by its top, falls back to one end, and is null with no figure', () => {
+    expect(heatOf(bought({ scoville_min: 100000, scoville_max: 350000 }))).toEqual({ min: 100000, max: 350000, key: 350000, estimate: false })
+    expect(heatOf(bought({ scoville_min: 5000, scoville_max: null }))).toEqual({ min: 5000, max: 5000, key: 5000, estimate: false })
+    expect(heatOf(bought({ scoville_min: 0, scoville_max: 0 }))?.key).toBe(0)
+    expect(heatOf(bought())).toBeNull()
+    expect(heatOf(bought({ scoville_min: 1, scoville_max: 2, scoville_source: 'inference' })).estimate).toBe(true)
+  })
+  it('heatLabel reuses the one SHU formatter (varietySpec.shuLabel)', () => {
+    expect(heatLabel(bought({ scoville_min: 100000, scoville_max: 350000 }))).toBe('100K–350K SHU')
+    expect(heatLabel(bought({ scoville_min: 0, scoville_max: 0 }))).toBe('Sweet · 0 SHU')
+    expect(heatLabel(bought())).toBe('')
+  })
+  it('Hottest: top of range descending, then bottom descending, then A→Z; no figure last', () => {
+    const r = (id, mn, mx) => bought({ id, variety_name: id, scoville_min: mn, scoville_max: mx })
+    const out = sortRows([r('mild', 0, 500), r('none', null, null), r('hab', 100000, 350000), r('tie-b', 30000, 50000), r('tie-a', 10000, 50000), r('aaa', null, null)], 'heat')
+    expect(out.map((x) => x.id)).toEqual(['hab', 'tie-b', 'tie-a', 'mild', 'aaa', 'none'])
+    expect(SORTS.map((x) => x.value)).toEqual(['name', 'oldest', 'newest', 'heat'])
+  })
+})
+
+describe('supplier facet (V5-SEEDCARDS-001)', () => {
+  const NAMES = { a: 'Botanical Interests', b: 'Bentley Seeds', c: 'Fedco Seeds' }
+  const vendorOf = (i) => NAMES[i.source_id] ?? ''
+  const rows = [
+    bought({ id: '1', source_id: 'b' }), bought({ id: '2', source_id: 'a' }), bought({ id: '3', source_id: 'a' }),
+    bought({ id: '4', source_id: 'c' }), saved({ id: '5' }),
+  ]
+  it('options are every supplier present, count-descending, keyed by the folded name, "No supplier" last', () => {
+    const opts = supplierOptions(rows, vendorOf)
+    expect(opts.map((o) => [o.value, o.label, o.count])).toEqual([
+      ['botanicalinterests', 'Botanical', 2], ['bentleyseeds', 'Bentley', 1], ['fedcoseeds', 'Fedco', 1], [NO_SUPPLIER_VALUE, 'No supplier', 1],
+    ])
+  })
+  it('matchesSuppliers ORs within the set and treats an empty set as no filter', () => {
+    const sel = new Set(['bentleyseeds', NO_SUPPLIER_VALUE])
+    expect(rows.filter((i) => matchesSuppliers(i, sel, vendorOf)).map((i) => i.id)).toEqual(['1', '5'])
+    expect(rows.every((i) => matchesSuppliers(i, new Set(), vendorOf))).toBe(true)
+  })
+  it('isFilterActive sees search, crop chips AND supplier chips — one filter object', () => {
+    expect(isFilterActive({ q: '', crops: new Set(), suppliers: new Set() })).toBe(false)
+    expect(isFilterActive({ q: '  ', crops: new Set(), suppliers: new Set() })).toBe(false)
+    expect(isFilterActive({ q: 'x', crops: new Set(), suppliers: new Set() })).toBe(true)
+    expect(isFilterActive({ q: '', crops: new Set(['pepper']), suppliers: new Set() })).toBe(true)
+    expect(isFilterActive({ q: '', crops: new Set(), suppliers: new Set(['a']) })).toBe(true)
+  })
+})
+
+describe('groupIsOpen — folded by default, opened by the user or a rule (V5-SEEDCARDS-001)', () => {
+  const none = new Set()
+  it.each([
+    ['default: closed', 'tomato', { openGroups: none, closedByUser: none, filterActive: false, sort: 'name' }, false],
+    ['opened by the user', 'tomato', { openGroups: new Set(['tomato']), closedByUser: none, filterActive: false, sort: 'name' }, true],
+    ['any active filter opens it', 'tomato', { openGroups: none, closedByUser: none, filterActive: true, sort: 'name' }, true],
+    ['Hottest opens Pepper', 'pepper', { openGroups: none, closedByUser: none, filterActive: false, sort: 'heat' }, true],
+    ['Hottest leaves the rest folded', 'tomato', { openGroups: none, closedByUser: none, filterActive: false, sort: 'heat' }, false],
+    ['a user close beats a rule', 'tomato', { openGroups: none, closedByUser: new Set(['tomato']), filterActive: true, sort: 'name' }, false],
+  ])('%s', (_label, slug, state, open) => {
+    expect(groupIsOpen(slug, state)).toBe(open)
+  })
 })
 
 describe('sortRows / groupByCrop', () => {
@@ -145,5 +222,11 @@ describe('sortRows / groupByCrop', () => {
     ], (slug) => ({ tomato: 'Tomato', pepper: 'Pepper' })[slug])
     expect(groups.map((g) => [g.label, g.rows.length])).toEqual([['Pepper', 1], ['Tomato', 2], ['No crop recorded', 1]])
     expect(groups[2].slug).toBe(NO_CROP)
+  })
+  it('the crop chips\' PINNED crops lead in pin order, then A→Z; Hottest\'s lead crop goes first', () => {
+    const label = (slug) => ({ tomato: 'Tomato', pepper: 'Pepper', bean: 'Bean', arugula: 'Arugula' })[slug]
+    const rows = [r('a', { crop_slug: 'arugula' }), r('b', { crop_slug: 'bean' }), r('p', { crop_slug: 'pepper' }), r('t', { crop_slug: 'tomato' }), r('n', { crop_slug: null })]
+    expect(groupByCrop(rows, label, { pinned: ['pepper', 'tomato'] }).map((g) => g.slug)).toEqual(['pepper', 'tomato', 'arugula', 'bean', NO_CROP])
+    expect(groupByCrop(rows, label, { pinned: ['tomato', 'bean'], leadSlug: 'pepper' }).map((g) => g.slug)).toEqual(['pepper', 'tomato', 'bean', 'arugula', NO_CROP])
   })
 })

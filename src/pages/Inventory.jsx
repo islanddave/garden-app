@@ -31,7 +31,8 @@ import { seedsHref } from '../lib/seedsRoutes.js'
 // (My seeds · Saved seeds · Sow now), which Dave approved by name as part of consolidating seed into
 // one home (design-seedshome-V102 §7, D2): the Seeds section here becomes ONE pointer row, "Seeds"
 // leaves the Category filter, and the cost totals cover non-seed items only. The packet − / + moved
-// with the rows (My seeds, re-plumbed through lib/quantityAdjuster.js).
+// with the rows to My seeds and was then removed there (V5-SEEDCARDS-001, Dave: "the 'on hand' item …
+// is not needed"); a packet's count is edited on its detail page.
 const SEED_CATEGORY = 'seeds'
 const CATEGORY_OPTIONS = INVENTORY_CATEGORY_OPTIONS.filter(([v]) => v !== SEED_CATEGORY)
 const CATEGORY_ORDER = INVENTORY_CATEGORIES.map(c => c.v).filter(v => v !== SEED_CATEGORY)

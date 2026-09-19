@@ -25,7 +25,9 @@ export default function FacetGroupHeader({ label, count, facet, value, collapsed
     >
       {interactive && <span aria-hidden="true" style={{ fontSize: T.type.xs }}>{collapsed ? '▸' : '▾'}</span>}
       <span style={{ fontStyle: isUnsorted ? 'italic' : 'normal' }}>{label}</span>
-      {typeof count === 'number' && <span style={{ marginLeft: 'auto', fontWeight: 600, opacity: 0.7 }}>{count}</span>}
+      {/* Full opacity (V5-SEEDCARDS-001): at .7 the count read 3.74:1 on its fill, under 4.5 — and on a
+          collapsed My seeds group it is the header's only content. */}
+      {typeof count === 'number' && <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{count}</span>}
     </div>
   )
 }

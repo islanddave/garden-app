@@ -175,7 +175,8 @@ export default function Seeds() {
 
         {view && view !== 'sow' && <StaleBand store={store} />}
 
-        {view && <p data-testid="seeds-question" style={questionStyle}>{QUESTION[view]}</p>}
+        {/* My seeds draws its own question line: it carries Expand all / Collapse all (V5-SEEDCARDS-001). */}
+        {view && view !== 'mine' && <p data-testid="seeds-question" style={questionStyle}>{QUESTION[view]}</p>}
 
         {!view && <AsyncRegion loading />}
 

@@ -17,8 +17,9 @@
 //
 // Still the WIDE PUT until the narrow /:id/quantity route lands (slice 3). `buildBody` is how a host
 // decides what rides along with the new quantity: the Inventory list round-trips its row as it
-// always has; My seeds strips the presence-guarded seed columns so a stale row cannot re-assert a
-// stage or a source that another view changed a moment ago.
+// always has. (My seeds used this with a seed-column strip until V5-SEEDCARDS-001 removed its row
+// stepper at Dave's request — "the 'on hand' item … is not needed"; the seam stays, exercised by
+// quantityAdjuster.test.js, for the next host that needs it.)
 
 // The shipped body: the whole row, with the new value. Kept as the default so the Inventory page's
 // write is byte-identical to what it was before the extraction.

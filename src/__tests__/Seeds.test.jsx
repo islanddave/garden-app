@@ -297,6 +297,15 @@ describe('Seeds — header actions (fixed slot per view)', () => {
 // the Seeds URL it came from: the add form and the detail page leave with navigate(-1) when they see it
 // (InventoryAdd.seedMode.test.jsx pins that half, with the state injected by hand). Without it every add
 // stacks another copy of Seeds under the form. These pin the sending half, one door per case.
+// V5-SEEDCARDS-001: My seeds' crop groups start FOLDED, so a test that reads a card first opens the
+// groups on screen (a header tap each), exactly as Dave would.
+const openMyGroups = async () => {
+  await waitFor(() => expect(within(screen.getByTestId('my-seeds-view')).getAllByTestId('facet-group-header').length).toBeGreaterThan(0))
+  for (const h of within(screen.getByTestId('my-seeds-view')).getAllByTestId('facet-group-header')) {
+    if (h.getAttribute('aria-expanded') === 'false') await act(async () => { fireEvent.click(h) })
+  }
+}
+
 describe('Seeds — every door that pushes a page off Seeds carries the way back', () => {
   const landed = (router) => ({
     action: router.state.historyAction,
@@ -314,6 +323,7 @@ describe('Seeds — every door that pushes a page off Seeds carries the way back
   it('My seeds row: Open details → (after expanding the row)', async () => {
     seedRows = [BOUGHT]
     const router = mount(['/today', '/seeds?view=mine'])
+    await openMyGroups()
     await waitFor(() => expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeTruthy())
     await act(async () => { fireEvent.click(document.querySelector('[data-lot-id="pkt-1"] button[aria-expanded]')) })
     await act(async () => { fireEvent.click(screen.getByTestId('my-seed-details')) })
@@ -412,6 +422,7 @@ describe('Seeds — offline rows are marked stale (§5.1)', () => {
   it('a REFRESH that fails after the rows landed keeps the rows and says so', async () => {
     seedRows = [BOUGHT]
     mount(['/seeds?view=mine'])
+    await openMyGroups()
     await waitFor(() => expect(screen.getAllByTestId('my-seed-row').length).toBe(1))
     seedResponse = () => Promise.reject(new Error('flaky'))
     await act(async () => { fireEvent.click(screen.getByTestId('seeds-save-seed')) })
@@ -494,6 +505,7 @@ describe('Seeds › Saved seeds — a lot the page is told about is brought into
       try {
         seedRows = [DRYING]
         mount([`/seeds?view=${view}`])
+        if (view === 'mine') await openMyGroups()
         await waitFor(() => expect(document.querySelector('[data-lot-id="lot-dry"]')).toBeTruthy())
         await act(async () => { fireEvent.click(screen.getByTestId('seeds-save-seed')) })
         const NEW = lot({ id: 'lot-new', name: 'Cherokee Purple — saved 2026', variety_name: 'Cherokee Purple', seed_stage: 'fermenting', seed_process: 'wet', stage_entered_at: daysAgo(0) })
@@ -523,6 +535,7 @@ describe('Seeds — every view sees the others’ writes without a reload', () =
     await act(async () => { fireEvent.click(screen.getByTestId('stage-save')) })
     await waitFor(() => expect(seedGets()).toBe(2))
     await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'My seeds' })) })
+    await openMyGroups()
     await waitFor(() => expect(document.querySelector('[data-lot-id="lot-dry"]')).toBeTruthy())
     const line = document.querySelector('[data-lot-id="lot-dry"] [data-testid="my-seed-line"]').textContent
     expect(line).not.toContain('Drying')
@@ -562,6 +575,7 @@ describe('Seeds — every view sees the others’ writes without a reload', () =
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Archive Sungold/ })) })
     await waitFor(() => expect(fetchSpy.mock.calls.some(([p, o]) => String(p).includes('/sow-archive') && o?.method === 'PATCH')).toBe(true))
     await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'My seeds' })) })
+    await openMyGroups()
     await waitFor(() => {
       const line = document.querySelector('[data-lot-id="pkt-1"] [data-testid="my-seed-line"]')
       expect(line?.textContent).toContain('Archived for this season')
@@ -656,6 +670,8 @@ describe('Seeds — an outline happens once, for the write it confirms', () => {
     await waitFor(() => expect(calls).toEqual(['pkt-1']))
     await wait(2100)
     const box = screen.getByTestId('my-seeds-search')
+    // Present before the search (the arrival opened its group), so the null below is the search's.
+    expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeTruthy()
     await act(async () => { fireEvent.change(box, { target: { value: 'Jalap' } }) })
     expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeNull()
     await act(async () => { fireEvent.change(box, { target: { value: '' } }) })
@@ -686,10 +702,13 @@ describe('Seeds — an outline happens once, for the write it confirms', () => {
   it('switching away and back keeps the filters the user chose after an outline', async () => {
     seedRows = [BOUGHT, PKT2]
     mount(['/seeds?view=mine'])
-    await waitFor(() => expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTestId('my-seeds-crop-filter')).toBeTruthy())
     await act(async () => { fireEvent.click(screen.getByTestId('seeds-save-seed')) })
     await act(async () => { saveSheetProps.current.onClose(); saveSheetProps.current.onSaved({ id: 'pkt-1' }, {}) })
     await waitFor(() => expect(calls).toEqual(['pkt-1']))
+    // The outline opened the lot's folded group — the row is on screen before the chip hides it, so
+    // the null below is the chip's doing, not a folded group's (re-anchored for V5-SEEDCARDS-001).
+    expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeTruthy()
     await wait(2200)
     const pepper = () => within(screen.getByTestId('my-seeds-crop-filter')).getAllByRole('button').find((b) => /pepper/i.test(b.textContent))
     await act(async () => { fireEvent.click(pepper()) })

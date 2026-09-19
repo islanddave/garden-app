@@ -1,5 +1,5 @@
-// src/pages/MySeeds.jsx — V5-SEEDSTAB-001 §5.1. The My seeds view of the Seeds page: "What seed do I
-// have?" over every packet and saved lot, one row each.
+// src/pages/MySeeds.jsx — V5-SEEDSTAB-001 §5.1, redesigned by V5-SEEDCARDS-001. The My seeds view
+// of the Seeds page: "What seed do I have?" over every packet and saved lot, one card each.
 //
 // Not a route — the Seeds shell mounts it, owns the fetch (useSeedItems) and hands the store down, so a
 // stage moved in Saved seeds or a packet archived in Sow now shows here without a reload.
@@ -7,63 +7,79 @@
 // WHY THIS VIEW EXISTS. Dave's seed lived in three places: the Seeds section of the Inventory list (327
 // of 521 rows, no variety, stage, year or vendor on the row), Saved seeds (tracked lots only) and Sow
 // now (a timing list, not an inventory). He asked for "inventory seeds" to have a proper home with the
-// "standard robust filtering/sorting … appropriate to the entity type" (09-03); this is it, and the
-// Inventory list now points here instead of listing seed.
+// "standard robust filtering/sorting … appropriate to the entity type" (09-03); this is it.
 //
-// THE STEPPER moved here from the Inventory row, re-plumbed rather than moved as-is: the − / + with
-// Undo runs lib/quantityAdjuster.js against this page's store, with both of its guards
-// (BUG-INVPUTREORDER-001 response order, BUG-INVUNDOQTY-001 undo against the live row). It still
-// writes the wide PUT until the narrow quantity route lands (slice 3), and strips the presence-guarded
-// seed columns from the body, so a row read before a stage change elsewhere cannot re-assert the old
-// stage or source with a 200.
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+// V5-SEEDCARDS-001 (Dave, 2026-09-19): "make each type collapsible and collapsed by default. Make the
+// brand/supplier … a featured callout / chip / improved color of each card … each seed to include a
+// seed packet img … The 'on hand' item in the details of each seed is not needed … add the ability to
+// filter by supplier, and for peppers, to sort them by expected SHU". Design: the UX spec and the
+// architecture plan in Projects/Gardening/_seedpacket_20260919/design/ (ux-spec.md, arch-plan.md).
+//   • Crop groups FOLD and start folded. A filter opens every group that still has rows; the Hottest
+//     sort opens Pepper; a write opens the group it landed in (a write never lands out of sight).
+//   • Each card leads with its supplier: a 4px stripe and a pill in the supplier's designated colours
+//     (src/lib/supplierPalette.js), and a 40px packet thumbnail (the app's row-thumb shape).
+//   • Supplier chips filter; Hottest orders peppers by expected Scoville inside the Pepper group.
+//   • The expanded card lost its "On hand − N +" stepper and gained the seed's facts (heat, country of
+//     origin, species, days to maturity) and a link to the packet's page. A packet's count is still
+//     edited on its detail page ("Qty on hand"); the Inventory page keeps its own stepper.
+import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { useToast } from '../context/ToastContext.jsx'
 import { T, selectChrome } from '../components/forms/formStyles.js'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import Badge from '../components/forms/Badge.jsx'
 import FilterChipRow from '../components/forms/FilterChipRow.jsx'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
+import Icon from '../components/Icon.jsx'
+import PhotoView from '../components/photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
+import SupplierChip from '../components/seed/SupplierChip.jsx'
+import { lotPhoto } from '../components/seed/lotPhoto.js'
+import { supplierColors, NO_SUPPLIER } from '../lib/supplierPalette.js'
 import { useCropFacetOptions } from '../hooks/useCropFacetOptions.js'
 import { useSources } from '../hooks/useSources.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
+import useImageWindow from '../hooks/useImageWindow.js'
 import { looseIncludes } from '../lib/comboboxInput.js'
-import { createQuantityAdjuster } from '../lib/quantityAdjuster.js'
 import { labelCandidates, isSavedLot } from '../components/seed/seedLots.js'
 import {
-  rowTitle, stateChips, howMuch, whereFrom, howOld, lineText, isSowedPreviously, ageOf,
-  SORTS, sortRows, groupByCrop,
+  rowTitle, stateChips, howMuch, originNote, howOld, lineText, isSowedPreviously, ageOf,
+  heatOf, heatLabel, SORTS, sortRows, groupByCrop, NO_CROP, supplierOptions,
+  matchesSuppliers, isFilterActive, groupIsOpen, NO_SUPPLIER_VALUE,
 } from '../components/seed/mySeedsModel.js'
 import { useLotOutline, outlineStyle } from '../components/seed/useLotOutline.js'
 import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
 import { isInProcess } from '../lib/sowEngine.js'
-// The list-row → wide-PUT strip lives with the other writer of list rows; the Seeds shell already
-// loads that page, so this import adds nothing to the chunk.
-import { listRowPutBody } from './SavedSeeds.jsx'
 
 const MINE_HREF = seedsHref('mine')
 const RETURN_HERE = seedsReturnState(MINE_HREF)
 const cropSlugOf = (i) => i.crop_slug
+const GROUPED_SORTS = new Set(['name', 'heat'])
+// The sticky offset: headers of OPEN groups stick under the 52px top bar (TopChrome BAR_H).
+const STICKY_TOP = 52
 
-// ── Filters survive the visit, not the history entry ────────────────────────────────────────────────
+// ── The view's shape survives the visit, not the history entry ───────────────────────────────────────
 // sessionStorage per PAGE, never the URL: any post-mount replace write re-keys useScrollRestore's
-// entry and deletes an armed sheet's Back marker (DismissRegistry.jsx:232-236). Search, crop chips and
-// sort are always visible in the controls, so a remembered filter is never a hidden one.
+// entry and deletes an armed sheet's Back marker (DismissRegistry.jsx:232-236). Search, crop and
+// supplier chips and sort are always visible in the controls, so a remembered filter is never a hidden
+// one. The groups a user OPENED ride the same blob (one lifetime for the whole view's shape; a fresh
+// launch starts collapsed). `.v1` is kept: the reader is field-tolerant both ways.
 const FILTER_KEY = 'seeds.mine.filters.v1'
 const SORT_VALUES = new Set(SORTS.map((s) => s.value))
+const strings = (a) => (Array.isArray(a) ? a.filter((c) => typeof c === 'string') : [])
 
 function readFilters() {
   try {
     const raw = JSON.parse(window.sessionStorage.getItem(FILTER_KEY) || 'null')
     return {
       q: typeof raw?.q === 'string' ? raw.q : '',
-      crops: Array.isArray(raw?.crops) ? raw.crops.filter((c) => typeof c === 'string') : [],
+      crops: strings(raw?.crops),
+      suppliers: strings(raw?.suppliers),
       sort: SORT_VALUES.has(raw?.sort) ? raw.sort : 'name',
+      openGroups: strings(raw?.openGroups),
     }
   } catch {
-    return { q: '', crops: [], sort: 'name' }
+    return { q: '', crops: [], suppliers: [], sort: 'name', openGroups: [] }
   }
 }
 
@@ -71,25 +87,47 @@ function writeFilters(f) {
   try { window.sessionStorage.setItem(FILTER_KEY, JSON.stringify(f)) } catch { /* private mode — the view still works */ }
 }
 
+const withAdded = (set, v) => (set.has(v) ? set : new Set(set).add(v))
+const withRemoved = (set, v) => { if (!set.has(v)) return set; const n = new Set(set); n.delete(v); return n }
+
+function prefersReducedMotion() {
+  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches } catch { return false }
+}
+
 export default function MySeeds({ store, highlight = null, onGoToLot }) {
-  const { fetch } = useApiFetch()
-  const { show, showUndo } = useToast()
   const items = store?.items ?? null
   const firstLoadError = items === null ? store?.error : null
 
   const [initial] = useState(readFilters)
   const [q, setQ] = useState(initial.q)
   const [crops, setCrops] = useState(() => new Set(initial.crops))
+  const [suppliers, setSuppliers] = useState(() => new Set(initial.suppliers))
   const [sort, setSort] = useState(initial.sort)
-  useEffect(() => { writeFilters({ q, crops: [...crops], sort }) }, [q, crops, sort])
+  const [openGroups, setOpenGroups] = useState(() => new Set(initial.openGroups))
+  useEffect(() => {
+    writeFilters({ q, crops: [...crops], suppliers: [...suppliers], sort, openGroups: [...openGroups] })
+  }, [q, crops, suppliers, sort, openGroups])
 
   const { restoredState, saveState } = useScrollRestore({ id: 'seeds-mine', ready: items != null })
   const [expanded, setExpanded] = useState(() => restoredState?.expanded ?? null)
   const [sowedOpenByUser, setSowedOpenByUser] = useState(() => restoredState?.sowedOpen ?? null)
-  useEffect(() => { saveState({ expanded, sowedOpen: sowedOpenByUser }) }, [expanded, sowedOpenByUser, saveState])
+  // Explicit closes of groups a RULE had opened (a filter, Hottest). Per history entry, and cleared
+  // whenever the filter signature changes — a stale close would otherwise hide the matches of a new
+  // search behind a folded header.
+  const [closedByUser, setClosedByUser] = useState(() => new Set(strings(restoredState?.closedByUser)))
+  useEffect(() => {
+    saveState({ expanded, sowedOpen: sowedOpenByUser, closedByUser: [...closedByUser] })
+  }, [expanded, sowedOpenByUser, closedByUser, saveState])
+  const signature = `${q.trim()}|${[...crops].sort()}|${[...suppliers].sort()}|${sort}`
+  const signatureRef = useRef(signature)
+  useEffect(() => {
+    if (signatureRef.current === signature) return
+    signatureRef.current = signature
+    setClosedByUser((prev) => (prev.size ? new Set() : prev))
+  }, [signature])
 
   // Vendor names come from the source registry; `source` is an order reference.
-  const { sources } = useSources()
+  const { sources, loading: sourcesLoading } = useSources()
   const vendorOf = useMemo(() => {
     const byId = new Map((sources ?? []).map((s) => [String(s.id), s.name]))
     return (i) => (i?.source_id != null ? byId.get(String(i.source_id)) ?? '' : '')
@@ -99,33 +137,60 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   const facet = useCropFacetOptions(rows, cropSlugOf)
   const cropLabel = useCallback((slug) => facet.labelBySlug.get(slug) || slug.replace(/_/g, ' '), [facet.labelBySlug])
 
-  const filtered = useMemo(() => {
-    const needle = q.trim()
-    return rows.filter((i) => {
-      if (crops.size && !crops.has(i.crop_slug)) return false
-      if (!needle) return true
-      return looseIncludes(rowTitle(i), needle) || looseIncludes(i.name, needle)
-        || looseIncludes(i.variety_name, needle) || looseIncludes(vendorOf(i), needle)
-    })
-  }, [rows, q, crops, vendorOf])
+  // Supplier options from the PRE-filter rows, so the row does not shrink to what is already chosen.
+  // Shown only when the WHOLE list holds at least two supplier values (a chip that cannot change the
+  // answer is hidden) — computed on all rows, not the filtered view, or the row would jump in and out
+  // under the thumb as other filters change.
+  const supplierOpts = useMemo(() => supplierOptions(rows, vendorOf).map((o) => ({
+    ...o, leading: <SupplierSwatch name={o.name} />,
+  })), [rows, vendorOf])
+  const supplierPinned = useMemo(() => supplierOpts.slice(0, 2).map((o) => o.value), [supplierOpts])
 
-  // A packet the − took to 0 on this visit stays where the thumb left it (§4.3, a write never lands
-  // out of sight): moving it into the collapsed Sowed previously would take the row — and its + —
-  // out from under the finger that just tapped. It files under Sowed previously on the next visit.
-  const [keptIds, setKeptIds] = useState(() => new Set())
-  const isFiledAway = useCallback((i) => isSowedPreviously(i) && !keptIds.has(String(i.id)), [keptIds])
-  const main = useMemo(() => filtered.filter((i) => !isFiledAway(i)), [filtered, isFiledAway])
-  const sowed = useMemo(() => sortRows(filtered.filter(isFiledAway), 'name'), [filtered, isFiledAway])
-  const filterActive = !!q.trim() || crops.size > 0
-  // An active search or chip opens Sowed previously when it holds a match — otherwise a packet that
-  // IS here reads as "no seed matches". So does a list where EVERY packet is used up (§5.1's empty
-  // state: "everything sowed previously (section opened)"), or the page would be a note over a closed
-  // door. A choice the user made with the toggle wins.
+  // A remembered chip for a crop or supplier that no longer exists would filter to "No seed matches"
+  // with no chip on screen to un-tap. Pruned once the rows (and, for suppliers, the registry) are in.
+  useEffect(() => {
+    if (items == null) return
+    const cropValues = new Set(facet.options.map((o) => o.value))
+    setCrops((prev) => { const keep = [...prev].filter((c) => cropValues.has(c)); return keep.length === prev.size ? prev : new Set(keep) })
+    if (sourcesLoading) return
+    const supplierValues = new Set(supplierOpts.map((o) => o.value))
+    setSuppliers((prev) => { const keep = [...prev].filter((s) => supplierValues.has(s)); return keep.length === prev.size ? prev : new Set(keep) })
+  }, [items, facet.options, supplierOpts, sourcesLoading])
+
+  // Hottest is offered only when at least two rows of the whole list carry a heat figure. A remembered
+  // Hottest with no data shows Name, without overwriting the preference.
+  const heatOffered = useMemo(() => rows.filter((i) => heatOf(i)).length >= 2, [rows])
+  const effectiveSort = sort === 'heat' && !heatOffered ? 'name' : sort
+  const grouped = GROUPED_SORTS.has(effectiveSort)
+
+  const needle = q.trim()
+  const filtered = useMemo(() => rows.filter((i) => {
+    if (crops.size && !crops.has(i.crop_slug)) return false
+    if (!matchesSuppliers(i, suppliers, vendorOf)) return false
+    if (!needle) return true
+    const vendor = vendorOf(i)
+    return looseIncludes(rowTitle(i), needle) || looseIncludes(i.name, needle)
+      || looseIncludes(i.variety_name, needle) || looseIncludes(vendor, needle)
+  }), [rows, crops, suppliers, needle, vendorOf])
+
+  const main = useMemo(() => filtered.filter((i) => !isSowedPreviously(i)), [filtered])
+  const sowed = useMemo(() => sortRows(filtered.filter(isSowedPreviously), 'name'), [filtered])
+  const filterActive = isFilterActive({ q, crops, suppliers })
+  // Sowed previously opens for a search/chip that finds something there, and when EVERY packet is used
+  // up (§5.1: "everything sowed previously (section opened)"). A choice made with its toggle wins.
   const sowedOpen = sowedOpenByUser ?? ((filterActive || main.length === 0) && sowed.length > 0)
 
+  const groups = useMemo(() => (grouped
+    ? groupByCrop(sortRows(main, effectiveSort), cropLabel, { pinned: facet.pinned, leadSlug: effectiveSort === 'heat' ? 'pepper' : null })
+    : []), [grouped, main, effectiveSort, cropLabel, facet.pinned])
+  const isOpen = useCallback(
+    (slug) => groupIsOpen(slug, { openGroups, closedByUser, filterActive, sort: effectiveSort }),
+    [openGroups, closedByUser, filterActive, effectiveSort],
+  )
+
   // ── A write never lands out of sight (§4.3) ─────────────────────────────────────────────────────────
-  // The shell names a row it just wrote (a save, an add). If the remembered filters would hide it,
-  // they are cleared and the page says so; if it is under Sowed previously, that section opens.
+  // The shell names a row it just wrote (a save, an add). Only the filters that EXCLUDE it are cleared,
+  // and the page says which; its crop group is opened (or Sowed previously, where it is filed there).
   const [notice, setNotice] = useState(null)
   const handledRef = useRef(null)
   const target = highlight?.id != null ? rows.find((i) => String(i.id) === String(highlight.id)) ?? null : null
@@ -134,68 +199,130 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
     const key = `${highlight.id}|${highlight.seq ?? 0}`
     if (handledRef.current === key) return
     handledRef.current = key
-    const hidden = filtered.every((i) => i.id !== target.id)
-    if (hidden) {
-      setQ('')
-      setCrops(new Set())
-      setNotice(`Showing all · ${rowTitle(target)}`)
+    const title = rowTitle(target)
+    const hiddenByCrop = crops.size > 0 && !crops.has(target.crop_slug)
+    const hiddenBySupplier = !matchesSuppliers(target, suppliers, vendorOf)
+    const vendor = vendorOf(target)
+    const hiddenBySearch = !!needle && !(looseIncludes(title, needle) || looseIncludes(target.name, needle)
+      || looseIncludes(target.variety_name, needle) || looseIncludes(vendor, needle))
+    if (hiddenByCrop) setCrops(new Set())
+    if (hiddenBySupplier) setSuppliers(new Set())
+    if (hiddenBySearch) setQ('')
+    if (hiddenByCrop || hiddenBySupplier || hiddenBySearch) {
+      const onlySupplier = hiddenBySupplier && !hiddenByCrop && !hiddenBySearch
+      setNotice(`${onlySupplier ? 'Showing all suppliers' : 'Showing all'} · ${title}`)
     }
-    if (isFiledAway(target)) setSowedOpenByUser(true)
+    if (isSowedPreviously(target)) {
+      setSowedOpenByUser(true)
+    } else {
+      const slug = target.crop_slug || NO_CROP
+      setOpenGroups((prev) => withAdded(prev, slug))
+      setClosedByUser((prev) => withRemoved(prev, slug))
+    }
   }, [target, highlight?.seq])  // eslint-disable-line react-hooks/exhaustive-deps
-  const outlined = useLotOutline(highlight, {
-    ready: !!target && filtered.some((i) => i.id === target.id),
-    skipArrival: restoredState !== undefined,
-  })
+  // The outline fires once per write, so it must wait until the row is RENDERED — not merely past the
+  // filters. Into a folded group it would be spent on a row that is not in the DOM.
+  const targetRendered = !!target && filtered.some((i) => i.id === target.id) && (
+    isSowedPreviously(target) ? sowedOpen : (!grouped || isOpen(target.crop_slug || NO_CROP))
+  )
+  const outlined = useLotOutline(highlight, { ready: targetRendered, skipArrival: restoredState !== undefined })
 
-  // ── The stepper ───────────────────────────────────────────────────────────────────────────────────
-  const putSeqRef = useRef(new Map())
-  const showToast = useCallback((t) => {
-    if (!t) return
-    if (t.onUndo) showUndo({ message: t.msg, onUndo: t.onUndo })
-    else show({ message: t.msg, tone: 'error' })
-  }, [show, showUndo])
-  const adjust = useMemo(() => createQuantityAdjuster({
-    fetch,
-    getRow: store?.getRow ?? (() => null),
-    commitRow: store?.patch ?? (() => {}),
-    showToast,
-    putSeq: putSeqRef.current,
-    buildBody: (row, col, value) => ({ ...listRowPutBody(row), [col]: value }),
-    // Keep the list-only projections (variety name, crop, stage age): the PUT answers bare columns.
-    applyServerRow: (row, updated) => ({ ...row, ...(updated && typeof updated === 'object' ? updated : {}) }),
-  }), [fetch, store?.getRow, store?.patch, showToast])
-  const onAdjust = useCallback((id, delta) => {
-    const row = store?.getRow?.(id)
-    if (row && delta < 0 && Number(row.quantity_on_hand ?? 0) + delta <= 0) {
-      setKeptIds((prev) => (prev.has(String(id)) ? prev : new Set(prev).add(String(id))))
+  // ── What is on screen, in order: the rows that render, for uniqueness and the image window ──────────
+  const onScreen = useMemo(() => {
+    const out = []
+    if (grouped) {
+      for (const g of groups) if (isOpen(g.slug)) out.push(...g.rows)
+    } else {
+      out.push(...sortRows(main, effectiveSort))
     }
-    return adjust(id, delta)
-  }, [adjust, store?.getRow])  // eslint-disable-line react-hooks/exhaustive-deps
+    if (sowedOpen) out.push(...sowed)
+    return out
+  }, [grouped, groups, isOpen, main, effectiveSort, sowedOpen, sowed])
+
+  // Images are windowed, rows are not: search, counts, the outline and Back-restore all need every row
+  // in the DOM, but 103 peppers mounting 103 thumbnails at once is the eager-image freeze
+  // (BUG-PHOTOTHUMB-001). Rows past the window keep their reserved box until scrolling reaches them.
+  const imageWindow = useImageWindow(onScreen.length, { resetKey: `${signature}|${[...openGroups].sort()}|${sowedOpen}` })
+  const imageRank = useMemo(() => {
+    const m = new Map()
+    onScreen.forEach((i, n) => m.set(i.id, n))
+    return m
+  }, [onScreen])
 
   // ── Uniqueness over what is actually on screen ────────────────────────────────────────────────────
-  // Rows carry a stepper, so two rows that read alike would let a thumb write to the wrong lot. The
-  // ordinal ("1 of 2 with identical details") is computed over the rendered title + line 2.
+  // Two rows that read alike would let a thumb open the wrong lot's details; the ordinal ("1 of 2
+  // identical") is computed over the rendered title + line 2. Identical rows share a variety and so a
+  // crop group, so they are shown or folded together.
   const lineOf = useCallback((i) => lineText(i, { vendorOf }), [vendorOf])
-  const onScreen = useMemo(() => [...main, ...(sowedOpen ? sowed : [])], [main, sowed, sowedOpen])
   const labels = useMemo(() => {
     const m = new Map()
     for (const r of labelCandidates(onScreen, lineOf, rowTitle)) m.set(r.item.id, r)
     return m
   }, [onScreen, lineOf])
-
-  const toggleCrop = useCallback((v) => setCrops((prev) => {
-    const next = new Set(prev)
-    if (next.has(v)) next.delete(v); else next.add(v)
-    return next
-  }), [])
-  const clearFilters = useCallback(() => { setQ(''); setCrops(new Set()) }, [])
-
-  // What labelCandidates appended to this row's line to make it unique (an ordinal, or the id as the
-  // last resort) — rendered after the facts, so the chips and facts stay in their own spans.
-  const suffixOf = (i) => {
+  const ordinalOf = (i) => {
     const lab = labels.get(i.id)
     if (!lab) return ''
-    return lab.detail.slice(lineOf(i).length).replace(/^ · /, '')
+    const suffix = lab.detail.slice(lineOf(i).length).replace(/^ · /, '')
+    return suffix.replace(' with identical details', ' identical')
+  }
+
+  const toggleCrop = useCallback((v) => setCrops((prev) => (prev.has(v) ? withRemoved(prev, v) : withAdded(prev, v))), [])
+  const toggleSupplier = useCallback((v) => setSuppliers((prev) => (prev.has(v) ? withRemoved(prev, v) : withAdded(prev, v))), [])
+  const clearFilters = useCallback(() => { setQ(''); setCrops(new Set()); setSuppliers(new Set()) }, [])
+
+  // ── Folding ────────────────────────────────────────────────────────────────────────────────────────
+  // Folding a group from its STUCK header re-anchors, so the header the thumb just tapped stays at the
+  // top instead of the page stranding thousands of pixels down in unrelated groups. Opening a group
+  // near the bottom scrolls just enough to show its first two rows.
+  const anchorRef = useRef(null)
+  const toggleGroup = useCallback((slug) => {
+    const open = isOpen(slug)
+    const el = typeof document !== 'undefined' ? document.querySelector(`[data-group-slug="${slug}"]`) : null
+    anchorRef.current = el ? { slug, opening: !open } : null
+    if (open) {
+      setOpenGroups((prev) => withRemoved(prev, slug))
+      setClosedByUser((prev) => withAdded(prev, slug))
+    } else {
+      setOpenGroups((prev) => withAdded(prev, slug))
+      setClosedByUser((prev) => withRemoved(prev, slug))
+    }
+  }, [isOpen])
+  useLayoutEffect(() => {
+    const a = anchorRef.current
+    if (!a) return
+    anchorRef.current = null
+    const el = document.querySelector(`[data-group-slug="${a.slug}"]`)
+    if (!el || typeof el.getBoundingClientRect !== 'function') return
+    const rect = el.getBoundingClientRect()
+    // No layout (jsdom, a hidden tab): nothing is on screen to keep in place.
+    if (!rect.height) return
+    const top = rect.top
+    if (!a.opening) {
+      if (top < STICKY_TOP) window.scrollBy?.(0, top - STICKY_TOP)
+      return
+    }
+    const rowsEl = el.querySelectorAll('[data-testid="my-seed-row"]')
+    const second = rowsEl[Math.min(1, rowsEl.length - 1)]
+    if (!second) return
+    const bottom = second.getBoundingClientRect().bottom
+    const limit = window.innerHeight - 64 // the bottom nav
+    if (bottom > limit) window.scrollBy?.({ top: bottom - limit, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+  })
+
+  const sectionSlugs = grouped ? groups.map((g) => g.slug) : []
+  const sectionCount = sectionSlugs.length + (sowed.length > 0 ? 1 : 0)
+  const allOpen = sectionSlugs.every(isOpen) && (sowed.length === 0 || sowedOpen)
+  const showExpandAll = grouped && sectionCount >= 2 && rows.length > 0
+  const expandAll = () => {
+    if (allOpen) {
+      setOpenGroups(new Set())
+      setClosedByUser(new Set(sectionSlugs))
+      setSowedOpenByUser(false)
+    } else {
+      setOpenGroups((prev) => new Set([...prev, ...sectionSlugs]))
+      setClosedByUser(new Set())
+      if (sowed.length > 0) setSowedOpenByUser(true)
+    }
   }
 
   const renderRow = (i) => (
@@ -203,16 +330,17 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
       key={i.id}
       item={i}
       title={labels.get(i.id)?.title ?? rowTitle(i)}
-      suffix={suffixOf(i)}
-      vendorOf={vendorOf}
+      ordinal={ordinalOf(i)}
+      vendor={vendorOf(i)}
+      withPhoto={(imageRank.get(i.id) ?? Infinity) < imageWindow.shown}
       expanded={expanded === i.id}
       outlined={outlined === String(i.id)}
-      kept={keptIds.has(String(i.id)) && isSowedPreviously(i)}
       onToggle={() => setExpanded((cur) => (cur === i.id ? null : i.id))}
-      onAdjust={onAdjust}
       onGoToLot={onGoToLot}
     />
   )
+
+  const noPepperOnScreen = effectiveSort === 'heat' && !main.some((i) => i.crop_slug === 'pepper')
 
   let body
   if (rows.length === 0) {
@@ -226,28 +354,54 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
       </div>
     )
   } else if (filtered.length === 0) {
+    const what = [
+      needle ? `“${needle}”` : '',
+      ...[...crops].map(cropLabel),
+      ...[...suppliers].map((s) => (s === NO_SUPPLIER_VALUE ? 'No supplier' : supplierOpts.find((o) => o.value === s)?.label ?? s)),
+    ].filter(Boolean).join(' · ')
     body = (
       <div data-testid="my-seeds-no-match" style={emptyCard}>
-        <p style={{ margin: '0 0 10px', color: P.mid }}>No seed matches.</p>
-        <button type="button" onClick={clearFilters} style={textBtn}>Clear search</button>
+        <p style={{ margin: '0 0 10px', color: P.mid }}>No seed matches{what ? ` ${what}` : ''}.</p>
+        <button type="button" onClick={clearFilters} style={textBtn}>Clear filters</button>
       </div>
     )
-  } else if (sort === 'name') {
-    const groups = groupByCrop(sortRows(main, 'name'), cropLabel)
-    body = groups.map((g) => (
-      <section key={g.slug} data-testid="my-seeds-group" style={{ marginBottom: 8 }}>
-        {/* Not interactive here (no onToggle — My seeds' groups do not collapse), so no tap floor:
-            the 44px Garden gives its toggling header was 18px of the first screen for nothing. */}
-        <div style={groupHeaderWrap}>
-          <FacetGroupHeader label={g.label} count={g.rows.length} facet="type" value={g.slug} />
-        </div>
-        <div style={listStyle}>{g.rows.map(renderRow)}</div>
-      </section>
-    ))
+  } else if (grouped) {
+    body = groups.map((g) => {
+      const open = isOpen(g.slug)
+      const heatSorted = effectiveSort === 'heat' && g.slug === 'pepper'
+      const known = heatSorted ? g.rows.filter((i) => heatOf(i)) : g.rows
+      const unknown = heatSorted ? g.rows.filter((i) => !heatOf(i)) : []
+      return (
+        <section key={g.slug} data-testid="my-seeds-group" data-group-slug={g.slug} style={{ marginBottom: 6 }}>
+          <div style={open ? groupHeaderSticky : undefined}>
+            <FacetGroupHeader
+              label={heatSorted ? `${g.label} · hottest first` : g.label}
+              count={g.rows.length}
+              facet="type"
+              value={g.slug}
+              collapsed={!open}
+              onToggle={() => toggleGroup(g.slug)}
+              style={groupHeaderStyle}
+            />
+          </div>
+          {open && (
+            <div data-testid="my-seeds-group-rows" style={{ ...listStyle, marginTop: 6 }}>
+              {known.map(renderRow)}
+              {unknown.length > 0 && (
+                <>
+                  <div data-testid="my-seeds-heat-unknown" style={dividerStyle}>Heat unknown ({unknown.length})</div>
+                  {unknown.map(renderRow)}
+                </>
+              )}
+            </div>
+          )}
+        </section>
+      )
+    })
   } else {
-    const sorted = sortRows(main, sort)
-    const known = sort === 'oldest' ? sorted.filter((i) => ageOf(i)) : sorted
-    const unknown = sort === 'oldest' ? sorted.filter((i) => !ageOf(i)) : []
+    const sorted = sortRows(main, effectiveSort)
+    const known = effectiveSort === 'oldest' ? sorted.filter((i) => ageOf(i)) : sorted
+    const unknown = effectiveSort === 'oldest' ? sorted.filter((i) => !ageOf(i)) : []
     body = (
       <>
         <div style={listStyle}>{known.map(renderRow)}</div>
@@ -261,19 +415,28 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
     )
   }
 
+  const sortOptions = SORTS.filter((s) => s.value !== 'heat' || heatOffered)
+
   return (
     <div data-testid="my-seeds-view">
+      {/* The view's question, with Expand all / Collapse all on the same line (UX spec §3.4) — the
+          Garden pattern Dave approved for collapsed-by-default sections, at a 44px tap floor. */}
+      <div style={questionRow}>
+        <p data-testid="seeds-question" style={questionStyle}>What seed do I have?</p>
+        {showExpandAll && (
+          <button type="button" onClick={expandAll} data-testid="my-seeds-expand-all" style={expandAllBtn}>
+            {allOpen ? 'Collapse all' : 'Expand all'}
+          </button>
+        )}
+      </div>
       <AsyncRegion
         loading={items === null && !firstLoadError}
         error={firstLoadError}
         onRetry={store?.reload}
         errorTitle="Couldn't load your seed"
       >
-        {/* TWO control lines (§5.1): search + sort, then the crop chips. Measured at 360x640 with the
-            sort as its own segmented line, the controls pushed the first row to y494 and ONE row showed
-            between the bars (DoD: >= 3). The sort is a native select here, as Inventory's own Sort is —
-            three segments cannot share a 328px line with a search box, and Android's picker is the
-            larger target anyway. */}
+        {/* THREE control lines: search + sort, the crop chips, the supplier chips. The sort is a native
+            select, as Inventory's own Sort is — segments cannot share a 328px line with a search box. */}
         {rows.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -282,7 +445,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder={`Search ${rows.length} seeds…`}
-                aria-label="Search your seed by variety, lot name or vendor"
+                aria-label="Search your seed by variety, lot name or supplier"
                 data-testid="my-seeds-search"
                 style={searchStyle}
               />
@@ -290,13 +453,15 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
                 <label style={sortLabel}>
                   <span aria-hidden="true">Sort</span>
                   <select
-                    value={sort}
+                    value={effectiveSort}
                     onChange={(e) => setSort(e.target.value)}
-                    aria-label="Sort your seed by name, oldest seed or newest added"
+                    aria-label={heatOffered
+                      ? 'Sort your seed by name, oldest seed, newest added or hottest pepper'
+                      : 'Sort your seed by name, oldest seed or newest added'}
                     data-testid="my-seeds-sort"
                     style={sortSelect}
                   >
-                    {SORTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    {sortOptions.map((s) => <option key={s.value} value={s.value}>{s.value === 'heat' ? 'Hottest' : s.label}</option>)}
                   </select>
                 </label>
               )}
@@ -313,11 +478,28 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
                 data-testid="my-seeds-crop-filter"
               />
             )}
+            {supplierOpts.length > 1 && (
+              <FilterChipRow
+                options={supplierOpts}
+                selected={suppliers}
+                pinned={supplierPinned}
+                trayMaxHeight={180}
+                onToggle={toggleSupplier}
+                onClear={() => setSuppliers(new Set())}
+                aria-label="Filter your seed by supplier"
+                data-testid="my-seeds-supplier-filter"
+              />
+            )}
           </div>
         )}
         {notice && (
           <p data-testid="my-seeds-notice" role="status" style={{ margin: '0 0 10px', color: P.mid, fontSize: T.type.sm }}>
             {notice}
+          </p>
+        )}
+        {noPepperOnScreen && filtered.length > 0 && (
+          <p data-testid="my-seeds-no-pepper" style={{ margin: '0 0 10px', color: P.mid, fontSize: T.type.sm }}>
+            No peppers here — Hottest orders peppers only.
           </p>
         )}
         {rows.length > 0 && main.length === 0 && sowed.length > 0 && !filterActive && (
@@ -327,20 +509,18 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
         )}
         {body}
         {sowed.length > 0 && (
-          <section data-testid="my-seeds-sowed" style={{ marginTop: T.space.md }}>
-            <button
-              type="button"
-              aria-expanded={sowedOpen}
-              onClick={() => setSowedOpenByUser(!sowedOpen)}
-              style={disclosureBtn}
-            >
-              <span aria-hidden="true" style={{ fontSize: '0.8rem' }}>{sowedOpen ? '▾' : '▸'}</span>
-              Sowed previously
-              <span style={countPill}>{sowed.length}</span>
-            </button>
+          <section data-testid="my-seeds-sowed" data-group-slug="__sowed__" style={{ marginTop: T.space.md }}>
+            <FacetGroupHeader
+              label="Sowed previously"
+              count={sowed.length}
+              isUnsorted
+              collapsed={!sowedOpen}
+              onToggle={() => setSowedOpenByUser(!sowedOpen)}
+              style={groupHeaderStyle}
+            />
             {sowedOpen && (
               <>
-                <p style={{ margin: '0 0 8px', color: P.mid, fontSize: T.type.xs2 }}>
+                <p style={{ margin: '6px 0 8px', color: P.mid, fontSize: T.type.xs2 }}>
                   None of these left. Kept so you can see what you have grown.
                 </p>
                 <div style={listStyle}>{sowed.map(renderRow)}</div>
@@ -353,79 +533,134 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   )
 }
 
+// The supplier filter chip's swatch: the supplier's fill ringed in its secondary, so the chip doubles
+// as the legend for the stripes on the cards. "No supplier" is hollow with a dashed ring.
+function SupplierSwatch({ name }) {
+  const c = name ? (supplierColors(name) ?? NO_SUPPLIER) : NO_SUPPLIER
+  const none = !name
+  return (
+    <span
+      aria-hidden="true"
+      data-testid="supplier-swatch"
+      style={{
+        display: 'inline-block', width: 12, height: 12, borderRadius: '50%', flex: '0 0 auto',
+        backgroundColor: none ? P.white : c.primary,
+        boxShadow: none ? 'none' : `0 0 0 2px ${c.secondary}`,
+        border: none ? `1.5px dashed ${P.light}` : 'none',
+      }}
+    />
+  )
+}
+
+// Where a Scoville figure came from, in words (UX spec §2). Never the LOT's supplier: heat is a
+// cultivar fact and can come from another seller's page.
+const HEAT_SOURCE_WORDS = {
+  packet_label: 'from the packet',
+  vendor_catalog: 'from a seller’s catalogue',
+  breeder: 'from the breeder',
+  reference_work: 'from a reference',
+  grower_record: 'grower’s record',
+  inference: 'best guess',
+}
+const fullNumber = (n) => Number(n).toLocaleString('en-US')
+
+// A saved lot's heat is always an estimate: home-saved pepper seed crosses readily, and seed from an F1
+// parent segregates. The cultivar's range is what it SHOULD be, not what this jar will do.
+function rowHeat(item) {
+  const label = heatLabel(item)
+  if (!label) return ''
+  if (isSavedLot(item) && !label.startsWith('est.')) return `est. ${label}`
+  return label
+}
+
+function heatFact(item) {
+  const h = heatOf(item)
+  if (!h) return item?.crop_slug === 'pepper' ? 'not recorded' : ''
+  const range = h.min === h.max
+    ? (h.max === 0 ? 'Sweet · 0 SHU' : `${fullNumber(h.max)} SHU`)
+    : `${fullNumber(h.min)}–${fullNumber(h.max)} SHU`
+  const src = item?.scoville_source
+  const words = isSavedLot(item) ? 'saved seed may have crossed'
+    : src ? HEAT_SOURCE_WORDS[src] ?? '' : ('scoville_source' in (item ?? {}) ? 'source not recorded' : '')
+  return words ? `${range} · ${words}` : range
+}
+
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' }
+}
+
 // One packet or lot. Tap expands in place, as Inventory rows did.
-function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, kept, onToggle, onAdjust, onGoToLot }) {
+function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, onToggle, onGoToLot }) {
   const chips = stateChips(item)
-  // Line 2 is chips, then the amount, then where from · how old. The amount is its own span that
-  // never shrinks: at 360px a long name's two chips squeezed a single facts span to 0px, and the
-  // amount — the fact this line exists to show — went with it. Now the chips give way first (each
-  // ellipsised), then where-from/how-old; the amount stays whole.
+  // Line 2, in order: the supplier chip (never cut), the state chips (the first one, a lot's live
+  // state, stays whole; later ones ellipsise), the amount (never cut; "1 packet" is not printed), the
+  // heat (whole or absent), then the tail — origin words and how old — which is cut first.
   const amount = howMuch(item)
-  // The ordinal ("1 of 2 with identical details") is how a thumb tells two identical packets apart,
-  // and identical rows share where-from and how-old by definition — so it follows the amount and never
-  // shrinks, and the shared facts are what the ellipsis cuts (pre-promote regression pass #2).
-  const rest = [whereFrom(item, vendorOf), howOld(item)].filter(Boolean).join(' · ')
+  const heat = rowHeat(item)
+  const tail = [originNote(item), howOld(item)].filter(Boolean).join(' · ')
   const inProcess = isInProcess(item)
-  const qty = Number(item.quantity_on_hand ?? 0)
-  const shownQty = Number.isFinite(qty) ? Math.round(qty) : 0
-  // A saved lot is ONE jar whose amount is its seed count, edited in Saved seeds: a − / + here moved
-  // the jar count, so one tap filed a stored lot of 175 counted seeds as "none left" while line 2
-  // still read "approx. 175 seeds" (pre-promote QA, A2). Bought packets keep the stepper.
-  const stepper = item.type !== 'durable' && !isSavedLot(item)
+  const colors = vendor ? supplierColors(vendor) : null
+  const photo = useMemo(
+    () => lotPhoto(item),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [item.id, item.hero_photo_id, item.featured_photo_view_url, item.featured_photo_thumb_url],
+  )
+  const sep = (has) => (has ? ' · ' : '')
 
   return (
     <div
       data-testid="my-seed-row"
       data-lot-id={item.id}
       data-outlined={outlined ? 'true' : undefined}
-      style={{ ...rowCard, ...(outlined ? outlineStyle(P.green) : null) }}
+      data-supplier={vendor || undefined}
+      style={{
+        ...rowCard,
+        ...(colors ? { borderLeft: `4px solid ${colors.primary}` } : { paddingLeft: 3 }),
+        ...(outlined ? outlineStyle(P.green) : null),
+      }}
     >
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        aria-label={`${title} — ${expanded ? 'collapse' : 'expand'}`}
+        aria-label={`${title}${vendor ? `, from ${vendor}` : ''} — ${expanded ? 'collapse' : 'expand'}`}
         style={rowBtn}
       >
+        <span data-testid="my-seed-thumb" style={photo ? thumbBoxPhoto : thumbBoxEmpty}>
+          {photo && withPhoto && (
+            <PhotoView photo={photo} tier={TIER.THUMB} alt="" decoding="async" style={thumbImg} data-testid="my-seed-photo" />
+          )}
+          {!photo && <Icon name="lifecycle.sprout" size={24} decorative />}
+        </span>
         <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <span style={titleStyle}>{title}</span>
+          <span style={line1Style}>
+            <span style={titleStyle}>{title}</span>
+            {ordinal && <span data-testid="my-seed-ordinal" style={ordinalStyle}>{ordinal}</span>}
+            <span aria-hidden="true" style={chevronStyle}>{expanded ? '▾' : '▸'}</span>
+          </span>
           <span data-testid="my-seed-line" style={lineStyle}>
+            {vendor && <SupplierChip name={vendor} data-testid="my-seed-supplier" style={{ marginRight: 6 }} />}
             {chips.length > 0 && (
               <span style={chipsBox}>
                 {chips.map((c, n) => (
-                  <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" style={n === 0 ? firstChipStyle : chipStyle}>
+                  <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" style={n === 0 && c.tone !== 'neutral' ? firstChipStyle : chipStyle}>
                     {c.label}
                   </Badge>
                 ))}
               </span>
             )}
             {amount && <span data-testid="my-seed-amount" style={amountStyle}>{amount}</span>}
-            {suffix && <span data-testid="my-seed-ordinal" style={amountStyle}>{amount ? `\u00a0· ${suffix}` : suffix}</span>}
-            {rest && <span data-testid="my-seed-rest" style={restStyle}>{(amount || suffix) ? `\u00a0· ${rest}` : rest}</span>}
+            {heat && <span data-testid="my-seed-heat" style={heatStyle}>{sep(!!amount)}{heat}</span>}
+            {tail && <span data-testid="my-seed-rest" style={restStyle}>{sep(!!(amount || heat))}{tail}</span>}
           </span>
         </span>
-        <span aria-hidden="true" style={{ color: P.light, fontSize: T.type.xs2, flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>
       </button>
 
       {expanded && (
         <div data-testid="my-seed-expanded" style={expandedStyle}>
-          {stepper && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span style={{ fontSize: T.type.sm, color: P.mid, flexShrink: 0 }}>On hand</span>
-              <button type="button" onClick={() => onAdjust(item.id, -1)} style={qtyBtn} aria-label={`One fewer ${unitWord(item.unit, 1)} of ${title}`}>−</button>
-              <span data-testid="my-seed-qty" style={{ fontWeight: 700, minWidth: T.tapMinHeight, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                {shownQty}
-                <span style={{ fontWeight: 400, fontSize: T.type.xs2, color: P.mid }}> {unitWord(item.unit, shownQty)}</span>
-              </span>
-              <button type="button" onClick={() => onAdjust(item.id, +1)} style={qtyBtn} aria-label={`One more ${unitWord(item.unit, 1)} of ${title}`}>+</button>
-            </div>
-          )}
-          {kept && (
-            <p data-testid="my-seed-kept-note" style={{ margin: 0, fontSize: T.type.xs2, color: P.mid }}>
-              None left — it moves to Sowed previously next time you open My seeds.
-            </p>
-          )}
+          <SeedFacts item={item} vendor={vendor} />
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <PacketLink item={item} />
             {inProcess && onGoToLot && (
               <button type="button" onClick={() => onGoToLot(item.id)} data-testid="my-seed-change-stage" style={secondaryBtn}>
                 Change stage in Saved seeds →
@@ -441,12 +676,58 @@ function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, kept, onTo
   )
 }
 
-// The stepper's unit, counted: "1 packet" / "3 packets", and a bought `each` packet counts seeds.
-function unitWord(unit, n) {
-  const u = String(unit ?? '').trim()
-  if (u === '' || u === 'packet') return n === 1 ? 'packet' : 'packets'
-  if (u === 'each') return n === 1 ? 'seed' : 'seeds'
-  return u
+// The seed's facts, in a fixed order; an absent fact is left out, never dashed — except a pepper's
+// heat, the fact Dave looks for on a pepper, whose absence is stated.
+function SeedFacts({ item, vendor }) {
+  const age = howOld(item)
+  const from = [vendor || originNote(item), age].filter(Boolean).join(' · ')
+  const heat = heatFact(item)
+  const origin = [item.origin_country, item.origin_region].filter(Boolean).join(' · ')
+  const dmin = item.days_to_maturity_min, dmax = item.days_to_maturity_max
+  const days = dmin == null && dmax == null ? '' : `${dmin != null && dmax != null && dmin !== dmax ? `${dmin}–${dmax}` : (dmin ?? dmax)} days`
+  const basis = item.dtm_basis === 'from-transplant' ? ' from transplant' : item.dtm_basis === 'from-sow' ? ' from sowing' : ''
+  const facts = [
+    ['From', from],
+    ['Heat', heat],
+    ['Country of origin', origin],
+    ['Species', item.species ? <i>{item.species}</i> : ''],
+    ['Days to maturity', days ? `${days}${basis}` : ''],
+  ].filter(([, v]) => v)
+  if (facts.length === 0) return null
+  return (
+    <dl data-testid="my-seed-facts" style={factsGrid}>
+      {facts.map(([k, v]) => (
+        <React.Fragment key={k}>
+          <dt style={factLabel}>{k}</dt>
+          <dd data-fact={k} style={factValue}>{v}</dd>
+        </React.Fragment>
+      ))}
+    </dl>
+  )
+}
+
+// The packet's own page when the lot records one; otherwise a page about the variety. Each is named by
+// where it goes — the variety URL is usually another seller's page, so neither is a "supplier page".
+function PacketLink({ item }) {
+  const packet = item.source_url && /^https?:\/\//.test(item.source_url) ? item.source_url : ''
+  const variety = !packet && item.variety_source_url && /^https?:\/\//.test(item.variety_source_url) ? item.variety_source_url : ''
+  const href = packet || variety
+  if (!href) return null
+  const host = hostOf(href)
+  const label = packet ? `Packet page · ${host} ↗` : `About this variety · ${host} ↗`
+  const name = packet ? `Packet page on ${host}, opens in browser` : `About this variety on ${host}, opens in browser`
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={name}
+      data-testid="my-seed-packet-link"
+      style={secondaryLink}
+    >
+      {label}
+    </a>
+  )
 }
 
 // ── Styles — from T tokens, matching the Saved seeds card (48px buttons, 44px taps) ──────────────────
@@ -456,37 +737,49 @@ const rowCard = {
 }
 const rowBtn = {
   width: '100%', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-  padding: '6px 12px', minHeight: 48, display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'inherit',
+  padding: '6px 10px 6px 8px', minHeight: 48, display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'inherit',
 }
+// The app's ROW thumbnail (Garden tree rows, ProjectDetail planting rows): 40x40, radius 8. The box is
+// fixed so an image arriving never moves the text; a photo box waits on the photo-tile fill, a lot
+// with no photo shows the colour sprout — the two must not look alike, or a slow load reads as "none".
+const thumbBase = {
+  position: 'relative', flex: '0 0 auto', width: 40, height: 40, borderRadius: T.radiusButton,
+  border: `1px solid ${P.border}`, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center',
+}
+const thumbBoxPhoto = { ...thumbBase, backgroundColor: P.photoPlaceholder }
+const thumbBoxEmpty = { ...thumbBase, backgroundColor: P.greenPale }
+const thumbImg = { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }
+const line1Style = { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }
 const titleStyle = {
-  fontWeight: 600, color: P.dark, fontSize: T.type.md, lineHeight: 1.25,
+  flex: '1 1 auto', minWidth: 0, fontWeight: 600, color: P.dark, fontSize: T.type.md, lineHeight: 1.25,
   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
 }
+const ordinalStyle = { flex: '0 0 auto', whiteSpace: 'nowrap', fontSize: T.type.xs2, color: P.mid }
+const chevronStyle = { flex: '0 0 auto', color: P.light, fontSize: T.type.xs2 }
 const lineStyle = {
   display: 'flex', alignItems: 'center', minWidth: 0, fontSize: T.type.xs2, color: P.mid,
   whiteSpace: 'nowrap', overflow: 'hidden',
 }
 // Shrink order on a crowded line: `rest` has a 0 basis, so it only ever gets what is left over and is
-// the first thing cut; then the later chips (ellipsised); then the first chip — the engine's order puts
-// the lot's state first ("Fermenting · day 5"), so it stays whole unless it alone overflows; the amount
-// never shrinks. No flex gap on the line: the chips carry their own margin, and rest opens with a
-// NON-BREAKING space so "1 packet · Fedco" reads as one phrase (a plain leading space collapses at the
-// start of the span).
+// the first thing cut; then the later chips (ellipsised); the supplier chip, a live state chip, the
+// amount and the heat never shrink. No flex gap on the line: the chips carry their own margin, and the
+// facts open with a NON-BREAKING space so "2 packets · 30K–50K SHU" reads as one phrase.
 const chipsBox = { display: 'flex', gap: 6, minWidth: 0, flex: '0 1 auto', overflow: 'hidden', marginRight: 6 }
 const chipStyle = {
   display: 'block', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: T.type.xs,
 }
 const firstChipStyle = { ...chipStyle, flex: '0 0 auto', maxWidth: '100%' }
 const amountStyle = { flex: '0 0 auto', whiteSpace: 'nowrap' }
+const heatStyle = { flex: '0 0 auto', whiteSpace: 'nowrap', color: P.dark }
 const restStyle = { flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const expandedStyle = {
   padding: '10px 12px 12px', borderTop: `1px solid ${P.border}`, display: 'flex', flexDirection: 'column', gap: 10,
 }
-const qtyBtn = {
-  width: T.tapMinHeight, height: T.tapMinHeight, borderRadius: T.radiusButton, border: `1px solid ${P.border}`,
-  backgroundColor: P.cream, color: P.dark, cursor: 'pointer', fontSize: '1.2rem', fontWeight: 700,
-  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, padding: 0,
+const factsGrid = {
+  display: 'grid', gridTemplateColumns: '100px 1fr', columnGap: 10, rowGap: 6, margin: 0, alignItems: 'baseline',
 }
+const factLabel = { fontSize: T.type.xs2, color: P.mid }
+const factValue = { margin: 0, fontSize: T.type.sm, color: P.dark, overflowWrap: 'anywhere' }
 const secondaryBtn = {
   minHeight: T.tapMinHeight, padding: '0 12px', borderRadius: T.radiusButton, border: `1px solid ${P.green}`,
   background: P.white, color: P.green, fontWeight: 600, fontSize: T.type.sm, cursor: 'pointer', fontFamily: 'inherit',
@@ -503,20 +796,23 @@ const sortLabel = {
 }
 // selectChrome's own 1rem field font, not a smaller one: iOS zooms the page on focus under 16px.
 const sortSelect = { ...selectChrome(), width: 'auto', paddingLeft: 10, paddingRight: 30, backgroundPosition: 'right 8px center' }
-const groupHeaderWrap = {
-  position: 'sticky', top: 52, zIndex: 1, backgroundColor: P.cream, paddingBottom: 2,
+// Headers are interactive now (they fold), so the 44px tap floor V102 §16 dropped comes back.
+const groupHeaderStyle = { minHeight: T.tapMinHeight, padding: '0 12px', boxSizing: 'border-box' }
+const groupHeaderSticky = {
+  position: 'sticky', top: STICKY_TOP, zIndex: 1, backgroundColor: P.cream, paddingBottom: 2,
+}
+const questionRow = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+  minHeight: T.tapMinHeight, marginBottom: 2,
+}
+const questionStyle = { margin: 0, color: P.mid, fontSize: T.type.sm }
+const expandAllBtn = {
+  background: 'none', border: 'none', color: P.green, fontWeight: 600, fontSize: T.type.sm, cursor: 'pointer',
+  minHeight: T.tapMinHeight, padding: '0 4px', fontFamily: 'inherit', flexShrink: 0,
 }
 const dividerStyle = {
-  margin: '14px 0 8px', fontSize: T.type.xs2, fontWeight: 700, color: P.mid, letterSpacing: '0.04em',
+  margin: '8px 0 2px', fontSize: T.type.xs2, fontWeight: 700, color: P.mid, letterSpacing: '0.04em',
   textTransform: 'uppercase',
-}
-const disclosureBtn = {
-  background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center',
-  gap: 8, fontSize: T.type.sm, fontWeight: 700, color: P.mid, minHeight: T.tapMinHeight, fontFamily: 'inherit',
-}
-const countPill = {
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 22, padding: '1px 7px',
-  borderRadius: 999, backgroundColor: P.greenPale, color: P.green, fontSize: T.type.xs, fontWeight: 700,
 }
 const emptyCard = {
   backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: '18px 16px',
