@@ -28,6 +28,11 @@
 // NOT re-derived client-side from plan.weather/plan.hydrology: re-deriving would duplicate engine
 // arithmetic in a second place and let the two drift, which is the failure mode BUG-TODAYWATER-001
 // already produced once on this screen.
+// ONE EXCEPTION, OUTSIDE THIS MODULE (V5-FROSTTWOMODELS-001): on a night the frost line names as
+// tonight, Today hands this module a freeze/cold callout re-worded at the one low it prints for the
+// night (src/lib/tonightLow.js agreeCallout — a copy of the engine's two branches, swept against the
+// REAL computeCallout by tonightLow.test.js). Such a callout carries `modelVersion`, and buildCueLine
+// passes it through so the impression is partitioned by the model that produced the words.
 //
 // AND IT FAILS CLOSED. If a check-form cue's text does not carry the separator, this module returns
 // null and the line does not render at all, rather than falling back to the imperative string. A
@@ -73,19 +78,23 @@ export const CUE_SEPARATOR = ' — '
  *
  * Returns { cue, form, text }. `cue` is the engine's rule name and is what the impression row
  * records — the icon field is a rule identity here, not a glyph.
+ * V5-FROSTTWOMODELS-001: plus `modelVersion`, ONLY when the callout carries one as a non-empty string
+ * (a cue Today re-worded, src/lib/tonightLow.js). An engine callout has none, and its line is the
+ * same three keys as before.
  */
 export function buildCueLine(callout) {
   const cue = callout?.icon
   const text = typeof callout?.text === 'string' ? callout.text : ''
   const form = CUE_FORM[cue]
   if (!form || !text) return null
+  const mv = typeof callout.modelVersion === 'string' && callout.modelVersion ? { modelVersion: callout.modelVersion } : {}
 
-  if (form === 'imperative') return { cue, form, text }
+  if (form === 'imperative') return { cue, form, text, ...mv }
 
   const i = text.indexOf(CUE_SEPARATOR)
   const condition = i > 0 ? text.slice(0, i) : ''
   const clause = CHECK_CLAUSE[cue]
   // Fail closed, not back to the imperative string — see the header.
   if (!condition || !clause) return null
-  return { cue, form, text: `${condition}${CUE_SEPARATOR}${clause}` }
+  return { cue, form, text: `${condition}${CUE_SEPARATOR}${clause}`, ...mv }
 }

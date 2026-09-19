@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
+import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
 import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
 import WeatherCueLine from '../components/today/WeatherCueLine.jsx'
 import FrostAlertLine from '../components/today/FrostAlertLine.jsx'
@@ -50,6 +51,12 @@ export default function Today() {
   // DRG-WXROLL-001 — refresh the displayed rain figure live (Open-Meteo) using the plan's resolved coords;
   // display-only, the watering recommendation stays the nightly plan. No coords/offline -> nightly snapshot.
   const { liveHydrology, refreshedAt } = useLiveRain(plan?.weather_coords ?? plan?.coords)
+  // V5-FROSTTWOMODELS-001 — ONE low per night. When the frost line below names TONIGHT, the card's
+  // night low, a freeze/cold cue and the frost line all print the colder of the plan low and the
+  // advisory's low (src/lib/tonightLow.js). null on every other night, and then nothing below changes.
+  // Computed once here so the three surfaces cannot each work it out differently.
+  const agreed = useMemo(() => agreedTonightLow(plan), [plan])
+  const cueCallout = useMemo(() => agreeCallout(plan?.weather?.callout, agreed), [plan, agreed])
 
   return (
     <div style={{ padding: 16, paddingBottom: 32, maxWidth: 640, margin: '0 auto' }}>
@@ -105,15 +112,17 @@ export default function Today() {
               (08-03, 08-08). Handing the widget the SAME list it sits above is what lets it stop
               claiming "All set" over a non-empty one. Length, not contents: no new coupling. */}
           {plan.weather && (
-            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} />
+            <WeatherWidget weather={plan.weather} hydrology={plan.hydrology} generatedAt={data?.generated_at} planDate={data?.plan_date} liveHydrology={liveHydrology} refreshedAt={refreshedAt} waterDueCount={Array.isArray(plan.water_due) ? plan.water_due.length : 0} lowShown={agreed?.lowF} />
           )}
 
           {/* V5-WXCALLOUTRENDER-001 — the engine's one-cue-per-day weather callout, which has had
               zero client consumers since it was written. Renders nothing on the 56% of days the
               engine is silent, and writes an impression row (OPS-CUEINSTRUMENT-001) on the days it
               is not. Directly under the weather card because it is a weather statement; deliberately
-              NOT in the gold/warn family — see the component header. */}
-          <WeatherCueLine callout={plan.weather?.callout} generatedAt={data?.generated_at} planDate={data?.plan_date} />
+              NOT in the gold/warn family — see the component header.
+              V5-FROSTTWOMODELS-001: on a night the frost line names as tonight, a freeze/cold cue is
+              re-worded at the agreed low (a silent cue stays silent; heat/rain/wet are untouched). */}
+          <WeatherCueLine callout={cueCallout} generatedAt={data?.generated_at} planDate={data?.plan_date} />
 
           {/* BUG-FROSTALERTNOAPP-001 — the frost ADVISORY the engine already texted, which had no
               surface here at all. Directly under the cue because they are both weather statements
@@ -121,10 +130,12 @@ export default function Today() {
               coldest of the next three civil days, so tonight-then-ahead is the reading order. It is
               not a second copy of the cue: it quotes the advisory Dave was texted, and it names that
               advisory's night — which CAN be tonight (BUG-FROSTADVISORYNIGHTWORDING-001: a D1 minimum
-              usually falls before dawn). The imminent tier is excluded because the freeze cue above
-              already covers it. Renders nothing on a day with no advisory, and nothing for entries
-              stored before the handler persisted lowF. */}
-          <FrostAlertLine alertsSent={plan.alerts_sent} />
+              usually falls before dawn). On such a night it prints the same low as the card and the
+              cue (V5-FROSTTWOMODELS-001, `agreed` above) rather than a second model's number for the
+              same night. The imminent tier is excluded because the freeze cue above already covers
+              it. Renders nothing on a day with no advisory, and nothing for entries stored before the
+              handler persisted lowF. */}
+          <FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} />
 
           {/* V5-LEGACYEXCEPTIONCARE-001 — the garden-wide drought line. MOUNTED HERE DELIBERATELY:
               without this one line the whole signal is inert — droughtSignal.js computes it, the
