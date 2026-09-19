@@ -24,6 +24,17 @@
 // (user_id, plan_date), answers both alerts_sent reads), so each run sees what the earlier ones wrote. Each run sets
 // the clock to its own ET hour, so every send carries a distinct `at`, as in prod. The unit suite mocks SQL: none of
 // this proves what Postgres does.
+//
+// MUTATION LOG — 2026-09-19, lane-nightbasis-20260919 (harness mutate.mjs in the lane scratch: each mutation applied
+// alone; this file run as an expect.soft copy, so every failing assertion counts, with frostnightmove.test.js, under
+// TZ=UTC; file restored and sha256 + git status verified). All 43 assertion sites are killed by at least one. RED tests
+// here / in frostnightmove.test.js:
+//   the rule: basis check dropped (the base) 6/0 · inverted 9/9 · threshold path only 1/0 · radiative path only 5/0 ·
+//             identity keeps a guessed night 3/0 · escalation keeps a guessed night 1/0 · a guessed night never
+//             escalates 3/0 · a gap run sends nothing new, any tier 4/0 · HELD drops night_basis 1/0
+//   the gate: no dedup gate at all 10/12 · the stored entry drops its night 9/11
+//   scenario guards: the gap run has a located series (fixture) 9/0 · key ignores the crop set 2/1 · key names the
+//             advisory night 4/1 · locateNight never locates 12/9
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import h from './handler.js';
 import _cf from './_coverFlags.js';
