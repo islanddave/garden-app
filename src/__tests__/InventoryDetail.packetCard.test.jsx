@@ -174,6 +174,8 @@ const facts = () => screen.getByTestId('packet-facts')
 const factRows = () => Array.from(facts().querySelectorAll('[data-testid="packet-fact"]'))
   .map(n => [n.children[0].textContent, n.children[1].textContent])
 const uploadProps = (node) => JSON.parse(node.getAttribute('data-props'))
+// The link's visible line is hidden from AT; its accessible name is a separate sentence.
+const linkLine = (a) => a.querySelector('[aria-hidden="true"]')?.textContent
 const labelTexts = () => Array.from(document.querySelectorAll('label')).map(l => l.textContent.trim())
 
 describe('the packet card — seeds only, right under the title', () => {
@@ -396,7 +398,7 @@ describe('the packet card — the link out', () => {
     await renderPage(PEPPER)
     const a = screen.getByTestId('packet-link')
     expect(facts().contains(a)).toBe(true)
-    expect(a.textContent).toBe('Packet page · sandiaseed.com ↗')
+    expect(linkLine(a)).toBe('Packet page · sandiaseed.com ↗')
     expect(a.getAttribute('href')).toBe(PEPPER.source_url)
     expect(a.getAttribute('target')).toBe('_blank')
     expect(a.getAttribute('rel')).toBe('noopener noreferrer')
@@ -407,12 +409,13 @@ describe('the packet card — the link out', () => {
   it('without a packet URL the cultivar\'s page stands in, named for where it goes — never "Supplier"', async () => {
     await renderPage({ ...PEPPER, source_url: '' })
     const a = screen.getByTestId('packet-link')
-    expect(a.textContent).toBe('About this variety · johnnyseeds.com ↗')
+    expect(linkLine(a)).toBe('About this variety · johnnyseeds.com ↗')
     expect(a.getAttribute('href')).toBe(PEPPER.variety_source_url)
     expect(a.getAttribute('target')).toBe('_blank')
     expect(a.getAttribute('rel')).toBe('noopener noreferrer')
     expect(screen.getByRole('link', { name: 'About this variety on johnnyseeds.com, opens in browser' })).toBe(a)
-    expect(a.textContent + a.getAttribute('aria-label')).not.toMatch(/supplier/i)
+    // Everything the link says, to eyes and to a screen reader.
+    expect(a.textContent).not.toMatch(/supplier/i)
     expect(a.textContent).not.toMatch(/Packet page/)
   })
 
@@ -427,12 +430,12 @@ describe('the packet card — the link out', () => {
     await renderPage(PEPPER)
     const field = screen.getByLabelText('Packet page (URL)')
     fireEvent.change(field, { target: { value: 'https://www.botanicalinterests.com/products/reaper' } })
-    expect(screen.getByTestId('packet-link').textContent).toBe('Packet page · sandiaseed.com ↗')
+    expect(linkLine(screen.getByTestId('packet-link'))).toBe('Packet page · sandiaseed.com ↗')
 
     await act(async () => { fireEvent.click(screen.getByText('Save changes')) })
     expect(updateItemSpy).toHaveBeenCalledTimes(1)
     await waitFor(() =>
-      expect(screen.getByTestId('packet-link').textContent).toBe('Packet page · botanicalinterests.com ↗'))
+      expect(linkLine(screen.getByTestId('packet-link'))).toBe('Packet page · botanicalinterests.com ↗'))
   })
 })
 

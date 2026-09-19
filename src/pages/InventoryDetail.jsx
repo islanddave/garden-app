@@ -1209,15 +1209,18 @@ function PacketCard({ item, supplierName, packetUrl, onUploadComplete }) {
               href={link.href}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`${link.words} on ${link.domain}, opens in browser`}
               data-testid="packet-link"
               style={{
-                display: 'inline-flex', alignItems: 'center', minHeight: 44,
+                position: 'relative', display: 'inline-flex', alignItems: 'center', minHeight: 44,
                 color: P.green, fontSize: '0.82rem', fontWeight: 600,
                 textDecoration: 'none', overflowWrap: 'anywhere',
               }}
             >
-              {link.words} · {link.domain}{' '}<span aria-hidden="true">↗</span>
+              {/* Named by its CONTENT — the sentence a screen reader should hear — with the glyph
+                  line hidden from it. Not aria-label: the a11y gate's static layer rebuilds an <a>
+                  without its href, where a name is prohibited, so the label would read as a defect. */}
+              <span aria-hidden="true">{link.words} · {link.domain} ↗</span>
+              <span style={SR_ONLY}>{`${link.words} on ${link.domain}, opens in browser`}</span>
             </a>
           )}
         </div>
@@ -1239,6 +1242,11 @@ const PACKET_BOX = {
   position: 'relative', display: 'block', width: '100%', aspectRatio: '3 / 4',
   padding: 0, margin: 0, overflow: 'hidden', cursor: 'pointer', fontFamily: 'inherit',
   border: `1px solid ${P.border}`, borderRadius: 10,
+}
+// LiveRegion.jsx's visually-hidden recipe.
+const SR_ONLY = {
+  position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)', whiteSpace: 'nowrap', border: 0,
 }
 // A text button, full column width so its target is the column and not the word.
 const ADD_PHOTO_BTN = {
