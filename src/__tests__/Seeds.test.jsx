@@ -124,6 +124,18 @@ describe('Seeds — the default view is settled once, in the URL, before a body 
     expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
   })
 
+  it('a failure with an EMPTY message lands there too — never an endless spinner with no Retry', async () => {
+    // api.js builds its Error from the body's `error`, falling back to `HTTP <status>` only on null: a
+    // non-JSON error body with an empty statusText (HTTP/2 has none) or `{"error":""}` gives Error('').
+    // An empty-string error is falsy, so the default rule read it as "still loading" and bare /seeds
+    // never settled; the store has to turn it into a message.
+    seedResponse = () => Promise.reject(new Error(''))
+    const router = mount()
+    await waitFor(() => expect(search(router)).toBe('?view=mine'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy())
+    expect(screen.getByText('Could not load your seed inventory.')).toBeTruthy()
+  })
+
   it('mounts NO view body while the rows are still loading (the URL is written first)', async () => {
     let release
     seedResponse = () => new Promise((r) => { release = r })
