@@ -58,7 +58,8 @@ const key = (arr) => [...new Set(arr)].sort().join(',');
 // LIVE — "alive and owed routine care". The population a care/logging surface acts ON.
 //   lambda/events/index.js       Log Many batch scope resolver   (BUG-LOGMANYSTATUS-001)
 //   lambda/events/index.js       GET /api/events/harvest-ready
-//   lambda/daily-plan/handler.js the daily plan's planting set
+//   lambda/daily-plan/handler.js the nightly anchor re-derivation target (REDERIVE_CTE,
+//                                V4-ANCHORRESWEEP-001) — NOT the plan's planting set, which is ANCHOR
 //   lambda/harvests/watch-route.js the harvest watch band
 //   lambda/plants/anchorCreate.js DEAD_STATUSES, same set via `= ANY(...)`
 const LIVE = ['dormant', 'ended', 'failed'];
@@ -71,10 +72,15 @@ const LIVE = ['dormant', 'ended', 'failed'];
 //   Whether the dashboard is right to hide it from Water Due is a real open question, and a
 //   separate one from this file: it is a change to 13 query sites on the nag surfaces.
 const CARE = ['dormant', 'ended', 'failed', 'rooting'];
-// ANCHOR — the nightly anchor-derivation population (daily-plan/handler.js, the pg.query path).
-//   Deliberately NOT LIVE: a dormant garlic still has a planted date worth deriving, so `dormant`
-//   is correctly absent. Recorded here rather than converged. Note it also carries two terms that
-//   are not in the status vocabulary at all — see the out-of-vocabulary test below.
+// ANCHOR — the daily plan's own planting set: daily-plan/handler.js's nightly plantings query, and
+//   (BUG-RAINONENDEDPLANTINGS-001) the rain autologger's INSERT in the same file, which copies it
+//   word for word so rain goes where the plan looks. Deliberately NOT LIVE: the plan must SELECT a
+//   dormant planting so the engine can put it in the Dormant bucket (engine.js,
+//   V4-DORMANTRESUME-001), and a dormant perennial is still in the ground, so its rain counts.
+//   Recorded here rather than converged. The name is historical: this comment used to call the set
+//   "the nightly anchor-derivation population", but the anchor re-derivation target is the LIVE
+//   site above, and was already when this registry was written (509060b). Note it also carries two
+//   terms that are not in the status vocabulary at all — see the out-of-vocabulary test below.
 const ANCHOR = ['archived', 'dead', 'ended', 'failed'];
 const REGISTERED = new Map([[key(LIVE), 'LIVE'], [key(CARE), 'CARE'], [key(ANCHOR), 'ANCHOR']]);
 
@@ -164,9 +170,9 @@ describe('planting-status exclusions use a registered vocabulary', () => {
   it('LIVE and CARE name only real statuses; ANCHOR is the recorded exception', () => {
     // src/lib/constants.js is the vocabulary of record and the server has no copy of it, so the
     // two lists that gate care are checked against it here. ANCHOR's `dead` and `archived` match
-    // nothing in prod (0 rows each, 2026-08-20) and it omits `dormant`; that is a finding parked
-    // for its own row, pinned so that fixing it forces this registry to be updated in the same
-    // commit rather than drifting silently.
+    // nothing in prod (0 rows each, 2026-08-20); that is a finding parked for its own row, pinned
+    // so that fixing it forces this registry to be updated in the same commit rather than drifting
+    // silently. (Its omission of `dormant` is deliberate — see ANCHOR above.)
     const CONSTS = readFileSync(join(here, '..', 'src', 'lib', 'constants.js'), 'utf8');
     const vocab = new Set(
       [...CONSTS.match(/export const PLANT_STATUSES = \[([^\]]*)\]/)[1].matchAll(/'([a-z_]+)'/g)]
