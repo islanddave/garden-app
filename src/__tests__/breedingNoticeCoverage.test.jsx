@@ -109,8 +109,10 @@ describe('the F1 warning covers every breeding_system the schema allows', () => 
 describe('the notice renders from the variety being saved', () => {
   // Rendering breedingNotice's own output rather than mounting the whole sheet: the sheet needs a
   // router, a toast provider and a stubbed fetch, and none of that is what these assertions are
-  // about. The sheet-level wiring (that it reads `variety` and not the `planting` prop) is covered
-  // in SaveSeedSheet.test.jsx, where the fixtures already exist.
+  // about. The sheet-level wiring (that it reads the `variety` the picker hands over and not the
+  // `planting` prop) is covered in SaveSeedSheet.test.jsx by "an F1 variety picked through the real
+  // picker, with no planting prop, shows "F1 hybrid" above Save" (V5-SEEDSTAB-001). Until that test
+  // existed this comment claimed coverage nothing provided.
   const Notice = ({ v }) => {
     const n = breedingNotice(v)
     return n ? <div data-testid="breeding-notice">{n.badge ? <span>{n.badge}</span> : null}<span>{n.line}</span></div> : null
