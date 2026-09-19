@@ -13,6 +13,8 @@
 import { formatQty } from '../../lib/format.js'
 import { isInProcess, isUnstartedSave, isDepleted, isArchivedForSeason } from '../../lib/sowEngine.js'
 import { elapsedDays, fermentUrgency, lotMeasure, isSavedLot } from './seedLots.js'
+import { shuLabel } from '../../lib/varietySpec.js'
+import { supplierKey, supplierLabel } from '../../lib/supplierPalette.js'
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -122,13 +124,74 @@ export const SORTS = [
   { value: 'name',   label: 'Name' },
   { value: 'oldest', label: 'Oldest' },
   { value: 'newest', label: 'Newest' },
+  // V5-SEEDCARDS-001 — Dave: "for peppers, to sort them by expected SHU". Offered only when at least
+  // two rows carry a heat figure (MySeeds decides; a control that cannot change the answer is hidden).
+  { value: 'heat',   label: 'Heat' },
 ]
+
+// ── Heat (V5-SEEDCARDS-001) ────────────────────────────────────────────────────────────────────────
+// A cultivar's expected Scoville range, from the list row's cultivar facts. The SORT KEY is the top of
+// the range (a "hottest first" list ranks a 100k-350k habanero above a 100k-150k one), falling back
+// to the bottom when only one end is known. `estimate` is true when the figure is a best guess from
+// the pepper's type rather than a supplier or reference figure (scoville_source 'inference') — the
+// label carries "≈" for it (varietySpec.shuLabel), so a guess never reads as a stated number.
+export function heatOf(i) {
+  const mn = i?.scoville_min, mx = i?.scoville_max
+  if (mn == null && mx == null) return null
+  return { min: mn ?? mx, max: mx ?? mn, key: Number(mx ?? mn), estimate: i?.scoville_source === 'inference' }
+}
+
+export function heatLabel(i) {
+  return heatOf(i) ? shuLabel(i) : ''
+}
+
+// ── Supplier facet (V5-SEEDCARDS-001) ──────────────────────────────────────────────────────────────
+// Options for the supplier filter, from the PRE-filter rows (a facet derived from its own filtered
+// output collapses to whatever is selected). Count-descending, ties by label; rows with no supplier on
+// record (saved lots, and packets whose vendor was never entered) are one "No supplier" option, last.
+// The value is the folded name (supplierPalette.supplierKey) — the same key the colours use, and
+// stable across environments where registry uuids are not.
+export const NO_SUPPLIER_VALUE = '__none__'
+export function supplierOf(i, vendorOf) {
+  const name = vendorOf ? String(vendorOf(i) ?? '').trim() : ''
+  return name ? { key: supplierKey(name), name } : null
+}
+export function supplierOptions(rows, vendorOf) {
+  const counts = new Map()
+  let none = 0
+  for (const r of rows) {
+    const s = supplierOf(r, vendorOf)
+    if (!s) { none++; continue }
+    const cur = counts.get(s.key)
+    counts.set(s.key, { value: s.key, name: s.name, count: (cur?.count ?? 0) + 1 })
+  }
+  const opts = [...counts.values()]
+    .sort((a, b) => b.count - a.count || collator.compare(a.name, b.name))
+    .map((o) => ({ value: o.value, label: supplierLabel(o.name), name: o.name, count: o.count }))
+  if (none > 0) opts.push({ value: NO_SUPPLIER_VALUE, label: 'No supplier', name: '', count: none })
+  return opts
+}
+export function matchesSuppliers(i, selected, vendorOf) {
+  if (!selected || selected.size === 0) return true
+  const s = supplierOf(i, vendorOf)
+  return selected.has(s ? s.key : NO_SUPPLIER_VALUE)
+}
+
+// ── One filter object (V5-SEEDCARDS-001) ───────────────────────────────────────────────────────────
+// Search, crop chips and supplier chips are ONE value, so "is anything filtering?", "clear them" and
+// the write-never-lands-out-of-sight notice can never enumerate a different subset of them — a third
+// facet added to two of three sites is exactly how a just-saved row ends up hidden with no notice.
+export function isFilterActive(f) {
+  return !!(f && (String(f.q ?? '').trim() || (f.crops && f.crops.size > 0) || (f.suppliers && f.suppliers.size > 0)))
+}
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
 
 // Name: grouped by crop (the caller groups), A→Z inside. Oldest seed first: flat, by the age year,
 // unknown years last. Newest added: flat, created_at descending, then id — July's intake put 104
-// rows on one day, so the tie-break is what makes the order stable.
+// rows on one day, so the tie-break is what makes the order stable. Heat: grouped by crop like Name
+// (the caller groups), hottest first inside a group — only peppers carry a figure, so every other
+// group reads A→Z exactly as under Name.
 export function sortRows(rows, sort) {
   const byTitle = (a, b) => collator.compare(rowTitle(a), rowTitle(b)) || String(a.id).localeCompare(String(b.id))
   const out = [...rows]
@@ -144,6 +207,17 @@ export function sortRows(rows, sort) {
   if (sort === 'newest') {
     return out.sort((a, b) =>
       String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')) || String(a.id).localeCompare(String(b.id)))
+  }
+  if (sort === 'heat') {
+    // Hottest first; rows with no figure keep their A→Z order after every row that has one. A sort
+    // never hides a row.
+    return out.sort((a, b) => {
+      const A = heatOf(a)?.key, B = heatOf(b)?.key
+      if (A == null && B == null) return byTitle(a, b)
+      if (A == null) return 1
+      if (B == null) return -1
+      return B - A || byTitle(a, b)
+    })
   }
   return out.sort(byTitle)
 }
