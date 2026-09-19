@@ -257,6 +257,19 @@ describe('plants Lambda GET SELECT clauses (S1.A-hotfix regression guard)', () =
     expect(hits.length, 'expected harvest_habit in the 3 maturity-reading variety_ref JSON blocks').toBe(3);
   });
 
+  // V5-SEEDCARDS-001 (v5-scovillesource-001): scoville_source rides WITH the two scoville numbers.
+  // CropCard's SHU chip reads all three off variety_ref and prefixes an inference figure with
+  // "est.", so a block that kept the numbers and dropped the source would put an estimate on screen
+  // with the authority of a supplier figure — silently, since shuLabel treats an absent source like
+  // a sourced one. Counted against the numbers rather than against a constant, so the pair has to
+  // move together: 3 today (by-id + both default lists; grid and picker carry no scoville at all).
+  it("every variety_ref block carrying the scoville numbers carries 'scoville_source', pv.scoville_source", () => {
+    const withNumbers = SRC.match(/'scoville_min',\s*pv\.scoville_min\b/g) || [];
+    const withSource = SRC.match(/'scoville_source',\s*pv\.scoville_source\b/g) || [];
+    expect(withNumbers.length, 'expected the scoville numbers in the 3 wide variety_ref JSON blocks').toBe(3);
+    expect(withSource.length, 'a variety_ref block carries scoville numbers without their source').toBe(withNumbers.length);
+  });
+
   // 3 -> 4 with the picker projection, which needs the join for default_unit (see above). The join
   // and the key are counted SEPARATELY on purpose: the key can be present while the join that
   // populates it is gone, and that combination reports default_unit null for every planting with a

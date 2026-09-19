@@ -903,8 +903,11 @@ export const handler = async (event) => {
                  pv.display_name AS variety_name,
                  -- V5-SEEDCARDS-001: the same cultivar facts the seed list projects, for the
                  -- seed's detail page (heat, origin, species, the cultivar's reference URL).
+                 -- scoville_source travels WITH the two numbers (v5-scovillesource-001): an
+                 -- inference figure renders as est. ... SHU, never as a supplier figure.
                  pv.crop_type_slug AS crop_slug,
-                 pv.scoville_min, pv.scoville_max, pv.origin_country, pv.origin_region, pv.species,
+                 pv.scoville_min, pv.scoville_max, pv.scoville_source,
+                 pv.origin_country, pv.origin_region, pv.species,
                  pv.breeding_system, pv.days_to_maturity_min, pv.days_to_maturity_max, pv.dtm_basis,
                  pv.source_url AS variety_source_url
           FROM inventory_items i
@@ -1293,13 +1296,17 @@ export const handler = async (event) => {
       //   • the cultivar facts a card and its Heat sort read: scoville, origin, species, breeding
       //     system, days to maturity and the cultivar's own reference URL. All come from the
       //     `cultivar` view already joined here (no new relation); cultivar-columns.test.js lists them.
+      //     scoville_source rides beside the two numbers (v5-scovillesource-001, which must be applied
+      //     before this deploys): shuLabel reads it and prefixes an 'inference' figure with "est.",
+      //     so a best guess never reaches a card looking like a supplier figure.
       // The payload grows by the two URLs per row, which is why this handler now answers through the
       // negotiated-gzip responder (api-gzip-wiring.test.js).
       const rows = cats && cats.length
         ? await sql`
             SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
                    se.entered_at AS stage_entered_at,
-                   pv.scoville_min, pv.scoville_max, pv.origin_country, pv.origin_region, pv.species,
+                   pv.scoville_min, pv.scoville_max, pv.scoville_source,
+                   pv.origin_country, pv.origin_region, pv.species,
                    pv.breeding_system, pv.days_to_maturity_min, pv.days_to_maturity_max, pv.dtm_basis,
                    pv.source_url AS variety_source_url,
                    COALESCE(fp.id, fb.id) AS effective_featured_photo_id,
@@ -1339,7 +1346,8 @@ export const handler = async (event) => {
         : await sql`
             SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
                    se.entered_at AS stage_entered_at,
-                   pv.scoville_min, pv.scoville_max, pv.origin_country, pv.origin_region, pv.species,
+                   pv.scoville_min, pv.scoville_max, pv.scoville_source,
+                   pv.origin_country, pv.origin_region, pv.species,
                    pv.breeding_system, pv.days_to_maturity_min, pv.days_to_maturity_max, pv.dtm_basis,
                    pv.source_url AS variety_source_url,
                    COALESCE(fp.id, fb.id) AS effective_featured_photo_id,
