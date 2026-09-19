@@ -1,0 +1,351 @@
+# gates.yml
+# v5-coldshadow-002 — V5-COLDSHADOWCENSUS-001. Adds the `cold` key to eight cultivar care_profile rows (the
+# potted plantings among the 19 whose bundled cold block a database profile shadows) with the value the
+# bundled cadence data carries. Data-only. Rows, reach and exclusions: 0a-data.sql header and README.md.
+# The two coleus cultivar rows are deliberately NOT written (Dave, 2026-09-19: "No, leave them off"); a
+# pre/post pair checks that 0a leaves them alone.
+#
+# STATUS AT AUTHORING (2026-09-19): AUTHORED, NOT APPLIED on staging or prod.
+#
+# SEQUENCING — README.md. Per environment, staging first:
+#   --phase pre -> apply 0a -> --phase post
+# then `gate_runner.py --all --phase post --continuous-only` on BOTH envs.
+# Pushing this directory before the apply cannot red gate-invariants.yml: the one continuous post gate
+# self-arms on this migration's schema_version row. Measured read-only on prod at authoring.
+#
+# GATE CLASSIFICATION (decided at authoring, not after the first false red)
+#   * Standing invariant (continuous, self-armed): the failure shape this migration exists to undo — a
+#     database profile adopted by the engine for a POTTED planting of one of these eight cultivars that no
+#     longer yields a card at the decided threshold (the key dropped again by a future whole-profile
+#     backfill, a hardy clone, a lowered threshold, or a leaf-scope override). ONE gate, read through
+#     v_resolved_care, because that view is what the daily-plan handler selects: judging the view covers
+#     the cultivar row AND any leaf override with one assertion. A floor per cultivar, not an equality: a
+#     higher threshold still cards (more protective), a lower one breaks Dave's decision. "Potted" is
+#     Dave's word, so a planting in the ground or in a fixed planter (in_ground, raised_bed, trough,
+#     whiskey_barrel, window_box — the Alaska Mix trough is why this migration exists without it) is not
+#     judged: a deliberate leaf override that silences one of those is not a regression of this decision.
+#   * Apply-window receipts (continuous: false): the exact value 0a wrote, the single-key method, the
+#     engine's view of the eight plantings, and that the two coleus rows were left without `cold`. A later,
+#     deliberate edit of any profile is not a regression — including a later decision to card the coleus,
+#     which is why "leave them off" is a receipt and not a standing gate.
+#   * EVERY gate that names a prod id is env: prod — the standing invariant included. Its population is
+#     defined by eight prod cultivar ids, not by anything this migration mints, and 0a is keyed to prod
+#     care_profile row ids written on prod on 2026-08-23, after the staging branch was cut (2026-08-11,
+#     Neon API). On staging those rows cannot exist, so 0a stamps the version and nothing else, and a
+#     'both' gate would judge rows this file never wrote (the v5-coldshadow-001 / v4-cadencerefill-001
+#     precedent for prod-id-keyed data). This lane was cleared to read prod only; staging is unread.
+#   * No gate names a column this migration adds (it adds none), and none casts ::regclass, so every gate
+#     parses and runs on an unapplied database.
+#
+# NO `sweep` PHASE: nothing is constrained, so there is no predicate that must hold before the apply.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-coldshadow-002'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_cultivars_are_the_rows_read_at_authoring
+    env: prod
+    note: >
+      Identity receipt for the eight cultivars whose care profiles 0a edits, read on prod 2026-09-19: name,
+      controlled crop type and genus, live. The names are checked here once, as a receipt; the selector is
+      always the id. The crop type is what makes each bundled entry trustworthy for its cultivar (no name
+      collision of the by_variety Peach kind), so a retyped cultivar must stop the apply.
+    sql: |
+      SELECT pv.id
+        FROM (VALUES
+               ('3db84405-1941-4e88-bb77-58595f47c3e7'::uuid, 'Cobaea scandens (Violet)', 'cobaea', 'Cobaea'),
+               ('ba53f113-9903-449d-81b9-7dce30ef3934'::uuid, 'Easy Wave Berry Velour', 'petunia', 'Petunia'),
+               ('d3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid, 'Jewel Mix Nasturtium', 'nasturtium', 'Tropaeolum'),
+               ('f46745bf-c77e-4f42-b939-5363378a035e'::uuid, 'Petunia', 'petunia', 'Petunia'),
+               ('4379ae45-51ac-49f2-8205-aea13c3c64ad'::uuid, 'Silver (Licorice Plant)', 'helichrysum', 'Helichrysum'),
+               ('ece82bf2-6a60-4186-b031-64af0519aa49'::uuid, 'Spider Plant', 'spider_plant', 'Chlorophytum'),
+               ('eb7e7347-26f2-42aa-b042-967511a31c0d'::uuid, 'Sunny Susy White Halo', 'thunbergia', 'Thunbergia'),
+               ('a3d41b0a-f79e-4301-b710-587b6d8544bf'::uuid, 'Wishbone Flower', 'torenia', 'Torenia')
+             ) AS v(variety_id, name, crop_type_slug, genus)
+        JOIN public.plant_varieties pv
+          ON pv.id = v.variety_id AND pv.name = v.name AND pv.crop_type_slug = v.crop_type_slug
+         AND pv.genus = v.genus AND pv.deleted_at IS NULL
+    expect: rowcount_eq
+    value: 8
+
+  - name: pre_profiles_are_the_backfill_rows_without_cold
+    env: prod
+    note: >
+      The exact starting state 0a matches: each cultivar row written by cadence-backfill-20260823, with no
+      `cold` key, byte-identical to what was reviewed (md5 of the whole profile, read on prod 2026-09-19).
+      If this fails a row changed since authoring: re-read it before applying. A cold key already present
+      makes 0a match nothing for that row; any other change would ride along under the post md5 receipt
+      and turn it red.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('9548b3f2-e86c-435e-8ef2-28f5d0e8aa8c'::uuid, '3db84405-1941-4e88-bb77-58595f47c3e7'::uuid, 'be58c910eab3470432bdb296f2030a59'),
+               ('04554719-e633-44d7-8791-f3e33c90ed2d'::uuid, 'ba53f113-9903-449d-81b9-7dce30ef3934'::uuid, '3b18f320614cab469d3d77b307fbf342'),
+               ('2d2bc039-58e4-4ce7-8930-e58a66c4cd5a'::uuid, 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid, 'b28ed671a8f656396c90e430f4cabe8a'),
+               ('315a0e95-0469-4b88-9647-5662c0edc884'::uuid, 'f46745bf-c77e-4f42-b939-5363378a035e'::uuid, '3b18f320614cab469d3d77b307fbf342'),
+               ('54187824-9ea7-4c5c-9fbf-da5f2326b84e'::uuid, '4379ae45-51ac-49f2-8205-aea13c3c64ad'::uuid, 'a47d1659be4e527f5cbdbca0036dd13a'),
+               ('241d3455-8961-4c8c-a7ab-4a73e84fc002'::uuid, 'ece82bf2-6a60-4186-b031-64af0519aa49'::uuid, 'fcfeab4ddf82c6c28c6897def61fb06f'),
+               ('f9a3ca14-5a9e-4cd9-8294-babd6e90279f'::uuid, 'eb7e7347-26f2-42aa-b042-967511a31c0d'::uuid, '5307458bac412b8785a7eb669f632a72'),
+               ('19c81d1a-c313-4ae2-bc82-5069eee72fe6'::uuid, 'a3d41b0a-f79e-4301-b710-587b6d8544bf'::uuid, '3e69cae72b72b3918608ece93b07cde2')
+             ) AS v(row_id, scope_id, md5_before)
+        JOIN public.care_profile cp
+          ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE NOT (cp.profile ? 'cold')
+         AND cp.profile->>'_source' = 'cadence-backfill-20260823'
+         AND md5(cp.profile::text) = v.md5_before
+    expect: rowcount_eq
+    value: 8
+
+  - name: pre_the_coleus_rows_carry_no_cold
+    env: prod
+    note: >
+      Dave, 2026-09-19: the three coleus (15-gallon terracotta) stay OFF — "No, leave them off". Their two
+      cultivar rows, Fairway Orange and Kiwi Fern, exist and carry no `cold` today. If one has gained a cold
+      block since, someone decided otherwise after this file was written: stop and re-read before applying.
+      Paired with post_the_coleus_rows_were_left_alone, which proves 0a did not write them.
+    sql: |
+      SELECT cp.id
+        FROM public.care_profile cp
+       WHERE cp.id IN ('573c512c-f98a-4b1f-9fc6-c18afced8306', '56d1cef3-b0ab-4556-b926-93f61fc8304b')
+         AND cp.scope = 'cultivar'
+         AND NOT (cp.profile ? 'cold')
+    expect: rowcount_eq
+    value: 2
+
+  - name: pre_no_leaf_override_carries_cold
+    env: prod
+    note: >
+      v_resolved_care merges system || cultivar || leaf, right wins. A leaf-scope row carrying its own
+      `cold` on a planting of one of these cultivars would override what 0a writes on the cultivar row, so
+      the fix would not reach that planting. None exists at authoring; if one appears, stop and decide
+      which value is meant before applying.
+    sql: |
+      SELECT lo.id, p.name
+        FROM public.care_profile lo
+        JOIN public.plants p ON p.id = lo.scope_id
+       WHERE lo.scope = 'leaf'
+         AND p.variety_id IN ('3db84405-1941-4e88-bb77-58595f47c3e7', 'ba53f113-9903-449d-81b9-7dce30ef3934', 'd3101ac0-fd4e-456e-86b7-ebea732ac84c', 'f46745bf-c77e-4f42-b939-5363378a035e', '4379ae45-51ac-49f2-8205-aea13c3c64ad', 'ece82bf2-6a60-4186-b031-64af0519aa49', 'eb7e7347-26f2-42aa-b042-967511a31c0d', 'a3d41b0a-f79e-4301-b710-587b6d8544bf')
+         AND p.deleted_at IS NULL
+         AND lo.profile ? 'cold'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_other_live_planting_reaches_these_rows
+    env: prod
+    note: >
+      THE REACH GUARD. A cultivar row reaches every planting of its variety, so the decision "card the
+      potted ones" holds only while these eight rows reach exactly the eight potted plantings it was made
+      for. Read on prod 2026-09-19 over the daily-plan handler's live-planting filter: they do, and no other
+      planting of these varieties is live. A new planting of one of them (a petunia bedded out next spring,
+      say) must stop the apply until someone decides whether it should inherit a bring-inside card. The
+      same holds if a coleus cultivar is added to the lists below without its plantings: its three live
+      coleus plantings would be named here.
+    sql: |
+      SELECT p.id, p.name, p.container_type
+        FROM public.plants p
+        LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+       WHERE p.variety_id IN ('3db84405-1941-4e88-bb77-58595f47c3e7', 'ba53f113-9903-449d-81b9-7dce30ef3934', 'd3101ac0-fd4e-456e-86b7-ebea732ac84c', 'f46745bf-c77e-4f42-b939-5363378a035e', '4379ae45-51ac-49f2-8205-aea13c3c64ad', 'ece82bf2-6a60-4186-b031-64af0519aa49', 'eb7e7347-26f2-42aa-b042-967511a31c0d', 'a3d41b0a-f79e-4301-b710-587b6d8544bf')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (pj.status IS NULL OR pj.status <> 'planning')
+         AND pj.archived_at IS NULL
+         AND p.id NOT IN ('1ef9592e-4d69-4171-a21e-24cf5c3f2e61', 'ac3c0e05-aada-47c6-a4c1-447ee3906b79', '731682ea-a840-469d-8cf8-2fb143c993b9', 'e6f33a3d-f861-4354-8728-34c08b84e1be', 'a70bc754-04a0-4c85-8bec-5febe0bf33c9', 'dc196337-453b-4c44-94c0-f1e20d6deef3', '8ca4d744-77e8-432d-b130-b862768fa55c', 'ae936173-1806-419b-a7e1-eb00a294dc74')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_eight_are_live_potted_and_unheated
+    env: prod
+    note: >
+      The eight plantings the decision covers, as read on prod 2026-09-19: live, still of the cultivar
+      the row belongs to, in a pot that can be carried (plastic pot, terracotta, hanging basket), and not in
+      a heated location (a heated one gets no card on dev, so it would not need this row). If one has been
+      planted out or moved into the House, re-decide it before applying.
+    sql: |
+      SELECT p.id
+        FROM (VALUES
+               ('1ef9592e-4d69-4171-a21e-24cf5c3f2e61'::uuid, '3db84405-1941-4e88-bb77-58595f47c3e7'::uuid),
+               ('ac3c0e05-aada-47c6-a4c1-447ee3906b79'::uuid, 'ba53f113-9903-449d-81b9-7dce30ef3934'::uuid),
+               ('731682ea-a840-469d-8cf8-2fb143c993b9'::uuid, 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid),
+               ('e6f33a3d-f861-4354-8728-34c08b84e1be'::uuid, 'f46745bf-c77e-4f42-b939-5363378a035e'::uuid),
+               ('a70bc754-04a0-4c85-8bec-5febe0bf33c9'::uuid, '4379ae45-51ac-49f2-8205-aea13c3c64ad'::uuid),
+               ('dc196337-453b-4c44-94c0-f1e20d6deef3'::uuid, 'ece82bf2-6a60-4186-b031-64af0519aa49'::uuid),
+               ('8ca4d744-77e8-432d-b130-b862768fa55c'::uuid, 'eb7e7347-26f2-42aa-b042-967511a31c0d'::uuid),
+               ('ae936173-1806-419b-a7e1-eb00a294dc74'::uuid, 'a3d41b0a-f79e-4301-b710-587b6d8544bf'::uuid)
+             ) AS v(planting_id, variety_id)
+        JOIN public.plants p ON p.id = v.planting_id AND p.variety_id = v.variety_id
+        LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+        LEFT JOIN public.locations l ON l.id = coalesce(p.location_id, pj.location_id)
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND p.container_type IN ('plastic_pot', 'terracotta', 'hanging_basket')
+         AND l.heated IS NOT TRUE
+    expect: rowcount_eq
+    value: 8
+
+  - name: pre_the_engine_adopts_a_profile_without_cold
+    env: prod
+    note: >
+      The premise, as the engine sees it: all eight plantings adopt their cultivar profile (cadence_scopes
+      {cultivar}, so resolveCadence returns it whole) and it carries no `cold`. If this fails, the defect is
+      gone or has changed shape for some planting — the bundled threshold may already reach the engine —
+      so find out why before applying.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM public.v_resolved_care vrc
+       WHERE vrc.leaf_id IN ('1ef9592e-4d69-4171-a21e-24cf5c3f2e61', 'ac3c0e05-aada-47c6-a4c1-447ee3906b79', '731682ea-a840-469d-8cf8-2fb143c993b9', 'e6f33a3d-f861-4354-8728-34c08b84e1be', 'a70bc754-04a0-4c85-8bec-5febe0bf33c9', 'dc196337-453b-4c44-94c0-f1e20d6deef3', '8ca4d744-77e8-432d-b130-b862768fa55c', 'ae936173-1806-419b-a7e1-eb00a294dc74')
+         AND vrc.cadence_scopes = ARRAY['cultivar']
+         AND NOT (vrc.resolved_profile ? 'cold')
+    expect: rowcount_eq
+    value: 8
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-coldshadow-002'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANT (continuous, self-armed) ────────────────────────────────────────────────────
+
+  - name: post_no_db_profile_shadows_the_potted_cold_cards
+    env: prod
+    note: >
+      Dave's decision (2026-09-19, "card the potted ones") as an invariant: every live, potted planting of
+      one of these eight cultivars whose care comes from a database profile gets a bring-inside card at its
+      cultivar's decided threshold or warmer. Read through v_resolved_care, the view the daily-plan handler
+      selects, so a leaf-scope override is judged too. Only plantings with a non-empty cadence_scopes are
+      judged, because only those adopt the database profile whole; the others resolve the bundled entry,
+      which lambda/daily-plan/coldcards.test.js pins at the same values. Plantings in the ground or in a
+      fixed planter are not judged (see the file header). Returns one row per offending planting. `IS NOT
+      TRUE` so an ABSENT cold block (NULL) is a finding, not a pass — that absence is the defect this undoes.
+      Numeric cast only under jsonb_typeof = number, so an odd value cannot ERROR the gate. Self-armed:
+      vacuous until the stamp exists.
+    sql: |
+      SELECT p.id, p.name, vrc.resolved_profile->'cold' AS cold, v.floor_f
+        FROM public.plants p
+        JOIN (VALUES
+               ('3db84405-1941-4e88-bb77-58595f47c3e7'::uuid, 40),
+               ('ba53f113-9903-449d-81b9-7dce30ef3934'::uuid, 35),
+               ('d3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid, 32),
+               ('f46745bf-c77e-4f42-b939-5363378a035e'::uuid, 35),
+               ('4379ae45-51ac-49f2-8205-aea13c3c64ad'::uuid, 40),
+               ('ece82bf2-6a60-4186-b031-64af0519aa49'::uuid, 50),
+               ('eb7e7347-26f2-42aa-b042-967511a31c0d'::uuid, 45),
+               ('a3d41b0a-f79e-4301-b710-587b6d8544bf'::uuid, 45)
+             ) AS v(variety_id, floor_f) ON v.variety_id = p.variety_id
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = p.id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-coldshadow-002')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (p.container_type IS NULL
+              OR p.container_type NOT IN ('in_ground', 'raised_bed', 'trough', 'whiskey_barrel', 'window_box'))
+         AND cardinality(vrc.cadence_scopes) > 0
+         AND (    vrc.resolved_profile->'cold'->'tender' = 'true'::jsonb
+              AND CASE WHEN jsonb_typeof(vrc.resolved_profile->'cold'->'protect_below_F') = 'number'
+                       THEN (vrc.resolved_profile->'cold'->>'protect_below_F')::numeric >= v.floor_f
+                       ELSE false END
+             ) IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ─────────────────────────────────────────────────────
+
+  - name: post_each_row_carries_its_bundled_value
+    env: prod
+    continuous: false
+    note: >
+      The only positive gate that can tell "wrote the key" from "matched the row" (jsonb_set with
+      create_missing false would match and write nothing). Each value is the cadence-data-v2.json entry the
+      census resolved for that cultivar's plantings; coldcards.test.js fails if a literal drifts from it.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('9548b3f2-e86c-435e-8ef2-28f5d0e8aa8c'::uuid, '3db84405-1941-4e88-bb77-58595f47c3e7'::uuid, '{"tender": true, "protect_below_F": 40}'::jsonb),
+               ('04554719-e633-44d7-8791-f3e33c90ed2d'::uuid, 'ba53f113-9903-449d-81b9-7dce30ef3934'::uuid, '{"tender": true, "protect_below_F": 35}'::jsonb),
+               ('2d2bc039-58e4-4ce7-8930-e58a66c4cd5a'::uuid, 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid, '{"tender": true, "protect_below_F": 32}'::jsonb),
+               ('315a0e95-0469-4b88-9647-5662c0edc884'::uuid, 'f46745bf-c77e-4f42-b939-5363378a035e'::uuid, '{"tender": true, "protect_below_F": 35}'::jsonb),
+               ('54187824-9ea7-4c5c-9fbf-da5f2326b84e'::uuid, '4379ae45-51ac-49f2-8205-aea13c3c64ad'::uuid, '{"tender": true, "protect_below_F": 40}'::jsonb),
+               ('241d3455-8961-4c8c-a7ab-4a73e84fc002'::uuid, 'ece82bf2-6a60-4186-b031-64af0519aa49'::uuid, '{"tender": true, "protect_below_F": 50}'::jsonb),
+               ('f9a3ca14-5a9e-4cd9-8294-babd6e90279f'::uuid, 'eb7e7347-26f2-42aa-b042-967511a31c0d'::uuid, '{"tender": true, "protect_below_F": 45}'::jsonb),
+               ('19c81d1a-c313-4ae2-bc82-5069eee72fe6'::uuid, 'a3d41b0a-f79e-4301-b710-587b6d8544bf'::uuid, '{"tender": true, "protect_below_F": 45}'::jsonb)
+             ) AS v(row_id, scope_id, cold)
+        JOIN public.care_profile cp
+          ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE cp.profile->'cold' = v.cold
+    expect: rowcount_eq
+    value: 8
+
+  - name: post_cold_fix_was_single_key_not_a_full_replace
+    env: prod
+    continuous: false
+    note: >
+      THE METHOD GUARD (v5-coldshadow-001, v5-heatrespcabbage-001). Each corrected row has exactly one key
+      more than before (9) and, with that key taken away, is byte-identical to the row reviewed at
+      authoring: md5 of the profile minus `cold` equals the pre gate's md5 of the whole profile. A
+      whole-object rewrite — even one that carries the same `cold` — changes that hash; so does dropping the
+      _source marker.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('9548b3f2-e86c-435e-8ef2-28f5d0e8aa8c'::uuid, '3db84405-1941-4e88-bb77-58595f47c3e7'::uuid, 'be58c910eab3470432bdb296f2030a59'),
+               ('04554719-e633-44d7-8791-f3e33c90ed2d'::uuid, 'ba53f113-9903-449d-81b9-7dce30ef3934'::uuid, '3b18f320614cab469d3d77b307fbf342'),
+               ('2d2bc039-58e4-4ce7-8930-e58a66c4cd5a'::uuid, 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid, 'b28ed671a8f656396c90e430f4cabe8a'),
+               ('315a0e95-0469-4b88-9647-5662c0edc884'::uuid, 'f46745bf-c77e-4f42-b939-5363378a035e'::uuid, '3b18f320614cab469d3d77b307fbf342'),
+               ('54187824-9ea7-4c5c-9fbf-da5f2326b84e'::uuid, '4379ae45-51ac-49f2-8205-aea13c3c64ad'::uuid, 'a47d1659be4e527f5cbdbca0036dd13a'),
+               ('241d3455-8961-4c8c-a7ab-4a73e84fc002'::uuid, 'ece82bf2-6a60-4186-b031-64af0519aa49'::uuid, 'fcfeab4ddf82c6c28c6897def61fb06f'),
+               ('f9a3ca14-5a9e-4cd9-8294-babd6e90279f'::uuid, 'eb7e7347-26f2-42aa-b042-967511a31c0d'::uuid, '5307458bac412b8785a7eb669f632a72'),
+               ('19c81d1a-c313-4ae2-bc82-5069eee72fe6'::uuid, 'a3d41b0a-f79e-4301-b710-587b6d8544bf'::uuid, '3e69cae72b72b3918608ece93b07cde2')
+             ) AS v(row_id, scope_id, md5_before)
+        JOIN public.care_profile cp ON cp.id = v.row_id
+       WHERE (SELECT count(*) FROM jsonb_object_keys(cp.profile)) = 9
+         AND md5((cp.profile - 'cold')::text) = v.md5_before
+         AND cp.profile->>'_source' = 'cadence-backfill-20260823'
+    expect: rowcount_eq
+    value: 8
+
+  - name: post_engine_view_of_the_eight_carries_the_cold_block
+    env: prod
+    continuous: false
+    note: >
+      End to end, as the handler reads it: all eight plantings still adopt their cultivar profile
+      (cadence_scopes {cultivar}, so the watering interval the engine computes is unchanged) and the
+      resolved profile now carries the cold block written for its cultivar. The receipt that the fix
+      reaches the engine rather than stopping at the row.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM (VALUES
+               ('1ef9592e-4d69-4171-a21e-24cf5c3f2e61'::uuid, '{"tender": true, "protect_below_F": 40}'::jsonb, '2'),
+               ('ac3c0e05-aada-47c6-a4c1-447ee3906b79'::uuid, '{"tender": true, "protect_below_F": 35}'::jsonb, '1'),
+               ('731682ea-a840-469d-8cf8-2fb143c993b9'::uuid, '{"tender": true, "protect_below_F": 32}'::jsonb, '2'),
+               ('e6f33a3d-f861-4354-8728-34c08b84e1be'::uuid, '{"tender": true, "protect_below_F": 35}'::jsonb, '1'),
+               ('a70bc754-04a0-4c85-8bec-5febe0bf33c9'::uuid, '{"tender": true, "protect_below_F": 40}'::jsonb, '2'),
+               ('dc196337-453b-4c44-94c0-f1e20d6deef3'::uuid, '{"tender": true, "protect_below_F": 50}'::jsonb, '7'),
+               ('8ca4d744-77e8-432d-b130-b862768fa55c'::uuid, '{"tender": true, "protect_below_F": 45}'::jsonb, '1'),
+               ('ae936173-1806-419b-a7e1-eb00a294dc74'::uuid, '{"tender": true, "protect_below_F": 45}'::jsonb, '1')
+             ) AS v(planting_id, cold, water_interval_days_container)
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = v.planting_id
+       WHERE vrc.cadence_scopes = ARRAY['cultivar']
+         AND vrc.resolved_profile->'cold' = v.cold
+         AND vrc.resolved_profile->>'water_interval_days_container' = v.water_interval_days_container
+    expect: rowcount_eq
+    value: 8
+
+  - name: post_the_coleus_rows_were_left_alone
+    env: prod
+    continuous: false
+    note: >
+      Dave's 2026-09-19 answer ("No, leave them off") as a receipt: after 0a, neither coleus cultivar row
+      carries `cold`. With pre_the_coleus_rows_carry_no_cold passing before the apply, a row here means 0a
+      wrote one — a coleus UPDATE that sneaked back into the file. A receipt, not a standing gate: a later,
+      deliberate decision to card the coleus is not a regression of this one.
+    sql: |
+      SELECT cp.id
+        FROM public.care_profile cp
+       WHERE cp.id IN ('573c512c-f98a-4b1f-9fc6-c18afced8306', '56d1cef3-b0ab-4556-b926-93f61fc8304b')
+         AND cp.profile ? 'cold'
+    expect: rowcount_eq
+    value: 0
