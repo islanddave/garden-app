@@ -1927,12 +1927,22 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           // whole identity. escalatesBeyond decides whether a moved night is news. The night is read off the facts
           // this send would store, through the same frostEval.sentNight the next run reads the stored entry with,
           // so the two cannot disagree.
+          //
+          // Pre-promote I1 (mainsync5-20260919) — only a night the hours LOCATED can be a move. Without the hourly
+          // series the advisory's night is a guess (frostEval.locateNight 'base_rate', always the EARLIER night; the
+          // radiative-only fallback 'radiative'), so one run whose Open-Meteo body lacked hourly temperature read as
+          // "the cold moved to tonight": a second email, and Today saying tonight for the rest of the plan date. A
+          // guessed night keeps the gate this rule replaced: the same key is already sent, and only severity and crops
+          // escalate. The next run whose hours locate the minimum decides. What a send stores is unchanged.
           const facts = frostDecision ? frostWeatherFacts(frostDecision) : {};
           const night = frostDecision ? sentNight({ tier: frostDecision.tier, ...facts }) : null;
+          const nightBasis = frostDecision && frostDecision.tier === 'advisory' && frostDecision.advisory
+            ? frostDecision.advisory.nightBasis : null;
+          const guessedNight = !!frostDecision && frostDecision.tier === 'advisory' && nightBasis !== 'hourly';
           const sentExactly = (a) => !!a && a.key === dk
-            && (frostDecision.tier !== 'advisory' || sentNight(a) === night);
+            && (frostDecision.tier !== 'advisory' || guessedNight || sentNight(a) === night);
           const worse = !escalationGated
-            || escalatesBeyond(alertsSent, { level: frostDecision.level, crops: frostDecision.cropLevels, night });
+            || escalatesBeyond(alertsSent, { level: frostDecision.level, crops: frostDecision.cropLevels, night: guessedNight ? null : night });
           if (frostDecision && frostDecision.alert && dk && !frostPublished.has(dk)
               && !alertsSent.some(sentExactly) && worse) {
             if (!publishAlert) {
@@ -1970,9 +1980,10 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
             // warning. Logged at INFO because holding is the designed behaviour, not a fault; the
             // fields are what you would need to answer "should it have gone out?" after the fact.
             // BUG-FROSTESCALATENIGHTMOVE-001 — the night is one of those fields now (a night that moved LATER holds).
+            // I1: so is how the advisory's night was known, since a guessed night earlier than every sent one holds too.
             console.log(JSON.stringify({ msg: 'frost alert HELD — not an escalation', space: spaceId, user: user_id,
               dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level,
-              crops: frostDecision.cropLevels || null, night,
+              crops: frostDecision.cropLevels || null, night, night_basis: nightBasis,
               already_sent: alertsSent.map((a) => (a && { level: a.level, crops: a.crops || null, night: sentNight(a) })).filter(Boolean) }));
           }
           // Capped here rather than only on a send: the merged list can pass the cap with no send this run.
