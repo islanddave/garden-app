@@ -479,19 +479,46 @@ function cropLevels(trippedCrops) {
   return Object.keys(out).length ? out : null;
 }
 
-// `sent` is the alerts_sent array as stored (entries: { tier, level, crops? }). Returns true when the
-// decision is strictly worse than the high-water mark of everything already sent for the same night.
+// BUG-FROSTESCALATENIGHTMOVE-001 — the NIGHT a sent entry warned about, in nights after the plan date
+// (0 = tonight): an imminent send is about tonight by construction (evalImminent reads tonightLow), an
+// advisory about the nightOffset its message named (handler.frostWeatherFacts persists it). Everything
+// else is null, no night on record: heat, and an advisory written before nightOffset was persisted.
+// handler.js calls this on the entry it is about to write as well as on the stored ones, so the night
+// it compares and the night it records cannot disagree.
+function sentNight(a) {
+  if (!a) return null;
+  if (a.tier === 'imminent') return 0;
+  if (a.tier === 'advisory' && Number.isInteger(a.nightOffset) && a.nightOffset >= 0) return a.nightOffset;
+  return null;
+}
+
+// `sent` is the alerts_sent array as stored (entries: { tier, level, crops?, nightOffset? }). Returns true
+// when the decision is strictly worse than the high-water mark of everything already sent for the same
+// plan date.
 //
 // An entry written before this change carries no `crops`. Its level still counts toward the site
 // high-water mark, but it contributes NO per-crop history — so a crop tripped tonight reads as new and
 // the alert goes out. That errs toward sending for the one evening that spans the deploy, which is the
 // posture §3-7 states repeatedly: a swallowed frost alert is the failure this feature exists to
 // prevent, and a duplicate is merely annoying.
-function escalatesBeyond(sent, { level, crops } = {}) {
+//
+// BUG-FROSTESCALATENIGHTMOVE-001 — the third axis is TIME. An advisory that told him "tomorrow night" is
+// not news about tonight: when a later run moves the cold night EARLIER than every night already
+// warned about, the frost arrives before the one he is preparing for, and that is worse at the same
+// level and the same crops. Once per earlier night, because the send records its night and the next run
+// compares against it. A night moving LATER is not worse (he is ready early). `night` absent (a caller
+// with no night, every pre-existing one) skips the axis. Stored entries with no night on record
+// contribute nothing to it, the same deploy-evening posture as `crops` above: if none of the prior sends
+// has one, a decision that has one goes out once.
+function escalatesBeyond(sent, { level, crops, night } = {}) {
   const prior = (Array.isArray(sent) ? sent : []).filter((a) => a && severityRank(a.level) > 0);
   if (!prior.length) return true;                       // nothing sent tonight — anything is an escalation
   const maxSent = Math.max(...prior.map((a) => severityRank(a.level)));
   if (severityRank(level) > maxSent) return true;       // the headline got worse
+  if (Number.isInteger(night) && night >= 0) {
+    const warned = prior.map(sentNight).filter((n) => n != null);
+    if (!warned.length || night < Math.min(...warned)) return true;   // the cold night moved earlier
+  }
   const seen = {};
   for (const a of prior) {
     for (const [k, lv] of Object.entries(a.crops || {})) {
@@ -819,7 +846,7 @@ function sentCoverage(decision, coverage, sent) {
 
 module.exports = {
   frostEval, frostCoverage, sentCoverage, resolveThresholds, dedupKey, cropDigest,
-  escalatesBeyond, cropLevels, severityRank, FROST_SEVERITY_RANK,
+  escalatesBeyond, sentNight, cropLevels, severityRank, FROST_SEVERITY_RANK,
   evalAdvisory, evalImminent, evalHeat, evalImminentCrops, evalAdvisoryCrops,
   locateNight, advisoryNight, nightPhrase, weekdayOf, NIGHT_SPLIT_HOUR,
   advisoryMessage, imminentMessage, heatMessage, exposurePhrase, cropListPhrase, totalsPhrase, truncate,
