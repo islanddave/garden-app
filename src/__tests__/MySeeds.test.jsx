@@ -516,15 +516,17 @@ describe('My seeds — the expanded card (no "On hand", the seed\'s facts)', () 
         id: 'hab', name: 'Habanero', variety_name: 'Habanero', source_id: 'src-sandia', purchase_date: '2025-02-01',
         scoville_min: 100000, scoville_max: 350000, scoville_source: 'inference', origin_country: 'Mexico', origin_region: 'Yucatán',
         species: 'Capsicum chinense', days_to_maturity_min: 90, days_to_maturity_max: 100, dtm_basis: 'from-transplant',
+        breeding_system: 'open_pollinated',
       }),
-      pepper({ id: 'bare', name: 'Mystery', variety_name: 'Mystery' }),
+      pepper({ id: 'bare', name: 'Mystery', variety_name: 'Mystery', breeding_system: 'unknown' }),
       pkt({ id: 'tom' }),
     ]
     await mount()
     await openAll()
     await expandRow('hab')
     const facts = within(rowFor('hab')).getByTestId('my-seed-facts')
-    expect([...facts.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['From', 'Heat', 'Country of origin', 'Species', 'Days to maturity'])
+    expect([...facts.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['From', 'Heat', 'Country of origin', 'Species', 'Days to maturity', 'Breeding'])
+    expect(facts.querySelector('[data-fact="Breeding"]').textContent).toBe('Open-pollinated')
     const val = (k) => facts.querySelector(`[data-fact="${k}"]`).textContent
     expect(val('From')).toBe('Sandia Seed Company · bought 2025')
     expect(val('Heat')).toBe('100,000–350,000 SHU · best guess')

@@ -47,6 +47,7 @@ import {
   heatOf, heatLabel, SORTS, sortRows, groupByCrop, NO_CROP, supplierOptions,
   matchesSuppliers, isFilterActive, groupIsOpen, NO_SUPPLIER_VALUE,
 } from '../components/seed/mySeedsModel.js'
+import { seedFacts } from '../components/seed/seedFacts.js'
 import { useLotOutline, outlineStyle } from '../components/seed/useLotOutline.js'
 import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
 import { isInProcess } from '../lib/sowEngine.js'
@@ -552,18 +553,6 @@ function SupplierSwatch({ name }) {
   )
 }
 
-// Where a Scoville figure came from, in words (UX spec §2). Never the LOT's supplier: heat is a
-// cultivar fact and can come from another seller's page.
-const HEAT_SOURCE_WORDS = {
-  packet_label: 'from the packet',
-  vendor_catalog: 'from a seller’s catalogue',
-  breeder: 'from the breeder',
-  reference_work: 'from a reference',
-  grower_record: 'grower’s record',
-  inference: 'best guess',
-}
-const fullNumber = (n) => Number(n).toLocaleString('en-US')
-
 // A saved lot's heat is always an estimate: home-saved pepper seed crosses readily, and seed from an F1
 // parent segregates. The cultivar's range is what it SHOULD be, not what this jar will do.
 function rowHeat(item) {
@@ -571,18 +560,6 @@ function rowHeat(item) {
   if (!label) return ''
   if (isSavedLot(item) && !label.startsWith('est.')) return `est. ${label}`
   return label
-}
-
-function heatFact(item) {
-  const h = heatOf(item)
-  if (!h) return item?.crop_slug === 'pepper' ? 'not recorded' : ''
-  const range = h.min === h.max
-    ? (h.max === 0 ? 'Sweet · 0 SHU' : `${fullNumber(h.max)} SHU`)
-    : `${fullNumber(h.min)}–${fullNumber(h.max)} SHU`
-  const src = item?.scoville_source
-  const words = isSavedLot(item) ? 'saved seed may have crossed'
-    : src ? HEAT_SOURCE_WORDS[src] ?? '' : ('scoville_source' in (item ?? {}) ? 'source not recorded' : '')
-  return words ? `${range} · ${words}` : range
 }
 
 function hostOf(url) {
@@ -676,30 +653,18 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
   )
 }
 
-// The seed's facts, in a fixed order; an absent fact is left out, never dashed — except a pepper's
-// heat, the fact Dave looks for on a pepper, whose absence is stated.
+// The seed's facts, in the words and order the detail page uses too (seedFacts.js), led by where the
+// packet came from and how old it is.
 function SeedFacts({ item, vendor }) {
-  const age = howOld(item)
-  const from = [vendor || originNote(item), age].filter(Boolean).join(' · ')
-  const heat = heatFact(item)
-  const origin = [item.origin_country, item.origin_region].filter(Boolean).join(' · ')
-  const dmin = item.days_to_maturity_min, dmax = item.days_to_maturity_max
-  const days = dmin == null && dmax == null ? '' : `${dmin != null && dmax != null && dmin !== dmax ? `${dmin}–${dmax}` : (dmin ?? dmax)} days`
-  const basis = item.dtm_basis === 'from-transplant' ? ' from transplant' : item.dtm_basis === 'from-sow' ? ' from sowing' : ''
-  const facts = [
-    ['From', from],
-    ['Heat', heat],
-    ['Country of origin', origin],
-    ['Species', item.species ? <i>{item.species}</i> : ''],
-    ['Days to maturity', days ? `${days}${basis}` : ''],
-  ].filter(([, v]) => v)
+  const from = [vendor || originNote(item), howOld(item)].filter(Boolean).join(' · ')
+  const facts = seedFacts(item, { from })
   if (facts.length === 0) return null
   return (
     <dl data-testid="my-seed-facts" style={factsGrid}>
-      {facts.map(([k, v]) => (
-        <React.Fragment key={k}>
-          <dt style={factLabel}>{k}</dt>
-          <dd data-fact={k} style={factValue}>{v}</dd>
+      {facts.map((f) => (
+        <React.Fragment key={f.key}>
+          <dt style={factLabel}>{f.label}</dt>
+          <dd data-fact={f.label} style={factValue}>{f.italic ? <i>{f.value}</i> : f.value}</dd>
         </React.Fragment>
       ))}
     </dl>

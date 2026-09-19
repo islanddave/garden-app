@@ -5,7 +5,8 @@
 // (v5-scovillesource-001) says where the numbers came from, and 'inference' (a best guess) is
 // labelled "est." on the chip. Every other source, and null/absent, renders exactly as before.
 
-function fmtShu(n) {
+// Exported for the seed facts' narrow-column heat (components/seed/seedFacts.js).
+export function fmtShu(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2).replace(/\.?0+$/, '') + 'M'
   if (n >= 10_000) return Math.round(n / 1000) + 'K'
   if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K'

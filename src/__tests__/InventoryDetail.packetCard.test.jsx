@@ -72,7 +72,6 @@ import InventoryDetail from '../pages/InventoryDetail.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
 import { readMarker } from '../lib/backNav.js'
-import { shuLabel } from '../lib/varietySpec.js'
 import { SUPPLIER_COLORS } from '../lib/supplierPalette.js'
 import { clearReloadBlocks } from '../lib/reloadGate.js'
 
@@ -339,10 +338,10 @@ describe('the packet card — seeds only, right under the title', () => {
 describe('the packet card — facts, in one fixed order, with the row\'s words', () => {
   it('Heat, Country of origin, Species, Days to maturity, Breeding', async () => {
     await renderPage(PEPPER)
-    const heat = shuLabel(PEPPER)
-    expect(heat, 'shuLabel returned nothing for the fixture — the Heat row would be vacuous').toBeTruthy()
     expect(factRows()).toEqual([
-      ['Heat', heat],
+      // The chip's short numbers (a ~168 px column), and no source words: the fixture has no
+      // scoville_source key at all.
+      ['Heat', '1.2M–2M SHU'],
       ['Country of origin', 'United States · South Carolina'],
       ['Species', 'Capsicum chinense'],
       ['Days to maturity', '90–120 days from transplant'],
@@ -384,6 +383,25 @@ describe('the packet card — facts, in one fixed order, with the row\'s words',
     expect(got['Country of origin']).toBe('United States')
     expect(Object.keys(got)).not.toContain('Breeding')
     expect(Object.keys(got)).toEqual(['Heat', 'Country of origin', 'Species', 'Days to maturity'])
+  })
+
+  it('says where the heat figure came from, in My seeds\' words — and a saved jar is only ever a guess', async () => {
+    const { unmount } = await renderPage({ ...PEPPER, scoville_source: 'inference' })
+    const heat = () => Object.fromEntries(factRows()).Heat
+    // One mark of a guess, not two: never "est. 1.2M–2M SHU · best guess".
+    expect(heat()).toBe('1.2M–2M SHU · best guess')
+    unmount()
+
+    const second = await renderPage({ ...PEPPER, scoville_source: 'vendor_catalog' })
+    expect(heat()).toBe('1.2M–2M SHU · from a seller’s catalogue')
+    second.unmount()
+
+    const third = await renderPage({ ...PEPPER, scoville_source: null })
+    expect(heat()).toBe('1.2M–2M SHU · source not recorded')
+    third.unmount()
+
+    await renderPage({ ...PEPPER, scoville_source: 'vendor_catalog', seed_stage: 'stored', source_plant_id: 'pl-1' })
+    expect(heat()).toBe('1.2M–2M SHU · saved seed may have crossed')
   })
 
   it('is read-only — cultivar facts are edited in the variety editor, never here', async () => {
@@ -456,6 +474,23 @@ describe('the form, in a seed\'s words', () => {
     const qty = screen.getByLabelText('Qty on hand')
     const help = document.getElementById(qty.getAttribute('aria-describedby'))
     expect(help.textContent).toBe('Set to 0 when the packet is used up — it moves to Sowed previously.')
+  })
+
+  it('"Acquired from" is measured against the SUPPLIER — its help and its same-source error say so', async () => {
+    await renderPage({ ...PEPPER, acquired_from_source_id: 'src-sandia' })
+    const venue = () => Array.from(document.querySelectorAll('label'))
+      .find(l => l.textContent.includes('Acquired from'))?.parentElement
+    await waitFor(() => expect(venue(), 'the Acquired from field never rendered').toBeTruthy())
+    expect(venue().textContent).toContain('The shop or venue, only if it differs from the supplier.')
+    expect(venue().textContent).not.toMatch(/origin/i)
+
+    await act(async () => { fireEvent.click(screen.getByText('Save changes')) })
+    expect(updateItemSpy).not.toHaveBeenCalled()
+    const alerts = Array.from(document.querySelectorAll('[role="alert"]'))
+      .filter(n => n.textContent.includes('Same as the supplier'))
+    expect(alerts.length).toBe(1)
+    expect(venue().contains(alerts[0])).toBe(true)
+    expect(document.body.textContent).not.toContain('Same as the origin')
   })
 
   it('a packet with no supplier shows the Supplier combobox under its new name', async () => {

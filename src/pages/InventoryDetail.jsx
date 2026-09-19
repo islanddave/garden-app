@@ -20,7 +20,7 @@ import Icon from '../components/Icon.jsx'
 import { useSources } from '../hooks/useSources.js'
 import { TIER } from '../lib/photoModel.js'
 import { supplierColors } from '../lib/supplierPalette.js'
-import { shuLabel } from '../lib/varietySpec.js'
+import { seedFacts } from '../components/seed/seedFacts.js'
 // V4-SEEDORIGIN-001 — the SAME eight values preservation_log uses, deliberately. This registry is
 // one of the four synchronised homes of that vocabulary (the others: lambda/preservation/
 // provenance.js, the per-Lambda copy in lambda/inventory-items/source-kinds.js, and the DB CHECK
@@ -183,7 +183,7 @@ export default function InventoryDetail() {
     // rejects it too (inventory-items/index.js:193), but its message names the two columns; caught
     // here it costs no round trip and reads like the form.
     if (form.source_id && form.source_id === form.acquired_from_source_id)
-      e.acquired_from_source_id = 'Same as the origin — leave this blank when they match.'
+      e.acquired_from_source_id = `Same as the ${form.category === 'seeds' ? 'supplier' : 'origin'} — leave this blank when they match.`
     // BUG-SEEDYEARNOOP-001 — reject an unparseable year rather than letting it become a silent
     // clear. parseNum returns null for both '' and NaN, so without this a typo ("19 86") would read
     // as "the user emptied the field" and NULL a curated value on save, with a 200 and no message.
@@ -908,7 +908,7 @@ export default function InventoryDetail() {
             {/* Only once an origin exists — before that the question is "different from what?". */}
             {form.source_id !== '' && (
               <Field label="Acquired from" error={errors.acquired_from_source_id}
-                help="The shop or venue, only if it differs from the origin.">
+                help={`The shop or venue, only if it differs from the ${isSeedForm ? 'supplier' : 'origin'}.`}>
                 <SourcePicker
                   label="Acquired from"
                   value={form.acquired_from_source_id}
@@ -1124,7 +1124,8 @@ function PacketCard({ item, supplierName, packetUrl, onUploadComplete }) {
   const photo = lotPhoto(item)
   // No stripe without a supplier: a grey one would read as a disabled supplier (supplierPalette.js).
   const stripe = supplierColors(supplierName)?.primary ?? null
-  const facts = packetFacts(item)
+  // My seeds' words and order (seedFacts.js); the chip's short numbers, for a ~168 px column.
+  const facts = seedFacts(item, { compact: true })
   // The lot's own packet page first. Only without one does the cultivar's reference URL stand in, and
   // then it is named for where it goes — it usually points at another seller (UX spec P6).
   const packet = linkTarget(packetUrl)
@@ -1254,39 +1255,6 @@ const ADD_PHOTO_BTN = {
   width: '100%', minHeight: 44, padding: '0 4px',
   background: 'none', border: 'none', color: P.green,
   fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer',
-}
-
-// The facts, in the fixed order and with the words My seeds' expanded row uses (UX spec §6.3: one
-// vocabulary). An absent fact is LEFT OUT, never dashed. Heat is the one fact whose absence is stated,
-// and only on a pepper: it is the fact looked for there, so "not recorded" goes where the eye goes.
-// Heat is shuLabel's, unchanged, so a number reads the same here as on the planting's CropCard.
-const BREEDING_LABEL = new Map([['f1', 'F1 hybrid'], ['open_pollinated', 'Open-pollinated'], ['landrace', 'Landrace']])
-// dtm_basis is the cultivar's own override (NULL = inherit the crop's), so a NULL states no basis
-// rather than guessing one.
-const DTM_BASIS_SUFFIX = new Map([['from-transplant', ' from transplant'], ['from-sow', ' from sowing']])
-function packetFacts(i) {
-  const text = (v) => (typeof v === 'string' ? v.trim() : '')
-  const days = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
-  const out = []
-  const heat = shuLabel(i)
-  if (heat) out.push({ key: 'heat', label: 'Heat', value: heat })
-  else if (i?.crop_slug === 'pepper') out.push({ key: 'heat', label: 'Heat', value: 'not recorded' })
-  const origin = [text(i?.origin_country), text(i?.origin_region)].filter(Boolean).join(' · ')
-  if (origin) out.push({ key: 'origin', label: 'Country of origin', value: origin })
-  const species = text(i?.species)
-  if (species) out.push({ key: 'species', label: 'Species', value: species, italic: true })
-  const lo = days(i?.days_to_maturity_min) ?? days(i?.days_to_maturity_max)
-  const hi = days(i?.days_to_maturity_max) ?? lo
-  if (lo != null) {
-    out.push({
-      key: 'dtm', label: 'Days to maturity',
-      value: `${lo === hi ? lo : `${lo}–${hi}`} days${DTM_BASIS_SUFFIX.get(i?.dtm_basis) ?? ''}`,
-    })
-  }
-  // 'unknown' is a researched answer ("could not tell"), not a fact to show on a card.
-  const breeding = BREEDING_LABEL.get(i?.breeding_system)
-  if (breeding) out.push({ key: 'breeding', label: 'Breeding', value: breeding })
-  return out
 }
 
 // A stored URL as a link: http(s) only — these are free-text columns, and one holding `javascript:`
