@@ -33,9 +33,23 @@ vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
 }))
 
 import { renderRoutes } from '../App.jsx'
+import Seeds from '../pages/Seeds.jsx'
+import SavedSeeds from '../pages/SavedSeeds.jsx'
+import SowNow from '../pages/SowNow.jsx'
+import LegacySeedsRedirect from '../components/LegacySeedsRedirect.jsx'
 
 const pagePaths = () => renderRoutes({ overlay: false, user: true }).map((r) => r.props.path)
 const overlayPaths = () => renderRoutes({ overlay: true, user: true }).map((r) => r.props.path)
+
+// Every React element in a route's element tree — the element, its children, and any element-valued
+// prop (an ErrorBoundary `fallback`, say). A static walk of the JSX the table returns; nothing renders.
+function elementsIn(node, out = []) {
+  if (Array.isArray(node)) { for (const n of node) elementsIn(n, out); return out }
+  if (!node || typeof node !== 'object' || !('type' in node) || !('props' in node)) return out
+  out.push(node)
+  for (const v of Object.values(node.props ?? {})) elementsIn(v, out)
+  return out
+}
 
 describe('App route table (single source of truth)', () => {
   it('the page tree has the full 60-route set with no duplicates', () => {
@@ -217,5 +231,25 @@ describe('App route table (single source of truth)', () => {
     const page = renderRoutes({ overlay: false, user: true }).find((r) => r.props.path === '/today')
     expect(page).toBeTruthy()
     expect(overlayPaths()).not.toContain('/today') // never appears in the overlay tree
+  })
+
+  // V5-SEEDSTAB-001 — Saved seeds and Sow now exist ONLY as views inside the Seeds page. /sow and
+  // /seeds/saved stay in the table (see the 59 -> 60 note above) but as REPLACE redirects into it. A
+  // route that rendered either page standalone again would bring back a render the shell no longer
+  // draws around it — and the 200-odd suites that mount the standalone page could not tell.
+  it('no route renders SavedSeeds or SowNow directly — /seeds renders the shell, the old paths redirect into it', () => {
+    const routes = [...renderRoutes({ overlay: false, user: true }), ...renderRoutes({ overlay: true, user: true })]
+    const offenders = routes
+      .filter((r) => elementsIn(r.props.element).some((el) => el.type === SavedSeeds || el.type === SowNow))
+      .map((r) => r.props.path)
+    expect(offenders).toEqual([])
+    // Non-vacuity: the same walk DOES find what is there, one level under Protected and ErrorBoundary.
+    const at = (p) => elementsIn(routes.find((r) => r.props.path === p).props.element)
+    expect(at('/seeds').some((el) => el.type === Seeds)).toBe(true)
+    for (const [p, view] of [['/sow', 'sow'], ['/seeds/saved', 'saved']]) {
+      const redirect = at(p).find((el) => el.type === LegacySeedsRedirect)
+      expect(redirect, `${p} is not a LegacySeedsRedirect any more`).toBeTruthy()
+      expect(redirect.props.view).toBe(view)
+    }
   })
 })
