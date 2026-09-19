@@ -108,6 +108,12 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          # ERREXIT — keep pipefail OFF for this pipeline. GitHub runs this step as `bash -e {0}`, so the
+          # audit's exit reaches AUDIT_EXIT only because the pipeline's status is tee's. With pipefail on
+          # (the `set -euo pipefail` prologue most steps here use), exit 1 or 2 would end the step on this
+          # line: no annotation, and an inconclusive run red instead of warned (OPS-STAGINGDRIFTERREXIT-001
+          # sweep). A no-op today; scripts/test_workflow_steps.py runs the body with that prologue.
+          set +o pipefail
           python3 scripts/dev-main-schema-audit.py --repo-root . --verbose | tee audit-output.txt
           AUDIT_EXIT=${PIPESTATUS[0]}
           if [[ "$AUDIT_EXIT" -eq 0 ]]; then
