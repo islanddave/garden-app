@@ -138,12 +138,19 @@ together and fails on drift (verified by mutation, not just by passing). **If yo
 `BASELINE-eeb7019.json` and the numbers in the `psheetverify-20260830` and `sheetoverflow-20260831`
 reports were all taken under the old conditions. Re-take rather than diff against them.
 
-## `seedssaved.*` — /seeds/saved, added 2026-09-01
+## `seedssaved.*` — Saved seeds, added 2026-09-01
 
-`SavedSeeds` shipped in v4.90.0 having never been rendered in a browser. This entry mounts the real
-page inside the real `ToastProvider`, stubs `window.fetch` (so the real `useApiFetch` seam runs) and
-fixtures it with **real prod inventory names taken longest-first** — the 44-character "Money Plant
-(self-saved, variety unrecorded)" is the widest name in the seed set and the reason the entry exists.
+`SavedSeeds` shipped in v4.90.0 having never been rendered in a browser. This entry stubs
+`window.fetch` (so the real `useApiFetch` seam runs) and fixtures it with **real prod inventory
+names taken longest-first** — the 44-character "Money Plant (self-saved, variety unrecorded)" is the
+widest name in the seed set and the reason the entry exists.
+
+**Since V5-SEEDSTAB-001 (2026-09-18) it mounts the real `<Seeds />` page at `/seeds?view=saved`**,
+inside a `MemoryRouter` and the real `ToastProvider` — not `<SavedSeeds />` standalone, which no user
+is shown any more (`/seeds/saved` redirects into the Seeds page). Saved seeds renders there
+`embedded`: the shell's title, action slot, view switch and ferment line above it, one 720px/16px
+frame around it, and the shell's single seed fetch feeding it. `gate:seeds-saved` checks that the
+page it measured IS that surface before it reads a single box.
 
 ```
 http://localhost:5311/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=844&page=seedssaved.html&case=empty
@@ -157,6 +164,35 @@ http://localhost:5311/tests/harness/plantingphotosheet.viewport.html?vw=390&vh=8
 `__h.all()` reports `hscroll`, per-card overflow, clipped names, `sheetOverflowX` and every tap
 target under 48px. The sheet check is separate from the document one on purpose: a sheet scrolls its
 own content, so a field wider than the panel does **not** show up as document `hscroll`.
+
+## `seeds.*` — the whole Seeds page, added 2026-09-18
+
+V5-SEEDSTAB-001 made `/seeds` one page over three views. This entry mounts the real `<Seeds />` in a
+`MemoryRouter` at `/seeds?view=…`, with stand-ins for the app chrome that is on screen there: a
+sticky top bar of TopChrome's `BAR_H` (52px) and a fixed `<nav aria-label="Main navigation">` of
+`BOTTOM_NAV_HEIGHT_PX` (56px). Without them "how many rows are on the first screen" is answered for
+108px of page the phone never shows.
+
+```
+http://localhost:5311/tests/harness/seeds.html?view=mine
+    view=mine|saved|sow   the view the page opens on (goes into the router URL)
+    topbar=52             the top-bar stand-in's height; the gate passes TopChrome.jsx's BAR_H
+    verdict=0             hide the measurement bar
+```
+
+The fixture is 27 seed rows over 8 crops, including the 44-character "Money Plant (self-saved,
+variety unrecorded)" as a lot fermenting 5 days and archived for the season (two chips on its second
+line, and the ferment line names it), registry vendors, a used-up packet and an identical pair. Sow
+now's candidates are built so the gate's floors rest only on date-independent buckets.
+
+**Every load clears `sessionStorage` first.** The views' scroll restore keys on
+`window.history.state.key`, which `MemoryRouter` never writes, so every load shares the key
+`default` and would restore the previous load's scroll — measured at 591px before the clear existed.
+`seedssaved.jsx` clears it for the same reason.
+
+`scripts/layout-gate/seeds-page-shot.mjs` (`gate:seeds-page`) is the instrument; it writes one PNG
+per view and viewport to `artifacts/layout-gate/`, plus evidence shots of the 44-char row and the
+most-squeezed Sow now card.
 
 ## Limits — what this harness CANNOT prove
 
