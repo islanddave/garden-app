@@ -24,7 +24,7 @@
 //     edited on its detail page ("Qty on hand"); the Inventory page keeps its own stepper.
 import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { P } from '../lib/constants.js'
+import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import { T, selectChrome } from '../components/forms/formStyles.js'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import Badge from '../components/forms/Badge.jsx'
@@ -58,6 +58,11 @@ const cropSlugOf = (i) => i.crop_slug
 const GROUPED_SORTS = new Set(['name', 'heat'])
 // The sticky offset: headers of OPEN groups stick under the 52px top bar (TopChrome BAR_H).
 const STICKY_TOP = 52
+// How much of a just-opened group's SECOND row has to show above the bottom nav: the card's top edge
+// (1px border, 6px padding) and its title line down past the baseline — enough to read which packet
+// comes next, so the tap visibly opened a list. A thinner sliver reads as a stray border; asking for
+// the whole 54-58px row is what scrolled the tapped header out from under the thumb.
+const OPEN_PEEK_PX = 24
 
 // ── The view's shape survives the visit, not the history entry ───────────────────────────────────────
 // sessionStorage per PAGE, never the URL: any post-mount replace write re-keys useScrollRestore's
@@ -273,8 +278,11 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
 
   // ── Folding ────────────────────────────────────────────────────────────────────────────────────────
   // Folding a group from its STUCK header re-anchors, so the header the thumb just tapped stays at the
-  // top instead of the page stranding thousands of pixels down in unrelated groups. Opening a group
-  // near the bottom scrolls just enough to show its first two rows.
+  // top instead of the page stranding thousands of pixels down in unrelated groups. Opening one keeps
+  // the header still (UX spec §3.3): the page scrolls only when the group's first row would be cut by
+  // the bottom nav or less than OPEN_PEEK_PX of its second row would show, and then by the least
+  // distance that shows both. The old rule wanted row 2 WHOLE, 8px clear of the nav — on a 360x640
+  // first screen that moved the header a thumb had just tapped by 24px (gate:seeds-page (e2)).
   const anchorRef = useRef(null)
   const toggleGroup = useCallback((slug) => {
     const open = isOpen(slug)
@@ -302,12 +310,14 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
       if (top < STICKY_TOP) window.scrollBy?.(0, top - STICKY_TOP)
       return
     }
-    const rowsEl = el.querySelectorAll('[data-testid="my-seed-row"]')
-    const second = rowsEl[Math.min(1, rowsEl.length - 1)]
-    if (!second) return
-    const bottom = second.getBoundingClientRect().bottom
-    const limit = window.innerHeight - 64 // the bottom nav
-    if (bottom > limit) window.scrollBy?.({ top: bottom - limit, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    const [first, second] = el.querySelectorAll('[data-testid="my-seed-row"]')
+    if (!first) return
+    const bandBottom = window.innerHeight - BOTTOM_NAV_HEIGHT_PX
+    const need = Math.max(
+      first.getBoundingClientRect().bottom - bandBottom,
+      second ? second.getBoundingClientRect().top + OPEN_PEEK_PX - bandBottom : 0,
+    )
+    if (need > 0) window.scrollBy?.({ top: need, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
   })
 
   const sectionSlugs = grouped ? groups.map((g) => g.slug) : []
