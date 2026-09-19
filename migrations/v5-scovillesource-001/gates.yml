@@ -1,0 +1,272 @@
+# gates.yml
+# V5-SEEDCARDS-001 (v5-scovillesource-001) — plant_varieties.scoville_source + its vocabulary CHECK,
+# plus the public.cultivar widen 46 -> 47.
+#
+# STATUS AT AUTHORING (2026-09-19): AUTHORED, NOT APPLIED. Not applied to staging, not applied to prod.
+#
+# SEQUENCING: staging pre -> apply 0a -> staging post -> rehearse 0r -> re-apply 0a -> staging post
+# -> prod pre -> apply 0a -> prod post -> `--all --phase post --continuous-only` on BOTH envs
+# -> THEN push the branch to dev -> CI -> promote -> deploy-lambda (inventory-items, plants).
+# The DDL must land in BOTH environments BEFORE the branch reaches dev: the integration job forks
+# from staging, and it exercises the plants and inventory-items reads.
+#
+# FAILURE MODE IF THE DDL DOES NOT LAND FIRST — asymmetric, and the hard direction is the reason
+# for the ordering above:
+#   * New Lambdas + old schema = HARD. inventory-items (seed list, both template branches, and the
+#     seed detail GET) and plants (the by-id GET and both default list branches) select
+#     pv.scoville_source unconditionally. A missing column 500s the seed list, seed detail, the
+#     planting page and both planting lists.
+#   * Old Lambdas + new schema = INERT. No deployed reader names the column, the cultivar view only
+#     APPENDS it, and every deployed writer (the varieties INSERT and PUT, both explicit column
+#     lists) leaves it NULL, which the CHECK admits.
+#
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#   * pre and sweep gates are `continuous: false`: they assert the UNAPPLIED state, so every one of
+#     them is self-falsifying the moment the apply succeeds.
+#   * Every continuous post gate SELF-ARMS on this migration's schema_version row: vacuously true
+#     before the apply, asserting forever after, with no follow-up edit. gate-invariants.yml runs
+#     `--all --phase post --continuous-only` on prod AND staging and also fires on pushes touching
+#     `migrations/**`, so a non-self-arming post gate would go red the moment this directory reached
+#     dev and stay red until the apply.
+#   * PARSE-TIME HAZARD (v5-wxbackfillvars-001, v5-locheated-001): Postgres resolves column and
+#     ::regclass references when it PARSES a statement, before any EXISTS guard is evaluated. No
+#     self-arming gate here names scoville_source as a column or casts to ::regclass; they read the
+#     catalogs, where a missing column is simply a missing row.
+#   * Receipts that pin one moment (the column count, the position, the vocabulary copy) are
+#     `continuous: false`. A later migration is entitled to widen the view or the vocabulary, and a
+#     standing gate would red on the feature working (memory `frozen-count-gates-break-on-widening`).
+#
+# COUNT DISCIPLINE: no gate here counts plant_varieties rows. Nothing in this migration writes a
+# value, so there is no population to assert over, and no gate is a prod-derived absolute.
+
+pre:
+  - name: pre_plant_varieties_present
+    continuous: false
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='plant_varieties'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_scoville_source_absent
+    continuous: false
+    note: >
+      Greenfield. A row here means the column already arrived — by this 0a or by some other route.
+      0a is ADD COLUMN IF NOT EXISTS, so it would silently keep a pre-existing column of whatever
+      shape it has; stop and diff before applying.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties'
+         AND column_name='scoville_source'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_scoville_source_check_absent
+    continuous: false
+    note: >
+      0a creates the CHECK only when no constraint of that NAME exists, so a same-named constraint
+      with a different body would be silently kept. Assert the name is free.
+    sql: |
+      SELECT 1 FROM pg_constraint WHERE conname = 'chk_plant_varieties_scoville_source'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-scovillesource-001'
+    expect: rowcount_eq
+    value: 0
+
+  # The view must be at exactly the 46 columns 0a captured from prod pg_get_viewdef, or the
+  # CREATE OR REPLACE in 0a is being applied against a definition this file did not capture and the
+  # column-name/type/position guarantee does not hold. Apply-window only, never bumped
+  # (memory `frozen-count-gates-break-on-widening`).
+  - name: pre_cultivar_view_column_count_46
+    continuous: false
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar'
+    expect: scalar_eq
+    value: 46
+
+  # Stronger than the count, and the check that the capture is still TRUE at apply time. A count
+  # cannot see an in-place change (an expression swapped under an existing name), which 0a's
+  # CREATE OR REPLACE would silently revert. md5 of pg_get_viewdef(oid, true) read on prod AND
+  # staging 2026-09-19, both 12daf78b11fb90953fba3d4d7f31b858 on PostgreSQL 17.11. If this fails,
+  # diff the live definition against 0a's list before anything else: a server upgrade that only
+  # re-formats the text is the benign cause, a peer's widen of the view is the real one.
+  - name: pre_cultivar_view_is_the_captured_definition
+    continuous: false
+    sql: |
+      SELECT md5(pg_get_viewdef(c.oid, true))
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname='public' AND c.relname='cultivar' AND c.relkind='v'
+    expect: scalar_eq
+    value: 12daf78b11fb90953fba3d4d7f31b858
+
+sweep:
+  # L-058 requires that every predicate a CHECK will enforce already holds before the CHECK is
+  # armed. Here it holds VACUOUSLY — the column does not exist yet, so 0a's CHECK is created
+  # VALIDATED against an all-NULL population. Stated as a gate rather than left inferred.
+  - name: sweep_no_preexisting_violators_possible
+    continuous: false
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='plant_varieties'
+         AND column_name='scoville_source'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ────────────────────────────────────────────────────
+
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-scovillesource-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_cultivar_view_column_count_47
+    continuous: false
+    sql: |
+      SELECT count(*) FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar'
+    expect: scalar_eq
+    value: 47
+
+  # Appended LAST, so no existing view column moved — the property CREATE OR REPLACE requires and
+  # every positional reader of the view relies on.
+  - name: post_scoville_source_is_the_last_view_column
+    continuous: false
+    sql: |
+      SELECT ordinal_position FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='cultivar' AND column_name='scoville_source'
+    expect: scalar_eq
+    value: 47
+
+  # "The same six values as chk_plant_varieties_breeding_source", checked rather than asserted: the
+  # two constraint bodies must be identical once the column names are masked. Window-only, because
+  # the two vocabularies are entitled to diverge later (a lab-measured HPLC figure is a real SHU
+  # source with no meaning for a breeding call).
+  - name: post_scoville_source_vocabulary_matches_breeding_source
+    continuous: false
+    sql: |
+      SELECT 1
+        FROM pg_constraint s
+        JOIN pg_constraint b ON b.conrelid = s.conrelid
+        JOIN pg_class t ON t.oid = s.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname='public' AND t.relname='plant_varieties'
+         AND s.conname = 'chk_plant_varieties_scoville_source'
+         AND b.conname = 'chk_plant_varieties_breeding_source'
+         AND replace(pg_get_constraintdef(s.oid), 'scoville_source', '<col>')
+           = replace(pg_get_constraintdef(b.oid), 'breeding_source', '<col>')
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANTS, SELF-ARMING ─────────────────────────────────────────────────────────────
+  # Each is wrapped in `WHERE EXISTS (schema_version = this migration)`, so before the apply it is
+  # VACUOUSLY TRUE and after it asserts for real, permanently. v4-cachemissingrow-001 is the
+  # pattern; v5-locheated-001 is the nearest sibling.
+
+  - name: post_scoville_source_is_nullable_text_without_default
+    note: >
+      Nullable: NULL is the honest state of the 104 live cultivars whose figures nobody has sourced,
+      and NOT NULL would 23502 every deployed writer, none of which names the column. No DEFAULT: any
+      default would stamp a provenance claim on every new cultivar with nobody having looked — the
+      grown_as failure (a bulk default on 362 of 413 cultivars). Also catches a column that arrived
+      by another route with a different shape, which 0a's IF NOT EXISTS would skip.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-scovillesource-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='plant_varieties'
+                            AND column_name='scoville_source' AND data_type='text'
+                            AND is_nullable='YES' AND column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_scoville_source_check_exists_and_is_validated
+    note: >
+      The vocabulary CHECK exists AND is convalidated. The second half is the point: 0a creates it
+      validated rather than NOT VALID (hybridflag's reasoning — a NOT VALID CHECK still blocks writes,
+      defers nothing, and leaves a flag a later reader cannot tell from "known violators exist").
+      pg_catalog joins, never ::regclass, so this parses on an unapplied database.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-scovillesource-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='plant_varieties'
+                            AND c.conname='chk_plant_varieties_scoville_source'
+                            AND c.contype='c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_check_couples_scoville_source
+    note: >
+      THE DECISION 0a DOCUMENTS, pinned so a later session cannot "restore symmetry" with the paired
+      breeding_system/breeding_source (chk_plant_varieties_breeding_sourced). The only CHECK allowed to
+      mention scoville_source is its own single-column vocabulary CHECK. A pairing with
+      scoville_min/max would 23514 Dave's next VarietyEditor edit of any of the 104 unsourced
+      cultivars, because the varieties PUT edits the numbers without naming this column. If a future
+      writer ever sends the pair together, retire this gate in the same migration that adds the
+      pairing — loudly, with the reason. Returns one row per offending constraint, naming it.
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-scovillesource-001')
+         AND n.nspname='public' AND t.relname='plant_varieties'
+         AND c.contype='c' AND a.attname='scoville_source'
+         AND (c.conname <> 'chk_plant_varieties_scoville_source' OR cardinality(c.conkey) <> 1)
+    expect: rowcount_eq
+    value: 0
+
+  # THE GATE THAT WOULD HAVE CAUGHT THE OUTAGE, in this migration's own terms. An explicit-column-list
+  # view does not inherit a new base column, so without 0a's widen the Lambdas that ship with this
+  # migration select a column the view does not have. Column-level is_updatable, not only the view's:
+  # a COMPUTED scoville_source would leave the view auto-updatable overall while the column itself
+  # became read-only through it, and nothing else here would notice.
+  - name: post_cultivar_view_carries_scoville_source_as_updatable_passthrough
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-scovillesource-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='cultivar'
+                            AND column_name='scoville_source' AND is_updatable='YES')
+    expect: rowcount_eq
+    value: 0
+
+  # The view must stay AUTO-UPDATABLE AND INSERTABLE, or lambda/varieties' `UPDATE public.cultivar`
+  # and `INSERT INTO public.cultivar` both break. Appending a plain pass-through preserves both.
+  - name: post_cultivar_view_still_auto_updatable
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-scovillesource-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.views
+                          WHERE table_schema='public' AND table_name='cultivar'
+                            AND is_updatable='YES' AND is_insertable_into='YES')
+    expect: rowcount_eq
+    value: 0
+
+  # Prod-only: staging has no garden_ro role at all (re-read 2026-09-19), so this cannot run there.
+  # 0r's DROP VIEW is the path that does not preserve grants, and staging is structurally blind to
+  # it. Same catalog view as hybridflag's unarmed twin, which already runs in gate-invariants.
+  - name: post_garden_ro_can_still_read_cultivar
+    env: prod
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-scovillesource-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.role_table_grants
+                          WHERE table_schema='public' AND table_name='cultivar'
+                            AND grantee='garden_ro' AND privilege_type='SELECT')
+    expect: rowcount_eq
+    value: 0
