@@ -123,6 +123,12 @@ describe('the grid — plan low x entry x the REAL callout: ONE number for tonig
           expect(page.line, where).toMatch(new RegExp(`^Frost possible tonight — low ${T}°F\\.`))
           // A silent cue stays silent (Q1); a cue that spoke still speaks.
           expect(page.cue == null, where).toBe(plan.weather.callout == null)
+          // …and a freeze/cold cue speaks in the words the engine uses for the UNROUNDED shared low:
+          // freeze below 40, never softened to cold by rounding (plan low 39.6 prints "(40°F)").
+          if (plan.weather.callout) {
+            const raw = low == null ? tonightLow : Math.min(low, tonightLow)
+            expect(page.cue, where).toMatch(raw < 40 ? /^Freeze tonight \(/ : /^Cool night \(/)
+          }
           on++
         } else {
           // No trigger: exactly what the base commit rendered.
