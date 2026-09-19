@@ -463,6 +463,23 @@ else
         if [[ "${VAR_HTTP:0:1}" == "2" && -n "$CREATED_VARIETY_ID" ]]; then
           echo "✅ PASS [crud:POST /varieties] HTTP $VAR_HTTP (id: $CREATED_VARIETY_ID)"
           PASS=$((PASS+1))
+          # BUG-VARIETIESLIMIT500-001: the list GET runs `LIMIT ${VARIETY_LIST_CAP}::int` (it was a
+          # literal 500 against 495 prod cultivars, sorted by name, so an "s…" name was the first to
+          # fall off). The variety just created must be IN the full list.
+          VLIST=$(mktemp)
+          VLIST_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+            -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$VLIST" -w "%{http_code}" "${STAGING_API_VARIETIES%/}/api/varieties") || VLIST_HTTP="000"
+          VLIST_HAS=$(jq -r --arg id "$CREATED_VARIETY_ID" 'if type == "array" then ([.[] | select(.id == $id)] | length > 0) else "not-an-array" end' "$VLIST" 2>/dev/null || echo "unparseable")
+          VLIST_N=$(jq -r 'if type == "array" then length else 0 end' "$VLIST" 2>/dev/null || echo 0)
+          rm -f "$VLIST"
+          if [[ "${VLIST_HTTP:0:1}" == "2" && "$VLIST_HAS" == "true" ]]; then
+            echo "✅ PASS [read:varieties-list] HTTP $VLIST_HTTP, $VLIST_N cultivars, the new one among them"
+            PASS=$((PASS+1))
+          else
+            echo "❌ FAIL [read:varieties-list] HTTP $VLIST_HTTP, $VLIST_N cultivars, new one listed: $VLIST_HAS"
+            FAIL=$((FAIL+1))
+          fi
           PLANT_BODY=$(mktemp)
           PLANT_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
             -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
@@ -600,6 +617,53 @@ else
           PASS=$((PASS+1))
           assert_readback "write:inventory-name" \
             "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_INV_ID}" ".name" "smoke-test-inv-$TEST_RUN_ID"
+
+          # ── F2) The list's new row shape → wide PUT round-trip (V5-SEEDCARDS-001) ─────────────
+          # Every list GET now carries the derived hero (hero_photo_id) and the cultivar facts, and
+          # the client PUTs a LIST row back whole (Inventory's stepper, quantityAdjuster.js). Prove on
+          # staging's real schema that the row just created carries the new keys, that the exact
+          # row PUT back is accepted, and that the seeds list — the one branch that signs photo URLs,
+          # and that also joins scoville_source — answers 200.
+          INV_LIST=$(mktemp)
+          INV_LIST_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+            -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$INV_LIST" -w "%{http_code}" "${STAGING_API_INVENTORY%/}/api/inventory-items") || INV_LIST_HTTP="000"
+          INV_ROW=$(jq -c --arg id "$CREATED_INV_ID" '[.[] | select(.id == $id)][0] // empty' "$INV_LIST" 2>/dev/null || echo "")
+          rm -f "$INV_LIST"
+          if [[ "${INV_LIST_HTTP:0:1}" == "2" && -n "$INV_ROW" ]] \
+             && echo "$INV_ROW" | jq -e 'has("hero_photo_id") and has("scoville_source") and has("variety_source_url")' >/dev/null 2>&1; then
+            echo "✅ PASS [read:inventory-list-shape] the new row carries hero_photo_id, scoville_source, variety_source_url"
+            PASS=$((PASS+1))
+            ROW_PUT_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+              -X PUT -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+              -o /dev/null -w "%{http_code}" "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_INV_ID}" \
+              -d "$INV_ROW") || ROW_PUT_HTTP="000"
+            if [[ "${ROW_PUT_HTTP:0:1}" == "2" ]]; then
+              echo "✅ PASS [write:inventory-list-row-put] the list row PUT back whole → HTTP $ROW_PUT_HTTP"
+              PASS=$((PASS+1))
+              assert_readback "write:inventory-list-row-put-name" \
+                "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_INV_ID}" ".name" "smoke-test-inv-$TEST_RUN_ID"
+            else
+              echo "❌ FAIL [write:inventory-list-row-put] the list row PUT back whole → HTTP $ROW_PUT_HTTP"
+              FAIL=$((FAIL+1))
+            fi
+          else
+            echo "❌ FAIL [read:inventory-list-shape] HTTP $INV_LIST_HTTP; row: ${INV_ROW:0:200}"
+            FAIL=$((FAIL+1))
+          fi
+          SEEDS_LIST=$(mktemp)
+          SEEDS_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+            -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$SEEDS_LIST" -w "%{http_code}" "${STAGING_API_INVENTORY%/}/api/inventory-items?category=seeds") || SEEDS_HTTP="000"
+          SEEDS_N=$(jq -r 'if type == "array" then length else "not-an-array" end' "$SEEDS_LIST" 2>/dev/null || echo "unparseable")
+          rm -f "$SEEDS_LIST"
+          if [[ "${SEEDS_HTTP:0:1}" == "2" && "$SEEDS_N" =~ ^[0-9]+$ ]]; then
+            echo "✅ PASS [read:seeds-list] HTTP $SEEDS_HTTP, $SEEDS_N row(s) (the photo-signing branch)"
+            PASS=$((PASS+1))
+          else
+            echo "❌ FAIL [read:seeds-list] HTTP $SEEDS_HTTP, body: $SEEDS_N"
+            FAIL=$((FAIL+1))
+          fi
         else
           echo "❌ FAIL [crud:POST /inventory-items] HTTP $INV_HTTP"
           FAIL=$((FAIL+1))
