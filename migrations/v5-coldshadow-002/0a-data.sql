@@ -17,9 +17,9 @@
 -- profile WHOLE and never reads cadence-data-v2.json. cadence-backfill-20260823 wrote watering-only
 -- cultivar profiles with no `cold` key, and every bundled cold block beneath them went dark. Census over
 -- the daily-plan handler's live-planting filter (209 plantings), base engine: 19 plantings shadowed. The
--- live plan shows both halves: on 2026-07-24 (low 49F) the coleus got "tender tropical — bring in
--- tonight (low 49°F ≤ 50°F)" from the bundled data; from 2026-08-23 the plan's `crop` string for every
--- one of these plantings is the database wording, and none has had a profile-path card since except
+-- live plan shows both halves: on 2026-07-24 (low 49F) the coleus (left out below) got "tender tropical —
+-- bring in tonight (low 49°F ≤ 50°F)" from the bundled data; from 2026-08-23 the plan's `crop` string for
+-- every one of these plantings is the database wording, and none has had a profile-path card since except
 -- Spider Plant, through the crop-type fallback at 45F.
 --
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -36,16 +36,9 @@
 --   04554719-e633-44d7-8791-f3e33c90ed2d  cultivar "Easy Wave Berry Velour" (ba53f113…), petunia
 --       `cold` <- by_genus_fallback["Petunia"].cold = protect below 35F
 --       -> Easy Wave Berry Velour Petunia (ac3c0e05…), plastic pot 6 in, Trough; no card today
---   573c512c-f98a-4b1f-9fc6-c18afced8306  cultivar "Fairway Orange" (ba9e69e5…), coleus
---       `cold` <- by_genus_fallback["Coleus"].cold = protect below 50F
---       -> Fairway Orange Coleus (293cd7d2…), terracotta 15 gal, Trough; no card today
---       -> Fairway Orange Coleus Clone 1 (6cfdc63e…), terracotta 15 gal, Drive-Shade; no card today
 --   2d2bc039-58e4-4ce7-8930-e58a66c4cd5a  cultivar "Jewel Mix Nasturtium" (d3101ac0…), nasturtium
 --       `cold` <- by_genus_fallback["Tropaeolum"].cold = protect below 32F
 --       -> Jewel Mix Nasturtium (731682ea…), plastic pot 6 in, Bag Area; no card today
---   56d1cef3-b0ab-4556-b926-93f61fc8304b  cultivar "Kiwi Fern" (d62f0fa1…), coleus
---       `cold` <- by_genus_fallback["Coleus"].cold = protect below 50F
---       -> Kiwi Fern Coleus (9a75c6e2…), terracotta 15 gal, Trough; no card today
 --   315a0e95-0469-4b88-9647-5662c0edc884  cultivar "Petunia" (f46745bf…), petunia
 --       `cold` <- by_genus_fallback["Petunia"].cold = protect below 35F
 --       -> Petunia (e6f33a3d…), hanging basket 8 in, Trough; no card today
@@ -64,12 +57,15 @@
 --
 -- Values are the bundled ones, COPIED, not re-decided: the `cold` of the cadence-data-v2.json entry the
 -- census resolved for each planting at 10452156cbef82b613bc0d4161d9237da555c969 (by_genus_fallback[genus]
--- for nine rows, by_variety["Spider Plant"] for one). Each bundled entry's crop agrees with the
+-- for seven rows, by_variety["Spider Plant"] for one). Each bundled entry's crop agrees with the
 -- variety's controlled crop_type_slug — no name collision of the by_variety["Peach"] kind.
 -- lambda/daily-plan/coldcards.test.js parses every literal out of this file and fails if one stops
 -- equalling its bundled entry.
 --
 -- NOT IN THIS FILE, deliberately (Dave, 2026-09-19: "card the potted ones"; decisions in README.md):
+--   Fairway Orange Coleus, Fairway Orange Coleus Clone 1, Kiwi Fern Coleus — 15-gallon terracotta. Dave,
+--     2026-09-19: "No, leave them off" — he will not move them. gates.yml checks that this file does not
+--     write their two cultivar rows (573c512c Fairway Orange, 56d1cef3 Kiwi Fern).
 --   Alaska Mix Nasturtium 1 — a 6x2 ft trough planter, cannot be carried in.
 --   Clemson Spineless 80 (okra), Peach tree — in the ground; the Peach's bundled entry is a PEPPER.
 --   Graptosedum, Pachyphytum — v5-coldshadow-001.
@@ -96,14 +92,15 @@
 -- ─────────────────────────────────────────────────────────────────────────────────────────────────
 -- THE EMAIL DOES NOT MOVE. The only other reader of `cold` is handler.js's cadenceTenderFor, which can
 -- only PROMOTE an UNBANDED crop type into the frost alert. Every crop type here is banded
--- (coleus, cobaea, thunbergia, torenia: chill_sensitive; nasturtium, helichrysum: tender; petunia:
+-- (cobaea, thunbergia, torenia: chill_sensitive; nasturtium, helichrysum: tender; petunia:
 -- light_frost_tolerant; spider_plant: tropical), so the alert classifies these plantings exactly as
 -- before. This is a Today-card change only.
 --
--- LANDING ORDER: none. No code change; no column added or removed. The two coldFor branches that differ
--- between prod (v4.136.0) and dev (v4.138.0) — the heated-location drop and the in-ground drop — cannot
--- touch these 11 plantings (all potted, none in a heated location), so the cards are the same under
--- either build.
+-- LANDING ORDER: none. No code change; no column added or removed. Prod runs v4.139.0 (main 6a630cdd,
+-- 2026-09-19), whose lambda/daily-plan is byte-identical to this migration's base 10452156 (v4.138.0).
+-- The build before it, v4.136.0, differed in two coldFor branches — the heated-location drop and the
+-- in-ground drop — and neither can touch these 8 plantings (all potted, none in a heated location), so
+-- the cards are the same under any of the three builds.
 --
 -- SAFETY: idempotent and non-clobbering. On a database without these rows every UPDATE matches zero
 -- rows and only the stamp is written, the safe direction. That is the expected staging result: the rows
@@ -130,24 +127,10 @@ UPDATE public.care_profile
    AND NOT (profile ? 'cold');
 
 UPDATE public.care_profile
-   SET profile = jsonb_set(profile, '{cold}', '{"tender": true, "protect_below_F": 50}'::jsonb, true),
-       updated_at = now()
- WHERE id = '573c512c-f98a-4b1f-9fc6-c18afced8306'
-   AND scope = 'cultivar' AND scope_id = 'ba9e69e5-b8e5-40ea-a4a4-aeee7411ddd2'   -- Fairway Orange -> Fairway Orange Coleus, Fairway Orange Coleus Clone 1
-   AND NOT (profile ? 'cold');
-
-UPDATE public.care_profile
    SET profile = jsonb_set(profile, '{cold}', '{"tender": true, "protect_below_F": 32}'::jsonb, true),
        updated_at = now()
  WHERE id = '2d2bc039-58e4-4ce7-8930-e58a66c4cd5a'
    AND scope = 'cultivar' AND scope_id = 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'   -- Jewel Mix Nasturtium -> Jewel Mix Nasturtium
-   AND NOT (profile ? 'cold');
-
-UPDATE public.care_profile
-   SET profile = jsonb_set(profile, '{cold}', '{"tender": true, "protect_below_F": 50}'::jsonb, true),
-       updated_at = now()
- WHERE id = '56d1cef3-b0ab-4556-b926-93f61fc8304b'
-   AND scope = 'cultivar' AND scope_id = 'd62f0fa1-05c6-4fb9-8861-e16ce66b82ef'   -- Kiwi Fern -> Kiwi Fern Coleus
    AND NOT (profile ? 'cold');
 
 UPDATE public.care_profile
@@ -187,13 +170,13 @@ UPDATE public.care_profile
 
 INSERT INTO public.schema_version (version, description, applied_at)
 VALUES ('5.0.0-coldshadow-002',
-        'COLDSHADOW-002: V5-COLDSHADOWCENSUS-001 (data-only, no DDL). Adds the `cold` key to ten cultivar '
+        'COLDSHADOW-002: V5-COLDSHADOWCENSUS-001 (data-only, no DDL). Adds the `cold` key to eight cultivar '
         'care_profile rows written by cadence-backfill-20260823 without one — the potted plantings among the 19 '
         'whose bundled cadence-data-v2.json cold block their database profile shadowed whole: Cobaea, two '
-        'petunias, two coleus cultivars (three plantings), Jewel Mix nasturtium, licorice plant, Spider Plant, '
-        'thunbergia, torenia. Values copied from the bundled entry the census resolved. Single-key jsonb_set '
-        'keyed by row id and guarded on the key being absent; every other key untouched. Dave decision '
-        '2026-09-19 (card the potted ones). Reversible via 0r.',
+        'petunias, Jewel Mix nasturtium, licorice plant, Spider Plant, thunbergia, torenia. Values copied from '
+        'the bundled entry the census resolved. Single-key jsonb_set keyed by row id and guarded on the key '
+        'being absent; every other key untouched. Dave decisions 2026-09-19 (card the potted ones; leave the '
+        'coleus off). Reversible via 0r.',
         now())
 ON CONFLICT (version) DO UPDATE
   SET applied_at = now(), description = EXCLUDED.description;

@@ -1,28 +1,31 @@
 // V5-COLDSHADOWCENSUS-001 — the POTTED plantings among the 19 live plantings whose bundled bring-inside threshold a
 // database care profile shadows (the mechanism, and the first two, are coldshadow.test.js / v5-coldshadow-001).
-// Dave, 2026-09-19: "card the potted ones". migrations/v5-coldshadow-002 adds the one key, `cold`, to ten cultivar
-// care profiles written by cadence-backfill-20260823, copying the bundled value the census resolved. No engine change.
+// Dave, 2026-09-19: "card the potted ones" — and then, of the three 15-gallon terracotta coleus, "No, leave them
+// off". migrations/v5-coldshadow-002 adds the one key, `cold`, to eight cultivar care profiles written by
+// cadence-backfill-20260823, copying the bundled value the census resolved. No engine change.
 //
 // Pinned here, through the real call site (engine.generatePlan -> tasks.cold) and coldFor itself:
 //   * every value 0a writes, PARSED OUT OF 0a-data.sql, equals the bundled entry the census resolved for that
 //     cultivar's plantings (resolveCadence with no database scope), and 0r and the gates.yml receipts carry the
 //     same literals;
-//   * 0a writes exactly the ten rows, none of the eight the decision excluded, and none of v5-coldshadow-001's;
+//   * 0a writes exactly the eight rows, none of the ten the decisions excluded (the two coleus rows among them),
+//     and none of v5-coldshadow-001's; the gates' reach guards name exactly these cultivars and plantings, and
+//     the only gates that name a coleus row are the pair proving 0a left it alone;
 //   * each bundled entry is about the same plant as the cultivar it is copied onto (its crop names the genus) — the
 //     by_variety["Peach"] pepper fails that check, which is why the Peach tree is not here;
-//   * each of the eleven plantings cards at its threshold and not one degree above; before the apply none cards at
+//   * each of the eight plantings cards at its threshold and not one degree above; before the apply none cards at
 //     any temperature except Spider Plant, at the crop-type fallback's 45F;
 //   * the fixtures really exercise the ADOPTED DATABASE PROFILE (`_via 'db'`), and the bundled entry alone gives the
 //     same threshold — so a fixture that silently fell through to it would be caught;
 //   * the frost email does not move: every crop type here is banded, and the cadence promotion only lifts unbanded
 //     ones;
 //   * the three brief-named exclusions are what the decision says they are: writing the bundled value would change
-//     nothing for Echeveria or Ginger, and would drop Jade from 45F to 40F.
+//     nothing for Echeveria or Ginger, and would drop Jade from 45F to 40F; and the coleus, left off, get no card.
 // The unit suite mocks SQL: nothing here proves the migration applied or the rows exist. Its gates do.
 //
 // MUTATION LOG — 2026-09-19, lane-coldcards-20260919. Each applied to ONE file, this file run, RED observed, file
-// restored byte-for-byte (sha256 checked), GREEN re-observed. Recorded in the lane findings
-// (_mainsync5_20260919/coldcards.md).
+// restored byte-for-byte (sha256 checked), GREEN re-observed; re-run in full after the coleus came out, with
+// coleus-sneaks-back mutations added. Recorded in the lane findings (_mainsync5_20260919/coldcards.md).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -61,25 +64,12 @@ const ROWS = [
       confidence: 'medium', _tier: 'T2', _source: 'cadence-backfill-20260823',
       notes: "No crop baseline existed. Cadence derived from Dave's own watering log: median gap 1.0d over 19 intervals." },
     plantings: [{ id: 'ac3c0e05-aada-47c6-a4c1-447ee3906b79', name: 'Easy Wave Berry Velour Petunia', container_type: 'plastic_pot', status: 'flowering' }] },
-  { row: '573c512c-f98a-4b1f-9fc6-c18afced8306', cultivar: 'ba9e69e5-b8e5-40ea-a4a4-aeee7411ddd2',
-    variety: 'Fairway Orange', genus: 'Coleus', slug: 'coleus', bundled: ['by_genus_fallback', 'Coleus'],
-    profile: { crop: 'coleus', water_interval_days_container: 1, water_method: 'drench_to_drainage', drought_tolerance: 'low',
-      confidence: 'medium', _tier: 'T2', _source: 'cadence-backfill-20260823',
-      notes: "No crop baseline existed. Cadence derived from Dave's own watering log: median gap 1.0d over 32 intervals." },
-    plantings: [{ id: '293cd7d2-2fee-41c8-8d88-30b9dcfffb9e', name: 'Fairway Orange Coleus', container_type: 'terracotta', status: 'vegetative' },
-      { id: '6cfdc63e-a62a-4408-b9b9-6edf913ff1ce', name: 'Fairway Orange Coleus Clone 1', container_type: 'terracotta', status: 'vegetative' }] },
   { row: '2d2bc039-58e4-4ce7-8930-e58a66c4cd5a', cultivar: 'd3101ac0-fd4e-456e-86b7-ebea732ac84c',
     variety: 'Jewel Mix Nasturtium', genus: 'Tropaeolum', slug: 'nasturtium', bundled: ['by_genus_fallback', 'Tropaeolum'],
     profile: { crop: 'nasturtium', water_interval_days_container: 2, water_method: 'drench_to_drainage', drought_tolerance: 'low',
       confidence: 'medium', _tier: 'T2', _source: 'cadence-backfill-20260823',
       notes: "No crop baseline existed. Cadence derived from Dave's own watering log: median gap 2.0d over 21 intervals." },
     plantings: [{ id: '731682ea-a840-469d-8cf8-2fb143c993b9', name: 'Jewel Mix Nasturtium', container_type: 'plastic_pot', status: 'flowering' }] },
-  { row: '56d1cef3-b0ab-4556-b926-93f61fc8304b', cultivar: 'd62f0fa1-05c6-4fb9-8861-e16ce66b82ef',
-    variety: 'Kiwi Fern', genus: 'Coleus', slug: 'coleus', bundled: ['by_genus_fallback', 'Coleus'],
-    profile: { crop: 'coleus', water_interval_days_container: 1, water_method: 'drench_to_drainage', drought_tolerance: 'low',
-      confidence: 'medium', _tier: 'T2', _source: 'cadence-backfill-20260823',
-      notes: "No crop baseline existed. Cadence derived from Dave's own watering log: median gap 1.0d over 19 intervals." },
-    plantings: [{ id: '9a75c6e2-922c-4509-8ef2-0aec1385b013', name: 'Kiwi Fern Coleus', container_type: 'terracotta', status: 'vegetative' }] },
   { row: '315a0e95-0469-4b88-9647-5662c0edc884', cultivar: 'f46745bf-c77e-4f42-b939-5363378a035e',
     variety: 'Petunia', genus: 'Petunia', slug: 'petunia', bundled: ['by_genus_fallback', 'Petunia'],
     profile: { crop: 'petunia', water_interval_days_container: 1, water_method: 'drench_to_drainage', drought_tolerance: 'low',
@@ -112,8 +102,29 @@ const ROWS = [
     plantings: [{ id: 'ae936173-1806-419b-a7e1-eb00a294dc74', name: 'Wishbone Flower (Torenia)', container_type: 'plastic_pot', status: 'flowering' }] },
 ];
 
-// The eight rows the decision leaves alone (prod ids, read 2026-09-19), and why.
+// The two coleus cultivar rows Dave left off (2026-09-19, "No, leave them off": 15-gallon terracotta, he will not
+// move them). Same shape as ROWS, as read on prod; 0a must not write them, and only the gates.yml pair that proves
+// 0a left them alone may name them.
+const COLEUS = [
+  { row: '573c512c-f98a-4b1f-9fc6-c18afced8306', cultivar: 'ba9e69e5-b8e5-40ea-a4a4-aeee7411ddd2',
+    variety: 'Fairway Orange', genus: 'Coleus', slug: 'coleus', bundled: ['by_genus_fallback', 'Coleus'],
+    profile: { crop: 'coleus', water_interval_days_container: 1, water_method: 'drench_to_drainage', drought_tolerance: 'low',
+      confidence: 'medium', _tier: 'T2', _source: 'cadence-backfill-20260823',
+      notes: "No crop baseline existed. Cadence derived from Dave's own watering log: median gap 1.0d over 32 intervals." },
+    plantings: [{ id: '293cd7d2-2fee-41c8-8d88-30b9dcfffb9e', name: 'Fairway Orange Coleus', container_type: 'terracotta', status: 'vegetative' },
+      { id: '6cfdc63e-a62a-4408-b9b9-6edf913ff1ce', name: 'Fairway Orange Coleus Clone 1', container_type: 'terracotta', status: 'vegetative' }] },
+  { row: '56d1cef3-b0ab-4556-b926-93f61fc8304b', cultivar: 'd62f0fa1-05c6-4fb9-8861-e16ce66b82ef',
+    variety: 'Kiwi Fern', genus: 'Coleus', slug: 'coleus', bundled: ['by_genus_fallback', 'Coleus'],
+    profile: { crop: 'coleus', water_interval_days_container: 1, water_method: 'drench_to_drainage', drought_tolerance: 'low',
+      confidence: 'medium', _tier: 'T2', _source: 'cadence-backfill-20260823',
+      notes: "No crop baseline existed. Cadence derived from Dave's own watering log: median gap 1.0d over 19 intervals." },
+    plantings: [{ id: '9a75c6e2-922c-4509-8ef2-0aec1385b013', name: 'Kiwi Fern Coleus', container_type: 'terracotta', status: 'vegetative' }] },
+];
+
+// The ten rows the decisions leave alone (prod ids, read 2026-09-19), and why.
 const EXCLUDED = {
+  '573c512c-f98a-4b1f-9fc6-c18afced8306': 'Fairway Orange (two coleus plantings) — Dave: leave them off, 15-gal terracotta',
+  '56d1cef3-b0ab-4556-b926-93f61fc8304b': 'Kiwi Fern (one coleus planting) — Dave: leave them off, 15-gal terracotta',
   '58586ba5-7080-469d-bf77-3f5746cd2132': 'Alaska Mix — a 6x2 ft trough planter, cannot be carried in',
   '834a3a15-bd59-4801-ac2d-1d58bc0c79a3': 'Clemson Spineless 80 — okra, in the ground',
   'd9690105-fb81-40cf-abb0-218972f86daa': 'Peach — in the ground; its bundled entry is a pepper',
@@ -139,6 +150,15 @@ const gate = (name) => {
   const j = GATES.indexOf('- name: ', i + 1);
   return GATES.slice(i, j < 0 ? undefined : j);
 };
+const GATE_NAMES = [...GATES.matchAll(/- name: (\S+)\n/g)].map((m) => m[1]);
+const uuids = (s) => [...s.matchAll(/'([0-9a-f-]{36})'/g)].map((m) => m[1]);
+// The ids inside one `<column> IN (...)` / `NOT IN (...)` list of a gate.
+const inList = (name, column, not = false) => {
+  const m = gate(name).match(new RegExp(`${column.replace('.', '\\.')} ${not ? 'NOT IN' : 'IN'} \\(([^)]*)\\)`));
+  if (!m) throw new Error(`${name}: no ${column} ${not ? 'NOT IN' : 'IN'} list`);
+  return uuids(m[1]);
+};
+const valueOf = (name) => Number(gate(name).match(/\n {4}value: (\d+)\n/)[1]);
 
 // v_resolved_care = system || cultivar (no leaf row on any of these plantings): the system row's keys under it.
 const SYSTEM = { light: 'part_sun', water_amount_ml: 250, water_interval_days: 3, fertilize_interval_days: 14 };
@@ -170,8 +190,8 @@ const card = (p, low) => Object.values(planFor(p, low).users).flatMap((u) => u.t
 const LOWS = [60, 56, 55, 51, 50, 46, 45, 41, 40, 36, 35, 33, 32, 31, 28, 20, 10];
 const carded = (p) => LOWS.filter((low) => card(p, low));
 
-describe('v5-coldshadow-002 writes the bundled value, and only that key, on exactly the ten rows', () => {
-  it('0a sets `cold` on the ten rows, by id and (scope, scope_id), guarded on the key being absent, create_missing true', () => {
+describe('v5-coldshadow-002 writes the bundled value, and only that key, on exactly the eight rows', () => {
+  it('0a sets `cold` on the eight rows, by id and (scope, scope_id), guarded on the key being absent, create_missing true', () => {
     expect(UPDATES.map(({ row, cultivar, createMissing }) => ({ row, cultivar, createMissing })))
       .toEqual(ROWS.map(({ row, cultivar }) => ({ row, cultivar, createMissing: 'true' })));
     expect((SQL_0A.match(/UPDATE public\.care_profile/g) || []).length).toBe(ROWS.length);
@@ -194,7 +214,7 @@ describe('v5-coldshadow-002 writes the bundled value, and only that key, on exac
     expect(cad.by_variety.Peach.crop.toLowerCase()).not.toContain('prunus');
   });
 
-  it('0a names none of the eight excluded rows anywhere, and none of v5-coldshadow-001\'s', () => {
+  it('0a names none of the ten excluded rows anywhere, and none of v5-coldshadow-001\'s', () => {
     for (const [id, why] of Object.entries(EXCLUDED)) expect(RAW_0A.includes(id), why).toBe(false);
     const rows001 = [...SQL_001.matchAll(/WHERE id = '([0-9a-f-]{36})'/g)].map((m) => m[1]);
     expect(rows001).toHaveLength(2);
@@ -214,7 +234,7 @@ describe('v5-coldshadow-002 writes the bundled value, and only that key, on exac
       /\('([0-9a-f-]{36})'::uuid, '([0-9a-f-]{36})'::uuid, '(\{[^']*\})'::jsonb\)/g)]
       .map((m) => ({ row: m[1], cultivar: m[2], cold: JSON.parse(m[3]) }));
     expect(colds).toEqual(ROWS.map((r) => ({ row: r.row, cultivar: r.cultivar, cold: bundledFor(r).cold })));
-    const view = [...gate('post_engine_view_of_the_eleven_carries_the_cold_block').matchAll(
+    const view = [...gate('post_engine_view_of_the_eight_carries_the_cold_block').matchAll(
       /\('([0-9a-f-]{36})'::uuid, '(\{[^']*\})'::jsonb, '(\d+)'\)/g)]
       .map((m) => ({ id: m[1], cold: JSON.parse(m[2]), wi: Number(m[3]) }));
     expect(view).toEqual(CASES.map((c) => ({ id: c.after.id, cold: bundledFor(c.r).cold, wi: c.r.profile.water_interval_days_container })));
@@ -222,12 +242,56 @@ describe('v5-coldshadow-002 writes the bundled value, and only that key, on exac
       .map((m) => ({ cultivar: m[1], floor: Number(m[2]) }));
     expect(floors).toEqual(ROWS.map((r) => ({ cultivar: r.cultivar, floor: bundledFor(r).cold.protect_below_F })));
   });
+
+  it('gates.yml: the reach guards name exactly these cultivars and plantings, and every count matches them', () => {
+    const cultivars = ROWS.map((r) => r.cultivar);
+    const plantingIds = CASES.map((c) => c.after.id);
+    expect(inList('pre_no_other_live_planting_reaches_these_rows', 'p.variety_id')).toEqual(cultivars);
+    expect(inList('pre_no_other_live_planting_reaches_these_rows', 'p.id', true)).toEqual(plantingIds);
+    expect(inList('pre_no_leaf_override_carries_cold', 'p.variety_id')).toEqual(cultivars);
+    expect(inList('pre_the_engine_adopts_a_profile_without_cold', 'vrc.leaf_id')).toEqual(plantingIds);
+    expect(uuids(gate('pre_the_eight_are_live_potted_and_unheated')))
+      .toEqual(CASES.flatMap((c) => [c.after.id, c.r.cultivar]));
+    expect(uuids(gate('pre_cultivars_are_the_rows_read_at_authoring'))).toEqual(cultivars);
+    for (const name of ['pre_profiles_are_the_backfill_rows_without_cold', 'post_cold_fix_was_single_key_not_a_full_replace']) {
+      expect(uuids(gate(name)), name).toEqual(ROWS.flatMap((r) => [r.row, r.cultivar]));
+    }
+    for (const name of ['pre_cultivars_are_the_rows_read_at_authoring', 'pre_profiles_are_the_backfill_rows_without_cold',
+      'post_each_row_carries_its_bundled_value', 'post_cold_fix_was_single_key_not_a_full_replace']) {
+      expect(valueOf(name), name).toBe(ROWS.length);
+    }
+    for (const name of ['pre_the_eight_are_live_potted_and_unheated', 'pre_the_engine_adopts_a_profile_without_cold',
+      'post_engine_view_of_the_eight_carries_the_cold_block']) {
+      expect(valueOf(name), name).toBe(CASES.length);
+    }
+  });
+
+  it('the coleus stay off: only the pair proving 0a left them alone names a coleus row, and nothing names their plantings', () => {
+    const coleusRows = COLEUS.map((c) => c.row);
+    expect(inList('pre_the_coleus_rows_carry_no_cold', 'cp.id')).toEqual(coleusRows);
+    expect(valueOf('pre_the_coleus_rows_carry_no_cold')).toBe(coleusRows.length);
+    expect(inList('post_the_coleus_rows_were_left_alone', 'cp.id')).toEqual(coleusRows);
+    expect(valueOf('post_the_coleus_rows_were_left_alone')).toBe(0);
+    expect(gate('post_the_coleus_rows_were_left_alone')).toContain('continuous: false');
+    const pair = new Set(['pre_the_coleus_rows_carry_no_cold', 'post_the_coleus_rows_were_left_alone']);
+    for (const name of GATE_NAMES.filter((n) => !pair.has(n))) {
+      for (const id of coleusRows) expect(gate(name).includes(id), `${name} names coleus row ${id}`).toBe(false);
+    }
+    for (const c of COLEUS) {
+      for (const id of [c.cultivar, ...c.plantings.map((p) => p.id)]) {
+        for (const [what, text] of [['gates.yml', GATES], ['0a', RAW_0A], ['0r', RAW_0R]]) {
+          expect(text.includes(id), `${what} names ${c.variety} id ${id}`).toBe(false);
+        }
+      }
+      expect(RAW_0R.includes(c.row), `0r names coleus row ${c.row}`).toBe(false);
+    }
+  });
 });
 
-describe('CARD — each of the eleven plantings cards at its threshold and not one degree above', () => {
-  it('eleven plantings on ten rows (Fairway Orange carries two)', () => {
-    expect(CASES).toHaveLength(11);
-    expect(new Set(CASES.map((c) => c.after.id)).size).toBe(11);
+describe('CARD — each of the eight plantings cards at its threshold and not one degree above', () => {
+  it('eight plantings on eight rows (one planting per cultivar)', () => {
+    expect(CASES).toHaveLength(8);
+    expect(new Set(CASES.map((c) => c.after.id)).size).toBe(8);
   });
 
   it.each(CASES)('$name: generatePlan puts a bring-inside card on tasks.cold at $threshold°F, none one degree above', ({ after, threshold }) => {
@@ -265,7 +329,7 @@ describe('EMAIL — the frost alert does not move', () => {
   const cadenceTenderFor = (p) => { const c = resolveCadence(p, cad); return !!(c && c.cold && c.cold.tender); };
   const shape = (s) => ({ tender: s.tender, unknown: s.unknown, atRisk: s.atRisk,
     byCropType: s.byCropType.map((g) => [g.label, g.count, g.class, g.band, g.thresholds]) });
-  it('every crop type here is banded, so the email classifies the eleven exactly as before the apply', () => {
+  it('every crop type here is banded, so the email classifies the eight exactly as before the apply', () => {
     const after = shape(summarize(CASES.map((c) => c.after), { cadenceTenderFor }));
     expect(after).toEqual(shape(summarize(CASES.map((c) => c.before), { cadenceTenderFor })));
     expect(after.unknown).toBe(0);
@@ -273,7 +337,7 @@ describe('EMAIL — the frost alert does not move', () => {
   });
 });
 
-describe('DECISION — the three brief-named plantings left out, and why', () => {
+describe('DECISION — the plantings left out, and why', () => {
   // Shape as read on prod 2026-09-19 (abridged: coldFor reads only the resolved `cold` and the crop type; each
   // profile adopts on its container interval, cadence_scopes {cultivar}, no `cold`). Bundled `cold` from the same
   // resolution the census used.
@@ -313,4 +377,13 @@ describe('DECISION — the three brief-named plantings left out, and why', () =>
     expect(carded(outdoors(JADE))).toEqual(LOWS.filter((low) => low <= 45));
     expect(carded(withBundled(outdoors(JADE)))).toEqual(LOWS.filter((low) => low <= 40));
   });
+
+  // Dave, 2026-09-19: "No, leave them off" (15-gallon terracotta). Their profiles as read carry no `cold`, 0a does not
+  // add one, and the engine gives them no card: the accepted state. If this goes red, an ENGINE change (a new
+  // crop-type fallback, a resolver merge) started carding them without data — re-check with Dave before shipping it.
+  it.each(COLEUS.flatMap((c) => c.plantings.map((p) => [p.name, planting(c, p, resolved(c.profile))])))(
+    '%s (coleus, left off): the database profile it adopts yields no card at any temperature', (_n, p) => {
+      expect(resolveCadence(p, cad)._via).toBe('db');
+      expect(carded(p)).toEqual([]);
+    });
 });

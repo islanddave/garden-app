@@ -8,7 +8,7 @@
 -- the 8 keys it had before, byte-identical (the md5 in the gates.yml pre gate is the one the post receipt
 -- checks after the apply).
 --
--- WHAT ROLLING BACK COSTS, stated plainly: the eleven plantings go back to no bring-inside card at any
+-- WHAT ROLLING BACK COSTS, stated plainly: the eight plantings go back to no bring-inside card at any
 -- temperature, except Spider Plant, which goes back to the crop-type fallback's 45F. The frost email is
 -- not affected either way. This exists to unwind a bad apply, not for tidiness.
 --
@@ -34,23 +34,9 @@ UPDATE public.care_profile
 
 UPDATE public.care_profile
    SET profile = profile - 'cold', updated_at = now()
- WHERE id = '573c512c-f98a-4b1f-9fc6-c18afced8306'
-   AND scope = 'cultivar' AND scope_id = 'ba9e69e5-b8e5-40ea-a4a4-aeee7411ddd2'   -- Fairway Orange
-   AND profile->'cold' = '{"tender": true, "protect_below_F": 50}'::jsonb
-   AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-coldshadow-002');
-
-UPDATE public.care_profile
-   SET profile = profile - 'cold', updated_at = now()
  WHERE id = '2d2bc039-58e4-4ce7-8930-e58a66c4cd5a'
    AND scope = 'cultivar' AND scope_id = 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'   -- Jewel Mix Nasturtium
    AND profile->'cold' = '{"tender": true, "protect_below_F": 32}'::jsonb
-   AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-coldshadow-002');
-
-UPDATE public.care_profile
-   SET profile = profile - 'cold', updated_at = now()
- WHERE id = '56d1cef3-b0ab-4556-b926-93f61fc8304b'
-   AND scope = 'cultivar' AND scope_id = 'd62f0fa1-05c6-4fb9-8861-e16ce66b82ef'   -- Kiwi Fern
-   AND profile->'cold' = '{"tender": true, "protect_below_F": 50}'::jsonb
    AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-coldshadow-002');
 
 UPDATE public.care_profile
@@ -96,9 +82,7 @@ SELECT v.variety, cp.profile->'cold' AS cold_now, md5(cp.profile::text) AS md5_n
   FROM (VALUES
          ('9548b3f2-e86c-435e-8ef2-28f5d0e8aa8c', 'Cobaea scandens (Violet)', 'be58c910eab3470432bdb296f2030a59'),
          ('04554719-e633-44d7-8791-f3e33c90ed2d', 'Easy Wave Berry Velour', '3b18f320614cab469d3d77b307fbf342'),
-         ('573c512c-f98a-4b1f-9fc6-c18afced8306', 'Fairway Orange', 'f1da83d4f74e9ebd64f003074786bc8c'),
          ('2d2bc039-58e4-4ce7-8930-e58a66c4cd5a', 'Jewel Mix Nasturtium', 'b28ed671a8f656396c90e430f4cabe8a'),
-         ('56d1cef3-b0ab-4556-b926-93f61fc8304b', 'Kiwi Fern', 'd606f36a348db2139b631c7f33f10963'),
          ('315a0e95-0469-4b88-9647-5662c0edc884', 'Petunia', '3b18f320614cab469d3d77b307fbf342'),
          ('54187824-9ea7-4c5c-9fbf-da5f2326b84e', 'Silver (Licorice Plant)', 'a47d1659be4e527f5cbdbca0036dd13a'),
          ('241d3455-8961-4c8c-a7ab-4a73e84fc002', 'Spider Plant', 'fcfeab4ddf82c6c28c6897def61fb06f'),
