@@ -978,7 +978,8 @@ function frostForSpace({ rows, weather, hydrology, lowSource, spaceId, today, fr
     forecastLows: hy ? hy.forecast_lows : null,          // G5 — index.js:fetchPrecip temperature_2m_min
     forecastDates: hy ? hy.forecast_dates : null,
     // BUG-FROSTADVISORYNIGHTWORDING-001 — which night the advisory's civil-day minimum belongs to. null (no
-    // block) names the base-rate night; nothing in the trigger reads it.
+    // block) names the base-rate night. The threshold trigger never reads it; the radiative one judges that
+    // night's sky, or both candidates' when it is null (BUG-RADIATIVEPAIRINGNIGHT-001).
     forecastHourly: hy ? hy.hourly_temp : null,
     lowSource: lowSource || (wx ? 'forecast' : 'forecast_absent'),
     // V5-RADIATIVEFROST-001 — per-night dewpoint/cloud/wind derived from the hourly block

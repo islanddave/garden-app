@@ -175,6 +175,9 @@ describe('the advisory tier resolves the night that MAKES its minimum', () => {
   // `temperature_2m_min` is set shortly after sunrise, so the night that produces it is keyed D-1.
   // Measured over 380 nights at the site: 77.6% of daily minima fall at hour <=08:00, and the two
   // keyings disagree on 36.1% of pairs.
+  // BUG-RADIATIVEPAIRINGNIGHT-001: "usually D-1" is now read from the hours. These cases carry no hourly
+  // series unless they say so, so they exercise the fallback, which judges BOTH candidate nights (D-1 and D)
+  // and trips on either; the located pairing and the fallback are pinned in radiativepairing.test.js.
   it('pairs advisory date D with the night keyed D-1', () => {
     // D1 = 2026-10-10 at 42F. The night that makes that minimum STARTS 2026-10-09.
     const on = run({
@@ -187,12 +190,19 @@ describe('the advisory tier resolves the night that MAKES its minimum', () => {
     expect(on.advisoryCrops.tripped[0].level).toBe('advisory');
   });
 
-  it('does NOT pair it with the night keyed D — the night that makes the NEXT day\'s minimum', () => {
+  it('does NOT pair a MORNING minimum with the night keyed D — the night that makes the NEXT day\'s minimum', () => {
+    // CHANGED by BUG-RADIATIVEPAIRINGNIGHT-001 (lane radiativefix, 2026-09-19): this case had no hourly series and
+    // asserted night D is never judged. Without the hours the trigger cannot rule night D out (on ~22% of days
+    // it IS the minimum's night), so it now judges both. The claim holds where it is true: the hours put the
+    // minimum at 05:00, so night D's clear sky is not this minimum's and does not trip.
+    const hours = Array.from({ length: 24 }, (_, i) => `2026-10-10T${String(i).padStart(2, '0')}:00`);
     const on = run({
       tonightLow: 55,
       forecastLows: [42, 50, 51],
+      forecastHourly: { time: hours, temperature_2m: hours.map((_, i) => (i === 5 ? 42 : 45)) },
       radiativeNights: [{ ...RAD, date: '2026-10-10', minDewpointF: 34 }],
     });
+    expect(on.advisory).toMatchObject({ nightBasis: 'hourly', minHour: 5 });
     expect(on.alert).toBe(false);
   });
 

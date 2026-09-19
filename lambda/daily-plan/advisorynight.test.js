@@ -274,18 +274,28 @@ describe('frostEval — the two radiative sentences name the right night', () =>
     expect(late.message).toMatch(/Colder ahead: 35°F tomorrow night, 2026-10-10/);
   });
 
-  it('the radiative-only advisory names the night whose SKY it quotes, even when the hours say evening', () => {
-    // radAdvisory is keyed prevDate(date) — night 2026-10-09 = tonight. The civil-day minimum (42F) falls at
-    // 23:00 on 10-10, which alone would say "tomorrow night"; the sentence is about the clear, calm night.
+  it('the radiative-only advisory judges and names the night the hours put the minimum in', () => {
+    // CHANGED by BUG-RADIATIVEPAIRINGNIGHT-001 (lane radiativefix, 2026-09-19). This case used to pin the defect:
+    // the civil-day minimum (42F) falls at 23:00 on 10-10, i.e. in the night that STARTS 10-10, yet the trigger
+    // judged night 10-09's clear sky and the copy said "tonight looks clear and calm". Now the night judged is
+    // the minimum's own, and the copy names it.
+    const evening = hourlyFor([['2026-10-10', dayCurve(42, 23)]]);
     const r = base({
       tonightLow: 55, forecastLows: [42, 50, 51],
-      radiativeNights: [{ ...RAD, date: '2026-10-09', minDewpointF: 34 }],
-      forecastHourly: hourlyFor([['2026-10-10', dayCurve(42, 23)]]),
+      radiativeNights: [{ ...RAD, date: '2026-10-10', minDewpointF: 34 }],
+      forecastHourly: evening,
     });
     expect(r.tier).toBe('advisory');
-    expect(r.message).toMatch(/^FROST ADVISORY — tonight looks clear and calm \(low 42°F, 2026-10-10, dewpoint 34°F\)/);
-    expect(r.advisory).toMatchObject({ nightOffset: 0, nightDate: '2026-10-09', nightBasis: 'radiative' });
-    expect(frostWeatherFacts(r)).toMatchObject({ nightOffset: 0 });
+    expect(r.message).toMatch(/^FROST ADVISORY — tomorrow night looks clear and calm \(low 42°F, 2026-10-10, dewpoint 34°F\)/);
+    expect(r.advisory).toMatchObject({ nightOffset: 1, nightDate: '2026-10-10', nightBasis: 'hourly' });
+    expect(frostWeatherFacts(r)).toMatchObject({ nightOffset: 1 });
+    // ...and the previous night's clear sky, the old pairing, no longer fires for this evening minimum.
+    const wrongNight = base({
+      tonightLow: 55, forecastLows: [42, 50, 51],
+      radiativeNights: [{ ...RAD, date: '2026-10-09', minDewpointF: 34 }],
+      forecastHourly: evening,
+    });
+    expect(wrongNight.tier).toBeNull();
   });
 });
 
