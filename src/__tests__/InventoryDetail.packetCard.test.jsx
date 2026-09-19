@@ -96,7 +96,9 @@ const PEPPER = {
   seed_stage: null, source_plant_id: null, source_kind: null, year_harvested: null, germination: null,
   featured_photo_id: 'ph-hero', hero_photo_id: 'ph-hero', featured_photo_view_url: VIEW_URL,
   featured_photo_thumb_url: THUMB_URL,
-  scoville_min: 1200000, scoville_max: 2000000,
+  // The by-id SELECT names scoville_source, so a real row always carries the KEY; null is what 55 of
+  // 103 prod pepper lots hold (2026-09-19), and it reads "source not recorded".
+  scoville_min: 1200000, scoville_max: 2000000, scoville_source: null,
   origin_country: 'United States', origin_region: 'South Carolina', species: 'Capsicum chinense',
   days_to_maturity_min: 90, days_to_maturity_max: 120, dtm_basis: 'from-transplant',
   breeding_system: 'open_pollinated',
@@ -293,7 +295,9 @@ describe('the packet card — seeds only, right under the title', () => {
 
   it('a re-read with the SAME hero keeps the URL on screen, and one with no URL never blanks the box', async () => {
     const resigned = { ...PEPPER, featured_photo_view_url: 'https://photos.example.test/inventory/inv-seed-1/ph-hero.jpg?sig=2' }
-    const unsigned = { ...PEPPER, featured_photo_view_url: null }
+    // A NEW hero whose re-read presign failed — the real partial-failure case. The same-hero guard
+    // cannot answer for it, so this is what proves a null URL is never adopted (QA mutant C30).
+    const unsigned = { ...PEPPER, featured_photo_id: 'ph-other', hero_photo_id: 'ph-other', featured_photo_view_url: null }
     queue[PEPPER.id] = [PEPPER, resigned, unsigned]
     await renderPage(PEPPER)
     const url = () => card().querySelector('[data-testid="packet-photo"]')?.getAttribute('data-initial-url')
@@ -339,9 +343,9 @@ describe('the packet card — facts, in one fixed order, with the row\'s words',
   it('Heat, Country of origin, Species, Days to maturity, Breeding', async () => {
     await renderPage(PEPPER)
     expect(factRows()).toEqual([
-      // The chip's short numbers (a ~168 px column), and no source words: the fixture has no
-      // scoville_source key at all.
-      ['Heat', '1.2M–2M SHU'],
+      // The chip's short numbers (a ~168 px column), with the words for a figure whose source was
+      // never recorded.
+      ['Heat', '1.2M–2M SHU · source not recorded'],
       ['Country of origin', 'United States · South Carolina'],
       ['Species', 'Capsicum chinense'],
       ['Days to maturity', '90–120 days from transplant'],
@@ -454,6 +458,21 @@ describe('the packet card — the link out', () => {
     expect(updateItemSpy).toHaveBeenCalledTimes(1)
     await waitFor(() =>
       expect(linkLine(screen.getByTestId('packet-link'))).toBe('Packet page · botanicalinterests.com ↗'))
+  })
+
+  it('follows the SUPPLIER as saved too — clearing it in the form moves nothing until the save', async () => {
+    await renderPage(PEPPER)
+    const chip = () => facts().querySelector('[data-testid="supplier-chip"]')
+    await waitFor(() => expect(chip(), 'the supplier chip never appeared').toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Clear supplier' }))
+    // Unsaved: the card still names the saved supplier, stripe and all (QA mutant C12).
+    expect(chip().textContent).toBe('Sandia Seed Company')
+    expect(card().style.borderLeftWidth).toBe('4px')
+
+    await act(async () => { fireEvent.click(screen.getByText('Save changes')) })
+    expect(updateItemSpy).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(chip()).toBeNull())
+    expect(card().style.borderLeftWidth).not.toBe('4px')
   })
 })
 
