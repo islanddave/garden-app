@@ -174,6 +174,112 @@ def test_audit_step_without_the_secret_warns_and_checks_nothing(tmp_path):
     assert "UNVERIFIED — L-081 schema audit did not run" in summary
 
 
+# ── ci.yml "Workflow lint": the guard that stops a clean lint result from being vacuous ─────────────────────────
+# OPS-WORKFLOWLINTCANARY-001. The downloads are stubbed (curl touches its -o file, sha256sum passes, tar drops a
+# fake actionlint and a dummy shellcheck where the step expects them); the fake actionlint answers the canary run
+# and the real run from files the test writes, and logs how it was called. What is under test is the step's own
+# logic: the canary must be REJECTED by both linters, and the real run must cover every workflow file with
+# shellcheck enabled. That the fixture really trips actionlint 1.7.12 + shellcheck 0.11.0 is proven with the real
+# binaries outside this suite (and by every CI run of the step).
+
+LINT = ("ci.yml", "build-and-test", "Workflow lint (actionlint + shellcheck, pinned and checksum-verified)")
+CANARY_FINDINGS = (
+    '.github/workflows/canary.yml:3:3: job "canary" needs job "no-such-job" which does not exist [job-needs]\n'
+    ".github/workflows/canary.yml:7:9: shellcheck reported issue in this script: SC2034:warning:1:1: unused "
+    "appears unused [shellcheck]\n")
+FAKE_ACTIONLINT = """#!/bin/bash
+echo "$PWD :: $*" >> "$FAKE/calls"
+case " $* " in
+  *" -version "*) echo 1.7.12 ;;
+  *" -verbose "*) cat "$FAKE/lint.err" >&2; exit "$(cat "$FAKE/lint.rc")" ;;
+  *) cp .github/workflows/canary.yml "$FAKE/canary.yml"; cp .github/actionlint.yaml "$FAKE/canary-config.yaml" \
+       2>/dev/null; cat "$FAKE/canary.out"; exit "$(cat "$FAKE/canary.rc")" ;;
+esac
+"""
+
+
+def _run_lint(tmp_path, canary_out=CANARY_FINDINGS, canary_rc=1, lint_err="verbose: Linting 3 files\n", lint_rc=0,
+              files=3, **env_extra):
+    wf, step = _step(*LINT)
+    fake, bindir, rt, repo = (tmp_path / d for d in ("fake", "bin", "rt", "repo"))
+    for d in (fake, bindir, rt, repo / ".github" / "workflows"):
+        d.mkdir(parents=True)
+    for i in range(files):
+        (repo / ".github" / "workflows" / f"w{i}.yml").write_text("on: push\n")
+    (repo / ".github" / "actionlint.yaml").write_text("paths: {}\n")
+    for name, text in (("canary.out", canary_out), ("canary.rc", str(canary_rc)), ("lint.err", lint_err),
+                       ("lint.rc", str(lint_rc)), ("actionlint", FAKE_ACTIONLINT)):
+        (fake / name).write_text(text)
+    stubs = {
+        "curl": 'while [ $# -gt 0 ]; do [ "$1" = -o ] && touch "$2"; shift; done',
+        "sha256sum": "cat >/dev/null",
+        "tar": 'd=""; m=""; while [ $# -gt 0 ]; do case "$1" in -C) d="$2"; shift ;; -*) ;; *) m="$1" ;; esac; shift; done\n'
+               'mkdir -p "$d/$(dirname "$m")"; cp "$FAKE/actionlint" "$d/$m"; chmod +x "$d/$m"',
+    }
+    for name, body in stubs.items():
+        (bindir / name).write_text("#!/bin/bash\n" + body + "\n")
+        (bindir / name).chmod(0o755)
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", RUNNER_TEMP=str(rt), FAKE=str(fake))
+    env.update({k: str(v) for k, v in step["env"].items()}, **env_extra)
+    script = tmp_path / "step.sh"
+    script.write_text(step["run"])
+    proc = subprocess.run(RUNNER_SHELL + [str(script)], cwd=repo, env=env, capture_output=True, text=True)
+    calls = (fake / "calls").read_text().splitlines() if (fake / "calls").exists() else []
+    return proc, calls, fake
+
+
+def test_lint_step_runs_under_the_shell_the_harness_models():
+    wf, step = _step(*LINT)
+    assert _declared_shell(wf, "build-and-test", step) is None
+
+
+def test_lint_step_passes_only_after_the_canary_is_rejected_and_every_file_is_linted(tmp_path):
+    proc, calls, fake = _run_lint(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Workflow lint: 3 of 3 workflow files clean" in proc.stdout
+    canary_calls = [c for c in calls if "-verbose" not in c and "-version" not in c]
+    real_calls = [c for c in calls if "-verbose" in c]
+    assert len(canary_calls) == 1 and len(real_calls) == 1
+    assert canary_calls[0].split(" :: ")[0].endswith("/canary")  # its own project, never the checkout
+    shellcheck_args = {a for c in canary_calls + real_calls for a in c.split() if a.startswith("-shellcheck=")}
+    assert len(shellcheck_args) == 1  # the canary proves the very shellcheck the real run uses
+    fixture = (fake / "canary.yml").read_text()
+    assert "needs: no-such-job" in fixture and "- run: unused=1" in fixture
+    assert (fake / "canary-config.yaml").read_text() == "paths: {}\n"  # under the repo's own actionlint config
+
+
+@pytest.mark.parametrize("canary_out,canary_rc", [
+    ("", 0),                                                 # silenced: a blanket ignore, or no linter ran
+    (CANARY_FINDINGS.splitlines()[0] + "\n", 1),            # actionlint only: shellcheck disabled or filtered
+    (CANARY_FINDINGS.splitlines()[1] + "\n", 1),            # shellcheck only
+    ("fatal error while checking .github/workflows/canary.yml\n", 3),
+])
+def test_lint_step_fails_when_the_canary_is_not_rejected_by_both_linters(tmp_path, canary_out, canary_rc):
+    proc, calls, _ = _run_lint(tmp_path, canary_out=canary_out, canary_rc=canary_rc)
+    assert proc.returncode == 1
+    assert "::error title=Workflow lint canary::" in proc.stdout
+    assert not [c for c in calls if "-verbose" in c]  # never reached the real run
+
+
+@pytest.mark.parametrize("lint_err", [
+    "verbose: Linting 2 files\n",
+    "verbose: Rule \"shellcheck\" was disabled: exec: \"x\": stat x: no such file or directory\n"
+    "verbose: Linting 3 files\n",
+    "",
+])
+def test_lint_step_fails_when_the_real_run_is_vacuous(tmp_path, lint_err):
+    proc, _, _ = _run_lint(tmp_path, lint_err=lint_err)
+    assert proc.returncode == 1
+    assert "::error title=Workflow lint vacuous::" in proc.stdout
+
+
+@pytest.mark.parametrize("lint_rc", [1, 3])
+def test_lint_step_fails_with_the_linter_on_findings_or_a_fatal_error(tmp_path, lint_rc):
+    proc, _, _ = _run_lint(tmp_path, lint_err="verbose: Linting 3 files\nfatal error: boom\n", lint_rc=lint_rc)
+    assert proc.returncode == lint_rc
+    assert ("fatal error: boom" in proc.stdout) == (lint_rc != 1)  # findings are already on stdout; a fatal is not
+
+
 # ── every step of every workflow: no exit-status read that errexit has already decided ─────────────────────
 # The steps above are guarded one at a time. This scans every bash/sh `run:` body for the shape itself, so a new
 # step cannot reintroduce it unnoticed. Under errexit, `$?` read on its own is always 0 (any non-zero ended the
