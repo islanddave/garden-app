@@ -3,9 +3,9 @@
     "version": "4.139.1",
     "date": "2026-09-19",
     "highlights": [
-      "If a frost email has already gone out and a newer forecast moves the cold to an earlier night, a new frost email now names the earlier night, once; a night that moves later sends nothing new",
-      "Clear-and-calm frost warnings now check the sky on the night the cold actually arrives and are titled Frost watch, and a forecast-service outage no longer stops the afternoon frost check",
-      "On nights the frost line warns about tonight, the forecast card and the weather line show the same low, so Today no longer shows two different lows for one night",
+      "If a frost email has already gone out and a newer forecast moves the cold to an earlier night, a new frost email names the earlier night, once for each earlier night; a night that moves later sends nothing new",
+      "Clear-and-calm frost warnings now check the sky on the night the cold actually arrives, and when that is the only reason for a warning the email is titled Frost watch; a second forecast's colder low for the same night is no longer called \"ahead\", and a forecast-service outage no longer stops the afternoon frost check",
+      "On nights the frost line warns about tonight, the forecast card, the weather line and the Protect cards use the same low, so Today no longer shows two different lows for one night; the weather line may switch to freeze wording to match",
       "Rain from the weather station is no longer logged on plantings you've marked Ended or Failed, or on plants in a deleted or archived container; Dormant plantings still get it"
     ]
   },
