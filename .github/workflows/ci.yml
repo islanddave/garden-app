@@ -365,13 +365,16 @@ jobs:
         # field is >= T.tapMinHeight, except the frozen SegmentedControl's 40px radios — ONE named
         # exemption, shared with gate:seeds-saved; (e) at 360x640 on My seeds, >= 3 rows fully on the
         # first screen between the bars; (f) every My seeds row's second line and title are ONE line,
-        # the 44-char name truncating with an ellipsis. It refuses to measure a view whose innerWidth
-        # or innerHeight is not the one requested, or that is not at scrollTop 0.
+        # the 44-char name truncating with an ellipsis; (g) every row's amount shows whole (the chips
+        # and vendor give way first); (h) every open Sow now card keeps its name column at least
+        # SowNow.jsx's TITLE_COL_MIN_PX. It refuses to measure a view whose innerWidth or innerHeight
+        # is not the one requested, or that is not at scrollTop 0.
         #
         # Verified non-vacuous: `npm run gate:seeds-page:probe-nothing` exits 1 on all six
         # view/viewport pairs; and GATE_MUTATE_CSS (CSS injected before measuring, src/** untouched)
         # reds each assertion by name — (a) switch forced to wrap, (b) actions stacked, (c) page forced
-        # to 480px, (d) Save seed forced to 30px, (f) line flex-wrap / facts wrap / title wrap.
+        # to 480px, (d) Save seed forced to 30px, (f) line flex-wrap / facts wrap / title wrap,
+        # (g) the amount span allowed to shrink, (h) the Sow now card kept from wrapping.
         # NO continue-on-error, per the policy note above. ~10 s locally.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
