@@ -997,7 +997,12 @@ export const handler = async (event) => {
             rate: sown > 0 ? Math.round((up / sown) * 1000) / 10 : null,
           };
         }
-        return resp(200, { ...rest, featured_photo_id: row.effective_featured_photo_id, featured_photo_view_url, germination });
+        // hero_photo_id (V5-SEEDCARDS-001) repeats the effective id under the name the seed list uses,
+        // so the one client adapter (src/components/seed/lotPhoto.js) reads one name on both surfaces.
+        return resp(200, {
+          ...rest, featured_photo_id: row.effective_featured_photo_id, hero_photo_id: row.effective_featured_photo_id,
+          featured_photo_view_url, germination,
+        });
       }
 
       if (method === 'PUT') {
@@ -1370,16 +1375,27 @@ export const handler = async (event) => {
               AND i.deleted_at IS NULL
             ORDER BY i.created_at DESC
           `;
-      // Same override the single-item GET makes (INV-HERO): `i.*` carried the RAW pointer; the row
-      // leaves with the derived effective hero so its id and its URLs can never disagree. Presigning
-      // is signature math, not an S3 call, so this adds no round trips; a thumb URL is a HINT (the
-      // object may not exist) and the client degrades to the original it already holds.
+      // The effective hero leaves as `hero_photo_id`, NOT as an override of `featured_photo_id` the
+      // way the single-item GET does it. A LIST row is what the client merges back into the wide PUT
+      // (useInventory.updateItem's {...current, ...payload}; SavedSeeds' listRowPutBody), and a
+      // present featured_photo_id key is an ASSIGNMENT there — an overridden value would promote a
+      // fallback photo to the explicit pointer on the next unrelated edit. `i.*`'s raw pointer rides
+      // through untouched.
+      //
+      // URLs are signed only when the caller asked for seeds. The unfiltered list is fetched on every
+      // mount of Inventory, the add form, the detail page and Favorites, none of which renders an
+      // inventory photo, so signing ~500 pairs there would be cost with no reader. Presigning is
+      // signature math, not an S3 call (this Lambda shares garden-app-lambda-exec, whose S3forGarden
+      // policy grants GetObject on garden-photos-prod/*, originals and thumbs/ alike). A thumb URL is
+      // a HINT — the object may not exist — and PhotoView degrades to the original it already holds.
+      const wantUrls = !!cats?.includes('seeds');
       const listRows = await Promise.all(rows.map(async (row) => {
         const {
           featured_photo_storage_path: storagePath,
-          effective_featured_photo_id: effectiveId,
+          effective_featured_photo_id: heroId,
           ...rest
         } = row;
+        if (!wantUrls) return { ...rest, hero_photo_id: heroId ?? null };
         const [featured_photo_view_url, featured_photo_thumb_url] = storagePath
           ? await Promise.all([
               resolvePhotoViewUrl(storagePath, { presign: getFeaturedPhotoViewUrl, sm }),
@@ -1387,7 +1403,7 @@ export const handler = async (event) => {
                 .catch(() => null),
             ])
           : [null, null];
-        return { ...rest, featured_photo_id: effectiveId ?? null, featured_photo_view_url, featured_photo_thumb_url };
+        return { ...rest, hero_photo_id: heroId ?? null, featured_photo_view_url, featured_photo_thumb_url };
       }));
       return resp(200, listRows);
     }
