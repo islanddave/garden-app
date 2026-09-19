@@ -20,11 +20,14 @@
 // what Postgres does.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { resolve, dirname } from 'node:path';
 import h from './handler.js';
 import fe from './frostEval.js';
 import { buildFrostAlertLine } from '../../src/lib/frostAlertLine.js';
 
-const { run, mergeAlertsSent } = h;
+const { run, mergeAlertsSent, readSpaceAlertsSent, readAlertsSent, readPriorRuns, readWeatherDaily } = h;
 const { escalatesBeyond, sentNight, sentCoverage, advisoryNight, nightPhrase } = fe;
 
 const SPACE = 'sp1';
@@ -358,5 +361,87 @@ describe('OPS-FROSTREHEARSALMARK-001 — the stored entry says which run sent it
     // the client that words the Today line (src/lib/frostAlertLine.js)
     expect(buildFrostAlertLine([withRun])).toEqual(buildFrostAlertLine([without]));
     expect(buildFrostAlertLine([without]).text).toBe('Frost possible tonight — low 38°F. Plan cover for tender plants.');
+  });
+});
+
+// ── OPS-SPACEALERTSREADLOG-001 ───────────────────────────────────────────────────────────────────────────────────
+// readSpaceAlertsSent (BUG-FROSTDUPTWOUSERS-001) is the one new SQL statement of v4.138 and has no real-Postgres
+// coverage in CI (preship-qa I2). A successful read logged nothing, and a failed one logged a WARN that no metric
+// filter or alarm watched, so a broken read would surface only as a duplicate frost email. Now every frost-eval
+// line carries `space_sent`, and scripts/weather-observability.sh provisions a filter on the WARN phrase. The filter
+// is AWS config, so it is proven here from the CODE side: the phrase must be in both fail-open WARNs the handler
+// really emits, in nothing a healthy frost run logs, and in neither neighbouring fail-open WARN.
+const SCRIPT = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../scripts/weather-observability.sh'), 'utf8');
+const filterPhrase = () => {
+  const m = /^\s*emit_filter\s+frost-dedup-read-failed\s+'"([^"]+)"'\s+FrostDedupReadFailed\s*$/m.exec(SCRIPT);
+  return m ? m[1] : null;
+};
+// A sample line's `msg` in the script's test_patterns (a bash string with \" escapes).
+const sampleMsg = (name) => {
+  const m = new RegExp(`local ${name}="[^\\n]*?\\{\\\\"msg\\\\":\\\\"([^\\\\]+)\\\\"`).exec(SCRIPT);
+  return m ? m[1] : null;
+};
+const warned = () => console.warn.mock.calls.map(([l]) => String(l));
+const boom = () => ({ query: async () => { throw new Error('relation "daily_plan" does not exist'); } });
+
+describe('OPS-SPACEALERTSREADLOG-001 — the per-Space dedup read is visible when it works and metered when it fails', () => {
+  it('every frost-eval line carries space_sent: the Space\'s sends BEFORE that run', async () => {
+    const t = planTable({ rows: TOMATO });
+    const pub = publisher();
+    const got = [];
+    for (const [hr, s] of [[14, TOMORROW], [15, TOMORROW], [16, TONIGHT], [17, TONIGHT]]) got.push((await once(t, pub, { etHour: hr, ...s })).evalLine.space_sent);
+    expect(got).toEqual([0, 1, 1, 2]);
+    expect(pub.frost().map((c) => c.hour)).toEqual([14, 16]);
+  });
+
+  it('flag OFF: the read is not attempted, so the line says null, never a 0 that claims a read', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'false');
+    const t = planTable({ rows: TOMATO });
+    const r = await once(t, publisher(), { etHour: 15, ...TONIGHT });
+    expect(r.evalLine).toMatchObject({ enabled: false, space_sent: null });
+    expect(t.pg.query.mock.calls.some(([sql]) => /from daily_plan where plan_date = \$1/.test(sql))).toBe(false);
+  });
+
+  it('a failed per-Space read: space_sent 0 on the line, and exactly one WARN carrying the metered phrase', async () => {
+    const t = planTable({ rows: TOMATO });
+    const inner = t.pg.query.getMockImplementation();
+    t.pg.query.mockImplementation(async (sql, params) => {
+      if (/from daily_plan where plan_date = \$1/.test(sql)) throw new Error('permission denied for table daily_plan');
+      return inner(sql, params);
+    });
+    const r = await once(t, publisher(), { etHour: 15, ...TONIGHT });
+    expect(r.evalLine.space_sent).toBe(0);
+    const w = warned().filter((l) => l.includes(filterPhrase()));
+    expect(w).toHaveLength(1);
+    expect(JSON.parse(w[0])).toMatchObject({ msg: 'space alerts_sent read failed — continuing (may re-send)', space: SPACE });
+  });
+
+  it('the filter phrase in scripts/weather-observability.sh is in both fail-open WARNs, and in nothing else', async () => {
+    const phrase = filterPhrase();
+    expect(phrase, 'provision() no longer declares the frost-dedup-read-failed filter').toBe('alerts_sent read failed');
+    await readSpaceAlertsSent(boom(), SPACE, TODAY);
+    await readAlertsSent(boom(), DAVE, TODAY);
+    const [spaceWarn, userWarn] = warned();
+    expect(spaceWarn).toContain(phrase);
+    expect(userWarn).toContain(phrase);
+    // negative controls: the neighbouring fail-open WARNs must not move this metric
+    console.warn.mockClear();
+    await readPriorRuns(boom(), DAVE, TODAY);
+    await readWeatherDaily(boom(), SPACE, '2026-09-28', TODAY);
+    expect(warned()).toHaveLength(2);
+    for (const l of warned()) expect(l).not.toContain(phrase);
+    // ...and nothing a healthy frost run logs (a send, a hold, the frost-eval line) may match it either
+    console.warn.mockClear();
+    const t = planTable({ rows: TOMATO });
+    const pub = publisher();
+    for (const [hr, s] of [[14, TONIGHT], [15, TOMORROW], [16, TONIGHT]]) await once(t, pub, { etHour: hr, ...s });
+    const all = [...logSpy.mock.calls, ...console.warn.mock.calls, ...console.error.mock.calls].map(([l]) => String(l));
+    expect(all.some((l) => l.includes('"frost-eval"'))).toBe(true);
+    expect(all.some((l) => l.includes('frost alert HELD'))).toBe(true);
+    for (const l of all) expect(l).not.toContain(phrase);
+    // The script's own server-side test lines must be the strings the code really emits.
+    expect(sampleMsg('L_SPACEFAIL')).toBe(JSON.parse(spaceWarn).msg);
+    expect(sampleMsg('L_USERFAIL')).toBe(JSON.parse(userWarn).msg);
+    expect(sampleMsg('L_FROSTEVAL')).toBe('frost-eval');
   });
 });

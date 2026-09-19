@@ -1725,9 +1725,14 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       frostDecision = frost.decision;
       // §3-8 — emitted on EVERY evaluation, alert or not. This log is also the 2026 corpus for the 2027
       // learned microclimate offset (G4): nightly station minimum vs NWS forecast low.
+      // OPS-SPACEALERTSREADLOG-001 — `space_sent` is how many of this Space's sends today the per-Space read
+      // returned before this run (readSpaceAlertsSent). A number proves the read ran on this evaluation; null
+      // means it was not attempted (flag off). A failed read also reads 0 here, and logs the WARN that
+      // scripts/weather-observability.sh meters (FrostDedupReadFailed).
       console.log(JSON.stringify({ msg: 'frost-eval', space: spaceId, plan_date: today, run: frostRun.slot,
         enabled: frostAlertEnabled, dry_run: dryRun, season: frostSeason, alert: frostDecision.alert,
-        degraded: frostDecision.degraded, dedup_key: frostDecision.dedupKey, ...frostDecision.observability }));
+        degraded: frostDecision.degraded, dedup_key: frostDecision.dedupKey,
+        space_sent: frostAlertEnabled ? spaceSent.length : null, ...frostDecision.observability }));
       // §3-7 loud degradation: inside frost season, a missing tonightLow is NOT "no frost tonight". Silence
       // must never be indistinguishable from safety. Routed to garden-ops-alerts, not the frost topic.
       if (frostDecision.degradedAlert && frostAlertEnabled && !dryRun && publishAlert) {
