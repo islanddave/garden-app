@@ -42,7 +42,9 @@ const pkt = (over = {}) => ({
   purchase_date: null, year_harvested: null, stage_entered_at: null, seed_count: null, seed_weight_g: null,
   seed_count_estimated: null, sow_archived_season: null, created_at: '2026-07-01T12:00:00Z',
   hero_photo_id: null, featured_photo_id: null, featured_photo_view_url: null, featured_photo_thumb_url: null,
-  scoville_min: null, scoville_max: null, origin_country: null, origin_region: null, species: null,
+  // scoville_source is on every real list row (the SELECT names it), null when nobody recorded where the
+  // figure came from — 55 of 103 prod peppers. Present-and-null is the branch production takes.
+  scoville_min: null, scoville_max: null, scoville_source: null, origin_country: null, origin_region: null, species: null,
   days_to_maturity_min: null, days_to_maturity_max: null, dtm_basis: null, source_url: null, variety_source_url: null,
   ...over,
 })
@@ -132,6 +134,13 @@ describe('My seeds — what each card says', () => {
     const sa = within(lineOf('sa')).getByTestId('my-seed-supplier')
     expect(sa.textContent).toBe('Sandia')
     expect(hex(sa.style.backgroundColor)).not.toBe(hex(bi.style.backgroundColor))
+    // The card's stripe is each supplier's OWN primary, not one accent for every card (normalised
+    // through a probe element, as the detail page's stripe test does).
+    for (const [id, name] of [['bi', 'Botanical Interests'], ['sa', 'Sandia Seed Company']]) {
+      const probe = document.createElement('div')
+      probe.style.color = supplierColors(name).primary
+      expect(rowFor(id).style.borderLeftColor).toBe(probe.style.color)
+    }
   })
 
   it('"1 packet" is not printed — every other amount is', async () => {
@@ -419,8 +428,10 @@ describe('My seeds — folding groups', () => {
     expect(headerFor('Tomato').getAttribute('aria-expanded')).toBe('true')
     await act(async () => { fireEvent.click(headerFor('Tomato')) })
     expect(headerFor('Tomato').getAttribute('aria-expanded')).toBe('false')
-    await act(async () => { fireEvent.change(box, { target: { value: 'or' } }) })
-    expect(headerFor('Tomato')?.getAttribute('aria-expanded') ?? 'true').toBe('true')
+    // A new search that still finds a tomato ("go": Sungold, and Gong Bao) — so the Tomato header is
+    // on the page to be read, and the hand fold must have been cleared by the change.
+    await act(async () => { fireEvent.change(box, { target: { value: 'go' } }) })
+    expect(headerFor('Tomato').getAttribute('aria-expanded')).toBe('true')
   })
 })
 
@@ -581,9 +592,15 @@ describe('My seeds — the expanded card (no "On hand", the seed\'s facts)', () 
       }),
       pepper({ id: 'bare', name: 'Mystery', variety_name: 'Mystery', breeding_system: 'unknown' }),
       pkt({ id: 'tom' }),
+      // A figure nobody recorded the source of (the fixture's scoville_source: null, as prod sends it).
+      pepper({ id: 'unk', name: 'Hungarian Hot Wax', variety_name: 'Hungarian Hot Wax', scoville_min: 5000, scoville_max: 15000 }),
     ]
     await mount()
     await openAll()
+    await expandRow('unk')
+    expect(within(rowFor('unk')).getByTestId('my-seed-facts').querySelector('[data-fact="Heat"]').textContent)
+      .toBe('5,000–15,000 SHU · source not recorded')
+    expect(within(lineOf('unk')).getByTestId('my-seed-heat').textContent).toBe('5K–15K SHU')
     await expandRow('hab')
     const facts = within(rowFor('hab')).getByTestId('my-seed-facts')
     expect([...facts.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['From', 'Heat', 'Country of origin', 'Species', 'Days to maturity', 'Breeding'])
@@ -608,6 +625,10 @@ describe('My seeds — the expanded card (no "On hand", the seed\'s facts)', () 
       pkt({ id: 'own', source_url: 'https://sandiaseed.com/products/fresno' }),
       pkt({ id: 'ref', name: 'Stupice', variety_name: 'Stupice', variety_source_url: 'https://www.johnnyseeds.com/stupice' }),
       pkt({ id: 'none', name: 'Plain', variety_name: 'Plain' }),
+      // Only http(s) ever becomes a link: a `javascript:` packet URL falls through to the variety page, or
+      // to no link at all.
+      pkt({ id: 'js', name: 'Script', variety_name: 'Script', source_url: 'javascript:alert(1)', variety_source_url: 'https://www.johnnyseeds.com/script' }),
+      pkt({ id: 'jsonly', name: 'Script Only', variety_name: 'Script Only', source_url: 'javascript:alert(1)', variety_source_url: 'javascript:alert(2)' }),
     ]
     await mount()
     await openAll()
@@ -626,6 +647,13 @@ describe('My seeds — the expanded card (no "On hand", the seed\'s facts)', () 
     expect(ref.textContent).not.toMatch(/supplier/i)
     await expandRow('none')
     expect(within(rowFor('none')).queryByTestId('my-seed-packet-link')).toBeNull()
+    await expandRow('js')
+    const js = within(rowFor('js')).getByTestId('my-seed-packet-link')
+    expect(js.getAttribute('href')).toBe('https://www.johnnyseeds.com/script')
+    expect(js.querySelector('[aria-hidden="true"]').textContent).toBe('About this variety · johnnyseeds.com ↗')
+    await expandRow('jsonly')
+    expect(within(rowFor('jsonly')).queryByTestId('my-seed-packet-link')).toBeNull()
+    expect([...document.querySelectorAll('a[href]')].some((a) => /^javascript:/i.test(a.getAttribute('href')))).toBe(false)
   })
 
   it('offers "Change stage in Saved seeds →" only for a lot in process, and hands the lot to the shell', async () => {
