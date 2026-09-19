@@ -188,7 +188,9 @@ def test_over_threshold_exits_one_and_under_exits_zero(monkeypatch):
 NOW = datetime(2026, 9, 18, 16, 0, tzinfo=timezone.utc)
 NOW_ISO = '2026-09-18T16:00:00.000Z'
 YEAR = 2026
-SOURCES = [{'id': 'src-fedco', 'name': 'Fedco Seeds'}, {'id': 'src-baker', 'name': 'Baker Creek Heirloom Seeds'}]
+SOURCES = [{'id': 'src-fedco', 'name': 'Fedco Seeds'}, {'id': 'src-baker', 'name': 'Baker Creek Heirloom Seeds'},
+           {'id': 'src-sandia', 'name': 'Sandia Seed Company'}, {'id': 'src-johnny', 'name': "Johnny's Selected Seeds"},
+           {'id': 'src-coop', 'name': 'Greenfield Co-op'}, {'id': 'src-bare', 'name': 'Seeds'}]
 
 
 def srow(rid, variety, **over):
@@ -254,11 +256,22 @@ MYSEEDS = [
     # pair of them, which collides there and nowhere else
     srow('z1', 'Black Seeded Simpson', quantity_on_hand='0.000', **BOUGHT_2026),
     srow('z2', 'Black Seeded Simpson', quantity_on_hand='0.000', **BOUGHT_2026),
-    # SYNTHETIC — the id backstop. y3's own line equals the ordinal y1 is handed, so labelCandidates'
-    # second pass must append an id to whichever of the two it meets second.
+    # SYNTHETIC — the id backstop. y3's own line equals the ordinal y1 is handed (a status chip is the
+    # one free-text part of the line that can spell it), so labelCandidates' second pass must append an
+    # id to whichever of the two it meets second.
     srow('y1', 'Zinnia'),
     srow('y2', 'Zinnia'),
-    srow('y3', 'Zinnia', unit='packet · 1 of 2 with identical details'),
+    srow('y3', 'Zinnia', status='1 of 2 with identical details'),
+    # V5-SEEDCARDS-001 — the supplier's short name leads the line, and a pepper's heat rides in it.
+    # Curated short forms, the trade-word rule, and the heat formatter's edges (a toFixed half-up tie
+    # at 1,125,000; Math.round at 12,500; sweet; one-sided; a guess marked "est.").
+    srow('p1', 'Carolina Reaper', source_id='src-sandia', scoville_min=1125000, scoville_max=2200000,
+         scoville_source='vendor_catalog'),
+    srow('p2', 'Habanero', source_id='src-johnny', scoville_min=12500, scoville_max=350000, scoville_source='inference'),
+    srow('p3', 'California Wonder', source_id='src-coop', scoville_min=0, scoville_max=0, scoville_source='inference'),
+    srow('p4', 'Sweet Banana', source_id='src-bare', scoville_min=0, scoville_max=500),
+    srow('p5', 'Jalapeño', scoville_min=None, scoville_max=8000, quantity_on_hand='2.000'),
+    srow('p6', 'Cayenne', scoville_min=1500, scoville_max=1500, scoville_source=None),
 ]
 
 NODE_PARITY = r"""
@@ -323,16 +336,16 @@ def test_the_second_line_reads_as_the_model_builds_it():
     by = {r['id']: r for r in MYSEEDS}
     v = sla.vendor_resolver(SOURCES)
     line = lambda rid: sla.line_text(by[rid], v, NOW, YEAR)  # noqa: E731
-    assert line('s1') == '1 packet · Fedco Seeds · bought 2026'            # vendor from the registry
-    assert line('v2') == '1 packet'                                        # the order text never prints
-    assert line('v1') == '1 packet · bought 2024'                           # unregistered id: no vendor
-    assert line('q1') == '1 packet · Fedco Seeds · bought 2026'            # 0.5 rounds UP, as Math.round
-    assert line('q2') == '3 packets · Fedco Seeds · bought 2026'
+    assert line('s1') == 'Fedco · bought 2026'                    # vendor from the registry, short; "1 packet" is not printed
+    assert line('v2') == ''                                       # the order text never prints
+    assert line('v1') == 'bought 2024'                            # unregistered id: no vendor
+    assert line('q1') == 'Fedco · bought 2026'                    # 0.5 rounds UP to 1, as Math.round — then says nothing
+    assert line('q2') == 'Fedco · 3 packets · bought 2026'
     assert line('q3') == '1 seed' and line('q4') == '25 seeds' and line('q5') == '2 oz'
-    assert line('q6') == '1 packet' and line('q7') == 'Fedco Seeds · bought 2026'
-    assert line('l1') == 'Fermenting · day 5 · Saved from my plant · harvested 2026'   # ET calendar days
-    assert line('l2') == 'Fermenting · today · Saved from my plant · harvested 2026'
-    assert line('l3') == 'Fermenting · Saved from my plant'
+    assert line('q6') == '' and line('q7') == 'Fedco · bought 2026'
+    assert line('l1') == 'Ferment · day 5 · Saved from my plant · harvested 2026'   # ET calendar days
+    assert line('l2') == 'Ferment · today · Saved from my plant · harvested 2026'
+    assert line('l3') == 'Ferment · Saved from my plant'
     assert line('l4') == 'Drying · 121 seeds · 1.6 g · Saved from my plant · harvested 2026'
     assert line('l5') == '185 seeds · Saved from my garden · harvested 2025'
     assert line('l6') == 'approx. 500 seeds · 99 mg · Saved · farm stand'
@@ -341,9 +354,30 @@ def test_the_second_line_reads_as_the_model_builds_it():
     assert line('l10') == '0 seeds · 0 g · Saved · gift'                   # a counted zero DOES render
     assert line('u1') == 'Not started · Saved from my plant'
     assert line('u2') == 'Not started · Saved from my plant'
-    assert line('c1').startswith('Archived for this season · ') and line('c2').startswith('Archived for this season · ')
-    assert not line('c3').startswith('Archived')
-    assert line('c4') == 'Retired · 1 packet · Fedco Seeds · bought 2026'
+    assert line('c1') == 'Fedco · Archived for this season · bought 2026' and line('c2') == line('c1')
+    assert 'Archived' not in line('c3')
+    assert line('c4') == 'Fedco · Retired · bought 2026'
+    # the supplier chip's label, then the heat
+    assert line('p1') == 'Sandia · 1.13M–2.2M SHU'                # curated short form; toFixed's half-up tie
+    assert line('p2') == "Johnny's · est. 13K–350K SHU"           # Math.round(12.5) is 13; a guess says so
+    assert line('p3') == 'Greenfield · est. Sweet · 0 SHU'        # "Co-op": the trade-word rule
+    assert line('p4') == 'Seeds · 0–500 SHU'                      # a name that is ALL trade words keeps itself
+    assert line('p5') == '2 packets · 8K SHU' and line('p6') == '1.5K SHU'
+
+
+def test_the_supplier_short_forms_match_the_javascript_palette():
+    """SUPPLIER_SHORT is a copy of supplierPalette.js's curated `short`s. A supplier added or renamed
+    there and not here changes the lines this script counts, so the two maps must be equal."""
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('node is not on PATH — the palette copy was NOT checked against supplierPalette.js')
+    js = r"""
+const M = await import(new URL(`file://${process.argv[1]}/src/lib/supplierPalette.js`).href)
+process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(M.SUPPLIER_COLORS).map(([k, v]) => [k, v.short]))))
+"""
+    proc = subprocess.run([node, '--input-type=module', '-e', js, str(REPO)], capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == sla.SUPPLIER_SHORT
 
 
 def test_row_title_keeps_a_hand_typed_lot_name_and_drops_the_default():
@@ -384,9 +418,9 @@ def test_the_id_backstop_fires_when_an_ordinal_meets_a_natural_line():
     zinnias = [r for r in MYSEEDS if r['id'] in ('y1', 'y2', 'y3')]
     labels = sla.label_candidates(zinnias, lambda r: sla.line_text(r, None, NOW, YEAR), sla.row_title)
     details = [lab['detail'] for lab in labels]
-    assert details[0] == '1 packet · 1 of 2 with identical details'
-    assert details[1] == '1 packet · 2 of 2 with identical details'
-    assert details[2] == '1 packet · 1 of 2 with identical details · #y3'
+    assert details[0] == '1 of 2 with identical details'
+    assert details[1] == '2 of 2 with identical details'
+    assert details[2] == '1 of 2 with identical details · #y3'
 
 
 def test_ferment_days_are_eastern_calendar_days_not_24_hour_windows():
@@ -458,9 +492,9 @@ def test_myseeds_duplicate_ids_defeat_the_backstop_and_fail(monkeypatch):
     backstopped line of the third row equals the fourth row's own line, both ending "#dup".
     inventory_items.id is a primary key, so prod cannot produce this — but a threshold that can
     never fire is not a threshold, so the exit-1 path is exercised on the one input that reaches it."""
-    ordinal = 'packet · 1 of 2 with identical details'
+    ordinal = '1 of 2 with identical details'
     rows = [srow('dup', 'Serrano'), srow('dup', 'Serrano'),
-            srow('dup', 'Serrano', unit=ordinal), srow('dup', 'Serrano', unit=f'{ordinal} · #dup')]
+            srow('dup', 'Serrano', status=ordinal), srow('dup', 'Serrano', status=f'{ordinal} · #dup')]
     s = sla.my_seeds_screens(rows, sla.vendor_resolver(SOURCES), NOW, YEAR)
     assert s['default']['after_rows'] == 2
     monkeypatch.setenv('NEON_DATABASE_URL', 'postgres://not-used-fetch-is-stubbed')

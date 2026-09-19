@@ -41,9 +41,11 @@ The connection is opened read_only, so PostgreSQL itself rejects any write.
 
 MY SEEDS (--surface myseeds, V5-SEEDSTAB-001)
 ---------------------------------------------
-The Seeds page's My seeds view renders every live seed row as a title plus a second line -- state
-chips, then how much, where from, how old -- and each row carries a quantity STEPPER, so two rows
-that read alike let a thumb write to the wrong lot. The page makes them unique with labelCandidates
+The Seeds page's My seeds view renders every live seed row as a title plus a second line -- the
+supplier's short name, state chips, how much, the heat, a saved lot's origin words, how old
+(V5-SEEDCARDS-001) -- and each row opens its own details, so two rows that read alike send a thumb to
+the wrong lot. (Until V5-SEEDCARDS-001 each row also carried a quantity stepper that wrote to the lot
+it sat on.) The page makes them unique with labelCandidates
 (src/components/seed/seedLots.js): an ordinal ("1 of 2 with identical details") on every row whose
 rendered title + second line collide, and the row id as the last resort. This surface reports how
 many rows collide BEFORE that ordinal -- how much the ordinal is carrying -- and how many AFTER it,
@@ -399,13 +401,15 @@ def row_title(i):
 
 
 def how_much(i):
-    """mySeedsModel.js howMuch."""
+    """mySeedsModel.js howMuch. EXACTLY "1 packet" says nothing and is left out (V5-SEEDCARDS-001)."""
     if is_saved_lot(i):
         return lot_measure(i)
     qty = format_qty(i.get('quantity_on_hand'))
     if qty == '':
         return ''
     unit = _js_trim(_js_str(i.get('unit')))
+    if unit in ('packet', '') and qty == '1':
+        return ''
     if unit in ('packet', ''):
         return f"{qty} {'packet' if qty == '1' else 'packets'}"
     if unit == 'each':
@@ -491,7 +495,7 @@ def state_chips(i, now, year):
     if is_in_process(i):
         if _js_trim(str(i.get('seed_stage'))).lower() == 'fermenting':
             d = elapsed_days(i.get('stage_entered_at'), now)
-            chips.append('Fermenting' if d is None else 'Fermenting · today' if d <= 0 else f'Fermenting · day {d}')
+            chips.append('Ferment' if d is None else 'Ferment · today' if d <= 0 else f'Ferment · day {d}')
         else:
             chips.append('Drying')
     elif is_unstarted_save(i):
@@ -504,10 +508,88 @@ def state_chips(i, now, year):
     return chips
 
 
+# supplierPalette.js SUPPLIER_COLORS, the `short` of each curated entry, keyed by supplierKey. The
+# parity test compares this map with the JavaScript's, entry for entry.
+SUPPLIER_SHORT = {
+    'botanicalinterests': 'Botanical', 'bentleyseeds': 'Bentley', 'marysheirloomseeds': "Mary's",
+    'sandiaseedcompany': 'Sandia', 'amazon': 'Amazon', 'johnnysselectedseeds': "Johnny's",
+    'highmowingorganicseeds': 'High Mowing', 'seedsaversexchange': 'Seed Savers',
+    'hillfolkseedcollective': 'Hillfolk', 'belchertownplantswap': 'Belchertown', 'owngarden': 'Own garden',
+    'greenfieldfarmerscoop': 'Greenfield', 'massachusettsflowergrowersassociation': 'Mass. Flower',
+    'magicwings': 'Magic Wings', 'gurneysseednurseryco': "Gurney's", 'jensuncle': "Jen's uncle",
+    'panoramatours': 'Panorama', 'livingstonseed': 'Livingston',
+    'umassamherstlibrariescommonseedproject': 'UMass', 'lakevalleyseed': 'Lake Valley',
+}
+_TRADE_WORDS = re.compile(r'\b(seeds?|company|co\.?|co-op|selected|organic|heirloom)\b', re.IGNORECASE)
+
+
+def supplier_key(name):
+    """supplierPalette.js supplierKey."""
+    if not isinstance(name, str):
+        return ''
+    return re.sub(r'[^a-z0-9]', '', name.lower())
+
+
+def short_supplier_label(name):
+    """supplierPalette.js shortSupplierLabel: drop the trade words, then cut at a word within 12."""
+    full = _js_trim(_js_str(name))
+    if not full:
+        return ''
+    words = [w for w in re.sub(r'\s+', ' ', _TRADE_WORDS.sub(' ', full)).strip().split(' ') if w]
+    if not words:
+        return full[:12]
+    out = ''
+    for w in words:
+        nxt = f'{out} {w}' if out else w
+        if len(nxt) > 12:
+            break
+        out = nxt
+    return out or words[0][:12]
+
+
+def supplier_label(name):
+    """supplierPalette.js supplierLabel: the curated short form, else the default rule."""
+    k = supplier_key(name)
+    if not k:
+        return ''
+    return SUPPLIER_SHORT.get(k) or short_supplier_label(name)
+
+
+def _to_fixed(x, places):
+    """Number.prototype.toFixed: half-up on the EXACT binary value."""
+    return str(Decimal(x).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP))
+
+
+def fmt_shu(n):
+    """varietySpec.js fmtShu."""
+    if n >= 1_000_000:
+        return re.sub(r'\.?0+$', '', _to_fixed(n / 1_000_000, 2), count=1) + 'M'
+    if n >= 10_000:
+        return f'{_js_round(n / 1000)}K'
+    if n >= 1000:
+        return re.sub(r'\.0$', '', _to_fixed(n / 1000, 1), count=1) + 'K'
+    return str(n)
+
+
+def heat_label(i):
+    """mySeedsModel.js heatLabel = varietySpec.js shuLabel when the row has a figure, else ''."""
+    mn, mx = i.get('scoville_min'), i.get('scoville_max')
+    if mn is None and mx is None:
+        return ''
+    lo = mn if mn is not None else mx
+    hi = mx if mx is not None else mn
+    label = ('Sweet · 0 SHU' if lo == 0 and hi == 0
+             else f'{fmt_shu(lo)} SHU' if lo == hi else f'{fmt_shu(lo)}–{fmt_shu(hi)} SHU')
+    return f'est. {label}' if i.get('scoville_source') == 'inference' else label
+
+
 def line_text(i, vendor_of, now, year):
-    """mySeedsModel.js lineText: the second line as one string — what row uniqueness is computed over."""
-    facts = [f for f in (how_much(i), where_from(i, vendor_of), how_old(i)) if f]
-    return ' · '.join(state_chips(i, now, year) + facts)
+    """mySeedsModel.js lineText: the second line as one string — what row uniqueness is computed over.
+    The supplier's short name leads; the vendor is not repeated in the tail, where only a saved lot's
+    origin words (whereFrom with no vendor) remain."""
+    vendor = _js_trim(_js_str(vendor_of(i))) if vendor_of else ''
+    facts = [f for f in (how_much(i), heat_label(i), where_from(i, None), how_old(i)) if f]
+    return ' · '.join([p for p in [supplier_label(vendor) if vendor else ''] if p] + state_chips(i, now, year) + facts)
 
 
 def label_candidates(rows, facts, title):
@@ -590,7 +672,10 @@ SELECT i.id::text                AS id,
        i.seed_weight_g           AS seed_weight_g,
        i.seed_count_estimated    AS seed_count_estimated,
        i.sow_archived_season     AS sow_archived_season,
-       i.created_by              AS created_by
+       i.created_by              AS created_by,
+       pv.scoville_min           AS scoville_min,
+       pv.scoville_max           AS scoville_max,
+       pv.scoville_source        AS scoville_source
   FROM public.inventory_items i
   LEFT JOIN public.cultivar pv ON pv.id = i.variety_id
   LEFT JOIN LATERAL (
