@@ -357,25 +357,43 @@ jobs:
         # ferment line, and ONE view body — on ?view=mine, ?view=saved and ?view=sow at a TRUE 360x640
         # and 390x844, mounted by tests/harness/seeds.{html,jsx} with the app's 52px top bar and 56px
         # bottom nav in place (their heights are read from TopChrome.jsx and constants.js and checked).
-        # Fixture: 27 seed rows over 8 crops, the 44-char "Money Plant (self-saved, variety
+        # Fixture: 28 seed rows over 8 crops, the 44-char "Money Plant (self-saved, variety
         # unrecorded)" as a lot fermenting 5 days AND archived (two chips; the ferment line names it),
-        # registry vendors, an order-reference `source`, a used-up packet and an identical pair.
+        # registry suppliers that hit the colour palette plus one it does not know, pepper heat (sweet,
+        # ranges, one bound, none, a saved lot's estimate), 13 packet photos on three small committed
+        # PNGs with distinct per-photo URLs (one broken), an order-reference `source`, a used-up packet
+        # and an identical pair.
         # Asserts: (a) the view switch is one line; (b) the header's title and actions share one line
-        # and nothing overflows it; (c) no sideways scroll; (d) every visible button, link, radio and
-        # field is >= T.tapMinHeight, except the frozen SegmentedControl's 40px radios — ONE named
-        # exemption, shared with gate:seeds-saved; (e) at 360x640 on My seeds, >= 3 rows fully on the
-        # first screen between the bars; (f) every My seeds row's second line and title are ONE line,
-        # the 44-char name truncating with an ellipsis; (g) every row's amount shows whole (the chips
-        # and vendor give way first); (h) every open Sow now card keeps its name column at least
-        # SowNow.jsx's TITLE_COL_MIN_PX. It refuses to measure a view whose innerWidth or innerHeight
-        # is not the one requested, or that is not at scrollTop 0.
+        # and nothing overflows it; (c) no sideways scroll; (d) every visible button, link, radio,
+        # field and role=button (the folding crop headers) is >= T.tapMinHeight, except the frozen
+        # SegmentedControl's 40px radios — ONE named exemption, shared with gate:seeds-saved.
+        # My seeds opens FOLDED (V5-SEEDCARDS-001), so it is measured in three states, each reached by a
+        # real hit-tested tap: (e) the folded first screen — the search line and both chip rows fully
+        # between the bars and each chip row one line, every header folded, no row in the band, the
+        # pinned crops first, and at 360x640 >= 3 headers fully in the band; (e2) the Pepper header
+        # tapped — it does not move (+-1px), its first row is fully in the band and its second row
+        # starts in it; then Expand all and one row opened, over every row: (f) line 1 and line 2 are
+        # ONE line each, the 44-char name ellipsising; (g) the amount, (i) the identical-pair ordinal
+        # (line 1), (j) the supplier chip and (k) the heat each show whole; (l) every thumbnail box is
+        # 40x40 at one x, with a supplier stripe or without, measured with the packet-image requests
+        # HELD at the network layer and again after every image loaded or failed; (d) and (c) again.
+        # (h) every open Sow now card keeps its name column at least SowNow.jsx's TITLE_COL_MIN_PX.
+        # It refuses to measure a view whose innerWidth or innerHeight is not the one requested, that
+        # is not at scrollTop 0, or where a tap did not take.
         #
         # Verified non-vacuous: `npm run gate:seeds-page:probe-nothing` exits 1 on all six
         # view/viewport pairs; and GATE_MUTATE_CSS (CSS injected before measuring, src/** untouched)
-        # reds each assertion by name — (a) switch forced to wrap, (b) actions stacked, (c) page forced
-        # to 480px, (d) Save seed forced to 30px, (f) line flex-wrap / facts wrap / title wrap,
-        # (g) the amount span allowed to shrink, (h) the Sow now card kept from wrapping.
-        # NO continue-on-error, per the policy note above. ~10 s locally.
+        # reds each assertion by name — (a) switch forced to wrap, (b) actions stacked, (c) page / the
+        # opened rows forced to 480px, (d) Save seed, the headers, the supplier chips, Expand all and
+        # an expanded row's link forced short, (e) the controls pushed under the nav, a chip row
+        # narrowed until it wraps, Tomato moved below Bean, headers made 90px, (e2) the header padded
+        # on open, row 1 made taller than the band, row 2 pushed out, (f) line 1 / line 2 wrap, (g) the
+        # amount, (i) the ordinal, (j) the supplier chip, (k) the heat squeezed or pushed out of the
+        # line, (l) the box sized by its image or the stripeless rows shifted 3px, (h) the Sow now card
+        # kept from wrapping. GATE_MUTATE_JS (a page script) covers what no stylesheet reaches: a group
+        # opened on the first screen reds (e)'s folded and no-row checks, and disabling the page's own
+        # open-scroll isolates (e2)'s row checks.
+        # NO continue-on-error, per the policy note above. ~15 s locally.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-page

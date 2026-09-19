@@ -666,13 +666,24 @@ async function allOpened(v, at, vw, vh) {
   if (why) { fail(`${at}: ${why} — no way to open every group`); return }
   const opened = await waitSettled(`(() => { const hs = [...document.querySelectorAll('${tid('my-seeds-view')} ${tid('facet-group-header')}')]
     return hs.length > 0 && hs.every(h => h.getAttribute('aria-expanded') === 'true') && document.querySelectorAll('${tid('my-seed-row')}').length === ${e.rows} })()`)
-  why = opened ? await tap(`(${rowByTitle(EXPAND_ROW)})?.querySelector('button')`, `the "${EXPAND_ROW}" row`) : null
-  const expandedRow = opened && !why ? await waitSettled(`!!document.querySelector('${tid('my-seed-expanded')}')`) : false
+  // The row is brought to the middle of the band before it is tapped — a thumb scrolls to a row it
+  // wants — and the page goes back to the top after, so the census below runs at scrollTop 0 with no
+  // header stuck over the rows.
+  let expandedRow = false
+  if (opened) {
+    await evalSettled(`(() => { const r = ${rowByTitle(EXPAND_ROW)}; if (r) r.scrollIntoView({ block: 'center' }); return 1 })()`)
+    await waitSettled('true')
+    why = await tap(`(${rowByTitle(EXPAND_ROW)})?.querySelector('button')`, `the "${EXPAND_ROW}" row`)
+    expandedRow = !why && await waitSettled(`!!document.querySelector('${tid('my-seed-expanded')}')`)
+    await evalSettled('(() => { window.scrollTo(0, 0); return 1 })()')
+    await waitSettled('window.scrollY === 0')
+  }
   const m = await evalSettled(MEASURE(v))
 
   // ── INSTRUMENT CHECK for this state. Every count here falls out of the fixture.
   const mismatch = []
   if (m.vw !== vw || m.vh !== vh) mismatch.push(`(c) with every group open the page self-reports ${m.vw}x${m.vh}, not ${vw}x${vh} — mobile Chrome widened the layout viewport to fit a ${m.doc.scrollW}px document, so a row overflows sideways`)
+  if (m.scroll.x !== 0 || m.scroll.y !== 0) mismatch.push(`the page is scrolled to ${m.scroll.x},${m.scroll.y} — the census is read at 0,0`)
   if (m.errors.length) mismatch.push(`the page raised ${m.errors.length} error(s): ${m.errors.join(' | ')}`)
   if (!opened) mismatch.push(`tapping Expand all did not open every group into ${e.rows} rows (${m.rows.length} rows, headers ${m.mine ? m.mine.headers.map(h => `${h.label}=${h.expanded}`).join(' ') : 'none'})`)
   if (why) mismatch.push(`${why} — no expanded row for the census`)
@@ -984,10 +995,13 @@ try {
         for (const [what, b] of [['the search line', M.search], ['the crop chip row', M.crops], ['the supplier chip row', M.suppliers]]) {
           if (!inBand(b)) fail(`${at}: (e) ${what} spans y${b.t}-${b.b}, not fully inside the visible band y${band.t}-${band.b}`)
         }
-        const rowSpread = {}
+        // Each chip row's MARGIN: from its last chip's right edge to the row's own right edge — what
+        // CI's wider fonts spend before the row wraps to a second 48px line.
+        const rowSpread = {}, rowSlack = {}
         for (const [what, row] of [['crop', M.crops], ['supplier', M.suppliers]]) {
           const tops = row.buttons.map(c => c.t)
           rowSpread[what] = R1(Math.max(...tops) - Math.min(...tops))
+          rowSlack[what] = R1(row.r - Math.max(...row.buttons.map(c => c.r)))
           if (rowSpread[what] > SAME_TOP_PX) fail(`${at}: (e) the ${what} chip row is not one line — its chips' tops span ${rowSpread[what]}px (${row.buttons.map(c => `"${c.label}" y${c.t}`).join(', ')})`)
         }
         const open = M.headers.filter(h => h.expanded !== 'false')
@@ -1001,7 +1015,8 @@ try {
         const at360 = v.view === FIRST_SCREEN.view && vw === FIRST_SCREEN.vw && vh === FIRST_SCREEN.vh
         const next = M.headers.find(h => !inBand(h))
         if (at360 && headersIn.length < FIRST_SCREEN.minHeaders) fail(`${at}: (e) only ${headersIn.length} header(s) fully in the visible band y${band.t}-${band.b}, need >=${FIRST_SCREEN.minHeaders} — the first header starts at y${M.headers[0] ? M.headers[0].t : '?'}`)
-        firstScreen = `(e) FOLDED FIRST SCREEN — search line y${M.search.t}-${M.search.b}, crop chips y${M.crops.t}-${M.crops.b} (${M.crops.buttons.length} on one line, spread ${rowSpread.crop}px), supplier chips y${M.suppliers.t}-${M.suppliers.b} (${M.suppliers.buttons.length}, spread ${rowSpread.supplier}px) · ${headersIn.length} of ${M.headers.length} headers fully in the band y${band.t}-${band.b}${at360 ? ` (need >=${FIRST_SCREEN.minHeaders})` : ' [PRINTED, not asserted]'}: ${headersIn.map(h => `${h.label} y${h.t}-${h.b}`).join(', ')}${next ? `; next "${next.label}" at y${next.t} (${R1(band.b - next.t)}px of it above the nav)` : ''} · ${m.rows.length} rows rendered, ${rowsInBand.length} in the band`
+        const lastIn = headersIn[headersIn.length - 1]
+        firstScreen = `(e) FOLDED FIRST SCREEN — search line y${M.search.t}-${M.search.b}, crop chips y${M.crops.t}-${M.crops.b} (${M.crops.buttons.map(c => `"${c.label}"`).join(' ')} on one line, spread ${rowSpread.crop}px, ${rowSlack.crop}px to spare), supplier chips y${M.suppliers.t}-${M.suppliers.b} (${M.suppliers.buttons.map(c => `"${c.label}"`).join(' ')}, spread ${rowSpread.supplier}px, ${rowSlack.supplier}px to spare) · ${headersIn.length} of ${M.headers.length} headers fully in the band y${band.t}-${band.b}${at360 ? ` (need >=${FIRST_SCREEN.minHeaders})` : ' [PRINTED, not asserted]'}: ${headersIn.map(h => `${h.label} y${h.t}-${h.b}`).join(', ')}${lastIn ? ` (the last ${R1(band.b - lastIn.b)}px above the nav)` : ''}${next ? `; next "${next.label}" at y${next.t} (${R1(band.b - next.t)}px of it above the nav)` : ''} · ${m.rows.length} rows rendered, ${rowsInBand.length} in the band`
       }
 
       // ── (h) SOW NOW NAMES ARE NOT SQUEEZED.
