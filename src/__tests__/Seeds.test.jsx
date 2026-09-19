@@ -9,7 +9,7 @@
 // No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, act, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent, cleanup, within } from '@testing-library/react'
 
 const { fetchSpy, saveSheetProps } = vi.hoisted(() => ({ fetchSpy: vi.fn(), saveSheetProps: { current: null } }))
 
@@ -267,6 +267,67 @@ describe('Seeds — header actions (fixed slot per view)', () => {
     await act(async () => { router.navigate('/seeds?view=sow', { replace: true }) })
     await waitFor(() => expect(screen.getByTestId('sow-now-view')).toBeTruthy())
     expect(screen.getByTestId('seeds-actions').children.length).toBe(0)
+  })
+})
+
+// §12 "N adds, then one Back leaves Seeds" holds only if the DOOR that pushes a page off Seeds attaches
+// the Seeds URL it came from: the add form and the detail page leave with navigate(-1) when they see it
+// (InventoryAdd.seedMode.test.jsx pins that half, with the state injected by hand). Without it every add
+// stacks another copy of Seeds under the form. These pin the sending half, one door per case.
+describe('Seeds — every door that pushes a page off Seeds carries the way back', () => {
+  const landed = (router) => ({
+    action: router.state.historyAction,
+    path: router.state.location.pathname,
+    state: router.state.location.state,
+  })
+
+  it('My seeds header: + Add seeds', async () => {
+    const router = mount(['/today', '/seeds?view=mine'])
+    await waitFor(() => expect(screen.getByTestId('my-seeds-view')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('seeds-add')) })
+    expect(landed(router)).toEqual({ action: 'PUSH', path: '/inventory/add', state: { seedsReturn: '/seeds?view=mine' } })
+  })
+
+  it('My seeds row: Open details → (after expanding the row)', async () => {
+    seedRows = [BOUGHT]
+    const router = mount(['/today', '/seeds?view=mine'])
+    await waitFor(() => expect(document.querySelector('[data-lot-id="pkt-1"]')).toBeTruthy())
+    await act(async () => { fireEvent.click(document.querySelector('[data-lot-id="pkt-1"] button[aria-expanded]')) })
+    await act(async () => { fireEvent.click(screen.getByTestId('my-seed-details')) })
+    expect(landed(router)).toEqual({ action: 'PUSH', path: '/inventory/pkt-1', state: { seedsReturn: '/seeds?view=mine' } })
+  })
+
+  it('My seeds empty state: + Add seeds', async () => {
+    seedRows = []
+    const router = mount(['/today', '/seeds?view=mine'])
+    await waitFor(() => expect(screen.getByTestId('my-seeds-empty')).toBeTruthy())
+    // The empty card's own link, not the header's (both read "+ Add seeds").
+    await act(async () => { fireEvent.click(within(screen.getByTestId('my-seeds-empty')).getByRole('link', { name: '+ Add seeds' })) })
+    expect(landed(router)).toEqual({ action: 'PUSH', path: '/inventory/add', state: { seedsReturn: '/seeds?view=mine' } })
+  })
+
+  it('Sow now card: a packet link (Add sow details) returns to Sow now', async () => {
+    candidates = [{ inventory_item_id: 'pkt-1', item_name: 'Sungold', variety_name: 'Sungold', variety_id: 'v-b' }]
+    const router = mount(['/today', '/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add sow details for Sungold' })).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Add sow details for Sungold' })) })
+    expect(landed(router)).toEqual({ action: 'PUSH', path: '/inventory/pkt-1', state: { seedsReturn: '/seeds?view=sow' } })
+  })
+
+  it('Sow now empty state: Add seeds returns to Sow now', async () => {
+    candidates = []
+    const router = mount(['/today', '/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByText('No seed packets yet')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('link', { name: 'Add seeds' })) })
+    expect(landed(router)).toEqual({ action: 'PUSH', path: '/inventory/add', state: { seedsReturn: '/seeds?view=sow' } })
+  })
+
+  it('Saved seeds empty state: Add the packet → returns to Saved seeds', async () => {
+    seedRows = [BOUGHT]   // nothing tracked
+    const router = mount(['/today', '/seeds?view=saved'])
+    await waitFor(() => expect(screen.getByTestId('empty-add-packet')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByTestId('empty-add-packet')) })
+    expect(landed(router)).toEqual({ action: 'PUSH', path: '/inventory/add', state: { seedsReturn: '/seeds?view=saved' } })
   })
 })
 
