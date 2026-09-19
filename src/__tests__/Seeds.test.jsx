@@ -47,6 +47,7 @@ const BOUGHT = lot({ id: 'pkt-1', name: 'Sungold', variety_name: 'Sungold', quan
 let seedRows
 let seedResponse   // optional override: a function returning the promise for the seed list
 let candidates     // sow-candidates items
+let candidatesResponse   // optional override: a function returning the promise for sow-candidates
 
 beforeEach(() => {
   fetchSpy.mockReset()
@@ -54,13 +55,14 @@ beforeEach(() => {
   seedRows = [BOUGHT]
   seedResponse = null
   candidates = []
+  candidatesResponse = null
   clearDraft('sow-now')
   try { window.sessionStorage.clear() } catch { /* jsdom */ }
   fetchSpy.mockImplementation((path, opts) => {
     const p = String(path)
     if (opts?.method) return Promise.resolve({ ok: true })
     if (p.startsWith('/api/inventory-items?category=seeds')) return seedResponse ? seedResponse() : Promise.resolve(seedRows)
-    if (p.startsWith('/api/inventory-items/sow-candidates')) return Promise.resolve({ items: candidates })
+    if (p.startsWith('/api/inventory-items/sow-candidates')) return candidatesResponse ? candidatesResponse() : Promise.resolve({ items: candidates })
     return Promise.resolve([])
   })
 })
@@ -134,6 +136,15 @@ describe('Seeds — the default view is settled once, in the URL, before a body 
     await waitFor(() => expect(search(router)).toBe('?view=mine'))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy())
     expect(screen.getByText('Could not load your seed inventory.')).toBeTruthy()
+  })
+
+  it('Sow now: a candidates failure with an EMPTY message says it failed — never "No seed packets yet"', async () => {
+    // Same Error('') as above, on Sow now's own fetch (lane T4): `??` kept the '' and the page rendered
+    // its empty state, so a failed load read as "you have no seed".
+    candidatesResponse = () => Promise.reject(new Error(''))
+    mount(['/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Failed to load sow candidates'))
+    expect(screen.queryByText('No seed packets yet')).toBeNull()
   })
 
   it('mounts NO view body while the rows are still loading (the URL is written first)', async () => {
@@ -470,11 +481,35 @@ describe('Seeds › Saved seeds — a lot the page is told about is brought into
     expect(document.querySelector('[data-lot-id="lot-ferm"]')).toBeTruthy()
   })
 
-  // Found by lane T4 (report: _crucible_seedstab_20260918/build-20260918/lane-t4-report.md). Kept out as
-  // a todo because the fix is in SavedSeeds.jsx: its useLotOutline `ready` is `items != null`, so after a
-  // save the outline (and its one scrollIntoView) fires BEFORE the reload brings the new card in, and
-  // nothing scrolls to it when it lands. My seeds waits for the row (`ready` includes it) and does scroll.
-  it.todo('Saved seeds scrolls a just-saved lot into view once a SLOW reload lands (§4.6) — DEFECT, SavedSeeds.jsx useLotOutline ready')
+  // Found by lane T4 (report: _crucible_seedstab_20260918/build-20260918/lane-t4-report.md): Saved seeds'
+  // useLotOutline `ready` was `items != null`, so after a save the outline (and its one scrollIntoView)
+  // fired BEFORE the reload brought the new card in, and nothing scrolled to it when it landed. An
+  // instant fetch cannot see this — the reload here is held open, as a phone's is.
+  for (const view of ['mine', 'saved']) {
+    it(`${view === 'saved' ? 'Saved seeds' : 'My seeds'} scrolls a just-saved lot into view once a SLOW reload lands (§4.6)`, async () => {
+      const calls = []
+      const had = Object.prototype.hasOwnProperty.call(Element.prototype, 'scrollIntoView')
+      const orig = Element.prototype.scrollIntoView
+      Element.prototype.scrollIntoView = function () { calls.push(this.getAttribute('data-lot-id')) }
+      try {
+        seedRows = [DRYING]
+        mount([`/seeds?view=${view}`])
+        await waitFor(() => expect(document.querySelector('[data-lot-id="lot-dry"]')).toBeTruthy())
+        await act(async () => { fireEvent.click(screen.getByTestId('seeds-save-seed')) })
+        const NEW = lot({ id: 'lot-new', name: 'Cherokee Purple — saved 2026', variety_name: 'Cherokee Purple', seed_stage: 'fermenting', seed_process: 'wet', stage_entered_at: daysAgo(0) })
+        let release
+        seedResponse = () => new Promise((r) => { release = r })
+        await act(async () => { saveSheetProps.current.onClose(); saveSheetProps.current.onSaved(NEW, { stageWritten: 'fermenting' }) })
+        await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+        expect(calls).toEqual([])   // nothing to scroll to yet — and nothing scrolled to the wrong place
+        await act(async () => { release([DRYING, NEW]) })
+        await waitFor(() => expect(document.querySelector('[data-lot-id="lot-new"]')?.getAttribute('data-outlined')).toBe('true'))
+        await waitFor(() => expect(calls).toContain('lot-new'))
+      } finally {
+        if (had) Element.prototype.scrollIntoView = orig; else delete Element.prototype.scrollIntoView
+      }
+    })
+  }
 })
 
 describe('Seeds — every view sees the others’ writes without a reload', () => {
@@ -492,6 +527,31 @@ describe('Seeds — every view sees the others’ writes without a reload', () =
     const line = document.querySelector('[data-lot-id="lot-dry"] [data-testid="my-seed-line"]').textContent
     expect(line).not.toContain('Drying')
     expect(line).toContain('40 seeds')
+  })
+
+  it('a stage advance outlines the card where it LANDS: nothing scrolls until the reload has moved it', async () => {
+    // The card is already on the page in its OLD section, so an outline asked for before the reload
+    // scrolled there and then watched the card jump to Stored.
+    const calls = []
+    const had = Object.prototype.hasOwnProperty.call(Element.prototype, 'scrollIntoView')
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function () { calls.push(this.closest('section')?.getAttribute('data-testid')) }
+    try {
+      seedRows = [DRYING]
+      mount(['/seeds?view=saved'])
+      await waitFor(() => expect(screen.getByTestId('advance-stage')).toBeTruthy())
+      await act(async () => { fireEvent.click(screen.getByTestId('advance-stage')) })
+      await act(async () => { fireEvent.change(screen.getByTestId('seed-count-input'), { target: { value: '40' } }) })
+      let release
+      seedResponse = () => new Promise((r) => { release = r })
+      await act(async () => { fireEvent.click(screen.getByTestId('stage-save')) })
+      await act(async () => { await new Promise((r) => setTimeout(r, 30)) })
+      expect(calls).toEqual([])
+      await act(async () => { release([{ ...DRYING, seed_stage: 'stored', seed_count: 40 }]) })
+      await waitFor(() => expect(calls).toEqual(['stage-section-stored']))
+    } finally {
+      if (had) Element.prototype.scrollIntoView = orig; else delete Element.prototype.scrollIntoView
+    }
   })
 
   it('an archive in Sow now shows in My seeds at once, patched in place — no second seed fetch', async () => {

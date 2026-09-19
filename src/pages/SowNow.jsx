@@ -186,7 +186,9 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
       })
       .catch((err) => {
         if (!alive) return
-        setError(err?.message ?? 'Failed to load sow candidates')
+        // `||`, not `??`: api.js throws Error('') on an empty statusText, and '' would render the
+        // "No seed packets yet" empty state for a load that FAILED (lane T4).
+        setError(err?.message || 'Failed to load sow candidates')
       })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }

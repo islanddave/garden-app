@@ -500,7 +500,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     // without the rest of inventory. seed_stage / seed_process ride along on `i.*`.
     fetch('/api/inventory-items?category=seeds')
       .then((rows) => setOwnItems(Array.isArray(rows) ? rows : []))
-      .catch((e) => setOwnErr(e?.message ?? 'Could not load your seed inventory.'))
+      .catch((e) => setOwnErr(e?.message || 'Could not load your seed inventory.'))
   }, [fetch])
 
   // With a store the shell owns the fetch; this page never issues a second copy of it.
@@ -749,7 +749,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             body: JSON.stringify({ source_plant_id: stagePlant }),
           })
         } catch (e) {
-          linkErr = e?.message ?? 'Stage saved, but the parent plant did not.'
+          linkErr = e?.message || 'Stage saved, but the parent plant did not.'
         }
       }
       // V4-SEEDSTOREDQTY-001 — the count, on the same terms as the link above: its OWN request with
@@ -783,7 +783,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             body: JSON.stringify({ seed_count: count.value, seed_count_estimated: qtyEstimated }),
           })
         } catch (e) {
-          qtyWriteErr = e?.message ?? 'Stage saved, but the count did not.'
+          qtyWriteErr = e?.message || 'Stage saved, but the count did not.'
         }
       }
       // V5-SEEDYEARHARVESTED-001 — the ONE key on this page with no narrow route, so it is the only
@@ -800,7 +800,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
             body: JSON.stringify({ ...listRowPutBody(advancing.item), ...yearPatch }),
           })
         } catch (e) {
-          yearWriteErr = e?.message ?? 'Stage saved, but the harvest year did not.'
+          yearWriteErr = e?.message || 'Stage saved, but the harvest year did not.'
         }
       }
       // "Started in", not "Moved to", when this is the lot's first stage — `process` is set only on
@@ -811,11 +811,13 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       const verb = advancing.process ? 'Started in' : advancing.correction ? 'Corrected to' : 'Moved to'
       show({ message: linkErr ?? qtyWriteErr ?? yearWriteErr ?? `✓ ${verb} ${STAGE_META[advancing.toStage].label.toLowerCase()}` })
       setAdvancing(null)
-      load()
       // V5-SEEDSTAB-001 — the card moves section on a stage change; the outline says where it went.
-      onHighlight?.(advancing.item.id)
+      // AFTER the reload: the card is already on the page in its OLD section, so an outline asked for
+      // now would scroll there and then watch the card jump away.
+      const movedId = advancing.item.id
+      Promise.resolve(load()).then(() => onHighlight?.(movedId), () => onHighlight?.(movedId))
     } catch (e) {
-      show({ message: e?.message ?? 'Could not save that.' })
+      show({ message: e?.message || 'Could not save that.' })
     } finally {
       setBusy(false)
     }
@@ -840,7 +842,11 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     setTrackedCropSel(new Set())
     setClearedFor(highlightLot.variety_name || highlightLot.name || 'that lot')
   }, [highlightLot, highlight?.seq])  // eslint-disable-line react-hooks/exhaustive-deps
-  const outlined = useLotOutline(highlight, { ready: items != null, skipArrival: restoredState !== undefined })
+  // Ready only once the lot's card is actually ON the page. `items != null` alone let the outline — and
+  // its one scrollIntoView — fire in the render right after a save, before the reload brought the new
+  // card in, so nothing scrolled to it when it landed (lane T4). My seeds already waited for its row.
+  const highlightShown = highlightLot != null && visibleTracked.some((i) => String(i.id) === String(highlightLot.id))
+  const outlined = useLotOutline(highlight, { ready: items != null && highlightShown, skipArrival: restoredState !== undefined })
 
   if (embedded && (items === null || loadErr)) {
     return (
