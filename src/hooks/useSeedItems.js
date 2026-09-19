@@ -47,7 +47,7 @@ export function useSeedItems() {
       setFromCache(isFromCache(rows))
     } catch (e) {
       if (seqRef.current !== my) return
-      setError(e?.message ?? 'Could not load your seed inventory.')
+      setError(e?.message || 'Could not load your seed inventory.')
     } finally {
       if (seqRef.current === my) setRefreshing(false)
     }

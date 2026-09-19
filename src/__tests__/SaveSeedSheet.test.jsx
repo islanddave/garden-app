@@ -16,8 +16,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-const { navigateSpy, apiFetchSpy, toastSpy } = vi.hoisted(() => ({
-  navigateSpy: vi.fn(), apiFetchSpy: vi.fn(), toastSpy: vi.fn(),
+const { navigateSpy, apiFetchSpy, toastSpy, pickerMode } = vi.hoisted(() => ({
+  navigateSpy: vi.fn(), apiFetchSpy: vi.fn(), toastSpy: vi.fn(), pickerMode: { real: false },
 }))
 vi.mock('react-router-dom', async (orig) => {
   const actual = await orig()
@@ -39,16 +39,21 @@ vi.mock('../lib/pendingCapture.js', () => ({ setPendingCapture: vi.fn(), takePen
 // "the first call was the POST" assertion below depend on the picker's internals. The real picker
 // has its own five suites. The stub keeps the same contract this component uses: `value` in,
 // onChange(variety|null) out.
-vi.mock('../components/VarietyPicker.jsx', () => ({
-  default: ({ value, onChange }) => (
-    <div data-testid="variety-picker-stub">
-      <span data-testid="variety-picker-value">{value?.id ?? 'none'}</span>
-      <button type="button" onClick={() => onChange({ id: 'v-other', name: 'Cherokee Purple' })}>
-        stub pick other variety
-      </button>
-    </div>
-  ),
-}))
+// `pickerMode.real` (default false, reset after use) swaps the REAL picker back in for the one suite at
+// the end of this file that is about what the picker hands over — every other test sees the stub.
+vi.mock('../components/VarietyPicker.jsx', async (importOriginal) => {
+  const { default: RealVarietyPicker } = await importOriginal()
+  return {
+    default: (props) => (pickerMode.real ? <RealVarietyPicker {...props} /> : (
+      <div data-testid="variety-picker-stub">
+        <span data-testid="variety-picker-value">{props.value?.id ?? 'none'}</span>
+        <button type="button" onClick={() => props.onChange({ id: 'v-other', name: 'Cherokee Purple' })}>
+          stub pick other variety
+        </button>
+      </div>
+    )),
+  }
+})
 
 import QuickActions from '../components/planting/QuickActions.jsx'
 import SaveSeedSheet, { defaultLotName, seedSavedNote } from '../components/planting/SaveSeedSheet.jsx'
@@ -729,5 +734,42 @@ describe('V5-SEEDSTAB-001 — "Not yet" says where an unstaged lot waits', () =>
     expect(none.textContent).toContain('Not yet — just save the lot')
     expect(none.textContent).toContain('It waits in Seeds › My seeds until you start the process')
     expect(none.textContent).not.toMatch(/Inventory/)
+  })
+})
+
+// ── V5-SEEDSTAB-001 §12 "F1 notice on My seeds' Save seed" ─────────────────────────────────────────
+// Seeds › My seeds opens this sheet with NO planting (Seeds.test.jsx pins that the shell passes none).
+// With no planting the variety can only arrive through the picker, so that is the path the notice has to
+// survive — and the stub above could never show it, because the variety it answers with carries no
+// breeding_system. So the REAL VarietyPicker, fed a stubbed /api/varieties whose row carries
+// breeding_system the way the list projection does. breedingNoticeCoverage.test.jsx cites this test.
+describe('V5-SEEDSTAB-001 — the F1 notice on the no-planting path (Seeds › My seeds › Save seed)', () => {
+  const BIG_BOY = { id: 'v-bb', name: 'Big Boy', species: 'Solanum lycopersicum', common_name: 'tomato', breeding_system: 'f1' }
+  beforeEach(() => { pickerMode.real = true })
+  afterEach(() => { pickerMode.real = false })
+
+  it('an F1 variety picked through the real picker, with no planting prop, shows "F1 hybrid" above Save', async () => {
+    apiFetchSpy.mockImplementation((path) => {
+      const p = String(path)
+      if (p === '/api/varieties' || p.startsWith('/api/varieties?')) return Promise.resolve([BIG_BOY])
+      return Promise.resolve([])
+    })
+    render(<MemoryRouter><SaveSeedSheet onClose={vi.fn()} onSaved={vi.fn()} /></MemoryRouter>)
+    // No planting: the sheet asks where the seed came from, and the picker is open because there is no
+    // cultivar to default to. Nothing is picked yet, so nothing is said.
+    fireEvent.click(screen.getByTestId('seed-origin-other'))
+    expect(screen.getByTestId('save-seed-variety-picker')).toBeTruthy()
+    expect(document.querySelector('[data-testid="breeding-notice"]')).toBeNull()
+
+    fireEvent.focus(screen.getByPlaceholderText('Search varieties…'))
+    await waitFor(() => expect(screen.getByText('Big Boy')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByText('Big Boy')) })
+
+    const notice = document.querySelector('[data-testid="breeding-notice"][data-breeding="f1"]')
+    expect(notice, 'no F1 notice after picking an F1 variety').toBeTruthy()
+    expect(notice.textContent).toContain('F1 hybrid')
+    // It sits above Save, the last thing read before the tap it is about.
+    const submit = screen.getByTestId('save-seed-submit')
+    expect(notice.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
