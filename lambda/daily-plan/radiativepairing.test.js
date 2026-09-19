@@ -57,7 +57,8 @@ const ev = (over = {}, opts = {}) => frostEval({
   spaceId: 'S1', eventDate: PLAN, ...over,
 }, { frostSeason: true, radiativeEnabled: true, ...opts });
 
-const head = (msg) => (/^FROST (?:ADVISORY|WATCH) — (.+?) looks clear and calm \(low (\d+)°F, (\S+), dewpoint (\d+)°F\)/.exec(msg || '') || []).slice(1);
+// The radiative-only advisory head (a FROST WATCH since V5-RADIATIVESUBJECTCOPY-001): night, low, date, dewpoint.
+const head = (msg) => (/^FROST WATCH — (.+?) looks clear and calm \(low (\d+)°F, (\S+), dewpoint (\d+)°F\)/.exec(msg || '') || []).slice(1);
 
 // ── 1 — the located pairing ───────────────────────────────────────────────────────────────────────────
 describe('located minimum — the trigger judges the night the hours put the minimum in, and only that night', () => {
@@ -379,7 +380,7 @@ describe('END TO END — real run(), radiative ON: the published text, the store
     const { frost, row, evalLine } = await drive({ hy: hydrology({ hourlyTemp: minAt('2026-10-10', 42, 23), frost: frostBlock(SKY_CLOUDY, SKY_CLEAR) }) });
     expect(frost).toHaveLength(1);
     expect(head(frost[0].message)).toEqual(['tomorrow night', '42', '2026-10-10', '31']);
-    expect(frost[0].subject).toMatch(/ tomorrow night \(low 42F\)$/);
+    expect(frost[0].subject).toBe('Garden alert - Frost watch tomorrow night (low 42F)');
     expect(row.alerts_sent.at(-1)).toMatchObject({ tier: 'advisory', lowF: 42, dayOffset: 1, date: '2026-10-10', nightOffset: 1 });
     expect(buildFrostAlertLine(row.alerts_sent).text).toBe('Frost possible tomorrow night — low 42°F. Plan cover for tender plants.');
     expect(evalLine).toMatchObject({ forecastMinHour: 23, advisoryNightOffset: 1, advisoryNightBasis: 'hourly',

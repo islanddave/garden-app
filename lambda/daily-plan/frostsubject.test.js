@@ -97,9 +97,10 @@ const decide = (days, { tonightLow = 55, withTemp = true } = {}) => {
   });
 };
 
-// What the BODY says, in either advisory shape: the night phrase and the printed low.
+// What the BODY says, in either advisory shape: the night phrase and the printed low. Each shape under its own
+// label (V5-RADIATIVESUBJECTCOPY-001: the radiative-only shape is a FROST WATCH).
 const bodyNightLow = (msg) => {
-  const m = /^FROST ADVISORY — (?:frost possible (.+?)|(.+?) looks clear and calm) \(low (-?\d+(?:\.\d+)?)°F/.exec(msg);
+  const m = /^FROST (?:ADVISORY — frost possible (.+?)|WATCH — (.+?) looks clear and calm) \(low (-?\d+(?:\.\d+)?)°F/.exec(msg);
   return m ? { night: m[1] || m[2], low: Number(m[3]) } : null;
 };
 // What the SUBJECT says for an advisory.
@@ -171,7 +172,8 @@ describe('frostSubject — an ADVISORY names its own night and low, the ones its
     }, { frostSeason: true, radiativeEnabled: true });
     expect(d.tier).toBe('advisory');
     expect(bodyNightLow(d.message)).toEqual({ night: 'tomorrow night', low: 42 });
-    expect(frostSubject(d)).toBe('Garden alert - Frost advisory tomorrow night (low 42F)');
+    // V5-RADIATIVESUBJECTCOPY-001: a watch, as the body says — 42F is above the 40F trip point.
+    expect(frostSubject(d)).toBe('Garden alert - Frost watch tomorrow night (low 42F)');
   });
 
   it('a record carrying its own lowF is quoted the way the body quotes it: lowF first, minLowF only when lowF is absent', () => {
@@ -262,7 +264,9 @@ describe('frostSubject — IMMINENT and HEAT subjects are byte-identical to befo
       exposure: { tender: 5, unknown: 0, tenderContainers: 1, atRisk: 5, byCropType: [tender] }, spaceId: 'S1', eventDate: '2026-10-09',
     }, { frostSeason: true, radiativeEnabled: true });
     expect(d.tier).toBe('imminent');
-    expect(d.message).toMatch(/Colder ahead: 35°F tonight/);           // the advisory is in the body...
+    // CHANGED by V5-RADIATIVESUBJECTCOPY-001 (lane radiativefix, 2026-09-19): was /Colder ahead: 35°F tonight/ —
+    // the same night is not "ahead"; the clause now names the second forecast's lower low for tonight.
+    expect(d.message).toMatch(/Colder on a second forecast: 35°F tonight/);   // the advisory is in the body...
     expect(frostSubject(d)).toBe('Garden alert - Frost watch tonight (low 39F)');   // ...and not in the subject
     expect(frostSubject(d)).toBe(legacySubject(d));
   });

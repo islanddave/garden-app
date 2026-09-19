@@ -261,6 +261,9 @@ describe('frostEval — the two radiative sentences name the right night', () =>
   it('"Colder ahead" names the advisory\'s LOCATED night, not "tomorrow night" by offset', () => {
     // Imminent fires radiatively on tonight (39 > 38, clear and calm); the advisory's D1 (35F) is colder and
     // its minimum falls at 04:00 — i.e. it is tonight's own minimum, on the other model.
+    // CHANGED by V5-RADIATIVESUBJECTCOPY-001 (lane radiativefix, 2026-09-19): that same-night case used to read
+    // "Colder ahead: 35°F tonight" under a FROST WATCH TONIGHT headline; it is the second forecast's lower low for
+    // the same night, and now says so. The different-night wording (the control below) is unchanged.
     const args = {
       tonightLow: 39, forecastLows: [35, 50, 51],
       radiativeNights: [{ ...RAD, date: '2026-10-09' }],
@@ -268,7 +271,8 @@ describe('frostEval — the two radiative sentences name the right night', () =>
     };
     const r = base(args);
     expect(r.tier).toBe('imminent');
-    expect(r.message).toMatch(/Colder ahead: 35°F tonight, 2026-10-10 — harvest ahead and stage row cover\.$/);
+    expect(r.message).toMatch(/ Colder on a second forecast: 35°F tonight, 2026-10-10 — harvest ahead and stage row cover\.$/);
+    expect(r.message).not.toMatch(/Colder ahead/);
     // CONTROL: the same inputs with the minimum at 22:00 name tomorrow night, so the clause reads the locator.
     const late = base({ ...args, forecastHourly: hourlyFor([['2026-10-10', dayCurve(35, 22)]]) });
     expect(late.message).toMatch(/Colder ahead: 35°F tomorrow night, 2026-10-10/);
@@ -286,7 +290,7 @@ describe('frostEval — the two radiative sentences name the right night', () =>
       forecastHourly: evening,
     });
     expect(r.tier).toBe('advisory');
-    expect(r.message).toMatch(/^FROST ADVISORY — tomorrow night looks clear and calm \(low 42°F, 2026-10-10, dewpoint 34°F\)/);
+    expect(r.message).toMatch(/^FROST WATCH — tomorrow night looks clear and calm \(low 42°F, 2026-10-10, dewpoint 34°F\)/);
     expect(r.advisory).toMatchObject({ nightOffset: 1, nightDate: '2026-10-10', nightBasis: 'hourly' });
     expect(frostWeatherFacts(r)).toMatchObject({ nightOffset: 1 });
     // ...and the previous night's clear sky, the old pairing, no longer fires for this evening minimum.

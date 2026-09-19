@@ -934,11 +934,13 @@ function frostSubject(d) {
   // V5-RADIATIVEFROST-001: a radiative-only trip fires ABOVE the trip point, so "Frost protect tonight
   // (low 39F)" would assert a threshold crossing at a number that did not cross it — the same
   // copy-that-lies failure imminentMessage guards against, in the one place that does not read from it.
+  // V5-RADIATIVESUBJECTCOPY-001: the advisory tier's radiative-only case is a watch too ("Frost advisory tonight
+  // (low 42F)" read as a 42F frost forecast); frostEval marks it on the record, from the predicate its body used.
   const radiativeOnly = !!(d.imminent && d.imminent.radiativeOnly);
   const label = d.tier === 'imminent'
     ? (d.level === 'hard_freeze' ? 'HARD FREEZE tonight'
       : (radiativeOnly ? 'Frost watch tonight' : 'Frost protect tonight'))
-    : (d.tier === 'advisory' ? 'Frost advisory' : 'Heat advisory');
+    : (d.tier === 'advisory' ? (d.advisory && d.advisory.radiativeOnly ? 'Frost watch' : 'Frost advisory') : 'Heat advisory');
   const low = d.tier === 'advisory' ? advisorySubjectTail(d.advisory)
     : (d.observability && d.observability.tonightLowF != null ? ` (low ${d.observability.tonightLowF}F)` : '');
   return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);

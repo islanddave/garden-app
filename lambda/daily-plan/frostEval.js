@@ -386,9 +386,12 @@ function advisoryMessage(a, exposure, cropResult, radiativeNight) {
   // V5-RADIATIVEFROST-001 — same rule as imminentMessage: when the ONLY reason this fired is the
   // radiative signal, the forecast low printed here sits ABOVE the trip point and needs its reason
   // stated, or the reader is left to wonder why 42°F produced an advisory.
+  // V5-RADIATIVESUBJECTCOPY-001 — and it is a WATCH, the name the imminent tier already gives the same case: a
+  // low above the trip point under "FROST ADVISORY" reads as a forecast crossing that did not happen. Copy only:
+  // tier, level and dedup key stay 'advisory'. The email subject says the same (handler.frostSubject).
   const radOnly = radiativeOnlyNamed(cropResult);
   const head = radOnly
-    ? `FROST ADVISORY — ${when} looks clear and calm (low ${a.lowF ?? a.minLowF}°F${on}` +
+    ? `FROST WATCH — ${when} looks clear and calm (low ${a.lowF ?? a.minLowF}°F${on}` +
       `${radiativeNight && radiativeNight.minDewpointF != null ? `, dewpoint ${radiativeNight.minDewpointF}°F` : ''}), ` +
       'so it can fall further than the forecast.'
     : `FROST ADVISORY — frost possible ${when} (low ${a.lowF ?? a.minLowF}°F${on}).`;
@@ -702,7 +705,11 @@ function frostEval(input = {}, opts = {}) {
     if (imminent.radiativeOnly && advisory.fires && finite(advisory.minLowF) != null
         && finite(imminent.lowF) != null && Number(advisory.minLowF) < Number(imminent.lowF)) {
       const when = advisoryWhen(advisory);
-      message = truncate(`${message} Colder ahead: ${advisory.minLowF}°F ${when}` +
+      // V5-RADIATIVESUBJECTCOPY-001 — this message is about TONIGHT. An advisory whose night is tonight too is
+      // not "ahead": it is the second forecast's lower low for the same night (Open-Meteo vs the NWS low above).
+      const night = advisoryNight(advisory);
+      const lead = night && night.nightOffset === 0 ? 'Colder on a second forecast:' : 'Colder ahead:';
+      message = truncate(`${message} ${lead} ${advisory.minLowF}°F ${when}` +
         `${advisory.date ? `, ${advisory.date}` : ''} — harvest ahead and stage row cover.`);
     }
   } else if ((advisory.fires || advisoryRadiative) && (!crops || (advisoryCrops && advisoryCrops.fires))) {
@@ -720,8 +727,13 @@ function frostEval(input = {}, opts = {}) {
     // must name the night whose sky it quotes, radAdvisory. BUG-RADIATIVEPAIRINGNIGHT-001: when the hours
     // located the minimum that IS the located night, already named ('hourly' stays). Otherwise it is whichever
     // candidate night tripped, which can be the later one: name that, basis 'radiative'.
-    if (radiativeOnlyNamed(advisoryNamed) && pairing.basis !== 'hourly') {
-      Object.assign(advisory, { nightOffset: pairing.nightOffset, nightDate: pairing.nightDate, nightBasis: 'radiative' });
+    // V5-RADIATIVESUBJECTCOPY-001 — `radiativeOnly` marks the record the way imminent.radiativeOnly marks that tier,
+    // so the email subject labels it a watch from the same predicate the body used. Absent otherwise.
+    if (radiativeOnlyNamed(advisoryNamed)) {
+      if (pairing.basis !== 'hourly') {
+        Object.assign(advisory, { nightOffset: pairing.nightOffset, nightDate: pairing.nightDate, nightBasis: 'radiative' });
+      }
+      advisory.radiativeOnly = true;
     }
     tier = 'advisory'; level = 'advisory'; message = advisoryMessage(advisory, exposure, advisoryNamed, radAdvisory);
     trippedCrops = (advisoryNamed && advisoryNamed.tripped) || null;
