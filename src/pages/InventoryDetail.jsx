@@ -340,8 +340,12 @@ export default function InventoryDetail() {
       setErrors({ _form: error })
       setConfirmDelete(false)
     } else if (item?.category === 'seeds') {
-      // V5-SEEDSTAB-001 — REPLACE, so Back from Seeds never reopens the lot just removed.
-      navigate(SEEDS_MINE, { replace: true })
+      // V5-SEEDSTAB-001 — Back never reopens the lot just removed. Pushed by a Seeds view: go BACK to
+      // it (Seeds remounts and refetches, so the row is gone). A replace there left two identical
+      // Seeds entries in a row, and the next Back was a press that did nothing (pre-promote review).
+      // Any other arrival has nothing under it to go back to: REPLACE onto My seeds.
+      if (pushedFromSeeds) navigate(-1)
+      else navigate(SEEDS_MINE, { replace: true })
     } else {
       navigate('/inventory')
     }

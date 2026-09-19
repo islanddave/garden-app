@@ -111,6 +111,27 @@ describe('My seeds — what each row says', () => {
     await waitFor(() => expect(lineOf('arch')).toContain('Archived for this season'))
   })
 
+  it('the amount is its own span after the chips, so a crowded line cuts chips and vendor, never the amount', async () => {
+    // Geometry is gate:seeds-page's (g) (jsdom has no layout); this pins the structure it relies on:
+    // at 360px one facts span holding the amount was squeezed to 0px behind two chips.
+    rows = [pkt({
+      id: 'crowd', name: 'Big Boy — saved 2026', variety_name: 'Big Boy', seed_stage: 'fermenting', source_plant_id: 'pl',
+      seed_count: 120, seed_count_estimated: true, year_harvested: 2026, stage_entered_at: new Date().toISOString(),
+      sow_archived_season: new Date().getFullYear(),
+    })]
+    await mount()
+    await waitFor(() => expect(rowFor('crowd')).toBeTruthy())
+    const line = within(rowFor('crowd')).getByTestId('my-seed-line')
+    const parts = [...line.children]
+    const amount = within(line).getByTestId('my-seed-amount')
+    expect(amount.textContent).toBe('approx. 120 seeds')
+    expect(within(line).getAllByTestId('my-seed-chip').length).toBe(2)
+    expect(within(line).getAllByTestId('my-seed-chip').every((c) => !c.contains(amount) && c.parentElement !== line)).toBe(true)
+    expect(parts.indexOf(amount)).toBe(1)
+    expect(parts[2]).toBe(within(line).getByTestId('my-seed-rest'))
+    expect(amount.style.flex).toBe('0 0 auto')
+  })
+
   it('two rows that would read alike are told apart on screen', async () => {
     rows = [pkt({ id: 'd1' }), pkt({ id: 'd2' })]
     await mount()
@@ -155,26 +176,40 @@ describe('My seeds — grouping, filtering, sorting', () => {
     expect(screen.getAllByTestId('my-seed-row').length).toBe(4)
   })
 
+  // The sort is a native select sharing the search's line (two control lines at 360px, §5.1).
+  const sortBy = async (value) => {
+    await act(async () => { fireEvent.change(screen.getByTestId('my-seeds-sort'), { target: { value } }) })
+  }
+
   it('Oldest puts unknown years under a labelled divider; Newest follows created_at', async () => {
     rows = CROPPED
     await mount()
-    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'Oldest' })) })
+    await sortBy('oldest')
     const order = () => screen.getAllByTestId('my-seed-row').map((r) => r.getAttribute('data-lot-id'))
     expect(order()).toEqual(['p1', 't2', 't1'])
     expect(screen.getByTestId('my-seeds-date-unknown').textContent).toBe('Date unknown (1)')
-    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'Newest' })) })
+    await sortBy('newest')
     expect(order()[0]).toBe('t2')
+  })
+
+  it('search and sort share ONE line; the sort offers exactly Name, Oldest, Newest', async () => {
+    rows = CROPPED
+    await mount()
+    const sort = screen.getByTestId('my-seeds-sort')
+    expect(sort.tagName).toBe('SELECT')
+    expect([...sort.options].map((o) => o.textContent)).toEqual(['Name', 'Oldest', 'Newest'])
+    expect(sort.closest('div')).toBe(screen.getByTestId('my-seeds-search').parentElement)
   })
 
   it('remembers search, chips and sort for the visit (sessionStorage), not in the URL', async () => {
     rows = CROPPED
     await mount()
     await act(async () => { fireEvent.change(screen.getByTestId('my-seeds-search'), { target: { value: 'gong' } }) })
-    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'Oldest' })) })
+    await sortBy('oldest')
     cleanup()
     await mount()
     expect(screen.getByTestId('my-seeds-search').value).toBe('gong')
-    expect(screen.getByRole('radio', { name: 'Oldest' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByTestId('my-seeds-sort').value).toBe('oldest')
   })
 
   it('has three different empty states', async () => {
@@ -185,12 +220,17 @@ describe('My seeds — grouping, filtering, sorting', () => {
     rows = [pkt({ id: 'e', quantity_on_hand: 0 })]
     await mount()
     await waitFor(() => expect(screen.getByTestId('my-seeds-all-sowed')).toBeTruthy())
+    // §5.1: "everything sowed previously (section opened)" — not a note over a closed door.
+    expect(within(screen.getByTestId('my-seeds-sowed')).getByRole('button', { expanded: true })).toBeTruthy()
+    expect(rowFor('e')).toBeTruthy()
   })
 })
 
 describe('My seeds — the stepper (moved from the Inventory row)', () => {
   it('− writes the wide PUT WITHOUT the presence-guarded seed columns, and the row updates', async () => {
-    rows = [pkt({ id: 'q', quantity_on_hand: 3, seed_stage: 'stored', source_plant_id: 'pl', source_id: 'src-fedco', year_harvested: 2025, seed_count: 40 })]
+    // A BOUGHT packet (only those carry the stepper). The strip is by key, and every key below is on
+    // the row — pkt() carries them all, most as null — so each would ride along unless stripped.
+    rows = [pkt({ id: 'q', quantity_on_hand: 3, source_id: 'src-fedco', year_harvested: 2025, seed_count: 40 })]
     await mount()
     await act(async () => { fireEvent.click(within(rowFor('q')).getByRole('button', { expanded: false })) })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /One fewer packet/ })) })
@@ -204,6 +244,49 @@ describe('My seeds — the stepper (moved from the Inventory row)', () => {
     await waitFor(() => expect(within(rowFor('q')).getByTestId('my-seed-qty').textContent).toContain('2'))
     // The list-only projections survive the write (the PUT answers bare columns).
     expect(rowFor('q').closest('section')?.textContent).toContain('Tomato')
+  })
+
+  it('a SAVED lot has no − / +: its amount is its seed count, edited in Saved seeds, not a jar count', async () => {
+    // Pre-promote QA A2: "− 1 packet" on a stored lot of 175 counted seeds wrote quantity_on_hand 0
+    // and filed the lot as "none left" in My seeds and Sow now, while line 2 still read 175 seeds.
+    rows = [
+      pkt({ id: 'jar', name: 'Big Boy — saved 2026', variety_name: 'Big Boy', seed_stage: 'stored', source_plant_id: 'pl', seed_count: 175, seed_count_estimated: true }),
+      pkt({ id: 'stand', name: 'Cayenne — saved 2026', variety_name: 'Cayenne', source_kind: 'farm_stand' }),
+      pkt({ id: 'bought', quantity_on_hand: 2 }),
+    ]
+    await mount()
+    for (const id of ['jar', 'stand']) {
+      await act(async () => { fireEvent.click(within(rowFor(id)).getByRole('button', { expanded: false })) })
+      expect(within(rowFor(id)).queryByRole('button', { name: /One fewer/ })).toBeNull()
+      expect(within(rowFor(id)).queryByTestId('my-seed-qty')).toBeNull()
+      expect(within(rowFor(id)).getByTestId('my-seed-details')).toBeTruthy()
+    }
+    await act(async () => { fireEvent.click(within(rowFor('bought')).getByRole('button', { expanded: false })) })
+    expect(within(rowFor('bought')).getByRole('button', { name: 'One fewer packet of Sungold' })).toBeTruthy()
+    expect(within(rowFor('bought')).getByTestId('my-seed-qty').textContent).toBe('2 packets')
+    expect(putBodies).toEqual([])
+  })
+
+  it('− to 0 keeps the row where the thumb is, says so, and files it under Sowed previously on the next visit', async () => {
+    rows = [pkt({ id: 'last', quantity_on_hand: 1 }), pkt({ id: 'other', name: 'Stupice', variety_name: 'Stupice', quantity_on_hand: 2 })]
+    await mount()
+    await act(async () => { fireEvent.click(within(rowFor('last')).getByRole('button', { expanded: false })) })
+    expect(within(rowFor('last')).getByTestId('my-seed-qty').textContent).toBe('1 packet')
+    await act(async () => { fireEvent.click(within(rowFor('last')).getByRole('button', { name: 'One fewer packet of Sungold' })) })
+    await waitFor(() => expect(putBodies.map((b) => b.quantity_on_hand)).toEqual([0]))
+    await waitFor(() => expect(within(rowFor('last')).getByTestId('my-seed-qty').textContent).toBe('0 packets'))
+    // Still in the main list, still expanded, + still under the finger — not moved into a closed section.
+    expect(rowFor('last').closest('[data-testid="my-seeds-sowed"]')).toBeNull()
+    expect(screen.queryByTestId('my-seeds-sowed')).toBeNull()
+    expect(within(rowFor('last')).getByTestId('my-seed-kept-note').textContent).toContain('moves to Sowed previously')
+    expect(within(rowFor('last')).getByRole('button', { name: 'One more packet of Sungold' })).toBeTruthy()
+    // The next visit files it away.
+    cleanup()
+    rows = [pkt({ id: 'last', quantity_on_hand: 0 }), rows[1]]
+    await mount()
+    await waitFor(() => expect(rowFor('other')).toBeTruthy())
+    expect(rowFor('last')).toBeNull()
+    expect(within(screen.getByTestId('my-seeds-sowed')).getByRole('button', { expanded: false })).toBeTruthy()
   })
 
   it('offers Undo, and Undo sends the reversing write', async () => {

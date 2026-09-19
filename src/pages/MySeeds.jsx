@@ -20,11 +20,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
-import { T } from '../components/forms/formStyles.js'
 import { useToast } from '../context/ToastContext.jsx'
+import { T, selectChrome } from '../components/forms/formStyles.js'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import Badge from '../components/forms/Badge.jsx'
-import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import FilterChipRow from '../components/forms/FilterChipRow.jsx'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import { useCropFacetOptions } from '../hooks/useCropFacetOptions.js'
@@ -32,7 +31,7 @@ import { useSources } from '../hooks/useSources.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
 import { looseIncludes } from '../lib/comboboxInput.js'
 import { createQuantityAdjuster } from '../lib/quantityAdjuster.js'
-import { labelCandidates } from '../components/seed/seedLots.js'
+import { labelCandidates, isSavedLot } from '../components/seed/seedLots.js'
 import {
   rowTitle, stateChips, howMuch, whereFrom, howOld, lineText, isSowedPreviously, ageOf,
   SORTS, sortRows, groupByCrop,
@@ -110,12 +109,19 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
     })
   }, [rows, q, crops, vendorOf])
 
-  const main = useMemo(() => filtered.filter((i) => !isSowedPreviously(i)), [filtered])
-  const sowed = useMemo(() => sortRows(filtered.filter(isSowedPreviously), 'name'), [filtered])
+  // A packet the − took to 0 on this visit stays where the thumb left it (§4.3, a write never lands
+  // out of sight): moving it into the collapsed Sowed previously would take the row — and its + —
+  // out from under the finger that just tapped. It files under Sowed previously on the next visit.
+  const [keptIds, setKeptIds] = useState(() => new Set())
+  const isFiledAway = useCallback((i) => isSowedPreviously(i) && !keptIds.has(String(i.id)), [keptIds])
+  const main = useMemo(() => filtered.filter((i) => !isFiledAway(i)), [filtered, isFiledAway])
+  const sowed = useMemo(() => sortRows(filtered.filter(isFiledAway), 'name'), [filtered, isFiledAway])
   const filterActive = !!q.trim() || crops.size > 0
   // An active search or chip opens Sowed previously when it holds a match — otherwise a packet that
-  // IS here reads as "no seed matches". A choice the user made with the toggle wins.
-  const sowedOpen = sowedOpenByUser ?? (filterActive && sowed.length > 0)
+  // IS here reads as "no seed matches". So does a list where EVERY packet is used up (§5.1's empty
+  // state: "everything sowed previously (section opened)"), or the page would be a note over a closed
+  // door. A choice the user made with the toggle wins.
+  const sowedOpen = sowedOpenByUser ?? ((filterActive || main.length === 0) && sowed.length > 0)
 
   // ── A write never lands out of sight (§4.3) ─────────────────────────────────────────────────────────
   // The shell names a row it just wrote (a save, an add). If the remembered filters would hide it,
@@ -134,7 +140,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
       setCrops(new Set())
       setNotice(`Showing all · ${rowTitle(target)}`)
     }
-    if (isSowedPreviously(target)) setSowedOpenByUser(true)
+    if (isFiledAway(target)) setSowedOpenByUser(true)
   }, [target, highlight?.seq])  // eslint-disable-line react-hooks/exhaustive-deps
   const outlined = useLotOutline(highlight, {
     ready: !!target && filtered.some((i) => i.id === target.id),
@@ -158,6 +164,13 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
     // Keep the list-only projections (variety name, crop, stage age): the PUT answers bare columns.
     applyServerRow: (row, updated) => ({ ...row, ...(updated && typeof updated === 'object' ? updated : {}) }),
   }), [fetch, store?.getRow, store?.patch, showToast])
+  const onAdjust = useCallback((id, delta) => {
+    const row = store?.getRow?.(id)
+    if (row && delta < 0 && Number(row.quantity_on_hand ?? 0) + delta <= 0) {
+      setKeptIds((prev) => (prev.has(String(id)) ? prev : new Set(prev).add(String(id))))
+    }
+    return adjust(id, delta)
+  }, [adjust, store?.getRow])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Uniqueness over what is actually on screen ────────────────────────────────────────────────────
   // Rows carry a stepper, so two rows that read alike would let a thumb write to the wrong lot. The
@@ -194,8 +207,9 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
       vendorOf={vendorOf}
       expanded={expanded === i.id}
       outlined={outlined === String(i.id)}
+      kept={keptIds.has(String(i.id)) && isSowedPreviously(i)}
       onToggle={() => setExpanded((cur) => (cur === i.id ? null : i.id))}
-      onAdjust={adjust}
+      onAdjust={onAdjust}
       onGoToLot={onGoToLot}
     />
   )
@@ -221,9 +235,11 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   } else if (sort === 'name') {
     const groups = groupByCrop(sortRows(main, 'name'), cropLabel)
     body = groups.map((g) => (
-      <section key={g.slug} data-testid="my-seeds-group" style={{ marginBottom: T.space.md }}>
+      <section key={g.slug} data-testid="my-seeds-group" style={{ marginBottom: 8 }}>
+        {/* Not interactive here (no onToggle — My seeds' groups do not collapse), so no tap floor:
+            the 44px Garden gives its toggling header was 18px of the first screen for nothing. */}
         <div style={groupHeaderWrap}>
-          <FacetGroupHeader label={g.label} count={g.rows.length} facet="type" value={g.slug} style={{ minHeight: T.tapMinHeight }} />
+          <FacetGroupHeader label={g.label} count={g.rows.length} facet="type" value={g.slug} />
         </div>
         <div style={listStyle}>{g.rows.map(renderRow)}</div>
       </section>
@@ -253,30 +269,38 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
         onRetry={store?.reload}
         errorTitle="Couldn't load your seed"
       >
+        {/* TWO control lines (§5.1): search + sort, then the crop chips. Measured at 360x640 with the
+            sort as its own segmented line, the controls pushed the first row to y494 and ONE row showed
+            between the bars (DoD: >= 3). The sort is a native select here, as Inventory's own Sort is —
+            three segments cannot share a 328px line with a search box, and Android's picker is the
+            larger target anyway. */}
         {rows.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: T.space.sm, marginBottom: T.space.md }}>
-            <input
-              type="search"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={`Search ${rows.length} packets and lots…`}
-              aria-label="Search your seed by variety, lot name or vendor"
-              data-testid="my-seeds-search"
-              style={searchStyle}
-            />
-            {rows.length > 1 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: T.type.xs2, color: P.mid, flexShrink: 0 }}>Sort</span>
-                <SegmentedControl
-                  small
-                  options={SORTS}
-                  value={sort}
-                  onChange={setSort}
-                  ariaLabel="Sort your seed by name, oldest seed or newest added"
-                  data-testid="my-seeds-sort"
-                />
-              </div>
-            )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="search"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder={`Search ${rows.length} seeds…`}
+                aria-label="Search your seed by variety, lot name or vendor"
+                data-testid="my-seeds-search"
+                style={searchStyle}
+              />
+              {rows.length > 1 && (
+                <label style={sortLabel}>
+                  <span aria-hidden="true">Sort</span>
+                  <select
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value)}
+                    aria-label="Sort your seed by name, oldest seed or newest added"
+                    data-testid="my-seeds-sort"
+                    style={sortSelect}
+                  >
+                    {SORTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
             {facet.options.length > 1 && (
               <FilterChipRow
                 options={facet.options}
@@ -330,12 +354,21 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
 }
 
 // One packet or lot. Tap expands in place, as Inventory rows did.
-function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, onToggle, onAdjust, onGoToLot }) {
+function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, kept, onToggle, onAdjust, onGoToLot }) {
   const chips = stateChips(item)
-  const facts = [howMuch(item), whereFrom(item, vendorOf), howOld(item)].filter(Boolean).join(' · ')
+  // Line 2 is chips, then the amount, then where from · how old. The amount is its own span that
+  // never shrinks: at 360px a long name's two chips squeezed a single facts span to 0px, and the
+  // amount — the fact this line exists to show — went with it. Now the chips give way first (each
+  // ellipsised), then where-from/how-old; the amount stays whole.
+  const amount = howMuch(item)
+  const rest = [whereFrom(item, vendorOf), howOld(item), suffix].filter(Boolean).join(' · ')
   const inProcess = isInProcess(item)
   const qty = Number(item.quantity_on_hand ?? 0)
-  const unit = item.unit || 'packet'
+  const shownQty = Number.isFinite(qty) ? Math.round(qty) : 0
+  // A saved lot is ONE jar whose amount is its seed count, edited in Saved seeds: a − / + here moved
+  // the jar count, so one tap filed a stored lot of 175 counted seeds as "none left" while line 2
+  // still read "approx. 175 seeds" (pre-promote QA, A2). Bought packets keep the stepper.
+  const stepper = item.type !== 'durable' && !isSavedLot(item)
 
   return (
     <div
@@ -354,12 +387,17 @@ function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, onToggle, 
         <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={titleStyle}>{title}</span>
           <span data-testid="my-seed-line" style={lineStyle}>
-            {chips.map((c) => (
-              <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" style={{ flexShrink: 0, fontSize: T.type.xs }}>
-                {c.label}
-              </Badge>
-            ))}
-            <span style={factsStyle}>{[facts, suffix].filter(Boolean).join(' · ')}</span>
+            {chips.length > 0 && (
+              <span style={chipsBox}>
+                {chips.map((c, n) => (
+                  <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" style={n === 0 ? firstChipStyle : chipStyle}>
+                    {c.label}
+                  </Badge>
+                ))}
+              </span>
+            )}
+            {amount && <span data-testid="my-seed-amount" style={amountStyle}>{amount}</span>}
+            {rest && <span data-testid="my-seed-rest" style={restStyle}>{amount ? `\u00a0· ${rest}` : rest}</span>}
           </span>
         </span>
         <span aria-hidden="true" style={{ color: P.light, fontSize: T.type.xs2, flexShrink: 0 }}>{expanded ? '▾' : '▸'}</span>
@@ -367,16 +405,21 @@ function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, onToggle, 
 
       {expanded && (
         <div data-testid="my-seed-expanded" style={expandedStyle}>
-          {item.type !== 'durable' && (
+          {stepper && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span style={{ fontSize: T.type.sm, color: P.mid, flexShrink: 0 }}>On hand</span>
-              <button type="button" onClick={() => onAdjust(item.id, -1)} style={qtyBtn} aria-label={`One fewer ${unit} of ${title}`}>−</button>
+              <button type="button" onClick={() => onAdjust(item.id, -1)} style={qtyBtn} aria-label={`One fewer ${unitWord(item.unit, 1)} of ${title}`}>−</button>
               <span data-testid="my-seed-qty" style={{ fontWeight: 700, minWidth: T.tapMinHeight, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                {Number.isFinite(qty) ? Math.round(qty) : 0}
-                <span style={{ fontWeight: 400, fontSize: T.type.xs2, color: P.mid }}> {unit}</span>
+                {shownQty}
+                <span style={{ fontWeight: 400, fontSize: T.type.xs2, color: P.mid }}> {unitWord(item.unit, shownQty)}</span>
               </span>
-              <button type="button" onClick={() => onAdjust(item.id, +1)} style={qtyBtn} aria-label={`One more ${unit} of ${title}`}>+</button>
+              <button type="button" onClick={() => onAdjust(item.id, +1)} style={qtyBtn} aria-label={`One more ${unitWord(item.unit, 1)} of ${title}`}>+</button>
             </div>
+          )}
+          {kept && (
+            <p data-testid="my-seed-kept-note" style={{ margin: 0, fontSize: T.type.xs2, color: P.mid }}>
+              None left — it moves to Sowed previously next time you open Seeds.
+            </p>
           )}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {inProcess && onGoToLot && (
@@ -394,6 +437,14 @@ function SeedRow({ item, title, suffix, vendorOf, expanded, outlined, onToggle, 
   )
 }
 
+// The stepper's unit, counted: "1 packet" / "3 packets", and a bought `each` packet counts seeds.
+function unitWord(unit, n) {
+  const u = String(unit ?? '').trim()
+  if (u === '' || u === 'packet') return n === 1 ? 'packet' : 'packets'
+  if (u === 'each') return n === 1 ? 'seed' : 'seeds'
+  return u
+}
+
 // ── Styles — from T tokens, matching the Saved seeds card (48px buttons, 44px taps) ──────────────────
 const listStyle = { display: 'flex', flexDirection: 'column', gap: 8 }
 const rowCard = {
@@ -401,17 +452,29 @@ const rowCard = {
 }
 const rowBtn = {
   width: '100%', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-  padding: '10px 12px', minHeight: 56, display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'inherit',
+  padding: '6px 12px', minHeight: 48, display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'inherit',
 }
 const titleStyle = {
   fontWeight: 600, color: P.dark, fontSize: T.type.md, lineHeight: 1.25,
   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
 }
 const lineStyle = {
-  display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: T.type.xs2, color: P.mid,
+  display: 'flex', alignItems: 'center', minWidth: 0, fontSize: T.type.xs2, color: P.mid,
   whiteSpace: 'nowrap', overflow: 'hidden',
 }
-const factsStyle = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+// Shrink order on a crowded line: `rest` has a 0 basis, so it only ever gets what is left over and is
+// the first thing cut; then the later chips (ellipsised); then the first chip — the engine's order puts
+// the lot's state first ("Fermenting · day 5"), so it stays whole unless it alone overflows; the amount
+// never shrinks. No flex gap on the line: the chips carry their own margin, and rest opens with a
+// NON-BREAKING space so "1 packet · Fedco" reads as one phrase (a plain leading space collapses at the
+// start of the span).
+const chipsBox = { display: 'flex', gap: 6, minWidth: 0, flex: '0 1 auto', overflow: 'hidden', marginRight: 6 }
+const chipStyle = {
+  display: 'block', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: T.type.xs,
+}
+const firstChipStyle = { ...chipStyle, flex: '0 0 auto', maxWidth: '100%' }
+const amountStyle = { flex: '0 0 auto', whiteSpace: 'nowrap' }
+const restStyle = { flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const expandedStyle = {
   padding: '10px 12px 12px', borderTop: `1px solid ${P.border}`, display: 'flex', flexDirection: 'column', gap: 10,
 }
@@ -428,11 +491,16 @@ const secondaryLink = {
   ...secondaryBtn, display: 'inline-flex', alignItems: 'center', textDecoration: 'none',
 }
 const searchStyle = {
-  display: 'block', width: '100%', minHeight: T.buttonMinHeight, padding: '0 12px', boxSizing: 'border-box',
+  display: 'block', flex: '1 1 auto', minWidth: 0, minHeight: T.tapMinHeight, padding: '0 12px', boxSizing: 'border-box',
   borderRadius: T.radiusButton, border: `1px solid ${P.border}`, fontSize: '1rem', backgroundColor: P.white,
 }
+const sortLabel = {
+  display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, fontSize: T.type.xs2, color: P.mid,
+}
+// selectChrome's own 1rem field font, not a smaller one: iOS zooms the page on focus under 16px.
+const sortSelect = { ...selectChrome(), width: 'auto', paddingLeft: 10, paddingRight: 30, backgroundPosition: 'right 8px center' }
 const groupHeaderWrap = {
-  position: 'sticky', top: 52, zIndex: 1, backgroundColor: P.cream, paddingBottom: 6,
+  position: 'sticky', top: 52, zIndex: 1, backgroundColor: P.cream, paddingBottom: 2,
 }
 const dividerStyle = {
   margin: '14px 0 8px', fontSize: T.type.xs2, fontWeight: 700, color: P.mid, letterSpacing: '0.04em',

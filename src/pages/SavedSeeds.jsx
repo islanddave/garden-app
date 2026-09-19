@@ -241,7 +241,9 @@ const FERMENT_URGENCY = {
   },
   alarm: {
     tone: 'danger', ink: P.severityUrgent, border: P.alertBorder,
-    badge: 'Overdue', note: 'Past 5 days the seed can sprout in the jar.',
+    // "By", not "Past": days are calendar days in Eastern now (BUG-SEEDSOWRELDAY-001), so day 5 can
+    // arrive ~96h in, and "past 5 days" overstated it.
+    badge: 'Overdue', note: 'By day 5 the seed can sprout in the jar.',
   },
 }
 
@@ -1033,7 +1035,16 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <Link to={`/inventory/${item.id}`} state={SAVED_RETURN_STATE} style={{ color: P.green, fontWeight: 600, textDecoration: 'none' }}>
+                    {/* The card's way in, so a 44px target (BUG-SEEDTAPTARGET-001's reasoning, below):
+                        it rendered 18px tall on a one-line name and 36px on two, and WCAG 2.5.8's
+                        inline-link exemption covers a link inside a sentence, not a card title. Flex
+                        across the column, so the whole title line is the target. */}
+                    <Link
+                      to={`/inventory/${item.id}`}
+                      state={SAVED_RETURN_STATE}
+                      data-testid="seed-lot-title"
+                      style={{ display: 'flex', alignItems: 'center', minHeight: T.tapMinHeight, color: P.green, fontWeight: 600, textDecoration: 'none' }}
+                    >
                       {item.variety_name || item.name}
                     </Link>
                     {/* BUG-SEEDELAPSEDUPDATED-001 — elapsed from stage_entered_at, NOT updated_at.

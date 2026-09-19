@@ -7,7 +7,9 @@
 //     window.history.state.usr.seedsReturn — so the view comes back with its filters and scroll. Any
 //     other arrival (a bookmark, Search, a reload that dropped state) has nothing to go back TO, and
 //     pushes My seeds instead.
-//   • DELETE REPLACES, so Back from Seeds never reopens the lot just removed.
+//   • DELETE never leaves a way Back onto the lot just removed: pushed by a Seeds view it goes BACK
+//     (a replace there left two identical Seeds entries, so the next Back did nothing); any other
+//     arrival REPLACES onto My seeds.
 // Every other category is unchanged, and pinned here as such: '/inventory' breadcrumb and Cancel
 // link, delete -> navigate('/inventory').
 // Harness shape follows InventoryDetail.seedStageControl.test.jsx. No jest-dom (L-182).
@@ -150,19 +152,19 @@ describe('seed-row Cancel — Back to the Seeds view that opened the page, else 
   })
 })
 
-describe('deleting a seed row lands on My seeds, REPLACING the dead page', () => {
-  it('replaces to My seeds', async () => {
+describe('deleting a seed row never leaves Back pointing at the dead page', () => {
+  it('arrived any other way: replaces to My seeds', async () => {
     await renderPage()
     await removeItem()
     expect(deleteItemSpy.mock.calls[0][0]).toBe('inv-1')
     expect(navigateSpy.mock.calls).toEqual([[MINE, { replace: true }]])
   })
 
-  it('does so even when a Seeds view pushed the page — the delete does not take Cancel\'s Back', async () => {
+  it('pushed by a Seeds view: goes BACK to it — a replace would stack two identical Seeds entries and make the next Back a dead press', async () => {
     arriveFrom(SAVED)
     await renderPage()
     await removeItem()
-    expect(navigateSpy.mock.calls).toEqual([[MINE, { replace: true }]])
+    expect(navigateSpy.mock.calls).toEqual([[-1]])
   })
 
   it('a FAILED delete goes nowhere and says why', async () => {

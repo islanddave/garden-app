@@ -420,7 +420,7 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
     const sowProse = String(c.direct_sow_timing || c.sow_notes || '').trim()
     return (
       <div key={c.inventory_item_id} style={cardStyle}>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={titleColumn}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: 700, color: P.dark, fontSize: '0.95rem' }}>{title}</span>
             {entry.daysLeft != null && (
@@ -799,11 +799,20 @@ const cardStyle = {
   display: 'flex',
   alignItems: 'center',
   gap: 12,
+  flexWrap: 'wrap',
 }
 
+// The name keeps at least TITLE_COL_MIN_PX; when the actions would take more than that leaves, they
+// drop under the name (the card wraps) instead of squeezing it. Measured at 360px before this: a
+// needs-profile card's "Add sow details" + "Archive" left the name 76px and put "Red Mustard
+// (heirloom, unspecified variety)" on five lines. 140px keeps Sow + Archive beside the name at 360
+// (so ordinary cards do not grow) and wraps the wider pairs. gate:seeds-page reads this constant.
+const TITLE_COL_MIN_PX = 140
+const titleColumn = { flex: `1 1 ${TITLE_COL_MIN_PX}px`, minWidth: 0 }
+
 // Action column. Wraps rather than overflows: a card can carry two buttons (Sow + Archive, or
-// Add sow details + Archive) and the narrowest phone Dave uses is 360px, where three side-by-side
-// controls plus the title would squeeze the name to nothing.
+// Add sow details + Archive) and the narrowest phone Dave uses is 360px. marginLeft auto keeps it on
+// the right when the card has wrapped it under the name.
 const cardActions = {
   display: 'flex',
   alignItems: 'center',
@@ -811,6 +820,7 @@ const cardActions = {
   gap: 8,
   flexWrap: 'wrap',
   flexShrink: 0,
+  marginLeft: 'auto',
 }
 
 // Deliberately the quietest control on the card — archiving is housekeeping, not the primary

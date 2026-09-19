@@ -29,6 +29,13 @@
 //       its height <= ONE_LINE_RATIO x its one-line height, AND its text runs share one horizontal
 //       band. Its title is one line too, and the fixture's 44-character name is TRUNCATED with an
 //       ellipsis rather than wrapped.
+//   (g) THE AMOUNT IS NEVER CUT — every My seeds row that states an amount ([data-testid=
+//       "my-seed-amount"]) shows ALL of it: the span is inside its line's box, has width, and its
+//       text is not ellipsised. Promoted from a REPORTED finding (2026-09-18: at 360px the 44-char
+//       row's two chips squeezed a single facts span to 0px, and the amount went with it).
+//   (h) SOW NOW NAMES ARE NOT SQUEEZED — every open Sow now card's title column is at least
+//       SowNow.jsx's TITLE_COL_MIN_PX (read from the source); wider action pairs wrap under the name.
+//       Promoted from a REPORTED finding (a needs-profile card left its name 76px, five lines).
 //
 // "ITS LINE-HEIGHT", MADE PRECISE, because the literal reading is wrong for this element. The second
 // line is a flex row of Badges and a facts span; its own computed line-height is `normal` at 12px
@@ -88,6 +95,13 @@ function topChromeHeightPx() {
   return found[0]
 }
 const TOP_CHROME_PX = topChromeHeightPx()
+function sowTitleColMinPx() {
+  const src = readFileSync(resolve(ROOT, 'src/pages/SowNow.jsx'), 'utf8')
+  const found = [...src.matchAll(/const TITLE_COL_MIN_PX = (\d+)/g)].map(m => Number(m[1]))
+  if (found.length !== 1) throw new Error(`SowNow.jsx declares TITLE_COL_MIN_PX ${found.length} times; expected exactly 1 — (h) has no floor to hold the cards to`)
+  return found[0]
+}
+const SOW_TITLE_COL_MIN_PX = sowTitleColMinPx()
 
 // Tolerances. 2px is "the same line" for boxes whose centres a flex row aligns exactly; 1.5 is the
 // brief's own one-line ratio (a second line of any of this text at least doubles the box).
@@ -121,7 +135,7 @@ const tidPrefix = (name) => `[data-testid^="${name}${SUFFIX}"]`
 // details + Archive; 2 in process: Archive) and the two collapsed review sections' toggles.
 const LONG_NAME = 'Money Plant (self-saved, variety unrecorded)'
 const VIEWS = [
-  { view: 'mine', label: 'My seeds', body: 'my-seeds-view', expect: { actions: 2, rows: 26, groups: 8, longRowChips: 2, ordinalRows: 2 } },
+  { view: 'mine', label: 'My seeds', body: 'my-seeds-view', expect: { actions: 2, rows: 26, groups: 8, longRowChips: 2, ordinalRows: 2, amountRows: 24 } },
   { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 4, sections: 3 } },
   { view: 'sow', label: 'Sow now', body: 'sow-now-view', expect: { actions: 0, minSowButtons: 10, minSowHeadings: 2 } },
 ]
@@ -303,18 +317,22 @@ const MEASURE = (v) => `(() => {
     if (line) {
       const items = [...line.children]
       const chips = [...line.querySelectorAll('${tid('my-seed-chip')}')]
-      const facts = items.filter(i => !chips.includes(i)).pop() || null
+      const amount = line.querySelector('${tid('my-seed-amount')}')
+      const rest = line.querySelector('${tid('my-seed-rest')}')
       const lb = line.getBoundingClientRect()
       const one = Math.max(oneLine(line), ...items.map(oneLine))
+      const ab = amount ? amount.getBoundingClientRect() : null
       L = { text: (line.textContent || '').trim().replace(/\\s+/g, ' '), h: R(lb.height), oneLineH: R(one),
         ratio: Math.round(lb.height / one * 100) / 100, lines: lines(line), chips: chips.length,
         chipLabels: chips.map(c => (c.textContent || '').trim()),
-        // REPORTED: what the eye loses when the chips crowd the facts. The line clips (overflow
-        // hidden), so a chip past its right edge is cut mid-word, and a facts span squeezed to ~0 is
-        // the quantity — the fact the model orders first so an ellipsis never cuts it — gone.
-        chipsClipped: chips.filter(c => c.getBoundingClientRect().right > lb.right + 0.5).length,
-        factsW: facts ? R(facts.getBoundingClientRect().width) : null,
-        factsInkW: facts ? R(facts.scrollWidth) : null,
+        // (g): the amount, whole — inside the line's box, with width, not ellipsised.
+        amount: amount ? { text: (amount.textContent || '').trim(), w: R(ab.width), l: R(ab.left), r: R(ab.right),
+          inLine: ab.left >= lb.left - 0.5 && ab.right <= lb.right + 0.5, cut: amount.scrollWidth > amount.clientWidth + 1 } : null,
+        lineL: R(lb.left), lineR: R(lb.right),
+        // REPORTED: what gives way on a crowded line, by design — chips ellipsised, then where-from/how-old.
+        chipsCut: chips.filter(c => c.scrollWidth > c.clientWidth + 1 || c.getBoundingClientRect().right > lb.right + 0.5).length,
+        restW: rest ? R(rest.getBoundingClientRect().width) : null,
+        restInkW: rest ? R(rest.scrollWidth) : null,
         clipsContent: line.scrollWidth > line.clientWidth + 1 }
     }
     if (title) {
@@ -338,7 +356,8 @@ const MEASURE = (v) => `(() => {
     .filter(shown).map(b => b.parentElement && b.parentElement.parentElement).filter(Boolean).map(card => {
       const col = card.firstElementChild, titleEl = col && col.querySelector('span')
       return { title: titleEl ? (titleEl.textContent || '').trim() : '?', colW: col ? R(col.getBoundingClientRect().width) : null,
-        titleLines: titleEl ? lines(titleEl) : null, cardH: R(card.getBoundingClientRect().height) }
+        titleLines: titleEl ? lines(titleEl) : null, cardH: R(card.getBoundingClientRect().height),
+        hasProfileBtn: !!card.querySelector('button[aria-label^="Add sow details for "]') }
     }) : []
 
   const hb = header ? box(header) : null, tb = h1 ? box(h1) : null
@@ -465,7 +484,11 @@ try {
           // truncation. Ink, not scrollWidth — a name that wrapped fits by scrollWidth, and that is
           // (f)'s failure to report, not this check's.
           if (!(long.title.inkW > long.title.w + 1)) mismatch.push(`the 44-character title's ink (${long.title.inkW}px) fits its ${long.title.w}px column at ${vw}px, so the ellipsis path is exercised by nothing`)
+          // Non-vacuity for (g): the worst row must state an amount, or (g) holds it to nothing.
+          if (!long.line || !long.line.amount) mismatch.push('the 44-character row states no amount — (g) would be checking nothing on the one row that crowds it')
         }
+        const withAmount = m.rows.filter(r => r.line && r.line.amount).length
+        if (withAmount !== e.amountRows) mismatch.push(`${withAmount} of ${m.rows.length} rows state an amount, expected ${e.amountRows} (every row but the two uncounted saved lots, Aji Charapita and Cherokee Purple)`)
         const ordinal = m.rows.filter(r => r.line && /with identical details/.test(r.line.text)).length
         if (ordinal !== e.ordinalRows) mismatch.push(`${ordinal} row(s) carry the identical-details ordinal, expected ${e.ordinalRows}`)
       }
@@ -476,6 +499,8 @@ try {
       if (v.view === 'sow') {
         if (!m.sow || m.sow.buttons < e.minSowButtons) mismatch.push(`${m.sow ? m.sow.buttons : 0} buttons in Sow now, expected >=${e.minSowButtons} (the date-independent cards and toggles alone)`)
         if (!m.sow || m.sow.headings < e.minSowHeadings) mismatch.push(`${m.sow ? m.sow.headings : 0} open Sow now sections, expected >=${e.minSowHeadings} (Needs a sow profile, Still in process)`)
+        // Non-vacuity for (h): the widest action pair must be on screen, or (h) measures only the easy cards.
+        if (!m.sow || !m.sow.cards.some(c => c.hasProfileBtn)) mismatch.push('no open Sow now card carries "Add sow details" — (h) would never meet the action pair that squeezed the name')
       }
       if (mismatch.length) {
         // A selector that matched nothing is a FAILURE, never a quiet pass. If the page was
@@ -545,6 +570,20 @@ try {
       const longRow = m.rows.find(r => r.title && r.title.text === LONG_NAME)
       if (longRow && !(longRow.title.truncated && longRow.title.ellipsis)) fail(`${at}: (f) the 44-character name is not truncated with an ellipsis (truncated ${longRow.title.truncated}, ellipsis ${longRow.title.ellipsis}, ${longRow.title.lines} line(s))`)
 
+      // ── (g) THE AMOUNT IS NEVER CUT.
+      for (const r of m.rows) {
+        const A = r.line && r.line.amount
+        if (!A) continue
+        if (!(A.w > 0) || !A.inLine || A.cut) fail(`${at}: (g) "${r.title ? r.title.text : '?'}": its amount "${A.text}" is cut — ${A.w}px wide at x${A.l}-${A.r} in a line spanning x${r.line.lineL}-${r.line.lineR}${A.cut ? ', ellipsised' : ''}`)
+      }
+
+      // ── (h) SOW NOW NAMES ARE NOT SQUEEZED.
+      if (m.sow) {
+        for (const c of m.sow.cards) {
+          if (!(c.colW >= SOW_TITLE_COL_MIN_PX - 0.5)) fail(`${at}: (h) Sow now card "${c.title}": its title column is ${c.colW}px, under SowNow.jsx's TITLE_COL_MIN_PX ${SOW_TITLE_COL_MIN_PX}px — the actions squeezed the name onto ${c.titleLines} line(s)`)
+        }
+      }
+
       // ── The record. Printed on pass as well as fail: the numbers a redesign has to move.
       const P = `[seeds-page] ${at}`
       const minFloored = floored.length ? Math.min(...floored.map(t => t.h)) : 0
@@ -557,14 +596,14 @@ try {
         const long = m.rows.find(r => r.title && r.title.text === LONG_NAME)
         console.log(`${P}: ${m.rows.length} rows in ${m.groups} groups · first row y${m.rows[0].t}-${m.rows[0].b} · visible band y${m.chrome.bandTop}-${m.chrome.bandBottom}: ${inBand} row(s) fully inside it, ${inViewport} inside the bare viewport · row heights ${[...new Set(m.rows.map(r => r.h))].join('/')}px`)
         console.log(`${P}: second lines max x${maxRatio} of one line (limit ${ONE_LINE_RATIO}), ${lr.filter(r => r.line.lines !== 1).length} multi-line · titles truncated ${m.rows.filter(r => r.title && r.title.truncated).length}/${m.rows.length}`)
-        console.log(`${P}: the 44-char row: title ${long.title.w}px column, ink ${long.title.inkW}px, ellipsis ${long.title.ellipsis} · line "${long.line.text}" ${long.line.h}px/${long.line.oneLineH}px, chips [${long.line.chipLabels.join(' | ')}], facts span ${long.line.factsW}px wide of ${long.line.factsInkW}px ink`)
-        const clipped = lr.filter(r => r.line.chipsClipped > 0 || (r.line.factsW != null && r.line.factsW < 1 && r.line.factsInkW > 0))
-        console.log(`${P}: [REPORTED, NOT ASSERTED] ${clipped.length} row(s) whose second line loses content at this width: ${clipped.map(r => `"${r.title.text}" (${r.line.chipsClipped} chip(s) cut, facts ${r.line.factsW}px of ${r.line.factsInkW}px)`).join('; ') || 'none'}`)
+        console.log(`${P}: the 44-char row: title ${long.title.w}px column, ink ${long.title.inkW}px, ellipsis ${long.title.ellipsis} · line "${long.line.text}" ${long.line.h}px/${long.line.oneLineH}px, chips [${long.line.chipLabels.join(' | ')}], amount "${long.line.amount ? long.line.amount.text : '—'}" ${long.line.amount ? long.line.amount.w : 0}px (whole: ${!!(long.line.amount && long.line.amount.inLine && !long.line.amount.cut)}), rest ${long.line.restW}px of ${long.line.restInkW}px ink`)
+        const gave = lr.filter(r => r.line.chipsCut > 0 || (r.line.restW != null && r.line.restInkW > r.line.restW + 1))
+        console.log(`${P}: [REPORTED — gives way by design, amount asserted whole in (g)] ${gave.length} row(s) whose chips or where-from/how-old are ellipsised at this width: ${gave.map(r => `"${r.title.text}" (${r.line.chipsCut} chip(s) cut, rest ${r.line.restW}px of ${r.line.restInkW}px)`).join('; ') || 'none'}`)
       }
       if (v.view === 'saved') console.log(`${P}: ${m.cards} lot cards in ${m.sections} stage sections`)
       if (v.view === 'sow') {
         const squeezed = m.sow.cards.filter(c => c.titleLines > 2)
-        console.log(`${P}: ${m.sow.buttons} buttons, ${m.sow.headings} open sections, ${m.sow.cards.length} open cards · [REPORTED, NOT ASSERTED] title column widths ${m.sow.cards.map(c => c.colW).join('/')}px; ${squeezed.length} card title(s) over 2 lines: ${squeezed.map(c => `"${c.title}" ${c.titleLines}L in ${c.colW}px`).join('; ') || 'none'}`)
+        console.log(`${P}: ${m.sow.buttons} buttons, ${m.sow.headings} open sections, ${m.sow.cards.length} open cards · (h) title column widths ${m.sow.cards.map(c => c.colW).join('/')}px (floor ${SOW_TITLE_COL_MIN_PX}px); [REPORTED] ${squeezed.length} card title(s) over 2 lines: ${squeezed.map(c => `"${c.title}" ${c.titleLines}L in ${c.colW}px`).join('; ') || 'none'}`)
       }
       console.log(`${P}: seed-row fetches ${m.hits['seed-rows'] ?? 0} · screenshot ${shotPath}`)
 

@@ -152,7 +152,7 @@ export default function Seeds() {
           </div>
         </div>
 
-        <div style={{ marginBottom: 8 }}>
+        <div style={{ marginBottom: 6 }}>
           <SegmentedControl
             small
             options={SEEDS_VIEWS}
@@ -248,15 +248,18 @@ function ViewFallback({ retry }) {
 }
 
 // ── Styles ─────────────────────────────────────────────────────────────────────────────────────────
-const frameStyle = { maxWidth: 720, margin: '0 auto', padding: '20px 16px 90px' }
+// Spacing above the list is budgeted, not guessed: at 360x640, with the ferment line showing, the DoD
+// wants >= 3 My seeds rows between the top bar and the nav (gate:seeds-page (e)), and every px here
+// comes out of that.
+const frameStyle = { maxWidth: 720, margin: '0 auto', padding: '12px 16px 90px' }
 // Identical height on every view: the action slot is always there, empty on Sow now, so the switch
 // and everything under it sit at the same place whichever view is showing.
 const headerStyle = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-  minHeight: T.buttonMinHeight, marginBottom: 10,
+  minHeight: T.tapMinHeight, marginBottom: 8,
 }
 const titleStyle = { margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700 }
-const actionsStyle = { display: 'flex', alignItems: 'center', gap: 8, minHeight: T.buttonMinHeight }
+const actionsStyle = { display: 'flex', alignItems: 'center', gap: 8, minHeight: T.tapMinHeight }
 const actionBase = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: T.tapMinHeight,
   padding: '0 12px', borderRadius: T.radiusButton, fontSize: T.type.sm, fontWeight: 700,
@@ -269,7 +272,7 @@ const fermentStyle = {
   display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: '6px 0',
   minHeight: T.tapMinHeight, fontSize: T.type.sm, cursor: 'pointer', fontFamily: 'inherit',
 }
-const questionStyle = { margin: '6px 0 12px', color: P.mid, fontSize: T.type.sm }
+const questionStyle = { margin: '0 0 6px', color: P.mid, fontSize: T.type.sm }
 const staleStyle = {
   display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0 10px', padding: '8px 12px',
   backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: T.radiusButton,
