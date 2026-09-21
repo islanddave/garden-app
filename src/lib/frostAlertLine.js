@@ -267,7 +267,9 @@ function warmedLine(imminent, planLow) {
 // WATCH, the word its email uses: the low sits above the trip point and the clear, calm sky is the reason it
 // can fall further, so the line names both — "Frost watch tonight — clear and calm, low 42°F. …".
 // V5-TODAYFROSTLINEGAPS-001 — a watch whose email printed a colder second forecast for its night says so, at that
-// figure: "Frost watch tonight — clear and calm, as low as 35°F. …".
+// figure: "Frost watch tonight — clear and calm, as low as 35°F. …". Decided on the ROUNDED figures (QA M2): a 38.6
+// second forecast under a 39 watch prints 39 either way, and "as low as 39°F" would claim a lower number it does not
+// show. handler.frostSubject applies the same rounded rule to the email subject.
 function lineFor(a, lowShown) {
   const night = resolveNight(a)
   const when = nightPhrase(night)
@@ -276,7 +278,7 @@ function lineFor(a, lowShown) {
   const low = Number.isFinite(lowShown) ? lowShown : Math.round(raw)
   return {
     text: a.trip === 'radiative'
-      ? `Frost watch ${when} — clear and calm, ${raw < own ? 'as low as' : 'low'} ${low}°F. Plan cover for tender plants.`
+      ? `Frost watch ${when} — clear and calm, ${Math.round(raw) < Math.round(own) ? 'as low as' : 'low'} ${low}°F. Plan cover for tender plants.`
       : `Frost possible ${when} — low ${low}°F. Plan cover for tender plants.`,
     tier: a.tier,
     dayOffset: intOrNull(a.dayOffset),

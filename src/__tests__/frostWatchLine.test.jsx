@@ -345,6 +345,16 @@ describe('(2) the watch shows its email\'s colder second forecast — "as low as
     expect(rows.some((r) => / \(low [^()]*\)$/.test(r))).toBe(false)
   })
 
+  it('QA M2 — "as low as" only when the PRINTED number is lower: a 38.5-38.99 second forecast under a 39 watch reads "low 39°F"', () => {
+    for (const second of [38.5, 38.6, 38.75, 38.99]) {
+      expect(buildFrostAlertLine([watch(39, { colder: colderTonight(second) })]).text, String(second)).toBe(WATCH('tonight', 39))
+    }
+    expect(buildFrostAlertLine([watch(39, { colder: colderTonight(38.49) })]).text).toBe(ASLOW('tonight', 38))   // control: rounds lower
+    // the agreed low still takes the raw figure (the cue's freeze split reads it raw), and prints the same 39
+    expect(agreedTonightLow(planFor(41, [watch(39, { colder: colderTonight(38.6) })]))).toEqual({ lowF: 39, lowRaw: 38.6 })
+    expect(buildFrostAlertLine([watch(39, { colder: colderTonight(38.6) })], { lowShown: 39 }).text).toBe(WATCH('tonight', 39))
+  })
+
   it('the tonight exception reads the second forecast: an advisory warmer than it yields, a colder one keeps the line', () => {
     const w = watch(41, { at: at('20:00'), colder: colderTonight(35) })
     expect(texts([tonight(37.6), w])).toEqual([ASLOW('tonight', 35)])
