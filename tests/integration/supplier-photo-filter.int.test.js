@@ -42,9 +42,11 @@ async function insertPhoto(label, originalFilename) {
 
 beforeAll(async () => {
   setTestUserId(USER)
+  // A durable tool: needs only `quantity` (durable_requires_quantity), where a seed lot would need a
+  // variety row too. The parent's kind is irrelevant to the predicate under test.
   const item = await directSql`
-    INSERT INTO inventory_items (name, type, category, created_by, user_id)
-    VALUES (${'int-supplierphoto-' + RUN}, 'durable', 'tools', ${USER}, ${USER})
+    INSERT INTO inventory_items (name, type, category, quantity, created_by, user_id)
+    VALUES (${'int-supplierphoto-' + RUN}, 'durable', 'tools', 1, ${USER}, ${USER})
     RETURNING id
   `
   itemId = item[0].id
