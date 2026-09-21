@@ -267,8 +267,63 @@ describe('frostSubject — IMMINENT and HEAT subjects are byte-identical to befo
     // CHANGED by V5-RADIATIVESUBJECTCOPY-001 (lane radiativefix, 2026-09-19): was /Colder ahead: 35°F tonight/ —
     // the same night is not "ahead"; the clause now names the second forecast's lower low for tonight.
     expect(d.message).toMatch(/Colder on a second forecast: 35°F tonight/);   // the advisory is in the body...
-    expect(frostSubject(d)).toBe('Garden alert - Frost watch tonight (low 39F)');   // ...and not in the subject
-    expect(frostSubject(d)).toBe(legacySubject(d));
+    // CHANGED by V5-TODAYFROSTLINEGAPS-001 follow-up F2 (Dave 2026-09-21): this pinned "...and not in the subject"
+    // ("(low 39F)", === legacySubject). The colder SAME-night figure now leads the subject, as it leads the Today line.
+    expect(frostSubject(d)).toBe('Garden alert - Frost watch tonight (as low as 35F)');
+    expect(frostSubject(d)).not.toBe(legacySubject(d));
+    // The body still opens with the NWS low; only its closing clause carries the 35 (unchanged, reported).
+    expect(d.message.startsWith('FROST WATCH TONIGHT — forecast low 39°F, but clear and calm')).toBe(true);
+  });
+
+  it('F2 GRID — only a watch carrying a colder SAME-night figure that rounds lower changes; every other subject is as before', () => {
+    const T = { ADVISORY_LOW_F: 40, IMMINENT_LOW_F: 38, HARD_FREEZE_LOW_F: 33 };
+    const tender = { slug: 'pepper', label: 'peppers', band: 'tender', count: 5, containers: 1, thresholds: T };
+    const dates = ['2026-10-10', '2026-10-11', '2026-10-12'];
+    const clearNight = (date) => ({ date, minDewpointF: 33, meanCloudPct: 5, meanWindMph: 2, radiative: true });
+    const cloudyNight = (date) => ({ date, minDewpointF: 33, meanCloudPct: 95, meanWindMph: 12, radiative: false });
+    let changed = 0; let same = 0; let advisories = 0;
+    for (const tonightLow of [30, 36, 38, 38.6, 39, 39.4, 41, 42, 45]) {
+      for (const d1 of [33, 34.7, 35, 38.4, 38.5, 38.6, 38.99, 39, 40, 46]) {
+        for (const hour of [4, 22]) {
+          for (const sky of [clearNight, cloudyNight]) {
+            const d = frostEval({
+              tonightLow, highToday: 60, forecastLows: [d1, 50, 51], forecastDates: dates,
+              forecastHourly: { time: stamps('2026-10-10'), temperature_2m: dayCurve(d1, hour) }, lowSource: 'forecast',
+              radiativeNights: [sky('2026-10-09'), sky('2026-10-10')],
+              exposure: { tender: 5, unknown: 0, tenderContainers: 1, atRisk: 5, byCropType: [tender] }, spaceId: 'S1', eventDate: '2026-10-09',
+            }, { frostSeason: true, radiativeEnabled: true });
+            const at = `nws=${tonightLow} d1=${d1} hour=${hour} ${sky === clearNight ? 'clear' : 'cloudy'}`;
+            const s = frostSubject(d);
+            if (d.tier !== 'imminent') { advisories++; expect(s, at).not.toMatch(/as low as/); continue; }
+            const lower = d.imminent.radiativeOnly && d.colder && d.colder.nightOffset === 0
+              && Math.round(d.colder.lowF) < Math.round(tonightLow);
+            if (lower) {
+              expect(s, at).toBe(`Garden alert - Frost watch tonight (as low as ${Math.round(d.colder.lowF)}F)`);
+              expect(d.message, at).toMatch(new RegExp(` Colder on a second forecast: ${d.colder.lowF}°F tonight, `));
+              changed++;
+            } else {
+              expect(s, at).toBe(legacySubject(d));
+              same++;
+            }
+          }
+        }
+      }
+    }
+    expect([changed > 5, same > 40, advisories > 5]).toEqual([true, true, true]);
+    // The rounding band: a 38.6 second forecast under a 39 watch prints no lower number, so the subject keeps "(low 39F)".
+    const band = frostEval({ tonightLow: 39, highToday: 60, forecastLows: [38.6, 50, 51], forecastDates: dates,
+      forecastHourly: { time: stamps('2026-10-10'), temperature_2m: dayCurve(38.6, 4) }, lowSource: 'forecast',
+      radiativeNights: [clearNight('2026-10-09')], exposure: { tender: 5, unknown: 0, tenderContainers: 1, atRisk: 5, byCropType: [tender] },
+      spaceId: 'S1', eventDate: '2026-10-09' }, { frostSeason: true, radiativeEnabled: true });
+    expect(band.message).toMatch(/Colder on a second forecast: 38\.6°F tonight/);
+    expect(frostSubject(band)).toBe('Garden alert - Frost watch tonight (low 39F)');
+    // A LATER-night colder figure ("Colder ahead") never reaches the subject.
+    const ahead = frostEval({ tonightLow: 41, highToday: 60, forecastLows: [46, 35, 51], forecastDates: dates,
+      forecastHourly: { time: stamps('2026-10-11'), temperature_2m: dayCurve(35, 5) }, lowSource: 'forecast',
+      radiativeNights: [clearNight('2026-10-09')], exposure: { tender: 5, unknown: 0, tenderContainers: 1, atRisk: 5, byCropType: [tender] },
+      spaceId: 'S1', eventDate: '2026-10-09' }, { frostSeason: true, radiativeEnabled: true });
+    expect(ahead.colder).toMatchObject({ lowF: 35, nightOffset: 1 });
+    expect(frostSubject(ahead)).toBe('Garden alert - Frost watch tonight (low 41F)');
   });
 
   it('heat (off in prod, D5) keeps its old tail', () => {

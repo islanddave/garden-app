@@ -176,7 +176,8 @@ describe('V5-TODAYRADIATIVEWATCH-001 — the radiative imminent email and Today 
     const t = planTable(PEPTOM);
     const emails = [];
     for (const hr of [15, 16, 17]) await once(t, emails, { etHour: hr, nws: 39, lows: [35, 50, 51], minHours: [4, 6, 6] });
-    expect(emails.map((e) => [e.hour, e.subject])).toEqual([[15, 'Garden alert - Frost watch tonight (low 39F)']]);   // one email, as before
+    // CHANGED by follow-up F2: the subject leads with the colder same-night figure (was "(low 39F)").
+    expect(emails.map((e) => [e.hour, e.subject])).toEqual([[15, 'Garden alert - Frost watch tonight (as low as 35F)']]);   // one email, as before
     expect(emails[0].message.endsWith(' Colder on a second forecast: 35°F tonight, 2026-10-10 — pick what\'s ripe and cover tender plants tonight.')).toBe(true);
     expect(t.sent()).toHaveLength(1);
     expect(t.sent()[0]).toMatchObject({ tier: 'imminent', level: 'protect', lowF: 39, dayOffset: 0, trip: 'radiative', run: 'intraday-pm',
@@ -241,7 +242,8 @@ describe('V5-TODAYFROSTLINEGAPS-001 — Today after the real run()', () => {
     const t = planTable(PEPTOM);
     const emails = [];
     await once(t, emails, { etHour: 15, nws: 39, lows: [35, 50, 51], minHours: [4, 6, 6] });
-    expect(emails.map((e) => e.subject)).toEqual(['Garden alert - Frost watch tonight (low 39F)']);
+    // CHANGED by follow-up F2: the subject says what the line says (was "(low 39F)").
+    expect(emails.map((e) => e.subject)).toEqual(['Garden alert - Frost watch tonight (as low as 35F)']);
     expect(lines(t)).toEqual([ASLOW('tonight', 35)]);
     const agreed = agreedTonightLow(t.items());
     expect(agreed).toEqual({ lowF: 35, lowRaw: 35 });

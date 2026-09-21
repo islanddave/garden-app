@@ -183,7 +183,8 @@ describe('radiative imminent + colder advisory — the same night is not "ahead"
     // and stage row cover." (Dave: a same-night clause says what to do tonight). The later-night close is unchanged.
     expect(r.message).toBe(`${IMMINENT} Colder on a second forecast: 35°F tonight, 2026-10-10 — pick what's ripe and cover tender plants tonight.`);
     // BEFORE (base 10452156): `${IMMINENT} Colder ahead: 35°F tonight, 2026-10-10 — harvest ahead and stage row cover.`
-    expect(frostSubject(r)).toBe('Garden alert - Frost watch tonight (low 39F)');
+    // CHANGED by follow-up F2 (Dave 2026-09-21): the subject leads with the colder same-night figure (was "(low 39F)").
+    expect(frostSubject(r)).toBe('Garden alert - Frost watch tonight (as low as 35F)');
   });
 
   it('no hourly series: the base-rate night of D1 is tonight too, so the same wording', () => {
@@ -240,7 +241,8 @@ describe('radiative imminent + colder advisory — the same night is not "ahead"
     expect(big.tier).toBe('imminent');
     expect(big.message.length).toBeLessThanOrEqual(fe.MAX_MESSAGE_CHARS);
     expect(big.message.endsWith(' Colder on a second forecast: 34.5°F tonight, 2026-10-10 — pick what\'s ripe and cover tender plants tonight.')).toBe(true);
-    expect(frostSubject(big)).toBe('Garden alert - Frost watch tonight (low 39F)');
+    // CHANGED by follow-up F2: 34.5 rounds to 35, lower than the watch's 39 (was "(low 39F)").
+    expect(frostSubject(big)).toBe('Garden alert - Frost watch tonight (as low as 35F)');
     // A crop list long enough to pass the cap: the combined message is cut at the cap and marked, never sent long.
     const huge = watch(minAt('2026-10-10', 34.5, 4), { forecastLows: [34.5, 50, 51],
       exposure: { tender: 54, unknown: 0, tenderContainers: 54, atRisk: 54, byCropType: many(6, (i) => `${'x'.repeat(130)}${i}`) } });
@@ -358,7 +360,8 @@ describe('END TO END — what the real run() publishes', () => {
   it('a radiative imminent with a colder same-night advisory: the second forecast is named, not "ahead"', async () => {
     const { frost } = await drive({ lows: [35, 50, 51], hourlyTemp: minAt('2026-10-10', 35, 4), tonightLow: 39 });
     expect(frost).toHaveLength(1);
-    expect(frost[0].subject).toBe('Garden alert - Frost watch tonight (low 39F)');
+    // CHANGED by follow-up F2: the phone notification line carries the colder same-night figure (was "(low 39F)").
+    expect(frost[0].subject).toBe('Garden alert - Frost watch tonight (as low as 35F)');
     // CHANGED by V5-TODAYFROSTLINEGAPS-001: the same-night close (was "— harvest ahead and stage row cover.").
     expect(frost[0].message.endsWith(' Colder on a second forecast: 35°F tonight, 2026-10-10 — pick what\'s ripe and cover tender plants tonight.')).toBe(true);
   });

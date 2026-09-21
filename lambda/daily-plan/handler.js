@@ -939,6 +939,20 @@ function advisorySubjectTail(a) {
   return `${when ? ` ${when}` : ''}${Number.isFinite(lowF) ? ` (low ${Math.round(lowF)}F)` : ''}`;
 }
 
+// V5-TODAYFROSTLINEGAPS-001 follow-up F2 (Dave 2026-09-21) — a radiative watch whose body carries a colder SAME-night
+// second forecast ("Colder on a second forecast: 35°F tonight", frostEval decision.colder at night 0) puts that figure in
+// the subject, the phone notification line: "(as low as 35F)", the words and rounded number Today's watch line prints
+// (src/lib/frostAlertLine.js lineFor), and only when the ROUNDED figure is lower, as there. Else null: the old tail.
+// frostEval records `colder` only on a radiative-only imminent decision (the one message that carries the clause).
+function colderTonightTail(d) {
+  const c = d.tier === 'imminent' ? d.colder : null;
+  if (!c || c.nightOffset !== 0) return null;
+  const second = Number(c.lowF);
+  const own = Number(d.observability ? d.observability.tonightLowF : null);
+  if (c.lowF == null || !Number.isFinite(second) || !Number.isFinite(own) || !(Math.round(second) < Math.round(own))) return null;
+  return ` (as low as ${Math.round(second)}F)`;
+}
+
 function frostSubject(d) {
   // V5-RADIATIVEFROST-001: a radiative-only trip fires ABOVE the trip point, so "Frost protect tonight
   // (low 39F)" would assert a threshold crossing at a number that did not cross it — the same
@@ -951,7 +965,8 @@ function frostSubject(d) {
       : (radiativeOnly ? 'Frost watch tonight' : 'Frost protect tonight'))
     : (d.tier === 'advisory' ? (d.advisory && d.advisory.radiativeOnly ? 'Frost watch' : 'Frost advisory') : 'Heat advisory');
   const low = d.tier === 'advisory' ? advisorySubjectTail(d.advisory)
-    : (d.observability && d.observability.tonightLowF != null ? ` (low ${d.observability.tonightLowF}F)` : '');
+    : (colderTonightTail(d)
+      || (d.observability && d.observability.tonightLowF != null ? ` (low ${d.observability.tonightLowF}F)` : ''));
   return `Garden alert - ${label}${low}`.replace(/[^\x20-\x7E]/g, '').slice(0, 100);
 }
 
