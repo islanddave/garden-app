@@ -218,7 +218,10 @@ def main(argv=None):
         print(f"\nFATAL: could not read one of the databases: {exc}", file=sys.stderr)
         print("  Fix: check the URLs and Neon branch availability. Drift is UNKNOWN, never assumed absent.",
               file=sys.stderr)
-        print("::error::staging-drift check could not reach a database — drift UNKNOWN")
+        # ::warning::, not ::error:: (OPS-PROMOTEGATEERREXIT2-001): staging-drift.yml turns exit 2 into a PASSING step
+        # with its own `::warning title=Staging drift UNKNOWN::`, so an ::error:: here put a red annotation on a green
+        # job. Same level as that warning and as a drift finding; exit 2 (never a silent pass) is unchanged.
+        print("::warning::staging-drift check could not reach a database — drift UNKNOWN")
         return 2
 
     if info:
