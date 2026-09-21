@@ -4,6 +4,7 @@
 -- gives each of those 21 cultivar profiles the one key it lacks, `fertilize_interval_days`, with the
 -- value the bundled cadence data already carries for that plant.
 --
+-- APPLIED on prod 2026-09-21 17:10:19Z and on staging 17:10:12Z (stamp only). Do not re-run (README.md, Status).
 -- NOT APPLIED as of authoring (2026-09-21, lane feedintervals). No statement in this directory has run
 -- against staging or prod; it was rehearsed on an ephemeral fork of prod (README.md). Apply order:
 -- README.md.

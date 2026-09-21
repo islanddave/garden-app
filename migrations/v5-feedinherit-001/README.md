@@ -1,7 +1,9 @@
 # v5-feedinherit-001 — feed 21 plants on their own schedule, not the house 14 days
 
-**Status: WRITTEN, GATED, REHEARSED ON A FORK OF PROD, UNAPPLIED.** Nothing in this directory has run against
-staging or prod. The apply is a prod write and is the orchestrator's call; Dave approved the change itself.
+**Status: APPLIED on prod 2026-09-21 17:10:19Z** (21 rows `UPDATE 1`, `--phase post` PASS 7/7, whole corpus 0 FAIL)
+**and on staging 17:10:12Z (stamp only, `UPDATE 0` x21).** Written, gated and rehearsed on a fork of prod first; Dave
+approved the change itself. Do not re-run 0a: it is idempotent (`UPDATE 0` x21) but moves the stamp's `applied_at`,
+which re-points the two window-only `updated_at = applied_at` receipts.
 
 Ledger row: `BUG-CAREFEEDINHERIT-001`. Dave's decision (2026-09-21), the option he chose: "Use the care-data intervals
 (Recommended) — Set each of the 21 to its own interval from the app's care data. This changes only care records, not
@@ -171,7 +173,8 @@ be rolled back. The rollback never touches the five rows left out.
 
 ## Verification at authoring (2026-09-21)
 
-**Nothing was applied to staging or prod.** Read-only against prod (gate_runner, owner DSN by key name, read-only
+**At authoring, nothing had been applied to staging or prod** (it was applied later the same day; see Status).
+Read-only against prod (gate_runner, owner DSN by key name, read-only
 connection): `--validate-only` clean; `--phase pre` PASS 9/9; `--phase post --continuous-only` PASS 1 (the standing
 gate, vacuous until the stamp exists) with 6 apply-window receipts skipped. The full `--phase post` on unapplied prod
 fails the stamp receipt and the three value receipts, so none of them passes on data that was never written; the two
