@@ -99,7 +99,7 @@ post:
       Written as IS DISTINCT FROM ... OR, not NOT (... AND ...): with no _basis the conjunction is
       NULL and the row would silently leave the guard. Unknown Sweet Long is NOT a placeholder by this
       rule — its row says 'unresearched' but carries the Dave-approved 2d/17d Capsicum fallback — so
-      re-identifying it flags. README §Placeholders has the rehearsal and the mutations.
+      re-identifying it flags. README §Placeholders; rehearsal and mutants in §Verification 2026-09-21.
     sql: |
       WITH rekeyed AS (
         SELECT DISTINCT (a.before_jsonb->>'variety_id')::uuid AS old_v

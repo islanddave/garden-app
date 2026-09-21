@@ -19,11 +19,16 @@
 -- job the moment these gates landed if they asserted before being applied (gate-invariants.yml:166-171).
 --
 -- ┌─ READ BEFORE APPLYING ───────────────────────────────────────────────────────────────────────┐
--- │ APPLYING THIS MAKES TWO EXISTING FINDINGS VISIBLE. Measured on live prod 2026-09-08, the      │
--- │ guard has two violations waiting for it:                                                      │
+-- │ APPLYING THIS MAKES EXISTING FINDINGS VISIBLE. Run preview_armed.py first and apply only      │
+-- │ when it prints ARM-SAFE (README §Arming). 2026-09-08 measured two (Snapdragon, since          │
+-- │ resolved, and Palmetto Punch). Live prod on 2026-09-21 read NOT ARM-SAFE with three, all      │
+-- │ 2026-06-18 _seeded profiles:                                                                  │
 -- │                                                                                               │
--- │   411e7cf8-580c-4720-9d51-52af93461cdd  Snapdragon      _source lane-penstemon-20260907       │
--- │   81951ffd-71fc-4a77-87a1-01ea07e96357  Palmetto Punch  (second instance, found by the recon) │
+-- │   81951ffd-71fc-4a77-87a1-01ea07e96357  Palmetto Punch                                        │
+-- │   c03b71ce-963d-482c-ad1d-19ddcdb69b9b  Bulgarian Carrot (Shipka)                             │
+-- │   f0f2ed77-d3a5-418b-975c-fca44c11cd4c  Sunbright                                             │
+-- │                                                                                               │
+-- │ A stranded app placeholder is NOT a finding (Dave, 2026-09-21; README §Placeholders).         │
 -- │                                                                                               │
 -- │ That is the point of the guard, not a bug in it — but it means gate-invariants.yml goes RED   │
 -- │ on the next run after apply unless each is resolved first, one of two ways:                   │
@@ -47,11 +52,10 @@
 --   UPDATE public.care_profile
 --      SET profile = profile || jsonb_build_object(
 --            '_retained',
---            'Kept 2026-09-08 on Dave''s decision: the research describes snapdragons correctly and '
---            'this cultivar is expected to be planted again. Its last planting was re-keyed to '
---            'Penstemon 1565a553 on 2026-09-08.')
+--            'Kept <date> on Dave''s decision: <why this research should outlive its planting>. '
+--            'Its last planting was re-keyed to <new cultivar> on <date>.')
 --    WHERE scope = 'cultivar'
---      AND scope_id = '411e7cf8-580c-4720-9d51-52af93461cdd'::uuid;
+--      AND scope_id = '<variety uuid>'::uuid;
 --
 -- Left as a comment on purpose. Uncommenting it is asserting the decision was made; running this file
 -- must never make it by default.
@@ -59,7 +63,9 @@
 -- REVERSIBLE: 0r-rollback.sql deletes exactly this receipt, which disarms the gates back to vacuous.
 -- No data is touched in either direction.
 --
--- Usage: psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -f 0a-arm-guard.sql
+-- Usage (README §Arming has the full order — this predicate on main first, then the preview):
+--   python3 migrations/v5-rekeystrand-001/preview_armed.py --env prod     # must print ARM-SAFE
+--   psql "$NEON_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f migrations/v5-rekeystrand-001/0a-arm-guard.sql
 
 BEGIN;
 
@@ -71,8 +77,10 @@ VALUES ('5.0.0-rekeystrand-20260908',
         'dependent-row logic). Scoped to varieties an audit_events row PROVES lost a planting, which '
         'is what keeps the candidate set at 4 instead of the ~1200 that "no live planting" alone '
         'matches. Release valve is a _retained sentence on the profile, itself gated so it cannot '
-        'degrade to a boolean off-switch. Writes NO data. Forward-looking only: the plants audit '
-        'trigger was armed 2026-08-27, so earlier re-keys are undetectable by construction.',
+        'degrade to a boolean off-switch. A stranded app placeholder (_basis unresearched, no key '
+        'beyond _source/_basis/notes) is not counted, per Dave 2026-09-21. Writes NO data. '
+        'Forward-looking only: the plants audit trigger was armed 2026-08-27, so earlier re-keys are '
+        'undetectable by construction.',
         now())
 ON CONFLICT (version) DO UPDATE
   SET applied_at = now(), description = EXCLUDED.description;

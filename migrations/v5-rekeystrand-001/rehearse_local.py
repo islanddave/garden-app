@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """rehearse_local.py — v5-rekeystrand-001's red/green rehearsal on a THROWAWAY local Postgres.
 
-README §Rehearsal describes the method. This file is that method made re-runnable: the 2026-09-08
-harness lived in a scratch directory and died with it, and preship-qa I4 (2026-09-18) asked for a case
-to be ADDED to it before arming.
+README §Verification performed 2026-09-21 describes it. This file is the 2026-09-08 method made
+re-runnable: that harness lived in a scratch directory and died with it, and preship-qa I4 (2026-09-18)
+asked for a case to be ADDED to it before arming.
 
 WHAT IT DRIVES. The shipped gates.yml (or --gates copies, for mutation runs) through the shipped
 scripts/gate_runner.py CLI. Audit capture is the shipped trigger machinery, loaded from
