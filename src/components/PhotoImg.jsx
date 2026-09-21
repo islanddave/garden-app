@@ -27,6 +27,17 @@
 // to give. `mintTier` is that missing identity, not a mode — it reaches the mint URL and the cache
 // key and nothing else, the component body below names no tier vocabulary at all, and
 // PhotoImg.tier.test.jsx reds if either stops being true. Render, layout and degrade stay tier-blind.
+// (5) V5-SEEDSPOLISH-001 (Dave-approved 2026-09-21) adds ONE outbound event, `onTerminal`. A consumer
+// that draws its OWN empty state once a photo is truly gone (My seeds' sprout box) could not learn
+// that from this component: with alt="" the TERMINAL box is byte-identical to the PENDING one, and
+// onError/onRemint/onLoad log the same stream for a terminal heal as for a live one, so the only other
+// route was copying this file's retry budget into the consumer. `onTerminal(photoId)` fires once at
+// each entry into TERMINAL — heal exhausted, a re-mint 404/403, a mount-mint 404/403 — and never for
+// pending, a transient (429/5xx/network) failure or a heal that lands. It is an event, not a mode: it
+// is called beside each setTerminal(true), and nothing in render, layout or degrade reads it. It is
+// deliberately NOT a flavour of onError: PhotoView steps its degrade chain on every onError, so a
+// terminal onError would walk a thumb tile to the original. PhotoImg.terminal.test.jsx pins each
+// entry, the negatives, and that no setTerminal(true) exists without the event beside it.
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
@@ -166,9 +177,16 @@ function _seed(photoId, initialUrl, publishUrl = true, tier) {
 // layout, degrade or a11y path reads it, and it changes in lockstep with `initialUrl` (each step of
 // PhotoView's chain carries its own URL), so the existing initialUrl-change reset already covers a
 // tier switch and no separate mintTier-change branch is needed.
+//
+// `onTerminal` — freeze delta (5). Called with the photoId beside every setTerminal(true), so it fires
+// exactly when this instance enters TERMINAL; the fallback="none" exhausted heal never enters it (it
+// keeps its broken <img>) and so never fires. Destructured, like mintTier, so it cannot reach the DOM
+// as an unknown event-handler attribute. On PhotoView's id-only arm a mount-mint 404 on the thumb rung
+// fires it too, and that is still true of the photo: view-url 404s only a missing, foreign or deleted
+// photo ROW, never a missing derivative, so every rung of that photo would 404 alike.
 export default function PhotoImg({
   photoId, initialUrl, alt = '', fallback = 'placeholder', loading, hasFallback = false, mintTier,
-  onOpen, onRemint, onError, onLoad, style, className, ...rest
+  onOpen, onRemint, onError, onTerminal, onLoad, style, className, ...rest
 }) {
   const { fetch: apiFetch } = useApiFetch()
   const [src, setSrc] = useState(initialUrl ?? null)
@@ -245,7 +263,7 @@ export default function PhotoImg({
     // before the swap lands. Return BEFORE the retry budget is touched: the budget belongs to the
     // source that actually gets to heal.
     if (hasFallback) return
-    if (!photoId || retriedRef.current) { if (fallback !== 'none') setTerminal(true); return }
+    if (!photoId || retriedRef.current) { if (fallback !== 'none') { setTerminal(true); onTerminal?.(photoId) } return }
     retriedRef.current = true
     abortRef.current?.abort()
     const ac = new AbortController(); abortRef.current = ac
@@ -257,11 +275,11 @@ export default function PhotoImg({
     } catch (err) {
       if (!mountedRef.current) return
       const st = err?.status
-      if (st === 404) { setTerminal(true); onError?.({ type: 'deleted', photoId }) }   // signal cache invalidate
-      else if (st === 403) { setTerminal(true) }                                       // fresh URL still forbidden → terminal
+      if (st === 404) { setTerminal(true); onTerminal?.(photoId); onError?.({ type: 'deleted', photoId }) }   // signal cache invalidate
+      else if (st === 403) { setTerminal(true); onTerminal?.(photoId) }                                       // fresh URL still forbidden → terminal
       else { retriedRef.current = false }   // 429/5xx/network/offline → non-terminal, budget NOT spent; proactive/online retries
     }
-  }, [photoId, apiFetch, fallback, hasFallback, mintTier, onRemint, onError, adopt, useCors, src])
+  }, [photoId, apiFetch, fallback, hasFallback, mintTier, onRemint, onError, onTerminal, adopt, useCors, src])
 
   // V4-PHOTOCORS-001 — latch detection. This fires only on the plain RETRY of a url whose CORS
   // attempt failed, which is the one observation that isolates the CORS mode as the cause: same url,
@@ -291,11 +309,11 @@ export default function PhotoImg({
     }).catch((err) => {
       if (!mountedRef.current) return
       const st = err?.status
-      if (st === 404) { setTerminal(true); onError?.({ type: 'deleted', photoId }) }
-      else if (st === 403) { setTerminal(true) }
+      if (st === 404) { setTerminal(true); onTerminal?.(photoId); onError?.({ type: 'deleted', photoId }) }
+      else if (st === 403) { setTerminal(true); onTerminal?.(photoId) }
       // network/5xx/offline → non-terminal; the proactive/online path recovers it
     })
-  }, [photoId, initialUrl, apiFetch, mintTier, adopt, onRemint, onError])
+  }, [photoId, initialUrl, apiFetch, mintTier, adopt, onRemint, onError, onTerminal])
 
   // Proactive heal: on foreground / resume / bfcache-restore, re-mint an IN-VIEWPORT photo BEFORE the
   // stale URL renders — but only if the last mint is older than the presign TTL (elapsed gate, NEW-4),

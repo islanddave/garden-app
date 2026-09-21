@@ -619,6 +619,15 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [item.id, item.hero_photo_id, item.featured_photo_view_url, item.featured_photo_thumb_url, deviceThumb],
   )
+  // V5-SEEDSPOLISH-001: a packet photo that cannot be shown ends as the no-photo row's sprout box, not as
+  // PhotoImg's plain green placeholder (the sprout box with the sprout missing). PhotoImg says when it
+  // has given up (onTerminal); until then the row draws exactly what it drew before, stone box and all.
+  // The flag names the photo it failed for — its id, or its URL for a photo that came with none — so a
+  // row re-pointed at a different picture starts clean instead of inheriting the old one's failure.
+  const photoKey = photo ? (photo.id ?? photo.featured_photo_view_url ?? null) : null
+  const [failedKey, setFailedKey] = useState(null)
+  const onPhotoTerminal = useCallback(() => setFailedKey(photoKey), [photoKey])
+  const thumbPhoto = photoKey != null && failedKey === photoKey ? null : photo
   const sep = (has) => (has ? ' · ' : '')
 
   return (
@@ -640,11 +649,11 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
         aria-label={`${title}${vendor ? `, from ${vendor}` : ''} — ${expanded ? 'collapse' : 'expand'}`}
         style={rowBtn}
       >
-        <span data-testid="my-seed-thumb" style={photo ? thumbBoxPhoto : thumbBoxEmpty}>
-          {photo && withPhoto && deviceThumb !== undefined && (
-            <PhotoView photo={photo} tier={TIER.THUMB} resolveById alt="" decoding="async" style={thumbImg} data-testid="my-seed-photo" />
+        <span data-testid="my-seed-thumb" style={thumbPhoto ? thumbBoxPhoto : thumbBoxEmpty}>
+          {thumbPhoto && withPhoto && deviceThumb !== undefined && (
+            <PhotoView photo={thumbPhoto} tier={TIER.THUMB} resolveById alt="" decoding="async" style={thumbImg} data-testid="my-seed-photo" onTerminal={onPhotoTerminal} />
           )}
-          {!photo && <Icon name="lifecycle.sprout" size={24} decorative />}
+          {!thumbPhoto && <Icon name="lifecycle.sprout" size={24} decorative />}
         </span>
         <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={line1Style}>
