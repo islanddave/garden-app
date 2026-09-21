@@ -33,7 +33,7 @@
 //                  tender band (radiativeFrost.js proximity 4) — where the cue says "Cool night" or nothing,
 //                  so Today never said "watch" on the evening the email did (V5-TODAYRADIATIVEWATCH-001;
 //                  Dave 2026-09-21, "Show it on Today"). The most recently sent imminent entry decides: a
-//                  later threshold send leaves tonight to the freeze cue again. pickAdvisory ranks it.
+//                  later threshold send leaves tonight to the freeze cue again. pickFrostLines ranks it.
 //   - heat      -> skipped. computeCallout renders `high >= 88` already.
 //   - advisory  -> rendered, tonight included: its figure is a second model's, and it is the one
 //                  Dave was texted about. When it names tonight, Today prints ONE low for the night
@@ -45,6 +45,19 @@
 //                  and keeps "Frost possible".
 //   - forced    -> skipped, any tier: a rehearsal, never a real alert (BUG-FROSTREHEARSALSWALLOWS-001).
 //
+// UP TO TWO LINES, ONE PER NIGHT (V5-TODAYFROSTLINEGAPS-001, Dave 2026-09-21). The slot used to hold ONE line, so a
+// watch for tonight displaced the advisory for a LATER night for the rest of the plan date. Now:
+//   1. tonight — the watch, or an advisory naming tonight (the V5-TODAYRADIATIVEWATCH-001 choice between them,
+//      unchanged); when neither applies and a THRESHOLD "Frost protect tonight" email went out earlier but the plan
+//      low has since warmed out of the freeze cue (>= FREEZE_BELOW_F), the facts: "Forecast warmed to 44°F since the
+//      3 PM frost email." — the only Today trace such an email would otherwise leave once the cue stops covering it.
+//   2. a later night — the newest advisory statement about one: the advisory entry when it names a later night, or
+//      the "Colder ahead" advisory a watch email carried (`colder` on the imminent entry, below).
+// Tonight's line comes first. Never two lines about the same night; with only one of them, exactly one line, as before.
+// A watch entry's `colder` (handler.frostWeatherFacts) is the colder advisory its email printed. Naming TONIGHT it is
+// the second forecast's low for the watch's own night ("Colder on a second forecast: 35°F tonight"): the watch line
+// says "as low as 35°F", and tonightLow.js agrees the night on it. Naming a later night it is line 2's candidate.
+//
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // AN ENTRY WITHOUT A TEMPERATURE RENDERS NOTHING, DELIBERATELY.
 //
@@ -55,6 +68,17 @@
 // Those rows age out on their own; nothing needs backfilling.
 
 const SEVERITY = { advisory: 1 };
+
+// engine.js computeCallout: `low < 40` is the freeze cue, the line where it stops covering tonight. src/lib/tonightLow.js
+// imports it for its copy of that cue, and its PARITY sweep holds it to the real computeCallout.
+export const FREEZE_BELOW_F = 40
+
+// A number, or a non-empty numeric string, else null (tonightLow.js reads a plan low by the same rule).
+function numOrNull(v) {
+  if (typeof v !== 'number' && !(typeof v === 'string' && v.trim() !== '')) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // THE NIGHT — the same rule as frostEval (advisoryNight + nightPhrase), from the fields the handler
@@ -114,27 +138,60 @@ export function nightPhrase(night) {
   return wd ? `${wd} night` : `in ${night.nightOffset} days`
 }
 
-// Picks the alert to render, or null. Most severe wins; among equals the most recently SENT wins,
-// because a re-send inside one night is an escalation, not a repeat (handler carries prior sends
-// forward rather than replacing them, so the array is append-ordered but `at` is authoritative).
+// V5-TODAYFROSTLINEGAPS-001 — a watch entry's `colder` (the colder advisory its email carried), read by the advisory
+// rules (resolveNight on its own dayOffset/date/nightOffset) and nothing else of the object.
+function colderFacts(a) {
+  const c = a && a.colder
+  if (!c || typeof c !== 'object') return null
+  const f = { lowF: numOrNull(c.lowF), dayOffset: c.dayOffset, date: c.date, nightOffset: c.nightOffset }
+  const night = resolveNight(f)
+  return f.lowF != null && night && nightPhrase(night) != null ? { f, night } : null
+}
+// The second forecast's low for the watch's OWN night ("Colder on a second forecast: 35°F tonight"), or null.
+function colderTonight(a) {
+  const c = colderFacts(a)
+  return c && c.night.nightOffset === 0 ? c.f.lowF : null
+}
+// The "Colder ahead" advisory a watch email carried, as an advisory statement sent when the email was, or null.
+function colderAhead(a) {
+  const c = colderFacts(a)
+  return c && c.night.nightOffset >= 1 ? { ...c.f, tier: 'advisory', level: 'advisory', at: a.at } : null
+}
+// A line's own raw low: an advisory's figure; a watch's the colder of its own and its second forecast's.
+function lineLowRaw(a) {
+  const own = Number(a.lowF)
+  const second = a.tier === 'imminent' ? colderTonight(a) : null
+  return second != null && second < own ? second : own
+}
+
+// Picks what to render -> { tonight, ahead, imminent }: the entry for tonight's line, the statement for a later
+// night's, and the most recently sent real imminent entry (for the warmed line). Each null when nothing applies.
+// Most severe wins; among equals the most recently SENT wins, because a re-send inside one night is an escalation,
+// not a repeat (handler carries prior sends forward rather than replacing them, so the array is append-ordered but
+// `at` is authoritative).
 // BUG-FROSTREHEARSALSWALLOWS-001 — a send made by a FORCED run (`run: 'forced'`, a rehearsal whose trip
 // points may be raised) is never a real alert, so it never renders and never outranks a real one. The
 // server's "already sent?" gates skip the same entries (lambda/daily-plan/frostEval.js countsAsSent;
 // frostrehearsal.test.js holds the two together). An entry with no `run` predates the field and counts.
 // V5-TODAYRADIATIVEWATCH-001 — the imminent tier renders only as a WATCH, and the most recently sent imminent
 // entry decides whether it does: a radiative one is tonight's watch, a threshold one leaves tonight to the
-// freeze cue (see the header) whatever was sent before it. A watch outranks an advisory — it is the imminent
-// tier, and it is about tonight — except that an advisory naming TONIGHT at the same or a colder low keeps the
-// line: the watch's own email says so ("Colder on a second forecast: 37°F tonight"), and a watch must never
-// make the line warmer than the one it replaced (V5-FROSTTWOMODELS-001: one low per night, the colder wins).
-export function pickAdvisory(alertsSent) {
-  if (!Array.isArray(alertsSent)) return null
+// freeze cue (see the header) whatever was sent before it. A watch outranks an advisory for tonight — it is the
+// imminent tier — except that an advisory naming TONIGHT at the same or a colder low keeps tonight's line: a
+// watch must never make the line warmer than the one it replaced (V5-FROSTTWOMODELS-001: one low per night, the
+// colder wins). The watch's low there is lineLowRaw: its second forecast's figure counts.
+// V5-TODAYFROSTLINEGAPS-001 — an advisory for a LATER night is no longer displaced: it is `ahead`, the newest of the
+// newest advisory entry (when it names a later night) and every "Colder ahead" a real watch email carried.
+export function pickFrostLines(alertsSent) {
+  if (!Array.isArray(alertsSent)) return { tonight: null, ahead: null, imminent: null }
   let best = null
   let imminent = null
+  let carried = null
   for (const a of alertsSent) {
     if (!a || a.run === 'forced') continue
     if (a.tier === 'imminent') {
       if (imminent == null || String(a.at || '') > String(imminent.at || '')) imminent = a
+      const c = colderAhead(a)
+      if (c && (carried == null || String(c.at || '') > String(carried.at || ''))) carried = c
       continue
     }
     if (SEVERITY[a.tier] == null) continue
@@ -147,33 +204,102 @@ export function pickAdvisory(alertsSent) {
   }
   const watch = imminent && imminent.trip === 'radiative' && imminent.lowF != null
     && Number.isFinite(Number(imminent.lowF)) ? imminent : null
-  if (!watch) return best
-  if (best && resolveNight(best).nightOffset === 0 && Number(best.lowF) <= Number(watch.lowF)) return best
-  return watch
+  const bestTonight = best != null && resolveNight(best).nightOffset === 0
+  let tonight = bestTonight ? best : null
+  if (watch && !(bestTonight && Number(best.lowF) <= lineLowRaw(watch))) tonight = watch
+  let ahead = bestTonight ? null : best
+  if (carried && (ahead == null || String(carried.at || '') > String(ahead.at || ''))) ahead = carried
+  return { tonight, ahead, imminent }
 }
 
-// -> { text, tier, dayOffset, nightOffset, lowF } or null.
-// V5-FROSTTWOMODELS-001 — `lowShown`, when a finite number, is the figure the line prints (and returns
-// as lowF) instead of its own rounded low. Today passes it only on a night this line names TONIGHT —
-// src/lib/tonightLow.js agreedTonightLow decides that, here nothing does — so the card, the cue and this
-// line print one number. Without it the output is the one-argument output, byte for byte: the server's
-// PARITY suites (lambda/daily-plan/advisorynight.test.js, frostsubject.test.js) call it that way.
+// The single entry the FIRST line renders, or null: tonight's, else the later night's. Unchanged for every entry
+// stored before V5-TODAYFROSTLINEGAPS-001 (a list with no `colder` picks exactly what the one-slot rule picked).
+export function pickAdvisory(alertsSent) {
+  const { tonight, ahead } = pickFrostLines(alertsSent)
+  return tonight || ahead
+}
+
+// The raw low of the line naming TONIGHT (a watch: including its second forecast), or null when no line names
+// tonight. src/lib/tonightLow.js agrees the night on it.
+export function tonightLineLow(alertsSent) {
+  const { tonight } = pickFrostLines(alertsSent)
+  return tonight ? lineLowRaw(tonight) : null
+}
+
+// The email's send time on the ET clock, as the reader says it: "3 PM", "3:05 PM". The garden and its sends are ET
+// (lambda/daily-plan frost window 14:00-17:59 ET); the phone's zone does not move it. null when `at` is not a time.
+const ET_CLOCK = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })
+function etClock(at) {
+  if (typeof at !== 'string' || at.trim() === '') return null
+  const d = new Date(at)
+  if (Number.isNaN(d.getTime())) return null
+  const p = {}
+  for (const part of ET_CLOCK.formatToParts(d)) p[part.type] = part.value
+  if (!p.hour || !p.minute || !p.dayPeriod) return null
+  return `${p.hour}${p.minute === '00' ? '' : `:${p.minute}`} ${p.dayPeriod}`
+}
+
+// V5-TODAYFROSTLINEGAPS-001 (Dave 2026-09-21, "Say it warmed") — a THRESHOLD imminent email ("Frost protect tonight
+// (low 36°F)") leaves tonight to the freeze cue, which keys on the CURRENT plan low: once a later run warms it to
+// FREEZE_BELOW_F or above, the cue stops saying "Freeze tonight" and Today said nothing about an email he got that
+// afternoon. This line says what changed — facts only, no advice — with the plan low as the card prints it and the
+// email's send time. Only from the most recently sent real imminent entry, only when it is a threshold one (a watch
+// is its own line), only when the plan low is now warmer than the low that email sent at, and never while the freeze
+// cue still covers tonight. pickFrostLines never hands it a forced entry.
+function warmedLine(imminent, planLow) {
+  if (!imminent || imminent.trip === 'radiative') return null
+  const plan = numOrNull(planLow)
+  const sent = numOrNull(imminent.lowF)
+  if (plan == null || sent == null || plan < FREEZE_BELOW_F || !(plan > sent)) return null
+  const time = etClock(imminent.at)
+  if (!time) return null
+  return { text: `Forecast warmed to ${planLow}°F since the ${time} frost email.`, tier: 'imminent', dayOffset: 0, nightOffset: 0, lowF: plan }
+}
+
+// -> { text, tier, dayOffset, nightOffset, lowF } for one picked entry.
 // V5-TODAYRADIATIVEWATCH-001 — a radiative trip (`trip: 'radiative'` on the entry, imminent or advisory) is a
 // WATCH, the word its email uses: the low sits above the trip point and the clear, calm sky is the reason it
 // can fall further, so the line names both — "Frost watch tonight — clear and calm, low 42°F. …".
-export function buildFrostAlertLine(alertsSent, { lowShown } = {}) {
-  const a = pickAdvisory(alertsSent)
-  if (!a) return null
+// V5-TODAYFROSTLINEGAPS-001 — a watch whose email printed a colder second forecast for its night says so, at that
+// figure: "Frost watch tonight — clear and calm, as low as 35°F. …".
+function lineFor(a, lowShown) {
   const night = resolveNight(a)
   const when = nightPhrase(night)
-  const low = Number.isFinite(lowShown) ? lowShown : Math.round(Number(a.lowF))
+  const own = Number(a.lowF)
+  const raw = lineLowRaw(a)
+  const low = Number.isFinite(lowShown) ? lowShown : Math.round(raw)
   return {
     text: a.trip === 'radiative'
-      ? `Frost watch ${when} — clear and calm, low ${low}°F. Plan cover for tender plants.`
+      ? `Frost watch ${when} — clear and calm, ${raw < own ? 'as low as' : 'low'} ${low}°F. Plan cover for tender plants.`
       : `Frost possible ${when} — low ${low}°F. Plan cover for tender plants.`,
     tier: a.tier,
     dayOffset: intOrNull(a.dayOffset),
     nightOffset: night.nightOffset,
     lowF: low,
   }
+}
+
+// -> the lines Today renders, in order (tonight's first), each { text, tier, dayOffset, nightOffset, lowF }; [] when
+// nothing applies. See the header for which lines, and pickFrostLines for which entries.
+// V5-FROSTTWOMODELS-001 — `lowShown`, when a finite number, is the figure TONIGHT's line prints (and returns as
+// lowF) instead of its own rounded low. Today passes it only on a night a line names TONIGHT — src/lib/tonightLow.js
+// agreedTonightLow decides that — so the card, the cue and that line print one number; a later night's line always
+// keeps its own figure. `planLow` (plan.weather.tonightLow) is read only for the warmed line.
+export function buildFrostAlertLines(alertsSent, { lowShown, planLow } = {}) {
+  const { tonight, ahead, imminent } = pickFrostLines(alertsSent)
+  const lines = []
+  if (tonight) lines.push(lineFor(tonight, lowShown))
+  else {
+    const warmed = warmedLine(imminent, planLow)
+    if (warmed) lines.push(warmed)
+  }
+  if (ahead) lines.push(lineFor(ahead, null))
+  return lines
+}
+
+// -> the FIRST line, or null. Without `planLow` its output is the one-argument output, and for every entry stored
+// before V5-TODAYFROSTLINEGAPS-001 that is byte for byte what it returned before: the server's PARITY suites
+// (lambda/daily-plan/advisorynight.test.js, frostsubject.test.js, …) call it that way.
+export function buildFrostAlertLine(alertsSent, opts = {}) {
+  return buildFrostAlertLines(alertsSent, opts)[0] || null
 }

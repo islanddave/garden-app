@@ -17,6 +17,11 @@
 // V5-FROSTTWOMODELS-001 — on such a night the two models' lows used to sit on screen side by side for
 // one night. Today now passes `lowShown` (src/lib/tonightLow.js, the colder of the two, rounded) and
 // the card, the cue and this line all print it. Absent `lowShown` this line prints its own figure.
+// V5-TODAYFROSTLINEGAPS-001 (Dave 2026-09-21) — up to TWO lines now, one per night, tonight's first: a
+// watch no longer hides the advisory for a later night. Tonight's can also be "Forecast warmed to 44°F
+// since the 3 PM frost email." when a threshold frost email went out and the plan low has since left
+// the freeze cue; `planLow` (plan.weather.tonightLow) is read for that line only. Each line is the same
+// element as before — same test id, same style — so one line renders exactly the DOM it always did.
 //
 // VISUAL TREATMENT MIRRORS WeatherCueLine, AND FOR ITS STATED REASON, NOT BY COPYING. That header
 // argues the gold/warn family is a crowded slot — hydrology uncertainty plus StorageDeadlineAlert
@@ -44,32 +49,38 @@
 // screen he already opens daily, and NOTHING on a day with no advisory.
 import React, { useMemo } from 'react'
 import { P } from '../../lib/constants.js'
-import { buildFrostAlertLine } from '../../lib/frostAlertLine.js'
+import { buildFrostAlertLines } from '../../lib/frostAlertLine.js'
 
-export default function FrostAlertLine({ alertsSent = null, lowShown = null }) {
-  const line = useMemo(() => buildFrostAlertLine(alertsSent, { lowShown }), [alertsSent, lowShown])
+export default function FrostAlertLine({ alertsSent = null, lowShown = null, planLow = null }) {
+  const lines = useMemo(() => buildFrostAlertLines(alertsSent, { lowShown, planLow }), [alertsSent, lowShown, planLow])
 
   // Renders NOTHING when no advisory or watch is live — which is most days, and on every day whose
   // stored entries predate the handler persisting lowF/dayOffset. Never a blank strip, never a heading
   // over silence.
-  if (!line) return null
+  if (!lines.length) return null
 
+  // A fragment, not a wrapper: each line is its own item in Today's column, exactly as the one line was.
   return (
-    <div
-      data-testid="frost-alert-line"
-      data-frost-tier={line.tier}
-      data-frost-day-offset={String(line.dayOffset)}
-      data-frost-night-offset={String(line.nightOffset)}
-      style={{
-        borderLeft: `3px solid ${P.sage}`,
-        paddingLeft: 10,
-        fontSize: '0.84rem',
-        lineHeight: 1.45,
-        color: P.dark,
-        fontWeight: 600,
-      }}
-    >
-      {line.text}
-    </div>
+    <>
+      {lines.map((line, i) => (
+        <div
+          key={i}
+          data-testid="frost-alert-line"
+          data-frost-tier={line.tier}
+          data-frost-day-offset={String(line.dayOffset)}
+          data-frost-night-offset={String(line.nightOffset)}
+          style={{
+            borderLeft: `3px solid ${P.sage}`,
+            paddingLeft: 10,
+            fontSize: '0.84rem',
+            lineHeight: 1.45,
+            color: P.dark,
+            fontWeight: 600,
+          }}
+        >
+          {line.text}
+        </div>
+      ))}
+    </>
   )
 }

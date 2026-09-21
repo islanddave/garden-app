@@ -138,8 +138,12 @@ export default function Today() {
               here as a watch line, and so does a radiative-only advisory (V5-TODAYRADIATIVEWATCH-001).
               A rehearsal (run "forced") never renders (BUG-FROSTREHEARSALSWALLOWS-001). Renders
               nothing on a day with no advisory or watch, and nothing for entries stored before the
-              handler persisted lowF. */}
-          <FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} />
+              handler persisted lowF.
+              V5-TODAYFROSTLINEGAPS-001: up to two lines, one per night, tonight's first — a watch no
+              longer hides a later night's advisory — and "Forecast warmed to N°F since the 3 PM frost
+              email." once a threshold frost email's night has warmed out of the freeze cue; that line
+              reads the plan low, hence `planLow`. lowShown still reaches tonight's line only. */}
+          <FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} planLow={plan.weather?.tonightLow} />
 
           {/* V5-LEGACYEXCEPTIONCARE-001 — the garden-wide drought line. MOUNTED HERE DELIBERATELY:
               without this one line the whole signal is inert — droughtSignal.js computes it, the

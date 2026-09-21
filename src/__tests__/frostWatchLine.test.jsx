@@ -39,8 +39,8 @@ vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMoc
 
 import Today from '../pages/Today.jsx'
 import FrostAlertLine from '../components/today/FrostAlertLine.jsx'
-import { buildFrostAlertLine, pickAdvisory, resolveNight } from '../lib/frostAlertLine.js'
-import { agreedTonightLow } from '../lib/tonightLow.js'
+import { buildFrostAlertLine, buildFrostAlertLines, pickAdvisory, resolveNight, FREEZE_BELOW_F } from '../lib/frostAlertLine.js'
+import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import {
   PLAN_DATE, GEN, planFor, tonight, tomorrowNight, imminent, coldText, freezeText,
@@ -110,10 +110,15 @@ describe('which line renders — the latest imminent decides, and a watch never 
     expect(buildFrostAlertLine([{ ...t, at: at('18:30') }, w]).text).toBe(WATCH('tonight', 41))
   })
 
-  it('a watch outranks an advisory for a LATER night, sent before or after it', () => {
+  // CHANGED by V5-TODAYFROSTLINEGAPS-001 (lane frostlinegaps, 2026-09-21): this pinned the one-slot rule ("a watch
+  // outranks an advisory for a LATER night" — the later night vanished). Dave chose two lines: the watch is still the
+  // FIRST line (what buildFrostAlertLine returns, unchanged), and the later night is now the second, not displaced.
+  it('a watch comes first over an advisory for a LATER night, sent before or after it — which is now the second line', () => {
     for (const advAt of ['18:00', '21:00']) {
       const adv = tomorrowNight(34, { at: at(advAt) })
       expect(buildFrostAlertLine([adv, watch(41, { at: at('19:00') })]).text, advAt).toBe(WATCH('tonight', 41))
+      expect(buildFrostAlertLines([adv, watch(41, { at: at('19:00') })]).map((l) => l.text), advAt)
+        .toEqual([WATCH('tonight', 41), POSSIBLE('tomorrow night', 34)])
     }
   })
 
@@ -224,5 +229,232 @@ describe('Today — the watch line, mounted from plan.alerts_sent', () => {
     const { container: adv } = render(<FrostAlertLine alertsSent={[tonight(38)]} />)
     expect(line.getAttribute('style')).toBe(adv.querySelector('[data-testid="frost-alert-line"]').getAttribute('style'))
     expect(line.getAttribute('style')).toMatch(/border-left/)
+  })
+})
+
+// ══ V5-TODAYFROSTLINEGAPS-001 — Dave's three decisions (AskUserQuestion, 2026-09-21 ~12:15 ET) ═══════════════════════
+//   (1) TWO SEPARATE LINES: tonight's watch and a frost advisory for a LATER night both show, tonight's first; one
+//       applies -> one line, as before; never two lines about the same night.
+//   (2) SHOW THE COLDER FIGURE: a watch whose email printed "Colder on a second forecast: 35°F tonight" stores it
+//       (`colder` on the imminent entry) and the line says "as low as 35°F"; the card and the cue agree on it.
+//   (3) SAY IT WARMED: after a THRESHOLD "Frost protect tonight" email, once the plan low has left the freeze cue,
+//       "Forecast warmed to 44°F since the 3 PM frost email." Facts only. Never while the cue covers it, never forced.
+const ASLOW = (when, t) => `Frost watch ${when} — clear and calm, as low as ${t}°F. Plan cover for tender plants.`
+const WARMED = (t, time) => `Forecast warmed to ${t}°F since the ${time} frost email.`
+// handler.frostWeatherFacts' `colder`, the advisory entry's own vocabulary: tonight (D1 before dawn) or a later night.
+const colderTonight = (lowF) => ({ lowF, dayOffset: 1, date: '2026-10-10', nightOffset: 0 })
+const colderAhead = (lowF, over = {}) => ({ lowF, dayOffset: 2, date: '2026-10-11', nightOffset: 1, ...over })
+const MONDAY = { dayOffset: 3, date: '2026-10-12', nightOffset: 3 }
+const texts = (entries, opts) => buildFrostAlertLines(entries, opts).map((l) => l.text)
+
+describe('(1) two lines, one per night — a watch no longer hides a later night', () => {
+  it('THE GAP: a watch for tonight and an advisory for tomorrow night -> both, tonight first, whatever the order', () => {
+    for (const advAt of ['18:00', '21:00']) {
+      const adv = tomorrowNight(34, { at: at(advAt) })
+      const w = watch(41, { at: at('19:00') })
+      expect(texts([adv, w]), advAt).toEqual([WATCH('tonight', 41), POSSIBLE('tomorrow night', 34)])
+      expect(texts([w, adv]), advAt).toEqual([WATCH('tonight', 41), POSSIBLE('tomorrow night', 34)])
+    }
+    const lines = buildFrostAlertLines([tomorrowNight(34), watch(41)])
+    expect(lines.map((l) => [l.tier, l.nightOffset, l.dayOffset, l.lowF])).toEqual([['imminent', 0, 0, 41], ['advisory', 1, 2, 34]])
+  })
+
+  it('a weekday night keeps its own name and figure', () => {
+    expect(texts([tomorrowNight(31.4, MONDAY), watch(41)])).toEqual([WATCH('tonight', 41), POSSIBLE('Monday night', 31)])
+  })
+
+  it('never two lines about the same night: an advisory naming tonight and a watch -> one line, chosen as before', () => {
+    const w = watch(41, { at: at('20:00') })
+    expect(texts([tonight(37.6), w])).toEqual([POSSIBLE('tonight', 38)])
+    expect(texts([tonight(42), w])).toEqual([WATCH('tonight', 41)])
+  })
+
+  it('only one applies -> exactly one line, as before; the newest advisory still supersedes an older one', () => {
+    expect(texts([watch(41)])).toEqual([WATCH('tonight', 41)])
+    expect(texts([tomorrowNight(36.4)])).toEqual([POSSIBLE('tomorrow night', 36)])
+    expect(texts([tonight(37.6)])).toEqual([POSSIBLE('tonight', 38)])
+    expect(texts([])).toEqual([])
+    expect(texts([tomorrowNight(36.4, { at: at('18:00') }), tonight(37.6, { at: at('20:00') })])).toEqual([POSSIBLE('tonight', 38)])
+    expect(texts([tonight(37.6, { at: at('18:00') }), tomorrowNight(36.4, { at: at('20:00') })])).toEqual([POSSIBLE('tomorrow night', 36)])
+  })
+
+  it('the "Colder ahead" advisory a watch email carried is the later night\'s line — no advisory entry is needed', () => {
+    expect(texts([watch(41, { colder: colderAhead(35) })])).toEqual([WATCH('tonight', 41), POSSIBLE('tomorrow night', 35)])
+    expect(texts([watch(41, { colder: colderAhead(33.4, MONDAY) })])).toEqual([WATCH('tonight', 41), POSSIBLE('Monday night', 33)])
+    // An entry stored before the field carries no `colder`: one line, as before.
+    expect(texts([watch(41)])).toEqual([WATCH('tonight', 41)])
+  })
+
+  it('one later-night line: the newest statement about a later night wins, entry or watch email', () => {
+    const adv = tomorrowNight(36.4, { at: at('18:00') })
+    expect(texts([adv, watch(41, { at: at('19:00'), colder: colderAhead(35) })])).toEqual([WATCH('tonight', 41), POSSIBLE('tomorrow night', 35)])
+    expect(texts([adv, watch(41, { at: at('19:00'), colder: colderAhead(33, MONDAY) })])).toEqual([WATCH('tonight', 41), POSSIBLE('Monday night', 33)])
+    expect(texts([watch(41, { at: at('19:00'), colder: colderAhead(33, MONDAY) }), tomorrowNight(36.4, { at: at('21:00') })]))
+      .toEqual([WATCH('tonight', 41), POSSIBLE('tomorrow night', 36)])
+  })
+
+  it('a threshold send after the watch hands tonight back to the cue; the later night stays', () => {
+    const t = { ...imminent(36), at: at('20:00') }
+    expect(texts([watch(41, { at: at('19:00'), colder: colderAhead(35) }), t])).toEqual([POSSIBLE('tomorrow night', 35)])
+    expect(texts([tomorrowNight(34, { at: at('18:00') }), watch(41, { at: at('19:00') }), t])).toEqual([POSSIBLE('tomorrow night', 34)])
+  })
+
+  it('a forced watch contributes to neither line', () => {
+    expect(texts([watch(41, { run: 'forced', colder: colderAhead(35) })])).toEqual([])
+    expect(texts([tomorrowNight(36.4), watch(41, { run: 'forced', at: at('23:00'), colder: colderAhead(30) })])).toEqual([POSSIBLE('tomorrow night', 36)])
+  })
+
+  it('lowShown (the agreed low for tonight) reaches tonight\'s line only; the later night keeps its own figure', () => {
+    const lines = buildFrostAlertLines([tomorrowNight(34), watch(41)], { lowShown: 39 })
+    expect(lines.map((l) => [l.text, l.lowF])).toEqual([[WATCH('tonight', 39), 39], [POSSIBLE('tomorrow night', 34), 34]])
+    expect(agreedTonightLow(planFor(39, [tomorrowNight(34), watch(41)]))).toEqual({ lowF: 39, lowRaw: 39 })
+    // a later night alone never triggers the agreement
+    expect(agreedTonightLow(planFor(39, [watch(41, { colder: colderAhead(30) }), { ...imminent(36), at: at('20:00') }]))).toBeNull()
+  })
+})
+
+describe('(2) the watch shows its email\'s colder second forecast — "as low as 35°F"', () => {
+  it('the line says "as low as" at the second forecast\'s figure, rounded', () => {
+    expect(buildFrostAlertLine([watch(39, { colder: colderTonight(35) })])).toEqual({ text: ASLOW('tonight', 35), tier: 'imminent', dayOffset: 0, nightOffset: 0, lowF: 35 })
+    expect(buildFrostAlertLine([watch(39, { colder: colderTonight(34.7) })]).text).toBe(ASLOW('tonight', 35))
+    expect(buildFrostAlertLine([watch(39, { colder: colderTonight('35') })]).text).toBe(ASLOW('tonight', 35))   // a numeric string reads
+    // An entry stored before the field: exactly as before.
+    expect(buildFrostAlertLine([watch(39)]).text).toBe(WATCH('tonight', 39))
+  })
+
+  it('an unusable or not-colder figure is ignored: the watch reads its own low, worded as before', () => {
+    for (const lowF of [null, undefined, '', 'n/a', NaN]) expect(buildFrostAlertLine([watch(39, { colder: colderTonight(lowF) })]).text, String(lowF)).toBe(WATCH('tonight', 39))
+    expect(buildFrostAlertLine([watch(39, { colder: colderTonight(39) })]).text).toBe(WATCH('tonight', 39))
+    expect(buildFrostAlertLine([watch(39, { colder: colderTonight(40) })]).text).toBe(WATCH('tonight', 39))
+    for (const colder of ['35', 35, [], { nightOffset: 0 }]) expect(buildFrostAlertLine([watch(39, { colder })]).text, JSON.stringify(colder)).toBe(WATCH('tonight', 39))
+  })
+
+  it('ONE LOW FOR THE NIGHT: the card and the cue print the second forecast\'s figure too', () => {
+    const w = watch(39, { colder: colderTonight(35) })
+    expect(agreedTonightLow(planFor(39, [w]))).toEqual({ lowF: 35, lowRaw: 35 })
+    expect(agreedTonightLow(planFor(41, [w]))).toEqual({ lowF: 35, lowRaw: 35 })
+    expect(agreedTonightLow(planFor(33, [w]))).toEqual({ lowF: 33, lowRaw: 33 })        // a colder plan low still wins
+    expect(buildFrostAlertLine([w], { lowShown: 33 }).text).toBe(ASLOW('tonight', 33))
+    expect(agreedTonightLow(planFor(39, [watch(39)]))).toEqual({ lowF: 39, lowRaw: 39 })  // control: no field, as before
+    const p = planFor(41, [w])
+    expect(p.weather.callout).toEqual({ icon: 'cold', text: coldText(41) })
+    expect(agreeCallout(p.weather.callout, agreedTonightLow(p))).toMatchObject({ icon: 'freeze', text: freezeText(35) })
+    // Protect rows: no third number beside the agreed one
+    const rows = buildCareNeeded(p).filter((r) => r.need === 'cold').map((r) => r.reason)
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.some((r) => / \(low [^()]*\)$/.test(r))).toBe(false)
+  })
+
+  it('the tonight exception reads the second forecast: an advisory warmer than it yields, a colder one keeps the line', () => {
+    const w = watch(41, { at: at('20:00'), colder: colderTonight(35) })
+    expect(texts([tonight(37.6), w])).toEqual([ASLOW('tonight', 35)])
+    expect(texts([tonight(34.4), w])).toEqual([POSSIBLE('tonight', 34)])
+    expect(texts([tonight(35), w])).toEqual([POSSIBLE('tonight', 35)])                   // tie: the advisory, as before
+    expect(agreedTonightLow(planFor(44, [tonight(37.6), w]))).toEqual({ lowF: 35, lowRaw: 35 })
+  })
+})
+
+describe('(3) "Forecast warmed" — a threshold frost email whose night has left the freeze cue', () => {
+  const thr = (lowF, over = {}) => ({ ...imminent(lowF), run: 'intraday-pm', at: at('19:00'), ...over })   // 3 PM EDT
+  const lines = (entries, planLow) => texts(entries, { planLow })
+
+  it('THE GAP: a 3 PM "Frost protect tonight (low 36°F)" email, plan low now 44 -> one line of fact', () => {
+    expect(lines([thr(36)], 44)).toEqual([WARMED(44, '3 PM')])
+    expect(buildFrostAlertLines([thr(36)], { planLow: 44 })).toEqual([{ text: WARMED(44, '3 PM'), tier: 'imminent', dayOffset: 0, nightOffset: 0, lowF: 44 }])
+  })
+
+  it('never while the freeze cue still covers tonight — the boundary is the engine\'s own (computeCallout low < 40)', () => {
+    for (const low of [36, 39, 39.9]) expect(lines([thr(36)], low), String(low)).toEqual([])
+    expect(lines([thr(36)], 40)).toEqual([WARMED(40, '3 PM')])
+    expect(FREEZE_BELOW_F).toBe(40)
+    expect(planFor(39.9, []).weather.callout.icon).toBe('freeze')
+    expect(planFor(40, []).weather.callout.icon).toBe('cold')
+  })
+
+  it('only when the plan low is now warmer than the low the email was sent at', () => {
+    expect(lines([thr(41)], 41)).toEqual([])
+    expect(lines([thr(41)], 42)).toEqual([WARMED(42, '3 PM')])
+    expect(lines([thr(null)], 44)).toEqual([])
+  })
+
+  it('the email\'s send time on the ET clock, the phone\'s zone aside', () => {
+    expect(lines([thr(36, { at: '2026-10-09T19:05:00.000Z' })], 44)).toEqual([WARMED(44, '3:05 PM')])
+    expect(lines([thr(36, { at: '2026-10-09T21:00:30.000Z' })], 44)).toEqual([WARMED(44, '5 PM')])
+    expect(lines([thr(36, { at: '2026-11-13T20:00:00.000Z' })], 44)).toEqual([WARMED(44, '3 PM')])   // EST, UTC-5
+    for (const bad of [null, '', 'z', undefined]) expect(lines([thr(36, { at: bad })], 44), String(bad)).toEqual([])
+  })
+
+  it('the most recently sent real imminent decides: a later watch is tonight\'s line; a forced send never counts', () => {
+    expect(lines([thr(36), watch(41, { at: at('20:00') })], 44)).toEqual([WATCH('tonight', 41)])
+    expect(lines([thr(36, { run: 'forced' })], 44)).toEqual([])
+    expect(lines([thr(36), thr(30, { run: 'forced', at: at('21:00') })], 44)).toEqual([WARMED(44, '3 PM')])
+    expect(lines([thr(36), thr(32, { level: 'hard_freeze', at: at('20:00') })], 44)).toEqual([WARMED(44, '4 PM')])
+  })
+
+  it('never two lines about tonight: an advisory naming tonight keeps tonight\'s line and its agreed low', () => {
+    expect(lines([tonight(37.6), thr(36)], 44)).toEqual([POSSIBLE('tonight', 38)])
+    expect(agreedTonightLow(planFor(44, [tonight(37.6), thr(36)]))).toEqual({ lowF: 38, lowRaw: 37.6 })
+  })
+
+  it('with an advisory for a later night: two lines, tonight\'s first', () => {
+    expect(lines([tomorrowNight(34), thr(36)], 44)).toEqual([WARMED(44, '3 PM'), POSSIBLE('tomorrow night', 34)])
+  })
+
+  it('the figure is the plan low as the card prints it; no plan low, no line', () => {
+    expect(lines([thr(36)], 44.3)).toEqual([WARMED(44.3, '3 PM')])
+    expect(lines([thr(36)], '44')).toEqual([WARMED('44', '3 PM')])
+    for (const p of [null, undefined, '', 'n/a']) expect(lines([thr(36)], p), String(p)).toEqual([])
+  })
+
+  it('it triggers no agreement (it prints the plan low itself) and needs planLow: the one-argument call is unchanged', () => {
+    expect(agreedTonightLow(planFor(44, [thr(36)]))).toBeNull()
+    expect(buildFrostAlertLine([thr(36)])).toBeNull()
+    expect(buildFrostAlertLines([thr(36)])).toEqual([])
+    const rows = buildCareNeeded(planFor(44, [thr(36)])).filter((r) => r.need === 'cold').map((r) => r.reason)
+    expect(rows.some((r) => r.endsWith('(low 44°F)'))).toBe(true)                       // the plan's own figure, kept
+  })
+})
+
+describe('Today — the frost lines mounted from plan.alerts_sent (V5-TODAYFROSTLINEGAPS-001)', () => {
+  const readAll = (container) => {
+    const q = within(container)
+    return {
+      card: q.getByTestId('weather-night-low').textContent,
+      cue: q.queryByTestId('weather-cue-line')?.textContent ?? null,
+      lines: q.queryAllByTestId('frost-alert-line').map((el) => el.textContent),
+    }
+  }
+
+  it('(1) a watch and an advisory for tomorrow night: two lines under the cue, tonight first, the same element twice', () => {
+    planState.current = mountData(planFor(41, [tomorrowNight(34, { at: at('18:00') }), watch(41, { at: at('19:00') })]))
+    const { container } = render(<Today />)
+    expect(readAll(container)).toEqual({ card: '41°', cue: coldText(41), lines: [WATCH('tonight', 41), POSSIBLE('tomorrow night', 34)] })
+    const cue = screen.getByTestId('weather-cue-line')
+    const [a, b] = screen.getAllByTestId('frost-alert-line')
+    expect(cue.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect([a.dataset.frostNightOffset, b.dataset.frostNightOffset]).toEqual(['0', '1'])
+    expect(a.parentElement).toBe(cue.parentElement)                                       // items of Today's column, no wrapper
+    expect(b.parentElement).toBe(cue.parentElement)
+    expect(b.getAttribute('style')).toBe(a.getAttribute('style'))
+    for (const el of [a, b]) expect(el.querySelectorAll('*')).toHaveLength(0)
+  })
+
+  it('(2) the watch with a colder second forecast: one low, 35, on the card, the cue and the line', () => {
+    planState.current = mountData(planFor(41, [watch(41, { colder: colderTonight(35) })]))
+    const { container } = render(<Today />)
+    expect(readAll(container)).toEqual({ card: '35°', cue: freezeText(35), lines: [ASLOW('tonight', 35)] })
+  })
+
+  it('(3) a threshold email, the plan since warmed to 44: the plan\'s low everywhere, and the warmed line', () => {
+    planState.current = mountData(planFor(44, [{ ...imminent(36), at: at('19:00') }]))
+    const { container } = render(<Today />)
+    expect(readAll(container)).toEqual({ card: '44°', cue: coldText(44), lines: [WARMED(44, '3 PM')] })
+  })
+
+  it('(3) while the plan low still freezes (39): the cue covers it and there is no line', () => {
+    planState.current = mountData(planFor(39, [{ ...imminent(36), at: at('19:00') }]))
+    const { container } = render(<Today />)
+    expect(readAll(container)).toEqual({ card: '39°', cue: freezeText(39), lines: [] })
   })
 })

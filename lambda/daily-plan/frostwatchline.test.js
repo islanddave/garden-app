@@ -20,8 +20,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import h from './handler.js';
 import fe from './frostEval.js';
 import _cf from './_coverFlags.js';
-import { buildFrostAlertLine, resolveNight, nightPhrase as clientNightPhrase } from '../../src/lib/frostAlertLine.js';
-import { agreedTonightLow } from '../../src/lib/tonightLow.js';
+import { buildFrostAlertLine, buildFrostAlertLines, resolveNight, nightPhrase as clientNightPhrase } from '../../src/lib/frostAlertLine.js';
+import { agreedTonightLow, agreeCallout } from '../../src/lib/tonightLow.js';
 
 const { run, frostWeatherFacts, frostSubject } = h;
 const { frostEval } = fe;
@@ -95,10 +95,10 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); 
 
 // One run of the plan date. Open-Meteo D1..D3 at 46/50/51 by default, above every advisory trip and its radiative
 // reach (40 + 4), so the imminent tier is the whole story unless a case lowers them.
-async function once(t, emails, { etHour, nws, lows = [46, 50, 51], minHours = [5, 6, 6], skies = [CLEAR, CLOUDY] }) {
+async function once(t, emails, { etHour, nws, lows = [46, 50, 51], minHours = [5, 6, 6], skies = [CLEAR, CLOUDY], event = {} }) {
   vi.setSystemTime(new Date(Date.UTC(2026, 9, 9, etHour + 4, 0, 0)));
   await run({
-    pg: t.pg, today: FRI, dryRun: false, etHour, event: {}, geocodeZip: async () => ({ lat: 42.5, lng: -72.6 }),
+    pg: t.pg, today: FRI, dryRun: false, etHour, event, geocodeZip: async () => ({ lat: 42.5, lng: -72.6 }),
     fetchNWS: async () => ({ tonightLow: nws, highToday: nws + 20, code: 1, unit: 'F', short: 'Clear' }),
     fetchPrecip: async () => ({ forecast_lows: lows, forecast_dates: DATES, recent_precip_in: 0, today_precip_in: 0,
       today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, yesterday_precip_actual_in: 0,
@@ -190,6 +190,88 @@ describe('V5-TODAYRADIATIVEWATCH-001 — the radiative imminent email and Today 
     expect(emails[0].message.endsWith(' Colder ahead: 35°F tomorrow night, 2026-10-11 — harvest ahead and stage row cover.')).toBe(true);
     expect(t.sent()).toHaveLength(1);   // the advisory is inside the watch email: no advisory entry of its own
     expect(t.sent()[0]).toMatchObject({ tier: 'imminent', trip: 'radiative', lowF: 41, colder: { lowF: 35, dayOffset: 2, date: '2026-10-11', nightOffset: 1 } });
+  });
+});
+
+// ── V5-TODAYFROSTLINEGAPS-001 — what Today renders from the rows the real run() writes ────────────────────────────────
+// Dave's three decisions (2026-09-21): (1) a watch and a later night's advisory are two lines, tonight's first; (2) the
+// watch line shows its email's colder second forecast and the night agrees on it; (3) after a threshold frost email,
+// "Forecast warmed to N°F since the 3 PM frost email." once the plan low has left the freeze cue. Every row below is
+// written by the real handler and read back through the real client, as Today reads it.
+const POSSIBLE = (when, t) => `Frost possible ${when} — low ${t}°F. Plan cover for tender plants.`;
+const ASLOW = (when, t) => `Frost watch ${when} — clear and calm, as low as ${t}°F. Plan cover for tender plants.`;
+const lines = (t) => buildFrostAlertLines(t.sent(), { lowShown: agreedTonightLow(t.items())?.lowF, planLow: t.items().weather.tonightLow }).map((l) => l.text);
+
+describe('V5-TODAYFROSTLINEGAPS-001 — Today after the real run()', () => {
+  it('(1) a 2 PM advisory for tomorrow night, then a 3 PM watch whose email repeats it -> both lines, tonight first', async () => {
+    const t = planTable(PEPTOM);
+    const emails = [];
+    await once(t, emails, { etHour: 14, nws: 45, lows: [46, 35, 51], minHours: [5, 5, 6] });
+    await once(t, emails, { etHour: 15, nws: 41, lows: [46, 35, 51], minHours: [5, 5, 6] });
+    expect(emails.map((e) => e.hour)).toEqual([14, 15]);
+    expect(emails[0].message.startsWith('FROST ADVISORY — frost possible tomorrow night (low 35°F, 2026-10-11)')).toBe(true);
+    expect(emails[1].message).toMatch(/ Colder ahead: 35°F tomorrow night, 2026-10-11 — harvest ahead and stage row cover\.$/);
+    expect(lines(t)).toEqual([LINE('tonight', 41), POSSIBLE('tomorrow night', 35)]);
+    // BEFORE (base d9affbeb): the watch alone — one slot, and it took it.
+    expect(buildFrostAlertLine(t.sent()).text).toBe(LINE('tonight', 41));
+  });
+
+  it('(1) the displaced case exactly: the watch email carries no clause, and the 2 PM advisory entry still shows', async () => {
+    const t = planTable(PEPTOM);
+    const emails = [];
+    await once(t, emails, { etHour: 14, nws: 45, lows: [46, 35, 51], minHours: [5, 5, 6] });
+    // by 3 PM tomorrow night's second-model low is no colder than the watch's 39: the watch email names no other night
+    await once(t, emails, { etHour: 15, nws: 39, lows: [46, 39.5, 51], minHours: [5, 5, 6] });
+    expect(emails.map((e) => e.hour)).toEqual([14, 15]);
+    expect(emails[1].message).not.toMatch(/Colder/);
+    expect(t.sent().map((a) => [a.tier, a.colder ?? null])).toEqual([['advisory', null], ['imminent', null]]);
+    expect(lines(t)).toEqual([LINE('tonight', 39), POSSIBLE('tomorrow night', 35)]);
+  });
+
+  it('(1) the watch the first send of the day: its "Colder ahead" is the later night\'s line (no advisory entry exists)', async () => {
+    const t = planTable(PEPTOM);
+    const emails = [];
+    await once(t, emails, { etHour: 15, nws: 41, lows: [46, 35, 51], minHours: [5, 5, 6] });
+    expect(t.sent().map((a) => a.tier)).toEqual(['imminent']);
+    expect(lines(t)).toEqual([LINE('tonight', 41), POSSIBLE('tomorrow night', 35)]);
+  });
+
+  it('(2) "Colder on a second forecast: 35°F tonight" -> "as low as 35°F", and the card and the cue say 35', async () => {
+    const t = planTable(PEPTOM);
+    const emails = [];
+    await once(t, emails, { etHour: 15, nws: 39, lows: [35, 50, 51], minHours: [4, 6, 6] });
+    expect(emails.map((e) => e.subject)).toEqual(['Garden alert - Frost watch tonight (low 39F)']);
+    expect(lines(t)).toEqual([ASLOW('tonight', 35)]);
+    const agreed = agreedTonightLow(t.items());
+    expect(agreed).toEqual({ lowF: 35, lowRaw: 35 });
+    expect(t.items().weather.callout).toEqual({ icon: 'freeze', text: 'Freeze tonight (39°F) — cover or bring peppers & tomatoes in' });
+    expect(agreeCallout(t.items().weather.callout, agreed)).toMatchObject({ icon: 'freeze', text: 'Freeze tonight (35°F) — cover or bring peppers & tomatoes in' });
+  });
+
+  it('(3) a 3 PM "Frost protect tonight (low 36F)", then the plan warms: nothing while it freezes, then the facts', async () => {
+    const t = planTable(PEPTOM);
+    const emails = [];
+    await once(t, emails, { etHour: 15, nws: 36 });
+    expect(emails.map((e) => e.subject)).toEqual(['Garden alert - Frost protect tonight (low 36F)']);
+    expect(lines(t)).toEqual([]);                                  // the cue says "Freeze tonight (36°F)"
+    await once(t, emails, { etHour: 17, nws: 39 });
+    expect(t.items().weather.callout.icon).toBe('freeze');
+    expect(lines(t)).toEqual([]);                                  // still covered by the cue
+    await once(t, emails, { etHour: 20, nws: 44 });
+    expect(emails).toHaveLength(1);
+    expect(t.items().weather.callout).toEqual({ icon: 'cold', text: 'Cool night (44°F) — protect flowering peppers/tomatoes' });
+    expect(lines(t)).toEqual(['Forecast warmed to 44°F since the 3 PM frost email.']);
+    expect(agreedTonightLow(t.items())).toBeNull();                // the card keeps the plan's 44
+  });
+
+  it('(3) a FORCED rehearsal never counts: the same warming after a rehearsal says nothing', async () => {
+    const t = planTable(PEPTOM);
+    const emails = [];
+    await once(t, emails, { etHour: 13, nws: 36, event: { frostEval: true } });
+    expect(emails.map((e) => e.hour)).toEqual([13]);
+    expect(t.sent()[0]).toMatchObject({ tier: 'imminent', run: 'forced' });
+    await once(t, emails, { etHour: 20, nws: 44 });
+    expect(lines(t)).toEqual([]);
   });
 });
 

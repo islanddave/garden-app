@@ -16,10 +16,17 @@
 // nightOffset 0. No trigger -> null here, and every caller renders exactly what it rendered before.
 // A line naming tomorrow night or a weekday is about a DIFFERENT night: tonight keeps the plan low and
 // the line keeps its own number. A THRESHOLD imminent entry never renders as the frost line
-// (frostAlertLine.js pickAdvisory), so it never triggers — the card and the cue already share the plan low
+// (frostAlertLine.js pickFrostLines), so it never triggers — the card and the cue already share the plan low
 // on those nights. A RADIATIVE imminent entry renders as tonight's watch line (V5-TODAYRADIATIVEWATCH-001)
 // and triggers like any line naming tonight: its low is the plan low it was sent at, and min() below keeps
 // whichever is colder if a later run has moved the plan low.
+// V5-TODAYFROSTLINEGAPS-001 — Today can render two frost lines now, one per night; the trigger is the one naming
+// tonight (frostAlertLine.js tonightLineLow). A watch whose email printed a colder SECOND forecast for tonight
+// ("Colder on a second forecast: 35°F tonight", stored as the entry's `colder`) contributes that figure: the line
+// says "as low as 35°F", so the card and the cue say 35 too. That is this rule's own reason applied to one more
+// number: the email named 35 for tonight, the line names it, and a card left at 39 would put two lows for one
+// night back on the screen. The colder figure wins, as it does between the plan low and an advisory's. The
+// "Forecast warmed to …" line names tonight too but never triggers: it prints the plan low itself.
 //
 // Shared low: Traw = min(plan low, the line's raw lowF), the colder one winning in both directions
 // (a missing plan low leaves the advisory's). Every surface prints T = round(Traw), one whole number.
@@ -45,7 +52,7 @@
 // branches. src/__tests__/tonightLow.test.js sweeps every whole-degree low 20..44 against the REAL
 // computeCallout and deep-compares the result, so an engine copy change or a retuned threshold reds
 // that test instead of leaving two wordings of one cue on the page.
-import { buildFrostAlertLine, pickAdvisory } from './frostAlertLine.js'
+import { tonightLineLow, FREEZE_BELOW_F } from './frostAlertLine.js'
 
 /** The impression partition for a cue this module RE-WORDED (weatherCueImpressions.js bills it). A
  *  cue whose words and number came through unchanged keeps weatherCue.js WX_CUE_MODEL_VERSION: the
@@ -57,7 +64,8 @@ export const AGREED_CUE_MODEL_VERSION = 'wxcue-v1-agreed'
 // engine.js computeCallout: `low<40` -> freeze, `low<45` -> cold. On a consistent plan the agreed low
 // is never warmer than the plan low the engine keyed on (it is a min), so of these two the 40 split is
 // the only one that can move; the 45 bound is kept so the copy reads as the engine's two branches.
-const FREEZE_BELOW_F = 40
+// FREEZE_BELOW_F is imported from frostAlertLine.js (V5-TODAYFROSTLINEGAPS-001), whose "Forecast warmed" line
+// starts exactly where this cue's freeze branch stops; tonightLow.test.js's PARITY sweep guards the one value for both.
 const COLD_BELOW_F = 45
 const freezeText = (t) => `Freeze tonight (${t}°F) — cover or bring peppers & tomatoes in`
 const coldText = (t) => `Cool night (${t}°F) — protect flowering peppers/tomatoes`
@@ -71,15 +79,14 @@ function finiteOrNull(v) {
 }
 
 /**
- * PURE. The one low Today prints for tonight, or null when the frost line does not name tonight.
+ * PURE. The one low Today prints for tonight, or null when no frost line names tonight.
  * -> { lowF: T (whole °F), lowRaw: Traw } | null. Reads plan.alerts_sent and plan.weather.tonightLow;
  * writes nothing.
  */
 export function agreedTonightLow(plan) {
   const alertsSent = plan ? plan.alerts_sent : null
-  const line = buildFrostAlertLine(alertsSent)
-  if (!line || line.nightOffset !== 0) return null
-  const lineRaw = Number(pickAdvisory(alertsSent).lowF)
+  const lineRaw = tonightLineLow(alertsSent)
+  if (lineRaw == null) return null
   const planRaw = finiteOrNull(plan.weather ? plan.weather.tonightLow : null)
   const lowRaw = planRaw == null ? lineRaw : Math.min(planRaw, lineRaw)
   return { lowF: Math.round(lowRaw), lowRaw }
