@@ -138,6 +138,10 @@ real = {
             "determinacy", "direct_sow_timing", "grown_as", "row_spacing_in",
             "seed_spacing_in", "sow_depth_in", "sow_notes", "sow_season",
             "start_indoor_weeks_max", "start_indoor_weeks_min", "start_method",
+            # V5-VARIETYFACTSEDIT-001 (2026-09-21): the variety editor's origin, breeding and heat-source
+            # facts plus variety_rank; all six present on prod cultivar/plant_varieties when added.
+            "breeding_source", "breeding_system", "origin_country", "origin_region",
+            "scoville_source", "variety_rank",
         ],
     },
     "lambda/plants/select-columns.test.js": {
