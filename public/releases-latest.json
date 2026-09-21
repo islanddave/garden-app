@@ -1,9 +1,8 @@
 {
-  "version": "4.140.1",
+  "version": "4.141.0",
   "date": "2026-09-21",
   "highlights": [
-    "My seeds opens faster again: the list no longer carries a signed link for every packet picture, and each picture loads as its row comes on screen, from the phone's own copy once it has one",
-    "Supplier packet pictures no longer fill the Photo Library, the Space photo picker or photo search; they still show on your seeds",
-    "Coming Back to My seeds or Sow now keeps the card you had open and the groups you folded, even if you hadn't scrolled"
+    "On a clear, calm night that brings a Frost watch email, the Today screen now says the same thing, for example: Frost watch tonight, clear and calm, low 41°F.",
+    "A test run of the frost alert no longer counts as the day's real frost email, so a real frost warning always goes out."
   ]
 }
