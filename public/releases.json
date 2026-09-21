@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.140.1",
+    "date": "2026-09-21",
+    "highlights": [
+      "My seeds opens faster again: the list no longer carries a signed link for every packet picture, and each picture loads as its row comes on screen, from the phone's own copy once it has one",
+      "Supplier packet pictures no longer fill the Photo Library, the Space photo picker or photo search; they still show on your seeds"
+    ]
+  },
+  {
     "version": "4.140.0",
     "date": "2026-09-19",
     "highlights": [

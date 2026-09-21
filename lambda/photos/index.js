@@ -1239,6 +1239,17 @@ export const handler = async (event) => {
             LIMIT ${limit}
           `;
       } else {
+        // V5-SEEDVENDORPHOTOFILTER-001 — the UNSCOPED gallery (the Photo Library's default page and its
+        // quick-tag source, the Space attach picker) leaves out SUPPLIER PACKET IMAGES: the vendor's
+        // catalog picture attached to a seed lot so My seeds has a thumbnail. They are the supplier's
+        // photographs, not Dave's, and 305 of them arrived in one batch on 2026-09-19 and filled the
+        // whole first page. They stay on the seed pages, which read them through the lot.
+        // The four scoped branches above need no filter: a supplier image's only parent is its
+        // inventory item, which none of them reads. Marker: our own ingest names the file
+        // vendor-image--* (there is no provenance column); COALESCE because original_filename is
+        // NULL on most rows, and a bare NOT LIKE on NULL would drop them all. Header search
+        // (lambda/dashboard/handlers.js searchPhotos) carries the same predicate;
+        // supplier-image-marker-sync.test.js holds the two equal.
         rows = await sql`
             SELECT
               p.id, p.project_id, p.event_id, p.location_id, p.plant_id,
@@ -1249,6 +1260,7 @@ export const handler = async (event) => {
             LEFT JOIN public.container pp ON pp.id = p.project_id
             WHERE p.created_by = ANY(${householdIds})
               AND p.deleted_at IS NULL
+              AND COALESCE(p.original_filename, '') NOT LIKE 'vendor-image--%'
               AND NOT EXISTS (
                 SELECT 1 FROM public.garden_node gna
                 WHERE gna.id = p.plant_id AND gna.archived_at IS NOT NULL

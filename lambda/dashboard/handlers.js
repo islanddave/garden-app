@@ -1160,6 +1160,12 @@ export function searchInventory(sql, userId, pat, prefixPat) {
     `;
 }
 
+// V5-SEEDVENDORPHOTOFILTER-001 — supplier packet images are left out of photo search, as they are out of
+// the unscoped Photo Library (lambda/photos/index.js, same literal; supplier-image-marker-sync.test.js).
+// Every one carries a caption ("Seed packet · <supplier> (supplier image)"), so without this a search for
+// a supplier or "packet" answers with catalog pictures; the seed lot itself still matches under inventory.
+// COALESCE: original_filename is NULL on most rows, and NOT LIKE on NULL would drop them. The pattern is
+// SQL text, not a bound value: S12 in search.test.js holds every BOUND pattern to the escaped form.
 export function searchPhotos(sql, userId, pat) {
   const householdIds = householdScope(userId);
   return sql`
@@ -1167,6 +1173,7 @@ export function searchPhotos(sql, userId, pat) {
       FROM photos p
       WHERE p.created_by = ANY(${householdIds})
         AND p.deleted_at IS NULL
+        AND COALESCE(p.original_filename, '') NOT LIKE 'vendor-image--%'
         AND p.caption IS NOT NULL AND p.caption <> ''
         AND p.caption ILIKE ${pat} ESCAPE '\\'
       ORDER BY p.created_at DESC
