@@ -103,11 +103,15 @@ export function nightPhrase(night) {
 // Picks the alert to render, or null. Most severe wins; among equals the most recently SENT wins,
 // because a re-send inside one night is an escalation, not a repeat (handler carries prior sends
 // forward rather than replacing them, so the array is append-ordered but `at` is authoritative).
+// BUG-FROSTREHEARSALSWALLOWS-001 — a send made by a FORCED run (`run: 'forced'`, a rehearsal whose trip
+// points may be raised) is never a real alert, so it never renders and never outranks a real one. The
+// server's "already sent?" gates skip the same entries (lambda/daily-plan/frostEval.js countsAsSent;
+// frostrehearsal.test.js holds the two together). An entry with no `run` predates the field and counts.
 export function pickAdvisory(alertsSent) {
   if (!Array.isArray(alertsSent)) return null
   let best = null
   for (const a of alertsSent) {
-    if (!a || SEVERITY[a.tier] == null) continue
+    if (!a || a.run === 'forced' || SEVERITY[a.tier] == null) continue
     if (a.lowF == null || !Number.isFinite(Number(a.lowF))) continue
     if (nightPhrase(resolveNight(a)) == null) continue
     if (best == null) { best = a; continue }

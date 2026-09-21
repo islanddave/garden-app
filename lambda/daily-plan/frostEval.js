@@ -527,6 +527,18 @@ function sentNight(a) {
   return null;
 }
 
+// BUG-FROSTREHEARSALSWALLOWS-001 — does a stored send count as "already sent"? Not when a FORCED run made it (`run`
+// 'forced', OPS-FROSTREHEARSALMARK-001: event.frostEval, the F5 rehearsal lever, whose trip points may be raised). A
+// rehearsal sent before 14:00 ET stored the same key and night as the day's real advisory, and the 14-17 ET runs read
+// it as sent: the real warning never went out. Dave's call (2026-09-21, "Tests never count"): a test run is ignored
+// by every "already sent?" gate — the key gate in handler.js run(), escalatesBeyond, sentCoverage — so a real warning
+// always sends; the accepted cost is that a REAL alert forced before the window is sent again by the next scheduled
+// evaluation. An entry with no `run` was stored before the field existed and counts. src/lib/frostAlertLine.js
+// applies the same rule to the Today line (frostrehearsal.test.js holds the two together).
+function countsAsSent(a) {
+  return !!a && a.run !== 'forced';
+}
+
 // `sent` is the alerts_sent array as stored (entries: { tier, level, crops?, nightOffset? }). Returns true
 // when the decision is strictly worse than the high-water mark of everything already sent for the same
 // plan date.
@@ -545,8 +557,9 @@ function sentNight(a) {
 // with no night, every pre-existing one) skips the axis. Stored entries with no night on record
 // contribute nothing to it, the same deploy-evening posture as `crops` above: if none of the prior sends
 // has one, a decision that has one goes out once.
+// BUG-FROSTREHEARSALSWALLOWS-001 — a forced (test) send is no high-water mark on any axis (countsAsSent).
 function escalatesBeyond(sent, { level, crops, night } = {}) {
-  const prior = (Array.isArray(sent) ? sent : []).filter((a) => a && severityRank(a.level) > 0);
+  const prior = (Array.isArray(sent) ? sent : []).filter((a) => countsAsSent(a) && severityRank(a.level) > 0);
   if (!prior.length) return true;                       // nothing sent tonight — anything is an escalation
   const maxSent = Math.max(...prior.map((a) => severityRank(a.level)));
   if (severityRank(level) > maxSent) return true;       // the headline got worse
@@ -883,11 +896,12 @@ function frostCoverage(decision, exposure, tonightLow) {
 // crop that got worse after the window, or was never named, reads 'unnamed' and coldFor keeps its card.
 // 'above_band' and 'unnamed' are returned as they are: neither ever relied on an email. An entry with no
 // `crops` (a send with no crop breakdown) names nothing. No coverage -> null.
+// BUG-FROSTREHEARSALSWALLOWS-001 — nor does a forced (test) send (countsAsSent): the bed keeps its card.
 function sentCoverage(decision, coverage, sent) {
   if (!coverage) return null;
   const sentRank = {};
   for (const a of (Array.isArray(sent) ? sent : [])) {
-    if (!a || !a.crops || typeof a.crops !== 'object') continue;
+    if (!countsAsSent(a) || !a.crops || typeof a.crops !== 'object') continue;
     for (const [k, lv] of Object.entries(a.crops)) sentRank[k] = Math.max(sentRank[k] || 0, severityRank(lv));
   }
   const out = new Map(coverage);
@@ -902,7 +916,7 @@ function sentCoverage(decision, coverage, sent) {
 
 module.exports = {
   frostEval, frostCoverage, sentCoverage, resolveThresholds, dedupKey, cropDigest,
-  escalatesBeyond, sentNight, cropLevels, severityRank, FROST_SEVERITY_RANK,
+  escalatesBeyond, sentNight, countsAsSent, cropLevels, severityRank, FROST_SEVERITY_RANK,
   evalAdvisory, evalImminent, evalHeat, evalImminentCrops, evalAdvisoryCrops,
   locateNight, advisoryNight, nightPhrase, weekdayOf, NIGHT_SPLIT_HOUR, radiativeAdvisoryPairing,
   advisoryMessage, imminentMessage, heatMessage, exposurePhrase, cropListPhrase, totalsPhrase, truncate,
