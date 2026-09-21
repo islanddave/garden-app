@@ -4,7 +4,7 @@
     "date": "2026-09-21",
     "highlights": [
       "On a clear, calm night that brings a Frost watch email, the Today screen now says the same thing, for example: Frost watch tonight, clear and calm, low 41°F.",
-      "A test run of the frost alert no longer counts as the day's real frost email, so a real frost warning always goes out."
+      "A test run of the frost alert no longer counts as the day's real frost email, so a test can no longer stop a real frost warning from going out."
     ]
   },
   {
