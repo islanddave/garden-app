@@ -288,6 +288,9 @@ post:
       authoring: md5 of the profile minus `cold` equals the pre gate's md5 of the whole profile. A
       whole-object rewrite — even one that carries the same `cold` — changes that hash; so does dropping the
       _source marker.
+      APPLY-WINDOW ONLY SINCE 2026-09-21: v5-feedinherit-001 added fertilize_interval_days to five of these
+      eight rows (Cobaea, both petunias, Jewel Mix, Spider Plant), so a runbook re-run of this receipt now
+      reads 3, not 8. That is expected, not a regression; do not bump the count (frozen-count rule).
     sql: |
       SELECT cp.id
         FROM (VALUES
