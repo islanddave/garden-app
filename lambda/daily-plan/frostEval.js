@@ -17,7 +17,7 @@
 // Env override lets F5's forced-trigger rehearsal raise/lower a trip point on a deployed Lambda without a
 // code change (design §5 F5: "a prod dry-run with the threshold temporarily raised to a value today's
 // forecast exceeds"). For the per-crop bands the equivalent lever is FROST_THRESHOLD_OFFSET_F (frostClass).
-const { radiativeTrips, nightFor, mostPermissiveNight, prevDate, RADIATIVE_ENABLED } = require('./radiativeFrost');
+const { radiativeTrips, nightFor, mostPermissiveNight, prevDate } = require('./radiativeFrost');
 
 const numEnv = (name, fallback) => {
   const v = Number(process.env[name]);
