@@ -16,8 +16,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
 import {
-  normalizeOriginText, touchesBreeding, breedingPairingError, validateBody,
-  VALID_BREEDING_SYSTEM, VALID_FACT_SOURCE,
+  normalizeOriginText, touchesBreeding, breedingPairingError, fillsCultivarRank, validateBody,
+  VALID_BREEDING_SYSTEM, VALID_FACT_SOURCE, RANK_WORDS,
 } from './validate.js';
 
 vi.mock('@neondatabase/serverless', async () => {
@@ -87,6 +87,10 @@ function bindAfter(prefix) {
 }
 const keepBind = (col) => bindAfter(`, ${col})`);
 const clearBind = (col) => bindAfter(` @> ARRAY['${col}']`);
+// The variety_rank arm's one bind: true only when this PUT records Open-pollinated on a NULL rank.
+const fillBind = () => bindAfter('::boolean AND variety_rank IS NULL');
+// Dave reads these verbatim in the editor's error banner (2026-09-21: plain English, no columns).
+const COLUMN_WORDS = /breeding_system|breeding_source|variety_rank|open_pollinated|market_class|cultivar\b/;
 
 beforeEach(() => {
   resetStubs();
@@ -103,6 +107,12 @@ describe('the UPDATE carries an arm for each of the five columns', () => {
       expect(keepBind(col), `${col} keep bind`).toBeNull();
       expect(clearBind(col), `${col} clear arm`).toEqual([]);
     }
+  });
+
+  it('carries the variety_rank fill arm, off for a PUT that is not about breeding', async () => {
+    expect((await put({ care_notes: 'x' })).status).toBe(200);
+    expect(updateCall().text).toMatch(/variety_rank\s+= CASE WHEN \?::boolean AND variety_rank IS NULL THEN 'cultivar' ELSE variety_rank END/);
+    expect(fillBind()).toBe(false);
   });
 });
 
@@ -203,10 +213,11 @@ describe('an unknown value is a 400 that names the field', () => {
 // ── refuse: the pairings ────────────────────────────────────────────────────────────────────────
 
 describe('breeding pairing is checked against the row as it will be, before the UPDATE', () => {
-  it('breeding_system set with no source anywhere is a 400 naming breeding_source', async () => {
+  it('breeding_system set with no source anywhere is a 400 in the editor\'s own words', async () => {
     const res = await put({ breeding_system: 'f1' });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('breeding_source is required when breeding_system is set');
+    expect(res.body.error).toBe('"Breeding info from" is required when Breeding is set.');
+    expect(res.body.error).not.toMatch(COLUMN_WORDS);
     expect(calls(isPreflight)).toHaveLength(1);
     expect(calls(isUpdate)).toHaveLength(0);
   });
@@ -222,7 +233,7 @@ describe('breeding pairing is checked against the row as it will be, before the 
     db({ current: { breeding_system: 'f1', breeding_source: 'breeder', variety_rank: 'cultivar' } });
     const res = await put({ clear: ['breeding_source'] });
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/^breeding_source is required/);
+    expect(res.body.error).toMatch(/^"Breeding info from" is required/);
     expect(calls(isUpdate)).toHaveLength(0);
   });
 
@@ -238,25 +249,51 @@ describe('breeding pairing is checked against the row as it will be, before the 
     expect((await put({ clear: ['breeding_system', 'breeding_source'] })).status).toBe(200);
   });
 
-  it('open_pollinated on a row not recorded as a single cultivar is a 400 naming breeding_system', async () => {
-    db({ current: { breeding_system: null, breeding_source: 'breeder', variety_rank: 'market_class' } });
-    const res = await put({ breeding_system: 'open_pollinated' });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/^breeding_system open_pollinated can only be recorded on a single named cultivar/);
-    expect(calls(isUpdate)).toHaveLength(0);
-  });
+  // Dave, 2026-09-21: "Record it as named" — Open-pollinated on a variety whose rank was never
+  // recorded records it as a single named cultivar; a recorded non-cultivar rank refuses plainly.
+  it.each(['market_class', 'blend', 'species', 'placeholder'])(
+    'open_pollinated on a %s row is a plain-English 400 and nothing is written',
+    async (rank) => {
+      db({ current: { breeding_system: null, breeding_source: 'breeder', variety_rank: rank } });
+      const res = await put({ breeding_system: 'open_pollinated' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe(
+        `Open-pollinated applies only to a single named variety, and this entry is recorded as ${RANK_WORDS[rank]}.`,
+      );
+      expect(res.body.error).not.toMatch(COLUMN_WORDS);
+      expect(calls(isUpdate)).toHaveLength(0);
+    },
+  );
 
-  it('open_pollinated with no rank recorded at all is refused the same way', async () => {
+  it('open_pollinated with no rank recorded saves and records the variety as a single named cultivar', async () => {
     const res = await put({ breeding_system: 'open_pollinated', breeding_source: 'packet_label' });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/^breeding_system open_pollinated/);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(keepBind('breeding_system')).toBe('open_pollinated');
+    expect(fillBind()).toBe(true);
   });
 
-  it('open_pollinated on a cultivar-rank row is allowed', async () => {
+  it('open_pollinated on a cultivar-rank row is allowed and leaves the rank alone', async () => {
     db({ current: { breeding_system: 'unknown', breeding_source: 'inference', variety_rank: 'cultivar' } });
     const res = await put({ breeding_system: 'open_pollinated', breeding_source: 'packet_label' });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(keepBind('breeding_system')).toBe('open_pollinated');
+    expect(fillBind()).toBe(false);
+  });
+
+  it('any other breeding call on an unranked row never fills the rank', async () => {
+    for (const system of VALID_BREEDING_SYSTEM.filter((s) => s !== 'open_pollinated')) {
+      resetStubs(); stubState.verifyTokenResult = { sub: USER }; db();
+      const res = await put({ breeding_system: system, breeding_source: 'packet_label' });
+      expect(res.status, `${system}: ${JSON.stringify(res.body)}`).toBe(200);
+      expect(fillBind(), system).toBe(false);
+    }
+  });
+
+  it('a source-only edit on an open-pollinated cultivar never fills the rank', async () => {
+    db({ current: { breeding_system: 'open_pollinated', breeding_source: 'inference', variety_rank: 'cultivar' } });
+    const res = await put({ breeding_source: 'breeder' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(fillBind()).toBe(false);
   });
 
   it('a row the caller may not edit answers the generic 404, never a pairing 400', async () => {
@@ -325,6 +362,36 @@ describe('touchesBreeding / breedingPairingError', () => {
     const current = { breeding_system: 'f1', breeding_source: 'breeder', variety_rank: 'market_class' };
     expect(breedingPairingError({ breeding_system: 'unknown' }, [], current)).toBeNull();
     expect(breedingPairingError({ breeding_source: 'packet_label' }, ['breeding_source'], current))
-      .toMatch(/^breeding_source is required/);
+      .toMatch(/^"Breeding info from" is required/);
+  });
+
+  it('refuses open_pollinated only on a RECORDED rank that is not cultivar', () => {
+    const src = { breeding_source: 'packet_label' };
+    const op = { breeding_system: 'open_pollinated', ...src };
+    expect(breedingPairingError(op, [], { variety_rank: null })).toBeNull();
+    expect(breedingPairingError(op, [], { variety_rank: 'cultivar' })).toBeNull();
+    for (const rank of Object.keys(RANK_WORDS)) {
+      expect(breedingPairingError(op, [], { variety_rank: rank }), rank).toContain(RANK_WORDS[rank]);
+    }
+    // A rank value the CHECK would never admit still refuses rather than passing silently.
+    expect(breedingPairingError(op, [], { variety_rank: 'cultivar_group' }))
+      .toMatch(/something other than a single named variety\.$/);
+  });
+
+  it('RANK_WORDS covers every non-cultivar rank chk_plant_varieties_variety_rank admits', () => {
+    expect(Object.keys(RANK_WORDS).sort()).toEqual(['blend', 'market_class', 'placeholder', 'species']);
+  });
+});
+
+describe('fillsCultivarRank', () => {
+  const op = { breeding_system: 'open_pollinated', breeding_source: 'packet_label' };
+  it('is true only for open_pollinated sent onto a NULL rank', () => {
+    expect(fillsCultivarRank(op, [], { variety_rank: null })).toBe(true);
+    expect(fillsCultivarRank(op, [], {})).toBe(true);
+    expect(fillsCultivarRank(op, [], { variety_rank: 'cultivar' })).toBe(false);
+    expect(fillsCultivarRank(op, [], { variety_rank: 'market_class' })).toBe(false);
+    expect(fillsCultivarRank({ breeding_system: 'f1' }, [], { variety_rank: null })).toBe(false);
+    expect(fillsCultivarRank({ breeding_source: 'breeder' }, [], { variety_rank: null })).toBe(false);
+    expect(fillsCultivarRank(op, ['breeding_system'], { variety_rank: null })).toBe(false);
   });
 });

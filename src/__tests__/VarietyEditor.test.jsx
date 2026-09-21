@@ -534,9 +534,10 @@ describe('VarietyEditor — origin, breeding and heat source (VARIETYFACTSEDIT)'
 
   it("the server's Open-pollinated refusal is shown, not reported as saved", async () => {
     // chk_plant_varieties_op_requires_cultivar: the editor cannot see variety_rank, so this one is
-    // the server's to refuse, by name, before the UPDATE.
-    const refusal = 'breeding_system open_pollinated can only be recorded on a single named cultivar '
-      + '(variety_rank cultivar), and this variety is not recorded as one'
+    // the server's to refuse (only for a recorded non-cultivar rank), in plain English, before the
+    // UPDATE. Text as lambda/varieties/validate.js breedingPairingError words it for a market class.
+    const refusal = 'Open-pollinated applies only to a single named variety, and this entry is recorded as '
+      + 'a market class (a group of similar varieties).'
     const onSave = vi.fn(async () => ({ error: refusal }))
     const onSaved = vi.fn()
     const { container } = render(

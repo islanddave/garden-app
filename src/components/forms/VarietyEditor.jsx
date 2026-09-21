@@ -10,9 +10,11 @@
 // the create path happens to set (31 until V5-VARIETYFACTSEDIT-001 added origin country/region,
 // breeding and the two "info from" sources). Deliberately absent: photo_id (needs the photo-picker
 // surface, a different lane) and dtm_basis (no read path or consumer yet — V4-MATURITYBASIS-001).
-// breeding_confidence and variety_rank are not PUT-writable at all; variety_rank decides whether the
-// server accepts Open-pollinated (chk_plant_varieties_op_requires_cultivar), so on a row not
-// recorded as a single named cultivar that choice comes back as a save error naming breeding_system.
+// breeding_confidence and variety_rank are not PUT-writable, so there is no rank field here. The
+// server decides Open-pollinated against variety_rank (chk_plant_varieties_op_requires_cultivar):
+// on a variety whose rank was never recorded it saves and records the variety as a single named
+// cultivar (Dave, 2026-09-21); on a market class, blend, species or placeholder it comes back as a
+// plain-English save error in the banner below.
 //
 // The PUT is owner-only (created_by = JWT.sub). `currentUserId` gates the form into a read-only
 // state rather than letting the user type a save that will 404 — 26 of the live rows are owned by

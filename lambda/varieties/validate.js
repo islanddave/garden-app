@@ -230,25 +230,52 @@ export function touchesBreeding(body, clear = []) {
 // The two CHECKs on plant_varieties that couple breeding_system to ANOTHER column, evaluated on the
 // row as it will be AFTER the patch (the same three-way rule the UPDATE applies: cleared -> NULL,
 // sent -> the value, absent -> the current value). Checked before the UPDATE so the caller gets a
-// 400 naming the field instead of a raw 23514 constraint name. `current` is
+// plain-English 400 instead of a raw 23514 constraint name. The messages name the editor's labels,
+// never a column: they reach Dave verbatim in the editor's error banner. `current` is
 // { breeding_system, breeding_source, variety_rank } read under the PUT's own ownership predicate.
 //   chk_plant_varieties_breeding_sourced:     breeding_system IS NULL OR breeding_source IS NOT NULL
 //   chk_plant_varieties_op_requires_cultivar: breeding_system IS DISTINCT FROM 'open_pollinated'
 //                                             OR variety_rank = 'cultivar'
-// variety_rank is not writable here, so for the second the current row decides. Both CHECKs still
-// stand behind this: a concurrent write between the read and the UPDATE lands on them, as before.
+// variety_rank has no edit surface. Dave's rule (2026-09-21): choosing Open-pollinated on a variety
+// whose rank was never recorded (NULL, 416 of 495 live rows) records it as a single named cultivar —
+// fillsCultivarRank says when, and the UPDATE fills the rank in the same statement. A rank that IS
+// recorded and is not cultivar (market_class, blend, species, placeholder) refuses; the CHECK would
+// refuse it too. Both CHECKs still stand behind this: a concurrent write between the read and the
+// UPDATE lands on them, as before.
+export const RANK_WORDS = {
+  market_class: 'a market class (a group of similar varieties)',
+  blend: 'a seed blend',
+  species: 'a whole species',
+  placeholder: 'a placeholder',
+};
+
 export function breedingPairingError(body, clear = [], current = {}) {
   const after = (k) => (clear.includes(k) ? null : (body?.[k] ?? current?.[k] ?? null));
   const system = after('breeding_system');
   if (system == null) return null;
   if (after('breeding_source') == null) {
-    return 'breeding_source is required when breeding_system is set';
+    return '"Breeding info from" is required when Breeding is set.';
   }
-  if (system === 'open_pollinated' && current?.variety_rank !== 'cultivar') {
-    return 'breeding_system open_pollinated can only be recorded on a single named cultivar '
-      + '(variety_rank cultivar), and this variety is not recorded as one';
+  const rank = current?.variety_rank ?? null;
+  if (system === 'open_pollinated' && rank != null && rank !== 'cultivar') {
+    return 'Open-pollinated applies only to a single named variety, and this entry is recorded as '
+      + `${RANK_WORDS[rank] ?? 'something other than a single named variety'}.`;
   }
   return null;
+}
+
+// True when this patch records Open-pollinated on a row with no recorded rank, so the UPDATE sets
+// variety_rank = 'cultivar' in the same statement. That is Dave's rule and the invariant
+// v5-varietyhybridflag-001 states ("a positive open-pollinated claim structurally requires the rank
+// that makes it meaningful") — but NOT something its CHECK enforces on an unranked row: there
+// `variety_rank = 'cultivar'` is NULL, and a CHECK passes on NULL (measured on a staging fork
+// 2026-09-21; BUG-OPRANKCHECKNULL-001). So this fill is what records the rank, not the database.
+// Only a row whose rank is NULL: a recorded rank is never overwritten (breedingPairingError refuses the
+// non-cultivar ones, and a cultivar needs nothing). Call it after breedingPairingError returned null.
+export function fillsCultivarRank(body, clear = [], current = {}) {
+  return body?.breeding_system === 'open_pollinated'
+    && !clear.includes('breeding_system')
+    && (current?.variety_rank ?? null) === null;
 }
 
 // ── V4-CROPTYPE-001 — user-minted crop types ────────────────────────────────────────────────

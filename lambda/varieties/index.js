@@ -39,7 +39,9 @@
 // VARIETYFACTSEDIT (V5-VARIETYFACTSEDIT-001): the PUT also writes origin_country, origin_region,
 //   breeding_system, breeding_source and scoville_source (the provenance that decides whether the
 //   seed card shows "est." on a heat figure). Same COALESCE + clear contract; GET /:id reads them so
-//   the editor seeds from the stored values. POST still does not write them.
+//   the editor seeds from the stored values. POST still does not write them. variety_rank is not
+//   PUT-writable, with one exception the handler decides itself: Open-pollinated on a row whose rank
+//   was never recorded fills variety_rank = 'cultivar' in the same UPDATE (fillsCultivarRank).
 //
 // CORS: handler owns CORS — Lambda URL CORS config must be empty (handler sets headers).
 
@@ -50,7 +52,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import {
   validateBody, validateCropTypeBody, resolveCropTypeName, validateClear, auditActor,
   validateSourceBody, validateSourceKindBody, resolveSourceKindName, foldSourceKey, blankToNull,
-  normalizeOriginText, touchesBreeding, breedingPairingError,
+  normalizeOriginText, touchesBreeding, breedingPairingError, fillsCultivarRank,
 } from './validate.js';
 import { applyDerive } from './crop-derive.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
@@ -746,6 +748,9 @@ export const handler = async (event) => {
         // lands on, so read that row first, under the UPDATE's own predicate (a row the caller may
         // not edit answers the same generic 404 it always has). Only patches that touch a breeding
         // column pay for the read; every other PUT issues exactly the statements it did before.
+        // fillRank: Open-pollinated on a row with no recorded rank records it as a single named
+        // cultivar (Dave, 2026-09-21) — the UPDATE's variety_rank arm below, never the clear channel.
+        let fillRank = false;
         if (touchesBreeding(body, clear)) {
           const [current] = await sql`
             SELECT breeding_system, breeding_source, variety_rank
@@ -758,6 +763,7 @@ export const handler = async (event) => {
           if (!current) return resp(404, { error: 'Not found or not owner' });
           const perr = breedingPairingError(body, clear, current);
           if (perr) return resp(400, { error: perr });
+          fillRank = fillsCultivarRank(body, clear, current);
         }
 
         const [, updateRows] = await sql.transaction([
@@ -800,7 +806,10 @@ export const handler = async (event) => {
               origin_region        = CASE WHEN ${clear} @> ARRAY['origin_region'] THEN NULL ELSE COALESCE(${body.origin_region ?? null}, origin_region) END,
               breeding_system      = CASE WHEN ${clear} @> ARRAY['breeding_system'] THEN NULL ELSE COALESCE(${body.breeding_system ?? null}, breeding_system) END,
               breeding_source      = CASE WHEN ${clear} @> ARRAY['breeding_source'] THEN NULL ELSE COALESCE(${body.breeding_source ?? null}, breeding_source) END,
-              scoville_source      = CASE WHEN ${clear} @> ARRAY['scoville_source'] THEN NULL ELSE COALESCE(${body.scoville_source ?? null}, scoville_source) END
+              scoville_source      = CASE WHEN ${clear} @> ARRAY['scoville_source'] THEN NULL ELSE COALESCE(${body.scoville_source ?? null}, scoville_source) END,
+              -- Fills only a rank that was never recorded; a recorded rank is never overwritten, so a
+              -- concurrent rank write between the preflight and here still lands on the CHECK.
+              variety_rank         = CASE WHEN ${fillRank}::boolean AND variety_rank IS NULL THEN 'cultivar' ELSE variety_rank END
             WHERE id = ${varietyId}
               AND ( created_by = ANY(${household})
                     OR created_by LIKE ANY(${managedPatterns}::text[]) )
