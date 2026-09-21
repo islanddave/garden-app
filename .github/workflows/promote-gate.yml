@@ -225,7 +225,12 @@ jobs:
           SNAP: ${{ needs.resolve.outputs.snap_version }}
         run: |
           set -euo pipefail
-          PKG=$(curl -sS -f -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/$REPO/contents/package.json?ref=$DEV_SHA" | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])")
+          # ERREXIT (OPS-PROMOTEGATEERREXIT2-001) — keep every `|| X=` fallback in this step. Under errexit + pipefail
+          # a failed curl or an unparseable reply (non-JSON body, JSON without the field) ended the step ON the
+          # assignment, so each of those reds arrived with no annotation; only a literal empty version ever reached
+          # the handler below. Each fallback now routes the failure to the handler that names it. Still fail-closed:
+          # an unreadable version, tag lookup or tag target refuses the promote, it never passes it.
+          PKG=$(curl -sS -f -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/$REPO/contents/package.json?ref=$DEV_SHA" | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])") || PKG=""
           if [ -z "$PKG" ]; then
             echo "::error::could not read package.json version at $DEV_SHA — refusing to promote"; exit 1
           fi
@@ -240,12 +245,17 @@ jobs:
           # ensure_tag/manifest reuse guard AFTER main has been fast-forwarded. Pull that
           # exact check forward. Idempotency is preserved deliberately, mirroring
           # snap.py: an existing tag ALREADY pointing at this DEV_SHA is a clean re-run.
-          CODE=$(curl -sS -o /tmp/tagref.json -w "%{http_code}" -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/git/ref/tags/$SNAP")
+          # "000" = no usable HTTP answer (curl prints it for a transport error); it lands in the lookup-failed branch.
+          CODE=$(curl -sS -o /tmp/tagref.json -w "%{http_code}" -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/git/ref/tags/$SNAP") || CODE="000"
           if [ "$CODE" = "200" ]; then
-            TAG_TYPE=$(python3 -c "import json;print(json.load(open('/tmp/tagref.json'))['object']['type'])")
-            TAG_SHA=$(python3 -c "import json;print(json.load(open('/tmp/tagref.json'))['object']['sha'])")
+            TAG_TYPE=$(python3 -c "import json;print(json.load(open('/tmp/tagref.json'))['object']['type'])") || TAG_TYPE=""
+            TAG_SHA=$(python3 -c "import json;print(json.load(open('/tmp/tagref.json'))['object']['sha'])") || TAG_SHA=""
             if [ "$TAG_TYPE" = "tag" ]; then
-              TAG_SHA=$(curl -sS -f -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/git/tags/$TAG_SHA" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])")
+              TAG_SHA=$(curl -sS -f -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/git/tags/$TAG_SHA" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])") || TAG_SHA=""
+            fi
+            if [ -z "$TAG_SHA" ]; then
+              echo "::error::tag lookup for $SNAP returned HTTP 200 but its target commit could not be read — cannot rule out a tag collision, refusing to promote"
+              exit 1
             fi
             if [ "$TAG_SHA" != "$DEV_SHA" ]; then
               echo "::error::tag $SNAP already exists at $TAG_SHA (!= $DEV_SHA) — that version has already shipped. Bump dev first: node scripts/add-release.mjs <next> \"<highlight>\", then re-dispatch. main has NOT been touched (snap.py would have caught this only AFTER the fast-forward)."
