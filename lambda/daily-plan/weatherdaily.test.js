@@ -855,3 +855,345 @@ describe('rain auto-log — reached by run(), and correctly gated (V4-RAINAUTOLO
     expect(res.rows).toBeGreaterThan(0);       // the plan still got written
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// BUG-CACHEORPHANREGRESS-001 — the rain night's care-cache upserts write LIVE parents only.
+//
+// WHAT IS GUARDED. The two entity_memory upserts logRainEvents sends after the rain INSERT. The plant
+// arm must skip a soft-deleted planting and the container arm a soft-deleted container, and both must
+// still write an ARCHIVED one. Until this change neither joined its parent at all, so every rain night
+// re-created a cache row for each soft-deleted planting that had ever been watered: the very rows that
+// lambda/plants/index.js and merge.js delete along with the soft-delete (BUG-CACHEORPHANLEAK-001).
+// Seven of them sat on prod from 2026-08-28, each counted by integrity-weekly-check.sh's
+// entity_memory_orphans (migrations/v5-cacheorphan-001 removes them). Archived stays WRITTEN because
+// migrations/v4-cachemissingrow-001 gates every non-deleted planting and container with events on
+// having a cache row, archived included.
+//
+// METHOD. The statements are the ones run() actually sent (drive() above), not the handler's source,
+// so a filter left in a branch that never runs is a filter that is not there. Each is parsed into its
+// FROM list and its WHERE and evaluated for the four states a parent can be in on deleted_at x
+// archived_at, the way rain-live-filter.test.js evaluates the rain INSERT: the parent's two columns are
+// PINNED from the state, the join key is TRUE (it is the event's own foreign key, so every event row
+// finds its parent) and every other term is left free. The join type is READ: under an INNER join the
+// ON and the WHERE both filter; under a LEFT join the ON only decides whether the parent's columns are
+// filled, and a row whose ON failed reaches the WHERE with all of them NULL.
+//
+// WHY NOT THAT FILE'S PARSER. Its header asks that a third guard needing it hoist it into a module
+// outside this function directory rather than copy it again, and moving its two existing copies is not
+// this change. This model is narrower on purpose: the WHERE must be a conjunction, and a parent term it
+// cannot place (inside an OR, a NOT, a COALESCE, a CASE, a HAVING, a subquery, or another join's ON)
+// THROWS instead of being scored. An unusual but correct spelling therefore fails loudly and has to be
+// written plainly; nothing can pass for the wrong reason.
+//
+// LIMIT: the pg stub records SQL and runs none of it, so this proves the statements' shape, not the rows
+// they match. The prod read of both statements and the fork rehearsal are in the migration's README.
+
+const PARENT_STATES = {
+  live: { deleted_at: false, archived_at: false },
+  deleted: { deleted_at: true, archived_at: false },
+  archived: { deleted_at: false, archived_at: true },
+  deletedAndArchived: { deleted_at: true, archived_at: true },
+};
+// The ONLY acceptable answer on either arm: a soft-deleted parent gets no row, an archived one does.
+const DELETED_REFUSED = { live: true, deleted: false, archived: true, deletedAndArchived: false };
+const EVERY_STATE = { live: true, deleted: true, archived: true, deletedAndArchived: true };
+
+// Each arm's key column on event_log, and the relations its parent may be read from (the view or the
+// table under it; both carry deleted_at and archived_at).
+const CACHE_ARMS = {
+  plant: { key: 'plant_id', parents: ['garden_node', 'plants'] },
+  project: { key: 'project_id', parents: ['container', 'plant_projects'] },
+};
+
+// SQL comments as Postgres reads them (a quoted `--` stays a literal), lower-cased outside string
+// literals, then tokenised.
+const CACHE_SQL_COMMENT = /'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|\/\*[\s\S]*?\*\//g;
+const CACHE_TOKEN = /'(?:[^']|'')*'|"(?:[^"]|"")*"|[a-z0-9_$.]+|\S/g;
+function cacheTokens(sql) {
+  return sql
+    .replace(CACHE_SQL_COMMENT, (m) => (m.startsWith('--') || m.startsWith('/*') ? ' ' : m))
+    .replace(/'(?:[^']|'')*'|[^']+/g, (m) => (m.startsWith("'") ? m : m.toLowerCase()))
+    .match(CACHE_TOKEN) ?? [];
+}
+
+function closeOf(tokens, open) {
+  for (let depth = 0, k = open; k < tokens.length; k += 1) {
+    if (tokens[k] === '(') depth += 1;
+    else if (tokens[k] === ')' && --depth === 0) return k;
+  }
+  throw new Error(`unbalanced ( at token ${open}`);
+}
+
+// Split at depth-0 `sep` tokens. BETWEEN's own AND, and anything inside CASE ... END, stay in their term.
+function splitTop(tokens, sep) {
+  const out = [[]];
+  for (let k = 0, depth = 0, cases = 0, between = false; k < tokens.length; k += 1) {
+    const t = tokens[k];
+    if (t === '(') depth += 1;
+    else if (t === ')') depth -= 1;
+    else if (t === 'case') cases += 1;
+    else if (t === 'end') cases -= 1;
+    else if (depth === 0 && cases === 0) {
+      if (t === 'between') between = true;
+      else if (t === 'and' && between) between = false;
+      else if (t === sep) { out.push([]); continue; }
+    }
+    out.at(-1).push(t);
+  }
+  return out;
+}
+
+// A clause's conjuncts: split at depth-0 AND, a fully parenthesised conjunct unwrapped and split again.
+// A depth-0 OR keeps the clause as ONE term, which is harmless unless it names a parent column (then the
+// caller throws).
+function conjuncts(tokens) {
+  if (!tokens.length) return [];
+  if (splitTop(tokens, 'or').length > 1) return [tokens];
+  return splitTop(tokens, 'and').flatMap((t) => {
+    if (!t.length) throw new Error('an empty term in a conjunction');
+    const wrapped = t[0] === '(' && closeOf(t, 0) === t.length - 1 && !/^(select|with|values)$/.test(t[1]);
+    return wrapped ? conjuncts(t.slice(1, -1)) : [t];
+  });
+}
+
+// The SELECT's FROM list, WHERE and HAVING, each found at depth 0. `on conflict` also ends the SELECT.
+const SELECT_END = new Set(['group', 'having', 'order', 'limit', 'offset', 'window', 'union', 'returning', ';']);
+function selectClauses(tokens) {
+  const depth = [];
+  tokens.reduce((d, t) => { const here = t === ')' ? d - 1 : d; depth.push(here); return t === '(' ? d + 1 : here; }, 0);
+  const find = (from, test) => tokens.findIndex((t, k) => k > from && depth[k] === 0 && test(t, k));
+  const s = find(-1, (t) => t === 'select');
+  const f = find(s, (t) => t === 'from');
+  if (s < 0 || f < 0) throw new Error('no SELECT ... FROM at the top level of the statement');
+  const ends = (t, k) => SELECT_END.has(t) || (t === 'on' && tokens[k + 1] === 'conflict');
+  const endAt = (k) => { const e = find(k, ends); return e < 0 ? tokens.length : e; };
+  const e = endAt(f);
+  const w = find(f, (t, k) => t === 'where' && k < e);
+  const h = find(f, (t) => t === 'having');
+  return {
+    from: tokens.slice(f + 1, w < 0 ? e : w),
+    where: w < 0 ? [] : tokens.slice(w + 1, e),
+    having: h < 0 ? [] : tokens.slice(h + 1, endAt(h)),
+  };
+}
+
+// The FROM list as relations in order, each with how it is joined and its ON's tokens.
+const JOIN_WORDS = new Set(['join', 'inner', 'left', 'right', 'full', 'cross', 'natural', 'outer', 'lateral']);
+function fromItems(tokens) {
+  const items = [];
+  let k = 0;
+  const relation = (how) => {
+    if (tokens[k] === '(' || tokens[k] === 'lateral') throw new Error('a subquery or LATERAL in the FROM list: this model reads plain relations only');
+    const table = String(tokens[k]).replace(/^public\./, '');
+    k += 1;
+    if (tokens[k] === 'as') k += 1;
+    const alias = tokens[k] !== undefined && !JOIN_WORDS.has(tokens[k]) && !['on', 'using', ','].includes(tokens[k]) ? tokens[k++] : table;
+    if (tokens[k] === 'using') throw new Error('JOIN ... USING: this model reads ON only');
+    const item = { table, alias, how, on: [] };
+    if (tokens[k] === 'on') {
+      const start = ++k;
+      for (let depth = 0; k < tokens.length; k += 1) {
+        if (tokens[k] === '(') depth += 1;
+        else if (tokens[k] === ')') depth -= 1;
+        else if (depth === 0 && (tokens[k] === ',' || JOIN_WORDS.has(tokens[k]))) break;
+      }
+      item.on = tokens.slice(start, k);
+    }
+    items.push(item);
+  };
+  relation('from');
+  while (k < tokens.length) {
+    if (tokens[k] === ',') { k += 1; relation('inner'); continue; }
+    const words = [];
+    while (tokens[k] !== 'join') {
+      if (!JOIN_WORDS.has(tokens[k])) throw new Error(`unexpected "${tokens[k]}" in the FROM list`);
+      words.push(tokens[k]);
+      k += 1;
+    }
+    k += 1;
+    const kind = words.join(' ');
+    const how = kind === '' || kind === 'inner' ? 'inner' : kind === 'left' || kind === 'left outer' ? 'left' : null;
+    if (!how) throw new Error(`${kind} join: this model reads JOIN, INNER JOIN and LEFT [OUTER] JOIN only`);
+    relation(how);
+  }
+  return items;
+}
+
+// Which parent states the statement writes a cache row for. `parent` is null when the statement does not
+// read its parent at all (then every state is written); `pinned` names the parent-column terms found.
+function cacheParentModel(sql, arm) {
+  const { key, parents } = CACHE_ARMS[arm];
+  const { from, where, having } = selectClauses(cacheTokens(sql));
+  const items = fromItems(from);
+  const [base] = items;
+  if (base.table !== 'event_log') throw new Error(`the ${arm} arm no longer reads FROM event_log first: this model takes the event rows as the base`);
+  const hidden = [...where, ...having].find((t) => parents.includes(t.replace(/^public\./, '')));
+  if (hidden) throw new Error(`the ${arm} arm reads ${hidden} inside its WHERE or HAVING: a parent this model cannot place`);
+  const bound = items.filter((it) => parents.includes(it.table));
+  if (bound.length > 1) throw new Error(`the ${arm} arm binds its parent ${bound.length} times: "the parent" is ambiguous`);
+  if (!bound.length) return { parent: null, pinned: [], admits: { ...EVERY_STATE } };
+  const [p] = bound;
+  const cols = new Map([[`${p.alias}.deleted_at`, 'deleted_at'], [`${p.alias}.archived_at`, 'archived_at']]);
+  const names = (toks) => toks.some((t) => cols.has(t));
+  for (const it of items) {
+    if (it !== p && names(it.on)) throw new Error(`the ${arm} parent's filter sits in the ON of ${it.table}, not its own`);
+  }
+  if (names(having)) throw new Error(`the ${arm} parent's filter sits in the HAVING: this model cannot place it`);
+  const classify = (terms, place) => terms.map((t) => {
+    const text = t.join(' ');
+    for (const [c, col] of cols) {
+      if (text === `${c} is null`) return { text, col, isNull: true };
+      if (text === `${c} is not null`) return { text, col, isNull: false };
+    }
+    if (names(t)) throw new Error(`the ${arm} parent's filter is buried in ${place}, inside an expression this model cannot evaluate: ${text.slice(0, 90)}`);
+    return { text };
+  });
+  const on = classify(conjuncts(p.on), 'its ON');
+  const wh = classify(conjuncts(where), 'the WHERE');
+  const keyed = [`${p.alias}.id = ${base.alias}.${key}`, `${base.alias}.${key} = ${p.alias}.id`];
+  const hasKey = (terms) => terms.some((t) => keyed.includes(t.text));
+  if (!hasKey(on) && !(p.how === 'inner' && hasKey(wh))) {
+    throw new Error(`the ${arm} arm joins ${p.table} on something other than the event's own ${key}`);
+  }
+  const holds = (terms, state) => terms.every((t) => !t.col || (t.isNull ? !state[t.col] : state[t.col]));
+  const NULLS = { deleted_at: false, archived_at: false };
+  const admits = Object.fromEntries(Object.entries(PARENT_STATES).map(([name, state]) => [name,
+    p.how === 'inner'
+      ? holds(on, state) && holds(wh, state)
+      // LEFT: the ON decides only whether the parent's columns are filled; the WHERE then reads them.
+      : holds(wh, holds(on, state) ? state : NULLS)]));
+  return { parent: { table: p.table, alias: p.alias, how: p.how }, pinned: [...on, ...wh].filter((t) => t.col).map((t) => t.text), admits };
+}
+
+// Synthetic statements in the two arms' shapes, for the bench below.
+const PLANT_ARM = (from, where) => `insert into entity_memory (plant_id, last_event_at, last_watered_at)
+       select e.plant_id, max(e.event_date), max(e.event_date)
+         from ${from}
+        where ${where}
+        group by e.plant_id
+       on conflict (plant_id) where plant_id is not null do update set
+         last_event_at = greatest(coalesce(entity_memory.last_event_at, excluded.last_event_at), excluded.last_event_at)`;
+const PROJECT_ARM = (from, where) => `insert into entity_memory (project_id, last_event_at, last_watered_at)
+       select e.project_id, max(e.event_date), max(e.event_date) filter (where e.event_type in ('watering','rain'))
+         from ${from}
+        where ${where}
+        group by e.project_id
+       having max(e.event_date) filter (where e.event_type in ('watering','rain')) is not null
+       on conflict (project_id) do update set
+         last_event_at = greatest(coalesce(entity_memory.last_event_at, excluded.last_event_at), excluded.last_event_at)`;
+
+describe('BUG-CACHEORPHANREGRESS-001 — the rain night care-cache upserts never write a soft-deleted parent', () => {
+  beforeEach(() => { vi.spyOn(console, 'log').mockImplementation(() => {}); });
+
+  // Driven inside each test, so a model that throws reds that test and leaves the others running.
+  const sent = async () => {
+    const { pg } = await drive({ event: { rainLog: true }, pgOpts: { weatherRows: [{ precip_in: 0.34, precip_source: 'gauge_merged' }] } });
+    const cache = pg.calls.filter((c) => /into entity_memory/i.test(c.sql));
+    return {
+      cache,
+      plant: cache.filter((c) => /on conflict \(plant_id\)/i.test(c.sql)),
+      project: cache.filter((c) => /on conflict \(project_id\)/i.test(c.sql)),
+    };
+  };
+
+  it('is evaluating the two statements run() sends, each reading its parent (vacuity floor)', async () => {
+    const { cache, plant, project } = await sent();
+    expect(cache, 'the rain night no longer sends both cache upserts').toHaveLength(2);
+    expect(plant).toHaveLength(1);
+    expect(project).toHaveLength(1);
+    expect(plant[0].sql).toMatch(/insert into entity_memory \(plant_id,/);
+    expect(project[0].sql).toMatch(/insert into entity_memory \(project_id,/);
+    for (const [arm, [c]] of [['plant', plant], ['project', project]]) {
+      const m = cacheParentModel(c.sql, arm);
+      expect(m.parent, `the ${arm} arm no longer reads its parent: every soft-deleted one gets a row`).not.toBeNull();
+      // Named here, so a lost filter reports THAT rather than only a state table below.
+      expect(m.pinned.some((t) => t.startsWith(`${m.parent.alias}.deleted_at `)), `the ${arm} arm carries no deleted_at term`).toBe(true);
+    }
+  });
+
+  it('the plant arm writes a live or archived planting and never a soft-deleted one', async () => {
+    const m = cacheParentModel((await sent()).plant[0].sql, 'plant');
+    expect(m.admits.live, 'the plant arm writes no live planting: the writer, or this model, has gone dead').toBe(true);
+    expect(m.admits.archived, 'an archived planting loses its cache row (v4-cachemissingrow-001)').toBe(true);
+    expect(m.admits, 'the plant arm writes these planting states').toEqual(DELETED_REFUSED);
+  });
+
+  it('the container arm writes a live or archived container and never a soft-deleted one', async () => {
+    const m = cacheParentModel((await sent()).project[0].sql, 'project');
+    expect(m.admits.live, 'the container arm writes no live container: the writer, or this model, has gone dead').toBe(true);
+    expect(m.admits.archived, 'an archived container loses its cache row (v4-cachemissingrow-001)').toBe(true);
+    expect(m.admits, 'the container arm writes these container states').toEqual(DELETED_REFUSED);
+  });
+
+  it('reads the plant filter from the statement, not its spelling (synthetic statements)', () => {
+    // The same model on statements no writer contains, so it is shown to SEPARATE the shapes rather
+    // than merely agree with today's handler.
+    const E = "e.event_type in ('watering','rain') and e.deleted_at is null and e.plant_id is not null";
+    const J = 'event_log e join garden_node gn on gn.id = e.plant_id';
+    const of = (from, where) => cacheParentModel(PLANT_ARM(from, where), 'plant').admits;
+    const REFUSED = [
+      [J, `${E} and gn.deleted_at is null`],                                                   // the handler's shape
+      ['event_log e join garden_node gn on gn.id = e.plant_id and gn.deleted_at is null', E],  // in an INNER join's ON
+      ['event_log e inner join public.garden_node as gn on e.plant_id = gn.id', `gn.deleted_at is null and ${E}`],
+      ['event_log e left join garden_node gn on gn.id = e.plant_id', `${E} and gn.deleted_at is null`],  // LEFT, filter in the WHERE
+      ['event_log e, garden_node gn', `gn.id = e.plant_id and ${E} and (gn.deleted_at is null)`],       // comma join, key in the WHERE
+      ['event_log e join plants p on p.id = e.plant_id', `${E} and p.deleted_at is null`],               // the table, not the view
+      [J, `${E} and gn.deleted_at is null and gn.status is distinct from 'ended'`],             // another parent term stays free
+      [J, `x <> '--' and ${E} and gn.deleted_at is null`],                                      // a quoted -- is not a comment
+      [J, `e.event_date between '2026-01-01' and '2027-01-01' and ${E} and gn.deleted_at is null`],  // BETWEEN's AND is its own
+    ];
+    for (const [f, w] of REFUSED) expect(of(f, w), `${f} / ${w}`).toEqual(DELETED_REFUSED);
+    const T = true;
+    const F = false;
+    const LEAKS = [
+      ['event_log e', E, EVERY_STATE],                                                                    // no join (the regression)
+      [J, E, EVERY_STATE],                                                                                // joined, never filtered
+      [J, `${E} and gn.deleted_at is not null`, { live: F, deleted: T, archived: F, deletedAndArchived: T }],   // inverted
+      [J, `${E} and gn.archived_at is null`, { live: T, deleted: T, archived: F, deletedAndArchived: F }],      // archived instead
+      [J, `${E} and gn.deleted_at is null and gn.archived_at is null`, { ...DELETED_REFUSED, archived: F }],    // archived as well
+      ['event_log e left join garden_node gn on gn.id = e.plant_id and gn.deleted_at is null', E, EVERY_STATE],  // LEFT, filter in the ON
+      ['event_log e left join garden_node gn on gn.id = e.plant_id and gn.deleted_at is null',                // ...and repeated in the
+        `${E} and gn.deleted_at is null`, EVERY_STATE],                                                   // WHERE: the NULLs pass it
+      [J, `${E}\n         -- and gn.deleted_at is null\n`, EVERY_STATE],                                  // a line comment
+      [J, `${E} /* and gn.deleted_at is null */`, EVERY_STATE],                                           // a block comment
+      [J, `${E} and e.deleted_at is null`, EVERY_STATE],                                                  // the event's column, not the parent's
+      [`${J} join container ct on ct.id = gn.container_id`, `${E} and ct.deleted_at is null`, EVERY_STATE],  // the container's, not the planting's
+    ];
+    for (const [f, w, admits] of LEAKS) expect(of(f, w), `${f} / ${w}`).toEqual(admits);
+    const THROWS = [
+      [J, `${E} and coalesce(gn.deleted_at, gn.archived_at) is null`, /buried/],
+      [J, `${E} and (gn.deleted_at is null or e.event_type = 'rain')`, /buried/],
+      [J, `${E} and gn.deleted_at is null or e.plant_id is null`, /buried/],
+      [J, `${E} and not gn.deleted_at is not null`, /buried/],
+      [J, `${E} and case when true then gn.deleted_at is null else true end`, /buried/],
+      ['event_log e', `${E} and exists (select 1 from garden_node g2 where g2.id = e.plant_id and g2.deleted_at is null)`, /cannot place/],
+      ['event_log e join garden_node gn on gn.id = e.project_id', `${E} and gn.deleted_at is null`, /own plant_id/],
+      [`${J} join garden_node g2 on g2.id = e.plant_id`, `${E} and gn.deleted_at is null`, /ambiguous/],
+      ['event_log e right join garden_node gn on gn.id = e.plant_id', `${E} and gn.deleted_at is null`, /JOIN only/],
+      ['event_log e join garden_node gn using (id)', `${E} and gn.deleted_at is null`, /USING/],
+      ['garden_node gn join event_log e on e.plant_id = gn.id', `${E} and gn.deleted_at is null`, /event_log first/],
+      [`${J} join locations l on l.id = gn.location_id and gn.deleted_at is null`, E, /ON of locations/],
+    ];
+    for (const [f, w, re] of THROWS) expect(() => of(f, w), `${f} / ${w}`).toThrow(re);
+  });
+
+  it('reads the container filter from the statement, not its spelling (synthetic statements)', () => {
+    const E = 'e.deleted_at is null and e.project_id is not null';
+    const J = 'event_log e join container ct on ct.id = e.project_id';
+    const of = (from, where) => cacheParentModel(PROJECT_ARM(from, where), 'project').admits;
+    expect(of(J, `${E} and ct.deleted_at is null`)).toEqual(DELETED_REFUSED);                                        // the handler's shape
+    expect(of('event_log e join plant_projects pp on pp.id = e.project_id and pp.deleted_at is null', E)).toEqual(DELETED_REFUSED);
+    expect(of('event_log e', E)).toEqual(EVERY_STATE);                                                                // no join
+    expect(of(J, E)).toEqual(EVERY_STATE);                                                                            // never filtered
+    expect(of(J, `${E} and ct.deleted_at is not null`)).toEqual({ live: false, deleted: true, archived: false, deletedAndArchived: true });
+    expect(of(J, `${E} and ct.archived_at is null`)).toEqual({ live: true, deleted: true, archived: false, deletedAndArchived: false });
+    expect(of('event_log e left join container ct on ct.id = e.project_id and ct.deleted_at is null', E)).toEqual(EVERY_STATE);
+    // The planting's filter does not stand in for the container's.
+    expect(of(`${J} join garden_node gn on gn.id = e.plant_id`, `${E} and gn.deleted_at is null`)).toEqual(EVERY_STATE);
+    expect(() => of('event_log e join container ct on ct.id = e.plant_id', `${E} and ct.deleted_at is null`)).toThrow(/own project_id/);
+    // The select list's FILTER (WHERE ...) is not the statement's WHERE, and a HAVING cannot hide a filter.
+    const inHaving = PROJECT_ARM(J, E).replace(/(having [^\n]* is not null)\n/, '$1 and bool_and(ct.deleted_at is null)\n');
+    expect(inHaving, 'the HAVING edit did not land').toMatch(/is not null and bool_and\(ct\.deleted_at is null\)\n\s*on conflict/);
+    expect(() => cacheParentModel(inHaving, 'project')).toThrow(/HAVING/);
+  });
+});

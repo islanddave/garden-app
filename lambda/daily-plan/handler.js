@@ -1200,11 +1200,30 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
     // existed) stayed green. Shape mirrors the deployed batch writer's two upserts in
     // lambda/events/index.js: ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL, and
     // ON CONFLICT (project_id).
+    //
+    // BUG-CACHEORPHANREGRESS-001: LIVE parents only. A soft-deleted planting keeps its events (the
+    // Deleted-Planting History Rule) but not its cache row: lambda/plants/index.js deletes the row in
+    // the same statement as the soft-delete, and merge.js deletes the losers' (BUG-CACHEORPHANLEAK-001).
+    // Without the join below, this upsert put the row straight back on the next rain night. Seven such
+    // rows sat on prod from 2026-08-28 (created by v4-rainbackfill-001/0c-cachearms.sql, which had the
+    // same gap, and rewritten here every rain night since), each one an entity_memory_orphan in
+    // scripts/integrity-weekly-check.sh. The container arm gets the same filter: the container DELETE
+    // in lambda/projects/index.js leaves its cache row in place, and this upsert must not keep one alive.
+    //   * deleted_at ONLY. An ARCHIVED planting or container keeps its cache row
+    //     (v4-cachemissingrow-001's post_every_non_deleted_*_has_a_cache_row gates), so archived_at is
+    //     deliberately absent.
+    //   * The filter sits in the WHERE, not in the join's ON: under a LEFT JOIN an ON-clause filter
+    //     only blanks the joined columns and the row is written anyway. The join key is the event's own
+    //     foreign key, so every event row finds its parent.
+    //   * Aliases gn/ct, not p/pp, for the reason given at the rain INSERT above.
+    // weatherdaily.test.js evaluates the statements run() actually sends, parent state by parent state.
     const { rowCount: cachedPlant } = await pg.query(
       `insert into entity_memory (plant_id, last_event_at, last_watered_at)
        select e.plant_id, max(e.event_date), max(e.event_date)
          from event_log e
+         join garden_node gn on gn.id = e.plant_id
         where e.event_type in ('watering','rain') and e.deleted_at is null and e.plant_id is not null
+          and gn.deleted_at is null
         group by e.plant_id
        on conflict (plant_id) where plant_id is not null do update set
          last_event_at   = greatest(coalesce(entity_memory.last_event_at,   excluded.last_event_at),   excluded.last_event_at),
@@ -1220,7 +1239,9 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
               max(e.event_date),
               max(e.event_date) filter (where e.event_type in ('watering','rain'))
          from event_log e
+         join container ct on ct.id = e.project_id
         where e.deleted_at is null and e.project_id is not null
+          and ct.deleted_at is null
         group by e.project_id
        having max(e.event_date) filter (where e.event_type in ('watering','rain')) is not null
        on conflict (project_id) do update set
