@@ -243,11 +243,11 @@ function etClock(at) {
 // (low 36°F)") leaves tonight to the freeze cue, which keys on the CURRENT plan low: once a later run warms it to
 // FREEZE_BELOW_F or above, the cue stops saying "Freeze tonight" and Today said nothing about an email he got that
 // afternoon. This line says what changed — facts only, no advice — with the plan low as the card prints it and the
-// email's send time. Only from the most recently sent real imminent entry, only when it is a threshold one (a watch
-// is its own line), only when the plan low is now warmer than the low that email sent at, and never while the freeze
-// cue still covers tonight. pickFrostLines never hands it a forced entry.
+// email's send time. Only from the most recently sent real imminent entry, only when the plan low is now warmer than
+// the low that email sent at, and never while the freeze cue still covers tonight. Only reached when no line names
+// tonight, so never for a watch: pickFrostLines makes any usable one tonight's line. It never hands this a forced entry.
 function warmedLine(imminent, planLow) {
-  if (!imminent || imminent.trip === 'radiative') return null
+  if (!imminent) return null
   const plan = numOrNull(planLow)
   const sent = numOrNull(imminent.lowF)
   if (plan == null || sent == null || plan < FREEZE_BELOW_F || !(plan > sent)) return null
