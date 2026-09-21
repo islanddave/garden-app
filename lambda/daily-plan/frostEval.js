@@ -732,6 +732,13 @@ function frostEval(input = {}, opts = {}) {
   // Highest-severity tier wins the single outbound message; the others remain in the record for the log.
   // D6: "single outbound message" is now literal — every crop that tripped is inside it.
   let tier = null; let level = null; let message = null; let trippedCrops = null;
+  // V5-TODAYFROSTLINEGAPS-001 — the colder advisory a watch message carries (the clause below), as the facts an advisory
+  // entry stores (handler.frostWeatherFacts' advisory branch): its low, its civil day, and the night the clause NAMED.
+  // The advisory entry is never written when the imminent tier wins the single message, so this is the only record of a
+  // figure the email printed ("Colder on a second forecast: 35°F tonight", "Colder ahead: 34°F Monday night").
+  // handler.js stores it on the imminent entry as `colder`; the Today client reads it (src/lib/frostAlertLine.js).
+  // null whenever no clause is carried.
+  let colder = null;
   if (imminent.fires) {
     tier = 'imminent'; level = imminent.level; message = imminentMessage(imminent, exposure);
     trippedCrops = imminent.tripped || null;
@@ -755,6 +762,12 @@ function frostEval(input = {}, opts = {}) {
       const close = sameNight ? 'pick what\'s ripe and cover tender plants tonight.' : 'harvest ahead and stage row cover.';
       message = truncate(`${message} ${lead} ${advisory.minLowF}°F ${when}` +
         `${advisory.date ? `, ${advisory.date}` : ''} — ${close}`);
+      colder = {
+        lowF: Number(advisory.minLowF),
+        ...(advisory.dayOffset != null ? { dayOffset: advisory.dayOffset } : {}),
+        ...(advisory.date ? { date: advisory.date } : {}),
+        ...(night && Number.isInteger(night.nightOffset) && night.nightOffset >= 0 ? { nightOffset: night.nightOffset } : {}),
+      };
     }
   } else if ((advisory.fires || advisoryRadiative) && (!crops || (advisoryCrops && advisoryCrops.fires))) {
     // With a crop breakdown the advisory only fires if some crop's OWN advisory point is met — otherwise a
@@ -793,7 +806,7 @@ function frostEval(input = {}, opts = {}) {
     tier, level, message,
     alert: tier != null,
     advisory, advisoryCrops, imminent, imminentGlobal, heat,
-    trippedCrops,
+    trippedCrops, colder,
     degraded, degradedAlert, advisoryDegraded, advisoryDegradedAlert,
     // §3-8 — logged on EVERY evaluation, alert or not; also the 2026 corpus for the 2027 learned offset.
     observability: {

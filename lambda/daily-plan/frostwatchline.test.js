@@ -20,7 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import h from './handler.js';
 import fe from './frostEval.js';
 import _cf from './_coverFlags.js';
-import { buildFrostAlertLine } from '../../src/lib/frostAlertLine.js';
+import { buildFrostAlertLine, resolveNight, nightPhrase as clientNightPhrase } from '../../src/lib/frostAlertLine.js';
 import { agreedTonightLow } from '../../src/lib/tonightLow.js';
 
 const { run, frostWeatherFacts, frostSubject } = h;
@@ -169,6 +169,28 @@ describe('V5-TODAYRADIATIVEWATCH-001 — the radiative imminent email and Today 
     // the email's own tail is untouched (out of scope: Dave was not asked about it)
     expect(emails[0].message.endsWith('Harvest ahead and stage row cover.')).toBe(true);
   });
+
+  // V5-TODAYFROSTLINEGAPS-001 — the colder advisory the watch email carries is stored on the entry (`colder`).
+  it('a watch whose email carries "Colder on a second forecast: 35°F tonight" stores the 35 and its night on the entry', async () => {
+    const t = planTable(PEPTOM);
+    const emails = [];
+    for (const hr of [15, 16, 17]) await once(t, emails, { etHour: hr, nws: 39, lows: [35, 50, 51], minHours: [4, 6, 6] });
+    expect(emails.map((e) => [e.hour, e.subject])).toEqual([[15, 'Garden alert - Frost watch tonight (low 39F)']]);   // one email, as before
+    expect(emails[0].message.endsWith(' Colder on a second forecast: 35°F tonight, 2026-10-10 — pick what\'s ripe and cover tender plants tonight.')).toBe(true);
+    expect(t.sent()).toHaveLength(1);
+    expect(t.sent()[0]).toMatchObject({ tier: 'imminent', level: 'protect', lowF: 39, dayOffset: 0, trip: 'radiative', run: 'intraday-pm',
+      colder: { lowF: 35, dayOffset: 1, date: '2026-10-10', nightOffset: 0 } });
+  });
+
+  it('a watch whose email carries "Colder ahead: 35°F tomorrow night" stores that night on the entry', async () => {
+    const t = planTable(PEPTOM);
+    const emails = [];
+    await once(t, emails, { etHour: 15, nws: 41, lows: [46, 35, 51], minHours: [5, 5, 6] });
+    expect(emails.map((e) => e.subject)).toEqual(['Garden alert - Frost watch tonight (low 41F)']);
+    expect(emails[0].message.endsWith(' Colder ahead: 35°F tomorrow night, 2026-10-11 — harvest ahead and stage row cover.')).toBe(true);
+    expect(t.sent()).toHaveLength(1);   // the advisory is inside the watch email: no advisory entry of its own
+    expect(t.sent()[0]).toMatchObject({ tier: 'imminent', trip: 'radiative', lowF: 41, colder: { lowF: 35, dayOffset: 2, date: '2026-10-11', nightOffset: 1 } });
+  });
 });
 
 // ── frostWeatherFacts — the advisory entry's trip basis ─────────────────────────────────────────────────────────────
@@ -210,6 +232,104 @@ describe('frostWeatherFacts — `trip: \'radiative\'` on exactly the advisories 
     expect(frostWeatherFacts(rad)).toEqual({ lowF: 41, dayOffset: 0, trip: 'radiative' });
     const thr = ev({ tonightLow: 36 });
     expect(frostWeatherFacts(thr)).toEqual({ lowF: 36, dayOffset: 0 });
+  });
+});
+
+// ── V5-TODAYFROSTLINEGAPS-001 — the colder advisory a watch email carries is stored on its entry (`colder`) ──────────
+// A radiative imminent message carries a colder advisory in its body ("Colder on a second forecast: 35°F tonight" or
+// "Colder ahead: 35°F tomorrow night"), and the advisory entry is never written when the imminent tier wins. So the
+// figure reached no screen. frostEval records it (decision.colder) and frostWeatherFacts stores it on the imminent entry
+// in the advisory entry's own vocabulary; the Today client reads it (src/lib/frostAlertLine.js).
+describe('colder — the advisory figure a watch email carries, stored where the client can read it', () => {
+  const T = { ADVISORY_LOW_F: 40, IMMINENT_LOW_F: 38, HARD_FREEZE_LOW_F: 33 };
+  const tender = { slug: 'pepper', label: 'peppers', band: 'tender', count: 5, containers: 1, thresholds: T };
+  const stamps = (date) => Array.from({ length: 24 }, (_, i) => `${date}T${pad(i)}:00`);
+  const minAt = (date, low, hour) => ({ time: stamps(date), temperature_2m: curve(low, hour) });
+  const clear = (date) => ({ date, minDewpointF: 33, meanCloudPct: 5, meanWindMph: 2, hours: 15, radiative: true });
+  const watchEv = (lows, hourly, tonightLow = 39) => frostEval({
+    tonightLow, highToday: 60, forecastLows: lows, forecastDates: DATES, lowSource: 'forecast', forecastHourly: hourly,
+    radiativeNights: [clear('2026-10-09')], exposure: { tender: 5, unknown: 0, tenderContainers: 1, atRisk: 5, byCropType: [tender] },
+    spaceId: 'S1', eventDate: FRI,
+  }, { frostSeason: true, radiativeEnabled: true });
+
+  it('the same night: the second forecast\'s low, its day, and night 0 — exactly what the clause printed', () => {
+    const d = watchEv([35, 50, 51], minAt('2026-10-10', 35, 4));
+    expect(d.message).toMatch(/ Colder on a second forecast: 35°F tonight, 2026-10-10 — /);
+    expect(d.colder).toEqual({ lowF: 35, dayOffset: 1, date: '2026-10-10', nightOffset: 0 });
+    expect(frostWeatherFacts(d)).toEqual({ lowF: 39, dayOffset: 0, trip: 'radiative', colder: { lowF: 35, dayOffset: 1, date: '2026-10-10', nightOffset: 0 } });
+  });
+
+  it('a later night: the night the "Colder ahead" clause named, tomorrow night or a weekday', () => {
+    const tomorrow = watchEv([46, 35, 51], minAt('2026-10-11', 35, 5), 41);
+    expect(tomorrow.message).toMatch(/ Colder ahead: 35°F tomorrow night, 2026-10-11 — harvest ahead and stage row cover\.$/);
+    expect(frostWeatherFacts(tomorrow).colder).toEqual({ lowF: 35, dayOffset: 2, date: '2026-10-11', nightOffset: 1 });
+    const evening = watchEv([34.5, 50, 51], minAt('2026-10-10', 34.5, 22), 41);   // D1's minimum at 22:00 -> tomorrow night
+    expect(evening.message).toMatch(/ Colder ahead: 34\.5°F tomorrow night, 2026-10-10 — /);
+    expect(evening.colder).toEqual({ lowF: 34.5, dayOffset: 1, date: '2026-10-10', nightOffset: 1 });
+    const monday = watchEv([46, 47, 33], minAt('2026-10-12', 33, 23), 41);
+    expect(monday.message).toMatch(/ Colder ahead: 33°F Monday night, 2026-10-12 — /);
+    expect(monday.colder).toEqual({ lowF: 33, dayOffset: 3, date: '2026-10-12', nightOffset: 3 });
+  });
+
+  it('no clause, no field: an advisory not colder than the watch, one that does not fire, and a threshold imminent', () => {
+    // 39 is not colder than the watch's 39: no clause, and the entry is exactly what it was before this change.
+    const tie = watchEv([39, 50, 51], minAt('2026-10-10', 39, 4));
+    expect(tie.tier).toBe('imminent');
+    expect(tie.message).not.toMatch(/Colder/);
+    expect(tie.colder).toBeNull();
+    expect(frostWeatherFacts(tie)).toEqual({ lowF: 39, dayOffset: 0, trip: 'radiative' });
+    const warm = watchEv([46, 50, 51], minAt('2026-10-10', 46, 4));
+    expect([warm.message.includes('Colder'), warm.colder]).toEqual([false, null]);
+    // A threshold imminent carries no clause (the rule is for the radiative watch only), so no field.
+    const thr = watchEv([33, 50, 51], minAt('2026-10-10', 33, 4), 36);
+    expect(thr.imminent.radiativeOnly).toBe(false);
+    expect([thr.message.includes('Colder'), thr.colder]).toEqual([false, null]);
+    expect(frostWeatherFacts(thr)).toEqual({ lowF: 36, dayOffset: 0 });
+    // NEAR-MISS CONTROL for the tie: one tenth colder and the clause and the field both appear.
+    expect(watchEv([38.9, 50, 51], minAt('2026-10-10', 38.9, 4)).colder).toEqual({ lowF: 38.9, dayOffset: 1, date: '2026-10-10', nightOffset: 0 });
+  });
+
+  it('PARITY GRID — whenever the message carries a clause, `colder` holds its figure and names its night; else absent', () => {
+    let same = 0; let ahead = 0; let none = 0;
+    for (const day of [0, 1, 2]) {
+      for (const hour of [0, 4, 7, 11, 12, 18, 23, null]) {
+        for (const low of [30, 34.5, 36, 37, 39, 41]) {
+          for (const tonightLow of [39, 41.5]) {
+            const lows = [50, 51, 52]; lows[day] = low;
+            const d = watchEv(lows, hour == null ? null : minAt(DATES[day], low, hour), tonightLow);
+            const at = `D${day + 1} hour=${hour} low=${low} nws=${tonightLow}`;
+            expect(d.tier, at).toBe('imminent');
+            const m = / Colder (on a second forecast|ahead): (-?[\d.]+)°F (.+?), (\d{4}-\d{2}-\d{2}) — /.exec(d.message);
+            const facts = frostWeatherFacts(d);
+            if (!m) { expect(facts, at).not.toHaveProperty('colder'); none++; continue; }
+            expect(facts.colder.lowF, at).toBe(Number(m[2]));
+            expect(facts.colder.date, at).toBe(m[4]);
+            // the night the CLIENT resolves from the stored facts is the night the clause named
+            expect(clientNightPhrase(resolveNight(facts.colder)), at).toBe(m[3]);
+            expect(facts.colder.nightOffset === 0, at).toBe(m[1] === 'on a second forecast');
+            if (m[1] === 'ahead') ahead++; else same++;
+          }
+        }
+      }
+    }
+    expect(same).toBeGreaterThan(20);
+    expect(ahead).toBeGreaterThan(20);
+    expect(none).toBeGreaterThan(20);
+  });
+
+  it('no "already sent?" reader sees it: the gates answer the same for the entry with and without `colder`', () => {
+    const d = watchEv([35, 50, 51], minAt('2026-10-10', 35, 4));
+    const withC = { key: d.dedupKey, tier: 'imminent', level: 'protect', at: '2026-10-09T19:00:00.000Z', run: 'intraday-pm', crops: d.cropLevels, ...frostWeatherFacts(d) };
+    const { colder: _c, ...without } = withC;
+    expect(withC.colder).toBeTruthy();
+    expect(fe.sentNight(withC)).toBe(fe.sentNight(without));
+    expect(fe.countsAsSent(withC)).toBe(fe.countsAsSent(without));
+    for (const next of [{ level: 'protect', crops: d.cropLevels, night: 0 }, { level: 'advisory', crops: null, night: 1 }, { level: 'hard_freeze', crops: { pepper: 'hard_freeze' }, night: 0 }]) {
+      expect(fe.escalatesBeyond([withC], next), JSON.stringify(next)).toBe(fe.escalatesBeyond([without], next));
+    }
+    const coverage = new Map([['p1', 'named']]);
+    const dec = { trippedCrops: [{ slug: 'pepper', level: 'protect', ids: ['p1'] }] };
+    expect([...fe.sentCoverage(dec, coverage, [withC])]).toEqual([...fe.sentCoverage(dec, coverage, [without])]);
   });
 });
 

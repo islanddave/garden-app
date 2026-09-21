@@ -901,8 +901,13 @@ function frostWeatherFacts(d) {
     // rich observability block goes only to a CloudWatch console.log, which is subject to retention;
     // THIS is the durable store, and without the basis a radiative WATCH and a threshold PROTECT are
     // indistinguishable in the history the fitting will read.
+    // V5-TODAYFROSTLINEGAPS-001 — `colder`: the colder advisory this email carried in its body ("Colder on a second
+    // forecast: 35°F tonight" / "Colder ahead: 34°F Monday night"), as frostEval recorded it: { lowF, dayOffset?, date?,
+    // nightOffset? }, the advisory entry's own facts. The advisory entry is not written when this tier wins, so without
+    // it Today could not show the figure the email printed. Absent when the email carried no such clause. No gate reads it.
     return lowF == null ? {}
-      : { lowF, dayOffset: 0, ...(d.imminent && d.imminent.radiativeOnly ? { trip: 'radiative' } : {}) };
+      : { lowF, dayOffset: 0, ...(d.imminent && d.imminent.radiativeOnly ? { trip: 'radiative' } : {}),
+        ...(d.colder ? { colder: { ...d.colder } } : {}) };
   }
   if (d.tier === 'advisory' && d.advisory) {
     const { minLowF, dayOffset, date, nightOffset, radiativeOnly } = d.advisory;
