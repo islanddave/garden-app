@@ -228,13 +228,19 @@ export function tonightLineLow(alertsSent) {
 
 // The email's send time on the ET clock, as the reader says it: "3 PM", "3:05 PM". The garden and its sends are ET
 // (lambda/daily-plan frost window 14:00-17:59 ET); the phone's zone does not move it. null when `at` is not a time.
-const ET_CLOCK = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })
+// Built per call and never at module load: this module is imported by tonightLow.js and careNeeded.js, so a runtime
+// without the zone (RangeError) costs the warmed line, never the Today page.
 function etClock(at) {
   if (typeof at !== 'string' || at.trim() === '') return null
   const d = new Date(at)
   if (Number.isNaN(d.getTime())) return null
   const p = {}
-  for (const part of ET_CLOCK.formatToParts(d)) p[part.type] = part.value
+  try {
+    const f = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })
+    for (const part of f.formatToParts(d)) p[part.type] = part.value
+  } catch {
+    return null
+  }
   if (!p.hour || !p.minute || !p.dayPeriod) return null
   return `${p.hour}${p.minute === '00' ? '' : `:${p.minute}`} ${p.dayPeriod}`
 }

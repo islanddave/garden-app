@@ -406,6 +406,24 @@ describe('(3) "Forecast warmed" — a threshold frost email whose night has left
     for (const p of [null, undefined, '', 'n/a']) expect(lines([thr(36)], p), String(p)).toEqual([])
   })
 
+  it('a runtime without the ET zone costs the warmed line only: nothing throws, the other lines still render', () => {
+    const spy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(() => { throw new RangeError('Invalid time zone specified: America/New_York') })
+    try {
+      expect(lines([tomorrowNight(34), thr(36)], 44)).toEqual([POSSIBLE('tomorrow night', 34)])
+      expect(spy).toHaveBeenCalled()
+    } finally { spy.mockRestore() }
+    expect(lines([tomorrowNight(34), thr(36)], 44)).toEqual([WARMED(44, '3 PM'), POSSIBLE('tomorrow night', 34)])   // control
+  })
+
+  it('the ET formatter is never built at module load (the module is imported by tonightLow.js and careNeeded.js)', async () => {
+    vi.resetModules()
+    const spy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(() => { throw new RangeError('Invalid time zone specified: America/New_York') })
+    try {
+      const fresh = await import('../lib/frostAlertLine.js')
+      expect(fresh.buildFrostAlertLines([tomorrowNight(34)]).map((l) => l.text)).toEqual([POSSIBLE('tomorrow night', 34)])
+    } finally { spy.mockRestore() }
+  })
+
   it('it triggers no agreement (it prints the plan low itself) and needs planLow: the one-argument call is unchanged', () => {
     expect(agreedTonightLow(planFor(44, [thr(36)]))).toBeNull()
     expect(buildFrostAlertLine([thr(36)])).toBeNull()
