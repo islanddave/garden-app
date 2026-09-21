@@ -103,8 +103,9 @@ all 26 plantings by id, so a new planting of any of these cultivars, or a restor
   petunias go from 4 to 8 (every 7 days from 10-11). The kohlrabi keeps two cards, and the second one comes a week
   later (11-26 instead of 11-19).
 - **Nothing changes today.** None of the 21 has a feed card on 2026-09-21, and today's plan is identical either way.
-- **Each feed card shows its own interval.** The card's check-off (a feed logged within the interval clears it) uses the
-  new number.
+- **Each feed card carries its interval in the plan, but the card does not print it.** The card's check-off (a feed
+  logged within the interval clears it) uses the new number. What Dave sees is the cadence: those plants' feed cards
+  come back less often (or, for the petunias, more often) over the coming weeks.
 - **Nothing else changes.** Watering intervals, the bring-inside cards and the frost email read other keys. The other
   keys on each row are untouched and checked by hash.
 

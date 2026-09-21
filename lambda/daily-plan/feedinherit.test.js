@@ -18,6 +18,8 @@
 //   * the expected change Dave was shown: forward 2026-09-21..11-30, 77 feed cards become 53 across the 21;
 //   * the five left out get no feed card either way, which is why writing them would change nothing.
 // The unit suite mocks SQL: nothing here proves the migration applied or the rows exist. Its gates do.
+// IF THIS GOES RED BECAUSE cadence-data-v2.json CHANGED one of these entries: 0a is APPLIED on prod (2026-09-21) —
+// never edit it. Pin the old value here, and write a NEW migration if the 21 rows should follow the new data.
 //
 // MUTATION LOG — 2026-09-21, lane-feedintervals-20260921. Each applied to ONE file, this file run, RED observed, file
 // restored byte-for-byte (sha256 checked), GREEN re-observed. Recorded in the lane findings
