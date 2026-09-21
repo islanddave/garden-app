@@ -18,13 +18,14 @@ no TCP listener, stopped and deleted on exit. It never reads .env.local and acce
 process gets an environment scrubbed of PG* and NEON_* variables, with NEON_DATABASE_URL pointed at the
 local socket, so the runner cannot reach a real database even if the calling shell exports one.
 
-WHAT IT CANNOT PROVE. The local tables carry only the columns the gates read, plus care_profile's
-constraints as measured on prod 2026-09-21. plants' RLS is absent, which matches what the runner sees on
-prod (owner DSN, RLS-exempt). It proves the predicate's semantics on constructed rows; what prod says
-today is a separate, read-only measurement (README §Arming).
+WHAT IT CANNOT PROVE. The local tables carry only the columns the gates (and preview_armed.py) read,
+plus care_profile's constraints as measured on prod 2026-09-21. plants' RLS is absent, which matches what
+the runner sees on prod (owner DSN, RLS-exempt). It proves the predicate's semantics on constructed rows;
+what prod says today is a separate, read-only measurement: preview_armed.py (README §Arming).
 
   python3 migrations/v5-rekeystrand-001/rehearse_local.py
   python3 migrations/v5-rekeystrand-001/rehearse_local.py --gates /tmp/mutant.yml --gates /tmp/other.yml
+  python3 migrations/v5-rekeystrand-001/rehearse_local.py --keep     # leave the cluster up to poke at
 
 Exit 0 only if every case matches its expectation under every gates file. A mutant that is killed
 therefore exits 1 — that is the kill. Exit 2 on a harness fault (missing binary, failed fixture, a
@@ -92,6 +93,7 @@ CREATE TABLE public.plants (
 CREATE VIEW public.garden_node AS
   SELECT id, name AS display_name, variety_id AS cultivar_id, status, notes, deleted_at, archived_at, updated_at
     FROM public.plants;
+CREATE TABLE public.plant_varieties (id uuid PRIMARY KEY, name text NOT NULL, deleted_at timestamptz);
 """
 
 # Eight of the thirteen keys prod's 2026-06-18 `_seeded` rows carry (Palmetto Punch, Shipka and Sunbright
@@ -292,10 +294,14 @@ class Cluster:
         env = dict(self.env, NEON_DATABASE_URL=self.dsn(db))
         r = subprocess.run([sys.executable, str(RUNNER), "--migration", str(gates_file), "--env", "prod",
                             "--phase", "all", "--json"], env=env, capture_output=True, text=True)
-        if r.returncode == 2:
-            fault(f"gate_runner exit 2 on {db}: {r.stderr.strip()[:400]}")
+        try:
+            if r.returncode not in (0, 1):
+                raise ValueError
+            results = json.loads(r.stdout)
+        except ValueError:  # JSONDecodeError included; gate_runner's FATAL paths exit 1 with no JSON
+            fault(f"gate_runner exit {r.returncode} on {db}: {r.stderr.strip()[:400]}")
         out = {}
-        for g in json.loads(r.stdout):
+        for g in results:
             m = re.search(r"rowcount=(\d+)$", g["detail"])
             if g["status"] not in ("PASS", "FAIL") or not m:
                 fault(f"{db} {g['name']} -> {g['status']} {g['detail']}")
@@ -348,6 +354,8 @@ def check_audited(cl, db, case):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--gates", action="append", help="gates.yml to drive (default: the shipped one)")
+    ap.add_argument("--keep", action="store_true",
+                    help="leave the cluster running and print how to reach and stop it (debugging only)")
     args = ap.parse_args(argv)
     files = [Path(g).resolve() for g in (args.gates or [HERE / "gates.yml"])]
     placeholder = placeholder_from_source()
@@ -375,7 +383,11 @@ def main(argv=None):
             all_ok = all_ok and not bad
         return 0 if all_ok else 1
     finally:
-        cl.stop()
+        if args.keep:
+            print(f"\nKEPT: {cl.dsn('<case db>')}\n  stop: pg_ctl -D {cl.dir / 'data'} -m immediate stop "
+                  f"&& rm -rf {cl.dir}")
+        else:
+            cl.stop()
 
 
 if __name__ == "__main__":
