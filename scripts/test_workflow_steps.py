@@ -273,6 +273,16 @@ def test_lint_step_runs_under_the_shell_the_harness_models():
     assert _declared_shell(wf, "build-and-test", step) is None
 
 
+def test_lint_step_downloads_retry_a_refused_connection():
+    # OPS-PROMOTEGATEERREXIT2-001: `curl --retry 3` alone does not retry a refused connection (curl 7), so one
+    # GitHub-releases blip reddened the required check. The fake-curl harness above cannot see a flag, so pin it
+    # on the text: every curl in the step carries --retry-connrefused, and there are exactly the two downloads.
+    _, step = _step(*LINT)
+    curls = [ln for ln in step["run"].splitlines() if ln.lstrip().startswith("curl ")]
+    assert len(curls) == 2, curls
+    assert all("--retry-connrefused" in ln.split() for ln in curls), curls
+
+
 def test_lint_step_passes_only_after_the_canary_is_rejected_and_every_file_is_linted(tmp_path):
     proc, calls, fake = _run_lint(tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr
