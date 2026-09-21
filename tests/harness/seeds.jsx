@@ -60,8 +60,8 @@
 //     from the previous one's memory cache: the gate holds these requests to measure the boxes BEFORE
 //     any image has landed, and a cached image would land synchronously and skip that state. The
 //     broken photo's thumb fails, PhotoView steps to the original, that fails, its one re-mint hands
-//     back the same dead URL and it ends TERMINAL, as a photo whose object is gone does on prod. An id
-//     the harness never issued answers 404.
+//     back a fresh url for the same dead object and it ends TERMINAL, as a photo whose object is gone
+//     does on prod. An id the harness never issued answers 404.
 //   · A used-up packet (quantity 0), which My seeds files under "Sowed previously".
 //   · An identical pair (same cultivar, vendor, year and count) with a LONG name, so line 1 carries
 //     the ordinal ("1 of 2 identical") beside a title that has to ellipsise to make room for it.
@@ -171,8 +171,10 @@ const bought = (variety, crop, vendor, date, over = {}) => seed(variety, crop, {
 const LOAD = Date.now().toString(36)
 const IMG = '/tests/harness/seeds-packets'
 let photoN = 0
-// What /api/photos/view-url/<id>[?tier=thumb] mints for each photo id this harness issued.
+// What /api/photos/view-url/<id>[?tier=thumb] mints for each photo id this harness issued, and how many
+// times each id has been minted (the stub below makes every mint's url distinct, as S3's are).
 const MINTS = new Map()
+const mintCount = new Map()
 const photoUrls = (file) => {
   const p = ++photoN
   const id = `photo-${String(p).padStart(2, '0')}`
@@ -319,8 +321,14 @@ window.fetch = (url, ...rest) => {
   if (u.includes('/api/photos/view-url/')) {
     const [, id, tier] = u.match(/\/api\/photos\/view-url\/([^?]+)(?:\?tier=(\w+))?/) ?? []
     const urls = MINTS.get(id)
+    // Each mint hands back a DIFFERENT url for the same object (&m=<n>), as a presigned URL is (its
+    // signature and date move). Handing back the identical string made the broken photo's one heal
+    // re-adopt a url the <img> already held: React can batch PhotoImg's null-then-same re-decode into
+    // no change at all, so no second request and no second error fired, and the photo sat as a
+    // broken <img> instead of going terminal (seen in CI at 390x844, never locally).
+    const n = (mintCount.set(id, (mintCount.get(id) ?? 0) + 1), mintCount.get(id))
     return urls
-      ? hit('view-url', { view_url: tier === 'thumb' ? urls.thumb : urls.full, expires_in: 900, tier: tier ?? 'full' })
+      ? hit('view-url', { view_url: `${tier === 'thumb' ? urls.thumb : urls.full}&m=${n}`, expires_in: 900, tier: tier ?? 'full' })
       : hit('view-url', { error: 'not found' }, 404)
   }
   if (u.includes('/sow-candidates')) return hit('sow-candidates', { items: SOW_CANDIDATES })
