@@ -84,6 +84,11 @@ jobs:
         # body carries no -e; the runner adds it. SC2181 (style) fires only on `[ $? ... ]`, not on `RC=$?`,
         # has 0 hits here, and lowering the severity for it would red on 5 unrelated info/style findings.
         # scripts/test_workflow_steps.py guards that class instead (a scan of every run: body).
+        #
+        # DOWNLOAD RETRIES (OPS-PROMOTEGATEERREXIT2-001): --retry alone retries a timeout, a DNS failure and HTTP
+        # 408/429/5xx but NOT a refused connection, which failed this required check at once (curl exit 7, measured
+        # with curl 8.7); --retry-connrefused adds it. A reset or an empty reply (curl 56/52) is still not retried.
+        # The sha256 checks below still decide what may run, so a retried download cannot weaken them.
         env:
           ACTIONLINT_VERSION: 1.7.12
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -94,9 +99,9 @@ jobs:
           set -euo pipefail
           T="$RUNNER_TEMP/wflint"
           mkdir -p "$T"
-          curl -sSfL --retry 3 -o "$T/actionlint.tgz" \
+          curl -sSfL --retry 3 --retry-connrefused -o "$T/actionlint.tgz" \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -sSfL --retry 3 -o "$T/shellcheck.tgz" \
+          curl -sSfL --retry 3 --retry-connrefused -o "$T/shellcheck.tgz" \
             "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
           echo "${ACTIONLINT_SHA256}  $T/actionlint.tgz" | sha256sum -c -
           echo "${SHELLCHECK_SHA256}  $T/shellcheck.tgz" | sha256sum -c -
