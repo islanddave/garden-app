@@ -34,6 +34,7 @@ import MySeeds from '../pages/MySeeds.jsx'
 import { useSeedItems } from '../hooks/useSeedItems.js'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
+import { __resetScrollRestoreStore } from '../hooks/useScrollRestore.js'
 
 const FILTER_KEY = 'seeds.mine.filters.v1'
 const pkt = (over = {}) => ({
@@ -117,12 +118,15 @@ describe('My seeds — Back restores the expanded card, a hand fold, and the Sow
       </BrowserRouter>,
     )
   }
-  // useScrollRestore hands back view state only with a scroll offset to restore (`armed`: y > 0), so the
-  // page is scrolled — as it is when a thumb has gone down to a card. jsdom has no scrolling: the offset
-  // is a variable the page reads through window.scrollY and moves through window.scrollTo.
+  // The first case scrolls, as a thumb does going down to a card; the second does not (My seeds asks the
+  // hook for its state with no offset too — stateAtTop, V5-SEEDSPOLISH-001). jsdom has no scrolling: the
+  // offset is a variable the page reads through window.scrollY and moves through window.scrollTo.
   let y = 0, saved
   beforeEach(() => {
     y = 0
+    // The hook's store is module-level and jsdom's BrowserRouter entries share one key here, so a
+    // case must not inherit the entry the previous case saved (it would arrive pre-restored).
+    __resetScrollRestoreStore()
     saved = { scrollY: Object.getOwnPropertyDescriptor(window, 'scrollY'), scrollTo: Object.getOwnPropertyDescriptor(window, 'scrollTo') }
     Object.defineProperty(window, 'scrollY', { configurable: true, get: () => y })
     Object.defineProperty(window, 'scrollTo', { configurable: true, writable: true, value: (a, b) => { y = typeof a === 'object' ? a.top ?? y : b } })
@@ -167,5 +171,33 @@ describe('My seeds — Back restores the expanded card, a hand fold, and the Sow
     expect(sowedHeader().getAttribute('aria-expanded')).toBe('false')
     expect(rowFor('e1')).toBeNull()
     expect(within(rowFor('p1')).getByTestId('my-seed-expanded')).toBeTruthy()
+  })
+
+  // V5-SEEDSPOLISH-001 — the same three choices made WITHOUT scrolling. Before stateAtTop the hook
+  // withheld view state whenever there was no offset to restore, so Back to an unscrolled My seeds
+  // brought back the search (sessionStorage) and none of the choices made against it.
+  it('the page was never scrolled: Back still restores all three', async () => {
+    window.history.replaceState({}, '', '/seeds?view=mine')
+    renderApp()
+    await waitFor(() => expect(section('pepper')).toBeTruthy())
+    await act(async () => { fireEvent.change(screen.getByTestId('my-seeds-search'), { target: { value: 'o' } }) })
+    await waitFor(() => expect(header('tomato').getAttribute('aria-expanded')).toBe('true'))
+    const sowedHeader = () => within(screen.getByTestId('my-seeds-sowed')).getByTestId('facet-group-header')
+    await act(async () => { fireEvent.click(header('tomato')) })
+    await act(async () => { fireEvent.click(sowedHeader()) })
+    await act(async () => { fireEvent.click(within(rowFor('p1')).getByRole('button', { expanded: false })) })
+    expect(y).toBe(0)
+    await settle()
+    await act(async () => { fireEvent.click(within(rowFor('p1')).getByTestId('my-seed-details')) })
+    await waitFor(() => expect(screen.getByTestId('path').textContent).toBe('/inventory/p1'))
+    act(() => { window.history.back() })
+    await waitFor(() => expect(screen.getByTestId('path').textContent).toBe('/seeds'))
+    await waitFor(() => expect(section('pepper')).toBeTruthy())
+    await settle()
+    expect(screen.getByTestId('my-seeds-search').value).toBe('o')
+    expect(header('tomato').getAttribute('aria-expanded')).toBe('false')
+    expect(sowedHeader().getAttribute('aria-expanded')).toBe('false')
+    expect(within(rowFor('p1')).getByTestId('my-seed-expanded')).toBeTruthy()
+    expect(y).toBe(0)
   })
 })

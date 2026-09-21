@@ -148,7 +148,8 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
   const sownIds = sownIdsProp ?? localSownIds
   // Best-effort Back restore (V5-SEEDSTAB-001). The open disclosures ride with the offset: a restored
   // position measured against sections that have since collapsed lands somewhere else entirely.
-  const { restoredState, saveState } = useScrollRestore({ id: 'seeds-sow', ready: !loading })
+  // stateAtTop (V5-SEEDSPOLISH-001): a section opened at the top of the page is still open on Back.
+  const { restoredState, saveState } = useScrollRestore({ id: 'seeds-sow', ready: !loading, stateAtTop: true })
   // Which COLLAPSED sections are expanded, keyed by bucket. One Set rather than a boolean per
   // section: V4-SEEDZEROVIEW-001 made this a third disclosure, and a per-key ternary in
   // renderSection is exactly the drift vector the shared COLLAPSED set exists to close.

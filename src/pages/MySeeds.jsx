@@ -116,7 +116,9 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
     writeFilters({ q, crops: [...crops], suppliers: [...suppliers], sort, openGroups: [...openGroups] })
   }, [q, crops, suppliers, sort, openGroups])
 
-  const { restoredState, saveState } = useScrollRestore({ id: 'seeds-mine', ready: items != null })
+  // stateAtTop (V5-SEEDSPOLISH-001): the expanded card and the folds are set without scrolling, and
+  // Back to an unscrolled page used to drop all three.
+  const { restoredState, saveState } = useScrollRestore({ id: 'seeds-mine', ready: items != null, stateAtTop: true })
   const [expanded, setExpanded] = useState(() => restoredState?.expanded ?? null)
   const [sowedOpenByUser, setSowedOpenByUser] = useState(() => restoredState?.sowedOpen ?? null)
   // Explicit closes of groups a RULE had opened (a filter, Hottest). Per history entry, and cleared

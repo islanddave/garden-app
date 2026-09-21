@@ -70,8 +70,8 @@ afterEach(() => {
   window.history.replaceState(null, '')
 })
 
-function Probe({ id = 'surf', ready = true, state }) {
-  const { restoredState, saveState } = useScrollRestore({ id, ready })
+function Probe({ id = 'surf', ready = true, state, stateAtTop }) {
+  const { restoredState, saveState } = useScrollRestore({ id, ready, stateAtTop })
   React.useEffect(() => { if (state !== undefined) saveState(state) }, [state, saveState])
   return <div data-testid="restored">{JSON.stringify(restoredState ?? null)}</div>
 }
@@ -230,6 +230,28 @@ describe('useScrollRestore — the view-state channel', () => {
     __seedScrollRestoreEntry('surf', 0, 96)
     const { getByTestId } = render(<Probe ready={false} />)
     expect(getByTestId('restored').textContent).toBe('null')
+  })
+
+  // V5-SEEDSPOLISH-001: a page whose state is DISCLOSURE (My seeds' folds and expanded card) sets it
+  // without scrolling; Back to it at the top used to drop the lot.
+  it('stateAtTop hands the state back with no offset, and still scrolls nothing', () => {
+    __seedScrollRestoreEntry('surf', 0, 96)
+    const { getByTestId } = render(<Probe ready stateAtTop />)
+    act(() => flushFrames(3))
+    expect(getByTestId('restored').textContent).toBe('96')
+    expect(window.scrollTo).not.toHaveBeenCalled()
+  })
+
+  it('stateAtTop is still inert on an entry this page never saved into — a fresh visit, not a Back', () => {
+    const { getByTestId } = render(<Probe ready stateAtTop />)
+    expect(getByTestId('restored').textContent).toBe('null')
+  })
+
+  it('stateAtTop round-trips a state saved at the top through an unmount and a remount of the same entry', () => {
+    const first = render(<Probe ready state={33} stateAtTop />)
+    first.unmount()
+    const second = render(<Probe ready={false} stateAtTop />)
+    expect(second.getByTestId('restored').textContent).toBe('33')
   })
 
   it('round-trips state through a save and a remount of the same entry', () => {

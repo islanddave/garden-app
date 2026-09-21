@@ -4,6 +4,7 @@
  * Keep this file minimal; heavy setup goes in individual test files or fixtures.
  */
 import { configure } from '@testing-library/dom';
+import { __resetScrollRestoreStore } from '../hooks/useScrollRestore.js';
 
 // Tell React we're in a test environment (suppresses act() warnings)
 // @ts-expect-error — global not typed by default
@@ -86,6 +87,12 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
 beforeEach(() => {
   try { localStorage.clear(); } catch { /* jsdom build without Storage — nothing to leak */ }
   try { sessionStorage.clear(); } catch { /* ditto */ }
+  // useScrollRestore keeps an IN-MEMORY copy of its sessionStorage blob, loaded once per module, so
+  // the clear above does not reach it. Every jsdom mount shares the history key 'default', so an
+  // entry one test saved is the entry the next test's page reads. Harmless while view state came
+  // back only with a scroll offset (jsdom never scrolls); a page that asks for it at the top
+  // (stateAtTop, V5-SEEDSPOLISH-001) would arrive pre-restored. Reset alongside the storage it mirrors.
+  __resetScrollRestoreStore();
 });
 
 // Silence noisy console.error in tests unless you need to debug

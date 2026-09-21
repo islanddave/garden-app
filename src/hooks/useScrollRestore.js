@@ -117,14 +117,20 @@ export function __peekScrollRestoreEntry(id) { return readEntry(entryKey(id)) }
  *                              entry key, so two surfaces can never read each other's offset.
  * @param {boolean} opts.ready  The page's content is committed — normally `!loading`. The restore
  *                              does not start until this is true.
+ * @param {boolean} [opts.stateAtTop=false]  Hand back the saved view state even when there is no
+ *                              offset to restore (V5-SEEDSPOLISH-001). For pages whose view state is
+ *                              DISCLOSURE — folded groups, an expanded card — which the user sets
+ *                              without scrolling at all. Off by default because FeedPage and
+ *                              PhotoLibrary size their first fetch or tile window from the state, and
+ *                              a user sitting at the top needs none of that depth.
  * @returns {{restoredState: any, saveState: (v:any)=>void}}
  *   restoredState — the view state saved with this entry's offset, available at FIRST RENDER so it
  *                   can seed a lazy useState or the initial fetch. `undefined` when there is nothing
- *                   to restore (fresh entry, or the user was at the top anyway).
+ *                   to restore (fresh entry, or the user was at the top anyway — unless stateAtTop).
  *   saveState     — record the current view state to persist alongside the offset. Stable identity;
  *                   call it from an effect.
  */
-export default function useScrollRestore({ id, ready }) {
+export default function useScrollRestore({ id, ready, stateAtTop = false }) {
   const keyRef = useRef(null)
   if (keyRef.current === null) keyRef.current = entryKey(id)
 
@@ -204,6 +210,9 @@ export default function useScrollRestore({ id, ready }) {
   // Read from the first-render SNAPSHOT, never from stateRef — restoredState must stay stable
   // across re-renders even after the page has started calling saveState with newer values.
   // Gated on `armed`: with no offset to restore there is no view to reconstruct either, and a page
-  // that acted on it would refetch a deep page for a user who was sitting at the top.
-  return { restoredState: armed && saved ? saved.s : undefined, saveState }
+  // that acted on it would refetch a deep page for a user who was sitting at the top. `stateAtTop`
+  // lifts that gate for a page whose state is disclosure rather than depth: an entry only exists for
+  // a history entry this page has already saved into, so a defined value still means "Back", never a
+  // fresh visit.
+  return { restoredState: (armed || stateAtTop) && saved ? saved.s : undefined, saveState }
 }
