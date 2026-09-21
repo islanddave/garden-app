@@ -17,7 +17,7 @@ vi.mock('../lib/api.js', () => ({
   isFromCache: () => false,
 }))
 vi.mock('../components/photo/PhotoView.jsx', () => ({
-  default: ({ photo, tier }) => <img data-testid="pv-probe" data-photo-id={photo?.id ?? ''} data-tier={tier} alt="" />,
+  default: ({ photo, tier, resolveById }) => <img data-testid="pv-probe" data-photo-id={photo?.id ?? ''} data-tier={tier} data-by-id={resolveById ? 'yes' : 'no'} alt="" />,
 }))
 
 import { MemoryRouter } from 'react-router-dom'
@@ -41,7 +41,8 @@ const pkt = (over = {}) => ({
   seed_process: null, source_plant_id: null, source_kind: null, source_id: null, source: null,
   purchase_date: null, year_harvested: null, stage_entered_at: null, seed_count: null, seed_weight_g: null,
   seed_count_estimated: null, sow_archived_season: null, created_at: '2026-07-01T12:00:00Z',
-  hero_photo_id: null, featured_photo_id: null, featured_photo_view_url: null, featured_photo_thumb_url: null,
+  // The packet photo leaves the list as its id only (BUG-SEEDLISTSIGNING-001): no URL keys at all.
+  hero_photo_id: null, featured_photo_id: null,
   // scoville_source is on every real list row (the SELECT names it), null when nobody recorded where the
   // figure came from — 55 of 103 prod peppers. Present-and-null is the branch production takes.
   scoville_min: null, scoville_max: null, scoville_source: null, origin_country: null, origin_region: null, species: null,
@@ -316,9 +317,9 @@ describe('My seeds — what each card says', () => {
     expect(within(lineOf('tom')).queryByTestId('my-seed-heat')).toBeNull()
   })
 
-  it('the thumbnail asks for the PHOTO id at the thumb tier, never the lot id; no photo shows the sprout box', async () => {
+  it('the thumbnail asks for the PHOTO id at the thumb tier, never the lot id, minted by id; no photo shows the sprout box', async () => {
     rows = [
-      pkt({ id: 'with', hero_photo_id: 'photo-9', featured_photo_id: 'photo-9', featured_photo_view_url: 'https://x/full.jpg', featured_photo_thumb_url: 'https://x/thumb.jpg' }),
+      pkt({ id: 'with', hero_photo_id: 'photo-9', featured_photo_id: 'photo-9' }),
       pkt({ id: 'without', name: 'Stupice', variety_name: 'Stupice' }),
     ]
     await mount()
@@ -327,6 +328,8 @@ describe('My seeds — what each card says', () => {
     expect(probe.getAttribute('data-photo-id')).toBe('photo-9')
     expect(probe.getAttribute('data-photo-id')).not.toBe('with')
     expect(probe.getAttribute('data-tier')).toBe('thumb')
+    // The row has no URL, so without resolveById PhotoView would draw nothing.
+    expect(probe.getAttribute('data-by-id')).toBe('yes')
     const empty = within(rowFor('without')).getByTestId('my-seed-thumb')
     expect(within(rowFor('without')).queryByTestId('pv-probe')).toBeNull()
     expect(empty.querySelector('svg')).toBeTruthy()

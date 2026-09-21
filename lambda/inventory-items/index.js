@@ -329,6 +329,9 @@ export function validateUpdate(body) {
 }
 
 export const handler = async (event) => {
+  // BUG-SEEDLISTSIGNING-001: the list route logs its own elapsed time from here (tag inv-list), because
+  // a REPORT line cannot say which of this function's routes it measured.
+  const startedAt = Date.now();
   // Bound per invocation: the encoding is negotiated from THIS request's Accept-Encoding. Bodies
   // under the responder's threshold (every error path) take the byte-identical identity branch.
   const resp = jsonResponder(event, CORS);
@@ -1289,18 +1292,18 @@ export const handler = async (event) => {
       //   • its PACKET PHOTO: the effective hero, derived exactly as the single-item GET derives it
       //     (explicit featured_photo_id, alive and still a member of this item's gallery, else the
       //     item's newest live photo) — hero-read-derivation.test.js holds both reads to that one
-      //     contract. Returned as a presigned view URL plus the 800px thumb URL, the pair
-      //     lambda/plants featuredPhotoUrls() returns, so PhotoView's thumb→original degrade needs no
-      //     round trip. The fallback LATERAL is GATED on `fp.id IS NULL`: with a valid explicit hero
-      //     (the common case once packets are attached) it returns nothing without touching photos.
+      //     contract. It leaves as the photo's ID only (BUG-SEEDLISTSIGNING-001, below); the storage
+      //     path is still derived here because that contract reads it, and is dropped before the
+      //     response. The fallback LATERAL is GATED on `fp.id IS NULL`: with a valid explicit hero
+      //     it returns nothing without touching photos.
       //   • the cultivar facts a card and its Heat sort read: scoville, origin, species, breeding
       //     system, days to maturity and the cultivar's own reference URL. All come from the
       //     `cultivar` view already joined here (no new relation); cultivar-columns.test.js lists them.
       //     scoville_source rides beside the two numbers (v5-scovillesource-001, which must be applied
       //     before this deploys): shuLabel reads it and prefixes an 'inference' figure with "est.",
       //     so a best guess never reaches a card looking like a supplier figure.
-      // The payload grows by the two URLs per row, which is why this handler now answers through the
-      // negotiated-gzip responder (api-gzip-wiring.test.js).
+      // The list is still ~330 wide rows, which is why this handler answers through the negotiated-gzip
+      // responder (api-gzip-wiring.test.js).
       const rows = cats && cats.length
         ? await sql`
             SELECT i.*, pv.display_name AS variety_name, pv.crop_type_slug AS crop_slug,
@@ -1390,28 +1393,24 @@ export const handler = async (event) => {
       // fallback photo to the explicit pointer on the next unrelated edit. `i.*`'s raw pointer rides
       // through untouched.
       //
-      // URLs are signed only when the caller asked for seeds. The unfiltered list is fetched on every
-      // mount of Inventory, the add form, the detail page and Favorites, none of which renders an
-      // inventory photo, so signing ~500 pairs there would be cost with no reader. Presigning is
-      // signature math, not an S3 call (this Lambda shares garden-app-lambda-exec, whose S3forGarden
-      // policy grants GetObject on garden-photos-prod/*, originals and thumbs/ alike). A thumb URL is
-      // a HINT — the object may not exist — and PhotoView degrades to the original it already holds.
-      const wantUrls = !!cats?.includes('seeds');
-      const listRows = await Promise.all(rows.map(async (row) => {
+      // BUG-SEEDLISTSIGNING-001 — NO list signs a URL, the seed list included. v4.140.0 signed a view
+      // AND a thumb URL for every seed row on every load: 654 presigns for 327 rows, roughly 1 MB of
+      // body (each URL carries the ~1 KB session token), on a 512 MB function. Warm large-body calls
+      // took 2.9–4.6 s the day after it shipped, while the list's SQL runs in ~55 ms on prod (EXPLAIN
+      // ANALYZE, 2026-09-21). The phone draws at most a screenful of those thumbnails and keeps them in
+      // its own cache (sw.js photos-v1, keyed on the URL minus its signature), so the list carries the
+      // photo's id and My seeds asks GET /api/photos/view-url/:id?tier=thumb for the rows it draws
+      // (PhotoView resolveById). Do not put the URLs back to save those round trips.
+      const listRows = rows.map((row) => {
         const {
-          featured_photo_storage_path: storagePath,
+          featured_photo_storage_path: _storagePath,
           effective_featured_photo_id: heroId,
           ...rest
         } = row;
-        if (!wantUrls) return { ...rest, hero_photo_id: heroId ?? null };
-        const [featured_photo_view_url, featured_photo_thumb_url] = storagePath
-          ? await Promise.all([
-              resolvePhotoViewUrl(storagePath, { presign: getFeaturedPhotoViewUrl, sm }),
-              resolvePhotoViewUrl(`thumbs/${storagePath}`, { presign: getFeaturedPhotoViewUrl, sm })
-                .catch(() => null),
-            ])
-          : [null, null];
-        return { ...rest, hero_photo_id: heroId ?? null, featured_photo_view_url, featured_photo_thumb_url };
+        return { ...rest, hero_photo_id: heroId ?? null };
+      });
+      console.log(JSON.stringify({
+        tag: 'inv-list', filter: cats ? cats.join(',') : 'all', rows: listRows.length, ms: Date.now() - startedAt,
       }));
       return resp(200, listRows);
     }

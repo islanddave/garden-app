@@ -658,7 +658,7 @@ else
           SEEDS_N=$(jq -r 'if type == "array" then length else "not-an-array" end' "$SEEDS_LIST" 2>/dev/null || echo "unparseable")
           rm -f "$SEEDS_LIST"
           if [[ "${SEEDS_HTTP:0:1}" == "2" && "$SEEDS_N" =~ ^[0-9]+$ ]]; then
-            echo "✅ PASS [read:seeds-list] HTTP $SEEDS_HTTP, $SEEDS_N row(s) (the photo-signing branch)"
+            echo "✅ PASS [read:seeds-list] HTTP $SEEDS_HTTP, $SEEDS_N row(s) (the ?category=seeds branch, which signs no photo URL)"
             PASS=$((PASS+1))
           else
             echo "❌ FAIL [read:seeds-list] HTTP $SEEDS_HTTP, body: $SEEDS_N"

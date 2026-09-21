@@ -50,15 +50,18 @@
 //   · HEAT on the peppers, from the cultivar facts the list row carries: a sweet 0–0 ("Sweet · 0
 //     SHU"), ranges up to the longest label ("1.2M–2M SHU"), a single known bound, a pepper with NO
 //     figure (renders no heat), and the saved pepper lot (its heat is always an estimate: "est.").
-//   · PACKET PHOTOS: hero_photo_id + a thumb and a full URL per photo, each DISTINCT (?p=<n>, as a
+//   · PACKET PHOTOS: the row carries hero_photo_id and NO URL, as the list does since
+//     BUG-SEEDLISTSIGNING-001; My seeds mints each drawn row's thumb from /api/photos/view-url/:id,
+//     which this harness answers with a thumb and a full URL per photo, each DISTINCT (?p=<n>, as a
 //     presigned URL is distinct per photo, so the HTTP cache cannot collapse N photos into one), on
 //     three small local images of different shapes (tall, wide, square — a box that followed the
-//     image would change size), plus ONE BROKEN URL (a path nothing serves) and rows with no photo
-//     at all. Every URL also carries a per-LOAD token, so no navigation is ever answered from the
-//     previous one's memory cache: the gate holds these requests to measure the boxes BEFORE any
-//     image has landed, and a cached image would land synchronously and skip that state.
-//     /api/photos/view-url/ answers 404, so the broken photo's one re-mint ends TERMINAL, as a
-//     deleted photo does on prod, rather than retrying forever against the dev server.
+//     image would change size), plus ONE BROKEN photo (its URLs name a path nothing serves) and rows
+//     with no photo at all. Every URL also carries a per-LOAD token, so no navigation is ever answered
+//     from the previous one's memory cache: the gate holds these requests to measure the boxes BEFORE
+//     any image has landed, and a cached image would land synchronously and skip that state. The
+//     broken photo's thumb fails, PhotoView steps to the original, that fails, its one re-mint hands
+//     back the same dead URL and it ends TERMINAL, as a photo whose object is gone does on prod. An id
+//     the harness never issued answers 404.
 //   · A used-up packet (quantity 0), which My seeds files under "Sowed previously".
 //   · An identical pair (same cultivar, vendor, year and count) with a LONG name, so line 1 carries
 //     the ordinal ("1 of 2 identical") beside a title that has to ellipsise to make room for it.
@@ -153,9 +156,8 @@ const seed = (variety, crop, over = {}) => ({
   scoville_min: null, scoville_max: null, origin_country: null, origin_region: null, species: null,
   breeding_system: null, days_to_maturity_min: null, days_to_maturity_max: null, dtm_basis: null,
   variety_source_url: null,
-  // The packet photo: `i.*`'s raw pointer, the effective hero, and its two presigned URLs.
+  // The packet photo: `i.*`'s raw pointer and the effective hero's id. No URL rides on the row.
   featured_photo_id: null, featured_is_explicit: false, hero_photo_id: null,
-  featured_photo_view_url: null, featured_photo_thumb_url: null,
   ...over,
 })
 // A bought packet: the vendor is the REGISTRY row; `source` holds what prod keeps there, an order note.
@@ -169,20 +171,23 @@ const bought = (variety, crop, vendor, date, over = {}) => seed(variety, crop, {
 const LOAD = Date.now().toString(36)
 const IMG = '/tests/harness/seeds-packets'
 let photoN = 0
+// What /api/photos/view-url/<id>[?tier=thumb] mints for each photo id this harness issued.
+const MINTS = new Map()
 const photoUrls = (file) => {
   const p = ++photoN
-  return {
-    hero_photo_id: `photo-${String(p).padStart(2, '0')}`,
-    featured_photo_thumb_url: `${IMG}/${file}?p=${p}&tier=thumb&load=${LOAD}`,
-    featured_photo_view_url: `${IMG}/${file}?p=${p}&tier=full&load=${LOAD}`,
-  }
+  const id = `photo-${String(p).padStart(2, '0')}`
+  MINTS.set(id, {
+    thumb: `${IMG}/${file}?p=${p}&tier=thumb&load=${LOAD}`,
+    full: `${IMG}/${file}?p=${p}&tier=full&load=${LOAD}`,
+  })
+  return { hero_photo_id: id }
 }
 const photo = (shape) => {
   const u = photoUrls(`packet-${shape}.png`)
   return { ...u, featured_photo_id: u.hero_photo_id, featured_is_explicit: true }
 }
-// Both URLs point at a file that does not exist: the thumb fails, PhotoView degrades to the full
-// URL, that fails, the one re-mint 404s (the fetch stub below) and the photo ends terminal.
+// Both of its minted URLs name a file that does not exist: the thumb fails, PhotoView steps to the
+// original, that fails, the one re-mint returns the same dead URL and the photo ends terminal.
 const brokenPhoto = () => ({ ...photoUrls('missing-packet.png'), featured_is_explicit: true })
 const heat = (min, max) => ({ scoville_min: min, scoville_max: max })
 const annuum = { species: 'Capsicum annuum' }
@@ -309,8 +314,15 @@ const hits = {}
 window.fetch = (url, ...rest) => {
   const u = String(url)
   const hit = (k, body, status) => { hits[k] = (hits[k] ?? 0) + 1; return json(body, status) }
-  // PhotoImg's one re-mint for a photo whose URLs failed. 404 = the photo is gone: terminal, as prod.
-  if (u.includes('/api/photos/view-url/')) return hit('view-url', { error: 'not found' }, 404)
+  // PhotoImg's mint: every drawn row's thumb, the original when a thumb fails, and the one re-mint of a
+  // failed source. An id the harness never issued is gone, as on prod: 404, terminal.
+  if (u.includes('/api/photos/view-url/')) {
+    const [, id, tier] = u.match(/\/api\/photos\/view-url\/([^?]+)(?:\?tier=(\w+))?/) ?? []
+    const urls = MINTS.get(id)
+    return urls
+      ? hit('view-url', { view_url: tier === 'thumb' ? urls.thumb : urls.full, expires_in: 900, tier: tier ?? 'full' })
+      : hit('view-url', { error: 'not found' }, 404)
+  }
   if (u.includes('/sow-candidates')) return hit('sow-candidates', { items: SOW_CANDIDATES })
   if (u.includes('/seed-stage') || u.includes('/source-plant') || u.includes('/sow-archive')) return hit('write', { ok: true })
   if (u.includes('/api/projects')) return hit('projects', [{ id: 'proj-beds', name: 'Raised beds' }])

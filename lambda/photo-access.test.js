@@ -70,12 +70,14 @@ describe('photo-access seam — ON path signing correctness', () => {
 // from a grid of grey boxes — and a soft-deleted photo's S3 object is untouched (DD2), so it signs
 // exactly like any other read. Enrolling it here is the point of the census: a new read path that
 // bypassed the resolver would serve an unsigned presign with no CloudFront signing.
-// inventory-items 1 -> 3 (V5-SEEDCARDS-001): the seed list signs each row's packet photo, original AND
-// 800px thumb, beside the by-id GET's one — the same view + thumb pair plants' featuredPhotoUrls signs.
-const SITES = { photos: 6, plants: 2, projects: 1, locations: 1, 'inventory-items': 3 };
-const TOTAL_SITES = Object.values(SITES).reduce((a, b) => a + b, 0); // 9 at d9afab95, 11 at W-RESTORE, 13 at V5-SEEDCARDS-001
+// inventory-items 1 -> 3 (V5-SEEDCARDS-001): the seed list signed each row's packet photo, original AND
+// 800px thumb, beside the by-id GET's one. 3 -> 1 (BUG-SEEDLISTSIGNING-001): the list signs nothing
+// again — it sends the photo id and the phone mints only the thumbs it draws — so the by-id GET's
+// read is the one site left.
+const SITES = { photos: 6, plants: 2, projects: 1, locations: 1, 'inventory-items': 1 };
+const TOTAL_SITES = Object.values(SITES).reduce((a, b) => a + b, 0); // 9 at d9afab95, 11 at W-RESTORE, 13 at V5-SEEDCARDS-001, 11 at BUG-SEEDLISTSIGNING-001
 
-describe('photo-access seam — all 13 call sites route through the resolver', () => {
+describe('photo-access seam — all 11 call sites route through the resolver', () => {
   // Derived from disk, not hand-listed: a dir that starts importing the resolver must be
   // enrolled, and a dir that STOPS importing it (the seam removed wholesale) turns this red
   // instead of quietly shrinking the loop to nothing.

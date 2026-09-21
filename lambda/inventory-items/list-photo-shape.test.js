@@ -6,8 +6,9 @@
 //     NOT write it into featured_photo_id: the client PUTs a list row back whole (quantityAdjuster.js,
 //     SavedSeeds' listRowPutBody), and a derived id there would promote the fallback photo to the
 //     explicit pointer — after which Dave's own next photo could never become the cover.
-//   - URLs are signed ONLY for ?category=seeds (the one list that draws a photo); the thumb is the
-//     `thumbs/` object, never the original, or a 40px box downloads a multi-MB file.
+//   - NO list signs a URL (BUG-SEEDLISTSIGNING-001). v4.140.0 signed a view and a thumb URL for every
+//     seed row on every load and the seed list went from sub-second to multi-second; the row now
+//     carries the photo id and My seeds mints the thumbs it draws. A presign here is the regression.
 //   - the join-only columns (storage path, effective id) never leave the Lambda.
 // Found by the pre-promote QA pass (review/qa-v4140.md): every one of these could break with the
 // whole lambda/ suite still green (mutants L1-L5, L13, L14).
@@ -39,19 +40,36 @@ beforeEach(() => {
 });
 
 describe('seed list rows carry the packet photo the card reads', () => {
-  it('?category=seeds: hero_photo_id is the DERIVED id, featured_photo_id stays RAW, both URLs signed, no join-only keys', async () => {
-    stubState.sqlHandler = () => [listRow()];
+  it('?category=seeds: hero_photo_id is the DERIVED id, featured_photo_id stays RAW, NOTHING signed, no join-only keys', async () => {
+    // Many rows, so a per-row presign cannot hide behind a one-row fixture.
+    stubState.sqlHandler = () => Array.from({ length: 40 }, () => listRow());
     const { status, body } = parse(await handler(get('/api/inventory-items', { category: 'seeds' })));
     expect(status).toBe(200);
+    expect(body).toHaveLength(40);
     const [r] = body;
     expect(r.hero_photo_id).toBe('ph-9');
     expect(r.featured_photo_id).toBeNull();
-    expect(r.featured_photo_view_url).toContain(KEY);
-    expect(r.featured_photo_view_url).not.toContain('thumbs/');
-    expect(r.featured_photo_thumb_url).toContain(`thumbs/${KEY}`);
+    expect(r).not.toHaveProperty('featured_photo_view_url');
+    expect(r).not.toHaveProperty('featured_photo_thumb_url');
     expect(r).not.toHaveProperty('featured_photo_storage_path');
     expect(r).not.toHaveProperty('effective_featured_photo_id');
-    expect(stubState.presigns.map((p) => p.key).sort()).toEqual([KEY, `thumbs/${KEY}`].sort());
+    expect(stubState.presigns).toEqual([]);
+  });
+
+  it('the list logs its route, row count and elapsed ms under tag inv-list', async () => {
+    stubState.sqlHandler = () => [listRow(), listRow()];
+    const logged = [];
+    const orig = console.log;
+    console.log = (line) => { logged.push(line); };
+    try {
+      await handler(get('/api/inventory-items', { category: 'seeds' }));
+    } finally {
+      console.log = orig;
+    }
+    const line = logged.map((l) => { try { return JSON.parse(l); } catch { return null; } })
+      .find((o) => o?.tag === 'inv-list');
+    expect(line).toMatchObject({ tag: 'inv-list', filter: 'seeds', rows: 2 });
+    expect(Number.isInteger(line.ms) && line.ms >= 0).toBe(true);
   });
 
   it('unfiltered list: hero_photo_id present, NO URL keys, nothing signed', async () => {

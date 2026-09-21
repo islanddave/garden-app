@@ -37,7 +37,7 @@ const row = (n) => ({
   id: `r${n}`, name: `Pepper ${n}`, variety_name: `Pepper ${String(n).padStart(3, '0')}`, category: 'seeds', type: 'consumable',
   unit: 'packet', status: 'active', quantity_on_hand: 1, crop_slug: 'pepper', seed_stage: null, source_plant_id: null,
   source_kind: null, source_id: null, purchase_date: null, year_harvested: null, created_at: '2026-07-01T12:00:00Z',
-  hero_photo_id: `ph${n}`, featured_photo_view_url: `https://x/${n}.jpg`, featured_photo_thumb_url: `https://x/t${n}.jpg`,
+  hero_photo_id: `ph${n}`,  // the list's shape: the photo id, no URL (BUG-SEEDLISTSIGNING-001)
 })
 
 let scrollY = 0

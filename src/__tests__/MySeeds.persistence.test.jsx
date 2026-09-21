@@ -41,8 +41,8 @@ const pkt = (over = {}) => ({
   status: 'active', quantity_on_hand: 1, variety_id: 'v', crop_slug: 'tomato', seed_stage: null, seed_process: null,
   source_plant_id: null, source_kind: null, source_id: null, source: null, purchase_date: null, year_harvested: null,
   stage_entered_at: null, seed_count: null, seed_weight_g: null, seed_count_estimated: null, sow_archived_season: null,
-  created_at: '2026-07-01T12:00:00Z', hero_photo_id: null, featured_photo_id: null, featured_photo_view_url: null,
-  featured_photo_thumb_url: null, scoville_min: null, scoville_max: null, scoville_source: null, source_url: null,
+  created_at: '2026-07-01T12:00:00Z', hero_photo_id: null, featured_photo_id: null,
+  scoville_min: null, scoville_max: null, scoville_source: null, source_url: null,
   variety_source_url: null,
   ...over,
 })

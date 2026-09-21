@@ -95,14 +95,16 @@ afterAll(async () => {
 })
 
 describe('the seed list row, read from a real database', () => {
-  it('?category=seeds: the FALLBACK photo is the hero, the raw pointer stays null, both keys signed', async () => {
+  // BUG-SEEDLISTSIGNING-001: the list carries the hero's ID and no URL — My seeds mints the thumbs it
+  // draws. The id is the whole contract now, so it is what this proves against real rows.
+  it('?category=seeds: the FALLBACK photo is the hero, the raw pointer stays null, nothing signed', async () => {
     setTestUserId(USER)
     expect(await pointer(), 'fixture: the lot must start with no explicit pointer').toBeNull()
     const r = await listRow('/api/inventory-items?category=seeds')
     expect(r.hero_photo_id).toBe(livePhotoId)
     expect(r.featured_photo_id).toBeNull()
-    expect(r.featured_photo_view_url).toBe(`https://stub-s3.invalid/${livePath}?signed=1`)
-    expect(r.featured_photo_thumb_url).toBe(`https://stub-s3.invalid/thumbs/${livePath}?signed=1`)
+    expect(r).not.toHaveProperty('featured_photo_view_url')
+    expect(r).not.toHaveProperty('featured_photo_thumb_url')
     expect(r).not.toHaveProperty('featured_photo_storage_path')
     expect(r).not.toHaveProperty('effective_featured_photo_id')
   })

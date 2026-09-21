@@ -603,8 +603,10 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
   const hasLine = chipTall || !!(amount || heat || tail)
   const inProcess = isInProcess(item)
   const colors = vendor ? supplierColors(vendor) : null
+  // The list row carries the photo's id and no URL (BUG-SEEDLISTSIGNING-001): the thumb is minted by id
+  // (resolveById below) for rows that mount one, and served from the phone's photo cache once seen.
   const photo = useMemo(
-    () => lotPhoto(item),
+    () => lotPhoto(item, { byId: true }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [item.id, item.hero_photo_id, item.featured_photo_view_url, item.featured_photo_thumb_url],
   )
@@ -631,7 +633,7 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
       >
         <span data-testid="my-seed-thumb" style={photo ? thumbBoxPhoto : thumbBoxEmpty}>
           {photo && withPhoto && (
-            <PhotoView photo={photo} tier={TIER.THUMB} alt="" decoding="async" style={thumbImg} data-testid="my-seed-photo" />
+            <PhotoView photo={photo} tier={TIER.THUMB} resolveById alt="" decoding="async" style={thumbImg} data-testid="my-seed-photo" />
           )}
           {!photo && <Icon name="lifecycle.sprout" size={24} decorative />}
         </span>
