@@ -81,8 +81,15 @@ async function plantingsSql(flagOverrides) {
 // the emitted statement was captured with this file's harness before and after and diffed: the whole
 // flag-OFF diff is those 9 lines, and the flag-ON diff is the same 9 lines at the same position
 // relative to the SELECT; no column, join, CTE or predicate moved.
-const PRE_CHANGE_SHA256 = '9854ca9fe49cf47206ba5116da96b554bbda40b07dc4c6f78a9c91268898e490';
-const PRE_CHANGE_LENGTH = 14262;
+//
+// RE-BASELINED A THIRD TIME, 2026-09-21 (lane-plansoftdel-20260921, BUG-PLANSOFTDELCONTAINER-001),
+// from 9854ca9fe49cf47206ba5116da96b554bbda40b07dc4c6f78a9c91268898e490 / 14262. The WHERE gained
+// `and pj.deleted_at is null` plus its 6-line SQL comment, after `and pj.archived_at is null`.
+// UNCONDITIONAL, like the two above. Same procedure: captured with this file's harness before and
+// after and diffed. The whole flag-OFF diff is those 7 lines at the end of the WHERE, and the flag-ON
+// diff is the same 7 lines at the same position. No column, join or CTE moved, and no other predicate.
+const PRE_CHANGE_SHA256 = '60d5745c68d84af5c51292c13611208919aae68febea7b78e08d9b23c89c52e7';
+const PRE_CHANGE_LENGTH = 14919;
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 

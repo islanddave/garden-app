@@ -1385,7 +1385,14 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     where p.deleted_at is null and p.archived_at is null
       and (p.status is null or p.status not in ('ended','failed','dead','archived'))
       and (pj.status is null or pj.status <> 'planning')
-      and pj.archived_at is null`);
+      and pj.archived_at is null
+      -- BUG-PLANSOFTDELCONTAINER-001: nor in a soft-deleted container. A deleted container always hides
+      -- its plantings (gardening rules: the container rule is NOT a switch), and neither container state
+      -- cascades to them (projects/index.js DELETE sets the container's own column only), so without this
+      -- the plan carded a planting the plants API 404s (V4-SOFTDEL-001 F4) and the rain writer skips.
+      -- Its own clause, never merged into the archived one above: archived and deleted are separate axes
+      -- and stay separately observable. A project-less planting has pj all NULL and passes both.
+      and pj.deleted_at is null`);
   console.log(JSON.stringify({ msg: 'db-ready', ms: Date.now() - t0, rows: plantings.length })); // first pool.query done — includes any Neon cold-resume stall
   // V4-ANCHORSUPERSEDE-001. Here rather than at the end of the run: it is one indexed statement, it
   // depends on nothing the run computes, and running it early means a fetch hang later in the night
