@@ -95,6 +95,20 @@ describe('V5-VARIETYFACTSEDIT-001 — PUT /api/varieties/:id writes the five col
     })
   })
 
+  it('a PUT that names no breeding column — every edit that existed before — leaves the five and the rank untouched', async () => {
+    setTestUserId(USER)
+    const before = await facts(varietyId)
+    const { status, body } = await put(varietyId, { care_notes: `int non-breeding edit ${RUN}` })
+    expect(status, JSON.stringify(body)).toBe(200)
+    expect(await facts(varietyId)).toEqual(before)
+    expect(before.variety_rank).toBeNull()
+    expect(body).toHaveProperty('breeding_system', 'landrace')
+    expect(body).toHaveProperty('breeding_source', 'reference_work')
+    expect(body).toHaveProperty('scoville_source', 'packet_label')
+    expect((await directSql`SELECT care_notes FROM plant_varieties WHERE id = ${varietyId}`)[0].care_notes)
+      .toBe(`int non-breeding edit ${RUN}`)
+  })
+
   it('an unknown value is refused by name and writes nothing', async () => {
     setTestUserId(USER)
     const before = await facts(varietyId)

@@ -52,6 +52,12 @@ const VARIETY_FACTS_COLUMNS = [
   'origin_country', 'origin_region', 'breeding_system', 'breeding_source', 'scoville_source',
 ];
 
+// variety_rank is named by EVERY PUT (the Open-pollinated fill arm is in the one UPDATE all edits
+// share) and read by the breeding preflight, but it is neither projected by GET /:id nor returned —
+// so it cannot ride in VARIETY_FACTS_COLUMNS. Listed here so Phase 1 audits it against prod's
+// public.cultivar: were it missing there, every variety save would 500, not only breeding edits.
+const VARIETY_RANK_FILL_COLUMNS = ['variety_rank'];
+
 // Extract each SELECT...FROM public.cultivar block from the source. Five exist:
 // by-id GET, list GET (with q), list GET (without q), POST idempotent-by-source-id,
 // and the POST fuzzy-match probe (id/name/species/genus only — intentionally narrow,
@@ -215,6 +221,17 @@ describe('varieties Lambda VARIETYFACTSEDIT column plumbing (static-source guard
       for (const [idx, list] of returningLists.entries()) {
         expect(new RegExp(`\\b${col}\\b`).test(list), `RETURNING list #${idx} missing ${col}`).toBe(true);
       }
+    });
+  }
+
+  for (const col of VARIETY_RANK_FILL_COLUMNS) {
+    it(`the PUT writes ${col} only through the fill arm, which never overwrites a recorded rank`, () => {
+      const arm = new RegExp(`\\b${col}\\s*=\\s*CASE WHEN \\$\\{fillRank\\}::boolean AND ${col} IS NULL THEN 'cultivar' ELSE ${col} END`);
+      expect(arm.test(coalesceBlock), `PUT missing the guarded fill arm for ${col}`).toBe(true);
+      expect(coalesceBlock.match(new RegExp(`\\b${col}\\s*=`, 'g')), `${col} assigned more than once`).toHaveLength(1);
+    });
+    it(`the breeding preflight reads ${col}`, () => {
+      expect(new RegExp(`SELECT breeding_system, breeding_source, ${col}\\s+FROM public\\.cultivar`).test(SRC)).toBe(true);
     });
   }
 });
