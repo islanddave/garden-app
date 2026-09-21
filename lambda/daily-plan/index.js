@@ -446,6 +446,19 @@ exports.handler = async (event) => {
   const started = Date.now();
   const { NEON_DATABASE_URL } = await getSecrets();
   const pool = new Pool({ connectionString: NEON_DATABASE_URL });
+  // BUG-DAILYPLANCONNDROP-001 — the pool re-emits an IDLE client's connection loss as a pool 'error' event
+  // (pg-pool's idleListener, after it has already discarded that client). With no listener Node throws it as
+  // an Uncaught Exception and the runtime kills the invocation: 2026-09-19 21:00Z and 2026-09-20 12:00Z, Neon
+  // closed the pooler WebSocket (code 1000) while the run sat between queries (both runs found the compute
+  // awake, db-ready 361/540 ms; both retries a minute later waited 2022/1440 ms for it to resume). Nothing
+  // is lost when an idle client drops: the next pool.query opens a fresh connection. A query that fails —
+  // in flight, or on that reconnect — still rejects into the catch below, so a real outage still fails the
+  // invocation, retries and pages.
+  // Message and code ONLY: the error carries `client`, whose config holds the DSN with its password, and the
+  // runtime's uncaught-exception logger wrote exactly that to CloudWatch both times.
+  pool.on('error', (err) => {
+    console.warn(JSON.stringify({ msg: 'db-pool-idle-error', error: err && err.message, code: (err && err.code) || null, ms: Date.now() - started }));
+  });
   try {
     const res = await run({ pg: pool, today, dryRun, flagOverrides, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour: hourET(), event });
     console.log(JSON.stringify({ msg: 'daily-plan', today, dryRun, rows: res.rows, ms: Date.now() - started }));
