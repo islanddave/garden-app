@@ -111,13 +111,17 @@ describe('agreedTonightLow — the trigger and the shared low', () => {
     expect(agreedTonightLow({ weather: { tonightLow: '36' }, alerts_sent: [tonight(37.6)] })).toEqual({ lowF: 36, lowRaw: 36 })
   })
 
-  it('follows whichever line renders: the most recently SENT advisory decides the night', () => {
+  // CHANGED by V5-TODAYFROSTLINEGAPS-001 follow-up F1 (Dave 2026-09-21): this pinned "the most recently SENT advisory
+  // decides the night" — a newer tomorrow-night advisory took the one line, so tonight's agreement lapsed (null) and the
+  // card fell back to the plan low. Advisories are now ranked per night: tonight's advisory keeps tonight's line and the
+  // agreement, whichever was sent last; the newest advisory about TONIGHT still decides tonight's figure.
+  it('follows the line naming tonight: a newer advisory for a later night no longer takes tonight\'s line away', () => {
     const t = tonight(37.6, { at: '2026-10-09T19:05:00.000Z' })
     const m = tomorrowNight(36.4, { at: '2026-10-09T20:05:00.000Z' })
-    expect(buildFrostAlertLine([t, m]).nightOffset).toBe(1)
-    expect(agreedTonightLow(planFor(55, [t, m]))).toBeNull()
-    const later = tonight(37.6, { at: '2026-10-09T21:05:00.000Z' })
-    expect(agreedTonightLow(planFor(55, [m, later]))).toEqual({ lowF: 38, lowRaw: 37.6 })
+    expect(buildFrostAlertLine([t, m]).nightOffset).toBe(0)
+    expect(agreedTonightLow(planFor(55, [t, m]))).toEqual({ lowF: 38, lowRaw: 37.6 })
+    const later = tonight(39.2, { at: '2026-10-09T21:05:00.000Z' })
+    expect(agreedTonightLow(planFor(55, [m, t, later]))).toEqual({ lowF: 39, lowRaw: 39.2 })   // the newest about tonight
   })
 
   it('an entry stored before nightOffset existed triggers exactly when its line says "tonight"', () => {

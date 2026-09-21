@@ -180,40 +180,45 @@ function lineLowRaw(a) {
 // watch must never make the line warmer than the one it replaced (V5-FROSTTWOMODELS-001: one low per night, the
 // colder wins). The watch's low there is lineLowRaw: its second forecast's figure counts.
 // V5-TODAYFROSTLINEGAPS-001 — an advisory for a LATER night is no longer displaced: it is `ahead`, the newest of the
-// newest advisory entry (when it names a later night) and every "Colder ahead" a real watch email carried.
+// newest advisory entry naming a later night and every "Colder ahead" a real watch email carried.
+// Follow-up F1 (Dave 2026-09-21): the same for a plain "Frost possible tonight" ADVISORY — the advisory entries are
+// ranked PER NIGHT CLASS, tonight and later, so an advisory about tonight and one about a later night both show,
+// whichever was sent last. Within a class the newest entry supersedes (the same night named again, or another later
+// night). Before this, the newest advisory entry of ANY night took the one advisory slot and the other night vanished.
 export function pickFrostLines(alertsSent) {
   if (!Array.isArray(alertsSent)) return { tonight: null, ahead: null, imminent: null }
-  let best = null
+  const newer = (a, than) => than == null || String(a.at || '') > String(than.at || '')
+  let bestTonight = null
+  let bestAhead = null
   let imminent = null
   let carried = null
   for (const a of alertsSent) {
     if (!a || a.run === 'forced') continue
     if (a.tier === 'imminent') {
-      if (imminent == null || String(a.at || '') > String(imminent.at || '')) imminent = a
+      if (newer(a, imminent)) imminent = a
       const c = colderAhead(a)
-      if (c && (carried == null || String(c.at || '') > String(carried.at || ''))) carried = c
+      if (c && newer(c, carried)) carried = c
       continue
     }
     if (SEVERITY[a.tier] == null) continue
     if (a.lowF == null || !Number.isFinite(Number(a.lowF))) continue
-    if (nightPhrase(resolveNight(a)) == null) continue
-    if (best == null) { best = a; continue }
-    const s = SEVERITY[a.tier] - SEVERITY[best.tier]
-    if (s > 0) { best = a; continue }
-    if (s === 0 && String(a.at || '') > String(best.at || '')) best = a
+    const night = resolveNight(a)
+    if (nightPhrase(night) == null) continue
+    if (night.nightOffset === 0) { if (newer(a, bestTonight)) bestTonight = a }
+    else if (newer(a, bestAhead)) bestAhead = a
   }
   const watch = imminent && imminent.trip === 'radiative' && imminent.lowF != null
     && Number.isFinite(Number(imminent.lowF)) ? imminent : null
-  const bestTonight = best != null && resolveNight(best).nightOffset === 0
-  let tonight = bestTonight ? best : null
-  if (watch && !(bestTonight && Number(best.lowF) <= lineLowRaw(watch))) tonight = watch
-  let ahead = bestTonight ? null : best
-  if (carried && (ahead == null || String(carried.at || '') > String(ahead.at || ''))) ahead = carried
+  let tonight = bestTonight
+  if (watch && !(bestTonight && Number(bestTonight.lowF) <= lineLowRaw(watch))) tonight = watch
+  let ahead = bestAhead
+  if (carried && newer(carried, ahead)) ahead = carried
   return { tonight, ahead, imminent }
 }
 
-// The single entry the FIRST line renders, or null: tonight's, else the later night's. Unchanged for every entry
-// stored before V5-TODAYFROSTLINEGAPS-001 (a list with no `colder` picks exactly what the one-slot rule picked).
+// The single entry the FIRST line renders, or null: tonight's, else the later night's. For a list with no `colder` it
+// picks what the one-slot rule picked, except (follow-up F1) where a tonight advisory sits beside a NEWER later-night
+// advisory: the one slot took the later night, the first line is now tonight's.
 export function pickAdvisory(alertsSent) {
   const { tonight, ahead } = pickFrostLines(alertsSent)
   return tonight || ahead
@@ -305,9 +310,9 @@ export function buildFrostAlertLines(alertsSent, { lowShown, planLow } = {}) {
   return lines
 }
 
-// -> the FIRST line, or null. Without `planLow` its output is the one-argument output, and for every entry stored
-// before V5-TODAYFROSTLINEGAPS-001 that is byte for byte what it returned before: the server's PARITY suites
-// (lambda/daily-plan/advisorynight.test.js, frostsubject.test.js, …) call it that way.
+// -> the FIRST line, or null. Without `planLow` its output is the one-argument output, and for an entry list stored
+// before V5-TODAYFROSTLINEGAPS-001 it is byte for byte what it returned before, except the F1 case pickAdvisory names:
+// the server's PARITY suites (lambda/daily-plan/advisorynight.test.js, frostsubject.test.js, …) call it that way.
 export function buildFrostAlertLine(alertsSent, opts = {}) {
   return buildFrostAlertLines(alertsSent, opts)[0] || null
 }

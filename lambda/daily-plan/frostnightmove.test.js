@@ -47,7 +47,8 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import h from './handler.js';
 import fe from './frostEval.js';
-import { buildFrostAlertLine } from '../../src/lib/frostAlertLine.js';
+import { buildFrostAlertLine, buildFrostAlertLines } from '../../src/lib/frostAlertLine.js';
+import { agreedTonightLow } from '../../src/lib/tonightLow.js';
 
 const { run, mergeAlertsSent, readSpaceAlertsSent, readAlertsSent, readPriorRuns, readWeatherDaily } = h;
 const { escalatesBeyond, sentNight, sentCoverage, advisoryNight, nightPhrase } = fe;
@@ -316,6 +317,40 @@ describe('BUG-FROSTESCALATENIGHTMOVE-001 — the night moves between hourly runs
     const pub = publisher();
     for (const hr of [14, 15, 16, 17]) await once(t, pub, { etHour: hr, ...TONIGHT });
     expect(pub.frost().map((c) => c.hour)).toEqual([14]);
+  });
+});
+
+// ── V5-TODAYFROSTLINEGAPS-001 follow-up F1 — two advisory nights stay two lines on Today (QA probes P1/P2) ────────────
+// Both orders can send through the real gates: P1 through the night-moved-earlier axis (escalatesBeyond's night), P2
+// through a newly tripped crop (marigold's own 36F point). Under the one-slot rule Today kept only the newest advisory:
+// P1 lost the later night it had emailed, P2 lost tonight and its one-low agreement. Dave (2026-09-21): both, tonight
+// first, whichever was sent last.
+describe('F1 — an advisory for tonight and one for a later night, sent in either order (real run())', () => {
+  const lines = (t) => {
+    const items = t.store.get(`${DAVE}|${TODAY}`);
+    return buildFrostAlertLines(t.sent(), { lowShown: agreedTonightLow(items)?.lowF, planLow: items.weather.tonightLow }).map((l) => l.text);
+  };
+  const P = (when, n) => `Frost possible ${when} — low ${n}°F. Plan cover for tender plants.`;
+
+  it('P1: tomorrow night (D2) at 2 PM, then tonight (D1) at 4 PM by the night-moved-earlier axis -> both lines', async () => {
+    const t = planTable({ rows: TOMATO });
+    const pub = publisher();
+    await once(t, pub, { etHour: 14, lows: [45, 36, 50], minHours: [5, 5, 6] });
+    await once(t, pub, { etHour: 16, lows: [37, 45, 50], minHours: [5, 6, 6] });
+    expect(pub.frost().map((c) => [c.hour, snsNight(c.message)])).toEqual([[14, 'tomorrow night'], [16, 'tonight']]);
+    expect(t.sent().map((a) => [a.nightOffset, a.date])).toEqual([[1, DATES[1]], [0, DATES[0]]]);
+    expect(lines(t)).toEqual([P('tonight', 37), P('tomorrow night', 36)]);
+  });
+
+  it('P2: tonight (D1) at 2 PM, then tomorrow night (D2) at 4 PM by a newly tripped crop -> both lines, tonight agreed', async () => {
+    const t = planTable({ rows: [row('Tomato Dave', DAVE, 'tomato'), row('Marigold Dave', DAVE, 'marigold')] });
+    const pub = publisher();
+    await once(t, pub, { etHour: 14, lows: [38, 45, 50], minHours: [5, 6, 6] });   // 38: tomato (40) trips, marigold (36) not
+    await once(t, pub, { etHour: 16, lows: [45, 35, 50], minHours: [5, 5, 6] });   // 35: marigold newly at risk
+    expect(pub.frost().map((c) => [c.hour, snsNight(c.message)])).toEqual([[14, 'tonight'], [16, 'tomorrow night']]);
+    expect(t.sent().map((a) => [a.nightOffset, Object.keys(a.crops).sort().join('+')])).toEqual([[0, 'tomato'], [1, 'marigold+tomato']]);
+    expect(lines(t)).toEqual([P('tonight', 38), P('tomorrow night', 35)]);
+    expect(agreedTonightLow(t.store.get(`${DAVE}|${TODAY}`))).toEqual({ lowF: 38, lowRaw: 38 });
   });
 });
 
