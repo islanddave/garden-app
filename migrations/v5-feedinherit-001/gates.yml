@@ -1,0 +1,463 @@
+# gates.yml
+# v5-feedinherit-001 — BUG-CAREFEEDINHERIT-001. Adds fertilize_interval_days to 21 cultivar care_profile
+# rows (written by cadence-backfill-20260823 without one, so they inherit the system row's 14 days) with
+# the value the bundled cadence data carries. Data-only. Rows, reach and exclusions: 0a-data.sql header
+# and README.md. The three legacy Rubus rows, Lemon Thyme and the Peach are deliberately NOT written; a
+# pre/post pair checks that 0a leaves them alone.
+#
+# STATUS AT AUTHORING (2026-09-21): AUTHORED, NOT APPLIED on staging or prod. Rehearsed on an ephemeral
+# fork of prod (README.md).
+#
+# SEQUENCING — README.md. Per environment, staging first:
+#   --phase pre -> apply 0a -> --phase post
+# then `gate_runner.py --all --phase post --continuous-only` on BOTH envs.
+# Pushing this directory before the apply cannot red gate-invariants.yml: the one continuous post gate
+# self-arms on this migration's schema_version row. Measured read-only on prod at authoring.
+#
+# GATE CLASSIFICATION (decided at authoring, not after the first false red)
+#   * Standing invariant (continuous, self-armed): the failure shape this migration exists to undo — a
+#     live planting of one of these 21 cultivars that adopts a database profile and takes its feeding
+#     interval from the SYSTEM row, because neither its cultivar row nor a leaf row states one (the key
+#     dropped again by a future whole-profile backfill, or a non-numeric/zero value written over it). It
+#     judges WHERE the interval comes from, not what it is: a later, deliberate change to another number
+#     is a new decision, not a regression, and a planting whose profile says no_calendar_feed is fed by
+#     nobody's interval, so it passes too.
+#   * Apply-window receipts (continuous: false): the exact value 0a wrote, the single-key method, the
+#     engine's view of the 21 plantings, that the five excluded rows were left alone, and that 0a wrote no
+#     other care_profile row. A later, deliberate edit of any profile is not a regression.
+#   * EVERY gate that names a prod id is env: prod — the standing invariant included. Its population is
+#     defined by 21 prod cultivar ids, and 0a is keyed to prod care_profile row ids written on prod on
+#     2026-08-23, after the staging branch was cut (2026-08-11; the v5-coldshadow-001/-002 finding). On
+#     staging those rows cannot exist, so 0a stamps the version and nothing else. This lane was cleared to
+#     read prod only; staging is unread.
+#   * No gate names a column this migration adds (it adds none), and none casts ::regclass, so every gate
+#     parses and runs on an unapplied database.
+#
+# NO `sweep` PHASE: nothing is constrained, so there is no predicate that must hold before the apply.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-feedinherit-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_cultivars_are_the_rows_read_at_authoring
+    env: prod
+    note: >
+      Identity receipt for the 21 cultivars whose care profiles 0a edits, read on prod 2026-09-21: name,
+      controlled crop type and genus, live. The names are checked here once, as a receipt; the selector is
+      always the id. The genus picks the bundled entry for 18 of the rows and the name for the other three,
+      so a renamed or re-genused cultivar must stop the apply: its bundled value may no longer be the one
+      written.
+    sql: |
+      SELECT pv.id
+        FROM (VALUES
+               ('a11dd600-84b4-4bd6-8611-f85336bc3c2e'::uuid, 'Alaska Mix', 'nasturtium', 'Tropaeolum'),
+               ('b11814aa-83ed-48e4-882d-a6709e42572f'::uuid, 'Chrysanthemum', 'chrysanthemum', 'Chrysanthemum'),
+               ('1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7'::uuid, 'Clemson Spineless 80', 'okra', 'Abelmoschus'),
+               ('3db84405-1941-4e88-bb77-58595f47c3e7'::uuid, 'Cobaea scandens (Violet)', 'cobaea', 'Cobaea'),
+               ('d9eba456-0836-4690-b3db-02aa0fb4fb1b'::uuid, 'Contender', 'bean', 'Phaseolus'),
+               ('219329ac-66f3-4c25-8a46-6246bb91c858'::uuid, 'Dwarf Blue Curled (Vates)', 'kale', 'Brassica'),
+               ('ba53f113-9903-449d-81b9-7dce30ef3934'::uuid, 'Easy Wave Berry Velour', 'petunia', 'Petunia'),
+               ('c94e3179-b14a-4707-8ca2-1305dd0946dc'::uuid, 'Foxglove', 'foxglove', 'Digitalis'),
+               ('450c3391-b809-43e5-b7ae-de16b9cce431'::uuid, 'Gold Rush', 'bean', 'Phaseolus'),
+               ('3b986e62-14ca-4262-86bb-eb35c418bd19'::uuid, 'Hosta', 'hosta', 'Hosta'),
+               ('055e3ff1-21c0-44ce-bace-d8a900f6145a'::uuid, 'Japanese Maple', 'japanese_maple', 'Acer'),
+               ('d3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid, 'Jewel Mix Nasturtium', 'nasturtium', 'Tropaeolum'),
+               ('b1fad1e2-b2e1-40ee-ab02-1f6cf9a20a6d'::uuid, 'Lacinato (Dinosaur)', 'kale', 'Brassica'),
+               ('72ebf73c-bf46-429a-bb2d-3243e3d0826d'::uuid, 'Lemon Verbena', 'lemon_verbena', 'Aloysia'),
+               ('0609afc2-51ea-4045-858b-fe28060e2f20'::uuid, 'Palla Rossa Mavrik', 'radicchio', 'Cichorium'),
+               ('f46745bf-c77e-4f42-b939-5363378a035e'::uuid, 'Petunia', 'petunia', 'Petunia'),
+               ('81924103-2858-408f-991e-aad591827a49'::uuid, 'Purple Vienna', 'kohlrabi', 'Brassica'),
+               ('51da1e31-c16d-4cbc-ac3b-b3c718e7472c'::uuid, 'Redbor', 'kale', 'Brassica'),
+               ('ece82bf2-6a60-4186-b031-64af0519aa49'::uuid, 'Spider Plant', 'spider_plant', 'Chlorophytum'),
+               ('21a8596d-f689-4028-a1dc-a34ae94c128b'::uuid, 'Tavera', 'bean', 'Phaseolus'),
+               ('bc79d915-69a3-4945-8293-27314d83a29b'::uuid, 'Tendersweet', 'carrot', 'Daucus')
+             ) AS v(variety_id, name, crop_type_slug, genus)
+        JOIN public.plant_varieties pv
+          ON pv.id = v.variety_id AND pv.name = v.name AND pv.crop_type_slug = v.crop_type_slug
+         AND pv.genus = v.genus AND pv.deleted_at IS NULL
+    expect: rowcount_eq
+    value: 21
+
+  - name: pre_profiles_are_the_backfill_rows_without_a_feed_interval
+    env: prod
+    note: >
+      The exact starting state 0a matches: each cultivar row written by cadence-backfill-20260823, with no
+      fertilize_interval_days key, byte-identical to what was reviewed (md5 of the whole profile, read on
+      prod 2026-09-21 — five of them after v5-coldshadow-002 added their cold block). If this fails a row
+      changed since authoring: re-read it before applying. A feed interval already present makes 0a match
+      nothing for that row; any other change would ride along under the post md5 receipt and turn it red.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('58586ba5-7080-469d-bf77-3f5746cd2132'::uuid, 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'::uuid, '56232db6edd44008c0036b319237ec12'),
+               ('cf4e17cf-d3da-46c9-bf71-a014f35bf2ad'::uuid, 'b11814aa-83ed-48e4-882d-a6709e42572f'::uuid, '95a27bbffd9bbeb5c89a2407d6d02551'),
+               ('834a3a15-bd59-4801-ac2d-1d58bc0c79a3'::uuid, '1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7'::uuid, '0d9731f506b43f422c9055cc0b2d2870'),
+               ('9548b3f2-e86c-435e-8ef2-28f5d0e8aa8c'::uuid, '3db84405-1941-4e88-bb77-58595f47c3e7'::uuid, '3fb6b9b305e417724b087ebd42d606cc'),
+               ('e43739f4-75a6-4ae4-a673-1a8aef0e0f0b'::uuid, 'd9eba456-0836-4690-b3db-02aa0fb4fb1b'::uuid, '7d54f17db6de625fc7ccf3018d4f162a'),
+               ('f807599b-f4d4-4fff-9703-ff21cbf9981f'::uuid, '219329ac-66f3-4c25-8a46-6246bb91c858'::uuid, 'c851db18b63f8b19612ce9300af574de'),
+               ('04554719-e633-44d7-8791-f3e33c90ed2d'::uuid, 'ba53f113-9903-449d-81b9-7dce30ef3934'::uuid, '5f2027fd1ff9e33e8bbbb1ebe0a6fa78'),
+               ('f86d0c66-7b6d-4a8e-b9de-0132d9e3332a'::uuid, 'c94e3179-b14a-4707-8ca2-1305dd0946dc'::uuid, '43e034ff6ab7011b3d6fd6e8aecdb2ee'),
+               ('13bcffdc-ac3d-4294-a6a9-b887aa76584e'::uuid, '450c3391-b809-43e5-b7ae-de16b9cce431'::uuid, '7d54f17db6de625fc7ccf3018d4f162a'),
+               ('5378c39e-8174-4ce9-85ad-351adc4f1486'::uuid, '3b986e62-14ca-4262-86bb-eb35c418bd19'::uuid, '378cd2587ff37d625fbfd7b8c8c9948f'),
+               ('8cc55d60-10a6-468e-a9af-cfafc7731b65'::uuid, '055e3ff1-21c0-44ce-bace-d8a900f6145a'::uuid, '12c1d516c75c3cbdfba2e90bca267794'),
+               ('2d2bc039-58e4-4ce7-8930-e58a66c4cd5a'::uuid, 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid, 'a83395305590751cc6f2ddd03a6cf20f'),
+               ('ebf1aab5-4879-4080-a8aa-4e11b454de31'::uuid, 'b1fad1e2-b2e1-40ee-ab02-1f6cf9a20a6d'::uuid, 'c851db18b63f8b19612ce9300af574de'),
+               ('e74d95b7-df0a-4948-9bf2-d5bfd1bbeeea'::uuid, '72ebf73c-bf46-429a-bb2d-3243e3d0826d'::uuid, 'a626e28a0675a5892506e1fbf5160ce0'),
+               ('c848cd0b-48bf-4622-be46-b65903725bc3'::uuid, '0609afc2-51ea-4045-858b-fe28060e2f20'::uuid, '5831719141b1265afb0e269a71c3c358'),
+               ('315a0e95-0469-4b88-9647-5662c0edc884'::uuid, 'f46745bf-c77e-4f42-b939-5363378a035e'::uuid, '5f2027fd1ff9e33e8bbbb1ebe0a6fa78'),
+               ('1d49baf7-103b-4a65-a6f5-81d1034d36a1'::uuid, '81924103-2858-408f-991e-aad591827a49'::uuid, '76525dcf00834fc2e91268173b5d66d3'),
+               ('ae276aeb-95c1-4dd2-8eab-159aa4dfa262'::uuid, '51da1e31-c16d-4cbc-ac3b-b3c718e7472c'::uuid, 'c851db18b63f8b19612ce9300af574de'),
+               ('241d3455-8961-4c8c-a7ab-4a73e84fc002'::uuid, 'ece82bf2-6a60-4186-b031-64af0519aa49'::uuid, '81e03e75f3e41f00829efc350ef319db'),
+               ('d44d911e-b57c-40d2-88e9-d35ae16b1c87'::uuid, '21a8596d-f689-4028-a1dc-a34ae94c128b'::uuid, '7d54f17db6de625fc7ccf3018d4f162a'),
+               ('43162747-b27c-4ac3-bbd8-eadddd48cffc'::uuid, 'bc79d915-69a3-4945-8293-27314d83a29b'::uuid, 'b7c570259a428cb046b14e49c1032dad')
+             ) AS v(row_id, scope_id, md5_before)
+        JOIN public.care_profile cp
+          ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE NOT (cp.profile ? 'fertilize_interval_days')
+         AND cp.profile->>'_source' = 'cadence-backfill-20260823'
+         AND md5(cp.profile::text) = v.md5_before
+    expect: rowcount_eq
+    value: 21
+
+  - name: pre_the_excluded_rows_state_no_feed_interval
+    env: prod
+    note: >
+      Dave, 2026-09-21: the 21 only. The three legacy Rubus rows (Allegheny Blackberry, Red Raspberry, Wild
+      Wineberry: _tier P, deliberately unmanaged, all three plantings dormant), Lemon Thyme (never carded:
+      engine.isMedHerb) and the Peach (no_calendar_feed, Dave 2026-09-17) are left as they are. All five
+      exist and state no feeding interval today; if one has gained one since, someone decided otherwise after
+      this file was written: stop and re-read before applying. Paired with post_the_excluded_rows_were_left_alone.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('49ebc111-edb7-46f3-b665-8e0ea04a579a'::uuid, '4ae060fa-ac18-4b71-8428-ffe3568a96a8'::uuid),
+               ('b973ecee-5c9e-4eac-b801-56b30e38dce3'::uuid, 'f8d90e8b-c43f-424a-96d4-45e5ad2db017'::uuid),
+               ('401f91aa-ebb5-4fdf-9b5c-f6872b203bbc'::uuid, '3e9997e1-350a-4c81-b9b9-e607e808fec0'::uuid),
+               ('6b8e2195-5534-4bb6-aceb-c91a9daebc88'::uuid, 'db83be63-5344-4615-9399-4eb0644dce14'::uuid),
+               ('d9690105-fb81-40cf-abb0-218972f86daa'::uuid, '62b87b4c-96fe-439e-99c8-d39c0179ed12'::uuid)
+             ) AS v(row_id, scope_id)
+        JOIN public.care_profile cp
+          ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE NOT (cp.profile ? 'fertilize_interval_days')
+    expect: rowcount_eq
+    value: 5
+
+  - name: pre_no_leaf_row_states_feeding_on_these_cultivars
+    env: prod
+    note: >
+      v_resolved_care merges system || cultivar || leaf, right wins. A leaf-scope row stating its own
+      fertilize_interval_days (or no_calendar_feed) on any planting of these cultivars would override what
+      0a writes on the cultivar row, so the fix would not reach that planting. None exists at authoring —
+      no leaf row at all on any planting of these 21 cultivars, live or deleted; if one appears, stop and
+      decide which value is meant before applying.
+    sql: |
+      SELECT lo.id, p.name
+        FROM public.care_profile lo
+        JOIN public.plants p ON p.id = lo.scope_id
+       WHERE lo.scope = 'leaf'
+         AND p.variety_id IN ('a11dd600-84b4-4bd6-8611-f85336bc3c2e', 'b11814aa-83ed-48e4-882d-a6709e42572f', '1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7', '3db84405-1941-4e88-bb77-58595f47c3e7', 'd9eba456-0836-4690-b3db-02aa0fb4fb1b', '219329ac-66f3-4c25-8a46-6246bb91c858', 'ba53f113-9903-449d-81b9-7dce30ef3934', 'c94e3179-b14a-4707-8ca2-1305dd0946dc', '450c3391-b809-43e5-b7ae-de16b9cce431', '3b986e62-14ca-4262-86bb-eb35c418bd19', '055e3ff1-21c0-44ce-bace-d8a900f6145a', 'd3101ac0-fd4e-456e-86b7-ebea732ac84c', 'b1fad1e2-b2e1-40ee-ab02-1f6cf9a20a6d', '72ebf73c-bf46-429a-bb2d-3243e3d0826d', '0609afc2-51ea-4045-858b-fe28060e2f20', 'f46745bf-c77e-4f42-b939-5363378a035e', '81924103-2858-408f-991e-aad591827a49', '51da1e31-c16d-4cbc-ac3b-b3c718e7472c', 'ece82bf2-6a60-4186-b031-64af0519aa49', '21a8596d-f689-4028-a1dc-a34ae94c128b', 'bc79d915-69a3-4945-8293-27314d83a29b')
+         AND (lo.profile ? 'fertilize_interval_days' OR lo.profile ? 'no_calendar_feed')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_each_row_reaches_exactly_the_listed_plantings
+    env: prod
+    note: >
+      THE REACH GUARD. A cultivar row reaches every planting of its variety — v_resolved_care joins every
+      plants row, deleted or not — so Dave's decision holds only while these 21 rows reach exactly the
+      plantings it was made for. Read on prod 2026-09-21 with NO status, archive or delete filter: each row
+      reaches its one live planting, and three rows also reach soft-deleted plantings of the same cultivar
+      (Alaska Mix two, Clemson Spineless 80 two, Purple Vienna one — listed in 0a and the README). Any other
+      plants row of these varieties (a new planting, a duplicate, a re-pointed one) must stop the apply until
+      someone decides whether it should take the new interval.
+    sql: |
+      SELECT p.id, p.name, p.status, p.deleted_at
+        FROM public.plants p
+       WHERE p.variety_id IN ('a11dd600-84b4-4bd6-8611-f85336bc3c2e', 'b11814aa-83ed-48e4-882d-a6709e42572f', '1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7', '3db84405-1941-4e88-bb77-58595f47c3e7', 'd9eba456-0836-4690-b3db-02aa0fb4fb1b', '219329ac-66f3-4c25-8a46-6246bb91c858', 'ba53f113-9903-449d-81b9-7dce30ef3934', 'c94e3179-b14a-4707-8ca2-1305dd0946dc', '450c3391-b809-43e5-b7ae-de16b9cce431', '3b986e62-14ca-4262-86bb-eb35c418bd19', '055e3ff1-21c0-44ce-bace-d8a900f6145a', 'd3101ac0-fd4e-456e-86b7-ebea732ac84c', 'b1fad1e2-b2e1-40ee-ab02-1f6cf9a20a6d', '72ebf73c-bf46-429a-bb2d-3243e3d0826d', '0609afc2-51ea-4045-858b-fe28060e2f20', 'f46745bf-c77e-4f42-b939-5363378a035e', '81924103-2858-408f-991e-aad591827a49', '51da1e31-c16d-4cbc-ac3b-b3c718e7472c', 'ece82bf2-6a60-4186-b031-64af0519aa49', '21a8596d-f689-4028-a1dc-a34ae94c128b', 'bc79d915-69a3-4945-8293-27314d83a29b')
+         AND p.id NOT IN ('8f84f21c-f2f8-4ead-9221-9c5add78036d', '7ea304c4-5ae5-4408-94e5-546d706e3392', 'd6b56799-875c-4999-bb94-e2cbab1641b1', 'a458d170-6669-4e7a-b12b-810877fc535e', 'c7a08b26-f5d0-44ba-843c-416cba97e02b', '11b13057-608e-4de2-b9b3-c9fd586265b4', 'cd6c4356-a29c-489c-a3a3-b9c68829f829', '1ef9592e-4d69-4171-a21e-24cf5c3f2e61', '909c85ce-60a5-4e55-8564-9437ef7df383', '198627b4-91b2-4806-917f-d812623409cd', 'ac3c0e05-aada-47c6-a4c1-447ee3906b79', 'b2784442-9945-4004-bd5f-c36fe3b7530e', '71cfa027-adb9-4d29-86bc-977e14c19dee', '21408041-566c-432a-a109-38e158158120', '8814273d-3444-4183-83b8-dad09a49c452', '731682ea-a840-469d-8cf8-2fb143c993b9', '54689036-4d77-4370-9f6d-591260fe0e0a', 'edfc68f5-a28a-484a-8be6-dd00b4067dde', '54245a51-629f-463f-8515-0b51f2896c73', 'e6f33a3d-f861-4354-8728-34c08b84e1be', 'd2e8c2df-5a9e-4f24-abf7-665ba849cdfc', 'f441211e-c528-49d7-a6f3-5ed8433beb55', 'b9b5d4b2-7763-4904-b897-2562647b6a8f', 'dc196337-453b-4c44-94c0-f1e20d6deef3', '3f273506-c291-4863-932d-9388bb8b5c81', 'a690cd4a-fa1e-4c8b-93ac-08b8f8c6041a')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_twenty_one_are_live
+    env: prod
+    note: >
+      The 21 plantings the decision covers, as read on prod 2026-09-21: still of the cultivar the row
+      belongs to and live by the daily-plan handler's own filter. If one has ended, been deleted or moved to
+      another cultivar, the decision no longer covers exactly these plants: re-read before applying.
+    sql: |
+      SELECT p.id
+        FROM (VALUES
+               ('8f84f21c-f2f8-4ead-9221-9c5add78036d'::uuid, 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'::uuid),
+               ('a458d170-6669-4e7a-b12b-810877fc535e'::uuid, 'b11814aa-83ed-48e4-882d-a6709e42572f'::uuid),
+               ('c7a08b26-f5d0-44ba-843c-416cba97e02b'::uuid, '1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7'::uuid),
+               ('1ef9592e-4d69-4171-a21e-24cf5c3f2e61'::uuid, '3db84405-1941-4e88-bb77-58595f47c3e7'::uuid),
+               ('909c85ce-60a5-4e55-8564-9437ef7df383'::uuid, 'd9eba456-0836-4690-b3db-02aa0fb4fb1b'::uuid),
+               ('198627b4-91b2-4806-917f-d812623409cd'::uuid, '219329ac-66f3-4c25-8a46-6246bb91c858'::uuid),
+               ('ac3c0e05-aada-47c6-a4c1-447ee3906b79'::uuid, 'ba53f113-9903-449d-81b9-7dce30ef3934'::uuid),
+               ('b2784442-9945-4004-bd5f-c36fe3b7530e'::uuid, 'c94e3179-b14a-4707-8ca2-1305dd0946dc'::uuid),
+               ('71cfa027-adb9-4d29-86bc-977e14c19dee'::uuid, '450c3391-b809-43e5-b7ae-de16b9cce431'::uuid),
+               ('21408041-566c-432a-a109-38e158158120'::uuid, '3b986e62-14ca-4262-86bb-eb35c418bd19'::uuid),
+               ('8814273d-3444-4183-83b8-dad09a49c452'::uuid, '055e3ff1-21c0-44ce-bace-d8a900f6145a'::uuid),
+               ('731682ea-a840-469d-8cf8-2fb143c993b9'::uuid, 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid),
+               ('54689036-4d77-4370-9f6d-591260fe0e0a'::uuid, 'b1fad1e2-b2e1-40ee-ab02-1f6cf9a20a6d'::uuid),
+               ('edfc68f5-a28a-484a-8be6-dd00b4067dde'::uuid, '72ebf73c-bf46-429a-bb2d-3243e3d0826d'::uuid),
+               ('54245a51-629f-463f-8515-0b51f2896c73'::uuid, '0609afc2-51ea-4045-858b-fe28060e2f20'::uuid),
+               ('e6f33a3d-f861-4354-8728-34c08b84e1be'::uuid, 'f46745bf-c77e-4f42-b939-5363378a035e'::uuid),
+               ('d2e8c2df-5a9e-4f24-abf7-665ba849cdfc'::uuid, '81924103-2858-408f-991e-aad591827a49'::uuid),
+               ('b9b5d4b2-7763-4904-b897-2562647b6a8f'::uuid, '51da1e31-c16d-4cbc-ac3b-b3c718e7472c'::uuid),
+               ('dc196337-453b-4c44-94c0-f1e20d6deef3'::uuid, 'ece82bf2-6a60-4186-b031-64af0519aa49'::uuid),
+               ('3f273506-c291-4863-932d-9388bb8b5c81'::uuid, '21a8596d-f689-4028-a1dc-a34ae94c128b'::uuid),
+               ('a690cd4a-fa1e-4c8b-93ac-08b8f8c6041a'::uuid, 'bc79d915-69a3-4945-8293-27314d83a29b'::uuid)
+             ) AS v(planting_id, variety_id)
+        JOIN public.plants p ON p.id = v.planting_id AND p.variety_id = v.variety_id
+        LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (pj.status IS NULL OR pj.status <> 'planning')
+         AND pj.archived_at IS NULL
+    expect: rowcount_eq
+    value: 21
+
+  - name: pre_the_five_soft_deleted_stay_deleted
+    env: prod
+    note: >
+      The five soft-deleted plantings the three rows also reach, as read on prod 2026-09-21: still deleted,
+      still of the same cultivar. Nothing reads a deleted planting's feeding interval; a RESTORED one would
+      take the new interval into the plan, so a restore must stop the apply until someone decides.
+    sql: |
+      SELECT p.id
+        FROM (VALUES
+               ('7ea304c4-5ae5-4408-94e5-546d706e3392'::uuid, 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'::uuid),
+               ('d6b56799-875c-4999-bb94-e2cbab1641b1'::uuid, 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'::uuid),
+               ('11b13057-608e-4de2-b9b3-c9fd586265b4'::uuid, '1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7'::uuid),
+               ('cd6c4356-a29c-489c-a3a3-b9c68829f829'::uuid, '1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7'::uuid),
+               ('f441211e-c528-49d7-a6f3-5ed8433beb55'::uuid, '81924103-2858-408f-991e-aad591827a49'::uuid)
+             ) AS v(planting_id, variety_id)
+        JOIN public.plants p ON p.id = v.planting_id AND p.variety_id = v.variety_id
+       WHERE p.deleted_at IS NOT NULL
+    expect: rowcount_eq
+    value: 5
+
+  - name: pre_the_engine_inherits_the_house_fourteen
+    env: prod
+    note: >
+      The premise, as the engine sees it: all 21 plantings adopt their cultivar profile (cadence_scopes
+      {cultivar}, so resolveCadence returns it whole), its feeding interval resolves to the system row's
+      14, and nothing suppresses feeding. If this fails, the defect is gone or has changed shape for some
+      planting (the system default moved, or a no_calendar_feed appeared), so find out why before applying.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM public.v_resolved_care vrc
+       WHERE vrc.leaf_id IN ('8f84f21c-f2f8-4ead-9221-9c5add78036d', 'a458d170-6669-4e7a-b12b-810877fc535e', 'c7a08b26-f5d0-44ba-843c-416cba97e02b', '1ef9592e-4d69-4171-a21e-24cf5c3f2e61', '909c85ce-60a5-4e55-8564-9437ef7df383', '198627b4-91b2-4806-917f-d812623409cd', 'ac3c0e05-aada-47c6-a4c1-447ee3906b79', 'b2784442-9945-4004-bd5f-c36fe3b7530e', '71cfa027-adb9-4d29-86bc-977e14c19dee', '21408041-566c-432a-a109-38e158158120', '8814273d-3444-4183-83b8-dad09a49c452', '731682ea-a840-469d-8cf8-2fb143c993b9', '54689036-4d77-4370-9f6d-591260fe0e0a', 'edfc68f5-a28a-484a-8be6-dd00b4067dde', '54245a51-629f-463f-8515-0b51f2896c73', 'e6f33a3d-f861-4354-8728-34c08b84e1be', 'd2e8c2df-5a9e-4f24-abf7-665ba849cdfc', 'b9b5d4b2-7763-4904-b897-2562647b6a8f', 'dc196337-453b-4c44-94c0-f1e20d6deef3', '3f273506-c291-4863-932d-9388bb8b5c81', 'a690cd4a-fa1e-4c8b-93ac-08b8f8c6041a')
+         AND vrc.cadence_scopes = ARRAY['cultivar']
+         AND vrc.resolved_profile->'fertilize_interval_days' = '14'::jsonb
+         AND vrc.resolved_profile->'no_calendar_feed' IS NULL
+    expect: rowcount_eq
+    value: 21
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-feedinherit-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANT (continuous, self-armed) ────────────────────────────────────────────────────
+
+  - name: post_no_live_planting_of_these_cultivars_inherits_the_house_feed_interval
+    env: prod
+    note: >
+      Dave's decision (2026-09-21, set the 21 to their care-data intervals) as an invariant: no live
+      planting of these 21 cultivars that adopts a database profile takes its feeding interval from the
+      system row. Its cultivar row or a leaf row must state fertilize_interval_days, and the resolved value
+      must be a positive number (the engine reads nothing else as a cadence), unless the resolved profile
+      says no_calendar_feed — then no interval is used at all. Judges the source, not the number, so a later
+      deliberate change to another value stays green. Only plantings with a non-empty cadence_scopes are
+      judged, because only those adopt the database profile; the others resolve the bundled entry, which
+      lambda/daily-plan/feedinherit.test.js pins at the same values. Returns one row per offending
+      planting. Self-armed: vacuous until the stamp exists.
+    sql: |
+      SELECT p.id, p.name, vrc.resolved_profile->'fertilize_interval_days' AS feed
+        FROM public.plants p
+        LEFT JOIN public.plant_projects pj ON pj.id = p.project_id
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = p.id
+        LEFT JOIN public.care_profile cd ON cd.scope = 'cultivar' AND cd.scope_id = p.variety_id
+        LEFT JOIN public.care_profile lo ON lo.scope = 'leaf' AND lo.scope_id = p.id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-feedinherit-001')
+         AND p.variety_id IN ('a11dd600-84b4-4bd6-8611-f85336bc3c2e', 'b11814aa-83ed-48e4-882d-a6709e42572f', '1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7', '3db84405-1941-4e88-bb77-58595f47c3e7', 'd9eba456-0836-4690-b3db-02aa0fb4fb1b', '219329ac-66f3-4c25-8a46-6246bb91c858', 'ba53f113-9903-449d-81b9-7dce30ef3934', 'c94e3179-b14a-4707-8ca2-1305dd0946dc', '450c3391-b809-43e5-b7ae-de16b9cce431', '3b986e62-14ca-4262-86bb-eb35c418bd19', '055e3ff1-21c0-44ce-bace-d8a900f6145a', 'd3101ac0-fd4e-456e-86b7-ebea732ac84c', 'b1fad1e2-b2e1-40ee-ab02-1f6cf9a20a6d', '72ebf73c-bf46-429a-bb2d-3243e3d0826d', '0609afc2-51ea-4045-858b-fe28060e2f20', 'f46745bf-c77e-4f42-b939-5363378a035e', '81924103-2858-408f-991e-aad591827a49', '51da1e31-c16d-4cbc-ac3b-b3c718e7472c', 'ece82bf2-6a60-4186-b031-64af0519aa49', '21a8596d-f689-4028-a1dc-a34ae94c128b', 'bc79d915-69a3-4945-8293-27314d83a29b')
+         AND p.deleted_at IS NULL AND p.archived_at IS NULL
+         AND (p.status IS NULL OR p.status NOT IN ('ended', 'failed', 'dead', 'archived'))
+         AND (pj.status IS NULL OR pj.status <> 'planning')
+         AND pj.archived_at IS NULL
+         AND cardinality(vrc.cadence_scopes) > 0
+         AND vrc.resolved_profile->'no_calendar_feed' IS DISTINCT FROM 'true'::jsonb
+         AND (    (coalesce(cd.profile ? 'fertilize_interval_days', false)
+                   OR coalesce(lo.profile ? 'fertilize_interval_days', false))
+              AND CASE WHEN jsonb_typeof(vrc.resolved_profile->'fertilize_interval_days') = 'number'
+                       THEN (vrc.resolved_profile->>'fertilize_interval_days')::numeric > 0
+                       ELSE false END
+             ) IS NOT TRUE
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ─────────────────────────────────────────────────────
+
+  - name: post_each_row_carries_its_bundled_interval
+    env: prod
+    continuous: false
+    note: >
+      The only positive gate that can tell "wrote the key" from "matched the row" (jsonb_set with
+      create_missing false would match and write nothing). Each value is the cadence-data-v2.json entry the
+      engine resolves for that cultivar's plantings, as a JSON number; feedinherit.test.js fails if a literal
+      drifts from it.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('58586ba5-7080-469d-bf77-3f5746cd2132'::uuid, 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'::uuid, '45'::jsonb),
+               ('cf4e17cf-d3da-46c9-bf71-a014f35bf2ad'::uuid, 'b11814aa-83ed-48e4-882d-a6709e42572f'::uuid, '28'::jsonb),
+               ('834a3a15-bd59-4801-ac2d-1d58bc0c79a3'::uuid, '1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7'::uuid, '21'::jsonb),
+               ('9548b3f2-e86c-435e-8ef2-28f5d0e8aa8c'::uuid, '3db84405-1941-4e88-bb77-58595f47c3e7'::uuid, '21'::jsonb),
+               ('e43739f4-75a6-4ae4-a673-1a8aef0e0f0b'::uuid, 'd9eba456-0836-4690-b3db-02aa0fb4fb1b'::uuid, '30'::jsonb),
+               ('f807599b-f4d4-4fff-9703-ff21cbf9981f'::uuid, '219329ac-66f3-4c25-8a46-6246bb91c858'::uuid, '21'::jsonb),
+               ('04554719-e633-44d7-8791-f3e33c90ed2d'::uuid, 'ba53f113-9903-449d-81b9-7dce30ef3934'::uuid, '7'::jsonb),
+               ('f86d0c66-7b6d-4a8e-b9de-0132d9e3332a'::uuid, 'c94e3179-b14a-4707-8ca2-1305dd0946dc'::uuid, '30'::jsonb),
+               ('13bcffdc-ac3d-4294-a6a9-b887aa76584e'::uuid, '450c3391-b809-43e5-b7ae-de16b9cce431'::uuid, '30'::jsonb),
+               ('5378c39e-8174-4ce9-85ad-351adc4f1486'::uuid, '3b986e62-14ca-4262-86bb-eb35c418bd19'::uuid, '45'::jsonb),
+               ('8cc55d60-10a6-468e-a9af-cfafc7731b65'::uuid, '055e3ff1-21c0-44ce-bace-d8a900f6145a'::uuid, '60'::jsonb),
+               ('2d2bc039-58e4-4ce7-8930-e58a66c4cd5a'::uuid, 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid, '45'::jsonb),
+               ('ebf1aab5-4879-4080-a8aa-4e11b454de31'::uuid, 'b1fad1e2-b2e1-40ee-ab02-1f6cf9a20a6d'::uuid, '21'::jsonb),
+               ('e74d95b7-df0a-4948-9bf2-d5bfd1bbeeea'::uuid, '72ebf73c-bf46-429a-bb2d-3243e3d0826d'::uuid, '21'::jsonb),
+               ('c848cd0b-48bf-4622-be46-b65903725bc3'::uuid, '0609afc2-51ea-4045-858b-fe28060e2f20'::uuid, '21'::jsonb),
+               ('315a0e95-0469-4b88-9647-5662c0edc884'::uuid, 'f46745bf-c77e-4f42-b939-5363378a035e'::uuid, '7'::jsonb),
+               ('1d49baf7-103b-4a65-a6f5-81d1034d36a1'::uuid, '81924103-2858-408f-991e-aad591827a49'::uuid, '21'::jsonb),
+               ('ae276aeb-95c1-4dd2-8eab-159aa4dfa262'::uuid, '51da1e31-c16d-4cbc-ac3b-b3c718e7472c'::uuid, '21'::jsonb),
+               ('241d3455-8961-4c8c-a7ab-4a73e84fc002'::uuid, 'ece82bf2-6a60-4186-b031-64af0519aa49'::uuid, '30'::jsonb),
+               ('d44d911e-b57c-40d2-88e9-d35ae16b1c87'::uuid, '21a8596d-f689-4028-a1dc-a34ae94c128b'::uuid, '30'::jsonb),
+               ('43162747-b27c-4ac3-bbd8-eadddd48cffc'::uuid, 'bc79d915-69a3-4945-8293-27314d83a29b'::uuid, '30'::jsonb)
+             ) AS v(row_id, scope_id, feed)
+        JOIN public.care_profile cp
+          ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE cp.profile->'fertilize_interval_days' = v.feed
+    expect: rowcount_eq
+    value: 21
+
+  - name: post_feed_fix_was_single_key_not_a_full_replace
+    env: prod
+    continuous: false
+    note: >
+      THE METHOD GUARD (v5-coldshadow-001/-002). Each corrected row has exactly one key more than before (9
+      or 10) and, with that key taken away, is byte-identical to the row reviewed at authoring: md5 of the
+      profile minus fertilize_interval_days equals the pre gate's md5 of the whole profile. A whole-object
+      rewrite — even one that carries the same interval — changes that hash; so does dropping the _source
+      marker or the cold block v5-coldshadow-002 added to five of these rows.
+    sql: |
+      SELECT cp.id
+        FROM (VALUES
+               ('58586ba5-7080-469d-bf77-3f5746cd2132'::uuid, 'a11dd600-84b4-4bd6-8611-f85336bc3c2e'::uuid, '56232db6edd44008c0036b319237ec12', 9),
+               ('cf4e17cf-d3da-46c9-bf71-a014f35bf2ad'::uuid, 'b11814aa-83ed-48e4-882d-a6709e42572f'::uuid, '95a27bbffd9bbeb5c89a2407d6d02551', 9),
+               ('834a3a15-bd59-4801-ac2d-1d58bc0c79a3'::uuid, '1b2b7bf8-0d9e-4c39-b7d7-0acd744f16f7'::uuid, '0d9731f506b43f422c9055cc0b2d2870', 10),
+               ('9548b3f2-e86c-435e-8ef2-28f5d0e8aa8c'::uuid, '3db84405-1941-4e88-bb77-58595f47c3e7'::uuid, '3fb6b9b305e417724b087ebd42d606cc', 10),
+               ('e43739f4-75a6-4ae4-a673-1a8aef0e0f0b'::uuid, 'd9eba456-0836-4690-b3db-02aa0fb4fb1b'::uuid, '7d54f17db6de625fc7ccf3018d4f162a', 10),
+               ('f807599b-f4d4-4fff-9703-ff21cbf9981f'::uuid, '219329ac-66f3-4c25-8a46-6246bb91c858'::uuid, 'c851db18b63f8b19612ce9300af574de', 9),
+               ('04554719-e633-44d7-8791-f3e33c90ed2d'::uuid, 'ba53f113-9903-449d-81b9-7dce30ef3934'::uuid, '5f2027fd1ff9e33e8bbbb1ebe0a6fa78', 10),
+               ('f86d0c66-7b6d-4a8e-b9de-0132d9e3332a'::uuid, 'c94e3179-b14a-4707-8ca2-1305dd0946dc'::uuid, '43e034ff6ab7011b3d6fd6e8aecdb2ee', 9),
+               ('13bcffdc-ac3d-4294-a6a9-b887aa76584e'::uuid, '450c3391-b809-43e5-b7ae-de16b9cce431'::uuid, '7d54f17db6de625fc7ccf3018d4f162a', 10),
+               ('5378c39e-8174-4ce9-85ad-351adc4f1486'::uuid, '3b986e62-14ca-4262-86bb-eb35c418bd19'::uuid, '378cd2587ff37d625fbfd7b8c8c9948f', 10),
+               ('8cc55d60-10a6-468e-a9af-cfafc7731b65'::uuid, '055e3ff1-21c0-44ce-bace-d8a900f6145a'::uuid, '12c1d516c75c3cbdfba2e90bca267794', 9),
+               ('2d2bc039-58e4-4ce7-8930-e58a66c4cd5a'::uuid, 'd3101ac0-fd4e-456e-86b7-ebea732ac84c'::uuid, 'a83395305590751cc6f2ddd03a6cf20f', 10),
+               ('ebf1aab5-4879-4080-a8aa-4e11b454de31'::uuid, 'b1fad1e2-b2e1-40ee-ab02-1f6cf9a20a6d'::uuid, 'c851db18b63f8b19612ce9300af574de', 9),
+               ('e74d95b7-df0a-4948-9bf2-d5bfd1bbeeea'::uuid, '72ebf73c-bf46-429a-bb2d-3243e3d0826d'::uuid, 'a626e28a0675a5892506e1fbf5160ce0', 9),
+               ('c848cd0b-48bf-4622-be46-b65903725bc3'::uuid, '0609afc2-51ea-4045-858b-fe28060e2f20'::uuid, '5831719141b1265afb0e269a71c3c358', 9),
+               ('315a0e95-0469-4b88-9647-5662c0edc884'::uuid, 'f46745bf-c77e-4f42-b939-5363378a035e'::uuid, '5f2027fd1ff9e33e8bbbb1ebe0a6fa78', 10),
+               ('1d49baf7-103b-4a65-a6f5-81d1034d36a1'::uuid, '81924103-2858-408f-991e-aad591827a49'::uuid, '76525dcf00834fc2e91268173b5d66d3', 9),
+               ('ae276aeb-95c1-4dd2-8eab-159aa4dfa262'::uuid, '51da1e31-c16d-4cbc-ac3b-b3c718e7472c'::uuid, 'c851db18b63f8b19612ce9300af574de', 9),
+               ('241d3455-8961-4c8c-a7ab-4a73e84fc002'::uuid, 'ece82bf2-6a60-4186-b031-64af0519aa49'::uuid, '81e03e75f3e41f00829efc350ef319db', 10),
+               ('d44d911e-b57c-40d2-88e9-d35ae16b1c87'::uuid, '21a8596d-f689-4028-a1dc-a34ae94c128b'::uuid, '7d54f17db6de625fc7ccf3018d4f162a', 10),
+               ('43162747-b27c-4ac3-bbd8-eadddd48cffc'::uuid, 'bc79d915-69a3-4945-8293-27314d83a29b'::uuid, 'b7c570259a428cb046b14e49c1032dad', 10)
+             ) AS v(row_id, scope_id, md5_before, nkeys_after)
+        JOIN public.care_profile cp ON cp.id = v.row_id AND cp.scope = 'cultivar' AND cp.scope_id = v.scope_id
+       WHERE (SELECT count(*) FROM jsonb_object_keys(cp.profile)) = v.nkeys_after
+         AND md5((cp.profile - 'fertilize_interval_days')::text) = v.md5_before
+         AND cp.profile->>'_source' = 'cadence-backfill-20260823'
+    expect: rowcount_eq
+    value: 21
+
+  - name: post_engine_view_of_the_twenty_one_carries_the_interval
+    env: prod
+    continuous: false
+    note: >
+      End to end, as the handler reads it: all 21 plantings still adopt their cultivar profile
+      (cadence_scopes {cultivar}, so the watering interval the engine computes is unchanged) and the
+      resolved profile now carries the feeding interval written for its cultivar. The receipt that the fix
+      reaches the engine rather than stopping at the row.
+    sql: |
+      SELECT vrc.leaf_id
+        FROM (VALUES
+               ('8f84f21c-f2f8-4ead-9221-9c5add78036d'::uuid, '45'::jsonb, '2'),
+               ('a458d170-6669-4e7a-b12b-810877fc535e'::uuid, '28'::jsonb, '5'),
+               ('c7a08b26-f5d0-44ba-843c-416cba97e02b'::uuid, '21'::jsonb, '2'),
+               ('1ef9592e-4d69-4171-a21e-24cf5c3f2e61'::uuid, '21'::jsonb, '2'),
+               ('909c85ce-60a5-4e55-8564-9437ef7df383'::uuid, '30'::jsonb, '2'),
+               ('198627b4-91b2-4806-917f-d812623409cd'::uuid, '21'::jsonb, '2'),
+               ('ac3c0e05-aada-47c6-a4c1-447ee3906b79'::uuid, '7'::jsonb, '1'),
+               ('b2784442-9945-4004-bd5f-c36fe3b7530e'::uuid, '30'::jsonb, '2'),
+               ('71cfa027-adb9-4d29-86bc-977e14c19dee'::uuid, '30'::jsonb, '2'),
+               ('21408041-566c-432a-a109-38e158158120'::uuid, '45'::jsonb, '14'),
+               ('8814273d-3444-4183-83b8-dad09a49c452'::uuid, '60'::jsonb, '2'),
+               ('731682ea-a840-469d-8cf8-2fb143c993b9'::uuid, '45'::jsonb, '2'),
+               ('54689036-4d77-4370-9f6d-591260fe0e0a'::uuid, '21'::jsonb, '2'),
+               ('edfc68f5-a28a-484a-8be6-dd00b4067dde'::uuid, '21'::jsonb, '1'),
+               ('54245a51-629f-463f-8515-0b51f2896c73'::uuid, '21'::jsonb, '2'),
+               ('e6f33a3d-f861-4354-8728-34c08b84e1be'::uuid, '7'::jsonb, '1'),
+               ('d2e8c2df-5a9e-4f24-abf7-665ba849cdfc'::uuid, '21'::jsonb, '2'),
+               ('b9b5d4b2-7763-4904-b897-2562647b6a8f'::uuid, '21'::jsonb, '2'),
+               ('dc196337-453b-4c44-94c0-f1e20d6deef3'::uuid, '30'::jsonb, '7'),
+               ('3f273506-c291-4863-932d-9388bb8b5c81'::uuid, '30'::jsonb, '2'),
+               ('a690cd4a-fa1e-4c8b-93ac-08b8f8c6041a'::uuid, '30'::jsonb, '1')
+             ) AS v(planting_id, feed, water_interval_days_container)
+        JOIN public.v_resolved_care vrc ON vrc.leaf_id = v.planting_id
+       WHERE vrc.cadence_scopes = ARRAY['cultivar']
+         AND vrc.resolved_profile->'fertilize_interval_days' = v.feed
+         AND vrc.resolved_profile->>'water_interval_days_container' = v.water_interval_days_container
+    expect: rowcount_eq
+    value: 21
+
+  - name: post_the_excluded_rows_were_left_alone
+    env: prod
+    continuous: false
+    note: >
+      Dave's 2026-09-21 scope (the 21 only) as a receipt: after 0a, none of the five excluded rows states a
+      feeding interval, and none was written by 0a's transaction (its updated_at is not the stamp's
+      applied_at — both are now() of the same transaction when 0a writes a row). With
+      pre_the_excluded_rows_state_no_feed_interval passing before the apply, a row here means 0a touched
+      one. A receipt, not a standing gate: a later, deliberate decision about any of them is not a
+      regression of this one.
+    sql: |
+      SELECT cp.id
+        FROM public.care_profile cp
+       WHERE cp.id IN ('49ebc111-edb7-46f3-b665-8e0ea04a579a', 'b973ecee-5c9e-4eac-b801-56b30e38dce3', '401f91aa-ebb5-4fdf-9b5c-f6872b203bbc', '6b8e2195-5534-4bb6-aceb-c91a9daebc88', 'd9690105-fb81-40cf-abb0-218972f86daa')
+         AND (cp.profile ? 'fertilize_interval_days'
+              OR cp.updated_at = (SELECT applied_at FROM public.schema_version WHERE version = '5.0.0-feedinherit-001'))
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_zero_a_wrote_no_other_care_profile_row
+    env: prod
+    continuous: false
+    note: >
+      0a sets updated_at = now() on every row it writes, and now() is the stamp's applied_at (same
+      transaction), so the rows written in the apply are exactly those whose updated_at equals it. None may
+      be outside the 21. An absence receipt, so it also passes on an unapplied database; the value receipts
+      above are the ones that fail there. A re-run of 0a moves applied_at and writes no row, so it stays
+      green.
+    sql: |
+      SELECT cp.id, cp.scope, cp.scope_id
+        FROM public.care_profile cp
+       WHERE cp.updated_at = (SELECT applied_at FROM public.schema_version WHERE version = '5.0.0-feedinherit-001')
+         AND cp.id NOT IN ('58586ba5-7080-469d-bf77-3f5746cd2132', 'cf4e17cf-d3da-46c9-bf71-a014f35bf2ad', '834a3a15-bd59-4801-ac2d-1d58bc0c79a3', '9548b3f2-e86c-435e-8ef2-28f5d0e8aa8c', 'e43739f4-75a6-4ae4-a673-1a8aef0e0f0b', 'f807599b-f4d4-4fff-9703-ff21cbf9981f', '04554719-e633-44d7-8791-f3e33c90ed2d', 'f86d0c66-7b6d-4a8e-b9de-0132d9e3332a', '13bcffdc-ac3d-4294-a6a9-b887aa76584e', '5378c39e-8174-4ce9-85ad-351adc4f1486', '8cc55d60-10a6-468e-a9af-cfafc7731b65', '2d2bc039-58e4-4ce7-8930-e58a66c4cd5a', 'ebf1aab5-4879-4080-a8aa-4e11b454de31', 'e74d95b7-df0a-4948-9bf2-d5bfd1bbeeea', 'c848cd0b-48bf-4622-be46-b65903725bc3', '315a0e95-0469-4b88-9647-5662c0edc884', '1d49baf7-103b-4a65-a6f5-81d1034d36a1', 'ae276aeb-95c1-4dd2-8eab-159aa4dfa262', '241d3455-8961-4c8c-a7ab-4a73e84fc002', 'd44d911e-b57c-40d2-88e9-d35ae16b1c87', '43162747-b27c-4ac3-bbd8-eadddd48cffc')
+    expect: rowcount_eq
+    value: 0
