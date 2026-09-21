@@ -1,0 +1,293 @@
+# gates.yml
+# v5-cacheorphan-001 — BUG-CACHEORPHANREGRESS-001. Deletes the 7 plant-keyed entity_memory rows that sit on
+# soft-deleted plantings (created 2026-08-28 by v4-rainbackfill-001/0c-cachearms.sql, rewritten every rain night
+# since by the daily-plan cache upsert). Data-only. Rows, guards and apply order: 0a-cleanup.sql header and
+# README.md.
+#
+# STATUS AT AUTHORING (2026-09-21): AUTHORED, NOT APPLIED on staging or prod. Rehearsed on an ephemeral fork of
+# prod (README.md).
+#
+# SEQUENCING — README.md. The daily-plan fix (live-parent cache upserts) must be LIVE on prod first; then, per
+# environment, staging first: --phase pre -> apply 0a -> --phase post; then
+# `gate_runner.py --all --phase post --continuous-only` on BOTH envs.
+# Pushing this directory before the apply cannot red gate-invariants.yml: the one continuous post gate self-arms
+# on this migration's schema_version row, and every other post gate is window-only.
+#
+# GATE CLASSIFICATION (decided at authoring, not after the first false red)
+#   * Standing invariant (continuous, self-armed): no plant-keyed cache row on a soft-deleted planting — the
+#     recon's recommendation, and the plant-keyed half of scripts/integrity-weekly-check.sh's
+#     entity_memory_orphans, asserted continuously instead of weekly. It reads relations only: no id, no count,
+#     no date. It is the detector for this leak class from ANY writer, not just the one this change fixes
+#     (README.md, Risks: the events PUT re-anchor upsert is a known second writer, not fixed here).
+#   * Apply-window receipts (continuous: false): the stamp, the 7 rows gone, the BEFORE copy holding exactly
+#     them, the orphan set reduced to the 4 project-keyed baseline rows, and those 4 untouched. A later
+#     deliberate cleanup of the 4, or a later container delete, is not a regression.
+#   * EVERY gate that names a prod id is env: prod, and so is the standing invariant (the precedent's
+#     handling, v5-feedinherit-001). The 7 rows were created on prod after the staging branch was cut
+#     (2026-08-11), so on staging 0a writes only the stamp; staging's own cache rows were not read (this lane
+#     was cleared to read prod only), and a self-armed invariant over rows nobody has looked at would be a
+#     knowingly-unknown gate.
+#   * post_receipt_holds_the_seven_before_copies reads the snap_ table 0a creates, so on an UNAPPLIED database
+#     it ERRORs rather than failing (the v4-cachemissingrow-001 precedent does the same). It is window-only,
+#     so --continuous-only (what CI runs) never executes it. Every other gate parses and runs on an unapplied
+#     database; none casts ::regclass.
+#
+# NO `sweep` PHASE: nothing is constrained. The before-picture of the orphan set is pinned by the pre gates.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-cacheorphan-001'
+    expect: rowcount_eq
+    value: 0
+
+  # A leftover copy would mean a half-finished earlier apply or rollback; 0a's CREATE TABLE would fail on it
+  # anyway, and this says why before anything runs.
+  - name: pre_before_copy_table_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'snap_cacheorphan001_entity_memory'
+    expect: rowcount_eq
+    value: 0
+
+  # THE ORDERING PRECONDITION. "A Lambda is deployed" is not database state, so this is a manual gate rather
+  # than a fake SQL one; gate_runner reports MANUAL and does NOT count it as a pass.
+  - name: pre_live_parent_cache_upserts_are_deployed
+    manual: true
+    note: >
+      The daily-plan change that ships with this directory (lambda/daily-plan/handler.js logRainEvents: the plant
+      upsert joins garden_node and filters gn.deleted_at IS NULL, the container upsert joins container and
+      filters ct.deleted_at IS NULL) must be LIVE on the prod garden-daily-plan Lambda before 0a runs. Otherwise
+      the next rain night re-creates all 7 rows under new ids and post_no_cache_row_on_soft_deleted_planting
+      goes red. promote-gate.yml's coupled deploy is the SPA only; deploy-lambda.yml is a separate push:main
+      workflow, so a successful promote is not evidence. README.md gives the checks. Verifier = whoever runs the
+      apply.
+
+  - name: pre_the_seven_rows_are_the_ones_read_at_authoring
+    env: prod
+    note: >
+      Identity receipt, read on prod 2026-09-21: each row still has the id and planting it had, is plant-keyed
+      only, and carries the creation timestamp of 0c-cachearms.sql's transaction. The selector in 0a is the id
+      and the planting id together.
+    sql: |
+      SELECT em.id
+        FROM (VALUES
+               ('45bbd419-d153-4c56-aa94-a16c11f6002b'::uuid, '6e0e8cc0-0282-4fe0-9938-3fe21551bede'::uuid), -- Plum
+               ('40c4fec4-db50-43ae-bf5f-e0b4fdf5f2d1'::uuid, '53c74573-be0a-432d-8c19-f0f10af525ba'::uuid), -- Red Leaf (Regrown)
+               ('9d1f2750-1af9-43ba-8143-0c0aeb41a384'::uuid, 'da969f5d-e18b-4f4e-b23a-e227269c7c74'::uuid), -- Jalapeño Orange
+               ('b1ba32dc-3997-4eb7-9a95-616b6f4d9031'::uuid, 'f7cc1e5c-6a71-4a57-8969-5148da48adb1'::uuid), -- Crown of Thorns
+               ('05a13854-80fa-4d71-80c8-df67b568aad7'::uuid, '6def5dc1-e0df-446c-8cb7-d45f8a14ec53'::uuid), -- Vietnamese Coriander
+               ('ca39cf2a-bd0b-49d0-bfc9-61b40bcf19f1'::uuid, 'b0a61907-5e6d-4135-ad4a-e204f8c780d1'::uuid), -- Dracaena
+               ('0478b377-b3ff-448a-a2d5-b2bf0243a24b'::uuid, '845b0dcf-e480-4da5-bb13-e0ac7550f029'::uuid) -- Curly Parsley
+             ) AS v(id, plant_id)
+        JOIN public.entity_memory em
+          ON em.id = v.id AND em.plant_id = v.plant_id
+         AND em.project_id IS NULL AND em.location_id IS NULL
+         AND em.created_at = '2026-08-28T13:17:38.504170+00:00'::timestamptz
+    expect: rowcount_eq
+    value: 7
+
+  - name: pre_every_parent_is_still_soft_deleted
+    env: prod
+    note: >
+      A planting restored since authoring owns its cache row again; 0a would skip that row and then abort the
+      whole apply (all or nothing). Stop here instead, and re-decide.
+    sql: |
+      SELECT p.id
+        FROM (VALUES
+               ('6e0e8cc0-0282-4fe0-9938-3fe21551bede'::uuid), -- Plum
+               ('53c74573-be0a-432d-8c19-f0f10af525ba'::uuid), -- Red Leaf (Regrown)
+               ('da969f5d-e18b-4f4e-b23a-e227269c7c74'::uuid), -- Jalapeño Orange
+               ('f7cc1e5c-6a71-4a57-8969-5148da48adb1'::uuid), -- Crown of Thorns
+               ('6def5dc1-e0df-446c-8cb7-d45f8a14ec53'::uuid), -- Vietnamese Coriander
+               ('b0a61907-5e6d-4135-ad4a-e204f8c780d1'::uuid), -- Dracaena
+               ('845b0dcf-e480-4da5-bb13-e0ac7550f029'::uuid) -- Curly Parsley
+             ) AS v(plant_id)
+        JOIN public.plants p ON p.id = v.plant_id AND p.deleted_at IS NOT NULL
+    expect: rowcount_eq
+    value: 7
+
+  - name: pre_no_listed_row_belongs_to_a_live_planting
+    env: prod
+    sql: |
+      SELECT em.id
+        FROM public.entity_memory em
+        JOIN public.plants p ON p.id = em.plant_id
+       WHERE p.deleted_at IS NULL
+         AND em.id IN (
+               ('45bbd419-d153-4c56-aa94-a16c11f6002b'::uuid), -- Plum
+               ('40c4fec4-db50-43ae-bf5f-e0b4fdf5f2d1'::uuid), -- Red Leaf (Regrown)
+               ('9d1f2750-1af9-43ba-8143-0c0aeb41a384'::uuid), -- Jalapeño Orange
+               ('b1ba32dc-3997-4eb7-9a95-616b6f4d9031'::uuid), -- Crown of Thorns
+               ('05a13854-80fa-4d71-80c8-df67b568aad7'::uuid), -- Vietnamese Coriander
+               ('ca39cf2a-bd0b-49d0-bfc9-61b40bcf19f1'::uuid), -- Dracaena
+               ('0478b377-b3ff-448a-a2d5-b2bf0243a24b'::uuid) -- Curly Parsley
+             )
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_soft_deleted_planting_rows_are_exactly_the_seven
+    env: prod
+    note: >
+      Set equality between the listed ids and every cache row on a soft-deleted planting, as rows of the
+      symmetric difference. An eighth row appearing since authoring (a planting deleted with watering history,
+      then a rain night under the old code) would leave the standing post gate red right after the apply;
+      stop and re-read instead.
+    sql: |
+      WITH listed(id) AS (
+             VALUES
+               ('45bbd419-d153-4c56-aa94-a16c11f6002b'::uuid), -- Plum
+               ('40c4fec4-db50-43ae-bf5f-e0b4fdf5f2d1'::uuid), -- Red Leaf (Regrown)
+               ('9d1f2750-1af9-43ba-8143-0c0aeb41a384'::uuid), -- Jalapeño Orange
+               ('b1ba32dc-3997-4eb7-9a95-616b6f4d9031'::uuid), -- Crown of Thorns
+               ('05a13854-80fa-4d71-80c8-df67b568aad7'::uuid), -- Vietnamese Coriander
+               ('ca39cf2a-bd0b-49d0-bfc9-61b40bcf19f1'::uuid), -- Dracaena
+               ('0478b377-b3ff-448a-a2d5-b2bf0243a24b'::uuid) -- Curly Parsley
+           ),
+           on_deleted AS (
+             SELECT em.id FROM public.entity_memory em
+               JOIN public.plants p ON p.id = em.plant_id
+              WHERE p.deleted_at IS NOT NULL
+           )
+      (SELECT id FROM on_deleted EXCEPT SELECT id FROM listed)
+      UNION ALL
+      (SELECT id FROM listed EXCEPT SELECT id FROM on_deleted)
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_four_project_keyed_baseline_rows_are_present
+    env: prod
+    note: >
+      The alert's accepted baseline of 4 (integrity-baselines.json): project-keyed rows on containers
+      soft-deleted in May, last written by migrations on 2026-08-07/08. 0a must leave them exactly as they are;
+      post_the_four_project_keyed_rows_were_left_alone checks the same three facts after the apply.
+    sql: |
+      SELECT em.id
+        FROM (VALUES
+               ('1f878dce-701f-437b-b385-e939ea2df5b1'::uuid, 'f83cdf32-a2d6-4ab6-9e9d-7650e5506356'::uuid, '2026-08-08T20:14:56.084619+00:00'::timestamptz), -- Smoke Child 2
+               ('3371b3ce-9e42-46c3-8115-8c1b367074f3'::uuid, 'abc82569-7db5-4a7f-a5d1-152237f4b334'::uuid, '2026-08-07T14:47:59.748414+00:00'::timestamptz), -- Chilis
+               ('4658fa20-b2e4-4505-b4cc-60c4bdb019df'::uuid, 'a88e6366-c32b-4422-9399-5ac7c50a0f2d'::uuid, '2026-08-07T14:47:59.748414+00:00'::timestamptz), -- Build Out
+               ('7706c321-4c8f-4524-927f-d107298a0de8'::uuid, '7bd88e96-2d4b-48a4-8a4b-a5c8cbfa9ac4'::uuid, '2026-08-07T14:47:59.748414+00:00'::timestamptz) -- Basil
+             ) AS v(id, project_id, updated_at)
+        JOIN public.entity_memory em
+          ON em.id = v.id AND em.project_id = v.project_id AND em.updated_at = v.updated_at
+    expect: rowcount_eq
+    value: 4
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-cacheorphan-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANT (continuous, self-armed) ────────────────────────────────────────────────────
+
+  - name: post_no_cache_row_on_soft_deleted_planting
+    env: prod
+    note: >
+      No plant-keyed care-cache row on a soft-deleted planting. A soft-deleted planting keeps its events but
+      not its cache row (Deleted-Planting History Rule; plants DELETE and merge remove it with the
+      soft-delete), so any row here was written after the delete by something that did not check the parent.
+      Returns one row per offending cache row. Reads relations only, so it stays true as the garden grows and
+      goes red for ANY writer that reopens the class. Self-armed: vacuous until this migration's stamp exists,
+      asserting for good after. Archived plantings are NOT in scope: they keep their rows
+      (v4-cachemissingrow-001).
+    sql: |
+      SELECT em.id, em.plant_id
+        FROM public.entity_memory em
+        JOIN public.plants p ON p.id = em.plant_id
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-cacheorphan-001')
+         AND p.deleted_at IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ─────────────────────────────────────────────────────
+
+  - name: post_the_seven_rows_are_gone
+    env: prod
+    continuous: false
+    sql: |
+      SELECT em.id
+        FROM public.entity_memory em
+       WHERE em.id IN (
+               ('45bbd419-d153-4c56-aa94-a16c11f6002b'::uuid), -- Plum
+               ('40c4fec4-db50-43ae-bf5f-e0b4fdf5f2d1'::uuid), -- Red Leaf (Regrown)
+               ('9d1f2750-1af9-43ba-8143-0c0aeb41a384'::uuid), -- Jalapeño Orange
+               ('b1ba32dc-3997-4eb7-9a95-616b6f4d9031'::uuid), -- Crown of Thorns
+               ('05a13854-80fa-4d71-80c8-df67b568aad7'::uuid), -- Vietnamese Coriander
+               ('ca39cf2a-bd0b-49d0-bfc9-61b40bcf19f1'::uuid), -- Dracaena
+               ('0478b377-b3ff-448a-a2d5-b2bf0243a24b'::uuid) -- Curly Parsley
+             )
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_holds_the_seven_before_copies
+    env: prod
+    continuous: false
+    note: >
+      The rollback source exists and is exactly the 7 (id, planting) pairs, as rows of the symmetric
+      difference. Reads the snap_ table 0a creates, so on an unapplied database this ERRORs (see the header).
+    sql: |
+      WITH listed(id, plant_id) AS (
+             VALUES
+               ('45bbd419-d153-4c56-aa94-a16c11f6002b'::uuid, '6e0e8cc0-0282-4fe0-9938-3fe21551bede'::uuid), -- Plum
+               ('40c4fec4-db50-43ae-bf5f-e0b4fdf5f2d1'::uuid, '53c74573-be0a-432d-8c19-f0f10af525ba'::uuid), -- Red Leaf (Regrown)
+               ('9d1f2750-1af9-43ba-8143-0c0aeb41a384'::uuid, 'da969f5d-e18b-4f4e-b23a-e227269c7c74'::uuid), -- Jalapeño Orange
+               ('b1ba32dc-3997-4eb7-9a95-616b6f4d9031'::uuid, 'f7cc1e5c-6a71-4a57-8969-5148da48adb1'::uuid), -- Crown of Thorns
+               ('05a13854-80fa-4d71-80c8-df67b568aad7'::uuid, '6def5dc1-e0df-446c-8cb7-d45f8a14ec53'::uuid), -- Vietnamese Coriander
+               ('ca39cf2a-bd0b-49d0-bfc9-61b40bcf19f1'::uuid, 'b0a61907-5e6d-4135-ad4a-e204f8c780d1'::uuid), -- Dracaena
+               ('0478b377-b3ff-448a-a2d5-b2bf0243a24b'::uuid, '845b0dcf-e480-4da5-bb13-e0ac7550f029'::uuid) -- Curly Parsley
+           )
+      (SELECT id, plant_id FROM public.snap_cacheorphan001_entity_memory EXCEPT SELECT id, plant_id FROM listed)
+      UNION ALL
+      (SELECT id, plant_id FROM listed EXCEPT SELECT id, plant_id FROM public.snap_cacheorphan001_entity_memory)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_orphans_left_are_the_four_project_keyed_baseline_rows
+    env: prod
+    continuous: false
+    note: >
+      scripts/integrity-weekly-check.sh's entity_memory_orphans predicate, copied verbatim, now returns exactly
+      the 4 baseline rows: the metric reads 4 again. Window-only: a later container soft-delete with a cache
+      row, or Dave choosing to clean the 4, changes this set legitimately.
+    sql: |
+      WITH four(id) AS (
+             VALUES
+               ('1f878dce-701f-437b-b385-e939ea2df5b1'::uuid), -- Smoke Child 2
+               ('3371b3ce-9e42-46c3-8115-8c1b367074f3'::uuid), -- Chilis
+               ('4658fa20-b2e4-4505-b4cc-60c4bdb019df'::uuid), -- Build Out
+               ('7706c321-4c8f-4524-927f-d107298a0de8'::uuid) -- Basil
+           ),
+           orphan AS (
+                 SELECT em.id FROM public.entity_memory em
+                  WHERE (em.project_id IS NOT NULL
+                         AND NOT EXISTS (SELECT 1 FROM public.plant_projects pp
+                                          WHERE pp.id = em.project_id AND pp.deleted_at IS NULL))
+                     OR (em.plant_id IS NOT NULL
+                         AND NOT EXISTS (SELECT 1 FROM public.plants p
+                                          WHERE p.id = em.plant_id AND p.deleted_at IS NULL))
+           )
+      (SELECT id FROM orphan EXCEPT SELECT id FROM four)
+      UNION ALL
+      (SELECT id FROM four EXCEPT SELECT id FROM orphan)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_the_four_project_keyed_rows_were_left_alone
+    env: prod
+    continuous: false
+    sql: |
+      SELECT em.id
+        FROM (VALUES
+               ('1f878dce-701f-437b-b385-e939ea2df5b1'::uuid, 'f83cdf32-a2d6-4ab6-9e9d-7650e5506356'::uuid, '2026-08-08T20:14:56.084619+00:00'::timestamptz), -- Smoke Child 2
+               ('3371b3ce-9e42-46c3-8115-8c1b367074f3'::uuid, 'abc82569-7db5-4a7f-a5d1-152237f4b334'::uuid, '2026-08-07T14:47:59.748414+00:00'::timestamptz), -- Chilis
+               ('4658fa20-b2e4-4505-b4cc-60c4bdb019df'::uuid, 'a88e6366-c32b-4422-9399-5ac7c50a0f2d'::uuid, '2026-08-07T14:47:59.748414+00:00'::timestamptz), -- Build Out
+               ('7706c321-4c8f-4524-927f-d107298a0de8'::uuid, '7bd88e96-2d4b-48a4-8a4b-a5c8cbfa9ac4'::uuid, '2026-08-07T14:47:59.748414+00:00'::timestamptz) -- Basil
+             ) AS v(id, project_id, updated_at)
+        JOIN public.entity_memory em
+          ON em.id = v.id AND em.project_id = v.project_id AND em.updated_at = v.updated_at
+    expect: rowcount_eq
+    value: 4
