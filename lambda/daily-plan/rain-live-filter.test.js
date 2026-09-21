@@ -1,6 +1,7 @@
 // OPS-RAININSERTLIVEFILTER-001 — the rain autologger credits LIVE plantings only, guarded at WRITE TIME.
 // OPS-RAININSERTCONTAINERFILTER-001 — and only in a live container, or in none.
 // BUG-RAINONENDEDPLANTINGS-001 — and never an ended or failed one: exactly the plan's status set.
+// BUG-PLANSOFTDELCONTAINER-001 — and the daily plan's own plantings query hides the same containers.
 //
 // WHAT IS GUARDED. The rain INSERT in handler.js (logRainEvents) writes one event row per planting.
 // Its outer WHERE carries `gn.deleted_at is null and gn.archived_at is null`, and this file proves
@@ -67,6 +68,14 @@
 // — every PLANT_STATUSES entry, NULL, and the list's two out-of-vocabulary terms — through `is [not]
 // null`, `[not] in (...)`, `=` and `<>`, with SQL's NULL for a NULL status. The plantings query's WHERE
 // is parsed the same way from the same handler, and the two are compared status by status.
+//
+// The PLAN gets a container pass of its own (BUG-PLANSOFTDELCONTAINER-001, 2026-09-21). The plantings
+// query filtered `pj.archived_at` and not `pj.deleted_at`, so a live planting in a soft-deleted container
+// stayed in the nightly plan, carded, while the plants API 404ed it and this writer refused it rain. The
+// query now carries both, each its own clause. The pass lives here rather than in a new file because this
+// file already parses that query for the status parity, and a new file would be the third copy of the
+// parser the note below asks not to make. Same five container states, the planting pinned live,
+// everything else FREE, the join READ. Required: the writer's table, and equal to the writer's.
 //
 // DELIBERATELY NOT DECIDED HERE. A planting whose record was created after the rain day it is
 // credited for (seen in the BUG-RAINONENDEDPLANTINGS-001 recon; the live writer can only do it at the
@@ -383,6 +392,43 @@ function planStatusOf(src) {
   return admitsByState(where, states, Object.keys(states), new Set(['p.status']))
 }
 
+// The same plantings query WHOLE, since its join matters too: from the `rows: plantings` binding to the
+// template's closing backtick, bound exactly once, and required to hold the WHERE planStatusOf reads, so
+// the two plan passes cannot be reading two different statements. Both ends are found in the RAW source
+// and only the slice is stripped: the closing backtick can sit on a `--` line (a clause deleted from
+// under its comment), where strip() would take the backtick with the comment and run on past it.
+function planStatementOf(src) {
+  const hits = [...src.matchAll(/\{\s*rows:\s*plantings\s*\}\s*=\s*await\s+pg\.query\(`/g)]
+  if (hits.length !== 1) throw new Error(`expected the plantings query bound exactly once, found ${hits.length}`)
+  const start = hits[0].index + hits[0][0].length
+  const end = src.indexOf('`', start)
+  if (end < 0) throw new Error('the plantings query template is not terminated')
+  const stmt = strip(src.slice(start, end))
+  if (!stmt.includes('where p.deleted_at is null and p.archived_at is null')) {
+    throw new Error('the plantings query does not hold the WHERE planStatusOf reads')
+  }
+  return stmt
+}
+
+// The plan's container pass (BUG-PLANSOFTDELCONTAINER-001): the planting pinned LIVE, the container's
+// `id`, `deleted_at` and `archived_at` pinned from each CONTAINER_STATES entry, the status and every
+// other term FREE. The container alias is READ from the plant_projects binding, and so is the join:
+// under anything but a LEFT JOIN a project-less planting never reaches the WHERE, so `none` is refused.
+function planContainerModelOf(stmt) {
+  const flat = sqlFlat(stmt)
+  const bound = [...flat.matchAll(/\b(left\s+(?:outer\s+)?join|join|from)\s+(?:\w+\.)?plant_projects\s+(?:as\s+)?(\w+)\b/g)]
+  if (bound.length !== 1) throw new Error(`expected plant_projects bound exactly once in the plantings query, found ${bound.length}`)
+  const [, how, calias] = bound[0]
+  const states = Object.fromEntries(Object.entries(CONTAINER_STATES).map(([state, set]) => [state, {
+    ...Object.fromEntries(AXES.map((a) => [`p.${a}`, false])),
+    ...Object.fromEntries(Object.entries(set).map(([col, isSet]) => [`${calias}.${col}`, isSet])),
+  }]))
+  const model = admitsByState(flat, states, ['none', 'live'])
+  const left = how.startsWith('left')
+  if (!left) model.admits.none = false
+  return { alias: calias, left, ...model }
+}
+
 // Which alias the statement's rows come from is READ, not assumed — `gn` in the handler, `p` in the
 // migration — so the pinned terms are the PLANTING's columns, and `ct.deleted_at is null` is just
 // another free term in the planting pass. Bound more than once would make "the planting" ambiguous,
@@ -626,5 +672,87 @@ describe('OPS-RAININSERTLIVEFILTER-001 / OPS-RAININSERTCONTAINERFILTER-001 — t
       .toEqual({ none: true, live: true, deleted: true, archived: true, deletedAndArchived: true })
     // Nor any status (BUG-RAINONENDEDPLANTINGS-001 postdates it too) — characterised the same way.
     expect(migration.status.admits).toEqual(STATUS_TABLE([]))
+  })
+})
+
+// Built inside each test rather than at load, so an extractor failure reds these tests and leaves the
+// writer's tests above running.
+const planOf = () => {
+  const stmt = planStatementOf(HANDLER)
+  return { stmt, container: planContainerModelOf(stmt) }
+}
+
+describe('BUG-PLANSOFTDELCONTAINER-001 — the daily plan drops a planting in a soft-deleted or archived container', () => {
+  it('is reading the real plantings query and a container term per axis (vacuity floor)', () => {
+    const { stmt, container: c } = planOf()
+    // Anchor and ceiling: the plantings query and only it (about 4,600 stripped characters today).
+    expect(stmt, 'extracted statement is not the plantings query').toMatch(/\bfrom plants p\b/)
+    expect(stmt.length, 'plantings query extracted as a stub').toBeGreaterThan(2000)
+    expect(stmt.length, 'extractor ran past the plantings query').toBeLessThan(9000)
+    expect(c.left, 'plant_projects is no longer LEFT JOINed — every project-less planting leaves the plan').toBe(true)
+    // One pinned term per axis, named, so a lost axis reports THAT rather than only a table below.
+    const cols = new Set(c.where.pinned.map((t) => t.split(' ')[0]))
+    for (const a of AXES) expect(cols.has(`${c.alias}.${a}`), `the plantings query carries no container ${a} term`).toBe(true)
+  })
+
+  it('drops a live planting in a soft-deleted container and in an archived one, and keeps one in none', () => {
+    const { container: c } = planOf()
+    expect(c.admits.live,
+      'a live planting in a live container leaves the plan — the query, or this parser, has gone dead').toBe(true)
+    expect(c.admits.none, 'a project-less planting leaves the plan (BUG-LOGMANYPROJECTLESS-001)').toBe(true)
+    // `leak` names the container state and the free terms under which a planting in it is still planned.
+    expect(c.leak, 'a live planting in a retired container stays in the plan whenever these other terms hold').toEqual({})
+    expect(c.admits).toEqual(CONTAINER_REFUSED)
+  })
+
+  it('plans exactly the containers the rain writer credits', () => {
+    // Container by container, so a drift on either side names the state that moved.
+    expect(planOf().container.admits, 'the plantings query and the rain writer disagree about these container states')
+      .toEqual(HANDLER_MODEL.container.admits)
+  })
+
+  it('reads the plan container filter from the predicate, not its spelling (synthetic WHEREs)', () => {
+    // P is the planting's live filter, S the status terms (FREE here), A and D the two container axes.
+    // The subquery in the select list carries its own WHERE, which must not be read as the statement's.
+    const P = 'p.deleted_at is null and p.archived_at is null'
+    const S = "(p.status is null or p.status not in ('ended','failed','dead','archived')) and (pj.status is null or pj.status <> 'planning')"
+    const A = 'pj.archived_at is null'
+    const D = 'pj.deleted_at is null'
+    const of = (w, join = 'left join plant_projects pj') => planContainerModelOf(
+      `select p.id, (select max(e.event_date) from event_log e where e.plant_id = p.id) as last_water\n`
+      + ` from plants p ${join} on pj.id = p.project_id\n where ${w}`)
+    const REFUSED = [
+      `${P} and ${S} and ${A} and ${D}`,                                          // the handler's shape
+      `${P} and ${D} and ${S} and ${A}`,                                          // order is not meaning
+      `${P} and ${S} and (pj.id is null or (${D} and ${A}))`,                     // REDERIVE_CTE's shape
+      `${P} and ${S} and not (pj.deleted_at is not null or pj.archived_at is not null)`,  // De Morgan
+    ]
+    for (const w of REFUSED) expect(of(w).admits, w).toEqual(CONTAINER_REFUSED)
+    const T = true
+    const F = false
+    const ALL = { none: T, live: T, deleted: T, archived: T, deletedAndArchived: T }
+    const LEAKS = [
+      [`${P} and ${S} and ${A}`, { ...ALL, archived: F, deletedAndArchived: F }],            // the defect: no deleted term
+      [`${P} and ${S} and ${D}`, { ...ALL, deleted: F, deletedAndArchived: F }],             // no archived term
+      [`${P} and ${S} and ${D} and ${D}`, { ...ALL, deleted: F, deletedAndArchived: F }],    // archived replaced by deleted
+      [`${P} and ${S} and ${A} and ${A}`, { ...ALL, archived: F, deletedAndArchived: F }],   // deleted replaced by archived
+      [`${P} and ${S} and (${A} or ${D})`, { ...ALL, deletedAndArchived: F }],               // merged with OR
+      [`${P} and ${S} and ${A} or ${D}`, { ...ALL, deletedAndArchived: F }],                 // made optional
+      [`${P} and ${S} and ${A} and pj.deleted_at is not null`,                                // inverted
+        { none: F, live: F, deleted: T, archived: F, deletedAndArchived: F }],
+      [`${P} and ${S} and ${A} and p.deleted_at is null`, { ...ALL, archived: F, deletedAndArchived: F }],  // the planting's alias
+      [`${P} and ${S} and ${A}\n --and ${D}`, { ...ALL, archived: F, deletedAndArchived: F }],             // a comment
+      [`${P} and ${S} and ${A} /* and ${D} */`, { ...ALL, archived: F, deletedAndArchived: F }],           // a block comment
+    ]
+    for (const [w, admits] of LEAKS) expect(of(w).admits, w).toEqual(admits)
+    // The join is READ: an INNER join refuses the project-less planting before the WHERE is consulted.
+    expect(of(`${P} and ${S} and ${A} and ${D}`, 'join plant_projects pj').admits).toEqual({ ...CONTAINER_REFUSED, none: F })
+    expect(of(`${P} and ${S} and ${A} and ${D}`, 'left outer join public.plant_projects pj').admits).toEqual(CONTAINER_REFUSED)
+    for (const w of [
+      `${P} and ${S} and coalesce(pj.deleted_at, pj.archived_at) is null`,
+      `${P} and ${S} and case when pj.id is null then true else ${D} and ${A} end`,
+    ]) {
+      expect(() => of(w), w).toThrow(/buried/)
+    }
   })
 })

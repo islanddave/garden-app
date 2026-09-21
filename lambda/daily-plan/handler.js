@@ -1392,6 +1392,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       -- the plan carded a planting the plants API 404s (V4-SOFTDEL-001 F4) and the rain writer skips.
       -- Its own clause, never merged into the archived one above: archived and deleted are separate axes
       -- and stay separately observable. A project-less planting has pj all NULL and passes both.
+      -- Parsed and evaluated per container state by rain-live-filter.test.js (the plan pass).
       and pj.deleted_at is null`);
   console.log(JSON.stringify({ msg: 'db-ready', ms: Date.now() - t0, rows: plantings.length })); // first pool.query done — includes any Neon cold-resume stall
   // V4-ANCHORSUPERSEDE-001. Here rather than at the end of the run: it is one indexed statement, it
