@@ -117,7 +117,7 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); 
 // One run. NWS 45F by default, so the imminent tier is silent and the advisory is the whole story. `minHours` is the
 // hour of each day's minimum; D1 at 23:00 is "tomorrow night", at 05:00 "tonight". The clock is the run's own ET
 // hour (EDT = UTC-4), so each send's `at` is distinct, as in prod.
-async function once(t, pub, { etHour, nws = 45, lows = [38, 46, 50], minHours = [23, 6, 6], event = {}, runFn = run }) {
+async function once(t, pub, { etHour, nws = 45, lows = [38, 46, 50], minHours = [23, 6, 6], event = {}, runFn = run, hourlyFrost = null, noHourlyTemp = false }) {
   pub.at(etHour);
   vi.setSystemTime(new Date(Date.UTC(2026, 9, 5, etHour + 4, 0, 0)));
   const from = logSpy.mock.calls.length;
@@ -128,7 +128,7 @@ async function once(t, pub, { etHour, nws = 45, lows = [38, 46, 50], minHours = 
       fetchNWS: async () => ({ tonightLow: nws, highToday: nws + 20, code: 1, unit: 'F', short: 'Clear' }),
       fetchPrecip: async () => ({ forecast_lows: lows, forecast_dates: DATES, recent_precip_in: 0, today_precip_in: 0,
         today_pop: 0, upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, yesterday_precip_actual_in: 0,
-        hourly_frost: null, hourly_temp: hourlyTemp(lows, minHours) }),
+        hourly_frost: hourlyFrost, hourly_temp: noHourlyTemp ? null : hourlyTemp(lows, minHours) }),
       fetchStation: async () => null, publishAlert: pub.fn,
     });
   } catch (e) { error = e; }
@@ -316,6 +316,47 @@ describe('BUG-FROSTESCALATENIGHTMOVE-001 — the night moves between hourly runs
     const pub = publisher();
     for (const hr of [14, 15, 16, 17]) await once(t, pub, { etHour: hr, ...TONIGHT });
     expect(pub.frost().map((c) => c.hour)).toEqual([14]);
+  });
+});
+
+// ── preship-qa M1 (mainsync5-20260919), added by V5-TODAYFROSTLINEGAPS-001's lane — the radiative fallback ───────────
+// FROST_RADIATIVE_ENABLED=true in prod. A run whose Open-Meteo body lacks hourly temperature cannot locate the minimum,
+// so the radiative advisory judges BOTH candidate nights (radiativeAdvisoryPairing 'base_rate') and names whichever
+// tripped — which can be the LATER one (nightOffset = dayOffset). The next run's hours locate the minimum in the
+// earlier night: that is a night moving earlier, one re-send. A third run without hours guesses the later night
+// again: a guessed night is the key's own identity (pre-promote I1), and that key already went out, so it is neither
+// sent nor logged as a hold. No night-move test had radiative nights before this one.
+// index.js hourly_frost for the nights that start 10-05 (tonight) and 10-06 (tomorrow night), 18:00 -> 08:00 each:
+// both clear and calm, tomorrow night's dewpoint the lower, so the two-candidate union picks tomorrow night.
+const skyBlock = (tonightDew, tomorrowDew) => {
+  const time = []; const dew = []; const cloud = []; const wind = [];
+  const add = (date, next, d) => {
+    for (const hr of [18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8]) {
+      time.push(`${hr >= 18 ? date : next}T${pad(hr)}:00`); dew.push(d); cloud.push(4); wind.push(2);
+    }
+  };
+  add(TODAY, DATES[0], tonightDew);
+  add(DATES[0], DATES[1], tomorrowDew);
+  return { time, dew_point_2m: dew, cloud_cover: cloud, wind_speed_10m: wind, timezone: 'America/New_York' };
+};
+
+describe('preship-qa M1 — no hourly temperature, then located, then none again (real run(), radiative on)', () => {
+  it('"Frost watch tomorrow night" -> ONE re-send naming tonight -> no third email; Today says tonight', async () => {
+    vi.stubEnv('FROST_RADIATIVE_ENABLED', 'true');
+    const t = planTable({ rows: TOMATO });
+    const pub = publisher();
+    const sky = skyBlock(33, 30);
+    const lows = [42, 50, 51];                    // D1 42F: above the 40F trip point, inside the radiative reach (44F)
+    const r1 = await once(t, pub, { etHour: 14, lows, noHourlyTemp: true, hourlyFrost: sky });
+    const r2 = await once(t, pub, { etHour: 15, lows, minHours: [5, 6, 6], hourlyFrost: sky });
+    const r3 = await once(t, pub, { etHour: 16, lows, noHourlyTemp: true, hourlyFrost: sky });
+    expect(pub.frost().map((c) => [c.hour, c.subject])).toEqual([
+      [14, 'Garden alert - Frost watch tomorrow night (low 42F)'], [15, 'Garden alert - Frost watch tonight (low 42F)']]);
+    expect([r1, r2, r3].map((r) => [r.evalLine.tier, r.evalLine.advisoryNightOffset, r.evalLine.advisoryNightBasis]))
+      .toEqual([['advisory', 1, 'radiative'], ['advisory', 0, 'hourly'], ['advisory', 1, 'radiative']]);
+    expect(t.sent().map((a) => [a.nightOffset, a.trip ?? null, a.run])).toEqual([[1, 'radiative', 'intraday-pm'], [0, 'radiative', 'intraday-pm']]);
+    expect(r3.held).toEqual([]);
+    expect(buildFrostAlertLine(t.sent()).text).toBe('Frost watch tonight — clear and calm, low 42°F. Plan cover for tender plants.');
   });
 });
 
