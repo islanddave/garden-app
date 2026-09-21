@@ -94,7 +94,7 @@ async function once(t, pub, { etHour, nws = 45, lows = [39, 46, 50], minHours = 
   pub.at(etHour);
   vi.setSystemTime(new Date(Date.UTC(2026, 9, 5, etHour + 4, 0, 0)));
   const from = logSpy.mock.calls.length;
-  await runFn({
+  const res = await runFn({
     pg: t.pg, today: TODAY, dryRun: false, etHour, event, geocodeZip: async () => ({ lat: 42.5, lng: -72.6 }),
     fetchNWS: async () => ({ tonightLow: nws, highToday: nws + 20, code: 1, unit: 'F', short: 'Clear' }),
     fetchPrecip: async () => ({ forecast_lows: lows, forecast_dates: DATES, recent_precip_in: 0, today_precip_in: 0,
@@ -103,8 +103,10 @@ async function once(t, pub, { etHour, nws = 45, lows = [39, 46, 50], minHours = 
     fetchStation: async () => null, publishAlert: pub.fn,
   });
   const logs = logSpy.mock.calls.slice(from).map(([l]) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const cards = res ? res.plans.flatMap((pl) => pl.plan.tasks.cold) : [];
   return { evalLine: logs.find((l) => l.msg === 'frost-eval') || null,
-    held: logs.filter((l) => l.msg === 'frost alert HELD — not an escalation') };
+    held: logs.filter((l) => l.msg === 'frost alert HELD — not an escalation'),
+    card: (name) => cards.find((c) => c.name === name) || null };
 }
 
 // THE REHEARSAL LEVER as it is pulled on a deployed Lambda: trip points are read at MODULE LOAD (frostEval
@@ -214,6 +216,28 @@ describe('BUG-FROSTREHEARSALSWALLOWS-001 — a rehearsal before 14:00 ET no long
     const pub2 = publisher();
     for (const hr of [15, 16, 17]) await once(t2, pub2, { etHour: hr });
     expect(pub2.frost().map((c) => c.hour)).toEqual([15]);
+  });
+
+  it('after the window, a rehearsal\'s email does not stand in for a real one: the in-ground bed keeps its card', async () => {
+    // frostsent.test.js BUG-INGROUNDPOSTWINDOW-001: after 17:59 ET a bed's bring-in card drops only for an email that
+    // went out and named its crop (sentCoverage). A rehearsal after the window (the old workaround) names potatoes at
+    // 36F; the 20 ET run must not read that as the warning Dave was sent.
+    const potato = (id, containerType) => ({ ...row(id, DAVE, 'potato'), variety: 'Yukon Gold', genus: 'Solanum', container_type: containerType });
+    const BED = potato('Potato bed', 'in_ground');
+    const BAG = potato('Potato bag', 'fabric_bag');
+    const t = planTable({ rows: [BED, BAG] });
+    const pub = publisher();
+    await once(t, pub, { etHour: 19, nws: 36, lows: [45, 50, 52], event: FORCED });
+    expect(pub.frost()).toHaveLength(1);
+    expect(pub.frost()[0].message).toMatch(/potatoes/);
+    expect(t.sent()[0]).toMatchObject({ run: 'forced', crops: { potato: 'protect' } });
+    const r20 = await once(t, pub, { etHour: 20, nws: 36, lows: [45, 50, 52] });
+    expect(r20.card('Potato bed')).toMatchObject({ level: 'bring_in' });
+    expect(r20.card('Potato bag')).toMatchObject({ level: 'bring_in' });   // control: the bag never relied on an email
+    // CONTROL: the same email from a scheduled run does cover the bed (frostsent.test.js, "an email that WAS sent").
+    const t2 = planTable({ rows: [BED, BAG] });
+    await once(t2, publisher(), { etHour: 15, nws: 36, lows: [45, 50, 52] });
+    expect((await once(t2, publisher(), { etHour: 20, nws: 36, lows: [45, 50, 52] })).card('Potato bed')).toBeNull();
   });
 
   it('two users in the Space: the rehearsal on Jen\'s row does not swallow the Space\'s real email either', async () => {
