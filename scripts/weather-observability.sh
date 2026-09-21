@@ -37,8 +37,12 @@
 # failure mode weatherdaily.test.js already guards in unit space ("the rain reader never ran —
 # logRainEvents is not reachable"). Every exit path of logRainEvents emits exactly one `rain-log`
 # line, so the counter reads one per invocation. Measured baseline over 2026-08-29..09-02:
-# exactly 3/day at 06:00, 09:30 and 19:30 UTC — the three EventBridge rules that target the
-# function (garden-daily-plan-nightly / -intraday-am / -intraday-pm).
+# exactly 3/day at 06:00, 09:30 and 19:30 UTC — the three EventBridge rules that then targeted the
+# function (garden-daily-plan-nightly / -intraday-am / -intraday-pm). OPS-PLANHOURLY-001 replaced
+# those three with ONE rule, garden-daily-plan-hourly, cron(0 0-1,3,5,9-23 * * ? *): 19 runs a day,
+# hourly 05:00-21:00 ET plus 23:00 and 01:00 ET (declared in .github/workflows/deploy-lambda.yml
+# `ensure_rule`, which retires the old three). So the counter's expected rate is now 19/day. The
+# 3/day figure is kept as what was measured, on the schedule it was measured on.
 #
 # Metric count is kept to three deliberately. CloudWatch cost here is custom METRICS, not alarms,
 # and the remaining weather warn-paths (fetchNWS / fetchPrecip / fetchStation / AWN-secret /
@@ -125,7 +129,7 @@ test_patterns() {
   local L_SPACEFAIL="${PFX}WARN${T}{\"msg\":\"space alerts_sent read failed — continuing (may re-send)\",\"space\":\"00000000-0000-0000-0000-000000000001\",\"error\":\"boom\"}"
   local L_USERFAIL="${PFX}WARN${T}{\"msg\":\"alerts_sent read failed — continuing (may re-send)\",\"error\":\"boom\"}"
   local L_FROSTEVAL="${PFX}INFO${T}{\"msg\":\"frost-eval\",\"space\":\"x\",\"plan_date\":\"2026-10-05\",\"run\":\"intraday-pm\",\"enabled\":true,\"dry_run\":false,\"season\":true,\"alert\":true,\"degraded\":false,\"dedup_key\":\"k\",\"space_sent\":1}"
-  local L_HELD="${PFX}INFO${T}{\"msg\":\"frost alert HELD — not an escalation\",\"space\":\"x\",\"user\":\"u\",\"dedup_key\":\"k\",\"tier\":\"advisory\",\"level\":\"advisory\",\"crops\":null,\"night\":1,\"already_sent\":[{\"level\":\"advisory\",\"crops\":null,\"night\":0}]}"
+  local L_HELD="${PFX}INFO${T}{\"msg\":\"frost alert HELD — not an escalation\",\"space\":\"x\",\"user\":\"u\",\"dedup_key\":\"k\",\"tier\":\"advisory\",\"level\":\"advisory\",\"crops\":null,\"night\":1,\"night_basis\":\"hourly\",\"already_sent\":[{\"level\":\"advisory\",\"crops\":null,\"night\":0}]}"
   local L_PRIORFAIL="${PFX}WARN${T}{\"msg\":\"prior-runs read failed — continuing without history\",\"error\":\"boom\"}"
 
   echo "positive: each pattern matches the string handler.js emits"
@@ -180,13 +184,13 @@ verify() {
 FAIL: RainLogRuns has never moved.
 
 A metric filter only counts events ingested AFTER it was created, so this is the honest state until
-one scheduled run lands. garden-daily-plan runs at 06:00, 09:30 and 19:30 UTC, so wait for the next
-one and re-run. If it is still zero after a full day, logRainEvents is no longer being reached and
-the failure alarms are watching a dead code path.
+one scheduled run lands. garden-daily-plan runs on the hour, 19 times a day (UTC 00, 01, 03, 05 and
+09-23), so wait for the next one and re-run. If it is still zero after a full day, logRainEvents is no
+longer being reached and the failure alarms are watching a dead code path.
 EOF
       return 1 ;;
   esac
-  echo "  instrument confirmed live (expected 3/day)."
+  echo "  instrument confirmed live (expected 19/day on the hourly schedule)."
 }
 
 alarm() {
@@ -194,11 +198,12 @@ alarm() {
   echo "arming failure alarms -> ${SNS_TOPIC}"
 
   # PERIOD 3600 / EVALUATION-PERIODS 1, matching the existing garden-daily-plan-errors alarm on the
-  # same function. This is a SCHEDULED function: 3 invocations a day, each bounded by a 120s Lambda
-  # timeout. An hour therefore contains a whole run and never splits one, while 21 of the 24 hourly
-  # periods carry no data at all — hence notBreaching, which keeps the alarm green through the gaps
-  # instead of flapping. A 300s period (the share-observability default) would work but buys nothing
-  # here: nothing is invoked between the runs.
+  # same function. This is a SCHEDULED function: 19 invocations a day on the hour since
+  # OPS-PLANHOURLY-001 (3 when this was written), each bounded by a 120s Lambda timeout. An hour
+  # therefore contains at most one whole run and never splits one, while the five hours with no run
+  # (UTC 02, 04, 06, 07, 08) carry no data at all — hence notBreaching, which keeps the alarm green
+  # through the gaps instead of flapping. A 300s period (the share-observability default) would work
+  # but buys nothing here: nothing is invoked between the runs.
   #
   # THRESHOLD 0 / EVALUATION-PERIODS 1 rather than a tolerance band, because one swallowed failure
   # is already the whole event being watched: it means the night's rain auto-log silently did not
@@ -244,14 +249,15 @@ alarm() {
 alarm_liveness() {
   verify || { echo "refusing to arm a breaching-on-missing alarm against an empty metric." >&2; exit 1; }
   # PERIOD 86400 / THRESHOLD 1 / LessThanThreshold / breaching, matching the existing
-  # garden-daily-plan-missing-run alarm. Threshold 1 rather than 3 on purpose: the failure this
-  # catches is "logRainEvents is no longer reached at all", and a threshold of 3 would fire on any
-  # single missed or slow run, or on a run straddling the UTC day boundary. This alarm is what stops
-  # RainLogFailures from reading a permanent, meaningless zero.
+  # garden-daily-plan-missing-run alarm. Threshold 1 rather than the day's full count (3 when this was
+  # written, 19 on the hourly schedule) on purpose: the failure this catches is "logRainEvents is no
+  # longer reached at all", and a threshold at the full count would fire on any single missed or slow
+  # run, or on a run straddling the UTC day boundary. This alarm is what stops RainLogFailures from
+  # reading a permanent, meaningless zero.
   aws cloudwatch put-metric-alarm \
     --region "$REGION" \
     --alarm-name "garden-weather-rainlog-missing-run" \
-    --alarm-description "logRainEvents produced no 'rain-log' line in 24h. Expected 3/day (06:00/09:30/19:30 UTC). Either garden-daily-plan is not running or logRainEvents is no longer reachable — in which case garden-weather-rainlog-failures is watching a dead path and its zero means nothing." \
+    --alarm-description "logRainEvents produced no 'rain-log' line in 24h. Expected 19/day on the hourly schedule (UTC 00-01, 03, 05, 09-23). Either garden-daily-plan is not running or logRainEvents is no longer reachable — in which case garden-weather-rainlog-failures is watching a dead path and its zero means nothing." \
     --namespace "$NS" --metric-name RainLogRuns \
     --statistic Sum --period 86400 --evaluation-periods 1 --threshold 1 \
     --comparison-operator LessThanThreshold \
