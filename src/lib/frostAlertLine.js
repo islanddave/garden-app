@@ -185,35 +185,52 @@ function lineLowRaw(a) {
 // ranked PER NIGHT CLASS, tonight and later, so an advisory about tonight and one about a later night both show,
 // whichever was sent last. Within a class the newest entry supersedes (the same night named again, or another later
 // night). Before this, the newest advisory entry of ANY night took the one advisory slot and the other night vanished.
+// ONE MINIMUM, ONE LINE (orchestrator, 2026-09-21, keeping "never two lines about one night" true for a corrected
+// attribution): an advisory statement is about the coldest CIVIL DAY in the window, `date`, and which night that
+// minimum falls in. Two statements with the same `date` describe ONE minimum — a later run re-attributed it (the
+// BUG-FROSTESCALATENIGHTMOVE sequence: "tomorrow night" at 2 PM corrected to "tonight" at 3 PM) — so only the newest of
+// them is kept, whichever night it names, before the per-class ranking. A watch email's carried "Colder ahead" is such
+// a statement too. A statement with no usable `date` is not grouped and keeps the per-class rule.
 export function pickFrostLines(alertsSent) {
   if (!Array.isArray(alertsSent)) return { tonight: null, ahead: null, imminent: null }
   const newer = (a, than) => than == null || String(a.at || '') > String(than.at || '')
-  let bestTonight = null
-  let bestAhead = null
+  const entries = []
+  const carried = []
   let imminent = null
-  let carried = null
   for (const a of alertsSent) {
     if (!a || a.run === 'forced') continue
     if (a.tier === 'imminent') {
       if (newer(a, imminent)) imminent = a
       const c = colderAhead(a)
-      if (c && newer(c, carried)) carried = c
+      if (c) carried.push(c)
       continue
     }
     if (SEVERITY[a.tier] == null) continue
     if (a.lowF == null || !Number.isFinite(Number(a.lowF))) continue
-    const night = resolveNight(a)
-    if (nightPhrase(night) == null) continue
-    if (night.nightOffset === 0) { if (newer(a, bestTonight)) bestTonight = a }
-    else if (newer(a, bestAhead)) bestAhead = a
+    if (nightPhrase(resolveNight(a)) == null) continue
+    entries.push(a)
+  }
+  // Entries before carried statements, so an entry still wins a tie on `at`, as it did against a carried statement.
+  const statements = [...entries, ...carried]
+  const dayOf = (s) => (typeof s.date === 'string' && YMD.test(s.date) ? s.date : null)
+  const newestOfDay = new Map()
+  for (const s of statements) {
+    const d = dayOf(s)
+    if (d != null && newer(s, newestOfDay.get(d))) newestOfDay.set(d, s)
+  }
+  let bestTonight = null
+  let bestAhead = null
+  for (const s of statements) {
+    const d = dayOf(s)
+    if (d != null && newestOfDay.get(d) !== s) continue
+    if (resolveNight(s).nightOffset === 0) { if (newer(s, bestTonight)) bestTonight = s }
+    else if (newer(s, bestAhead)) bestAhead = s
   }
   const watch = imminent && imminent.trip === 'radiative' && imminent.lowF != null
     && Number.isFinite(Number(imminent.lowF)) ? imminent : null
   let tonight = bestTonight
   if (watch && !(bestTonight && Number(bestTonight.lowF) <= lineLowRaw(watch))) tonight = watch
-  let ahead = bestAhead
-  if (carried && newer(carried, ahead)) ahead = carried
-  return { tonight, ahead, imminent }
+  return { tonight, ahead: bestAhead, imminent }
 }
 
 // The single entry the FIRST line renders, or null: tonight's, else the later night's. For a list with no `colder` it

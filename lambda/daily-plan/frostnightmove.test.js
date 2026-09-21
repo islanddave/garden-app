@@ -342,6 +342,17 @@ describe('F1 — an advisory for tonight and one for a later night, sent in eith
     expect(lines(t)).toEqual([P('tonight', 37), P('tomorrow night', 36)]);
   });
 
+  // Follow-up F1b (orchestrator): the SAME civil-day minimum re-attributed is one advisory — the newest attribution wins.
+  it('F1b: the BUG-FROSTESCALATENIGHTMOVE sequence (D1 "tomorrow night" at 2 PM, "tonight" at 3 PM) -> ONE line, tonight', async () => {
+    const t = planTable({ rows: TOMATO });
+    const pub = publisher();
+    await once(t, pub, { etHour: 14, ...TOMORROW });
+    await once(t, pub, { etHour: 15, ...TONIGHT });
+    expect(pub.frost().map((c) => [c.hour, snsNight(c.message)])).toEqual([[14, 'tomorrow night'], [15, 'tonight']]);
+    expect(t.sent().map((a) => [a.nightOffset, a.date])).toEqual([[1, DATES[0]], [0, DATES[0]]]);   // one date, two nights
+    expect(lines(t)).toEqual([P('tonight', 38)]);
+  });
+
   it('P2: tonight (D1) at 2 PM, then tomorrow night (D2) at 4 PM by a newly tripped crop -> both lines, tonight agreed', async () => {
     const t = planTable({ rows: [row('Tomato Dave', DAVE, 'tomato'), row('Marigold Dave', DAVE, 'marigold')] });
     const pub = publisher();

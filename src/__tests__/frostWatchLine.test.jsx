@@ -524,12 +524,46 @@ describe('F1 — advisories are ranked per night: tonight\'s and a later night\'
       .toEqual([POSSIBLE('tonight', 38), POSSIBLE('Monday night', 31)])
   })
 
-  it('a night MOVE of one minimum (D1: tomorrow night at 2 PM, tonight at 3 PM) shows both nights — both were emailed', () => {
-    // Pinned as built, and reported: nights are told apart by the night they name, so the earlier attribution of the
-    // SAME civil-day minimum stays as the later-night line for the rest of the plan date (frost-safe: it over-warns).
+  // CHANGED by follow-up F1b (orchestrator, 2026-09-21): this pinned the F1 consequence — a night MOVE of one civil-day
+  // minimum showed both nights. Advisory statements with the same `date` are now ONE advisory: the newest attribution wins.
+  it('ONE MINIMUM: a night move of D1 ("tomorrow night" at 2 PM corrected to "tonight" at 3 PM) shows only tonight', () => {
     const moved = [tonight(38, { nightOffset: 1, at: at('18:00') }), tonight(38, { at: at('19:00') })]
     expect(moved.map((a) => [a.dayOffset, a.date, a.nightOffset])).toEqual([[1, '2026-10-10', 1], [1, '2026-10-10', 0]])
-    expect(texts(moved)).toEqual([POSSIBLE('tonight', 38), POSSIBLE('tomorrow night', 38)])
+    expect(texts(moved)).toEqual([POSSIBLE('tonight', 38)])
+    expect(texts([...moved].reverse())).toEqual([POSSIBLE('tonight', 38)])            // array order is not send order
+    expect(agreedTonightLow(planFor(43, moved))).toEqual({ lowF: 38, lowRaw: 38 })
+  })
+
+  it('ONE MINIMUM, the other correction: the newer names a LATER night -> only the later night, and tonight is no longer agreed', () => {
+    const moved = [tonight(38, { at: at('18:00') }), tonight(38, { nightOffset: 1, at: at('19:00') })]
+    expect(texts(moved)).toEqual([POSSIBLE('tomorrow night', 38)])
+    expect(agreedTonightLow(planFor(43, moved))).toBeNull()
+  })
+
+  it('no usable `date`: not grouped, so the per-night-class rule holds — two lines', () => {
+    for (const date of [undefined, null, '', 'bad']) {
+      const pair = [tonight(38, { date, at: at('18:00') }), tomorrowNight(36.4, { date, at: at('19:00') })]
+      expect(texts(pair), String(date)).toEqual([POSSIBLE('tonight', 38), POSSIBLE('tomorrow night', 36)])
+    }
+    // NEAR-MISS CONTROL: the same two nights sharing one usable date collapse to the newest
+    expect(texts([tonight(38, { at: at('18:00') }), tomorrowNight(36.4, { date: '2026-10-10', dayOffset: 1, at: at('19:00') })]))
+      .toEqual([POSSIBLE('tomorrow night', 36)])
+  })
+
+  it('two DIFFERENT minima (different dates) stay two lines, either order (P1/P2)', () => {
+    const t = (hhmm) => tonight(37.6, { at: at(hhmm) })          // date 2026-10-10 (D1)
+    const m = (hhmm) => tomorrowNight(36.4, { at: at(hhmm) })    // date 2026-10-11 (D2)
+    expect(texts([m('18:00'), t('20:00')])).toEqual([POSSIBLE('tonight', 38), POSSIBLE('tomorrow night', 36)])
+    expect(texts([t('18:00'), m('20:00')])).toEqual([POSSIBLE('tonight', 38), POSSIBLE('tomorrow night', 36)])
+  })
+
+  it('a watch email\'s carried "Colder ahead" is a statement about its date too: a newer one replaces an older tonight entry of that date', () => {
+    const olderTonight = tonight(37.6, { at: at('18:00') })                                   // D1, before dawn -> tonight
+    const w = watch(41, { at: at('19:00'), colder: { lowF: 36, dayOffset: 1, date: '2026-10-10', nightOffset: 1 } })   // D1 re-attributed
+    expect(texts([olderTonight, w])).toEqual([WATCH('tonight', 41), POSSIBLE('tomorrow night', 36)])
+    // a different date carried beside the tonight entry: both statements stand (tonight's colder advisory keeps tonight)
+    const w2 = watch(41, { at: at('19:00'), colder: colderAhead(35) })                         // D2
+    expect(texts([olderTonight, w2])).toEqual([POSSIBLE('tonight', 38), POSSIBLE('tomorrow night', 35)])
   })
 
   it('forced sends never count, in either night', () => {
