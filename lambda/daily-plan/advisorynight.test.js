@@ -271,11 +271,13 @@ describe('frostEval — the two radiative sentences name the right night', () =>
     };
     const r = base(args);
     expect(r.tier).toBe('imminent');
-    expect(r.message).toMatch(/ Colder on a second forecast: 35°F tonight, 2026-10-10 — harvest ahead and stage row cover\.$/);
+    // CHANGED by V5-TODAYFROSTLINEGAPS-001 (lane frostlinegaps, 2026-09-21): the same-night close was "— harvest ahead
+    // and stage row cover." (Dave: it is about tonight, so it says what to do tonight). The later-night close is not.
+    expect(r.message).toMatch(/ Colder on a second forecast: 35°F tonight, 2026-10-10 — pick what's ripe and cover tender plants tonight\.$/);
     expect(r.message).not.toMatch(/Colder ahead/);
     // CONTROL: the same inputs with the minimum at 22:00 name tomorrow night, so the clause reads the locator.
     const late = base({ ...args, forecastHourly: hourlyFor([['2026-10-10', dayCurve(35, 22)]]) });
-    expect(late.message).toMatch(/Colder ahead: 35°F tomorrow night, 2026-10-10/);
+    expect(late.message).toMatch(/Colder ahead: 35°F tomorrow night, 2026-10-10 — harvest ahead and stage row cover\.$/);
   });
 
   it('the radiative-only advisory judges and names the night the hours put the minimum in', () => {

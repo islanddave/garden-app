@@ -748,9 +748,13 @@ function frostEval(input = {}, opts = {}) {
       // V5-RADIATIVESUBJECTCOPY-001 — this message is about TONIGHT. An advisory whose night is tonight too is
       // not "ahead": it is the second forecast's lower low for the same night (Open-Meteo vs the NWS low above).
       const night = advisoryNight(advisory);
-      const lead = night && night.nightOffset === 0 ? 'Colder on a second forecast:' : 'Colder ahead:';
+      const sameNight = !!night && night.nightOffset === 0;
+      const lead = sameNight ? 'Colder on a second forecast:' : 'Colder ahead:';
+      // V5-TODAYFROSTLINEGAPS-001 (Dave 2026-09-21) — the same-night close is about TONIGHT, so it says what to do
+      // tonight; "harvest ahead and stage row cover" is lead time for a night still to come, and stays on that branch.
+      const close = sameNight ? 'pick what\'s ripe and cover tender plants tonight.' : 'harvest ahead and stage row cover.';
       message = truncate(`${message} ${lead} ${advisory.minLowF}°F ${when}` +
-        `${advisory.date ? `, ${advisory.date}` : ''} — harvest ahead and stage row cover.`);
+        `${advisory.date ? `, ${advisory.date}` : ''} — ${close}`);
     }
   } else if ((advisory.fires || advisoryRadiative) && (!crops || (advisoryCrops && advisoryCrops.fires))) {
     // With a crop breakdown the advisory only fires if some crop's OWN advisory point is met — otherwise a

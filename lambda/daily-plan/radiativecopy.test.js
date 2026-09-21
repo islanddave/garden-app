@@ -173,7 +173,9 @@ describe('radiative imminent + colder advisory — the same night is not "ahead"
   it('D1 minimum at 04:00 is tonight\'s own minimum on the other forecast: exact message', () => {
     const r = watch(minAt('2026-10-10', 35, 4));
     expect(r.tier).toBe('imminent');
-    expect(r.message).toBe(`${IMMINENT} Colder on a second forecast: 35°F tonight, 2026-10-10 — harvest ahead and stage row cover.`);
+    // CHANGED by V5-TODAYFROSTLINEGAPS-001 (lane frostlinegaps, 2026-09-21): the same-night close was "— harvest ahead
+    // and stage row cover." (Dave: a same-night clause says what to do tonight). The later-night close is unchanged.
+    expect(r.message).toBe(`${IMMINENT} Colder on a second forecast: 35°F tonight, 2026-10-10 — pick what's ripe and cover tender plants tonight.`);
     // BEFORE (base 10452156): `${IMMINENT} Colder ahead: 35°F tonight, 2026-10-10 — harvest ahead and stage row cover.`
     expect(frostSubject(r)).toBe('Garden alert - Frost watch tonight (low 39F)');
   });
@@ -181,7 +183,8 @@ describe('radiative imminent + colder advisory — the same night is not "ahead"
   it('no hourly series: the base-rate night of D1 is tonight too, so the same wording', () => {
     const r = watch(null);
     expect(r.advisory).toMatchObject({ nightOffset: 0, nightBasis: 'base_rate' });
-    expect(r.message.endsWith(' Colder on a second forecast: 35°F tonight, 2026-10-10 — harvest ahead and stage row cover.')).toBe(true);
+    // CHANGED by V5-TODAYFROSTLINEGAPS-001: the same-night close (was "— harvest ahead and stage row cover.").
+    expect(r.message.endsWith(' Colder on a second forecast: 35°F tonight, 2026-10-10 — pick what\'s ripe and cover tender plants tonight.')).toBe(true);
   });
 
   it('a DIFFERENT night keeps the old wording byte for byte', () => {
@@ -210,12 +213,35 @@ describe('radiative imminent + colder advisory — the same night is not "ahead"
           const tonight = r.advisory.nightOffset === 0;
           expect(r.message.includes(' Colder on a second forecast: '), at).toBe(tonight);
           expect(r.message.includes(' Colder ahead: '), at).toBe(!tonight);
+          // V5-TODAYFROSTLINEGAPS-001 — each lead keeps its own close: tonight's says what to do tonight.
+          expect(r.message.endsWith(tonight ? ' — pick what\'s ripe and cover tender plants tonight.' : ' — harvest ahead and stage row cover.'), at).toBe(true);
+          expect(r.message.includes('harvest ahead'), at).toBe(!tonight);
           if (tonight) same++; else ahead++;
         }
       }
     }
     expect(same).toBeGreaterThan(0);
     expect(ahead).toBeGreaterThan(0);
+  });
+
+  // V5-TODAYFROSTLINEGAPS-001 — the same-night close is 15 characters longer than the old one. The whole message still
+  // goes through truncate() (the SMS-era cap, MAX_MESSAGE_CHARS 900): a big garden keeps the clause whole under it, and
+  // a message that would pass it is cut and marked, never sent long. The subject is built separately and does not move.
+  it('LENGTH — the longer close stays inside the cap on a big garden, and truncate() still owns the cap', () => {
+    const many = (n, label) => Array.from({ length: n }, (_, i) => tender({ slug: `c${i}`, label: label(i), count: 9, containers: 9 }));
+    const big = watch(minAt('2026-10-10', 34.5, 4), { forecastLows: [34.5, 50, 51],
+      exposure: { tender: 360, unknown: 12, tenderContainers: 360, atRisk: 360, byCropType: many(40, (i) => `crop-with-a-long-name-${i}`) } });
+    expect(big.tier).toBe('imminent');
+    expect(big.message.length).toBeLessThanOrEqual(fe.MAX_MESSAGE_CHARS);
+    expect(big.message.endsWith(' Colder on a second forecast: 34.5°F tonight, 2026-10-10 — pick what\'s ripe and cover tender plants tonight.')).toBe(true);
+    expect(frostSubject(big)).toBe('Garden alert - Frost watch tonight (low 39F)');
+    // A crop list long enough to pass the cap: the combined message is cut at the cap and marked, never sent long.
+    const huge = watch(minAt('2026-10-10', 34.5, 4), { forecastLows: [34.5, 50, 51],
+      exposure: { tender: 54, unknown: 0, tenderContainers: 54, atRisk: 54, byCropType: many(6, (i) => `${'x'.repeat(130)}${i}`) } });
+    expect(huge.tier).toBe('imminent');
+    expect(huge.message.length).toBeLessThanOrEqual(fe.MAX_MESSAGE_CHARS);
+    expect(huge.message.length).toBeGreaterThan(fe.MAX_MESSAGE_CHARS - 10);
+    expect(huge.message.endsWith('…')).toBe(true);
   });
 });
 
@@ -274,6 +300,7 @@ describe('END TO END — what the real run() publishes', () => {
     const { frost } = await drive({ lows: [35, 50, 51], hourlyTemp: minAt('2026-10-10', 35, 4), tonightLow: 39 });
     expect(frost).toHaveLength(1);
     expect(frost[0].subject).toBe('Garden alert - Frost watch tonight (low 39F)');
-    expect(frost[0].message.endsWith(' Colder on a second forecast: 35°F tonight, 2026-10-10 — harvest ahead and stage row cover.')).toBe(true);
+    // CHANGED by V5-TODAYFROSTLINEGAPS-001: the same-night close (was "— harvest ahead and stage row cover.").
+    expect(frost[0].message.endsWith(' Colder on a second forecast: 35°F tonight, 2026-10-10 — pick what\'s ripe and cover tender plants tonight.')).toBe(true);
   });
 });
