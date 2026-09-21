@@ -79,6 +79,13 @@ describe('the words — a radiative trip is a WATCH, every other entry reads as 
     }
   })
 
+  it('a watch entry with no usable low renders nothing, like any entry without a temperature', () => {
+    for (const lowF of [null, undefined, 'n/a', NaN]) expect(buildFrostAlertLine([watch(41, { lowF })]), String(lowF)).toBeNull()
+    // ...and it does not hide an advisory beside it
+    expect(buildFrostAlertLine([tomorrowNight(36.4), watch(41, { lowF: null })]).text).toBe(POSSIBLE('tomorrow night', 36))
+    expect(buildFrostAlertLine([watch(41, { lowF: '41' })]).text).toBe(WATCH('tonight', 41))   // control: a numeric string reads
+  })
+
   it('lowShown (the one low per night) applies to a watch as to any line', () => {
     expect(buildFrostAlertLine([watch(41)], { lowShown: 39 }).text).toBe(WATCH('tonight', 39))
     expect(buildFrostAlertLine([watch(41)], { lowShown: null }).text).toBe(WATCH('tonight', 41))
