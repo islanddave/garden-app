@@ -251,19 +251,33 @@ describe('breeding pairing is checked against the row as it will be, before the 
 
   // Dave, 2026-09-21: "Record it as named" — Open-pollinated on a variety whose rank was never
   // recorded records it as a single named cultivar; a recorded non-cultivar rank refuses plainly.
-  it.each(['market_class', 'blend', 'species', 'placeholder'])(
+  // The sentences are literal on purpose: built from RANK_WORDS, a raw DB token put there would pass.
+  it.each([
+    ['market_class', 'a market class (a group of similar varieties)'],
+    ['blend', 'a seed blend'],
+    ['species', 'a whole species'],
+    ['placeholder', 'a placeholder'],
+  ])(
     'open_pollinated on a %s row is a plain-English 400 and nothing is written',
-    async (rank) => {
+    async (rank, words) => {
       db({ current: { breeding_system: null, breeding_source: 'breeder', variety_rank: rank } });
       const res = await put({ breeding_system: 'open_pollinated' });
       expect(res.status).toBe(400);
       expect(res.body.error).toBe(
-        `Open-pollinated applies only to a single named variety, and this entry is recorded as ${RANK_WORDS[rank]}.`,
+        `Open-pollinated applies only to a single named variety, and this entry is recorded as ${words}.`,
       );
       expect(res.body.error).not.toMatch(COLUMN_WORDS);
       expect(calls(isUpdate)).toHaveLength(0);
     },
   );
+
+  it('f1 on a market-class row is allowed — the CHECK only couples open_pollinated to the rank', async () => {
+    db({ current: { breeding_system: null, breeding_source: null, variety_rank: 'market_class' } });
+    const res = await put({ breeding_system: 'f1', breeding_source: 'breeder' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(keepBind('breeding_system')).toBe('f1');
+    expect(fillBind()).toBe(false);
+  });
 
   it('open_pollinated with no rank recorded saves and records the variety as a single named cultivar', async () => {
     const res = await put({ breeding_system: 'open_pollinated', breeding_source: 'packet_label' });
@@ -289,11 +303,23 @@ describe('breeding pairing is checked against the row as it will be, before the 
     }
   });
 
-  it('a source-only edit on an open-pollinated cultivar never fills the rank', async () => {
-    db({ current: { breeding_system: 'open_pollinated', breeding_source: 'inference', variety_rank: 'cultivar' } });
+  // The fill is triggered by THIS patch choosing Open-pollinated, not by the row already being OP. An
+  // OP row with no rank can only come from a non-PUT writer (the CHECK passes on NULL,
+  // BUG-OPRANKCHECKNULL-001); a source-only edit must not quietly re-rank it.
+  it('a source-only edit on an open-pollinated row with no rank never fills the rank', async () => {
+    db({ current: { breeding_system: 'open_pollinated', breeding_source: 'inference', variety_rank: null } });
     const res = await put({ breeding_source: 'breeder' });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(fillBind()).toBe(false);
+  });
+
+  it('the preflight reads the row by the UPDATE\'s own WHERE clause, byte for byte', async () => {
+    await put({ breeding_system: 'f1', breeding_source: 'breeder' });
+    const [pf] = calls(isPreflight);
+    const where = (t) => t.slice(t.lastIndexOf('WHERE id = ?')).replace(/\s+RETURNING[\s\S]*$/, '').replace(/\s+/g, ' ').trim();
+    expect(where(pf.text)).toBe(where(updateCall().text));
+    expect(where(pf.text)).toMatch(/^WHERE id = \? AND \( created_by = ANY\(\?\) OR created_by LIKE ANY\(\?::text\[\]\) \) AND deleted_at IS NULL$/);
+    expect(pf.values[0]).toBe(VARIETY_ID);
   });
 
   it('a row the caller may not edit answers the generic 404, never a pairing 400', async () => {
@@ -348,6 +374,23 @@ describe('normalizeOriginText', () => {
   it('passes non-objects through for validateBody to refuse', () => {
     expect(normalizeOriginText(null)).toBeNull();
     expect(normalizeOriginText([1])).toEqual([1]);
+  });
+
+  // null and absent are one token on the wire and both mean KEEP (index.js "undefined/null in body =
+  // keep existing"); only blank text or `clear` empties a column. An API or agent caller sending
+  // null must not lose the stored origin.
+  it('leaves an explicit null alone — null means keep, it is not a clear', () => {
+    expect(normalizeOriginText({ origin_country: null, origin_region: null }))
+      .toEqual({ origin_country: null, origin_region: null });
+  });
+
+  it('a PUT carrying null origins keeps them: no keep value, no clear', async () => {
+    const res = await put({ origin_country: null, origin_region: null, care_notes: 'x' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    for (const col of ['origin_country', 'origin_region']) {
+      expect(keepBind(col), col).toBeNull();
+      expect(clearBind(col), col).not.toContain(col);
+    }
   });
 });
 

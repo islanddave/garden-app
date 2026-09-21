@@ -445,6 +445,19 @@ describe('VarietyEditor — origin, breeding and heat source (VARIETYFACTSEDIT)'
     expect(Object.fromEntries(field('breeding_source').options).inference).toBe('Best guess')
   })
 
+  // The table above is data; this is what reaches the screen. A renderer that printed the raw value
+  // (open_pollinated, inference) would pass every FIELDS assertion.
+  it('renders those labels, not the stored values, as the dropdown choices', () => {
+    const { container } = renderRoundTrip()
+    openAllSections(container)
+    const shown = (key) => [...container.querySelector(`select[id$="-${key}"]`).options]
+      .filter(o => o.value !== '').map(o => o.textContent)
+    expect(shown('breeding_system')).toEqual(['F1 hybrid', 'Open-pollinated', 'Landrace', 'Unknown'])
+    expect(shown('scoville_source')).toEqual([
+      'Seed packet', "Supplier's catalog", 'Breeder', 'Reference book or site', 'My own record', 'Best guess (shows est.)',
+    ])
+  })
+
   // src/ must not import lambda/, so the server's vocabulary is read off disk (clearKeys.test.js's
   // approach). An option the server does not accept is a Save that 400s and loses every other edit.
   it('offers exactly the values the server validates, no more and no fewer', () => {
