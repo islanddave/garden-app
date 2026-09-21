@@ -6,7 +6,7 @@
 const { generatePlan, PLAN_SCHEMA_VERSION, resolveCadence } = require('./engine');
 const { stationConfig, deriveStation, bindStationToSpace, mergeStationHydrology, mergeStationWeather, FRESHNESS_MAX_MIN, ARRAY_SILENT_MIN_GAP_MIN } = require('./station'); // DRG-WXSTATION-001; stationConfig BUG-STATIONDEGRADESILENT-001; FRESHNESS_MAX_MIN BUG-STATIONSTALESILENT-001; ARRAY_SILENT_MIN_GAP_MIN V5-STATIONHEALTHYEAR-001
 const { summarize } = require('./frostClass');                                   // V4-FROST-001 F2 (D6 per-crop bands)
-const { frostEval, frostCoverage, sentCoverage, isFrostSeason, resolveFrostRun, escalatesBeyond, advisoryNight, nightPhrase, sentNight } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001; frostCoverage BUG-INGROUND39FSLIVER-001; sentCoverage BUG-INGROUNDPOSTWINDOW-001; advisoryNight/nightPhrase frostSubject (BUG-FROSTADVISORYNIGHTWORDING-001 F9.1); sentNight BUG-FROSTESCALATENIGHTMOVE-001
+const { frostEval, frostCoverage, sentCoverage, isFrostSeason, resolveFrostRun, escalatesBeyond, advisoryNight, nightPhrase, sentNight, countsAsSent } = require('./frostEval');    // V4-FROST-001 F1/F3; escalatesBeyond OPS-PLANHOURLY-001; frostCoverage BUG-INGROUND39FSLIVER-001; sentCoverage BUG-INGROUNDPOSTWINDOW-001; advisoryNight/nightPhrase frostSubject (BUG-FROSTADVISORYNIGHTWORDING-001 F9.1); sentNight BUG-FROSTESCALATENIGHTMOVE-001; countsAsSent BUG-FROSTREHEARSALSWALLOWS-001
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
 const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
 const drought = require('./droughtSignal');                                      // V5-LEGACYEXCEPTIONCARE-001
@@ -905,10 +905,14 @@ function frostWeatherFacts(d) {
       : { lowF, dayOffset: 0, ...(d.imminent && d.imminent.radiativeOnly ? { trip: 'radiative' } : {}) };
   }
   if (d.tier === 'advisory' && d.advisory) {
-    const { minLowF, dayOffset, date, nightOffset } = d.advisory;
+    const { minLowF, dayOffset, date, nightOffset, radiativeOnly } = d.advisory;
     if (minLowF == null) return {};
+    // V5-TODAYRADIATIVEWATCH-001 — the advisory's trip basis too, in the imminent entry's vocabulary: a radiative-only
+    // advisory (frostEval marks it from the predicate its "FROST WATCH" copy used) fires above its trip point, and the
+    // Today line words it as the watch its email is titled, not "Frost possible". Absent otherwise, as for imminent.
     return { lowF: minLowF, ...(dayOffset != null ? { dayOffset } : {}), ...(date ? { date } : {}),
-      ...(Number.isInteger(nightOffset) && nightOffset >= 0 ? { nightOffset } : {}) };
+      ...(Number.isInteger(nightOffset) && nightOffset >= 0 ? { nightOffset } : {}),
+      ...(radiativeOnly ? { trip: 'radiative' } : {}) };
   }
   return {};   // heat carries no low; its cue is already on Today (computeCallout high >= 88)
 }
@@ -1934,12 +1938,16 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
           // "the cold moved to tonight": a second email, and Today saying tonight for the rest of the plan date. A
           // guessed night keeps the gate this rule replaced: the same key is already sent, and only severity and crops
           // escalate. The next run whose hours locate the minimum decides. What a send stores is unchanged.
+          //
+          // BUG-FROSTREHEARSALSWALLOWS-001 — a send made by a FORCED run (a rehearsal) is never "exactly this": both
+          // gates below skip it (frostEval.countsAsSent), so a rehearsal before 14:00 ET can no longer swallow the
+          // real advisory. It is still carried and stored: it is the record of an email that went out.
           const facts = frostDecision ? frostWeatherFacts(frostDecision) : {};
           const night = frostDecision ? sentNight({ tier: frostDecision.tier, ...facts }) : null;
           const nightBasis = frostDecision && frostDecision.tier === 'advisory' && frostDecision.advisory
             ? frostDecision.advisory.nightBasis : null;
           const guessedNight = !!frostDecision && frostDecision.tier === 'advisory' && nightBasis !== 'hourly';
-          const sentExactly = (a) => !!a && a.key === dk
+          const sentExactly = (a) => countsAsSent(a) && a.key === dk
             && (frostDecision.tier !== 'advisory' || guessedNight || sentNight(a) === night);
           const worse = !escalationGated
             || escalatesBeyond(alertsSent, { level: frostDecision.level, crops: frostDecision.cropLevels, night: guessedNight ? null : night });
@@ -1958,8 +1966,9 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
                 // 'forced' (event.frostEval, the F5 rehearsal lever, whose trip points may be raised). The
                 // 2026-09-07 rehearsal was stored as key/tier/level/at alone and was read as a real <= 40F night
                 // in four code comments; only CloudWatch (30-day retention) showed run "forced" at 58F. Written on
-                // every send, so an entry without it was stored before this field existed. Nothing reads it to
-                // decide anything: a forced send still dedups later runs exactly as before.
+                // every send, so an entry without it was stored before this field existed.
+                // BUG-FROSTREHEARSALSWALLOWS-001 — and it is now READ: a 'forced' entry dedups nothing (countsAsSent)
+                // and never renders on Today, so a rehearsal can no longer stand in for the day's real email.
                 const entry = { key: dk, tier: frostDecision.tier, level: frostDecision.level, at: new Date().toISOString(), run: frostRun.slot, ...(frostDecision.cropLevels ? { crops: frostDecision.cropLevels } : {}), ...facts };
                 spaceNew.push(entry);
                 alertsSent = [...alertsSent, entry];
@@ -1984,7 +1993,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
             console.log(JSON.stringify({ msg: 'frost alert HELD — not an escalation', space: spaceId, user: user_id,
               dedup_key: dk, tier: frostDecision.tier, level: frostDecision.level,
               crops: frostDecision.cropLevels || null, night, night_basis: nightBasis,
-              already_sent: alertsSent.map((a) => (a && { level: a.level, crops: a.crops || null, night: sentNight(a) })).filter(Boolean) }));
+              already_sent: alertsSent.map((a) => (countsAsSent(a) && { level: a.level, crops: a.crops || null, night: sentNight(a) })).filter(Boolean) }));
           }
           // Capped here rather than only on a send: the merged list can pass the cap with no send this run.
           alertsSent = alertsSent.slice(-ALERTS_SENT_MAX);

@@ -37,6 +37,9 @@
 //          filter narrowed 1 · filter broadened 1 · filter removed 2 · sample line drifts 1 · failed read goes silent 2
 // The script's own test-patterns controls were mutated separately (bash -e, a fake aws that emulates a quoted
 // phrase as a substring and touches nothing): 4/4 fail the run, the unmutated control passes.
+// BUG-FROSTREHEARSALSWALLOWS-001 (lane frostwatch, 2026-09-21) REVERSED "no reader reads `run`": the gates and the Today
+// client now skip `run: 'forced'` entries, which is what the "gate reads it" and "Today client reads it" mutations
+// above did. Two cases in the OPS-FROSTREHEARSALMARK-001 block are marked CHANGED; frostrehearsal.test.js pins the rule.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -334,9 +337,11 @@ describe('OPS-FROSTREHEARSALMARK-001 — the stored entry says which run sent it
     const pub = publisher();
     await once(t, pub, { etHour: 20, nws: 35, ...TONIGHT, event: { frostEval: true } });
     await once(t, pub, { etHour: 21, ...TONIGHT, event: { frostEval: true } });
-    expect(pub.frost().map((c) => c.hour)).toEqual([20]);
-    expect(t.sent()).toHaveLength(1);
-    expect(t.sent()[0]).toMatchObject({ tier: 'imminent', run: 'forced' });
+    // CHANGED by BUG-FROSTREHEARSALSWALLOWS-001 (lane frostwatch, 2026-09-21). This case used to pin that the 20 ET
+    // forced send held the 21 ET one (emails [20], one entry): "nothing reads `run`". Dave's call, "Tests never count":
+    // a forced entry dedups nothing, not even another rehearsal, so 21 ET sends as well. Both are marked forced.
+    expect(pub.frost().map((c) => c.hour)).toEqual([20, 21]);
+    expect(t.sent().map((a) => [a.tier, a.run])).toEqual([['imminent', 'forced'], ['advisory', 'forced']]);
   });
 
   it('THE 2026-09-07 SHAPE: ADVISORY_LOW_F raised to 58, forced at 19 ET, a 55.7F forecast -> the entry is marked forced', async () => {
@@ -358,8 +363,11 @@ describe('OPS-FROSTREHEARSALMARK-001 — the stored entry says which run sent it
   });
 
   it('an entry stored before the field (no `run`) reads exactly as before, in every reader of the entry', () => {
+    // CHANGED by BUG-FROSTREHEARSALSWALLOWS-001 (lane frostwatch, 2026-09-21). `withRun` was a FORCED entry, and the
+    // property was "no reader reads `run`". The readers now skip forced entries (frostrehearsal.test.js pins each), so
+    // the property held here is the one that still matters: an entry without `run` reads exactly like a scheduled one.
     const withRun = { key: 'sp1|2026-10-05|advisory|advisory|s51rcs', tier: 'advisory', level: 'advisory',
-      at: '2026-10-05T19:00:00.000Z', run: 'forced', crops: { tomato: 'advisory' },
+      at: '2026-10-05T19:00:00.000Z', run: 'intraday-pm', crops: { tomato: 'advisory' },
       lowF: 38, dayOffset: 1, date: '2026-10-06', nightOffset: 0 };
     const { run: _dropped, ...without } = withRun;
     expect(without).not.toHaveProperty('run');
@@ -380,6 +388,10 @@ describe('OPS-FROSTREHEARSALMARK-001 — the stored entry says which run sent it
     // the client that words the Today line (src/lib/frostAlertLine.js)
     expect(buildFrostAlertLine([withRun])).toEqual(buildFrostAlertLine([without]));
     expect(buildFrostAlertLine([without]).text).toBe('Frost possible tonight — low 38°F. Plan cover for tender plants.');
+    // ...while the same entry sent by a forced run reads as nothing sent, and renders nothing.
+    const forced = { ...withRun, run: 'forced' };
+    expect(escalatesBeyond([forced], { level: 'advisory', crops: { tomato: 'advisory' }, night: 0 })).toBe(true);
+    expect(buildFrostAlertLine([forced])).toBeNull();
   });
 });
 

@@ -12,6 +12,9 @@
 // body head ("FROST WATCH — …") and the email subject ("Garden alert - Frost watch <night> (low NNF)"). Copy only —
 // tier, level and dedup key stay 'advisory'. The same-night clause reads "Colder on a second forecast: 35°F tonight,
 // <date> — …"; the different-night clause is byte-identical to before. (The Today line names no tier and is untouched.)
+// CHANGED by V5-TODAYRADIATIVEWATCH-001 (lane frostwatch, 2026-09-21): no longer untouched. The advisory entry now records
+// `trip: 'radiative'` and the Today line says "Frost watch <night> — clear and calm, low N°F. …" (Dave: "Show it on
+// Today"); the two cases below that pinned the old entry and line are marked.
 //
 // Every decision here comes out of the real frostEval, and every subject out of the real handler.frostSubject.
 // Run under TZ=UTC and TZ=America/New_York.
@@ -86,13 +89,15 @@ describe('radiative-only advisory — labelled a watch where the tier name reach
     expect(frostSubject(r)).toBe('Garden alert - Frost watch tonight (low 42F)');
   });
 
-  it('copy only: tier, level, dedup key and the stored entry are the advisory\'s, as before', () => {
+  it('copy only: tier, level and dedup key are the advisory\'s, as before; the stored entry adds the trip basis', () => {
     const r = ev();
     expect([r.tier, r.level]).toEqual(['advisory', 'advisory']);
     expect(r.dedupKey).toBe(dedupKey({ spaceId: 'S1', eventDate: PLAN, tier: 'advisory', level: 'advisory', crops: r.trippedCrops }));
     expect(r.dedupKey.startsWith('S1|2026-10-09|advisory|advisory|')).toBe(true);
     expect(r.observability).toMatchObject({ tier: 'advisory', level: 'advisory' });
-    expect(frostWeatherFacts(r)).toEqual({ lowF: 42, dayOffset: 1, date: '2026-10-10', nightOffset: 0 });
+    // CHANGED by V5-TODAYRADIATIVEWATCH-001 (lane frostwatch, 2026-09-21): the entry also records the trip basis, so
+    // the Today line can say watch. It was { lowF, dayOffset, date, nightOffset } exactly; tier/level/key are unchanged.
+    expect(frostWeatherFacts(r)).toEqual({ lowF: 42, dayOffset: 1, date: '2026-10-10', nightOffset: 0, trip: 'radiative' });
     expect(r.advisory.radiativeOnly).toBe(true);
   });
 });
@@ -254,13 +259,15 @@ async function drive({ lows, hourlyTemp, tonightLow }) {
 }
 
 describe('END TO END — what the real run() publishes', () => {
-  it('a radiative-only advisory goes out as a watch; the stored entry and the Today line are unchanged in kind', async () => {
+  it('a radiative-only advisory goes out as a watch; the stored entry records the trip and the Today line says watch', async () => {
     const { frost, row } = await drive({ lows: [42, 50, 51], hourlyTemp: minAt('2026-10-10', 42, 5), tonightLow: 55 });
     expect(frost).toHaveLength(1);
     expect(frost[0].subject).toBe('Garden alert - Frost watch tonight (low 42F)');
     expect(frost[0].message.startsWith('FROST WATCH — tonight looks clear and calm (low 42°F, 2026-10-10, dewpoint 33°F), so it can fall further than the forecast.')).toBe(true);
-    expect(row.alerts_sent.at(-1)).toMatchObject({ tier: 'advisory', level: 'advisory', lowF: 42, nightOffset: 0 });
-    expect(buildFrostAlertLine(row.alerts_sent).text).toBe('Frost possible tonight — low 42°F. Plan cover for tender plants.');
+    // CHANGED by V5-TODAYRADIATIVEWATCH-001 (lane frostwatch, 2026-09-21): the entry records the radiative trip and the
+    // Today line says watch, as the email does. Was: no `trip`, and "Frost possible tonight — low 42°F. …".
+    expect(row.alerts_sent.at(-1)).toMatchObject({ tier: 'advisory', level: 'advisory', lowF: 42, nightOffset: 0, trip: 'radiative' });
+    expect(buildFrostAlertLine(row.alerts_sent).text).toBe('Frost watch tonight — clear and calm, low 42°F. Plan cover for tender plants.');
   });
 
   it('a radiative imminent with a colder same-night advisory: the second forecast is named, not "ahead"', async () => {

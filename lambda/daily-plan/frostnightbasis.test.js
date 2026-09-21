@@ -228,7 +228,9 @@ describe('I1 — a gap in the hourly data is not the cold moving to another nigh
     expect(s.emails.map((e) => [e.hour, e.subject])).toEqual([[14, 'Garden alert - Frost watch tomorrow night (low 42F)']]);
     expect(s.runs[15].held).toEqual([]);
     expect(s.t.sent().map((a) => a.nightOffset)).toEqual([1]);
-    expect(buildFrostAlertLine(s.t.sent()).text).toBe('Frost possible tomorrow night — low 42°F. Plan cover for tender plants.');
+    // CHANGED by V5-TODAYRADIATIVEWATCH-001 (lane frostwatch, 2026-09-21): the radiative-only advisory's entry now carries
+    // `trip: 'radiative'` and Today words it as the watch its email is titled (was "Frost possible tomorrow night — …").
+    expect(buildFrostAlertLine(s.t.sent()).text).toBe('Frost watch tomorrow night — clear and calm, low 42°F. Plan cover for tender plants.');
     expect(agreedTonightLow(s.t.items())).toBeNull();
   });
 

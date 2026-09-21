@@ -15,10 +15,13 @@
 // Trigger: the frost line Today renders (buildFrostAlertLine(plan.alerts_sent)) names tonight,
 // nightOffset 0. No trigger -> null here, and every caller renders exactly what it rendered before.
 // A line naming tomorrow night or a weekday is about a DIFFERENT night: tonight keeps the plan low and
-// the line keeps its own number. An imminent entry never renders as the frost line (frostAlertLine.js
-// SEVERITY), so it never triggers — the card and the cue already share the plan low on those nights.
+// the line keeps its own number. A THRESHOLD imminent entry never renders as the frost line
+// (frostAlertLine.js pickAdvisory), so it never triggers — the card and the cue already share the plan low
+// on those nights. A RADIATIVE imminent entry renders as tonight's watch line (V5-TODAYRADIATIVEWATCH-001)
+// and triggers like any line naming tonight: its low is the plan low it was sent at, and min() below keeps
+// whichever is colder if a later run has moved the plan low.
 //
-// Shared low: Traw = min(plan low, the advisory's raw lowF), the colder one winning in both directions
+// Shared low: Traw = min(plan low, the line's raw lowF), the colder one winning in both directions
 // (a missing plan low leaves the advisory's). Every surface prints T = round(Traw), one whole number.
 // The cue's freeze/cold split is taken on Traw, never on T, so rounding can never soften freeze into
 // cold: a plan low of 39.6 keeps the freeze words and prints "(40°F)", exactly as the engine keys its
