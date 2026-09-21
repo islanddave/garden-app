@@ -54,6 +54,8 @@ pre:
       carries a cultivar care_profile, so staging has zero STRANDS and this rowcount_gte 1 would fail there
       while describing nothing wrong. continuous false because this is a measurement of a moment, not an
       invariant: applying 0a does not change it, and resolving the two findings drives it to zero.
+      Carries the guard's placeholder exclusion (2026-09-21) so it keeps measuring what the guard
+      counts. Re-measured 2026-09-21: 3 (Shipka, Palmetto Punch, Sunbright; Snapdragon resolved).
     env: prod
     continuous: false
     sql: |
@@ -71,6 +73,8 @@ pre:
                           WHERE p.variety_id = r.old_v
                             AND p.deleted_at IS NULL AND p.archived_at IS NULL)
          AND cp.profile->>'_retained' IS NULL
+         AND (cp.profile->>'_basis' IS DISTINCT FROM 'unresearched'
+              OR (cp.profile - ARRAY['_source', '_basis', 'notes']) <> '{}'::jsonb)
     expect: rowcount_gte
     value: 1
 
@@ -83,6 +87,19 @@ post:
       schema_version row, so it is vacuously green on a migrations/** push and becomes a real standing
       invariant the moment 0a is applied. Deliberately NOT filtered by plant_varieties.deleted_at — a
       profile hanging off a soft-deleted variety is more stranded, not less.
+
+      AN APP PLACEHOLDER IS NOT A STRAND — Dave's decision 2026-09-21 ("Ignore placeholders: it flags
+      only when researched care info gets left behind. A placeholder holds nothing."). Since v4.137
+      every cultivar the app mints carries NEW_CULTIVAR_PROFILE (lambda/varieties/index.js) — _source,
+      _basis 'unresearched', notes, and nothing else — so each VarietyPicker correction strands one. The
+      exclusion is by PROPERTY, never by name or writer: a row is a placeholder only while _basis is
+      'unresearched' AND it carries no key beyond _source, _basis and notes. Any other key (a cadence,
+      a feed flag, a drought note, anything) or a relabelled _basis makes it count again. Keyed on
+      _basis, the meaning, not _source, the writer — same choice as v4-cadencerefill-001's sibling.
+      Written as IS DISTINCT FROM ... OR, not NOT (... AND ...): with no _basis the conjunction is
+      NULL and the row would silently leave the guard. Unknown Sweet Long is NOT a placeholder by this
+      rule — its row says 'unresearched' but carries the Dave-approved 2d/17d Capsicum fallback — so
+      re-identifying it flags. README §Placeholders has the rehearsal and the mutations.
     sql: |
       WITH rekeyed AS (
         SELECT DISTINCT (a.before_jsonb->>'variety_id')::uuid AS old_v
@@ -98,6 +115,8 @@ post:
                           WHERE p.variety_id = r.old_v
                             AND p.deleted_at IS NULL AND p.archived_at IS NULL)
          AND cp.profile->>'_retained' IS NULL
+         AND (cp.profile->>'_basis' IS DISTINCT FROM 'unresearched'
+              OR (cp.profile - ARRAY['_source', '_basis', 'notes']) <> '{}'::jsonb)
          AND EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '5.0.0-rekeystrand-20260908')
     expect: rowcount_eq
