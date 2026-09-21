@@ -54,6 +54,16 @@ describe('seed list rows carry the packet photo the card reads', () => {
     expect(r).not.toHaveProperty('featured_photo_storage_path');
     expect(r).not.toHaveProperty('effective_featured_photo_id');
     expect(stubState.presigns).toEqual([]);
+    // BUG-SEEDTHUMBSOFFLINE-001: the thumb's object KEY rides along (a string, not a signature), so
+    // the phone can find a thumb it already holds before asking for a link.
+    expect(r.hero_thumb_key).toBe(`thumbs/${KEY}`);
+  });
+
+  it('a row with no photo carries no thumb key', async () => {
+    stubState.sqlHandler = () => [{ ...listRow(), effective_featured_photo_id: null, featured_photo_storage_path: null }];
+    const { body } = parse(await handler(get('/api/inventory-items', { category: 'seeds' })));
+    expect(body[0].hero_photo_id).toBeNull();
+    expect(body[0].hero_thumb_key).toBeNull();
   });
 
   it('the list logs its route, row count and elapsed ms under tag inv-list', async () => {

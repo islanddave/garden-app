@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.141.1",
+    "date": "2026-09-21",
+    "highlights": [
+      "My seeds shows a packet picture you have already seen straight from your phone, even with no signal, and asks the server only for the ones you haven't"
+    ]
+  },
+  {
     "version": "4.141.0",
     "date": "2026-09-21",
     "highlights": [

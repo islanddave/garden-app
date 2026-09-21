@@ -107,6 +107,8 @@ describe('the seed list row, read from a real database', () => {
     expect(r).not.toHaveProperty('featured_photo_thumb_url')
     expect(r).not.toHaveProperty('featured_photo_storage_path')
     expect(r).not.toHaveProperty('effective_featured_photo_id')
+    // BUG-SEEDTHUMBSOFFLINE-001: the FALLBACK hero's own thumb key — not the soft-deleted newer photo's.
+    expect(r.hero_thumb_key).toBe(`thumbs/${livePath}`)
   })
 
   it('carries every cultivar fact the card shows, through the cultivar view', async () => {

@@ -41,6 +41,7 @@ import { useSources } from '../hooks/useSources.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
 import { IMAGE_WINDOW_PAGE } from '../hooks/useImageWindow.js'
 import useNearViewport from '../hooks/useNearViewport.js'
+import useDeviceThumb from '../hooks/useDeviceThumb.js'
 import { looseIncludes } from '../lib/comboboxInput.js'
 import { labelCandidates, isSavedLot } from '../components/seed/seedLots.js'
 import {
@@ -605,12 +606,18 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
   const hasLine = chipTall || !!(amount || heat || tail)
   const inProcess = isInProcess(item)
   const colors = vendor ? supplierColors(vendor) : null
-  // The list row carries the photo's id and no URL (BUG-SEEDLISTSIGNING-001): the thumb is minted by id
-  // (resolveById below) for rows that mount one, and served from the phone's photo cache once seen.
+  // The list row carries the photo's id and no URL (BUG-SEEDLISTSIGNING-001). A row that draws its
+  // thumb first asks the phone's own photo cache for it by key (BUG-SEEDTHUMBSOFFLINE-001): a hit is a
+  // URL the service worker answers with no network, offline included. Only a miss mints a link by id
+  // (resolveById below). While the lookup runs (`undefined`) the row draws nothing but its box, so no
+  // mint starts for a picture the phone already has.
+  const deviceThumb = useDeviceThumb(withPhoto ? item.hero_thumb_key : null)
   const photo = useMemo(
-    () => lotPhoto(item, { byId: true }),
+    () => (deviceThumb && item.hero_photo_id
+      ? { id: item.hero_photo_id, featured_photo_thumb_url: deviceThumb, inventory_item_id: item.id ?? null }
+      : lotPhoto(item, { byId: true })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [item.id, item.hero_photo_id, item.featured_photo_view_url, item.featured_photo_thumb_url],
+    [item.id, item.hero_photo_id, item.featured_photo_view_url, item.featured_photo_thumb_url, deviceThumb],
   )
   const sep = (has) => (has ? ' · ' : '')
 
@@ -634,7 +641,7 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
         style={rowBtn}
       >
         <span data-testid="my-seed-thumb" style={photo ? thumbBoxPhoto : thumbBoxEmpty}>
-          {photo && withPhoto && (
+          {photo && withPhoto && deviceThumb !== undefined && (
             <PhotoView photo={photo} tier={TIER.THUMB} resolveById alt="" decoding="async" style={thumbImg} data-testid="my-seed-photo" />
           )}
           {!photo && <Icon name="lifecycle.sprout" size={24} decorative />}

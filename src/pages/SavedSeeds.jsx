@@ -332,7 +332,7 @@ const LIST_ROW_PUT_STRIP = [
   'germination', 'featured_photo_id', 'variety_id', 'seed_process', 'seed_stage', 'source_plant_id',
   'source_kind', 'source_id', 'acquired_from_source_id', 'year_harvested',
   'seed_count', 'seed_weight_g', 'seed_count_estimated',
-  'featured_photo_thumb_url', 'hero_photo_id', 'scoville_min', 'scoville_max', 'scoville_source',
+  'featured_photo_thumb_url', 'hero_photo_id', 'hero_thumb_key', 'scoville_min', 'scoville_max', 'scoville_source',
   'origin_country', 'origin_region', 'species', 'breeding_system', 'days_to_maturity_min',
   'days_to_maturity_max', 'dtm_basis', 'variety_source_url',
 ]

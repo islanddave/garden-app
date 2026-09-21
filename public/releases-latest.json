@@ -1,8 +1,7 @@
 {
-  "version": "4.141.0",
+  "version": "4.141.1",
   "date": "2026-09-21",
   "highlights": [
-    "On a clear, calm night that brings a Frost watch email, the Today screen now says the same thing, for example: Frost watch tonight, clear and calm, low 41°F.",
-    "A test run of the frost alert no longer counts as the day's real frost email, so a test can no longer stop a real frost warning from going out."
+    "My seeds shows a packet picture you have already seen straight from your phone, even with no signal, and asks the server only for the ones you haven't"
   ]
 }

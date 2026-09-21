@@ -1401,13 +1401,23 @@ export const handler = async (event) => {
       // its own cache (sw.js photos-v1, keyed on the URL minus its signature), so the list carries the
       // photo's id and My seeds asks GET /api/photos/view-url/:id?tier=thumb for the rows it draws
       // (PhotoView resolveById). Do not put the URLs back to save those round trips.
+      //
+      // BUG-SEEDTHUMBSOFFLINE-001 — and the thumb's object KEY (`hero_thumb_key`, thumbs/<storage
+      // path>: a string, not a signature — no presign runs). With it My seeds looks the thumb up in
+      // the phone's photos-v1 cache BEFORE asking for a link, so a thumb the phone already holds
+      // shows with no request at all — offline included — and only a missing one costs a mint.
+      // The thumbs/ prefix is lambda/photos viewTier.js's TIER_PREFIX; the client never builds it.
       const listRows = rows.map((row) => {
         const {
-          featured_photo_storage_path: _storagePath,
+          featured_photo_storage_path: storagePath,
           effective_featured_photo_id: heroId,
           ...rest
         } = row;
-        return { ...rest, hero_photo_id: heroId ?? null };
+        return {
+          ...rest,
+          hero_photo_id: heroId ?? null,
+          hero_thumb_key: heroId && storagePath ? `thumbs/${storagePath}` : null,
+        };
       });
       console.log(JSON.stringify({
         tag: 'inv-list', filter: cats ? cats.join(',') : 'all', rows: listRows.length, ms: Date.now() - startedAt,

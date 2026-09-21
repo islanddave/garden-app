@@ -22,14 +22,17 @@ import MySeeds from '../pages/MySeeds.jsx'
 import { useSeedItems } from '../hooks/useSeedItems.js'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+import { __resetDeviceThumb } from '../lib/deviceThumb.js'
+import { makeFakeCaches } from './helpers/swHarness.js'
 
 const pepper = (id, hero) => ({
   id, name: `Pepper ${id}`, variety_name: `Pepper ${id}`, category: 'seeds', type: 'consumable', unit: 'packet',
   status: 'active', quantity_on_hand: 1, variety_id: `v-${id}`, crop_slug: 'pepper', seed_stage: null,
   seed_process: null, source_plant_id: null, source_kind: null, source_id: null, source: null,
   purchase_date: null, year_harvested: null, stage_entered_at: null, created_at: '2026-07-01T12:00:00Z',
-  // The list's shape: the derived hero's id, no URL keys.
+  // The list's shape: the derived hero's id and its thumb's object key, no URL keys.
   hero_photo_id: hero, featured_photo_id: null,
+  hero_thumb_key: hero ? `thumbs/inventory/${id}/${hero}.jpg` : null,
   scoville_min: null, scoville_max: null, scoville_source: null, variety_source_url: null,
 })
 const ROWS = [pepper('a', 'ph-a'), pepper('b', 'ph-b'), pepper('c', null)]
@@ -39,6 +42,8 @@ const mintCalls = () => fetchSpy.mock.calls.map(([p]) => String(p)).filter((p) =
 
 beforeEach(() => {
   __resetPhotoImgCache()
+  __resetDeviceThumb()
+  delete globalThis.caches
   fetchSpy.mockReset()
   try { window.sessionStorage.clear() } catch { /* jsdom */ }
   fetchSpy.mockImplementation((path) => {
@@ -50,7 +55,7 @@ beforeEach(() => {
     return Promise.resolve([])
   })
 })
-afterEach(() => cleanup())
+afterEach(() => { cleanup(); delete globalThis.caches })
 
 function Host() {
   const store = useSeedItems()
@@ -84,5 +89,24 @@ describe('My seeds — packet thumbs are minted by id, for drawn rows only', () 
     expect(mintCalls().sort()).toEqual(['/api/photos/view-url/ph-a?tier=thumb', '/api/photos/view-url/ph-b?tier=thumb'])
     expect(within(rowFor('c')).queryByTestId('my-seed-photo')).toBeNull()
     expect(within(rowFor('c')).getByTestId('my-seed-thumb').querySelector('svg')).toBeTruthy()
+  })
+
+  // BUG-SEEDTHUMBSOFFLINE-001: a thumb the phone already holds is drawn from its cache by key — no mint,
+  // no request — and only the row whose thumb is missing asks for a link.
+  it('a thumb already in photos-v1 is drawn by key with NO mint; the missing one still mints', async () => {
+    const HOST = 'https://photos.test'
+    const api = makeFakeCaches({ 'photos-v1': {
+      [`${HOST}/thumbs/inventory/a/ph-a.jpg?x-id=GetObject`]: new Response('A', { headers: { 'Content-Type': 'image/jpeg' } }),
+    } })
+    api.has = async (name) => api.store.has(name)
+    globalThis.caches = api
+    await mount()
+    await act(async () => { fireEvent.click(screen.getByTestId('facet-group-header')) })
+    await waitFor(() => {
+      expect(within(rowFor('a')).getByTestId('my-seed-photo').getAttribute('src'))
+        .toBe(`${HOST}/thumbs/inventory/a/ph-a.jpg?x-id=GetObject`)
+      expect(within(rowFor('b')).getByTestId('my-seed-photo').getAttribute('src')).toBe(minted('ph-b', 'thumb'))
+    })
+    expect(mintCalls()).toEqual(['/api/photos/view-url/ph-b?tier=thumb'])
   })
 })

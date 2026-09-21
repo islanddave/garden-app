@@ -157,7 +157,7 @@ const seed = (variety, crop, over = {}) => ({
   breeding_system: null, days_to_maturity_min: null, days_to_maturity_max: null, dtm_basis: null,
   variety_source_url: null,
   // The packet photo: `i.*`'s raw pointer and the effective hero's id. No URL rides on the row.
-  featured_photo_id: null, featured_is_explicit: false, hero_photo_id: null,
+  featured_photo_id: null, featured_is_explicit: false, hero_photo_id: null, hero_thumb_key: null,
   ...over,
 })
 // A bought packet: the vendor is the REGISTRY row; `source` holds what prod keeps there, an order note.
@@ -182,7 +182,9 @@ const photoUrls = (file) => {
     thumb: `${IMG}/${file}?p=${p}&tier=thumb&load=${LOAD}`,
     full: `${IMG}/${file}?p=${p}&tier=full&load=${LOAD}`,
   })
-  return { hero_photo_id: id }
+  // The object key rides too, as on prod; the harness registers no service worker, so the phone-cache
+  // lookup (BUG-SEEDTHUMBSOFFLINE-001) always misses here and every drawn row mints.
+  return { hero_photo_id: id, hero_thumb_key: `thumbs/harness/${id}.png` }
 }
 const photo = (shape) => {
   const u = photoUrls(`packet-${shape}.png`)

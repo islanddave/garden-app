@@ -622,8 +622,8 @@ else
           # Every list GET now carries the derived hero (hero_photo_id) and the cultivar facts, and
           # the client PUTs a LIST row back whole (Inventory's stepper, quantityAdjuster.js). Prove on
           # staging's real schema that the row just created carries the new keys, that the exact
-          # row PUT back is accepted, and that the seeds list — the one branch that signs photo URLs,
-          # and that also joins scoville_source — answers 200.
+          # row PUT back is accepted, and that the seeds list — which joins scoville_source and, since
+          # BUG-SEEDLISTSIGNING-001, signs no photo URL at all — answers 200.
           INV_LIST=$(mktemp)
           INV_LIST_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
             -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
