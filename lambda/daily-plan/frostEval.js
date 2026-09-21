@@ -395,11 +395,16 @@ function advisoryMessage(a, exposure, cropResult, radiativeNight) {
       `${radiativeNight && radiativeNight.minDewpointF != null ? `, dewpoint ${radiativeNight.minDewpointF}°F` : ''}), ` +
       'so it can fall further than the forecast.'
     : `FROST ADVISORY — frost possible ${when} (low ${a.lowF ?? a.minLowF}°F${on}).`;
+  // V5-TODAYFROSTLINEGAPS-001 (Dave 2026-09-21) — an advisory about TONIGHT says what to do tonight, as the watch's
+  // same-night clause does; "Harvest ahead and stage row cover" is lead time for a night still to come. The night is
+  // the one the head names (advisoryNight, the predicate the imminent branch's `sameNight` uses), both heads alike.
+  const night = advisoryNight(a);
+  const close = night && night.nightOffset === 0 ? 'Pick what\'s ripe and cover tender plants tonight.' : 'Harvest ahead and stage row cover.';
   if (cropResult && cropResult.tripped && cropResult.tripped.length) {
     return truncate(`${head} At risk: ${cropListPhrase(cropResult.tripped)}. ${totalsPhrase(cropResult.tripped, exposure)} ` +
-      'Harvest ahead and stage row cover.');
+      close);
   }
-  return `${head} ${exposurePhrase(exposure)} Harvest ahead and stage row cover.`;
+  return `${head} ${exposurePhrase(exposure)} ${close}`;
 }
 
 function imminentMessage(im, exposure) {

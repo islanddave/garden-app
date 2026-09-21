@@ -166,8 +166,9 @@ describe('V5-TODAYRADIATIVEWATCH-001 — the radiative imminent email and Today 
     expect(emails[0].message.startsWith('FROST WATCH — tonight looks clear and calm (low 42°F, 2026-10-10')).toBe(true);
     expect(t.sent()[0]).toMatchObject({ tier: 'advisory', lowF: 42, nightOffset: 0, trip: 'radiative' });
     expect(buildFrostAlertLine(t.sent()).text).toBe(LINE('tonight', 42));
-    // the email's own tail is untouched (out of scope: Dave was not asked about it)
-    expect(emails[0].message.endsWith('Harvest ahead and stage row cover.')).toBe(true);
+    // CHANGED by V5-TODAYFROSTLINEGAPS-001 follow-up F3: this pinned the tail as out of scope ("Harvest ahead and stage row
+    // cover."); Dave has since been asked (2026-09-21) and an email about TONIGHT now says what to do tonight.
+    expect(emails[0].message.endsWith('Pick what\'s ripe and cover tender plants tonight.')).toBe(true);
   });
 
   // V5-TODAYFROSTLINEGAPS-001 — the colder advisory the watch email carries is stored on the entry (`colder`).

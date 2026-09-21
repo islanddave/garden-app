@@ -209,7 +209,11 @@ describe('frostEval — the advisory message names the located night; nothing el
   });
 
   it('D1 minimum before dawn -> "frost possible tonight", date suffix unchanged', () => {
+    // CHANGED by V5-TODAYFROSTLINEGAPS-001 follow-up F3 (Dave 2026-09-21): an advisory naming tonight closes with what to
+    // do tonight (was "Harvest ahead and stage row cover."). The no-crop-breakdown path, untruncated as before.
     expect(ev(hourly(5)).message).toBe('FROST ADVISORY — frost possible tonight (low 37°F, 2026-09-21). ' +
+      '~10 tender plantings, 2 in containers. Pick what\'s ripe and cover tender plants tonight.');
+    expect(ev(hourly(23)).message).toBe('FROST ADVISORY — frost possible tomorrow night (low 37°F, 2026-09-21). ' +
       '~10 tender plantings, 2 in containers. Harvest ahead and stage row cover.');
   });
 

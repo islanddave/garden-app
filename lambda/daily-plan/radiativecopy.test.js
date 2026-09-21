@@ -58,6 +58,9 @@ const ev = (over = {}, opts = {}) => frostEval({
 }, { frostSeason: true, radiativeEnabled: true, ...opts });
 
 const TAIL = ' At risk: peppers (5). 5 plantings, 1 in containers. Harvest ahead and stage row cover.';
+// CHANGED by V5-TODAYFROSTLINEGAPS-001 follow-up F3 (Dave 2026-09-21): an advisory naming TONIGHT closes with what to do
+// tonight. Both cases below that used TAIL name tonight, so they now use TAIL_TONIGHT; TAIL stays for a later night.
+const TAIL_TONIGHT = ' At risk: peppers (5). 5 plantings, 1 in containers. Pick what\'s ripe and cover tender plants tonight.';
 
 // ── 1 — the radiative-only advisory is a WATCH, in the body and the subject ─────────────────────────────
 describe('radiative-only advisory — labelled a watch where the tier name reaches Dave', () => {
@@ -65,7 +68,7 @@ describe('radiative-only advisory — labelled a watch where the tier name reach
     const r = ev();
     expect(r.tier).toBe('advisory');
     expect(r.message).toBe('FROST WATCH — tonight looks clear and calm (low 42°F, 2026-10-10, dewpoint 33°F), so it can fall ' +
-      `further than the forecast.${TAIL}`);
+      `further than the forecast.${TAIL_TONIGHT}`);
     expect(frostSubject(r)).toBe('Garden alert - Frost watch tonight (low 42F)');
     // BEFORE (base 10452156): 'Garden alert - Frost advisory tonight (low 42F)' over 'FROST ADVISORY — tonight looks …'
   });
@@ -105,7 +108,10 @@ describe('radiative-only advisory — labelled a watch where the tier name reach
 describe('every OTHER advisory keeps "Frost advisory" — the label follows the body', () => {
   it('a threshold advisory: body and subject unchanged', () => {
     const r = ev({ forecastLows: [37, 50, 51], forecastHourly: minAt('2026-10-10', 37, 5) });
-    expect(r.message).toBe(`FROST ADVISORY — frost possible tonight (low 37°F, 2026-10-10).${TAIL}`);
+    expect(r.message).toBe(`FROST ADVISORY — frost possible tonight (low 37°F, 2026-10-10).${TAIL_TONIGHT}`);
+    // ...and the same threshold advisory for TOMORROW night keeps the old close, byte for byte (evening minimum)
+    const later = ev({ forecastLows: [37, 50, 51], forecastHourly: minAt('2026-10-10', 37, 23) });
+    expect(later.message).toBe(`FROST ADVISORY — frost possible tomorrow night (low 37°F, 2026-10-10).${TAIL}`);
     expect(frostSubject(r)).toBe('Garden alert - Frost advisory tonight (low 37F)');
     expect(r.advisory).not.toHaveProperty('radiativeOnly');
   });
@@ -242,6 +248,59 @@ describe('radiative imminent + colder advisory — the same night is not "ahead"
     expect(huge.message.length).toBeLessThanOrEqual(fe.MAX_MESSAGE_CHARS);
     expect(huge.message.length).toBeGreaterThan(fe.MAX_MESSAGE_CHARS - 10);
     expect(huge.message.endsWith('…')).toBe(true);
+  });
+});
+
+// ── 2b — V5-TODAYFROSTLINEGAPS-001 follow-up F3: an ADVISORY about tonight closes with what to do tonight ──────────
+// Dave (2026-09-21): the close of an advisory email naming TONIGHT is "Pick what's ripe and cover tender plants tonight."
+// (capital P: it starts a sentence here), for the FROST ADVISORY head and the advisory-tier FROST WATCH head alike; an
+// advisory about a later night keeps "Harvest ahead and stage row cover.". The night is the one the head names.
+describe('advisory close — tonight says what to do tonight, a later night keeps the lead-time close', () => {
+  const PICK = ' Pick what\'s ripe and cover tender plants tonight.';
+  const HARVEST = ' Harvest ahead and stage row cover.';
+  const nights = ['2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11', '2026-10-12'].map((d) => clear(d));
+
+  it('GRID — both heads, every night the hours (or their absence) can name: the close follows the head\'s night', () => {
+    const seen = { advisoryTonight: 0, advisoryLater: 0, watchTonight: 0, watchLater: 0 };
+    for (const [low, radiativeNights] of [[37, []], [42, nights]]) {
+      for (const day of [0, 1, 2]) {
+        for (const hour of [0, 5, 11, 12, 18, 23, null]) {
+          const lows = [50, 51, 52]; lows[day] = low;
+          const r = ev({ forecastLows: lows, forecastHourly: hour == null ? null : minAt(DATES[day], low, hour), radiativeNights });
+          const at = `low=${low} D${day + 1} hour=${hour}`;
+          expect(r.tier, at).toBe('advisory');
+          const watch = r.message.startsWith('FROST WATCH — ');
+          const tonight = fe.advisoryNight(r.advisory).nightOffset === 0;
+          // the head's own night phrase agrees with the predicate that picks the close
+          expect(r.message.startsWith(watch ? 'FROST WATCH — tonight ' : 'FROST ADVISORY — frost possible tonight '), at).toBe(tonight);
+          expect(r.message.endsWith(tonight ? PICK : HARVEST), at).toBe(true);
+          expect(r.message.includes(tonight ? HARVEST : PICK), at).toBe(false);
+          seen[`${watch ? 'watch' : 'advisory'}${tonight ? 'Tonight' : 'Later'}`]++;
+        }
+      }
+    }
+    for (const [k, n] of Object.entries(seen)) expect(n, k).toBeGreaterThan(0);
+  });
+
+  it('the no-crop-breakdown path (untruncated) closes the same way', () => {
+    const legacy = (hour) => ev({ forecastLows: [37, 50, 51], forecastHourly: minAt('2026-10-10', 37, hour), exposure: { tender: 3, unknown: 0, tenderContainers: 0 } });
+    expect(legacy(5).message).toBe(`FROST ADVISORY — frost possible tonight (low 37°F, 2026-10-10). ~3 tender plantings.${PICK}`);
+    expect(legacy(23).message).toBe(`FROST ADVISORY — frost possible tomorrow night (low 37°F, 2026-10-10). ~3 tender plantings.${HARVEST}`);
+  });
+
+  it('LENGTH — a big garden keeps the whole tonight close under the cap; a list that passes it is cut and marked', () => {
+    const many = (n, label) => Array.from({ length: n }, (_, i) => tender({ slug: `c${i}`, label: label(i), count: 9, containers: 9 }));
+    for (const [low, radiativeNights] of [[37, []], [42, nights]]) {
+      const big = ev({ forecastLows: [low, 50, 51], forecastHourly: minAt('2026-10-10', low, 5), radiativeNights,
+        exposure: { tender: 360, unknown: 12, tenderContainers: 360, atRisk: 360, byCropType: many(40, (i) => `crop-with-a-long-name-${i}`) } });
+      expect(big.message.length, `low ${low}`).toBeLessThanOrEqual(fe.MAX_MESSAGE_CHARS);
+      expect(big.message.endsWith(PICK), `low ${low}`).toBe(true);
+      const huge = ev({ forecastLows: [low, 50, 51], forecastHourly: minAt('2026-10-10', low, 5), radiativeNights,
+        exposure: { tender: 54, unknown: 0, tenderContainers: 54, atRisk: 54, byCropType: many(6, (i) => `${'x'.repeat(140)}${i}`) } });
+      expect(huge.message.length, `low ${low}`).toBeLessThanOrEqual(fe.MAX_MESSAGE_CHARS);
+      expect(huge.message.length, `low ${low}`).toBeGreaterThan(fe.MAX_MESSAGE_CHARS - 10);
+      expect(huge.message.endsWith('…'), `low ${low}`).toBe(true);
+    }
   });
 });
 
