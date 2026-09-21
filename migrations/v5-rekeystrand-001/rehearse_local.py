@@ -58,6 +58,12 @@ RECEIPT = "post_receipt_written"
 PRE = "pre_rekey_strands_exist_before_the_decision"
 LABEL = {GUARD: "guard", PRE: "pre", FEED: "feed", MARKER: "marker", RECEIPT: "receipt"}
 
+
+def fault(msg):
+    """Exit 2, never 1: a harness that cannot run must not read as a killed mutant or a real red."""
+    print(f"HARNESS FAULT: {msg}", file=sys.stderr)
+    raise SystemExit(2)
+
 # care_profile as measured on prod 2026-09-21 (information_schema + pg_constraint + pg_indexes, owner DSN).
 SCHEMA = """
 CREATE TABLE public.schema_version (
@@ -104,9 +110,11 @@ def placeholder_from_source():
     src = VARIETIES_JS.read_text()
     m = re.search(r"^const NEW_CULTIVAR_PROFILE = (\{.*?^\});", src, re.S | re.M)
     if not m:
-        raise SystemExit(f"HARNESS FAULT: NEW_CULTIVAR_PROFILE not found in {VARIETIES_JS}")
+        fault(f"NEW_CULTIVAR_PROFILE not found in {VARIETIES_JS}")
     out = subprocess.run(["node", "-e", f"process.stdout.write(JSON.stringify({m.group(1)}))"],
-                         capture_output=True, text=True, check=True)
+                         capture_output=True, text=True)
+    if out.returncode:
+        fault(f"could not evaluate NEW_CULTIVAR_PROFILE: {out.stderr.strip()[:300]}")
     return json.loads(out.stdout)
 
 
@@ -241,7 +249,7 @@ class Cluster:
     def __init__(self):
         for b in ("initdb", "pg_ctl", "psql", "node"):
             if not shutil.which(b):
-                raise SystemExit(f"HARNESS FAULT: {b} not on PATH")
+                fault(f"{b} not on PATH")
         self.dir = Path(tempfile.mkdtemp(prefix="rks-"))
         # LC_ALL: on macOS a postmaster with no valid locale aborts ("became multithreaded during startup").
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("PG", "NEON_"))}
@@ -255,7 +263,7 @@ class Cluster:
         except subprocess.CalledProcessError:
             log = (self.dir / "pg.log").read_text()[-600:] if (self.dir / "pg.log").exists() else ""
             self.stop()
-            raise SystemExit(f"HARNESS FAULT: could not start the throwaway cluster.\n{log}")
+            fault(f"could not start the throwaway cluster.\n{log}")
 
     def dsn(self, db):
         return f"host={self.dir} port={PORT} dbname={db} user=rehearse"
@@ -265,7 +273,7 @@ class Cluster:
         args += ["-f", str(file)] if file else ["-c", sql]
         r = subprocess.run(args, env=self.env, capture_output=True, text=True)
         if r.returncode:
-            raise SystemExit(f"HARNESS FAULT: psql on {db} failed: {r.stderr.strip()[:400]}")
+            fault(f"psql on {db} failed: {r.stderr.strip()[:400]}")
         return r.stdout
 
     def run_stmts(self, db, stmts):
@@ -277,7 +285,7 @@ class Cluster:
         r = subprocess.run(["psql", "-X", "-At", "-v", "ON_ERROR_STOP=1", self.dsn(db), "-c", sql],
                            env=self.env, capture_output=True, text=True)
         if r.returncode:
-            raise SystemExit(f"HARNESS FAULT: psql on {db} failed: {r.stderr.strip()[:400]}")
+            fault(f"psql on {db} failed: {r.stderr.strip()[:400]}")
         return r.stdout.strip()
 
     def gates(self, db, gates_file):
@@ -285,12 +293,12 @@ class Cluster:
         r = subprocess.run([sys.executable, str(RUNNER), "--migration", str(gates_file), "--env", "prod",
                             "--phase", "all", "--json"], env=env, capture_output=True, text=True)
         if r.returncode == 2:
-            raise SystemExit(f"HARNESS FAULT: gate_runner exit 2 on {db}: {r.stderr.strip()[:400]}")
+            fault(f"gate_runner exit 2 on {db}: {r.stderr.strip()[:400]}")
         out = {}
         for g in json.loads(r.stdout):
             m = re.search(r"rowcount=(\d+)$", g["detail"])
             if g["status"] not in ("PASS", "FAIL") or not m:
-                raise SystemExit(f"HARNESS FAULT: {db} {g['name']} -> {g['status']} {g['detail']}")
+                fault(f"{db} {g['name']} -> {g['status']} {g['detail']}")
             out[g["name"]] = int(m.group(1))
         return out
 
@@ -333,7 +341,7 @@ def check_audited(cl, db, case):
                           f"AND action = 'UPDATE' AND row_id = '{planting}' "
                           f"AND before_jsonb->>'variety_id' = '{old}'")
         if n != "1":
-            raise SystemExit(f"HARNESS FAULT: {db}: the re-key of {planting} wrote {n} audit rows, not 1 — "
+            fault(f"{db}: the re-key of {planting} wrote {n} audit rows, not 1 — "
                              "the case would test nothing")
 
 
