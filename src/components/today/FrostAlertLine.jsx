@@ -10,6 +10,10 @@
 // Open-Meteo, and BUG-FROSTADVISORYNIGHTWORDING-001 found that its night is usually TONIGHT (a D1
 // minimum falls before dawn on 78% of cold days here). So this line CAN name tonight; it names the
 // night the SNS text named. See src/lib/frostAlertLine.js.
+// V5-TODAYRADIATIVEWATCH-001 — the one imminent send that cue does NOT cover renders here too: a
+// radiative "Frost watch tonight", which fires at 39-42F where the cue says "Cool night" or nothing. It
+// and a radiative-only advisory read "Frost watch <night> — clear and calm, low N°F. …", as their
+// emails are titled. Same slot, same treatment below: no new element, colour or tap target.
 // V5-FROSTTWOMODELS-001 — on such a night the two models' lows used to sit on screen side by side for
 // one night. Today now passes `lowShown` (src/lib/tonightLow.js, the colder of the two, rounded) and
 // the card, the cue and this line all print it. Absent `lowShown` this line prints its own figure.
@@ -45,8 +49,8 @@ import { buildFrostAlertLine } from '../../lib/frostAlertLine.js'
 export default function FrostAlertLine({ alertsSent = null, lowShown = null }) {
   const line = useMemo(() => buildFrostAlertLine(alertsSent, { lowShown }), [alertsSent, lowShown])
 
-  // Renders NOTHING when no advisory is live — which is most days, and on every day whose stored
-  // entries predate the handler persisting lowF/dayOffset. Never a blank strip, never a heading
+  // Renders NOTHING when no advisory or watch is live — which is most days, and on every day whose
+  // stored entries predate the handler persisting lowF/dayOffset. Never a blank strip, never a heading
   // over silence.
   if (!line) return null
 

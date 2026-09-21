@@ -905,10 +905,14 @@ function frostWeatherFacts(d) {
       : { lowF, dayOffset: 0, ...(d.imminent && d.imminent.radiativeOnly ? { trip: 'radiative' } : {}) };
   }
   if (d.tier === 'advisory' && d.advisory) {
-    const { minLowF, dayOffset, date, nightOffset } = d.advisory;
+    const { minLowF, dayOffset, date, nightOffset, radiativeOnly } = d.advisory;
     if (minLowF == null) return {};
+    // V5-TODAYRADIATIVEWATCH-001 — the advisory's trip basis too, in the imminent entry's vocabulary: a radiative-only
+    // advisory (frostEval marks it from the predicate its "FROST WATCH" copy used) fires above its trip point, and the
+    // Today line words it as the watch its email is titled, not "Frost possible". Absent otherwise, as for imminent.
     return { lowF: minLowF, ...(dayOffset != null ? { dayOffset } : {}), ...(date ? { date } : {}),
-      ...(Number.isInteger(nightOffset) && nightOffset >= 0 ? { nightOffset } : {}) };
+      ...(Number.isInteger(nightOffset) && nightOffset >= 0 ? { nightOffset } : {}),
+      ...(radiativeOnly ? { trip: 'radiative' } : {}) };
   }
   return {};   // heat carries no low; its cue is already on Today (computeCallout high >= 88)
 }

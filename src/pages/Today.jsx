@@ -53,7 +53,7 @@ export default function Today() {
   const { liveHydrology, refreshedAt } = useLiveRain(plan?.weather_coords ?? plan?.coords)
   // V5-FROSTTWOMODELS-001 — ONE low per night. When the frost line below names TONIGHT, the card's
   // night low, a freeze/cold cue and the frost line all print the colder of the plan low and the
-  // advisory's low (src/lib/tonightLow.js). null on every other night, and then nothing below changes.
+  // line's low (src/lib/tonightLow.js). null on every other night, and then nothing below changes.
   // Computed once here so the three surfaces cannot each work it out differently.
   const agreed = useMemo(() => agreedTonightLow(plan), [plan])
   const cueCallout = useMemo(() => agreeCallout(plan?.weather?.callout, agreed), [plan, agreed])
@@ -132,8 +132,12 @@ export default function Today() {
               advisory's night — which CAN be tonight (BUG-FROSTADVISORYNIGHTWORDING-001: a D1 minimum
               usually falls before dawn). On such a night it prints the same low as the card and the
               cue (V5-FROSTTWOMODELS-001, `agreed` above) rather than a second model's number for the
-              same night. The imminent tier is excluded because the freeze cue above already covers
-              it. Renders nothing on a day with no advisory, and nothing for entries stored before the
+              same night. A THRESHOLD imminent send is excluded: it fires at <= 38F on the plan low the
+              cue keys on, so the run that sent it has the cue above saying "Freeze tonight". A RADIATIVE
+              one ("Frost watch tonight", 39-42F, where that cue says "Cool night" or nothing) renders
+              here as a watch line, and so does a radiative-only advisory (V5-TODAYRADIATIVEWATCH-001).
+              A rehearsal (run "forced") never renders (BUG-FROSTREHEARSALSWALLOWS-001). Renders
+              nothing on a day with no advisory or watch, and nothing for entries stored before the
               handler persisted lowF. */}
           <FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} />
 

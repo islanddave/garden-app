@@ -167,8 +167,10 @@ describe('no usable hourly series — BOTH candidate nights are judged (the fros
     expect(head(r.message)).toEqual(['tomorrow night', '42', '2026-10-10', '31']);
     expect(r.advisory).toMatchObject({ nightOffset: 1, nightDate: '2026-10-10', nightBasis: 'radiative' });
     expect(frostWeatherFacts(r)).toMatchObject({ nightOffset: 1 });
+    // CHANGED by V5-TODAYRADIATIVEWATCH-001 (lane frostwatch, 2026-09-21): the entry carries `trip: 'radiative'`, so the
+    // Today line is the watch its email is titled. Was "Frost possible tomorrow night — low 42°F. …".
     expect(buildFrostAlertLine([{ tier: 'advisory', level: 'advisory', at: 'z', ...frostWeatherFacts(r) }]).text)
-      .toBe('Frost possible tomorrow night — low 42°F. Plan cover for tender plants.');
+      .toBe('Frost watch tomorrow night — clear and calm, low 42°F. Plan cover for tender plants.');
     expect(r.observability).toMatchObject({ advisoryNightOffset: 1, radiativeAdvisoryNight: '2026-10-10', radiativeAdvisoryNightBasis: 'base_rate' });
   });
 
@@ -391,8 +393,10 @@ describe('END TO END — real run(), radiative ON: the published text, the store
     expect(frost).toHaveLength(1);
     expect(head(frost[0].message)).toEqual(['tomorrow night', '42', '2026-10-10', '31']);
     expect(frost[0].subject).toBe('Garden alert - Frost watch tomorrow night (low 42F)');
-    expect(row.alerts_sent.at(-1)).toMatchObject({ tier: 'advisory', lowF: 42, dayOffset: 1, date: '2026-10-10', nightOffset: 1 });
-    expect(buildFrostAlertLine(row.alerts_sent).text).toBe('Frost possible tomorrow night — low 42°F. Plan cover for tender plants.');
+    // CHANGED by V5-TODAYRADIATIVEWATCH-001 (lane frostwatch, 2026-09-21): the entry records the radiative trip and the
+    // Today line says watch, naming the same night. Was: no `trip`, "Frost possible tomorrow night — low 42°F. …".
+    expect(row.alerts_sent.at(-1)).toMatchObject({ tier: 'advisory', lowF: 42, dayOffset: 1, date: '2026-10-10', nightOffset: 1, trip: 'radiative' });
+    expect(buildFrostAlertLine(row.alerts_sent).text).toBe('Frost watch tomorrow night — clear and calm, low 42°F. Plan cover for tender plants.');
     expect(evalLine).toMatchObject({ forecastMinHour: 23, advisoryNightOffset: 1, advisoryNightBasis: 'hourly',
       radiativeAdvisoryNight: '2026-10-10', radiativeAdvisoryNightBasis: 'hourly', radiativeNightsAvailable: 2 });
   });

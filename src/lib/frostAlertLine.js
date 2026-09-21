@@ -6,7 +6,7 @@
 // drift into describing the same night two ways.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
-// IT RENDERS THE ADVISORY TIER ONLY, AND THE EXCLUSIONS ARE MEASURED, NOT TASTE.
+// IT RENDERS THE ADVISORY TIER AND THE RADIATIVE WATCH; THE EXCLUSIONS ARE MEASURED, NOT TASTE.
 //
 // Today already has a frost surface: WeatherCueLine renders computeCallout's `freeze` cue at
 // `tonightLow < 40` and `cold` at `< 45`. So the naive reading of this bug — "frost alerts are
@@ -26,13 +26,24 @@
 // night the SNS text named, from `nightOffset` on the entry. (The 2026-09-07 row once cited here as a
 // <= 40F night the cue missed was the F5 rehearsal: ADVISORY_LOW_F raised to 58, run "forced".)
 //
-//   - imminent  -> skipped. Fires at <= 38F, and 38 < 40, so the freeze cue ALWAYS covers it.
+//   - imminent  -> a THRESHOLD send is skipped: it fires at <= 38F on the same plan low the engine's cue
+//                  keys on (weather.tonightLow, handler.js frostForSpace), so on the run that sent it the cue
+//                  says "Freeze tonight" (< 40F). A RADIATIVE send (`trip: 'radiative'`, the "Frost watch
+//                  tonight" email) is RENDERED, as a watch: it fires ABOVE its trip point — 39-42F for the
+//                  tender band (radiativeFrost.js proximity 4) — where the cue says "Cool night" or nothing,
+//                  so Today never said "watch" on the evening the email did (V5-TODAYRADIATIVEWATCH-001;
+//                  Dave 2026-09-21, "Show it on Today"). The most recently sent imminent entry decides: a
+//                  later threshold send leaves tonight to the freeze cue again. pickAdvisory ranks it.
 //   - heat      -> skipped. computeCallout renders `high >= 88` already.
 //   - advisory  -> rendered, tonight included: its figure is a second model's, and it is the one
 //                  Dave was texted about. When it names tonight, Today prints ONE low for the night
 //                  on the card, the cue and this line — the colder of this figure and the plan low
 //                  (V5-FROSTTWOMODELS-001, src/lib/tonightLow.js) — so this line's number can be the
-//                  plan's. Any other night keeps this line's own figure.
+//                  plan's. Any other night keeps this line's own figure. A RADIATIVE-ONLY advisory
+//                  (`trip: 'radiative'`, stored since V5-TODAYRADIATIVEWATCH-001) is worded as the watch
+//                  its email is titled ("Frost watch <night>"); an entry stored before carries no `trip`
+//                  and keeps "Frost possible".
+//   - forced    -> skipped, any tier: a rehearsal, never a real alert (BUG-FROSTREHEARSALSWALLOWS-001).
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 // AN ENTRY WITHOUT A TEMPERATURE RENDERS NOTHING, DELIBERATELY.
@@ -82,6 +93,9 @@ function weekdayOf(ymd) {
 // date is `date - dayOffset`, so the night starting `nightOffset` days after it is date + (n - dayOffset).
 export function resolveNight(a) {
   if (!a) return null
+  // V5-TODAYRADIATIVEWATCH-001 — an imminent send is about TONIGHT by construction (frostEval sentNight says
+  // the same); its entry carries dayOffset 0 and no nightOffset.
+  if (a.tier === 'imminent') return { nightOffset: 0, nightDate: null }
   const day = intOrNull(a.dayOffset)
   const n = intOrNull(a.nightOffset)
   if (n != null && n >= 0) {
@@ -107,11 +121,23 @@ export function nightPhrase(night) {
 // points may be raised) is never a real alert, so it never renders and never outranks a real one. The
 // server's "already sent?" gates skip the same entries (lambda/daily-plan/frostEval.js countsAsSent;
 // frostrehearsal.test.js holds the two together). An entry with no `run` predates the field and counts.
+// V5-TODAYRADIATIVEWATCH-001 — the imminent tier renders only as a WATCH, and the most recently sent imminent
+// entry decides whether it does: a radiative one is tonight's watch, a threshold one leaves tonight to the
+// freeze cue (see the header) whatever was sent before it. A watch outranks an advisory — it is the imminent
+// tier, and it is about tonight — except that an advisory naming TONIGHT at the same or a colder low keeps the
+// line: the watch's own email says so ("Colder on a second forecast: 37°F tonight"), and a watch must never
+// make the line warmer than the one it replaced (V5-FROSTTWOMODELS-001: one low per night, the colder wins).
 export function pickAdvisory(alertsSent) {
   if (!Array.isArray(alertsSent)) return null
   let best = null
+  let imminent = null
   for (const a of alertsSent) {
-    if (!a || a.run === 'forced' || SEVERITY[a.tier] == null) continue
+    if (!a || a.run === 'forced') continue
+    if (a.tier === 'imminent') {
+      if (imminent == null || String(a.at || '') > String(imminent.at || '')) imminent = a
+      continue
+    }
+    if (SEVERITY[a.tier] == null) continue
     if (a.lowF == null || !Number.isFinite(Number(a.lowF))) continue
     if (nightPhrase(resolveNight(a)) == null) continue
     if (best == null) { best = a; continue }
@@ -119,7 +145,11 @@ export function pickAdvisory(alertsSent) {
     if (s > 0) { best = a; continue }
     if (s === 0 && String(a.at || '') > String(best.at || '')) best = a
   }
-  return best
+  const watch = imminent && imminent.trip === 'radiative' && imminent.lowF != null
+    && Number.isFinite(Number(imminent.lowF)) ? imminent : null
+  if (!watch) return best
+  if (best && resolveNight(best).nightOffset === 0 && Number(best.lowF) <= Number(watch.lowF)) return best
+  return watch
 }
 
 // -> { text, tier, dayOffset, nightOffset, lowF } or null.
@@ -128,6 +158,9 @@ export function pickAdvisory(alertsSent) {
 // src/lib/tonightLow.js agreedTonightLow decides that, here nothing does — so the card, the cue and this
 // line print one number. Without it the output is the one-argument output, byte for byte: the server's
 // PARITY suites (lambda/daily-plan/advisorynight.test.js, frostsubject.test.js) call it that way.
+// V5-TODAYRADIATIVEWATCH-001 — a radiative trip (`trip: 'radiative'` on the entry, imminent or advisory) is a
+// WATCH, the word its email uses: the low sits above the trip point and the clear, calm sky is the reason it
+// can fall further, so the line names both — "Frost watch tonight — clear and calm, low 42°F. …".
 export function buildFrostAlertLine(alertsSent, { lowShown } = {}) {
   const a = pickAdvisory(alertsSent)
   if (!a) return null
@@ -135,7 +168,9 @@ export function buildFrostAlertLine(alertsSent, { lowShown } = {}) {
   const when = nightPhrase(night)
   const low = Number.isFinite(lowShown) ? lowShown : Math.round(Number(a.lowF))
   return {
-    text: `Frost possible ${when} — low ${low}°F. Plan cover for tender plants.`,
+    text: a.trip === 'radiative'
+      ? `Frost watch ${when} — clear and calm, low ${low}°F. Plan cover for tender plants.`
+      : `Frost possible ${when} — low ${low}°F. Plan cover for tender plants.`,
     tier: a.tier,
     dayOffset: intOrNull(a.dayOffset),
     nightOffset: night.nightOffset,
