@@ -13,6 +13,15 @@ export const VALID_GROWN_AS = ['annual', 'tender_perennial', 'perennial', 'bienn
 // SEEDINV (V4-SEEDINV-001): mirror the sow-profile CHECKs in migrations/v4-seedinv-001/0a.
 export const VALID_START_METHOD = ['start_indoors', 'direct_sow', 'both', 'indoors_only'];
 export const VALID_SOW_SEASON = ['cool', 'warm', 'cool_warm'];
+// V5-VARIETYFACTSEDIT-001: mirror chk_plant_varieties_breeding_system (v5-varietyhybridflag-001) and
+// the ONE provenance vocabulary chk_plant_varieties_breeding_source and
+// chk_plant_varieties_scoville_source (v5-scovillesource-001, written as a copy of the first) share.
+export const VALID_BREEDING_SYSTEM = ['f1', 'open_pollinated', 'landrace', 'unknown'];
+export const VALID_FACT_SOURCE = [
+  'packet_label', 'vendor_catalog', 'breeder', 'reference_work', 'grower_record', 'inference',
+];
+// Free text with no CHECK (v2-variety-origin). Trimmed on the way in; see normalizeOriginText.
+export const ORIGIN_TEXT_FIELDS = ['origin_country', 'origin_region'];
 
 // V4-EDITCOMPLETE-001 — the columns a PUT may explicitly set back to NULL via `body.clear`.
 // Deliberately excludes `name`: display_name is the identity every planting, harvest chip and
@@ -30,6 +39,9 @@ export const CLEARABLE_FIELDS = [
   'start_method', 'start_indoor_weeks_min', 'start_indoor_weeks_max',
   'direct_sow_timing', 'sow_depth_in', 'seed_spacing_in', 'row_spacing_in',
   'days_to_germ_min', 'days_to_germ_max', 'sow_season', 'sow_notes',
+  // V5-VARIETYFACTSEDIT-001. breeding_confidence and variety_rank stay OFF: no edit surface owns
+  // them, and variety_rank is half of chk_plant_varieties_op_requires_cultivar (breedingPairingError).
+  'origin_country', 'origin_region', 'breeding_system', 'breeding_source', 'scoville_source',
 ];
 
 const CLEARABLE_SET = new Set(CLEARABLE_FIELDS);
@@ -144,10 +156,16 @@ export function validateBody(body, { requireName = true } = {}) {
     ['grown_as', VALID_GROWN_AS],
     ['start_method', VALID_START_METHOD],
     ['sow_season', VALID_SOW_SEASON],
+    ['breeding_system', VALID_BREEDING_SYSTEM],
+    ['breeding_source', VALID_FACT_SOURCE],
+    ['scoville_source', VALID_FACT_SOURCE],
   ]) {
     if (body[k] != null && !valid.includes(body[k])) {
       return `${k} must be one of: ${valid.join(', ')}`;
     }
+  }
+  for (const k of ORIGIN_TEXT_FIELDS) {
+    if (body[k] != null && typeof body[k] !== 'string') return `${k} must be a string or null`;
   }
   // SEEDINV integer fields (weeks + germination days), scoville-style checks.
   for (const k of ['start_indoor_weeks_min', 'start_indoor_weeks_max', 'days_to_germ_min', 'days_to_germ_max']) {
@@ -177,6 +195,58 @@ export function validateBody(body, { requireName = true } = {}) {
       if (typeof body[k] !== 'string') return `${k} must be a string or null`;
       if (body[k].length > cap) return `${k} must be <= ${cap} characters`;
     }
+  }
+  return null;
+}
+
+// ── V5-VARIETYFACTSEDIT-001 — origin, breeding and heat source on the PUT ─────────────────────
+
+// Origin text is trimmed, and a value that is EMPTY after the trim is a clear, not a '' stored as a
+// second spelling of "not recorded". Done by rewriting the body before any validator sees it, so
+// validateClear, the CASE arms and the RETURNING all handle it exactly like a `clear` the client
+// sent — and a caller sending '' AND naming the key in `clear` is not refused as "both cleared and
+// set", because it asked for one thing twice. A malformed `clear` is left untouched for
+// validateClear to refuse.
+export function normalizeOriginText(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const out = { ...body };
+  for (const k of ORIGIN_TEXT_FIELDS) {
+    if (typeof out[k] !== 'string') continue;
+    const t = out[k].trim();
+    if (t) { out[k] = t; continue; }
+    delete out[k];
+    if (out.clear == null) out.clear = [];
+    if (Array.isArray(out.clear) && !out.clear.includes(k)) out.clear = [...out.clear, k];
+  }
+  return out;
+}
+
+// True when the patch can change either side of a breeding pairing, which is the only time the PUT
+// needs the current row. Setting or clearing anything else cannot violate either CHECK below.
+export function touchesBreeding(body, clear = []) {
+  return ['breeding_system', 'breeding_source'].some((k) => body?.[k] != null || clear.includes(k));
+}
+
+// The two CHECKs on plant_varieties that couple breeding_system to ANOTHER column, evaluated on the
+// row as it will be AFTER the patch (the same three-way rule the UPDATE applies: cleared -> NULL,
+// sent -> the value, absent -> the current value). Checked before the UPDATE so the caller gets a
+// 400 naming the field instead of a raw 23514 constraint name. `current` is
+// { breeding_system, breeding_source, variety_rank } read under the PUT's own ownership predicate.
+//   chk_plant_varieties_breeding_sourced:     breeding_system IS NULL OR breeding_source IS NOT NULL
+//   chk_plant_varieties_op_requires_cultivar: breeding_system IS DISTINCT FROM 'open_pollinated'
+//                                             OR variety_rank = 'cultivar'
+// variety_rank is not writable here, so for the second the current row decides. Both CHECKs still
+// stand behind this: a concurrent write between the read and the UPDATE lands on them, as before.
+export function breedingPairingError(body, clear = [], current = {}) {
+  const after = (k) => (clear.includes(k) ? null : (body?.[k] ?? current?.[k] ?? null));
+  const system = after('breeding_system');
+  if (system == null) return null;
+  if (after('breeding_source') == null) {
+    return 'breeding_source is required when breeding_system is set';
+  }
+  if (system === 'open_pollinated' && current?.variety_rank !== 'cultivar') {
+    return 'breeding_system open_pollinated can only be recorded on a single named cultivar '
+      + '(variety_rank cultivar), and this variety is not recorded as one';
   }
   return null;
 }

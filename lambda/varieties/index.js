@@ -36,6 +36,11 @@
 //   Same contract as PLANTTYPE: omitted = COALESCE no-op on PUT, NULL on POST.
 //   Guarded by select-columns.test.js (static-source, plants-pattern).
 //
+// VARIETYFACTSEDIT (V5-VARIETYFACTSEDIT-001): the PUT also writes origin_country, origin_region,
+//   breeding_system, breeding_source and scoville_source (the provenance that decides whether the
+//   seed card shows "est." on a heat figure). Same COALESCE + clear contract; GET /:id reads them so
+//   the editor seeds from the stored values. POST still does not write them.
+//
 // CORS: handler owns CORS — Lambda URL CORS config must be empty (handler sets headers).
 
 import { randomUUID } from 'node:crypto';
@@ -45,6 +50,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import {
   validateBody, validateCropTypeBody, resolveCropTypeName, validateClear, auditActor,
   validateSourceBody, validateSourceKindBody, resolveSourceKindName, foldSourceKey, blankToNull,
+  normalizeOriginText, touchesBreeding, breedingPairingError,
 } from './validate.js';
 import { applyDerive } from './crop-derive.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
@@ -678,7 +684,11 @@ export const handler = async (event) => {
                  determinacy, day_length_response, grown_as,
                  start_method, start_indoor_weeks_min, start_indoor_weeks_max,
                  direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in,
-                 days_to_germ_min, days_to_germ_max, sow_season, sow_notes
+                 days_to_germ_min, days_to_germ_max, sow_season, sow_notes,
+                 -- V5-VARIETYFACTSEDIT-001. This read seeds VarietyEditor, which now edits these
+                 -- five. Left off, every stored value renders as an empty box, and the form would
+                 -- refuse a breeding edit for want of a source the row already has.
+                 origin_country, origin_region, breeding_system, breeding_source, scoville_source
           FROM public.cultivar
           WHERE id = ${varietyId}
             AND deleted_at IS NULL
@@ -688,7 +698,8 @@ export const handler = async (event) => {
       }
 
       if (method === 'PUT') {
-        const body = JSON.parse(event.body ?? '{}');
+        // V5-VARIETYFACTSEDIT-001: blank origin text becomes a `clear` before any validator runs.
+        const body = normalizeOriginText(JSON.parse(event.body ?? '{}'));
         const verr = validateBody(body, { requireName: false });
         if (verr) return resp(400, { error: verr });
 
@@ -729,6 +740,26 @@ export const handler = async (event) => {
         // the CASE's ELSE branch). Three-way behaviour verified against live Postgres.
         const cd = body.common_diseases;
         const clear = Array.isArray(body.clear) ? body.clear : [];
+
+        // V5-VARIETYFACTSEDIT-001 — breeding_system is CHECK-paired with breeding_source and, for
+        // open_pollinated, with variety_rank. Whether a patch satisfies them depends on the row it
+        // lands on, so read that row first, under the UPDATE's own predicate (a row the caller may
+        // not edit answers the same generic 404 it always has). Only patches that touch a breeding
+        // column pay for the read; every other PUT issues exactly the statements it did before.
+        if (touchesBreeding(body, clear)) {
+          const [current] = await sql`
+            SELECT breeding_system, breeding_source, variety_rank
+              FROM public.cultivar
+             WHERE id = ${varietyId}
+               AND ( created_by = ANY(${household})
+                     OR created_by LIKE ANY(${managedPatterns}::text[]) )
+               AND deleted_at IS NULL
+          `;
+          if (!current) return resp(404, { error: 'Not found or not owner' });
+          const perr = breedingPairingError(body, clear, current);
+          if (perr) return resp(400, { error: perr });
+        }
+
         const [, updateRows] = await sql.transaction([
           sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
           sql`
@@ -764,12 +795,17 @@ export const handler = async (event) => {
               days_to_germ_min     = CASE WHEN ${clear} @> ARRAY['days_to_germ_min'] THEN NULL ELSE COALESCE(${body.days_to_germ_min ?? null}, days_to_germ_min) END,
               days_to_germ_max     = CASE WHEN ${clear} @> ARRAY['days_to_germ_max'] THEN NULL ELSE COALESCE(${body.days_to_germ_max ?? null}, days_to_germ_max) END,
               sow_season           = CASE WHEN ${clear} @> ARRAY['sow_season'] THEN NULL ELSE COALESCE(${body.sow_season ?? null}, sow_season) END,
-              sow_notes            = CASE WHEN ${clear} @> ARRAY['sow_notes'] THEN NULL ELSE COALESCE(${body.sow_notes ?? null}, sow_notes) END
+              sow_notes            = CASE WHEN ${clear} @> ARRAY['sow_notes'] THEN NULL ELSE COALESCE(${body.sow_notes ?? null}, sow_notes) END,
+              origin_country       = CASE WHEN ${clear} @> ARRAY['origin_country'] THEN NULL ELSE COALESCE(${body.origin_country ?? null}, origin_country) END,
+              origin_region        = CASE WHEN ${clear} @> ARRAY['origin_region'] THEN NULL ELSE COALESCE(${body.origin_region ?? null}, origin_region) END,
+              breeding_system      = CASE WHEN ${clear} @> ARRAY['breeding_system'] THEN NULL ELSE COALESCE(${body.breeding_system ?? null}, breeding_system) END,
+              breeding_source      = CASE WHEN ${clear} @> ARRAY['breeding_source'] THEN NULL ELSE COALESCE(${body.breeding_source ?? null}, breeding_source) END,
+              scoville_source      = CASE WHEN ${clear} @> ARRAY['scoville_source'] THEN NULL ELSE COALESCE(${body.scoville_source ?? null}, scoville_source) END
             WHERE id = ${varietyId}
               AND ( created_by = ANY(${household})
                     OR created_by LIKE ANY(${managedPatterns}::text[]) )
               AND deleted_at IS NULL
-            RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes
+            RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes, breeding_system, breeding_source, scoville_source
           `,
         ]);
         if (!updateRows.length) return resp(404, { error: 'Not found or not owner' });
@@ -1010,7 +1046,7 @@ export const handler = async (event) => {
             ${body.days_to_germ_max ?? null},
             ${body.sow_season ?? null},
             ${body.sow_notes ?? null}
-          ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes
+          ) RETURNING id, display_name AS name, species, genus, days_to_maturity_min, days_to_maturity_max, care_notes, soil_notes, sun_requirements, common_diseases, expected_yield_notes, photo_id, source_url, crop_type_slug, lifecycle, scoville_min, scoville_max, growth_habit, produces_scape, created_by, created_at, updated_at, deleted_at, source_proj_rescope_project_id, origin_country, origin_region, model_version, determinacy, day_length_response, grown_as, start_method, start_indoor_weeks_min, start_indoor_weeks_max, direct_sow_timing, sow_depth_in, seed_spacing_in, row_spacing_in, days_to_germ_min, days_to_germ_max, sow_season, sow_notes, breeding_system, breeding_source, scoville_source
         `,
         // BUG-CULTIVARNOPROFILE-001 — the cadence-profile row, in the same transaction as the
         // cultivar it describes. Shape follows lambda/plants/overwinterAttr.js, the only other

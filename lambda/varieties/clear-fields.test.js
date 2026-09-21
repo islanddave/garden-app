@@ -63,8 +63,10 @@ describe('validateClear — ambiguity', () => {
 });
 
 describe('CLEARABLE_FIELDS', () => {
-  it('covers the 31 user-owned columns and excludes name', () => {
-    expect(CLEARABLE_FIELDS).toHaveLength(31);
+  // 31 -> 36 (V5-VARIETYFACTSEDIT-001): origin_country, origin_region, breeding_system,
+  // breeding_source, scoville_source.
+  it('covers the 36 user-owned columns and excludes name', () => {
+    expect(CLEARABLE_FIELDS).toHaveLength(36);
     expect(CLEARABLE_FIELDS).not.toContain('name');
     expect(new Set(CLEARABLE_FIELDS).size).toBe(CLEARABLE_FIELDS.length);
   });
@@ -74,5 +76,12 @@ describe('CLEARABLE_FIELDS', () => {
   // its own trap, so its absence here is deliberate rather than an oversight.
   it('excludes dtm_basis until it has a read path', () => {
     expect(CLEARABLE_FIELDS).not.toContain('dtm_basis');
+  });
+
+  // No edit surface owns these two, and variety_rank is half of the open-pollinated CHECK
+  // (chk_plant_varieties_op_requires_cultivar): clearing it on an open_pollinated row is a 23514.
+  it('excludes breeding_confidence and variety_rank', () => {
+    expect(CLEARABLE_FIELDS).not.toContain('breeding_confidence');
+    expect(CLEARABLE_FIELDS).not.toContain('variety_rank');
   });
 });

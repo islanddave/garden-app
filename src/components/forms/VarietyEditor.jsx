@@ -6,9 +6,13 @@
 // every type-grouped view), was permanent across 408 live cultivars. `useVarieties.updateVariety`
 // had been complete and callerless since VARIETY-REF Session 2.
 //
-// Per Dave's global rule this exposes ALL 31 user-owned columns the PUT can write, not just the 4
-// the create path happens to set. Deliberately absent: photo_id (needs the photo-picker surface,
-// a different lane) and dtm_basis (no read path or consumer yet — V4-MATURITYBASIS-001).
+// Per Dave's global rule this exposes ALL 36 user-owned columns the PUT can write, not just the 4
+// the create path happens to set (31 until V5-VARIETYFACTSEDIT-001 added origin country/region,
+// breeding and the two "info from" sources). Deliberately absent: photo_id (needs the photo-picker
+// surface, a different lane) and dtm_basis (no read path or consumer yet — V4-MATURITYBASIS-001).
+// breeding_confidence and variety_rank are not PUT-writable at all; variety_rank decides whether the
+// server accepts Open-pollinated (chk_plant_varieties_op_requires_cultivar), so on a row not
+// recorded as a single named cultivar that choice comes back as a save error naming breeding_system.
 //
 // The PUT is owner-only (created_by = JWT.sub). `currentUserId` gates the form into a read-only
 // state rather than letting the user type a save that will 404 — 26 of the live rows are owned by
@@ -42,6 +46,21 @@ const START_METHOD = [
   ['both', 'Both'], ['indoors_only', 'Indoors only'],
 ]
 const SOW_SEASON = [['cool', 'Cool'], ['warm', 'Warm'], ['cool_warm', 'Cool or warm']]
+// V5-VARIETYFACTSEDIT-001. Labels match the seed card's (seedFacts.js BREEDING_LABEL).
+const BREEDING = [
+  ['f1', 'F1 hybrid'], ['open_pollinated', 'Open-pollinated'],
+  ['landrace', 'Landrace'], ['unknown', 'Unknown'],
+]
+// breeding_source and scoville_source share one six-value vocabulary. Only a heat figure has an
+// "est." to show (shuLabel, for 'inference'); nothing renders breeding_source, so its list does not
+// promise one.
+const FACT_SOURCE = [
+  ['packet_label', 'Seed packet'], ['vendor_catalog', "Supplier's catalog"],
+  ['breeder', 'Breeder'], ['reference_work', 'Reference book or site'],
+  ['grower_record', 'My own record'],
+]
+const BREEDING_SOURCE = [...FACT_SOURCE, ['inference', 'Best guess']]
+const HEAT_SOURCE = [...FACT_SOURCE, ['inference', 'Best guess (shows est.)']]
 
 // The field table IS the contract: it drives rendering, the form seed, and the payload build, so a
 // field cannot be displayed without also being saved (the failure mode called out in 5b430f4).
@@ -50,6 +69,8 @@ export const FIELDS = [
   { key: 'species',                kind: 'text', label: 'Species',            section: 'identity', placeholder: 'e.g. Capsicum annuum' },
   { key: 'genus',                  kind: 'text', label: 'Genus',              section: 'identity' },
   { key: 'lifecycle',              kind: 'enum', label: 'Lifecycle',          section: 'identity', options: LIFECYCLE },
+  { key: 'origin_country',         kind: 'text', label: 'Country of origin',  section: 'identity' },
+  { key: 'origin_region',          kind: 'text', label: 'Region of origin',   section: 'identity' },
 
   { key: 'days_to_maturity_min',   kind: 'int',  label: 'Days to maturity — min', section: 'maturity' },
   { key: 'days_to_maturity_max',   kind: 'int',  label: 'Days to maturity — max', section: 'maturity' },
@@ -80,6 +101,10 @@ export const FIELDS = [
   { key: 'produces_scape',         kind: 'bool', label: 'Produces scape',     section: 'classify' },
   { key: 'scoville_min',           kind: 'int',  label: 'Scoville — min',     section: 'classify' },
   { key: 'scoville_max',           kind: 'int',  label: 'Scoville — max',     section: 'classify' },
+  // Beside the numbers on purpose: correcting a figure without this left the card's "est." standing.
+  { key: 'scoville_source',        kind: 'enum', label: 'Heat figure from',   section: 'classify', options: HEAT_SOURCE },
+  { key: 'breeding_system',        kind: 'enum', label: 'Breeding',           section: 'classify', options: BREEDING },
+  { key: 'breeding_source',        kind: 'enum', label: 'Breeding info from', section: 'classify', options: BREEDING_SOURCE },
 ]
 
 const SECTIONS = [
@@ -322,6 +347,11 @@ export default function VarietyEditor({
     e.preventDefault()
     if (saving || !canEdit) return
     if (!form.name.trim()) { setErr('Name is required.'); return }
+    // V5-VARIETYFACTSEDIT-001 — a breeding call may never stand unsourced
+    // (chk_plant_varieties_breeding_sourced). Stopped here, before the round trip.
+    if (form.breeding_system && !form.breeding_source) {
+      setErr('"Breeding info from" is required when Breeding is set.'); return
+    }
     if (isEmptyPatch(patch)) { setErr('Nothing changed.'); return }
     setSaving(true); setErr(null)
     const res = await onSave?.(variety.id, patch)

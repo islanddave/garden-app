@@ -301,11 +301,14 @@ describe('varieties write predicates — source-level invariants', () => {
   // 3 -> 6 (V4-RESTORESURFACE-001): the recovery surface adds three more uses of this SAME arm —
   // the /deleted list, the restore preflight and the restore UPDATE. They REUSE the arm rather than
   // inventing a fourth dialect, for exactly the reason the note above gives: the set of rows the
-  // recovery surface may show and restore is identical to the set PUT/DELETE may edit. A seventh
-  // still means something widened.
-  it('exactly six scoped predicates exist — PUT, DELETE, POST idempotency, and the three recovery reads', () => {
-    expect(SRC.match(/created_by = ANY\(\$\{household\}\)/g)).toHaveLength(6);
-    expect(SRC.match(/created_by LIKE ANY\(\$\{managedPatterns\}::text\[\]\)/g)).toHaveLength(6);
+  // recovery surface may show and restore is identical to the set PUT/DELETE may edit.
+  // 6 -> 7 (V5-VARIETYFACTSEDIT-001): the PUT's breeding-pairing preflight, a READ of the very row
+  // the PUT's UPDATE may edit, so it reuses this SAME arm for the same reason — a row the caller
+  // cannot edit must answer the PUT's generic 404, never a pairing 400 about someone else's row.
+  // An eighth still means something widened.
+  it('exactly seven scoped predicates exist — PUT, its pairing preflight, DELETE, POST idempotency, and the three recovery reads', () => {
+    expect(SRC.match(/created_by = ANY\(\$\{household\}\)/g)).toHaveLength(7);
+    expect(SRC.match(/created_by LIKE ANY\(\$\{managedPatterns\}::text\[\]\)/g)).toHaveLength(7);
     // …and the new one is a READ, not a write: it must sit inside a SELECT.
     expect(SRC).toMatch(/FROM public\.cultivar\s*\n\s*WHERE source_proj_rescope_project_id/);
   });

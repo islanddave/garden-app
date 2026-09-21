@@ -10,6 +10,9 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import VarietyEditor, {
   FIELDS, buildVarietyPatch, formFromVariety, isEmptyPatch,
 } from '../components/forms/VarietyEditor.jsx'
@@ -51,6 +54,12 @@ function makeVariety(over = {}) {
     days_to_germ_max: 21,
     sow_season: 'warm',
     sow_notes: 'Bottom heat helps.',
+    // V5-VARIETYFACTSEDIT-001 — GET /api/varieties/:id now carries these five.
+    origin_country: 'Mexico',
+    origin_region: 'Veracruz',
+    breeding_system: 'f1',
+    breeding_source: 'vendor_catalog',
+    scoville_source: 'inference',
     ...over,
   }
 }
@@ -84,7 +93,7 @@ function openAllSections(container) {
 }
 
 describe('VarietyEditor — every rendered field reaches the wire', () => {
-  it('renders a control for all 28 table-driven fields plus name and crop type', () => {
+  it('renders a control for every table-driven field plus name and crop type', () => {
     const { container } = renderEditor()
     openAllSections(container)
     for (const { key } of FIELDS) {
@@ -365,5 +374,180 @@ describe('VarietyEditor — inline crop-type mint (CROPTYPEREACH)', () => {
     await waitFor(() => screen.getByRole('alert'))
     fireEvent.click(screen.getByText(/Use "Pepper"/))
     await waitFor(() => expect(screen.getByLabelText(/Crop type/).value).toBe('pepper'))
+  })
+})
+
+// ── V5-VARIETYFACTSEDIT-001: origin, breeding and heat source ───────────────
+// Dave: "Today none is editable, and an edited Scoville figure keeps its 'est.' mark until the source
+// changes." The card prints "est." when scoville_source = 'inference', and nothing could change that
+// column. These pin the five new FIELDS rows end to end, plus the one rule the form enforces itself:
+// a breeding call is never sent without its source (chk_plant_varieties_breeding_sourced).
+describe('VarietyEditor — origin, breeding and heat source (VARIETYFACTSEDIT)', () => {
+  const NEW_KEYS = ['origin_country', 'origin_region', 'scoville_source', 'breeding_system', 'breeding_source']
+  const field = (key) => FIELDS.find(f => f.key === key)
+  const UNSET = { origin_country: null, origin_region: null, scoville_source: null, breeding_system: null, breeding_source: null }
+  const PAIRING_MSG = '"Breeding info from" is required when Breeding is set.'
+
+  function renderRoundTrip(over = {}) {
+    const box = { stored: makeVariety(over) }
+    const onSave = vi.fn(async (id, payload) => {
+      box.stored = applyPut(box.stored, payload)
+      return { variety: box.stored }
+    })
+    const onSaved = vi.fn()
+    const utils = render(
+      <VarietyEditor variety={box.stored} cropTypes={CROP_TYPES} currentUserId={OWNER}
+        onSave={onSave} onSaved={onSaved} onCancel={() => {}} />
+    )
+    openAllSections(utils.container)
+    return { ...utils, box, onSave, onSaved }
+  }
+  const change = (container, key, value) =>
+    fireEvent.change(container.querySelector(`#variety-edit-${key}`), { target: { value } })
+  const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+  it('shows origin in the always-open identity rows and the rest under Classification', () => {
+    const { container } = renderEditor()
+    for (const key of ['origin_country', 'origin_region']) {
+      const el = container.querySelector(`#variety-edit-${key}`)
+      expect(el, `${key} rendered`).toBeTruthy()
+      expect(el.closest('details'), `${key} must not sit in a collapsed section`).toBeNull()
+    }
+    const classify = container.querySelector('[data-testid="variety-section-classify"]')
+    for (const key of ['scoville_source', 'breeding_system', 'breeding_source']) {
+      expect(classify.querySelector(`#variety-edit-${key}`), `${key} under Classification`).toBeTruthy()
+    }
+  })
+
+  it('puts "Heat figure from" directly after the two Scoville numbers', () => {
+    const keys = FIELDS.map(f => f.key)
+    const i = keys.indexOf('scoville_max')
+    expect(keys.slice(i - 1, i + 2)).toEqual(['scoville_min', 'scoville_max', 'scoville_source'])
+  })
+
+  it('labels every new field in plain English', () => {
+    expect(NEW_KEYS.map(k => [k, field(k)?.label])).toEqual([
+      ['origin_country', 'Country of origin'],
+      ['origin_region', 'Region of origin'],
+      ['scoville_source', 'Heat figure from'],
+      ['breeding_system', 'Breeding'],
+      ['breeding_source', 'Breeding info from'],
+    ])
+    expect(field('breeding_system').options).toEqual([
+      ['f1', 'F1 hybrid'], ['open_pollinated', 'Open-pollinated'], ['landrace', 'Landrace'], ['unknown', 'Unknown'],
+    ])
+    expect(field('scoville_source').options).toEqual([
+      ['packet_label', 'Seed packet'], ['vendor_catalog', "Supplier's catalog"], ['breeder', 'Breeder'],
+      ['reference_work', 'Reference book or site'], ['grower_record', 'My own record'],
+      ['inference', 'Best guess (shows est.)'],
+    ])
+    // Only a heat figure has an "est." to show; nothing renders breeding_source.
+    expect(Object.fromEntries(field('breeding_source').options).inference).toBe('Best guess')
+  })
+
+  // src/ must not import lambda/, so the server's vocabulary is read off disk (clearKeys.test.js's
+  // approach). An option the server does not accept is a Save that 400s and loses every other edit.
+  it('offers exactly the values the server validates, no more and no fewer', () => {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const src = readFileSync(resolve(here, '../../lambda/varieties/validate.js'), 'utf8')
+    const list = (name) => {
+      const m = src.match(new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\];`))
+      expect(m, `validate.js no longer declares ${name}`).toBeTruthy()
+      return [...m[1].matchAll(/'([a-z0-9_]+)'/g)].map(x => x[1])
+    }
+    const values = (key) => field(key).options.map(([v]) => v)
+    expect(values('breeding_system')).toEqual(list('VALID_BREEDING_SYSTEM'))
+    expect(values('breeding_source')).toEqual(list('VALID_FACT_SOURCE'))
+    expect(values('scoville_source')).toEqual(list('VALID_FACT_SOURCE'))
+  })
+
+  it('seeds the form from the stored values rather than empty boxes', () => {
+    const { container } = renderRoundTrip()
+    for (const key of NEW_KEYS) {
+      expect(container.querySelector(`#variety-edit-${key}`).value, key).toBe(String(makeVariety()[key]))
+    }
+  })
+
+  it('a changed heat source survives the round trip — the stuck "est." this item exists for', async () => {
+    const { container, box, onSaved } = renderRoundTrip({ scoville_source: 'inference' })
+    change(container, 'scoville_source', 'packet_label')
+    save()
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(box.stored.scoville_source).toBe('packet_label')
+  })
+
+  it('all five set from empty survive the round trip', async () => {
+    const { container, box, onSave, onSaved } = renderRoundTrip(UNSET)
+    change(container, 'origin_country', '  Italy  ')
+    change(container, 'origin_region', 'Liguria')
+    change(container, 'scoville_source', 'grower_record')
+    change(container, 'breeding_system', 'landrace')
+    change(container, 'breeding_source', 'reference_work')
+    save()
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    // Trimmed on the wire, not just in the stored row.
+    expect(onSave.mock.calls[0][1].origin_country).toBe('Italy')
+    expect(NEW_KEYS.map(k => box.stored[k])).toEqual(['Italy', 'Liguria', 'grower_record', 'landrace', 'reference_work'])
+  })
+
+  it('all five emptied are named in clear and come back null', async () => {
+    const { container, box, onSave, onSaved } = renderRoundTrip()
+    for (const key of NEW_KEYS) change(container, key, '')
+    save()
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    const payload = onSave.mock.calls[0][1]
+    expect([...payload.clear].sort()).toEqual([...NEW_KEYS].sort())
+    for (const key of NEW_KEYS) {
+      expect(key in payload, `${key} must be cleared, not sent`).toBe(false)
+      expect(box.stored[key], key).toBeNull()
+    }
+  })
+
+  it('Breeding without "Breeding info from" is stopped with a message and never sent', async () => {
+    const { container, onSave, onSaved } = renderRoundTrip({ breeding_system: null, breeding_source: null })
+    change(container, 'breeding_system', 'f1')
+    save()
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(PAIRING_MSG))
+    expect(onSave).not.toHaveBeenCalled()
+
+    change(container, 'breeding_source', 'packet_label')
+    save()
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(onSave.mock.calls[0][1]).toMatchObject({ breeding_system: 'f1', breeding_source: 'packet_label' })
+  })
+
+  it('emptying the source under an existing breeding call is stopped the same way', async () => {
+    const { container, onSave } = renderRoundTrip()
+    change(container, 'breeding_source', '')
+    save()
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(PAIRING_MSG))
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('emptying Breeding alone saves — a source may stand without a breeding call', async () => {
+    const { container, onSave, onSaved } = renderRoundTrip()
+    change(container, 'breeding_system', '')
+    save()
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(onSave.mock.calls[0][1].clear).toEqual(['breeding_system'])
+  })
+
+  it("the server's Open-pollinated refusal is shown, not reported as saved", async () => {
+    // chk_plant_varieties_op_requires_cultivar: the editor cannot see variety_rank, so this one is
+    // the server's to refuse, by name, before the UPDATE.
+    const refusal = 'breeding_system open_pollinated can only be recorded on a single named cultivar '
+      + '(variety_rank cultivar), and this variety is not recorded as one'
+    const onSave = vi.fn(async () => ({ error: refusal }))
+    const onSaved = vi.fn()
+    const { container } = render(
+      <VarietyEditor variety={makeVariety()} cropTypes={CROP_TYPES} currentUserId={OWNER}
+        onSave={onSave} onSaved={onSaved} onCancel={() => {}} />
+    )
+    openAllSections(container)
+    change(container, 'breeding_system', 'open_pollinated')
+    save()
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(refusal))
+    expect(onSave.mock.calls[0][1].breeding_system).toBe('open_pollinated')
+    expect(onSaved).not.toHaveBeenCalled()
   })
 })

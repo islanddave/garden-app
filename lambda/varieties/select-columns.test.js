@@ -45,6 +45,13 @@ const SEEDINV_COLUMNS = [
   'days_to_germ_min', 'days_to_germ_max', 'sow_season', 'sow_notes',
 ];
 
+// V5-VARIETYFACTSEDIT-001 — the five columns VarietyEditor gained. All five are on public.cultivar
+// (origin_* since v4-planttype, breeding_* since v5-varietyhybridflag-001, scoville_source since
+// v5-scovillesource-001), which is what AUDIT_TABLES above makes Phase 1 check.
+const VARIETY_FACTS_COLUMNS = [
+  'origin_country', 'origin_region', 'breeding_system', 'breeding_source', 'scoville_source',
+];
+
 // Extract each SELECT...FROM public.cultivar block from the source. Five exist:
 // by-id GET, list GET (with q), list GET (without q), POST idempotent-by-source-id,
 // and the POST fuzzy-match probe (id/name/species/genus only — intentionally narrow,
@@ -174,4 +181,40 @@ describe('varieties Lambda SEEDINV column plumbing (static-source guard)', () =>
       expect(/\bdisplay_name AS name\b/.test(list)).toBe(true);
     }
   });
+});
+
+// V5-VARIETYFACTSEDIT-001 — write -> read symmetry for the five editor columns. The clear branch of
+// each is already pinned by the CLEARABLE_FIELDS loop above; this pins the other three places a
+// column has to appear for an edit to round-trip.
+describe('varieties Lambda VARIETYFACTSEDIT column plumbing (static-source guard)', () => {
+  // The by-id GET is the read VarietyEdit.jsx seeds the form from. A column missing here renders as
+  // an empty box however much the PUT can write it.
+  const byIdStart = SRC.indexOf("if (idMatch && rawPath !== '/api/varieties/deleted')");
+  const byIdSelects = extractSelectBlocks(SRC.slice(byIdStart, SRC.indexOf("if (method === 'PUT')", byIdStart)));
+  const coalesceBlock = [...SRC.matchAll(/UPDATE public\.cultivar\s+SET([\s\S]*?)WHERE/g)]
+    .map((m) => m[1]).find((b) => b.includes('COALESCE')) ?? '';
+  const returningLists = [...SRC.matchAll(/RETURNING ([^\n`]+)/g)]
+    .map((m) => m[1]).filter((r) => r.includes('display_name AS name'));
+
+  it('finds the by-id GET, the PUT block and both full-row RETURNING lists', () => {
+    expect(byIdStart).toBeGreaterThan(-1);
+    expect(byIdSelects).toHaveLength(1);
+    expect(coalesceBlock).not.toBe('');
+    expect(returningLists).toHaveLength(2);
+  });
+
+  for (const col of VARIETY_FACTS_COLUMNS) {
+    it(`the by-id GET projects ${col}`, () => {
+      expect(new RegExp(`\\b${col}\\b`).test(byIdSelects[0] ?? ''), `by-id GET missing ${col}`).toBe(true);
+    });
+    it(`PUT block partial-updates ${col} (COALESCE keep branch)`, () => {
+      const assignment = new RegExp(`\\b${col}\\s*=\\s*CASE WHEN \\$\\{clear\\} @> ARRAY\\['${col}'\\] THEN NULL ELSE COALESCE\\(\\$\\{body\\.${col} \\?\\? null\\}, ${col}\\) END`);
+      expect(assignment.test(coalesceBlock), `PUT missing the three-way arm for ${col}`).toBe(true);
+    });
+    it(`both RETURNING lists include ${col}`, () => {
+      for (const [idx, list] of returningLists.entries()) {
+        expect(new RegExp(`\\b${col}\\b`).test(list), `RETURNING list #${idx} missing ${col}`).toBe(true);
+      }
+    });
+  }
 });

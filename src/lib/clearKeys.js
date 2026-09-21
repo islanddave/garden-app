@@ -75,7 +75,7 @@ export function clearPatch(fields, form, saved, opts = {}) {
 // server will reject.
 //
 // NOT every handler with a server allowlist belongs here — only those whose form needs the helper.
-// lambda/varieties has a 31-column allowlist and is deliberately ABSENT: VarietyEditor drives
+// lambda/varieties has a 36-column allowlist and is deliberately ABSENT: VarietyEditor drives
 // render, seed and patch off one FIELDS table and builds `clear` itself in buildVarietyPatch, which
 // is the pattern this helper imitates rather than replaces. A mirror for it would be a second
 // source of truth for the same fact. src/__tests__/clearKeys.test.js asserts that its FIELDS keys
