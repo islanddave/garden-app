@@ -59,9 +59,9 @@ pre:
       upsert joins garden_node and filters gn.deleted_at IS NULL, the container upsert joins container and
       filters ct.deleted_at IS NULL) must be LIVE on the prod garden-daily-plan Lambda before 0a runs. Otherwise
       the next rain night re-creates all 7 rows under new ids and post_no_cache_row_on_soft_deleted_planting
-      goes red. promote-gate.yml's coupled deploy is the SPA only; deploy-lambda.yml is a separate push:main
-      workflow, so a successful promote is not evidence. README.md gives the checks. Verifier = whoever runs the
-      apply.
+      goes red. A green promote is not evidence by itself: promote-gate.yml's deploy-lambdas job ships the
+      Lambdas, but only the live function proves it (its Description marker src=<sha>, or
+      scripts/check-lambda-current.py). README.md gives the checks. Verifier = whoever runs the apply.
 
   - name: pre_the_seven_rows_are_the_ones_read_at_authoring
     env: prod
