@@ -212,31 +212,40 @@ describe('an unknown value is a 400 that names the field', () => {
 
 // ── refuse: origin text longer than a place name ────────────────────────────────────────────────
 
-// 120 characters, like genus, counted after the trim. The numbers are literal on purpose: a test built
-// from the validator's own cap would move with a wrong cap and still pass.
-describe('origin text is capped at 120 characters, counted after the trim', () => {
-  const X120 = 'x'.repeat(120);
+// 200 characters, like species, counted after the trim. The numbers are literal on purpose: a test built
+// from the validator's own cap would move with a wrong cap and still pass. 200, not 120: prod stores
+// origin regions up to 165 characters (nine over 120, measured 2026-09-23), and each must stay editable.
+describe('origin text is capped at 200 characters, counted after the trim', () => {
+  const X200 = 'x'.repeat(200);
+  // The longest origin_region on prod at 2026-09-23 (Pineapple) is 165 characters.
+  const LONGEST_STORED = 'r'.repeat(165);
 
-  it.each(['origin_country', 'origin_region'])('%s of exactly 120 characters is written', async (col) => {
-    const res = await put({ [col]: X120 });
+  it.each(['origin_country', 'origin_region'])('%s of exactly 200 characters is written', async (col) => {
+    const res = await put({ [col]: X200 });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(keepBind(col)).toBe(X120);
+    expect(keepBind(col)).toBe(X200);
   });
 
-  it.each(['origin_country', 'origin_region'])('%s of 121 characters is a 400 and nothing is written', async (col) => {
-    const res = await put({ [col]: `${X120}y` });
+  it.each(['origin_country', 'origin_region'])('%s as long as the longest stored region (165) is written', async (col) => {
+    const res = await put({ [col]: LONGEST_STORED });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(keepBind(col)).toBe(LONGEST_STORED);
+  });
+
+  it.each(['origin_country', 'origin_region'])('%s of 201 characters is a 400 and nothing is written', async (col) => {
+    const res = await put({ [col]: `${X200}y` });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe(`${col} must be <= 120 characters`);
+    expect(res.body.error).toBe(`${col} must be <= 200 characters`);
     expect(calls(isUpdate)).toHaveLength(0);
   });
 
-  it.each(['origin_country', 'origin_region'])('padding around 120 characters of %s does not count', async (col) => {
-    const res = await put({ [col]: `  ${X120}\t\n` });
+  it.each(['origin_country', 'origin_region'])('padding around 200 characters of %s does not count', async (col) => {
+    const res = await put({ [col]: `  ${X200}\t\n` });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(keepBind(col)).toBe(X120);
+    expect(keepBind(col)).toBe(X200);
     // validateBody alone — the POST path, which does not trim first — counts the same way.
-    expect(validateBody({ [col]: `   ${X120}   ` }, { requireName: false })).toBeNull();
-    expect(validateBody({ [col]: `   ${X120}y   ` }, { requireName: false })).toBe(`${col} must be <= 120 characters`);
+    expect(validateBody({ [col]: `   ${X200}   ` }, { requireName: false })).toBeNull();
+    expect(validateBody({ [col]: `   ${X200}y   ` }, { requireName: false })).toBe(`${col} must be <= 200 characters`);
   });
 });
 

@@ -164,13 +164,17 @@ export function validateBody(body, { requireName = true } = {}) {
       return `${k} must be one of: ${valid.join(', ')}`;
     }
   }
-  // Capped like genus: a place name, not a paragraph. Measured after the trim, so padding never counts
-  // against it — the PUT has already trimmed (normalizeOriginText), and the POST, which does not trim,
-  // is measured the same way.
+  // Capped like species at 200, and for the same reason as the genus/species caps above: to stop a
+  // pasted essay, while staying loose enough that no stored row becomes un-editable on PUT. Research
+  // loads write origin_region by SQL, past this validator: on prod 2026-09-23 nine regions ran over
+  // 120 characters (longest 165, Pineapple) and none over 200; the longest origin_country was 85.
+  // A cap first set at 120 would have refused a typo fix on those nine (v4.143.0 pre-promote review).
+  // Measured after the trim, so padding never counts against it — the PUT has already trimmed
+  // (normalizeOriginText), and the POST, which does not trim, is measured the same way.
   for (const k of ORIGIN_TEXT_FIELDS) {
     if (body[k] != null) {
       if (typeof body[k] !== 'string') return `${k} must be a string or null`;
-      if (body[k].trim().length > 120) return `${k} must be <= 120 characters`;
+      if (body[k].trim().length > 200) return `${k} must be <= 200 characters`;
     }
   }
   // SEEDINV integer fields (weeks + germination days), scoville-style checks.
