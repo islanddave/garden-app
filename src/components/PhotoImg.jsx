@@ -279,6 +279,9 @@ export default function PhotoImg({
       // A consumer that pages this instance to another photo (the Lightbox) aborts the heal, and a late
       // 404 for the photo it left says nothing about the one on screen now — without this line it put
       // the NEW photo into TERMINAL and sent the consumer a 'deleted' while the new photo was showing.
+      // Every render-time reset aborts the heal, so the SAME photo getting a new URL mid-heal drops its
+      // 404 too: that failure is re-derived if the new URL fails (one more mint, then TERMINAL) and moot
+      // if it loads. PhotoImg.staleCatch.test.jsx pins both shapes.
       if (!mountedRef.current || ac.signal.aborted) return
       const st = err?.status
       if (st === 404) { setTerminal(true); onTerminal?.(photoId); onError?.({ type: 'deleted', photoId }) }   // signal cache invalidate

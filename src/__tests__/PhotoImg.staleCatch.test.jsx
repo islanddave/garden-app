@@ -4,7 +4,9 @@
 // checked only that the component was still mounted, so a late 404 for photo A put photo B into its
 // TERMINAL box — even after B had loaded — and sent the consumer a 'deleted' while B was on screen.
 // Proved in jsdom on 2026-09-21 (lane-seedpacketfallback2 report, R1/R2); these are those two probes,
-// asserted.
+// asserted. The last three come from the v4.143.0 pre-promote review's differential probe (P2, P5, P6):
+// the reactive guard also drops a real 404 when the SAME photo gets a new URL mid-heal, and that
+// failure must be re-derived, not lost; and through PhotoView the fixed bug also cost bandwidth.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, act } from '@testing-library/react'
@@ -13,12 +15,17 @@ const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy, getToken: () => Promise.resolve('t') }) }))
 
 import PhotoImg, { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
+import PhotoView from '../components/photo/PhotoView.jsx'
+import { TIER } from '../lib/photoModel.js'
 import { failPhotoLoad } from './helpers/photoLoadFailure.js'
 
 beforeEach(() => { fetchSpy.mockReset(); __resetPhotoImgCache() })
 const img = (c) => c.querySelector('img')
 const gone = () => { const e = new Error('gone'); e.status = 404; return e }
 const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+const deferred = () => { let reject; const p = new Promise((_, rej) => { reject = rej }); return { p, reject } }
+const mintPaths = () => fetchSpy.mock.calls.map((c) => c[0])
+const deletedFor = (spy) => spy.mock.calls.filter(([a]) => a && a.type === 'deleted').map(([a]) => a.photoId)
 
 describe('PhotoImg — a late failure for the photo it left does not reach the photo it shows', () => {
   it('reactive heal: A fails, its re-mint is still out when the instance pages to B, then A\'s mint 404s', async () => {
@@ -59,6 +66,60 @@ describe('PhotoImg — a late failure for the photo it left does not reach the p
     expect(img(container)?.getAttribute('src')).toBe('https://s3/b-fresh.jpg')
     expect(onTerminal).not.toHaveBeenCalled()
     expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('same photo, new URL mid-heal, and both URLs are dead: the dropped 404 is re-derived — TERMINAL after exactly two mints', async () => {
+    const d = deferred()
+    fetchSpy.mockReturnValueOnce(d.p).mockRejectedValueOnce(gone())
+    const onTerminal = vi.fn()
+    const onError = vi.fn()
+    const { container, rerender } = render(<PhotoImg photoId="A" initialUrl="https://s3/a1.jpg" alt="" onTerminal={onTerminal} onError={onError} />)
+    failPhotoLoad(() => img(container))                             // a1 fails -> heal for A, left pending
+    rerender(<PhotoImg photoId="A" initialUrl="https://s3/a2.jpg" alt="" onTerminal={onTerminal} onError={onError} />)
+    await act(async () => { d.reject(gone()) })                      // the aborted heal's 404 is dropped...
+    await flush()
+    expect(img(container)?.getAttribute('src')).toBe('https://s3/a2.jpg')
+    expect(onTerminal).not.toHaveBeenCalled()
+    failPhotoLoad(() => img(container))                             // ...and a2 failing heals afresh
+    await flush()
+    expect(img(container)).toBeNull()
+    expect(onTerminal.mock.calls).toEqual([['A']])
+    expect(deletedFor(onError)).toEqual(['A'])
+    expect(mintPaths()).toEqual(['/api/photos/view-url/A', '/api/photos/view-url/A'])
+  })
+
+  it('through PhotoView (id-only thumb): re-pointed A -> B while A\'s thumb mint is out, A\'s late 404 leaves B on its thumb', async () => {
+    const d = deferred()
+    fetchSpy.mockImplementation((url) => {
+      if (url === '/api/photos/view-url/A?tier=thumb') return d.p
+      if (url === '/api/photos/view-url/B?tier=thumb') return Promise.resolve({ view_url: 'https://s3/b-thumb.jpg' })
+      if (url === '/api/photos/view-url/B') return Promise.resolve({ view_url: 'https://s3/b-FULL.jpg' })
+      return Promise.reject(gone())
+    })
+    const onTerminal = vi.fn()
+    const { container, rerender } = render(<PhotoView photo={{ id: 'A' }} resolveById tier={TIER.THUMB} alt="" onTerminal={onTerminal} />)
+    rerender(<PhotoView photo={{ id: 'B' }} resolveById tier={TIER.THUMB} alt="" onTerminal={onTerminal} />)
+    await flush()
+    expect(img(container)?.getAttribute('src')).toBe('https://s3/b-thumb.jpg')
+    await act(async () => { d.reject(gone()) })
+    await flush(); await flush()
+    // Before the fix the stale 'deleted' stepped B's chain to the ORIGINAL: a second mint for B and the
+    // full-size image where a thumb was asked for.
+    expect(img(container)?.getAttribute('src')).toBe('https://s3/b-thumb.jpg')
+    expect(onTerminal).not.toHaveBeenCalled()
+    expect(mintPaths()).toEqual(['/api/photos/view-url/A?tier=thumb', '/api/photos/view-url/B?tier=thumb'])
+  })
+
+  it('control: the same photo\'s own thumb mint 404 still steps PhotoView down to the original', async () => {
+    fetchSpy.mockImplementation((url) => {
+      if (url === '/api/photos/view-url/A?tier=thumb') return Promise.reject(gone())
+      if (url === '/api/photos/view-url/A') return Promise.resolve({ view_url: 'https://s3/a-full.jpg' })
+      return Promise.reject(gone())
+    })
+    const { container } = render(<PhotoView photo={{ id: 'A' }} resolveById tier={TIER.THUMB} alt="" />)
+    await flush(); await flush()
+    expect(img(container)?.getAttribute('src')).toBe('https://s3/a-full.jpg')
+    expect(mintPaths()).toEqual(['/api/photos/view-url/A?tier=thumb', '/api/photos/view-url/A'])
   })
 
   it('the guard is about identity, not timing: a 404 for the photo still on screen still ends TERMINAL', async () => {
