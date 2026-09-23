@@ -235,7 +235,9 @@ export function touchesBreeding(body, clear = []) {
 // { breeding_system, breeding_source, variety_rank } read under the PUT's own ownership predicate.
 //   chk_plant_varieties_breeding_sourced:     breeding_system IS NULL OR breeding_source IS NOT NULL
 //   chk_plant_varieties_op_requires_cultivar: breeding_system IS DISTINCT FROM 'open_pollinated'
-//                                             OR variety_rank = 'cultivar'
+//                                             OR variety_rank IS NOT DISTINCT FROM 'cultivar'
+//     (NULL-safe since v5-oprankchecknull-001: the original `= 'cultivar'` was NULL on an unranked row,
+//     and a CHECK passes on NULL, so until then only this preflight and the fill held the rule there.)
 // variety_rank has no edit surface. Dave's rule (2026-09-21): choosing Open-pollinated on a variety
 // whose rank was never recorded (NULL, 416 of 495 live rows) records it as a single named cultivar —
 // fillsCultivarRank says when, and the UPDATE fills the rank in the same statement. A rank that IS

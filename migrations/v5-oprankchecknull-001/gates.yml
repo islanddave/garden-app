@@ -1,0 +1,93 @@
+# gates.yml
+# v5-oprankchecknull-001 — BUG-OPRANKCHECKNULL-001. Re-arms chk_plant_varieties_op_requires_cultivar
+# NULL-safe: `variety_rank IS NOT DISTINCT FROM 'cultivar'` instead of `variety_rank = 'cultivar'`, which
+# is NULL on an unranked row, where a CHECK passes. Constraint only, no data. Why and the writer census:
+# 0a-rearm-check.sql header and README.md.
+#
+# SEQUENCING — README.md. Per environment, staging first:
+#   --phase pre -> apply 0a -> --phase post
+# staging additionally rehearses 0r and re-applies 0a. Then `gate_runner.py --all --phase post
+# --continuous-only` on BOTH envs.
+#
+# GATE CLASSIFICATION (decided at authoring)
+#   * Standing invariant (continuous, self-armed on this migration's stamp): the constraint exists under
+#     its name, is validated, and has the NULL-safe definition. A later migration that puts back the
+#     `= 'cultivar'` form, drops it, or leaves it NOT VALID turns this red.
+#   * Apply-window receipt (continuous: false): the stamp.
+#   * The DATA invariant — no live or deleted row claims open_pollinated without rank cultivar — is
+#     already standing in v5-varietyhybridflag-001 (post_no_op_claim_without_cultivar_rank and
+#     post_invariants_hold_for_soft_deleted_rows_too); it is not duplicated here. After this apply the
+#     constraint makes it impossible rather than merely detected.
+#   * No gate casts ::regclass (catalog joins instead), so every gate parses and runs on an unapplied
+#     database.
+#
+# NO `sweep` PHASE: the pre gate below already counts the whole table, soft-deleted rows included, and
+# 0a re-counts inside its own transaction and refuses rather than forcing.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-oprankchecknull-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_check_is_the_null_permissive_form
+    note: >
+      The starting state 0a replaces, read on prod and staging 2026-09-23: the v5-varietyhybridflag-001
+      definition, validated. If this fails, someone changed the constraint since authoring — read it before
+      applying rather than overwriting an unknown definition.
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND t.relname = 'plant_varieties'
+         AND c.conname = 'chk_plant_varieties_op_requires_cultivar'
+         AND c.convalidated
+         AND pg_get_constraintdef(c.oid) =
+             'CHECK (((breeding_system IS DISTINCT FROM ''open_pollinated''::text) OR (variety_rank = ''cultivar''::text)))'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_no_row_claims_open_pollinated_without_cultivar_rank
+    note: >
+      Every row the stricter CHECK would refuse, soft-deleted included (a CHECK does not know deleted_at).
+      0 on prod (517 rows, 41 open_pollinated, 438 unranked) and staging (72 rows) at authoring. A row here
+      is a decision for a person — rank it, or change the claim — never a reason to force the apply.
+    sql: |
+      SELECT v.id, v.name, v.variety_rank, v.deleted_at
+        FROM public.plant_varieties v
+       WHERE v.breeding_system = 'open_pollinated'
+         AND v.variety_rank IS DISTINCT FROM 'cultivar'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-oprankchecknull-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: post_the_check_is_null_safe_and_validated
+    note: >
+      Standing: the constraint exists under its name, is validated, and refuses an open_pollinated claim on
+      an unranked row. Its definition is compared as Postgres renders it (IS NOT DISTINCT FROM prints as
+      NOT (... IS DISTINCT FROM ...), measured on a scratch table on staging 2026-09-23). Self-armed:
+      vacuous until this migration's stamp exists.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-oprankchecknull-001')
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_constraint c
+                 JOIN pg_class t ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                WHERE n.nspname = 'public' AND t.relname = 'plant_varieties'
+                  AND c.conname = 'chk_plant_varieties_op_requires_cultivar'
+                  AND c.convalidated
+                  AND pg_get_constraintdef(c.oid) =
+                      'CHECK (((breeding_system IS DISTINCT FROM ''open_pollinated''::text) OR (NOT (variety_rank IS DISTINCT FROM ''cultivar''::text))))')
+    expect: rowcount_eq
+    value: 0
