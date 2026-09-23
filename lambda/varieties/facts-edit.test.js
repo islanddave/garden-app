@@ -210,6 +210,36 @@ describe('an unknown value is a 400 that names the field', () => {
   });
 });
 
+// ── refuse: origin text longer than a place name ────────────────────────────────────────────────
+
+// 120 characters, like genus, counted after the trim. The numbers are literal on purpose: a test built
+// from the validator's own cap would move with a wrong cap and still pass.
+describe('origin text is capped at 120 characters, counted after the trim', () => {
+  const X120 = 'x'.repeat(120);
+
+  it.each(['origin_country', 'origin_region'])('%s of exactly 120 characters is written', async (col) => {
+    const res = await put({ [col]: X120 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(keepBind(col)).toBe(X120);
+  });
+
+  it.each(['origin_country', 'origin_region'])('%s of 121 characters is a 400 and nothing is written', async (col) => {
+    const res = await put({ [col]: `${X120}y` });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(`${col} must be <= 120 characters`);
+    expect(calls(isUpdate)).toHaveLength(0);
+  });
+
+  it.each(['origin_country', 'origin_region'])('padding around 120 characters of %s does not count', async (col) => {
+    const res = await put({ [col]: `  ${X120}\t\n` });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(keepBind(col)).toBe(X120);
+    // validateBody alone — the POST path, which does not trim first — counts the same way.
+    expect(validateBody({ [col]: `   ${X120}   ` }, { requireName: false })).toBeNull();
+    expect(validateBody({ [col]: `   ${X120}y   ` }, { requireName: false })).toBe(`${col} must be <= 120 characters`);
+  });
+});
+
 // ── refuse: the pairings ────────────────────────────────────────────────────────────────────────
 
 describe('breeding pairing is checked against the row as it will be, before the UPDATE', () => {

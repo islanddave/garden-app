@@ -164,8 +164,14 @@ export function validateBody(body, { requireName = true } = {}) {
       return `${k} must be one of: ${valid.join(', ')}`;
     }
   }
+  // Capped like genus: a place name, not a paragraph. Measured after the trim, so padding never counts
+  // against it — the PUT has already trimmed (normalizeOriginText), and the POST, which does not trim,
+  // is measured the same way.
   for (const k of ORIGIN_TEXT_FIELDS) {
-    if (body[k] != null && typeof body[k] !== 'string') return `${k} must be a string or null`;
+    if (body[k] != null) {
+      if (typeof body[k] !== 'string') return `${k} must be a string or null`;
+      if (body[k].trim().length > 120) return `${k} must be <= 120 characters`;
+    }
   }
   // SEEDINV integer fields (weeks + germination days), scoville-style checks.
   for (const k of ['start_indoor_weeks_min', 'start_indoor_weeks_max', 'days_to_germ_min', 'days_to_germ_max']) {
