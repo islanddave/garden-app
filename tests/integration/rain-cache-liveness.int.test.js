@@ -23,8 +23,9 @@
 // "plantB has no cache row at all" and its manufactured missing row among them). So they run inside one
 // transaction, after a SAVEPOINT, with the read-back, and the transaction rolls back to the savepoint:
 // nothing is ever committed, which the last test checks. SET LOCAL lock_timeout keeps this file the one
-// that gives way if another file's transaction holds one of those rows (it retries; the other file never
-// waits long enough to reach a deadlock check).
+// that gives way if another file's transaction holds one of those rows: 300 ms is below Postgres' 1 s
+// deadlock_timeout, so in any lock cycle this statement times out first and another file never gets
+// the deadlock error. It then retries, and every attempt commits nothing.
 //
 // "NOT REWRITTEN" IS READ FROM xmin. The orphan rows are committed before the replay, so an ON CONFLICT
 // DO UPDATE that touched one — even with values it already held — gives it the replay's transaction id.
@@ -62,8 +63,8 @@ async function planting(tag, projectId, state = 'live') {
     VALUES (${projectId}, ${`int-raincache-${tag}-${RUN}`}, ${USER}) RETURNING id`
   const { id } = rows[0]
   // The watering is logged while the planting is live, as it was on prod; then the planting changes
-  // state. A direct UPDATE rather than the plants DELETE route, which would also delete a cache row
-  // this file never created.
+  // state. Direct SQL throughout: no cache row exists yet (nothing here goes through the events POST),
+  // so the plants DELETE route's cache delete would have nothing to do.
   await directSql`
     INSERT INTO event_log (project_id, plant_id, event_type, event_date, created_by)
     VALUES (${projectId}, ${id}, 'watering', ${TW}::timestamptz, ${USER})`
@@ -103,7 +104,7 @@ async function sentCacheUpserts() {
 
 let cHost, cLive, cGone, cOrphan, cArchived
 let pLive, pGone, pOrphan, pArchived
-let plantUpsert, projectUpsert
+let sentCount, plantUpsert, projectUpsert
 let before, after
 
 const readBack = () => directSql`
@@ -156,10 +157,11 @@ beforeAll(async () => {
     VALUES (${cOrphan}, ${T0}::timestamptz, ${T0}::timestamptz)`
 
   const cache = await sentCacheUpserts()
+  sentCount = cache.length
   plantUpsert = cache.find((s) => /entity_memory\s*\(\s*plant_id/i.test(s.text))
   projectUpsert = cache.find((s) => /entity_memory\s*\(\s*project_id/i.test(s.text))
   before = byKey(await readBack())
-  if (cache.length === 2 && plantUpsert && projectUpsert) after = byKey(await replayRolledBack())
+  if (sentCount === 2 && plantUpsert && projectUpsert) after = byKey(await replayRolledBack())
 })
 
 afterAll(async () => {
@@ -179,6 +181,7 @@ describe('logRainEvents cache upserts, as run() sends them, on real Postgres', (
   it('run() sent both cache upserts, one per arm, with nothing bound (so the replay is the statement verbatim)', () => {
     expect(plantUpsert, 'run() sent no plant-keyed upsert — logRainEvents was not reached').toBeTruthy()
     expect(projectUpsert, 'run() sent no container-keyed upsert').toBeTruthy()
+    expect(sentCount, 'run() now sends another entity_memory statement: this file replays only two').toBe(2)
     for (const s of [plantUpsert, projectUpsert]) expect(s.params ?? []).toEqual([])
     expect(after, 'the replay did not run').toBeTruthy()
   })
