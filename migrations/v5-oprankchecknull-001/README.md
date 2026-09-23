@@ -51,6 +51,12 @@ Census at dev `dc253a127ef940970f9252dedaf38dfb65ce4f77` (grep of `breeding_syst
 the two out-of-repo scripts that mention the column. Live rows the new form refuses: 0 on prod, 0 on
 staging (2026-09-23).
 
+The new form also refuses the OTHER half of the pair: setting `variety_rank` to NULL on an
+Open-pollinated row. The census above was keyed on `breeding_system` only, so writers of `variety_rank`
+were checked separately (v4.143.0 pre-promote review): it is not in the PUT's clearable fields, the PUT
+writes it only through the fill (NULL to `'cultivar'`), and nothing else in the repo or under `~/AI/Claude`
+writes it except v5-varietyhybridflag-001 (history) and test fixtures that set explicit ranks.
+
 ## Order
 
 Per `gardening-deploy.md` and the gate-invariants workflow (post gates must hold before this directory
@@ -73,7 +79,11 @@ python3 scripts/gate_runner.py --migration migrations/v5-oprankchecknull-001 --e
 ## Rolling back
 
 `0r-rollback.sql` puts the `= 'cultivar'` form back under the same name and deletes the stamp. It costs
-the database-level rule on unranked rows; the editor's fill and the weekly gate stay.
+the database-level rule on unranked rows; the editor's fill and the weekly gate stay. It ALSO turns
+`tests/integration/variety-facts-edit.int.test.js` red on every `integration-test.yml` run once it is
+applied to STAGING: that workflow forks staging on each push to dev, and since v4.143.0 the file asserts
+that a raw Open-pollinated write on an unranked row is refused (proved by applying this rollback to an
+ephemeral fork). Rolling back staging therefore needs that assertion reverted in the same change.
 
 ## Status
 

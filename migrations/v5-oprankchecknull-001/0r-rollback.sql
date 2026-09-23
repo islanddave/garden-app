@@ -7,6 +7,9 @@
 -- database. The variety editor still fills the rank itself, and the weekly gate
 -- v5-varietyhybridflag-001::post_no_op_claim_without_cultivar_rank still reports any such row after the
 -- fact. This exists to unwind a bad apply, not for tidiness.
+-- On STAGING it also reds tests/integration/variety-facts-edit.int.test.js on every push to dev (the
+-- integration workflow forks staging, and the file asserts the raw unranked Open-pollinated write is
+-- refused): revert that assertion in the same change.
 --
 -- Usage: psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -f 0r-rollback.sql
 
