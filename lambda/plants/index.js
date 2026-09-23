@@ -160,6 +160,40 @@ const CONSTRAINT_MESSAGES = {
     'The originator and the place you got it from have to be two different sources. Clear one of them, or pick a different one.',
 };
 
+// BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back brings its container back.
+//
+// The grid and picker lists hide a planting whose CONTAINER is archived, as the daily plan, the rain
+// writer, the dashboard and search already did, and neither container state cascades to its
+// plantings. So unarchiving or restoring a planting that sits in an archived container cleared the
+// planting's own column and left it hidden anyway: off the Archived page, absent from Garden, and no
+// surface can unarchive a container (containers are system-only). The Archived page promises
+// "Unarchive one and it goes straight back where it was"; this statement is what keeps that true.
+// Measured on prod 2026-09-23: 3 of the 28 rows on that page sit in an archived container.
+//
+// Sent in the SAME sql.transaction as the planting's own UPDATE and after it, so it reads the row that
+// UPDATE just wrote: it fires only when the planting is now LIVE (neither archived nor deleted), and
+// only for that planting's own container — the one the lists test, no ancestor walk. A soft-deleted
+// container is never touched: deletion is the stronger state, and the F4 gate on both routes already
+// refuses a planting whose container is deleted. Household-scoped like every container write here.
+// It writes archived_at and nothing else, the column and value lambda/projects' own unarchive PATCH
+// writes, so the container's triggers (version bump, updated_at) already see this exact write. Any
+// other live planting in that container comes back with it — the container is back in use — and that
+// was 0 rows on prod 2026-09-23. archived-container.test.js runs both routes against a fixture table.
+function unarchiveContainerOfLivePlanting(sql, plantId, householdIds) {
+  return sql`
+    UPDATE public.container pp
+       SET archived_at = NULL
+     WHERE pp.archived_at IS NOT NULL
+       AND pp.deleted_at IS NULL
+       AND pp.created_by = ANY(${householdIds})
+       AND EXISTS (SELECT 1 FROM public.garden_node gn
+                    WHERE gn.id = ${plantId}
+                      AND gn.container_id = pp.id
+                      AND gn.deleted_at IS NULL
+                      AND gn.archived_at IS NULL)
+  `;
+}
+
 const CORS = {}; // Lambda URL config is sole CORS source — handler must not duplicate
 
 export const handler = async (event) => {
@@ -393,7 +427,12 @@ export const handler = async (event) => {
         return resp(200, { id: existing.id, deleted_at: null, already_restored: true });
       }
 
-      const rows = await sql`
+      // BUG-PLANTSLISTARCHIVEDCONTAINER-001: one transaction with unarchiveContainerOfLivePlanting (see
+      // its header), which runs second and reads the row restored here. A planting that comes back
+      // still archived on its own goes to the Archived page and leaves its container alone — the
+      // statement requires it LIVE. The already_restored arm above sends neither statement.
+      const [rows] = await sql.transaction([
+        sql`
         UPDATE public.garden_node p
            SET deleted_at = NULL
          WHERE p.id = ${plantId}
@@ -405,7 +444,9 @@ export const handler = async (event) => {
              OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds}))
            )
         RETURNING p.id, p.display_name AS name, p.deleted_at
-      `;
+      `,
+        unarchiveContainerOfLivePlanting(sql, plantId, householdIds),
+      ]);
       // The `plants_entity_softdel` trigger mirrors deleted_at onto the entity registry row in BOTH
       // directions (it assigns NEW.deleted_at rather than a literal), so the planting comes back
       // visible to search and the registry with no extra statement here. Verified on the live
@@ -524,7 +565,7 @@ export const handler = async (event) => {
       // arm. `UPDATE ... FROM container pp` is an inner join by construction, so a project-less
       // planting matched zero rows and 404'd; EXISTS expresses the same container-ownership test
       // without forcing the row to have a container. Same predicate as the other five sites.
-      const rows = await sql`
+      const write = sql`
         UPDATE public.garden_node p
         SET archived_at = CASE WHEN ${archived} THEN NOW() ELSE NULL END
         WHERE p.id = ${plantId}
@@ -538,6 +579,13 @@ export const handler = async (event) => {
           AND p.deleted_at IS NULL
         RETURNING p.id, p.archived_at
       `;
+      // BUG-PLANTSLISTARCHIVEDCONTAINER-001: an UNarchive also brings back the planting's container if
+      // it is archived, in one transaction with the UPDATE above and after it (see
+      // unarchiveContainerOfLivePlanting). An archive sends that one UPDATE exactly as before, on its
+      // own, and never touches the container.
+      const rows = archived
+        ? await write
+        : (await sql.transaction([write, unarchiveContainerOfLivePlanting(sql, plantId, householdIds)]))[0];
       if (!rows.length) return resp(404, { error: 'Not found' });
       return resp(200, rows[0]);
     }

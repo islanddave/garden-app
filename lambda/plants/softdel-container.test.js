@@ -67,7 +67,11 @@ describe('plants Lambda — F4 container soft-delete gate', () => {
     // appear with no audit at all; an ADD is a deliberate change, so bump this in the same commit.
     expect(joined.length,
       'plants container-reaching query count changed. An ADD needs this number bumped deliberately; ' +
-      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(14);
+      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(15);
+    // 14 -> 15: BUG-PLANTSLISTARCHIVEDCONTAINER-001's unarchiveContainerOfLivePlanting, the first
+    // statement in this Lambda that WRITES container (it clears archived_at when an unarchive or a
+    // restore brings a planting back). It carries `pp.deleted_at IS NULL` like every read here, and
+    // for a stronger reason: a soft-deleted container must never be touched by that write.
     // 13 -> 14: V4-ARCHIVEBROWSE-001's GET /api/plants/archived. Container-reaching for ownership
     // and carrying the F4 `pp.deleted_at IS NULL` gate, copied from the /deleted list rather than
     // relaxed — measured on live prod 2026-08-27, all 30 archived-live plantings sit under a live
