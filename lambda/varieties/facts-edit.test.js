@@ -309,6 +309,22 @@ describe('breeding pairing is checked against the row as it will be, before the 
     expect(fillBind()).toBe(false);
   });
 
+  // ...and so is every other non-OP call on every recorded non-cultivar rank. A preflight stricter than
+  // the CHECK refuses a legal edit (S38 in the 658c71e review). Both lists are literal, not read from
+  // validate.js or RANK_WORDS, so a value dropped there cannot shrink the matrix.
+  it.each(['f1', 'landrace', 'unknown'].flatMap((system) =>
+    ['market_class', 'blend', 'species', 'placeholder'].map((rank) => [system, rank])))(
+    '%s on a %s row saves as sent and leaves the rank alone',
+    async (system, rank) => {
+      db({ current: { breeding_system: null, breeding_source: null, variety_rank: rank } });
+      const res = await put({ breeding_system: system, breeding_source: 'breeder' });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      expect(keepBind('breeding_system')).toBe(system);
+      expect(keepBind('breeding_source')).toBe('breeder');
+      expect(fillBind()).toBe(false);
+    },
+  );
+
   it('open_pollinated with no rank recorded saves and records the variety as a single named cultivar', async () => {
     const res = await put({ breeding_system: 'open_pollinated', breeding_source: 'packet_label' });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
@@ -341,6 +357,27 @@ describe('breeding pairing is checked against the row as it will be, before the 
     const res = await put({ breeding_source: 'breeder' });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(fillBind()).toBe(false);
+  });
+
+  // Dave's rule (2026-09-21): the fill is permanent. Once Open-pollinated has recorded the variety as a
+  // cultivar, switching Breeding to anything else, or clearing it, leaves the rank 'cultivar': no
+  // statement a PUT issues writes variety_rank except the fill arm, and that arm only fills a NULL.
+  // The real-Postgres half is the integration case that follows the fill.
+  it.each([
+    ['to f1', { breeding_system: 'f1' }],
+    ['to landrace', { breeding_system: 'landrace' }],
+    ['to unknown', { breeding_system: 'unknown' }],
+    ['cleared', { clear: ['breeding_system'] }],
+    ['cleared with its source', { clear: ['breeding_system', 'breeding_source'] }],
+  ])('after the fill, Breeding %s leaves the rank as it is', async (_label, body) => {
+    db({ current: { breeding_system: 'open_pollinated', breeding_source: 'packet_label', variety_rank: 'cultivar' } });
+    const res = await put(body);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(fillBind()).toBe(false);
+    const rankWrites = stubState.sqlCalls
+      .flatMap((c) => c.text.match(/\bvariety_rank\s*=[^\n]*/g) ?? [])
+      .map((s) => s.replace(/\s+/g, ' ').trim());
+    expect(rankWrites).toEqual(["variety_rank = CASE WHEN ?::boolean AND variety_rank IS NULL THEN 'cultivar' ELSE variety_rank END"]);
   });
 
   it('the preflight reads the row by the UPDATE\'s own WHERE clause, byte for byte', async () => {
