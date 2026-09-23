@@ -281,4 +281,20 @@ describe('V5-VARIETYFACTSEDIT-001 — the pairing preflight agrees with the live
       UPDATE plant_varieties SET breeding_system = 'f1' WHERE id = ${foreignId}`]))
       .rejects.toMatchObject({ code: '23514', constraint: 'chk_plant_varieties_breeding_sourced' })
   })
+
+  // ...and the catch itself, end to end. A patch that passes every validator but not a CHECK the
+  // preflight does not model (a Scoville minimum above the stored maximum) reaches the real catch, which
+  // still names an unmapped constraint the way it always has. That exact text is only possible when
+  // the driver hands the handler err.constraint, the field CONSTRAINT_MESSAGES is keyed by.
+  it('an unmapped CHECK refusal still answers "Constraint violation: <name>", through the real catch', async () => {
+    setTestUserId(USER)
+    const [{ id }] = await directSql`
+      INSERT INTO plant_varieties (name, created_by, scoville_min, scoville_max)
+      VALUES (${'facts-var-heat-' + RUN}, ${USER}, 100, 200)
+      RETURNING id`
+    const { status, body } = await put(id, { scoville_min: 500 })
+    expect(status).toBe(400)
+    expect(body.error).toBe('Constraint violation: chk_plant_varieties_scoville')
+    expect((await directSql`SELECT scoville_min FROM plant_varieties WHERE id = ${id}`)[0].scoville_min).toBe(100)
+  })
 })
