@@ -14,8 +14,12 @@
 //      same UPDATE records the variety as a single named cultivar. The live CHECK would NOT force
 //      that — `variety_rank = 'cultivar'` is NULL on an unranked row and a CHECK passes on NULL
 //      (BUG-OPRANKCHECKNULL-001) — so reading the rank back is the only proof the rule holds;
-//   4. GET /api/varieties/:id returns the five, which is what VarietyEditor seeds its form from.
-// Read-backs go through directSql, never the handler's echo.
+//   4. GET /api/varieties/:id returns the five, which is what VarietyEditor seeds its form from;
+//   5. the fill is permanent, and fires when Open-pollinated and its source arrive in ONE body; every
+//      other breeding call is written on every recorded rank; and the driver reports a CHECK refusal
+//      with the constraint name the handler's catch maps to a sentence (the race path).
+// Read-backs go through directSql, never the handler's echo. No case here leaves a row holding
+// open_pollinated on a NULL rank: an OP write on an unranked row goes through the PUT, which fills it.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, testRunId, setTestUserId, callHandler } from './_harness.js'
 import { handler } from '../../lambda/varieties/index.js'
@@ -24,7 +28,7 @@ const RUN = testRunId()
 const USER = `user_int_facts_${RUN}`
 const FOREIGN = `user_int_facts_foreign_${RUN}`
 
-let varietyId, rankedId, marketId, foreignId
+let varietyId, rankedId, marketId, foreignId, unrankedId
 
 const put = (id, body) => callHandler(handler, { method: 'PUT', path: `/api/varieties/${id}`, body })
 const facts = async (id) => (await directSql`
@@ -54,6 +58,11 @@ beforeAll(async () => {
     VALUES (${'facts-var-foreign-' + RUN}, ${FOREIGN})
     RETURNING id`
   foreignId = f[0].id
+  const u = await directSql`
+    INSERT INTO plant_varieties (name, created_by)
+    VALUES (${'facts-var-unranked-' + RUN}, ${USER})
+    RETURNING id`
+  unrankedId = u[0].id
 })
 
 afterAll(async () => {
@@ -193,6 +202,36 @@ describe('V5-VARIETYFACTSEDIT-001 — the pairing preflight agrees with the live
     })
   })
 
+  // Dave's rule (2026-09-21): the fill is permanent. The row the case above filled is moved off
+  // Open-pollinated three ways and then cleared; the rank reads back 'cultivar' after every step.
+  it('the fill is permanent: switching Breeding away from Open-pollinated, or clearing it, leaves the rank cultivar', async () => {
+    setTestUserId(USER)
+    expect(await facts(varietyId)).toMatchObject({ breeding_system: 'open_pollinated', variety_rank: 'cultivar' })
+    for (const edit of [
+      { breeding_system: 'f1' }, { breeding_system: 'landrace' }, { breeding_system: 'unknown' },
+      { clear: ['breeding_system'] },
+    ]) {
+      const { status, body } = await put(varietyId, edit)
+      expect(status, `${JSON.stringify(edit)} -> ${JSON.stringify(body)}`).toBe(200)
+      expect(await facts(varietyId), JSON.stringify(edit)).toMatchObject({
+        breeding_system: edit.breeding_system ?? null, breeding_source: 'grower_record', variety_rank: 'cultivar',
+      })
+    }
+  })
+
+  it('open_pollinated and its source in ONE body on an unranked row: both are written, and the rank recorded', async () => {
+    setTestUserId(USER)
+    expect(await facts(unrankedId)).toEqual({
+      origin_country: null, origin_region: null, breeding_system: null,
+      breeding_source: null, scoville_source: null, variety_rank: null,
+    })
+    const { status, body } = await put(unrankedId, { breeding_system: 'open_pollinated', breeding_source: 'packet_label' })
+    expect(status, JSON.stringify(body)).toBe(200)
+    expect(await facts(unrankedId)).toMatchObject({
+      breeding_system: 'open_pollinated', breeding_source: 'packet_label', variety_rank: 'cultivar',
+    })
+  })
+
   it('open_pollinated on a cultivar-rank row is written', async () => {
     setTestUserId(USER)
     const { status, body } = await put(rankedId, { breeding_system: 'open_pollinated', breeding_source: 'packet_label' })
@@ -208,5 +247,38 @@ describe('V5-VARIETYFACTSEDIT-001 — the pairing preflight agrees with the live
     expect(status).toBe(404)
     expect(body.error).toBe('Not found or not owner')
     expect(await facts(foreignId)).toMatchObject({ breeding_system: null, breeding_source: null })
+  })
+
+  // The CHECK couples only open_pollinated to the rank, so the preflight must let every other call
+  // through on every recorded rank, and the database must take it. One fresh row per rank.
+  it.each(['market_class', 'blend', 'species', 'placeholder'])(
+    'f1, landrace and unknown are each written on a %s row, and the rank is left alone',
+    async (rank) => {
+      setTestUserId(USER)
+      const [{ id }] = await directSql`
+        INSERT INTO plant_varieties (name, created_by, variety_rank)
+        VALUES (${`facts-var-cell-${rank}-${RUN}`}, ${USER}, ${rank})
+        RETURNING id`
+      for (const system of ['f1', 'landrace', 'unknown']) {
+        const { status, body } = await put(id, { breeding_system: system, breeding_source: 'breeder' })
+        expect(status, `${system} on ${rank}: ${JSON.stringify(body)}`).toBe(200)
+        expect(await facts(id), `${system} on ${rank}`).toMatchObject({
+          breeding_system: system, breeding_source: 'breeder', variety_rank: rank,
+        })
+      }
+    },
+  )
+
+  // The race path's premise. The handler's catch turns a 23514 into a sentence by err.constraint, and
+  // the unit tests throw that shape by hand. This proves the real driver, through the same
+  // sql.transaction call the PUT makes, reports both coupling CHECKs under that name. Both writes are
+  // refused, so neither row changes.
+  it('a CHECK refusal inside a transaction carries code 23514 and the constraint name', async () => {
+    await expect(directSql.transaction([directSql`
+      UPDATE plant_varieties SET breeding_system = 'open_pollinated', breeding_source = 'packet_label' WHERE id = ${marketId}`]))
+      .rejects.toMatchObject({ code: '23514', constraint: 'chk_plant_varieties_op_requires_cultivar' })
+    await expect(directSql.transaction([directSql`
+      UPDATE plant_varieties SET breeding_system = 'f1' WHERE id = ${foreignId}`]))
+      .rejects.toMatchObject({ code: '23514', constraint: 'chk_plant_varieties_breeding_sourced' })
   })
 })
