@@ -134,3 +134,18 @@ Soft-Delete-Only Rule lists events and no carve-out clearly covers these), and r
 only for rows still sitting where `0b` left them — never blanket, or it would undo real waterings
 logged since. Note that after a rollback, re-running `0b` inserts a fresh set alongside the withdrawn
 ones, because `0b`'s guard asks whether a **live** row exists. Deliberate; documented in `0r`.
+
+## Do not copy `0c-cachearms.sql` (BUG-CACHEORPHANREGRESS-001)
+
+`0c-cachearms.sql` came in a later commit (`3cc0237`, applied to staging and prod 2026-08-28) and is not described
+above. Its plant arm (lines 83-106) upserts a plant-keyed `entity_memory` row for every planting with a live watering
+or rain event and never checks that the planting is live. A soft-deleted planting keeps its events, so on prod it
+created 7 rows on soft-deleted plantings in one transaction (2026-08-28 13:17:38Z; attributed by that shared creation
+time and `3cc0237`'s own apply notes): the +7 in the Monday
+`entity_memory_orphans` alert, removed by `migrations/v5-cacheorphan-001`. Its project arm (lines 111-135) has no
+container-liveness check either; it created no orphan only because no soft-deleted container had a live watering or
+rain event. The file is applied and stays as it is. Do not copy either arm into a writer or a new migration, and do
+not re-run it: nothing refuses a second apply (its stamp is `ON CONFLICT DO NOTHING`), and after v5-cacheorphan-001
+its plant arm would write the 7 rows back. The live-parent form is `logRainEvents` in `lambda/daily-plan/handler.js`:
+join `garden_node gn` and filter `gn.deleted_at IS NULL`, join `container ct` and filter `ct.deleted_at IS NULL`, and
+leave archived parents their rows.
