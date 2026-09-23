@@ -77,10 +77,12 @@ gates pin all 4 as untouched.
 
 ## Which build: the fixed daily-plan Lambda must be live first
 
-**Required:** commit `f1633e507517741c8487e8caa6527c09e6acf0fb` ("fix(daily-plan): rain night cache upserts skip
-soft-deleted plantings and containers (BUG-CACHEORPHANREGRESS-001)") running on the prod `garden-daily-plan` Lambda.
-Both of `logRainEvents`' cache upserts then join their parent and skip a soft-deleted one; archived parents are still
-written. It is not in v4.142.0; it reaches prod in a later release, under a new SHA once integrated.
+**Required:** the release carrying commit `8b7da9423fcfc6991248d463edfdf9720091f8f3` ("fix(daily-plan): rain night
+cache upserts skip soft-deleted plantings and containers (BUG-CACHEORPHANREGRESS-001)") running on the prod
+`garden-daily-plan` Lambda, and commit `ed19cff1617f6ea72ea8ad312d8114638d4765ae` (the events fix below) on the prod
+`garden-events` Lambda. Both ship in v4.143.0. (The lane built them as `f1633e5` and `4ed11b7`; those lane SHAs are
+not on dev, so check containment with the dev SHAs above.) Both of `logRainEvents`' cache upserts then join their
+parent and skip a soft-deleted one; archived parents are still written.
 
 **Why the order matters.** On the fork, after 0a had run, the unfixed plant upsert (as the current Lambda runs it) wrote
 279 rows: 272 updates and 7 new rows, one for each of these plantings, under new ids. The orphan count went 4 → 11,
@@ -92,32 +94,40 @@ between 08-28 and 09-21), so an early apply undoes itself within days.
 /api/events/:id` re-anchor block (`lambda/events/index.js`, `if (newPlantId)`) has no liveness check. All 56 live
 events on these 7 plantings sit in live containers, so the route reaches every one of them, and an edit that changes
 an event's date, type or issue flag writes its planting's row (after the cleanup, re-creates it). It is fixed by
-commit `4ed11b798f2c9dffc06af5e4c68c97bb27057280` under the same ledger row: the upsert now reads the planting in the
+commit `ed19cff1617f6ea72ea8ad312d8114638d4765ae` (lane `4ed11b7`) under the same ledger row: the upsert now reads the planting in the
 same statement and selects nothing for a soft-deleted one, and `lambda/events/reanchor-cache-liveness.test.js` guards
 the statement the handler sends. If that fix ships after the daily-plan fix, an apply in between can be undone by one
 such edit, and the standing gate reports it.
 
 **How to check the MANUAL gate** (`pre_live_parent_cache_upserts_are_deployed`; gate_runner prints it and does not
-count it as a pass). Its note says `deploy-lambda.yml` is a separate `push: main` workflow. That has not been true
-since OPS-PROMOTERACE-001 (2026-08-14). `promote-gate.yml` now runs `deploy-lambda.yml` itself, as its
+count it as a pass). Since OPS-PROMOTERACE-001 (2026-08-14) `promote-gate.yml` runs `deploy-lambda.yml` itself, as its
 `deploy-lambdas` job, before the SPA deploy. It skips that job only when `scripts/check-lambda-current.py` proves every
 running function is already current. A release carrying the fix changes `lambda/`, so its promote deploys all 26
-functions. The check:
+functions. A green promote is still not the proof; the live functions are. The check (Apply step 2 runs it):
 
-1. The promote-gate run of the release that carries the fix shows `deploy-lambdas` succeeded, not skipped.
-2. `LastModified` from the `aws lambda get-function` line under Apply is later than that job. For proof beyond the
-   timestamp, the function's `Description` holds the deploy marker the last step of every deploy leg writes
+1. Each function's `Description` holds the deploy marker the last step of every deploy leg writes
    (`garden-app lambda-deploy v1 src=<commit built> … code=<CodeSha256> …`; `scripts/check-lambda-current.py`
-   documents it). Its `src=` must be a commit that contains the fix, and its `code=` must equal the `CodeSha256`.
+   documents it). Its `code=` must equal the function's `CodeSha256`, so the marker describes the code that runs.
+2. Its `src=` must contain the fix: `8b7da94…` for `garden-daily-plan`, `ed19cff…` for `garden-events`.
 3. Optional, once a rain night has been logged after that deploy: the database proof under Apply.
 
 ## Apply
 
 The apply is a prod write: not part of any ship, and only with Dave's approval. URLs come from `garden-app/.env.local`
-by key name, never by pattern, and are never typed on a command line. Run from a garden-app checkout that contains
-this directory, one line at a time, reading each result before the next. The blocks carry no comments on purpose:
-Dave's interactive zsh does not have `interactivecomments` set, so a pasted `#` line runs as a command, and an
-apostrophe in one opens a quote that swallows the lines after it.
+by key name, never by pattern, and are never typed on a command line. Run one line at a time, reading each result
+before the next. The blocks carry no comments on purpose: Dave's interactive zsh does not have `interactivecomments`
+set, so a pasted `#` line runs as a command, and an apostrophe in one opens a quote that swallows the lines after it.
+
+**0. A checkout that contains this directory.** The main garden-app checkout sits on an old release branch and does
+not have it, so make a throwaway one at `origin/main`. Go on only if it prints `migration-present`. When everything
+below is done: `cd ~`, then `git -C /Users/davenichols/AI/Claude/Projects/Gardening/garden-app worktree remove /tmp/apply-cacheorphan-001`.
+
+```zsh
+git -C /Users/davenichols/AI/Claude/Projects/Gardening/garden-app fetch -q origin main dev
+git -C /Users/davenichols/AI/Claude/Projects/Gardening/garden-app worktree add --detach /tmp/apply-cacheorphan-001 origin/main
+cd /tmp/apply-cacheorphan-001
+test -f migrations/v5-cacheorphan-001/0a-cleanup.sql && echo migration-present || echo MIGRATION-MISSING
+```
 
 **1. Load the two URLs by key name and check both hosts.** Go on only if the two `case` lines print `prod-host-ok` and
 `staging-host-ok`.
@@ -130,11 +140,17 @@ case "$NEON_DATABASE_URL" in *ep-lucky-bird-amju6iqt*) echo prod-host-ok ;; *) e
 case "$NEON_STAGING_URL" in *ep-mute-firefly-amq424mj*) echo staging-host-ok ;; *) echo WRONG-STAGING-HOST ;; esac
 ```
 
-**2. The deployed-first check (the MANUAL gate).** The live Lambda's code must carry the join; read the output as
-described under "How to check the MANUAL gate" above.
+**2. The deployed-first check (the MANUAL gate).** Both live Lambdas must carry their fix (see "How to check the
+MANUAL gate" above). Go on only if it prints `garden-daily-plan Successful code-matches-marker`,
+`garden-events Successful code-matches-marker`, `daily-plan-has-fix` and `events-has-fix`. Before v4.143.0 is live it
+prints `DAILY-PLAN-LACKS-FIX` and `EVENTS-LACKS-FIX` (checked 2026-09-23 against v4.142.0), so the check can fail.
 
 ```zsh
-aws lambda get-function --function-name garden-daily-plan --query 'Configuration.[LastModified,CodeSha256]' --output text
+for fn in garden-daily-plan garden-events; do aws lambda get-function-configuration --region us-east-1 --function-name "$fn" --query '[CodeSha256,LastUpdateStatus,Description]' --output text | awk -v fn="$fn" '{ split($0, a, " code="); split(a[2], b, " "); print fn, $2, ($1 == b[1] ? "code-matches-marker" : "CODE-MISMATCH") }'; done
+DP_SRC="$(aws lambda get-function-configuration --region us-east-1 --function-name garden-daily-plan --query Description --output text | sed -E 's/.* src=([0-9a-f]{40}) .*/\1/')"
+EV_SRC="$(aws lambda get-function-configuration --region us-east-1 --function-name garden-events --query Description --output text | sed -E 's/.* src=([0-9a-f]{40}) .*/\1/')"
+git -C /Users/davenichols/AI/Claude/Projects/Gardening/garden-app merge-base --is-ancestor 8b7da9423fcfc6991248d463edfdf9720091f8f3 "$DP_SRC" && echo daily-plan-has-fix || echo DAILY-PLAN-LACKS-FIX
+git -C /Users/davenichols/AI/Claude/Projects/Gardening/garden-app merge-base --is-ancestor ed19cff1617f6ea72ea8ad312d8114638d4765ae "$EV_SRC" && echo events-has-fix || echo EVENTS-LACKS-FIX
 ```
 
 Optional database proof, read-only (added 2026-09-23 and run on prod then). Before the fix, the second time is within
@@ -196,8 +212,10 @@ right after the apply. The baseline gate means one of the 4 project rows changed
 retry.
 
 **Push and apply order.** Pushing this directory before the apply is safe. The one continuous `post` gate arms itself
-on this migration's stamp, and every other `post` gate is window-only, so the nightly continuous corpus is unchanged
-(measured on the fork: 959 results, no change). The apply itself must come after the code, as above.
+on this migration's stamp, and every other `post` gate is window-only, so the continuous corpus that
+`gate-invariants.yml` runs (weekly, Tuesdays 13:00 UTC, and on dev pushes that touch `migrations/**`) is unchanged
+(measured on the fork: 959 results, no change). The apply itself must come after the code, as above. After the apply,
+a re-created orphan shows up there, or in the Monday integrity email, within a week; step 6 checks it on the day.
 
 ## Rollback
 
@@ -211,6 +229,12 @@ count reads 11 again: this exists to unwind a bad apply, not for tidiness. The c
 it; with the fix live, the restored rows are simply never written again. 0r restores all or nothing: if any row's id is
 in use, its planting has a cache row again, or the planting row is gone, it lists them, restores nothing and keeps the
 copy and the stamp.
+
+**A code rollback after the apply is the one case this does not cover.** Reverting v4.143.0 brings the unfixed rain
+writer back, and the next rain night re-creates the 7 rows under new ids (the negative control). The standing gate then
+fails, 0r refuses ("planting has a row again"), and 0a cannot remove them because it selects by id. Once the fix is
+live again, those rows need a one-off cleanup that selects by predicate (plant-keyed rows on soft-deleted plantings),
+written and approved like this one.
 
 ## Verification at authoring (2026-09-21)
 
@@ -262,8 +286,6 @@ host checked).
 
 ## Not in scope, noticed
 
-- **The note on `pre_live_parent_cache_upserts_are_deployed` in `gates.yml` is out of date** (see Which build). The
-  check it points to is the one in this README.
 - The container DELETE leaves the container's cache row, which is how the 4 baseline rows arose. Mirroring the plants
   DELETE there needs a decision on restore (`post_every_non_deleted_project_with_events_has_a_cache_row` in
   `v4-cachemissingrow-001` would stay red after a restore until the next write).
