@@ -99,6 +99,12 @@ same statement and selects nothing for a soft-deleted one, and `lambda/events/re
 the statement the handler sends. If that fix ships after the daily-plan fix, an apply in between can be undone by one
 such edit, and the standing gate reports it.
 
+**Apply soon after the deploy, not a week later.** With the events fix live and before 0a, an edit to one of those 56
+events no longer re-syncs its planting's leftover row: the row falls behind or ahead of `event_log`, and the continuous
+drift gates `post_no_cache_behind_event_log` / `post_no_cache_ahead_of_event_log` (in `v4-cachefwdgap-001`,
+`v4-cachemissingrow-001`, `v4-carecacheundo-001`) can go red on it. That is not a writer regression, nothing in the app
+reads the row, and 0a removes it by id either way; the pre-promote regression pass (2026-09-23) found all 7 in sync.
+
 **How to check the MANUAL gate** (`pre_live_parent_cache_upserts_are_deployed`; gate_runner prints it and does not
 count it as a pass). Since OPS-PROMOTERACE-001 (2026-08-14) `promote-gate.yml` runs `deploy-lambda.yml` itself, as its
 `deploy-lambdas` job, before the SPA deploy. It skips that job only when `scripts/check-lambda-current.py` proves every
@@ -229,6 +235,11 @@ count reads 11 again: this exists to unwind a bad apply, not for tidiness. The c
 it; with the fix live, the restored rows are simply never written again. 0r restores all or nothing: if any row's id is
 in use, its planting has a cache row again, or the planting row is gone, it lists them, restores nothing and keeps the
 copy and the stamp.
+
+**Restoring one of the 7 plantings after the apply** leaves a live planting with live events and no cache row, so the
+armed `post_every_non_deleted_planting_with_events_has_a_cache_row` (`v4-cachemissingrow-001`) reads red until that
+planting's next event write or rain night rebuilds the row. That is the existing restore design ("loss on undelete is
+acceptable and self-healing"), newly reachable for these 7; the orphan rows hide it today.
 
 **A code rollback after the apply is the one case this does not cover.** Reverting v4.143.0 brings the unfixed rain
 writer back, and the next rain night re-creates the 7 rows under new ids (the negative control). The standing gate then
