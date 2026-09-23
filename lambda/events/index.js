@@ -2275,6 +2275,18 @@ export const handler = async (event) => {
           // entity_memory_exactly_one_parent (23514), aborts the transaction, and the catch below
           // rethrows — a 500. Same fact the POST arm already documents at ~:2165. Keep the guard.
           if (newPlantId) {
+            // BUG-CACHEORPHANREGRESS-001 — never for a SOFT-DELETED planting. This route reaches an
+            // event whose planting was soft-deleted: its container is live, so the ownership SELECT and
+            // the UPDATE above both pass, and the Deleted-Planting History Rule keeps such events live
+            // and editable (56 of them on 7 plantings on prod, 2026-09-23). When the edit does not move
+            // the event, newPlantId IS that planting, and an unfiltered date/type/flag edit wrote the
+            // cache row the plants DELETE removes with the soft-delete — the entity_memory_orphans leak
+            // (migrations/v5-cacheorphan-001). The planting is read in THIS statement, so no soft-delete
+            // can land between a check and the write: a soft-deleted planting selects no row, the INSERT
+            // inserts nothing and ON CONFLICT never fires (no create, no update). The event edit above is
+            // untouched and the response is the same. deleted_at ONLY: an ARCHIVED planting keeps its row
+            // (v4-cachemissingrow-001). In this FROM's WHERE, not a join's ON, where under a LEFT JOIN it
+            // would only blank the columns. reanchor-cache-liveness.test.js evaluates the SENT statement.
             reanchor.push(sql`
               INSERT INTO entity_memory
                 (plant_id, last_event_at, last_watered_at, last_fertilized_at,
@@ -2287,6 +2299,9 @@ export const handler = async (event) => {
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type = 'observation' AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.event_type IN ('harvest','first_harvest') AND e.deleted_at IS NULL),
                 (SELECT MAX(e.event_date) FROM event_log e WHERE e.plant_id = ${newPlantId} AND e.flagged_as_issue = true AND e.deleted_at IS NULL)
+                FROM public.garden_node gn
+               WHERE gn.id = ${newPlantId}::uuid
+                 AND gn.deleted_at IS NULL
               ON CONFLICT (plant_id) WHERE plant_id IS NOT NULL DO UPDATE SET
                 last_event_at = EXCLUDED.last_event_at,
                 last_watered_at = EXCLUDED.last_watered_at,

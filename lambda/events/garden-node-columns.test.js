@@ -1,6 +1,6 @@
 // OPS-SCHEMAAUDITJOIN-001 — the public.garden_node columns lambda/events reads.
 //
-// The heaviest consumer in the repo: three handlers and seventeen statements, six aliases, plus
+// The heaviest consumer in the repo: three handlers and eighteen statements, six aliases, plus
 // two reads that name the table with no alias at all. Two of the columns here — `qty_harvested`
 // and `qty_lost` — are reached ONLY by the unaliased give-away availability read pinned below,
 // which is exactly the shape an alias scan cannot see.
@@ -125,7 +125,9 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/events garden_node column contract'
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(17);
+    // 18th (BUG-CACHEORPHANREGRESS-001): the PUT re-anchor's plant cache upsert reads gn.id and
+    // gn.deleted_at, both already in the contract below.
+    expect(STATEMENTS).toHaveLength(18);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['ga', 'gn', 'gn2', 'gp', 'p', 'pn']);
   });
