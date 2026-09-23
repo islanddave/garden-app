@@ -52,7 +52,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import {
   validateBody, validateCropTypeBody, resolveCropTypeName, validateClear, auditActor,
   validateSourceBody, validateSourceKindBody, resolveSourceKindName, foldSourceKey, blankToNull,
-  normalizeOriginText, touchesBreeding, breedingPairingError, fillsCultivarRank,
+  normalizeOriginText, touchesBreeding, breedingPairingError, fillsCultivarRank, CONSTRAINT_MESSAGES,
 } from './validate.js';
 import { applyDerive } from './crop-derive.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
@@ -1082,7 +1082,12 @@ export const handler = async (event) => {
 
   } catch (err) {
     console.error('varieties lambda error', err);
-    if (err.code === '23514') return resp(400, { error: `Constraint violation: ${err.constraint ?? err.message}` });
+    if (err.code === '23514') {
+      // Named constraints first (V5-VARIETYFACTSEDIT-001: the PUT's breeding race path, see
+      // CONSTRAINT_MESSAGES in ./validate.js), then the pre-existing generic arm unchanged.
+      const named = CONSTRAINT_MESSAGES[err.constraint];
+      return resp(400, { error: named ?? `Constraint violation: ${err.constraint ?? err.message}` });
+    }
     if (err.code === '23502') return resp(400, { error: `Required field missing: ${err.column ?? err.message}` });
     if (err.code === '23503') return resp(400, { error: `Foreign key violation: ${err.constraint ?? err.message}` });
     if (err.code === '23505') return resp(409, { error: `Unique violation: ${err.constraint ?? err.message}` });

@@ -257,18 +257,19 @@ export const RANK_WORDS = {
   placeholder: 'a placeholder',
 };
 
+// The two refusals, worded once: breedingPairingError says them before the UPDATE, and
+// CONSTRAINT_MESSAGES below says the same thing when the CHECK itself refuses the UPDATE.
+const SOURCE_REQUIRED = '"Breeding info from" is required when Breeding is set.';
+const opNeedsCultivar = (rank) => 'Open-pollinated applies only to a single named variety, and this entry is recorded as '
+  + `${RANK_WORDS[rank] ?? 'something other than a single named variety'}.`;
+
 export function breedingPairingError(body, clear = [], current = {}) {
   const after = (k) => (clear.includes(k) ? null : (body?.[k] ?? current?.[k] ?? null));
   const system = after('breeding_system');
   if (system == null) return null;
-  if (after('breeding_source') == null) {
-    return '"Breeding info from" is required when Breeding is set.';
-  }
+  if (after('breeding_source') == null) return SOURCE_REQUIRED;
   const rank = current?.variety_rank ?? null;
-  if (system === 'open_pollinated' && rank != null && rank !== 'cultivar') {
-    return 'Open-pollinated applies only to a single named variety, and this entry is recorded as '
-      + `${RANK_WORDS[rank] ?? 'something other than a single named variety'}.`;
-  }
+  if (system === 'open_pollinated' && rank != null && rank !== 'cultivar') return opNeedsCultivar(rank);
   return null;
 }
 
@@ -285,6 +286,19 @@ export function fillsCultivarRank(body, clear = [], current = {}) {
     && !clear.includes('breeding_system')
     && (current?.variety_rank ?? null) === null;
 }
+
+// The race path. breedingPairingError decides on a row read BEFORE the UPDATE, so a write that lands
+// between the two (a second editor clearing the source, a script recording a rank) is refused by the
+// CHECK itself, and the Lambda's catch sees a 23514 naming the constraint. It consults this map before
+// its generic arm (the lambda/plants CONSTRAINT_MESSAGES pattern), so the editor's banner reads the
+// preflight's own sentence whichever side of the race caught it. The rank that tripped
+// op_requires_cultivar was written by someone else after our read and is not known here, so that
+// sentence takes the preflight's rank-agnostic wording. Every other constraint keeps
+// "Constraint violation: <name>".
+export const CONSTRAINT_MESSAGES = {
+  chk_plant_varieties_breeding_sourced: SOURCE_REQUIRED,
+  chk_plant_varieties_op_requires_cultivar: opNeedsCultivar(null),
+};
 
 // ── V4-CROPTYPE-001 — user-minted crop types ────────────────────────────────────────────────
 // Dave's accepted design: "synonyms-not-types + always-add-on-the-fly. Guard only the 8

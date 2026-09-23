@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
 import {
   normalizeOriginText, touchesBreeding, breedingPairingError, fillsCultivarRank, validateBody,
-  VALID_BREEDING_SYSTEM, VALID_FACT_SOURCE, RANK_WORDS,
+  VALID_BREEDING_SYSTEM, VALID_FACT_SOURCE, RANK_WORDS, CONSTRAINT_MESSAGES,
 } from './validate.js';
 
 vi.mock('@neondatabase/serverless', async () => {
@@ -375,6 +375,64 @@ describe('breeding pairing is checked against the row as it will be, before the 
     await put({ origin_country: 'Italy', scoville_source: 'inference', scoville_min: 100 });
     expect(calls(isPreflight)).toHaveLength(0);
     expect(calls(isUpdate)).toHaveLength(1);
+  });
+});
+
+// ── the race path: the CHECK itself refuses the UPDATE ─────────────────────────────────────────────
+
+// The preflight reads the row before the UPDATE writes it. A write landing in between (a second editor
+// clearing the source, a script recording a rank) is refused by the CHECK, and the handler's catch sees
+// a 23514 naming the constraint — thrown here in the neon driver's shape. Before this, the editor's
+// banner printed "Constraint violation: chk_plant_varieties_op_requires_cultivar" (qa review of
+// 658c71e, probe). The sentences are literal, as above.
+function refusedAtUpdate(constraint, current = EMPTY_ROW) {
+  db({ current });
+  const read = stubState.sqlHandler;
+  stubState.sqlHandler = (text, values) => {
+    if (!isUpdate(text)) return read(text, values);
+    const err = new Error(`new row for relation "plant_varieties" violates check constraint "${constraint}"`);
+    err.code = '23514';
+    err.constraint = constraint;
+    throw err;
+  };
+}
+
+describe('a CHECK refusal at the UPDATE (a concurrent write) answers in the preflight\'s own words', () => {
+  it('chk_plant_varieties_breeding_sourced: the source was cleared after the preflight read it', async () => {
+    refusedAtUpdate('chk_plant_varieties_breeding_sourced',
+      { breeding_system: 'f1', breeding_source: 'breeder', variety_rank: 'cultivar' });
+    const res = await put({ breeding_system: 'unknown' });
+    expect(calls(isPreflight)).toHaveLength(1);
+    expect(calls(isUpdate)).toHaveLength(1);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('"Breeding info from" is required when Breeding is set.');
+  });
+
+  it('chk_plant_varieties_op_requires_cultivar: a rank was recorded after the preflight read none', async () => {
+    refusedAtUpdate('chk_plant_varieties_op_requires_cultivar');
+    const res = await put({ breeding_system: 'open_pollinated', breeding_source: 'packet_label' });
+    expect(fillBind()).toBe(true);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(
+      'Open-pollinated applies only to a single named variety, and this entry is recorded as something other than a single named variety.',
+    );
+    expect(res.body.error).not.toMatch(COLUMN_WORDS);
+  });
+
+  it('any other constraint keeps the generic answer', async () => {
+    refusedAtUpdate('chk_plant_varieties_lifecycle');
+    const res = await put({ breeding_system: 'f1', breeding_source: 'breeder' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Constraint violation: chk_plant_varieties_lifecycle');
+  });
+
+  it('the race sentences are the preflight\'s own sentences, not a second copy', () => {
+    expect(CONSTRAINT_MESSAGES.chk_plant_varieties_breeding_sourced)
+      .toBe(breedingPairingError({ breeding_system: 'f1' }, [], {}));
+    expect(CONSTRAINT_MESSAGES.chk_plant_varieties_op_requires_cultivar)
+      .toBe(breedingPairingError({ breeding_system: 'open_pollinated', breeding_source: 'breeder' }, [], { variety_rank: 'cultivar_group' }));
+    expect(Object.keys(CONSTRAINT_MESSAGES).sort())
+      .toEqual(['chk_plant_varieties_breeding_sourced', 'chk_plant_varieties_op_requires_cultivar']);
   });
 });
 
