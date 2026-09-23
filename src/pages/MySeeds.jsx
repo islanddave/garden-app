@@ -624,6 +624,9 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
   // has given up (onTerminal); until then the row draws exactly what it drew before, stone box and all.
   // The flag names the photo it failed for — its id, or its URL for a photo that came with none — so a
   // row re-pointed at a different picture starts clean instead of inheriting the old one's failure.
+  // It deliberately outlives the row leaving the image window (a filter or fold change can drop a row
+  // past the first page out of reach): coming back does not retry a photo that already failed its
+  // whole chain. Folding and re-opening its group, or leaving the page, remounts the row and retries.
   const photoKey = photo ? (photo.id ?? photo.featured_photo_view_url ?? null) : null
   const [failedKey, setFailedKey] = useState(null)
   const onPhotoTerminal = useCallback(() => setFailedKey(photoKey), [photoKey])

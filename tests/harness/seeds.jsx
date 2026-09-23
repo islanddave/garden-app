@@ -61,7 +61,9 @@
 //     any image has landed, and a cached image would land synchronously and skip that state. The
 //     broken photo's thumb fails, PhotoView steps to the original, that fails, its one re-mint hands
 //     back a fresh url for the same dead object and it ends TERMINAL, as a photo whose object is gone
-//     does on prod. An id the harness never issued answers 404.
+//     does on prod — and My seeds then draws the no-photo row's sprout box in its place
+//     (V5-SEEDSPOLISH-001), which the gate's (l) asserts by the row's name ("Fish"). An id the harness
+//     never issued answers 404.
 //   · A used-up packet (quantity 0), which My seeds files under "Sowed previously".
 //   · An identical pair (same cultivar, vendor, year and count) with a LONG name, so line 1 carries
 //     the ordinal ("1 of 2 identical") beside a title that has to ellipsise to make room for it.
@@ -191,7 +193,8 @@ const photo = (shape) => {
   return { ...u, featured_photo_id: u.hero_photo_id, featured_is_explicit: true }
 }
 // Both of its minted URLs name a file that does not exist: the thumb fails, PhotoView steps to the
-// original, that fails, the one re-mint returns the same dead URL and the photo ends terminal.
+// original, that fails, the one re-mint returns the same dead URL and the photo ends terminal — so
+// its row ("Fish") shows the sprout box a row with no photo shows.
 const brokenPhoto = () => ({ ...photoUrls('missing-packet.png'), featured_is_explicit: true })
 const heat = (min, max) => ({ scoville_min: min, scoville_max: max })
 const annuum = { species: 'Capsicum annuum' }

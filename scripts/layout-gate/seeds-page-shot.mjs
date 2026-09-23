@@ -78,7 +78,9 @@
 //       hoped for: the packet-image requests are HELD at the network layer (CDP Fetch) until the
 //       first measurement is read, and every mounted <img> must still be loading when it is; "after"
 //       releases them, scrolls to the last row (which brings the tail's rows within reach), and waits
-//       for each image to load or to end on its placeholder (the fixture's broken URL).
+//       for each image to load — and for the fixture's broken photo (BROKEN_PHOTO_ROW) to be tried
+//       down its whole chain and end as the no-photo row's sprout box, byte for byte, with no photo
+//       element left in its thumb (V5-SEEDSPOLISH-001; before that it ended on PhotoImg's placeholder).
 //   (o) THE IMAGE REACH — on its OWN page load (the harness's ?bulk variant: 64 more photo rows in
 //       Pepper), tapped open and scrolled to mid-group, far above the document's bottom: every row on
 //       screen has its packet image loaded; nothing is mounted beyond the first IMAGE_WINDOW_PAGE plus
@@ -224,6 +226,11 @@ const EXPAND_ROW = 'Aji Charapita'
 // this season" chip gives way, so that chip must ELLIPSISE and the heat stay whole.
 const HEAT_DROPPED_ROW = 'Hot Paper Lantern'
 const NEUTRAL_GIVES_ROW = 'Hungarian Hot Wax'
+// (l)'s failed photo: the one fixture row whose packet photo names a file nothing serves. Its thumb and
+// its original are both requested and both fail, and the row must then show the sprout box a row with
+// no photo shows (V5-SEEDSPOLISH-001) — asserted by name, so a bare element count cannot pass it.
+const BROKEN_PHOTO_ROW = 'Fish'
+const BROKEN_PHOTO_FILE = 'missing-packet.png'
 const LIVE_TONES = ['info', 'warn', 'danger']
 const VIEWS = [
   { view: 'mine', label: 'My seeds', body: 'my-seeds-view', expect: {
@@ -244,8 +251,9 @@ const VIEWS = [
     // (n): a LIVE first chip (tone info/warn/danger) on four lots in process — the Money Plant's ferment
     // (day 5, danger), Cherokee Purple's (day 1, info), and two drying lots (Aji Charapita, Hot Paper Lantern).
     liveChips: 4,
-    // 13 rows carry a packet photo (one of them the broken URL). 11 are among the first IMAGE_WINDOW_PAGE
-    // (24) rows on screen; the two tail photos mount only once the page is scrolled near them.
+    // 13 rows carry a packet photo (one of them the broken URL, which ends as the sprout box, so 12 photo
+    // elements remain once everything settles). 11 are among the first IMAGE_WINDOW_PAGE (24) rows on
+    // screen; the two tail photos mount only once the page is scrolled near them.
     photoRows: 13, brokenPhotos: 1, firstPagePhotos: 11,
   } },
   { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 5, sections: 3 } },
@@ -649,15 +657,18 @@ async function evalSettled(expr, tries = 25) {
 // a harness packet image is paused (CDP Fetch) until holdImages' caller releases it. Only the packet
 // images match the pattern; the page, its modules and its API stubs are untouched.
 const PACKET_URL_PATTERN = '*/tests/harness/seeds-packets/*'
-const imageHold = { enabled: false, holding: false, held: [], seen: 0 }
+// `urls` keeps every packet-image URL asked for while the hold is enabled, held or not: (l) reads it to
+// prove the broken photo was really tried before its row shows the sprout.
+const imageHold = { enabled: false, holding: false, held: [], seen: 0, urls: [] }
 function onImageRequest(m) {
   if (m.method !== 'Fetch.requestPaused') return
   imageHold.seen++
+  imageHold.urls.push(m.params.request && m.params.request.url || '')
   if (imageHold.holding) imageHold.held.push(m.params.requestId)
   else cdp.send('Fetch.continueRequest', { requestId: m.params.requestId }, cdp.sessionId).catch(() => { /* the <img> is gone */ })
 }
 async function holdImages() {
-  Object.assign(imageHold, { enabled: true, holding: true, held: [], seen: 0 })
+  Object.assign(imageHold, { enabled: true, holding: true, held: [], seen: 0, urls: [] })
   await cdp.send('Fetch.enable', { patterns: [{ urlPattern: PACKET_URL_PATTERN, requestStage: 'Request' }] }, cdp.sessionId)
 }
 async function releaseImages() {
@@ -909,23 +920,47 @@ async function allOpened(v, at, vw, vh) {
   // to its end so the image window (24 rows a page) mounts the tail's photos too.
   const heldCount = imageHold.held.length
   await releaseImages()
+  // Settled means: every photo that can load has loaded, and the broken one's row shows the SAME
+  // markup as a row with no photo at all — its thumb holds the sprout and no photo element, and no
+  // PhotoImg placeholder is left anywhere. The no-photo rows are counted too, so the markup they are
+  // compared against is the set this fixture actually has, not whatever happens to hold a drawing.
   const loaded = await evalSettled(`(async () => {
+    const titleOf = r => { const line = r.querySelector('${tid('my-seed-line')}'), t = line && line.previousElementSibling && line.previousElementSibling.firstElementChild; return t ? (t.textContent || '').trim() : '' }
     const t0 = performance.now(); let s = null
     while (performance.now() - t0 < 12000) {
       window.scrollTo(0, document.documentElement.scrollHeight)
       await new Promise(r => setTimeout(r, 120))
       const ph = [...document.querySelectorAll('${tid('my-seed-thumb')} ${tid('my-seed-photo')}')]
       const imgs = ph.filter(p => p.tagName === 'IMG')
+      const rows = [...document.querySelectorAll('${tid('my-seed-row')}')]
+      const failedRow = rows.find(r => titleOf(r) === ${JSON.stringify(BROKEN_PHOTO_ROW)})
+      const failedThumb = failedRow ? failedRow.querySelector('${tid('my-seed-thumb')}') : null
+      const bare = rows.filter(r => r !== failedRow).map(r => r.querySelector('${tid('my-seed-thumb')}'))
+        .filter(t => t && t.querySelector('svg') && !t.querySelector('${tid('my-seed-photo')}')).map(t => t.outerHTML)
+      const sprout = [...new Set(bare)]
       s = { photos: ph.length, loaded: imgs.filter(i => i.complete && i.naturalWidth > 0).length,
         pending: imgs.filter(i => !i.complete).length, broken: imgs.filter(i => i.complete && i.naturalWidth === 0).length,
         placeholders: ph.length - imgs.length,
-        shapes: [...new Set(imgs.filter(i => i.naturalWidth > 0).map(i => i.naturalWidth + 'x' + i.naturalHeight))] }
-      if (s.photos === ${e.photoRows} && s.pending === 0 && s.broken === 0 && s.placeholders === ${e.brokenPhotos}) return { ok: true, ...s }
+        shapes: [...new Set(imgs.filter(i => i.naturalWidth > 0).map(i => i.naturalWidth + 'x' + i.naturalHeight))],
+        failedRow: !!failedRow, failedHasPhoto: !!(failedThumb && failedThumb.querySelector('${tid('my-seed-photo')}')),
+        failedHasSvg: !!(failedThumb && failedThumb.querySelector('svg')), noPhotoRows: bare.length, sproutVariants: sprout.length,
+        failedIsSprout: !!failedThumb && sprout.length === 1 && failedThumb.outerHTML === sprout[0] }
+      if (s.photos === ${e.photoRows - e.brokenPhotos} && s.pending === 0 && s.broken === 0 && s.placeholders === 0
+        && s.noPhotoRows === ${e.rows - e.photoRows} && s.failedIsSprout) return { ok: true, ...s }
     }
     return { ok: false, ...s }
   })()`)
+  // The broken photo was really tried: its thumb AND its original were asked for (and failed) before
+  // its row gave up on it. A row that jumped straight to the sprout would pass the markup check alone.
+  const brokenAsked = imageHold.urls.filter(u => u.includes(BROKEN_PHOTO_FILE))
+  const triedTiers = ['thumb', 'full'].filter(t => brokenAsked.some(u => u.includes(`tier=${t}`)))
   if (!loaded.ok || loaded.loaded !== e.photoRows - e.brokenPhotos) {
-    fail(`${at}: (l) the packet images never settled — ${loaded.photos} photo element(s) (expected ${e.photoRows}), ${loaded.loaded} loaded, ${loaded.pending} still loading, ${loaded.broken} broken <img>, ${loaded.placeholders} placeholder(s) (expected ${e.brokenPhotos}, the broken URL) — the "after images load" half measures nothing`)
+    const fate = !loaded.failedRow ? 'NOT FOUND on the page'
+      : loaded.failedIsSprout ? 'ended as the sprout box'
+      : `did NOT end as the no-photo row's sprout box (photo element ${loaded.failedHasPhoto ? 'still in its thumb' : 'gone'}, drawing ${loaded.failedHasSvg ? 'present' : 'absent'})`
+    fail(`${at}: (l) the packet images never settled — ${loaded.photos} photo element(s) (expected ${e.photoRows - e.brokenPhotos}: ${e.photoRows} photo rows less the broken one), ${loaded.loaded} loaded, ${loaded.pending} still loading, ${loaded.broken} broken <img>, ${loaded.placeholders} PhotoImg placeholder(s) (expected 0), ${loaded.noPhotoRows} no-photo row(s) in ${loaded.sproutVariants} markup variant(s) (expected ${e.rows - e.photoRows} in 1); "${BROKEN_PHOTO_ROW}" ${fate} — the "after images load" half measures nothing`)
+  } else if (triedTiers.length < 2) {
+    fail(`${at}: (l) non-vacuity — "${BROKEN_PHOTO_ROW}" shows the sprout box, but its photo was requested ${brokenAsked.length} time(s) (tiers: ${triedTiers.join(', ') || 'none'}): its thumb and its original must both be tried before the row may give up on the photo`)
   } else {
     const m2 = await evalSettled(MEASURE(v))
     // Non-vacuity: the images that landed are not square, so a box that followed its image would move.
@@ -934,8 +969,8 @@ async function allOpened(v, at, vw, vh) {
     const after = thumbBoxes(at, m2, 'after every packet image loaded or failed')
     const byId = new Map(before.map(b => [b.id, b]))
     const drift = after.map(a => { const b = byId.get(a.id); return b ? Math.max(Math.abs(a.w - b.w), Math.abs(a.h - b.h), Math.abs(a.l - b.l)) : Infinity })
-    const broken = m2.rows.find(r => r.thumb && r.thumb.photo && !r.thumb.photo.img)
-    console.log(`${P}: (l) before: ${before.length} boxes, ${heldCount} packet image request(s) held, every mounted <img> still loading · after: ${loaded.loaded} loaded (${loaded.shapes.join(', ')}), ${loaded.placeholders} placeholder (${broken && broken.title ? `"${broken.title.text}"` : '?'}, box ${broken ? `${broken.thumb.w}x${broken.thumb.h}` : '?'}) · largest per-row change ${R1(Math.max(...drift))}px`)
+    const sprouted = m2.rows.find(r => r.title && r.title.text === BROKEN_PHOTO_ROW)
+    console.log(`${P}: (l) before: ${before.length} boxes, ${heldCount} packet image request(s) held, every mounted <img> still loading · after: ${loaded.loaded} loaded (${loaded.shapes.join(', ')}); "${BROKEN_PHOTO_ROW}" tried ${brokenAsked.length}x (${triedTiers.join(' + ')}), ended as the sprout box of the ${loaded.noPhotoRows} no-photo rows, box ${sprouted && sprouted.thumb ? `${sprouted.thumb.w}x${sprouted.thumb.h}` : '?'} · largest per-row change ${R1(Math.max(...drift))}px`)
   }
   await evalSettled('(() => { window.scrollTo(0, 0); return 1 })()')
   await waitSettled('window.scrollY === 0', 3000)

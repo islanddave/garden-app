@@ -183,7 +183,9 @@ function _seed(photoId, initialUrl, publishUrl = true, tier) {
 // keeps its broken <img>) and so never fires. Destructured, like mintTier, so it cannot reach the DOM
 // as an unknown event-handler attribute. On PhotoView's id-only arm a mount-mint 404 on the thumb rung
 // fires it too, and that is still true of the photo: view-url 404s only a missing, foreign or deleted
-// photo ROW, never a missing derivative, so every rung of that photo would 404 alike.
+// photo ROW, never a missing derivative, so every rung of that photo would 404 alike. The callback
+// MUST NOT THROW: on the two 404 arms it runs before onError({type:'deleted'}), so a throw would
+// swallow the signal PhotoView degrades on.
 export default function PhotoImg({
   photoId, initialUrl, alt = '', fallback = 'placeholder', loading, hasFallback = false, mintTier,
   onOpen, onRemint, onError, onTerminal, onLoad, style, className, ...rest

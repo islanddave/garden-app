@@ -9,6 +9,9 @@
 // for: an unrelated edit keeps the sprout without re-minting, and a row re-pointed at another photo
 // draws that photo instead of inheriting the old one's failure.
 //
+// S7 covers the phone-cached (photos-v1) arm, which the Seeds layout gate cannot reach: its harness
+// registers no service worker, so every row there mints.
+//
 // WHAT THIS CANNOT CATCH: jsdom never loads an image, so a failed load is a synthetic error event, and
 // the markup comparison proves the DOM is the no-photo row's, not how Chrome paints it.
 import React from 'react'
@@ -29,6 +32,7 @@ import { ToastProvider } from '../context/ToastContext.jsx'
 import { __resetPhotoImgCache } from '../components/PhotoImg.jsx'
 import { __resetDeviceThumb } from '../lib/deviceThumb.js'
 import { failPhotoLoad } from './helpers/photoLoadFailure.js'
+import { makeFakeCaches } from './helpers/swHarness.js'
 
 const pepper = (id, hero, extra = {}) => ({
   id, name: `Pepper ${id}`, variety_name: `Pepper ${id}`, category: 'seeds', type: 'consumable', unit: 'packet',
@@ -184,5 +188,26 @@ describe('My seeds — a packet photo that cannot be shown ends as the no-photo 
     expect(photo()).toBeNull()
     expect(boxIn('d').outerHTML).toBe(boxIn('c').outerHTML)
     expect(viewUrlCalls().filter((p) => !/\/ph-[ab](\?|$)/.test(p))).toEqual([])
+  })
+
+  it('S7 a phone-cached thumb whose copy fails, and whose one heal fails too, ends as the sprout box after ONE mint', async () => {
+    // The row draws the phone's own copy with no mint (BUG-SEEDTHUMBSOFFLINE-001); that copy fails, a
+    // single ?tier=thumb mint heals it, the healed URL fails as well: TERMINAL on the one-rung URL arm.
+    const DEVICE_A = 'https://photos.test/thumbs/inventory/a/ph-a.jpg?x-id=GetObject'
+    const api = makeFakeCaches({ 'photos-v1': { [DEVICE_A]: new Response('A', { headers: { 'Content-Type': 'image/jpeg' } }) } })
+    api.has = async (name) => api.store.has(name)
+    globalThis.caches = api
+    await mountOpen()
+    const photo = photoIn('a')
+    await waitFor(() => expect(photo()?.getAttribute('src')).toBe(DEVICE_A))
+    expect(mintsFor('ph-a')).toEqual([])                            // the phone's copy needed no mint
+    failPhotoLoad(photo)                                            // the cached copy fails -> one heal
+    await waitFor(() => expect(photo()?.getAttribute('src') || '').toMatch(/X-Amz-Signature/))
+    failPhotoLoad(photo)                                            // the healed URL fails too -> TERMINAL
+    await settle()
+    expect(photo()).toBeNull()
+    expect(boxIn('a').outerHTML).toBe(boxIn('c').outerHTML)
+    expect(mintsFor('ph-a')).toEqual(['/api/photos/view-url/ph-a?tier=thumb'])
+    expect(photoIn('b')()?.tagName).toBe('IMG')                     // the neighbour is untouched
   })
 })

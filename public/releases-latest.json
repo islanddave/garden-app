@@ -1,13 +1,7 @@
 {
-  "version": "4.142.0",
-  "date": "2026-09-21",
+  "version": "4.143.0",
+  "date": "2026-09-23",
   "highlights": [
-    "When frost warnings for tonight and for a later night both arrive the same day, Today now shows both, tonight first; when a later email corrects which night the same cold snap falls on, Today shows only the corrected night",
-    "When a Frost watch email says a second forecast is colder for tonight, Today's watch line, forecast card and cue show that colder low, and so does the email's subject, for example: as low as 35°F",
-    "If a Frost protect tonight email went out and a later forecast puts tonight at 40°F or warmer, Today now says so, for example: Forecast warmed to 44°F since the 3 PM frost email",
-    "Frost emails about tonight now end: Pick what's ripe and cover tender plants tonight",
-    "21 plants, including the hosta, Japanese maple, nasturtiums, kales, beans and carrot, now get feed reminders at the interval the app's care data gives them instead of every 14 days: less often for 18 of them, weekly for the two petunias",
-    "A plant in a container you have deleted no longer gets care cards on Today",
-    "The variety editor now edits a variety's origin country and region, its breeding (F1, open-pollinated, landrace, unknown) with where that came from, and where its heat figure came from; choosing Open-pollinated on a variety not yet marked as a single named variety records it as one"
+    "On My seeds, a packet picture that cannot be loaded now shows the same sprout as a packet with no picture, instead of an empty green square."
   ]
 }
