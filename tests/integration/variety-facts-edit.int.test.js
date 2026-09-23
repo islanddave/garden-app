@@ -11,9 +11,10 @@
 //      through what the CHECK allows (a source alone; open_pollinated on a cultivar-rank row). A
 //      preflight looser than the CHECK leaks a constraint name to the user; a stricter one refuses a
 //      legal edit. Open-pollinated on a row with NO recorded rank is Dave's rule (2026-09-21): the
-//      same UPDATE records the variety as a single named cultivar. The live CHECK would NOT force
-//      that — `variety_rank = 'cultivar'` is NULL on an unranked row and a CHECK passes on NULL
-//      (BUG-OPRANKCHECKNULL-001) — so reading the rank back is the only proof the rule holds;
+//      same UPDATE records the variety as a single named cultivar. Since v5-oprankchecknull-001
+//      (2026-09-23) the CHECK is NULL-safe and refuses Open-pollinated on an unranked row, so the
+//      fill is what lets that write through at all; the rank is still read back, because a refusal
+//      and a fill that wrote the wrong rank must look different;
 //   4. GET /api/varieties/:id returns the five, which is what VarietyEditor seeds its form from;
 //   5. the fill is permanent, and fires when Open-pollinated and its source arrive in ONE body; every
 //      other breeding call is written on every recorded rank; and the driver reports a CHECK refusal
@@ -191,9 +192,14 @@ describe('V5-VARIETYFACTSEDIT-001 — the pairing preflight agrees with the live
 
   it('open_pollinated on a row with no recorded rank is written, and the same UPDATE records it as a single named cultivar', async () => {
     setTestUserId(USER)
-    // No raw-UPDATE counterpart here, unlike the market-class case: on a NULL rank the CHECK evaluates
-    // to NULL and passes, so a raw OP write would succeed and leave the rank blank. The handler's
-    // fill is the only thing that records it, and the read-back below is what proves it did.
+    // The raw-UPDATE counterpart, as in the market-class case: since v5-oprankchecknull-001 the CHECK
+    // is NULL-safe, so writing Open-pollinated on an unranked row WITHOUT the fill is refused by the
+    // database (BUG-OPRANKCHECKNULL-001; before it this raw write succeeded and left the rank blank).
+    // The handler's fill is what lets the edit through, and the read-back below proves it wrote it.
+    expect(await facts(varietyId)).toMatchObject({ breeding_system: 'unknown', variety_rank: null })
+    await expect(directSql`
+      UPDATE plant_varieties SET breeding_system = 'open_pollinated' WHERE id = ${varietyId}`)
+      .rejects.toThrow(/chk_plant_varieties_op_requires_cultivar/)
     expect(await facts(varietyId)).toMatchObject({ breeding_system: 'unknown', variety_rank: null })
     const { status, body } = await put(varietyId, { breeding_system: 'open_pollinated' })
     expect(status, JSON.stringify(body)).toBe(200)

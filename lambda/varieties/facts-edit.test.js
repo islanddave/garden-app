@@ -350,8 +350,8 @@ describe('breeding pairing is checked against the row as it will be, before the 
   });
 
   // The fill is triggered by THIS patch choosing Open-pollinated, not by the row already being OP. An
-  // OP row with no rank can only come from a non-PUT writer (the CHECK passes on NULL,
-  // BUG-OPRANKCHECKNULL-001); a source-only edit must not quietly re-rank it.
+  // OP row with no rank cannot be written any more (the CHECK is NULL-safe since v5-oprankchecknull-001)
+  // but existed as a possibility before it; a source-only edit must still not quietly re-rank one.
   it('a source-only edit on an open-pollinated row with no rank never fills the rank', async () => {
     db({ current: { breeding_system: 'open_pollinated', breeding_source: 'inference', variety_rank: null } });
     const res = await put({ breeding_source: 'breeder' });

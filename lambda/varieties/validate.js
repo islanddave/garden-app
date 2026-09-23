@@ -276,9 +276,10 @@ export function breedingPairingError(body, clear = [], current = {}) {
 // True when this patch records Open-pollinated on a row with no recorded rank, so the UPDATE sets
 // variety_rank = 'cultivar' in the same statement. That is Dave's rule and the invariant
 // v5-varietyhybridflag-001 states ("a positive open-pollinated claim structurally requires the rank
-// that makes it meaningful") — but NOT something its CHECK enforces on an unranked row: there
-// `variety_rank = 'cultivar'` is NULL, and a CHECK passes on NULL (measured on a staging fork
-// 2026-09-21; BUG-OPRANKCHECKNULL-001). So this fill is what records the rank, not the database.
+// that makes it meaningful"). Its CHECK did not enforce that on an unranked row until
+// v5-oprankchecknull-001 (2026-09-23): `variety_rank = 'cultivar'` was NULL there, and a CHECK passes on
+// NULL. Now the CHECK is NULL-safe, so without this fill the UPDATE would be refused; the fill is what
+// records the rank, and the CHECK is what stops any other writer from skipping it.
 // Only a row whose rank is NULL: a recorded rank is never overwritten (breedingPairingError refuses the
 // non-cultivar ones, and a cultivar needs nothing). Call it after breedingPairingError returned null.
 export function fillsCultivarRank(body, clear = [], current = {}) {
