@@ -31,7 +31,9 @@
 // unusual but correct spelling therefore fails loudly and has to be written plainly.
 //
 // LIMIT: the stub records SQL and runs none of it. This proves the statement's shape, not the rows it
-// matches; tests/integration/reanchor-carecache.int.test.js drives the same route on real Postgres.
+// matches; tests/integration/reanchor-carecache.int.test.js drives the same route on real Postgres for
+// live and archived plantings, and tests/integration/reanchor-cache-liveness.int.test.js for a
+// soft-deleted one.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
 
@@ -313,7 +315,11 @@ describe('BUG-CACHEORPHANREGRESS-001 — the event PUT never writes the care cac
   // A date edit: the cache is dirty, the event is not moved, so the upsert's planting is the event's own.
   const EDIT = { event_type: 'watering', event_date: '2026-08-02T12:00:00.000Z' };
 
-  it('an edit of an event on a soft-deleted planting still saves and answers exactly as before', async () => {
+  it('the JS path: a date edit answers 200 with the row the event UPDATE returned, and sends that UPDATE once, in a transaction', async () => {
+    // What this does NOT prove (preship-qa M6): respond() hands back the same owned and updated rows
+    // whatever the planting's state, so no soft-deleted planting is involved and no SQL runs. The same
+    // edit on a real soft-deleted planting (200, the event moved, no cache row created, an orphan row
+    // left byte-identical) is tests/integration/reanchor-cache-liveness.int.test.js.
     const { status, body, sent } = await put(EDIT);
     expect(status, JSON.stringify(body)).toBe(200);
     expect(body).toEqual({ ...UPDATED, harvest: null });
