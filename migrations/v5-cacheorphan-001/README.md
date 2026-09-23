@@ -91,9 +91,11 @@ between 08-28 and 09-21), so an early apply undoes itself within days.
 **A second writer of the same kind** is in the events edit route: the plant-keyed cache upsert of the `PUT
 /api/events/:id` re-anchor block (`lambda/events/index.js`, `if (newPlantId)`) has no liveness check. All 56 live
 events on these 7 plantings sit in live containers, so the route reaches every one of them, and an edit that changes
-an event's date, type or issue flag writes its planting's row (after the cleanup, re-creates it). It is fixed
-separately under the same ledger row. If that fix ships after the daily-plan fix, an apply in between can be undone by
-one such edit, and the standing gate reports it.
+an event's date, type or issue flag writes its planting's row (after the cleanup, re-creates it). It is fixed by
+commit `4ed11b798f2c9dffc06af5e4c68c97bb27057280` under the same ledger row: the upsert now reads the planting in the
+same statement and selects nothing for a soft-deleted one, and `lambda/events/reanchor-cache-liveness.test.js` guards
+the statement the handler sends. If that fix ships after the daily-plan fix, an apply in between can be undone by one
+such edit, and the standing gate reports it.
 
 **How to check the MANUAL gate** (`pre_live_parent_cache_upserts_are_deployed`; gate_runner prints it and does not
 count it as a pass). Its note says `deploy-lambda.yml` is a separate `push: main` workflow. That has not been true
@@ -266,7 +268,11 @@ host checked).
   DELETE there needs a decision on restore (`post_every_non_deleted_project_with_events_has_a_cache_row` in
   `v4-cachemissingrow-001` would stay red after a restore until the next write).
 - `migrations/v4-rainbackfill-001/0c-cachearms.sql` is applied and is not edited; its plant arm has no liveness filter
-  and must not be copied.
+  and must not be copied or re-run (a note in that directory's README says so).
+- Two container-keyed upserts in `lambda/events/index.js` (the single-event POST and the edit's new-container arm) take
+  the container from the planting and never check that it is live. A live planting in a soft-deleted container would
+  get its container a cache row there; on prod on 2026-09-23 there were none, so nothing reaches them today. The
+  standing gate here is plant-keyed and would not see it; the weekly integrity check would.
 - `lambda/daily-plan/rain-live-filter.test.js` asks that a third user of its SQL parser hoist it into a shared module;
   the fix's test wrote a narrower model instead. Hoisting the two existing copies is a separate refactor.
 - `s3_not_in_db` (`OPS-S3UNREGISTEREDUPLOAD-001`) keeps the Monday alert firing after this apply.
