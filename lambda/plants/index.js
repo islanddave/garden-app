@@ -1537,6 +1537,17 @@ export const handler = async (event) => {
                    OR (gp.container_id IS NULL AND gp.created_by = ANY(${householdIds})))
               AND gp.deleted_at IS NULL
               AND gp.archived_at IS NULL
+              -- BUG-PLANTSLISTARCHIVEDCONTAINER-001: nor in an ARCHIVED container. The daily plan's
+              -- plantings query and the rain writer already hide these, and neither container state
+              -- cascades to its plantings (projects/index.js archive sets the container's own column
+              -- only), so without this the grid showed a planting the plan never cards. The test is the
+              -- container's OWN archived_at, exactly as those two readers make it: no ancestor walk.
+              -- Its own clause, never merged into the deleted gate inside the ownership arm above:
+              -- archived and deleted are separate axes and stay separately observable. Top level is
+              -- safe for a project-less planting, whose LEFT JOIN leaves pp all NULL, so it passes. In
+              -- the WHERE and not in the LEFT JOIN's ON, where it would null-extend pp rather than
+              -- filter. archived-container.test.js evaluates the emitted statement per container state.
+              AND pp.archived_at IS NULL
               -- project_id stays honoured under ?view=grid rather than silently ignored. The ::uuid
               -- casts are required, not decorative: an untyped NULL parameter is what Postgres
               -- answers "could not determine data type of parameter" to.
@@ -1617,6 +1628,10 @@ export const handler = async (event) => {
                    OR (gp.container_id IS NULL AND gp.created_by = ANY(${householdIds})))
               AND gp.deleted_at IS NULL
               AND gp.archived_at IS NULL
+              -- BUG-PLANTSLISTARCHIVEDCONTAINER-001: nor in an ARCHIVED container. Same clause, same
+              -- place and same reasons as the grid branch above; a chooser must not offer a planting
+              -- the plan and the rain writer treat as put away.
+              AND pp.archived_at IS NULL
               -- Same ::uuid casts as the grid branch, for the same reason: an untyped NULL parameter
               -- is what Postgres answers "could not determine data type of parameter" to.
               AND (${projectId}::uuid IS NULL OR gp.container_id = ${projectId}::uuid)

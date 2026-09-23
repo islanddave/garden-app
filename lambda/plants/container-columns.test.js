@@ -1,8 +1,8 @@
 // OPS-SCHEMAAUDITJOIN-001 — the public.container columns lambda/plants reads.
 //
 // Sixteen statements across three aliases — a planting's parent project, the destination
-// container in a merge, and the ownership walk. Still only four columns: plants resolves the
-// container it hangs from, it does not read it.
+// container in a merge, and the ownership walk. Only five columns: plants resolves the container
+// it hangs from, it does not read it — archived_at is a liveness test, like deleted_at.
 //
 // WHY A SEPARATE FILE AND NOT A BLOCK IN select-columns.test.js: parse_test_file returns on the
 // keyed AUDIT_COLUMNS form FIRST and never reaches the AUDIT_TABLES collector
@@ -41,11 +41,14 @@ const HANDLERS = readdirSync(__dirname)
 
 // L-081 KEYED contract. Every column below verified present on public.container in live prod Neon on
 // 2026-08-29 (30 columns), read through the read-only role.
+// archived_at added 2026-09-23 (BUG-PLANTSLISTARCHIVEDCONTAINER-001: the ?view=grid and ?view=picker
+// WHEREs now hide a planting whose container is archived); present on prod public.container that day,
+// read through the owner role, and written by lambda/projects' archive PATCH since V3-ARCHIVE-001.
 // The keyed form binds columns to ONE relation, so this file cannot assert its list onto whatever
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  container: ['created_by', 'deleted_at', 'display_name', 'id'],
+  container: ['archived_at', 'created_by', 'deleted_at', 'display_name', 'id'],
 };
 
 const CONTAINER_COLUMNS = AUDIT_COLUMNS.container;
