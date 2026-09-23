@@ -54,6 +54,7 @@
 // (_mainsync6_20260923/lane-plantsarchived-20260923.md): the list WHERE returned the same 244 rows
 // before and after; the container statement's WHERE, run verbatim as a SELECT, matched 0 rows, and
 // with only its planting-live test dropped mapped each of the 3 trapped plantings to its own container.
+// tests/integration/plants-archived-container.int.test.js runs both lists and both writes on Postgres.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
 
@@ -68,8 +69,14 @@ vi.mock('@neondatabase/serverless', async () => {
   return {
     neon: () => {
       const send = (q, tx) => {
-        st.sqlCalls.push({ text: q.text, values: q.values, tx });
-        return st.sqlHandler(q.text, q.values);
+        const call = { text: q.text, values: q.values, tx };
+        st.sqlCalls.push(call);
+        const out = st.sqlHandler(q.text, q.values);
+        // An UPDATE's answer carries how many rows its WHERE matched (execUpdate below). The real
+        // driver hands the handler nothing for an UPDATE without RETURNING, so the count is kept on
+        // the record, where a test can see a write that changed no value it could otherwise read.
+        if (out && out.rowCount !== undefined) call.rowCount = out.rowCount;
+        return out;
       };
       const sql = (strings, ...values) => {
         const q = { text: strings.reduce((acc, s, i) => `${acc}$${i}${s}`), values };
@@ -406,7 +413,10 @@ function updateOf(sql) {
 }
 
 // Postgres semantics for one UPDATE: every row's WHERE and SET are evaluated against the rows as they
-// were, then the writes land together.
+// were, then the writes land together. Returns the RETURNING rows, carrying `rowCount` — the number of
+// rows the WHERE matched, Postgres' `UPDATE n` — as a non-enumerable property, so the rows read exactly
+// as before. Matched, not changed: an UPDATE that sets a column to the value it already holds is still
+// a write on Postgres (a new row version, the table's triggers, a row lock), and only the count shows it.
 function execUpdate(u, values, db) {
   const rows = rowsOf(db, u.table);
   const hit = rows.filter((r) => truth(u.where, { [u.alias]: r }, values, db) === true);
@@ -415,9 +425,10 @@ function execUpdate(u, values, db) {
     return [col, evalExpr(e, { [u.alias]: r }, values, db)];
   })));
   hit.forEach((r, k) => Object.assign(r, patches[k]));
-  return u.returning.length
+  const out = u.returning.length
     ? hit.map((r) => Object.fromEntries(u.returning.map(([ref, as]) => [as, r[ref.split('.')[1]] ?? null])))
     : [];
+  return Object.defineProperty(out, 'rowCount', { value: hit.length });
 }
 
 // ── fixtures ───────────────────────────────────────────────────────────────────────────────────────
@@ -778,6 +789,8 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
     expect(calls.map(kindOf)).toEqual(['update garden_node', 'update container']);
     expect(calls[0].tx, 'the planting UPDATE ran outside a transaction').not.toBeNull();
     expect(calls[1].tx, 'the container UPDATE ran outside the planting UPDATE\'s transaction').toBe(calls[0].tx);
+    // Exactly one container matched: its own. (Also the live instrument for the zero asserted below.)
+    expect(calls[1].rowCount, 'the container statement did not match exactly the planting\'s own container').toBe(1);
     // What it DID.
     expect(plantRow(Q.trap).archived_at).toBeNull();
     expect(containerRow(K.trap).archived_at, 'the container stayed archived, so the planting is still hidden').toBeNull();
@@ -835,9 +848,21 @@ describe('BUG-PLANTSLISTARCHIVEDCONTAINER-001 — bringing a planting back bring
 
   it('a planting in a live container, or in none, has nothing to bring back', async () => {
     const before = archivedContainers();
-    expect((await unarchive(Q.inLive)).status).toBe(200);
-    expect((await unarchive(Q.projectless)).status).toBe(200);
+    const inLive = await unarchive(Q.inLive);
+    const none = await unarchive(Q.projectless);
+    expect(inLive.status).toBe(200);
+    expect(none.status).toBe(200);
     expect(archivedContainers()).toEqual(before);
+    // And the container statement MATCHED nothing. Its SET is archived_at = NULL, so matching the LIVE
+    // container changes no value this model reads, yet on Postgres it is a write: container_bump and
+    // set_updated_at fire and the row is locked, on every unarchive of one of its plantings.
+    // `pp.archived_at IS NOT NULL` is the only term that prevents it (preship-qa M1: dropping it
+    // survived every unit test). tests/integration/plants-archived-container.int.test.js checks the
+    // same case on Postgres by the container's row version.
+    for (const { calls } of [inLive, none]) {
+      expect(calls.map(kindOf)).toEqual(['update garden_node', 'update container']);
+      expect(calls[1].rowCount, 'the container statement matched a container it had nothing to bring back').toBe(0);
+    }
   });
 
   it('a live sibling comes back with the container — it is back in use (0 such rows on prod, 2026-09-23)', async () => {
