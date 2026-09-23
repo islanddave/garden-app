@@ -14,7 +14,8 @@
 #   write→read-back asserts (L-108 write-path coverage):
 #     C) events bare-date → NOON-anchored stored date (BUG-12 off-by-one guard)
 #     D) plants variety_id set→clear (the can't-clear COALESCE origin bug), plus the variety
-#        POST's cultivar care_profile, read back through SQL (needs NEON_STAGING_URL + psql)
+#        POST's cultivar care_profile, read back through SQL (needs NEON_STAGING_URL + psql), and
+#        a variety PUT of origin_country read back through GET /api/varieties/:id
 #     E) locations create → read-back name
 #     F) inventory-items create → read-back name (durable+tools dodges the L-058 seeds CHECK)
 #     G) favorites toggle → assert favorited on, then off
@@ -529,6 +530,20 @@ else
           else
             echo "⚠️  WARN [write:variety-care-profile-readback] NEON_STAGING_URL unset or psql missing — care_profile read-back NOT run"
           fi
+          # D-facts) the variety PUT → GET /:id read-back (V5-VARIETYFACTSEDIT-001, L-108). The PUT is the
+          # only writer of the variety facts (origin, breeding, heat source) and GET /api/varieties/:id is
+          # the read VarietyEditor seeds from; until this block the smoke called neither route. A run-unique
+          # origin_country goes in through the PUT and must come back out of the by-id GET, so a PASS also
+          # proves that GET answers 200 with the row. The PUT's result line stays VISIBLE (block E's lesson:
+          # a silenced 400 leaves no evidence). Same throwaway variety, name unchanged, so the cleanup
+          # DELETE above and the workflow's L-058 name sweep still remove it.
+          CLERK_JWT=$(mint_session_token)
+          VAR_ORIGIN="smoke-origin-$TEST_RUN_ID"
+          auth_request "write:PUT /varieties/$CREATED_VARIETY_ID origin_country" \
+            "${STAGING_API_VARIETIES%/}/api/varieties/${CREATED_VARIETY_ID}" "PUT" \
+            "{\"origin_country\": \"$VAR_ORIGIN\"}" || true
+          assert_readback "write:variety-origin-readback" \
+            "${STAGING_API_VARIETIES%/}/api/varieties/${CREATED_VARIETY_ID}" ".origin_country" "$VAR_ORIGIN"
         else
           echo "❌ FAIL [crud:POST /varieties] HTTP $VAR_HTTP"
           FAIL=$((FAIL+1))
