@@ -2287,6 +2287,9 @@ export const handler = async (event) => {
             // untouched and the response is the same. deleted_at ONLY: an ARCHIVED planting keeps its row
             // (v4-cachemissingrow-001). In this FROM's WHERE, not a join's ON, where under a LEFT JOIN it
             // would only blank the columns. reanchor-cache-liveness.test.js evaluates the SENT statement.
+            // Side effect on the note above: with this WHERE a NULL bind now selects no row instead of a
+            // zero-parent one, so the JS guard is no longer the only thing between a NULL and 23514. Keep
+            // it anyway — it also keeps the statement off the transaction entirely.
             reanchor.push(sql`
               INSERT INTO entity_memory
                 (plant_id, last_event_at, last_watered_at, last_fertilized_at,
