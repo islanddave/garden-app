@@ -275,7 +275,11 @@ export default function PhotoImg({
       onRemint?.(photoId)
       adopt(fresh, photoId)
     } catch (err) {
-      if (!mountedRef.current) return
+      // BUG-PHOTOIMGSTALECATCH-001: bail on an aborted heal exactly as the success branch above does.
+      // A consumer that pages this instance to another photo (the Lightbox) aborts the heal, and a late
+      // 404 for the photo it left says nothing about the one on screen now — without this line it put
+      // the NEW photo into TERMINAL and sent the consumer a 'deleted' while the new photo was showing.
+      if (!mountedRef.current || ac.signal.aborted) return
       const st = err?.status
       if (st === 404) { setTerminal(true); onTerminal?.(photoId); onError?.({ type: 'deleted', photoId }) }   // signal cache invalidate
       else if (st === 403) { setTerminal(true); onTerminal?.(photoId) }                                       // fresh URL still forbidden → terminal
@@ -309,7 +313,10 @@ export default function PhotoImg({
       onRemint?.(photoId)
       adopt(fresh, photoId)
     }).catch((err) => {
-      if (!mountedRef.current) return
+      // BUG-PHOTOIMGSTALECATCH-001: the same identity guard adopt() applies to a resolve. A mount-mint
+      // that fails after the consumer re-pointed this instance belongs to the photo it left; without
+      // this line a late 404 for that photo blanked the new one even after it had loaded.
+      if (!mountedRef.current || photoIdRef.current !== photoId) return
       const st = err?.status
       if (st === 404) { setTerminal(true); onTerminal?.(photoId); onError?.({ type: 'deleted', photoId }) }
       else if (st === 403) { setTerminal(true); onTerminal?.(photoId) }
