@@ -16,7 +16,7 @@ import { useMode } from '../lib/mode.js'
 import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import Sheet from './forms/Sheet.jsx'
 import Icon from './Icon.jsx'
-import { useNavTabs } from '../context/AppConfigContext.jsx'
+import { useNavLayout } from '../context/NavPrefsContext.jsx'
 
 // BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·Harvests·Put-Up·More (V4-PUTUPENGINE-001,
 // 2026-08-21; was Today·Garden·＋·Harvests·More per V4-NAVHARVEST-001, 2026-08-10, which itself
@@ -239,9 +239,10 @@ export default function BottomNav() {
   // Field-mode swaps the +LOG center button for a mic -> /field. Desk-mode unchanged.
   // toggleMode powers the More-menu mode mirror row.
   const { isField, toggleMode } = useMode()
-  // V5-ADMINCENTER-001 — the tab rows, config-ordered. Falls back to the shipped five with no
-  // provider mounted, which is what every isolated component test renders against.
-  const tabs = useNavTabs()
+  // V5-NAVCUSTOM-001 — this person's bar: their order, minus the tabs they moved into More. Falls
+  // back to the shipped five with no provider mounted, which is what every isolated component test
+  // renders against.
+  const { bar: tabs } = useNavLayout()
   const [showMore, setShowMore]             = useState(false)
   const [showCreate, setShowCreate]         = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)

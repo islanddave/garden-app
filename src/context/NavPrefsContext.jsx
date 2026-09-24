@@ -1,0 +1,252 @@
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useAuth } from './AuthContext.jsx'
+import { useApiFetch } from '../lib/api.js'
+import { usePrefs } from './PrefsContext.jsx'
+import { saveMorePins } from '../lib/notificationPrefsClient.js'
+import { TAB_REGISTRY, resolveBarLayout } from '../lib/navConfig.js'
+import { MORE_PINS_MAX_SHOWN, MORE_PINS_MAX_STORED, MORE_PIN_ID_RE, drawnPinIds, resolvePins } from '../lib/moreRegistry.js'
+import { onReconnect } from '../lib/reconnect.js'
+
+// NavPrefsContext — V5-NAVCUSTOM-001. A person's tab bar and More-menu pins.
+// Design: project-state/design-navcustom-V100-20260924.md §8; contract: _navcustom-build-20260924/CONTRACT.md.
+//
+// A PROVIDER, NOT BARE HOOKS, for three reasons that bare hooks cannot meet:
+//   1. ONE STATE, TWO CONSUMERS. BottomNav draws the bar and AdminConfig edits it, both mounted at
+//      once. The editor's Save must re-lay the bar at once; two hooks with their own useState would
+//      each hold a private copy and the bar would not move until the next launch.
+//   2. A PIN SAVE MUST OUTLIVE THE SHEET. Sheet unmounts its content on every close, so a save that
+//      resolved into the sheet would resolve into nothing — and its rollback would be lost.
+//   3. ONE OWNER FOR THE RETRY. The `online` listener and the launch re-send must run once, not once
+//      per consumer, or a reconnect would send the same list N times.
+// It sits directly under PrefsProvider and reads it; it adds no request of its own at boot.
+//
+// PER PERSON (D4, Dave 2026-09-24). Both values live on the caller's user_notification_prefs row
+// (bar_layout, more_pins), keyed by the Clerk sub. Nothing here is global: this replaces the retired
+// AppConfigProvider, whose one boot GET is gone with it.
+//
+// THE LAUNCH CACHES ARE CACHES OF SERVER STATE, not a store of record (precedent: clientPrefs.js).
+// They are read SYNCHRONOUSLY so the first paint draws this person's bar rather than the shipped one,
+// and they are in CLIENT_PREF_KEYS so sign-out clears them on a shared phone.
+//   nav.barLayout.v1        { layout: <raw server bar_layout>, canEdit: <last can_edit_bar> }
+//   nav.morePins.v1         the pin list as last shown (unknown ids included)
+//   nav.morePins.pending.v1 true while the server has not confirmed that list
+//
+// THE BAR NEVER RE-LAYS ITSELF OUT UNDER A THUMB. First paint uses the cache. When prefs land the
+// cache is rewritten, but the new value is applied at once ONLY if there was no cache at launch (a
+// first launch after sign-in); otherwise it takes effect from the next launch. The one other way the
+// bar moves mid-session is the person's own Save in the editor (applyLayout). Jen's bar therefore
+// never shifts while she is using it — and, per D4, never because of Dave at all.
+//
+// PINS ARE OPTIMISTIC AND DURABLE. A tap changes the button at once and marks the list pending
+// BEFORE the request goes out, so an app closed mid-save re-sends at the next launch. The save's
+// answer decides the rest: ok → confirmed; status 0 or 5xx (never reached / server trouble) → kept
+// and pending, re-sent on the `online` event and at launch; 4xx (refused) → rolled back to the last
+// server-confirmed list, reported as 'error'. Unknown ids ride along in every save (moreRegistry.js).
+// No toast, banner or dot for any of it (Reward UX / ADHD rules): the row's own button is the signal.
+
+export const BAR_LAYOUT_CACHE_KEY = 'nav.barLayout.v1'
+export const MORE_PINS_CACHE_KEY = 'nav.morePins.v1'
+export const MORE_PINS_PENDING_KEY = 'nav.morePins.pending.v1'
+
+// try/catch per the house convention (clientPrefs.js): an unavailable or throwing localStorage
+// degrades to "no cache", never to an error on the nav's render path.
+function readJson(key) {
+  try {
+    if (typeof localStorage === 'undefined' || !localStorage) return undefined
+    const s = localStorage.getItem(key)
+    return s == null ? undefined : JSON.parse(s)
+  } catch { return undefined }
+}
+function writeJson(key, value) {
+  try {
+    if (typeof localStorage === 'undefined' || !localStorage) return
+    if (value === undefined) localStorage.removeItem(key)
+    else localStorage.setItem(key, JSON.stringify(value))
+  } catch { /* unavailable/denied — the cache is an optimisation, the server is the record */ }
+}
+
+// Everything the first paint needs, read synchronously. A malformed cache is NO cache: it cannot
+// make the launch worse than a first launch.
+//
+// `touched` is the pins' session rule: once this person has changed their pins in this session (or
+// launched with a change still pending), the local list is the authority until the next launch, and
+// a later prefs read never overwrites it. That closes the race where a GET issued BEFORE a pin's
+// PATCH lands AFTER it and quietly un-pins what was just pinned. Another device's change therefore
+// arrives at the next launch — the same "read at boot" rule every other pref here follows.
+function readLaunch(userId) {
+  const bar = readJson(BAR_LAYOUT_CACHE_KEY)
+  const hadBarCache = !!bar && typeof bar === 'object' && !Array.isArray(bar) && Object.hasOwn(bar, 'layout')
+  const pinsRaw = readJson(MORE_PINS_CACHE_KEY)
+  const pending = Array.isArray(pinsRaw) && readJson(MORE_PINS_PENDING_KEY) === true
+  return {
+    epoch: {},
+    userId,
+    hadBarCache,
+    barRaw: hadBarCache ? bar.layout : null,
+    barAdopted: false,
+    cachedCanEdit: hadBarCache && bar.canEdit === true,
+    serverCanEdit: null,
+    pins: resolvePins(pinsRaw),
+    confirmed: null,
+    pending,
+    touched: pending,
+  }
+}
+
+const rowsOf = (keys) => keys.map(key => ({ ...TAB_REGISTRY[key], key }))
+
+// No provider (isolated component tests, public pages): the shipped bar, no pins, no editor. The same
+// answer a first launch gives before prefs land.
+const SHIPPED = resolveBarLayout(null)
+const DEFAULT = {
+  layout: SHIPPED, bar: rowsOf(SHIPPED.bar), moved: [], canEditBar: false, applyLayout: () => {},
+  pins: [], isPinned: () => false, togglePin: async () => 'error', pending: false,
+}
+const NavPrefsContext = createContext(DEFAULT)
+
+export function NavPrefsProvider({ children }) {
+  const { user } = useAuth()
+  const userId = user?.id ?? null
+  const { prefs, prefsLoaded } = usePrefs()
+  const { getToken } = useApiFetch()
+  // Read at call time, never captured — same reasoning as PrefsProvider's tokenRef.
+  const tokenRef = useRef(getToken)
+  tokenRef.current = getToken
+
+  const [s, setS] = useState(() => readLaunch(userId))
+  // `live` mirrors `s` SYNCHRONOUSLY, so two taps in one frame build on each other rather than both
+  // on the pre-tap list. Every mutation goes through commit().
+  const live = useRef(s)
+  const landed = useRef(undefined)   // the prefs object last folded in
+  const seq = useRef(0)              // monotonic save counter; only the latest save's answer applies
+  const settled = useRef(0)
+
+  // A different person: sign-out has already cleared the caches (CLIENT_PREF_KEYS), so this re-reads
+  // an empty launch. The prefs object on hand belongs to the previous person — mark it as seen so it
+  // is never folded into the new session. Derived-state-on-key-change, done during render so no
+  // child ever draws the previous person's bar.
+  if (s.userId !== userId) {
+    const next = readLaunch(userId)
+    live.current = next
+    landed.current = prefs
+    settled.current = seq.current   // the previous person's saves are abandoned, not in flight
+    setS(next)
+  }
+
+  const commit = useCallback((patch) => {
+    const next = { ...live.current, ...patch }
+    live.current = next
+    setS(next)
+    return next
+  }, [])
+
+  // Send `list` and settle it. Returns the save result, or null if a newer save or a new session has
+  // superseded this one (its answer no longer describes what is on screen).
+  const sendPins = useCallback(async (list, before) => {
+    const mine = ++seq.current
+    const epoch = live.current.epoch
+    const res = await saveMorePins({ getToken: tokenRef.current, ids: list })
+    if (mine !== seq.current || epoch !== live.current.epoch) return null
+    settled.current = mine
+    if (res.ok) {
+      writeJson(MORE_PINS_PENDING_KEY, undefined)
+      commit({ confirmed: list, pending: false })
+    } else if (res.status > 0 && res.status < 500) {
+      // Refused. Back to what the server last confirmed. If it has not answered this session, back to
+      // what was on screen before this change — and let the next prefs read decide (touched=false).
+      const known = live.current.confirmed
+      const back = known ?? before
+      writeJson(MORE_PINS_CACHE_KEY, back)
+      writeJson(MORE_PINS_PENDING_KEY, undefined)
+      commit({ pins: back, pending: false, touched: known != null })
+    }
+    // status 0 / 5xx: keep the list and the pending flag; the online event or the next launch retries.
+    return res
+  }, [commit])
+
+  // Re-send a pending list. A no-op while any save is in flight — its answer settles the list.
+  const resend = useCallback(() => {
+    const cur = live.current
+    if (!cur.userId || !cur.pending || settled.current !== seq.current) return
+    sendPins(cur.pins, cur.confirmed ?? cur.pins)
+  }, [sendPins])
+
+  // Launch re-send, once per session, and on every reconnect.
+  useEffect(() => { resend() }, [s.epoch, resend])
+  useEffect(() => onReconnect(() => resend()), [resend])
+
+  // Fold in each NEW prefs object, once. A failed read (null) changes nothing: the caches stand.
+  useEffect(() => {
+    if (!userId || !prefsLoaded || !prefs || prefs === landed.current) return
+    landed.current = prefs
+    const cur = live.current
+    const serverCanEdit = prefs.can_edit_bar === true
+    const barRaw = prefs.bar_layout ?? null
+    writeJson(BAR_LAYOUT_CACHE_KEY, { layout: barRaw, canEdit: serverCanEdit })
+    const patch = { serverCanEdit }
+    // First launch after sign-in: nothing was drawn from a cache, so apply at once. Otherwise the
+    // cache now holds the new value and the NEXT launch draws it.
+    if (!cur.hadBarCache && !cur.barAdopted) Object.assign(patch, { barRaw, barAdopted: true })
+    const server = resolvePins(prefs.more_pins)
+    if (!cur.touched) {
+      // Nothing local to protect: the server's list is the list.
+      writeJson(MORE_PINS_CACHE_KEY, server)
+      Object.assign(patch, { pins: server, confirmed: server })
+    } else if (cur.confirmed == null) {
+      // A local change is pending: keep it on screen, remember the server's copy as the rollback
+      // target, and re-send (resend no-ops if the launch re-send is still in flight).
+      patch.confirmed = server
+    }
+    commit(patch)
+    resend()
+  }, [prefs, prefsLoaded, userId, commit, resend])
+
+  const layout = useMemo(() => resolveBarLayout(s.barRaw), [s.barRaw])
+  const canEditBar = s.serverCanEdit ?? s.cachedCanEdit
+
+  // The editor's own Save: applies at once (the only mid-session re-layout) and becomes the cache.
+  const applyLayout = useCallback((raw) => {
+    const cur = live.current
+    writeJson(BAR_LAYOUT_CACHE_KEY, { layout: raw ?? null, canEdit: (cur.serverCanEdit ?? cur.cachedCanEdit) === true })
+    commit({ barRaw: raw ?? null, barAdopted: true })
+  }, [commit])
+
+  // → 'pinned' | 'unpinned' | 'full' | 'error'. The button changes before this resolves.
+  const togglePin = useCallback(async (id) => {
+    if (typeof id !== 'string' || !MORE_PIN_ID_RE.test(id)) return 'error'
+    const cur = live.current
+    const wasPinned = cur.pins.includes(id)
+    if (!wasPinned) {
+      const moved = resolveBarLayout(cur.barRaw).moved
+      if (drawnPinIds(cur.pins, { moved }).length >= MORE_PINS_MAX_SHOWN) return 'full'
+      if (cur.pins.length >= MORE_PINS_MAX_STORED) return 'full'
+    }
+    const next = wasPinned ? cur.pins.filter(p => p !== id) : [...cur.pins, id]
+    writeJson(MORE_PINS_CACHE_KEY, next)
+    writeJson(MORE_PINS_PENDING_KEY, true)
+    commit({ pins: next, pending: true, touched: true })
+    const res = await sendPins(next, cur.pins)
+    if (res && !res.ok && res.status > 0 && res.status < 500) return 'error'
+    return wasPinned ? 'unpinned' : 'pinned'
+  }, [commit, sendPins])
+
+  const isPinned = useCallback((id) => s.pins.includes(id), [s.pins])
+
+  const value = useMemo(() => ({
+    layout, bar: rowsOf(layout.bar), moved: layout.moved, canEditBar, applyLayout,
+    pins: s.pins, isPinned, togglePin, pending: s.pending,
+  }), [layout, canEditBar, applyLayout, s.pins, isPinned, togglePin, s.pending])
+
+  return <NavPrefsContext.Provider value={value}>{children}</NavPrefsContext.Provider>
+}
+
+// Non-throwing, like usePrefs: with no provider these return the shipped bar and no pins.
+export function useNavLayout() {
+  const { layout, bar, moved, canEditBar, applyLayout } = useContext(NavPrefsContext)
+  return { layout, bar, moved, canEditBar, applyLayout }
+}
+
+export function useMorePins() {
+  const { pins, isPinned, togglePin, pending } = useContext(NavPrefsContext)
+  return { pins, isPinned, togglePin, pending }
+}

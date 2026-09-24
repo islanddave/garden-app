@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from '
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { FavoritesProvider } from './context/FavoritesContext.jsx'
 import { PrefsProvider } from './context/PrefsContext.jsx'
-import { AppConfigProvider } from './context/AppConfigContext.jsx'
+import { NavPrefsProvider } from './context/NavPrefsContext.jsx'
 import { ModeProvider } from './context/ModeContext.jsx'
 import { ToastProvider } from './context/ToastContext.jsx'
 import TopChrome from './components/TopChrome.jsx'
@@ -521,23 +521,22 @@ export default function App() {
           and every route, and moving it would change nothing except the diff. */}
       <SplashScreen />
       <ModeProvider>
-        {/* V5-ADMINCENTER-001 — two once-at-boot reads, siblings of FavoritesProvider because they
-            are the same shape of thing: one app-level fetch replacing a per-consumer fan-out. Both
-            need AuthProvider above them (identity keys the read) and nothing below them.
+        {/* V5-ADMINCENTER-001 — PrefsProvider is a once-at-boot read, a sibling of FavoritesProvider
+            because it is the same shape of thing: one app-level fetch replacing a per-consumer
+            fan-out. It needs AuthProvider above it (identity keys the read) and nothing below it.
 
-            TWO PROVIDERS, NOT ONE, BECAUSE THEY ARE TWO SCOPES. PrefsProvider reads
-            user_notification_prefs (per-user, keyed by created_by); AppConfigProvider reads
-            app_config (global, keyed by `key` alone — one nav order for the installation, per Dave's
-            2026-09-08 ruling). They are independent, neither reads the other, and the nesting order
-            between them carries no meaning. Merging them would give one provider two scopes, which
-            is the category error that ruling exists to prevent. */}
+            V5-NAVCUSTOM-001 — NavPrefsProvider sits INSIDE PrefsProvider because it reads it: the
+            per-person tab bar and More pins live on the same user_notification_prefs row (D4, Dave
+            2026-09-24: only his bar changes). It adds no request at boot. It REPLACES the retired
+            AppConfigProvider, whose GET /api/app-config was a second boot request for a GLOBAL nav
+            order that D4 reversed — so the boot path is one request lighter. */}
         <FavoritesProvider>
           <PrefsProvider>
-            <AppConfigProvider>
+            <NavPrefsProvider>
               <ToastProvider>
                 <AppRoutes />
               </ToastProvider>
-            </AppConfigProvider>
+            </NavPrefsProvider>
           </PrefsProvider>
         </FavoritesProvider>
       </ModeProvider>

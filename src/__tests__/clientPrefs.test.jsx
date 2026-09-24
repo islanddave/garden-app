@@ -95,7 +95,7 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     }
   })
 
-  it('the enumerated list is exactly the six keys plus the two prefixes', () => {
+  it('the enumerated list is exactly the nine keys plus the two prefixes', () => {
     // Pins the SCOPE, not the behaviour: widening this set is a deliberate decision, not a drive-by.
     // Widened by V4-USERPREFS-001 (2026-08-17), deliberately: the three keys added there are
     // per-device CACHES of per-user server state, read synchronously to seed first render. That
@@ -103,11 +103,26 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     // they belong here for the same reason the original three did.
     // Widened again by V4-HANDEDNESSCONTROLS-001 (2026-08-25): same shape, higher stakes — the
     // inherited value decides which side a destructive control sits on, not merely a sort order.
+    // Widened again by V5-NAVCUSTOM-001 (2026-09-24), deliberately and in the same shape: the three
+    // nav.* keys are launch caches of the per-person bar and pins (D4), read before prefs land.
     expect(CLIENT_PREF_KEYS).toEqual([
       'croprank.v1', 'logone.lastPlant', 'lastHarvestUnit',
       'quicklog.defaultAllSelected', 'garden.releasesSeenVersion', 'ui.handedness',
+      'nav.barLayout.v1', 'nav.morePins.v1', 'nav.morePins.pending.v1',
     ])
     expect(CLIENT_PREF_KEY_PREFIXES).toEqual(['lastHarvestUnit:', 'today-skipped:'])
+  })
+
+  // The list above holds literals (an import would close an AuthContext cycle), so this is what
+  // stops NavPrefsContext renaming a key and leaving the new one to survive sign-out.
+  // KILLING MUTATION: rename a key in NavPrefsContext (e.g. nav.barLayout.v2) without listing it.
+  // RESULT: RED.
+  it('every NavPrefsContext launch cache is cleared at sign-out', async () => {
+    const nav = await import('../context/NavPrefsContext.jsx')
+    for (const key of [nav.BAR_LAYOUT_CACHE_KEY, nav.MORE_PINS_CACHE_KEY, nav.MORE_PINS_PENDING_KEY]) {
+      expect(typeof key).toBe('string')
+      expect(CLIENT_PREF_KEYS).toContain(key)
+    }
   })
 
   // V4-USERPREFS-001 — behavioural, not just enumerative. The list above could be right while the
