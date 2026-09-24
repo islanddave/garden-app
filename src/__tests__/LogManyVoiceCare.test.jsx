@@ -80,6 +80,7 @@ const DAVE_ALIASES = [
 let mic
 let writeReply
 let deleteReply
+let locationsReply
 const posts = []
 const deletes = []
 
@@ -89,6 +90,7 @@ beforeEach(() => {
   deletes.length = 0
   writeReply = null
   deleteReply = null
+  locationsReply = LOCATIONS_RES
   resetMicArbiter()
   clearReloadBlocks()
   try { sessionStorage.clear(); localStorage.clear() } catch { /* noop */ }
@@ -96,7 +98,7 @@ beforeEach(() => {
   apiFetch.mockReset()
   apiFetch.mockImplementation((path, opts = {}) => {
     if (path === '/api/projects') return Promise.resolve([])
-    if (path === '/api/locations') return Promise.resolve(LOCATIONS_RES)
+    if (path === '/api/locations') return Promise.resolve(locationsReply)
     if (path === '/api/plants?view=picker') return Promise.resolve({ plants: PICKER })
     if (path === '/api/varieties/crop-types') return Promise.resolve(CROP_TYPES)
     if (path === '/api/varieties/voice-aliases') return Promise.resolve({ aliases: DAVE_ALIASES })
@@ -156,6 +158,20 @@ describe('Log many — the voice entry', () => {
     vi.unstubAllGlobals()
     render(<LogMany />)
     await screen.findByText('What happened?')
+    expect(screen.queryByTestId('lmv-start')).toBeNull()
+  })
+
+  it('review MINOR-4: a location row voice cannot read turns voice OFF and the manual form still loads', async () => {
+    // careLocations reads every row of BOTH halves of GET /api/locations, and `locations_with_path`
+    // is read by nothing else on this page. It runs in the page's only load `.then`, so before the
+    // guard one unreadable row there sent the whole manual form to its error screen.
+    locationsReply = { ...LOCATIONS_RES, locations_with_path: [null, ...LOCATIONS_RES.locations_with_path] }
+    render(<LogMany />)
+    await screen.findByText('What happened?')
+    // The manual form is whole: its scope chips (fed by the same response) and its commit button.
+    expect(screen.getByText('By zone')).toBeTruthy()
+    await screen.findByText(/^Log watered on \d+$/)
+    // Voice alone is off.
     expect(screen.queryByTestId('lmv-start')).toBeNull()
   })
 })
