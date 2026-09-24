@@ -102,6 +102,18 @@ export default function DebugMenu() {
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine)
   const [storage, setStorage] = useState('—')
   const [ping, setPing] = useState(null)   // null | 'running' | {ok, ms, detail}
+  // V5-TODAYSHAPE-001 — the CSS viewport, which is a number only THIS DEVICE can report.
+  // The Today layout gate emulates a fixed width in headless Chrome, and picking that width wrong
+  // invalidates every measurement it takes: a defect measured at one width can simply not exist at
+  // another (the four bulk pills wrap to four lines at 358px of content and sit on two at 380px).
+  // A spec sheet is not good enough to settle it, because Android's system "Display size" setting
+  // changes the effective CSS width on the same hardware — so the phone in hand is the only
+  // authority. Held in state with a listener rather than read once at render because this panel's
+  // stated contract is that every value is live, and a width that silently survives a rotation
+  // would be the kind of quietly-stale readout the rest of this file exists to avoid.
+  const [vp, setVp] = useState(() => (typeof window === 'undefined' ? null : {
+    w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio,
+  }))
 
   useEffect(() => {
     const on = () => setOnline(true)
@@ -109,6 +121,14 @@ export default function DebugMenu() {
     window.addEventListener('online', on)
     window.addEventListener('offline', off)
     return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  }, [])
+
+  useEffect(() => {
+    const read = () => setVp({ w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio })
+    read()
+    window.addEventListener('resize', read)
+    window.addEventListener('orientationchange', read)
+    return () => { window.removeEventListener('resize', read); window.removeEventListener('orientationchange', read) }
   }, [])
 
   useEffect(() => {
@@ -178,6 +198,7 @@ export default function DebugMenu() {
         <Row label="SW stamp" value={swVersion} />
         <Row label="Network" value={online ? 'online' : 'OFFLINE'} tone={online ? 'good' : 'bad'} />
         <Row label="Display mode" value={standalone ? 'installed PWA' : 'browser tab'} />
+        <Row label="Viewport (CSS px)" value={vp ? `${vp.w} × ${vp.h} @${vp.dpr}×` : '—'} />
         <Row label="Storage" value={storage} />
         <Row
           label="API round-trip"
