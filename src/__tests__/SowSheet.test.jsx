@@ -223,6 +223,18 @@ describe('the Sow sheet on a packet\'s page', () => {
     expect(screen.getByText('Planted!')).toBeTruthy()
   })
 
+  // Spec §2 rule 9 (pre-ship QA, colour icons): the editor's packet banner is reachable from this door
+  // too, so it draws the registry sprout, never the 🌱 emoji. Garden.editor.test holds the glyph exactly.
+  it('the sheet\'s packet banner draws the registry sprout, not the 🌱 emoji', async () => {
+    await renderDetail()
+    await act(async () => { fireEvent.click(screen.getByTestId('sow-this')) })
+    await waitFor(() => expect(within(sowDialog()).getByText(/Planting from/)).toBeTruthy())
+    const banner = within(sowDialog()).getByText(/Planting from/).parentElement
+    expect(banner.textContent).toContain(ITEM.name)
+    expect(banner.textContent).not.toContain('🌱')
+    expect(banner.querySelector('svg[aria-hidden="true"]')).toBeTruthy()
+  })
+
   it('holds the service-worker reload while open, and releases it on Close', async () => {
     await renderDetail()
     expect(isReloadBlocked()).toBe(false)

@@ -14,6 +14,7 @@ import ProjectOptions from './ProjectOptions.jsx'
 import { PlantForm } from './forms'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
+import Icon from './Icon.jsx'
 
 // BUG-COALESCECLEAR-001 — the keys PlantForm RENDERS an input for. This is the render manifest, and
 // it is deliberately the full rendered set rather than the clearable subset: `clearPatch` filters it
@@ -439,9 +440,11 @@ export default function PlantingEditor({
           borderRadius: 8, padding: '10px 12px', marginBottom: 12,
           fontSize: '0.85rem', color: P.dark, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
         }}>
-          <span>
-            <span aria-hidden="true">🌱 </span>
-            Planting from <strong>{sourcePacket.name}</strong>
+          {/* The colour registry's sprout, the glyph "Sow this" and the packet box draw — not the 🌱 emoji
+              (spec §2 rule 9), now that the Sow sheet opens this banner from a packet's page too. */}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="lifecycle.sprout" size={18} decorative style={{ flexShrink: 0 }} />
+            <span>Planting from <strong>{sourcePacket.name}</strong></span>
           </span>
         </div>
       )}
