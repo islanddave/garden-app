@@ -212,6 +212,15 @@ jobs:
         # eslint.config.js. Raw hex is not deferrable on any file.
         run: npm run lint
 
+      - name: Today-gate fixture privacy preflight (V5-TODAYSHAPE-001)
+        # The Today layout gate's fixtures are dumped from prod (npm run todaymeasure:dump writes
+        # UNSCRUBBED raw dumps next to them, gitignored) and this repo is public. The preflight refuses
+        # Clerk subs, live keys, JWTs, Postgres URLs, emails and real coordinates in the tracked
+        # fixtures; its self-test first proves every matcher fires on a known positive. No browser,
+        # no fonts, under a second. The gate itself is not wired yet (V5-TODAYSHAPECI-001: its
+        # budget is Mac-font geometry).
+        run: npm run gate:today-shape:preflight:self-test && npm run gate:today-shape:preflight
+
       - name: Garden-render golden (V4-GARDENIA-001 / DESIGNSYS §7)
         # GroupByControl's regression oracle, per contract §3: the legacy by-project render
         # (buildDisplayList + buildGardenTree — the `none` path) must still reproduce parity
