@@ -51,10 +51,13 @@
 // (HARNESS_BASELINE_SHA=c016dcde…) and each fix reverted alone (GATE_HARNESS_CONFIG, a config that serves
 // one file from the base commit) — each red by name with the base numbers.
 //
-// SEAMS (never set in CI; a run with either set says so in its first line, so it cannot pass for clean):
+// SEAMS (never set in CI; a run with any of them set says so in its first lines, so it cannot pass for
+// clean):
 //   HARNESS_BASELINE_SHA — serve src/** from a git object (tests/harness/baselinePlugin.mjs). The gate
 //     refuses a baseline run whose Vite never printed that it is serving the object.
 //   GATE_HARNESS_CONFIG — a different Vite config for the harness (repo-relative or absolute).
+//   GATE_CPU_THROTTLE — CDP CPU throttling for each tab (e.g. 6 = six times slower): a slow CI runner,
+//     rehearsed on this tab alone rather than by loading the machine other sessions share.
 //
 // SCREENSHOTS: the frame's own rect (so exactly the device viewport, never a cropped window) on arrival
 // at the lot page / planting and again after Back, to --outdir (artifacts/layout-gate by default,
@@ -99,6 +102,8 @@ const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).fi
 const HARNESS_CONFIG = process.env.GATE_HARNESS_CONFIG || 'tests/harness/vite.harness.config.mjs'
 const CUSTOM_CONFIG = HARNESS_CONFIG !== 'tests/harness/vite.harness.config.mjs'
 const BASELINE_SHA = process.env.HARNESS_BASELINE_SHA || ''
+const CPU_THROTTLE = Number(process.env.GATE_CPU_THROTTLE || 1)
+if (!(CPU_THROTTLE >= 1)) throw new Error(`GATE_CPU_THROTTLE="${process.env.GATE_CPU_THROTTLE}" is not a rate >= 1`)
 const outArg = process.argv.indexOf('--outdir')
 const OUTDIR = outArg > -1 ? resolve(process.argv[outArg + 1]) : resolve(ROOT, 'artifacts/layout-gate')
 
@@ -374,6 +379,7 @@ async function runFlow(cdp, flow, vw, vh) {
     const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
     await cdp.send('Page.enable', {}, sessionId)
     await cdp.send('Runtime.enable', {}, sessionId)
+    if (CPU_THROTTLE > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU_THROTTLE }, sessionId)
     const t = tab(cdp, sessionId)
     const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=seedsscroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}`
     const nav = await cdp.send('Page.navigate', { url }, sessionId)
@@ -508,6 +514,7 @@ const udd = mkdtempSync(join(tmpdir(), 'gate-seedsscroll-'))
 try {
   if (BASELINE_SHA) console.log(`[seeds-scroll] BASELINE RUN — HARNESS_BASELINE_SHA=${BASELINE_SHA}: src/** is served from that commit. This is not a clean run.`)
   if (CUSTOM_CONFIG) console.log(`[seeds-scroll] CUSTOM HARNESS CONFIG — GATE_HARNESS_CONFIG=${HARNESS_CONFIG}. This is not a clean run.`)
+  if (CPU_THROTTLE > 1) console.log(`[seeds-scroll] CPU THROTTLED — GATE_CPU_THROTTLE=${CPU_THROTTLE}: every tab runs ${CPU_THROTTLE}x slower. This is not a clean run.`)
   if (PROBE_NOTHING) console.log('[seeds-scroll] --probe-nothing: every app testid points at one nothing renders. This run MUST fail.')
   mkdirSync(OUTDIR, { recursive: true })
   harness = await startHarness()
