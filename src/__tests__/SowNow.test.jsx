@@ -892,6 +892,11 @@ describe('SowNow — "Still in process" cards have a way out (§8)', () => {
     // The needs-profile packet in the same render is not a lot in process and carries no such door.
     expect(stageDoor('Mystery Pepper')).toBeNull()
     expect(screen.getAllByTestId('sow-lot-stage-door')).toHaveLength(2)
+    // Short visible words (a 360px card cannot hold My seeds' long label beside Archive — measured in
+    // gate:seeds-page), and an accessible name that STARTS with them (label in name, WCAG 2.5.3).
+    const door = stageDoor('Spacemaster 80')
+    expect(door.textContent).toBe('Change stage →')
+    expect(door.getAttribute('aria-label').startsWith('Change stage')).toBe(true)
   })
 
   it('inside the Seeds page it uses the shell\'s in-page door instead of pushing a URL', async () => {

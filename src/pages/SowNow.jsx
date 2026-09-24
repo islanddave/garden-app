@@ -551,7 +551,12 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
             Fermenting or drying → Saved seeds, on this lot (the only stage writer). A lot whose process
             never started is NOT listed there (Saved seeds shows staged lots), so it goes to its own
             page, where its count and origin are recorded. Keyed on the CANDIDATE's state, the same
-            predicates the chip above reads, so the door and the chip can never disagree. */}
+            predicates the chip above reads, so the door and the chip can never disagree.
+            The visible words are SHORTER than My seeds' "Change stage in Saved seeds →" on purpose:
+            gate:seeds-page's 360px screenshot showed that label plus Archive 13px wider than the card's
+            content box (the action row does not shrink), with Archive pushed into the card's padding.
+            "Change stage →" pairs with Archive like "Add sow details" does. The destination stays in
+            the accessible name, which starts with the visible words. */}
         {bucketKey === 'in_process' && isInProcess(c) && (
           <button
             type="button"
@@ -560,7 +565,7 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
             data-testid="sow-lot-stage-door"
             style={profileBtn}
           >
-            Change stage in Saved seeds &rarr;
+            Change stage &rarr;
           </button>
         )}
         {bucketKey === 'in_process' && !isInProcess(c) && isUnstartedSave(c) && (
