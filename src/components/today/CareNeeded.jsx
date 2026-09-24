@@ -726,8 +726,8 @@ export default function CareNeeded({ plan }) {
   }, [announce, getToken])
 
   const skipRow = useCallback((row) => {
-    // From the SHARED set, never from this list's view of it: the household list writes the same key
-    // and the same server column (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001).
+    // From the shared set as it stands now, never from a copy this list holds: the household list
+    // writes the same key and the same server column (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001).
     const n = readSkipped()
     n.add(row.key)
     writeSkipped(n)
