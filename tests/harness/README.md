@@ -194,6 +194,33 @@ now's candidates are built so the gate's floors rest only on date-independent bu
 per view and viewport to `artifacts/layout-gate/`, plus evidence shots of the 44-char row and the
 most-squeezed Sow now card.
 
+## `seeddetail.*` — the seed detail page, added 2026-09-24
+
+The seed's own page (`/inventory/:id`, `InventoryDetail`) gained Sow this, the "Sown ✓ · See the
+planting" line, Edit sow details, the "Sown from this packet" card and the F2 breeding fact in the
+Seeds release, and no gate rendered it. This entry mounts the real `<InventoryDetail />` at
+`/inventory/:id` in a `MemoryRouter`, under the real `AuthProvider` (the Clerk stub signs a user in, so
+the Favorite heart renders as it does for Dave) and `ToastProvider`, with the same top-bar and
+bottom-nav stand-ins as `seeds.*`. `window.fetch` is stubbed at the network layer; any request the
+fixture does not know answers `[]` and is listed by `__h.unstubbed()`.
+
+```
+http://localhost:5311/tests/harness/seeddetail.html?case=packet
+    case=packet   a bought packet with stock, two plantings in sown_from, a packet photo
+    case=f2       a lot saved off an F1 plant, still drying (no Sow this, the F2 fact, no card)
+    topbar=52     the top-bar stand-in's height; the gate passes TopChrome.jsx's BAR_H
+    verdict=0     hide the measurement bar
+```
+
+The "after a sow" state is not a URL: `gate:seed-detail` reaches it by tapping Sow this and the
+sheet's Add planting (the harness answers the create with `{ id: 'pl-new' }`). The packet's
+germination record carries ONE counted sowing on purpose — see the note on it in `seeddetail.jsx`:
+the per-sowing list widens the page when a planting name is long.
+
+`scripts/layout-gate/seed-detail-shot.mjs` (`gate:seed-detail`, and `:probe-nothing`, which must exit
+1) is the instrument; it writes the first screen and an evidence shot per state and viewport to
+`artifacts/layout-gate/`.
+
 ## Limits — what this harness CANNOT prove
 
 State these whenever a number from here is quoted.
