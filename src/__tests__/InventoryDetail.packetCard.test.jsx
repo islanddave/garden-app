@@ -180,10 +180,11 @@ const linkLine = (a) => a.querySelector('[aria-hidden="true"]')?.textContent
 const labelTexts = () => Array.from(document.querySelectorAll('label')).map(l => l.textContent.trim())
 
 describe('the packet card — seeds only, right under the title', () => {
-  it('sits between the title and the Plant-from-packet CTA', async () => {
+  // V5-SEEDSTAB-001 slice 2a: the CTA under the card is "Sow this" (it was "Plant from this packet").
+  it('sits between the title and the Sow this CTA', async () => {
     await renderPage(PEPPER)
     const h1 = screen.getByRole('heading', { level: 1 })
-    const cta = screen.getByLabelText('Plant from Carolina Reaper')
+    const cta = screen.getByLabelText('Sow this: Carolina Reaper')
     expect(h1.compareDocumentPosition(card()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(card().compareDocumentPosition(cta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })

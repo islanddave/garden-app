@@ -211,13 +211,30 @@ describe('SowNow — bucket sections (real sowEngine, today=2026-07-10)', () => 
       .toBeDefined()
   })
 
-  it('needs_profile card CTA navigates to the inventory item', async () => {
+  // V5-SEEDSTAB-001 slice 2a (§8) — RE-POINTED, not deleted. This pinned the dead end: the CTA opened
+  // the packet's page, which cannot edit one sow-profile field (they live on the cultivar). It now opens
+  // the cultivar's variety editor — the only editor of those fields. Reverting the door to the packet's
+  // page reds BOTH assertions.
+  it('needs_profile card CTA opens the variety editor for the packet\'s cultivar', async () => {
     routeFetch()
     await renderSowNow()
 
     const cta = await screen.findByLabelText('Add sow details for Mystery Pepper')
     fireEvent.click(cta)
+    expect(navigateSpy).toHaveBeenCalledWith('/varieties/var-mystery/edit')
+    expect(navigateSpy).not.toHaveBeenCalledWith('/inventory/inv-mystery')
+  })
+
+  // The fallback, so the repair can never become a dead door of its own: every seed row carries a
+  // variety (chk_inventory_seed_requires_variety), but a row that somehow arrives without one keeps the
+  // packet's page rather than a link to /varieties/undefined/edit.
+  it('a needs_profile card with no cultivar keeps the packet\'s page as its door', async () => {
+    routeFetch({ candidates: [{ ...MYSTERY, variety_id: null }] })
+    await renderSowNow()
+
+    fireEvent.click(await screen.findByLabelText('Add sow details for Mystery Pepper'))
     expect(navigateSpy).toHaveBeenCalledWith('/inventory/inv-mystery')
+    expect(navigateSpy.mock.calls.some(([to]) => String(to).startsWith('/varieties/'))).toBe(false)
   })
 
   // ── BUG-SOWPROSEUNREAD-001 — "Needs a sow profile" when the profile EXISTS ────────────────────
@@ -848,5 +865,148 @@ describe('SowNow — seed still in process', () => {
     // section it happens to be sitting in.
     expect(within(chipsFor('Spacemaster 80')).getByText('Fermenting — not ready to sow')).toBeDefined()
     expect(screen.getByLabelText('Un-archive Spacemaster 80')).toBeDefined()
+  })
+})
+
+// ── V5-SEEDSTAB-001 slice 2a — no dead ends (§8) ─────────────────────────────────────────────────
+// Each door below is asserted on the destination it hands the router, and each is paired with the
+// card that must NOT carry it, in the same render, so a door rendered on every card cannot pass.
+describe('SowNow — "Still in process" cards have a way out (§8)', () => {
+  const WET_CUKE = { ...CUCUMBER, seed_stage: 'fermenting', source_plant_id: 'pl-cuke' }
+  const DRYING_LETTUCE = { ...LETTUCE, seed_stage: 'drying', source_plant_id: 'pl-lettuce' }
+  const JUST_SAVED = {
+    ...LETTUCE, inventory_item_id: 'inv-lettuce-justsaved', variety_name: 'Lettuce (just saved)',
+    quantity_on_hand: '0', seed_stage: null, source_plant_id: 'pl-lettuce',
+  }
+  const stageDoor = (title) => screen.queryByLabelText(`Change stage in Saved seeds for ${title}`)
+
+  it('a fermenting or drying lot opens Saved seeds on THAT lot, through the seeds URL module', async () => {
+    routeFetch({ candidates: [WET_CUKE, DRYING_LETTUCE, MYSTERY] })
+    await renderSowNow()
+    await screen.findByText('Still in process')
+
+    fireEvent.click(stageDoor('Spacemaster 80'))
+    expect(navigateSpy).toHaveBeenLastCalledWith('/seeds?view=saved&lot=inv-cuke')
+    fireEvent.click(stageDoor('Black Seeded Simpson'))
+    expect(navigateSpy).toHaveBeenLastCalledWith('/seeds?view=saved&lot=inv-lettuce')
+    // The needs-profile packet in the same render is not a lot in process and carries no such door.
+    expect(stageDoor('Mystery Pepper')).toBeNull()
+    expect(screen.getAllByTestId('sow-lot-stage-door')).toHaveLength(2)
+    // Short visible words (a 360px card cannot hold My seeds' long label beside Archive — measured in
+    // gate:seeds-page), and an accessible name that STARTS with them (label in name, WCAG 2.5.3).
+    const door = stageDoor('Spacemaster 80')
+    expect(door.textContent).toBe('Change stage →')
+    expect(door.getAttribute('aria-label').startsWith('Change stage')).toBe(true)
+  })
+
+  it('inside the Seeds page it uses the shell\'s in-page door instead of pushing a URL', async () => {
+    const onGoToLot = vi.fn()
+    routeFetch({ candidates: [WET_CUKE] })
+    await act(async () => {
+      render(<ToastProvider><SowNow todayISO={TODAY} onGoToLot={onGoToLot} /></ToastProvider>)
+    })
+    await screen.findByText('Still in process')
+
+    fireEvent.click(stageDoor('Spacemaster 80'))
+    expect(onGoToLot).toHaveBeenCalledWith('inv-cuke')
+    expect(navigateSpy).not.toHaveBeenCalled()
+  })
+
+  it('a lot whose process never started goes to its own page — Saved seeds does not list it', async () => {
+    routeFetch({ candidates: [JUST_SAVED, WET_CUKE] })
+    await renderSowNow()
+    await screen.findByText('Still in process')
+
+    const details = screen.getByTestId('sow-lot-details-door')
+    expect(details.getAttribute('aria-label')).toBe('View details for Lettuce (just saved)')
+    fireEvent.click(details)
+    expect(navigateSpy).toHaveBeenCalledWith('/inventory/inv-lettuce-justsaved')
+    // One door each: the unstarted lot has no stage door, the wet lot has no details door.
+    expect(stageDoor('Lettuce (just saved)')).toBeNull()
+    expect(screen.getAllByTestId('sow-lot-details-door')).toHaveLength(1)
+    expect(screen.getAllByTestId('sow-lot-stage-door')).toHaveLength(1)
+  })
+})
+
+describe('SowNow — "Sown ✓" leads to the planting it made (§8)', () => {
+  // The card is the title's badge row's column's parent (see chipsFor above for the first hop).
+  const cardFor = (title) => screen.getByText(title).parentElement.parentElement.parentElement
+
+  async function sowFromCard(label) {
+    await act(async () => { fireEvent.click(await screen.findByLabelText(label)) })
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Add planting/i }))
+    })
+    await screen.findByText(/Sown/)
+  }
+
+  it('the chip carries a persistent link to the new planting, on the card — not in the toast', async () => {
+    routeFetch({ plantResponse: { id: 'plant-77' } })
+    await renderSowNow()
+    await sowFromCard('Sow Spacemaster 80')
+
+    const link = within(cardFor('Spacemaster 80')).getByText('See the planting')
+    expect(link.closest('a').getAttribute('href')).toBe('/plantings/plant-77')
+    expect(within(cardFor('Spacemaster 80')).getByText('Sown ✓')).toBeDefined()
+    // Only the card that was sown: its neighbour still offers Sow and no link.
+    expect(screen.getAllByText('See the planting')).toHaveLength(1)
+    expect(screen.getByLabelText('Sow Black Seeded Simpson')).toBeDefined()
+  })
+
+  it('the "Sow anyway" path gets the same link', async () => {
+    routeFetch({ candidates: [FLAT_OF_ITALY], plantResponse: { id: 'plant-onion' } })
+    await renderSowNow()
+    await sowFromCard('Sow Flat of Italy anyway')
+
+    expect(screen.getByText('See the planting').closest('a').getAttribute('href')).toBe('/plantings/plant-onion')
+  })
+
+  it('a create that names no planting still confirms, and links nowhere rather than to /plantings/undefined', async () => {
+    routeFetch({ plantResponse: {} })
+    await renderSowNow()
+    await sowFromCard('Sow Spacemaster 80')
+
+    expect(within(cardFor('Spacemaster 80')).getByText('Sown ✓')).toBeDefined()
+    expect(screen.queryByText('See the planting')).toBeNull()
+  })
+})
+
+// ── V5-SEEDSTAB-001 slice 2a — a sow from a saved lot says so (§8) ───────────────────────────────
+// plants.source_type is the planting's one human-readable provenance field. Seed Dave saved himself is
+// 'saved_seed' (PLANT_SOURCE_OPTIONS already had it); a bought packet stays 'seed_packet' — the POST
+// test at the top of this file pins that half, so a sheet that always wrote either value reds one side.
+describe('SowNow — the planting records where its seed came from', () => {
+  async function sowAndReadBody(label) {
+    await act(async () => { fireEvent.click(await screen.findByLabelText(label)) })
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Add planting/i }))
+    })
+    const call = fetchSpy.mock.calls.find(([url, o]) => url === '/api/plants' && o?.method === 'POST')
+    return JSON.parse(call[1].body)
+  }
+
+  it('a stored lot saved off one of Dave\'s plants is sown as saved seed', async () => {
+    const SAVED_CUKE = { ...CUCUMBER, inventory_item_id: 'inv-cuke-saved', seed_stage: 'stored', source_plant_id: 'pl-cuke' }
+    routeFetch({ candidates: [SAVED_CUKE] })
+    await renderSowNow()
+    const body = await sowAndReadBody('Sow Spacemaster 80')
+    expect(body.source_type).toBe('saved_seed')
+    expect(body.source_inventory_item_id).toBe('inv-cuke-saved')
+    expect(body.status).toBe('seed')
+    expect(body.sown_at).toBe(TODAY)
+  })
+
+  it('seed saved from produce (a recorded origin, no parent plant, no stage) is saved seed too', async () => {
+    routeFetch({ candidates: [{ ...LETTUCE, source_kind: 'farm_stand' }] })
+    await renderSowNow()
+    const body = await sowAndReadBody('Sow Black Seeded Simpson')
+    expect(body.source_type).toBe('saved_seed')
+  })
+
+  it('a bought packet with none of the three saved-lot facts stays a seed packet', async () => {
+    routeFetch({ candidates: [{ ...LETTUCE, seed_stage: null, source_plant_id: null, source_kind: null }] })
+    await renderSowNow()
+    const body = await sowAndReadBody('Sow Black Seeded Simpson')
+    expect(body.source_type).toBe('seed_packet')
   })
 })

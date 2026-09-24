@@ -1,10 +1,13 @@
 /**
  * src/__tests__/InventoryDetailCTA.test.jsx
- * VARIETY-REF S4b — Plant-from-packet CTA tests on InventoryDetail.
+ * VARIETY-REF S4b — the packet CTA on InventoryDetail. Since V5-SEEDSTAB-001 slice 2a it is "Sow this",
+ * which opens the shared Sow sheet in place instead of navigating to Garden's add form.
  *
- * Focused scope: CTA visibility rules + navigation contract.
- * - Visible only when category === 'seeds' AND quantity_on_hand > 0
- * - On click, calls navigate(/garden?source_inventory_item_id=<id>[&variety_id=<vid>]) — V3-IA: Garden hosts the editor now
+ * Focused scope: CTA visibility rules + what a tap does.
+ * - Visible only when category === 'seeds' AND quantity_on_hand > 0 (the S4b rule, unchanged)
+ * - On click, opens the Sow sheet on this packet — no navigation — and the sow it makes carries the
+ *   packet (source_inventory_item_id) and its cultivar (variety_id). The /garden deep link it used to
+ *   build is kept on Garden's side for typed URLs; Garden.editor.test.jsx still pins that reader.
  *
  * Mocks: useApiFetch, useParams/useNavigate, FavoriteToggle.
  * Strategy mirrors Plants.test.jsx structure.
@@ -12,7 +15,7 @@
 
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react'
 
 const { fetchSpy, navigateSpy } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
@@ -87,25 +90,28 @@ beforeEach(() => {
   paramsRef.current = { id: 'item-seed-1' }
 })
 
-describe('InventoryDetail — Plant-from-packet CTA visibility', () => {
+describe('InventoryDetail — Sow this CTA visibility (the S4b rule, unchanged)', () => {
   it('shows CTA when category=seeds and quantity_on_hand > 0', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
     render(<ToastProvider><InventoryDetail /></ToastProvider>)
-    await waitFor(() => expect(screen.getByText(/Plant from this packet/)).toBeDefined())
+    await waitFor(() => expect(screen.getByText('Sow this')).toBeDefined())
+    expect(screen.getByTestId('sow-this')).toBeDefined()
   })
 
   it('hides CTA when quantity_on_hand === 0', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_NO_STOCK)
     render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText('Black Krim seeds'))
-    expect(screen.queryByText(/Plant from this packet/)).toBeNull()
+    expect(screen.queryByTestId('sow-this')).toBeNull()
+    expect(screen.queryByText('Sow this')).toBeNull()
   })
 
   it('hides CTA when category != seeds', async () => {
     fetchSpy.mockResolvedValueOnce(NON_SEED)
     render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText('Black Krim seeds'))
-    expect(screen.queryByText(/Plant from this packet/)).toBeNull()
+    expect(screen.queryByTestId('sow-this')).toBeNull()
+    expect(screen.queryByText('Sow this')).toBeNull()
   })
 
   it('hides CTA for durable items', async () => {
@@ -113,54 +119,94 @@ describe('InventoryDetail — Plant-from-packet CTA visibility', () => {
     fetchSpy.mockResolvedValueOnce(DURABLE)
     render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText('Trowel'))
-    expect(screen.queryByText(/Plant from this packet/)).toBeNull()
+    expect(screen.queryByTestId('sow-this')).toBeNull()
+    expect(screen.queryByText('Sow this')).toBeNull()
   })
 
   it('hides CTA when quantity_on_hand is null', async () => {
     fetchSpy.mockResolvedValueOnce({ ...SEED_WITH_STOCK, quantity_on_hand: null })
     render(<ToastProvider><InventoryDetail /></ToastProvider>)
     await waitFor(() => screen.getByText('Black Krim seeds'))
-    expect(screen.queryByText(/Plant from this packet/)).toBeNull()
+    expect(screen.queryByTestId('sow-this')).toBeNull()
+    expect(screen.queryByText('Sow this')).toBeNull()
   })
 })
 
-describe('InventoryDetail — Plant-from-packet CTA navigation', () => {
-  it('navigates with source_inventory_item_id and variety_id query params on click', async () => {
-    fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
-    render(<ToastProvider><InventoryDetail /></ToastProvider>)
-    await waitFor(() => screen.getByText(/Plant from this packet/))
+// V5-SEEDSTAB-001 slice 2a — REPLACES the two navigation pins ("navigates with source_inventory_item_id
+// and variety_id query params", "omits variety_id when packet has no variety_id"). What they guarded —
+// the tap carries THIS packet and ITS cultivar into the planting — is now asserted on the planting
+// create itself, which is where it matters: drop the packet id or the variety from the sheet and these
+// red exactly as the old ones did when the query string lost them.
+describe('InventoryDetail — Sow this opens the Sow sheet on this packet', () => {
+  function routeSowFetch(item) {
+    fetchSpy.mockImplementation((path, opts = {}) => {
+      const p = String(path)
+      if (p === '/api/inventory-items/item-seed-1' && !opts.method) return Promise.resolve(item)
+      if (p === '/api/projects') return Promise.resolve([{ id: 'proj-beds', name: 'Raised beds' }])
+      if (p.startsWith('/api/varieties/var-')) return Promise.resolve({ id: p.split('/').pop(), name: 'Black Krim' })
+      if (p === '/api/plants' && opts.method === 'POST') return Promise.resolve({ id: 'plant-krim' })
+      return Promise.resolve([])
+    })
+  }
 
-    fireEvent.click(screen.getByLabelText(/Plant from Black Krim seeds/i))
+  async function openAndSow() {
+    await act(async () => { render(<ToastProvider><InventoryDetail /></ToastProvider>) })
+    await waitFor(() => screen.getByText('Sow this'))
+    await act(async () => { fireEvent.click(screen.getByTestId('sow-this')) })
+    const sheet = screen.getByRole('dialog', { name: 'Sow Black Krim seeds' })
+    await waitFor(() => expect(within(sheet).getByLabelText(/Name/i).value).toBe('Black Krim seeds'))
+    await act(async () => { fireEvent.click(within(sheet).getByRole('button', { name: /Add planting/i })) })
+    const call = fetchSpy.mock.calls.find(([u, o]) => u === '/api/plants' && o?.method === 'POST')
+    return JSON.parse(call[1].body)
+  }
 
-    expect(navigateSpy).toHaveBeenCalledTimes(1)
-    const dest = navigateSpy.mock.calls[0][0]
-    expect(dest).toMatch(/^\/garden\?/)
-    const params = new URLSearchParams(dest.split('?')[1])
-    expect(params.get('source_inventory_item_id')).toBe('item-seed-1')
-    expect(params.get('variety_id')).toBe('var-1')
+  it('a tap opens the sheet in place — no navigation', async () => {
+    routeSowFetch(SEED_WITH_STOCK)
+    await act(async () => { render(<ToastProvider><InventoryDetail /></ToastProvider>) })
+    await waitFor(() => screen.getByText('Sow this'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await act(async () => { fireEvent.click(screen.getByTestId('sow-this')) })
+
+    expect(screen.getByRole('dialog', { name: 'Sow Black Krim seeds' })).toBeDefined()
+    expect(navigateSpy).not.toHaveBeenCalled()
   })
 
-  it('omits variety_id when packet has no variety_id', async () => {
-    fetchSpy.mockResolvedValueOnce(SEED_NO_VARIETY)
-    render(<ToastProvider><InventoryDetail /></ToastProvider>)
-    await waitFor(() => screen.getByText(/Plant from this packet/))
+  it('the sow carries this packet and its cultivar', async () => {
+    routeSowFetch(SEED_WITH_STOCK)
+    const body = await openAndSow()
+    expect(body.source_inventory_item_id).toBe('item-seed-1')
+    expect(body.variety_id).toBe('var-1')
+    expect(body.status).toBe('seed')
+    expect(body.source_type).toBe('seed_packet')
+    expect(navigateSpy).not.toHaveBeenCalled()
+  })
 
-    fireEvent.click(screen.getByLabelText(/Plant from Black Krim seeds/i))
-
-    const dest = navigateSpy.mock.calls[0][0]
-    const params = new URLSearchParams(dest.split('?')[1])
-    expect(params.get('source_inventory_item_id')).toBe('item-seed-1')
-    expect(params.get('variety_id')).toBeNull()
+  it('a packet with no variety_id still sows from the packet, with no cultivar', async () => {
+    routeSowFetch(SEED_NO_VARIETY)
+    const body = await openAndSow()
+    expect(body.source_inventory_item_id).toBe('item-seed-1')
+    expect(body.variety_id).toBeNull()
   })
 
   it('CTA button is a 44px+ tap target (mobile-first)', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
     render(<ToastProvider><InventoryDetail /></ToastProvider>)
-    await waitFor(() => screen.getByText(/Plant from this packet/))
+    await waitFor(() => screen.getByText('Sow this'))
 
-    const cta = screen.getByLabelText(/Plant from Black Krim seeds/i)
+    const cta = screen.getByLabelText('Sow this: Black Krim seeds')
     // Inline style minHeight set to 56
     expect(cta.style.minHeight).toBe('56px')
+  })
+
+  it('carries the colour registry sprout, not the 🌱 emoji it used to', async () => {
+    fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
+    await waitFor(() => screen.getByText('Sow this'))
+
+    const cta = screen.getByTestId('sow-this')
+    expect(cta.querySelector('svg')).toBeTruthy()
+    expect(cta.textContent).not.toContain('🌱')
   })
 })
 
