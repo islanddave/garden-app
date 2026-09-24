@@ -10,7 +10,7 @@ writes them, and the SPA draws from them. Design: `project-state/design-navcusto
 | Step | State |
 |---|---|
 | `0a` / `0c` staging | **APPLIED** 2026-09-24 15:56:59Z — pre 6/6, sweep 2/2 (before and after 0a), post 8/8; whole corpus `--continuous-only` 0 FAIL / 0 ERROR |
-| `0a` / `0c` prod | **NOT APPLIED** — needs Dave's OK |
+| `0a` / `0c` prod | **APPLIED** 2026-09-24 17:37:34Z (Dave's OK via AUQ that turn) — pre 6/6, sweep 2/2 (before and after 0a), post 8/8 incl. both `post_*_is_nullable_jsonb_without_default` information_schema reads; whole corpus `--continuous-only` FAIL set identical to the pre-apply baseline (2 pre-existing `post_corroborated_*` FAILs from v4-cal1, already on the ledger) |
 | Critter Lambda (`lambda/critter/`) | integration branch `integ-navcustom-20260924`, **not pushed to dev** |
 | SPA (`src/`) | integration branch `integ-navcustom-20260924`, **not pushed to dev** |
 
