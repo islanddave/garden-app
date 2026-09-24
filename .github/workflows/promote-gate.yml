@@ -216,15 +216,16 @@ jobs:
     # OPS-PROMOTERACE-001: consumed by the deploy-lambdas job below to decide whether to run at all.
     outputs:
       lambda_changed: ${{ steps.lam.outputs.changed }}
-    # 50 (was 30). Widened 2026-07-23 after two promotes fail-closed when a runner-queue backlog pushed the ~16min
+    # 60 (30 until 2026-07-23, then 50). Widened 2026-07-23 after two promotes fail-closed when a runner-queue backlog pushed the ~16min
     # staging pipeline past the old window (staging was green both times). Worst case for a promote that reaches
     # the FF: ~1 min before the smoke gate (token, preflight, skew, checkout, psycopg2 install, and a schema gate
     # that PASSES in seconds) + up to 34.5 min in the staging smoke gate (5 locate + 27.5 poll + 2 jobs read) +
     # ~10 min FF and snap = ~45.5 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
     # <=250 s, about 9 min together) end in a refusal BEFORE the FF, so they stack with snap only on a
-    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait could pass
-    # 50 min and end the job inside snap, after the FF (review MINOR 2). Not closed here; raising this to 60 would.
-    timeout-minutes: 50
+    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~54.5
+    # min, which passed the old 50 and would have ended the job inside snap, after the FF (review MINOR 2) — main
+    # moved, nothing deployed. 60 (was 50, raised 2026-09-24 with the schema gate) covers that worst case.
+    timeout-minutes: 60
     steps:
       - name: Mint garden-bot installation token
         id: bot
