@@ -1554,7 +1554,25 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       noteMiss(`Kept the amount; didn't catch the command — heard “${heard}”.`)
       return
     }
-    if (split.command === 'save_and_advance' || split.command === 'save') { saveRecord(meta?.atMs); return }
+    if (split.command === 'save_and_advance' || split.command === 'save') {
+      // V5-VOICEVOCAB-001 (lane D4, review IMPORTANT-1) — THE SAVE WORD SAVES ONLY WHAT THE SENTENCE
+      // SET. The head above was just refused ("Didn't catch that"), so the record standing is the one
+      // from BEFORE this sentence — and this path used to save it anyway, announced as a success. With
+      // "Suyo Long", "5 count" standing, "danvers 12 three count 231 grams next" saved Suyo Long · 5 count
+      // under a "Saved Suyo Long" banner, for a sentence that named Danvers; prod does the same for 16
+      // shapes ("tomato 1884 3 count next", "super sweet 100 three count 231 grams next", …). Only the
+      // save is withheld: "clear" and "stop" after a refused head still act, because they write
+      // nothing and a dropped "stop" would leave a live mic he asked to stop. The claim on the write
+      // cooldown is given back, so the "next" he says after correcting himself is not swallowed.
+      if (!unitReads) {
+        say('warn', `${statusRef.current?.text ?? "Didn't catch that."} Nothing was saved.`)
+        const token = meta?.atMs
+        queueMicrotask(() => debRef.current?.invalidateLastWrite(token))
+        return
+      }
+      saveRecord(meta?.atMs)
+      return
+    }
     if (split.command === 'clear_field') { cue(hapticDigitAccepted); clearRecord(); say('warn', 'Cleared. Say a crop to start the next one.'); return }
     if (split.command === 'finish') {
       stopRef.current = true

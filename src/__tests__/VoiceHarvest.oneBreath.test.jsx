@@ -502,3 +502,59 @@ describe('V5-VOICEVOCAB-001 — two valid readings that disagree are refused', (
     expect(resolveBareOneBreath(TWO, oneBreathReadings('alpha 7 3 200'))).toMatchObject({ kind: 'apply', planting: { id: 'a7' } })
   })
 })
+
+// ── review IMPORTANT-1 — a save word saves only what its own sentence set ──────────────────────────
+//
+// With a record standing ("Suyo Long", "5 count") a sentence naming another planting whose head is
+// refused used to save the STANDING record — "danvers 12 three count 231 grams next" answered "Saved
+// Suyo Long — 5 count" (lane build), and prod does the same for 20 of the review's 120 standing-record
+// scripts. Every one of those 22 shapes, measured on the prod replica and the lane build (review §6):
+describe('IMPORTANT-1 — a refused sentence never lets its save word save the record from before', () => {
+  const STANDING_SAVED_ON_PROD_OR_LANE = [
+    'super sweet 100 3 count next', 'super sweet 100 three count 231 grams next',
+    'super sweet 100 3 count 231 grams next', 'super sweet 100 231 grams next',
+    'super sweet one hundred 3 count next', 'super sweet one hundred three count 231 grams next',
+    'super sweet one hundred 3 count 231 grams next', 'super sweet one hundred 231 grams next',
+    'tomato 1884 3 count next', 'tomato 1884 three count 231 grams next', 'tomato 1884 3 count 231 grams next',
+    'tomato 1884 231 grams next', 'marketmore 3 count next', 'marketmore three count 231 grams next',
+    'marketmore 3 count 231 grams next', 'marketmore 231 grams next', 'clemson 80 3 count next',
+    'clemson 80 three count 231 grams next', 'clemson 80 3 count 231 grams next', 'clemson 80 231 grams next',
+    'danvers 12 three count 231 grams next', 'danvers 12 3 count 231 grams next',
+  ]
+  it.each(STANDING_SAVED_ON_PROD_OR_LANE)('"Suyo Long", "5 count", %j saves nothing', async (said) => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '5 count', said]) await speak(rec, line)
+    await settle()
+    expect(posts()).toEqual([])
+    expect(statusText()).not.toContain('Saved')
+  })
+
+  it('a refused unit head says nothing was saved, and the "next" he says after it is not swallowed', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '5 count', 'danvers 12 three count 231 grams next']) await speak(rec, line)
+    expect(statusText()).toBe("Didn't catch that — say the planting, then the amount separately. Nothing was saved.")
+    await settle()
+    expect(posts()).toEqual([])
+    // The refused sentence changed nothing: the record on the card is still Suyo Long's, and a real
+    // "next" saves it — the cooldown the dropped save word claimed was given back.
+    expect(record()).toContain('Suyo Long')
+    expect(record()).toContain('5 count')
+    await speak(rec, 'next')
+    await settle()
+    expect(posts().map((b) => [b.plant_id, b.harvest])).toEqual([[byName('Suyo Long').id, H(5, 'count')]])
+  })
+
+  it('"clear" after a refused head still clears — only the save is withheld', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '5 count', 'tomato 1884 3 count clear']) await speak(rec, line)
+    expect(statusText()).toBe('Cleared. Say a crop to start the next one.')
+    expect(record()).not.toContain('5 count')
+  })
+
+  it('a head that applies still saves with its own save word — the control', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '5 count', 'suyo long 231 grams next']) await speak(rec, line)
+    await settle()
+    expect(posts().map((b) => [b.plant_id, b.harvest])).toEqual([[byName('Suyo Long').id, H(5, 'count', 231)]])
+  })
+})
