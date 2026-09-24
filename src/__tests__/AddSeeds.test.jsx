@@ -83,13 +83,14 @@ const PACKET = {
   origin: 'BI-order-2026-06-09',
 }
 
-// BUG-ADDSEEDSVALIDSLUGS-001 fixtures. Three guesses, one per side of the gate:
+// BUG-ADDSEEDSVALIDSLUGS-001 fixtures. One guess per side of the gate:
 //   carrot     — a LIVE crop type that the frozen CROP_TYPE_SLUGS list lacks (one of 85 such, prod
 //                2026-09-23). Saved untyped before the fix: the defect.
 //   tomato     — in BOTH lists. Must stay typed on every path, including a failed catalog fetch.
 //   moonflower — in NEITHER. Must stay untyped, or the "gate" is a pass-through for LLM guesses.
+//   bread      — live, but a non-plant food class. Must stay untyped: the page reads garden scope.
 // sow_profile null keeps each wire body to the crop-type question. Each body is found by EXACT
-// variety name (bodyFor), and the four variety names are distinct, so no lookup lands on the wrong row.
+// variety name (bodyFor), and the five variety names are distinct, so no lookup lands on the wrong row.
 const CARROT_PACKET = {
   ...PACKET,
   name: 'Danvers 126 Carrot Seeds', crop: 'Carrot', variety: 'Danvers 126', sku: '0071',
@@ -105,11 +106,20 @@ const MOONFLOWER_PACKET = {
   name: 'Giant White Moonflower Seeds', crop: 'Moonflower', variety: 'Giant White', sku: '0912',
   crop_type_slug_guess: 'moonflower', sow_profile: null,
 }
+// No wheat crop type exists, so the guess settles for the nearest valid neighbour (the L-286 shape)
+// and lands on a food class that the catalog response really does carry.
+const WHEAT_PACKET = {
+  ...PACKET,
+  name: 'Red Fife Wheat Seeds', crop: 'Wheat', variety: 'Red Fife', sku: '1203',
+  crop_type_slug_guess: 'bread', sow_profile: null,
+}
 
-// GET /api/varieties/crop-types rows, shape and values copied from prod crop_types 2026-09-23.
+// GET /api/varieties/crop-types rows, shape and values copied from prod crop_types 2026-09-23. The
+// endpoint returns the non-plant food classes too (useCropTypes filters them out by scope), so one rides along.
 const LIVE_CROP_TYPES = [
   { slug: 'carrot', display_name: 'Carrot', default_lifecycle: 'biennial', category: 'vegetable', sort_order: 0, dtm_basis: 'from-sow', search_aliases: null },
   { slug: 'tomato', display_name: 'Tomato', default_lifecycle: 'tender_perennial', category: 'vegetable', sort_order: 0, dtm_basis: 'from-transplant', search_aliases: null },
+  { slug: 'bread', display_name: 'Bread', default_lifecycle: null, category: 'non_plant_food', sort_order: 900, dtm_basis: null, search_aliases: null },
 ]
 
 // `cropTypes` is the GET /api/varieties/crop-types response: an array, or a function returning the
@@ -397,7 +407,7 @@ describe('AddSeeds — crop type is gated on the LIVE catalog (BUG-ADDSEEDSVALID
     expect(CROP_TYPE_SLUGS).not.toContain('carrot')
     expect(CROP_TYPE_SLUGS).toContain('tomato')
     expect(CROP_TYPE_SLUGS).not.toContain('moonflower')
-    expect(LIVE_CROP_TYPES.map((c) => c.slug)).toEqual(['carrot', 'tomato'])
+    expect(LIVE_CROP_TYPES.map((c) => c.slug)).toEqual(['carrot', 'tomato', 'bread'])
   })
 
   it('a crop type that exists only in the live catalog is saved WITH that type', async () => {
@@ -411,6 +421,19 @@ describe('AddSeeds — crop type is gated on the LIVE catalog (BUG-ADDSEEDSVALID
     expect(bodyFor('Danvers 126').crop_type_slug).toBe('carrot')          // the defect: was dropped
     expect(bodyFor('Sungold').crop_type_slug).toBe('tomato')               // still typed
     expect(bodyFor('Giant White')).not.toHaveProperty('crop_type_slug')    // still gated, not a pass-through
+  })
+
+  it('a non-plant food class in the catalog never types a seed variety (garden scope)', async () => {
+    routeFetch({ extract: { packets: [WHEAT_PACKET, CARROT_PACKET] } })
+    await renderAddSeeds()
+    await runPasteExtract()
+    await screen.findByText('Red Fife Wheat Seeds')
+    await clickSaveAll()
+    await screen.findByText('Saved 2 packets')
+
+    // Carrot is the control: typed, so the live list WAS in force when bread was refused.
+    expect(bodyFor('Danvers 126').crop_type_slug).toBe('carrot')
+    expect(bodyFor('Red Fife')).not.toHaveProperty('crop_type_slug')
   })
 
   it.each([
