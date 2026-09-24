@@ -42,7 +42,7 @@ import {
 } from '../components/seed/seedLots.js'
 // Where a Not started lot came from, in My seeds' words for the same lot one tap away.
 import { originNote } from '../components/seed/mySeedsModel.js'
-import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
+import { seedsHref, addPacketHref, seedsReturnState, LOT_SECTION_KEY, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
 import { useLotOutline, outlineStyle } from '../components/seed/useLotOutline.js'
 // SeedCountBasis alongside the sheet itself: V5-SEEDESTTOGGLE-001's control is shared by the two
 // writers of the seed-measure columns, and this page already depended on that module, so the shared
@@ -212,6 +212,10 @@ const ADD_PACKET_HREF = addPacketHref(SAVED_VIEW_HREF)
 // location.state for every page this view PUSHES (the add form, a lot's detail): its exits come back
 // here with one Back instead of pushing Seeds again.
 const SAVED_RETURN_STATE = seedsReturnState(SAVED_VIEW_HREF)
+// BUG-SEEDLOTOPENSATFORM-001 — "Set parent plant →" is an EDIT door: it opens the lot's page to set one
+// field, so it names that part beside the return state and the page lands on its "Saved from" card.
+// Every other door here opens the lot to look at it, and the page opens at its top.
+const SET_PARENT_STATE = { ...SAVED_RETURN_STATE, [LOT_SECTION_KEY]: LOT_SECTION_SOURCE_PLANT }
 
 // ── BUG-SEEDCANDIDATEAMBIG-001 — the untracked-packet picker ──────────────────────────────────────
 // Measured against prod: ~260 untracked seed rows, roughly 41 phone-screens of unbroken scroll, and
@@ -1297,7 +1301,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                         // and the text stays vertically centred in it.
                         <Link
                           to={`/inventory/${item.id}`}
-                          state={SAVED_RETURN_STATE}
+                          state={SET_PARENT_STATE}
                           data-testid="set-source-plant"
                           style={{
                             display: 'inline-flex', alignItems: 'center',

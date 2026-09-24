@@ -71,6 +71,24 @@ export function seedsReturnFromHistory() {
   try { return seedsReturnOf(window.history?.state?.usr) } catch { return null }
 }
 
+// BUG-SEEDLOTOPENSATFORM-001 — an EDIT door's arrival hint for a lot's page, carried beside
+// seedsReturnState's field. A lot's page opens at its top unless the door was an edit action for one
+// part of it (Dave: the top "is desired behavior when not going directly from an edit option of some
+// sort"); such a door names that part here, and the page brings it into sight once the lot has loaded.
+// One-shot, like `?lot=`: the page acts on it only on a fresh history entry, never on a Back to one.
+export const LOT_SECTION_KEY = 'lotSection'
+// The lot page's "Saved from" card: which plant the seed was saved from.
+export const LOT_SECTION_SOURCE_PLANT = 'source-plant'
+
+// The part named by the entry the page arrived on, read off the history entry for the reason
+// seedsReturnFromHistory gives.
+export function lotSectionFromHistory() {
+  try {
+    const v = window.history?.state?.usr?.[LOT_SECTION_KEY]
+    return typeof v === 'string' ? v : null
+  } catch { return null }
+}
+
 // The add form leaves with navigate(-1), which can carry nothing back — so the id of the row it just
 // created rides in sessionStorage, and the Seeds page takes it (once) on the way in and outlines that
 // row. Best-effort by design: a lost note costs an outline, never a row.

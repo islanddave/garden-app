@@ -29,7 +29,7 @@ import { kindAllowsParentPlant } from '../components/seed/seedLots.js'
 // canonical; the migration's post_vocabulary_exact gate pins the DB against it.
 import { PUTUP_SOURCE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { formatQtyExact, formatDate } from '../lib/format.js'
-import { seedsHref, seedsReturnFromHistory } from '../lib/seedsRoutes.js'
+import { seedsHref, seedsReturnFromHistory, lotSectionFromHistory, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
 import { readDraft } from '../lib/draftStash.js'
 import { T } from '../components/forms/formStyles.js'
 import SowSheet, { sowPacketFromItem } from '../components/seed/SowSheet.jsx'
@@ -42,6 +42,15 @@ const SEEDS_MINE = seedsHref('mine')
 // shared key would let a sow interrupted here reopen itself on Seeds › Sow now, and the other way round.
 // One key for every packet page, holding the packet's id; a page restores only its own packet's sheet.
 const SOW_DRAFT_KEY = 'sow-packet'
+
+// BUG-SEEDLOTOPENSATFORM-001 — the history entries this page has already been opened on, by
+// react-router's per-entry key (window.history.state.key, read directly as seedsReturnFromHistory
+// does, because this page's suites stub the router). A key seen before is a Back/Forward onto this
+// page, which is how every edit round trip returns here (the variety editor leaves with
+// navigate(-1)); the browser has already put the page where it was. A new key is a fresh door (push
+// or replace): open at the top.
+const openedEntries = new Set()
+const historyEntryKey = () => { try { return window.history?.state?.key ?? null } catch { return null } }
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
 // the former local duplicates here were removed (Lane D dedup).
@@ -117,6 +126,34 @@ export default function InventoryDetail() {
   // mounts in, so this joins its request inside useSources' dedupe window instead of issuing a
   // second GET — and a tool or an amendment never asks at all.
   const { sources } = useSources({ enabled: item?.category === 'seeds' })
+
+  // ── BUG-SEEDLOTOPENSATFORM-001 — where the page opens ──────────────────────────────────────────
+  // At the top, unless this is a return to an entry already opened. BrowserRouter never resets scroll
+  // on a push (PlantingDetail says so too), and the loading shell is one screen tall, so the previous
+  // page's offset rode through the spinner and Chrome's scroll anchoring re-applied it once the lot
+  // landed, clamped to the bottom of this page: the edit form. Keyed on id, as PlantingDetail's reset
+  // is. An EDIT door names the part it opened the page to edit (lotSectionFromHistory): the page still
+  // holds the top through the spinner, then lands on that part once the lot has rendered.
+  const arrivalSectionRef = useRef(null)
+  const sourcePlantCardRef = useRef(null)
+  useEffect(() => {
+    const key = historyEntryKey()
+    const returning = key != null && openedEntries.has(key)
+    if (key != null) openedEntries.add(key)
+    if (returning) return
+    window.scrollTo(0, 0)
+    arrivalSectionRef.current = lotSectionFromHistory()
+  }, [id])
+  // Once per arrival: the hint is spent here, so a later re-read of the row (the packet photo's) never
+  // scrolls again. Centred, like Saved seeds' arrival outline (useLotOutline), which keeps the card
+  // clear of the sticky top bar and the bottom nav. jsdom has no scrollIntoView, hence the guard.
+  useEffect(() => {
+    if (!item || !arrivalSectionRef.current) return
+    const section = arrivalSectionRef.current
+    arrivalSectionRef.current = null
+    const el = section === LOT_SECTION_SOURCE_PLANT ? sourcePlantCardRef.current : null
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' })
+  }, [item])
 
   // ── Load item ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -681,7 +718,7 @@ export default function InventoryDetail() {
             only fail. kindAllowsParentPlant is that CHECK, asked of the LIVE select, so choosing "My
             garden" or "Not recorded" below brings the picker straight back. */}
         {item.category === 'seeds' && (
-          <div data-testid="seed-source-plant" style={{ ...card, marginBottom: 20 }}>
+          <div ref={sourcePlantCardRef} data-testid="seed-source-plant" style={{ ...card, marginBottom: 20 }}>
             <div style={groupLabel}>Saved from</div>
             {parentAllowed && (
               <>
