@@ -236,6 +236,8 @@ export function parseNumber(tokens) {
   let fraction = 0
   // BUG-VOICENUMSUM-001, GUARD 2 OF 2 — magnitude of the previous ADDITIVE component. See below.
   let lastAdd = null
+  // V5-VOICEVOCAB-001, GUARD 3 — the previous token when it was itself a number WORD, else null.
+  let prevWord = null
 
   for (const tok of tokens) {
     if (FILLER.has(tok)) continue
@@ -245,6 +247,7 @@ export function parseNumber(tokens) {
       if (lastAdd !== null && v >= lastAdd) return null
       fraction += v
       lastAdd = v
+      prevWord = null
       seenAny = true
       continue
     }
@@ -255,6 +258,7 @@ export function parseNumber(tokens) {
       // A scale MULTIPLIES rather than adds, so it is not itself subject to the descent rule — but it
       // resets the ceiling for what may follow it: "two hundred thirty one" is 200 then 30 then 1.
       lastAdd = SCALES[tok]
+      prevWord = null
       seenAny = true
       continue
     }
@@ -268,8 +272,20 @@ export function parseNumber(tokens) {
       // there is no digit literal in the utterance at all, every token is a legitimate number word,
       // and only the ORDER reveals that two separate numbers were spoken.
       if (lastAdd !== null && v >= lastAdd) return null
+      // V5-VOICEVOCAB-001, GUARD 3 — TWO NUMBER WORDS IN A ROW ADD ONLY AS TENS + UNITS.
+      // Descending is necessary, not sufficient. "ten five", "five two" and "three two hundred thirty
+      // one" all descend, so guard 2 summed them — and once a bare number became an amount on its own
+      // (e142054), that sum was SAVED: on cb32814 "ten five" then "next" wrote 15 count, and the last
+      // one wrote 531 count. English composes two adjacent number words in exactly one way, a tens
+      // word followed by a units word ("twenty five"); every other adjacent pair is two numbers said
+      // together, and this parser returns one number or nothing. A scale ("hundred", "thousand") is
+      // not a word in this sense — it multiplies, and what follows it starts a fresh group.
+      if (prevWord !== null && !(prevWord >= 20 && prevWord <= 90 && prevWord % 10 === 0 && v >= 1 && v <= 9)) {
+        return null
+      }
       current += v
       lastAdd = v
+      prevWord = v
       seenAny = true
       continue
     }
