@@ -42,13 +42,13 @@ const sqlVerdict = (row) => SQL_FACTS.some((f) => row[f] != null && String(row[f
 const PARENT = '26afb9e8-56e8-4e67-80b9-61138dccf357';
 const none = { source_plant_id: null, source_kind: null, seed_stage: null };
 const FIXTURES = [
-  ['saved off a planting — parent only', { ...none, source_plant_id: PARENT }, true],
-  ['recorded origin — origin kind only', { ...none, source_kind: 'farm_stand' }, true],
-  ['in process — stage only', { ...none, seed_stage: 'fermenting' }, true],
-  ['a bought packet — none of the three', { ...none }, false],
+  ['saved off a planting — parent only', true, { ...none, source_plant_id: PARENT }],
+  ['recorded origin — origin kind only', true, { ...none, source_kind: 'farm_stand' }],
+  ['in process — stage only', true, { ...none, seed_stage: 'fermenting' }],
+  ['a bought packet — none of the three', false, { ...none }],
   // The columns cannot hold '' (uuid; CHECKed value sets), but a client row can: both sides must
   // read an empty string as absent.
-  ['a client-shaped row of empty strings', { source_plant_id: '', source_kind: '', seed_stage: '' }, false],
+  ['a client-shaped row of empty strings', false, { source_plant_id: '', source_kind: '', seed_stage: '' }],
 ];
 
 describe('saved lot — the preflight\'s SQL and isSavedLot agree', () => {
@@ -66,7 +66,7 @@ describe('saved lot — the preflight\'s SQL and isSavedLot agree', () => {
     expect([...SQL_FACTS].sort()).toEqual([...JS_FACTS].sort());
   });
 
-  it.each(FIXTURES)('%s: both say %s', (_label, row, expected) => {
+  it.each(FIXTURES)('%s: both say %s', (_label, expected, row) => {
     expect(isSavedLot(row)).toBe(expected);
     expect(sqlVerdict(row)).toBe(expected);
   });
