@@ -18,7 +18,7 @@ import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 import { installFakeSpeechRecognition } from './helpers/fakeSpeechRecognition.js'
 import { U, LOCATIONS, byName, dryRunResponse, locationByPath } from './voiceCare.fixture.js'
 import { looseKey } from '../lib/comboboxInput.js'
-import { resetMicArbiter } from '../lib/micArbiter.js'
+import { resetMicArbiter, acquireMic, micHolder } from '../lib/micArbiter.js'
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
 
 installStoragePolyfill()
@@ -325,6 +325,21 @@ describe('the go-ahead — only "next" or a tap; everything else writes NOTHING'
     await screen.findByText('Cancelled — nothing was logged')
     await speak('next', rec)
     expect(writes()).toEqual([])
+  })
+
+  it('another mic taking over (the checklist’s search mic) is not stolen back; the tap still logs', async () => {
+    await sayCommandToReadBack('water all bag area')
+    // The arbiter hands the mic to the NEWEST start. The voice listener must not re-arm and take it
+    // back from a mic the user just tapped.
+    let otherStopped = false
+    act(() => { acquireMic('search-field', () => { otherStopped = true }) })
+    await screen.findByText(/Another microphone on this screen took over/)
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)) })   // longer than a re-arm
+    expect(micHolder()).toBe('search-field')
+    expect(otherStopped).toBe(false)
+    fireEvent.click(inFrame().getByTestId('lmv-confirm'))
+    await screen.findByText('✓ 101 plantings watered')
+    expect(writes()).toHaveLength(1)
   })
 
   it('editing the list cancels — the read-back no longer describes it', async () => {
