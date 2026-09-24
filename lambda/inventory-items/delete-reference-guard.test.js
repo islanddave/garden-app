@@ -44,7 +44,7 @@ const isSoftDelete = (c) => /UPDATE inventory_items\s*SET deleted_at = NOW\(\)/.
 // preflight's answer is this row (Postgres returns the columns the SELECT names; the stub returns them
 // all, so a handler that starts reading a follower's count finds a real number there).
 const itemRow = (over = {}) => ({
-  category: 'seeds', plants: 0, plants_archived: 0, event_log: 0, photos: 0, seed_lot_stage_log: 0,
+  category: 'seeds', saved_lot: false, plants: 0, plants_archived: 0, event_log: 0, photos: 0, seed_lot_stage_log: 0,
   ...over,
 });
 
@@ -74,7 +74,7 @@ describe('DELETE /inventory-items/:id — POSITIVE CONTROLS: what belongs to the
   });
 
   it('a saved-seed lot with its processing history deletes (200) — stage rows are born with every lot and nothing can remove them', async () => {
-    stubState.sqlHandler = routeSql(itemRow({ seed_lot_stage_log: 3 }));
+    stubState.sqlHandler = routeSql(itemRow({ saved_lot: true, seed_lot_stage_log: 3 }));
     const { status, body } = parse(await handler(del()));
     expect(status).toBe(200);
     expect(body).toEqual({ ok: true });
@@ -122,6 +122,28 @@ describe('DELETE /inventory-items/:id — refuses over something grown or applie
     expect(body.error).toBe(
       'This packet can\'t be removed: 1 archived planting was sown from it. To mark it used up, set its Status to "depleted" instead.',
     );
+  });
+
+  it('a SAVED seed lot with a planting sown from it → 409 calling it a seed lot, not a packet', async () => {
+    // The preflight's saved_lot column (isSavedLot's three facts, in SQL) is what the route passes on;
+    // saved-lot-pairing.test.js holds that SQL to isSavedLot itself.
+    stubState.sqlHandler = routeSql(itemRow({ saved_lot: true, plants: 1, seed_lot_stage_log: 2 }));
+    const { status, body } = parse(await handler(del()));
+    expect(status).toBe(409);
+    expect(stubState.sqlCalls.filter(isSoftDelete)).toHaveLength(0);
+    expect(body.error).toBe(
+      'This seed lot can\'t be removed: 1 planting was sown from it. To mark it used up, set its Status to "depleted" instead.',
+    );
+  });
+
+  it('only a real boolean true makes it a seed lot — a missing or truthy-looking value is a packet', async () => {
+    for (const v of [undefined, null, 't', 'true', 1]) {
+      resetStubs();
+      stubState.verifyTokenResult = { sub: USER };
+      stubState.sqlHandler = routeSql(itemRow({ saved_lot: v, plants: 1 }));
+      const { body } = parse(await handler(del()));
+      expect(body.error, `saved_lot=${JSON.stringify(v)}`).toMatch(/^This packet can't be removed/);
+    }
   });
 
   it('the preflight counts archived plantings in the blocking total — no archived_at filter on it', async () => {
@@ -199,20 +221,28 @@ describe('blockingMessage — the sentence Dave reads', () => {
   const tail = ' To mark it used up, set its Status to "depleted" instead.';
 
   it.each([
-    [[plants(1)], 'seeds', 'This packet can\'t be removed: 1 planting was sown from it.'],
-    [[plants(2)], 'seeds', 'This packet can\'t be removed: 2 plantings were sown from it.'],
-    [[plants(1, 1)], 'seeds', 'This packet can\'t be removed: 1 archived planting was sown from it.'],
-    [[plants(3, 3)], 'seeds', 'This packet can\'t be removed: 3 archived plantings were sown from it.'],
-    [[plants(2, 1)], 'seeds', 'This packet can\'t be removed: 2 plantings were sown from it (1 of them archived).'],
-    [[treat(1)], 'fertilizer', 'This item can\'t be removed: it was used in 1 logged treatment.'],
-    [[plants(1), treat(2)], 'seeds', 'This packet can\'t be removed: 1 planting was sown from it and it was used in 2 logged treatments.'],
-  ])('%j (%s)', (blocking, category, head) => {
-    expect(blockingMessage(blocking, category)).toBe(head + tail);
+    [[plants(1)], 'seeds', false, 'This packet can\'t be removed: 1 planting was sown from it.'],
+    [[plants(2)], 'seeds', false, 'This packet can\'t be removed: 2 plantings were sown from it.'],
+    [[plants(1, 1)], 'seeds', false, 'This packet can\'t be removed: 1 archived planting was sown from it.'],
+    [[plants(3, 3)], 'seeds', false, 'This packet can\'t be removed: 3 archived plantings were sown from it.'],
+    [[plants(2, 1)], 'seeds', false, 'This packet can\'t be removed: 2 plantings were sown from it (1 of them archived).'],
+    [[treat(1)], 'fertilizer', false, 'This item can\'t be removed: it was used in 1 logged treatment.'],
+    [[plants(1), treat(2)], 'seeds', false, 'This packet can\'t be removed: 1 planting was sown from it and it was used in 2 logged treatments.'],
+    [[plants(1)], 'seeds', true, 'This seed lot can\'t be removed: 1 planting was sown from it.'],
+    [[plants(2, 1)], 'seeds', true, 'This seed lot can\'t be removed: 2 plantings were sown from it (1 of them archived).'],
+    // Category decides first: a saved-lot fact on a non-seed row (none on prod) is still an item.
+    [[treat(1)], 'fertilizer', true, 'This item can\'t be removed: it was used in 1 logged treatment.'],
+  ])('%j (%s, saved lot %s)', (blocking, category, savedLot, head) => {
+    expect(blockingMessage(blocking, category, savedLot)).toBe(head + tail);
+  });
+
+  it('a caller that passes no saved-lot flag gets the packet wording — the default is a bought packet', () => {
+    expect(blockingMessage([plants(1)], 'seeds')).toBe(blockingMessage([plants(1)], 'seeds', false));
   });
 
   it('never tells him to detach anything, and carries no table or column names', () => {
     const all = [[plants(1)], [plants(2, 1)], [treat(3)], [plants(1), treat(1)]]
-      .map((b) => blockingMessage(b, 'seeds')).join('\n');
+      .flatMap((b) => [blockingMessage(b, 'seeds'), blockingMessage(b, 'seeds', true)]).join('\n');
     expect(all).not.toMatch(/detach|unlink|clear/i);
     expect(all).not.toMatch(/source_inventory_item_id|treatment_product_id|event_log|plants\b/);
   });

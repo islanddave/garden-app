@@ -64,9 +64,19 @@ export const DEPLETED_STATUS_LABEL = 'depleted';
 // round trip. Zero rows = not found or not the caller's, which the route answers 404 before any count is
 // read. The plantings count includes archived ones; `plants_archived` is only there so the sentence can
 // say how many of them are archived.
+//
+// `saved_lot` — seed Dave saved himself rather than a packet he bought, so the sentence can call it what
+// the app calls it ("seed lot"). EXACTLY isSavedLot's three facts (src/components/seed/seedLots.js), any
+// one non-null and non-empty: a parent planting, a recorded origin kind, or a processing stage. The
+// Lambda cannot import that module (each Lambda is zipped from its own directory), so the predicate is
+// written again here in SQL, and saved-lot-pairing.test.js holds the two to the same facts and the same
+// verdicts. Empty-string arms kept for parity, though the columns cannot hold '' today (uuid, CHECKs).
 export async function deletePreflight(sql, itemId, householdIds) {
   const rows = await sql`
     SELECT i.category,
+           (COALESCE(i.source_plant_id::text, '') <> ''
+            OR COALESCE(i.source_kind, '') <> ''
+            OR COALESCE(i.seed_stage, '') <> '') AS saved_lot,
            (SELECT count(*) FROM public.plants p
              WHERE p.source_inventory_item_id = i.id
                AND p.deleted_at IS NULL)::int AS plants,
@@ -91,7 +101,8 @@ export async function deletePreflight(sql, itemId, householdIds) {
       ...(rel.table === 'plants' ? { archived: Number(row.plants_archived ?? 0) } : {}),
     }))
     .filter((rel) => rel.count > 0);
-  return { found: true, category: row.category, blocking };
+  // Strictly true: the driver parses a Postgres boolean to a JS boolean, and anything else is not one.
+  return { found: true, category: row.category, savedLot: row.saved_lot === true, blocking };
 }
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -106,8 +117,15 @@ function plantingsClause({ count, archived = 0 }) {
 // are among them (the packet page's "Sown from this packet" card lists only unarchived plantings, so an
 // archived one would otherwise look like nothing), and what to do instead. NEVER "detach": clearing a
 // planting's seed source destroys the provenance this refusal exists to protect.
-export function blockingMessage(blocking, category) {
-  const subject = category === 'seeds' ? 'This packet' : 'This item';
+//
+// The subject is the app's own noun for the row: "This seed lot" for seed he saved (the Seeds pages say
+// "Open the seed lot"), "This packet" for any other seed row, "This item" for everything else. A saved
+// lot is a kind of seed row, so `category` decides first. Two of the three facts are seeds-only by CHECK
+// (chk_inventory_source_plant_seeds_only, chk_inventory_source_kind_seeds_only); seed_stage has no such
+// CHECK, and no non-seed row carried any of the three on prod on 2026-09-24 — one that did would still
+// read "This item".
+export function blockingMessage(blocking, category, savedLot = false) {
+  const subject = category !== 'seeds' ? 'This item' : savedLot ? 'This seed lot' : 'This packet';
   const reasons = blocking.map((r) => (r.table === 'plants'
     ? plantingsClause(r)
     : `it was used in ${plural(r.count, 'logged treatment', 'logged treatments')}`));

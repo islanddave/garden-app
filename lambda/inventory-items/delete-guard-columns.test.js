@@ -12,6 +12,12 @@
 // parse_test_file returns on a keyed `AUDIT_COLUMNS` literal first (so a block dropped into an existing
 // contract would silently replace that file's coverage), Phase 4 groups by the file's directory, and
 // the discovery glob is `*columns.test.js`. See seed-stage-columns.test.js for the same reasoning.
+//
+// inventory_items IS NOT KEYED HERE, on purpose: select-columns.test.js is this directory's contract for
+// that table, and every column the preflight names on it — the ownership pair, category, and the three
+// saved-lot facts (source_plant_id, source_kind, seed_stage) — is already in its list. The last test below
+// makes that a checked fact rather than a claim: a column the preflight starts reading that no contract
+// pins would be audited by nothing.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -55,5 +61,16 @@ describe('delete-guard SELECT-column contract (L-081 Phase 1, keyed form)', () =
   it('pins a non-trivial contract — an emptied array must fail, not silently pass', () => {
     expect(AUDIT_COLUMNS.plants.length).toBeGreaterThanOrEqual(3);
     expect(AUDIT_COLUMNS.event_log.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('every inventory_items column the preflight names is pinned by select-columns.test.js', () => {
+    const contract = readFileSync(resolve(__dirname, 'select-columns.test.js'), 'utf8');
+    const list = contract.match(/const INVENTORY_ITEMS_COLUMNS = \[([\s\S]*?)\];/);
+    expect(list, 'select-columns.test.js no longer declares INVENTORY_ITEMS_COLUMNS').not.toBeNull();
+    const pinned = new Set([...decomment(list[1]).matchAll(/'(\w+)'/g)].map((m) => m[1]));
+    // The item is aliased `i`; every `i.<column>` in the statement is a read of inventory_items.
+    const read = [...new Set([...SQL.matchAll(/\bi\.(\w+)/g)].map((m) => m[1]))].sort();
+    expect(read).toEqual(['category', 'created_by', 'deleted_at', 'id', 'seed_stage', 'source_kind', 'source_plant_id']);
+    expect(read.filter((c) => !pinned.has(c))).toEqual([]);
   });
 });

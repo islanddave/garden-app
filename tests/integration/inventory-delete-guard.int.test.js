@@ -14,15 +14,21 @@
 //   · a live treatment event that applied the item blocks;
 //   · a soft-deleted planting does not block;
 //   · the item's own photo and its own seed-processing stage rows do not block;
-//   · another household's item answers 404, before any count.
+//   · another household's item answers 404, before any count;
+//   · the sentence calls a SAVED lot "This seed lot" — decided by the preflight's saved_lot SQL, which
+//     must agree with isSavedLot (src/components/seed/seedLots.js) on real rows: one per fact, plus a
+//     bought packet. lambda/inventory-items/saved-lot-pairing.test.js pins the two to the same facts;
+//     this file is where the SQL half is actually executed.
 //
 // FIXTURES are this file's own (`int-test-` namespaced users). Teardown unwinds what the global sweep
-// cannot reach (seed_lot_stage_log has no step there) and then the RESTRICT/NO ACTION children before
-// the items, as inventory-sown-from.int.test.js and seed-lifecycle.int.test.js do.
+// cannot reach (seed_lot_stage_log has no step there) and then the RESTRICT/NO ACTION children in FK
+// order, as inventory-sown-from.int.test.js and seed-lifecycle.int.test.js do.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, testRunId, setTestUserId } from './_harness.js'
 import { settle, assertFixtureId } from './_cleanup.js'
 import { handler } from '../../lambda/inventory-items/index.js'
+import { deletePreflight } from '../../lambda/inventory-items/delete-guard.js'
+import { isSavedLot } from '../../src/components/seed/seedLots.js'
 
 const RUN = testRunId()
 const USER = `user_int_delguard_${RUN}`
@@ -93,6 +99,17 @@ beforeAll(async () => {
   await directSql`
     INSERT INTO event_log (plant_id, event_type, event_date, created_by, treatment_product_id, treatment_category)
     VALUES (${anchor}, 'pest_treatment', NOW(), ${USER}, ${ids.spray}, 'pest_control')`
+
+  // Saved-lot pairing: one row per isSavedLot fact, plus a bought packet — all through the app's POST,
+  // the way the Seeds doors write them. Nothing is sown from these four; they are only read.
+  ids.parentPlanting = await planting('lot-parent', null)
+  ids.factParent = await packet('fact-parent', { source_plant_id: ids.parentPlanting })
+  ids.factKind = await packet('fact-kind', { source_kind: 'farm_stand' })
+  ids.factStage = await packet('fact-stage', { seed_process: 'wet', seed_stage: 'fermenting' })
+  ids.factNone = await packet('fact-none')
+  // Blocked, and called a seed lot: a lot saved from a gift, with a planting sown from it.
+  ids.sownLot = await packet('sown-lot', { source_kind: 'gift' })
+  await planting('sown-lot', ids.sownLot)
 })
 
 afterAll(async () => {
@@ -105,9 +122,12 @@ afterAll(async () => {
     () => directSql`DELETE FROM entity WHERE entity_type = 'planting' AND planting_ref_id IN (
                       SELECT id FROM plants WHERE created_by = ${USER})`,
     () => directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ${USER})`,
-    // BEFORE the items: plants.source_inventory_item_id is ON DELETE RESTRICT.
-    () => directSql`DELETE FROM plants WHERE created_by = ${USER}`,
+    // Two RESTRICT FKs run in opposite directions: a planting SOWN FROM an item
+    // (plants.source_inventory_item_id) must go before the item, and the planting a lot was SAVED OFF
+    // (inventory_items.source_plant_id) after it. So: sown plantings, then items, then the rest.
+    () => directSql`DELETE FROM plants WHERE created_by = ${USER} AND source_inventory_item_id IS NOT NULL`,
     () => directSql`DELETE FROM inventory_items WHERE created_by = ${USER}`,
+    () => directSql`DELETE FROM plants WHERE created_by = ${USER}`,
     () => directSql`DELETE FROM entity WHERE entity_type = 'cultivar' AND cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ${USER})`,
     () => directSql`DELETE FROM plant_varieties WHERE created_by = ${USER}`,
   ])
@@ -175,5 +195,34 @@ describe('DELETE /api/inventory-items/:id — blocks only on something sown or a
     const [p] = await directSql`SELECT count(*)::int AS n FROM photos WHERE inventory_item_id = ${ids.lot} AND deleted_at IS NULL`
     expect(s.n).toBe(1)
     expect(p.n).toBe(1)
+  })
+})
+
+describe('saved lot — the preflight\'s SQL and isSavedLot agree on real rows (one per fact, plus a bought packet)', () => {
+  // The REAL preflight statement, on the real driver, against rows the app's own POST wrote; isSavedLot
+  // on the same rows read back. The expected answer is asserted too, so two sides that both went
+  // false everywhere cannot agree their way to green.
+  it.each([
+    ['factParent', 'saved off a planting (parent only)', true],
+    ['factKind', 'recorded origin (origin kind only)', true],
+    ['factStage', 'in process (stage only)', true],
+    ['factNone', 'a bought packet (none of the three)', false],
+  ])('%s — %s', async (key, _label, expected) => {
+    const pf = await deletePreflight(directSql, ids[key], [USER])
+    const [row] = await directSql`
+      SELECT source_plant_id, source_kind, seed_stage FROM inventory_items WHERE id = ${ids[key]}`
+    expect(pf.found).toBe(true)
+    expect(pf.savedLot).toBe(isSavedLot(row))
+    expect(pf.savedLot).toBe(expected)
+  })
+
+  it('a saved lot with a planting sown from it is refused as "This seed lot", and stays live', async () => {
+    setTestUserId(USER)
+    const { status, body } = await del(ids.sownLot)
+    expect(status, JSON.stringify(body)).toBe(409)
+    expect(body.error).toBe(
+      'This seed lot can\'t be removed: 1 planting was sown from it. To mark it used up, set its Status to "depleted" instead.',
+    )
+    expect(await deletedAt(ids.sownLot)).toBeNull()
   })
 })

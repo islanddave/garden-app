@@ -1291,7 +1291,7 @@ export const handler = async (event) => {
         // an UPDATE, and an FK guards DELETEs — so without this check a delete strands whatever was
         // grown from the item or applied from it, and answers 200. delete-guard.js says what blocks and
         // what does not, and why the item's own photos and stage history follow it instead.
-        const { found, category, blocking } = await deletePreflight(sql, itemId, householdIds);
+        const { found, category, savedLot, blocking } = await deletePreflight(sql, itemId, householdIds);
         // 404 BEFORE 409, and that ordering is the authorization boundary rather than a courtesy:
         // answering 409 for an id the caller does not own would confirm the row exists and leak its
         // reference counts. Same reasoning as the loadOwned* short-circuits elsewhere in this file.
@@ -1300,7 +1300,7 @@ export const handler = async (event) => {
         // nothing a force flag would be for, and no screen would send one.
         if (blocking.length) {
           return resp(409, {
-            error: blockingMessage(blocking, category),
+            error: blockingMessage(blocking, category, savedLot),
             blocking: blocking.map(({ table, column, count }) => ({ table, column, count })),
           });
         }
