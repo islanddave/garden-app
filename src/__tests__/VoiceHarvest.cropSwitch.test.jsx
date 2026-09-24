@@ -671,3 +671,47 @@ describe('the other doors that take values off the record while a save is still 
     expect(header()).toBe('1 saved · 2 not captured')
   })
 })
+
+// Review v4.150.0 QA I1 and M1 — THE LANDING KEEPS WHAT WAS SAID WHILE THE POST WAS OUT, pinned where nothing did: the
+// same amount said again is a new value, not the one sent (identity, not value); a bare number held during the save
+// keeps it and its crop; a name that matched nothing keeps its teach box. Adapted from the QA seat's probes P-VA,
+// P-VB and P-VD, which killed its mutants VA, VB and VD where this suite could not.
+describe('what was said while a save was out survives the save landing', () => {
+  it('the same amount said again for the same crop is a new harvest, not the one sent', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, '5 count')
+    await posts.resolve()
+    expect(record()).toEqual(['Stupice', '5 count', '—'])
+    expect(header()).toBe('1 saved')
+    expect(misses()).toEqual([])
+    await say(rec, 'next')
+    await posts.resolve(1)
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Stupice', 5, 'count', null, []]])
+    expect(header()).toBe('2 saved')
+  })
+
+  it('a bare number said during the save stays held for its crop, and saves on "next"', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '4')
+    await posts.resolve()
+    expect(record()).toEqual(['Stupice', '4 count (assumed unless you say a unit)', '—'])
+    await say(rec, 'next')
+    await posts.resolve(1)
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 4, 'count', null, ['count']]])
+  })
+
+  it('a name that matched nothing during the save keeps its teach box when the save lands', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, 'zzqq quux')
+    await posts.resolve()
+    expect(within(screen.getByTestId('voice-harvest-teach')).getByText('What did you mean by “zzqq quux”?')).toBeTruthy()
+    expect(record()).toEqual(['—', '—', '—'])
+    expect(header()).toBe('1 saved · 1 not captured')
+  })
+})
