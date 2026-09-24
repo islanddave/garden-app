@@ -134,7 +134,7 @@ function writeUnskipped(set) {
 // server snapshot, and at the live set size (~10 KB a body) a handful of them overrun the 64 KiB
 // keepalive quota, so the one carrying the correct final set was the likeliest to be refused. Every
 // handler now only asks for a sync; the first ask queues a microtask, which runs after the last
-// handler in that loop and sends the set as it then stands in localStorage.
+// handler in that loop and sends the shared set (above) as it then stands.
 //
 // Module scope, never component state: the toast outlives Today, so this has to fire with Today
 // unmounted. Both CareNeeded instances on the household lens share the one localStorage key and the
