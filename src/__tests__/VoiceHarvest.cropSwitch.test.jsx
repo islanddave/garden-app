@@ -541,17 +541,30 @@ describe('a save word while the last harvest is still being sent', () => {
     expect(header()).toBe('1 saved · 1 not captured')
   })
 
-  it('a new record for another crop said while the POST is out still saves on "next"', async () => {
+  it('a new record for another crop said while the POST is out still saves on "next", even with the same amount', async () => {
     const rec = await startListening()
     const posts = holdPosts()
     await say(rec, 'Stupice', '5 count', 'next')
-    await say(rec, 'Suyo Long', '3 count', 'next')
+    await say(rec, 'Suyo Long', '5 count', 'next')
     expect(posts.count()).toBe(2)
     await posts.resolve(0)
     await posts.resolve(1)
-    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Suyo Long', 3, 'count', null, []]])
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Suyo Long', 5, 'count', null, []]])
     expect(header()).toBe('2 saved')
     expect(misses()).toEqual([])
+  })
+
+  it('a "next" after a name that matched nothing is still the harvest being sent, not a missing crop', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, 'zzqq quux', 'next')
+    expect(posts.count()).toBe(1)
+    expect(statusText()).toBe('Still saving the last one.')
+    // Only the name's own row: no "Not saved — still need a crop" for a harvest that is being saved.
+    expect(misses()).toEqual(['Nothing matched “zzqq quux”.'])
+    await posts.resolve()
+    expect(header()).toBe('1 saved · 1 not captured')
   })
 
   it('a new amount for the same crop waits until the amount still being sent has landed', async () => {
