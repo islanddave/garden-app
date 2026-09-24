@@ -216,6 +216,8 @@ describe('the Sow sheet on a packet\'s page', () => {
     expect(sowDialog()).toBeNull()
     expect(screen.getByTestId('sow-this-sown').textContent).toContain('Sown ✓')
     expect(screen.getByTestId('sow-this-see-planting').getAttribute('href')).toBe('/plantings/plant-1')
+    // On the 44px tap floor (QA T03: dropping it survived; gate:seed-detail measures it in Chrome too).
+    expect(screen.getByTestId('sow-this-see-planting').style.minHeight).toBe('44px')
     // Sowing does not consume a packet (SowNow.jsx header), so the packet's own page keeps the action.
     expect(screen.getByTestId('sow-this')).toBeTruthy()
     expect(screen.getByText('Planted!')).toBeTruthy()

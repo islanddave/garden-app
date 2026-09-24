@@ -947,6 +947,8 @@ describe('SowNow — "Sown ✓" leads to the planting it made (§8)', () => {
 
     const link = within(cardFor('Spacemaster 80')).getByText('See the planting')
     expect(link.closest('a').getAttribute('href')).toBe('/plantings/plant-77')
+    // On the 44px tap floor like every other action on the card (QA T02: dropping it survived).
+    expect(link.closest('a').style.minHeight).toBe('44px')
     expect(within(cardFor('Spacemaster 80')).getByText('Sown ✓')).toBeDefined()
     // Only the card that was sown: its neighbour still offers Sow and no link.
     expect(screen.getAllByText('See the planting')).toHaveLength(1)
