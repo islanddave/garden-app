@@ -275,3 +275,40 @@ describe('BUG-TODAYSKIPNOUNDO-001 — the Skip target', () => {
     expect(btn.style.minHeight).toBe('48px')
   })
 })
+
+// Review fix (review-v4147-regression IMPORTANT, Finding 1): the three-toast cap is shared, and the
+// skip toast took a slot there that a log Undo used to have. The tap sequence the review proved it
+// on, all inside one 5s window: Water A, Skip B, Feed C, Moist D. Before the skip toast existed the
+// watering Undo survived it; it must again. The skip toast is the one that yields (priority 'low').
+describe('BUG-TODAYSKIPNOUNDO-001 — the skip toast never costs a log its Undo', () => {
+  const plan4 = () => ({
+    hydrology: { tomorrow_precip_in: 0.05, tomorrow_pop: 10 },
+    rain_skipped: [],
+    water_due: [
+      { id: 'p1', name: 'Bhut Jolokia',  crop: 'pepper', project: 'Peppers', project_id: 'prP', overdue_by: 3, in_ground: false },
+      { id: 'p2', name: 'Habanero',      crop: 'pepper', project: 'Peppers', project_id: 'prP', overdue_by: 1, in_ground: false },
+      { id: 'p4', name: 'Scotch Bonnet', crop: 'pepper', project: 'Peppers', project_id: 'prP', overdue_by: 1, in_ground: false },
+    ],
+    fertilize: [{ id: 'p5', name: 'Cayenne', crop: 'pepper', project: 'Peppers', project_id: 'prP', item: 'MG', apply: 'half strength' }],
+    no_history: [], pest: [], cold: [], dormant: [],
+  })
+
+  // Mutations: drop `priority: 'low'` from the skip toast -> the watering Undo is evicted, red;
+  // capped() ignores priority -> the same, red.
+  it('Water A, Skip B, Feed C, Moist D: the watering Undo survives', async () => {
+    await mountHost(plan4())
+    await tap('Log Water for Bhut Jolokia')
+    await waitFor(() => expect(toastMessages()).toEqual(['Logged Water for Bhut Jolokia']))
+    skip('Habanero')
+    expect(toastMessages()).toEqual(['Logged Water for Bhut Jolokia', 'Skipped Habanero for today'])
+    await tap('Log Feed for Cayenne')
+    await waitFor(() => expect(toastMessages().length).toBe(3))
+    await tap('Checked Scotch Bonnet — still moist')
+    await waitFor(() => expect(toastMessages()).toContain('Checked Scotch Bonnet — still moist'))
+    expect(toastMessages()).toEqual([
+      'Logged Water for Bhut Jolokia',
+      'Logged Feed for Cayenne',
+      'Checked Scotch Bonnet — still moist',
+    ])
+  })
+})

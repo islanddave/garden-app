@@ -691,10 +691,16 @@ export default function CareNeeded({ plan }) {
     // row with no way back, and it is the one that silently drops a plant from today's list; the
     // announce() above is screen-reader-only. Coalesces like the log toast, under its own group, so a
     // run of skips reads "Skipped 3 plants for today" and never merges into a watering count.
+    //
+    // LOW priority: when the three-toast cap is hit, this one goes before any log Undo. A log toast
+    // can hold a whole coalesced run of events; a skip records none. The trade, stated so it stays a
+    // decision: an evicted skip toast leaves no way to un-skip that row until tomorrow, because this
+    // toast is the only un-skip there is.
     toast.showUndo({
       message: 'Skipped ' + row.name + ' for today',
       group: 'care-skip',
       groupMessage: (n) => 'Skipped ' + n + ' plants for today',
+      priority: 'low',
       onUndo: () => unskipRow(row),
     })
   }, [announce, getToken, toast, unskipRow])

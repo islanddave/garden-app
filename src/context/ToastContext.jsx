@@ -63,8 +63,27 @@ export function useOptionalToast() {
 
 let _seq = 0
 
-// Trim from the FRONT so the queue never exceeds the cap. Pure: safe to call inside a state updater.
-const capped = (ts) => (ts.length <= MAX_VISIBLE_TOASTS ? ts : ts.slice(ts.length - MAX_VISIBLE_TOASTS))
+// Trim so the queue never exceeds the cap. Pure: safe to call inside a state updater.
+//
+// LOW-PRIORITY toasts go first, oldest first; only when none is left does the oldest toast of any
+// priority go — which, with no low-priority toast on screen, is exactly the original front-trim.
+// Why a priority exists at all (BUG-TODAYSKIPNOUNDO-001 review): Today's Skip gained an undo toast,
+// and on the shared 3-slot cap a tap sequence like Water, Skip, Feed, Moist inside one 5s window
+// pushed the WATERING Undo off screen — which may be carrying a whole coalesced run. The caller
+// that knows its undo is the cheaper one to lose says so with `priority: 'low'`; this function
+// never learns which feature is which. The cost is carried by the low toast: arriving on a stack
+// already full of normal toasts, it is the one dropped (so that Skip shows no Undo that time).
+const capped = (ts) => {
+  if (ts.length <= MAX_VISIBLE_TOASTS) return ts
+  let excess = ts.length - MAX_VISIBLE_TOASTS
+  const evict = new Set()
+  for (const t of ts) {
+    if (!excess) break
+    if (t.priority === 'low') { evict.add(t.id); excess-- }
+  }
+  const kept = evict.size ? ts.filter(t => !evict.has(t.id)) : ts
+  return kept.length <= MAX_VISIBLE_TOASTS ? kept : kept.slice(kept.length - MAX_VISIBLE_TOASTS)
+}
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([])
@@ -97,7 +116,11 @@ export function ToastProvider({ children }) {
   // screen MERGE into it instead of stacking: the count rises, the message re-renders from
   // groupMessage, the 5s window restarts, and Undo runs every accumulated handler. Callers that
   // omit `group` behave exactly as before — one call, one toast.
-  const showUndo = useCallback(({ message, detail = null, onUndo, duration = 5000, group = null, groupMessage = null }) => {
+  //
+  // `priority: 'low'` (2026-09-24): this toast is the first evicted when the cap is hit — see
+  // capped(). Omitted => 'normal', i.e. exactly as before. Like the wording, a group's FIRST call
+  // owns it: a later merge cannot promote or demote the toast it merges into.
+  const showUndo = useCallback(({ message, detail = null, onUndo, duration = 5000, group = null, groupMessage = null, priority = 'normal' }) => {
     const id = ++_seq
     setToasts(ts => {
       const prior = group ? ts.find(t => t.kind === 'undo' && t.group === group) : null
@@ -119,7 +142,7 @@ export function ToastProvider({ children }) {
       }
       return capped([...ts, {
         id, kind: 'undo', group, groupMessage, message, detail,
-        undos: [onUndo], count: 1, duration, nonce: 0,
+        undos: [onUndo], count: 1, duration, nonce: 0, priority,
       }])
     })
     // A merged call returns the id of the toast it merged INTO, so a caller holding the id (e.g.
