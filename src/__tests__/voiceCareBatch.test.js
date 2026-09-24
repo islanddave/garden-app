@@ -8,8 +8,10 @@ import { classifyCareCommand } from '../lib/voiceCareGrammar.js'
 import {
   prepareCarePlan, fetchCareScopeSet, writeCarePlan, undoCareBatch, careWriteBody, mintIdempotencyKey,
   loggedSpoken, CARE_INPUT_SOURCE, SCOPE_CHANGED_SPOKEN, NOT_CONFIRMED_SPOKEN, REJECTED_SPOKEN,
-  UNDONE_SPOKEN, UNDO_FAILED_SPOKEN,
+  UNDONE_SPOKEN, UNDO_FAILED_SPOKEN, careAliasUses,
 } from '../lib/voiceCareBatch.js'
+import { indexAliases } from '../lib/voiceAliases.js'
+import { looseKey } from '../lib/comboboxInput.js'
 import { validateBatchBody, buildBatchMetadataPlan } from '../../lambda/events/validators.js'
 import { LOCATIONS, U, byName, dryRunResponse, locationByPath } from './voiceCare.fixture.js'
 
@@ -279,5 +281,41 @@ describe('mintIdempotencyKey', () => {
     const b = await prepareCarePlan(apiFetch, { care, plantings: U, locations: LOCATIONS })
     expect(a.idempotencyKey).toBeTruthy()
     expect(a.idempotencyKey).not.toBe(b.idempotencyKey)
+  })
+})
+
+// BUG-VOICEALIASHITCOUNT-001 — which of his taught names a plan's skips used, carried on the plan for the
+// host to count once the batch is logged. Never part of what is written.
+describe('careAliasUses — the taught names a plan used', () => {
+  const SUYO_VARIETY = byName('Suyo Long').variety_ref.id
+  const idx = indexAliases([
+    { heard_key: looseKey('studio long'), variety_id: SUYO_VARIETY },
+    { heard_key: looseKey("damn i'll see you"), variety_id: byName('Cucamelon').variety_ref.id },
+  ])
+
+  it('a skip the learned layer answered is a use; strict skips are not', async () => {
+    const plan = await prepare('water all bag area except studio long', fakeApi().apiFetch, { aliasIndex: idx })
+    expect(plan.exclusions.map((e) => e.how)).toEqual(['alias'])
+    expect(plan.aliasUses).toEqual([{ heard_key: 'studiolong', variety_id: SUYO_VARIETY }])
+    const strict = await prepare(DAVE, fakeApi().apiFetch, { aliasIndex: idx })
+    expect(strict.exclusions.map((e) => e.how)).not.toContain('alias')
+    expect(strict.aliasUses).toEqual([])
+  })
+
+  it('rides on the plan, never in the write body', async () => {
+    const plan = await prepare('water all bag area except studio long', fakeApi().apiFetch, { aliasIndex: idx })
+    expect(JSON.stringify(careWriteBody(plan))).not.toContain('studio')
+  })
+
+  it('once per phrase, only for alias answers, and nothing without a list', () => {
+    const exclusions = [
+      { how: 'alias', heard: 'studio long' }, { how: 'alias', heard: 'Studio Long' },
+      { how: 'fuzzy', heard: "damn i'll see you" }, { how: 'strict', heard: 'zephyr' },
+      { how: 'alias', heard: 'never taught' },
+    ]
+    expect(careAliasUses({ exclusions }, idx)).toEqual([{ heard_key: 'studiolong', variety_id: SUYO_VARIETY }])
+    expect(careAliasUses({ exclusions }, null)).toEqual([])
+    expect(careAliasUses({ exclusions }, new Map())).toEqual([])
+    expect(careAliasUses(null, idx)).toEqual([])
   })
 })

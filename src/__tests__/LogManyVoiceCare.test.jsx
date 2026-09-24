@@ -550,3 +550,96 @@ describe('the page’s own form, mid-edit', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 })
+
+// BUG-VOICEALIASHITCOUNT-001 / BUG-VOICEALIASFAILSOFT-001 — his taught names on Log many: a skip resolved
+// through one is counted once the batch is logged (PATCH /api/varieties/voice-aliases, after the write,
+// fire and forget), and a list that failed to load is asked for again on the next tap. While it is
+// missing, a skip that needed a taught name is REFUSED (R3), never guessed — measured over all 33 of his
+// live aliases in every top-level area (lane V report): 0 resolve to another planting.
+describe('taught names on Log many — counted when used, asked for again when missing', () => {
+  const ALIAS = '/api/varieties/voice-aliases'
+  const patches = () => apiFetch.mock.calls
+    .filter(([p, o]) => p === ALIAS && o?.method === 'PATCH').map(([, o]) => JSON.parse(o.body).used)
+  const aliasGets = () => apiFetch.mock.calls.filter(([p, o]) => p === ALIAS && !o?.method).length
+  const order = () => apiFetch.mock.calls.map(([p, o]) => {
+    if (p === ALIAS && o?.method === 'PATCH') return 'count'
+    if (p === '/api/events/batch' && o?.method === 'POST' && !JSON.parse(o.body).dry_run) return 'write'
+    return null
+  }).filter(Boolean)
+  const SUYO_VARIETY = byName('Suyo Long').variety_ref.id
+
+  it('a skip resolved through a taught name is counted once the batch is logged — after the write', async () => {
+    const rec = await sayCommandToReadBack('water all bag area except studio long')
+    expect(patches()).toEqual([])
+    await speak('next', rec)
+    await screen.findByText('✓ 100 plantings watered')
+    expect(patches()).toEqual([[{ heard_key: 'studiolong', variety_id: SUYO_VARIETY }]])
+    expect(order()).toEqual(['write', 'count'])
+  })
+
+  it('strict skips are not a use of any taught name', async () => {
+    const rec = await sayCommandToReadBack('fed all pasture in ground except zephyr, crimson sweet, king richard')
+    await speak('next', rec)
+    await screen.findByText(/^✓ 21 plantings/)
+    expect(patches()).toEqual([])
+  })
+
+  it('a cancelled read-back counts nothing', async () => {
+    const rec = await sayCommandToReadBack('water all bag area except studio long')
+    await speak('yes', rec)
+    await screen.findByText('Cancelled — nothing was logged')
+    expect(patches()).toEqual([])
+  })
+
+  it('a write the server refuses counts nothing', async () => {
+    writeReply = () => Promise.reject(Object.assign(new Error('Bad request'), { status: 400, body: {} }))
+    const rec = await sayCommandToReadBack('water all bag area except studio long')
+    await speak('next', rec)
+    await screen.findByTestId('lmv-message')
+    expect(writes()).toHaveLength(1)
+    expect(patches()).toEqual([])
+  })
+
+  it('a count that fails leaves the logged batch exactly as it was', async () => {
+    const base = apiFetch.getMockImplementation()
+    apiFetch.mockImplementation((path, opts = {}) => (path === ALIAS && opts.method === 'PATCH'
+      ? Promise.reject(new Error('Gateway Timeout')) : base(path, opts)))
+    const rec = await sayCommandToReadBack('water all bag area except studio long')
+    await speak('next', rec)
+    await screen.findByText('✓ 100 plantings watered')
+    expect(patches()).toHaveLength(1)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeTruthy()
+  })
+
+  it('a list that failed to load refuses a taught skip, and is asked for again on the next tap', async () => {
+    let failAliases = true
+    const base = apiFetch.getMockImplementation()
+    apiFetch.mockImplementation((path, opts = {}) => (path === ALIAS && !opts.method && failAliases
+      ? Promise.reject(new Error('offline')) : base(path, opts)))
+    await sayCommand('water all bag area except cucumber one')
+    await screen.findByTestId('lmv-message')
+    expect(inFrame().getByTestId('lmv-message').textContent).toMatch(/^“cucumber one” could be /)
+    expect(writes()).toEqual([])
+    // The tap starts the load and the command asks once more before refusing, as it does for a failed
+    // plant list; either way the failed list is not kept.
+    const before = aliasGets()
+    expect(before).toBeGreaterThan(0)
+    failAliases = false
+    fireEvent.click(inFrame().getByTestId('lmv-retry'))
+    expect(aliasGets()).toBe(before + 1)
+    await speak('water all bag area except cucumber one')
+    await screen.findByTestId('lmv-readback')
+    expect(inFrame().getByTestId('lmv-readback').textContent)
+      .toBe('Water 100 in Pasture > Bag Area, skipping 1: Suyo Long — heard ‘cucumber one’.')
+  })
+
+  it('a list that loaded is not asked for again', async () => {
+    await sayCommand('water all bag area except cucumber one')
+    await screen.findByTestId('lmv-readback')
+    fireEvent.click(inFrame().getByTestId('lmv-cancel'))
+    fireEvent.click(await screen.findByTestId('lmv-done'))
+    fireEvent.click(await screen.findByTestId('lmv-start'))
+    expect(aliasGets()).toBe(1)
+  })
+})

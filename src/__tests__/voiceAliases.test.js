@@ -10,7 +10,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { looseKey } from '../lib/comboboxInput.js'
 import {
-  indexAliases, resolveAlias, fetchAliases, teachAlias, MIN_ALIAS_CHARS,
+  indexAliases, resolveAlias, fetchAliases, teachAlias, recordAliasUse, MIN_ALIAS_CHARS,
 } from '../lib/voiceAliases.js'
 import { matchPlantingsWithRescue } from '../pages/VoiceHarvest.jsx'
 
@@ -118,14 +118,26 @@ describe('layer order — the safety argument', () => {
 })
 
 describe('the fail asymmetry', () => {
-  it('a failed READ is swallowed — the chooser keeps working', () => {
+  // BUG-VOICEALIASFAILSOFT-001 — swallowed, but answered as UNKNOWN (null), never as "none taught" ([]).
+  // The harvest page's one-breath reader keeps a taught name like "cucumber one" whole only when it
+  // knows the list; handed [] for a failed read it split the name into a crop and an amount of 1.
+  it('a failed READ never rejects, and answers null — unknown, not "none taught"', () => {
     const boom = vi.fn().mockRejectedValue(new Error('offline'))
-    return expect(fetchAliases(boom)).resolves.toEqual([])
+    return expect(fetchAliases(boom)).resolves.toBeNull()
   })
 
-  it('a malformed READ response is swallowed too', async () => {
-    expect(await fetchAliases(vi.fn().mockResolvedValue({ aliases: 'not an array' }))).toEqual([])
-    expect(await fetchAliases(vi.fn().mockResolvedValue(null))).toEqual([])
+  it('a malformed READ response is unknown too — only an aliases array is an answer', async () => {
+    expect(await fetchAliases(vi.fn().mockResolvedValue({ aliases: 'not an array' }))).toBeNull()
+    expect(await fetchAliases(vi.fn().mockResolvedValue(null))).toBeNull()
+    expect(await fetchAliases(vi.fn().mockResolvedValue({ id: 'evt-1' }))).toBeNull()
+  })
+
+  it('a loaded list is the rows, and an empty list is [] — he has taught nothing', async () => {
+    const rows = [{ heard_key: 'studiolong', heard_text: 'studio long', variety_id: 'v-suyo', hit_count: 0, last_used_at: null }]
+    expect(await fetchAliases(vi.fn().mockResolvedValue({ aliases: rows }))).toEqual(rows)
+    expect(await fetchAliases(vi.fn().mockResolvedValue({ aliases: [] }))).toEqual([])
+    // null still indexes to an empty map, so a caller that only searches keeps v4.78.0's behaviour.
+    expect(indexAliases(null).size).toBe(0)
   })
 
   it('a failed WRITE THROWS — the user must be told', async () => {
@@ -149,5 +161,48 @@ describe('the fail asymmetry', () => {
     await expect(teachAlias(api, { heardText: 'ab', varietyId: 'v-suyo' })).rejects.toThrow(/Too short/)
     await expect(teachAlias(api, { heardText: 'studio long', varietyId: null })).rejects.toThrow(/No variety/)
     expect(api).not.toHaveBeenCalled()
+  })
+})
+
+// BUG-VOICEALIASHITCOUNT-001 — a USE count is fire and forget: it is sent after the write it follows,
+// and nothing about it — a rejection, a throw, a hang — may reach the caller.
+describe('recordAliasUse', () => {
+  it('PATCHes the used keys and varieties, and returns nothing to wait on', () => {
+    const api = vi.fn().mockResolvedValue({ counted: 1 })
+    expect(recordAliasUse(api, [{ heard_key: 'cucumberone', variety_id: 'v-suyo', plantingId: 'p1' }])).toBeUndefined()
+    expect(api).toHaveBeenCalledTimes(1)
+    const [url, opts] = api.mock.calls[0]
+    expect(url).toBe('/api/varieties/voice-aliases')
+    expect(opts.method).toBe('PATCH')
+    // Only the two fields the server reads — nothing else about the record rides along.
+    expect(JSON.parse(opts.body)).toEqual({ used: [{ heard_key: 'cucumberone', variety_id: 'v-suyo' }] })
+  })
+
+  it('sends nothing when there is nothing valid to count', () => {
+    const api = vi.fn()
+    recordAliasUse(api, [])
+    recordAliasUse(api, null)
+    recordAliasUse(api, [{ heard_key: '', variety_id: 'v-suyo' }, { heard_key: 'cucumberone' }])
+    expect(api).not.toHaveBeenCalled()
+  })
+
+  // A plain function, not vi.fn: a vi.fn records the settlement of the promise it returns, which
+  // marks a rejection handled and would hide a missing .catch from this test.
+  it('a rejected count never becomes an unhandled rejection', async () => {
+    const seen = []
+    const onUnhandled = (reason) => { seen.push(reason) }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      recordAliasUse(() => Promise.reject(new Error('Gateway Timeout')), [{ heard_key: 'cucumberone', variety_id: 'v-suyo' }])
+      await new Promise((res) => setTimeout(res, 20))
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+    expect(seen).toEqual([])
+  })
+
+  it('a count whose transport throws outright never throws at the caller', () => {
+    expect(() => recordAliasUse(() => { throw new Error('boom') }, [{ heard_key: 'cucumberone', variety_id: 'v-suyo' }]))
+      .not.toThrow()
   })
 })

@@ -72,6 +72,11 @@ describe('ContinuousVoiceProbe — S0 debounce host', () => {
     expect(probeLog()).toContain('classify() ONLY')
     expect(probeLog()).toContain('never writes')
     expect(probeLog()).toContain('a save')
+    // Review MINOR-1 + lane D4's out-of-scope finding 2: the one-breath reader runs on the page too, and
+    // a cooldown suppression here is the debouncer's view — the page gives the claim back when a
+    // one-breath "… next" writes nothing, so the same "next" can commit there.
+    expect(probeLog()).toContain('oneBreathReadings')
+    expect(probeLog()).toContain("SUPPRESSED (cooldown) line is the debouncer's own view")
   })
 
   it('does not import the page-only grammar it disclaims — the scope line stays TRUE', async () => {
@@ -89,7 +94,7 @@ describe('ContinuousVoiceProbe — S0 debounce host', () => {
     const src = readFileSync(resolve(process.cwd(), 'src/components/ContinuousVoiceProbe.jsx'), 'utf8')
     const importLines = src.split('\n').filter((l) => /^\s*import\b/.test(l))
     expect(importLines.some((l) => /\bclassify\b/.test(l))).toBe(true)   // the import block was found
-    for (const fn of ['splitTrailingCommand', 'segmentCandidates', 'parseValueSequence', 'classifyPartial']) {
+    for (const fn of ['splitTrailingCommand', 'segmentCandidates', 'parseValueSequence', 'classifyPartial', 'oneBreathReadings']) {
       expect(importLines.filter((l) => new RegExp(`\\b${fn}\\b`).test(l))).toEqual([])
     }
   })

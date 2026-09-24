@@ -432,9 +432,17 @@ export default function ContinuousVoiceProbe() {
     // reasons about it next, and it is the only thing standing between "classify() said search" and
     // "the app searched". Do not drop it to tidy the header.
     log('scope: this probe runs classify() ONLY and never writes. splitTrailingCommand,')
-    log('  segmentCandidates, parseValueSequence and classifyPartial run in /log/voice, NOT here —')
-    log('  so a one-breath phrase, a trailing command, or a bare number may resolve on the real page')
-    log('  and still read as unparsed/search below. A COMMIT line is a classification, not a save.')
+    log('  segmentCandidates, parseValueSequence, oneBreathReadings and classifyPartial run in /log/voice,')
+    log('  NOT here — so a one-breath phrase, a trailing command, or a bare number may resolve on the real')
+    log('  page and still read as unparsed/search below. A COMMIT line is a classification, not a save.')
+    // Review MINOR-1 (review-regression-impact.md): the debouncer claims the write cooldown for a
+    // one-breath final that ends in a save word ("165 next"), and the PAGE gives that claim back when
+    // the sentence writes nothing (VoiceHarvest applyCommitted, releaseUnwritten). This probe writes
+    // nothing and releases nothing, so a real "next" said straight after reads SUPPRESSED here while the
+    // page would commit it. Labelled rather than re-implemented: the probe's value is that it shows the
+    // debouncer as it is.
+    log('  A SUPPRESSED (cooldown) line is the debouncer\'s own view: after a one-breath "… next" that')
+    log('  saves nothing, /log/voice gives the cooldown back, so a "next" said straight after commits there.')
 
     // A FRESH DEBOUNCER PER RUN, deliberately: `resetSession()` would clear the duplicate-suppression
     // memory of a layer that might still be holding a pending utterance from the previous run, which
