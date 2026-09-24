@@ -423,8 +423,11 @@ function readBack({ verb, keepCount, area, entries, excludedCount, rainNote, spo
  *
  * Inputs
  *   care         classifyCareCommand(transcript)
- *   plantings    U — the household list as ?view=picker returns it, with `crop_aliases` attached the
- *                way VoiceHarvest.jsx attaches them. Every name resolves against THIS, never against S.
+ *   plantings    U — the household list as the plants picker projection returns it, with `crop_aliases`
+ *                attached the way VoiceHarvest.jsx attaches them. Every name resolves against THIS, never
+ *                against S. (This file does not request that projection, so it deliberately does not spell
+ *                the URL: the census in lambda/plants/grid-view.test.js counts files that do. The page that
+ *                wires voice care will fetch it and must join that census with its field reads.)
  *   locations    L — live locations, careLocations(GET /api/locations)
  *   aliasIndex   A — indexAliases(rows) from voiceAliases.js; null degrades silently, as in harvest
  *   scopeSet     S — { locationId, count, capped, plantings:[{id,...}] }, the dry run for the location
