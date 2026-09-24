@@ -38,7 +38,7 @@ import { SEED_STAGES } from '../components/seed/seedStages.js'
 // seedLots.js for the vendor and calendar-day fixes that landed with the move.
 import {
   prettySlug, candidateFacts, labelCandidates, lotMeasure, elapsedLabel, fermentUrgency, isNotStartedLot,
-  isF2Lot, F2_LABEL,
+  isF2Lot, F2_LABEL, kindAllowsParentPlant,
 } from '../components/seed/seedLots.js'
 // Where a Not started lot came from, in My seeds' words for the same lot one tap away.
 import { originNote } from '../components/seed/mySeedsModel.js'
@@ -1277,12 +1277,16 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                         and is the only surface that reaches an UNTRACKED lot (which is every lot
                         that never gets a stage).
                         V5-SEEDSTAB-001 slice 2 — the name is now a door to that planting
-                        (ParentPlantLink); it was text, a dead end. */}
+                        (ParentPlantLink); it was text, a dead end.
+                        BUG-SAVEDSEEDPARENTONPRODUCE-001 — and no way in on a lot the database refuses
+                        a parent for: seed out of produce (a farm stand, a gift, a shop) can only fail
+                        chk_inventory_seed_source_plant. kindAllowsParentPlant is that CHECK; an
+                        own_garden lot still admits a parent and keeps the link. */}
                     {item.source_plant_id
                       ? (plantNameById.get(String(item.source_plant_id)) && (
                           <ParentPlantLink plantId={item.source_plant_id} name={plantNameById.get(String(item.source_plant_id))} />
                         ))
-                      : (
+                      : kindAllowsParentPlant(item.source_kind) && (
                         // BUG-SEEDTAPTARGET-001 — 44px, measured not assumed. The layout gate's tap
                         // census reported this anchor at FIFTEEN pixels tall at 390x844, four of
                         // them on a populated list, and it REPORTED rather than ASSERTED because
@@ -1452,8 +1456,11 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
               Shown ONLY while the lot has none: once it is recorded this sheet has nothing to ask,
               and re-offering the field here would make the advance form the place provenance gets
               edited, which it is not — /inventory/:id is. Optional throughout; a lot with no
-              remembered parent moves stages exactly as before. */}
-          {advancing.item.source_plant_id == null && (
+              remembered parent moves stages exactly as before.
+              BUG-SAVEDSEEDPARENTONPRODUCE-001 — nor on a lot the database refuses a parent for (seed
+              out of produce: kindAllowsParentPlant). There it could only fail, and it failed AFTER
+              the stage had landed, as "Stage saved, but the parent plant did not." */}
+          {advancing.item.source_plant_id == null && kindAllowsParentPlant(advancing.item.source_kind) && (
             <div data-testid="stage-source-plant" style={{ marginBottom: 14 }}>
               <div style={fieldLabelStyle}>
                 Saved from <span style={{ color: P.light, fontWeight: 400 }}>(optional)</span>

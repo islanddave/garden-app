@@ -21,6 +21,7 @@ import { useSources } from '../hooks/useSources.js'
 import { TIER } from '../lib/photoModel.js'
 import { supplierColors } from '../lib/supplierPalette.js'
 import { seedFacts } from '../components/seed/seedFacts.js'
+import { kindAllowsParentPlant } from '../components/seed/seedLots.js'
 // V4-SEEDORIGIN-001 — the SAME eight values preservation_log uses, deliberately. This registry is
 // one of the four synchronised homes of that vocabulary (the others: lambda/preservation/
 // provenance.js, the per-Lambda copy in lambda/inventory-items/source-kinds.js, and the DB CHECK
@@ -463,6 +464,10 @@ export default function InventoryDetail() {
   // V5-SEEDCARDS-001 — the seed wording on the form follows the form's own category, like the seed
   // harvest year below does.
   const isSeedForm = form.category === 'seeds'
+  // BUG-SAVEDSEEDPARENTONPRODUCE-001 — whether "Saved from" may offer a plant, per the CHECK that
+  // refuses a parent to a lot whose origin names a farm stand, a gift or a shop. The LIVE select value,
+  // so a change of origin shows or hides the picker in the same render as the change itself.
+  const parentAllowed = kindAllowsParentPlant(sourceKind)
   // The supplier as last SAVED, named from the registry. Null while the registry loads, for a lot
   // with no supplier, and for an id the registry no longer lists — the card then draws no stripe.
   const savedSourceId = baseline?.source_id || null
@@ -653,45 +658,56 @@ export default function InventoryDetail() {
             Every lot is reachable HERE, tracked or not.
 
             OUTSIDE the <form> deliberately: it writes on selection, so it has no business in a
-            surface whose Save button implies unsaved state. */}
+            surface whose Save button implies unsaved state.
+
+            BUG-SAVEDSEEDPARENTONPRODUCE-001 — the picker is SHOWN ONLY WHILE THE LOT MAY HAVE A
+            PARENT: the mirror of the rule below that hides the origin select while a parent is set,
+            and the same constraint read from its other side. A lot whose origin says a farm stand, a
+            gift or a shop is refused a parent by chk_inventory_seed_source_plant, so a pick here could
+            only fail. kindAllowsParentPlant is that CHECK, asked of the LIVE select, so choosing "My
+            garden" or "Not recorded" below brings the picker straight back. */}
         {item.category === 'seeds' && (
           <div data-testid="seed-source-plant" style={{ ...card, marginBottom: 20 }}>
             <div style={groupLabel}>Saved from</div>
-            <PlantingSelect
-              id="inv-source-plant"
-              value={sourcePlantId}
-              // The second argument is the chosen ROW — the picker passes it so call sites never
-              // need their own id→row lookup, and the chain panel below uses it for the name.
-              onChange={(pid, planting) => saveSourcePlant(pid || '', planting)}
-              // The lot's own cultivar pins the list exactly — every seed row carries a variety_id
-              // (chk_inventory_seed_requires_variety), so this collapses ~239 plantings to the one
-              // to three of that cultivar.
-              varietyId={item.variety_id}
-              // Succession disambiguation: three plantings of one cultivar are indistinguishable by
-              // name, and this is the case the multi-planting minority is made of.
-              labelFormat="wave"
-              // "Not recorded", not "you must choose" — the honest empty state for a bought packet
-              // and for a saved one whose parent Dave no longer remembers.
-              emptyMeaning="none"
-              // An already-set parent stays listed and selected even if it later falls out of scope.
-              retainOutOfScopeValue
-              required={false}
-              onLoadError={() => setSourcePlantLoadFailed(true)}
-              aria-label="Saved from which plant"
-              data-testid="source-plant-select"
-            />
-            <p data-testid="source-plant-help" style={{
-              margin: 0, color: sourcePlantErr ? P.terra : P.light,
-              fontSize: '0.78rem', lineHeight: 1.5,
-            }}>
-              {sourcePlantErr
-                ? sourcePlantErr
-                : sourcePlantLoadFailed
-                  ? "Couldn't load your plantings — the rest of this page still saves normally."
-                  : sourcePlantBusy
-                    ? 'Saving…'
-                    : 'The plant this seed was saved from. Leave it empty for bought seed.'}
-            </p>
+            {parentAllowed && (
+              <>
+                <PlantingSelect
+                  id="inv-source-plant"
+                  value={sourcePlantId}
+                  // The second argument is the chosen ROW — the picker passes it so call sites never
+                  // need their own id→row lookup, and the chain panel below uses it for the name.
+                  onChange={(pid, planting) => saveSourcePlant(pid || '', planting)}
+                  // The lot's own cultivar pins the list exactly — every seed row carries a variety_id
+                  // (chk_inventory_seed_requires_variety), so this collapses ~239 plantings to the one
+                  // to three of that cultivar.
+                  varietyId={item.variety_id}
+                  // Succession disambiguation: three plantings of one cultivar are indistinguishable by
+                  // name, and this is the case the multi-planting minority is made of.
+                  labelFormat="wave"
+                  // "Not recorded", not "you must choose" — the honest empty state for a bought packet
+                  // and for a saved one whose parent Dave no longer remembers.
+                  emptyMeaning="none"
+                  // An already-set parent stays listed and selected even if it later falls out of scope.
+                  retainOutOfScopeValue
+                  required={false}
+                  onLoadError={() => setSourcePlantLoadFailed(true)}
+                  aria-label="Saved from which plant"
+                  data-testid="source-plant-select"
+                />
+                <p data-testid="source-plant-help" style={{
+                  margin: 0, color: sourcePlantErr ? P.terra : P.light,
+                  fontSize: '0.78rem', lineHeight: 1.5,
+                }}>
+                  {sourcePlantErr
+                    ? sourcePlantErr
+                    : sourcePlantLoadFailed
+                      ? "Couldn't load your plantings — the rest of this page still saves normally."
+                      : sourcePlantBusy
+                        ? 'Saving…'
+                        : 'The plant this seed was saved from. Leave it empty for bought seed.'}
+                </p>
+              </>
+            )}
 
             {/* ── V4-SEEDORIGIN-001 — the OTHER half of provenance ────────────────────────────
                 "Saved from" answers which of MY plants. This answers where the seed came from when
@@ -709,10 +725,13 @@ export default function InventoryDetail() {
 
                 Plain Select, NOT EnumSelect, for the reason dropdownRegistry.js records: EnumSelect
                 defaults to sort=true and would alphabetize the list, burying the frequency ordering
-                the vocabulary is built on ("My garden" first). Same call PutUp.jsx makes. */}
+                the vocabulary is built on ("My garden" first). Same call PutUp.jsx makes.
+
+                BUG-SAVEDSEEDPARENTONPRODUCE-001 — alone in the card when the picker above is hidden,
+                so it drops the "Or" and the extra gap, and its help names the way back to a plant. */}
             {!sourcePlantId && (
-              <div style={{ marginTop: 14 }} data-testid="seed-source-kind">
-                <Field label="Or where did it come from?" htmlFor="inv-source-kind" optional>
+              <div style={{ marginTop: parentAllowed ? 14 : 0 }} data-testid="seed-source-kind">
+                <Field label={parentAllowed ? 'Or where did it come from?' : 'Where did it come from?'} htmlFor="inv-source-kind" optional>
                   <Select
                     id="inv-source-kind"
                     value={sourceKind}
@@ -737,7 +756,9 @@ export default function InventoryDetail() {
                     ? sourceKindErr
                     : sourceKindBusy
                       ? 'Saving…'
-                      : 'For seed you saved from something you did not grow — a shop-bought pepper, a gift, a u-pick.'}
+                      : parentAllowed
+                        ? 'For seed you saved from something you did not grow — a shop-bought pepper, a gift, a u-pick.'
+                        : 'For seed you saved from something you did not grow — a shop-bought pepper, a gift, a u-pick. From one of your own plants instead? Choose “My garden” to pick which one.'}
                 </p>
               </div>
             )}
