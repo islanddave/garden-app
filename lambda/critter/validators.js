@@ -27,6 +27,27 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
 // well-formed date self-heals on the next day boundary (the set is ignored when date != today).
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
+// V5-NAVCUSTOM-001 — the two per-person nav settings, more_pins and bar_layout. Dave ruled on
+// 2026-09-24 that pins (D1) AND the tab bar (D4) are per person, so both live on the caller's own
+// prefs row and are validated here with the rest of that row. The database checks shape only
+// (migrations/v5-navcustom-001); the vocabulary is checked here. A more_pins id is checked for FORM,
+// never against the current More rows: a retired row id must not make every later save by that
+// person fail (CONTRACT §3), and the client drops ids it cannot draw at read time.
+//
+// The shipped tab vocabulary, in the shipped order. Byte-identical to DEFAULT_NAV_TABS in
+// src/lib/navConfig.js, the client's copy and the renderer's authority; appConfig.parity.test.js
+// asserts the two agree. bar_layout.order must be a permutation of it.
+export const NAV_TAB_KEYS = ['today', 'garden', 'create', 'harvests', 'put-up']
+// The tabs a person may move off the bar into More. Today (where the app lands) and ＋ (the only door
+// to the create sheet and, in field mode, to Field capture) never move; More is not a tab key.
+export const MOVABLE_TAB_KEYS = ['garden', 'harvests', 'put-up']
+// A More row id, minted once from its route and frozen (src/lib/moreRegistry.js). The client carries
+// the same pattern (CONTRACT §4).
+export const MORE_PIN_ID_RE = /^[a-z][a-z0-9-]{0,39}$/
+// The stored cap, equal to chk_unp_more_pins_shape's. The sheet shows at most 4 pins; the headroom
+// keeps pins that are asleep (a flag-off or unknown row) through a save.
+export const MORE_PINS_MAX = 32
+
 export function validatePrefsPatchBody(body) {
   if (!body || typeof body !== 'object') return { status: 400, error: 'body required' }
   if (body.critter_visit != null && !CRITTER_VISIT_VALUES.has(body.critter_visit)) {
@@ -98,36 +119,74 @@ export function validatePrefsPatchBody(body) {
       return { status: 400, error: 'whats_new_last_seen must be a string of at most 32 chars' }
     }
   }
+  // V5-NAVCUSTOM-001 — more_pins, in pin order. [] clears; null or absent leaves the stored list alone
+  // (the route merges with COALESCE, so it cannot write NULL back). One bad entry refuses the whole
+  // list: a partly applied list would silently drop a pin the person just set.
+  if (body.more_pins != null) {
+    const pins = body.more_pins
+    if (!Array.isArray(pins)) return { status: 400, error: 'more_pins must be an array of More row ids' }
+    if (pins.length > MORE_PINS_MAX) return { status: 400, error: `more_pins exceeds max ${MORE_PINS_MAX}` }
+    // typeof first: RegExp.test coerces its argument, so a nested ["seeds"] would stringify to "seeds"
+    // and pass the pattern.
+    if (pins.some(id => typeof id !== 'string' || !MORE_PIN_ID_RE.test(id))) {
+      return { status: 400, error: 'more_pins entries must be row ids: a lowercase letter, then up to 39 of a-z, 0-9 or -' }
+    }
+    if (new Set(pins).size !== pins.length) return { status: 400, error: 'more_pins must not repeat an id' }
+  }
+  // V5-NAVCUSTOM-001 — bar_layout, this person's bar: EXACTLY {order, hidden}. Refused whole, so a
+  // valid order never lands beside a bad hidden list. The guards on `order` run in the same sequence as
+  // the dormant nav_tabs validator below: array, vocabulary, repeat, arity.
+  if (body.bar_layout != null) {
+    const layout = body.bar_layout
+    if (typeof layout !== 'object' || Array.isArray(layout)) {
+      return { status: 400, error: 'bar_layout must be an object with keys order and hidden' }
+    }
+    const unknown = Object.keys(layout).filter(k => k !== 'order' && k !== 'hidden')
+    if (unknown.length > 0) return { status: 400, error: `bar_layout has unknown key: ${unknown.join(', ')}` }
+    const { order, hidden } = layout
+    if (!Array.isArray(order)) return { status: 400, error: 'bar_layout.order must be an array of tab keys' }
+    // Membership also refuses non-strings, nulls and nested arrays (includes() does not coerce).
+    if (order.some(k => !NAV_TAB_KEYS.includes(k))) {
+      return { status: 400, error: `bar_layout.order entries must be one of: ${NAV_TAB_KEYS.join(', ')}` }
+    }
+    if (new Set(order).size !== order.length) return { status: 400, error: 'bar_layout.order must not repeat a tab' }
+    if (order.length !== NAV_TAB_KEYS.length) {
+      return { status: 400, error: `bar_layout.order must list all ${NAV_TAB_KEYS.length} tabs` }
+    }
+    if (!Array.isArray(hidden)) return { status: 400, error: 'bar_layout.hidden must be an array of tab keys' }
+    // Today and ＋ are refused here: each is the only door to something (design §2).
+    if (hidden.some(k => !MOVABLE_TAB_KEYS.includes(k))) {
+      return { status: 400, error: `bar_layout.hidden entries must be one of: ${MOVABLE_TAB_KEYS.join(', ')}` }
+    }
+    if (new Set(hidden).size !== hidden.length) return { status: 400, error: 'bar_layout.hidden must not repeat a tab' }
+  }
   // At least one updatable field must be present
-  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order', 'garden_expanded', 'garden_bloom_seen', 'garden_helper_rung1_seen', 'today_skipped', 'log_many_all_selected', 'whats_new_last_seen']
+  const HAS_UPDATABLE = ['critter_visit', 'quiet_hours_start', 'quiet_hours_end', 'garden_group_by', 'garden_sort_order', 'garden_expanded', 'garden_bloom_seen', 'garden_helper_rung1_seen', 'today_skipped', 'log_many_all_selected', 'whats_new_last_seen', 'more_pins', 'bar_layout']
     .some(k => body[k] != null)
   if (!HAS_UPDATABLE) return { status: 400, error: 'no updatable fields present' }
   return null
 }
 
-// ─── /api/app-config — GLOBAL, installation-wide config (V5-ADMINCENTER-001) ───────────────────
+// ─── /api/app-config — DORMANT since V5-NAVCUSTOM-001 (was GLOBAL config, V5-ADMINCENTER-001) ──────
 //
-// A DIFFERENT SCOPE FROM EVERYTHING ABOVE, and that is the whole reason it is a separate route
-// rather than another key on validatePrefsPatchBody. Dave ruled 2026-09-08 that nav_tabs is GLOBAL —
-// one nav order for the installation, not one per person. Every other validator in this file guards
-// a write to public.user_notification_prefs, which is keyed by created_by and cannot express an
-// installation-wide fact. `nav_tabs` is deliberately NOT in HAS_UPDATABLE at the top of this file
-// and must not be added there: that route is the wrong door regardless of ordering.
+// The SPA stopped reading and writing this route in V5-NAVCUSTOM-001. Dave ruled on 2026-09-24 (D4)
+// that the tab bar is per person — only his bar changes, and Jen's never shifts — which reverses his
+// 2026-09-08 ruling that nav_tabs is one global order for the installation. The per-person bar is
+// bar_layout on the caller's own prefs row, validated in validatePrefsPatchBody above. The route and
+// the helpers in this section stay, behaviour unchanged, only so a client that is still rolling out
+// gets a 200 rather than a 404; removing them is a follow-up ledger row, not this release.
 //
-// The store is public.app_config (key text PK | value jsonb | updated_at), which already existed in
-// live prod — created 2026-04-23 in the Supabase era, 0 rows, 0 code references until this row. No
-// DDL was written for this feature. Its RLS policies are already global (any authenticated caller
-// may read AND write), so RLS cannot express the admin restriction — which is the structural reason
-// the gate below is mandatory rather than defence-in-depth.
+// `nav_tabs` must still never be added to HAS_UPDATABLE: it is the dormant GLOBAL key, and a key on
+// the prefs route writes the caller's own row. The per-person setting is bar_layout.
+//
+// What stays true while the route exists: the store is public.app_config (key text PK | value jsonb |
+// updated_at), which predates this code (created 2026-04-23 in the Supabase era, 0 rows on prod). Its
+// RLS policies admit any authenticated caller, so RLS cannot express an admin restriction — which is
+// why the PATCH's admin gate stays mandatory for as long as the route does.
 
 // The write-side key allowlist. An unrecognised key 400s BEFORE any SQL is built, which is the
 // safety property V101 §3 identified as load-bearing: the guard is the allowlist, not the storage.
 export const APP_CONFIG_KEYS = ['nav_tabs']
-
-// The shipped tab vocabulary. Byte-identical to DEFAULT_NAV_TABS in src/lib/navConfig.js, which is
-// the client's copy and the renderer's authority; appConfig.parity.test.js asserts the two agree, in
-// the house pattern critterSpecies.parity.test.js established for the same class of duplication.
-export const NAV_TAB_KEYS = ['today', 'garden', 'create', 'harvests', 'put-up']
 
 // The allowlist, parsed at CALL TIME rather than cached at module init — so a Lambda config change
 // takes effect on the next invocation instead of on the next cold start.
@@ -135,12 +194,15 @@ function adminSubs(env) {
   return (env?.ADMIN_CLERK_SUBS ?? '').split(',').map(s => s.trim()).filter(Boolean)
 }
 
-// Fail-CLOSED admin gate. Unset/empty ADMIN_CLERK_SUBS -> nobody is admin -> 403 for everyone,
-// including Dave. That is the safe failure and it will look like a bug: ADMIN_CLERK_SUBS is
-// per-function Lambda runtime config, so this function needs the var set ON IT (it is set on
-// facebook-share, projects, tags and ux-events, and was never set here) before the gate admits
-// anyone. Copied from lambda/tags/validate.js:56-60 rather than reinvented — four Lambdas, one
-// idiom, and this is the fifth.
+// Fail-CLOSED admin check. Unset/empty ADMIN_CLERK_SUBS -> nobody is admin. Two callers:
+//   * the dormant app-config PATCH, through adminRefusal below (403 for everyone when unset);
+//   * GET /api/notifications/prefs, which reports it as can_edit_bar (V5-NAVCUSTOM-001). That flag
+//     decides only who SEES the bar editor (D3: today, Dave). It never gates a write — the prefs PATCH
+//     writes the caller's own row, so a bar_layout save needs no admin check.
+// ADMIN_CLERK_SUBS is per-function Lambda runtime config: deploy-lambda.yml sets it on garden-critter
+// in a continue-on-error step, and deploy-staging.yml does not set it on garden-critter-staging, so
+// can_edit_bar is false for everyone on staging. Copied from lambda/tags/validate.js:56-60 rather than
+// reinvented — four Lambdas, one idiom, and this is the fifth.
 export function isAdmin(userId, env) {
   const subs = adminSubs(env)
   return subs.length > 0 && subs.includes(userId)
@@ -161,9 +223,10 @@ export function adminRefusal(userId, env) {
 // installed), so a projection left inline there would be asserted by nothing.
 //
 // NO ROW = SHIPPED DEFAULT, made explicit here rather than implied. Every allowlisted key is
-// reported — absent ones as null — so the client sees "unset" rather than a key simply missing from
-// the object, and resolveNavTabs maps null to the shipped bar. app_config has zero rows in prod, so
-// "never configured" is already the natural state and no seeding row is needed or wanted.
+// reported — absent ones as null — so a client sees "unset" rather than a key simply missing from the
+// object; the client resolver that read this route (resolveNavTabs, until V5-NAVCUSTOM-001) maps null
+// to the shipped bar. app_config has zero rows in prod, so "never configured" is the natural state
+// and no seeding row is needed or wanted.
 export function projectAppConfig(rows) {
   const out = Object.fromEntries(APP_CONFIG_KEYS.map(k => [k, null]))
   for (const r of Array.isArray(rows) ? rows : []) {
@@ -172,19 +235,14 @@ export function projectAppConfig(rows) {
   return out
 }
 
-// PATCH /api/app-config body validator.
+// PATCH /api/app-config body validator — DORMANT with its route (section header above); unchanged.
 //
-// GUARD ORDER MIRRORS resolveNavTabs (src/lib/navConfig.js) DELIBERATELY — array, then vocabulary,
-// then duplicate, then arity. Two enforcement points on one contract, the same shape today_skipped
-// carries above: this one turns a bad write into a 400 the admin page can state, and the client
-// resolver is the total renderer that cannot be bypassed by a hand-written database row. There is no
-// third point: app_config is a generic k/v table and a nav_tabs-specific CHECK would be the wrong
-// shape on it.
-//
-// V1 IS REORDER-ONLY, enforced here as a permutation rule. A short array (including []) is a hide
-// attempt and a long one is an add; both are refused whole rather than partly applied. Hiding a tab
-// removes the only door to a page — the defect class DebugMenu.reachability.test.jsx exists to
-// catch, arriving by another route — and the hide-vs-reorder question is still Dave's (design §7).
+// Its guard order (array, vocabulary, duplicate, arity) mirrors resolveNavTabs in
+// src/lib/navConfig.js, the client resolver that read this key until V5-NAVCUSTOM-001, and
+// bar_layout.order above repeats the same sequence. It is REORDER-ONLY: a short array (including []) is
+// a hide attempt and a long one an add, and both are refused whole. Hiding now happens per person, in
+// bar_layout.hidden, which admits only the movable tabs; nothing here was widened to allow it, so an old
+// client that still saves nav_tabs can only ever store a full five-tab order.
 export function validateAppConfigPatchBody(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return { status: 400, error: 'body required' }
   const unknown = Object.keys(body).filter(k => !APP_CONFIG_KEYS.includes(k))

@@ -30,6 +30,9 @@
 #     G) favorites toggle → assert favorited on, then off
 #     L) a taught name (voice alias) for block D's variety → one use through PATCH /api/varieties/voice-aliases
 #        → the GET reads its hit_count exactly one higher, with a last_used_at (BUG-VOICEALIASHITCOUNT-001)
+#     M) (after the project blocks, independent of them) the smoke account's own nav prefs
+#        (V5-NAVCUSTOM-001): PATCH more_pins, then bar_layout, on the critter Lambda, each read back
+#        through GET, which must also carry a boolean can_edit_bar; then restored to [] and the shipped bar
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
 #   Per L-108 (ratified 2026-05-25): every write-path surface gets a write→read-back assert.
@@ -61,6 +64,7 @@ CREATED_INV_ID=""
 CREATED_SEEDPKT_ID=""
 CREATED_SOWN_PLANT_ID=""
 CREATED_FAVORITE_DONE=false
+NAVP_DIRTY=false
 DATA_CREATED=false
 CLERK_JWT=""
 CLERK_SESSION_ID=""
@@ -134,6 +138,17 @@ cleanup() {
     # workflow's L-058 'if: always()' DB step (deploy-staging.yml). The API deletes above are
     # soft-deletes and the ~60s Clerk token may have expired by now — the workflow DB sweep is
     # the AUTHORITATIVE cleanup; these are best-effort hygiene only.
+  fi
+  # Block M (V5-NAVCUSTOM-001): the run died between its first nav-prefs PATCH and its restore. Put the
+  # smoke account's own pins and bar back, best-effort, before the session is revoked below (the next
+  # run's block M restores them anyway). Fresh token: the one in hand may have expired.
+  if [[ "$NAVP_DIRTY" == "true" && -n "${CLERK_SESSION_ID:-}" && -n "${NAVP_URL:-}" ]]; then
+    local navp_jwt
+    navp_jwt=$(mint_session_token)
+    curl -s --max-time 15 --connect-timeout 10 -X PATCH \
+      -H "Authorization: Bearer $navp_jwt" -H "Content-Type: application/json" -o /dev/null \
+      "$NAVP_URL" -d '{"more_pins": [], "bar_layout": {"order": ["today","garden","create","harvests","put-up"], "hidden": []}}' \
+      && echo "✅ Cleanup: smoke account nav prefs restored" || true
   fi
   # Revoke the Clerk test session we created (best-effort hygiene).
   if [[ -n "${CLERK_SESSION_ID:-}" && -n "${CLERK_SECRET_KEY_STAGING:-}" ]]; then
@@ -1261,6 +1276,107 @@ else
     echo "   Body: ${CREATE_RESPONSE:0:200}"
     FAIL=$((FAIL+1))
   fi
+fi
+
+
+# ── M) Per-person nav prefs write → read-back (V5-NAVCUSTOM-001; L-108) — Phase 2, continued ──────
+# more_pins and bar_layout through PATCH /api/notifications/prefs on the critter Lambda, each read back
+# through GET, plus the GET's computed can_edit_bar. Independent of the test project: the write goes to
+# the smoke account's OWN prefs row (self-scoped, not admin-gated), so it needs no fixture and no admin.
+# garden-critter-staging carries no ADMIN_CLERK_SUBS, so can_edit_bar is false there and only its TYPE
+# is asserted. Needs migrations/v5-navcustom-001 applied on staging: the critter SELECT names both columns.
+#
+# Values are chosen to DIFFER from what the first GET returned (a run-unique pin id; the second layout
+# when the first is already stored), so a leftover from a run that died mid-block cannot make a read-back
+# pass vacuously. The second read-back also checks the pins survived a bar_layout-only PATCH (an absent
+# key leaves the stored value alone).
+#
+# RESTORE: more_pins [] and the shipped default bar_layout, NOT NULL. A PATCH cannot write NULL back
+# (null means "unchanged": the route merges with COALESCE), and [] and the default object mean exactly
+# what NULL means to every reader (no pins; the shipped bar). The restore runs whether or not the asserts
+# passed, and cleanup() repeats it best-effort if the run dies in between (NAVP_DIRTY).
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_CRITTERS:-}" && "$STAGING_API_CRITTERS" != *placeholder* ]]; then
+  NAVP_URL="${STAGING_API_CRITTERS%/}/api/notifications/prefs"
+  navp_patch() {                      # navp_patch <json-body> -> prints the HTTP status
+    local code
+    code=$(curl -s --max-time 30 --connect-timeout 10 -X PATCH \
+      -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+      -o /dev/null -w "%{http_code}" "$NAVP_URL" -d "$1") || code="000"
+    echo "$code"
+  }
+  navp_get() {                        # navp_get <jq-filter> -> the filtered GET body, keys sorted, compact
+    local body
+    body=$(curl -s --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" "$NAVP_URL") || body=""
+    echo "$body" | jq -S -c "$1" 2>/dev/null || echo "unreadable"
+  }
+  CLERK_JWT=$(mint_session_token)
+
+  # M0) Read first: the GET answers 200 and carries all three fields before anything is written.
+  NAVP_B=$(mktemp)
+  NAVP_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" \
+    -o "$NAVP_B" -w "%{http_code}" "$NAVP_URL") || NAVP_HTTP="000"
+  NAVP_BEFORE=$(cat "$NAVP_B" 2>/dev/null || echo ""); rm -f "$NAVP_B"
+  NAVP_SHAPE=$(echo "$NAVP_BEFORE" | jq -r '[(.can_edit_bar | type), has("more_pins"), has("bar_layout")] | map(tostring) | join(",")' 2>/dev/null || echo "unparseable")
+  if [[ "$NAVP_HTTP" == "200" && "$NAVP_SHAPE" == "boolean,true,true" ]]; then
+    echo "✅ PASS [read:prefs-nav-fields] HTTP 200, can_edit_bar is a boolean ($(echo "$NAVP_BEFORE" | jq -c '.can_edit_bar')), more_pins + bar_layout present"
+    PASS=$((PASS+1))
+  else
+    echo "❌ FAIL [read:prefs-nav-fields] HTTP $NAVP_HTTP shape=$NAVP_SHAPE (expected 200 and boolean,true,true)"
+    echo "   Body: ${NAVP_BEFORE:0:200}"
+    FAIL=$((FAIL+1))
+  fi
+
+  NAVP_PIN_ID="smoke-$(echo "$TEST_RUN_ID" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-8)"
+  NAVP_PINS=$(jq -c -n --arg id "$NAVP_PIN_ID" '["seeds", "photos", $id]')
+  NAVP_LAYOUT_A='{"order":["today","garden","create","harvests","put-up"],"hidden":["put-up"]}'
+  NAVP_LAYOUT_B='{"order":["today","harvests","create","garden","put-up"],"hidden":["garden"]}'
+  if [[ "$(echo "$NAVP_BEFORE" | jq -S -c '.bar_layout' 2>/dev/null)" == "$(echo "$NAVP_LAYOUT_A" | jq -S -c .)" ]]; then
+    NAVP_LAYOUT="$NAVP_LAYOUT_B"
+  else
+    NAVP_LAYOUT="$NAVP_LAYOUT_A"
+  fi
+  NAVP_LAYOUT_NORM=$(echo "$NAVP_LAYOUT" | jq -S -c .)
+  NAVP_DIRTY=true
+
+  # M1) more_pins → GET → equal.
+  NAVP_CODE=$(navp_patch "{\"more_pins\": $NAVP_PINS}")
+  NAVP_GOT=$(navp_get '.more_pins')
+  if [[ "${NAVP_CODE:0:1}" == "2" && "$NAVP_GOT" == "$NAVP_PINS" ]]; then
+    echo "✅ PASS [write:prefs-more-pins-readback] read-back == $NAVP_PINS"
+    PASS=$((PASS+1))
+  else
+    echo "❌ FAIL [write:prefs-more-pins-readback] PATCH HTTP $NAVP_CODE, read-back '$NAVP_GOT' (expected $NAVP_PINS)"
+    FAIL=$((FAIL+1))
+  fi
+
+  # M2) bar_layout → GET → equal, and the pins from M1 still stored (the key was absent from this PATCH).
+  CLERK_JWT=$(mint_session_token)
+  NAVP_CODE=$(navp_patch "{\"bar_layout\": $NAVP_LAYOUT}")
+  NAVP_GOT=$(navp_get '[.bar_layout, .more_pins]')
+  if [[ "${NAVP_CODE:0:1}" == "2" && "$NAVP_GOT" == "[$NAVP_LAYOUT_NORM,$NAVP_PINS]" ]]; then
+    echo "✅ PASS [write:prefs-bar-layout-readback] read-back == $NAVP_LAYOUT_NORM, pins untouched"
+    PASS=$((PASS+1))
+  else
+    echo "❌ FAIL [write:prefs-bar-layout-readback] PATCH HTTP $NAVP_CODE, read-back '$NAVP_GOT' (expected [$NAVP_LAYOUT_NORM,$NAVP_PINS])"
+    FAIL=$((FAIL+1))
+  fi
+
+  # M3) Restore, and read it back: [] must CLEAR the pins (the trap is sending null, which keeps them).
+  NAVP_DEFAULT_LAYOUT='{"order":["today","garden","create","harvests","put-up"],"hidden":[]}'
+  CLERK_JWT=$(mint_session_token)
+  NAVP_CODE=$(navp_patch "{\"more_pins\": [], \"bar_layout\": $NAVP_DEFAULT_LAYOUT}")
+  [[ "${NAVP_CODE:0:1}" == "2" ]] && NAVP_DIRTY=false
+  NAVP_GOT=$(navp_get '[.more_pins, .bar_layout]')
+  NAVP_WANT="[[],$(echo "$NAVP_DEFAULT_LAYOUT" | jq -S -c .)]"
+  if [[ "${NAVP_CODE:0:1}" == "2" && "$NAVP_GOT" == "$NAVP_WANT" ]]; then
+    echo "✅ PASS [write:prefs-nav-restore-readback] smoke account back to no pins and the shipped bar"
+    PASS=$((PASS+1))
+  else
+    echo "❌ FAIL [write:prefs-nav-restore-readback] PATCH HTTP $NAVP_CODE, read-back '$NAVP_GOT' (expected $NAVP_WANT)"
+    FAIL=$((FAIL+1))
+  fi
+else
+  echo "⚠️  WARN [write:prefs-nav] STAGING_API_CRITTERS unset/placeholder or no JWT — nav prefs asserts NOT run"
 fi
 
 

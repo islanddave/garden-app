@@ -14,14 +14,21 @@
  * everywhere else. It is deliberately presence-of-an-element rather than a style value, so the
  * assertions below can be written without reference to any colour — which is the same reason
  * the indicator survives greyscale and a peripheral glance.
+ *
+ * V5-NAVCUSTOM-001 — REWRITTEN, NOT REPAIRED. The bar is a person's layout now (D4), and a tab can
+ * move into More. The old file hardcoded four tabs and its own note warned that `slotOf` would THROW
+ * on a hidden tab rather than fail an assertion. So the tabs under test are read off the bar that each
+ * layout actually renders, and a moved tab's route is asserted to light NOTHING — a moved tab's page
+ * is a More-row page, like /dashboard, and the bar has no slot for it.
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 
-const { navigateSpy, locationRef } = vi.hoisted(() => ({
+const { navigateSpy, locationRef, prefsRef } = vi.hoisted(() => ({
   navigateSpy: vi.fn(),
   locationRef: { pathname: '/dashboard' },
+  prefsRef: { current: null },
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -44,45 +51,88 @@ vi.mock('../lib/mode.js', () => ({
   useMode: () => ({ mode: 'desk', isField: false, isDesk: true, setMode: vi.fn(), toggleMode: vi.fn() }),
   MODE: { FIELD: 'field', DESK: 'desk' },
 }))
+vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
+  ...(await orig()),
+  fetchNotificationPrefs: vi.fn(async () => prefsRef.current),
+}))
 
 import BottomNav from '../components/BottomNav.jsx'
+import { PrefsProvider } from '../context/PrefsContext.jsx'
+import { NavPrefsProvider } from '../context/NavPrefsContext.jsx'
+import { DEFAULT_NAV_TABS } from '../lib/navConfig.js'
 
 const INDICATOR = '[data-testid="nav-active-indicator"]'
-// label -> the route that makes that tab active. The FAB has no route and is not a destination.
-//
-// V5-ADMINCENTER-001 — RE-SCOPED, NOT REPAIRED. Tab order is user config as of that row, and this
-// suite renders <BottomNav /> with no PrefsProvider, so this list is the DEFAULT config's four
-// non-FAB destinations rather than "the tabs". Every case below is order-independent by
-// construction — each one sets a route and asks which slot lit up, never which slot is at index n —
-// so the property under test (the indicator tracks the route) holds for any permutation, and this
-// list only has to stay in sync with DEFAULT_NAV_TABS' membership. If a future row makes a tab
-// hideable rather than merely movable, THAT is when this needs rethinking: a hidden tab has no slot
-// to light and `slotOf` would throw rather than fail an assertion.
-const TABS = [['Today', '/today'], ['Garden', '/garden'], ['Harvests', '/harvests'], ['Put-Up', '/put-up']]
-
-const slotOf = (label) => within(screen.getByRole('navigation')).getByText(label).parentElement
+const nav = () => screen.getByRole('navigation')
+// The destination tabs the bar ACTUALLY rendered: every link in the nav. The FAB is a button, and
+// More is a button, so neither is a destination.
+const renderedTabs = () => [...nav().querySelectorAll('a[href]')]
+  .map(a => ({ label: a.textContent, path: a.getAttribute('href'), slot: a }))
+const slotOf = (label) => renderedTabs().find(t => t.label === label)?.slot
 const indicatorsIn = (el) => el.querySelectorAll(INDICATOR)
+
+// Layouts under test, rendered through the REAL provider chain (first launch: applies at once).
+const LAYOUTS = [
+  null,
+  { order: ['harvests', 'today', 'create', 'put-up', 'garden'], hidden: [] },
+  { order: [...DEFAULT_NAV_TABS], hidden: ['put-up'] },
+  { order: ['put-up', 'create', 'today', 'garden', 'harvests'], hidden: ['garden', 'harvests'] },
+  { order: [...DEFAULT_NAV_TABS], hidden: ['garden', 'harvests', 'put-up'] },
+]
+async function renderLayout(barLayout) {
+  localStorage.clear()
+  prefsRef.current = { bar_layout: barLayout, more_pins: null, can_edit_bar: false }
+  let view
+  await act(async () => {
+    view = render(<PrefsProvider><NavPrefsProvider><BottomNav /></NavPrefsProvider></PrefsProvider>)
+  })
+  return view
+}
 
 beforeEach(() => { locationRef.pathname = '/dashboard' })
 afterEach(cleanup)
 
-describe('V4-NAVACTIVESTATE-001 — the glyph carries the active state', () => {
-  it.each(TABS)('%s on its own route shows the indicator, and no other tab does', (label, path) => {
-    locationRef.pathname = path
-    render(<BottomNav />)
-    for (const [other] of TABS) {
-      expect(indicatorsIn(slotOf(other)), `${other} while on ${path}`)
-        .toHaveLength(other === label ? 1 : 0)
+describe('V4-NAVACTIVESTATE-001 — the glyph carries the active state, under every layout', () => {
+  // For each layout, each tab it RENDERS: on that tab's route it is lit, and no other slot is.
+  // KILLING MUTATION: render the indicator unconditionally, or key it to index instead of route.
+  // RESULT: RED.
+  it('each rendered tab on its own route shows the indicator, and no other tab does', async () => {
+    for (const layout of LAYOUTS) {
+      const probe = await renderLayout(layout)
+      const tabs = renderedTabs()
+      probe.unmount()
+      expect(tabs.length, JSON.stringify(layout)).toBeGreaterThanOrEqual(1)
+      for (const { label, path } of tabs) {
+        locationRef.pathname = path
+        const view = await renderLayout(layout)
+        for (const other of renderedTabs()) {
+          expect(indicatorsIn(other.slot), `${other.label} while on ${path} under ${JSON.stringify(layout)}`)
+            .toHaveLength(other.label === label ? 1 : 0)
+        }
+        view.unmount()
+      }
+    }
+  })
+
+  // THE CASE THE OLD FILE COULD NOT EXPRESS: its `slotOf` threw on a hidden label. On a MOVED tab's
+  // own route the bar has no slot to light, so it lights nothing — and must not throw.
+  // KILLING MUTATION: draw moved tabs on the bar anyway (bar = order). RESULT: RED — one lit slot.
+  it('on a MOVED tab’s route the bar lights nothing, and nothing throws', async () => {
+    for (const [moved, path] of [['put-up', '/put-up'], ['garden', '/garden'], ['harvests', '/harvests/2026']]) {
+      locationRef.pathname = path
+      const view = await renderLayout({ order: [...DEFAULT_NAV_TABS], hidden: [moved] })
+      expect(indicatorsIn(nav()), `${path} with ${moved} moved`).toHaveLength(0)
+      expect(renderedTabs().map(t => t.path)).not.toContain(path.split('/').slice(0, 2).join('/'))
+      view.unmount()
     }
   })
 
   // Non-vacuity, and the property that makes the whole file meaningful: on a route that is not
-  // a tab, the bar draws its six glyphs and ZERO indicators. Without this, an indicator wired to
+  // a tab, the bar draws its glyphs and ZERO indicators. Without this, an indicator wired to
   // render unconditionally — which is exactly the bug the glyph had before this item — would
   // satisfy every "the active tab has one" assertion above.
   it('draws no indicator at all on a non-tab route, while still drawing every glyph', () => {
     const { container } = render(<BottomNav />)
-    expect(indicatorsIn(screen.getByRole('navigation'))).toHaveLength(0)
+    expect(indicatorsIn(nav())).toHaveLength(0)
     expect(container.querySelectorAll('nav svg').length).toBeGreaterThanOrEqual(6)
   })
 

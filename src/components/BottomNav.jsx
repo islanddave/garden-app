@@ -1,22 +1,23 @@
-import React, { useState, useLayoutEffect } from 'react'
+import React, { useState, useLayoutEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useOverlayLocation } from '../context/OverlayContext.jsx'
 import { readMarker } from '../lib/backNav.js'
 import SheetRowLink from './SheetRowLink.jsx'
-import { SEEDS_PATH, seedsHref } from '../lib/seedsRoutes.js'
+import { seedsHref } from '../lib/seedsRoutes.js'
 import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
 import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import { T } from '../lib/tokens.js'
 import CatchUpBadge from './CatchUpBadge.jsx'
-import { CATCH_UP_EDITOR_SHIPPED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { useApiFetch } from '../lib/api.js'
 import BottomNavDot from './BottomNavDot.jsx'
 import { useMode } from '../lib/mode.js'
 import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import Sheet from './forms/Sheet.jsx'
 import Icon from './Icon.jsx'
-import { useNavTabs } from '../context/AppConfigContext.jsx'
+import { useNavLayout, useMorePins } from '../context/NavPrefsContext.jsx'
+import { layoutMoreSheet, rowPinnable } from '../lib/moreRegistry.js'
 
 // BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·Harvests·Put-Up·More (V4-PUTUPENGINE-001,
 // 2026-08-21; was Today·Garden·＋·Harvests·More per V4-NAVHARVEST-001, 2026-08-10, which itself
@@ -51,18 +52,24 @@ import { useNavTabs } from '../context/AppConfigContext.jsx'
 // never bound TABS; the only cap the tab bar ever had was the slot count pinned in BottomNav.test.
 // Plain <Link>, NOT OverlayLink — the More row was `overlay` (a flyover over whatever page you were
 // already on), and a flyover is precisely what a landing page is not. /put-up keeps
-// `overlayable: true` in App.jsx, so the three PREFILL doors that need the flyover keep it
-// (EventNew PreserveOffer, PutUpFromPlanting, PutUpUseSoonBand). PutUp already defaults a BARE open
-// to its 'stores' view, so the tab lands on "what have I got", not on an empty form.
-// V5-ADMINCENTER-001 — THE FIVE ROWS THAT USED TO BE HERE NOW LIVE IN src/lib/navConfig.js, and the
-// ORDER they render in is INSTALLATION config (public.app_config key 'nav_tabs', read once at boot
-// by AppConfigProvider). Global, not per-user: Dave ruled 2026-09-08 that there is one nav order for
-// the app, so Dave and Jen see the same bar. Nothing about the bar's CONTENTS moved: v1 is
-// reorder-only, and resolveNavTabs accepts a config only if it is a permutation of the shipped five,
-// so config can shuffle these slots and can neither drop nor add one. Null config — including an
-// absent app_config row, a failed GET, or an offline boot — renders the exact bar above unchanged.
-// The +LOG FAB is still identified by `highlight`, and "More" is still emitted after the map below
-// as a hardcoded button, so it stays pinned last by being outside the array entirely.
+// `overlayable: true` in App.jsx for the one door that opens it as a flyover: Today's
+// PutUpUseSoonBand (overlayNavigate). PutUpFromPlanting's "Log a put-up from this planting" is a plain
+// react-router <Link> carrying a prefill — a PAGE navigation, not a flyover — and EventNew's
+// PreserveOffer, once a third door, was deleted (V4-PRESERVEOFFERKILL-001). Since V5-NAVCUSTOM-001
+// /put-up is in ROOT_TABS, so as a page it carries the root header (no Back arrow) whichever door
+// opened it, PutUpFromPlanting and the freezer walk (?session=putup) included: Android Back still
+// works and the walk has its own exits. Accepted (regression seat M1). PutUp already defaults a BARE open to its
+// 'stores' view, so the tab lands on "what have I got", not on an empty form.
+// V5-ADMINCENTER-001 moved THE FIVE ROWS THAT USED TO BE HERE into src/lib/navConfig.js.
+// V5-NAVCUSTOM-001 made the bar PER PERSON (D4, Dave 2026-09-24: "only my bar changes" — this
+// reverses the 2026-09-08 one-global-order ruling). The slots come from useNavLayout(): this person's
+// user_notification_prefs.bar_layout, resolved by resolveBarLayout and drawn from a launch cache at
+// first paint, so Jen's bar never shifts because Dave changed his. A person may reorder the five and
+// move Garden, Harvests or Put-Up into More — a moved tab is not gone, it is drawn at the top of
+// "Your garden" in the More sheet below. Today and the ＋ FAB can never leave. A missing, malformed
+// or unreadable layout renders the exact shipped bar. The +LOG FAB is still identified by
+// `highlight`, and "More" is still emitted after the map below as a hardcoded button, so it stays
+// last by being outside the array entirely — no layout can move it or remove it.
 
 // +LOG FAB -> create action sheet. Slice 9: trimmed to 3 first-class quick-hit actions.
 // Log + Log many are the two rapid-capture verbs — Log many stays FIRST-CLASS (a direct
@@ -136,6 +143,13 @@ const menuRowStyle = {
   fontFamily: 'inherit', minHeight: 48,
 }
 
+// The More sheet header's "Edit tab bar" door (D3): a text link sized to the 44px floor.
+const editBarStyle = {
+  display: 'flex', alignItems: 'center', minHeight: 44, padding: '0 16px',
+  color: P.green, fontSize: '0.9rem', fontWeight: 600, textDecoration: 'none',
+  fontFamily: 'inherit', borderRadius: 8,
+}
+
 // BUG-BACKNAVMORE-001 (BD-009) — every navigating row in both sheets below is a SheetRowLink, which
 // CONSUMES the armed Back entry when it navigates; that is what lets these sheets arm at all. The
 // component moved to ./SheetRowLink.jsx in V5-SEEDSTAB-001 (Saved seeds' track sheet needed it too),
@@ -148,6 +162,93 @@ function SectionLabel({ children }) {
       letterSpacing: '0.04em', textTransform: 'uppercase', color: P.light,
     }}>
       {children}
+    </div>
+  )
+}
+
+// V5-NAVCUSTOM-001 — THE MORE SHEET IS DATA NOW (src/lib/moreRegistry.js). Each row's history — why
+// DrG sits here, why Space is above Zones, why Seeds is one row, why Debug & smoke is last and
+// deliberately not client-gated — lives beside that row there. What lives here is how a row is DRAWN,
+// and the extras a generic renderer could silently drop are fields the renderer honours (I12): the
+// Seeds subtitle and `more-seeds` testid, the Critters subtitle (ambient: never a badge or count,
+// Reward UX V102), the What's-New dot on Release Notes.
+
+// The pin button (D2 — Dave chose a button on every row over an edit mode, for both people). A
+// SIBLING of the row's SheetRowLink, AFTER it in DOM order, never inside it: a button inside an <a> is
+// invalid nested interactive content, and its tap would bubble into the link's consume-on-navigate
+// handler, which closes the sheet before it even looks at defaultPrevented. So it stops propagation,
+// never navigates, never closes the sheet and never writes history. 48px wide at full row height
+// (the 48dp floor); the link keeps the rest of the row, so a tap aimed at a label still opens the page.
+// State is carried by SHAPE (outline vs the filled colour pin), by aria-pressed and by the name —
+// never by colour alone.
+function PinButton({ row, pinned, onToggle }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pinned}
+      aria-label={pinned ? `Unpin ${row.label}` : `Pin ${row.label} to the top`}
+      data-testid="more-pin"
+      data-pin-id={row.id}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle(row.id) }}
+      style={{
+        width: 48, minHeight: 48, alignSelf: 'stretch', flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 0, border: 'none', background: 'none', cursor: 'pointer', color: P.light,
+      }}
+    >
+      <Icon name="action.pin" variant={pinned ? 'filled' : undefined} size={22} decorative />
+    </button>
+  )
+}
+
+function RowContent({ row }) {
+  const dot = row.adornment === 'whatsNew' ? <WhatsNewDot variant="inline" /> : null
+  if (!row.sub) {
+    return <><Icon name={row.iconName} variant={row.iconVariant} size={22} decorative />{row.label}{dot}</>
+  }
+  // Two-line row, the Critters/Seeds style.
+  return (
+    <>
+      <Icon name={row.iconName} variant={row.iconVariant} size={22} decorative style={{ lineHeight: 1.2 }} />
+      <span style={{ display: 'flex', flexDirection: 'column' }}>
+        <span style={{ fontSize: '1rem', fontWeight: 500 }}>{row.label}{dot}</span>
+        <span style={{ fontSize: '0.78rem', color: P.light }}>{row.sub}</span>
+      </span>
+    </>
+  )
+}
+
+// One More row: the SheetRowLink (every navigating row, pinned and moved ones included — it consumes
+// the armed Back entry, BUG-BACKNAVMORE-001) and, when the row is pinnable, its pin button. `note` is
+// the inline line under the row ("Unpin one first") — inline because a toast is an interrupt.
+function MoreRow({ row, pinned, note, onToggle, onNavigate }) {
+  // The catch-up badge (flag-gated off) is a component row: CatchUpBadge renders its own link, so it
+  // is not pinnable. BUG-BACKNAVMORE-001 NOTE: if it ever ships, that inner link must adopt the
+  // SheetRowLink consume-on-navigate contract or its tap will orphan the armed Back entry.
+  if (row.component === 'catchUpBadge') {
+    return (
+      <div data-testid="catch-up-nav-item" onClick={onNavigate} style={{ padding: '12px 24px 4px' }}>
+        <CatchUpBadge />
+      </div>
+    )
+  }
+  const linkStyle = {
+    ...menuRowStyle, borderTop: 'none', flex: 1, width: 'auto', minWidth: 0,
+    ...(row.sub ? { alignItems: 'flex-start' } : null),
+  }
+  return (
+    <div data-more-row={row.id} style={{ borderTop: `1px solid ${P.border}` }}>
+      <div style={{ display: 'flex', alignItems: 'stretch' }}>
+        <SheetRowLink to={row.to} onClick={onNavigate} data-testid={row.testId} style={linkStyle}>
+          <RowContent row={row} />
+        </SheetRowLink>
+        {rowPinnable(row) && <PinButton row={row} pinned={pinned} onToggle={onToggle} />}
+      </div>
+      {note && (
+        <div role="status" style={{ padding: '0 24px 10px 62px', fontSize: '0.8rem', color: P.terra }}>
+          {note}
+        </div>
+      )}
     </div>
   )
 }
@@ -239,12 +340,22 @@ export default function BottomNav() {
   // Field-mode swaps the +LOG center button for a mic -> /field. Desk-mode unchanged.
   // toggleMode powers the More-menu mode mirror row.
   const { isField, toggleMode } = useMode()
-  // V5-ADMINCENTER-001 — the tab rows, config-ordered. Falls back to the shipped five with no
-  // provider mounted, which is what every isolated component test renders against.
-  const tabs = useNavTabs()
+  // V5-NAVCUSTOM-001 — this person's bar: their order, minus the tabs they moved into More. Falls
+  // back to the shipped five with no provider mounted, which is what every isolated component test
+  // renders against. `moved` are those tabs; the More sheet draws them. `canEditBar` is the server's
+  // can_edit_bar (D3 — Dave only today), never a client list.
+  const { bar: tabs, moved, canEditBar } = useNavLayout()
+  const { pins, togglePin } = useMorePins()
   const [showMore, setShowMore]             = useState(false)
   const [showCreate, setShowCreate]         = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
+  // I11 — THE SHEET'S ROWS ARE FROZEN WHEN IT OPENS. A pin tap flips that row's button at once, but
+  // nothing moves until the next open: a row jumping to the top would slide every row under the thumb
+  // that is about to tap one. Pins that land from the server while the sheet is open wait likewise.
+  const [sheet, setSheet]                   = useState(null)
+  const [pinNote, setPinNote]               = useState(null)   // { id, text } — inline, at that row
+  const moreOpen = useRef(false)
+  moreOpen.current = showMore
 
   function isActive(path) {
     return location.pathname === path || location.pathname.startsWith(path + '/')
@@ -253,7 +364,40 @@ export default function BottomNav() {
   function closeMore() {
     setShowMore(false)
     setConfirmSignOut(false)
+    setPinNote(null)
   }
+
+  function toggleMore() {
+    closeCreate()
+    if (!showMore) setSheet(layoutMoreSheet({ pins, moved }))
+    setShowMore(!showMore)
+  }
+
+  // 'full', 'not-loaded' and 'error' answer at the row that was tapped, in words, and only while the
+  // sheet is still open to show them — never as a toast. 'not-loaded' is its own sentence because
+  // "try again" would be wrong there: nothing was refused, the pin list simply has not arrived yet
+  // (the provider has already sent for it — QA RE-1).
+  async function onTogglePin(id) {
+    setPinNote(null)
+    const outcome = await togglePin(id)
+    if (!moreOpen.current) return
+    if (outcome === 'full') setPinNote({ id, text: 'Unpin one first' })
+    else if (outcome === 'not-loaded') setPinNote({ id, text: "Can't pin yet — your pins haven't loaded" })
+    else if (outcome === 'error') setPinNote({ id, text: 'Not saved. Try again.' })
+  }
+
+  // The snapshot is set on open; the fallback only covers a render before the first open.
+  const view = sheet ?? layoutMoreSheet({ pins, moved })
+  const renderRow = (row) => (
+    <MoreRow
+      key={row.id}
+      row={row}
+      pinned={pins.includes(row.id)}
+      note={pinNote?.id === row.id ? pinNote.text : null}
+      onToggle={onTogglePin}
+      onNavigate={closeMore}
+    />
+  )
 
   function closeCreate() {
     setShowCreate(false)
@@ -329,12 +473,38 @@ export default function BottomNav() {
       </Sheet>
 
       {/* More menu (Sheet primitive). armsBack (BUG-BACKNAVMORE-001) — same contract as the create
-          sheet above: every navigating row is a SheetRowLink. */}
-      <Sheet open={showMore} onClose={closeMore} ariaLabel="More navigation options" armsBack>
+          sheet above: every navigating row is a SheetRowLink, including the header's "Edit tab bar"
+          door and every pinned and moved row. V5-NAVCUSTOM-001 — top to bottom: the name line, this
+          person's Pinned block, View mode, "Your garden" (moved tabs first), Rewards, Help & account,
+          Debug & smoke, Sign out. The rows are the snapshot taken when the sheet opened (I11). */}
+      <Sheet
+        open={showMore}
+        onClose={closeMore}
+        ariaLabel="More navigation options"
+        armsBack
+        headerStart={canEditBar === true ? (
+          // D3 — the bar editor's everyday door, in the header's empty left slot, shown only when the
+          // server says this person may use it (can_edit_bar; Dave only today). Debug & smoke →
+          // App configuration stays as the second door (the /admin reachability rule).
+          <SheetRowLink to="/admin/config" onClick={closeMore} data-testid="more-edit-tab-bar" style={editBarStyle}>
+            Edit tab bar
+          </SheetRowLink>
+        ) : null}
+      >
         {/* Signed-in identity */}
         <div style={{ padding: '4px 24px 12px', fontSize: '0.8rem', color: P.light }}>
           {profile?.display_name || profile?.email || 'Signed in'}
         </div>
+
+        {/* D1 — THIS person's pins, in pin order, at most four. A pinned row is drawn HERE and not at
+            home, and goes back to its home slot when unpinned. No block at all until something is
+            pinned, so nobody's sheet changes until they pin. */}
+        {view.pinned.length > 0 && (
+          <div data-testid="more-pinned">
+            <SectionLabel>Pinned</SectionLabel>
+            {view.pinned.map(renderRow)}
+          </div>
+        )}
 
         {/* Field/Desk mode mirror — keeps the current mode visible + switchable here too
             (TopBar retired V4-APPBAR-003; this is the primary mode toggle now). Toggling does NOT close the sheet so the
@@ -354,146 +524,12 @@ export default function BottomNav() {
           </span>
         </button>
 
-        <SectionLabel>Your garden</SectionLabel>
-        <SheetRowLink to="/dashboard" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="nav.dashboard" size={22} decorative />Dashboard
-        </SheetRowLink>
-        {/* V4-NAVHARVEST-001 — DrG demoted here from the tab bar. DEMOTED, NOT REMOVED: /findings
-            keeps its route, its page and its drawn nav.findings icon, and every deep link into it
-            still resolves. It sits beside Dashboard because both are read-only overview surfaces.
-            BottomNavDot (the critter poll) is unaffected — it hangs off the nav shell, not this tab. */}
-        <SheetRowLink to="/findings" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="nav.findings" size={22} decorative />DrG
-        </SheetRowLink>
-        <SheetRowLink to="/photos" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="media.camera" size={22} decorative />Photos
-        </SheetRowLink>
-        {/* V4-SPACEPHOTO-001 Lane C — a NEW row, above the zones row, because the two are different
-            tiers and neither can stand in for the other: "Space" (singular) is the property itself
-            (the one `spaces` row), while /locations is the tree of six level-0 ZONES beneath it
-            (Deck/Drive/House/Pasture/Stable/Yard, measured live). Re-pointing the existing row would
-            have silently stolen /locations' ONLY nav entry — the exact gap V4-PHOTOLOCFIND-001 added
-            it to close (only 5 of 913 photos carried a location). Flag-gated, so flag-off renders the
-            shipped single row unchanged. V4-ICON-001: the placeholder emoji is now nav.space — the
-            row's tier distinction (the property vs the zones beneath it) is carried by two DIFFERENT
-            drawn shapes rather than by two house-adjacent pictographs. */}
-        {SPACE_PHOTOS_ENABLED && (
-          <SheetRowLink to="/space" onClick={closeMore} style={menuRowStyle}>
-            <Icon name="nav.space" size={22} decorative />Space
-          </SheetRowLink>
-        )}
-        {/* V4-PHOTOLOCFIND-001 — /locations previously had ZERO nav entries (reachable only
-            from Search/Favorites/ProjectNew/ZonePicker — the last since deleted, V4-AMBIENTZONE-001),
-            which is half of why only 5 of 913 photos
-            carried a location. V4-ICON-001: now facet.location, the pin the rest of the app already
-            uses for a zone — the registry entry predates this row, so nothing had to be drawn.
-            V4-SPACECLIENTGAP-001 (Dave 2026-08-02): the label is now UNCONDITIONALLY "Zones", not
-            flag-conditional. Two rows both reading "Space(s)" pointing at different tiers is the
-            §6.8 four-noun drift made worse, and the level-0 rows this page is rooted in ARE zones
-            regardless of whether the Space surface is switched on. Naming is a product decision,
-            orthogonal to the feature gate: leaving it conditional would mean a rollback silently
-            RENAMES a nav row under the user, which is worse than a stable, correct name. Label
-            change only; the route and the page are untouched. */}
-        <SheetRowLink to="/locations" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="facet.location" size={22} decorative />Zones
-        </SheetRowLink>
-        <SheetRowLink to="/inventory" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="nav.inventory" size={22} decorative />Inventory
-        </SheetRowLink>
-        {/* V5-SEEDSTAB-001 — ONE "Seeds" row where "Sow now" (V4-SOWMOREMENU-001) and "Saved seeds"
-            (V4-SEEDSAVEFLOW-001) used to sit, opening the Seeds page that holds both plus the seed he
-            owns. The scope guard that stood here ("ADDITIVE … do not 'tidy' the others away without
-            asking him") is RETIRED by the thing it asked for: Dave asked to consolidate on
-            2026-09-18 ("consolidate Seeds into a single tab - save seeds, sow now, inventory seeds,
-            etc should have a home properly in the app") and, shown the change list, approved this
-            merge by name (design-seedshome-V102 §7, D1 = a More row, D2 = approved as listed).
-            A More row rather than a seventh bar tab (D1): seed work is seasonal, 2027 sowing is
-            frozen, and the bar is shared with Jen. The subtitle keeps both old names in the menu, so
-            the words he looks for are still here even though the direct rows are not. The fast doors
-            stay direct: ＋ → Sow from seed and Today's Sow now band open Seeds › Sow now.
-            Two-line row in the Critters style, and lifecycle.sprout — the colour glyph the Sow now
-            row already carried (event.seed_saved is mono). */}
-        <SheetRowLink
-          to={SEEDS_PATH}
-          onClick={closeMore}
-          data-testid="more-seeds"
-          style={{ ...menuRowStyle, alignItems: 'flex-start' }}
-        >
-          <Icon name="lifecycle.sprout" size={22} decorative style={{ lineHeight: 1.2 }} />
-          <span style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: '1rem', fontWeight: 500 }}>Seeds</span>
-            <span style={{ fontSize: '0.78rem', color: P.light }}>My seeds · Saved seeds · Sow now</span>
-          </span>
-        </SheetRowLink>
-        {/* V4-NAVHARVEST-001 / V4-PUTUPENGINE-001 — BOTH the Harvests row and the Put-Up row that
-            lived here were PROMOTED to the tab bar, not duplicated: two doors to one destination is
-            the redundant door-pair the IA work exists to merge. Put-Up's original placement
-            (V4-HARVESTCENTER-001, design V101 §6 dec.2 → route under More) is superseded by Dave's
-            2026-08-20 ruling; that row was an `overlay` flyover, the tab is a full-page landing.
-            The three PREFILL doors are untouched — EventNew PreserveOffer, PutUpFromPlanting and
-            PutUpUseSoonBand are content affordances carrying location.state.prefill, not nav rows,
-            and they still want the flyover. */}
-        <SheetRowLink to="/achievements" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="nav.achievements" size={22} decorative />Achievements
-        </SheetRowLink>
-        {/* Catch-up badge — gated behind CATCH_UP_EDITOR_SHIPPED (currently off).
-            BUG-BACKNAVMORE-001 NOTE: if this ever ships, CatchUpBadge's inner link must adopt the
-            SheetRowLink consume-on-navigate contract or its tap will orphan the armed Back entry. */}
-        {CATCH_UP_EDITOR_SHIPPED && (
-          <div data-testid="catch-up-nav-item" onClick={closeMore} style={{ padding: '12px 24px 4px' }}>
-            <CatchUpBadge />
-          </div>
-        )}
-
-        <SectionLabel>Rewards</SectionLabel>
-        {/* Critters — ambient reward surface (Reward UX V102): distinguished by placement +
-            subtitle, NEVER by a badge/count/alert. */}
-        <SheetRowLink
-          to="/collection"
-          onClick={closeMore}
-          style={{ ...menuRowStyle, alignItems: 'flex-start' }}
-        >
-          <Icon name="nav.critters" size={22} decorative style={{ lineHeight: 1.2 }} />
-          <span style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: '1rem', fontWeight: 500 }}>Critters</span>
-            <span style={{ fontSize: '0.78rem', color: P.light }}>Who&apos;s been visiting</span>
-          </span>
-        </SheetRowLink>
-
-        <SectionLabel>Help &amp; account</SectionLabel>
-        <SheetRowLink to="/helper" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="nav.helper" size={22} decorative />Garden Helper
-        </SheetRowLink>
-        <SheetRowLink to="/settings" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="action.settings" size={22} decorative />Settings
-        </SheetRowLink>
-        {/* V4-HANDEDNESSCONTROLS-001 (BD-054). Its own row rather than a child of Settings because
-            /settings is still the notifications redirect — see SettingsControls.jsx on why the
-            /settings parent refactor was deliberately left alone. */}
-        <SheetRowLink to="/settings/controls" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="action.settings" size={22} decorative />Controls
-        </SheetRowLink>
-        <SheetRowLink to="/about" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="action.info" size={22} decorative />About
-        </SheetRowLink>
-        <SheetRowLink to="/releases" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="nav.notes" size={22} decorative />Release Notes<WhatsNewDot variant="inline" />
-        </SheetRowLink>
-
-        {/* OPS-DEBUGMENU-001 — the ONLY nav entry to the diagnostic surfaces, and the reason it has
-            to exist at all: /admin/classify, /admin/garden-activity and /admin/voice-debug were each
-            shipped "unlinked, reachable by URL", which is fine on a desktop and means UNREACHABLE in
-            an installed PWA. Dave runs this from the Android home screen — no address bar — so a
-            session shipped him a voice probe and then twice told him to type a URL he could not
-            type. Dave 2026-08-27: "add a Debug / Smoke menu with quick links we can build in."
-            LAST ROW BY DESIGN, below Release Notes and above Sign out: it is the least-used entry in
-            the menu and must not push a daily one down. NOT client-gated — the app's convention is
-            server-side ADMIN_CLERK_SUBS with no client admin list (GardenActivity.jsx,
-            useShareToFacebook.js), and hiding a row is discoverability, not authorisation. Dave
-            2026-08-27: "this is still only me using it right now." */}
-        <SheetRowLink to="/admin" onClick={closeMore} style={menuRowStyle}>
-          <Icon name="mode.desk" size={22} decorative />Debug &amp; smoke
-        </SheetRowLink>
+        {view.sections.map(section => section.rows.length > 0 && (
+          <React.Fragment key={section.key}>
+            {section.label && <SectionLabel>{section.label}</SectionLabel>}
+            {section.rows.map(renderRow)}
+          </React.Fragment>
+        ))}
 
         {/* Sign Out — inline 2-step confirm (BottomNav-owned; Sheet stays a dumb container).
             A session-ending action must not be an impulsive mis-tap target. */}
@@ -606,7 +642,7 @@ export default function BottomNav() {
           )
         })}
 
-        <button onClick={() => { closeCreate(); setShowMore(s => !s) }}
+        <button onClick={toggleMore}
           aria-expanded={showMore} aria-label="More navigation options"
           style={{
             flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',

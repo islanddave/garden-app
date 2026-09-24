@@ -618,6 +618,36 @@ const A = {
     svg24: '<path d="M6.6 16.1c1-1.2 1.5-2.8 1.5-4.4V10a3.9 3.9 0 0 1 7.8 0v1.7c0 1.6 0.5 3.2 1.5 4.4z"/><path d="M4.9 16.1h14.2"/><path d="M10 19.1a2 2 0 0 0 4 0"/><path d="M4.6 4.6 19.4 19.4"/>',
     svg18: '<path d="M6.4 16c1.05-1.25 1.6-2.9 1.6-4.6V9.7a4 4 0 0 1 8 0v1.7c0 1.7 0.55 3.35 1.6 4.6z"/><path d="M4.6 16h14.8"/><path d="M4.4 4.4 19.6 19.6"/>',
   },
+  // ── V5-NAVCUSTOM-001 — the More-menu PIN (D2: a pin button on every More row). A two-state
+  //    control like action.heart: the base is the OUTLINE (not pinned) and `filled` is the pinned
+  //    state. Filled is a COLOUR variant (Dave prefers colour icons; the nav.today / nav.garden
+  //    pattern — base mono, colour rides the variant, so only the pin button asks for it). The state
+  //    is carried by SHAPE (hollow vs solid) and by the button's aria-pressed and name, never by hue
+  //    alone (SC 1.4.1). A text star would fail iconWire2 (U+2600–27BF) and is not what "pin" means.
+  //
+  //    An upright PUSH PIN — cap, barrel, flared collar, needle — the mark Android's own apps use
+  //    for "pin to the top". Deliberately NOT a map marker: facet.location is the teardrop-and-ring
+  //    pin for a zone, and the two sit on the same More sheet (Zones is a row), so they must not
+  //    converge. The colour head is solid (no interior counter) so the region-seam gate has no
+  //    seam to find, and the needle is its own region so it reads as metal, not as more head. ──
+  'action.pin': {
+    class: 'mono', register: 'functional', variant: 'outline',
+    regionIntent: { head: 'cap, barrel and collar — one solid terra head', needle: 'the point — metal grey' },
+    colorFills: { head: 'pinHead', needle: 'pinNeedle' },
+    svg24: '<path d="M8.2 3.6h7.6"/><path d="M9.8 3.6v5L6.6 12.8h10.8l-3.2-4.2v-5"/><path d="M12 12.8v7.8"/>',
+    // 18: same three parts, the barrel widened a step so its counter stays open at the heavier
+    // small-master stroke, and the needle shortened to keep the collar the widest thing on the mark.
+    svg18: '<path d="M8.2 4h7.6"/><path d="M9.6 4v4.8L6.4 12.8h11.2l-3.2-4v-4.8"/><path d="M12 12.8v7.2"/>',
+    variants: {
+      filled: {
+        class: 'color-candidate',
+        // The needle is drawn FIRST so the head paints over its round cap: drawn after, the grey cap
+        // pokes up into the terra collar and reads as a notch.
+        svg24: '<path data-region="needle" d="M12 13.2v7.4" fill="none" stroke="currentColor"/><path data-region="head" d="M8.6 2.8h6.8a.8.8 0 0 1 0 1.6h-1.2v4.2l3.6 4v1H6.2v-1l3.6-4V4.4H8.6a.8.8 0 0 1 0-1.6z" fill="currentColor" stroke="none"/>',
+        svg18: '<path data-region="needle" d="M12 13.2v6.8" fill="none" stroke="currentColor"/><path data-region="head" d="M8.6 3.2h6.8a.8.8 0 0 1 0 1.6h-1.2v4l3.6 3.8v1H6.2v-1l3.6-3.8v-4H8.6a.8.8 0 0 1 0-1.6z" fill="currentColor" stroke="none"/>',
+      },
+    },
+  },
   // ── V4-ICON-001 inventory-type family (2 keys). The inventory_items `type` CHECK is exactly
   //    ('consumable','durable') — a closed two-value set, not an open family — so this namespace
   //    is complete at two and is not a stub. Both are drawn rather than borrowed: nothing in the

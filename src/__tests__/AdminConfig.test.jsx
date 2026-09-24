@@ -1,214 +1,367 @@
 /**
  * src/__tests__/AdminConfig.test.jsx
  *
- * V5-ADMINCENTER-001 — the admin centre's first surface.
+ * V5-NAVCUSTOM-001 — "Your tab bar", the per-person bar editor (D3: only Dave sees it; D4: it changes
+ * his bar only). Rewritten deliberately from the V5-ADMINCENTER-001 global-order editor.
  *
- * Three properties, in descending order of how much they matter:
- *   1. AUTHORIZATION IS THE SERVER'S. A 403 on the WRITE swaps the page for a neutral placard. There
- *      is no client admin list and this file asserts that there is none — inventing one would
- *      reverse a decision recorded in three separate files.
- *   2. THE EDITOR CAN ONLY REORDER. Every affordance is a move; nothing removes a row. That is v1's
- *      scope and it is enforced at the resolver, but a UI that offered a delete button would be
- *      writing configs the renderer silently ignores, which is worse than not offering it.
- *   3. THE SAVE TELLS THE TRUTH. A refusal, a rejected order and an outage are three different
- *      outcomes and the page distinguishes all three. It never reports a save it did not make.
+ * Driven through the REAL PrefsProvider and NavPrefsProvider with only the network edge stubbed
+ * (fetchNotificationPrefs, saveBarLayout), because the defect this page most needed fixing lives in
+ * the gap between them: the old editor seeded itself ONCE, from the shipped default when the read was
+ * slow, so a Save could wipe a stored layout with a value nobody chose.
  *
- * The store is GLOBAL (public.app_config, keyed by `key` alone) as of Dave's 2026-09-08 ruling, not
- * per-user — which is what turns property 1 from a nicety into a privilege boundary: a save here
- * changes Jen's bar too.
+ * Properties, in descending order of how much they matter:
+ *   1. SAVE NEVER WRITES A VALUE NOBODY CHOSE. Disabled until the server's value is read; the editor
+ *      follows that value until the person edits; a failed read keeps Save off and says so.
+ *   2. TODAY AND ＋ CANNOT LEAVE THE BAR. "In bar" exists on Garden, Harvests and Put-Up only.
+ *   3. THE PREVIEW IS THE BAR THEY WILL GET, More last, and names what moves into More.
+ *   4. WHO SEES IT IS THE SERVER'S CALL (can_edit_bar). There is no client admin list.
+ *   5. THE SAVE TELLS THE TRUTH: a rejection, an outage and a success read differently.
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act, within } from '@testing-library/react'
+import { render, screen, fireEvent, act, within, cleanup } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const { saveSpy, configRef, refreshSpy } = vi.hoisted(() => ({
-  saveSpy: vi.fn(async () => ({ ok: true, config: {} })),
-  configRef: { current: null },
-  refreshSpy: vi.fn(async () => null),
+const { fetchPrefsSpy, saveSpy } = vi.hoisted(() => ({
+  fetchPrefsSpy: vi.fn(),
+  saveSpy: vi.fn(),
 }))
 
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
+vi.mock('../context/AuthContext.jsx', () => ({ useAuth: () => ({ user: { id: 'dave' } }) }))
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: vi.fn(), getToken: vi.fn(async () => 'token') }),
 }))
-vi.mock('../context/AppConfigContext.jsx', () => ({
-  useAppConfig: () => ({ appConfig: configRef.current, appConfigLoaded: true, refreshAppConfig: refreshSpy }),
+vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
+  ...(await orig()),
+  fetchNotificationPrefs: fetchPrefsSpy,
+  saveBarLayout: saveSpy,
+  saveMorePins: vi.fn(async () => ({ ok: true })),
 }))
-vi.mock('../lib/appConfigClient.js', () => ({ saveNavTabs: saveSpy }))
 
 import AdminConfig from '../pages/AdminConfig.jsx'
+import { PrefsProvider } from '../context/PrefsContext.jsx'
+import { NavPrefsProvider, BAR_LAYOUT_CACHE_KEY, useNavLayout } from '../context/NavPrefsContext.jsx'
 import { DEFAULT_NAV_TABS } from '../lib/navConfig.js'
 
 const rows = () => screen.getAllByTestId('nav-order-row').map(r => r.getAttribute('data-tab-key'))
+const preview = () => screen.getAllByTestId('bar-preview-slot').map(s => s.getAttribute('data-tab-key'))
 const moveDown = (label) => fireEvent.click(screen.getByLabelText(`Move ${label} down`))
 const moveUp = (label) => fireEvent.click(screen.getByLabelText(`Move ${label} up`))
+const inBar = (label) => screen.getByLabelText(`${label} in bar`)
+const saveButton = () => screen.getByText('Save')
+
+const prefs = (barLayout, canEdit = true) => ({ bar_layout: barLayout, more_pins: null, can_edit_bar: canEdit })
+const tree = () => <PrefsProvider><NavPrefsProvider><AdminConfig /></NavPrefsProvider></PrefsProvider>
+async function open(serverPrefs = prefs(null)) {
+  fetchPrefsSpy.mockResolvedValue(serverPrefs)
+  let view
+  await act(async () => { view = render(tree()) })
+  return view
+}
 
 beforeEach(() => {
-  configRef.current = null
-  saveSpy.mockClear().mockResolvedValue({ ok: true, config: {} })
-  refreshSpy.mockClear()
+  fetchPrefsSpy.mockReset()
+  saveSpy.mockReset().mockResolvedValue({ ok: true })
 })
 
-describe('AdminConfig — the editor', () => {
-  it('opens on the shipped order when nothing is configured', () => {
-    render(<AdminConfig />)
+describe('who sees the editor — the server’s can_edit_bar, nothing else', () => {
+  // KILLING MUTATION: drop the canEditBar gate. RESULT: RED — Jen would see an editor D3 kept from her.
+  it('shows the neutral placard when the server says this person may not edit', async () => {
+    await open(prefs(null, false))
+    expect(screen.getByRole('status').textContent).toBe('Nothing to see here.')
+    expect(screen.queryByTestId('nav-order-editor')).toBeNull()
+  })
+
+  it('shows the placard when the server never said (no flag at all)', async () => {
+    await open({ bar_layout: null, more_pins: null })
+    expect(screen.queryByTestId('nav-order-editor')).toBeNull()
+  })
+
+  it('shows the editor, titled for its owner, when the server says yes', async () => {
+    await open()
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Your tab bar')
+    expect(document.body.textContent).toMatch(/your tab bar only — nobody else’s/)
     expect(rows()).toEqual(DEFAULT_NAV_TABS)
   })
 
-  it('opens on the stored order when one is configured', () => {
-    configRef.current = { nav_tabs: ['harvests', 'today', 'create', 'garden', 'put-up'] }
-    render(<AdminConfig />)
+  // Asserted against the SOURCE, because the defect is a thing a future session would ADD in good
+  // faith ("hide the page from Jen" with a client list), and it would pass every render test here.
+  it('does not hardcode a Clerk sub or an admin allowlist', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../pages/AdminConfig.jsx'), 'utf8')
+    expect(src).not.toMatch(/user_[0-9A-Za-z]{20,}/)
+    expect(src).not.toMatch(/ADMIN_[A-Z_]*\s*=\s*\[/)
+    expect(src).not.toMatch(/isAdmin\s*[=:]/)
+  })
+})
+
+describe('the editor opens on what the server holds', () => {
+  it('opens on the stored order and the stored moves', async () => {
+    await open(prefs({ order: ['harvests', 'today', 'create', 'garden', 'put-up'], hidden: ['put-up'] }))
     expect(rows()).toEqual(['harvests', 'today', 'create', 'garden', 'put-up'])
+    expect(inBar('Put-Up').checked).toBe(false)
+    expect(inBar('Garden').checked).toBe(true)
   })
 
-  // The editor seeds from resolveNavTabs, not from the raw column, so a config the BAR is ignoring
-  // is not presented here as though it were live. Showing the stored-but-rejected value would make
-  // the page disagree with the nav for reasons a user cannot see.
-  it('opens on the shipped order when the stored value is one the bar rejects', () => {
-    configRef.current = { nav_tabs: ['today', 'today', 'garden', 'create', 'harvests'] }
-    render(<AdminConfig />)
+  // Seeded through resolveBarLayout, not the raw column: a value the BAR ignores is not presented
+  // here as though it were live. KILLING MUTATION: seed from prefs.bar_layout raw. RESULT: RED.
+  it('opens on the shipped layout when the stored value is one the bar rejects', async () => {
+    await open(prefs({ order: ['today', 'today', 'garden', 'create', 'harvests'], hidden: ['create'] }))
     expect(rows()).toEqual(DEFAULT_NAV_TABS)
+    expect(inBar('Put-Up').checked).toBe(true)
+  })
+})
+
+describe('THE STALE-SEED FIX — Save never writes a value nobody chose', () => {
+  // The read is SLOW: the cache says Dave may edit, but prefs have not answered. Before this fix the
+  // page seeded from the default right here and a Save wrote it.
+  // KILLING MUTATION: enable Save whenever dirty (drop the serverLayout requirement). RESULT: RED.
+  it('Save is disabled until the server’s value has been read, even after an edit', async () => {
+    localStorage.setItem(BAR_LAYOUT_CACHE_KEY, JSON.stringify({ userId: 'dave', layout: null, canEdit: true }))
+    let answer
+    fetchPrefsSpy.mockReturnValue(new Promise(r => { answer = r }))
+    await act(async () => { render(tree()) })
+    moveDown('Today')
+    expect(saveButton().disabled).toBe(true)
+    await act(async () => { answer(prefs(null)) })
+    expect(saveButton().disabled).toBe(false)
   })
 
-  it('moves a tab down and back up', () => {
-    render(<AdminConfig />)
+  // KILLING MUTATION: seed once at mount (useState(base)) instead of following the server value until
+  // the person edits. RESULT: RED — the editor keeps showing the default the slow read left behind.
+  it('an untouched editor switches to the server’s value when it lands — not the default', async () => {
+    localStorage.setItem(BAR_LAYOUT_CACHE_KEY, JSON.stringify({ userId: 'dave', layout: null, canEdit: true }))
+    let answer
+    fetchPrefsSpy.mockReturnValue(new Promise(r => { answer = r }))
+    await act(async () => { render(tree()) })
+    expect(rows()).toEqual(DEFAULT_NAV_TABS)
+    await act(async () => { answer(prefs({ order: ['garden', 'today', 'create', 'harvests', 'put-up'], hidden: ['harvests'] })) })
+    expect(rows()).toEqual(['garden', 'today', 'create', 'harvests', 'put-up'])
+    expect(inBar('Harvests').checked).toBe(false)
+    expect(saveButton().disabled).toBe(true)   // nothing changed yet
+  })
+
+  // KILLING MUTATION: drop the readFailed line, or treat a failed read as loaded. RESULT: RED.
+  it('a FAILED read keeps Save off and says the current bar could not be read', async () => {
+    localStorage.setItem(BAR_LAYOUT_CACHE_KEY, JSON.stringify({ userId: 'dave', layout: null, canEdit: true }))
+    await open(null)
+    expect(screen.getByTestId('bar-read-failed').textContent).toMatch(/could not be read/)
+    moveDown('Today')
+    expect(saveButton().disabled).toBe(true)
+  })
+
+  it('Save is inert until something actually changed', async () => {
+    await open()
+    expect(saveButton().disabled).toBe(true)
+    moveDown('Today')
+    expect(saveButton().disabled).toBe(false)
+    moveUp('Today')
+    expect(saveButton().disabled).toBe(true)
+  })
+})
+
+describe('moving tabs — Today and ＋ never leave the bar', () => {
+  // KILLING MUTATION: render the checkbox on every row. RESULT: RED.
+  it('offers "In bar" on Garden, Harvests and Put-Up only', async () => {
+    const { container } = await open()
+    const boxes = [...container.querySelectorAll('input[type="checkbox"]')].map(b => b.getAttribute('aria-label'))
+    expect(boxes).toEqual(['Garden in bar', 'Harvests in bar', 'Put-Up in bar'])
+    const fixed = screen.getAllByTestId('nav-order-fixed').map(f => f.closest('[data-testid="nav-order-row"]').getAttribute('data-tab-key'))
+    expect(fixed).toEqual(['today', 'create'])
+  })
+
+  it('unticking a tab moves it out of the preview and names where it goes', async () => {
+    await open()
+    fireEvent.click(inBar('Put-Up'))
+    expect(preview()).toEqual(['today', 'garden', 'create', 'harvests', 'more'])
+    expect(document.body.textContent).toMatch(/In More, at the top of “Your garden”: Put-Up\./)
+    fireEvent.click(inBar('Put-Up'))
+    expect(preview()).toEqual(['today', 'garden', 'create', 'harvests', 'put-up', 'more'])
+  })
+
+  // The preview is the bar THIS person gets, More last, in the edited order.
+  it('the preview follows the edited order and always ends in More', async () => {
+    await open()
+    moveDown('Today')
+    fireEvent.click(inBar('Harvests'))
+    expect(preview()).toEqual(['garden', 'today', 'create', 'put-up', 'more'])
+  })
+
+  it('moves a tab down and back up; the ends cannot walk off the list', async () => {
+    await open()
     moveDown('Today')
     expect(rows()).toEqual(['garden', 'today', 'create', 'harvests', 'put-up'])
     moveUp('Today')
     expect(rows()).toEqual(DEFAULT_NAV_TABS)
-  })
-
-  // The ends cannot walk off the list. `disabled` alone would not prove the handler is guarded —
-  // jsdom skips clicks on disabled buttons — so the guard is also asserted at the reducer level by
-  // the move() bounds check; what this pins is that the affordance is not offered.
-  it('cannot move the first tab up or the last tab down', () => {
-    render(<AdminConfig />)
     expect(screen.getByLabelText('Move Today up').disabled).toBe(true)
     expect(screen.getByLabelText('Move Put-Up down').disabled).toBe(true)
-    expect(screen.getByLabelText('Move Today down').disabled).toBe(false)
   })
 
-  // SCOPE, ASSERTED. v1 reorders; it does not hide. A remove/hide control would produce configs the
-  // renderer discards, and hiding a tab removes the only door to a page.
-  it('offers no way to remove or hide a tab', () => {
-    const { container } = render(<AdminConfig />)
-    const labels = [...container.querySelectorAll('button')].map(b => `${b.getAttribute('aria-label') ?? ''} ${b.textContent}`)
-    for (const l of labels) expect(l).not.toMatch(/hide|remove|delete|off/i)
-    expect(rows()).toHaveLength(DEFAULT_NAV_TABS.length)
-  })
-
-  it('every tab keeps a row however it is reordered', () => {
-    render(<AdminConfig />)
-    moveDown('Today'); moveDown('Today'); moveUp('Put-Up')
-    expect([...rows()].sort()).toEqual([...DEFAULT_NAV_TABS].sort())
-  })
-
-  it('Reset restores the shipped order', () => {
-    configRef.current = { nav_tabs: ['harvests', 'today', 'create', 'garden', 'put-up'] }
-    render(<AdminConfig />)
-    fireEvent.click(screen.getByText('Reset'))
+  // An unticked tab keeps its place, so ticking it back puts it where it was.
+  it('a moved tab keeps its place in the order', async () => {
+    await open()
+    fireEvent.click(inBar('Garden'))
     expect(rows()).toEqual(DEFAULT_NAV_TABS)
   })
 
-  it('Save is inert until something actually changed', () => {
-    render(<AdminConfig />)
-    expect(screen.getByText('Save order').disabled).toBe(true)
-    moveDown('Today')
-    expect(screen.getByText('Save order').disabled).toBe(false)
+  it('Reset restores the shipped order with nothing moved', async () => {
+    await open(prefs({ order: ['harvests', 'today', 'create', 'garden', 'put-up'], hidden: ['put-up', 'garden'] }))
+    fireEvent.click(screen.getByText('Reset'))
+    expect(rows()).toEqual(DEFAULT_NAV_TABS)
+    for (const l of ['Garden', 'Harvests', 'Put-Up']) expect(inBar(l).checked).toBe(true)
+    expect(saveButton().disabled).toBe(false)
   })
 })
 
-describe('AdminConfig — the write', () => {
-  it('sends the edited order', async () => {
-    render(<AdminConfig />)
+describe('the write', () => {
+  it('sends exactly the edited order and moves', async () => {
+    await open()
     moveDown('Today')
-    await act(async () => { fireEvent.click(screen.getByText('Save order')) })
+    fireEvent.click(inBar('Put-Up'))
+    await act(async () => { fireEvent.click(saveButton()) })
     expect(saveSpy).toHaveBeenCalledTimes(1)
-    expect(saveSpy.mock.calls[0][0].tabs).toEqual(['garden', 'today', 'create', 'harvests', 'put-up'])
+    expect(saveSpy.mock.calls[0][0].layout).toEqual({ order: ['garden', 'today', 'create', 'harvests', 'put-up'], hidden: ['put-up'] })
   })
 
-  it('re-reads the config after a successful save rather than trusting the echo', async () => {
-    render(<AdminConfig />)
-    moveDown('Today')
-    await act(async () => { fireEvent.click(screen.getByText('Save order')) })
-    expect(refreshSpy).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('status').textContent).toMatch(/Saved/)
+  // KILLING MUTATION: drop applyLayout from the success path. RESULT: RED — the bar (read here through
+  // the same hook BottomNav uses) would not change until the next launch, after Dave pressed Save and
+  // was told it had. The re-read alone cannot do it: a mid-session prefs read never re-lays the bar.
+  it('on success the bar changes at once (applyLayout) and prefs are re-read', async () => {
+    function BarProbe() {
+      return <span data-testid="live-bar">{useNavLayout().bar.map(t => t.key).join(',')}</span>
+    }
+    fetchPrefsSpy.mockResolvedValue(prefs(null))
+    await act(async () => { render(<PrefsProvider><NavPrefsProvider><AdminConfig /><BarProbe /></NavPrefsProvider></PrefsProvider>) })
+    expect(screen.getByTestId('live-bar').textContent).toBe(DEFAULT_NAV_TABS.join(','))
+    fireEvent.click(inBar('Garden'))
+    fetchPrefsSpy.mockResolvedValue(prefs({ order: [...DEFAULT_NAV_TABS], hidden: ['garden'] }))
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(screen.getByTestId('live-bar').textContent).toBe('today,create,harvests,put-up')
+    expect(JSON.parse(localStorage.getItem(BAR_LAYOUT_CACHE_KEY)).layout).toEqual({ order: [...DEFAULT_NAV_TABS], hidden: ['garden'] })
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('status').textContent).toBe('Saved. Your tab bar has changed.')
+    expect(inBar('Garden').checked).toBe(false)
+    expect(saveButton().disabled).toBe(true)
   })
 
-  // THE PROPERTY THIS PAGE EXISTS TO GET RIGHT. Authorization is the Lambda's ADMIN_CLERK_SUBS
-  // allowlist; a refusal reaches the client as a 403 on the write, and the surface goes neutral —
-  // the same placard GardenActivity shows, revealing nothing about what is behind it.
-  it('a 403 on the write replaces the page with the neutral placard', async () => {
-    saveSpy.mockResolvedValue({ ok: false, status: 403 })
-    render(<AdminConfig />)
-    moveDown('Today')
-    await act(async () => { fireEvent.click(screen.getByText('Save order')) })
-    expect(screen.getByRole('status').textContent).toBe('Nothing to see here.')
-    expect(screen.queryByTestId('nav-order-editor')).toBeNull()
-    expect(screen.queryByText(/tab bar order/i)).toBeNull()
-  })
-
-  // A refusal must not be reported as a failure of the same kind as an outage, and neither may be
-  // reported as a save. 400 is the route rejecting the ORDER — anything that is not a permutation of
-  // the shipped five, since v1 is reorder-only.
-  it('reports a rejected order instead of claiming a save', async () => {
+  // A rejection must not be reported like an outage, and neither may be reported as a save.
+  it('reports a rejected layout instead of claiming a save, and keeps the edit on screen', async () => {
     saveSpy.mockResolvedValue({ ok: false, status: 400 })
-    render(<AdminConfig />)
+    await open()
     moveDown('Today')
-    await act(async () => { fireEvent.click(screen.getByText('Save order')) })
-    const msg = screen.getByRole('status').textContent
-    expect(msg).toMatch(/Not saved/)
-    expect(msg).toMatch(/rejected this order/)
-    expect(refreshSpy).not.toHaveBeenCalled()
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(screen.getByRole('status').textContent).toMatch(/Not saved — the server rejected this layout/)
+    expect(rows()).toEqual(['garden', 'today', 'create', 'harvests', 'put-up'])
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(1)   // no re-read on a failure
   })
 
-  it('reports an unreachable server distinctly from a refusal', async () => {
+  it('reports an unreachable server distinctly, and never swaps to the placard for it', async () => {
     saveSpy.mockResolvedValue({ ok: false, status: 0 })
-    render(<AdminConfig />)
+    await open()
     moveDown('Today')
-    await act(async () => { fireEvent.click(screen.getByText('Save order')) })
+    await act(async () => { fireEvent.click(saveButton()) })
     expect(screen.getByRole('status').textContent).toMatch(/could not reach the server/i)
-    // NOT the placard: an outage is not a refusal, and treating it as one would tell Dave he is not
-    // an admin every time his phone drops the network.
     expect(screen.getByTestId('nav-order-editor')).toBeTruthy()
   })
+})
 
-  it('leaves the edited order on screen after a failed save, so the work is not lost', async () => {
-    saveSpy.mockResolvedValue({ ok: false, status: 400 })
-    render(<AdminConfig />)
+// QA MINOR-1 — the re-read AFTER a successful Save. The PATCH's 200 means the server stored exactly the
+// saved layout, so that is the editor's server value for the rest of the visit, whatever the re-read
+// returns. KILLING MUTATIONS: drop the savedLayout override of serverLayout; let readFailed ignore it.
+// RESULT: RED — "Saved" and "could not be read" together, the old bar back in the editor, Save dead.
+describe('after a successful Save, the re-read cannot take the saved bar away', () => {
+  it('a FAILED re-read: no "could not be read", the saved bar stays, and Save still works', async () => {
+    await open()
+    fireEvent.click(inBar('Garden'))
+    fetchPrefsSpy.mockResolvedValue(null)                 // the re-read fails
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(screen.getByRole('status').textContent).toBe('Saved. Your tab bar has changed.')
+    expect(screen.queryByTestId('bar-read-failed')).toBeNull()
+    expect(inBar('Garden').checked).toBe(false)
+    expect(saveButton().disabled).toBe(true)             // nothing changed since the save…
+    fireEvent.click(inBar('Harvests'))
+    expect(saveButton().disabled).toBe(false)            // …and Save did not die
+  })
+
+  it('an OLDER re-read (a GET that left before the Save) does not roll the editor back', async () => {
+    await open()
+    fireEvent.click(inBar('Garden'))
+    fetchPrefsSpy.mockResolvedValue(prefs(null))          // the pre-save row
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(inBar('Garden').checked).toBe(false)
+    expect(saveButton().disabled).toBe(true)
+    expect(preview()).toEqual(['today', 'create', 'harvests', 'put-up', 'more'])
+  })
+})
+
+// QA RE-3 — a prefs body the service worker served from its cache (marked like fetchNotificationPrefs
+// marks one) is this phone's LAST COPY, not the server's value: shown and labelled, never saved on top
+// of. And the editor re-reads once when it opens on such a body, so it is not stuck until a cold start.
+describe('a body served from the SW cache is this phone’s last copy, not the server’s value', () => {
+  const FROM_CACHE = Symbol.for('garden-app.fromCache')
+  const marked = (body) => Object.defineProperty(body, FROM_CACHE, { value: true, enumerable: false })
+  const HARVESTS_MOVED = { order: [...DEFAULT_NAV_TABS], hidden: ['harvests'] }
+  const settle = () => act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
+  // The QA probe (qa2.adminseed): a marked body with Harvests moved.
+  // KILLING MUTATION: count a last copy as read (serverLayout from any body). RESULT: RED — Save
+  // enables after one edit, on a starting point nobody checked.
+  it('shows it, says what it is, and keeps Save off even after an edit', async () => {
+    await open(marked(prefs(HARVESTS_MOVED)))                 // the re-read answers the same copy
+    await settle()
+    expect(inBar('Harvests').checked).toBe(false)            // shown…
+    expect(screen.getByTestId('bar-last-copy').textContent).toMatch(/last copy of your tab bar saved on this phone/)
+    expect(screen.queryByTestId('bar-read-failed')).toBeNull()
     moveDown('Today')
-    await act(async () => { fireEvent.click(screen.getByText('Save order')) })
-    expect(rows()).toEqual(['garden', 'today', 'create', 'harvests', 'put-up'])
+    expect(saveButton().disabled).toBe(true)                 // …but never saved on top of
+  })
+
+  // KILLING MUTATION: drop the re-read on open. RESULT: RED — one read only, and the editor stays on
+  // the last copy with Save off until the next cold start.
+  it('re-reads once on open: a fresh answer replaces the last copy and Save works', async () => {
+    fetchPrefsSpy.mockResolvedValueOnce(marked(prefs(HARVESTS_MOVED)))
+    fetchPrefsSpy.mockResolvedValueOnce(prefs({ order: [...DEFAULT_NAV_TABS], hidden: ['garden'] }))
+    await act(async () => { render(tree()) })
+    await settle()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('bar-last-copy')).toBeNull()
+    expect(inBar('Garden').checked).toBe(false)              // the fresh value, not the copy
+    expect(inBar('Harvests').checked).toBe(true)
+    fireEvent.click(inBar('Garden'))
+    expect(saveButton().disabled).toBe(false)
+  })
+
+  // Once per visit: a copy that comes back again cannot turn the re-read into a loop.
+  // KILLING MUTATION: drop the once-per-visit latch. RESULT: RED — reads keep going out.
+  it('re-reads at most once per visit, and a failed boot read is re-read the same way', async () => {
+    fetchPrefsSpy.mockImplementation(async () => marked(prefs(HARVESTS_MOVED)))
+    await act(async () => { render(tree()) })
+    await settle()
+    await settle()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
+    cleanup()
+    fetchPrefsSpy.mockReset().mockResolvedValue(null)       // the boot read fails, and so does the retry
+    await act(async () => { render(tree()) })
+    await settle()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
   })
 })
 
-describe('AdminConfig — no client admin list', () => {
-  // Asserted against the SOURCE, because the defect is a thing a future session would ADD in good
-  // faith ("hide the page from Jen"), and it would pass every render-level test in this file.
-  // DebugMenu.jsx:18-26 records the decision: the real gate is server-side and fail-closed, and a
-  // client list is the thing an attacker edits. GardenActivity and useShareToFacebook say the same.
-  it('does not hardcode a Clerk sub or an admin allowlist', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../pages/AdminConfig.jsx'), 'utf8')
-    expect(src).not.toMatch(/user_[0-9A-Za-z]{20,}/)     // a Clerk sub literal
-    expect(src).not.toMatch(/ADMIN_[A-Z_]*\s*=\s*\[/)    // a local allowlist array
-    expect(src).not.toMatch(/isAdmin\s*[=:]/)            // a client-side admin predicate
-  })
-})
-
-describe('AdminConfig — reachability (the gate this surface was placed to inherit)', () => {
+describe('reachability (the gate this surface was placed to inherit)', () => {
   const ROOT = path.resolve(__dirname, '../..')
 
-  // DebugMenu.reachability.test.jsx already fails the build for a missing row. This asserts the two
-  // things it CANNOT: that the route path is single-quoted (a double-quoted path escapes its regex
-  // and passes it vacuously) and that the row Dave taps points where the route lives.
   it('registers /admin/config with a single-quoted path, as the reachability regex requires', () => {
     const appSrc = fs.readFileSync(path.join(ROOT, 'src/App.jsx'), 'utf8')
     const routes = [...appSrc.matchAll(/path:\s*'(\/admin\/[^']*)'/g)].map(m => m[1])
     expect(routes).toContain('/admin/config')
+  })
+
+  it('keeps its Back to Debug & smoke link', async () => {
+    await open()
+    expect(screen.getByText('Back to Debug & smoke').closest('a').getAttribute('href')).toBe('/admin')
   })
 
   it('has a row in the debug menu that a thumb can hit', async () => {

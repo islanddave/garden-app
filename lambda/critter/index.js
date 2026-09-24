@@ -10,16 +10,18 @@
 //   PATCH  /api/critters/viewed                    Mark unviewed → viewed (Stage 3 dot clear, race-window guarded)
 //   PATCH  /api/critters/species-prefs             D-INV-1 Option A: long-press love/meh weight
 //   POST   /api/notifications/garden-view-opened   Updates last_garden_view_at (Stage 4 reopen instrumentation §3.3)
-//   GET    /api/notifications/prefs                Read current prefs (stateless defaults)
-//   PATCH  /api/notifications/prefs                Persist toggle change
+//   GET    /api/notifications/prefs                Read current prefs (stateless defaults) + can_edit_bar
+//   PATCH  /api/notifications/prefs                Persist toggle change (incl. more_pins / bar_layout, V5-NAVCUSTOM-001)
 //   POST   /api/notifications/coachmark-dismissed  One-shot: writes coachmark_seen_at = now()
 //   POST   /api/notifications/opt-in-dismissed     One-shot: writes opt_in_prompt_seen_at = now() (suppression-flag fix §3.8)
-//   GET    /api/app-config                         GLOBAL installation config — ungated read, no row = shipped default
-//   PATCH  /api/app-config                         GLOBAL installation config — ADMIN_CLERK_SUBS gated (V5-ADMINCENTER-001)
+//   GET    /api/app-config                         DORMANT since V5-NAVCUSTOM-001 — was the global nav read
+//   PATCH  /api/app-config                         DORMANT since V5-NAVCUSTOM-001 — was the global nav write, ADMIN_CLERK_SUBS gated
 //
 // Scope: every route except the two /api/app-config ones is PER-USER (householdScope / created_by).
-// Those two are the exception and the only ones here that write a row no user owns — see the block
-// above them for why that makes the admin gate a prerequisite of the feature rather than a polish.
+// Those two write a row no user owns, which is why their PATCH keeps its admin gate. They are dormant:
+// Dave ruled on 2026-09-24 (D4) that the tab bar is per person, so the SPA stopped using them in
+// V5-NAVCUSTOM-001 and the per-person bar is bar_layout on the prefs route. They stay only so a client
+// still rolling out gets a 200 rather than a 404; removal is a follow-up (see the block above them).
 // Scope: ZERO RLS in current Neon. Lambda enforces via householdScope(clerk_sub) → created_by = ANY(${ids}).
 // Idempotency: POST /api/critters relies on UNIQUE INDEX idx_critter_state_source_event_id.
 //   PG 23505 (unique_violation) caught + returns existing row → idempotent success (revision §3.27).
@@ -33,7 +35,7 @@ import { householdScope } from './household.js'
 import {
   validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
   validateMarkViewedPatchBody, validateAppConfigPatchBody,
-  adminRefusal, projectAppConfig, APP_CONFIG_KEYS, UUID_RE,
+  adminRefusal, isAdmin, projectAppConfig, APP_CONFIG_KEYS, UUID_RE,
 } from './validators.js'
 
 // Deploy marker — fires once per cold start. Smoke step greps last 5min CloudWatch for this string.
@@ -97,11 +99,15 @@ async function readUserPrefs(sql, clerkSub) {
            garden_group_by, garden_sort_order, garden_expanded,
            garden_bloom_seen, garden_helper_rung1_seen,
            today_skipped, log_many_all_selected, whats_new_last_seen,
+           more_pins, bar_layout,
            created_at, updated_at
       FROM public.user_notification_prefs
      WHERE created_by = ${clerkSub}
      LIMIT 1
   `
+  // V5-NAVCUSTOM-001: this list names more_pins and bar_layout, and it runs on every user's boot. It
+  // must never reach an environment before migrations/v5-navcustom-001 — a missing column 500s this
+  // read for everyone and every per-person pref resets (README-BUILD.md there has the order).
   if (rows.length > 0) return rows[0]
   return {
     critter_visit: 'in_app_only',
@@ -122,6 +128,9 @@ async function readUserPrefs(sql, clerkSub) {
     today_skipped: null,
     log_many_all_selected: null,
     whats_new_last_seen: null,
+    // V5-NAVCUSTOM-001. NULL = no pins (the shipped More menu) and the shipped bar, per CONTRACT §2.
+    more_pins: null,
+    bar_layout: null,
     created_at: null, updated_at: null,
   }
 }
@@ -362,9 +371,12 @@ export const handler = async (event) => {
     }
 
     // ── Route 7: GET /api/notifications/prefs (stateless defaults) ──────
+    // can_edit_bar (V5-NAVCUSTOM-001) is computed per request from ADMIN_CLERK_SUBS and never stored.
+    // It decides only who SEES the bar editor (D3: today, Dave); every bar_layout write goes to the
+    // caller's own row and needs no admin check. Fail-closed: unset allowlist -> false for everyone.
     if (rawPath === '/api/notifications/prefs' && method === 'GET') {
       const prefs = await readUserPrefs(sql, userId)
-      return resp(200, prefs)
+      return resp(200, { ...prefs, can_edit_bar: isAdmin(userId, process.env) })
     }
 
     // ── Route 8: PATCH /api/notifications/prefs ─────────────────────────
@@ -393,8 +405,16 @@ export const handler = async (event) => {
       const ts = tsObj == null ? null : JSON.stringify(tsObj)
       const lma = body.log_many_all_selected ?? null
       const wnls = body.whats_new_last_seen ?? null
+      // V5-NAVCUSTOM-001. Both jsonb, so stringified here and cast ::jsonb at every binding site below,
+      // exactly as today_skipped: the driver would otherwise send a JS array as a Postgres array
+      // literal, and a bare NULL parameter has no type Postgres can infer. [] (and the shipped-default
+      // bar_layout object) is how a client clears; null here means "leave the stored value alone".
+      const mpArr = body.more_pins ?? null
+      const mp = mpArr == null ? null : JSON.stringify(mpArr)
+      const blObj = body.bar_layout ?? null
+      const bl = blObj == null ? null : JSON.stringify(blObj)
       const rows = await sql`
-        INSERT INTO public.user_notification_prefs (created_by, critter_visit, quiet_hours_start, quiet_hours_end, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen, today_skipped, log_many_all_selected, whats_new_last_seen)
+        INSERT INTO public.user_notification_prefs (created_by, critter_visit, quiet_hours_start, quiet_hours_end, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen, today_skipped, log_many_all_selected, whats_new_last_seen, more_pins, bar_layout)
         VALUES (
           ${userId},
           COALESCE(${cv}, 'in_app_only'),
@@ -407,7 +427,9 @@ export const handler = async (event) => {
           ${ghr},
           ${ts}::jsonb,
           ${lma}::boolean,
-          ${wnls}::text
+          ${wnls}::text,
+          ${mp}::jsonb,
+          ${bl}::jsonb
         )
         ON CONFLICT (created_by) DO UPDATE SET
           critter_visit      = COALESCE(${cv}, public.user_notification_prefs.critter_visit),
@@ -421,9 +443,11 @@ export const handler = async (event) => {
           today_skipped        = COALESCE(${ts}::jsonb, public.user_notification_prefs.today_skipped),
           log_many_all_selected = COALESCE(${lma}::boolean, public.user_notification_prefs.log_many_all_selected),
           whats_new_last_seen  = COALESCE(${wnls}::text, public.user_notification_prefs.whats_new_last_seen),
+          more_pins            = COALESCE(${mp}::jsonb, public.user_notification_prefs.more_pins),
+          bar_layout           = COALESCE(${bl}::jsonb, public.user_notification_prefs.bar_layout),
           updated_at         = now()
         RETURNING critter_visit, quiet_hours_start, quiet_hours_end,
-                  coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen, today_skipped, log_many_all_selected, whats_new_last_seen, updated_at
+                  coachmark_seen_at, opt_in_prompt_seen_at, last_garden_view_at, garden_group_by, garden_sort_order, garden_expanded, garden_bloom_seen, garden_helper_rung1_seen, today_skipped, log_many_all_selected, whats_new_last_seen, more_pins, bar_layout, updated_at
       `
       return resp(200, rows[0])
     }
@@ -455,31 +479,28 @@ export const handler = async (event) => {
       return resp(200, rows[0])
     }
 
-    // ── Routes 11+12: /api/app-config — GLOBAL config (V5-ADMINCENTER-001) ──────
+    // ── Routes 11+12: /api/app-config — DORMANT since V5-NAVCUSTOM-001 (was global config, V5-ADMINCENTER-001) ──
     //
-    // WHY THIS PATH IS ON THIS LAMBDA. It is a new rawPath on an already-warm origin, not a new
-    // origin. The preconnect budget is closed at four and bootPaint.static.test.js asserts the set
-    // equals WARM_PATHS — but it dedupes by ORIGIN, not by path (warmOrigins.js:92-93), so this
-    // costs zero preconnects, zero new VITE_API_* variables and zero new Function URLs. Same move,
-    // and same reasoning, as Instagram reusing the Facebook Function URL (api.js:71-76). The nav
-    // already talks to this origin: BottomNavDot fetches /api/critters/active on mount.
+    // THE SPA STOPPED USING THESE TWO ROUTES IN V5-NAVCUSTOM-001. Dave ruled on 2026-09-24 (D4) that
+    // the tab bar is per person — only his bar changes, and Jen's never shifts — which reverses his
+    // 2026-09-08 ruling that the nav order is one setting for the whole installation. The per-person
+    // bar is bar_layout on the prefs route (Routes 7 and 8). These two stay, behaviour unchanged, only
+    // so a client that is still rolling out gets a 200 rather than a 404; removing them is a follow-up
+    // ledger row, not this release. Nothing new should call them.
     //
-    // EVERY OTHER ROUTE ON THIS LAMBDA IS PER-USER; THESE TWO ARE NOT. public.app_config is keyed by
-    // `key` alone — no created_by, no user_id — so a write here changes the nav for the whole
-    // installation. That is Dave's 2026-09-08 ruling, and it is what makes the gate below a
-    // prerequisite of the feature rather than a tidy-up: under a per-user store the upsert bound
-    // created_by to the caller's own token id and every write was self-scoped by construction. A
+    // While they exist, the reasoning that shaped them still holds. They sit on this Lambda because a
+    // new rawPath on an already-warm origin cost zero preconnects, zero new VITE_API_* variables and
+    // zero new Function URLs (bootPaint.static.test.js dedupes the preconnect set by ORIGIN,
+    // warmOrigins.js:92-93). And they are the only routes here that are NOT per-user:
+    // public.app_config is keyed by `key` alone, so a write changes the row for everyone, and a
     // self-scoped write to a SHARED row is not self-scoped. RLS cannot help — app_config's policies
     // admit any authenticated caller, and this Lambda connects as a role that bypasses them anyway.
+    // That is why the PATCH below keeps its admin gate for as long as the route exists.
     if (rawPath === '/api/app-config' && method === 'GET') {
-      // UNGATED ON PURPOSE, and only the read. Every client needs the nav order at boot, including
-      // the non-admin one: gating this would render Jen an empty-or-default bar while Dave's differs,
-      // which is the opposite of an installation-wide setting. Nav layout is not a secret.
-      //
-      // NO ROW = SHIPPED DEFAULT. app_config has zero rows, so "never configured" is already the
-      // natural state and needs no seeding. Every key is reported explicitly as null when absent
-      // rather than omitted, so the client sees "unset" instead of "undefined" — and resolveNavTabs
-      // maps null to the shipped bar. A failed read degrades to today's nav, never to an empty one.
+      // UNGATED ON PURPOSE, and only the read: while clients read the nav order from here at boot, the
+      // non-admin one needed it too, and nav layout is not a secret. NO ROW = SHIPPED DEFAULT:
+      // app_config has zero rows on prod, and every key is reported explicitly as null when absent, so
+      // an old client still reading this route keeps getting "unset" and draws the shipped bar.
       const rows = await sql`
         SELECT key, value FROM public.app_config WHERE key = ANY(${APP_CONFIG_KEYS})
       `
@@ -489,9 +510,9 @@ export const handler = async (event) => {
     if (rawPath === '/api/app-config' && method === 'PATCH') {
       // GATE FIRST, BEFORE THE BODY IS EVEN PARSED — the order facebook-share/index.js:9 documents
       // ("auth -> admin gate -> kill switch -> validate"). A non-admin is refused without the
-      // payload being read. This is the ONLY thing standing between either household member and the
-      // installation's nav; there is no client-side admin list and adding one would reverse a
-      // decision recorded in three files (DebugMenu.jsx:18-26).
+      // payload being read. It is the only thing standing between either household member and this
+      // shared row, so it stays for as long as the dormant route can write it; there is no client-side
+      // admin list and adding one would reverse a decision recorded in three files (DebugMenu.jsx:18-26).
       const refusal = adminRefusal(userId, process.env)
       if (refusal) return resp(refusal.status, { error: refusal.error })
       let body

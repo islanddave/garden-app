@@ -1,5 +1,5 @@
 {
-  "version": "4.148.0",
+  "version": "4.149.0",
   "date": "2026-09-24",
   "highlights": [
     "Seeds: Back from a seed card's \"Saved from…\" link now returns you to the same spot in Saved seeds instead of the top. The same fix keeps your place when you come back to My seeds and the other lists that remember where you were.",

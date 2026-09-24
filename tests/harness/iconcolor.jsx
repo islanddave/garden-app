@@ -12,22 +12,23 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 import Icon from '../../src/components/Icon.jsx'
 import { P } from '../../src/lib/constants.js'
+import { DEFAULT_NAV_TABS, TAB_REGISTRY } from '../../src/lib/navConfig.js'
 
-const TABS = [
-  { key: 'nav.today', label: 'Today' },
-  { key: 'nav.garden', label: 'Garden' },
-  { key: 'nav.harvests', label: 'Harvests' },
-  { key: 'nav.putup', label: 'Put-Up' },
-]
+// V5-NAVCUSTOM-001 — DERIVED from the registry and the shipped order rather than hand-copied: the bar
+// is a per-person layout now, and a copy here would silently keep drawing the old bar after the
+// registry changed. `key` is the icon key (the harness's unit), `fabAt` the FAB's shipped slot.
+const TABS = DEFAULT_NAV_TABS.filter(k => !TAB_REGISTRY[k].highlight)
+  .map(k => ({ key: TAB_REGISTRY[k].iconName, label: TAB_REGISTRY[k].label }))
+const fabAt = DEFAULT_NAV_TABS.findIndex(k => TAB_REGISTRY[k].highlight)
 
 // Mirrors BottomNav's own markup closely enough to judge spacing and mass; the FAB is inserted at
-// index 2 exactly as the real bar does, because the gap it leaves changes how the row scans.
+// its shipped slot exactly as the real bar does, because the gap it leaves changes how the row scans.
 function Bar({ filled, activeKey = 'nav.today', testid }) {
   return (
     <div className="bar" data-testid={testid}>
       {TABS.map((t, i) => (
         <React.Fragment key={t.key}>
-          {i === 2 && (
+          {i === fabAt && (
             <div className="tab">
               <span className="fab"><Icon name="nav.plus" size={22} decorative style={{ color: '#fff' }} /></span>
             </div>

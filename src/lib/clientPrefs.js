@@ -44,6 +44,16 @@ export const CLIENT_PREF_KEYS = [
   // wrong hand silently is not recoverable by the person it happens to, because nothing on screen
   // says the layout was decided by someone else.
   'ui.handedness',
+  // V5-NAVCUSTOM-001 — NavPrefsContext's launch caches of the per-person tab bar and More pins
+  // (user_notification_prefs.bar_layout / more_pins). Read SYNCHRONOUSLY for the first paint, so
+  // left behind they would draw the previous person's bar and pins for the next one — and, since
+  // D4 made the bar personal, that is exactly the shift Jen was promised she would never see.
+  // Literal strings rather than an import: NavPrefsContext imports AuthContext, which imports this
+  // file, so importing the constants here would close a cycle. clientPrefs.test.jsx pins that
+  // NavPrefsContext's exported key names are all listed here.
+  'nav.barLayout.v1',
+  'nav.morePins.v1',
+  'nav.morePins.pending.v1',
 ]
 
 export const CLIENT_PREF_KEY_PREFIXES = [

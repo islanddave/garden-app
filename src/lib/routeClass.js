@@ -23,7 +23,14 @@ import { matchPath } from 'react-router-dom'
 // demoted to More long ago (DRG-TODAY-003) and deliberately kept its root header. Demoting a route
 // in the nav and re-classing its header are separate decisions; this commit makes only the one the
 // nav change requires.
-export const ROOT_TABS = ['/today', '/garden', '/harvests', '/findings', '/dashboard']
+// V5-NAVCUSTOM-001 — /put-up joins (BUG-PUTUPROOTTAB-001: V4-PUTUPENGINE-001 made it a bar tab and it
+// shipped with a navigate(-1) Back arrow, the exact /harvests regression above, repeated). And this
+// list stays STATIC even though a person can now move Garden, Harvests or Put-Up into More (D4): it
+// is every bar-eligible destination, whatever any one layout shows. A header that followed the
+// layout would gain or lose its Back arrow when prefs land after first paint, and would differ
+// between Dave's phone and Jen's — a moved tab keeps its root header, like /dashboard and /findings.
+// routeClass.test.js derives the required set from TAB_REGISTRY, so the next tab cannot repeat this.
+export const ROOT_TABS = ['/today', '/garden', '/harvests', '/put-up', '/findings', '/dashboard']
 
 // Full-screen focused capture surfaces: slim immersive bar (Back + optional title, no search/fav).
 export const CAPTURE_ROUTES = ['/capture', '/field']

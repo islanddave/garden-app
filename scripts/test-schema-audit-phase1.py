@@ -115,8 +115,9 @@ const X_COLUMNS = ['sown_at'];
 check("LEGACY_COLUMNS_REMOVED_IN_2_0_5 excluded from audit",
       len(res) == 1 and res[0][1] == ["sown_at"])
 
-# 9. Real repo files: all 3 select-columns.test.js must parse to the exact
-#    (table, column) set below -- named, not counted.
+# 9. Real repo files: each file below must parse to the exact (table, column)
+#    set listed -- named, not counted. (Started as the 3 select-columns.test.js
+#    files; lambda/critter's two entries joined with V5-NAVCUSTOM-001.)
 #
 #    Why names and not a count: the count pin went RED twice for the same
 #    non-reason (24 -> 29 on 2026-08-28 when the contract gained 5 columns;
@@ -160,6 +161,28 @@ real = {
     },
     "lambda/projects/select-columns.test.js": {
         "plant_projects": ["kind", "kind_set_at", "target_end_date"],
+    },
+    # V5-NAVCUSTOM-001 (2026-09-24): the keyed contract that puts readUserPrefs' boot SELECT (and the
+    # four prefs upserts) under Phase 1. more_pins and bar_layout exist on prod only once
+    # migrations/v5-navcustom-001 is applied, so Phase 1 FAILS on them until then -- by design.
+    "lambda/critter/prefs-columns.test.js": {
+        "user_notification_prefs": [
+            "created_by", "critter_visit", "quiet_hours_start", "quiet_hours_end",
+            "coachmark_seen_at", "opt_in_prompt_seen_at", "last_garden_view_at",
+            "garden_group_by", "garden_sort_order", "garden_expanded",
+            "garden_bloom_seen", "garden_helper_rung1_seen", "today_skipped",
+            "log_many_all_selected", "whats_new_last_seen", "more_pins", "bar_layout",
+            "created_at", "updated_at",
+        ],
+    },
+    # Its neighbour, pinned beside it: a keyed AUDIT_COLUMNS block dropped into this AUDIT_TABLES file
+    # would make parse_test_file return early and silently lose all of critter_state.
+    "lambda/critter/select-columns.test.js": {
+        "critter_state": [
+            "id", "created_by", "species_id", "target_kind", "target_id", "plant_id",
+            "source_event_id", "earned_at", "viewed_at", "faded_at", "dot_visible_after",
+            "meta", "deleted_at", "created_at", "updated_at",
+        ],
     },
 }
 for rel, want in real.items():

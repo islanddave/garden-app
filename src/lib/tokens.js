@@ -90,4 +90,8 @@ export const ICON_COLORS = {
   navJarBand:    P.gold,      // #8a6e2a screw band — 4.44:1
   navJarGlass:   P.blue,      // #4a7fb5 glass outline — 3.87:1
   navJarFill:    P.terra,     // #b7532a preserves — 4.51:1
+  // V5-NAVCUSTOM-001 — action.pin's `filled` (pinned) state on the More sheet's pin button. The
+  // classic red-headed push pin; both clear the 3:1 floor on the sheet's white and on cream.
+  pinHead:       P.terra,     // #b7532a cap, barrel and collar — 4.51:1 on cream
+  pinNeedle:     P.mid,       // #4a4a4a the metal point — 8.3:1 on cream
 }

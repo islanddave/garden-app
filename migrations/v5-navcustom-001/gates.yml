@@ -1,0 +1,271 @@
+# gates.yml
+# V5-NAVCUSTOM-001 (v5-navcustom-001) — user_notification_prefs.more_pins + bar_layout, both jsonb NULL,
+# each with a shape-only CHECK added NOT VALID in 0a and VALIDATEd in 0c.
+#
+# STATUS AT AUTHORING (2026-09-24): AUTHORED, NOT APPLIED. Not applied to staging, not applied to prod.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# SEQUENCING — full reasoning in README-BUILD.md "Landing order".
+#
+#   staging pre -> sweep -> 0a -> sweep again -> 0c -> post
+#   -> prod pre -> sweep -> 0a -> sweep again -> 0c -> post
+#   -> `--all --phase post --continuous-only` on BOTH envs
+#   -> THEN push the code (critter Lambda, SPA) to dev -> CI -> staging smoke -> promote -> deploy-lambda
+#
+# The critter Lambda's readUserPrefs names both columns in an explicit SELECT list that runs on every
+# user's boot, so a Lambda that reaches an environment before this DDL 500s every boot prefs read there.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# GATE CLASSIFICATION (L-369 — decided at authoring, not after the first false red)
+#
+#   * pre and sweep gates are `continuous: false`. gate-invariants.yml never runs them (post only), and
+#     the pre gates assert the UNAPPLIED state, so they are self-falsifying once 0a succeeds.
+#   * Every continuous post gate SELF-ARMS on this migration's schema_version row, or is naturally
+#     vacuous over the columns' own catalog rows: vacuously true before the apply, asserting forever
+#     after, with no follow-up edit. gate-invariants.yml runs `--all --phase post --continuous-only` on
+#     prod AND staging and also fires on pushes touching `migrations/**`, so a post gate that is not
+#     self-arming would red the moment this directory reached dev without the apply.
+#   * PARSE-TIME HAZARD (v5-wxbackfillvars-001, v5-locheated-001): Postgres resolves column and
+#     ::regclass references when it PARSES a statement, before any EXISTS guard is evaluated. No gate
+#     here names more_pins or bar_layout as a column or casts to ::regclass. VALUES are read as
+#     `to_jsonb(t) -> 'more_pins'`, a key lookup that parses on an unapplied database and yields SQL
+#     NULL there; catalog facts are read from information_schema / pg_catalog by name.
+#   * to_jsonb BLIND SPOT, stated rather than hidden: a row's SQL NULL and a stored JSON `null` literal
+#     both render as JSON null inside to_jsonb(row), so the value gates below cannot see a stored JSON
+#     null. The CHECKs reject one (jsonb_typeof 'null' fails both), VALIDATE would refuse it loudly, and
+#     the Lambda binds a JS null as SQL NULL, so no writer produces one.
+#
+# COUNT DISCIPLINE: no gate counts user_notification_prefs rows or columns. The table held 2 rows on
+# prod at design time; a prod-derived absolute would red the day a third person signs in.
+
+pre:
+  - name: pre_userprefs_table_present
+    continuous: false
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_userprefs_is_a_table_not_a_view
+    continuous: false
+    note: >
+      Checked, not assumed, as v4-userprefs-001 did: a plain table (relkind 'r') cannot hide a new
+      base column behind an explicit-column-list view, the garden_node failure mode. If this fails the
+      table became a view and 0a's ALTER TABLE is aimed at the wrong object; stop.
+    sql: |
+      SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname='public' AND c.relname='user_notification_prefs' AND c.relkind='r'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_more_pins_absent
+    continuous: false
+    note: >
+      Greenfield. A row here means the column already arrived, by this 0a or by another route. 0a is
+      ADD COLUMN IF NOT EXISTS, so it would silently keep a pre-existing column of whatever shape it
+      has; stop and diff before applying.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name='more_pins'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_bar_layout_absent
+    continuous: false
+    note: >
+      Greenfield, as pre_more_pins_absent.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='user_notification_prefs'
+         AND column_name='bar_layout'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_shape_check_names_are_free
+    continuous: false
+    note: >
+      0a creates each CHECK only when no constraint of that NAME exists on the table, so a same-named
+      constraint with a different body would be silently kept. Returns any constraint already holding
+      either name, anywhere in the database.
+    sql: |
+      SELECT conname FROM pg_constraint
+       WHERE conname IN ('chk_unp_more_pins_shape', 'chk_unp_bar_layout_shape')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_not_already_applied
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-navcustom-001'
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # L-058: every predicate a CHECK is about to enforce must already hold on the FULL table (no
+  # deleted_at filter; this table has none) before VALIDATE. Run this phase before 0a (vacuous: the
+  # columns do not exist, and to_jsonb yields SQL NULL) AND again between 0a and 0c (vacuous on a first
+  # apply too: both columns are born NULL and no writer exists yet). It earns its keep on a re-run after
+  # the writer has shipped. Each returns the OFFENDING rows, named by created_by.
+
+  - name: sweep_more_pins_shape_holds
+    continuous: false
+    sql: |
+      SELECT t.created_by
+        FROM public.user_notification_prefs t
+       WHERE COALESCE(jsonb_typeof(to_jsonb(t) -> 'more_pins'), 'null') <> 'null'
+         AND NOT CASE WHEN jsonb_typeof(to_jsonb(t) -> 'more_pins') = 'array'
+                      THEN jsonb_array_length(to_jsonb(t) -> 'more_pins') <= 32
+                      ELSE false
+                 END
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_bar_layout_shape_holds
+    continuous: false
+    sql: |
+      SELECT t.created_by
+        FROM public.user_notification_prefs t
+       WHERE COALESCE(jsonb_typeof(to_jsonb(t) -> 'bar_layout'), 'null') <> 'null'
+         AND NOT (
+               jsonb_typeof(to_jsonb(t) -> 'bar_layout') = 'object'
+           AND COALESCE(jsonb_typeof(to_jsonb(t) -> 'bar_layout' -> 'order'),  'array') = 'array'
+           AND COALESCE(jsonb_typeof(to_jsonb(t) -> 'bar_layout' -> 'hidden'), 'array') = 'array'
+         )
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── APPLY-WINDOW RECEIPT (continuous: false) ─────────────────────────────────────────────────────
+
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-navcustom-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANTS, SELF-ARMING ─────────────────────────────────────────────────────────────
+  # Each is wrapped in `WHERE EXISTS (schema_version = this migration)` or is naturally vacuous before
+  # the apply. v4-cachemissingrow-001 is the pattern; v5-locheated-001 and v5-scovillesource-001 are the
+  # nearest siblings.
+
+  - name: post_more_pins_is_nullable_jsonb_without_default
+    note: >
+      The information_schema read design §5 asks to cite before any Lambda selects the column. Nullable
+      with no DEFAULT: NULL is the honest "never pinned" state of every existing row, and a DEFAULT would
+      stamp a choice nobody made (V4-ACQMATURE-001). Also catches a column that arrived by another route
+      with another shape, which 0a's IF NOT EXISTS would skip.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-navcustom-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='user_notification_prefs'
+                            AND column_name='more_pins' AND data_type='jsonb'
+                            AND is_nullable='YES' AND column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_bar_layout_is_nullable_jsonb_without_default
+    note: >
+      As post_more_pins_is_nullable_jsonb_without_default. NULL is "the shipped bar".
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-navcustom-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                          WHERE table_schema='public' AND table_name='user_notification_prefs'
+                            AND column_name='bar_layout' AND data_type='jsonb'
+                            AND is_nullable='YES' AND column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_more_pins_check_exists_and_is_validated
+    note: >
+      Presence AND validation, read from pg_catalog by name (never ::regclass, so this parses on an
+      unapplied database). A NOT VALID constraint looks identical to a validated one unless convalidated
+      is read, and 0c is the half that gets forgotten. RED BY DESIGN between 0a and 0c, because 0a writes
+      the stamp; that window should last seconds. A red that persists means 0c never ran.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-navcustom-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='user_notification_prefs'
+                            AND c.conname='chk_unp_more_pins_shape'
+                            AND c.contype='c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_bar_layout_check_exists_and_is_validated
+    note: >
+      As post_more_pins_check_exists_and_is_validated, for chk_unp_bar_layout_shape.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-navcustom-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname='public' AND t.relname='user_notification_prefs'
+                            AND c.conname='chk_unp_bar_layout_shape'
+                            AND c.contype='c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_only_the_shape_checks_touch_the_navcustom_columns
+    note: >
+      THE DECISION 0a DOCUMENTS, pinned: the database checks SHAPE only. A vocabulary CHECK (known tab
+      keys, known More row ids) would make a retired row id a 23514 on every later save by that person
+      and every new More row a migration (CONTRACT §3). The only CHECKs allowed to mention either column
+      are the two single-column shape CHECKs. Returns one row per offending constraint, naming it.
+      Naturally vacuous before the apply (no pg_attribute row to join), and self-armed besides.
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-navcustom-001')
+         AND n.nspname='public' AND t.relname='user_notification_prefs'
+         AND c.contype='c' AND a.attname IN ('more_pins', 'bar_layout')
+         AND NOT (cardinality(c.conkey) = 1
+                  AND ((a.attname = 'more_pins'  AND c.conname = 'chk_unp_more_pins_shape')
+                    OR (a.attname = 'bar_layout' AND c.conname = 'chk_unp_bar_layout_shape')))
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_more_pins_shape_holds
+    note: >
+      The shape contract asserted INDEPENDENTLY of the CHECK, so a dropped, disabled or weakened
+      constraint cannot make the data look clean. Values read through to_jsonb (header, PARSE-TIME
+      HAZARD). Returns the offending rows by created_by.
+    sql: |
+      SELECT t.created_by
+        FROM public.user_notification_prefs t
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-navcustom-001')
+         AND COALESCE(jsonb_typeof(to_jsonb(t) -> 'more_pins'), 'null') <> 'null'
+         AND NOT CASE WHEN jsonb_typeof(to_jsonb(t) -> 'more_pins') = 'array'
+                      THEN jsonb_array_length(to_jsonb(t) -> 'more_pins') <= 32
+                      ELSE false
+                 END
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_bar_layout_shape_holds
+    note: >
+      As post_more_pins_shape_holds, for bar_layout.
+    sql: |
+      SELECT t.created_by
+        FROM public.user_notification_prefs t
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-navcustom-001')
+         AND COALESCE(jsonb_typeof(to_jsonb(t) -> 'bar_layout'), 'null') <> 'null'
+         AND NOT (
+               jsonb_typeof(to_jsonb(t) -> 'bar_layout') = 'object'
+           AND COALESCE(jsonb_typeof(to_jsonb(t) -> 'bar_layout' -> 'order'),  'array') = 'array'
+           AND COALESCE(jsonb_typeof(to_jsonb(t) -> 'bar_layout' -> 'hidden'), 'array') = 'array'
+         )
+    expect: rowcount_eq
+    value: 0
