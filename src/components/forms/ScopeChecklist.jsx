@@ -37,6 +37,12 @@
 //                                vocabulary — the caller owns the value and its semantics. Absent
 //                                (the default) a row renders exactly as before: the toggle button
 //                                is the row's only child and still fills its width.
+//   - showDefaultToggle          OPTIONAL, default true (V5-VOICECARE-001, review MINOR-5). false
+//                                hides "Start with everything selected" — the one control here that
+//                                WRITES a stored preference (saveLogManyAllSelected). Log many's voice
+//                                read-back mounts this component as a twin of what it read back, and a
+//                                twin must not be able to change the user's default for every future
+//                                batch. Default true is byte-identical for every other caller.
 //
 // Net-count rule (plan §5 Phase D): never make the user mentally compute the set
 // difference — when any planting is skipped we render "N matched − M skipped → K will
@@ -143,6 +149,7 @@ export default function ScopeChecklist({
   renderRowExtra,
   initialSelection,
   primaryAction,
+  showDefaultToggle = true,
 }) {
   const [preview, setPreview] = useState(null)       // { count, capped, plantings:[{id,name}] }
   // V4-LOGMANYUXREFRESH-001 S0 — THE SELECTION IS NOW DURABLE STATE, not a by-product of the last
@@ -919,7 +926,7 @@ export default function ScopeChecklist({
                 raises the tap target even though a 44px checkbox glyph would be absurd. The box
                 itself goes 13px → 20px because at 13px it is also hard to READ which way it is
                 set, and that is the other half of why this control gets mis-tapped. */}
-            {mode === 'bulk' && total > 0 && (
+            {mode === 'bulk' && total > 0 && showDefaultToggle && (
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 0', fontSize: '0.8rem', color: P.mid, cursor: 'pointer', minHeight: T.tapMinHeight }}>
                 <input type="checkbox" checked={defaultAllSelected} onChange={e => applyDefaultSel(e.target.checked)}
                   data-testid="sc-default-all" style={{ width: 20, height: 20, flex: '0 0 auto' }} />

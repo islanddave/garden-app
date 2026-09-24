@@ -239,6 +239,16 @@ describe('the except example — Dave’s own sentence', () => {
     expect([...w[0].scope.plant_ids].sort()).toEqual(idsIn(IN_GROUND).filter((id) => !skippedIds.includes(id)).sort())
   })
 
+  it('review MINOR-5: the read-back twin cannot change his stored default — no "Start with everything selected"', async () => {
+    await sayCommandToReadBack(SAID)
+    // The twin is in exactly the state where ScopeChecklist would otherwise render that checkbox:
+    // bulk mode, a non-empty area (its Review link renders under the same condition).
+    expect(inFrame().getByTestId('sc-mode-bulk').getAttribute('aria-pressed')).toBe('true')
+    expect(inFrame().getByRole('button', { name: /Review 24 plantings/ })).toBeTruthy()
+    expect(inFrame().queryByTestId('sc-default-all')).toBeNull()
+    expect(inFrame().queryByText('Start with everything selected')).toBeNull()
+  })
+
   it('a fuzzy or taught skip is SAID in the read-back with what was heard, and still waits (Q-C)', async () => {
     await sayCommandToReadBack('water all bag area except studio long')
     expect(inFrame().getByTestId('lmv-readback').textContent)
