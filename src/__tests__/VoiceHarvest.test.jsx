@@ -1606,3 +1606,67 @@ describe('V5-VOICEVOCAB-001 — a held number is never assumed onto the slot the
     expect(misses()).toEqual(['Dropped 5 — no unit was said, and 3 count · 231 g left no open slot for it.'])
   })
 })
+
+// ── BUG-VOICEREFUSEDNEXT-001 — a REFUSED "next" gives the write cooldown back ──────────────────────
+//
+// Pre-existing, found by lane D4 (V5-VOICEVOCAB-001) and measured before the fix: "Suyo Long", "next"
+// (refused — no quantity yet), "3 count", "next" inside 1.5 s. The refusal's release ran inside the
+// debouncer's commit handler, before the debouncer armed the cooldown, so it released nothing; the
+// second "next" was then swallowed as a transport duplicate, NOTHING was saved, and the banner said
+// "Heard "next" twice in a moment — saved once." — a false success on a lost log. The pair below pins
+// both directions: the refused claim is given back, and a real save's claim is not.
+describe('BUG-VOICEREFUSEDNEXT-001 — a refused "next" does not swallow the next one', () => {
+  afterEach(() => { vi.useRealTimers() })
+  const bodies = () => harvestPosts().map(([, opts]) => JSON.parse(opts.body))
+
+  it('the measured sequence: the second "next" SAVES the 3 count, and nothing claims "saved once"', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'next')
+    // The refused write commits on its settle tick; the next "next" lands ~600 ms after it — inside
+    // the 1500 ms cooldown, which is the whole point of the case.
+    await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+    expect(statusText()).toBe('Not saved — still need a quantity. Say it, then "next".')
+    await speak(rec, '3 count')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+
+    expect(bodies()).toHaveLength(1)
+    expect(bodies()[0].plant_id).toBe('p1')
+    expect(bodies()[0].harvest).toEqual({ quantity: 3, unit: 'count', quality_rating: null })
+    expect(statusText()).toBe('Saved Suyo Long — 3 count · no weight was said')
+    expect(statusText()).not.toContain('saved once')
+  })
+
+  it('the duplicate guard still holds after a REAL save: a second "next" inside 1.5 s is suppressed, and that message is now true', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, '3 count')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+    expect(bodies()).toHaveLength(1)
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+
+    expect(bodies()).toHaveLength(1)
+    expect(statusText()).toBe('Heard "next" twice in a moment — saved once.')
+  })
+
+  it('…and a re-delivered one-breath final after a real save still saves ONCE — where the guard stops a double row', async () => {
+    // After a plain save the record is cleared, so an unsuppressed duplicate "next" would only be
+    // refused. A duplicated one-breath final re-fills the record before its "next", so only the
+    // cooldown stands between it and a second harvest row.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long three count next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(600) })
+    expect(bodies()).toHaveLength(1)
+    await speak(rec, 'Suyo Long three count next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+
+    expect(bodies()).toHaveLength(1)
+    expect(statusText()).toBe('Heard "next" twice in a moment — saved once.')
+  })
+})

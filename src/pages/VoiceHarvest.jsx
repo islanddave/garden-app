@@ -789,7 +789,16 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       cue(hapticSaveFailed)
       say('fail', `Not saved — still need ${missing}. Say it, then "next".`)
       noteMiss(`Not saved — still need ${missing}.`)
-      debRef.current?.invalidateLastWrite(token)
+      // BUG-VOICEREFUSEDNEXT-001 — RELEASED ONE MICROTASK LATER, OR NOT AT ALL. This refusal runs
+      // synchronously INSIDE the debouncer's commit handler, and the debouncer arms the write
+      // cooldown only after that handler returns (it arms on a handler that returned). Called here
+      // directly, the release found nothing armed and did nothing; the cooldown was then armed for a
+      // save that never happened. Measured: "Suyo Long", "next" (refused), "3 count", "next" inside
+      // 1.5 s — the second "next" was swallowed as a duplicate, NOTHING was saved, and the banner
+      // said "Heard "next" twice in a moment — saved once." A false success on a lost log. The
+      // failed-POST release below needs no deferral: it runs after an await, by which time the
+      // cooldown is armed. Token-scoped either way, so only this commit's claim is released.
+      queueMicrotask(() => debRef.current?.invalidateLastWrite(token))
       return
     }
 
