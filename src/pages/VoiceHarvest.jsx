@@ -52,7 +52,7 @@ import { todayLocalISO } from '../lib/dateLocal.js'
 import { looseKey, looseIncludes, splitCropAliases } from '../lib/comboboxInput.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
-import { fetchAliases, indexAliases, resolveAlias, teachAlias } from '../lib/voiceAliases.js'
+import { fetchAliases, indexAliases, resolveAlias, teachAlias, MIN_ALIAS_CHARS } from '../lib/voiceAliases.js'
 import {
   buildValue, classify, classifyPartial, foldNumberWords, isNumberPhrase, normalise, segmentCandidates,
   splitTrailingCommand, parseValueSequence, oneBreathReadings, NUMBER_HOMOPHONES,
@@ -273,6 +273,45 @@ export function digitRuns(text) {
     .filter((t) => /^\d+$/.test(t))
 }
 
+// V5-VOICEVOCAB-001 (lane D4, review BLOCKING-2) — THE NAMES DAVE TAUGHT ARE NAMES TOO. He taught
+// "cucumber one" → Suyo Long on 2026-09-15, and the name rules below knew only a planting's own names,
+// so the bare reader split his alias into the crop "cucumber" plus an amount of 1: "cucumber one", "3",
+// "next" saved 1 count · 3 g where prod saves 3 count. A phrase that resolves through the alias index
+// is a NAME wherever a name is recognised — the head guard, a reading's name, and ownership.
+//
+// Returns the variety the phrase names when it IS a taught alias, else null. Whole-key equality and
+// never under MIN_ALIAS_CHARS, the bounds resolveAlias itself applies. KEY-LEVEL, NOT PLANTING-LEVEL:
+// the phrase is a name whether or not that variety has a live planting, and the search then answers
+// for it exactly as prod does.
+export function aliasVarietyOf(aliasNames, spoken) {
+  if (!aliasNames?.size) return null
+  for (const key of [looseKey(spoken), looseKey(foldNumberWords(spoken))]) {
+    if (key.length >= MIN_ALIAS_CHARS && aliasNames.has(key)) return aliasNames.get(key)
+  }
+  return null
+}
+
+// The keys aliasVarietyOf reads: each stored heard_key, plus its heard_text with number words folded,
+// so Chrome's "cucumber 1" is the same name as the taught "cucumber one". Kept apart from indexAliases
+// on purpose: the learned SEARCH layer stays exactly what prod runs, and only "is this a name?" learns
+// the folded form. Rows without heard_text contribute their key alone.
+export function indexAliasNames(rows, base = null) {
+  const byKey = new Map(base ?? [])
+  for (const r of rows ?? []) {
+    if (!r?.variety_id) continue
+    const text = r.heard_text == null ? null : String(r.heard_text)
+    const keys = [String(r.heard_key ?? ''), ...(text ? [looseKey(text), looseKey(foldNumberWords(text))] : [])]
+    for (const k of keys) if (k) byKey.set(k, r.variety_id)
+  }
+  return byKey
+}
+
+// A taught alias of this planting's variety, said whole, carries its numbers and words with it.
+const taughtFor = (planting, name, aliasNames) => {
+  const variety = aliasVarietyOf(aliasNames, name)
+  return variety != null && variety === planting?.variety_ref?.id
+}
+
 // V5-VOICEVOCAB-001 (lane D4) — does this planting OWN every number left in the name that reached it?
 //
 // THE RULE THAT KEEPS A DIGIT FROM CHANGING SIDES. Every digit run in the spoken name must be a WHOLE
@@ -280,9 +319,12 @@ export function digitRuns(text) {
 // "danvers 12" does not own 12 even though looseIncludes finds "danvers12" inside "danvers126carrot";
 // "suyo long 2" does not own 2 even though the fuzzy layer resolves it to Suyo Long (measured: it does).
 // A name that fails this is not a name — the number in it was an amount the split put on the wrong side.
-export function plantingOwnsNumbers(planting, name) {
+// BLOCKING-2 — or the name IS an alias Dave taught for this planting's variety ("cucumber one" owns its
+// 1 for Suyo Long). Only the whole alias: "suyo long one" still does not own 1.
+export function plantingOwnsNumbers(planting, name, aliasNames = null) {
   const wanted = digitRuns(name)
   if (!wanted.length) return true
+  if (taughtFor(planting, name, aliasNames)) return true
   return plantingAliases(planting).some((alias) => {
     const pool = digitRuns(alias)
     return wanted.every((d) => {
@@ -297,10 +339,14 @@ export function plantingOwnsNumbers(planting, name) {
 // V5-VOICEVOCAB-001 (lane D4) — plantings whose alias IS this phrase, raw or with number words folded.
 // The only matcher a number-only phrase may use (see isNumberPhrase): whole-key equality cannot be
 // satisfied by a proper substring, which is the same bound namesAPlantingExactly puts on a bare digit.
-export function plantingsNamedExactly(plantings, spoken) {
+// BLOCKING-2 — a taught alias answers second, in the search's own order (strict, then learned).
+export function plantingsNamedExactly(plantings, spoken, aliasNames = null) {
   const keys = new Set([looseKey(spoken), looseKey(foldNumberWords(spoken))].filter(Boolean))
-  return (plantings ?? []).filter((p) => plantingAliases(p)
+  const named = (plantings ?? []).filter((p) => plantingAliases(p)
     .some((a) => keys.has(looseKey(a)) || keys.has(looseKey(foldNumberWords(a)))))
+  if (named.length) return named
+  const taught = aliasVarietyOf(aliasNames, spoken)
+  return taught == null ? [] : (plantings ?? []).filter((p) => p?.variety_ref?.id === taught)
 }
 
 // V5-VOICEONEBREATH-001 — pick the ONE reading of a one-breath sentence that the live planting
@@ -333,15 +379,17 @@ export function plantingsNamedExactly(plantings, spoken) {
 //   * Every number left in a name must be the planting's own (plantingOwnsNumbers) — "cucumber 3"
 //     reached Suyo Long through the fuzzy layer with the 3 still in it.
 // Neither bound touches a name without digits, and every digit-named planting still resolves by its
-// own name ("1884 two count", "super sweet one hundred three count", "danvers 126 3 count").
-export function resolveOneBreath(plantings, candidates, aliasIndex = null) {
+// own name ("1884 two count", "super sweet one hundred three count", "danvers 126 3 count") — and by
+// the names Dave taught (BLOCKING-2: "cucumber one 3 count" is Suyo Long · 3 count, as on prod).
+// `aliasNames` is indexAliasNames' map; given only the search index, the raw keys still count.
+export function resolveOneBreath(plantings, candidates, aliasIndex = null, aliasNames = aliasIndex) {
   const survivors = []
   for (const c of candidates) {
     const hits = isNumberPhrase(c.name)
-      ? plantingsNamedExactly(plantings, c.name)
+      ? plantingsNamedExactly(plantings, c.name, aliasNames)
       : matchPlantingsWithRescue(plantings, c.name, aliasIndex).hits
     if (hits.length !== 1) continue
-    if (!plantingOwnsNumbers(hits[0], c.name)) continue
+    if (!plantingOwnsNumbers(hits[0], c.name, aliasNames)) continue
     const keys = [looseKey(c.name), looseKey(foldNumberWords(c.name))]
     const exact = plantingAliases(hits[0]).some((a) => keys.includes(looseKey(a)))
     survivors.push({ ...c, planting: hits[0], exact })
@@ -390,9 +438,10 @@ const sameGroups = (a, b) => a.length === b.length
 
 const plantingNumbers = (planting) => new Set(plantingAliases(planting).flatMap(digitRuns))
 
-function plantingOwnsHomophones(planting, name) {
+function plantingOwnsHomophones(planting, name, aliasNames = null) {
   const words = normalise(name).split(' ').filter((t) => Object.prototype.hasOwnProperty.call(NUMBER_HOMOPHONES, t))
   if (!words.length) return true
+  if (taughtFor(planting, name, aliasNames)) return true
   const aliasWords = plantingAliases(planting).map((a) => normalise(a).split(/[^a-z0-9]+/))
   return words.every((w) => aliasWords.some((ws) => ws.includes(w)))
 }
@@ -404,19 +453,26 @@ function judgeBareReading(plantings, r, ctx) {
     return { kind: 'invalid' }
   }
   if (!r.name) return ctx.selected ? { kind: 'valid', planting: null, groups: r.groups } : { kind: 'invalid' }
+  // BLOCKING-2 — a name that runs on into a TAUGHT alias is only the front of it: "cucumber" then "one"
+  // is Dave's "cucumber one", so the one belongs to the name and is not an amount. The reading that
+  // keeps the whole alias as its name is judged on its own.
+  const rest = r.groups.map((g) => g.text).join(' ').split(' ')
+  for (let k = 1; k <= rest.length; k++) {
+    if (aliasVarietyOf(ctx.aliasNames, `${r.name} ${rest.slice(0, k).join(' ')}`) != null) return { kind: 'invalid' }
+  }
   const hits = isNumberPhrase(r.name)
-    ? plantingsNamedExactly(plantings, r.name)
+    ? plantingsNamedExactly(plantings, r.name, ctx.aliasNames)
     : matchPlantingsWithRescue(plantings, r.name, ctx.aliasIndex).hits
   if (hits.length !== 1) {
     // Several plantings answer to a real name ("super sweet 100" is two of them): not specific
     // enough to guess between, and worth offering as a list. One that does not own its numbers is
     // not a name at all.
-    return hits.length > 1 && hits.every((h) => plantingOwnsNumbers(h, r.name))
+    return hits.length > 1 && hits.every((h) => plantingOwnsNumbers(h, r.name, ctx.aliasNames))
       ? { kind: 'crowded', name: r.name, hits } : { kind: 'invalid' }
   }
   const [planting] = hits
-  if (!plantingOwnsNumbers(planting, r.name)) return { kind: 'invalid' }
-  if (!plantingOwnsHomophones(planting, r.name)) return { kind: 'ambiguous' }
+  if (!plantingOwnsNumbers(planting, r.name, ctx.aliasNames)) return { kind: 'invalid' }
+  if (!plantingOwnsHomophones(planting, r.name, ctx.aliasNames)) return { kind: 'ambiguous' }
   const first = r.groups[0]
   if (first.unit == null && plantingNumbers(planting).has(String(first.value))) return { kind: 'ambiguous' }
   const words = normalise(r.name).split(' ')
@@ -434,12 +490,13 @@ function judgeBareReading(plantings, r, ctx) {
   return { kind: 'valid', planting, groups: r.groups }
 }
 
-export function resolveBareOneBreath(plantings, info, { selected = null, aliasIndex = null } = {}) {
+export function resolveBareOneBreath(plantings, info, { selected = null, aliasIndex = null, aliasNames = aliasIndex } = {}) {
   if (!info) return null
-  // The whole head IS a planting's name ("cherry rescue 1", "eighteen eighty four"): a name, not a
-  // record — the ordinary search selects it, with or without a trailing command, exactly as before.
-  if (plantingsNamedExactly(plantings, info.head).length) return null
-  const judged = info.readings.map((r) => judgeBareReading(plantings, r, { selected, aliasIndex }))
+  // The whole head IS a planting's name ("cherry rescue 1", "eighteen eighty four"), or a name Dave
+  // taught ("cucumber one", BLOCKING-2): a name, not a record — the ordinary search selects it, with or
+  // without a trailing command, exactly as before.
+  if (plantingsNamedExactly(plantings, info.head).length || aliasVarietyOf(aliasNames, info.head) != null) return null
+  const judged = info.readings.map((r) => judgeBareReading(plantings, r, { selected, aliasIndex, aliasNames }))
   if (judged.some((j) => j.kind === 'ambiguous')) return { kind: 'refuse', reason: 'ambiguous' }
   const valid = judged.filter((j) => j.kind === 'valid')
   if (valid.length) {
@@ -563,6 +620,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // a tap would TEACH. It has to be a ref for the same reason the record slots are: the tap handler
   // must read what was actually heard, not what the last render closed over.
   const aliasRef    = useRef(null)
+  // BLOCKING-2 — the same aliases as NAMES (indexAliasNames): what the one-breath readers ask "is this
+  // phrase a name Dave taught?". Loaded and taught alongside aliasRef, never instead of it.
+  const aliasNamesRef = useRef(null)
   const unmatchedRef = useRef(null)
   // BUG-VOICECOUNTSPLIT-001 — a number whose unit has not arrived yet. A REF because the recogniser
   // callbacks that read it fire outside React's render cycle and must see the value the previous
@@ -723,8 +783,13 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // them. fetchAliases never rejects (it fails soft to []), and this deliberately sets no
     // loadError: a chooser that refuses to start because a cache of corrections could not load is
     // worse than one that has forgotten a few. Losing this degrades the page to its v4.78.0
-    // behaviour — strict, then fuzzy — which is a working page.
-    fetchAliases(apiFetch).then((rows) => { if (live) aliasRef.current = indexAliases(rows) })
+    // behaviour — strict, then fuzzy — which is a working page. It also forgets the taught NAMES
+    // (BLOCKING-2): "cucumber one" then reads as the crop plus an amount of 1, announced as assumed.
+    fetchAliases(apiFetch).then((rows) => {
+      if (!live) return
+      aliasRef.current = indexAliases(rows)
+      aliasNamesRef.current = indexAliasNames(rows)
+    })
 
     return () => { live = false }
   }, [apiFetch])
@@ -770,6 +835,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       const next = new Map(aliasRef.current ?? [])
       next.set(looseKey(phrase), varietyId)
       aliasRef.current = next
+      aliasNamesRef.current = indexAliasNames([{ heard_key: looseKey(phrase), heard_text: phrase, variety_id: varietyId }],
+        aliasNamesRef.current)
       say('ok', `${label} — learned “${phrase}”. Now say the count or the weight.`)
     } catch (err) {
       say('warn', `${label} selected, but I could not remember “${phrase}” — ${err?.message || 'the save failed'}.`)
@@ -1003,7 +1070,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // crop?) and the one-breath branches further down that apply them. A value rejoined from a bare
     // unit is never `unparsed`, so a rejoin cannot make these stale.
     const oneBreath = result.kind === 'unparsed'
-      ? resolveOneBreath(plantingsRef.current, segmentCandidates(result.transcript), aliasRef.current)
+      ? resolveOneBreath(plantingsRef.current, segmentCandidates(result.transcript), aliasRef.current, aliasNamesRef.current)
       : null
     const valueSeq = result.kind === 'unparsed' && !oneBreath ? parseValueSequence(result.transcript) : null
     const axesOf = (values) => new Set(values.map((v) => v.kind))
@@ -1541,7 +1608,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const r = classify(text)
     if (r.kind === 'quantity' || r.kind === 'weight') return true
     if (r.kind !== 'unparsed') return false
-    return resolveOneBreath(plantingsRef.current, segmentCandidates(text), aliasRef.current) != null
+    return resolveOneBreath(plantingsRef.current, segmentCandidates(text), aliasRef.current, aliasNamesRef.current) != null
       || parseValueSequence(text) != null
   }, [])
 
@@ -1554,7 +1621,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // first: when it answers, the sentence is its; when it does not, nothing below changes.
     const info = oneBreathReadings(heard)
     const bare = resolveBareOneBreath(plantingsRef.current, info,
-      { selected: selectedRef.current, aliasIndex: aliasRef.current })
+      { selected: selectedRef.current, aliasIndex: aliasRef.current, aliasNames: aliasNamesRef.current })
     // A one-breath final ending in a save word CLAIMS the debouncer's one-write cooldown when it
     // commits (splitTrailingCommand marks it `bare`), which is what stops a re-delivered final saving
     // twice. When it turns out NOT to write — refused here, or declined and read the ordinary way —

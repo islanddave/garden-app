@@ -12,7 +12,7 @@
 // VoiceHarvest suite does, and assert on the POSTed body: a card that looks right is not a row that is.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react'
 import { installFakeSpeechRecognition } from './helpers/fakeSpeechRecognition.js'
 
 const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
@@ -26,9 +26,30 @@ import * as haptics from '../lib/haptics.js'
 
 import VoiceHarvest, {
   resolveOneBreath, resolveBareOneBreath, plantingOwnsNumbers, plantingsNamedExactly, digitRuns,
+  aliasVarietyOf, indexAliasNames,
 } from '../pages/VoiceHarvest.jsx'
-import { segmentCandidates, oneBreathReadings } from '../lib/voiceHarvestGrammar.js'
+import { segmentCandidates, oneBreathReadings, foldNumberWords } from '../lib/voiceHarvestGrammar.js'
+import { indexAliases } from '../lib/voiceAliases.js'
+import { looseKey } from '../lib/comboboxInput.js'
 import { VOCAB, byName } from './voiceHarvest.vocabulary.fixture.js'
+
+// Review BLOCKING-2 — DAVE'S TAUGHT ALIASES, served the way GET /api/varieties/voice-aliases serves them
+// (lambda/varieties/index.js: heard_key, heard_text, variety_id, hit_count, last_used_at). Every page
+// test in this file runs with them loaded: the first review's harness served an empty list, and so
+// did every VoiceHarvest test, which is how "cucumber one" (his, prod voice_alias, taught 2026-09-15)
+// came to be read as the crop plus an amount of 1. His list has 33 rows; the two with a number are
+// the first two here. "damn i'll see you" is his too (voiceCareResolve.test.js); "studio long" is the
+// mishearing the alias suite teaches.
+const aliasRow = (heard, plantingName) => ({
+  heard_key: looseKey(heard), heard_text: heard, variety_id: byName(plantingName).variety_ref.id,
+  hit_count: 0, last_used_at: null,
+})
+const DAVE_ALIASES = [
+  aliasRow('cucumber one', 'Suyo Long'),
+  aliasRow('super sweet 100', 'Super Sweet 100'),
+  aliasRow("damn i'll see you", 'Cucamelon'),
+  aliasRow('studio long', 'Suyo Long'),
+]
 
 // The small garden the older VoiceHarvest tests use — two cucumbers, so "cucumber" alone is a
 // question — for the cases that are about the flow rather than the vocabulary.
@@ -40,15 +61,18 @@ const PLANTS = [planting('p1', 'Suyo Long', 'cucumber'), planting('p2', 'Marketm
 
 let mic
 let plantsNow = PLANTS
+let aliasesNow = DAVE_ALIASES
 beforeEach(() => {
   // Call history is per TEST: restoreAllMocks (afterEach) does not clear a vi.fn's calls, so without
   // this a haptic assertion would see every cue fired by the tests before it.
   vi.clearAllMocks()
   mic = installFakeSpeechRecognition(vi)
   plantsNow = PLANTS
+  aliasesNow = DAVE_ALIASES
   apiFetchSpy.mockReset()
-  apiFetchSpy.mockImplementation((url) => {
+  apiFetchSpy.mockImplementation((url, opts) => {
     if (String(url).startsWith('/api/plants')) return Promise.resolve({ plants: plantsNow })
+    if (url === '/api/varieties/voice-aliases' && !opts?.method) return Promise.resolve({ aliases: aliasesNow })
     return Promise.resolve({ id: 'evt-1' })
   })
 })
@@ -58,7 +82,7 @@ async function startListening(plants = PLANTS) {
   plantsNow = plants
   vi.useFakeTimers({ shouldAdvanceTime: true })
   render(<VoiceHarvest />)
-  await waitFor(() => expect(apiFetchSpy).toHaveBeenCalled())
+  await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith('/api/varieties/voice-aliases'))
   await act(async () => { fireEvent.click(screen.getByTestId('voice-harvest-toggle')) })
   return mic.latest()
 }
@@ -400,6 +424,201 @@ describe('V5-VOICEVOCAB-001 — one breath against the real planting names', () 
   })
 })
 
+// ── review BLOCKING-2: a name Dave TAUGHT is a name ─────────────────────────────────────────────────
+//
+// Measured by the regression seat at 4307524 with his real aliases loaded: 16 of 20 alias scripts saved
+// differently from prod. "cucumber one", "3", "next" saved 1 count · 3 g (prod: 3 count); "cucumber one",
+// "next" saved a 1 count he never said (prod: "still need a quantity"); "cucumber one three count 231
+// grams next" saved nothing (prod: 3 count · 231 g). The expectations below are prod's POSTs for the same
+// scripts (the seat's ALIAS set, re-measured on the prod replica for this round), except the two one-breath
+// forms with no units, which prod cannot read at all and which save here what the same parts said as
+// separate finals save.
+describe('BLOCKING-2 — a name Dave taught is a name: his alias never splits into a crop and an amount', () => {
+  const suyo = byName('Suyo Long')
+  const idx = indexAliases(DAVE_ALIASES)
+  const names = indexAliasNames(DAVE_ALIASES)
+  const nameOfId = (id) => VOCAB.find((p) => p.id === id)?.name
+  const saved = () => posts().map((b) => [nameOfId(b.plant_id), b.harvest, b.metadata.assumed_units ?? []])
+  const bare = (said, selected = null, aliasNames = names) =>
+    resolveBareOneBreath(VOCAB, oneBreathReadings(said), { selected, aliasIndex: idx, aliasNames })
+
+  it('an alias is recognised whole — raw, or with number words folded either way', () => {
+    expect(aliasVarietyOf(names, 'cucumber one')).toBe(suyo.variety_ref.id)
+    expect(aliasVarietyOf(names, 'Cucumber One')).toBe(suyo.variety_ref.id)
+    expect(aliasVarietyOf(names, 'cucumber 1')).toBe(suyo.variety_ref.id)   // Chrome's digit rendering
+    expect(aliasVarietyOf(names, 'super sweet one hundred')).toBe(byName('Super Sweet 100').variety_ref.id)
+    expect(aliasVarietyOf(names, 'cucumber')).toBeNull()
+    expect(aliasVarietyOf(names, 'cucumber one 3')).toBeNull()
+    expect(aliasVarietyOf(null, 'cucumber one')).toBeNull()
+    // The search index alone — rows with no heard_text — still knows the raw key, not the folded one.
+    expect(aliasVarietyOf(idx, 'cucumber one')).toBe(suyo.variety_ref.id)
+    expect(aliasVarietyOf(idx, 'cucumber 1')).toBeNull()
+    // Never under MIN_ALIAS_CHARS, which a folded key can fall below ("one two" folds to "12").
+    const short = indexAliasNames([{ heard_key: looseKey('one two'), heard_text: 'one two', variety_id: 'v-x' }])
+    expect(aliasVarietyOf(short, 'one two')).toBe('v-x')
+    expect(aliasVarietyOf(short, '1 2')).toBeNull()
+    // Taught in session: merged onto what was loaded, nothing lost.
+    const more = indexAliasNames([{ heard_key: looseKey('wombat three'), heard_text: 'wombat three', variety_id: 'v-y' }], names)
+    expect([aliasVarietyOf(more, 'wombat 3'), aliasVarietyOf(more, 'cucumber 1')]).toEqual(['v-y', suyo.variety_ref.id])
+  })
+
+  it('ownership — the whole alias owns its numbers, for its own variety only', () => {
+    expect(plantingOwnsNumbers(suyo, 'cucumber one')).toBe(false)   // Suyo Long's own names carry no 1
+    expect(plantingOwnsNumbers(suyo, 'cucumber one', names)).toBe(true)
+    expect(plantingOwnsNumbers(suyo, 'cucumber 1', names)).toBe(true)
+    expect(plantingOwnsNumbers(PLANTS[1], 'cucumber one', names)).toBe(false)   // a cucumber, another variety
+    expect(plantingOwnsNumbers(byName('Big Boy'), 'cucumber one', names)).toBe(false)
+    expect(plantingOwnsNumbers(suyo, 'suyo long one', names)).toBe(false)   // not the alias, said whole
+  })
+
+  it.each(['cucumber one', 'cucumber one next', 'Cucumber One', 'cucumber 1', 'cucumber 1 next'])(
+    '%j is a name, not a record — not this reader\'s, with or without a crop chosen', (said) => {
+      expect(bare(said)).toBeNull()
+      expect(bare(said, suyo)).toBeNull()
+    })
+
+  it('without the alias the same words ARE a crop and an amount (MINOR-5) — the alias is the difference', () => {
+    expect(resolveBareOneBreath(VOCAB, oneBreathReadings('cucumber one'))).toMatchObject({ kind: 'apply', groups: [{ value: 1 }] })
+    expect(bare('cucumber one 3 count', null, null)).toMatchObject({ kind: 'apply', groups: [{ value: 1 }, { value: 3 }] })
+  })
+
+  // The head guard's own case — the one the reading guard cannot settle. Every NAMED reading of an alias
+  // said whole is already caught (its name plus the words after it IS the alias), so the sentence would
+  // fall through to the grammar's own verdict, and for words that read as a run of numbers that verdict
+  // is a refusal. Synthetic alias: "cucumber one three" run together is "two numbers ran together".
+  it('said whole, an alias is a name even where its words read as numbers run together', async () => {
+    const rows = [aliasRow('cucumber one three', 'Suyo Long')]
+    expect(resolveBareOneBreath(VOCAB, oneBreathReadings('cucumber one three'))).toEqual({ kind: 'refuse', reason: 'run' })
+    expect(resolveBareOneBreath(VOCAB, oneBreathReadings('cucumber one three'),
+      { aliasIndex: indexAliases(rows), aliasNames: indexAliasNames(rows) })).toBeNull()
+    aliasesNow = rows
+    const rec = await startListening(VOCAB)
+    for (const line of ['cucumber one three', '3 count', 'next']) await speak(rec, line)
+    await settle()
+    expect(saved()).toEqual([['Suyo Long', H(3, 'count'), []]])
+  })
+
+  it('it is a name even when its variety has no live planting — the search answers for it, as on prod', () => {
+    // The small garden has two cucumbers and neither is the alias's variety: split, "cucumber" + 1
+    // would be a two-planting list; as a name it goes to the search, exactly as prod sends it.
+    const opts = { aliasIndex: idx, aliasNames: names }
+    expect(resolveBareOneBreath(PLANTS, oneBreathReadings('cucumber one'))).toMatchObject({ kind: 'refuse', reason: 'crowded' })
+    expect(resolveBareOneBreath(PLANTS, oneBreathReadings('cucumber one'), opts)).toBeNull()
+  })
+
+  it.each([
+    ['cucumber one 200', [200]], ['cucumber one 3 200', [3, 200]], ['cucumber 1 3 200', [3, 200]],
+    ['cucumber one twenty 200', [20, 200]], ['cucumber one 3 200 next', [3, 200]],
+  ])('%j keeps the alias whole as the name — only the amounts after it are amounts', (said, amounts) => {
+    const d = bare(said)
+    expect(d?.kind).toBe('apply')
+    expect(d.planting.id).toBe(suyo.id)
+    expect(d.groups.map((g) => g.value)).toEqual(amounts)
+  })
+
+  it('the unit reader: "cucumber one 3 count" is Suyo Long · 3 count, and the bare reader leaves it alone', () => {
+    const unit = (said, aliasNames = names) => {
+      const r = resolveOneBreath(VOCAB, segmentCandidates(said), idx, aliasNames)
+      return r && [r.planting.name, r.values.map((v) => `${v.value} ${v.unit}`)]
+    }
+    expect(bare('cucumber one 3 count')).toBeNull()
+    expect(unit('cucumber one 3 count')).toEqual(['Suyo Long', ['3 count']])
+    expect(unit('cucumber one three count 231 grams')).toEqual(['Suyo Long', ['3 count', '231 g']])
+    expect(unit('cucumber 1 3 count')).toEqual(['Suyo Long', ['3 count']])
+    // Slice 3's ownership rule without the names: the alias's 1 is not Suyo Long's, so no reading.
+    expect(unit('cucumber one 3 count', null)).toBeNull()
+    // The search index alone still carries the raw key (the default for a caller that passes one map).
+    expect(resolveOneBreath(VOCAB, segmentCandidates('cucumber one 3 count'), idx)?.planting.name).toBe('Suyo Long')
+  })
+
+  it('a number-only alias resolves by its key, second to a real name, like a number-only name', () => {
+    const rows = [{ heard_key: looseKey('eighteen eighty five'), heard_text: 'eighteen eighty five', variety_id: byName('1884').variety_ref.id }]
+    expect(plantingsNamedExactly(VOCAB, 'eighteen eighty five')).toEqual([])
+    expect(plantingsNamedExactly(VOCAB, 'eighteen eighty five', indexAliasNames(rows)).map((p) => p.name)).toEqual(['1884'])
+    expect(plantingsNamedExactly(VOCAB, '1884', indexAliasNames(rows)).map((p) => p.name)).toEqual(['1884'])
+    const r = resolveOneBreath(VOCAB, segmentCandidates('eighteen eighty five two count'), indexAliases(rows), indexAliasNames(rows))
+    expect(r && [r.planting.name, r.values.map((v) => `${v.value} ${v.unit}`)]).toEqual(['1884', ['2 count']])
+    expect(resolveOneBreath(VOCAB, segmentCandidates('eighteen eighty five two count'), indexAliases(rows), null)).toBeNull()
+    const d = resolveBareOneBreath(VOCAB, oneBreathReadings('eighteen eighty five 3 200'),
+      { aliasIndex: indexAliases(rows), aliasNames: indexAliasNames(rows) })
+    expect(d?.kind === 'apply' && [d.planting.name, d.groups.map((g) => g.value)]).toEqual(['1884', [3, 200]])
+  })
+
+  it('an alias for a variety with two plantings offers both, as a real name does', () => {
+    // "celebrity two" (synthetic) → Celebrity, which is two plantings (Celebrity, Celebrity Rescue),
+    // neither of whose own names carries a 2.
+    const rows = [{ heard_key: looseKey('celebrity two'), heard_text: 'celebrity two', variety_id: byName('Celebrity').variety_ref.id }]
+    const d = resolveBareOneBreath(VOCAB, oneBreathReadings('celebrity two 3 200'),
+      { aliasIndex: indexAliases(rows), aliasNames: indexAliasNames(rows) })
+    expect(d?.kind === 'refuse' && [d.reason, d.name, d.hits.map((p) => p.name)])
+      .toEqual(['crowded', 'celebrity two', ['Celebrity', 'Celebrity Rescue']])
+  })
+
+  it('a taught alias owns its homophones too — "big boy to" (taught) is a name, not "big boy" + 2', () => {
+    const rows = [{ heard_key: looseKey('big boy to'), heard_text: 'big boy to', variety_id: byName('Big Boy').variety_ref.id }]
+    expect(resolveBareOneBreath(VOCAB, oneBreathReadings('big boy to 3 200'))).toEqual({ kind: 'refuse', reason: 'ambiguous' })
+    const d = resolveBareOneBreath(VOCAB, oneBreathReadings('big boy to 3 200'),
+      { aliasIndex: indexAliases(rows), aliasNames: indexAliasNames(rows) })
+    expect(d?.kind).toBe('apply')
+    expect([d.planting.name, d.groups.map((g) => g.value)]).toEqual(['Big Boy', [3, 200]])
+  })
+
+  // The seat's ALIAS set on the page, with prod's POSTs (see the header above).
+  it.each([
+    [['cucumber one', '3', 'next'], H(3, 'count'), ['count']],
+    [['cucumber one', '3 count', 'next'], H(3, 'count'), []],
+    [['cucumber one', 'three count', 'next'], H(3, 'count'), []],
+    [['cucumber one 3 count next'], H(3, 'count'), []],
+    [['cucumber one 3 count', 'next'], H(3, 'count'), []],
+    [['Suyo Long', 'cucumber one 3 count next'], H(3, 'count'), []],
+    [['cucumber one three count 231 grams next'], H(3, 'count', 231), []],
+    [['cucumber one', '3 count', '231 grams', 'next'], H(3, 'count', 231), []],
+    // BUG-VOICETWOBARENUM-001's pairing — prod keeps only the last number here (231 count), by design no more.
+    [['cucumber one', 'three', '231', 'next'], H(3, 'count', 231), ['count', 'g']],
+    // One breath, no units: prod reads nothing; this is what the same parts said separately save.
+    [['cucumber one 3 200 next'], H(3, 'count', 200), ['count', 'g']],
+    [['cucumber one 200 next'], H(200, 'count'), ['count']],
+    // Chrome's digit rendering of the same alias.
+    [['cucumber 1', '3', 'next'], H(3, 'count'), ['count']],
+    [['cucumber 1 3 count next'], H(3, 'count'), []],
+  ])('%j saves Suyo Long with only the spoken amounts', async (lines, harvest, assumed) => {
+    const rec = await startListening(VOCAB)
+    for (const line of lines) await speak(rec, line)
+    await settle()
+    expect(saved()).toEqual([['Suyo Long', harvest, assumed]])
+  })
+
+  it.each([[['cucumber one', 'next']], [['cucumber one', '231 grams', 'next']]])(
+    '%j saves nothing — the alias names the crop, and no quantity was said (as on prod)', async (lines) => {
+      const rec = await startListening(VOCAB)
+      for (const line of lines) await speak(rec, line)
+      await settle()
+      expect(posts()).toEqual([])
+      expect(statusText()).toBe('Not saved — still need a quantity. Say it, then "next".')
+    })
+
+  it('rows served without heard_text (the key alone) still make the alias a name', async () => {
+    aliasesNow = DAVE_ALIASES.map(({ heard_text: _unused, ...row }) => row)
+    const rec = await startListening(VOCAB)
+    for (const line of ['cucumber one', '3', 'next']) await speak(rec, line)
+    await settle()
+    expect(saved()).toEqual([['Suyo Long', H(3, 'count'), ['count']]])
+  })
+
+  it('a name taught IN THIS SESSION is a name at once — its number is never an amount', async () => {
+    const rec = await startListening(VOCAB)
+    await speak(rec, 'zzqq three')
+    const teach = screen.getByTestId('voice-harvest-teach')
+    fireEvent.change(within(teach).getByLabelText('What did you mean by zzqq three'), { target: { value: 'suyo' } })
+    await act(async () => { fireEvent.click(within(teach).getByRole('button', { name: /Suyo Long/ })) })
+    const taught = apiFetchSpy.mock.calls.filter(([url, opts]) => url === '/api/varieties/voice-aliases' && opts?.method === 'POST')
+    expect(taught.map(([, opts]) => JSON.parse(opts.body).heard_key)).toEqual([looseKey('zzqq three')])
+    await speak(rec, 'zzqq three 3 count next')
+    await settle()
+    expect(saved()).toEqual([['Suyo Long', H(3, 'count'), []]])
+  })
+})
+
 // ── THE CENSUS: every digit or number word in a real name, through every one-breath shape ─────────
 //
 // The brief's hard rule: a digit that belongs to a name must never become a quantity or weight, and
@@ -492,6 +711,48 @@ describe('V5-VOICEVOCAB-001 — census: no digit of a real name lands in a value
         expect(d.groups.map((g) => g.value)).toEqual(amounts)
       }
     }
+  })
+
+  // Review BLOCKING-2 — the census's own rule, for the names Dave TAUGHT: every served alias with a digit
+  // or a number word, written, with digits said as words, and with number words as Chrome's digits.
+  // Said alone it is a name; followed by amounts, an apply lands on that alias's variety with exactly the
+  // spoken amounts, in the no-unit and in the unit form; anything else is a refusal or not the reader's.
+  it("Dave's taught aliases: an alias's number never lands in a value slot", () => {
+    const idx = indexAliases(DAVE_ALIASES)
+    const names = indexAliasNames(DAVE_ALIASES)
+    const TAUGHT = DAVE_ALIASES.filter((r) => /\d/.test(r.heard_text) || NUMBER_WORD.test(r.heard_text) || HOMOPHONE.test(r.heard_text))
+    expect(TAUGHT.map((r) => r.heard_text)).toEqual(['cucumber one', 'super sweet 100'])
+    const kinds = {}
+    const tally = (k) => { kinds[k] = (kinds[k] ?? 0) + 1 }
+    for (const row of TAUGHT) {
+      const ofVariety = VOCAB.filter((p) => p.variety_ref?.id === row.variety_id).map((p) => p.id)
+      for (const form of new Set([...spokenForms(row.heard_text), foldNumberWords(row.heard_text)])) {
+        for (const said of [form, `${form} next`]) {
+          expect(resolveBareOneBreath(VOCAB, oneBreathReadings(said), { aliasIndex: idx, aliasNames: names }), said).toBeNull()
+          tally('name')
+        }
+        for (const [tail, amounts] of [['3 200', [3, 200]], ['3 200 next', [3, 200]], ['7', [7]], ['200', [200]], ['200 next', [200]]]) {
+          const said = `${form} ${tail}`
+          const d = resolveBareOneBreath(VOCAB, oneBreathReadings(said), { aliasIndex: idx, aliasNames: names })
+          tally(d ? (d.kind === 'refuse' ? `refuse ${d.reason}` : d.kind) : 'not-mine')
+          if (d?.kind !== 'apply') continue
+          expect(ofVariety, said).toContain(d.planting?.id)
+          expect(d.groups.map((g) => g.value), said).toEqual(amounts)
+        }
+        for (const [tail, values] of [['3 count', ['3 count']], ['three count 231 grams', ['3 count', '231 g']]]) {
+          const said = `${form} ${tail}`
+          const r = resolveOneBreath(VOCAB, segmentCandidates(said), idx, names)
+          tally(r ? 'unit-apply' : 'unit-none')
+          if (!r) continue
+          expect(ofVariety, said).toContain(r.planting.id)
+          expect(r.values.map((v) => `${v.value} ${v.unit}`), said).toEqual(values)
+        }
+      }
+    }
+    // Pinned exactly, as the census above is: 4 forms. Every "cucumber one"/"cucumber 1" sentence applies
+    // to Suyo Long with its amounts (10 no-unit, 4 unit); every Super Sweet 100 form is two plantings —
+    // offered as a list (10) or, in the unit form, not read (4).
+    expect(kinds).toEqual({ name: 8, apply: 10, 'refuse crowded': 10, 'unit-apply': 4, 'unit-none': 4 })
   })
 
   it('a bare digit that sits INSIDE a name never selects that planting in one breath', () => {
