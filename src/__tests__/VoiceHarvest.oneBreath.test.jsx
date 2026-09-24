@@ -456,11 +456,31 @@ describe('V5-VOICEVOCAB-001 — census: no digit of a real name lands in a value
   it('a bare digit that sits INSIDE a name never selects that planting in one breath', () => {
     // "2" is in Danvers 1*2*6, "8" in 1884 and 80, "5" in Chinese 5-Color, "12" in 126: none of these
     // is a planting's whole name, so none may pick a crop.
-    for (const n of [1, 2, 4, 5, 6, 8, 12, 18, 26, 84, 88]) {
+    // 80 and 126 are WHOLE digit runs of Clemson Spineless 80 and Danvers 126 Carrot, so ownership
+    // alone would admit them — only the number-only-name rule (exact equality) keeps them out.
+    for (const n of [1, 2, 4, 5, 6, 8, 12, 18, 26, 80, 84, 88, 126]) {
       for (const said of [`${n} 200`, `${n} 200 next`, `${n} 165 grams`]) {
         const d = decide(said)
         expect(d?.kind === 'apply' ? d.planting?.name : null, said).toBeNull()
       }
     }
+  })
+})
+
+// Two readings that are each valid on their own and disagree — no clash, no homophone, no crowd:
+// only the agreement rule stands between this sentence and a guess.
+describe('V5-VOICEVOCAB-001 — two valid readings that disagree are refused', () => {
+  const TWO = [
+    { id: 'a', name: 'Alpha', archived_at: null, variety_ref: { id: 'va', name: 'Alpha', crop_type_slug: 'bean' } },
+    { id: 'a7', name: 'Alpha 7', archived_at: null, variety_ref: { id: 'va7', name: 'Alpha 7', crop_type_slug: 'bean' } },
+  ]
+  it('"alpha 7 200": Alpha with 7 and 200, or Alpha 7 with 200 — neither is chosen', () => {
+    const info = oneBreathReadings('alpha 7 200')
+    expect(info.readings.map((r) => r.name)).toEqual(['alpha', 'alpha 7'])
+    expect(resolveBareOneBreath(TWO, info)).toEqual({ kind: 'refuse', reason: 'ambiguous' })
+  })
+  it('while the unambiguous sentences for each still apply', () => {
+    expect(resolveBareOneBreath(TWO, oneBreathReadings('alpha 3 200'))).toMatchObject({ kind: 'apply', planting: { id: 'a' } })
+    expect(resolveBareOneBreath(TWO, oneBreathReadings('alpha 7 3 200'))).toMatchObject({ kind: 'apply', planting: { id: 'a7' } })
   })
 })
