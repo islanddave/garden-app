@@ -1929,6 +1929,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   }, [arm, noteScreenSleep, releaseRecogniser, reportRefusedCues, requestWakeLock, say])
 
   const tone = TONE[status.tone] ?? TONE.idle
+  // Where a held number will land if nothing changes it — the same slot order placeHeld uses (the crop's
+  // default unit into an empty quantity, else grams into an empty weight), and the axis from buildValue.
+  const heldLanding = useMemo(() => {
+    if (heldNum == null) return null
+    const unit = qty == null ? (selected?.variety_ref?.default_unit || 'count') : weight == null ? 'g' : null
+    const built = unit ? buildValue(heldNum, unit, '') : null
+    if (!built || (built.kind === 'weight' ? weight : qty) != null) return null
+    return { axis: built.kind, text: `${heldNum} ${built.unit} (assumed unless you say a unit)` }
+  }, [heldNum, qty, weight, selected])
   const savedCount = rows.filter((r) => r.kind === 'save' && !r.undone).length
   const missCount  = rows.filter((r) => r.kind === 'miss').length
   // BUG-VOICEFAILSILENT-001 R3 — ONE LINE THAT ANSWERS THE ONLY QUESTION HE HAS AT THE END OF A BED.
@@ -1996,14 +2005,17 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         {/* Every value in these three slots was SPOKEN. Nothing is pre-filled and nothing carries a
             default, so a slot reading "—" means the words have not been said yet — which is the only
             reading that lets a glance at this card be trusted. */}
-        {/* A HELD NUMBER IS SHOWN IN THE QUANTITY SLOT, not hidden until its unit lands. It is not a
-            quantity yet and must not read as one — hence the explicit "needs a unit" rather than a
-            bare number, which would look exactly like a filled slot and reintroduce the
-            looks-complete-but-isn't failure this card was built to make impossible. */}
+        {/* A HELD NUMBER IS SHOWN IN THE SLOT IT WILL LAND IN, with the unit it will get — not hidden until
+            something resolves it. QA F4 (the idea of D3's slice B, 312c90c): after "2", "165" the card read
+            Quantity "2 count", Weight "—" while 165 sat held, and a "—" for words that HAVE been said
+            breaks the one reading this card promises. It is marked as not final — "assumed unless you
+            say a unit", the banner's own words — rather than shown bare, which would look exactly like a
+            filled slot. The old "… needs a unit" wording was dropped with it: units are optional now.
+            With both slots filled it has nowhere to land; the banner says it will be dropped. */}
         <Slot label="Quantity"
-              value={qty ? `${qty.value} ${qty.unit}`
-                : heldNum != null ? `${heldNum} … needs a unit` : null} />
-        <Slot label="Weight"   value={weight ? `${weight.value} ${weight.unit}` : null} />
+              value={qty ? `${qty.value} ${qty.unit}` : heldLanding?.axis === 'quantity' ? heldLanding.text : null} />
+        <Slot label="Weight"
+              value={weight ? `${weight.value} ${weight.unit}` : heldLanding?.axis === 'weight' ? heldLanding.text : null} />
         <div style={{ marginTop: 6, fontSize: '0.78rem', color: P.light, fontStyle: 'italic' }} data-testid="voice-harvest-heard">
           hearing: {heard ? (heard.transcript || '—') : '—'}
         </div>

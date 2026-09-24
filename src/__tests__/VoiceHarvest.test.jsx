@@ -738,7 +738,7 @@ describe('BUG-VOICECOUNTSPLIT-001 — a value split across two utterances', () =
     // legitimately be a search term; only after one is chosen can it only be an amount.
     const rec = await startListening()
     await speak(rec, 'three')
-    expect(record()).not.toContain('needs a unit')
+    expect(record()).not.toContain('assumed unless you say a unit')
     expect(statusText()).toContain('Nothing matched')
   })
 
@@ -987,7 +987,7 @@ describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a n
     expect(statusText()).toContain('now say the count or the weight')
     expect(record()).toContain('1884')
     expect(record()).not.toContain('Suyo Long')
-    expect(record()).not.toContain('needs a unit')
+    expect(record()).not.toContain('assumed unless you say a unit')
   })
 
   it('still HOLDS a number that merely appears inside a name — the guard is not reopened', async () => {
@@ -1001,7 +1001,7 @@ describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a n
     await speak(rec, 'two')
     expect(record()).toContain('Suyo Long')
     expect(record()).not.toContain('Brentwood')
-    expect(record()).toContain('needs a unit')
+    expect(record()).toContain('Quantity2 count (assumed unless you say a unit)')
   })
 
   it('holds a number WORD even when a planting is named for it — the digit bound', async () => {
@@ -1016,7 +1016,7 @@ describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a n
     await speak(rec, 'Suyo Long')
     await speak(rec, 'three')
     expect(record()).toContain('Suyo Long')
-    expect(record()).toContain('needs a unit')
+    expect(record()).toContain('Quantity3 count (assumed unless you say a unit)')
   })
 
   it('takes a count against the planting it switched to — the fall-through lands somewhere usable', async () => {
@@ -1040,7 +1040,7 @@ describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a n
     await speak(rec, 'Brentwood')
     expect(record()).toContain('Brentwood')
     expect(statusText()).toContain('dropped 3')
-    expect(record()).not.toContain('needs a unit')
+    expect(record()).not.toContain('assumed unless you say a unit')
   })
 
   it('APPLIES the held number on an utterance it did not understand — no longer a loss', async () => {
@@ -1135,7 +1135,7 @@ describe('BUG-VOICEHELDREPEAT-001 — a held number restated with its unit is th
     await speak(rec, 'Suyo Long')
     await holdByTick(rec, '87')
     // Precondition, so this cannot pass by never reaching the hold.
-    expect(record()).toContain('87 … needs a unit')
+    expect(record()).toContain('Quantity87 count (assumed unless you say a unit)')
 
     await act(async () => { rec.deliverFinal('87 G') })   // next index, same session
     await act(async () => { rec.endSession() })
