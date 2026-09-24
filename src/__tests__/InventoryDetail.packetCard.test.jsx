@@ -590,6 +590,10 @@ function normaliseIds(html) {
 }
 const FIXTURE_DIR = resolve(process.cwd(), 'src/__tests__/__fixtures__')
 const WRITE = process.env.INVDETAIL_BASE_BYTES_WRITE === '1'
+// ONE deliberate difference from a3eb208 since: BUG-SEEDPAGETAPFLOORS-001 (2026-09-24) made the
+// SourcePicker chip's ✕ a 44px box with a -7px margin (its 30px footprint unchanged), so the tool
+// fixture was re-captured. Word-diffed before it was: `min-width`/`min-height` 30px -> 44px plus
+// `margin: -7px` on that one button, and nothing else in either fixture moved.
 
 describe.each([
   ['tool (durable)', TOOL, 'inventoryDetail.tool.base-a3eb208.html', 'inv-detail-origin-chip'],

@@ -1319,6 +1319,12 @@ function chipStyle(disabled) {
   }
 }
 
+// BUG-SEEDPAGETAPFLOORS-001 — the ✕ is a T.tapMinHeight target that keeps its 30px FOOTPRINT. The chip's
+// height is load-bearing (BUG-FRAMEPADOCCLUDE-001: every px it grows comes out of the weigh-in keypad's
+// track), so the box grows to 44 and a negative margin of the same 7px per side hands it back: the
+// margin box is 30x30 as before, the chip lays out exactly as before, and the extra reach lands in the
+// chip's own 8px padding and 4px gap. Same change, same numbers, as SourcePicker's chipClearBtn.
+const CLEAR_FOOTPRINT_PX = 30
 const chipClearBtn = {
   background: 'none',
   border: 'none',
@@ -1326,8 +1332,9 @@ const chipClearBtn = {
   color: P.mid,
   fontSize: '0.9rem',
   padding: '4px 6px',
-  minWidth: 30,
-  minHeight: 30,
+  minWidth: T.tapMinHeight,
+  minHeight: T.tapMinHeight,
+  margin: (CLEAR_FOOTPRINT_PX - T.tapMinHeight) / 2,
   lineHeight: 1,
 }
 

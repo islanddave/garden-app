@@ -836,9 +836,16 @@ function chipStyle(disabled) {
   }
 }
 
+// BUG-SEEDPAGETAPFLOORS-001 — the ✕ is a T.tapMinHeight target that keeps its 30px FOOTPRINT: the box
+// grows to 44 and a negative margin of the same 7px per side hands it back, so the chip (whose height is
+// the BUG-FRAMEPADOCCLUDE-001 concern noted on its label) lays out exactly as before and the extra reach
+// lands in the chip's own padding and gap. Same change, same numbers, as PlantingSelect's chipClearBtn.
+const CLEAR_FOOTPRINT_PX = 30
 const chipClearBtn = {
   background: 'none', border: 'none', cursor: 'pointer', color: P.mid,
-  fontSize: T.type.base, padding: `${T.space.xs}px`, minWidth: 30, minHeight: 30, lineHeight: 1,
+  fontSize: T.type.base, padding: `${T.space.xs}px`,
+  minWidth: T.tapMinHeight, minHeight: T.tapMinHeight, margin: (CLEAR_FOOTPRINT_PX - T.tapMinHeight) / 2,
+  lineHeight: 1,
 }
 
 const linkBtn = {

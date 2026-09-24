@@ -622,14 +622,21 @@ export default function InventoryDetail() {
                 {item.germination.sowings.length > 1 ? ` · ${item.germination.sowings.length} sowings` : ''}
               </span>
             </div>
+            {/* BUG-GERMLISTWIDENS-001 — the rows were nowrap flex rows in a template-less grid, and a
+                grid's implicit `auto` column takes its widest row's MIN-CONTENT: one long planting name
+                made it 477px and the page scrolled sideways at 360 and 390 (the layout viewport went to
+                ~500). minmax(0, 1fr) pins the column to the card's width whatever a row holds, and the
+                name now WRAPS rather than truncating — the planting is the thing this row identifies,
+                and the "Sown from this packet" rows above wrap theirs the same way. Baseline, so the
+                rate sits on the name's first line when it wraps. gate:seed-detail (h) holds both. */}
             {item.germination.sowings.length > 1 && (
-              <div style={{ marginTop: 10, display: 'grid', gap: 4 }}>
+              <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 4 }}>
                 {item.germination.sowings.map(s => {
                   const up = Number(s.seeds_germinated ?? 0)
                   const n = Number(s.seeds_sown ?? 0)
                   return (
-                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem', color: P.mid }}>
-                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div key={s.id} data-testid="packet-germ-sowing" style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: '0.82rem', color: P.mid }}>
+                      <span style={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
                         {s.sown_at ? String(s.sown_at).slice(0, 10) : 'undated'} — {s.name}
                       </span>
                       <span style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
