@@ -595,3 +595,79 @@ describe('a save word while the last harvest is still being sent', () => {
     expect(statusText()).not.toContain('saved once')
   })
 })
+
+// BUG-VOICESLOWSAVEFALSEROWS-001 — THE TWO OTHER DOORS THAT TAKE VALUES OFF THE RECORD, DURING A SLOW SAVE. A named
+// sentence refused and started over (QA F10) and amounts said again without units (review MINOR-6) wrote "Cleared …"
+// and "Replaced …" rows for values a POST was still sending — false when it saved them. Their rows now wait for that
+// POST, like the switch's. With no POST out, both still write their rows at once (VoiceHarvest.oneBreath.test.jsx).
+describe('the other doors that take values off the record while a save is still being sent', () => {
+  it('a refused sentence, and the POST lands: no Cleared row; only the refusal is not captured', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Suyo Long', '3 count', 'next')
+    await say(rec, 'danvers 126 200')
+    expect(statusText()).toBe("Didn't catch that — the name and the numbers could be split more than one way — say the planting, then the amounts.")
+    await posts.resolve()
+    expect(misses()).toEqual(["Didn't catch that — heard “danvers 126 200”."])
+    expect(header()).toBe('1 saved · 1 not captured')
+    expect(saved()).toEqual([['Suyo Long', 3, 'count', null, []]])
+  })
+
+  it('a refused sentence, and the POST fails: the Cleared row is written then, in its own words', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Suyo Long', '3 count', 'next')
+    await say(rec, 'danvers 126 200')
+    await posts.reject()
+    expect(misses()).toEqual([
+      "Didn't catch that — heard “danvers 126 200”.",
+      'NOT SAVED — Network error.',
+      'Cleared 3 count for Suyo Long — the record was started over after a sentence that could not be read.',
+    ])
+    expect(statusText()).toBe('NOT SAVED — Network error. The record has moved on (cleared 3 count) — say it again to log it.')
+    expect(header()).toBe('0 saved · 3 not captured')
+  })
+
+  it('amounts said again without units, and the POST lands: no Replaced rows, and the restated record still saves', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'suyo long 3 count 231 grams next')
+    await say(rec, '2 165')
+    expect(misses()).toEqual([])
+    await posts.resolve()
+    expect(header()).toBe('1 saved')
+    expect(misses()).toEqual([])
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Suyo Long', 3, 'count', 231, []], ['Suyo Long', 2, 'count', 165, ['count', 'g']]])
+  })
+
+  it('amounts said again without units, and the POST fails: the Replaced rows are written then', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'suyo long 3 count 231 grams next')
+    await say(rec, '2 165')
+    await posts.reject()
+    expect(misses()).toEqual([
+      'NOT SAVED — Network error.',
+      'Replaced 3 count with 2 count (assumed) — the amounts were said again without units.',
+      'Replaced 231 g with 165 g (assumed) — the amounts were said again without units.',
+    ])
+    expect(statusText()).toBe('NOT SAVED — Network error. The record has moved on (replaced 3 count with 2 count; replaced 231 g with 165 g) — say it again to log it.')
+    expect(header()).toBe('0 saved · 3 not captured')
+  })
+
+  it('a refused sentence during the save still says what it cleared that was never sent', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Suyo Long', '3 count', 'next')
+    // Said after "next", so not part of what is being sent.
+    await say(rec, '231 grams', 'danvers 126 200')
+    expect(misses()).toEqual([
+      'Cleared 231 g for Suyo Long — the record was started over after a sentence that could not be read.',
+      "Didn't catch that — heard “danvers 126 200”.",
+    ])
+    expect(statusText()).toBe("Didn't catch that — the name and the numbers could be split more than one way — say the planting, then the amounts. (cleared 231 g)")
+    await posts.resolve()
+    expect(header()).toBe('1 saved · 2 not captured')
+  })
+})
