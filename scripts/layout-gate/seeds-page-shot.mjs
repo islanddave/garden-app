@@ -91,10 +91,12 @@
 //       Promoted from a REPORTED finding (a needs-profile card left its name 76px, five lines).
 //   (p) F2 (V5-SEEDSTAB-001 slice 3) — the "F2 — won’t come true" chip (its words read from
 //       src/components/seed/seedLots.js) is on exactly the fixture's two lots saved off F1 plants and on
-//       no bought packet (three bought F1 packets are in the fixture: design §2 rule 8), and it is NEUTRAL,
-//       never a live chip — so (g) and (n) keep holding the amount and the live state whole on those rows.
-//       How much of the row chip shows at each width is REPORTED. On Saved seeds each F2 badge is whole
-//       and inside its card.
+//       no bought packet (three bought F1 packets are in the fixture: design §2 rule 8), and it is never
+//       a live chip — so (g) and (n) keep holding the amount and the live state whole on those rows. On
+//       an F2 row it OUTRANKS THE ESTIMATED HEAT (amended 2026-09-24): on both fixture F2 rows it is
+//       WHOLE at both widths, a heat is never shown beside a cut F2 chip, and at least one F2 row drops
+//       its heat to keep the chip whole (non-vacuity). On Saved seeds each F2 badge is whole and inside
+//       its card.
 //
 // "ITS LINE-HEIGHT", MADE PRECISE, because the literal reading is wrong for this element. The second
 // line is a flex row of Badges and facts spans; its own computed line-height is `normal` at 12px
@@ -256,7 +258,7 @@ const VIEWS = [
     // Every group open: 32 rows. The amount shows on 11 (every "1 packet" row prints none: Hot Portugal,
     // Shishito, Amish Paste and Hungarian Hot Wax's 2-3 packets, the Reaper's 25 seeds, the bean's 2 oz,
     // the used-up 0 packets, and the four MEASURED saved lots — 1884's 185, the Money Plant's approx.
-    // 120, Hot Paper Lantern's approx. 1200 seeds · 12.5 g and Ristra Cayenne II's approx. 175).
+    // 120, Hot Paper Lantern's approx. 1200 seeds · 12.5 g and Ristra Cayenne II's 175).
     rows: 32, longRowChips: 2, ordinalRows: 2, amountRows: 11, stripeless: 8, expandedControls: 3,
     // One chip per bought packet, by short label — Fedco is the one supplier the palette does not know.
     suppliers: { Botanical: 8, Bentley: 6, "Johnny's": 4, Fedco: 4, Sandia: 2 },
@@ -570,6 +572,9 @@ const MEASURE = (v) => `(() => {
         neutral: chips.filter(c => !live.includes(c)).map(c => ({ text: (c.textContent || '').trim(),
           w: R(c.getBoundingClientRect().width), full: c.scrollWidth + c.offsetWidth - c.clientWidth,
           cut: c.scrollWidth > c.clientWidth + 1 || !within(c.getBoundingClientRect(), clipOf(c.parentElement, row)) })),
+        // (p): the F2 chip, measured the way (g)/(n) measure what must be whole — found by its words.
+        f2: (() => { const c = chips.find(x => (x.textContent || '').trim() === ${JSON.stringify(F2_LABEL)})
+          return c ? { ...whole(c, line, row), full: c.scrollWidth + c.offsetWidth - c.clientWidth, onLine: c.parentElement === line } : null })(),
         lineL: R(lb.left), lineR: R(lb.right), lineT: R(lb.top), lineB: R(lb.bottom),
         slack: fixed.length ? R(lb.right - Math.max(...fixed) + gives) : null,
         // REPORTED: what gives way on a crowded line, by design — chips ellipsised, then where-from/how-old.
@@ -927,16 +932,26 @@ async function allOpened(v, at, vw, vh) {
   else if (!gN.cut) fail(`${at}: (k) non-vacuity — "${NEUTRAL_GIVES_ROW}"'s "${gN.text}" fits whole beside its heat at ${vw}px, so no row makes a neutral chip give way to a heat`)
 
   // ── (p) F2 (V5-SEEDSTAB-001 slice 3) — the chip rides on exactly the lots saved off F1 plants and on
-  // no bought packet (design §2 rule 8), and it is NEUTRAL: it gives way with the bookkeeping chips, so it
-  // can never take a live state's never-cut first place nor squeeze an amount — (g) and (n) above hold
-  // those on these rows too. How much of the chip shows at this width is REPORTED, not asserted.
+  // no bought packet (design §2 rule 8), and it is neutral in tone, never a live chip — so it can never
+  // take a live state's never-cut first place, and (g) and (n) above still hold the amount and the live
+  // state whole on these rows. AMENDED 2026-09-24 (orchestrator decision, reported to Dave): on an F2 row
+  // the chip OUTRANKS THE ESTIMATED HEAT — it is an item of the line, the heat rides the give-way box — so:
+  //   · on both fixture F2 rows the chip is WHOLE (not ellipsised, inside its line) at both widths;
+  //   · on ANY F2 row a heat is never shown beside a cut F2 chip (the heat gives way first);
+  //   · non-vacuity: at least one F2 row has DROPPED its heat to keep the chip whole at this width — a
+  //     row where everything fits would pass the order check for nothing.
   const f2Rows = m.rows.filter(r => r.line && r.line.chipLabels.includes(F2_LABEL))
   const f2Titles = f2Rows.map(r => r.title.text).sort()
   if (JSON.stringify(f2Titles) !== JSON.stringify([...e.f2Rows].sort())) fail(`${at}: (p) the F2 chip "${F2_LABEL}" is on ${JSON.stringify(f2Titles)}, expected exactly ${JSON.stringify(e.f2Rows)} — it belongs to lots saved off F1 plants and to nothing else`)
   for (const r of f2Rows) {
-    if (r.line.supplier) fail(`${at}: (p) "${r.title.text}" carries a supplier chip AND the F2 chip — a bought packet is never labelled F2`)
-    if (r.line.liveChips.some(c => c.text === F2_LABEL)) fail(`${at}: (p) "${r.title.text}": the F2 chip carries a live tone — it would take the first chip's never-cut place`)
+    const L = r.line, lb = { l: L.lineL, r: L.lineR, t: L.lineT, b: L.lineB }
+    if (L.supplier) fail(`${at}: (p) "${r.title.text}" carries a supplier chip AND the F2 chip — a bought packet is never labelled F2`)
+    if (L.liveChips.some(c => c.text === F2_LABEL)) fail(`${at}: (p) "${r.title.text}": the F2 chip carries a live tone — it would take the first chip's never-cut place`)
+    if (!L.f2) { fail(`${at}: (p) "${r.title.text}": the F2 chip could not be measured`); continue }
+    if (e.f2Rows.includes(r.title.text) && notWhole(L.f2)) fail(`${at}: (p) "${r.title.text}": the F2 chip is not whole — ${cutMsg(L.f2, lb)} (${L.f2.full}px whole); on an F2 row it outranks the estimated heat and gives way only to the amount, a live state or a supplier`)
+    if (L.heat && L.heat.shown && notWhole(L.f2)) fail(`${at}: (p) shrink order — "${r.title.text}" shows its heat "${L.heat.text}" while its F2 chip is cut (${L.f2.w}px of ${L.f2.full}px) — on an F2 row the estimated heat gives way first`)
   }
+  if (!f2Rows.some(r => r.line.heat && !r.line.heat.shown && r.line.f2 && !notWhole(r.line.f2))) fail(`${at}: (p) non-vacuity — no F2 row dropped its heat to keep its F2 chip whole at ${vw}px (${f2Rows.map(r => `"${r.title.text}": heat ${r.line.heat ? (r.line.heat.shown ? 'shown' : 'dropped') : 'none'}`).join(', ')}), so nothing shows the chip outranking the heat`)
 
   // ── (l) THE THUMBNAIL BOX — before any image has landed.
   const before = thumbBoxes(at, m, 'before any packet image landed')
@@ -955,8 +970,8 @@ async function allOpened(v, at, vw, vh) {
   console.log(`${P}: the 44-char row: title ${long.title.w}px column, ink ${long.title.inkW}px, ellipsis ${long.title.ellipsis} · line "${long.line.text}" ${long.line.h}px/${long.line.oneLineH}px, chips [${long.line.chipLabels.join(' | ')}], amount "${long.line.amount.text}" ${long.line.amount.w}px (whole: ${!!(long.line.amount.inLine && !long.line.amount.cut)}), rest ${long.line.restW}px of ${long.line.restInkW}px ink`)
   const gave = lr.filter(r => r.line.chipsCutLabels.length > 0 || (r.line.restW != null && r.line.restInkW > r.line.restW + 1))
   console.log(`${P}: [REPORTED — gives way by design, the never-cut items asserted whole in (g)(i)(j)(n), the heat whole or dropped in (k)] ${gave.length} row(s) whose chips or where-from/how-old are cut at this width: ${gave.map(r => `"${r.title.text}" (${r.line.chipsCutLabels.length ? `chip(s) cut: ${r.line.chipsCutLabels.map(c => `"${c}"`).join(', ')}` : 'no chip cut'}, rest ${r.line.restW}px of ${r.line.restInkW}px)`).join('; ') || 'none'}`)
-  console.log(`${P}: (p) F2 chip "${F2_LABEL}" — ${f2Rows.map(r => { const c = r.line.neutral.find(n => n.text === F2_LABEL)
-    return `"${r.title.text}" [${r.line.chipLabels.join(' | ')}]: ${c ? (c.cut ? `gives way, ${c.w}px of ${c.full}px shown` : `whole, ${c.w}px`) : 'NOT a neutral chip'}, amount ${r.line.amount ? `"${r.line.amount.text}" ${r.line.amount.w}px` : 'none'}, heat ${r.line.heat ? (r.line.heat.shown ? `${r.line.heat.w}px` : 'dropped') : 'none'}` }).join(' · ')} · ${f1BoughtRows.length} bought F1 packet(s), none carrying it`)
+  console.log(`${P}: (p) F2 chip "${F2_LABEL}" — ${f2Rows.map(r => { const c = r.line.f2
+    return `"${r.title.text}" [${r.line.chipLabels.join(' | ')}]: ${c ? `${notWhole(c) ? `CUT, ${c.w}px of ${c.full}px shown` : `whole, ${c.w}px`}${c.onLine ? ' (item of the line)' : ' (in the give-way flow)'}` : 'not measured'}, amount ${r.line.amount ? `"${r.line.amount.text}" ${r.line.amount.w}px` : 'none'}, heat ${r.line.heat ? (r.line.heat.shown ? `SHOWN ${r.line.heat.w}px` : 'dropped whole') : 'none'}, ${R1(r.line.lineR - Math.max(...[c, r.line.amount, ...r.line.liveChips].filter(Boolean).map(x => x.r)))}px of the line left after the chip, the amount and any live chip` }).join(' · ')} · ${f1BoughtRows.length} bought F1 packet(s), none carrying it`)
   const hiddenWrap = lr.filter(r => r.line.domLines > r.line.lines)
   console.log(`${P}: (k)/(n) SHRINK ORDER — "${HEAT_DROPPED_ROW}": live chip ${dL.liveChips.map(c => `"${c.text}" ${c.w}px`).join(', ')}, amount "${dL.amount.text}" ${dL.amount.w}px, heat "${dL.heat.text.replace(/^·\s*/, '')}" ${dL.heat.shown ? `SHOWN ${dL.heat.w}px` : 'dropped whole'}, ${dL.slack}px to spare · "${NEUTRAL_GIVES_ROW}": "${gN.text}" ${gN.cut ? `ellipsised to ${gN.w}px of ${gN.full}px` : `whole, ${gN.w}px`}, heat "${gL.heat.text.replace(/^·\s*/, '')}" ${gL.heat.shown ? `whole, ${gL.heat.w}px` : 'DROPPED'}, ${gL.slack}px to spare · ${liveCount} live chips · [REPORTED] ${hiddenWrap.length} row(s) whose facts wrapped out of sight (in the DOM on ${hiddenWrap.map(r => r.line.domLines).join('/') || '-'} bands; (f) reads the one line shown): ${hiddenWrap.map(r => `"${r.title.text}"`).join(', ') || 'none'}`)
 

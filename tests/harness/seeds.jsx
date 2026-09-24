@@ -84,11 +84,12 @@
 //     a stored saved lot with a counted yield. Saved seeds counts SEVEN saved lots in three stages
 //     (the drying Hot Paper Lantern is the fifth, the two F2 lots below the sixth and seventh);
 //     gate:seeds-saved has its own harness and does not move.
-//   · F2 (V5-SEEDSTAB-001 slice 3): two lots saved off F1 plants, each carrying the NEUTRAL
-//     "F2 — won’t come true" chip — "Ristra Cayenne II Saved seed 2026" stored (the chip is its only
-//     chip, in front of an amount the gate's (g) holds whole) and "Thai Dragon" drying (the chip follows
-//     the live "Drying" chip, which (n) holds whole). The bought F1 packets (Sungold F1, the Megatron
-//     pair) carry breeding_system 'f1' too and must show no F2 chip (design §2 rule 8).
+//   · F2 (V5-SEEDSTAB-001 slice 3): two lots saved off F1 plants, each carrying the
+//     "F2 — won’t come true" chip, which on an F2 row outranks the estimated heat — "Ristra Cayenne II
+//     Saved seed 2026" stored (the chip leads the line, whole, with the amount the gate's (g) holds whole
+//     beside it and the heat dropped) and "Thai Dragon" drying (the chip follows the live "Drying" chip,
+//     which (n) holds whole). The bought F1 packets (Sungold F1, the Megatron pair) carry
+//     breeding_system 'f1' too and must show no F2 chip (design §2 rule 8).
 //
 // DATES are relative to the run, like seedssaved.jsx, and stage dates are pinned to MID-DAY Eastern:
 // elapsedDays() counts CALENDAR days in Eastern (seedLots.js), so an instant 5x24h ago read at 00:30
@@ -271,13 +272,17 @@ const BASE_ROWS = [
   bought('Provider Bush Bean', 'bean', 'src-johnny', '2026-03-01', { unit: 'oz', quantity_on_hand: 2 }),
   // V5-SEEDSTAB-001 slice 3 — two lots saved off F1 plants, in the two shapes prod holds (2026-09-23:
   // Gong Bao and Ristra Cayenne II stored with a count and a heat, Big Boy and Thai Dragon drying). Each
-  // carries the NEUTRAL "F2 — won’t come true" chip: the stored one as its only chip, in front of an
-  // amount that must stay whole (g); the drying one after its live "Drying" chip, which stays first and
-  // whole (n). Appended, so no earlier row's id, created_at or photo number moves. The bought F1 packets
-  // above (Sungold F1, the Megatron pair) carry breeding_system 'f1' and must stay unbadged.
+  // carries the "F2 — won’t come true" chip, which on an F2 row OUTRANKS THE ESTIMATED HEAT (amended
+  // 2026-09-24): the stored one's chip is an item of the line with its amount beside it, whole (g), and its
+  // heat is dropped whole to make the room; the drying one's chip follows its live "Drying" chip, which
+  // stays first and whole (n). Appended, so no earlier row's id, created_at or photo number moves. The
+  // bought F1 packets above (Sungold F1, the Megatron pair) carry breeding_system 'f1' and must stay unbadged.
+  // The count is EXACT here ("175 seeds") where prod's is "approx. 175": (p) holds the chip WHOLE at 360,
+  // and the shorter amount leaves the ~20% a wider CI font needs (48px of 255 on the Mac, where prod's
+  // "approx." wording fits with ~3.6px to spare — the lane report carries that case).
   seed('Ristra Cayenne II', 'pepper', {
     name: 'Ristra Cayenne II Saved seed 2026', seed_stage: 'stored', stage_entered_at: stageDaysAgo(9),
-    source_plant_id: 'pl-ristra', year_harvested: YEAR, seed_count: 175, seed_count_estimated: true,
+    source_plant_id: 'pl-ristra', year_harvested: YEAR, seed_count: 175, seed_count_estimated: false,
     breeding_system: 'f1', ...heat(25000, 35000), ...annuum,
   }),
   seed('Thai Dragon', 'pepper', {

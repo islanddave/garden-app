@@ -6,7 +6,7 @@
 // answer so the two views cannot drift apart about one jar.
 import { describe, it, expect } from 'vitest'
 import {
-  rowTitle, howMuch, whereFrom, howOld, ageOf, stateChips, lineText, isSowedPreviously,
+  rowTitle, howMuch, whereFrom, howOld, ageOf, stateChips, lineLayout, lineText, isSowedPreviously,
   sortRows, groupByCrop, NO_CROP, heatOf, heatLabel, SORTS, supplierOptions, matchesSuppliers,
   isFilterActive, groupIsOpen, originNote, NO_SUPPLIER_VALUE,
 } from '../components/seed/mySeedsModel.js'
@@ -148,9 +148,57 @@ describe('lineText — the second line as the eye reads it (and as uniqueness is
     const lot = saved({ seed_stage: 'drying', seed_count: 40, breeding_system: 'f1', stage_entered_at: '2026-09-10T12:00:00Z' })
     expect(lineText(lot, { now: NOW, year: 2026 })).toBe('Drying · F2 — won’t come true · 40 seeds · Saved from my plant · harvested 2026')
   })
+  it('on an F2 row the line reads as it renders: F2 and the amount lead, any other chip rides after them', () => {
+    const lot = saved({ breeding_system: 'f1', seed_count: 175, seed_count_estimated: true, sow_archived_season: 2026 })
+    expect(lineText(lot, { now: NOW, year: 2026 }))
+      .toBe('F2 — won’t come true · approx. 175 seeds · Archived for this season · Saved from my plant')
+    // …and a bought F1 packet's line is exactly what it was: chips, then the amount.
+    const pkt = bought({ breeding_system: 'f1', quantity_on_hand: 2, sow_archived_season: 2026 })
+    expect(lineText(pkt, { now: NOW, year: 2026 })).toBe('Archived for this season · 2 packets')
+  })
   it('originNote names a saved lot\'s origin and never a bought packet\'s vendor', () => {
     expect(originNote(saved())).toBe('Saved from my plant')
     expect(originNote(bought({ source_id: 'src-fedco' }))).toBe('')
+  })
+})
+
+// V5-SEEDSTAB-001 slice 3 AMENDMENT (orchestrator decision 2026-09-24, reported to Dave): on an F2 row the
+// F2 chip OUTRANKS THE ESTIMATED HEAT. lineLayout is the one place that decides it; MySeeds renders from it.
+describe('lineLayout — what line 2 holds on the line and what rides the give-way flow', () => {
+  const at = { now: NOW, year: 2026 }
+  it('an F2 row: the F2 chip and the amount are items of the line, so the heat gives way first', () => {
+    const lay = lineLayout(saved({ breeding_system: 'f1', seed_count: 175, seed_count_estimated: true }), at)
+    expect(lay.f2).toEqual({ key: 'f2', label: 'F2 — won’t come true', tone: 'neutral' })
+    expect(lay.amountOnLine).toBe(true)
+    expect(lay.live).toBeNull()
+    expect(lay.flowChips).toEqual([])
+  })
+
+  it('an F2 row in process: the live state keeps the first place; any other chip stays in the flow', () => {
+    const lay = lineLayout(saved({
+      breeding_system: 'f1', seed_stage: 'fermenting', stage_entered_at: '2026-09-17', sow_archived_season: 2026,
+    }), at)
+    expect(lay.live.key).toBe('fermenting')
+    expect(lay.f2.key).toBe('f2')
+    expect(lay.flowChips.map((c) => c.key)).toEqual(['archived'])
+    expect(lay.amountOnLine).toBe(true)
+  })
+
+  it('bought packets (F1 or not) and every non-F2 row keep today\'s layout exactly', () => {
+    for (const row of [
+      bought({ breeding_system: 'f1', sow_archived_season: 2026 }),
+      bought({ status: 'retired' }),
+      saved({ breeding_system: 'open_pollinated', seed_stage: 'drying' }),
+      saved({ seed_stage: null, quantity_on_hand: 0 }),
+      saved(),
+    ]) {
+      const lay = lineLayout(row, at)
+      expect(lay.f2).toBeNull()
+      expect(lay.amountOnLine).toBe(false)
+      // The chips in the engine's order, the first one on the line only when it is a live state.
+      expect([lay.live, ...lay.flowChips].filter(Boolean)).toEqual(stateChips(row, at))
+      if (lay.live) expect(lay.live.tone).not.toBe('neutral')
+    }
   })
 })
 
