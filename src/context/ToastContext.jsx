@@ -192,8 +192,9 @@ export function ToastProvider({ children }) {
 
 // ── TAP TARGETS (BUG-UNDOTOASTTAPTARGET-001, 2026-09-24) ─────────────────────────────────────────
 // Undo measured 62x28 at Dave's 426x836 (its border box WAS the pill), under Android's 48dp; × was
-// 23x20. A 48px-tall visible button would add 20px to every toast and 60px to a full stack of three,
-// burying another row of Today's list under the layer. So each control's BOX is the target and the
+// 23x20. A 48px-tall visible button makes a one-line toast 20px taller and a two-line one 14px; on a
+// Water/Skip/Feed stack with long names that measured +42px, one more whole Today row buried under
+// the layer. So each control's BOX is the target and the
 // pill is drawn inside it: the box is TOAST_TAP_TARGET tall, and a negative vertical margin equal to
 // the toast's vertical padding hands the extra back to the layout — the box reaches into the padding
 // instead of pushing it out. The toast is exactly as tall as before, and a one-line toast is one 48px
