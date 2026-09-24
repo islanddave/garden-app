@@ -38,8 +38,12 @@ const PORT = Number(process.env.GATE_HARNESS_PORT || 5316)
 const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9427)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 
-// Dave is Android-only; 390x844 is the common Android logical viewport and the geometry the
-// sibling gates in this directory already measure at.
+// 390x844 is NOT an Android viewport: it is the iPhone 12/13/14 CDP preset. Dave is Android-only,
+// and his handset reads 426x836 CSS px at DPR 3 (off More → Debug & smoke → "Viewport (CSS px)",
+// 2026-09-24). This gate stays at 390 because it is the geometry its sibling gates measure at and
+// because what it asserts — icon/text centre skew and a minimum icon count — is a per-element
+// alignment check, not a wrap or page-length reading. Unverified at 426x836; any width-sensitive
+// conclusion drawn from these frames needs re-measuring there.
 const VIEWPORT = { w: 390, h: 844 }
 const SKEW_FLOOR = 3          // px of centre-to-centre drift tolerated between an icon and its text
 

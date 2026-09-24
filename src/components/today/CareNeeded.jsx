@@ -174,7 +174,7 @@ const SR_ONLY = {
 function MoistureButton({ row, pending, onMoist }) {
   return (
     <button
-      type="button" onClick={() => onMoist(row)} disabled={pending}
+      type="button" onClick={() => onMoist(row)} disabled={pending} data-testid="care-moist"
       aria-label={'Checked ' + row.name + ' — still moist'}
       style={{
         flexShrink: 0, width: 48, minHeight: ROW_TAP_MIN, border: 'none',
@@ -193,7 +193,7 @@ function Row({ row, pending, onLog, onSkip, onMoist }) {
     ? '/projects/' + row.projectId + '/plantings/' + row.plantingId
     : '/garden'
   return (
-    <div style={{ display: 'flex', alignItems: 'stretch', borderTop: '1px solid ' + P.border }}>
+    <div data-testid="care-row" style={{ display: 'flex', alignItems: 'stretch', borderTop: '1px solid ' + P.border }}>
       {/* Secondary zone: open detail (whole row body). */}
       <Link to={detailHref} style={{
         flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8,
@@ -243,7 +243,7 @@ function SubHeader({ label }) {
 function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, onMoist, mode, onShowAll, groupBulk, onGroupBulk, bulkBusy }) {
   const panelId = 'care-group-' + group.key
   return (
-    <div style={{ border: '1px solid ' + P.border, borderRadius: 12, background: P.white, overflow: 'hidden' }}>
+    <div data-testid="care-group" style={{ border: '1px solid ' + P.border, borderRadius: 12, background: P.white, overflow: 'hidden' }}>
       {/* V4-TODAYSECTIONBULK-001 (BD-037) — the section bulk sits BESIDE the disclosure, not inside
           it: nesting a button in a button is invalid, and the toggle must stay the whole-width
           target it already is. Same three-zone shape as Row (body | secondary | primary action), so
@@ -265,8 +265,15 @@ function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, onMoist,
           </button>
         ))}
       </div>
+      {/* V5-TODAYSHAPE-001 — THE `<div id={panelId}>` BELOW is the measured blind spot the Today
+          layout gate exists for. Adding `style={{height:0,overflow:'hidden'}}` to it clips the
+          whole care list to nothing, and 9,239 of 9,241 unit tests still passed when that was
+          measured (2026-09-08), because jsdom has no layout engine; `display:none` on the same line
+          kills 18. The gate asserts checkVisibility() AND a non-zero rect per `care-row`, in real
+          Chrome, which is the only place that difference is observable. Mutant `clipRowPanel` in
+          tests/harness/todayMutants.mjs re-proves it on demand. */}
       {expanded && (
-        <div id={panelId} role="list">
+        <div id={panelId} data-testid="care-group-panel" role="list">
           {(() => {
             const R = (r) => <Row key={r.key} row={r} pending={pendingKeys.has(r.key)} onLog={onLog} onSkip={onSkip} onMoist={onMoist} />
             if (mode === 'location') {
@@ -286,7 +293,7 @@ function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, onMoist,
             return group.rows.map(R)
           })()}
           {group.hidden > 0 && (
-            <button type="button" onClick={onShowAll}
+            <button type="button" onClick={onShowAll} data-testid="care-show-more"
               style={{ display: 'block', width: '100%', minHeight: 44, borderTop: '1px solid ' + P.border, border: 'none', background: 'none', color: P.green, fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer' }}>
               Show {group.hidden} more
             </button>
@@ -788,11 +795,11 @@ export default function CareNeeded({ plan }) {
   const isExpanded = (g) => (g.key in overrides) ? overrides[g.key] : autoKeys.has(g.key)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div data-testid="today-care" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div ref={liveRef} role="status" aria-live="polite" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }} />
 
       {total === 0 ? (
-        <div style={{ padding: '28px 16px', textAlign: 'center', color: P.light }}>
+        <div data-testid="care-empty" style={{ padding: '28px 16px', textAlign: 'center', color: P.light }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: P.green, marginBottom: 4 }}>All caught up</div>
           <div style={{ fontSize: '0.82rem', lineHeight: 1.4 }}>Nothing needs care today — enjoy the garden.</div>
           <RainNote plan={plan} center />
@@ -800,7 +807,7 @@ export default function CareNeeded({ plan }) {
       ) : (
         <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-            <h2 style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <h2 data-testid="care-heading" style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               Needs care today
             </h2>
             <GroupByControl options={GROUP_OPTS} value={mode} onChange={setMode} />
@@ -819,13 +826,13 @@ export default function CareNeeded({ plan }) {
               while the cap only armed on a stale day; now that it is always armed they are not, and
               `capping` would print this over a list that is showing all of itself. */}
           {hiddenTotal > 0 && (
-            <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4, padding: '0 2px' }}>
+            <div data-testid="care-cap-note" style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4, padding: '0 2px' }}>
               Showing the longest-waiting {WATER_STALE_CAP} per group.
             </div>
           )}
 
           {presentTypes.length > 0 && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div data-testid="care-bulk-chips" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {presentTypes.map(et => {
                 const n = candidatesFor(et).length
                 return (
@@ -970,7 +977,7 @@ function DormantList({ plan }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
+    <div data-testid="care-dormant" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
       <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, margin: 0 }}>Dormant</h3>
       <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
         Resting — no routine care. Resume one when it starts growing again.
@@ -1019,7 +1026,7 @@ function DroughtList({ plan }) {
   if (rows.length === 0) return null
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
+    <div data-testid="care-drought-list" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
       <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, margin: 0 }}>Dry — no deep soak</h3>
       <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
         These aren’t on calendar watering, and it has been dry. Check the soil at root depth.
@@ -1068,7 +1075,7 @@ function FeedSuppressedList({ plan }) {
   const label = (open ? 'Hide the ' : 'Show the ') + n + ' planting' + (n > 1 ? 's' : '') + ' with no feed schedule'
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
+    <div data-testid="care-feed-suppressed" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
       <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} aria-label={label}
         style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44, width: '100%',
           padding: '2px', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer' }}>
@@ -1109,7 +1116,7 @@ function RainNote({ plan, center }) {
   const n = Array.isArray(plan && plan.rain_skipped) ? plan.rain_skipped.length : 0
   if (!n) return null
   return (
-    <div style={{ fontSize: '0.78rem', color: P.light, padding: '4px 6px', textAlign: center ? 'center' : 'left' }}>
+    <div data-testid="care-rain-note" style={{ fontSize: '0.78rem', color: P.light, padding: '4px 6px', textAlign: center ? 'center' : 'left' }}>
       Rain handled watering for {n} planting{n > 1 ? 's' : ''} — recent rain counts.
     </div>
   )
