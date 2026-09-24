@@ -248,6 +248,14 @@ describe('V5-VOICEVOCAB-001 — "planting 2 165" said in one breath', () => {
     expect(statusText()).not.toContain('saved once')
   })
 
+  it('a REFUSED one-breath "next" gives the cooldown back too — the real "next" after it saves', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3 count', 'ten five next', 'next']) await speak(rec, line)
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(3, 'count')])
+    expect(statusText()).not.toContain('saved once')
+  })
+
   it('a re-delivered one-breath final saves ONCE — the cooldown covers the new shape', async () => {
     const rec = await startListening()
     for (const line of ['Suyo Long 2 165 next', 'Suyo Long 2 165 next']) await speak(rec, line)
@@ -332,6 +340,16 @@ describe('V5-VOICEVOCAB-001 — one breath against the real planting names', () 
     // The sentence named a planting, so the old crop does not stay selected behind the refusal —
     // the "next" after it cannot save Suyo Long's record.
     expect(misses()).toContain('Not saved — still need a crop.')
+  })
+
+  // DEFENSIVE, and said so: a homophone that is not the planting's own is caught for a name ENDING in
+  // it by the alternative reading ("suyo long to 165" reads as "suyo long" + 2, 165 and disagrees).
+  // Ownership is what still catches it when that alternative cannot be formed — here it would be three
+  // amounts. Measured: with the ownership check removed this applied 7 and 165 to Suyo Long and the
+  // "to" (the recogniser's "two") vanished into the name.
+  it('"suyo long to 7 165" is refused — "to" may be a number, and it is not part of Suyo Long', () => {
+    const d = resolveBareOneBreath(VOCAB, oneBreathReadings('suyo long to 7 165'))
+    expect(d).toEqual({ kind: 'refuse', reason: 'ambiguous' })
   })
 
   it('"super sweet 100 3 200" is two plantings — both offered, nothing saved', async () => {

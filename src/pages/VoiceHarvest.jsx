@@ -377,9 +377,10 @@ export function resolveOneBreath(plantings, candidates, aliasIndex = null) {
 //     search" stands unless the same final names one.
 // A reading is AMBIGUOUS — and the whole final is refused, never guessed — when its first bare amount
 // is a number the planting's own name carries ("clemson 80 200": is 80 the name's or the count?), when
-// the name holds a number-homophone the planting's name does not ("suyo long to 165"), or when a name
-// ending in a homophone reads differently with that word as the first amount ("peach tree 200" vs
-// "peach" + 3, 200). Two surviving readings that disagree are ambiguous too.
+// a name ending in a homophone reads differently with that word as the first amount ("peach tree 200"
+// vs "peach" + 3, 200; "suyo long to 165" vs "suyo long" + 2, 165), or — defensively, for when that
+// other reading cannot be formed — when the name holds a homophone the planting's name does not
+// ("suyo long to 7 165"). Two surviving readings that disagree are ambiguous too.
 //
 // Returns null when the final is not this reader's (the ordinary path handles it exactly as before),
 // { kind: 'apply', planting, groups, command, nearCommand } — planting null means the selected one —
