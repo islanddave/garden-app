@@ -92,6 +92,21 @@ describe('Search — seed rows are grouped under "Seeds"', () => {
     expect(heading('Inventory')).toBeNull()
   })
 
+  // The Seeds group dropped the category subtitle, so a seed row with no location_text is ONE line:
+  // 2x11 padding + 2x1 border + an ~18.75px line is about 43px, under the tap floor, unless the row
+  // itself carries the floor (pre-ship QA). The row style is shared, so every group gets it.
+  it('a one-line seed row sits on the 44px tap floor, like every result row', async () => {
+    searchImpl = async () => payload([SAVED_LOT, SEED_PACKET, SPRAYER])
+    renderPage()
+    await type('pepper')
+    await waitFor(() => expect(screen.queryByText('Pepper — saved 2026')).toBeTruthy(), { timeout: 2000 })
+    // The case that needs it: no location, so no subtitle — the row is its name and the chevron alone.
+    expect(rowFor('Pepper — saved 2026').textContent).toBe('Pepper — saved 2026›')
+    for (const name of ['Pepper — saved 2026', 'Pepper seed packet', 'Pepper sprayer', 'Pepper Mix Heirloom']) {
+      expect(rowFor(name).style.minHeight).toBe('44px')
+    }
+  })
+
   it('leaves the Varieties group and its door untouched', async () => {
     searchImpl = async () => payload([SEED_PACKET])
     renderPage()

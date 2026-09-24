@@ -216,9 +216,23 @@ describe('the Sow sheet on a packet\'s page', () => {
     expect(sowDialog()).toBeNull()
     expect(screen.getByTestId('sow-this-sown').textContent).toContain('Sown ✓')
     expect(screen.getByTestId('sow-this-see-planting').getAttribute('href')).toBe('/plantings/plant-1')
+    // On the 44px tap floor (QA T03: dropping it survived; gate:seed-detail measures it in Chrome too).
+    expect(screen.getByTestId('sow-this-see-planting').style.minHeight).toBe('44px')
     // Sowing does not consume a packet (SowNow.jsx header), so the packet's own page keeps the action.
     expect(screen.getByTestId('sow-this')).toBeTruthy()
     expect(screen.getByText('Planted!')).toBeTruthy()
+  })
+
+  // Spec §2 rule 9 (pre-ship QA, colour icons): the editor's packet banner is reachable from this door
+  // too, so it draws the registry sprout, never the 🌱 emoji. Garden.editor.test holds the glyph exactly.
+  it('the sheet\'s packet banner draws the registry sprout, not the 🌱 emoji', async () => {
+    await renderDetail()
+    await act(async () => { fireEvent.click(screen.getByTestId('sow-this')) })
+    await waitFor(() => expect(within(sowDialog()).getByText(/Planting from/)).toBeTruthy())
+    const banner = within(sowDialog()).getByText(/Planting from/).parentElement
+    expect(banner.textContent).toContain(ITEM.name)
+    expect(banner.textContent).not.toContain('🌱')
+    expect(banner.querySelector('svg[aria-hidden="true"]')).toBeTruthy()
   })
 
   it('holds the service-worker reload while open, and releases it on Close', async () => {
@@ -288,6 +302,27 @@ describe('per-host stash keys — an interrupted sow reopens where it was, and n
     await renderDetail()
     expect(sowDialog()).toBeNull()
     expect(screen.queryByTestId('sow-this')).toBeNull()
+  })
+
+  // The restore guard (`if (!canSowFrom(item)) return`) cannot be seen through the sheet: SowSheet is
+  // not mounted for an unsowable packet, so a restore past the guard opens nothing (QA Q05: deleting the
+  // guard left the test above green). It is still a defect — the page would hold a sow open in its state,
+  // report itself dirty, and reopen the stale sheet if the packet became sowable later in the tab. The
+  // overlay-dirty report is the channel the mount gate does not hide.
+  it.each([
+    ['used up', { ...ITEM, quantity_on_hand: 0 }],
+    ['still drying', { ...SAVED_ITEM, seed_stage: 'drying' }],
+    ['still fermenting', { ...SAVED_ITEM, seed_stage: 'fermenting' }],
+  ])('a stash naming a %s packet never reports the page dirty', async (_label, unsowable) => {
+    seedStash('sow-packet', { inventoryItemId: 'pkt-1' })
+    item = unsowable
+    const dirtySpy = vi.fn()
+    await renderDetail((n) => <OverlayDirtyProvider onDirtyChange={dirtySpy}>{n}</OverlayDirtyProvider>)
+    await act(async () => {})
+    // Positive evidence the page reported at all — a spy never called passes "never true" vacuously.
+    expect(dirtySpy).toHaveBeenCalledWith(false)
+    expect(dirtySpy).not.toHaveBeenCalledWith(true)
+    expect(sowDialog()).toBeNull()
   })
 
   it('a deliberate Close clears the stash, so the next visit does not reopen it', async () => {

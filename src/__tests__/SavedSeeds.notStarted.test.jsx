@@ -38,10 +38,18 @@ import Seeds from '../pages/Seeds.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
 import { readMarker } from '../lib/backNav.js'
-import { isNotStartedLot, F2_LABEL } from '../components/seed/seedLots.js'
+import { isNotStartedLot, F2_LABEL, elapsedLabel } from '../components/seed/seedLots.js'
 import { isUnstartedSave } from '../lib/sowEngine.js'
+import { etDay } from '../lib/harvestSummary.js'
 
-const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
+const DAY = 86400000
+// The Eastern calendar date `n` days before today, at 16:00Z — noon EDT / 11:00 EST, the same date either
+// way — as SavedSeeds.processAndElapsed's stageDaysAgo does it. The card counts CALENDAR days in Eastern
+// (seedLots.elapsedDays), so an instant n x 24 h back lands on the wrong day in the hour after a DST
+// change: 48 h back reads "3 days" from 00:00 to 01:00 ET on the Monday after spring-forward and "1 day"
+// from 23:00 to 24:00 ET on the Monday after fall-back (pre-ship QA; pinned at the foot of this file).
+const daysAgo = (n) =>
+  `${new Date(Date.parse(`${etDay(new Date())}T00:00:00Z`) - n * DAY).toISOString().slice(0, 10)}T16:00:00Z`
 const lot = (over = {}) => ({
   id: 'lot-x', name: 'Brandywine — saved 2026', variety_name: 'Brandywine', category: 'seeds',
   type: 'consumable', unit: 'packet', status: 'active', quantity_on_hand: 1, variety_id: 'v-b',
@@ -55,10 +63,11 @@ const OWN = lot({
   seed_count: 40, seed_count_estimated: false, created_at: daysAgo(5),
 })
 // Out of a farm-stand pepper, not started — isUnstartedSave says no (its kind is not own_garden).
-const PRODUCE = lot({
+const PRODUCE_ROW = () => lot({
   id: 'lot-stand', name: 'Aji Amarillo — saved 2026', variety_name: 'Aji Amarillo', crop_slug: 'pepper',
   source_kind: 'farm_stand', created_at: daysAgo(2),
 })
+const PRODUCE = PRODUCE_ROW()
 const BOUGHT = lot({ id: 'pkt-1', name: 'Sungold', variety_name: 'Sungold', quantity_on_hand: 2 })
 const DRYING = lot({
   id: 'lot-dry', name: 'Gong Bao — saved 2026', variety_name: 'Gong Bao', crop_slug: 'pepper',
@@ -292,5 +301,25 @@ describe('Seeds › Saved seeds — doors off a lot card, on real history', () =
     expect(screen.queryByTestId('start-process-step')).toBeNull()
     expect(where()).toBe(SAVED)
     expect(atFloor()).toBe(true)
+  })
+})
+
+// The fixture's day anchor, held to the two one-hour windows where a 48-hour offset lands on the wrong
+// Eastern date. Only Date is faked (the page's timers stay real), and the row is built AFTER the clock is
+// pinned, so the fixture helper runs at the pinned instant exactly as the module-level rows run at the real one.
+describe('"added N days ago" is right inside both DST windows (pinned clock)', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it.each([
+    ['00:30 EDT on the Monday after spring-forward', '2027-03-15T04:30:00Z', '3 days'],
+    ['23:30 EST on the Monday after fall-back', '2026-11-03T04:30:00Z', '1 day'],
+  ])('%s', async (_when, instant, fortyEightHoursReads) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(instant))
+    // The window is real at this instant: 48 hours back is the wrong calendar day here.
+    expect(elapsedLabel(new Date(Date.now() - 2 * DAY).toISOString())).toBe(fortyEightHoursReads)
+    await mountPage([PRODUCE_ROW()])
+    const card = document.querySelector('[data-lot-id="lot-stand"]')
+    expect(within(card).getByTestId('lot-unstarted-line').textContent).toBe('Not started · added 2 days ago')
   })
 })

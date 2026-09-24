@@ -100,6 +100,14 @@ describe('PlantingDetail Event log — a seed_saved event opens its lot (V5-SEED
     expect(lotLinkBeside('ev-dry').textContent).toBe('Open the seed lot →')
   })
 
+  // The door is a full 44px box, not a line of text under the row (QA T01: dropping the floor left
+  // every test in this file green, and no layout gate renders PlantingDetail).
+  it('every lot link sits on the 44px tap floor', async () => {
+    renderWith()
+    await waitFor(() => expect(screen.getAllByTestId('event-seed-lot-link').length).toBe(3))
+    for (const a of screen.getAllByTestId('event-seed-lot-link')) expect(a.style.minHeight).toBe('44px')
+  })
+
   it('an event whose lot is gone renders exactly as before: no link, the row where it always was', async () => {
     renderWith()
     await waitFor(() => expect(screen.getAllByTestId('event-seed-lot-link').length).toBe(3))

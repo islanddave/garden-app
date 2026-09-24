@@ -10,7 +10,8 @@
 //      to what it was before this change for the same rows — its query text included.
 //   2. THE PREDICATE IS THE PLANTS LAMBDA'S, NOT A NEW ONE. The Archive-Hiding Rule (claude-ops
 //      project-rules gardening.md) says archived rows are filtered in SQL at the route, and the brief
-//      says reuse the exact predicate the plants default views use. So this file reads
+//      says reuse the exact predicate the plants grid/picker views use (not the bare GET /api/plants
+//      list, which omits the container-archived clause). So this file reads
 //      lambda/plants/index.js, lifts the WHERE its ?view=grid and ?view=picker branches share (the
 //      household ownership arms, the container-deleted gate, deleted_at, and both archive clauses —
 //      BUG-PLANTSLISTARCHIVEDCONTAINER-001's container half included) and requires sown_from to carry
@@ -22,7 +23,7 @@
 // (memory: the Lambda unit suite proves no DB behaviour), and BUG-SEEDDETAIL500-001 was exactly a
 // green-suite 500. That proof is the real-Postgres run in the lane report and the integration test in
 // tests/integration/inventory-items.int.test.js; the column contract is garden-node-columns.test.js.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -135,6 +136,48 @@ describe('GET /api/inventory-items/:id — sown_from (V5-SEEDSTAB-001 slice 3)',
   });
 });
 
+// ── 1b. A FAILED READ ───────────────────────────────────────────────────────────────────────────────
+// Pre-promote review (the BUG-SEEDDETAIL500-001 class): the links are an extra on the packet page, so a
+// failed sown_from read must not take the page down. It degrades to null (the page draws no card) and is
+// logged by item and error class. The germination read keeps its old behaviour: it fails the request.
+class NeonDbError extends Error {
+  constructor(message, code) { super(message); this.name = 'NeonDbError'; this.code = code; }
+}
+
+describe('a failed read — sown_from degrades to null, germination still fails the page', () => {
+  let errSpy;
+  beforeEach(() => { errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); });
+  afterEach(() => errSpy.mockRestore());
+  const failureLines = () => errSpy.mock.calls.map((a) => String(a[0])).filter((l) => l.includes('inv-sown-from-failed'));
+
+  it('a failed sown_from read answers 200, sown_from null, germination intact, and one line naming the item and error class', async () => {
+    stubState.sqlHandler = (text) => {
+      if (isSownFrom(text)) throw new NeonDbError('relation "public.container" does not exist', '42P01');
+      if (isGermination(text)) return GERM_ROWS;
+      return text.includes('WHERE i.id = ?') ? [detailRow] : [];
+    };
+    const { status, body } = parse(await handler(get()));
+    expect(status).toBe(200);
+    expect(body.sown_from).toBeNull();
+    expect(body.germination).toEqual({ sowings: GERM_ROWS, seeds_sown: 30, seeds_germinated: 14, rate: 46.7 });
+    expect(failureLines()).toHaveLength(1);
+    expect(JSON.parse(failureLines()[0])).toMatchObject({ tag: 'inv-sown-from-failed', item: ITEM, error: 'NeonDbError', code: '42P01' });
+  });
+
+  it('a failed germination read still fails the request (500), as it did before sown_from existed', async () => {
+    stubState.sqlHandler = (text) => {
+      if (isGermination(text)) throw new NeonDbError('canceling statement due to statement timeout', '57014');
+      if (isSownFrom(text)) return SOWN_ROWS;
+      return text.includes('WHERE i.id = ?') ? [detailRow] : [];
+    };
+    const { status, body } = parse(await handler(get()));
+    expect(status).toBe(500);
+    expect(body).toEqual({ error: 'Internal server error' });
+    // Reported as the request's failure, never mislabelled as the links' one.
+    expect(failureLines()).toHaveLength(0);
+  });
+});
+
 // ── 2. THE PREDICATE IS THE PLANTS LAMBDA'S ─────────────────────────────────────────────────────────
 // Comments out, whitespace squashed, every template interpolation reduced to its expression, and the
 // plants Lambda's `gp` alias read as this handler's `p`.
@@ -146,19 +189,19 @@ const templates = (file) => [...decomment(readFileSync(resolve(__dirname, file),
 const norm = (s) => s.replace(/\s+/g, ' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').trim();
 
 const PLANTS = templates('../plants/index.js');
-// The two default views that hide archived plantings AND plantings in an archived container: Garden's
+// The two grid/picker views that hide archived plantings AND plantings in an archived container: Garden's
 // grid and the planting chooser. Found by what they are, not by position.
-const DEFAULT_VIEWS = PLANTS.filter((t) => /FROM public\.garden_node gp\b/.test(t)
+const GRID_PICKER_VIEWS = PLANTS.filter((t) => /FROM public\.garden_node gp\b/.test(t)
   && /\bgp\.archived_at IS NULL\b/.test(t) && /\bpp\.archived_at IS NULL\b/.test(t));
 const whereOf = (t) => norm(t).match(/WHERE (\(\(pp\.created_by[\s\S]*?AND pp\.archived_at IS NULL)/)?.[1] ?? null;
-const PLANTS_WHERE = DEFAULT_VIEWS.map((t) => whereOf(t).replace(/\bgp\./g, 'p.'));
+const PLANTS_WHERE = GRID_PICKER_VIEWS.map((t) => whereOf(t).replace(/\bgp\./g, 'p.'));
 
 const SOWN_FROM_SQL = norm(templates('index.js').find((t) => /FROM public\.garden_node p\b/.test(t)
   && /\bp\.archived_at IS NULL\b/.test(t)) ?? '');
 
-describe('sown_from uses the plants default views\' WHERE, verbatim (Archive-Hiding Rule)', () => {
-  it('finds both plants default views and the sown_from read, so the comparison is not vacuous', () => {
-    expect(DEFAULT_VIEWS).toHaveLength(2);
+describe('sown_from uses the plants grid/picker views\' WHERE, verbatim (Archive-Hiding Rule)', () => {
+  it('finds both plants grid/picker views and the sown_from read, so the comparison is not vacuous', () => {
+    expect(GRID_PICKER_VIEWS).toHaveLength(2);
     expect(PLANTS_WHERE.every(Boolean)).toBe(true);
     expect(PLANTS_WHERE[0]).toBe(PLANTS_WHERE[1]);
     expect(PLANTS_WHERE[0]).toMatch(/p\.archived_at IS NULL AND pp\.archived_at IS NULL$/);

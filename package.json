@@ -24,6 +24,8 @@
     "gate:seeds-saved:probe-nothing": "node scripts/layout-gate/seeds-saved-clearance.mjs --probe-nothing",
     "gate:seeds-page": "node scripts/layout-gate/seeds-page-shot.mjs --outdir artifacts/layout-gate",
     "gate:seeds-page:probe-nothing": "node scripts/layout-gate/seeds-page-shot.mjs --probe-nothing --outdir artifacts/layout-gate/probe-nothing",
+    "gate:seed-detail": "node scripts/layout-gate/seed-detail-shot.mjs --outdir artifacts/layout-gate",
+    "gate:seed-detail:probe-nothing": "node scripts/layout-gate/seed-detail-shot.mjs --probe-nothing --outdir artifacts/layout-gate/probe-nothing",
     "gate:putup": "node scripts/layout-gate/putup-close-clearance.mjs",
     "gate:putup:probe-nothing": "node scripts/layout-gate/putup-close-clearance.mjs --probe-nothing",
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
