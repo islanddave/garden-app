@@ -479,7 +479,10 @@ export function resolveCommandCollision(result, plantings) {
 
 // V5-VOICEVOCAB-001 / BUG-VOICETWOBARENUM-001 — THE ONE WORDING of an inferred unit ("3 count
 // assumed"), shared by the live banner and the saved banner/row so the two cannot drift apart.
-const assumedPhrase = (v) => `${v.value} ${v.unit} assumed`
+// QA F6 — AND SAYS WHEN THE GUESSED VALUE LOOKS HIGH. A spoken "60000 grams" warns "that looks high";
+// the same number reaching a slot by assumption did not, so "3", "60000", "next" saved 60000 g silently.
+// The flag rides on the slot (like `assumed`), so the saved banner and row say it too.
+const assumedPhrase = (v) => `${v.value} ${v.unit} assumed${v.implausible ? ' — that looks high' : ''}`
 
 const TONE = {
   ok:   { bg: P.greenPale, border: P.green,       fg: P.dark },
@@ -932,6 +935,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // an assumed unit that is never announced is the fabricated-value class. Do not remove it
     // to shorten the readback.
     const assumedNoteNow = () => (assumedApplied ? ` (${assumedPhrase(assumedApplied)})` : '')
+    const noteWarns = () => dropped != null || !!assumedApplied?.implausible
 
     // BUG-VOICETWOBARENUM-001 — THE ONE PLACE A HELD NUMBER IS GIVEN A SLOT WITHOUT ITS UNIT. Two
     // doors resolve a hold that way: the resolution site below (a command, or anything else that
@@ -974,7 +978,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // then "85 G"; or a later "3 count"), and clearRecord() nulls it with the record. saveRecord
         // turns it into metadata.assumed_units — the only way the server can tell this unit from a
         // spoken one. A separate per-record flag would need clearing at every write site instead.
-        const slot = { value: built.value, unit: built.unit, assumed: true }
+        const slot = { value: built.value, unit: built.unit, assumed: true, ...(built.implausible ? { implausible: true } : {}) }
         if (built.kind === 'weight') { setWeight(slot); weightRef.current = slot }
         else { setQty(slot); qtyRef.current = slot }
         assumedApplied = built
@@ -1080,13 +1084,22 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // utterance unless a unit comes with it, and that is said NOW, on the banner and the hand,
       // while he can still act on it — not only in the miss row after the fact.
       const full = qtyRef.current != null && weightRef.current != null
+      // QA F6 — where the held number WILL land if nothing changes it, and whether that looks high.
+      // Said now, while the unit can still be given or the number said again: when the next utterance
+      // is "next", the value is placed and saved in the same breath, and a warning at the save alone
+      // would come too late to act on.
+      const landing = full ? null : buildValue(partial.value, qtyRef.current == null
+        ? (selectedRef.current?.variety_ref?.default_unit || 'count') : 'g', '')
+      const high = !!landing?.implausible
       cue(full ? hapticDigitRejected : hapticDigitAccepted)
       recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `${repeat ? 'held-repeat' : 'held-number'} ${partial.value} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
       // No longer an instruction, because obeying it is what he asked to stop doing. It reads as a
       // progress line: the number landed, and saying a unit is now optional rather than required.
-      say(full || dropped != null ? 'warn' : 'ok', (full
+      say(full || high || noteWarns() ? 'warn' : 'ok', (full
         ? `${partial.value} — the quantity and weight are both filled. Say it with a unit to replace one, or it will be dropped.`
-        : `${partial.value} — say a unit to change it, or carry on.`) + dropNoteNow() + assumedNoteNow())
+        : high
+          ? `${partial.value} — as ${landing.unit === 'g' ? 'grams' : landing.unit} that looks high. Say it again to correct it, or say a unit to change it.`
+          : `${partial.value} — say a unit to change it, or carry on.`) + dropNoteNow() + assumedNoteNow())
       return
     } else if (heldNumRef.current != null
                && (result.kind === 'quantity' || result.kind === 'weight')
@@ -1187,7 +1200,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath ${label} ${said} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
         // Read back in full, for the same reason a fuzzy rescue is: the app chose a split point the
         // words did not settle, so Dave sees the reading it picked before "next" commits it.
-        say(implausible || dropped != null ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${dropNote}${assumedNote}`)
+        say(implausible || noteWarns() ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${dropNote}${assumedNote}`)
         return
       }
 
@@ -1218,7 +1231,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `value-sequence ${said} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
         // Read back both axes: the utterance set two fields at once, so a mishearing of either is
         // only visible if both are spoken back before "next" commits them.
-        say(implausible || dropped != null ? 'warn' : 'ok', `${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${dropNote}${assumedNote}`)
+        say(implausible || noteWarns() ? 'warn' : 'ok', `${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${dropNote}${assumedNote}`)
         return
       }
     }
@@ -1289,7 +1302,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // trailing unit ("three count"), so a bare "three" returns `unparsed` either way — the
         // default unit had no utterance it could rescue. A quantity now exists only if it was said.
         const chosen = hits[0].name || hits[0].variety_ref?.name
-        say(dropped != null ? 'warn' : 'ok', (rescued
+        say(noteWarns() ? 'warn' : 'ok', (rescued
           // The heard text is quoted back verbatim so the swap is legible at a glance. Without the
           // "heard X" half, a rescue of the WRONG planting reads exactly like a correct match.
           ? `Heard “${result.text}” — matched ${chosen}. Say the count, or say it again to change it.`
@@ -1327,7 +1340,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       cue(hapticDigitAccepted)
       const next = { value: result.value, unit: result.unit }
       setQty(next); qtyRef.current = next
-      say(result.implausible || dropped != null ? 'warn' : 'ok',
+      say(result.implausible || noteWarns() ? 'warn' : 'ok',
         result.implausible ? `${result.value} ${result.unit}${joinNote}${assumedNote} — that looks high. Say it again to correct it.${dropNote}`
           : `${result.value} ${result.unit}${joinNote}${assumedNote}${dropNote}`)
       return
@@ -1337,7 +1350,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       cue(hapticDigitAccepted)
       const next = { value: result.value, unit: result.unit }
       setWeight(next); weightRef.current = next
-      say(result.implausible || dropped != null ? 'warn' : 'ok',
+      say(result.implausible || noteWarns() ? 'warn' : 'ok',
         result.implausible ? `${result.value} ${result.unit}${joinNote}${assumedNote} — that looks high. Say it again to correct it.${dropNote}`
           : `${result.value} ${result.unit}${joinNote}${assumedNote}${dropNote}`)
       return
@@ -1444,6 +1457,26 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     }
   }, [applyOneUtterance, clearRecord, cue, noteMiss, say])
 
+  // QA F2 — the one-breath sentence whose ONE amount may be two numbers run together ("Suyo Long 2165
+  // next"). The name was read cleanly, so it is applied exactly as the one-breath would apply it (a
+  // different planting starts a new record); only the amount is refused — reject haptic, banner, miss
+  // row — and nothing is written.
+  const refuseMergedAmount = useCallback((d, heard) => {
+    const n = d.groups[0].value
+    if (d.planting && selectedRef.current?.id !== d.planting.id) {
+      const held = heldNumRef.current
+      if (held != null) noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
+      clearRecord()
+      setSelected(d.planting); selectedRef.current = d.planting
+      setCandidates([]); setUnmatched(null); unmatchedRef.current = null
+    }
+    cue(hapticDigitRejected)
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath-bare refused (merged ${n}) <- ${JSON.stringify(heard)}`)
+    const label = d.planting ? `${d.planting.name || d.planting.variety_ref?.name} — ` : ''
+    say('warn', `${label}heard ${n} as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.`)
+    noteMiss(`Not kept — heard “${heard}”: ${n} may be two numbers run together.`)
+  }, [clearRecord, cue, noteMiss, say])
+
   // A one-breath sentence whose split is not unique, or whose name is too vague, or whose numbers
   // cannot be read: refused LOUDLY — reject haptic, a banner saying why, a miss row quoting what was
   // heard. One that named a planting also unselects the old crop, as a failed search does, so a later
@@ -1511,7 +1544,6 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const info = oneBreathReadings(heard)
     const bare = resolveBareOneBreath(plantingsRef.current, info,
       { selected: selectedRef.current, aliasIndex: aliasRef.current })
-    if (bare?.kind === 'apply') { applyBareOneBreath(bare, heard, meta); return }
     // A one-breath final ending in a save word CLAIMS the debouncer's one-write cooldown when it
     // commits (splitTrailingCommand marks it `bare`), which is what stops a re-delivered final saving
     // twice. When it turns out NOT to write — refused here, or declined and read the ordinary way —
@@ -1522,6 +1554,22 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       if (info?.command !== 'save_and_advance' && info?.command !== 'save') return
       const token = meta?.atMs
       queueMicrotask(() => debRef.current?.invalidateLastWrite(token))
+    }
+    if (bare?.kind === 'apply') {
+      // QA F2 — ONE BIG NUMBER WHERE A COUNT GOES MAY BE TWO NUMBERS RUN TOGETHER. Chrome writes
+      // "two, one sixty-five" as "2165" at times; prod refused "Suyo Long 2165 next" (a search that
+      // matched nothing), and this lane's reader SAVED it as 2165 count — under MAX_PLAUSIBLE, so
+      // nothing warned. The narrowest rule that covers it: in a one-breath final, a LONE amount, said
+      // as 4+ digits, with no unit, that would land in the COUNT slot is refused out loud. A 4-digit
+      // number landing in the weight slot is left alone (a count was already said, so it is grams),
+      // and so is one said with its unit or in words. The planting it named is still selected.
+      const lone = bare.groups.length === 1 ? bare.groups[0] : null
+      const intoCount = lone != null && lone.unit == null && /^\d{4,}$/.test(lone.text)
+        && ((bare.planting != null && bare.planting.id !== selectedRef.current?.id)
+          || (qtyRef.current == null && (heldNumRef.current == null || heldNumRef.current === lone.value)))
+      if (intoCount) { refuseMergedAmount(bare, heard); releaseUnwritten(); return }
+      applyBareOneBreath(bare, heard, meta)
+      return
     }
     const split = splitTrailingCommand(heard)
     // V5-VOICEVOCAB-001 (lane D4, review BLOCKING-1) — A BARE REFUSAL NEVER PRE-EMPTS THE UNIT READER.
@@ -1585,7 +1633,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       try { recRef.current?.stop() } catch { /* already stopping */ }
       say('warn', 'Stopped listening.')
     }
-  }, [applyBareOneBreath, applyOneUtterance, clearRecord, cue, noteMiss, refuseBareOneBreath, saveRecord, say, unitReaderReads])
+  }, [applyBareOneBreath, applyOneUtterance, clearRecord, cue, noteMiss, refuseBareOneBreath, refuseMergedAmount, saveRecord, say, unitReaderReads])
 
   // ── the recogniser ──────────────────────────────────────────────────────────────────────────────
   const scheduleTickRef = useRef(null)
