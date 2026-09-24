@@ -15,7 +15,18 @@
 //     ARCHIVED COUNTS: archiving is a statement about the garden, and an archived planting is still
 //     history (the Archive-Hiding Rule). A SOFT-DELETED planting does not: it is retracted, and
 //     blocking on it would make the item undeletable to protect a row nobody can see.
-//   • a live treatment event that applied this item — event_log.treatment_product_id.
+//   • a live treatment event that applied this item — event_log.treatment_product_id. A soft-deleted
+//     treatment does not block, for the same reason.
+//
+// THE THREE COUNTS, exactly (the refusal's sentence is built from them):
+//   plants          = plantings from this item that are live (deleted_at IS NULL), archived or not;
+//   plants_archived = plantings from this item that are live AND archived (deleted_at IS NULL AND
+//                     archived_at IS NOT NULL) — a subset of `plants`, used only for the wording. A planting
+//                     archived and then soft-deleted counts in NEITHER (the plants DELETE soft-deletes
+//                     archived rows too), so it can never make the sentence say "archived";
+//   event_log       = treatment events that applied this item and are live (deleted_at IS NULL).
+// The item itself must be live and the caller's; an already-deleted item answers 404 whatever points
+// at it.
 //
 // WHAT DOES NOT BLOCK: what belongs to the item itself. Its own photos, its own seed-processing stage
 // rows, and the seed_saved event's metadata.seed_lot_id pointer describe the item, not something else,

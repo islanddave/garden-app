@@ -10,11 +10,13 @@
 //
 // THE CONTRACT (lambda/inventory-items/delete-guard.js):
 //   · a live planting sown from the item blocks — ARCHIVED ONES INCLUDED — and the 409 sentence says
-//     how many and how many of them are archived;
-//   · a live treatment event that applied the item blocks;
+//     how many and how many of them are archived; a planting archived AND soft-deleted counts in
+//     neither number, so it cannot make the sentence say "archived";
+//   · a live treatment event that applied the item blocks; a soft-deleted one does not;
 //   · a soft-deleted planting does not block;
 //   · the item's own photo and its own seed-processing stage rows do not block;
-//   · another household's item answers 404, before any count;
+//   · another household's item answers 404, before any count; so does an item that is already
+//     deleted, even with a live planting still pointing at it, and its deleted_at is left alone;
 //   · the sentence calls a SAVED lot "This seed lot" — decided by the preflight's saved_lot SQL, which
 //     must agree with isSavedLot (src/components/seed/seedLots.js) on real rows: one per fact, plus a
 //     bought packet. lambda/inventory-items/saved-lot-pairing.test.js pins the two to the same facts;
@@ -99,6 +101,30 @@ beforeAll(async () => {
   await directSql`
     INSERT INTO event_log (plant_id, event_type, event_date, created_by, treatment_product_id, treatment_category)
     VALUES (${anchor}, 'pest_treatment', NOW(), ${USER}, ${ids.spray}, 'pest_control')`
+
+  // Pre-promote review M-1 — blocked, but NOT "archived": one live, unarchived planting, plus one that
+  // was archived AND then soft-deleted (the plants DELETE soft-deletes archived rows). The deleted one
+  // must count in neither number.
+  ids.intersect = await packet('intersect')
+  await planting('intersect-live', ids.intersect)
+  await planting('intersect-archived-deleted', ids.intersect, { archived: true, deleted: true })
+  // Pre-promote review M-2a — allowed: the only treatment that applied this product was soft-deleted.
+  const retracted = await callHandler(handler, {
+    method: 'POST', path: '/api/inventory-items', userId: USER,
+    body: { name: `int-delguard-spray-retracted-${RUN}`, type: 'consumable', category: 'pest_control', unit: 'fl oz', quantity_on_hand: 8 },
+  })
+  expect(retracted.status, `POST retracted spray -> ${JSON.stringify(retracted.body)}`).toBe(201)
+  ids.sprayRetracted = retracted.body.id
+  const anchorRetracted = await planting('treated-retracted', null)
+  await directSql`
+    INSERT INTO event_log (plant_id, event_type, event_date, created_by, treatment_product_id, treatment_category, deleted_at)
+    VALUES (${anchorRetracted}, 'pest_treatment', NOW(), ${USER}, ${ids.sprayRetracted}, 'pest_control', NOW())`
+  // Pre-promote review M-2b — a packet ALREADY soft-deleted while a live planting still points at it (a
+  // strand, made here on purpose). The preflight must not match it. deleted_at is a fixed instant, so
+  // "unchanged" is an exact comparison.
+  ids.alreadyDeleted = await packet('already-deleted')
+  await planting('already-deleted-live', ids.alreadyDeleted)
+  await directSql`UPDATE inventory_items SET deleted_at = '2026-01-02T03:04:05Z' WHERE id = ${ids.alreadyDeleted}`
 
   // Saved-lot pairing: one row per isSavedLot fact, plus a bought packet — all through the app's POST,
   // the way the Seeds doors write them. Nothing is sown from these four; they are only read.
@@ -195,6 +221,48 @@ describe('DELETE /api/inventory-items/:id — blocks only on something sown or a
     const [p] = await directSql`SELECT count(*)::int AS n FROM photos WHERE inventory_item_id = ${ids.lot} AND deleted_at IS NULL`
     expect(s.n).toBe(1)
     expect(p.n).toBe(1)
+  })
+
+  // Pre-promote review M-1 / M-2. Each case first reads back the fixture property it depends on, so a
+  // fixture that stopped holding it fails here instead of passing for the wrong reason.
+  it('a planting archived AND soft-deleted counts nowhere — the sentence names only the live, unarchived one', async () => {
+    setTestUserId(USER)
+    const [f] = await directSql`
+      SELECT count(*) FILTER (WHERE deleted_at IS NULL AND archived_at IS NULL)::int AS live_unarchived,
+             count(*) FILTER (WHERE deleted_at IS NOT NULL AND archived_at IS NOT NULL)::int AS archived_deleted
+        FROM plants WHERE source_inventory_item_id = ${ids.intersect}`
+    expect(f).toEqual({ live_unarchived: 1, archived_deleted: 1 })
+    const { status, body } = await del(ids.intersect)
+    expect(status, JSON.stringify(body)).toBe(409)
+    expect(body.error).toBe(
+      'This packet can\'t be removed: 1 planting was sown from it. To mark it used up, set its Status to "depleted" instead.',
+    )
+    expect(await deletedAt(ids.intersect)).toBeNull()
+  })
+
+  it('a soft-deleted treatment does not block: 200 {ok:true}, and the product is soft-deleted', async () => {
+    setTestUserId(USER)
+    const [f] = await directSql`
+      SELECT count(*)::int AS total, count(*) FILTER (WHERE deleted_at IS NULL)::int AS live
+        FROM event_log WHERE treatment_product_id = ${ids.sprayRetracted}`
+    expect(f).toEqual({ total: 1, live: 0 })
+    const { status, body } = await del(ids.sprayRetracted)
+    expect(status, JSON.stringify(body)).toBe(200)
+    expect(body).toEqual({ ok: true })
+    expect(await deletedAt(ids.sprayRetracted)).not.toBeNull()
+  })
+
+  it('an item that is already deleted answers 404 even with a live planting on it, and its deleted_at is untouched', async () => {
+    setTestUserId(USER)
+    const [f] = await directSql`
+      SELECT count(*)::int AS n FROM plants WHERE source_inventory_item_id = ${ids.alreadyDeleted} AND deleted_at IS NULL`
+    expect(f.n, 'fixture: a live planting must still point at the deleted packet').toBe(1)
+    const before = await deletedAt(ids.alreadyDeleted)
+    expect(new Date(before).toISOString()).toBe('2026-01-02T03:04:05.000Z')
+    const { status, body } = await del(ids.alreadyDeleted)
+    expect(status, JSON.stringify(body)).toBe(404)
+    expect(body).toEqual({ error: 'Not found' })
+    expect(new Date(await deletedAt(ids.alreadyDeleted)).toISOString()).toBe('2026-01-02T03:04:05.000Z')
   })
 })
 

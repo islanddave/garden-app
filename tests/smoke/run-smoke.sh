@@ -23,7 +23,9 @@
 #        archived through PATCH /api/plants/:id/archive → the packet's sown_from no longer lists it
 #        (F3b, Archive-Hiding on the deployed stack); then DELETE on the packet → 409 with the
 #        "1 archived planting was sown from it" sentence, and the packet still reads back 200
-#        (F3c, BUG-INVREFSTRAND-001: archived plantings still block a delete)
+#        (F3c, BUG-INVREFSTRAND-001: archived plantings still block a delete); then the planting
+#        deleted → the packet's DELETE answers 200 {"ok":true} and the packet reads back 404
+#        (F3d, the allowed half of the same DELETE)
 #     G) favorites toggle → assert favorited on, then off
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
@@ -804,9 +806,8 @@ else
                   # not (BUG-INVREFSTRAND-001, option C). The planting above is archived now, so this is the
                   # case Dave decided: DELETE must answer 409 with the sentence the page shows, and must
                   # write nothing — the packet still reads back 200 (L-108: a 409 that deleted anyway would
-                  # strand the planting and say nothing). Cleanup is unchanged: the trap soft-deletes the
-                  # planting FIRST, which lets the packet's own delete through, and the L-058 sweep
-                  # hard-deletes both rows either way.
+                  # strand the planting and say nothing). F3d below then deletes both rows through the API;
+                  # the L-058 sweep hard-deletes them either way.
                   CLERK_JWT=$(mint_session_token)
                   DEL_BODY=$(mktemp)
                   DEL_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
@@ -825,6 +826,41 @@ else
                     PASS=$((PASS+1))
                   else
                     echo "❌ FAIL [write:inventory-delete-refused-when-sown] DELETE HTTP $DEL_HTTP, error '$DEL_ERROR' (expected 409 + '$DEL_EXPECTED'); the packet's GET afterwards HTTP $KEPT_HTTP (expected 200)"
+                    FAIL=$((FAIL+1))
+                  fi
+                  # ── F3d) The ALLOWED half of the same DELETE, on the deployed stack (pre-promote review M-3,
+                  # L-108). F3c proves the refusal; the shape the Sept-8 guard broke was the other half, a
+                  # delete that should go through (Snap's Undo). Delete the sown planting (the plants DELETE
+                  # soft-deletes an archived row too) → 200. Now nothing live was sown from the packet, so its
+                  # DELETE must answer 200 with the route's success body {"ok":true}, and the packet must read
+                  # back 404. Both routes answer {"ok":true} on success (lambda/plants/index.js and
+                  # lambda/inventory-items/index.js, the DELETE arms). Each id is cleared once its own DELETE
+                  # is confirmed, so the trap does not repeat it; one that was not confirmed is left for the
+                  # trap, and the L-058 sweep hard-deletes both rows either way.
+                  CLERK_JWT=$(mint_session_token)
+                  UNSOW_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+                    -X DELETE -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                    -o /dev/null -w "%{http_code}" \
+                    "${STAGING_API_PLANTS%/}/api/plants/${CREATED_SOWN_PLANT_ID}") || UNSOW_HTTP="000"
+                  if [[ "$UNSOW_HTTP" == "200" ]]; then CREATED_SOWN_PLANT_ID=""; fi
+                  PKTDEL_BODY=$(mktemp)
+                  PKTDEL_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+                    -X DELETE -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                    -o "$PKTDEL_BODY" -w "%{http_code}" \
+                    "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_SEEDPKT_ID}") || PKTDEL_HTTP="000"
+                  if jq -e '. == {"ok": true}' "$PKTDEL_BODY" >/dev/null 2>&1; then PKTDEL_OK="yes"; else PKTDEL_OK="no"; fi
+                  PKTDEL_SNIP=$(head -c 200 "$PKTDEL_BODY" 2>/dev/null || echo "")
+                  rm -f "$PKTDEL_BODY"
+                  GONE_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+                    -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                    -o /dev/null -w "%{http_code}" \
+                    "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_SEEDPKT_ID}") || GONE_HTTP="000"
+                  if [[ "$PKTDEL_HTTP" == "200" ]]; then CREATED_SEEDPKT_ID=""; fi
+                  if [[ "$UNSOW_HTTP" == "200" && "$PKTDEL_HTTP" == "200" && "$PKTDEL_OK" == "yes" && "$GONE_HTTP" == "404" ]]; then
+                    echo "✅ PASS [write:inventory-delete-allowed-once-unsown] planting DELETE 200; packet DELETE 200 {\"ok\":true}; the packet then reads back 404"
+                    PASS=$((PASS+1))
+                  else
+                    echo "❌ FAIL [write:inventory-delete-allowed-once-unsown] planting DELETE HTTP $UNSOW_HTTP (expected 200); packet DELETE HTTP $PKTDEL_HTTP body '$PKTDEL_SNIP' (expected 200 {\"ok\":true}); the packet's GET afterwards HTTP $GONE_HTTP (expected 404)"
                     FAIL=$((FAIL+1))
                   fi
                 else
