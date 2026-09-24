@@ -199,10 +199,14 @@ describe('V5-VOICEVOCAB-001 — "planting 2 165" said in one breath', () => {
 
   it('a misheard save word keeps the amounts and refuses the save — "2 165 text"', async () => {
     const rec = await startListening()
-    for (const line of ['Suyo Long', '2 165 text']) await speak(rec, line)
+    await speak(rec, 'Suyo Long')
+    haptics.hapticDigitRejected.mockClear()
+    await speak(rec, '2 165 text')
     await settle()
     expect(posts()).toEqual([])
     expect(statusText()).toBe('Kept that. Didn\'t catch the last word — say "next" again.')
+    // QA F5 — the refused save word is felt as well as read.
+    expect(haptics.hapticDigitRejected).toHaveBeenCalledTimes(1)
     await speak(rec, 'next')
     await settle()
     expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
@@ -337,7 +341,10 @@ describe('V5-VOICEVOCAB-001 — one breath against the real planting names', () 
   ])('%j is refused — the name and the numbers split more than one way', async (said) => {
     const rec = await startListening(VOCAB)
     for (const line of ['Suyo Long', '3 count']) await speak(rec, line)
+    haptics.hapticDigitRejected.mockClear()
     await speak(rec, said)
+    // QA F5 — the third channel: the refusal is felt, not only read.
+    expect(haptics.hapticDigitRejected).toHaveBeenCalledTimes(1)
     await speak(rec, 'next')
     await settle()
     expect(posts()).toEqual([])
