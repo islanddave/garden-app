@@ -80,6 +80,31 @@ function writeUnskipped(set) {
   try { localStorage.setItem(unskipKeyName(), JSON.stringify([...set])) } catch { return }
 }
 
+// ONE server sync per Undo tap (BUG-TODAYSKIPNOUNDO-001 review). A coalesced skip toast's Undo runs
+// every accumulated handler in one synchronous loop (ToastContext's onUndo), and each handler used to
+// fire its own whole-set PATCH. Concurrent, fire-and-forget and keepalive: arrival order decided the
+// server snapshot, and at the live set size (~10 KB a body) a handful of them overrun the 64 KiB
+// keepalive quota, so the one carrying the correct final set was the likeliest to be refused. Every
+// handler now only asks for a sync; the first ask queues a microtask, which runs after the last
+// handler in that loop and sends the set as it then stands in localStorage.
+//
+// Module scope, never component state: the toast outlives Today, so this has to fire with Today
+// unmounted. Both CareNeeded instances on the household lens share the one localStorage key and the
+// one signed-in user, so one flush serves both.
+let unskipSyncQueued = false
+let unskipSyncGetToken = null
+function queueUnskipSync(getToken) {
+  unskipSyncGetToken = getToken
+  if (unskipSyncQueued) return
+  unskipSyncQueued = true
+  queueMicrotask(() => {
+    unskipSyncQueued = false
+    const gt = unskipSyncGetToken
+    unskipSyncGetToken = null
+    saveTodaySkipped({ getToken: gt, date: todayLocalISO(), keys: [...readSkipped()] })
+  })
+}
+
 // `eventType` overrides the row's primary type — the moisture check posts through this same body so
 // the two writes cannot drift in shape. Omitted => the row's own mapped type, as before.
 function eventBody(row, eventType) {
@@ -624,7 +649,7 @@ export default function CareNeeded({ plan }) {
 
   // BUG-TODAYSKIPNOUNDO-001 — Skip's Undo. Same order as skipRow: the local write first and
   // synchronously, then the fire-and-forget sync, which still sends the WHOLE set (the column is a
-  // snapshot).
+  // snapshot) — but queued, so a coalesced Undo of N skips sends ONE sync, not N (queueUnskipSync).
   //
   // Reads the set FRESH from localStorage rather than through a state updater, on purpose. The toast
   // layer lives at the app root and outlives Today: skip, tap into the planting, tap Undo, and this
@@ -638,7 +663,7 @@ export default function CareNeeded({ plan }) {
     const u = readUnskipped()
     u.add(row.key)
     writeUnskipped(u)
-    saveTodaySkipped({ getToken, date: todayLocalISO(), keys: [...n] })
+    queueUnskipSync(getToken)
     setSkipped(prev => {
       if (!prev.has(row.key)) return prev
       const next = new Set(prev); next.delete(row.key); return next

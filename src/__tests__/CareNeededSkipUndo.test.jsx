@@ -6,7 +6,7 @@
 // that tapping it runs the handler — a mocked showUndo proves only that a function was called.
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
 const { fetchMock, getTokenMock, prefsMock } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
@@ -47,10 +47,18 @@ const todayISO = () => {
 }
 const stored = () => JSON.parse(localStorage.getItem('today-skipped:' + todayISO()) || '[]').sort()
 const skip = (name) => fireEvent.click(screen.getByRole('button', { name: new RegExp('Skip ' + name + ' today', 'i') }))
-const undo = () => fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+// Async: Undo's server sync is queued to a microtask (one per tap), so a test that reads the sync
+// has to let that microtask run.
+const undo = async () => { await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Undo' })) }) }
+const tap = async (label) => { await act(async () => { fireEvent.click(screen.getByRole('button', { name: label })) }) }
 // The toast itself — NOT getByText: CareNeeded's sr-only live region announces the same sentence, so
 // a bare text query matches twice, and matching the live region alone would pass with no toast at all.
 const toastText = () => screen.getByRole('button', { name: 'Undo' }).closest('[role="status"]').textContent
+// Every undo toast on screen, oldest first (the stack's DOM order), by its message line.
+const toastMessages = () => screen.queryAllByRole('button', { name: 'Undo' })
+  .map(b => b.closest('[role="status"]').querySelector('span span').textContent)
+// saveTodaySkipped calls made after `from` (a mock.calls.length taken earlier), as their arguments.
+const syncsSince = (from) => prefsMock.saveTodaySkipped.mock.calls.slice(from).map(c => c[0])
 const serverHas = (...keys) => prefsMock.fetchNotificationPrefs.mockResolvedValue({ today_skipped: { date: todayISO(), keys } })
 
 // The toast layer is the app ROOT; the list is one route under it. Unmounting the list while the
@@ -90,27 +98,29 @@ describe('BUG-TODAYSKIPNOUNDO-001 — Skip has a visible undo', () => {
     await mountHost()
     skip('Habanero')
     expect(stored()).toEqual(['p2:water_due'])
-    undo()
+    await undo()
     expect(screen.getByText('Habanero')).toBeTruthy()
     expect(stored()).toEqual([])
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull()   // the toast cleared
   })
 
   // The column is a snapshot, so the undo must send what is LEFT, not the key it removed.
-  // Mutations: send `keys: [row.key]` (a delta) -> last sync is ['p1:water_due'], red; drop the sync ->
-  // last sync is the skip's two-key set, red.
+  // Mutations: send `keys: [row.key]` (a delta) -> the sync is ['p1:water_due'], red; drop the sync ->
+  // no sync after the tap, red.
   it('Undo re-syncs the whole remaining set to the server', async () => {
     await mountHost()
     skip('Habanero')
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))   // a separate toast for the next skip
     skip('Bhut Jolokia')
-    undo()
+    const before = prefsMock.saveTodaySkipped.mock.calls.length
+    await undo()
     expect(screen.getByText('Bhut Jolokia')).toBeTruthy()
     expect(screen.queryByText('Habanero')).toBeNull()
     expect(stored()).toEqual(['p2:water_due'])
-    const last = prefsMock.saveTodaySkipped.mock.calls.at(-1)[0]
-    expect(last.keys).toEqual(['p2:water_due'])
-    expect(last.date).toBe(todayISO())
+    const sent = syncsSince(before)
+    expect(sent.length).toBe(1)
+    expect(sent[0].keys).toEqual(['p2:water_due'])
+    expect(sent[0].date).toBe(todayISO())
   })
 
   // Mutation: drop `group` from the skip toast -> two toasts, no "2 plants" line, red.
@@ -120,24 +130,91 @@ describe('BUG-TODAYSKIPNOUNDO-001 — Skip has a visible undo', () => {
     skip('Bhut Jolokia')
     expect(screen.getAllByRole('button', { name: 'Undo' }).length).toBe(1)
     expect(toastText()).toContain('Skipped 2 plants for today')
-    undo()
+    await undo()
     expect(screen.getByText('Habanero')).toBeTruthy()
     expect(screen.getByText('Bhut Jolokia')).toBeTruthy()
     expect(stored()).toEqual([])
   })
 
-  // The toast outlives the list: skip, tap into a planting, tap Undo. Mutation: do the local write
-  // inside the setSkipped updater instead of directly (the skipRow shape) — the updater never runs on
-  // an unmounted component, the key stays stored, and the row is still hidden on return: red.
-  it('Undo still lands after the list has unmounted', async () => {
+  // The toast outlives the list: skip, tap into a planting, tap Undo. Two coalesced skips, so this is
+  // also the one-sync-per-tap rule with Today unmounted. Mutations: do the local write inside the
+  // setSkipped updater (the skipRow shape) — it never runs on an unmounted component, the keys stay
+  // stored and the rows stay hidden: red; queue the sync through component state/effects instead of
+  // module scope — nothing is sent with the list gone: red.
+  it('Undo still lands after the list has unmounted, with one sync of the final set', async () => {
     await mountHost()
     skip('Habanero')
+    skip('Bhut Jolokia')
     await toggleList()                                  // list gone, toast still up
     expect(screen.queryByText('Bhut Jolokia')).toBeNull()
-    undo()
+    const before = prefsMock.saveTodaySkipped.mock.calls.length
+    await undo()
     expect(stored()).toEqual([])
+    expect(syncsSince(before).map(a => a.keys)).toEqual([[]])
     await toggleList()                                  // back to Today
     expect(screen.getByText('Habanero')).toBeTruthy()
+    expect(screen.getByText('Bhut Jolokia')).toBeTruthy()
+  })
+})
+
+// Review fix (review-v4147-regression MINOR / review-v4147-qa MINOR, 2026-09-24): a coalesced Undo
+// used to run one whole-set PATCH per handler — concurrent, fire-and-forget, keepalive — so arrival
+// order decided the server snapshot and the one carrying the correct final set was the likeliest to
+// be refused by the keepalive quota. The criterion: after an Undo tap the server is sent exactly ONE
+// snapshot, and it is the post-undo set.
+describe('BUG-TODAYSKIPNOUNDO-001 — one server sync per Undo tap', () => {
+  const plan3 = () => {
+    const p = plan()
+    p.water_due.push({ id: 'p3', name: 'Sungold', crop: 'tomato', project: 'Peppers', project_id: 'prP', overdue_by: 1, in_ground: false })
+    return p
+  }
+
+  // Mutations: sync per handler again -> 2 syncs, red; read the set when the FIRST handler queues the
+  // sync instead of when it is sent -> ['p1:water_due','p3:water_due'], red.
+  it('a coalesced Undo of 2 skips sends exactly one sync, carrying the final set', async () => {
+    await mountHost(plan3())
+    skip('Sungold')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))   // stays skipped: the final set is not empty
+    skip('Habanero')
+    skip('Bhut Jolokia')
+    expect(toastText()).toContain('Skipped 2 plants for today')
+    const before = prefsMock.saveTodaySkipped.mock.calls.length
+    await undo()
+    const sent = syncsSince(before)
+    expect(sent.length).toBe(1)
+    expect(sent[0].keys).toEqual(['p3:water_due'])
+    expect(sent[0].date).toBe(todayISO())
+    expect(stored()).toEqual(['p3:water_due'])
+  })
+
+  // One per TAP, not one ever. Mutation: never clear the queued flag -> the second tap sends nothing, red.
+  it('two separate Undo taps send two syncs, each with the set as it then stood', async () => {
+    await mountHost(plan3())
+    skip('Habanero')
+    const first = prefsMock.saveTodaySkipped.mock.calls.length
+    await undo()
+    expect(syncsSince(first).map(a => a.keys)).toEqual([[]])
+    skip('Sungold')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    skip('Bhut Jolokia')
+    const second = prefsMock.saveTodaySkipped.mock.calls.length
+    await undo()
+    expect(syncsSince(second).map(a => a.keys)).toEqual([['p3:water_due']])
+  })
+})
+
+// Review fix (review-v4147-qa MINOR): the skip toast's comment promised it "never merges into a
+// watering count" and nothing pinned it — the mutant below survived all 44 Today undo tests.
+describe('BUG-TODAYSKIPNOUNDO-001 — a skip is never counted as a log', () => {
+  // The skip's own toast group must never absorb (or be absorbed by) a log group: a merge would count
+  // a skip as a watering. Mutation (review-v4147-qa's surviving one): group 'care-skip' ->
+  // 'care-log-watering' -> one toast reading "Logged Water for 2 plants", red.
+  it('a skip inside the watering toast window stays its own toast', async () => {
+    await mountHost()
+    await tap('Log Water for Bhut Jolokia')
+    await waitFor(() => expect(toastMessages()).toEqual(['Logged Water for Bhut Jolokia']))
+    skip('Habanero')
+    expect(toastMessages()).toEqual(['Logged Water for Bhut Jolokia', 'Skipped Habanero for today'])
   })
 })
 
@@ -148,7 +225,7 @@ describe('BUG-TODAYSKIPNOUNDO-001 — the server merge after an Undo', () => {
   it('a stale server snapshot cannot re-hide a plant Dave brought back', async () => {
     await mountHost()
     skip('Habanero')
-    undo()
+    await undo()
     await toggleList()
     serverHas('p2:water_due')
     await toggleList()
@@ -175,7 +252,7 @@ describe('BUG-TODAYSKIPNOUNDO-001 — the server merge after an Undo', () => {
   it('skipping again after an Undo is honoured by the merge', async () => {
     await mountHost()
     skip('Habanero')
-    undo()
+    await undo()
     skip('Habanero')
     await toggleList()
     localStorage.removeItem('today-skipped:' + todayISO())
