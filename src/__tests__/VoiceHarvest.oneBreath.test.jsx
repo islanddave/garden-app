@@ -449,13 +449,17 @@ describe('V5-VOICEVOCAB-001 — census: no digit of a real name lands in a value
         }
       }
     }
-    // Not a vacuous sweep: most of it must actually APPLY.
-    // Not a vacuous sweep: most of it must actually APPLY (measured 2026-09-24: 75 of 105), and the
-    // refusals are the names that end in their own number followed by ONE amount, and Super Sweet 100.
-    expect(outcomes.filter(([, k]) => k === 'apply').length).toBeGreaterThanOrEqual(60)
+    // QA F7 — PINNED EXACTLY, not floored: the fixture is frozen, so any movement is a change in the
+    // rules. Measured 2026-09-24 (lane D4) and independently by the QA seat: 105 sentences, 75 apply
+    // and 30 refuse — the refusals are the names that end in their own number followed by ONE bare
+    // amount ("cherry rescue 1 7"), and every Super Sweet 100 form (two plantings share that name).
+    // A floor would let 15 applies turn silently into refusals.
+    const kinds = outcomes.reduce((c, [, k]) => ({ ...c, [k]: (c[k] ?? 0) + 1 }), {})
+    expect(kinds).toEqual({ apply: 75, refuse: 30 })
   })
 
   it("the name's OWN number as the first amount is never read as an amount", () => {
+    const kinds = {}
     for (const { planting: p, alias } of CENSUS) {
       for (const d of digitRuns(alias)) {
         for (const name of spokenForms(alias)) {
@@ -466,6 +470,7 @@ describe('V5-VOICEVOCAB-001 — census: no digit of a real name lands in a value
           const cut = words.slice(0, at).join(' ')
           for (const said of [`${cut} ${d} 200`, `${cut} ${SPOKEN[d]} 200`, `${name} 200`]) {
             const r = decide(said)
+            kinds[r?.kind ?? 'not-mine'] = (kinds[r?.kind ?? 'not-mine'] ?? 0) + 1
             if (r?.kind !== 'apply') continue
             // Allowed only as the name reading: the number stays in the name, 200 is the one amount.
             expect(r.groups.map((g) => g.value), `${said} → ${r.planting?.name}`).not.toContain(Number(d))
@@ -474,6 +479,9 @@ describe('V5-VOICEVOCAB-001 — census: no digit of a real name lands in a value
         }
       }
     }
+    // QA F7 — the adversarial half is pinned too, or a loop that refused EVERYTHING would pass: 84
+    // sentences, 69 refuse, 15 apply (each apply keeps the number in the name, checked above).
+    expect(kinds).toEqual({ refuse: 69, apply: 15 })
   })
 
   it('with the census planting already selected, bare amounts attach to it and never re-select by digit', () => {
