@@ -236,6 +236,8 @@ export function parseNumber(tokens) {
   let fraction = 0
   // BUG-VOICENUMSUM-001, GUARD 2 OF 2 — magnitude of the previous ADDITIVE component. See below.
   let lastAdd = null
+  // V5-VOICEVOCAB-001, GUARD 3 — the previous token when it was itself a number WORD, else null.
+  let prevWord = null
 
   for (const tok of tokens) {
     if (FILLER.has(tok)) continue
@@ -245,6 +247,7 @@ export function parseNumber(tokens) {
       if (lastAdd !== null && v >= lastAdd) return null
       fraction += v
       lastAdd = v
+      prevWord = null
       seenAny = true
       continue
     }
@@ -255,6 +258,7 @@ export function parseNumber(tokens) {
       // A scale MULTIPLIES rather than adds, so it is not itself subject to the descent rule — but it
       // resets the ceiling for what may follow it: "two hundred thirty one" is 200 then 30 then 1.
       lastAdd = SCALES[tok]
+      prevWord = null
       seenAny = true
       continue
     }
@@ -268,8 +272,20 @@ export function parseNumber(tokens) {
       // there is no digit literal in the utterance at all, every token is a legitimate number word,
       // and only the ORDER reveals that two separate numbers were spoken.
       if (lastAdd !== null && v >= lastAdd) return null
+      // V5-VOICEVOCAB-001, GUARD 3 — TWO NUMBER WORDS IN A ROW ADD ONLY AS TENS + UNITS.
+      // Descending is necessary, not sufficient. "ten five", "five two" and "three two hundred thirty
+      // one" all descend, so guard 2 summed them — and once a bare number became an amount on its own
+      // (e142054), that sum was SAVED: on cb32814 "ten five" then "next" wrote 15 count, and the last
+      // one wrote 531 count. English composes two adjacent number words in exactly one way, a tens
+      // word followed by a units word ("twenty five"); every other adjacent pair is two numbers said
+      // together, and this parser returns one number or nothing. A scale ("hundred", "thousand") is
+      // not a word in this sense — it multiplies, and what follows it starts a fresh group.
+      if (prevWord !== null && !(prevWord >= 20 && prevWord <= 90 && prevWord % 10 === 0 && v >= 1 && v <= 9)) {
+        return null
+      }
       current += v
       lastAdd = v
+      prevWord = v
       seenAny = true
       continue
     }
@@ -365,6 +381,23 @@ export function foldNumberWords(text) {
   }
   flushRun()
   return out.join(' ')
+}
+
+/**
+ * V5-VOICEVOCAB-001 (lane D4) — is this phrase made of NOTHING BUT numbers?
+ *
+ * Digit literals and the canonical number words a name is spoken with (NAME_NUMBER_WORDS plus the
+ * scales). A phrase like that — "2", "1884", "eighteen eighty four" — can only ever be a planting's
+ * name by EXACT equality, never by the substring or fuzzy layers: "2" is a substring of Danvers 1*2*6,
+ * "18" of 1884, and the one-breath reader offering "2" as a name is how "2 165 grams" switched the crop
+ * to Danvers 126 Carrot (measured on cb32814 against the 244 real plantings). The homophones in
+ * NUMBER_WORDS (to/for/tree/…) are deliberately not numbers here: "peach tree" is a name.
+ */
+export function isNumberPhrase(raw) {
+  const toks = normalise(raw).split(' ').filter(Boolean)
+  return toks.length > 0 && toks.every((t) => /^\d+(\.\d+)?$/.test(t)
+    || Object.prototype.hasOwnProperty.call(NAME_NUMBER_WORDS, t)
+    || Object.prototype.hasOwnProperty.call(SCALES, t))
 }
 
 /**
@@ -657,45 +690,194 @@ export function classify(raw) {
 // they were spoken clearly and throwing them away is the lost-log failure this page exists to
 // prevent — while the save is refused, which is the same asymmetry COMMAND_NEAR_MISSES already
 // encodes: a wrong search is visible and correctable, a wrong commit is silent.
-export function splitTrailingCommand(raw) {
-  const text = normalise(raw)
-  if (!text) return null
-  // A whole-utterance command is not a split: classify() owns it and must keep owning it.
-  if (Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, text)) return null
-  if (Object.prototype.hasOwnProperty.call(COMMANDS, text)) return null
-  if (COMMAND_NEAR_MISSES.has(text)) return null
-
-  const tokens = text.split(' ').filter(Boolean)
-  if (tokens.length < 2) return null
-
-  // Longest trailing phrase first, so "save and next" is not read as a bare trailing "next".
-  let head = null
-  let command
-  let nearCommand = false
+// The command a final ENDS with, if any, and how many tokens it takes. Longest trailing phrase first,
+// so "save and next" is not read as a bare trailing "next". A command that is the whole utterance is
+// not a trailing one (`take` must leave a head), because classify() owns that case.
+function trailingCommandOf(tokens) {
   for (let take = 3; take >= 1; take--) {
     if (take >= tokens.length) continue
     const tail = tokens.slice(tokens.length - take).join(' ')
     if (take > 1 && Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, tail)) {
-      head = tokens.slice(0, tokens.length - take).join(' '); command = COMMAND_PHRASES[tail]; break
+      return { take, command: COMMAND_PHRASES[tail], nearCommand: false }
     }
     if (take === 1 && Object.prototype.hasOwnProperty.call(COMMANDS, tail)) {
-      head = tokens.slice(0, tokens.length - 1).join(' '); command = COMMANDS[tail]; break
+      return { take, command: COMMANDS[tail], nearCommand: false }
     }
-    if (take === 1 && COMMAND_NEAR_MISSES.has(tail)) {
-      head = tokens.slice(0, tokens.length - 1).join(' '); command = null; nearCommand = true; break
-    }
+    if (take === 1 && COMMAND_NEAR_MISSES.has(tail)) return { take, command: null, nearCommand: true }
   }
-  if (head == null || !head) return null
+  return null
+}
+
+const isWholeCommand = (text) => Object.prototype.hasOwnProperty.call(COMMAND_PHRASES, text)
+  || Object.prototype.hasOwnProperty.call(COMMANDS, text)
+  || COMMAND_NEAR_MISSES.has(text)
+
+export function splitTrailingCommand(raw) {
+  const text = normalise(raw)
+  if (!text) return null
+  // A whole-utterance command is not a split: classify() owns it and must keep owning it.
+  if (isWholeCommand(text)) return null
+
+  const tokens = text.split(' ').filter(Boolean)
+  if (tokens.length < 2) return null
+
+  const tail = trailingCommandOf(tokens)
+  if (!tail) return null
+  const head = tokens.slice(0, tokens.length - tail.take).join(' ')
+  const { command, nearCommand } = tail
 
   // THE GATE. The head must already be a record on its own terms — never a search, never prose.
   const headKind = classify(head).kind
   const isRecord = headKind === 'quantity' || headKind === 'weight'
     || segmentCandidates(head).length > 0
     || parseValueSequence(head) != null
-  if (!isRecord) return null
+  // V5-VOICEVOCAB-001 (lane D4) — OR A RECORD SAID WITHOUT (ALL OF) ITS UNITS: "165 next", "2 165 next",
+  // "suyo long 2 165 next", "cucumber 3 231 grams next". Marked `bare`, because whether such a head IS
+  // a record depends on state this function cannot see (is a planting selected? which of the readings
+  // does the vocabulary support?) — so the page routes a bare head ONLY through its one-breath reader
+  // and never down the old split path, which would search the head and then save whatever record was
+  // standing. The mark is also what the commit debouncer reads: a one-breath final that writes claims
+  // the same one-write cooldown a bare "next" does, so a re-delivered final (BUG-VOICEDUPE-001..005)
+  // cannot save the same harvest twice. "cucumber next" and "next to the fence" still refuse: a head
+  // with no number in it has no reading at all.
+  const bare = !isRecord && (oneBreathReadings(raw)?.readings.length ?? 0) > 0
+  if (!isRecord && !bare) return null
 
-  return { head, command, nearCommand, transcript: String(raw ?? '') }
+  return { head, command, nearCommand, transcript: String(raw ?? ''), ...(bare ? { bare: true } : {}) }
 }
+
+// ── V5-VOICEVOCAB-001 (lane D4) — a one-breath record said WITHOUT (all of) its units ────────────────
+//
+// Dave, 2026-09-13: "assume the unit and assume grams, so 'planting 2 165' replaces 'planting 2 count
+// 165 grams'". BUG-VOICETWOBARENUM-001 made that work when the parts arrive as separate finals, and it
+// still failed when they arrive as ONE — which is how his own example reads. Measured on cb32814:
+// "165 next", "2 165" and "Suyo Long 2 165 next" were each a planting SEARCH that matched nothing,
+// cleared the crop and dropped the numbers; "ten five" was held as 15 and saved.
+//
+// WHAT THIS RETURNS, and what it deliberately does not decide. A final is `[name] values [command]`,
+// where values are one or two GROUPS — a number with or without a unit ("2", "twenty five",
+// "165 grams") — at least one WITHOUT a unit (an all-unit final belongs to segmentCandidates /
+// parseValueSequence / classify, unchanged). The boundary between name and values is the hazard:
+// thirteen of Dave's 244 plantings carry a digit or a number word in some alias (1884, Super Sweet
+// 100, Danvers 126, Cherry Rescue 1, Marvel of Four Seasons …), so "super sweet 100 3 200" is either
+// "super sweet 100" + 3, 200 or "super sweet" + 100, 3, 200. The string cannot say, so — exactly as
+// segmentCandidates does for the unit form — every split point is returned and the CALLER decides
+// against the vocabulary and the current selection. This function has neither.
+//
+// Returns null when the final is not this shape at all (no number at its end; an all-unit record; a
+// lone number with no name and no command, which classifyPartial owns). Otherwise:
+//   { head, nameless, command, nearCommand, readings: [{ name, groups: [{ value, unit, text }] }],
+//     badRun, overfull }
+// where `nameless` says the whole head is numbers (so a refusal must not clear the crop), `badRun`
+// flags a number-word run that is not ONE cardinal ("ten five", "three twenty five") — refused by the
+// caller rather than summed, because guard 3 makes parseNumber answer null for it — and `overfull`
+// flags a nameless head carrying more amounts than a record has slots ("2 165 7").
+const RUN_WORD = (t) => Object.prototype.hasOwnProperty.call(NAME_NUMBER_WORDS, t)
+  || Object.prototype.hasOwnProperty.call(SCALES, t)
+const DIGIT_TOKEN = (t) => /^\d+(\.\d+)?$/.test(t)
+
+// Read tokens as consecutive value groups, NUMBER [UNIT]. A digit literal is one number (guard 1); a
+// run of number words must be ONE cardinal or the whole run is `bad`. Anything else → null.
+function parseValueRun(toks) {
+  const groups = []
+  let i = 0
+  while (i < toks.length) {
+    let j
+    let value
+    if (DIGIT_TOKEN(toks[i])) {
+      value = Number(toks[i]); j = i + 1
+    } else if (RUN_WORD(toks[i])) {
+      j = i + 1
+      while (j < toks.length
+        && (RUN_WORD(toks[j]) || (toks[j] === 'and' && j + 1 < toks.length && RUN_WORD(toks[j + 1])))) j++
+      value = parseNumber(toks.slice(i, j))
+      if (value == null) return { bad: true }
+    } else {
+      return null
+    }
+    if (!(value > 0)) return null
+    let unit = null
+    if (j < toks.length && Object.prototype.hasOwnProperty.call(UNIT_ALIASES, toks[j])) {
+      unit = UNIT_ALIASES[toks[j]]; j++
+    }
+    groups.push({ value, unit, text: toks.slice(i, j).join(' ') })
+    i = j
+  }
+  return { groups }
+}
+
+export function oneBreathReadings(raw) {
+  const text = normalise(raw)
+  if (!text || isWholeCommand(text)) return null
+  const all = text.split(' ').filter(Boolean)
+  const tail = trailingCommandOf(all)
+  const head = tail ? all.slice(0, all.length - tail.take) : all
+  // The doubled-word defect (BUG-VOICEDUPE-00x) is collapsed for WORDS only. Two equal numbers stay
+  // two tokens: whether they are one number heard twice is decided below, as a value, not as text.
+  const toks = []
+  for (const t of head) {
+    const prev = toks[toks.length - 1]
+    if (prev === t && !DIGIT_TOKEN(t) && !RUN_WORD(t)) continue
+    toks.push(t)
+  }
+
+  // The value tail: the longest suffix made of numbers, number words, units and an "and" inside a
+  // number-word run. The name, if any, is everything before some split point inside it.
+  let s = toks.length
+  while (s > 0) {
+    const t = toks[s - 1]
+    if (DIGIT_TOKEN(t) || RUN_WORD(t) || Object.prototype.hasOwnProperty.call(UNIT_ALIASES, t)) { s--; continue }
+    if (t === 'and' && s >= 2 && RUN_WORD(toks[s - 2]) && s < toks.length && RUN_WORD(toks[s])) { s--; continue }
+    break
+  }
+  if (s === toks.length) return null
+  // One number and nothing else is a held number, and classifyPartial already owns it — including
+  // with filler in front ("a hundred", "about 165").
+  if (!tail && classifyPartial(toks.join(' '))?.kind === 'number') return null
+
+  // Filler carries no identity, so it is never part of a name: "a hundred next" is nameless, and
+  // "suyo long about 165" names Suyo Long.
+  const nameOf = (k) => {
+    const n = toks.slice(0, k)
+    while (n.length && FILLER.has(n[n.length - 1])) n.pop()
+    while (n.length && FILLER.has(n[0])) n.shift()
+    return n.join(' ')
+  }
+  const readings = []
+  let badRun = false
+  let overfull = false
+  for (let k = s; k < toks.length; k++) {
+    const run = parseValueRun(toks.slice(k))
+    if (!run) continue
+    if (run.bad) { badRun = true; continue }
+    // The same bare number twice in a row is ONE number — BUG-VOICETWOBARENUM-001's equality rule for
+    // separate finals, applied inside one: a doubled "165" is not a count and a weight.
+    const groups = []
+    for (const g of run.groups) {
+      const prev = groups[groups.length - 1]
+      if (prev && prev.unit == null && g.unit == null && prev.value === g.value) continue
+      groups.push(g)
+    }
+    if (!groups.some((g) => g.unit == null)) continue          // all units: the existing readers own it
+    // A record has two slots. Three amounts in one breath do not say which one is extra, so the
+    // nameless form is flagged for a refusal rather than read by guessing which to drop.
+    if (groups.length > 2) { if (k === s && nameOf(s) === '') overfull = true; continue }
+    const axes = groups.filter((g) => g.unit).map((g) => buildValue(g.value, g.unit)?.kind)
+    if (axes.some((a) => !a) || new Set(axes).size !== axes.length) continue
+    readings.push({ name: nameOf(k), groups })
+  }
+  if (!readings.length && !badRun && !overfull) return null
+  return {
+    head: toks.join(' '), nameless: nameOf(s) === '',
+    command: tail?.command ?? null, nearCommand: !!tail?.nearCommand,
+    readings, badRun, overfull,
+  }
+}
+
+// The words NUMBER_WORDS maps to a number only because a recogniser mishears them — "to" for two,
+// "tree" for three. They are names in their own right ("Peach tree"), so the one-breath reader never
+// counts them as numbers; the caller uses this to notice when one sits where a number could have been.
+export const NUMBER_HOMOPHONES = { won: 1, to: 2, too: 2, tree: 3, for: 4, fore: 4, ate: 8 }
 
 // ── V5-VOICEONEBREATH-002 — the NAMELESS value sequence ──────────────────────────────────────────
 //

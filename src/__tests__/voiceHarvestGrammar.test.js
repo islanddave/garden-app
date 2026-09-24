@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest'
 import {
   classify, parseNumber, normalise, collapseAdjacentDupes, COMMANDS, COMMAND_PHRASES, UNIT_ALIASES,
   COMMAND_NEAR_MISSES, foldNumberWords, classifyPartial, buildValue, segmentCandidates,
-  splitTrailingCommand, parseValueSequence,
+  splitTrailingCommand, parseValueSequence, oneBreathReadings, isNumberPhrase,
 } from '../lib/voiceHarvestGrammar.js'
 import { HARVEST_UNITS, WEIGHT_UNITS } from '../lib/harvest-constants.js'
 
@@ -487,14 +487,28 @@ describe('V5-VOICEONEBREATH-001 — candidate splits of a one-breath sentence', 
 
   // THE TRAP THE ROW NAMES. Nine live plantings are named with digits and Chrome dictates them as
   // words, so every token before the unit is a number and the string alone cannot say where the name
-  // ends. All three readings are offered and NONE is preferred here.
-  it('offers EVERY split of a number-named planting rather than guessing one', () => {
-    const c = segmentCandidates('eighteen eighty four two count 165 grams')
-    expect(c.map((x) => x.name)).toEqual(['eighteen eighty four', 'eighteen eighty', 'eighteen'])
-    expect(c.map((x) => x.values[0].value)).toEqual([2, 6, 86])
+  // ends. Every LEGAL reading is offered and NONE is preferred here.
+  //
+  // V5-VOICEVOCAB-001 (lane D4) moved the example, not the property. This test used
+  // "eighteen eighty four two count 165 grams" and expected three readings, counts 2, 6 and 86 — but
+  // 6 was "four two" and 86 was "eighty four two", sums of two numbers that parseNumber's guard 2
+  // let through because they descend. Guard 3 refuses them (adjacent number words add only as tens +
+  // units), so that sentence now has exactly one reading, pinned below. The property the test was
+  // written for — the grammar enumerates and the vocabulary decides — is kept with a sentence that
+  // genuinely has several legal splits.
+  it('offers EVERY legal split of a number-named planting rather than guessing one', () => {
+    const c = segmentCandidates('super sweet one hundred three count')
+    expect(c.map((x) => x.name)).toEqual(['super sweet one hundred', 'super sweet one', 'super sweet'])
+    expect(c.map((x) => x.values[0].value)).toEqual([3, 103, 103])
     // Name-longest-first, because a speaker says as much of the name as they can. The ORDER is a
     // prior, not a decision — the caller resolves it against the live plantings.
-    expect(c[0].name).toBe('eighteen eighty four')
+    expect(c[0].name).toBe('super sweet one hundred')
+  })
+
+  it('offers only the readings whose number run is ONE cardinal — 6 and 86 were sums', () => {
+    const c = segmentCandidates('eighteen eighty four two count 165 grams')
+    expect(c.map((x) => x.name)).toEqual(['eighteen eighty four'])
+    expect(c.map((x) => x.values[0].value)).toEqual([2])
   })
 
   it('stays out of the way of a phrase classify() already reads correctly', () => {
@@ -603,5 +617,138 @@ describe("V5-VOICEONEBREATH-002 — Dave's one-breath cadence", () => {
     expect(parseValueSequence('two count three count')).toBeNull()
     // Trailing prose after the final unit is not a record.
     expect(parseValueSequence('three count 231 grams please')).toBeNull()
+  })
+})
+
+// ── V5-VOICEVOCAB-001 — two numbers said together are two numbers, never their sum ──────────────────
+//
+// Guard 2 above (strict descent) is necessary and was never sufficient: "ten five" and "five two"
+// descend, so parseNumber summed them, and once a bare number became an amount on its own (e142054)
+// the sum was SAVED. Reproduced on the real page at cb32814: "Suyo Long", "ten five", "next" wrote 15
+// count, and "three two hundred thirty one" wrote 531 count — a count of 3 and a weight of 231, said
+// together. Guard 3 allows exactly one composition of two adjacent number words, tens + units.
+describe('V5-VOICEVOCAB-001 — adjacent number words compose only as tens + units (guard 3)', () => {
+  it.each([
+    [['ten', 'five']], [['five', 'two']], [['eleven', 'two']], [['twenty', 'fifteen']],
+    [['ninety', 'twenty']], [['twenty', 'dozen']], [['three', 'to']],
+    [['three', 'two', 'hundred', 'thirty', 'one']],
+  ])('refuses %j — two numbers, not one', (tokens) => {
+    expect(parseNumber(tokens)).toBeNull()
+  })
+
+  // The guard must not cost a single real cardinal. Each of these composes through a scale or as
+  // tens + units, and the homophone case is the pre-unit slot NUMBER_WORDS exists for ("twenty to count").
+  it.each([
+    [['twenty', 'five'], 25], [['ninety', 'nine'], 99], [['twenty', 'to'], 22], [['nineteen'], 19],
+    [['one', 'hundred', 'five'], 105], [['one', 'hundred', 'and', 'twenty', 'five'], 125],
+    [['twelve', 'hundred'], 1200], [['two', 'thousand', 'five'], 2005], [['a', 'hundred', 'and', 'one'], 101],
+    [['two', 'hundred', 'thirty', 'one'], 231], [['two', 'and', 'a', 'half'], 2.5],
+  ])('still parses %j as %s', (tokens, expected) => {
+    expect(parseNumber(tokens)).toBeCloseTo(expected, 5)
+  })
+
+  it('a bare pair is no longer one held number — classifyPartial refuses it', () => {
+    expect(classifyPartial('ten five')).toBeNull()
+    expect(classifyPartial('five two')).toBeNull()
+    expect(classifyPartial('three two hundred thirty one')).toBeNull()
+    // …while a real cardinal still holds, which is what keeps the split-value fix working.
+    expect(classifyPartial('twenty one')).toEqual({ kind: 'number', value: 21 })
+    expect(classifyPartial('two hundred thirty one')).toEqual({ kind: 'number', value: 231 })
+  })
+
+  it('a pair in front of a unit is refused, not summed into the value', () => {
+    expect(classify('five two count')).toMatchObject({ kind: 'unparsed', reason: 'ambiguous-number' })
+    expect(classify('ten five grams')).toMatchObject({ kind: 'unparsed', reason: 'ambiguous-number' })
+    expect(classify('twenty five grams')).toMatchObject({ kind: 'weight', value: 25 })
+  })
+})
+
+// ── V5-VOICEVOCAB-001 (lane D4) — the one-breath record said without its units ─────────────────────
+//
+// "planting 2 165" as ONE final. On cb32814 "165 next", "2 165" and "suyo long 2 165 next" were each a
+// planting SEARCH (nothing matched, crop cleared, numbers dropped). oneBreathReadings offers every
+// split of name and amounts; which one is real is the page's decision against the vocabulary
+// (VoiceHarvest.oneBreath.test.jsx). These pin what is offered, and what is NOT this reader's.
+describe('V5-VOICEVOCAB-001 — oneBreathReadings offers every name/amount split, decides none', () => {
+  const show = (s) => {
+    const r = oneBreathReadings(s)
+    return r && r.readings.map((x) => [x.name, x.groups.map((g) => (g.unit ? `${g.value} ${g.unit}` : g.value))])
+  }
+
+  it("reads Dave's own example in one final, with and without the crop and the save word", () => {
+    expect(show('2 165')).toEqual([['', [2, 165]], ['2', [165]]])
+    expect(show('165 next')).toEqual([['', [165]]])
+    expect(show('Suyo Long, 2, 165, next.')).toEqual([['suyo long', [2, 165]], ['suyo long 2', [165]]])
+    const r = oneBreathReadings('suyo long 2 165 next')
+    expect(r).toMatchObject({ command: 'save_and_advance', nearCommand: false, nameless: false })
+  })
+
+  it('offers both sides of a digit-named planting and leaves the choice to the vocabulary', () => {
+    expect(show('super sweet 100 3 200')).toEqual([['super sweet 100', [3, 200]], ['super sweet 100 3', [200]]])
+    expect(show('eighteen eighty four 2 165')).toEqual([
+      ['eighteen eighty four', [2, 165]], ['eighteen eighty four 2', [165]],
+    ])
+    expect(show('danvers 126 200')).toEqual([['danvers', [126, 200]], ['danvers 126', [200]]])
+  })
+
+  it('reads a bare count beside a weight that kept its unit — "drop count, keep grams"', () => {
+    expect(show('2 165 grams')).toEqual([['', [2, '165 g']]])
+    expect(show('cucumber 3 231 grams')).toEqual([['cucumber', [3, '231 g']]])
+    expect(show('suyo long 3 count 165')).toEqual([['suyo long', ['3 count', 165]], ['suyo long 3 count', [165]]])
+  })
+
+  it('flags a number-word run that is not ONE cardinal instead of summing it', () => {
+    expect(oneBreathReadings('ten five')).toMatchObject({ badRun: true, nameless: true })
+    expect(oneBreathReadings('three two hundred thirty one')).toMatchObject({ badRun: true })
+  })
+
+  it('flags three amounts with no name — a record has two slots', () => {
+    expect(oneBreathReadings('2 165 7')).toMatchObject({ overfull: true, nameless: true })
+  })
+
+  it('the same bare number twice in a row is one number', () => {
+    expect(show('2 2 165')[0]).toEqual(['', [2, 165]])
+  })
+
+  it('filler is never part of a name', () => {
+    expect(show('a hundred next')).toEqual([['', [100]]])
+    expect(show('suyo long about 165')).toEqual([['suyo long', [165]]])
+  })
+
+  it("is NOT this reader's: a lone number, an all-unit record, a name, a command, prose", () => {
+    for (const t of ['165', 'twenty five', 'a hundred', 'three count', '231 grams', '3 count 231 grams',
+      'suyo long three count 231 grams next', 'suyo long', 'next', 'next to the fence', 'cucumber next', '']) {
+      expect(oneBreathReadings(t), t).toBeNull()
+    }
+  })
+
+  it('isNumberPhrase — digits and cardinal words only; a homophone is a word', () => {
+    expect(isNumberPhrase('1884')).toBe(true)
+    expect(isNumberPhrase('eighteen eighty four')).toBe(true)
+    expect(isNumberPhrase('peach tree')).toBe(false)
+    expect(isNumberPhrase('to')).toBe(false)
+  })
+})
+
+// The trailing save word splits off a unit-less record too, MARKED `bare` so the page reads it only
+// through the one-breath reader. The mark is what the commit debouncer reads to give such a final the
+// one-write cooldown: a re-delivered "suyo long 2 165 next" must not save twice.
+describe('V5-VOICEVOCAB-001 — splitTrailingCommand marks a unit-less record `bare`', () => {
+  it('splits and marks the new shapes', () => {
+    expect(splitTrailingCommand('165 next')).toMatchObject({ head: '165', command: 'save_and_advance', bare: true })
+    expect(splitTrailingCommand('suyo long 2 165 next')).toMatchObject({ head: 'suyo long 2 165', bare: true })
+    expect(splitTrailingCommand('2 165 text')).toMatchObject({ head: '2 165', command: null, nearCommand: true, bare: true })
+  })
+
+  it('leaves every unit-bearing split unmarked — the old path still owns those', () => {
+    expect(splitTrailingCommand('231 grams next').bare).toBeUndefined()
+    expect(splitTrailingCommand('cucumber three count 231 grams next').bare).toBeUndefined()
+    expect(splitTrailingCommand('2 165 grams next').bare).toBeUndefined()
+  })
+
+  it('still refuses a head with no number in it — a search word never conjures a save', () => {
+    expect(splitTrailingCommand('cucumber next')).toBeNull()
+    expect(splitTrailingCommand('big boy next')).toBeNull()
+    expect(splitTrailingCommand('next to the fence')).toBeNull()
   })
 })
