@@ -17,8 +17,9 @@
 //       through the centre is >= TAP both ways. Hit-tested, not just boxed: a box can exist and still
 //       not take the tap. (At DPR 3 hit-testing snaps to device pixels, so an extent reads up to ~0.7px
 //       over the box — which is why the box is asserted too.)
-//   (b) NO BULK — the toast did not grow to buy that: height <= max(text column + padding, TAP) + 1.
-//       A visible 48px button, or a target made of padding that takes layout space, fails here.
+//   (b) NO BULK — the toast did not grow to buy that: height <= max(text column + padding, TAP) + 1,
+//       and the painted pill stays shorter than TAP (the extra is invisible). A visible 48px button, or
+//       a target made of padding that takes layout space, fails here.
 //   (c) NEIGHBOUR — the Dismiss (x) control is >= TAP tall, takes a tap across its whole box, reaches
 //       the toast's right edge (the padding there is target, not dead space), and sits >= MIN_TARGET_GAP
 //       px clear of Undo. The gap is the part that matters most: Undo reverses the action, x throws the
@@ -172,6 +173,8 @@ function checkToast(where, m) {
   if (u.grid.ok !== u.grid.of) fail(`${where}: only ${u.grid.ok}/${u.grid.of} points of a ${TAP}x${TAP} square on Undo hit Undo`)
   const need = Math.max(m.textCol.h + m.toast.padY, TAP) + 1
   if (m.toast.h > need) fail(`${where}: toast is ${m.toast.h}px tall; its text needs ${r1(m.textCol.h + m.toast.padY)}px and one target ${TAP}px — the target made the toast bulkier`)
+  if (!m.pill) fail(`${where}: no painted Undo pill found (nothing under Undo draws a border)`)
+  else if (m.pill.h >= TAP) fail(`${where}: the painted Undo pill is ${m.pill.h}px tall — a visible ${TAP}px button, not an invisible target`)
   if (!c) { fail(`${where}: no Dismiss control in the toast`); return }
   if (c.h < TAP || c.hitH < TAP) fail(`${where}: Dismiss is ${c.h}px tall (hit ${c.hitH}px), under ${TAP}`)
   if (c.ownGrid.ok !== c.ownGrid.of) fail(`${where}: only ${c.ownGrid.ok}/${c.ownGrid.of} points of Dismiss's own box hit Dismiss`)
