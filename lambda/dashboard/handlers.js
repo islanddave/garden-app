@@ -1140,24 +1140,59 @@ export function searchEvents(sql, userId, pat) {
     `;
 }
 
-export function searchInventory(sql, userId, pat, prefixPat) {
+// BUG-SEARCHSEEDCAP20-001 — seed rows are not capped at 20. Header search files seed packets and saved
+// lots under their own "Seeds" group, split client-side on `category` (src/pages/Search.jsx,
+// V5-SEEDSTAB-001 slice 2), but this query ended in ONE LIMIT 20 across every inventory category, so the
+// Seeds group stopped at 20 and said nothing: on prod 2026-09-24 q=pepper matched 94 live seed rows and
+// showed 20. Dave's decision (2026-09-24): show every match. Seed rows now take their own ceiling;
+// every other category keeps LIMIT 20, like every other search group — and no longer loses its slots to
+// seed rows that happen to sort first.
+//
+// ONE predicate, two caps. Scope, soft-delete filter and matched columns are written once, in `hits`,
+// so the two groups cannot drift apart on who sees what; each branch only picks its side and its cap.
+// The sides are the client's own split — exactly 'seeds', and IS DISTINCT FROM 'seeds' for everything
+// else, so even a NULL category would land with the other inventory rather than vanish. The ordering
+// is the one this query always had (name-prefix matches first, then name), in each branch and on the
+// joined list, and the client's filter keeps it within each group.
+//
+// SEARCH_SEED_CAP is a safety ceiling, not a page size: prod held 351 live seed rows on 2026-09-24, and
+// q=seed matches every one of them through the category column. 2000 follows VARIETY_LIST_CAP
+// (lambda/varieties/index.js, BUG-VARIETIESLIMIT500-001 — a LIMIT 500 over 495 cultivars): years of
+// headroom, and a full list of these six short fields stays far under Lambda's 6 MB response limit.
+// Reaching it logs to CloudWatch rather than truncating in silence.
+export const SEARCH_SEED_CAP = 2000;
+
+export async function searchInventory(sql, userId, pat, prefixPat) {
   const householdIds = householdScope(userId);
-  return sql`
-      SELECT i.id, i.name, i.category, i.status, i.location_text,
-             LEFT(COALESCE(i.notes, ''), 160) AS snippet
-      FROM inventory_items i
-      WHERE i.created_by = ANY(${householdIds})
-        AND i.deleted_at IS NULL
-        AND (i.name ILIKE ${pat} ESCAPE '\\'
-             OR i.brand ILIKE ${pat} ESCAPE '\\'
-             OR i.model ILIKE ${pat} ESCAPE '\\'
-             OR i.category ILIKE ${pat} ESCAPE '\\'
-             OR i.location_text ILIKE ${pat} ESCAPE '\\'
-             OR i.notes ILIKE ${pat} ESCAPE '\\')
-      ORDER BY CASE WHEN i.name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END,
-               i.name ASC
-      LIMIT 20
+  const rows = await sql`
+      WITH hits AS (
+        SELECT i.id, i.name, i.category, i.status, i.location_text,
+               LEFT(COALESCE(i.notes, ''), 160) AS snippet,
+               CASE WHEN i.name ILIKE ${prefixPat} ESCAPE '\\' THEN 0 ELSE 1 END AS prefix_rank
+        FROM inventory_items i
+        WHERE i.created_by = ANY(${householdIds})
+          AND i.deleted_at IS NULL
+          AND (i.name ILIKE ${pat} ESCAPE '\\'
+               OR i.brand ILIKE ${pat} ESCAPE '\\'
+               OR i.model ILIKE ${pat} ESCAPE '\\'
+               OR i.category ILIKE ${pat} ESCAPE '\\'
+               OR i.location_text ILIKE ${pat} ESCAPE '\\'
+               OR i.notes ILIKE ${pat} ESCAPE '\\')
+      )
+      SELECT id, name, category, status, location_text, snippet
+      FROM ((SELECT * FROM hits WHERE category = 'seeds'
+             ORDER BY prefix_rank, name ASC
+             LIMIT ${SEARCH_SEED_CAP}::int)
+            UNION ALL
+            (SELECT * FROM hits WHERE category IS DISTINCT FROM 'seeds'
+             ORDER BY prefix_rank, name ASC
+             LIMIT 20)) capped
+      ORDER BY prefix_rank, name ASC
     `;
+  if (rows.filter(r => r.category === 'seeds').length >= SEARCH_SEED_CAP) {
+    console.error('search inventory hit SEARCH_SEED_CAP', SEARCH_SEED_CAP);
+  }
+  return rows;
 }
 
 // V5-SEEDVENDORPHOTOFILTER-001 — supplier packet images are left out of photo search, as they are out of

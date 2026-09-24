@@ -1,7 +1,10 @@
 {
-  "version": "4.148.0",
+  "version": "4.149.0",
   "date": "2026-09-24",
   "highlights": [
-    "Pin the pages you use most to the top of More (tap the pin beside any row, up to 4), and the tab-bar editor can now move Garden, Harvests or Put-Up into More, for your own bar only."
+    "Seeds: Back from a seed card's \"Saved from…\" link now returns you to the same spot in Saved seeds instead of the top. The same fix keeps your place when you come back to My seeds and the other lists that remember where you were.",
+    "Seeds: opening a seed packet or lot now starts at the top of its page instead of scrolled down at the edit form, and \"Set parent plant →\" takes you straight to the parent-plant card.",
+    "My seeds: the heat estimate (SHU) is never hidden on a row, F2 saved seed included. When a row is full, the heat moves to the next line whole.",
+    "Search: every seed packet and lot that matches now shows under Seeds, not just the first 20."
   ]
 }

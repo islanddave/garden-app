@@ -89,6 +89,12 @@ const mount = async (props = {}) => {
 }
 const rowFor = (id) => document.querySelector(`[data-lot-id="${id}"]`)
 const lineOf = (id) => within(rowFor(id)).getByTestId('my-seed-line')
+// What may hide a piece of line 2: a box between it and the line that clips.
+const clippersBetween = (el, line) => {
+  const out = []
+  for (let a = el.parentElement; a && a !== line; a = a.parentElement) if (/clip|hidden/.test(a.style.overflow)) out.push(a)
+  return out
+}
 const headerFor = (label) => screen.queryAllByTestId('facet-group-header').find((h) => h.textContent.replace(/^[▸▾]/, '').startsWith(label))
 // Open every folded crop group on screen (and Sowed previously), one header at a time.
 const openAll = async () => {
@@ -215,11 +221,12 @@ describe('My seeds — what each card says', () => {
     expect(seen.sort()).toEqual(['1 of 2 identical', '2 of 2 identical'])
   })
 
-  // Line 2's shrink order (UX spec §1.3) is geometry, measured by gate:seeds-page (g)(k)(n); these pin the
-  // structure it rests on. Replaces the pins of "the amount is its own span after the chips" (V102 §12): the
-  // amount outside any chip, the neutral chip in a box that shrinks (not an item of the line), and the order
-  // chips box → amount → tail — plus what changed on purpose: the LIVE chip is now the line's own rigid item.
-  it('line 2 gives way in order: a live chip is a rigid item of the line; neutral chips, amount and tail share the give-way flow', async () => {
+  // Line 2's shrink order (UX spec §1.3) is geometry, measured by gate:seeds-page (f)(g)(k)(n); these pin the
+  // structure it rests on. Since BUG-MYSEEDSF2HIDESSHU-001 (Dave 2026-09-24: "I want the shu shown") every
+  // piece is an item of ONE line that WRAPS: the live chip and the amount are rigid and whole, the neutral
+  // chips give way in a box with a 0 basis that shrinks, straight before the amount, and the tail follows
+  // with a 0 basis — nothing is laid out on a hidden line any more, so nothing can be dropped there.
+  it('line 2 gives way in order: the live chip and the amount are whole items of one wrapping line; neutral chips shrink in a 0-basis box before the amount', async () => {
     rows = [pkt({
       id: 'crowd', name: 'Big Boy — saved 2026', variety_name: 'Big Boy', seed_stage: 'fermenting', source_plant_id: 'pl',
       seed_count: 120, seed_count_estimated: true, year_harvested: 2026, stage_entered_at: new Date().toISOString(),
@@ -228,6 +235,7 @@ describe('My seeds — what each card says', () => {
     await mount()
     await openAll()
     const line = lineOf('crowd')
+    expect([line.style.flexWrap, line.style.overflow]).toEqual(['wrap', 'clip'])
     const amount = within(line).getByTestId('my-seed-amount')
     const chips = within(line).getAllByTestId('my-seed-chip')
     expect(amount.textContent).toBe('approx. 120 seeds')
@@ -240,20 +248,22 @@ describe('My seeds — what each card says', () => {
     expect(liveChip.getAttribute('data-tone')).toBe('info')
     expect(liveChip.parentElement).toBe(line)
     expect(liveChip.style.flex).toBe('0 0 auto')
-    // "Archived for this season" gives way: in a box with a 0 basis that shrinks, inside the same flow as the
-    // facts, straight before the amount; the tail follows the amount (a tomato has no heat).
+    // "Archived for this season" gives way: in a box with a 0 basis that shrinks — itself an item of the line —
+    // straight before the amount; the tail follows the amount (a tomato has no heat).
     expect(neutralChip.getAttribute('data-tone')).toBe('neutral')
     expect(neutralChip.parentElement).not.toBe(line)
     const box = neutralChip.parentElement
-    expect(box.style.flexShrink).toBe('1')
-    expect(box.style.flexBasis).toBe('0px')
+    expect(box.parentElement).toBe(line)
+    expect([box.style.flexBasis, box.style.flexShrink, box.style.minWidth]).toEqual(['0px', '1', '0'])
     expect(box.nextElementSibling).toBe(amount)
-    expect(amount.nextElementSibling).toBe(within(line).getByTestId('my-seed-rest'))
-    expect(amount.parentElement).toBe(box.parentElement)
+    expect(amount.parentElement).toBe(line)
     expect(amount.style.flex).toBe('0 0 auto')
+    const rest = within(line).getByTestId('my-seed-rest')
+    expect(amount.nextElementSibling).toBe(rest)
+    expect(rest.style.flexBasis).toBe('0px')
   })
 
-  it('a heat that cannot fit drops WHOLE: it follows the amount in a wrapping flow and carries its own " · " — the tail goes with it', async () => {
+  it('a heat that cannot fit moves to the NEXT LINE, whole — never dropped: a rigid item of the wrapping line after the amount, its " · " outside it, the tail after it', async () => {
     rows = [pepper({
       id: 'lantern', name: 'Hot Paper Lantern — saved 2026', variety_name: 'Hot Paper Lantern', seed_stage: 'drying',
       source_plant_id: 'pl', seed_count: 1200, seed_count_estimated: true, seed_weight_g: 12.5,
@@ -262,29 +272,65 @@ describe('My seeds — what each card says', () => {
     await mount()
     await openAll()
     const line = lineOf('lantern')
+    // One line that WRAPS and clips; nothing in it is laid out out of sight, and nothing holds its height but
+    // what it shows (no absolutely positioned flow, no stand-in).
+    expect([line.style.flexWrap, line.style.overflow]).toEqual(['wrap', 'clip'])
+    expect([...line.querySelectorAll('*')].some((el) => el.style.position === 'absolute' && el.children.length > 0)).toBe(false)
+    expect(line.querySelector('[aria-hidden="true"]:empty')).toBeNull()
     const amount = within(line).getByTestId('my-seed-amount')
     const heat = within(line).getByTestId('my-seed-heat')
     const rest = within(line).getByTestId('my-seed-rest')
     expect(amount.textContent).toBe('approx. 1200 seeds · 12.5 g')
-    expect(heat.textContent).toBe(' · est. 150K–325K SHU')
-    expect(rest.textContent.startsWith(' · ')).toBe(true)
-    // amount → heat → tail, in one flow that WRAPS (what does not fit goes to a hidden second line, whole),
-    // and the flow's box clips.
-    expect([amount.nextElementSibling, heat.nextElementSibling]).toEqual([heat, rest])
-    const flow = heat.parentElement
-    expect(flow).toBe(amount.parentElement)
-    expect(flow.style.flexWrap).toBe('wrap')
-    expect(flow.style.position).toBe('absolute')
-    expect(flow.parentElement.style.overflow).toBe('clip')
+    // The heat is the number alone, in a rigid item of the line, and nothing that clips stands between it and
+    // the line: the line can only move it to the next line, whole — never hide it.
+    expect(heat.textContent).toBe('est. 150K–325K SHU')
     expect(heat.style.flex).toBe('0 0 auto')
-    // The Drying chip sits outside that flow: nothing the flow drops can take it.
+    const item = heat.parentElement
+    expect(item.parentElement).toBe(line)
+    expect(item.style.flex).toBe('0 0 auto')
+    expect(clippersBetween(heat, line)).toEqual([])
+    expect([amount.nextElementSibling, item.nextElementSibling]).toEqual([item, rest])
+    // Its " · " is drawn outside the heat's box, in the gap the amount leaves: when the heat starts the next
+    // line, the dot falls left of the clipped edge and the line starts with the number.
+    const dot = heat.previousElementSibling
+    expect([dot.getAttribute('aria-hidden'), dot.textContent]).toEqual(['true', '·'])
+    expect([dot.style.position, dot.style.right, dot.style.width]).toEqual(['absolute', '100%', '10px'])
+    expect(amount.style.marginRight).toBe('10px')
+    // The tail follows the heat onto whichever line it is on, and is cut first (0 basis, ellipsised).
+    expect(rest.textContent).toBe(' · Saved from my plant · harvested 2026')
+    expect(rest.style.flexBasis).toBe('0px')
+    // The Drying chip leads, a whole item of the same line.
     const live = within(line).getByTestId('my-seed-chip')
     expect(live.textContent).toBe('Drying')
     expect(live.parentElement).toBe(line)
-    expect(flow.contains(live)).toBe(false)
-    // The line's height comes from an invisible stand-in that adds no text.
-    expect(line.lastElementChild.getAttribute('aria-hidden')).toBe('true')
-    expect(line.lastElementChild.textContent).toBe('')
+    expect(live.style.flex).toBe('0 0 auto')
+  })
+
+  it('EVERY row with a heat keeps it as a whole item of its wrapping line — bought or saved, with or without an amount or chips', async () => {
+    rows = [
+      pepper({ id: 'reaper', name: 'Carolina Reaper', variety_name: 'Carolina Reaper', source_id: 'src-sandia', unit: 'each',
+        quantity_on_hand: 25, scoville_min: 1200000, scoville_max: 2000000, purchase_date: '2025-03-02' }),
+      pepper({ id: 'wax', name: 'Hungarian Hot Wax', variety_name: 'Hungarian Hot Wax', source_id: 'src-sandia',
+        quantity_on_hand: 2, scoville_min: 5000, scoville_max: 15000, sow_archived_season: new Date().getFullYear() }),
+      pepper({ id: 'hab', name: 'Habanero', variety_name: 'Habanero', source_id: 'src-bi', scoville_min: 100000, scoville_max: 350000 }),
+      pepper({ id: 'aji', name: 'Aji Charapita — saved 2026', variety_name: 'Aji Charapita', source_plant_id: 'pl',
+        seed_stage: 'drying', stage_entered_at: new Date().toISOString(), scoville_min: 30000, scoville_max: 50000 }),
+    ]
+    await mount()
+    await openAll()
+    for (const id of ['reaper', 'wax', 'hab', 'aji']) {
+      const line = lineOf(id)
+      expect(line.style.flexWrap, `${id}: its line does not wrap`).toBe('wrap')
+      const heat = within(line).getByTestId('my-seed-heat')
+      expect(heat.parentElement.parentElement, `${id}: the heat is not an item of the line`).toBe(line)
+      expect(heat.parentElement.style.flex).toBe('0 0 auto')
+      expect(clippersBetween(heat, line), `${id}: something clips the heat`).toEqual([])
+      // Only an amount before it earns the heat its dot, as it always has.
+      const hasAmount = !!within(line).queryByTestId('my-seed-amount')
+      expect(!!heat.previousElementSibling, `${id}: dot`).toBe(hasAmount)
+    }
+    expect(within(lineOf('reaper')).getByTestId('my-seed-heat').textContent).toBe('1.2M–2M SHU')
+    expect(within(lineOf('aji')).getByTestId('my-seed-heat').textContent).toBe('est. 30K–50K SHU')
   })
 
   it('a line with nothing to print stays EMPTY — no stand-in, so the row keeps its height', async () => {
@@ -320,12 +366,13 @@ describe('My seeds — what each card says', () => {
 
   // V5-SEEDSTAB-001 slice 3 (design §2 rule 8, §5.4). Prod's four such lots, 2026-09-23: Gong Bao and
   // Ristra Cayenne II stored with a count and an estimated heat, Big Boy and Thai Dragon drying.
-  // AMENDED 2026-09-24 (orchestrator decision, reported to Dave): on an F2 row the F2 chip OUTRANKS THE
-  // ESTIMATED HEAT. It is an item of the LINE — shrinkable, so the amount, a live state and a supplier
-  // never give way to it — and so is the amount, rigid, right after it; the heat rides the give-way box
-  // and is dropped whole first. A live state keeps the first place (§16). Bought packets and non-F2 rows
-  // keep the old layout exactly. Geometry is gate:seeds-page (p)(g)(k)(n); this pins the structure the
-  // geometry rests on.
+  // BUG-MYSEEDSF2HIDESSHU-001 (Dave, 2026-09-24, on his phone at 426px: "I want the shu shown. there is
+  // room here"): the F2 chip never costs the heat. Like every row's, an F2 row's line WRAPS — the F2 chip,
+  // the amount and the heat are all rigid items of ONE wrapping line, so when it cannot hold them the heat
+  // moves to a second line, whole, instead of being dropped (the slice 3 amendment, abf8bf1, dropped it for
+  // the chip). What is F2's own: the chip is a whole item, after any live state (§16), and the amount
+  // follows it; any other chip comes after the amount. Geometry is gate:seeds-page (p)(f)(g)(k)(n); this
+  // pins the structure the geometry rests on.
   const F2_ROWS = () => [
     pepper({
       id: 'gongbao', name: 'Gong Bao (Kung Pao) — saved 2026', variety_name: 'Gong Bao (Kung Pao)', source_plant_id: 'pl',
@@ -341,42 +388,80 @@ describe('My seeds — what each card says', () => {
   ]
   const f2ChipOf = (id) => within(lineOf(id)).queryAllByTestId('my-seed-chip').find((c) => c.textContent === F2_LABEL) ?? null
 
-  it('a lot saved off an F1 plant says "F2 — won’t come true" as an item of the LINE, ahead of the amount and the heat', async () => {
+  it('an F2 lot\'s line WRAPS: "F2 — won’t come true", the amount and the heat are all whole items of it — the heat is never given up for the chip', async () => {
     rows = F2_ROWS()
     await mount()
     await openAll()
-    // Stored: the F2 chip is the line's own item — neutral, SHRINKABLE (a 0 floor) — then the amount,
-    // rigid, also an item of the line; the heat is left to the give-way flow behind them.
     const line = lineOf('gongbao')
+    // The line itself wraps and is as tall as what it shows: no give-way flow, no stand-in holding it.
+    expect(line.style.flexWrap).toBe('wrap')
+    expect(line.style.overflow).toBe('clip')
+    expect([...line.querySelectorAll('*')].some((el) => el.style.position === 'absolute' && el.children.length > 0)).toBe(false)
+    expect(line.querySelector('[aria-hidden="true"]:empty')).toBeNull()
+    // Stored: the F2 chip, then the amount, then the heat — each an item of the line, none shrinkable.
     const chip = f2ChipOf('gongbao')
     expect(chip, 'the stored F2 lot carries no F2 chip').toBeTruthy()
     expect(chip.getAttribute('data-tone')).toBe('neutral')
     expect(chip.parentElement).toBe(line)
-    expect([chip.style.flexGrow, chip.style.flexShrink, chip.style.minWidth]).toEqual(['0', '1', '0'])
+    expect([chip.style.flexGrow, chip.style.flexShrink, chip.style.maxWidth]).toEqual(['0', '0', '100%'])
     const amount = within(line).getByTestId('my-seed-amount')
     expect(amount.textContent).toBe('approx. 85 seeds')
     expect(chip.nextElementSibling).toBe(amount)
     expect(amount.parentElement).toBe(line)
     expect(amount.style.flex).toBe('0 0 auto')
+    // The heat: the number alone, whole, in a rigid item of the line — nothing that clips stands between it
+    // and the line, so the line can only move it to the next line, never hide it.
     const heat = within(line).getByTestId('my-seed-heat')
-    const flow = heat.parentElement
-    expect(flow.style.flexWrap).toBe('wrap')
-    expect(flow.parentElement).toBe(amount.nextElementSibling)
-    expect(flow.contains(chip) || flow.contains(amount)).toBe(false)
-    expect(heat.textContent).toBe(' · est. 5K–12K SHU')
-    // Drying: the live state keeps the first place, rigid; F2 follows it, shrinkable — both items of the line.
-    const chips = within(lineOf('bigboy')).getAllByTestId('my-seed-chip')
+    expect(heat.textContent).toBe('est. 5K–12K SHU')
+    const item = heat.parentElement
+    expect(item.parentElement).toBe(line)
+    expect(amount.nextElementSibling).toBe(item)
+    expect(item.style.flex).toBe('0 0 auto')
+    expect(clippersBetween(heat, line)).toEqual([])
+    // Its " · " sits OUTSIDE the heat's box, in the gap the amount leaves: on a second line it falls left of
+    // the clipped edge, so a wrapped heat starts with its number, never with a separator.
+    const dot = heat.previousElementSibling
+    expect(dot.getAttribute('aria-hidden')).toBe('true')
+    expect(dot.textContent).toBe('·')
+    expect([dot.style.position, dot.style.right, dot.style.width]).toEqual(['absolute', '100%', '10px'])
+    expect(amount.style.marginRight).toBe('10px')
+    // The tail follows the heat and is the one piece that gives way.
+    const rest = within(line).getByTestId('my-seed-rest')
+    expect(item.nextElementSibling).toBe(rest)
+    expect(rest.textContent).toBe(' · Saved from my plant · harvested 2026')
+    expect(rest.style.flexBasis).toBe('0px')
+    // Drying: the live state keeps the first place; F2 follows it; both rigid items of the wrapping line.
+    const bigboy = lineOf('bigboy')
+    expect(bigboy.style.flexWrap).toBe('wrap')
+    const chips = within(bigboy).getAllByTestId('my-seed-chip')
     expect(chips.map((c) => c.textContent)).toEqual(['Drying', F2_LABEL])
-    expect(chips.map((c) => c.parentElement === lineOf('bigboy'))).toEqual([true, true])
-    expect(chips[0].style.flex).toBe('0 0 auto')
-    expect(chips[1].style.flexShrink).toBe('1')
+    expect(chips.map((c) => c.parentElement === bigboy)).toEqual([true, true])
+    expect(chips.map((c) => c.style.flex)).toEqual(['0 0 auto', '0 0 auto'])
     // Rule 8: never on a bought packet, and only F1 speaks.
     expect(f2ChipOf('sungold')).toBeNull()
     expect(f2ChipOf('brandy')).toBeNull()
     expect(screen.getByTestId('my-seeds-view').textContent.split(F2_LABEL).length - 1).toBe(2)
   })
 
-  it('a bought F1 packet and every non-F2 row keep the old layout: amount and heat ride the flow, no chip on the line but a live one', async () => {
+  it('a drying F2 pepper with no count: its heat follows the chips with no dot, still a whole item of the wrapping line', async () => {
+    rows = [pepper({
+      id: 'thai', name: 'Thai Dragon — saved 2026', variety_name: 'Thai Dragon', source_plant_id: 'pl', seed_stage: 'drying',
+      stage_entered_at: new Date().toISOString(), breeding_system: 'f1', scoville_min: 50000, scoville_max: 100000,
+    })]
+    await mount()
+    await openAll()
+    const line = lineOf('thai')
+    expect(line.style.flexWrap).toBe('wrap')
+    expect(within(line).queryByTestId('my-seed-amount')).toBeNull()
+    const heat = within(line).getByTestId('my-seed-heat')
+    expect(heat.textContent).toBe('est. 50K–100K SHU')
+    expect(heat.parentElement.parentElement).toBe(line)
+    expect(heat.parentElement.previousElementSibling).toBe(f2ChipOf('thai'))
+    expect(heat.previousElementSibling).toBeNull()
+    expect(clippersBetween(heat, line)).toEqual([])
+  })
+
+  it('a bought F1 packet and every non-F2 row keep their order: chips that give way, then the amount, then the heat — no F2 chip, no neutral chip rigid', async () => {
     rows = [
       pepper({ id: 'f1pkt', name: 'Megatron F1', variety_name: 'Megatron F1', source_id: 'src-fedco', breeding_system: 'f1',
         quantity_on_hand: 2, scoville_min: 2500, scoville_max: 8000, sow_archived_season: new Date().getFullYear() }),
@@ -388,21 +473,27 @@ describe('My seeds — what each card says', () => {
     await openAll()
     for (const id of ['f1pkt', 'oplot']) {
       const line = lineOf(id)
+      expect(line.style.flexWrap, `${id}: its line does not wrap`).toBe('wrap')
+      expect(f2ChipOf(id)).toBeNull()
       const amount = within(line).getByTestId('my-seed-amount')
       const heat = within(line).getByTestId('my-seed-heat')
-      expect(amount.parentElement, `${id}: the amount left the flow`).not.toBe(line)
-      expect(amount.parentElement).toBe(heat.parentElement)
-      expect(amount.nextElementSibling).toBe(heat)
+      // The amount straight before the heat, both whole items of the line, the dot in the amount's gap.
+      expect(amount.parentElement).toBe(line)
+      expect(amount.nextElementSibling).toBe(heat.parentElement)
+      expect(heat.parentElement.parentElement).toBe(line)
+      expect(heat.previousElementSibling.textContent).toBe('·')
+      expect(amount.style.marginRight).toBe('10px')
       const onLine = within(line).queryAllByTestId('my-seed-chip').filter((c) => c.parentElement === line)
       expect(onLine.map((c) => c.getAttribute('data-tone')).every((t) => t !== 'neutral'), `${id}: a neutral chip is an item of the line`).toBe(true)
     }
-    // The bought F1 packet's archive chip still gives way inside the flow, before its amount.
+    // The bought F1 packet's archive chip still gives way, in its 0-basis box before the amount.
     const archived = within(lineOf('f1pkt')).getAllByTestId('my-seed-chip')
     expect(archived.map((c) => c.textContent)).toEqual(['Archived for this season'])
+    expect(archived[0].parentElement.style.flexBasis).toBe('0px')
     expect(archived[0].parentElement.nextElementSibling).toBe(within(lineOf('f1pkt')).getByTestId('my-seed-amount'))
   })
 
-  it('on an F2 row any OTHER neutral chip stays in the flow, still giving way before the heat', async () => {
+  it('on an F2 row any OTHER neutral chip still gives way first — a 0-basis box after the amount — and the heat after it keeps its dot', async () => {
     rows = [pepper({
       id: 'f2arch', name: 'Ristra Cayenne II Saved seed 2026', variety_name: 'Ristra Cayenne II', source_plant_id: 'pl',
       seed_stage: 'stored', seed_count: 175, seed_count_estimated: true, breeding_system: 'f1',
@@ -411,14 +502,24 @@ describe('My seeds — what each card says', () => {
     await mount()
     await openAll()
     const line = lineOf('f2arch')
+    expect(line.style.flexWrap).toBe('wrap')
     const [f2, archived] = within(line).getAllByTestId('my-seed-chip')
     expect([f2.textContent, archived.textContent]).toEqual([F2_LABEL, 'Archived for this season'])
     expect(f2.parentElement).toBe(line)
+    const amount = within(line).getByTestId('my-seed-amount')
     const box = archived.parentElement
-    expect(box).not.toBe(line)
-    expect(box.style.flexBasis).toBe('0px')
-    // In the flow, straight before the heat: it gives way before the heat does, as on any row.
-    expect(box.nextElementSibling).toBe(within(line).getByTestId('my-seed-heat'))
+    // An item of the same wrapping line, after the amount: a 0 basis, so it can never push the heat down
+    // a line — it shrinks (ellipsised) into whatever room its line has left.
+    expect(box.parentElement).toBe(line)
+    expect(amount.nextElementSibling).toBe(box)
+    expect([box.style.flexBasis, box.style.flexShrink, box.style.minWidth]).toEqual(['0px', '1', '0'])
+    // The heat follows it, whole, with its dot in the gap the box leaves (the amount keeps the chip gap).
+    const heat = within(line).getByTestId('my-seed-heat')
+    expect(heat.textContent).toBe('est. 25K–35K SHU')
+    expect(box.nextElementSibling).toBe(heat.parentElement)
+    expect(heat.previousElementSibling.textContent).toBe('·')
+    expect([amount.style.marginRight, box.style.marginRight]).toEqual(['6px', '10px'])
+    expect(clippersBetween(heat, line)).toEqual([])
   })
 
   it('the expanded F2 lot\'s Breeding fact says F2 from an F1 parent; the bought F1 packet keeps "F1 hybrid"', async () => {

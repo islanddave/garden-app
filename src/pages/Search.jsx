@@ -163,6 +163,27 @@ function PeekCard({ planting, locationName, headingRef }) {
   )
 }
 
+// One result row. MODULE scope for PeekCard's reason above (v4.148.0 review M4): declared inside Search()
+// it was a new component type on every render, so every keystroke unmounted and remounted every row, and
+// the Seeds group now lists every matching seed row (BUG-SEARCHSEEDCAP20-001), hundreds on a broad query.
+// It closed over nothing of Search's; everything it reads arrives as props.
+function Row({ to, name, sub, onPeek, peekLabel }) {
+  const inner = (<><div style={{ flex: 1 }}><div style={nameStyle}>{name}</div>{sub && <div style={subStyle}>{sub}</div>}</div>{chev}</>)
+  // No peek offered -> the historical single-element row, byte for byte. Every non-planting group
+  // (locations, varieties, projects, events, inventory, photos) takes this branch untouched.
+  if (!onPeek) return to ? <Link to={to} style={rowStyle}>{inner}</Link> : <div style={rowStyle}>{inner}</div>
+  // With a peek: shell > link + control. The control is a SIBLING of the anchor, never nested
+  // inside it — a <button> inside an <a> is invalid HTML and its activation is swallowed. The row's
+  // own tap target keeps its existing destination, so the peek is purely additive (the dead-tap
+  // repair of BUG-SEARCHDEADTAP-001 is not disturbed).
+  return (
+    <div style={peekShellStyle}>
+      {to ? <Link to={to} style={peekRowLinkStyle}>{inner}</Link> : <div style={peekRowLinkStyle}>{inner}</div>}
+      <button type="button" onClick={onPeek} aria-label={peekLabel} style={peekBtnStyle}>Peek</button>
+    </div>
+  )
+}
+
 export default function Search() {
   const { fetch } = useApiFetch()
   const inOverlay = useInOverlaySurface()
@@ -357,25 +378,11 @@ export default function Search() {
   // eye to a heading that no longer holds seed anywhere else in the app. Split on the row's own
   // `category`, which the server already returns; every other row stays under Inventory as before, and
   // `total` above is unchanged because the two groups partition the same list.
+  // BUG-SEARCHSEEDCAP20-001: the server caps the two sides separately — every matching seed row (up to
+  // its SEARCH_SEED_CAP safety ceiling), other inventory at 20 — so this must stay the same
+  // `=== 'seeds'` split lambda/dashboard/handlers.js searchInventory caps by, and add no cap of its own.
   const seedHits = srv.inventory.filter(it => it.category === 'seeds')
   const inventoryHits = srv.inventory.filter(it => it.category !== 'seeds')
-
-  const Row =({ to, name, sub, onPeek, peekLabel }) => {
-    const inner = (<><div style={{ flex: 1 }}><div style={nameStyle}>{name}</div>{sub && <div style={subStyle}>{sub}</div>}</div>{chev}</>)
-    // No peek offered -> the historical single-element row, byte for byte. Every non-planting group
-    // (locations, varieties, projects, events, inventory, photos) takes this branch untouched.
-    if (!onPeek) return to ? <Link to={to} style={rowStyle}>{inner}</Link> : <div style={rowStyle}>{inner}</div>
-    // With a peek: shell > link + control. The control is a SIBLING of the anchor, never nested
-    // inside it — a <button> inside an <a> is invalid HTML and its activation is swallowed. The row's
-    // own tap target keeps its existing destination, so the peek is purely additive (the dead-tap
-    // repair of BUG-SEARCHDEADTAP-001 is not disturbed).
-    return (
-      <div style={peekShellStyle}>
-        {to ? <Link to={to} style={peekRowLinkStyle}>{inner}</Link> : <div style={peekRowLinkStyle}>{inner}</div>}
-        <button type="button" onClick={onPeek} aria-label={peekLabel} style={peekBtnStyle}>Peek</button>
-      </div>
-    )
-  }
 
   const plantingRow = p => {
     // BUG-SEARCHDEADTAP-001: was `p.project_id && p.id ? /projects/${p.project_id}/plantings/${p.id} : null`.

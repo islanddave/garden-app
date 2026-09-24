@@ -11,7 +11,8 @@
 //   · §16. A save made with "Not yet" from the Seeds header used to confirm with a toast alone: nothing on
 //     Saved seeds could be outlined. It now lands, outlined, in Not started.
 //   · THE PARENT IS A DOOR. "Saved from <planting>" links to the planting (44px), and Back from there
-//     returns to the same Saved seeds view, on real jsdom history.
+//     returns to the same Saved seeds view, on real jsdom history — and to the same place in it
+//     (BUG-SAVEDSEEDSBACKTOP-001), with the browser's scroll clamp modelled.
 //
 // No jest-dom (L-182).
 import React from 'react'
@@ -254,7 +255,7 @@ describe('Seeds › Saved seeds — doors off a lot card, on real history', () =
     document.body.style.overscrollBehavior = ''
   })
 
-  const renderSeeds = async () => {
+  const renderSeeds = async (planting = <div data-testid="planting" />) => {
     render(
       <BrowserRouter>
         <DismissRegistryProvider>
@@ -262,7 +263,7 @@ describe('Seeds › Saved seeds — doors off a lot card, on real history', () =
             <Routes>
               <Route path="/seeds" element={<Seeds />} />
               <Route path="/today" element={<div data-testid="today" />} />
-              <Route path="/plantings/:id" element={<div data-testid="planting" />} />
+              <Route path="/plantings/:id" element={planting} />
               <Route path="/inventory/:id" element={<div data-testid="detail" />} />
             </Routes>
             <Probe />
@@ -301,6 +302,58 @@ describe('Seeds › Saved seeds — doors off a lot card, on real history', () =
     expect(screen.queryByTestId('start-process-step')).toBeNull()
     expect(where()).toBe(SAVED)
     expect(atFloor()).toBe(true)
+  })
+
+  // BUG-SAVEDSEEDSBACKTOP-001 — Dave's flow: down Saved seeds, "Saved from <planting> →", Back. It came
+  // back at the top. jsdom has no layout, so the one browser behaviour the bug is made of is modelled:
+  // scrollTo clamps to the document's max offset, and the planting's FIRST PAINT (PlantingDetail's
+  // one-screen "Loading…") clamps the offset to 56, the bottom-nav padding Chrome reported at 426x836,
+  // the moment it replaces the list. It clamps in a LAYOUT effect because that is where Chrome's clamp
+  // sits: after the DOM swap and before the leaving page's useEffect cleanups read the offset.
+  describe('with the scroll clamp modelled', () => {
+    let y = 0
+    let maxY = 5000
+    let descriptors
+    beforeEach(() => {
+      y = 0
+      maxY = 5000
+      descriptors = {
+        scrollY: Object.getOwnPropertyDescriptor(window, 'scrollY'),
+        scrollTo: Object.getOwnPropertyDescriptor(window, 'scrollTo'),
+      }
+      Object.defineProperty(window, 'scrollY', { configurable: true, get: () => y })
+      Object.defineProperty(window, 'scrollTo', {
+        configurable: true, writable: true,
+        value: (a, b) => { const t = typeof a === 'object' ? (a.top ?? y) : b; y = Math.max(0, Math.min(t, maxY)) },
+      })
+    })
+    afterEach(() => {
+      for (const [k, d] of Object.entries(descriptors)) { if (d) Object.defineProperty(window, k, d); else delete window[k] }
+    })
+    function PlantingFirstPaint() {
+      React.useLayoutEffect(() => {
+        maxY = 56
+        y = Math.min(y, maxY)
+        return () => { maxY = 5000 }
+      }, [])
+      return <div data-testid="planting">Loading…</div>
+    }
+
+    it('Back from "Saved from <planting>" lands where the user left the list, not at the top', async () => {
+      await renderSeeds(<PlantingFirstPaint />)
+      const dry = () => document.querySelector('[data-lot-id="lot-dry"]')
+      await waitFor(() => expect(within(dry()).getByTestId('lot-source-plant')).toBeTruthy())
+      // Down the list to the card, as a thumb does.
+      await act(async () => { y = 1500; window.dispatchEvent(new Event('scroll')) })
+      await act(async () => { fireEvent.click(within(dry()).getByTestId('lot-source-plant')) })
+      await settle()
+      expect(where()).toBe('/plantings/pl-gongbao')
+      expect(y).toBe(56)                  // the model did clamp against the planting's first paint
+      await back()
+      expect(where()).toBe(SAVED)
+      await waitFor(() => expect(dry()).toBeTruthy())
+      await waitFor(() => expect(y).toBe(1500))
+    })
   })
 })
 

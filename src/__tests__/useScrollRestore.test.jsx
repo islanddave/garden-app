@@ -179,6 +179,8 @@ describe('useScrollRestore — which entry an offset belongs to', () => {
 })
 
 describe('useScrollRestore — saving', () => {
+  // The entry is still the current one here, so the unmount's own read is kept. The two tests after
+  // this one are the other half: once the entry has moved on, nothing more is filed under it.
   it('records the offset on scroll and on unmount', () => {
     const { unmount } = render(<Probe ready />)
     act(() => { setScrollY(640); window.dispatchEvent(new Event('scroll')) })
@@ -186,6 +188,39 @@ describe('useScrollRestore — saving', () => {
     act(() => { setScrollY(700) })
     unmount()
     expect(__peekScrollRestoreEntry('surf').y).toBe(700)
+  })
+
+  // BUG-SAVEDSEEDSBACKTOP-001. The order a real tap on a <Link> produces, which jsdom never does on its
+  // own: (1) react-router pushes the new entry, synchronously, in the click; (2) React commits the next
+  // route, swapping the list for that page's first paint; (3) Chrome clamps the offset to that short
+  // paint (56px, Saved seeds → a planting's "Loading…"); (4) only then do the leaving page's useEffect
+  // cleanups run. A read at (4) describes the NEXT page and used to overwrite the right offset.
+  it("the unmount after a navigation does not overwrite the offset with the next page's clamped one", () => {
+    const { unmount } = render(<Probe state={{ v: 1 }} />)       // SavedSeeds saves { v: 1 } on mount
+    act(() => { setScrollY(4147); window.dispatchEvent(new Event('scroll')) })
+    expect(__peekScrollRestoreEntry('surf').y).toBe(4147)
+    window.history.pushState({ key: 'entry-B' }, '')              // (1)
+    setScrollY(56)                                                // (2)-(3)
+    unmount()                                                     // (4)
+    const blob = JSON.parse(window.sessionStorage.getItem('garden.scrollRestore.v1'))
+    expect(blob['surf|entry-A']).toEqual({ y: 4147, s: { v: 1 } })
+    // Back to entry-A: the restore aims where the user was, not at the clamp.
+    window.history.replaceState({ key: 'entry-A' }, '')
+    maxScroll = 5000
+    render(<Probe />)
+    act(() => flushFrames(2))
+    expect(window.scrollY).toBe(4147)
+  })
+
+  // The clamp can fire a scroll event of its own, and it can land before the cleanup does. Dropping the
+  // unmount's write would not stop this one; the listener has to refuse it too.
+  it('a scroll event fired by that clamp is not filed under the entry the user left', () => {
+    render(<Probe state={{ v: 1 }} />)
+    act(() => { setScrollY(4147); window.dispatchEvent(new Event('scroll')) })
+    window.history.pushState({ key: 'entry-B' }, '')
+    act(() => { setScrollY(56); window.dispatchEvent(new Event('scroll')) })
+    window.history.replaceState({ key: 'entry-A' }, '')
+    expect(__peekScrollRestoreEntry('surf').y).toBe(4147)
   })
 
   // THE ONE THAT DECIDES WHETHER ANY OF THIS WORKS. Every one of these surfaces mounts at scrollY 0
@@ -277,6 +312,19 @@ describe('useScrollRestore — persistence across a document swap', () => {
     unmount()
     const blob = JSON.parse(window.sessionStorage.getItem('garden.scrollRestore.v1'))
     expect(blob['surf|entry-A']).toEqual({ y: 640, s: 48 })
+  })
+
+  // pagehide, not unmount: an installed PWA is frozen or discarded rather than unloaded, and no unmount
+  // runs when Chrome tears the document down (qa-v4148 MINOR — nothing tested this path). The page is
+  // still mounted and its entry still current. The listener saved 640; a fling left it at 700 before any
+  // scroll event arrived, so pagehide has to read the offset itself, not just flush the last save.
+  it('persists the current offset on pagehide, with the page still mounted (the PWA discard path)', () => {
+    render(<Probe ready state={48} />)
+    act(() => { setScrollY(640); window.dispatchEvent(new Event('scroll')) })
+    act(() => { setScrollY(700) })
+    act(() => { window.dispatchEvent(new Event('pagehide')) })
+    const blob = JSON.parse(window.sessionStorage.getItem('garden.scrollRestore.v1'))
+    expect(blob?.['surf|entry-A']).toEqual({ y: 700, s: 48 })
   })
 
   it('hydrates from sessionStorage on a cold module load', () => {
