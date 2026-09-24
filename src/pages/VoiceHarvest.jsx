@@ -319,6 +319,10 @@ export function resolveCommandCollision(result, plantings) {
   return collides ? { kind: 'search', text: spoken, transcript: spoken } : result
 }
 
+// V5-VOICEVOCAB-001 / BUG-VOICETWOBARENUM-001 — THE ONE WORDING of an inferred unit ("3 count
+// assumed"), shared by the live banner and the saved banner/row so the two cannot drift apart.
+const assumedPhrase = (v) => `${v.value} ${v.unit} assumed`
+
 const TONE = {
   ok:   { bg: P.greenPale, border: P.green,       fg: P.dark },
   warn: { bg: P.warn,      border: P.warnBorder,  fg: P.dark },
@@ -629,6 +633,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     }
 
     const label = plant.name || plant.variety_ref?.name || 'planting'
+    // The slots whose unit the app INFERRED, quantity's first. ONE list feeds both the metadata below
+    // and the saved banner/row, so what Dave is told and what the server records cannot disagree.
+    const assumed = [q, w].filter((s) => s?.assumed)
     try {
       const res = await apiFetch('/api/events', {
         method: 'POST',
@@ -654,7 +661,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           // the moment the default changes — staying SILENT is the pattern, which is why the key is
           // absent and this comment stands in its place (EventNew.jsx:1746-1749 says the same).
           has_photo: false,
-          metadata: { harvest_input_source: 'voice' },   // C8 — see the note below
+          // C8 — the row says how it was captured. V5-VOICEVOCAB-001 — and which of its units the
+          // app INFERRED rather than heard, quantity's first; [] when both were spoken. Without this
+          // the no-unit path was measurable only from a debug trace Dave had to switch on and copy.
+          // ALWAYS SENT, so a row without the key means a bundle from before this change, never
+          // "nothing assumed". Machine provenance: EventDetail.jsx hides it like the key above it.
+          metadata: {
+            harvest_input_source: 'voice',
+            assumed_units: assumed.map((s) => s.unit),
+          },
           harvest: {
             quantity: Number(q.value),
             unit: q.unit,
@@ -680,7 +695,17 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // must still save cleanly, so this changes no payload, blocks nothing and keeps the `ok` tone
       // (it DID save). The note travels into the ledger row rather than only the banner, because the
       // banner is the channel that gets overwritten and this is exactly a thing to reconcile later.
+      //
+      // BUG-VOICETWOBARENUM-001 — AN ASSUMED UNIT IS SAID AT THE SAVE TOO, for the same two reasons.
+      // "next" is itself a resolver: when it applies a held number, this save follows in the same
+      // utterance and used to replace the "(… assumed)" note before it was ever shown — on 15db68c,
+      // "Suyo Long, three, 231, next" ended on "Saved Suyo Long — 231 count · no weight was said",
+      // which reads exactly like a spoken count. e142054's safety argument is that "nothing is
+      // assumed SILENTLY"; this was the one door where it was. Every assumed slot is named, not only
+      // the one "next" resolved, because the row is what Dave reads when he corrects it later ("I can
+      // correct it later if it is wrong") and it has to say which values were guesses.
       const said = `${q.value} ${q.unit}${w ? ` · ${w.value} ${w.unit}` : ' · no weight was said'}`
+        + (assumed.length ? ` (${assumed.map(assumedPhrase).join(', ')})` : '')
       say('ok', `Saved ${label} — ${said}`)
       setRows((r) => [...r, { kind: 'save', eventId, label, said, at: Date.now() }])
       clearRecord()
@@ -730,6 +755,60 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     let dropped = null
     // V5-VOICEVOCAB-001 — the value a held number RESOLVED TO, carried to the announcement.
     let assumedApplied = null
+    // The two notes those carry, built in ONE place because two branches say them: the hold branch
+    // (where a second number resolves the first) returns before the shared readback further down.
+    const dropNoteNow = () => (dropped != null ? ` (dropped ${dropped} — no unit was said)` : '')
+    // The inference, said out loud. THIS IS THE GUARD that replaced "refuse the save" —
+    // an assumed unit that is never announced is the fabricated-value class. Do not remove it
+    // to shorten the readback.
+    const assumedNoteNow = () => (assumedApplied ? ` (${assumedPhrase(assumedApplied)})` : '')
+
+    // BUG-VOICETWOBARENUM-001 — THE ONE PLACE A HELD NUMBER IS GIVEN A SLOT WITHOUT ITS UNIT. Two
+    // doors resolve a hold that way: the resolution site below (a command, or anything else that
+    // leaves the record standing) and a SECOND bare number (the hold branch). e142054 described both
+    // and wired only the first, so the second door simply re-held — which is how Dave's own example,
+    // "planting 2 165", saved 165 count and no weight. One function, so the two cannot disagree again.
+    //
+    // SLOT ORDER IS THE INFERENCE, and it is the whole of it: the first EMPTY slot, quantity first in
+    // the crop's default unit, then weight in grams. That mirrors the order he speaks them and is the
+    // same ordering parseValueSequence already relies on for the unit-bearing form.
+    //
+    // A FILLED SLOT IS NEVER OVERWRITTEN BY AN ASSUMPTION. With both filled the number is DROPPED and
+    // said rather than guessed onto one of them: "3, 231, 4" does not say whether the 4 corrects the
+    // count or the weight, and either guess can write a value he never meant over one he did —
+    // including over a weight he SPOKE ("3 count, 231 grams, 85" used to save 85 g). Saying it with a
+    // unit replaces a slot; that path is untouched and is the way to correct one.
+    const placeHeld = (value) => {
+      // default_unit comes from crop_types via the ?view=picker projection and CAN BE NULL (there is
+      // no cultivar-level column; see lambda/plants/grid-view.test.js:333-337), hence the fallback.
+      const unit = qtyRef.current == null
+        ? (selectedRef.current?.variety_ref?.default_unit || 'count')
+        : weightRef.current == null ? 'g' : null
+      const built = unit ? buildValue(value, unit, '') : null
+      // The axis comes from buildValue, not from the branch above, so a mass default_unit (legal in
+      // the CHECK, absent from prod today) is checked against the slot it would actually land in.
+      if (built && (built.kind === 'weight' ? weightRef : qtyRef).current == null) {
+        // `assumed` RIDES ON THE SLOT VALUE, not beside it, so it cannot outlive the value it
+        // describes: every spoken write builds a fresh { value, unit } without it ("85" assumed,
+        // then "85 G"; or a later "3 count"), and clearRecord() nulls it with the record. saveRecord
+        // turns it into metadata.assumed_units — the only way the server can tell this unit from a
+        // spoken one. A separate per-record flag would need clearing at every write site instead.
+        const slot = { value: built.value, unit: built.unit, assumed: true }
+        if (built.kind === 'weight') { setWeight(slot); weightRef.current = slot }
+        else { setQty(slot); qtyRef.current = slot }
+        assumedApplied = built
+        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `assumed-unit ${built.value} ${built.unit} (held number resolved)`)
+        return
+      }
+      // Honest losses rather than guesses, each an R3 permanent row: default_unit is outside
+      // HARVEST_UNITS (it is a crop_types value and may be), or there is no empty slot left for it.
+      dropped = value
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-dropped ${value} (${unit && !built ? 'no usable default unit' : 'no empty slot'})`)
+      noteMiss(unit && !built
+        ? `Dropped ${value} — no unit was said, and this crop has no usable default unit.`
+        : `Dropped ${value} — no unit was said, and the quantity and weight were already filled.`)
+    }
+
     const partial = classifyPartial(result.transcript)
     if (partial?.kind === 'unit' && heldNumRef.current != null) {
       const joined = buildValue(heldNumRef.current, partial.unit, result.transcript)
@@ -742,8 +821,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
                && !namesAPlantingExactly(plantingsRef.current, result.transcript)) {
       // GATED ON A PLANTING BEING SELECTED, which is what makes suppressing the search safe: before
       // a plant is chosen a bare number can legitimately be a search term, and after one is chosen
-      // it can only be an amount. A second number simply replaces the first — saying "three" then
-      // "fifteen" means he corrected himself.
+      // it can only be an amount.
       //
       // AND GATED OFF A NUMBER THAT IS A WHOLE PLANTING NAME (case C). That utterance is not an
       // amount, it is the crop, so it falls through to the ordinary search branch rather than being
@@ -763,14 +841,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // NUMBER IS ALWAYS SPOKEN; only its unit is inferred, and the inference is announced. A wrong
       // unit is visible in the ledger and correctable before "next"; a fabricated value was neither.
       //
-      // SLOT ORDER IS THE INFERENCE, and it is the whole of it: first number fills the quantity axis,
-      // the next fills weight in grams. That mirrors the order he speaks them and is the same
-      // ordering parseValueSequence already relies on for the unit-bearing form.
+      // SLOT ORDER IS THE INFERENCE — see placeHeld above, the one place it is decided.
       //
-      // default_unit comes from crop_types via the ?view=picker projection and CAN BE NULL (there is
-      // no cultivar-level column; see lambda/plants/grid-view.test.js:333-337), hence the fallback.
-      // If it is a unit this grammar does not know, buildValue returns null and we keep the old
-      // hold-and-prompt rather than guessing a unit that is not in the vocabulary.
       // THE HOLD STAYS. The first cut of this change applied the assumed unit IMMEDIATELY, and the
       // existing suite caught why that is wrong: Chrome splits "231 grams" into "231" then "grams"
       // routinely — it is the dominant shape in the 2026-09-13 device trace, where every weight
@@ -779,18 +851,46 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // the one outcome this page may not produce, so the number is still HELD; what changed is that
       // holding no longer DEMANDS a unit and no longer ends in the number being thrown away.
       //
-      // A held number is now resolved by whatever comes next (see the resolution sites below):
-      //   unit          -> rejoin, exactly as before
-      //   another number-> the held one was the count; it is applied and the new one is held
-      //   restated value-> the same number with its unit; the hold is released, nothing is assumed
-      //   anything else -> applied to the next empty slot with an assumed unit
-      // so Dave never says "count" or "grams", and no utterance loses a number he spoke.
+      // A held number is now resolved by whatever comes next:
+      //   unit            -> rejoin, exactly as before
+      //   another number  -> the held one takes the next empty slot (placeHeld); the new one is held
+      //   the same number -> one number heard twice, not two amounts; it stays held
+      //   restated value  -> the same number with its unit; the hold is released, nothing is assumed
+      //   a search        -> dropped, and said: the crop is changing
+      //   anything else   -> the next empty slot with an assumed unit (placeHeld)
+      // so Dave never says "count" or "grams", and no utterance loses a number he spoke without
+      // saying so.
+      //
+      // BUG-VOICETWOBARENUM-001 — A SECOND BARE NUMBER IS THE NEXT AMOUNT, NOT A CORRECTION. Until this
+      // fix the branch simply re-held, on ae83521's reading (2026-08-31) that "three" then "fifteen"
+      // means he corrected himself. That was right when it was written: a bare number could not become
+      // an amount without its unit — it waited for one or was dropped — so two of them could never be
+      // a count and a weight. Dave's directive made them exactly that (V5-VOICEVOCAB-001, 2026-09-13:
+      // "assume the unit and assume grams, so 'planting 2 165' replaces 'planting 2 count 165
+      // grams'"), and re-holding saved that very phrase as 165 count with no weight. A correction is
+      // still one utterance away: said WITH its unit ("fifteen count", or "fifteen" then "count") it
+      // replaces the slot through the ordinary branches.
+      //
+      // THE SAME NUMBER AGAIN IS ONE NUMBER, by BUG-VOICEHELDREPEAT-001's equality rule. Chrome
+      // re-delivers finals (BUG-VOICEDUPE-001..005; one measured 274 ms after its twin, against a
+      // 16-133 ms re-arm), and the debouncer's only cross-session defence is the WRITE cooldown, so a
+      // duplicate "85" arrives here as a second utterance. Pairing it would save 85 count AND 85 g
+      // from one spoken number. What this reads wrongly is a real count and weight that share a
+      // number: the weight stays empty and the save says "no weight was said".
+      const repeat = partial.value === heldNumRef.current
+      if (heldNumRef.current != null && !repeat) placeHeld(heldNumRef.current)
       heldNumRef.current = partial.value; setHeldNum(partial.value)
-      cue(hapticDigitAccepted)
-      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-number ${partial.value} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
+      // No slot left for this one (both filled, spoken or assumed): it will be dropped at the next
+      // utterance unless a unit comes with it, and that is said NOW, on the banner and the hand,
+      // while he can still act on it — not only in the miss row after the fact.
+      const full = qtyRef.current != null && weightRef.current != null
+      cue(full ? hapticDigitRejected : hapticDigitAccepted)
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `${repeat ? 'held-repeat' : 'held-number'} ${partial.value} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
       // No longer an instruction, because obeying it is what he asked to stop doing. It reads as a
       // progress line: the number landed, and saying a unit is now optional rather than required.
-      say('ok', `${partial.value} — say a unit to change it, or carry on.`)
+      say(full || dropped != null ? 'warn' : 'ok', (full
+        ? `${partial.value} — the quantity and weight are both filled. Say it with a unit to replace one, or it will be dropped.`
+        : `${partial.value} — say a unit to change it, or carry on.`) + dropNoteNow() + assumedNoteNow())
       return
     } else if (heldNumRef.current != null
                && (result.kind === 'quantity' || result.kind === 'weight')
@@ -826,8 +926,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       //
       // BUG-VOICEFAILSILENT-001 IS SATISFIED MORE STRONGLY THAN BEFORE, not weakened: its whole
       // complaint was that a number Dave spoke could vanish ("A SILENT FAIL IS A LOST LOG"). On this
-      // path the number no longer vanishes at all. The `dropped` branch below survives for the one
-      // case that can still lose it — a crop whose default_unit is not in this grammar's vocabulary.
+      // path the number no longer vanishes without a word. The `dropped` path survives for the cases
+      // that can still lose it, each said out loud: a search (below), a crop whose default_unit is
+      // not in this grammar's vocabulary, and a record with no empty slot left (both in placeHeld).
       const heldVal = heldNumRef.current
       heldNumRef.current = null; setHeldNum(null)
       // A SEARCH STILL DROPS IT, and that is not an oversight. A search utterance is how the plant
@@ -836,34 +937,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // before that record is replaced is the same value in a different grave. So this case keeps
       // BUG-VOICEFAILSILENT-001's original answer: drop it, and SAY so. Assuming is for the
       // utterances that leave the record standing — a save command, or something unrecognised.
-      const heldUnit = result.kind === 'search' ? null
-        // SLOT ORDER IS THE INFERENCE: first number is the quantity axis, a later one is grams. That
-        // matches the order he speaks them and the order parseValueSequence already assumes.
-        : qtyRef.current == null
-          ? (selectedRef.current?.variety_ref?.default_unit || 'count')
-          : 'g'
-      const heldBuilt = heldUnit ? buildValue(heldVal, heldUnit, '') : null
-      if (heldBuilt) {
-        const slot = { value: heldBuilt.value, unit: heldBuilt.unit }
-        if (heldBuilt.kind === 'weight') { setWeight(slot); weightRef.current = slot }
-        else { setQty(slot); qtyRef.current = slot }
-        assumedApplied = heldBuilt
-        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `assumed-unit ${heldBuilt.value} ${heldBuilt.unit} (held number resolved)`)
-      } else {
-        // Two ways to land here, and both are honest losses rather than guesses: the utterance was a
-        // search (the record this number belonged to is being replaced), or default_unit is absent
-        // or outside HARVEST_UNITS — it is a crop_types value and may be either. R3 permanent row.
+      if (result.kind === 'search') {
         dropped = heldVal
-        noteMiss(result.kind === 'search'
-          ? `Dropped ${dropped} — no unit was said, and the crop changed before one was.`
-          : `Dropped ${dropped} — no unit was said, and this crop has no usable default unit.`)
+        noteMiss(`Dropped ${dropped} — no unit was said, and the crop changed before one was.`)
+      } else {
+        placeHeld(heldVal)
       }
     }
-    const dropNote = dropped != null ? ` (dropped ${dropped} — no unit was said)` : ''
-    // The inference, said out loud. THIS IS THE GUARD that replaced "refuse the save" —
-    // an assumed unit that is never announced is the fabricated-value class. Do not remove it
-    // to shorten the readback.
-    const assumedNote = assumedApplied ? ` (${assumedApplied.value} ${assumedApplied.unit} assumed)` : ''
+    const dropNote = dropNoteNow()
+    const assumedNote = assumedNoteNow()
 
     // ── V5-VOICEONEBREATH-001: the whole record in one sentence ──────────────────────────────────
     //

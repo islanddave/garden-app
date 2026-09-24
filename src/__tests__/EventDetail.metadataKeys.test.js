@@ -61,6 +61,9 @@ const PROD_METADATA_KEYS = [
   ['loss_reason', 6], ['qty_reduced', 6],
   ['non_chemical', 5], ['issue_label', 4],
   ['health', 3], ['count', 2], ['depth_mm', 2], ['medium', 1],
+  // Not from the 09-03 census: V5-VOICEVOCAB-001 starts writing it on every voice harvest, so it is
+  // decided here BEFORE its first live row rather than after it has rendered raw (0 rows as added).
+  ['assumed_units', 0],
 ]
 
 describe('BUG-EVTMETARAWKEYS-001 — no live metadata key renders raw', () => {

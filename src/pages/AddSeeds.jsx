@@ -4,7 +4,8 @@
 // (-> /inventory/add). Extracted packets[] land in a local review list with per-row
 // variety auto-match chips + a Sheet editor (VarietyPicker override + name/qty/price/
 // date). Save all runs sequentially: NEW rows create the variety first via
-// useVarieties().createVariety(packetToVarietyCols(packet)) (409 {error, existing}
+// useVarieties().createVariety(packetToVarietyCols(packet, {validSlugs})) — crop type gated on
+// the live crop_types catalog (409 {error, existing}
 // -> auto-use existing.id), then POST /api/inventory-items with a payload mirroring
 // InventoryAdd.buildPayload (server sets created_by — never sent from the client)
 // plus packet metadata. All state stays local to this page.
@@ -12,6 +13,7 @@ import React, { useState, useMemo, useRef, useEffect, useId } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useVarieties } from '../hooks/useVarieties.js'
+import { useCropTypes } from '../hooks/useCropTypes.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
@@ -122,6 +124,25 @@ export default function AddSeeds() {
   // ONE shared varieties list at page level — rows auto-match against it.
   const { varieties, createVariety } = useVarieties()
 
+  // BUG-ADDSEEDSVALIDSLUGS-001 — each packet's LLM crop-type guess is gated on the LIVE crop_types
+  // catalog. Without validSlugs, packetToVarietyCols gates on its frozen CROP_TYPE_SLUGS list: 73
+  // slugs against 158 live garden types in prod on 2026-09-23, so a carrot, bean, pea, kale or radish
+  // packet (85 live types in all) would save untyped and drop out of every by-type view.
+  //
+  // The list is passed ONLY when it is non-empty. packetToVarietyCols treats any validSlugs as the
+  // whole catalog and `[]` is truthy, so an empty list rejects every guess, and useCropTypes returns
+  // [] while loading AND on any fetch error. Both empty cases therefore fall back to the frozen list,
+  // which is exactly the pre-fix behaviour and never worse. The loading window is closed separately by
+  // holding Save all until the fetch settles (see the button), so no save can race the catalog.
+  // Default 'garden' scope: a non-plant food class must never type a seed packet's variety.
+  const { cropTypes, loading: cropTypesLoading } = useCropTypes()
+  const varietyColsOpts = useMemo(
+    () => (cropTypes.length > 0 ? { validSlugs: new Set(cropTypes.map((c) => c.slug)) } : {}),
+    [cropTypes],
+  )
+  // Every packetToVarietyCols call on this page goes through this, never the bare helper.
+  const varietyCols = (packet) => packetToVarietyCols(packet, varietyColsOpts)
+
   const [mode, setMode] = useState('')          // '' | 'photo' | 'paste'
   const [pasteText, setPasteText] = useState('')
   const [extracting, setExtracting] = useState(false)
@@ -216,7 +237,7 @@ export default function AddSeeds() {
   }, [varieties])
 
   function autoMatch(row) {
-    const name = (packetToVarietyCols(row.packet).name || '').trim().toLowerCase()
+    const name = (varietyCols(row.packet).name || '').trim().toLowerCase()
     return name ? (varietyByLowerName.get(name) ?? null) : null
   }
 
@@ -305,7 +326,7 @@ export default function AddSeeds() {
 
       let varietyId = effectiveVariety(row)?.id ?? null
       if (!varietyId) {
-        const res = await createVariety(packetToVarietyCols(row.packet), { allowDuplicate: false })
+        const res = await createVariety(varietyCols(row.packet), { allowDuplicate: false })
         if (res.variety) {
           varietyId = res.variety.id
         } else if (res.existing) {
@@ -482,13 +503,16 @@ export default function AddSeeds() {
             </div>
 
             <div style={{ display: 'flex', gap: 14, alignItems: 'center', paddingTop: 4 }}>
+              {/* Held while the crop-type catalog loads (BUG-ADDSEEDSVALIDSLUGS-001): a save in that
+                  window would type against the frozen list. Bounded: useCropTypes always settles
+                  (the fetch times out), and on failure Save all opens on the frozen-list fallback. */}
               <Button
                 type="button"
                 variant="primary"
                 onClick={handleSaveAll}
                 loading={savingAll}
                 loadingLabel="Saving&hellip;"
-                disabled={pendingCount === 0}
+                disabled={pendingCount === 0 || cropTypesLoading}
               >
                 {pendingCount === 0 ? 'All saved' : `Save all (${pendingCount})`}
               </Button>
@@ -514,7 +538,7 @@ export default function AddSeeds() {
                 the control, plus the aria-describedby the loose <div> never had. */}
             <Field
               label="Variety"
-              help={<>Leave blank to create &ldquo;{packetToVarietyCols(editingRow.packet).name}&rdquo; as a new variety on save.</>}
+              help={<>Leave blank to create &ldquo;{varietyCols(editingRow.packet).name}&rdquo; as a new variety on save.</>}
             >
               <VarietyPicker
                 value={effectiveVariety(editingRow)}
