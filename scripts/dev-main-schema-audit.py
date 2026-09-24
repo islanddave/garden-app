@@ -39,9 +39,11 @@ Four phases (all run; a failure in any fails the audit):
     the handler's own directory may fall but never rise past
     scripts/schema-audit-join-baseline.json (ratchet FAIL).
 
-Waivers (scripts/schema-audit-allowlist.json) cover COLUMNS only: a waived
-`table.column` missing from prod is reported, not failed. A relation prod lacks
-cannot be waived; its DDL has to reach prod first.
+Waivers (scripts/schema-audit-allowlist.json) cover columns: a waived
+`table.column` missing from prod is reported, not failed. A relation a handler
+SELECTs/JOINs (Phase 4), or a contract names (Phase 1), cannot be waived: its
+DDL has to reach prod first. A table a handler only INSERTs into is waived
+column by column (Phase 2 reports each column its INSERT list names).
 
 Runs in two places:
   - `.github/workflows/schema-audit.yml` on pushes to dev that touch the audited
@@ -613,8 +615,9 @@ def main() -> int:
     #   2. it SELF-EXPIRES — once prod actually has the column the waiver is stale, and a stale
     #      waiver is a hard FAIL demanding its deletion. That is what stops this file rotting
     #      into a permanent silencer, which is how allowlists usually die.
-    # Waivers cover COLUMNS only. A relation prod lacks fails Phase 4 (or Phase 1's empty-relation guard)
-    # above, before this point, so a new table or view needs its prod DDL before any promote.
+    # Waivers cover columns. A relation a handler SELECTs/JOINs fails Phase 4, and one a contract names fails
+    # Phase 1's empty-relation guard, both above this point, so those need their prod DDL before any promote. A
+    # table a handler only INSERTs into arrives here as Phase-2 column misses and is waived column by column.
     allow_path = Path(args.allowlist) if args.allowlist else repo / "scripts" / "schema-audit-allowlist.json"
     waived: dict = {}
     if allow_path.exists():

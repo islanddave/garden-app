@@ -161,8 +161,8 @@ def test_gate_still_honours_a_live_waiver(run_audit):
      "FAIL: 1 of 8 column refs are MISSING in prod Neon (Phase 1: 1, Phase 2: 0, Phase 3 soft-delete: 0):"),
     ({"lambda/x/prefs-columns.test.js": PREFS_CONTRACT.replace("t_prefs:", "t_nope:"),
       "lambda/x/select-columns.test.js": None}, 2, "has ZERO columns in prod information_schema"),
-    # A new relation cannot be waived: the waiver below covers every column the new handler reads, and the gate
-    # still refuses, because Phase 4's existence check runs before waivers apply (review IMPORTANT 2).
+    # A relation a handler SELECTs cannot be waived: the waiver below covers every column the new handler reads,
+    # and the gate still refuses, because Phase 4's existence check runs before waivers apply (review IMPORTANT 2).
     ({"lambda/x/index.js": HANDLER + "export const n = (sql) => sql`SELECT id FROM zz_new_table`;\n",
       "scripts/schema-audit-allowlist.json": {"waived_refs": {"zz_new_table.id": {"flag": "F"}}}}, 1,
      "FAIL: 1 relation(s) queried by a handler do NOT exist in prod:"),
@@ -172,6 +172,19 @@ def test_hard_fails_exit_the_same_with_and_without_gate(run_audit, files, rc_wan
         rc, out, err = run_audit(files, *flags)
         assert rc == rc_want, (flags, out, err)
         assert line in out + err, (flags, out, err)
+
+
+def test_a_table_a_handler_only_inserts_into_is_waived_column_by_column(run_audit):
+    """The other side of the waiver rule, pinned so the header and docstring stay true (review re-check MINOR):
+    Phase 4 sees FROM/JOIN only, so a new table reached ONLY by an INSERT arrives as Phase-2 column misses, and a
+    waiver for each column passes it, with and without --gate. Changing that is a design call, not a text fix."""
+    files = {"lambda/x/log.js": "export const l = (sql) => sql`INSERT INTO zz_new_log (item_id, noted_at) VALUES (1, 2)`;\n",
+             "scripts/schema-audit-allowlist.json": {"waived_refs": {"zz_new_log.item_id": {"flag": "F"},
+                                                                     "zz_new_log.noted_at": {"flag": "F"}}}}
+    for flags in ([], ["--gate"]):
+        rc, out, err = run_audit(files, *flags)
+        assert rc == 0, (flags, out, err)
+        assert out.count("WAIVED [P2] zz_new_log.") == 2 and "do NOT exist in prod" not in out, (flags, out)
 
 
 # ── the real tree: nothing the gate would refuse as unparseable ───────────────────────────────────────────────

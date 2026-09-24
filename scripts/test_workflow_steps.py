@@ -667,11 +667,15 @@ def _bindir(tmp_path):
 
 
 def _run_schema_gate(tmp_path, rc, req="true", url="postgresql://prod.invalid/db", head=DEV_SHA, prologue="",
-                     audit_out="", fail_phase="none", phase_rc=1):
+                     audit_out="", fail_phase="none", phase_rc=1, files=None):
     """The gate body, the runner's way. The audit stub prints `audit_out` and exits `rc`; self-test `fail_phase`
     (1, 2 or 4) exits `phase_rc` and the others 0; `git rev-parse HEAD` answers `head` ("" = git fails, as outside a
-    checkout). Returns (proc, the python3 argv lists in call order)."""
+    checkout); `files` ({path: text}) are written under the body's cwd, standing in for the promoted tree.
+    Returns (proc, the python3 argv lists in call order)."""
     _, step = _step(PROMOTE, "promote", SCHEMA)
+    for rel, text in (files or {}).items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
     bindir = _bindir(tmp_path)
     called = tmp_path / "called"
     stubs = {
@@ -798,6 +802,38 @@ def test_schema_gate_a_definite_fail_also_names_a_contract_that_could_not_be_par
     assert "ALSO a Phase-1 contract could not be parsed" in errors[0]
 
 
+# Review re-check MINOR: Phase 4's extractor lists a set-returning function under its own name and a non-public
+# schema qualifier truncated (`pg_catalog` -> `pg_catalo`). The regex is unchanged this round; the refusal says the
+# listed name may be a misread when the promoted tree shows it followed by `(`, or as the start of a longer
+# `name.` qualifier. A genuinely missing relation gets no such note.
+ABSENT = "FAIL: {n} relation(s) queried by a handler do NOT exist in prod:\n{rows}"
+MISREAD_TREE = {
+    "lambda/tags/bulk.js": "export const b = (sql, rows) => sql`UPDATE tag t SET name = r.name\n"
+                           "  FROM jsonb_to_recordset(${rows}::jsonb) AS r(id uuid, name text) WHERE t.id = r.id`;\n",
+    "lambda/x/sys.js": "export const s = (sql) => sql`SELECT c.relname FROM pg_catalog.pg_class c`;\n",
+    "lambda/x/new.js": "export const n = (sql) => sql`SELECT id FROM zz_new_table`;\n",
+}
+
+
+@pytest.mark.parametrize("rows,misread,genuine", [
+    (["jsonb_to_recordset  (queried by lambda/tags)"], ["jsonb_to_recordset"], []),
+    (["pg_catalo  (queried by lambda/x)"], ["pg_catalo"], []),
+    (["zz_new_table  (queried by lambda/x)"], [], ["zz_new_table"]),
+    (["jsonb_to_recordset  (queried by lambda/tags)", "zz_new_table  (queried by lambda/x)"],
+     ["jsonb_to_recordset"], ["zz_new_table"]),
+], ids=["function-call", "schema-truncation", "genuine", "mixed"])
+def test_schema_gate_flags_a_listed_relation_that_looks_like_an_extractor_misread(tmp_path, rows, misread, genuine):
+    out = ABSENT.format(n=len(rows), rows="\n".join(f"    - {r}" for r in rows))
+    proc, _ = _run_schema_gate(tmp_path, 1, audit_out=out, files=MISREAD_TREE)
+    errors = _errors(proc)
+    assert len(errors) == 1 and "apply its DDL to prod" in errors[0], errors
+    note = errors[0].split("; NOTE:", 1)[1] if "; NOTE:" in errors[0] else ""
+    assert note.split(" may be an extractor misread")[0].split() == misread, errors[0]
+    if misread:
+        assert "which no DDL can fix: fix it on dev and promote the new SHA" in note
+    assert not any(name in note for name in genuine)
+
+
 def test_schema_gate_stale_waiver_is_a_warning_not_a_refusal(tmp_path):
     out = ("WARN: 1 STALE waiver(s) in schema-audit-allowlist.json — the column now exists in prod (--gate: not a "
            "refusal, prod already has it):\n    - t.c  (delete this entry on dev)\nPASS: 2120 column refs")
@@ -851,10 +887,19 @@ def test_schema_gate_opt_out_warns_loudly_still_audits_and_passes(tmp_path, rc):
     assert len(warnings) == (1 if rc == 0 else 2)
 
 
-def test_schema_gate_opt_out_also_passes_a_failed_self_test(tmp_path):
-    proc, calls = _run_schema_gate(tmp_path, 0, req="false", fail_phase=1)
-    assert proc.returncode == 0 and _errors(proc) == [] and AUDIT_ARGV not in calls
-    assert len(_warnings(proc)) == 2
+@pytest.mark.parametrize("phase_rc", [1, 124, 137], ids=["failed", "hung", "killed"])
+@pytest.mark.parametrize("audit_rc", [0, 1])
+def test_schema_gate_opt_out_a_bad_self_test_warns_and_the_audit_still_runs(tmp_path, phase_rc, audit_rc):
+    """Opted out, a failed or hung self-test must not also skip the audit (review re-check MINOR): the header promises
+    the audit still runs, report-only, and pin drift is the likeliest reason to opt out at all."""
+    proc, calls = _run_schema_gate(tmp_path, audit_rc, req="false", fail_phase=1, phase_rc=phase_rc)
+    assert proc.returncode == 0 and _errors(proc) == [], proc.stdout + proc.stderr
+    assert calls == [[t] for t in SELF_TESTS] + [AUDIT_ARGV]  # every self-test, then the audit
+    assert "SENTINEL audit output" in proc.stdout
+    warnings = _warnings(proc)
+    assert warnings[0].startswith("::warning title=Prod schema gate NOT enforced::")
+    assert "scripts/test-schema-audit-phase1.py" in warnings[1] and "running the audit anyway, report-only" in warnings[1]
+    assert len(warnings) == 2 + (audit_rc != 0)  # plus the audit's own (not enforced) refusal when it fails
 
 
 @pytest.mark.parametrize("req,step_rc,level", [("true", 1, "::error"), ("false", 0, "::warning")])

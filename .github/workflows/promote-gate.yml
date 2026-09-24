@@ -53,11 +53,13 @@ name: promote-gate
 #   - traceback, connection error, hang   -> a crash, not a verdict: re-run the failed jobs.
 # Coverage is the audit's, no more: Phase 1 = columns declared in lambda/**/*columns.test.js contracts, Phase 2 =
 # INSERT column lists, Phase 3 = soft-delete deleted_at targets, Phase 4 = that every relation a handler queries
-# exists. A SELECT/WHERE/SET column with no contract is NOT checked. WAIVERS COVER COLUMNS ONLY: a flag-gated
-# column that lands ahead of its prod DDL is waived in scripts/schema-audit-allowlist.json (self-expiring), not by
-# switching the gate off. A new table or view cannot be waived: it needs its prod DDL before ANY promote (the house
-# rule: additive DDL before the code that reads it). require_schema_audit=false is the dispatch-only escape hatch:
-# every refusal becomes a loud ::warning::, and the audit still runs report-only whenever it can.
+# exists. A SELECT/WHERE/SET column with no contract is NOT checked. WAIVERS: a flag-gated column that lands ahead
+# of its prod DDL is waived in scripts/schema-audit-allowlist.json (self-expiring), not by switching the gate off.
+# A relation a handler SELECTs/JOINs (Phase 4), or a contract names (Phase 1), cannot be waived: it needs its prod
+# DDL before ANY promote (the house rule: additive DDL before the code that reads it). A table a handler only
+# INSERTs into is waived column by column (Phase 2). require_schema_audit=false is the dispatch-only escape hatch:
+# every refusal becomes a loud ::warning::, and the audit still runs report-only whenever it can: a failed or hung
+# self-test falls through to it; only a missing secret or a checkout that is not dev_sha stops it.
 #
 # WRITE-PATH SMOKE GATE (PHASE2-CI-001 / L-145, added 2026-06-04): before the FF, this job dispatches
 # deploy-staging.yml for the exact dev SHA, polls the run to completion, and requires its `smoke-tests` job
@@ -94,8 +96,8 @@ name: promote-gate
 # require_schema_audit deliberately does NOT follow it: the tag path resolves it to TRUE. The schema gate reads prod
 # directly, so it has no in-flight check to race, and shipping a column prod lacks is exactly the outage it exists
 # for. Recovery per cause is in PROD SCHEMA GATE above.
-# Tag-path consequence: from the moment a handler on dev queries a new table or view, every promote-v* tag refuses
-# until that relation's DDL is on prod (no waiver, no opt-out on that path).
+# Tag-path consequence: from the moment a handler on dev SELECTs/JOINs a new table or view, or a contract names one,
+# every promote-v* tag refuses until that relation's DDL is on prod (no waiver, no opt-out on that path).
 
 on:
   workflow_dispatch:
@@ -361,8 +363,9 @@ jobs:
       # ERREXIT — keep every `|| RC=$?`, `|| HEAD=""` and `|| refuse`. GitHub runs this step as `bash -e {0}`, so a
       # bare call would end the step on exit 1 or 2 with no annotation, and a bare `X=$(...)` would end it
       # unexplained. scripts/test_workflow_steps.py runs this body the runner's way. Every failure goes through
-      # refuse(), which errors (exit 1) unless require_schema_audit=false, and then warns and passes. Only an audit
-      # that exits 0 on the promoted tree, after its parser self-tests pass, passes an enforced gate.
+      # refuse(), which errors (exit 1) unless require_schema_audit=false, and then warns and passes; a failed or hung
+      # self-test under the opt-out warns and falls through to the audit instead. Only an audit that exits 0 on the
+      # promoted tree, after its parser self-tests pass, passes an enforced gate.
       #
       # BOUNDS. Each python3 runs inside `timeout`, so a hang ends in refuse() and the opt-out still decides:
       # self-tests 3 x (30 + 5) s, audit 240 + 10 s, about 6 min together. timeout-minutes stays above that sum as
@@ -397,7 +400,7 @@ jobs:
             if grep -q '^Traceback' "$1"; then
               WHY="the audit CRASHED (exit $2, traceback above; e.g. a refused or dropped Neon connection) — a crash, not a verdict: re-run the failed jobs"
             elif grep -q 'relation(s) queried by a handler do NOT exist in prod' "$1"; then
-              WHY="a relation the promoted handlers query does NOT exist in prod (listed above; a waiver cannot cover a relation) — apply its DDL to prod, then re-run the failed jobs or re-dispatch the same SHA"
+              WHY="a relation the promoted handlers query does NOT exist in prod (listed above; a relation a handler SELECTs/JOINs cannot be waived) — apply its DDL to prod, then re-run the failed jobs or re-dispatch the same SHA"
             elif grep -q 'column refs are MISSING in prod' "$1"; then
               WHY="a column the promoted code names is MISSING in prod (listed above) — apply its DDL to prod, then re-run the failed jobs or re-dispatch the same SHA"
             elif grep -q 'contract file(s) could not be parsed' "$1"; then
@@ -411,6 +414,20 @@ jobs:
               WHY="psycopg2 is not installed (see the install step's warning) — infrastructure, not a verdict: re-run the failed jobs"
             else
               WHY="the audit exited $2 with no verdict line this gate recognises (output above), so prod's schema was NOT verified"
+            fi
+            # Phase 4's extractor can misread SQL as a relation (review re-check MINOR): a set-returning function lists
+            # under its own name (`FROM jsonb_to_recordset(...)`), and a non-public schema qualifier lists truncated
+            # (`FROM pg_catalog.pg_class` as `pg_catalo`). No DDL fixes either. Flag a listed name when the promoted
+            # tree has it followed by `(`, or as the start of a longer name followed by `.`.
+            MISREAD=""
+            for REL in $(sed -n 's/^    - \([A-Za-z0-9_][A-Za-z0-9_]*\)  (queried by lambda\/.*)$/\1/p' "$1"); do
+              if grep -rEqs --include='*.js' --exclude-dir=node_modules "(FROM|JOIN)[[:space:]]+(public\.)?${REL}[[:space:]]*\(" lambda \
+                || grep -rEqs --include='*.js' --exclude-dir=node_modules "(FROM|JOIN)[[:space:]]+${REL}[A-Za-z0-9_]+[[:space:]]*\." lambda; then
+                MISREAD="$MISREAD $REL"
+              fi
+            done
+            if [ -n "$MISREAD" ]; then
+              WHY="$WHY; NOTE:$MISREAD may be an extractor misread (a function call, or a schema-qualified name Phase 4 truncated), which no DDL can fix: fix it on dev and promote the new SHA"
             fi
             # A skipped contract rides along with a definite FAIL (exit 1 wins), so say so: the re-run would refuse on it.
             if [ "$PARSE_CAUSE" = "no" ] && grep -q 'contract file(s) could not be parsed' "$1"; then
@@ -426,6 +443,17 @@ jobs:
             refuse "the checked-out tree is '${HEAD:-unreadable}', not the promoted $DEV_SHA, so the audit would check the wrong code"
           fi
           LOGS=$(mktemp -d) || refuse "could not create a temp dir for the audit's output"
+          # Enforced, a failed or hung self-test refuses. Opted out, it warns and FALLS THROUGH, so the audit still
+          # runs report-only (review re-check MINOR): pin drift is the likeliest reason to opt out, and it must not
+          # also buy zero verification. scripts/test_schema_audit_phase_suites.py runs the same suites in
+          # build-and-test, so drift should red the dev push long before it reaches this step.
+          selftest_failed() {
+            if [ "$ENFORCE" = "false" ]; then
+              echo "::warning title=Prod schema gate (not enforced)::$1 — running the audit anyway, report-only, because require_schema_audit=false."
+            else
+              refuse "$1"
+            fi
+          }
           # 1) The promoted tree's own parser self-tests, DB-free: schema-audit.yml runs them first for the same
           #    reason, a Phase-1 parser regression is silent downstream (review MINOR 1). No DSN reaches them.
           for t in 1 2 4; do
@@ -436,8 +464,8 @@ jobs:
             echo "::endgroup::"
             case "$RC" in
               0) ;;
-              124|137) refuse "the audit parser self-test scripts/test-schema-audit-phase$t.py did not finish in 30 s — a hang, not a verdict: re-run the failed jobs" ;;
-              *) refuse "the promoted tree's audit parser self-test scripts/test-schema-audit-phase$t.py failed (exit $RC, output above): the audit's parser, or a contract whose exact column set that test pins, changed without the other, so the audit's verdict cannot be trusted — fix it on dev and promote the new SHA" ;;
+              124|137) selftest_failed "the audit parser self-test scripts/test-schema-audit-phase$t.py did not finish in 30 s — a hang, not a verdict: re-run the failed jobs" ;;
+              *) selftest_failed "the promoted tree's audit parser self-test scripts/test-schema-audit-phase$t.py failed (exit $RC, output above): the audit's parser, or a contract whose exact column set that test pins, changed without the other, so the audit's verdict cannot be trusted — fix it on dev and promote the new SHA" ;;
             esac
           done
           # 2) The audit itself, --gate mode, bounded.
