@@ -1,9 +1,9 @@
 {
-  "version": "4.146.0",
+  "version": "4.147.0",
   "date": "2026-09-24",
   "highlights": [
-    "Seeds: a packet or seed lot that a planting was sown from can't be removed by mistake. The Remove dialog stays open and says why, and suggests setting its Status to depleted instead. Packets with nothing sown from them, saved lots and a Snap's Undo still remove as before.",
-    "Lots saved from farm-stand or gift produce no longer offer Set parent plant, which could only fail. Long planting names in a packet's germination list wrap instead of pushing the page sideways.",
-    "The heart, the clear ✕ on a chosen supplier or planting, and Remove item are easier to tap, and look the same."
+    "Today: Skip now has an Undo, the same as logging a watering, and several skips in a row share one Undo. Skip is also a bigger target with a little space before the Moist or Water button, so a near-miss does nothing.",
+    "Today: when one plant fails during Water all or Log all, the ones that saved still get an Undo, and the one that failed stays on the list to try again.",
+    "Voice harvest: if your taught names haven't loaded yet, the app waits a moment for them, and it no longer reads a taught name like 'cucumber one' as a crop plus the number 1. Log many's voice asks for your taught names again if they didn't load, and the app now counts how often each taught name is used."
   ]
 }
