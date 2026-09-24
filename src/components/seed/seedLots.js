@@ -192,6 +192,19 @@ export function isNotStartedLot(i) {
   return isSavedLot(i)
 }
 
+// BUG-SAVEDSEEDPARENTONPRODUCE-001 — may this lot be given a parent PLANT? The database's answer, not an
+// approximation of it: chk_inventory_seed_source_plant is `source_kind IS NULL OR source_kind =
+// 'own_garden' OR source_plant_id IS NULL` (read off live prod 2026-09-24; the same text as
+// migrations/v4-seedorigin-001), so a lot whose origin kind names somewhere other than this garden — a
+// farm stand, a gift, a shop — is REFUSED a parent, and any door offering to set one on it offers a
+// write that can only fail. NULL and 'own_garden' both admit one; "has a source_kind" is not the rule.
+// Takes the KIND rather than the lot so /inventory/:id can ask it of its live select, whose '' is "Not
+// recorded" (sent as null) — the only other spelling of NULL this client has.
+// seedLots.parentPlant.test.js derives the admitted kinds from the migration's CHECK text itself.
+export function kindAllowsParentPlant(kind) {
+  return kind == null || kind === '' || kind === 'own_garden'
+}
+
 // Seed you saved yourself, as opposed to a packet you bought: it came off one of your plants, or its
 // origin kind was recorded (a farm-stand pepper, a gift), or it has been through a stage. Three
 // facts, any one sufficient, because each door that makes a saved lot writes a different one of them.

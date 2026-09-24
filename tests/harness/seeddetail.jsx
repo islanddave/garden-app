@@ -42,8 +42,9 @@
 //     longest planting-name shape (a cultivar, a bed and a note) so the row's name has to WRAP inside
 //     the row at 360px — "whole" is then a real question — and one short.
 //   · the packet's supplier is a registry row the palette knows (Johnny's: a stripe and a chip), with a
-//     packet URL, a germination record (one counted sowing; see the note on it below), and a real
-//     (local) packet photo.
+//     packet URL, a germination record (two counted sowings, one with the long bed name, so the
+//     per-sowing list renders and has to wrap; see the note on it below), and a real (local) packet
+//     photo.
 //   · the F2 lot carries breeding_system 'f1', a parent planting and a seed_stage of drying, with
 //     stock on hand, so "no Sow this" is decided by the process and not by an empty jar.
 import React from 'react'
@@ -103,17 +104,17 @@ const PACKET = row({
   days_to_maturity_min: 57, days_to_maturity_max: 65, dtm_basis: 'from-transplant',
   featured_photo_id: 'photo-sungold', hero_photo_id: 'photo-sungold', featured_is_explicit: true,
   featured_photo_view_url: `/tests/harness/seeds-packets/packet-tall.png?p=sungold&tier=full&load=${LOAD}`,
-  // ONE counted sowing, so the panel shows its rate and counts and not its per-sowing list. That list
-  // (2+ counted sowings) WIDENS THE PAGE when a planting's name is long: its rows are nowrap flex rows in
-  // a `display: grid` with no template, so the grid's auto column takes a row's full min-content (477px
-  // measured at 360 and 390 with the bed's name below) and the document scrolls sideways. Latent on prod
-  // (0 counted sowings on 2026-09-23), outside this gate's brief, and reported as a finding
-  // (lane-seedpolish-20260924); give the bed a count here once it is fixed.
+  // TWO counted sowings, so the panel shows its per-sowing list (it lists sowings only at 2+), and the
+  // bed carries the longest planting name. BUG-GERMLISTWIDENS-001: that list's rows were nowrap flex rows
+  // in a `display: grid` with no template, so the grid's auto column took a row's full min-content (477px
+  // measured at 360 and 390 with the bed's name) and the document scrolled sideways. The gate's (h) asks
+  // that each row is whole with the name WRAPPED at 360, and (a) that nothing scrolls sideways.
   germination: {
     sowings: [
       { id: 'pl-sungold-pot', name: 'Sungold pot 4', sown_at: '2026-06-18', seeds_sown: 10, seeds_germinated: 6 },
+      { id: 'pl-sungold-bed', name: 'Sungold F1 — raised bed 3, north end, second sowing', sown_at: '2026-04-02', seeds_sown: 12, seeds_germinated: 9 },
     ],
-    seeds_sown: 10, seeds_germinated: 6, rate: 60,
+    seeds_sown: 22, seeds_germinated: 15, rate: 68.2,
   },
   // Newest sowing first, as the route's ORDER BY p.sown_at DESC NULLS LAST returns them.
   sown_from: [

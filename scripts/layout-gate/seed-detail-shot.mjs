@@ -41,7 +41,17 @@
 //       seedLots.js), whole inside the packet card; and "Change stage in Saved seeds →" is present.
 //   (g) REACH — each of the page's seed controls (Sow this, See the planting, Edit sow details, every
 //       Sown-from row, Change stage) scrolled to the middle of the visible band hit-tests to itself.
-//   (h) THE REFUSED REMOVE (BUG-INVDELETEERROROFFSCREEN-001), its own state at both viewports: "Remove
+//   (h) THE GERMINATION RECORD'S PER-SOWING LIST (BUG-GERMLISTWIDENS-001) — on the packet, EXACTLY the
+//       fixture's counted sowings (the list renders only at 2+), each row naming its planting, inside the
+//       record and the viewport, not overflowing, and WHOLE; at 360 the long bed name must wrap inside its
+//       row. Its rows used to be nowrap in a template-less grid, whose auto column took the long name's
+//       min-content (477px) and scrolled the page sideways — which (a) above is what catches.
+//   (i) LAYOUT-NEUTRAL HIT AREAS (BUG-SEEDPAGETAPFLOORS-001) — the Favorite heart and the pickers' ✕ were
+//       brought to the tap floor by growing the BOX and handing the growth back with a negative margin,
+//       so their FOOTPRINT (border box plus computed margins, what the host lays out) must still be the
+//       old one: the heart's glyph advance + 8 by its font-size + 8 (FavoriteToggle's old padding: 4px),
+//       the ✕'s 30x30. (b) holds the hit box to the floor; this holds the host's layout still.
+//   (j) THE REFUSED REMOVE (BUG-INVDELETEERROROFFSCREEN-001), its own state at both viewports: "Remove
 //       item" and then the dialog's "Remove", both real taps, against a harness that answers the DELETE
 //       with the Lambda's 409 sentence (remove=refuse). The dialog must still be up, wholly inside the
 //       viewport, with the sentence INSIDE it as role="alert", every text run whole, directly above the
@@ -120,35 +130,44 @@ const SOWN_FROM = [
 const PACKET_ID = 'pkt-sungold'
 const NEW_PLANTING_HREF = '/plantings/pl-new'   // the harness's POST /api/plants answers { id: 'pl-new' }
 const STAGE_LINK_WORDS = 'Change stage in Saved seeds →'
+// The packet's counted sowings, in the fixture's order — (h). The bed's is the long name that widened
+// the page (BUG-GERMLISTWIDENS-001).
+const GERM_SOWINGS = [
+  { name: 'Sungold pot 4' },
+  { name: 'Sungold F1 — raised bed 3, north end, second sowing' },
+]
+// pickerClears: the chosen-value ✕ each state carries — the packet's supplier in the form's SourcePicker,
+// the F2 lot's parent in "Saved from" (PlantingSelect).
 const STATES = [
   { name: 'packet', harness: 'packet', sow: false,
-    expect: { h1: PACKET_NAME, sowThis: 1, sownLine: 0, sownFrom: SOWN_FROM, f2: false, stageLink: 1, editSow: 1 } },
+    expect: { h1: PACKET_NAME, sowThis: 1, sownLine: 0, sownFrom: SOWN_FROM, f2: false, stageLink: 1, editSow: 1, germ: GERM_SOWINGS,
+      pickerClears: ['Clear supplier'] } },
   { name: 'sown', harness: 'packet', sow: true,
-    expect: { h1: PACKET_NAME, sowThis: 1, sownLine: 1, sownFrom: SOWN_FROM, f2: false, stageLink: 1, editSow: 1 } },
+    expect: { h1: PACKET_NAME, sowThis: 1, sownLine: 1, sownFrom: SOWN_FROM, f2: false, stageLink: 1, editSow: 1, germ: GERM_SOWINGS,
+      pickerClears: ['Clear supplier'] } },
   { name: 'f2', harness: 'f2', sow: false,
-    expect: { h1: F2_NAME, sowThis: 0, sownLine: 0, sownFrom: [], f2: true, stageLink: 1, editSow: 1 } },
+    expect: { h1: F2_NAME, sowThis: 0, sownLine: 0, sownFrom: [], f2: true, stageLink: 1, editSow: 1, germ: [],
+      pickerClears: ['Clear planting selection'] } },
 ]
 const VIEWPORTS = [[360, 640], [390, 844]]
 
 // NAMED TAP-FLOOR EXEMPTIONS, from the first measured run (2026-09-24). Each is matched by what the
 // control IS on this page — its place in the structure, never a label alone — printed with its size on
 // every run, and reported INERT once every match clears the floor. NONE is part of the Seeds release.
-// The two inline links are WCAG 2.5.8's own exemption (a target inside a line of text). The other two
-// are PRE-EXISTING tap-floor misses in code this gate's brief does not own (the frozen forms pickers'
-// clear ✕, the app-wide Favorite toggle); they were REPORTED for a decision
-// (lane-seedpolish-20260924 report) rather than fixed here, and each should leave this list when fixed.
-// (The delete button's `remove-item` entry left it with BUG-SEEDPAGETAPFLOORS-001: "Remove item" now
-// sits on the floor and is held to it by the census like every other control.)
+// The two inline links are WCAG 2.5.8's own exemption (a target inside a line of text), and they are the
+// only entries left. The others were PRE-EXISTING tap-floor misses REPORTED for a decision
+// (lane-seedpolish-20260924 report), and all three left with BUG-SEEDPAGETAPFLOORS-001: the Favorite
+// heart (26x27) and the pickers' clear ✕ (30x30) are now held to the floor like every other control —
+// and, so that hold cannot go vacuous, the instrument check below requires them to be ON the page
+// (FAVORITES, e.pickerClears); "Remove item" sits on the floor and the census holds it there too.
 const EXEMPTIONS = [
   { key: 'breadcrumb', why: 'the "Seeds" link inline in the breadcrumb line — WCAG 2.5.8 inline exemption',
     match: (t) => t.inBreadcrumb },
   { key: 'history-origin', why: 'the parent planting inline in the processing history\'s "Saved from …" sentence — WCAG 2.5.8 inline exemption',
     match: (t) => t.inHistoryOrigin },
-  { key: 'favorite', why: 'FavoriteToggle, the app-wide heart beside every detail title — pre-existing, REPORTED',
-    match: (t) => t.favorite },
-  { key: 'picker-clear', why: 'the ✕ on a chosen value in the frozen forms pickers (SourcePicker\'s "Clear supplier", PlantingSelect\'s "Clear planting selection"), drawn at 30px by their chipClearBtn — pre-existing, REPORTED',
-    match: (t) => t.pickerClear },
 ]
+// The Favorite heart beside the title, on every state (the harness signs a user in).
+const FAVORITES = 1
 
 const failures = []
 const fail = (m) => failures.push(m)
@@ -341,6 +360,34 @@ const MEASURE = `(() => {
     whole: pcr ? whole(breedingEl, pcr) : null, lines: breedingEl.children[1] ? lines(breedingEl.children[1]) : 0,
     overflowX: breedingEl.children[1] ? breedingEl.children[1].scrollWidth > breedingEl.children[1].clientWidth + 1 : null } : null
 
+  // (i) the footprint the host lays out for each control whose hit box was grown in place: the border box
+  // plus its computed margins, beside what the old box would have been.
+  const footprints = [...d.querySelectorAll('button')].filter(shown).filter(el => !inChrome(el))
+    .filter(el => el.getAttribute('aria-label') === 'Favorite' || (/^Clear /.test(el.getAttribute('aria-label') || '') &&
+      !!(el.parentElement && el.parentElement.nextElementSibling && text(el.parentElement.nextElementSibling) === 'Change')))
+    .map(el => {
+      const r = el.getBoundingClientRect(), cs = w.getComputedStyle(el)
+      const rg = d.createRange(); rg.selectNodeContents(el)
+      return { label: name(el), heart: el.getAttribute('aria-label') === 'Favorite', hit: box(el),
+        w: R(r.width + px(cs.marginLeft) + px(cs.marginRight)), h: R(r.height + px(cs.marginTop) + px(cs.marginBottom)),
+        glyphW: R(rg.getBoundingClientRect().width), font: px(cs.fontSize) }
+    })
+
+  // (h) the germination record's per-sowing rows.
+  const germPanels = [...d.querySelectorAll('${tid('packet-germination')}')]
+  const germPanel = germPanels[0] || null
+  let germ = null
+  if (germPanel) {
+    const gr = germPanel.getBoundingClientRect()
+    germ = { box: box(germPanel), inViewX: inViewX(gr), overflowX: germPanel.scrollWidth > germPanel.clientWidth + 1,
+      rows: [...germPanel.querySelectorAll('${tid('packet-germ-sowing')}')].map(row => {
+        const r = row.getBoundingClientRect(), nameEl = row.firstElementChild
+        return { text: text(row), box: box(row), inViewX: inViewX(r),
+          inPanel: r.left >= gr.left - 0.5 && r.right <= gr.right + 0.5,
+          overflowX: row.scrollWidth > row.clientWidth + 1, whole: whole(row, r), nameLines: nameEl ? lines(nameEl) : 0 }
+      }) }
+  }
+
   const stageLink = d.querySelector('${tid('seed-stage-change-link')}')
   const h = window.__h
   return {
@@ -351,9 +398,9 @@ const MEASURE = `(() => {
       h1: text(h1), dialog: !!d.querySelector('[role="dialog"]') },
     counts: { sowThis: d.querySelectorAll('${tid('sow-this')}').length, sownLine: sownLineEl ? 1 : 0,
       editSow: d.querySelectorAll('${tid('edit-sow-details')}').length, stageLink: stageLink ? 1 : 0,
-      cards: cards.length, controls: taps.length },
+      cards: cards.length, controls: taps.length, germPanels: germPanels.length },
     stageLinkText: text(stageLink),
-    taps, sownFrom, sownLine, breeding,
+    taps, sownFrom, sownLine, breeding, germ, footprints,
     errors: h ? h.errors() : ['window.__h missing'], unstubbed: h ? h.unstubbed() : [], posts: h ? h.posts() : [],
   }
 })()`
@@ -458,7 +505,7 @@ async function sow(at) {
   return null
 }
 
-// ── (h) THE REFUSED REMOVE — BUG-INVDELETEERROROFFSCREEN-001 ─────────────────────────────────────────
+// ── (j) THE REFUSED REMOVE — BUG-INVDELETEERROROFFSCREEN-001 ─────────────────────────────────────────
 // The defect this state exists for: a refused delete closed the dialog and wrote its reason to the
 // form banner, above the whole form — off-screen on a phone, with nothing changed near the finger. So
 // the question is geometric, and jsdom cannot ask it: after the refusal, is the reason ON SCREEN, in
@@ -523,38 +570,38 @@ async function removeRefused(vw, vh) {
   await waitSettled('true', 2000)
   // Both taps real, hit-tested at their centres, exactly as the finger would land.
   const why = await tap(`document.querySelector('${tid('inventory-remove')}')`, '"Remove item"')
-  if (why) return fail(`${at}: (h) ${why}`)
-  if (!await waitSettled(`!!${REMOVE_DIALOG}`)) return fail(`${at}: (h) "Remove item" was tapped and no "Remove item?" dialog opened`)
+  if (why) return fail(`${at}: (j) ${why}`)
+  if (!await waitSettled(`!!${REMOVE_DIALOG}`)) return fail(`${at}: (j) "Remove item" was tapped and no "Remove item?" dialog opened`)
   const why2 = await tap(`document.querySelector('${tid('inventory-remove-confirm')}')`, 'the dialog\'s "Remove"')
-  if (why2) return fail(`${at}: (h) ${why2}`)
+  if (why2) return fail(`${at}: (j) ${why2}`)
   // Settles on whichever happens: the reason appears, the dialog goes away, or the page leaves. The
   // measurement below says which, and only the first is a pass.
   if (!await waitSettled(`!!document.querySelector('${tid('inventory-remove-error')}') || !${REMOVE_DIALOG} || !!document.querySelector('[data-testid="harness-left-page"]')`)) {
-    return fail(`${at}: (h) the refusal never showed — the dialog is still up with no reason in it`)
+    return fail(`${at}: (j) the refusal never showed — the dialog is still up with no reason in it`)
   }
   const m = await evalSettled(MEASURE_REMOVE)
   if (m.vw !== vw || m.vh !== vh) return fail(`${at}: page self-reports ${m.vw}x${m.vh} — emulation did not take`)
   if (m.errors.length) return fail(`${at}: the page raised ${m.errors.length} error(s): ${m.errors.join(' | ')}`)
   if (!m.refusal) return fail(`${at}: the harness is not refusing (remove=refuse not honoured) — the state measures nothing`)
-  if (m.leftPage) return fail(`${at}: (h) the page LEFT after a refused delete`)
-  if (m.deletes !== 1) fail(`${at}: (h) ${m.deletes} DELETE request(s) sent, expected exactly 1`)
+  if (m.leftPage) return fail(`${at}: (j) the page LEFT after a refused delete`)
+  if (m.deletes !== 1) fail(`${at}: (j) ${m.deletes} DELETE request(s) sent, expected exactly 1`)
   if (m.docScrollW > m.docClientW + 1) fail(`${at}: (a) document scrollWidth ${m.docScrollW} > clientWidth ${m.docClientW} — the page scrolls sideways`)
-  if (!m.dialog) return fail(`${at}: (h) the dialog CLOSED on the refusal — the reason is not where the tap was`)
-  if (!m.dialog.inView) fail(`${at}: (h) the dialog spans y${m.dialog.box.t}-${m.dialog.box.b} x${m.dialog.box.l}-${m.dialog.box.r}, not wholly inside the ${vw}x${vh} viewport`)
+  if (!m.dialog) return fail(`${at}: (j) the dialog CLOSED on the refusal — the reason is not where the tap was`)
+  if (!m.dialog.inView) fail(`${at}: (j) the dialog spans y${m.dialog.box.t}-${m.dialog.box.b} x${m.dialog.box.l}-${m.dialog.box.r}, not wholly inside the ${vw}x${vh} viewport`)
   const e = m.error
-  if (!e) return fail(`${at}: (h) no reason in the dialog`)
-  if (e.role !== 'alert') fail(`${at}: (h) the reason is not role="alert" (it is ${JSON.stringify(e.role)}) — a screen reader would not announce it`)
-  if (e.text !== m.refusal) fail(`${at}: (h) the dialog shows "${e.text}", expected the server's sentence "${m.refusal}"`)
-  if (m.shownAt !== 1) fail(`${at}: (h) the sentence is on the page ${m.shownAt} times, expected once (in the dialog only)`)
-  if (!e.inDialog) fail(`${at}: (h) the reason is not inside the dialog's box`)
-  if (!e.inView) fail(`${at}: (h) the reason spans y${e.box.t}-${e.box.b}, not wholly inside the ${vw}x${vh} viewport`)
-  if (!e.runs || !e.runsWhole) fail(`${at}: (h) the reason is not whole — ${e.runs} text run(s), some painted outside its box or the viewport`)
-  if (!e.rowHoldsButtons) fail(`${at}: (h) the element after the reason is not the Remove / Keep it row — the reason is not beside the buttons`)
-  if (e.gapToButtons == null || e.gapToButtons < 0 || e.gapToButtons > 24) fail(`${at}: (h) the reason ends ${e.gapToButtons}px above the buttons, expected 0-24px`)
+  if (!e) return fail(`${at}: (j) no reason in the dialog`)
+  if (e.role !== 'alert') fail(`${at}: (j) the reason is not role="alert" (it is ${JSON.stringify(e.role)}) — a screen reader would not announce it`)
+  if (e.text !== m.refusal) fail(`${at}: (j) the dialog shows "${e.text}", expected the server's sentence "${m.refusal}"`)
+  if (m.shownAt !== 1) fail(`${at}: (j) the sentence is on the page ${m.shownAt} times, expected once (in the dialog only)`)
+  if (!e.inDialog) fail(`${at}: (j) the reason is not inside the dialog's box`)
+  if (!e.inView) fail(`${at}: (j) the reason spans y${e.box.t}-${e.box.b}, not wholly inside the ${vw}x${vh} viewport`)
+  if (!e.runs || !e.runsWhole) fail(`${at}: (j) the reason is not whole — ${e.runs} text run(s), some painted outside its box or the viewport`)
+  if (!e.rowHoldsButtons) fail(`${at}: (j) the element after the reason is not the Remove / Keep it row — the reason is not beside the buttons`)
+  if (e.gapToButtons == null || e.gapToButtons < 0 || e.gapToButtons > 24) fail(`${at}: (j) the reason ends ${e.gapToButtons}px above the buttons, expected 0-24px`)
   for (const [what, b] of [['Remove', m.confirm], ['Keep it', m.keep]]) {
-    if (!b) { fail(`${at}: (h) the dialog has no "${what}" button`); continue }
-    if (b.h < TAP_MIN_HEIGHT_PX) fail(`${at}: (h) "${what}" is ${b.h}px tall, under the ${TAP_MIN_HEIGHT_PX}px tap floor`)
-    if (!b.inView || !b.hits) fail(`${at}: (h) "${what}" is off-screen or covered (inView=${b.inView}, hitsSelf=${b.hits})`)
+    if (!b) { fail(`${at}: (j) the dialog has no "${what}" button`); continue }
+    if (b.h < TAP_MIN_HEIGHT_PX) fail(`${at}: (j) "${what}" is ${b.h}px tall, under the ${TAP_MIN_HEIGHT_PX}px tap floor`)
+    if (!b.inView || !b.hits) fail(`${at}: (j) "${what}" is off-screen or covered (inView=${b.inView}, hitsSelf=${b.hits})`)
   }
   shots.push(await shoot(join(OUTDIR, `seed-detail-remove-refused-${vw}x${vh}.png`)))
   console.log(`[seed-detail] ${at}: dialog y${m.dialog.box.t}-${m.dialog.box.b} · reason ${e.box.w}x${e.box.h}px at y${e.box.t}-${e.box.b}, ${e.gapToButtons}px above the buttons · Remove ${m.confirm?.h}px · Keep it ${m.keep?.h}px · DELETEs ${m.deletes}`)
@@ -620,6 +667,14 @@ try {
       if (m.counts.cards !== (e.sownFrom.length ? 1 : 0)) mismatch.push(`"Sown from this packet" cards ${m.counts.cards} != ${e.sownFrom.length ? 1 : 0}`)
       if (m.sownFrom && m.sownFrom.rows.length !== e.sownFrom.length) mismatch.push(`sown-from rows ${m.sownFrom.rows.length} != ${e.sownFrom.length}`)
       if (e.f2 && !m.breeding) mismatch.push('no Breeding fact in the packet card — (f) has nothing to read')
+      if (m.counts.germPanels !== (e.germ.length ? 1 : 0)) mismatch.push(`germination records ${m.counts.germPanels} != ${e.germ.length ? 1 : 0}`)
+      if (m.germ && m.germ.rows.length !== e.germ.length) mismatch.push(`germination rows ${m.germ.rows.length} != ${e.germ.length} — (h) has nothing to read`)
+      // The two controls that left EXEMPTIONS: (b) holds them to the floor only while they are measured.
+      const favs = m.taps.filter((t) => t.favorite).length
+      if (favs !== FAVORITES) mismatch.push(`Favorite toggles beside the title ${favs} != ${FAVORITES} — (b) would not be measuring the heart`)
+      const clears = m.taps.filter((t) => t.pickerClear).map((t) => t.label)
+      if (clears.join(' | ') !== e.pickerClears.join(' | ')) mismatch.push(`picker clear buttons [${clears.join(', ')}] != [${e.pickerClears.join(', ')}] — (b) would not be measuring them`)
+      if (m.footprints.length !== FAVORITES + e.pickerClears.length) mismatch.push(`${m.footprints.length} footprints read, expected ${FAVORITES + e.pickerClears.length} — (i) has nothing to read`)
       if (m.counts.controls < 8) mismatch.push(`${m.counts.controls} controls measured — a page this size carries far more`)
       if (mismatch.length) {
         fail(`${at}: the fixture did not produce what this gate measures — ${mismatch.join('; ')}`)
@@ -690,6 +745,34 @@ try {
       }
       if (m.counts.stageLink && m.stageLinkText !== STAGE_LINK_WORDS) fail(`${at}: (f) the stage link reads "${m.stageLinkText}", expected "${STAGE_LINK_WORDS}"`)
 
+      // ── (h) THE GERMINATION RECORD'S PER-SOWING LIST.
+      if (m.germ) {
+        const g = m.germ
+        if (!g.inViewX) fail(`${at}: (h) the germination record spans x${g.box.l}-${g.box.r}, outside the ${vw}px viewport`)
+        if (g.overflowX) fail(`${at}: (h) the germination record overflows its own box horizontally`)
+        g.rows.forEach((r, i) => {
+          const want = e.germ[i]
+          const tag = `(h) germination row ${i + 1}`
+          if (!r.text.includes(want.name)) fail(`${at}: ${tag} reads "${r.text}", expected it to name "${want.name}"`)
+          if (!r.inPanel) fail(`${at}: ${tag} spans x${r.box.l}-${r.box.r}, outside its record x${g.box.l}-${g.box.r}`)
+          if (!r.inViewX) fail(`${at}: ${tag} spans x${r.box.l}-${r.box.r}, outside the ${vw}px viewport`)
+          if (r.overflowX) fail(`${at}: ${tag} overflows its own box horizontally`)
+          if (!r.whole.runs) fail(`${at}: ${tag} paints no text`)
+          if (!r.whole.inside) fail(`${at}: ${tag} is not whole — some of its text is painted outside the row (clipped or truncated)`)
+          if (!r.whole.inViewX) fail(`${at}: ${tag} is not whole — some of its text is painted outside the viewport`)
+        })
+        // The non-vacuity of "whole": at the narrowest phone the long name must be a WRAPPED one.
+        if (vw === 360 && !g.rows.some((r) => r.nameLines >= 2)) fail(`${at}: (h) no germination row's name wraps at 360px — either the name is cut short, or the fixture stopped carrying a name long enough to ask`)
+      }
+
+      // ── (i) LAYOUT-NEUTRAL HIT AREAS. 0.15px: both sides are rounded to 0.1 and Chrome lays out in 1/64 px.
+      for (const f of m.footprints) {
+        const old = f.heart ? { w: Math.round((f.glyphW + 8) * 10) / 10, h: Math.round((f.font + 8) * 10) / 10 } : { w: 30, h: 30 }
+        if (Math.abs(f.w - old.w) > 0.15 || Math.abs(f.h - old.h) > 0.15) {
+          fail(`${at}: (i) "${f.label}" lays out ${f.w}x${f.h}px where its old box was ${old.w}x${old.h}px — the grown hit box (${f.hit.w}x${f.hit.h}px) is moving its host's layout`)
+        }
+      }
+
       // ── (g) REACH — each seed control, brought to the middle of the band, hit-tests to itself.
       const keys = [
         ['Sow this', `document.querySelector('${tid('sow-this')}')`],
@@ -732,6 +815,8 @@ try {
       }
       if (m.sownLine) console.log(`[seed-detail] ${at}: sown line "${m.sownLine.text}" ${m.sownLine.box.w}x${m.sownLine.box.h}px · See the planting ${m.sownLine.see ? `${m.sownLine.see.h}px → ${m.sownLine.see.href}` : 'ABSENT'}`)
       if (m.breeding) console.log(`[seed-detail] ${at}: Breeding "${m.breeding.value}" on ${m.breeding.lines} line(s)`)
+      if (m.germ) console.log(`[seed-detail] ${at}: germination record x${m.germ.box.l}-${m.germ.box.r} · rows ${m.germ.rows.map((r) => `${r.box.w}x${r.box.h}px/${r.nameLines}L`).join(', ')}`)
+      console.log(`[seed-detail] ${at}: formerly exempt, now floored — ${m.footprints.map((f) => `"${f.label}" hit ${f.hit.w}x${f.hit.h}px, lays out ${f.w}x${f.h}px`).join(', ')}`)
       console.log(`[seed-detail] ${at}: reach ${reached.join(' · ') || 'none'}${m.unstubbed.length ? ` · unstubbed requests: ${[...new Set(m.unstubbed)].join(', ')}` : ''}`)
     }
   }
