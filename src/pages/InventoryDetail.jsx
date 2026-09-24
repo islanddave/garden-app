@@ -51,6 +51,14 @@ const SOW_DRAFT_KEY = 'sow-packet'
 // or replace): open at the top.
 const openedEntries = new Set()
 const historyEntryKey = () => { try { return window.history?.state?.key ?? null } catch { return null } }
+// Does the current history entry show `path`? Its own URL, or, under an overlay, the page beneath it, which
+// OverlayContext keeps as the entry's `background` (the same shape check as its validBackground).
+const historyEntryShows = (path) => {
+  try {
+    const bg = window.history?.state?.usr?.background
+    return decodeURIComponent(bg && typeof bg.pathname === 'string' ? bg.pathname : window.location.pathname) === path
+  } catch { return false }
+}
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
 // the former local duplicates here were removed (Lane D dedup).
@@ -144,6 +152,16 @@ export default function InventoryDetail() {
     window.scrollTo(0, 0)
     arrivalSectionRef.current = lotSectionFromHistory()
   }, [id])
+  // Every later commit files the current key too, AFTER the decision above so it never pre-empts one. An
+  // overlay over this page (header Search, /log) closed by its Close, backdrop or Escape REPLACES the entry
+  // (useOverlayDismiss) without remounting the page, and a Back onto that new key is a return, not a door.
+  // Only while the entry still shows THIS lot: BrowserRouter commits a route inside a transition, after the
+  // push has already written the next entry, so a commit landing in between would otherwise file the next
+  // lot's key and its arrival would read as a return (the lot opening at its form again).
+  useEffect(() => {
+    const key = historyEntryKey()
+    if (key != null && historyEntryShows(`/inventory/${id}`)) openedEntries.add(key)
+  })
   // Once per arrival: the hint is spent here, so a later re-read of the row (the packet photo's) never
   // scrolls again. Centred, like Saved seeds' arrival outline (useLotOutline), which keeps the card
   // clear of the sticky top bar and the bottom nav. jsdom has no scrollIntoView, hence the guard.

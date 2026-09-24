@@ -3,12 +3,28 @@
  * Vitest global test setup — runs before each test file.
  * Keep this file minimal; heavy setup goes in individual test files or fixtures.
  */
+import { vi } from 'vitest';
 import { configure } from '@testing-library/dom';
 import { __resetScrollRestoreStore } from '../hooks/useScrollRestore.js';
 
 // Tell React we're in a test environment (suppresses act() warnings)
 // @ts-expect-error — global not typed by default
 global.IS_REACT_ACT_ENVIRONMENT = true;
+
+// v4.148.0 regression-impact review M6 — jsdom implements no scrolling. Its window.scrollTo is a stub
+// that reports "Not implemented: window.scrollTo" through the virtual console, printed to stderr as a
+// full stack trace: 183 per full run from InventoryDetail's open-at-top reset, 9 from PlantingDetail,
+// burying real errors in CI output. A quiet mock replaces THAT stub only (a real implementation is left
+// alone), once per file, before the file loads. Suites that model scrolling still install their own and
+// restore whatever they captured, which is now this. Pinned by testScrollToDefault.test.js.
+// The stub is recognised on the JSDOM instance's own window (vitest exposes it as window.jsdom): the
+// global copy is a bound function whose source reads "[native code]".
+if (typeof window !== 'undefined') {
+  const jsdomWindow = (window as unknown as { jsdom?: { window?: Window } }).jsdom?.window;
+  if (/notImplemented/.test(String(jsdomWindow?.scrollTo ?? window.scrollTo))) {
+    window.scrollTo = vi.fn() as unknown as typeof window.scrollTo;
+  }
+}
 
 // OPS-FLAKEFAMILYWIDER-001. Testing Library's stock 1000ms waitFor budget is an IDLE-MACHINE figure,
 // and this suite is 792 files wide — when several run in parallel (or several agent lanes run at
