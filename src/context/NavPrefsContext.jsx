@@ -57,8 +57,13 @@ import { onReconnect } from '../lib/reconnect.js'
 //     `touched` makes the pins theirs: a later landing — including the editor's own re-read, which can
 //     join a GET that left BEFORE the save — never rewrites the bar cache.
 //   - Pins are saved as a WHOLE list, so a session that has never learned the server's list (no owned
-//     cache, no fresh read yet) cannot save one: a tap then answers 'error' rather than overwrite the
-//     server's pins with a list built from nothing.
+//     cache, no fresh read yet) cannot save one: a tap then answers 'not-loaded' rather than overwrite
+//     the server's pins with a list built from nothing — AND GOES TO GET THE LIST (QA RE-1). Prefs are
+//     otherwise read once per identity, so without that re-read a failed or SW-served boot read left
+//     pinning impossible until the next cold start, which on a backgrounded PWA can be days. The refused
+//     tap and the `online` event both re-read while the list is unknown; the prefs client's single-
+//     flight latch folds them into any read already in flight, and the next tap after a fresh landing
+//     saves on top of the server's list.
 
 export const BAR_LAYOUT_CACHE_KEY = 'nav.barLayout.v1'
 export const MORE_PINS_CACHE_KEY = 'nav.morePins.v1'
@@ -66,8 +71,9 @@ export const MORE_PINS_PENDING_KEY = 'nav.morePins.pending.v1'
 
 // api.js's SW offline-cache marker, read through the global Symbol registry rather than by importing
 // isFromCache — the dependency-free seam dataCache.js and HarvestExportSheet.jsx already use.
+// Exported for AdminConfig, which must not treat such a body as the server's value either.
 const FROM_CACHE = Symbol.for('garden-app.fromCache')
-const servedFromCache = (v) => !!v && typeof v === 'object' && v[FROM_CACHE] === true
+export const servedFromCache = (v) => !!v && typeof v === 'object' && v[FROM_CACHE] === true
 
 // try/catch per the house convention (clientPrefs.js): an unavailable or throwing localStorage
 // degrades to "no cache", never to an error on the nav's render path.
@@ -144,7 +150,7 @@ const NavPrefsContext = createContext(DEFAULT)
 export function NavPrefsProvider({ children }) {
   const { user } = useAuth()
   const userId = user?.id ?? null
-  const { prefs, prefsLoaded } = usePrefs()
+  const { prefs, prefsLoaded, refreshPrefs } = usePrefs()
   const { getToken } = useApiFetch()
   // Read at call time, never captured — same reasoning as PrefsProvider's tokenRef.
   const tokenRef = useRef(getToken)
@@ -211,9 +217,17 @@ export function NavPrefsProvider({ children }) {
     sendPins(cur.pins, cur.confirmed ?? cur.pins)
   }, [sendPins])
 
-  // Launch re-send, once per session, and on every reconnect.
+  // While this session has never learned the server's pin list, go and get it (QA RE-1). Prefs are
+  // otherwise read once per identity. refreshPrefs goes through fetchNotificationPrefs, whose
+  // single-flight latch joins any read already in flight, so repeated triggers cost one request.
+  const learnPins = useCallback(() => {
+    const cur = live.current
+    if (cur.userId && !cur.pinsKnown) refreshPrefs()
+  }, [refreshPrefs])
+
+  // Launch re-send, once per session; on every reconnect, re-send and — if still unknown — re-read.
   useEffect(() => { resend() }, [s.epoch, resend])
-  useEffect(() => onReconnect(() => resend()), [resend])
+  useEffect(() => onReconnect(() => { resend(); learnPins() }), [resend, learnPins])
 
   // Fold in each NEW prefs object, once. A failed read (null) changes nothing: the caches stand.
   useEffect(() => {
@@ -234,8 +248,13 @@ export function NavPrefsProvider({ children }) {
     }
     const server = resolvePins(prefs.more_pins)
     if (!cur.touched) {
-      // Nothing local to protect: the server's list is the list.
+      // Nothing local to protect: the server's list is the list. And nothing of THIS person's is
+      // pending, so a pending stamp still on the phone is another session's leftover — possibly this
+      // person's own, from before someone else used the phone. It can only ever re-send a list this
+      // cache no longer holds, over a newer server list (QA RE-2: A → B → A without sign-out, then an
+      // edit on another device), so it goes with the old cache.
       writePinsCache(cur.userId, server)
+      writePending(cur.userId, false)
       Object.assign(patch, { pins: server, confirmed: server })
     } else if (cur.confirmed == null) {
       // A local change is pending: keep it on screen, remember the server's copy as the rollback
@@ -256,15 +275,16 @@ export function NavPrefsProvider({ children }) {
     commit({ barRaw: raw ?? null, barAdopted: true, barTouched: true })
   }, [commit])
 
-  // → 'pinned' | 'unpinned' | 'full' | 'error'. The button changes before this resolves.
+  // → 'pinned' | 'unpinned' | 'full' | 'not-loaded' | 'error'. The button changes before this resolves.
   const togglePin = useCallback(async (id) => {
     if (typeof id !== 'string' || !MORE_PIN_ID_RE.test(id)) return 'error'
     const cur = live.current
     // Nobody signed in: there is no row to save to and no owner to stamp a cache with.
     if (!cur.userId) return 'error'
     // The list is saved WHOLE. Until this session knows the server's list — an owned launch cache, or
-    // a fresh read — a save would replace the person's real pins with a list built from nothing.
-    if (!cur.pinsKnown) return 'error'
+    // a fresh read — a save would replace the person's real pins with a list built from nothing. So
+    // this tap saves nothing, says so in its own words, and sends for the list.
+    if (!cur.pinsKnown) { learnPins(); return 'not-loaded' }
     const wasPinned = cur.pins.includes(id)
     if (!wasPinned) {
       const moved = resolveBarLayout(cur.barRaw).moved
@@ -278,7 +298,7 @@ export function NavPrefsProvider({ children }) {
     const res = await sendPins(next, cur.pins)
     if (res && !res.ok && res.status > 0 && res.status < 500) return 'error'
     return wasPinned ? 'unpinned' : 'pinned'
-  }, [commit, sendPins])
+  }, [commit, sendPins, learnPins])
 
   const isPinned = useCallback((id) => s.pins.includes(id), [s.pins])
 
