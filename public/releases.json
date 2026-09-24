@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.148.0",
+    "date": "2026-09-24",
+    "highlights": [
+      "Pin the pages you use most to the top of More (tap the pin beside any row, up to 4), and the tab-bar editor can now move Garden, Harvests or Put-Up into More, for your own bar only."
+    ]
+  },
+  {
     "version": "4.147.0",
     "date": "2026-09-24",
     "highlights": [
