@@ -38,6 +38,7 @@ import { Toast } from '../components/forms'
 // Direct import, NOT via the forms barrel: formsPrimitivesFreeze.test.js pins the barrel's export
 // set exactly, and this offset constant is layout plumbing rather than a frozen primitive.
 import { TOAST_BOTTOM } from '../components/forms/Toast.jsx'
+import { T } from '../components/forms/formStyles.js'
 
 const ToastCtx = createContext(null)
 
@@ -189,6 +190,21 @@ export function ToastProvider({ children }) {
   )
 }
 
+// ── TAP TARGETS (BUG-UNDOTOASTTAPTARGET-001, 2026-09-24) ─────────────────────────────────────────
+// Undo measured 62x28 at Dave's 426x836 (its border box WAS the pill), under Android's 48dp; × was
+// 23x20. A 48px-tall visible button would add 20px to every toast and 60px to a full stack of three,
+// burying another row of Today's list under the layer. So each control's BOX is the target and the
+// pill is drawn inside it: the box is TOAST_TAP_TARGET tall, and a negative vertical margin equal to
+// the toast's vertical padding hands the extra back to the layout — the box reaches into the padding
+// instead of pushing it out. The toast is exactly as tall as before, and a one-line toast is one 48px
+// row that both controls span top to bottom. × keeps its glyph where it was and also takes the toast's
+// right padding, dead space until now, as width. The gap between the two is deliberately NOT spent:
+// a tap that misses Undo must land on nothing rather than on ×, which throws the undo away.
+// Measured before/after by scripts/layout-gate/undo-toast-target.mjs (tests/harness/undotap.*).
+const TOAST_TAP_TARGET = T.buttonMinHeight
+const TOAST_PAD_Y = 10
+const TOAST_PAD_RIGHT = 14
+
 // Operational undo toast (mirrors the retired Dashboard-local UndoToast, now global).
 function UndoToast({ toast, onUndo, onDismiss }) {
   // onDismiss lives in a ref so the timer depends only on (duration, nonce). As an effect dep it
@@ -205,7 +221,8 @@ function UndoToast({ toast, onUndo, onDismiss }) {
   return (
     <div role="status" style={{
       // Position and spacing belong to the container; this is a plain flow child.
-      backgroundColor: P.dark, color: P.white, borderRadius: 10, padding: '10px 14px 10px 18px',
+      backgroundColor: P.dark, color: P.white, borderRadius: 10,
+      padding: `${TOAST_PAD_Y}px ${TOAST_PAD_RIGHT}px ${TOAST_PAD_Y}px 18px`,
       boxShadow: '0 6px 18px rgba(0,0,0,0.3)', fontSize: '0.88rem',
       display: 'flex', alignItems: 'center', gap: 14, maxWidth: '100%',
       // The container is pass-through; Undo and × must still be tappable.
@@ -219,14 +236,23 @@ function UndoToast({ toast, onUndo, onDismiss }) {
           <span style={{ fontSize: '0.78rem', opacity: 0.85 }}>{toast.detail}</span>
         )}
       </span>
+      {/* The button is the invisible 48px target; the span is the pill the eye sees (TAP TARGETS). */}
       <button type="button" onClick={onUndo} style={{
-        background: 'transparent', color: P.greenLight, border: `1px solid ${P.greenLight}`,
-        borderRadius: 6, padding: '5px 12px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer',
-        flexShrink: 0,
-      }}>Undo</button>
+        background: 'transparent', color: P.greenLight, border: 'none', padding: 0,
+        minHeight: TOAST_TAP_TARGET, minWidth: TOAST_TAP_TARGET, margin: `-${TOAST_PAD_Y}px 0`,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', flexShrink: 0,
+      }}>
+        <span style={{ border: `1px solid ${P.greenLight}`, borderRadius: 6, padding: '5px 12px' }}>Undo</span>
+      </button>
+      {/* 6px left/right is the UA button padding the glyph always sat in; the right side adds the
+          toast's own padding and the negative margin gives it back, so the glyph does not move. */}
       <button type="button" onClick={onDismiss} aria-label="Dismiss" style={{
         background: 'transparent', color: P.white, border: 'none', fontSize: '1.1rem', cursor: 'pointer',
         lineHeight: 1, flexShrink: 0,
+        minHeight: TOAST_TAP_TARGET, padding: `0 ${6 + TOAST_PAD_RIGHT}px 0 6px`,
+        margin: `-${TOAST_PAD_Y}px -${TOAST_PAD_RIGHT}px -${TOAST_PAD_Y}px 0`,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       }}>×</button>
     </div>
   )

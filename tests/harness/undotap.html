@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Viewport copied from ./index.html for the same reason it is copied there. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Undo toast — tap targets and stack clearance, real browser</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #faf8f3; }
+      #verdict {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 99999;
+        font: 11px/1.4 ui-monospace, monospace; color: #fff; background: #2d6a4f; padding: 4px 8px; white-space: pre-wrap;
+      }
+      /* 16px sides = Today's own container (src/pages/Today.jsx: padding 16), as in careskip.html. */
+      #root { padding: 60px 16px 80px; }
+      /* Stand-in for BottomNav: its height and z-index only (README Limits #4). The height is set from
+         BOTTOM_NAV_HEIGHT_PX in undotap.jsx, the same constant the real nav reads. */
+      #nav { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #e4ded1;
+             z-index: 100; display: flex; align-items: center; justify-content: space-around; font: 11px system-ui; color: #2d6a4f; }
+    </style>
+  </head>
+  <body>
+    <div id="verdict">booting…</div>
+    <div id="root"></div>
+    <div id="nav"><span>Today</span><span>Garden</span><span>＋</span><span>Harvests</span><span>More</span></div>
+    <script type="module" src="/tests/harness/undotap.jsx"></script>
+  </body>
+</html>
