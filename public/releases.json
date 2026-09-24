@@ -5,8 +5,8 @@
     "highlights": [
       "Seeds: Sow this on a packet's page opens the same sow form as Sow now, and Edit sow details opens the variety's sow settings. Sow now's dead ends now lead somewhere.",
       "Seed saved off an F1 plant now says F2 — won't come true, on My seeds, Saved seeds and the packet page.",
-      "A packet's page lists the plantings sown from it. Saved seeds gains a Not started group, and its parent-plant names, seed-saved events and search results open the right page.",
-      "Variety editor: varieties added by the app's own scripts can be edited again, and a read-only variety now looks read-only."
+      "A packet's page lists the plantings sown from it. Saved seeds gains a Not started group, its parent-plant names and seed-saved events open the right page, and search lists seed under its own Seeds heading.",
+      "Variety editor: varieties added by the app's own scripts can now be edited, and a read-only variety now looks read-only."
     ]
   },
   {
