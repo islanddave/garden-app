@@ -1479,20 +1479,31 @@ export default function VoiceHarvest({ embedded = false } = {}) {
 
   // A one-breath sentence whose split is not unique, or whose name is too vague, or whose numbers
   // cannot be read: refused LOUDLY — reject haptic, a banner saying why, a miss row quoting what was
-  // heard. One that named a planting also unselects the old crop, as a failed search does, so a later
-  // "next" cannot save a record he had moved on from; the held number goes with it, said. A refused
-  // sentence of numbers only changes nothing.
+  // heard. A refused sentence of numbers only changes nothing.
+  //
+  // QA F10 — ONE THAT NAMED A PLANTING CLEARS THE WHOLE RECORD, AND SAYS WHAT WENT. It already unselected
+  // the old crop (as a failed search does) but KEPT the amounts, so "Suyo Long", "3 count", "danvers 126
+  // 200" (refused), "danvers 126", "next" saved Danvers 126 Carrot · 3 count — a count said for Suyo
+  // Long, under a crop he named afterwards, with the reselect banner saying only "now say the count or
+  // the weight" (QA probe P7). Of the two ways to close that — keep the amounts and name them at the
+  // reselect, or clear them — clearing is the one that CANNOT save them under a different crop at all.
+  // What is cleared is said on the banner and in a miss row, so nothing he spoke vanishes unannounced.
   const refuseBareOneBreath = useCallback((d, info, heard) => {
     cue(hapticDigitRejected)
     let droppedNote = ''
     if (!info.nameless) {
-      setSelected(null); selectedRef.current = null
+      const crop = selectedRef.current ? (selectedRef.current.name || selectedRef.current.variety_ref?.name) : null
+      const amounts = [qtyRef.current, weightRef.current].filter(Boolean).map((v) => `${v.value} ${v.unit}`)
       const held = heldNumRef.current
       if (held != null) {
-        heldNumRef.current = null; setHeldNum(null)
         noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
-        droppedNote = ` (dropped ${held} — no unit was said)`
+        droppedNote += ` (dropped ${held} — no unit was said)`
       }
+      if (amounts.length) {
+        noteMiss(`Cleared ${amounts.join(' · ')}${crop ? ` for ${crop}` : ''} — the record was started over after a sentence that could not be read.`)
+        droppedNote += ` (cleared ${amounts.join(' · ')})`
+      }
+      clearRecord()
     }
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath-bare refused (${d.reason}) <- ${JSON.stringify(heard)}`)
     if (d.reason === 'crowded') {
@@ -1506,7 +1517,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       : 'the name and the numbers could be split more than one way — say the planting, then the amounts'
     say('warn', `Didn't catch that — ${why}.${droppedNote}`)
     noteMiss(`Didn't catch that — heard “${heard}”.`)
-  }, [cue, noteMiss, say])
+  }, [clearRecord, cue, noteMiss, say])
 
   // ── V5-VOICEONEBREATH-002: a trailing command rides on the record it follows ────────────────────
   //

@@ -336,13 +336,18 @@ describe('V5-VOICEVOCAB-001 — one breath against the real planting names', () 
     ['peach tree 200'], ['suyo long to 165'], ['okra 80 200'],
   ])('%j is refused — the name and the numbers split more than one way', async (said) => {
     const rec = await startListening(VOCAB)
-    for (const line of ['Suyo Long', '3 count', said, 'next']) await speak(rec, line)
+    for (const line of ['Suyo Long', '3 count']) await speak(rec, line)
+    await speak(rec, said)
+    await speak(rec, 'next')
     await settle()
     expect(posts()).toEqual([])
-    expect(misses()).toContain(`Didn't catch that — heard “${said}”.`)
-    // The sentence named a planting, so the old crop does not stay selected behind the refusal —
-    // the "next" after it cannot save Suyo Long's record.
-    expect(misses()).toContain('Not saved — still need a crop.')
+    // The sentence named a planting, so the record it could not read is not left standing behind the
+    // refusal — neither the crop nor (QA F10) its amounts — and the "next" after it saves nothing.
+    expect(misses()).toEqual([
+      'Cleared 3 count for Suyo Long — the record was started over after a sentence that could not be read.',
+      `Didn't catch that — heard “${said}”.`,
+      'Not saved — still need a crop and a quantity.',
+    ])
   })
 
   // DEFENSIVE, and said so: a homophone that is not the planting's own is caught for a name ENDING in
@@ -752,5 +757,48 @@ describe('QA F4 — a held number shows where it will land, marked as assumed', 
     expect(record()).toContain('Weight231 g')
     expect(record()).not.toContain('85')
     expect(statusText()).toContain('both filled')
+  })
+})
+
+// ── QA F10 — a refused NAMED one-breath clears the record it abandons, and says what went ──────────
+//
+// QA probe P7: "Suyo Long", "3 count", "danvers 126 200" (refused), "danvers 126", "next" SAVED Danvers
+// 126 Carrot · 3 count — a count said for Suyo Long, under a crop named afterwards, while the reselect
+// banner said only "now say the count or the weight". Decision: the refusal clears the amounts along with
+// the crop (it already dropped the crop), because clearing is the option that cannot save them under a
+// different crop at all; what is cleared is said on the banner and in a miss row.
+describe('QA F10 — a refused named sentence cannot carry old amounts onto the next crop', () => {
+  it('P7: the 3 count said for Suyo Long is cleared and said, and cannot save under Danvers', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '3 count', 'danvers 126 200']) await speak(rec, line)
+    expect(statusText()).toBe("Didn't catch that — the name and the numbers could be split more than one way — say the planting, then the amounts. (cleared 3 count)")
+    expect(record()).toContain('Crop—')
+    expect(record()).toContain('Quantity—')
+    await speak(rec, 'danvers 126')
+    expect(statusText()).toBe('Danvers 126 Carrot — now say the count or the weight.')
+    await speak(rec, 'next')
+    await settle()
+    expect(posts()).toEqual([])
+    expect(misses()).toEqual([
+      'Cleared 3 count for Suyo Long — the record was started over after a sentence that could not be read.',
+      "Didn't catch that — heard “danvers 126 200”.",
+      'Not saved — still need a quantity.',
+    ])
+  })
+
+  it('a refused crowded name clears too, and offers the plantings to pick from', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '3 count', '231 grams', 'super sweet 100 3 200']) await speak(rec, line)
+    expect(statusText()).toBe('2 match “super sweet 100” — tap one, then say the amounts again. (cleared 3 count · 231 g)')
+    expect(record()).toContain('Quantity—')
+    expect(record()).toContain('Weight—')
+    expect(screen.getByTestId('voice-harvest-candidates').textContent).toContain('Super Sweet 100 Rescue')
+  })
+
+  it('a refused sentence of numbers only changes nothing — the control', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '3 count', 'ten five']) await speak(rec, line)
+    expect(record()).toContain('Suyo Long')
+    expect(record()).toContain('Quantity3 count')
   })
 })
