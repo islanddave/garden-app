@@ -74,7 +74,15 @@ describe('DELETE /inventory-items/:id — POSITIVE CONTROLS: what belongs to the
   });
 
   it('a saved-seed lot with its processing history deletes (200) — stage rows are born with every lot and nothing can remove them', async () => {
-    stubState.sqlHandler = routeSql(itemRow({ seed_lot_stage_log: 3, photos: 1 }));
+    stubState.sqlHandler = routeSql(itemRow({ seed_lot_stage_log: 3 }));
+    const { status, body } = parse(await handler(del()));
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true });
+    expect(stubState.sqlCalls.filter(isSoftDelete)).toHaveLength(1);
+  });
+
+  it('an item with its photo AND its stage rows, nothing sown or applied from it, deletes (200)', async () => {
+    stubState.sqlHandler = routeSql(itemRow({ photos: 1, seed_lot_stage_log: 2 }));
     const { status, body } = parse(await handler(del()));
     expect(status).toBe(200);
     expect(body).toEqual({ ok: true });
