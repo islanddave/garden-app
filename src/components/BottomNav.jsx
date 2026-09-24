@@ -52,9 +52,14 @@ import { layoutMoreSheet, rowPinnable } from '../lib/moreRegistry.js'
 // never bound TABS; the only cap the tab bar ever had was the slot count pinned in BottomNav.test.
 // Plain <Link>, NOT OverlayLink — the More row was `overlay` (a flyover over whatever page you were
 // already on), and a flyover is precisely what a landing page is not. /put-up keeps
-// `overlayable: true` in App.jsx, so the three PREFILL doors that need the flyover keep it
-// (EventNew PreserveOffer, PutUpFromPlanting, PutUpUseSoonBand). PutUp already defaults a BARE open
-// to its 'stores' view, so the tab lands on "what have I got", not on an empty form.
+// `overlayable: true` in App.jsx for the one door that opens it as a flyover: Today's
+// PutUpUseSoonBand (overlayNavigate). PutUpFromPlanting's "Log a put-up from this planting" is a plain
+// react-router <Link> carrying a prefill — a PAGE navigation, not a flyover — and EventNew's
+// PreserveOffer, once a third door, was deleted (V4-PRESERVEOFFERKILL-001). Since V5-NAVCUSTOM-001
+// /put-up is in ROOT_TABS, so as a page it carries the root header (no Back arrow) whichever door
+// opened it, PutUpFromPlanting and the freezer walk (?session=putup) included: Android Back still
+// works and the walk has its own exits. Accepted (regression seat M1). PutUp already defaults a BARE open to its
+// 'stores' view, so the tab lands on "what have I got", not on an empty form.
 // V5-ADMINCENTER-001 moved THE FIVE ROWS THAT USED TO BE HERE into src/lib/navConfig.js.
 // V5-NAVCUSTOM-001 made the bar PER PERSON (D4, Dave 2026-09-24: "only my bar changes" — this
 // reverses the 2026-09-08 one-global-order ruling). The slots come from useNavLayout(): this person's
