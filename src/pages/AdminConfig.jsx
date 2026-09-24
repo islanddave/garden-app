@@ -104,10 +104,16 @@ export default function AdminConfig() {
   const { prefs, prefsLoaded, refreshPrefs } = usePrefs()
   const { layout: current, canEditBar, applyLayout } = useNavLayout()
 
+  // A 200 on this visit's own Save IS the server's value — the PATCH stored exactly that layout — so it
+  // stays the editor's server value for the rest of the visit, whatever the re-read after it returns.
+  // A failed re-read (null) must not turn a saved bar into "could not be read" and disable Save for
+  // good (QA MINOR-1), and a re-read that joined a GET issued BEFORE the Save must not roll the editor
+  // back to the old bar (regression M5; the bar cache has the same guard in NavPrefsContext).
+  const [savedLayout, setSavedLayout] = useState(null)
   // What the server holds, once read. Until then the editor shows the bar this device is drawing.
   const serverLayout = useMemo(
-    () => (prefsLoaded && prefs ? resolveBarLayout(prefs.bar_layout) : null),
-    [prefs, prefsLoaded],
+    () => savedLayout ?? (prefsLoaded && prefs ? resolveBarLayout(prefs.bar_layout) : null),
+    [savedLayout, prefs, prefsLoaded],
   )
   const base = serverLayout ?? current
   // null until the person edits: an untouched editor follows the server value as it arrives.
@@ -134,7 +140,7 @@ export default function AdminConfig() {
     hidden: inBar ? d.hidden.filter(k => k !== key) : (d.hidden.includes(key) ? d.hidden : [...d.hidden, key]),
   })), [edit])
 
-  const readFailed = prefsLoaded && !prefs
+  const readFailed = prefsLoaded && !prefs && !savedLayout
   const dirty = serverLayout ? !sameLayout(shown, serverLayout) : draft != null
   const canSave = !!serverLayout && dirty && status !== 'saving'
 
@@ -144,6 +150,7 @@ export default function AdminConfig() {
     const res = await saveBarLayout({ getToken, layout })
     if (res.ok) {
       applyLayout(layout)
+      setSavedLayout(resolveBarLayout(layout))
       await refreshPrefs()
       setDraft(null)
       setStatus({ ok: true, detail: 'Saved. Your tab bar has changed.' })

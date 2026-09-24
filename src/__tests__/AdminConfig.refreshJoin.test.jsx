@@ -115,6 +115,10 @@ describe('M5 — the editor’s re-read joins a GET that left before the Save', 
     expect(gets).toBe(2)
     expect(screen.getByTestId('live-bar').textContent).toBe('today,create,harvests,put-up')
     expect(cachedLayout()).toEqual(SAVED)
+    // …and the editor (QA MINOR-1's guard) still shows what was saved, not the joined pre-save row.
+    // KILLING MUTATION: drop AdminConfig's savedLayout override. RESULT: RED — Garden re-ticked.
+    expect(screen.getByLabelText('Garden in bar').checked).toBe(false)
+    expect(screen.getByRole('status').textContent).toBe('Saved. Your tab bar has changed.')
   })
 
   // Negative control from the seat's probe: with nothing in flight the re-read is its own GET, issued

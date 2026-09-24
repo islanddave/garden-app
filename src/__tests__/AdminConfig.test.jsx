@@ -268,6 +268,35 @@ describe('the write', () => {
   })
 })
 
+// QA MINOR-1 — the re-read AFTER a successful Save. The PATCH's 200 means the server stored exactly the
+// saved layout, so that is the editor's server value for the rest of the visit, whatever the re-read
+// returns. KILLING MUTATIONS: drop the savedLayout override of serverLayout; let readFailed ignore it.
+// RESULT: RED — "Saved" and "could not be read" together, the old bar back in the editor, Save dead.
+describe('after a successful Save, the re-read cannot take the saved bar away', () => {
+  it('a FAILED re-read: no "could not be read", the saved bar stays, and Save still works', async () => {
+    await open()
+    fireEvent.click(inBar('Garden'))
+    fetchPrefsSpy.mockResolvedValue(null)                 // the re-read fails
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(screen.getByRole('status').textContent).toBe('Saved. Your tab bar has changed.')
+    expect(screen.queryByTestId('bar-read-failed')).toBeNull()
+    expect(inBar('Garden').checked).toBe(false)
+    expect(saveButton().disabled).toBe(true)             // nothing changed since the save…
+    fireEvent.click(inBar('Harvests'))
+    expect(saveButton().disabled).toBe(false)            // …and Save did not die
+  })
+
+  it('an OLDER re-read (a GET that left before the Save) does not roll the editor back', async () => {
+    await open()
+    fireEvent.click(inBar('Garden'))
+    fetchPrefsSpy.mockResolvedValue(prefs(null))          // the pre-save row
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(inBar('Garden').checked).toBe(false)
+    expect(saveButton().disabled).toBe(true)
+    expect(preview()).toEqual(['today', 'create', 'harvests', 'put-up', 'more'])
+  })
+})
+
 describe('reachability (the gate this surface was placed to inherit)', () => {
   const ROOT = path.resolve(__dirname, '../..')
 
