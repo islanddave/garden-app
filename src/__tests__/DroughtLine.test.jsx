@@ -1,12 +1,10 @@
 // V5-DROUGHTSPACE-001 — the garden-wide drought line, rendered.
 //
-// ⚠ THIS SUITE CANNOT PROVE THE WIRING, AND SAYS SO RATHER THAN IMPLYING OTHERWISE.
-// FrostAlertLine.test.jsx's sibling block mounts Today.jsx with a plan-shaped payload precisely because
-// the likeliest failure of a line like this is being mounted on the wrong prop path and rendering
-// nothing forever while every test stays green. Today.jsx was outside this lane's write scope, so
-// DroughtLine is NOT MOUNTED anywhere and there is no Today render to assert against. What follows
-// covers the component in isolation only. The mount, and a Today-level test alongside it, are the
-// remaining work — see the header of DroughtLine.jsx.
+// This suite covers the component in isolation only. The wiring — the likeliest failure of a line like
+// this is being mounted on the wrong prop path and rendering nothing forever while every test stays
+// green — is proved by src/__tests__/DroughtTodayEndToEnd.test.jsx (engine -> stored row ->
+// daily-plan-read -> the real Today page) and TodayDroughtMount.test.js. An earlier header here said
+// DroughtLine was NOT MOUNTED; Today.jsx mounts it since f11707f5 (2026-09-08).
 import React from 'react'
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'

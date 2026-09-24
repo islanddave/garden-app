@@ -4,13 +4,11 @@
 // per-plant hook because the dryness is measured per Space and is identical for every planting in it,
 // and because that is how he noticed the problem — the GARDEN was dry, not one blueberry.
 //
-// ⚠ NOT MOUNTED. Today.jsx was outside this lane's write scope, so nothing renders this yet. The mount
-// is one import plus one element, next to the other two ambient weather lines:
-//     import DroughtLine from '../components/today/DroughtLine.jsx'
-//     <DroughtLine plan={plan} />
-// Until that lands this component is inert — stated here rather than discovered later, because
-// "shipped but never rendered" is the failure this project keeps hitting (the per-plant drought note
-// shipped into dormancy_suppressed, which src/lib/careNeeded.js's NEED_ORDER does not read).
+// MOUNTED in src/pages/Today.jsx as <DroughtLine plan={plan} /> (f11707f5, 2026-09-08), next to the other
+// ambient weather lines. An earlier header here said "NOT MOUNTED"; that stopped being true at that
+// commit. src/__tests__/DroughtTodayEndToEnd.test.jsx drives the whole chain (engine -> stored row ->
+// daily-plan-read -> Today) on real rain data, so "never fired" cannot hide "cannot fire"
+// (BUG-DROUGHTNEVERFIRED-001: it had simply never had a 20-day run to fire on).
 //
 // PROP IS THE WHOLE PLAN, NOT plan.drought. daily-plan-read returns the stored items payload verbatim
 // as `plan`, and the likeliest failure of a line like this is being mounted on the wrong prop path and
