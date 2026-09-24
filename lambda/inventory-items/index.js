@@ -23,6 +23,9 @@ import { VALID_SOURCE_KINDS } from './source-kinds.js';
 // it adopts the negotiated-gzip responder the plants list uses (V4-APIGZIP-001). Per-dir copy for the
 // packaging reason lambda/http-response.js gives; http-response-copies-sync.test.js guards the bytes.
 import { jsonResponder } from './http-response.js';
+// BUG-INVREFSTRAND-001 — the pre-delete reference check. Its own module because the DELETE arm is the
+// only caller and the relation list is shared vocabulary with migrations/v5-invrefstrand-001.
+import { deletePreflight, blockingMessage } from './delete-guard.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 const s3 = new S3Client({
@@ -1284,6 +1287,23 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
+        // BUG-INVREFSTRAND-001 (option C). The FKs on this table cannot protect it — the delete below is
+        // an UPDATE, and an FK guards DELETEs — so without this check a delete strands whatever was
+        // grown from the item or applied from it, and answers 200. delete-guard.js says what blocks and
+        // what does not, and why the item's own photos and stage history follow it instead.
+        const { found, category, blocking } = await deletePreflight(sql, itemId, householdIds);
+        // 404 BEFORE 409, and that ordering is the authorization boundary rather than a courtesy:
+        // answering 409 for an id the caller does not own would confirm the row exists and leak its
+        // reference counts. Same reasoning as the loadOwned* short-circuits elsewhere in this file.
+        if (!found) return resp(404, { error: 'Not found' });
+        // No override. The refusal names the way on (the Status control's "depleted"), so there is
+        // nothing a force flag would be for, and no screen would send one.
+        if (blocking.length) {
+          return resp(409, {
+            error: blockingMessage(blocking, category),
+            blocking: blocking.map(({ table, column, count }) => ({ table, column, count })),
+          });
+        }
         const rows = await sql`
           UPDATE inventory_items
           SET deleted_at = NOW()
