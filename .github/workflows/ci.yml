@@ -468,6 +468,37 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-page
 
+      - name: Seed detail page layout — packet, after a sow, F2 lot (V5-SEEDSTAB-001)
+        # The seed's own page (/inventory/:id) had no layout gate while the Seeds release gave it Sow this,
+        # the "Sown ✓ · See the planting" line, Edit sow details, the "Sown from this packet" card and the
+        # F2 breeding fact (pre-ship QA, IMPORTANT #1). tests/harness/seeddetail.{html,jsx} mounts the real
+        # InventoryDetail under the 52px top bar and 56px bottom nav stand-ins (heights read and checked)
+        # at a TRUE 360x640 and 390x844, in three states: a bought packet with two plantings in sown_from;
+        # the same page after a REAL sow (Sow this, then the sheet's Add planting, each a hit-tested tap);
+        # and a lot saved off an F1 plant, still drying.
+        # Asserts: (a) no sideways scroll; (b) every visible link, button and form control >=
+        # T.tapMinHeight and inside the viewport, hit-testing to itself on the first screen, with five
+        # NAMED exemptions printed on every run (two inline links, and three pre-existing misses outside
+        # this release: the pickers' clear ✕, the Favorite heart, Remove item); (c) the Sown-from card
+        # carries exactly the fixture's rows, each a full-width 44px+ link to its planting, inside the
+        # card and the viewport, not overflowing, and WHOLE (every text run painted inside the row), with
+        # a wrapped name at 360; (d) Sow this present on the packet, ABSENT on the in-process lot; (e) one
+        # create POST carrying the packet, the sheet closed, "Sown ✓" linking the new planting; (f) the
+        # F2 lot's Breeding reads "F2 — won't come true (parent F1 hybrid)" whole inside its card, and
+        # "Change stage in Saved seeds →" is there; (g) each seed control scrolled into the visible band
+        # hit-tests to itself. It refuses a page whose viewport, surface, chrome or fixture counts are
+        # not the ones promised.
+        # Verified non-vacuous: `npm run gate:seed-detail:probe-nothing` exits 1 on all six
+        # state/viewport pairs; and seven real regressions in src/** each red it by name — the 44px
+        # floor dropped from the Sown-from rows (row 1 renders 43px), floor and padding dropped (31px), a
+        # long planting name made nowrap (sideways scroll at 360, row not whole at 390), See the planting's
+        # floor dropped (16px), Sow this shown on a drying lot, the F2 fact reverted to "F1 hybrid", and
+        # the row made inline-flex (195px in a 294px card). NO continue-on-error, per the policy note
+        # above. ~30 s locally.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:seed-detail
+
       - name: Kitchen-batch close-out layout and band clearance (V5-KBCLOSE-001)
         # RE-WIRED 2026-09-07 after its first CI run went red and the finding was triaged to TWO
         # false positives in the pre-scroll census, both fixed in the gate rather than worked around:

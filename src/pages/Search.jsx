@@ -19,6 +19,7 @@ import { looseIncludesCropType } from '../lib/comboboxInput.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P, statusLabel } from '../lib/constants.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { T } from '../components/forms/formStyles.js'
 
 const norm = s => (s || '').toString().toLowerCase()
 const asArray = (d, key) => (Array.isArray(d) ? d : (d?.[key] ?? []))
@@ -43,11 +44,14 @@ const SERVER_MIN_LEN = 2
 const EMPTY_SERVER = { plantings: [], projects: [], locations: [], varieties: [], events: [], inventory: [], photos: [] }
 
 // Hoisted from inside Search() unchanged (same values, same keys). They close over nothing but the
-// module-level palette, and PeekCard below has to be a MODULE-scope component: while the peek is up
+// module-level palette and tokens, and PeekCard below has to be a MODULE-scope component: while the peek is up
 // the debounced server search still resolves and re-renders Search, and a component declared inside
 // the render body is a new type on every render -> remount -> the focus we just moved to the peek
 // heading is thrown on the floor mid-read.
-const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, textDecoration: 'none', marginBottom: 8 }
+// minHeight: a row with no subtitle is one line — 2x11 padding + 2x1 border + an ~18.75px line, about
+// 43px, under the tap floor. The Seeds group drops the category subtitle, so a seed row with no
+// location_text is exactly that row (V5-SEEDSTAB-001 pre-ship QA). Two-line rows are ~56px and do not move.
+const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', minHeight: T.tapMinHeight, background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, textDecoration: 'none', marginBottom: 8 }
 const nameStyle = { fontWeight: 700, color: P.dark, fontSize: '0.92rem' }
 const subStyle = { fontSize: '0.75rem', color: P.light }
 const sectionHead = { fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', color: P.mid, margin: '16px 2px 8px' }
@@ -348,7 +352,15 @@ export default function Search() {
     // while rendering nothing). Flag OFF keeps srv.projects.length in the sum (byte-identical).
     + (PROJECTS_HIDDEN ? 0 : srv.projects.length) + srv.events.length + srv.inventory.length + srv.photos.length
 
-  const Row = ({ to, name, sub, onPeek, peekLabel }) => {
+  // V5-SEEDSTAB-001 slice 2 (design V102 §8) — seed packets and saved lots get their own "Seeds" group.
+  // Seed left the Inventory page for the Seeds page, so a packet filed under "Inventory" here sent the
+  // eye to a heading that no longer holds seed anywhere else in the app. Split on the row's own
+  // `category`, which the server already returns; every other row stays under Inventory as before, and
+  // `total` above is unchanged because the two groups partition the same list.
+  const seedHits = srv.inventory.filter(it => it.category === 'seeds')
+  const inventoryHits = srv.inventory.filter(it => it.category !== 'seeds')
+
+  const Row =({ to, name, sub, onPeek, peekLabel }) => {
     const inner = (<><div style={{ flex: 1 }}><div style={nameStyle}>{name}</div>{sub && <div style={subStyle}>{sub}</div>}</div>{chev}</>)
     // No peek offered -> the historical single-element row, byte for byte. Every non-planting group
     // (locations, varieties, projects, events, inventory, photos) takes this branch untouched.
@@ -526,10 +538,19 @@ export default function Search() {
           </>
         )}
 
-        {!loading && query && srv.inventory.length > 0 && (
+        {/* In the Inventory group's slot, just ahead of it, and to the same page: a seed row opens its
+            packet or lot. The subtitle drops the category word, which the heading now says. */}
+        {!loading && query && seedHits.length > 0 && (
+          <>
+            <div style={sectionHead}>Seeds</div>
+            {seedHits.map(it => <Row key={it.id} to={`/inventory/${it.id}`} name={it.name} sub={it.location_text || null} />)}
+          </>
+        )}
+
+        {!loading && query && inventoryHits.length > 0 && (
           <>
             <div style={sectionHead}>Inventory</div>
-            {srv.inventory.map(it => <Row key={it.id} to={`/inventory/${it.id}`} name={it.name} sub={[it.category, it.location_text].filter(Boolean).join(' · ') || null} />)}
+            {inventoryHits.map(it => <Row key={it.id} to={`/inventory/${it.id}`} name={it.name} sub={[it.category, it.location_text].filter(Boolean).join(' · ') || null} />)}
           </>
         )}
 

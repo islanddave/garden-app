@@ -25,6 +25,10 @@ import { formatEntry } from '../lib/harvestSummary.js'
 // DD9 / W-EVTDEL adoption: the disclose-and-offer delete confirm (shared with ProjectDetail's
 // event rows — the two delete surfaces must stay behaviorally identical).
 import EventDeleteConfirm from '../components/photo/EventDeleteConfirm.jsx'
+// V5-SEEDSTAB-001 slice 2 — a seed_saved event's door to its lot (SeedLotAnchor below): the planting's
+// live seed lots, read the way the planting page reads them, and where a lot's door lands.
+import { useSeedLotsFromPlanting } from '../components/planting/SeedLotsFromPlanting.jsx'
+import { lotHref } from '../components/seed/seedLots.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, PlantingSelect, Sheet } from '../components/forms'
 // The same label chrome <Field> renders, for the one control on this form that cannot BE a Field.
 import { labelChrome } from '../components/forms/formStyles.js'
@@ -1067,6 +1071,36 @@ function PlantingAnchor({ event: ev }) {
   )
 }
 
+// V5-SEEDSTAB-001 slice 2 — "a seed_saved event → its lot" (design V102 §8). SaveSeedSheet writes the
+// lot's id into metadata.seed_lot_id, and METADATA_HIDDEN_KEYS keeps that raw uuid out of Details; this
+// turns it into the door it always implied. The lot is looked up among the planting's LIVE seed lots
+// (GET /api/plants/:id/seed-lots, the read the planting page makes), so a lot that was soft-deleted, or
+// no longer names this planting, resolves to nothing and the block does not render: the event reads
+// exactly as it did, never a link to a missing page. Where the door lands is lotHref's rule — Saved
+// seeds on the lot while it ferments or dries, else the lot's own page. Same grammar as PlantingAnchor.
+function SeedLotAnchor({ event: ev }) {
+  const { fetch } = useApiFetch()
+  const { lots } = useSeedLotsFromPlanting(ev.plant_id, fetch)
+  const lot = lots.find((l) => String(l.id) === String(ev.metadata.seed_lot_id)) ?? null
+  const to = lot ? lotHref(lot) : null
+  if (!to) return null
+  return (
+    <div data-testid="event-seed-lot">
+      <FieldLabel>Seed lot</FieldLabel>
+      <div style={{ fontSize: T.type.md, fontWeight: 600, color: P.dark, lineHeight: 1.4 }}>
+        <Link
+          to={to}
+          data-testid="event-seed-lot-link"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minHeight: T.tapMinHeight, color: P.green, textDecoration: 'none' }}
+        >
+          <Icon name="event.seed_saved" size={17} decorative style={{ color: P.greenLight, flexShrink: 0 }} />
+          {lot.name || 'Untitled seed lot'}
+        </Link>
+      </div>
+    </div>
+  )
+}
+
 // The harvest readout — the block this ticket exists for. Two axes, in the order the rest of the app
 // puts them: the NATIVE-unit amount is the headline ("6 zucchini" is what was picked), grams are the
 // second axis (Harvests.jsx:387-393, PlantingDetail's HarvestWeightChip).
@@ -1254,6 +1288,7 @@ function EventFields({ event: ev }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
       <PlantingAnchor event={ev} />
+      {ev.metadata?.seed_lot_id != null && !!ev.plant_id && <SeedLotAnchor event={ev} />}
       {isHarvestRead && <HarvestReadout harvest={ev.harvest} />}
       {rows.map(([label, value]) => (
         <div key={label}>

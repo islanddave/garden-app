@@ -180,10 +180,11 @@ const linkLine = (a) => a.querySelector('[aria-hidden="true"]')?.textContent
 const labelTexts = () => Array.from(document.querySelectorAll('label')).map(l => l.textContent.trim())
 
 describe('the packet card — seeds only, right under the title', () => {
-  it('sits between the title and the Plant-from-packet CTA', async () => {
+  // V5-SEEDSTAB-001 slice 2a: the CTA under the card is "Sow this" (it was "Plant from this packet").
+  it('sits between the title and the Sow this CTA', async () => {
     await renderPage(PEPPER)
     const h1 = screen.getByRole('heading', { level: 1 })
-    const cta = screen.getByLabelText('Plant from Carolina Reaper')
+    const cta = screen.getByLabelText('Sow this: Carolina Reaper')
     expect(h1.compareDocumentPosition(card()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(card().compareDocumentPosition(cta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
@@ -378,6 +379,16 @@ describe('the packet card — facts, in one fixed order, with the row\'s words',
       ['Days to maturity', '80 days from sowing'],
       ['Breeding', 'F1 hybrid'],
     ])
+  })
+
+  // V5-SEEDSTAB-001 slice 3 — the packet card reads the same vocabulary as My seeds' expanded row, so a
+  // jar of seed saved off an F1 plant is not called "F1 hybrid" here either.
+  it('a lot saved off an F1 plant reads F2 from an F1 parent in Breeding; the bought F1 packet keeps "F1 hybrid"', async () => {
+    const { unmount } = await renderPage({ ...PEPPER, breeding_system: 'f1', seed_stage: 'stored', source_plant_id: 'pl-1' })
+    expect(Object.fromEntries(factRows()).Breeding).toBe('F2 — won’t come true (parent F1 hybrid)')
+    unmount()
+    await renderPage({ ...PEPPER, breeding_system: 'f1' })
+    expect(Object.fromEntries(factRows()).Breeding).toBe('F1 hybrid')
   })
 
   it('"unknown" breeding and an unset maturity basis state nothing they do not know', async () => {

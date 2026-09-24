@@ -1,7 +1,9 @@
 // Garden PlantingEditor — V3-IA merge coverage. The add/edit/delete machinery that
 // lived in the retired Plants page now opens inside Garden via query params:
 //   ?add=1 (FAB create sheet) · ?edit=<id> (PlantingDetail V3-EDIT-001) ·
-//   ?source_inventory_item_id/&variety_id (InventoryDetail plant-from-packet).
+//   ?source_inventory_item_id/&variety_id (InventoryDetail plant-from-packet until V5-SEEDSTAB-001
+//   slice 2a; since then no in-app door produces it — the reader is KEPT for typed/bookmarked URLs, and
+//   so are its tests below, which still guard it).
 // Wire-contract assertions (dual-write variety, planting-details union, COALESCE PUT)
 // ported from the old Plants.test.jsx.
 //
@@ -19,6 +21,8 @@ import { MemoryRouter } from 'react-router-dom'
 import { renderWithRouter, currentParams, navigateTo, resetRouterHarness } from './helpers/routerHarness.jsx'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
 import { readMarker } from '../lib/backNav.js'
+import { renderToStaticMarkup } from 'react-dom/server'
+import Icon from '../components/Icon.jsx'
 
 const { fetchSpy, getTokenSpy } = vi.hoisted(() => ({
   fetchSpy: vi.fn(),
@@ -172,6 +176,23 @@ describe('Garden — plant-from-packet deep link (InventoryDetail entry)', () =>
     expect(screen.getByText(/Black Krim seed packet/)).toBeDefined()
     await waitFor(() => expect(screen.getByTestId('vp-value').textContent).toBe('Black Krim'))
     expect(screen.getByLabelText(/Name/i).value).toBe('Black Krim seed packet')
+  })
+
+  // Spec §2 rule 9 (pre-ship QA, colour icons): the banner draws the colour registry's sprout — the glyph
+  // "Sow this" uses — never the 🌱 emoji. Held glyph-exact against <Icon> at the banner's own size, so any
+  // other svg (or a different registry icon) reds as surely as the emoji coming back.
+  it('the packet banner carries the colour registry sprout, not the 🌱 emoji', async () => {
+    primeFetch()
+    await renderGarden('source_inventory_item_id=item-seed-1&variety_id=var-1')
+    await waitFor(() => expect(screen.getByText(/Planting from/)).toBeDefined())
+    const banner = screen.getByText(/Planting from/).parentElement
+    expect(banner.textContent).not.toContain('🌱')
+    const svg = banner.querySelector('svg')
+    expect(svg).toBeTruthy()
+    expect(svg.getAttribute('aria-hidden')).toBe('true')
+    const probe = document.createElement('div')
+    probe.innerHTML = renderToStaticMarkup(<Icon name="lifecycle.sprout" size={Number(svg.getAttribute('width'))} decorative />)
+    expect(svg.innerHTML).toBe(probe.querySelector('svg').innerHTML)
   })
 
   it('POST includes source_inventory_item_id', async () => {

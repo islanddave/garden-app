@@ -16,13 +16,36 @@
 // cultivar (Dave, 2026-09-21); on a market class, blend, species or placeholder it comes back as a
 // plain-English save error in the banner below.
 //
-// The PUT is owner-only (created_by = JWT.sub). `currentUserId` gates the form into a read-only
-// state rather than letting the user type a save that will 404 — 26 of the live rows are owned by
-// intake/system subs no human can edit.
+// The PUT is household-scoped (V4-VARIETYHOUSEHOLD-001), not owner-only. `currentUserId` gates the
+// form into a read-only state rather than letting the user type a save that will 404.
+//
+// BUG-VARIETYEDITSTRICTER-001 — that gate used to read `variety.created_by === currentUserId`,
+// which was STRICTER than the server it was predicting. The PUT and DELETE in
+// lambda/varieties/index.js accept `created_by = ANY(household) OR created_by LIKE
+// ANY(managedPatterns)`, so the component refused edits the API would have taken. Measured on live
+// prod 2026-09-08 (garden_ro): 490 live cultivars, 23 of them locked out for Dave. Re-measured
+// 2026-09-23 (read-only, server rule unchanged): 497 live cultivars, all 497 in the API's editable
+// set for either household member, and the old gate locked Dave out of 25 — 24 managed-principal
+// rows (rescue-intake 15 / data-audit 5 / system 3 / data-correction 1) plus 1 row the other
+// household member created.
+// `canEditVariety` below now mirrors the managed-principal arm exactly. The household arm is NOT
+// mirrored: GARDEN_HOUSEHOLD_IDS is Lambda-side config with no VITE_ counterpart, and this
+// component does not consume the one client view of that roster (GET /api/members, useMembers).
+// So a row the OTHER household member created stays read-only here although the server would save
+// it — 1 row from Dave's side, 472 from the other member's side (2026-09-23). That residual is
+// recorded, not guessed at: an "any user_* sub is fine" predicate would be a DIFFERENT rule from
+// the server's that only coincides while the household has two members. Closing it means feeding
+// the members roster in here, or a `can_edit` flag on the GET.
+//
+// The mirror is LOOSER than the server in one place, knowingly: the server hands the managed arm
+// only to a proven household member (managedPrincipalPatterns in lambda/varieties/authz.js), and
+// the client cannot tell a member from a signed-in stranger either. A stranger sees a managed row
+// as editable and gets the server's 404 in the error banner — a refused save, never a bad row.
 
 import React, { useMemo, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from './index.js'
+import { T } from './formStyles.js'
 
 // Mirrors the CHECK constraints on plant_varieties (verified against live Neon, not migrations).
 // Duplicated rather than imported because src/ must not reach into lambda/; the server re-validates,
@@ -63,6 +86,35 @@ const FACT_SOURCE = [
 ]
 const BREEDING_SOURCE = [...FACT_SOURCE, ['inference', 'Best guess']]
 const HEAT_SOURCE = [...FACT_SOURCE, ['inference', 'Best guess (shows est.)']]
+
+// Mirrors lambda/varieties/authz.js MANAGED_PRINCIPAL_PATTERNS verbatim — the SQL `LIKE ANY` arm of
+// the PUT/DELETE predicate. Duplicated rather than imported for the same reason LIFECYCLE above is:
+// src/ must not reach into lambda/, and the server re-validates, so drift here can never write a
+// bad row. It can still lock a row the server would save (a pattern the Lambda gained and this
+// copy lacks) — the exact bug this list closes — so VarietyEditor.test.jsx reads authz.js off disk
+// and fails when the two lists differ. Kept in the SQL spelling (a trailing `%`) so a reader can
+// diff it against the Lambda by eye; `system` is an exact match there and stays one here.
+export const MANAGED_PRINCIPAL_PATTERNS = [
+  'system',
+  'rescue-intake-%',
+  'data-audit-%',
+  'data-correction-%',
+]
+
+// Only a trailing `%` appears in the patterns above — no `_`, no leading or interior wildcard — so
+// prefix/equality is a faithful LIKE, not an approximation of one.
+function matchesManagedPrincipal(createdBy) {
+  return MANAGED_PRINCIPAL_PATTERNS.some(p =>
+    p.endsWith('%') ? createdBy.startsWith(p.slice(0, -1)) : createdBy === p)
+}
+
+// The form's prediction of what the server will accept. Exported so the guard test can drive the
+// predicate directly against real prod-shaped created_by values instead of only through a render.
+export function canEditVariety(variety, currentUserId) {
+  const createdBy = variety?.created_by
+  if (!currentUserId || !createdBy) return true
+  return createdBy === currentUserId || matchesManagedPrincipal(createdBy)
+}
 
 // The field table IS the contract: it drives rendering, the form seed, and the payload build, so a
 // field cannot be displayed without also being saved (the failure mode called out in 5b430f4).
@@ -260,6 +312,7 @@ function CropTypeField({ idPrefix, value, onChange, cropTypes, onCreateCropType,
           value={value}
           onChange={e => onChange(e.target.value)}
           disabled={disabled}
+          style={disabled ? readOnlyFieldStyle : undefined}
           placeholder="— none —"
         >
           {options.map(c => <option key={c.slug} value={c.slug}>{c.display_name}</option>)}
@@ -336,7 +389,7 @@ export default function VarietyEditor({
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
 
-  const canEdit = !currentUserId || !variety?.created_by || variety.created_by === currentUserId
+  const canEdit = canEditVariety(variety, currentUserId)
   const patch = useMemo(() => buildVarietyPatch(form, variety), [form, variety])
   const dirty = !isEmptyPatch(patch)
 
@@ -364,7 +417,10 @@ export default function VarietyEditor({
 
   const renderField = ({ key, kind, label, options, placeholder, help }) => {
     const id = `${idPrefix}-${key}`
-    const common = { id, value: form[key] ?? '', onChange: set(key), disabled: !canEdit }
+    const common = {
+      id, value: form[key] ?? '', onChange: set(key), disabled: !canEdit,
+      style: canEdit ? undefined : readOnlyFieldStyle,
+    }
     let control
     if (kind === 'area') control = <Textarea rows={3} {...common} />
     else if (kind === 'enum') {
@@ -395,9 +451,11 @@ export default function VarietyEditor({
   return (
     <form onSubmit={handleSubmit} style={{ padding: '0 16px 16px' }}>
       {!canEdit && (
-        <div style={readOnlyNotice} role="status">
-          This variety was created by <strong>{variety.created_by}</strong>, not by you. The server
-          only accepts edits from the row's owner, so this form is read-only.
+        <div style={readOnlyNotice} role="status" data-testid="variety-readonly-notice">
+          <div style={readOnlyNoticeHeadline}>Read-only — you can't edit this variety here</div>
+          It was added by another account (<strong>{variety.created_by}</strong>). This screen can
+          only save a variety you added, or one the garden's own scripts added, so every value below
+          is shown but nothing you type here will save.
         </div>
       )}
 
@@ -408,6 +466,7 @@ export default function VarietyEditor({
           value={form.name}
           onChange={set('name')}
           disabled={!canEdit}
+          style={canEdit ? undefined : readOnlyFieldStyle}
           error={!form.name.trim() || undefined}
         />
       </Field>
@@ -462,10 +521,43 @@ const mintPanelStyle = {
   padding: '12px 14px', backgroundColor: P.cream,
 }
 
+// BUG-VARIETYREADONLYINVISIBLE-001 — the notice was cream fill + P.border on a cream page, at the
+// same weight as the `help` text under every Field, so it read as a hint rather than as a blocker.
+// Now the house warning surface (P.warn + P.warnBorder + a bolded headline), the same one
+// ComposeHarvestBand.jsx:404 and StorageDeadlineAlert.jsx:141 use. No new primitive: this is a
+// styled div, exactly as it was.
+//
+// The copy states what THIS SCREEN will do and never predicts the server. The old sentence ("the
+// server only accepts edits from the row's owner") had been false since V4-VARIETYHOUSEHOLD-001, and
+// "the server will refuse any change" would be false too: after the widening, the one place a
+// household member still meets this notice is a row the OTHER member created — a row the server
+// would save. The client cannot tell that row from a stranger's, so it says only what it knows.
+//
 // overflowWrap: a Clerk sub is a 32-char unbroken token and this renders one inline — without it
 // the notice pushes the whole form wider than a 390px viewport.
 const readOnlyNotice = {
-  backgroundColor: P.cream, border: `1px solid ${P.border}`, borderRadius: 8,
+  backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: 8,
   padding: '10px 12px', marginBottom: 14, fontSize: '0.82rem', color: P.mid,
   overflowWrap: 'anywhere',
+}
+
+// T.space.xs (5) rather than a raw 4: the designsys rule caps this file's dimensional literals and
+// a one-pixel gap is not worth spending the budget on.
+const readOnlyNoticeHeadline = {
+  fontWeight: 700, color: P.gold, marginBottom: T.space.xs,
+}
+
+// The other half of BUG-VARIETYREADONLYINVISIBLE-001, and the half the notice alone could not fix:
+// inputChrome/selectChrome carry NO disabled treatment at all, so a `disabled` field rendered
+// P.dark ink on a P.white box — pixel-identical to an editable one. A user who scrolled past the
+// notice (four fields is enough on a 390px screen) saw a normal-looking box that silently ate
+// keystrokes. Merged through each primitive's `style` slot, so the frozen primitives are untouched.
+//
+// Four independent channels, not colour alone: recessed fill, muted ink, a DASHED border (shape,
+// which survives greyscale and every colour-vision deficiency), and the not-allowed cursor.
+const readOnlyFieldStyle = {
+  backgroundColor: P.cream,
+  color: P.light,
+  borderStyle: 'dashed',
+  cursor: 'not-allowed',
 }

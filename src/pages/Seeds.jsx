@@ -13,7 +13,9 @@
 //     rows; one fetch, patched or reloaded on every write, keeps them from disagreeing one tap apart.
 //   · THE FRAME. One max-width and one 16 px inset for all three views, so the content column does not
 //     jump on a switch (Sow now's inset moved 20 -> 16 px; a named, re-baselined change).
-//   · "SOWN ✓". Switching views unmounts Sow now, and a confirmation held there died with it.
+//   · "SOWN ✓". Switching views unmounts Sow now, and a confirmation held there died with it. Since
+//     slice 2a it is held with the planting each sow created, so the chip's "See the planting" link
+//     survives a view switch too.
 //   · SAVE SEED. The sheet opens from the header on My seeds and Saved seeds and confirms IN PLACE
 //     (onSaved): the new lot is outlined in the view you are on, and the page never switches view.
 //
@@ -105,7 +107,8 @@ export default function Seeds() {
     seqRef.current += 1
     setHighlight({ id: String(id), seq: seqRef.current })
   }, [])
-  // Bring a lot into view in Saved seeds: the ferment line and "Change stage in Saved seeds →".
+  // Bring a lot into view in Saved seeds: the ferment line, and "Change stage in Saved seeds →" on My
+  // seeds rows and on Sow now's "Still in process" cards.
   const goToLot = useCallback((id) => {
     if (view !== 'saved') switchView('saved')
     outline(id)
@@ -119,8 +122,9 @@ export default function Seeds() {
     switchView(next)
   }, [view, switchView])
 
-  const [sownIds, setSownIds] = useState(() => new Set())
-  const onSown = useCallback((id) => setSownIds((prev) => new Set(prev).add(id)), [])
+  // Packet id -> the planting its sow created (null when the create named none).
+  const [sownIds, setSownIds] = useState(() => new Map())
+  const onSown = useCallback((id, plantingId) => setSownIds((prev) => new Map(prev).set(id, plantingId ?? null)), [])
   const onArchived = useCallback((id, season) => {
     store.patch(id, (row) => ({ ...row, sow_archived_season: season }))
   }, [store.patch])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -187,7 +191,7 @@ export default function Seeds() {
           <ErrorBoundary key={view} scope={`seeds-${view}`} fallback={<ViewFallback />}>
             {view === 'mine' && <MySeeds store={store} highlight={highlight} onGoToLot={goToLot} />}
             {view === 'saved' && <SavedSeeds embedded store={store} highlight={highlight} onHighlight={outline} />}
-            {view === 'sow' && <SowNow embedded sownIds={sownIds} onSown={onSown} onArchived={onArchived} />}
+            {view === 'sow' && <SowNow embedded sownIds={sownIds} onSown={onSown} onArchived={onArchived} onGoToLot={goToLot} />}
           </ErrorBoundary>
         )}
       </div>

@@ -1,8 +1,10 @@
 // PlantingEditor — V3-IA: the add/edit/delete planting machinery folded out of the
 // retired Plants page into the unified Garden page. Hosted by Garden.jsx, opened via
 // /garden?add=1 (FAB create sheet), /garden?source_inventory_item_id=&variety_id=
-// (InventoryDetail plant-from-packet), or /garden?edit=<plantingId> (PlantingDetail
-// V3-EDIT-001 affordance). Owns the /api/plants wire contract previously in Plants.jsx:
+// (a packet deep link with no in-app producer since V5-SEEDSTAB-001 slice 2a — kept for typed
+// and bookmarked URLs), or /garden?edit=<plantingId> (PlantingDetail V3-EDIT-001 affordance);
+// and by components/seed/SowSheet.jsx, the Sow sheet Sow now and the seed's detail page share.
+// Owns the /api/plants wire contract previously in Plants.jsx:
 // dual-write variety (variety_id canonical + flat text), COALESCE-merge PUT, '' -> null
 // coercions for source/status, source_inventory_item_id passthrough on POST.
 import React, { useState, useEffect, useRef } from 'react'
@@ -12,6 +14,7 @@ import ProjectOptions from './ProjectOptions.jsx'
 import { PlantForm } from './forms'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { clearPatch, SERVER_CLEARABLE } from '../lib/clearKeys.js'
+import Icon from './Icon.jsx'
 
 // BUG-COALESCECLEAR-001 — the keys PlantForm RENDERS an input for. This is the render manifest, and
 // it is deliberately the full rendered set rather than the clearable subset: `clearPatch` filters it
@@ -437,9 +440,11 @@ export default function PlantingEditor({
           borderRadius: 8, padding: '10px 12px', marginBottom: 12,
           fontSize: '0.85rem', color: P.dark, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
         }}>
-          <span>
-            <span aria-hidden="true">🌱 </span>
-            Planting from <strong>{sourcePacket.name}</strong>
+          {/* The colour registry's sprout, the glyph "Sow this" and the packet box draw — not the 🌱 emoji
+              (spec §2 rule 9), now that the Sow sheet opens this banner from a packet's page too. */}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="lifecycle.sprout" size={18} decorative style={{ flexShrink: 0 }} />
+            <span>Planting from <strong>{sourcePacket.name}</strong></span>
           </span>
         </div>
       )}

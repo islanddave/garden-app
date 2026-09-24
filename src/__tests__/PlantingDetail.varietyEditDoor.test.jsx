@@ -23,6 +23,10 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { T } from '../components/forms/formStyles.js'
 
 const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
 
@@ -107,6 +111,83 @@ describe('BUG-VARIETYEDITUNREACHABLE-001 — the variety editor has a door', () 
     // The door must not cost the information the row existed to show.
     await openBasics()
     expect(screen.getByText('Ghost')).toBeTruthy()
+  })
+})
+
+// ── BUG-VARIETYDOORTAPFLOOR-001 — the door is reachable, but only by a thumb that can hit it ────
+// The link shipped as bare inline text at T.type.xs and measured 66.3 × 17.3 px in a real browser at
+// a genuine 390×844 (lane varietyeditdrive-20260908, CDP device emulation — macOS Chrome cannot open
+// a sub-500px window, so a --window-size run would have measured a cropped 500px layout). 17.3px is
+// under WCAG SC 2.5.8's 24px minimum and under half the 44px floor T.tapMinHeight already names.
+//
+// WHAT THIS CAN AND CANNOT PROVE, same honesty scoping as VarietyPicker.tapFloor.test.js: jsdom has
+// no layout engine, so nothing here measures 44 rendered CSS px. It pins the DECLARATION on two
+// independent axes — the computed style of the REAL rendered link (which catches the style object
+// being detached from the element, something a source grep cannot see) and the source text (which
+// catches a literal creeping back in at a number that is 44 today and drifts tomorrow).
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const decomment = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n').map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1')).join('\n')
+const PAGE_SRC = decomment(readFileSync(resolve(__dirname, '../pages/PlantingDetail.jsx'), 'utf8'))
+
+function styleBlock(name) {
+  const start = PAGE_SRC.indexOf(`const ${name} = {`)
+  if (start === -1) return null
+  const end = PAGE_SRC.indexOf('\n}', start)
+  return end === -1 ? null : PAGE_SRC.slice(start, end)
+}
+
+describe('BUG-VARIETYDOORTAPFLOOR-001 — the door clears the tap floor', () => {
+  // INSTRUMENT CHECK. Every assertion below is worthless if the token is not actually 44: routing
+  // the door "through the token" satisfies a grep just as well at 20.
+  it('T.tapMinHeight is 44 — the floor this file is about', () => {
+    expect(T.tapMinHeight).toBe(44)
+  })
+
+  it('the rendered link carries the floor on BOTH axes', async () => {
+    // WCAG 2.5.8 measures the SMALLER dimension, so a 44px-tall strip of 66px text is still a miss
+    // on the axis that was actually failing. Read off the real element, not the style object.
+    await openBasics()
+    const cs = getComputedStyle(screen.getByTestId('planting-variety-edit-link'))
+    expect(cs.minHeight).toBe(`${T.tapMinHeight}px`)
+    expect(cs.minWidth).toBe(`${T.tapMinHeight}px`)
+    // A minHeight on an inline element is ignored by the box model — the fix only works because the
+    // link is also a block-ish box. This is the assertion that catches "the number is there but does
+    // nothing", which is how the original 17.3px happened.
+    expect(cs.display).toBe('inline-flex')
+  })
+
+  it('is no longer typeset at the smallest size on the ramp', async () => {
+    // T.type.xs (0.72rem) is the caption size the row LABELS use. The door read as one of them.
+    await openBasics()
+    expect(getComputedStyle(screen.getByTestId('planting-variety-edit-link')).fontSize)
+      .not.toBe(T.type.xs)
+  })
+
+  it('carries its own accessible name — "Edit variety" alone repeats down a list', async () => {
+    await openBasics()
+    expect(screen.getByRole('link', { name: `Edit variety ${BASE.variety_ref.name}` })).toBeTruthy()
+  })
+
+  // NON-VACUITY. If the const is renamed or inlined back into the JSX, styleBlock returns null and
+  // every toContain below would pass against an empty string. Fail loudly instead.
+  it('the varietyEditLinkStyle declaration is findable', () => {
+    expect(styleBlock('varietyEditLinkStyle'),
+      'varietyEditLinkStyle not found — renamed or re-inlined? update this guard').toBeTruthy()
+  })
+
+  it('routes both floors through T.tapMinHeight, not a literal', () => {
+    const block = styleBlock('varietyEditLinkStyle')
+    expect(block).toContain('minHeight: T.tapMinHeight')
+    expect(block).toContain('minWidth: T.tapMinHeight')
+    expect(block).not.toMatch(/min(Height|Width):\s*\d/)
+  })
+
+  it('does NOT use the chip token — this is a control, not a chip', () => {
+    // chipMinHeight is 40 and is correct for chips. Aliasing the door to it would still be under the
+    // floor while looking tokenized, which is exactly how BUG-ADOPTTAPFLOOR-001 shipped.
+    expect(styleBlock('varietyEditLinkStyle')).not.toContain('chipMinHeight')
   })
 })
 

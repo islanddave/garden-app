@@ -982,16 +982,72 @@ export const handler = async (event) => {
         // between "70% of what I measured" and "70% if you assume the unmeasured ones all failed".
         // germinated COALESCEs to 0 only INSIDE a row that has a sown count, where a null means he
         // recorded the sowing and nothing came up yet.
+        //
+        // ── V5-SEEDSTAB-001 slice 3 (design section 9) — sown_from: the plantings sown FROM this packet
+        // Every planting whose source_inventory_item_id is this item, as the four fields a link needs
+        // (id, the planting's name, its sown date, its status), so the packet page can link to each one.
+        // It is NOT the germination summary widened: sowings above keeps only plantings WITH a sown
+        // count (0 of 39 on prod, 2026-09-23), and it stays byte-identical. This is every live one.
+        //
+        // WHICH plantings, and why each predicate is here:
+        //   * household scope and the container-deleted gate are the plants Lambda's own grid/picker-view
+        //     ownership arms, copied rather than re-derived (its ?view=grid and ?view=picker branches):
+        //     a planting in a household container that still exists, or a container-less one the
+        //     household created. The germination read above scopes only through the item; a link
+        //     is a door, so it answers to the planting's own ownership as well. NOT the bare
+        //     GET /api/plants list, which omits the container-archived clause.
+        //   * p.deleted_at IS NULL: a soft-deleted planting is retracted (Soft-Delete-Only Rule).
+        //   * p.archived_at IS NULL AND pp.archived_at IS NULL: the Archive-Hiding Rule. Archived rows
+        //     are filtered HERE, in SQL, never loaded and dropped client-side, and by the same two
+        //     clauses Garden's grid and the planting chooser use (BUG-PLANTSLISTARCHIVEDCONTAINER-001
+        //     for the container half): a planting Garden does not show is never linked from here.
+        // sown-from.test.js holds this WHERE to the plants Lambda's text, so the two cannot drift.
+        //
+        // Run beside the germination read, together: one round trip, not two, on a page Dave opens to
+        // answer one question. NO BACKTICKS in the SQL comments of either template.
+        //
+        // SETTLED, NOT ALL-OR-NOTHING (pre-promote review, the BUG-SEEDDETAIL500-001 class): a failed
+        // sown_from read degrades to sown_from: null — the page draws no card, as for an old Lambda — and
+        // says so in CloudWatch by item and error class, instead of 500ing the whole packet page for the
+        // sake of its links. A failed germination read still fails the request, exactly as it did before
+        // sown_from existed.
         let germination = null;
+        let sown_from = null;
         if (row.category === 'seeds') {
-          const g = await sql`
-            SELECT p.id, p.display_name AS name, p.sown_at, p.seeds_sown, p.seeds_germinated
-              FROM public.garden_node p
-             WHERE p.source_inventory_item_id = ${itemId}
-               AND p.deleted_at IS NULL
-               AND p.seeds_sown IS NOT NULL
-             ORDER BY p.sown_at DESC NULLS LAST, p.id
-          `;
+          const [germRead, sownFromRead] = await Promise.allSettled([
+            sql`
+              SELECT p.id, p.display_name AS name, p.sown_at, p.seeds_sown, p.seeds_germinated
+                FROM public.garden_node p
+               WHERE p.source_inventory_item_id = ${itemId}
+                 AND p.deleted_at IS NULL
+                 AND p.seeds_sown IS NOT NULL
+               ORDER BY p.sown_at DESC NULLS LAST, p.id
+            `,
+            sql`
+              SELECT p.id, p.display_name AS name, p.sown_at, p.status
+                FROM public.garden_node p
+                LEFT JOIN public.container pp ON pp.id = p.container_id
+               WHERE p.source_inventory_item_id = ${itemId}
+                 AND (( pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL )
+                      OR (p.container_id IS NULL AND p.created_by = ANY(${householdIds})))
+                 AND p.deleted_at IS NULL
+                 AND p.archived_at IS NULL
+                 AND pp.archived_at IS NULL
+               ORDER BY p.sown_at DESC NULLS LAST, p.id
+            `,
+          ]);
+          if (germRead.status === 'rejected') throw germRead.reason;
+          const g = germRead.value;
+          if (sownFromRead.status === 'fulfilled') {
+            sown_from = sownFromRead.value;
+          } else {
+            const err = sownFromRead.reason;
+            console.error(JSON.stringify({
+              tag: 'inv-sown-from-failed', item: itemId,
+              error: err?.name ?? err?.constructor?.name ?? typeof err, code: err?.code ?? null,
+              message: err?.message ?? String(err),
+            }));
+          }
           const sown = g.reduce((n, r) => n + Number(r.seeds_sown ?? 0), 0);
           const up = g.reduce((n, r) => n + Number(r.seeds_germinated ?? 0), 0);
           germination = {
@@ -1005,9 +1061,11 @@ export const handler = async (event) => {
         }
         // hero_photo_id (V5-SEEDCARDS-001) repeats the effective id under the name the seed list uses,
         // so the one client adapter (src/components/seed/lotPhoto.js) reads one name on both surfaces.
+        // sown_from is null off the seeds branch, like germination: not "none sown", not applicable. On a
+        // seed row it is null only when its read failed (unknown) — never [], which would say none sown.
         return resp(200, {
           ...rest, featured_photo_id: row.effective_featured_photo_id, hero_photo_id: row.effective_featured_photo_id,
-          featured_photo_view_url, germination,
+          featured_photo_view_url, germination, sown_from,
         });
       }
 

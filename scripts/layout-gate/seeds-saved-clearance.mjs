@@ -88,6 +88,13 @@
 //     radios are drawn at 40px. See segmented-control-exemption.mjs — exempt radios keep a floor
 //     (the primitive's own) and are printed on every run.
 //
+// V5-SEEDSTAB-001 SLICE 2 — THE NOT STARTED GROUP (2026-09-23). Saved lots with no stage now have a
+// section of their own, first on the page, and its cards carry "Start →" where a stage card carries its
+// advance. The harness gained two such lots (i5, i6), so the populated cases now read 6 cards in 4
+// sections, 4 of them with a seed-measure line, and `startBtns` is an EXACT count beside advanceBtns.
+// The card checks in (b) treat "Start →" as the card's action button, so the text column is held clear
+// of it exactly as it is of an advance button.
+//
 // TRAPS THESE SIBLINGS ALREADY PAID FOR:
 //   1. macOS Chrome floors an OS window at ~500px, so --window-size=390 lays the page out at ~500
 //      and CROPS the capture. Geometry comes from Emulation.setDeviceMetricsOverride and the run
@@ -166,7 +173,9 @@ const tidPrefix = (name) => `[data-testid^="${name}${SUFFIX}"]`
 //     deliberately none. If a redesign changes that grouping the two files move together, and being
 //     told so is the point. measureLines is set on EVERY case with no `!= null` escape, unlike
 //     advanceBtns: a case authored without it must fail loudly, because "this case measures no
-//     seed-measure line" is exactly the state that hid for a release.
+//     seed-measure line" is exactly the state that hid for a release. (Slice 2 added two Not started
+//     lots on top of these four — see the V5-SEEDSTAB-001 SLICE 2 note in the header and CASES —
+//     and `startBtns`, exact on every case for measureLines' reason.)
 //   · minCandidates is a FLOOR because the candidate list is the surface under redesign — a cap or
 //     a search filter legitimately changes how many of the 4 untracked rows are offered, and
 //     pinning the number would freeze a decision this lane did not make. What must never happen is
@@ -177,11 +186,13 @@ const tidPrefix = (name) => `[data-testid^="${name}${SUFFIX}"]`
 // so it is the geometry where the seed-measure line and the 44-char name are tightest — and it runs
 // on every state, sheets included.
 const NARROW = [360, 640]
+// Slice 2: the 4 tracked lots plus the 2 Not started lots (i5, i6) — 6 cards in 4 sections, 2 carrying
+// "Start →", and i6's "approx. 40 seeds" is the fourth seed-measure line.
 const CASES = [
-  { name: 'empty', viewports: [[390, 844], NARROW], expect: { cards: 0, sections: 0, minCandidates: 0, minControls: 1, measureLines: 0, emptyState: true, sheet: false } },
-  { name: 'list', viewports: [[390, 844], NARROW], expect: { cards: 4, sections: 3, minCandidates: 0, advanceBtns: 3, minControls: 4, measureLines: 3, emptyState: false, sheet: false } },
-  { name: 'picker', viewports: [[390, 844], [390, 667], NARROW], expect: { cards: 4, sections: 3, minCandidates: 1, minControls: 5, measureLines: 3, emptyState: false, sheet: true } },
-  { name: 'advance', viewports: [[390, 844], [390, 667], NARROW], expect: { cards: 4, sections: 3, minCandidates: 0, minControls: 4, measureLines: 3, emptyState: false, sheet: true, primary: 'stage-save' } },
+  { name: 'empty', viewports: [[390, 844], NARROW], expect: { cards: 0, sections: 0, minCandidates: 0, startBtns: 0, minControls: 1, measureLines: 0, emptyState: true, sheet: false } },
+  { name: 'list', viewports: [[390, 844], NARROW], expect: { cards: 6, sections: 4, minCandidates: 0, advanceBtns: 3, startBtns: 2, minControls: 6, measureLines: 4, emptyState: false, sheet: false } },
+  { name: 'picker', viewports: [[390, 844], [390, 667], NARROW], expect: { cards: 6, sections: 4, minCandidates: 1, startBtns: 2, minControls: 5, measureLines: 4, emptyState: false, sheet: true } },
+  { name: 'advance', viewports: [[390, 844], [390, 667], NARROW], expect: { cards: 6, sections: 4, minCandidates: 0, startBtns: 2, minControls: 4, measureLines: 4, emptyState: false, sheet: true, primary: 'stage-save' } },
 ]
 // The view every case must land on. Read off the switch's checked radio, by its visible label.
 const EXPECT_VIEW_LABEL = 'Saved seeds'
@@ -352,7 +363,8 @@ const MEASURE = (c) => `(() => {
   const cardMetrics = cards.map(cd => {
     const r = box(cd)
     const col = cd.firstElementChild
-    const adv = cd.querySelector('${tid('advance-stage')}')
+    // The card's action button: a stage card's advance, or a Not started card's "Start →" (slice 2).
+    const adv = cd.querySelector('${tid('advance-stage')}, ${tid('start-lot')}')
     const cr = col ? box(col) : null, ar = adv ? box(adv) : null
     // V5-SEEDCOUNTCARD-001. Read as its own box rather than trusting the column's colClips above:
     // colClips answers "did anything in this column overflow" and this answers "was it this line",
@@ -438,6 +450,7 @@ const MEASURE = (c) => `(() => {
     counts: { cards: cards.length, sections: sections.length, candidates: candidates.length,
               controls: taps.length, links: links.length,
               advanceBtns: d.querySelectorAll('${tid('advance-stage')}').length,
+              startBtns: d.querySelectorAll('${tid('start-lot')}').length,
               measureLines: d.querySelectorAll('${tid('lot-seed-measure')}').length },
     taps, links, cardMetrics, sheet, action,
   }
@@ -502,6 +515,9 @@ try {
       if (m.counts.candidates < e.minCandidates) mismatch.push(`${m.counts.candidates} candidates offered, expected >=${e.minCandidates} — a picker offering nothing is indistinguishable from a picker that never rendered`)
       if (!e.sheet && m.counts.candidates) mismatch.push(`${m.counts.candidates} candidates on a case with no picker open`)
       if (e.advanceBtns != null && m.counts.advanceBtns !== e.advanceBtns) mismatch.push(`advance buttons ${m.counts.advanceBtns} != ${e.advanceBtns}`)
+      // Set on EVERY case, like measureLines: a populated case that stopped rendering the Not started
+      // group would otherwise measure its cards by nothing and pass.
+      if (m.counts.startBtns !== e.startBtns) mismatch.push(`"Start →" buttons ${m.counts.startBtns} != ${e.startBtns} — the Not started group (fixture rows i5, i6) did not render`)
       if (m.counts.measureLines !== e.measureLines) mismatch.push(`seed-measure lines ${m.counts.measureLines} != ${e.measureLines} — the fixture's tracked rows stopped carrying seed_count/seed_weight_g, so the clearance checks below would read a card that has no such line and report a pass about nothing`)
       // The same decay one level in. MEASURE_MAX_LINES is only a budget while something on screen
       // actually reaches it: water i3's count back down to four digits and the bound below is

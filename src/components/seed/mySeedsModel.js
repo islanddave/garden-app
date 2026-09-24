@@ -12,7 +12,7 @@
 // of these here would let the two views disagree about one jar.
 import { formatQty } from '../../lib/format.js'
 import { isInProcess, isUnstartedSave, isDepleted, isArchivedForSeason } from '../../lib/sowEngine.js'
-import { elapsedDays, fermentUrgency, lotMeasure, isSavedLot } from './seedLots.js'
+import { elapsedDays, fermentUrgency, lotMeasure, isSavedLot, isF2Lot, F2_LABEL } from './seedLots.js'
 import { shuLabel } from '../../lib/varietySpec.js'
 import { supplierKey, supplierLabel } from '../../lib/supplierPalette.js'
 
@@ -109,7 +109,33 @@ export function stateChips(i, { now = new Date(), year = now.getFullYear() } = {
   if (isArchivedForSeason(i, year)) chips.push({ key: 'archived', label: 'Archived for this season', tone: 'neutral' })
   const status = String(i?.status ?? 'active')
   if (status !== 'active') chips.push({ key: 'status', label: status[0].toUpperCase() + status.slice(1), tone: 'neutral' })
+  // V5-SEEDSTAB-001 slice 3 — the one chip that is not an engine state: a lot saved off an F1 plant is
+  // F2 seed (seedLots.isF2Lot). LAST and NEUTRAL, deliberately. Last, so a live state ("Ferment · day
+  // 5", "Drying") keeps the first place and stays whole; neutral in tone, because it is a fact about the
+  // seed, not an alarm. Where it sits in the give-way order is lineLayout's call, below. Bought F1
+  // packets never get it.
+  if (isF2Lot(i)) chips.push({ key: 'f2', label: F2_LABEL, tone: 'neutral' })
   return chips
+}
+
+// ── Line 2's layout: which pieces are RIGID ITEMS OF THE LINE and which ride the GIVE-WAY FLOW ──────
+// MySeeds renders line 2 from this, so the shrink order is decided here, once (UX spec §1.3):
+//   · every row: the live state chip (a lot in process) is an item of the line, never cut. The neutral
+//     chips, the amount, the heat and the tail ride the flow in that order — the amount first of the
+//     facts, so it is never the one that wraps out of sight; the heat after it, dropped WHOLE when it
+//     does not fit; neutral chips ellipsise before the heat does; the tail is cut first.
+//   · an F2 row (V5-SEEDSTAB-001 slice 3 amendment, orchestrator decision 2026-09-24, reported to Dave):
+//     the F2 chip OUTRANKS THE ESTIMATED HEAT. It and the amount become items of the line — the chip
+//     shrinkable, the amount rigid — so the heat, left only what the give-way box has, is dropped whole
+//     before the chip gives up a pixel, and the chip still gives way (ellipsised) to the amount, a live
+//     state or a supplier. For F2 seed the cultivar's heat range is the least reliable number on the
+//     row; the words that say so are not. Any OTHER neutral chip stays in the flow, still giving way
+//     before the heat. Bought packets and every non-F2 row keep today's layout exactly.
+export function lineLayout(i, { now, year } = {}) {
+  const chips = stateChips(i, { now, year })
+  const live = chips[0] && chips[0].tone !== 'neutral' ? chips[0] : null
+  const f2 = chips.find((c) => c.key === 'f2') ?? null
+  return { live, f2, flowChips: chips.filter((c) => c !== live && c !== f2), amountOnLine: f2 != null }
 }
 
 // Where from, for the TAIL of line 2: a saved lot's origin words. A bought packet's vendor is not
@@ -118,14 +144,20 @@ export function originNote(i) {
   return whereFrom(i, null)
 }
 
-// Line 2 as one string, in the order it renders: the supplier chip's label, the state chips, the
-// amount, the heat, then the tail (origin words, how old). Also what row uniqueness is computed over,
-// because it is what the eye reads.
+// Line 2 as one string, in the order it renders (lineLayout's): the supplier chip's label, the state
+// chips, the amount, the heat, then the tail (origin words, how old) — on an F2 row the live chip, the
+// F2 chip and the amount lead, then any other chips. Also what row uniqueness is computed over, because
+// it is what the eye reads.
 export function lineText(i, { vendorOf, now, year } = {}) {
   const vendor = vendorOf ? String(vendorOf(i) ?? '').trim() : ''
-  const chips = stateChips(i, { now, year }).map((c) => c.label)
-  const facts = [howMuch(i), heatLabel(i), originNote(i), howOld(i)].filter(Boolean)
-  return [vendor ? supplierLabel(vendor) : '', ...chips, ...facts].filter(Boolean).join(' · ')
+  const { live, f2, flowChips, amountOnLine } = lineLayout(i, { now, year })
+  const amount = howMuch(i)
+  const chips = flowChips.map((c) => c.label)
+  const rest = [heatLabel(i), originNote(i), howOld(i)]
+  const ordered = amountOnLine
+    ? [live?.label, f2?.label, amount, ...chips, ...rest]
+    : [live?.label, ...chips, amount, ...rest]
+  return [vendor ? supplierLabel(vendor) : '', ...ordered].filter(Boolean).join(' · ')
 }
 
 // Sowed previously — Dave's term, and Sow now's section — is a packet there is none of left. Never a
