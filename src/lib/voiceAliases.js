@@ -19,6 +19,8 @@
 //   * a failed WRITE must be LOUD. The moment someone teaches a correction is the moment they have
 //     already been let down once, and a teach that silently did nothing would let them believe it was
 //     fixed and meet the same failure tomorrow. So teachAlias REJECTS and the caller says so.
+//   * a failed USE COUNT is SILENT (recordAliasUse). It is bookkeeping about a write that already
+//     landed; nothing the user did depends on it, so it may never cost them anything.
 //
 // BUG-VOICEALIASFAILSOFT-001 — A FAILED READ IS null, NOT []. "He has taught nothing" and "his taught
 // names could not be read" were the same empty list, and the harvest page's one-breath reader acts on
@@ -93,6 +95,32 @@ export async function fetchAliases(apiFetch) {
   } catch {
     return null
   }
+}
+
+/**
+ * BUG-VOICEALIASHITCOUNT-001 — count a USE of taught aliases. `uses` is [{ heard_key, variety_id }],
+ * sent after the write each alias led to has landed. voice_alias.hit_count and last_used_at were read
+ * and reset but never written, so every learned alias read 0 and nothing could say which ones are
+ * load-bearing and which were one-off noise worth pruning — the column's stated purpose.
+ *
+ * FIRE AND FORGET, and that is the contract rather than a shortcut: nothing awaits it, it never rejects
+ * and never throws, so a failed or slow count cannot block, delay or fail the write it follows. The
+ * variety rides along so the server credits the meaning that was used — a phrase re-taught to another
+ * variety in between (which resets its count) is not credited for the old one.
+ *
+ * PATCH on the route that already exists, not a new one: the varieties Lambda owns voice_alias, and a
+ * new endpoint is the four-wiring hazard lambda/varieties/index.js records above these routes.
+ */
+export function recordAliasUse(apiFetch, uses) {
+  const used = (uses ?? []).filter((u) => u?.heard_key && u?.variety_id)
+    .map((u) => ({ heard_key: String(u.heard_key), variety_id: String(u.variety_id) }))
+  if (!used.length) return
+  try {
+    Promise.resolve(apiFetch('/api/varieties/voice-aliases', {
+      method: 'PATCH',
+      body: JSON.stringify({ used }),
+    })).catch(() => {})
+  } catch { /* a count is never worth a thrown error */ }
 }
 
 /**

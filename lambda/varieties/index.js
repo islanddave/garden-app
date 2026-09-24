@@ -650,17 +650,78 @@ export const handler = async (event) => {
         // resolution order-dependent — the correction would appear to work and then intermittently
         // not. hit_count resets: it counts uses of THIS meaning, and the old meaning's tally is not
         // evidence for the new one.
+        //
+        // BUG-VOICEALIASHITCOUNT-001 — AND ONLY WHEN THE MEANING CHANGES. The voice page re-teaches a
+        // phrase it already knows whenever a learned alias offers several plantings and one is tapped
+        // (7 of the 33 live aliases name a variety with two live plantings), so an unconditional reset
+        // zeroed a count on every use of exactly the aliases that are used the most. Same variety, same
+        // meaning: the tally stands. Inside DO UPDATE, `voice_alias.` is the row as it was.
         const [row] = await sql`
           INSERT INTO public.voice_alias (user_id, heard_key, heard_text, variety_id)
                VALUES (${userId}, ${heardKey}, ${heardText}, ${varietyId})
           ON CONFLICT ON CONSTRAINT uq_voice_alias_user_phrase
             DO UPDATE SET variety_id = EXCLUDED.variety_id,
                           heard_text = EXCLUDED.heard_text,
-                          hit_count  = 0,
-                          last_used_at = NULL
+                          hit_count  = CASE WHEN voice_alias.variety_id = EXCLUDED.variety_id
+                                            THEN voice_alias.hit_count ELSE 0 END,
+                          last_used_at = CASE WHEN voice_alias.variety_id = EXCLUDED.variety_id
+                                              THEN voice_alias.last_used_at ELSE NULL END
             RETURNING heard_key, heard_text, variety_id, hit_count, last_used_at
         `;
         return resp(200, row);
+      }
+
+      // BUG-VOICEALIASHITCOUNT-001 — COUNT A USE. hit_count and last_used_at were read by the GET and
+      // reset by the teach, and written by nothing, so all 33 of Dave's aliases read 0 (prod, 2026-09-24)
+      // and nothing could tell a load-bearing alias from one-off noise — the column's whole purpose.
+      // The client sends this AFTER the write the alias led to has landed (a harvest saved, a care batch
+      // logged), fire-and-forget, so nothing here can block, delay or fail that write.
+      //
+      // ON THE EXISTING PATH, as a new METHOD, not a new route: the same Function URL and VITE variable,
+      // the reason these routes live in this Lambda at all (header above). PATCH is already in every
+      // Function URL's CORS AllowMethods (deploy-lambda.yml, deploy.yml, deploy-staging.yml).
+      //
+      // SCOPED THREE WAYS, and each is a guard rather than a filter of convenience:
+      //   * user_id = the verified caller — another person's alias is never touched, whatever keys a
+      //     client sends; there is no household widening here, for the reason given above.
+      //   * variety_id must match — a phrase re-taught to another variety since the client loaded its
+      //     list (which reset its count) is not credited for the meaning that was actually used.
+      //   * voice_alias has no soft delete (no deleted_at, prod 2026-09-24), so a removed alias is a
+      //     missing row, and an UPDATE cannot resurrect or count a row that is not there.
+      // DISTINCT, so one request counts a phrase once however often it is repeated in the body.
+      if (method === 'PATCH') {
+        let body;
+        try { body = JSON.parse(event.body ?? '{}'); } catch { return resp(400, { error: 'Body must be JSON' }); }
+        const used = Array.isArray(body?.used) ? body.used : null;
+        if (!used || used.length < 1 || used.length > 20) {
+          return resp(400, { error: 'used must list 1-20 { heard_key, variety_id }' });
+        }
+        const keys = [];
+        const varieties = [];
+        for (const u of used) {
+          const heardKey = String(u?.heard_key ?? '');
+          const varietyId = String(u?.variety_id ?? '');
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(varietyId)) {
+            return resp(400, { error: 'variety_id must be a uuid' });
+          }
+          if (heardKey !== heardKey.toLowerCase() || /[\s\p{P}]/u.test(heardKey)
+              || heardKey.length < 4 || heardKey.length > 120) {
+            return resp(400, { error: 'heard_key must be a normalised 4-120 character key' });
+          }
+          keys.push(heardKey);
+          varieties.push(varietyId);
+        }
+        const rows = await sql`
+          UPDATE public.voice_alias a
+             SET hit_count = a.hit_count + 1,
+                 last_used_at = now()
+            FROM (SELECT DISTINCT k, v FROM unnest(${keys}::text[], ${varieties}::uuid[]) AS u(k, v)) u
+           WHERE a.user_id = ${userId}
+             AND a.heard_key = u.k
+             AND a.variety_id = u.v
+          RETURNING a.heard_key
+        `;
+        return resp(200, { counted: rows.length });
       }
 
       return resp(405, { error: 'Method not allowed' });

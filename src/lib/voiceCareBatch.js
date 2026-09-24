@@ -23,6 +23,7 @@
 // (index.js idempotency fast-path). A new command is a new plan and a new key.
 
 import { resolveCareScope, resolveCareCommand } from './voiceCareResolve.js'
+import { looseKey } from './comboboxInput.js'
 
 // Stamped on every row of a voice batch, as harvest voice stamps harvest_input_source, so voice care
 // can be measured later. Accepted by the server as-is: validateEventMetadata polices only the
@@ -79,7 +80,27 @@ export async function prepareCarePlan(apiFetch, {
   }
   const plan = resolveCareCommand({ care, plantings, locations, aliasIndex, scopeSet, rainTomorrow, inGroundIds })
   if (plan?.kind !== 'care_plan') return plan
-  return { ...plan, idempotencyKey: mintKey() }
+  return { ...plan, idempotencyKey: mintKey(), aliasUses: careAliasUses(plan, aliasIndex) }
+}
+
+// BUG-VOICEALIASHITCOUNT-001 — the taught aliases this plan's skips were resolved through, in the shape
+// recordAliasUse sends: [{ heard_key, variety_id }], once each. A skip reads 'alias' only when the learned
+// layer answered it — strict names answer first (voiceCareResolve's resolveName) — and the key it was
+// looked up by, looseKey(heard), IS the stored heard_key (resolveAlias). Carried on the plan, never in
+// the write body (careWriteBody names its fields), and counted by the host only once the batch is logged.
+export function careAliasUses(plan, aliasIndex) {
+  if (!aliasIndex?.size) return []
+  const seen = new Set()
+  const uses = []
+  for (const e of plan?.exclusions ?? []) {
+    if (e?.how !== 'alias') continue
+    const key = looseKey(e.heard)
+    const varietyId = aliasIndex.get(key)
+    if (!varietyId || seen.has(key)) continue
+    seen.add(key)
+    uses.push({ heard_key: key, variety_id: varietyId })
+  }
+  return uses
 }
 
 // R8's body. `ids` + the plan's key + the voice marker, and nothing that could widen the set.

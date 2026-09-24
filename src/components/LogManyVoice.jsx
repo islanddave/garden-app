@@ -45,7 +45,7 @@ import { isMicHeld } from '../lib/micArbiter.js'
 import { classifyCareCommand } from '../lib/voiceCareGrammar.js'
 import { careConfirmDecision, CARE_CONFIRM_PROMPT } from '../lib/voiceCareResolve.js'
 import { prepareCarePlan, writeCarePlan } from '../lib/voiceCareBatch.js'
-import { fetchAliases, indexAliases } from '../lib/voiceAliases.js'
+import { fetchAliases, indexAliases, recordAliasUse } from '../lib/voiceAliases.js'
 import { splitCropAliases } from '../lib/comboboxInput.js'
 import { EVENT_TYPE_META } from '../lib/eventTypes.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
@@ -111,8 +111,14 @@ async function loadVocabulary(apiFetch) {
       .then(() => apiFetch('/api/varieties/crop-types'))
       .then((d) => (Array.isArray(d) ? d : []))
       .catch(() => []),
-    // Fails soft to [] by contract (voiceAliases.js): forgetting his taught names degrades matching,
-    // it never blocks it.
+    // Fails soft by contract (voiceAliases.js): forgetting his taught names degrades matching, it never
+    // blocks it. BUG-VOICEALIASFAILSOFT-001 — a failed read is null ("unknown"), and indexes to an empty
+    // map, so a skip that needed a taught name is REFUSED (R3 "couldn't find" / "could be…"), never
+    // guessed: measured over all 33 of his live aliases × every top-level area (198 skips, the lane V
+    // report), 0 resolve to another planting with the list missing. The number case the harvest page
+    // had cannot arise here (a skip carries no amount), nor the late case (this load is awaited before
+    // any name is resolved). What was missing is the second try: `aliasesLoaded` makes ensureVocab ask
+    // again on the next tap instead of keeping the failed list for the whole visit.
     fetchAliases(apiFetch),
   ])
   const bySlug = new Map(cropTypes.map((c) => [c.slug, c]))
@@ -120,7 +126,7 @@ async function loadVocabulary(apiFetch) {
     const aliases = splitCropAliases(bySlug.get(p?.variety_ref?.crop_type_slug)?.search_aliases)
     return aliases.length ? { ...p, crop_aliases: aliases } : p
   })
-  return { ok: plants.ok, plantings, aliasIndex: indexAliases(aliasRows) }
+  return { ok: plants.ok, plantings, aliasIndex: indexAliases(aliasRows), aliasesLoaded: aliasRows != null }
 }
 
 function listJoin(items) {
@@ -284,7 +290,7 @@ export default function LogManyVoice({
     const cur = vocabRef.current
     if (cur && !cur.failed) return cur.promise
     const entry = { failed: false, promise: null }
-    entry.promise = loadVocabulary(apiFetch).then((v) => { if (!v.ok) entry.failed = true; return v })
+    entry.promise = loadVocabulary(apiFetch).then((v) => { if (!v.ok || !v.aliasesLoaded) entry.failed = true; return v })
     vocabRef.current = entry
     return entry.promise
   }, [apiFetch])
@@ -336,6 +342,10 @@ export default function LogManyVoice({
     } finally {
       writingRef.current = false
     }
+    // BUG-VOICEALIASHITCOUNT-001 — the batch is logged, so the taught names its skips were resolved
+    // through were used: count them. Before the liveness check, because the write landed whether or not
+    // this frame is still open; fire-and-forget (recordAliasUse), so it cannot touch the result.
+    if (res.ok) recordAliasUse(apiFetch, plan.aliasUses)
     if (!aliveRef.current || run !== runRef.current) return
     if (res.ok) {
       runRef.current += 1

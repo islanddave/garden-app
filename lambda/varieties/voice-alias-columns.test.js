@@ -121,6 +121,19 @@ describe('lambda/varieties — public.voice_alias column contract', () => {
     expect(write.sql).toMatch(/ON\s+CONFLICT\s+ON\s+CONSTRAINT\s+uq_voice_alias_user_phrase/i);
   });
 
+  it('every UPDATE is scoped to the calling user and to the variety that was used', () => {
+    // BUG-VOICEALIASHITCOUNT-001 — the use count is the first UPDATE of this table. The same argument as
+    // the read below, from the write side: an increment that forgot user_id would count Dave's uses on
+    // Jen's aliases, and one that forgot the variety would credit a phrase re-taught since to a meaning
+    // that was never used. Checked on the source template, so ${userId} must be the bound value.
+    const writes = STATEMENTS.filter((s) => /\bUPDATE\s+(?:public\.)?voice_alias\b/i.test(s.sql));
+    expect(writes.length, 'no UPDATE of voice_alias found').toBeGreaterThan(0);
+    for (const { file, sql } of writes) {
+      expect(sql, `${file}: a voice_alias UPDATE is not scoped to the caller`).toMatch(/\buser_id\s*=\s*\$\{userId\}/);
+      expect(sql, `${file}: a voice_alias UPDATE does not match the variety`).toMatch(/\bvariety_id\s*=/);
+    }
+  });
+
   it('reads are scoped to the calling user', () => {
     // An alias records how ONE person's speech is misheard. A read that forgot user_id would serve
     // Jen's corrections to Dave and steer his chooser with evidence about her audio — and it would

@@ -52,7 +52,7 @@ import { todayLocalISO } from '../lib/dateLocal.js'
 import { looseKey, looseIncludes, splitCropAliases } from '../lib/comboboxInput.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
-import { fetchAliases, indexAliases, resolveAlias, teachAlias, MIN_ALIAS_CHARS } from '../lib/voiceAliases.js'
+import { fetchAliases, indexAliases, resolveAlias, teachAlias, recordAliasUse, MIN_ALIAS_CHARS } from '../lib/voiceAliases.js'
 import {
   buildValue, classify, classifyPartial, foldNumberWords, isNumberPhrase, normalise, segmentCandidates,
   splitTrailingCommand, parseValueSequence, oneBreathReadings, NUMBER_HOMOPHONES,
@@ -320,6 +320,38 @@ export function indexAliasNames(rows, base = null) {
   return byKey
 }
 
+// BUG-VOICEALIASHITCOUNT-001 — the same keys as indexAliasNames, each pointing at the alias it came
+// from: the stored heard_key the server counts by, and its variety. So Chrome's "cucumber 1" is counted
+// as a use of the alias he taught as "cucumber one".
+export function indexAliasUses(rows, base = null) {
+  const byKey = new Map(base ?? [])
+  for (const r of rows ?? []) {
+    if (!r?.variety_id || !r?.heard_key) continue
+    const use = { heard_key: String(r.heard_key), variety_id: r.variety_id }
+    const text = r.heard_text == null ? null : String(r.heard_text)
+    const keys = [use.heard_key, ...(text ? [looseKey(text), looseKey(foldNumberWords(text))] : [])]
+    for (const k of keys) if (k) byKey.set(k, use)
+  }
+  return byKey
+}
+
+// BUG-VOICEALIASHITCOUNT-001 — the taught alias that chose THIS planting from THESE words, or null.
+// Credited only when the alias is what did the choosing: a strict name answers before any alias does
+// (matchPlantingsWithRescue's order), so words that already name the planting strictly — "super sweet
+// 100", taught but also the planting's own name — are not a use of the alias, whatever the list says.
+// Same variety only: an alias names a variety, and a planting of another variety was not its doing.
+export function aliasUseOf(aliasUses, plantings, spoken, planting) {
+  const varietyId = planting?.variety_ref?.id
+  if (!aliasUses?.size || !varietyId || !spoken) return null
+  const strict = isNumberPhrase(spoken) ? plantingsNamedExactly(plantings, spoken) : matchPlantings(plantings ?? [], spoken)
+  if (strict.some((p) => p.id === planting.id)) return null
+  for (const key of [looseKey(spoken), looseKey(foldNumberWords(spoken))]) {
+    const use = key.length >= MIN_ALIAS_CHARS ? aliasUses.get(key) : null
+    if (use && use.variety_id === varietyId) return use
+  }
+  return null
+}
+
 // A taught alias of this planting's variety, said whole, carries its numbers and words with it.
 const taughtFor = (planting, name, aliasNames) => {
   const variety = aliasVarietyOf(aliasNames, name)
@@ -501,7 +533,7 @@ function judgeBareReading(plantings, r, ctx) {
       }
     }
   }
-  return { kind: 'valid', planting, groups: r.groups }
+  return { kind: 'valid', planting, groups: r.groups, name: r.name }
 }
 
 // BUG-VOICEALIASFAILSOFT-001 — `aliasesKnown: false` says his taught names could not be read (the list
@@ -533,7 +565,7 @@ export function resolveBareOneBreath(plantings, info, {
     const agree = valid.every((v) => (v.planting?.id ?? null) === (first.planting?.id ?? null)
       && sameGroups(v.groups, first.groups))
     return agree
-      ? { kind: 'apply', planting: first.planting, groups: first.groups, command: info.command, nearCommand: info.nearCommand }
+      ? { kind: 'apply', planting: first.planting, groups: first.groups, command: info.command, nearCommand: info.nearCommand, name: first.name ?? null }
       : { kind: 'refuse', reason: 'ambiguous' }
   }
   // The longest name that several plantings answer to — readings run shortest name first.
@@ -675,6 +707,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   const reloadAliasesRef = useRef(null)
   const releaseHeldRef = useRef(null)
   const applyCommittedRef = useRef(null)
+  // BUG-VOICEALIASHITCOUNT-001 — `aliasUsesRef` maps what can be said to the alias it would use
+  // (indexAliasUses); `aliasUseRef` is the alias that chose the planting on the record under
+  // construction — { heard_key, variety_id, plantingId } or null — counted once that record saves.
+  const aliasUsesRef = useRef(null)
+  const aliasUseRef = useRef(null)
   const unmatchedRef = useRef(null)
   // BUG-VOICECOUNTSPLIT-001 — a number whose unit has not arrived yet. A REF because the recogniser
   // callbacks that read it fire outside React's render cycle and must see the value the previous
@@ -863,6 +900,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           const all = [...rows, ...taughtRowsRef.current]
           aliasRef.current = indexAliases(all)
           aliasNamesRef.current = indexAliasNames(all)
+          aliasUsesRef.current = indexAliasUses(all)
           aliasStateRef.current = 'ready'
         }
         releaseHeldRef.current?.()
@@ -878,10 +916,18 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     setSelected(null); setCandidates([]); setUnmatched(null); setQty(null); setWeight(null)
     selectedRef.current = null; qtyRef.current = null; weightRef.current = null
     unmatchedRef.current = null
+    aliasUseRef.current = null
     // A held number belongs to the record being cleared. Carrying it into the NEXT planting would
     // let a count spoken for one crop attach itself to another — the silent wrong save this flow
     // exists to prevent, reached by the back door.
     heldNumRef.current = null; setHeldNum(null)
+  }, [])
+
+  // BUG-VOICEALIASHITCOUNT-001 — which taught alias, if any, chose the planting now on the record.
+  // Called wherever spoken words select a planting; a selection by any other door leaves null.
+  const noteAliasUse = useCallback((spoken, planting) => {
+    const use = aliasUseOf(aliasUsesRef.current, plantingsRef.current, spoken, planting)
+    aliasUseRef.current = use ? { ...use, plantingId: planting.id } : null
   }, [])
 
   // V5-VOICEALIAS-001 — THE TEACH. One handler for every manual pick, so a correction is learned
@@ -898,6 +944,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   const pickPlanting = useCallback(async (p) => {
     const phrase = unmatchedRef.current
     setSelected(p); selectedRef.current = p
+    // A pick from a learned alias's list ("Which one?" for a variety with two plantings) is a use of
+    // it. A pick that TEACHES a new phrase is not: the phrase is not in the list yet, so this is null.
+    noteAliasUse(phrase, p)
     setCandidates([]); setUnmatched(null)
     const label = p.name || p.variety_ref?.name
     say('ok', `${label} — now say the count or the weight.`)
@@ -917,6 +966,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       aliasRef.current = next
       const taughtRow = { heard_key: looseKey(phrase), heard_text: phrase, variety_id: varietyId }
       aliasNamesRef.current = indexAliasNames([taughtRow], aliasNamesRef.current)
+      aliasUsesRef.current = indexAliasUses([taughtRow], aliasUsesRef.current)
       // BUG-VOICEALIASFAILSOFT-001 — kept for a list that is still loading or being asked for again, so
       // the load that lands later cannot undo this teach. The state is NOT set to 'ready' here: one name
       // taught is not the rest of the list.
@@ -925,7 +975,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     } catch (err) {
       say('warn', `${label} selected, but I could not remember “${phrase}” — ${err?.message || 'the save failed'}.`)
     }
-  }, [apiFetch, say])
+  }, [apiFetch, noteAliasUse, say])
 
   // ── the save ────────────────────────────────────────────────────────────────────────────────────
   // Returns nothing and throws nothing: every outcome is a banner, a haptic and (on success) a row.
@@ -935,6 +985,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const plant = selectedRef.current
     const q = qtyRef.current
     const w = weightRef.current
+    const aliasUse = aliasUseRef.current
 
     // REFUSE LOUDLY AND KEEP THE RECORD. Advancing over an unsaveable record is how a picking gets
     // silently lost, which is the one failure mode this flow is least allowed to have.
@@ -1033,6 +1084,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       say('ok', `Saved ${label} — ${said}`)
       setRows((r) => [...r, { kind: 'save', eventId, label, said, at: Date.now() }])
       clearRecord()
+      // BUG-VOICEALIASHITCOUNT-001 — a taught alias chose this crop, and the harvest it named has
+      // landed: count the use. AFTER the save, never awaited, never throwing (recordAliasUse), so the
+      // count can cost this save nothing. An Undo does not un-count it: the alias did its job.
+      if (aliasUse?.plantingId === plant.id) recordAliasUse(apiFetch, [aliasUse])
     } catch (err) {
       // The row did not land. Say so on every channel, keep the record so nothing is retyped, and
       // release the cooldown so "next" is a real retry.
@@ -1338,6 +1393,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         if (selectedRef.current?.id !== one.planting.id) clearRecord()
         heldNumRef.current = null; setHeldNum(null)
         setSelected(one.planting); selectedRef.current = one.planting
+        noteAliasUse(one.name, one.planting)
         setCandidates([]); setUnmatched(null); unmatchedRef.current = null
         for (const v of one.values) {
           const next = { value: v.value, unit: v.unit }
@@ -1421,6 +1477,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // committing. Chosen over marking it stale or blocking the save because it needs no new
         // state to drift and it reuses a refusal that is already tested.
         setSelected(null); selectedRef.current = null
+        aliasUseRef.current = null
         // The phrase survives into the candidate-less state so the manual picker below can still
         // teach it. Without this, a total miss — the case most worth learning from — is the one case
         // that cannot be taught.
@@ -1441,6 +1498,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         if (rescued !== null) cue(hapticMatchUncertain)
         else cue(hapticDigitAccepted)
         setSelected(hits[0]); selectedRef.current = hits[0]
+        noteAliasUse(result.text, hits[0])
         setCandidates([])
         // NO DEFAULT QUANTITY IS SEEDED HERE, and that is a correction rather than an omission.
         // This branch briefly pre-filled `{ value: 1, unit: variety_ref.default_unit }` so a weighed
@@ -1465,6 +1523,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // question, not an answer — until one is tapped the user has chosen nothing, and leaving the
       // old plant selected behind the list is the same silent-wrong-save route as the miss above.
       setSelected(null); selectedRef.current = null
+      aliasUseRef.current = null
       // THE WHOLE HIT LIST, not the eight that fit. The render caps the buttons; holding the full
       // list here is what lets the card say how many it is hiding, and a cap the user can see is a
       // different thing from a truncation they cannot. A crop-type utterance reaches 46 live tomato
@@ -1544,7 +1603,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // WHAT it heard — "Didn't catch that ← "text"" is actionable minutes later; "Didn't catch that"
     // alone asks him to remember which of forty utterances it was.
     noteMiss(`Didn't catch that — heard “${String(result.transcript ?? '')}”.`)
-  }, [clearRecord, cue, noteMiss, saveRecord, say])
+  }, [clearRecord, cue, noteAliasUse, noteMiss, saveRecord, say])
 
   // ── V5-VOICEVOCAB-001 (lane D4): apply a one-breath record said without its units ───────────────
   //
@@ -1593,6 +1652,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     }
     if (planting) {
       setSelected(planting); selectedRef.current = planting
+      noteAliasUse(d.name, planting)
       setCandidates([]); setUnmatched(null); unmatchedRef.current = null
     }
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision',
@@ -1625,7 +1685,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       const last = statusRef.current
       say(droppedNote ? 'warn' : (last?.tone ?? 'ok'), `${label ? `${label} — ` : ''}${last?.text ?? ''}${droppedNote}`)
     }
-  }, [applyOneUtterance, clearRecord, cue, noteMiss, say])
+  }, [applyOneUtterance, clearRecord, cue, noteAliasUse, noteMiss, say])
 
   // QA F2 — the one-breath sentence whose ONE amount may be two numbers run together ("Suyo Long 2165
   // next"). The name was read cleanly, so it is applied exactly as the one-breath would apply it (a
@@ -1638,6 +1698,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       if (held != null) noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
       clearRecord()
       setSelected(d.planting); selectedRef.current = d.planting
+      noteAliasUse(d.name, d.planting)
       setCandidates([]); setUnmatched(null); unmatchedRef.current = null
     }
     cue(hapticDigitRejected)
@@ -1645,7 +1706,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const label = d.planting ? `${d.planting.name || d.planting.variety_ref?.name} — ` : ''
     say('warn', `${label}heard ${n} as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.`)
     noteMiss(`Not kept — heard “${heard}”: ${n} may be two numbers run together.`)
-  }, [clearRecord, cue, noteMiss, say])
+  }, [clearRecord, cue, noteAliasUse, noteMiss, say])
 
   // A one-breath sentence whose split is not unique, or whose name is too vague, or whose numbers
   // cannot be read: refused LOUDLY — reject haptic, a banner saying why, a miss row quoting what was
