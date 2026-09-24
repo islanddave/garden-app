@@ -94,4 +94,13 @@ describe('BUG-SEEDEXTRACTOR-001 — bulk intake tiles are hidden while unprovisi
     const hitExtract = fetchSpy.mock.calls.some(([url]) => String(url).includes('extract-seeds'))
     expect(hitExtract).toBe(false)
   })
+
+  it('does not fetch the crop-type catalog on a visit that only redirects', async () => {
+    // Review MINOR-3 (mainsync8): the catalog gates a packet's crop-type guess, and with the flag off
+    // and no draft there is no packet — the page forwards straight through. The fetch fired anyway on
+    // every visit and its answer was discarded on unmount.
+    await renderPage()
+    expect(navigateSpy).toHaveBeenCalledTimes(1)
+    expect(fetchSpy.mock.calls.map(([url]) => String(url))).not.toContain('/api/varieties/crop-types')
+  })
 })

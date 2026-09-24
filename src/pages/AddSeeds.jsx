@@ -124,6 +124,9 @@ export default function AddSeeds() {
   // ONE shared varieties list at page level — rows auto-match against it.
   const { varieties, createVariety } = useVarieties()
 
+  // Declared ahead of the crop-type vocabulary below, which is fetched only once rows can exist.
+  const [rows, setRows] = useState(null)        // null until an extract succeeds
+
   // BUG-ADDSEEDSVALIDSLUGS-001 — each packet's LLM crop-type guess is gated on the LIVE crop_types
   // catalog. Without validSlugs, packetToVarietyCols gates on its frozen CROP_TYPE_SLUGS list: 73
   // slugs against 158 live garden types in prod on 2026-09-23, so a carrot, bean, pea, kale or radish
@@ -135,7 +138,13 @@ export default function AddSeeds() {
   // which is exactly the pre-fix behaviour and never worse. The loading window is closed separately by
   // holding Save all until the fetch settles (see the button), so no save can race the catalog.
   // Default 'garden' scope: a non-plant food class must never type a seed packet's variety.
-  const { cropTypes, loading: cropTypesLoading } = useCropTypes()
+  //
+  // Fetched only when a packet grid can exist (review MINOR-3, mainsync8): with the extractor flag off
+  // and no restored draft, this page's only job is the redirect below, and the catalog fetch was a
+  // request whose answer was thrown away on every visit. `rows` turning non-null (a draft restored,
+  // an extract landed) enables it, and useCropTypes resolves `loading` false while disabled, so
+  // Save all is never held by a fetch that was not started.
+  const { cropTypes, loading: cropTypesLoading } = useCropTypes({ enabled: SEED_BULK_EXTRACT_ENABLED || rows != null })
   const varietyColsOpts = useMemo(
     () => (cropTypes.length > 0 ? { validSlugs: new Set(cropTypes.map((c) => c.slug)) } : {}),
     [cropTypes],
@@ -147,7 +156,6 @@ export default function AddSeeds() {
   const [pasteText, setPasteText] = useState('')
   const [extracting, setExtracting] = useState(false)
   const [banner, setBanner] = useState(null)    // extraction error banner text
-  const [rows, setRows] = useState(null)        // null until an extract succeeds
   const [editingIdx, setEditingIdx] = useState(null)
   const [savingAll, setSavingAll] = useState(false)
   const fileRef = useRef(null)
