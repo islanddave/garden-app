@@ -79,6 +79,56 @@ describe('notificationPrefsClient', () => {
     })
   })
 
+  // V5-NAVCUSTOM-001 (QA IMPORTANT-2) — the SW offline-cache marker, carried across the parse boundary
+  // the way apiFetch carries it (api.test.js, SW-STALEAPI-001). public/sw.js answers a prefs GET whose
+  // network attempt failed outright from its cache — HTTP 200, stamped X-From-Cache — and without the
+  // marker NavPrefsContext took that days-old body for the truth.
+  // KILLING MUTATION: drop the defineProperty (or read the wrong header). RESULT: RED on the first case.
+  describe('fetchNotificationPrefs — the SW offline-cache marker', () => {
+    const res = (body, headers) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json', ...headers } })
+
+    it('marks a body the service worker served from its cache', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      mod.__resetPrefsFlight()
+      const { isFromCache, FROM_CACHE_HEADER } = await import('../lib/api.js')
+      global.fetch.mockResolvedValueOnce(res({ more_pins: ['seeds'] }, { [FROM_CACHE_HEADER]: '1' }))
+      const prefs = await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      expect(prefs).toEqual({ more_pins: ['seeds'] })
+      expect(isFromCache(prefs)).toBe(true)
+    })
+
+    it('does NOT mark a live network body', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      mod.__resetPrefsFlight()
+      const { isFromCache } = await import('../lib/api.js')
+      global.fetch.mockResolvedValueOnce(res({ more_pins: ['seeds'] }))
+      expect(isFromCache(await mod.fetchNotificationPrefs({ getToken: async () => TOKEN }))).toBe(false)
+    })
+
+    // Every existing caller spreads, JSON-encodes or key-walks prefs: the marker must be invisible.
+    it('the marker is invisible to Object.keys, spread and JSON', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      mod.__resetPrefsFlight()
+      const { isFromCache, FROM_CACHE_HEADER } = await import('../lib/api.js')
+      global.fetch.mockResolvedValueOnce(res({ a: 1, b: 2 }, { [FROM_CACHE_HEADER]: '1' }))
+      const prefs = await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      expect(Object.keys(prefs)).toEqual(['a', 'b'])
+      expect(JSON.parse(JSON.stringify(prefs))).toEqual({ a: 1, b: 2 })
+      expect(isFromCache({ ...prefs })).toBe(false)
+    })
+
+    it('tolerates a header-less stubbed response (what most component tests hand it)', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      mod.__resetPrefsFlight()
+      const { isFromCache } = await import('../lib/api.js')
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ a: 1 }) })
+      const prefs = await mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      expect(prefs).toEqual({ a: 1 })
+      expect(isFromCache(prefs)).toBe(false)
+    })
+  })
+
   // V5-ADMINCENTER-001 — SINGLE FLIGHT. This route had eight independent callers each fetching on
   // their own mount, three of which mount in the same frame on /today, and the admin centre's nav
   // config read would have been a ninth. The dedup lives here rather than at any call site so all
@@ -509,7 +559,7 @@ describe('notificationPrefsClient — saveMorePins / saveBarLayout (reported)', 
 
   it('carries no timeout literal of its own — the bound is imported', () => {
     const src = readFileSync(resolve(process.cwd(), 'src/lib/notificationPrefsClient.js'), 'utf8')
-    expect(src).toMatch(/import \{ API_TIMEOUT_MS \} from '\.\/api\.js'/)
+    expect(src).toMatch(/import \{[^}]*\bAPI_TIMEOUT_MS\b[^}]*\} from '\.\/api\.js'/)
     expect(src).not.toMatch(/\b15_?000\b/)
   })
 

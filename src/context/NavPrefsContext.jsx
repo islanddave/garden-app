@@ -48,10 +48,26 @@ import { onReconnect } from '../lib/reconnect.js'
 // and pending, re-sent on the `online` event and at launch; 4xx (refused) → rolled back to the last
 // server-confirmed list, reported as 'error'. Unknown ids ride along in every save (moreRegistry.js).
 // No toast, banner or dot for any of it (Reward UX / ADHD rules): the row's own button is the signal.
+//
+// A PREFS BODY THAT IS NOT FRESH NEVER OVERWRITES WHAT THIS SESSION KNOWS (QA IMPORTANT-2, reg M5).
+//   - A body the service worker served from its cache (marked FROM_CACHE by fetchNotificationPrefs)
+//     may predate a pin or a Save this device already made. It may say who can edit — the best answer
+//     on hand — and nothing else: pins, the pin cache and the bar cache all stand.
+//   - Once this person's own Save has run (applyLayout) the bar is theirs for the session, exactly as
+//     `touched` makes the pins theirs: a later landing — including the editor's own re-read, which can
+//     join a GET that left BEFORE the save — never rewrites the bar cache.
+//   - Pins are saved as a WHOLE list, so a session that has never learned the server's list (no owned
+//     cache, no fresh read yet) cannot save one: a tap then answers 'error' rather than overwrite the
+//     server's pins with a list built from nothing.
 
 export const BAR_LAYOUT_CACHE_KEY = 'nav.barLayout.v1'
 export const MORE_PINS_CACHE_KEY = 'nav.morePins.v1'
 export const MORE_PINS_PENDING_KEY = 'nav.morePins.pending.v1'
+
+// api.js's SW offline-cache marker, read through the global Symbol registry rather than by importing
+// isFromCache — the dependency-free seam dataCache.js and HarvestExportSheet.jsx already use.
+const FROM_CACHE = Symbol.for('garden-app.fromCache')
+const servedFromCache = (v) => !!v && typeof v === 'object' && v[FROM_CACHE] === true
 
 // try/catch per the house convention (clientPrefs.js): an unavailable or throwing localStorage
 // degrades to "no cache", never to an error on the nav's render path.
@@ -103,9 +119,11 @@ function readLaunch(userId) {
     hadBarCache,
     barRaw: hadBarCache ? bar.layout : null,
     barAdopted: false,
+    barTouched: false,              // this person's own Save ran this session (applyLayout)
     cachedCanEdit: hadBarCache && bar.canEdit === true,
     serverCanEdit: null,
     pins: hadPinsCache ? resolvePins(pinsCache.pins) : [],
+    pinsKnown: hadPinsCache,        // an owned cache, or a fresh read this session: a list to save FROM
     confirmed: null,
     pending,
     touched: pending,
@@ -203,12 +221,17 @@ export function NavPrefsProvider({ children }) {
     landed.current = prefs
     const cur = live.current
     const serverCanEdit = prefs.can_edit_bar === true
+    // Served from the SW's cache: not fresh. Who-may-edit only; pins and both caches stand.
+    if (servedFromCache(prefs)) { commit({ serverCanEdit }); return }
     const barRaw = prefs.bar_layout ?? null
-    writeBarCache(cur.userId, barRaw, serverCanEdit)
-    const patch = { serverCanEdit }
-    // First launch after sign-in: nothing was drawn from a cache, so apply at once. Otherwise the
-    // cache now holds the new value and the NEXT launch draws it.
-    if (!cur.hadBarCache && !cur.barAdopted) Object.assign(patch, { barRaw, barAdopted: true })
+    const patch = { serverCanEdit, pinsKnown: true }
+    // After this person's own Save, the bar (and its cache) are theirs until the next launch.
+    if (!cur.barTouched) {
+      writeBarCache(cur.userId, barRaw, serverCanEdit)
+      // First launch after sign-in: nothing was drawn from a cache, so apply at once. Otherwise the
+      // cache now holds the new value and the NEXT launch draws it.
+      if (!cur.hadBarCache && !cur.barAdopted) Object.assign(patch, { barRaw, barAdopted: true })
+    }
     const server = resolvePins(prefs.more_pins)
     if (!cur.touched) {
       // Nothing local to protect: the server's list is the list.
@@ -230,7 +253,7 @@ export function NavPrefsProvider({ children }) {
   const applyLayout = useCallback((raw) => {
     const cur = live.current
     if (cur.userId) writeBarCache(cur.userId, raw, cur.serverCanEdit ?? cur.cachedCanEdit)
-    commit({ barRaw: raw ?? null, barAdopted: true })
+    commit({ barRaw: raw ?? null, barAdopted: true, barTouched: true })
   }, [commit])
 
   // → 'pinned' | 'unpinned' | 'full' | 'error'. The button changes before this resolves.
@@ -239,6 +262,9 @@ export function NavPrefsProvider({ children }) {
     const cur = live.current
     // Nobody signed in: there is no row to save to and no owner to stamp a cache with.
     if (!cur.userId) return 'error'
+    // The list is saved WHOLE. Until this session knows the server's list — an owned launch cache, or
+    // a fresh read — a save would replace the person's real pins with a list built from nothing.
+    if (!cur.pinsKnown) return 'error'
     const wasPinned = cur.pins.includes(id)
     if (!wasPinned) {
       const moved = resolveBarLayout(cur.barRaw).moved

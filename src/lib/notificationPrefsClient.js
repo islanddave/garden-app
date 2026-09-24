@@ -14,7 +14,7 @@
 // quiet_hours_start='21:00:00', quiet_hours_end='07:00:00'.
 
 import { HANDS } from './handedness.js'
-import { API_TIMEOUT_MS } from './api.js'
+import { API_TIMEOUT_MS, FROM_CACHE, FROM_CACHE_HEADER } from './api.js'
 import { MORE_PIN_ID_RE, MORE_PINS_MAX_STORED } from './moreRegistry.js'
 import { resolveBarLayout } from './navConfig.js'
 
@@ -162,6 +162,15 @@ let inFlight = null
 
 // fetchNotificationPrefs — GETs current prefs, joining any request already in flight.
 // Returns the prefs object on success, null on no-op or failure (NEVER throws).
+//
+// V5-NAVCUSTOM-001 — A BODY THE SERVICE WORKER SERVED FROM ITS CACHE IS MARKED, exactly as apiFetch
+// marks one (api.js, SW-STALEAPI-001): public/sw.js answers a GET whose network attempt failed
+// outright from its per-user API cache, still HTTP 200, stamped X-From-Cache. This client bypasses
+// apiFetch (the prefs route lives on the critter Lambda), so without this the stamp died here and a
+// days-old body read as fresh — it un-pinned pins this device had already confirmed and rewrote the
+// launch caches with an older bar. The marker is api.js's FROM_CACHE: a non-enumerable global-registry
+// Symbol, invisible to Object.keys, spread and JSON, so no existing caller sees a shape change.
+// NavPrefsContext reads it; every other caller is unaffected.
 export async function fetchNotificationPrefs({ getToken } = {}) {
   if (!CRITTER_BASE) return null
   if (inFlight) return inFlight
@@ -175,7 +184,15 @@ export async function fetchNotificationPrefs({ getToken } = {}) {
       })
       if (!res.ok) return null
       const json = await res.json().catch(() => null)
-      return json && typeof json === 'object' ? json : null
+      if (!json || typeof json !== 'object') return null
+      // Optional chaining is load-bearing, as in apiFetch: most tests stub fetch with a bare
+      // { ok, json } that has no headers, and "no header surface" means "not from cache".
+      if (res.headers?.get?.(FROM_CACHE_HEADER)) {
+        try {
+          Object.defineProperty(json, FROM_CACHE, { value: true, enumerable: false, configurable: true })
+        } catch { /* frozen body — marking is best-effort */ }
+      }
+      return json
     } catch {
       return null
     } finally {

@@ -358,6 +358,77 @@ describe('a different person on the same phone', () => {
   })
 })
 
+// QA IMPORTANT-2 + regression M5 — A PREFS BODY THAT IS NOT FRESH NEVER OVERWRITES WHAT THIS SESSION
+// KNOWS. `fromSwCache` marks a body the way fetchNotificationPrefs marks one the service worker served
+// from its cache (api.js's FROM_CACHE: a non-enumerable global-registry Symbol).
+describe('a prefs body that is not fresh', () => {
+  const FROM_CACHE = Symbol.for('garden-app.fromCache')
+  const fromSwCache = (body) => Object.defineProperty(body, FROM_CACHE, { value: true, enumerable: false })
+  const LAYOUT = { order: [...DEFAULT_BAR.split(',')], hidden: ['put-up'] }
+
+  // The QA probe: Dave confirmed Seeds last session (cache ['seeds']); this launch's GET fails
+  // outright and the SW answers with a body from before that pin.
+  // KILLING MUTATION: drop the servedFromCache guard in the landing effect. RESULT: RED — Seeds
+  // vanishes, the caches are rewritten, and the next pin PATCHes ['photos'] without Seeds.
+  it('a body the SW served from its cache updates who may edit — and nothing else', async () => {
+    seed(BAR_LAYOUT_CACHE_KEY, barCache(LAYOUT, false))
+    seed(MORE_PINS_CACHE_KEY, pinsCache(['seeds']))
+    fetchPrefsSpy.mockResolvedValue(fromSwCache({ bar_layout: null, more_pins: null, can_edit_bar: true }))
+    await boot()
+    expect(text('pins')).toBe('seeds')
+    expect(text('bar')).toBe('today,garden,create,harvests')
+    expect(text('edit')).toBe('true')                             // the one thing it may say
+    expect(read(MORE_PINS_CACHE_KEY)).toEqual(pinsCache(['seeds']))
+    expect(read(BAR_LAYOUT_CACHE_KEY)).toEqual(barCache(LAYOUT, false))
+    await act(async () => { await api.current.togglePin('photos') })
+    expect(saveSpy.mock.calls[0][0].ids).toEqual(['seeds', 'photos'])
+  })
+
+  // With no cache of its own, a stale body cannot become the base of a whole-list save either:
+  // pinning then would replace the server's pins with a list built from nothing.
+  // KILLING MUTATION: drop the pinsKnown guard in togglePin. RESULT: RED — ['photos'] is PATCHed.
+  it('with no launch cache, a stale (or failed) read leaves pins unknown, and a tap saves nothing', async () => {
+    fetchPrefsSpy.mockResolvedValue(fromSwCache({ bar_layout: LAYOUT, more_pins: ['seeds'], can_edit_bar: false }))
+    const view = await boot()
+    expect(text('pins')).toBe('')
+    expect(text('bar')).toBe(DEFAULT_BAR)                          // not adopted either
+    let outcome
+    await act(async () => { outcome = await api.current.togglePin('photos') })
+    expect(outcome).toBe('error')
+    expect(saveSpy).not.toHaveBeenCalled()
+    expect(localStorage.getItem(MORE_PINS_CACHE_KEY)).toBeNull()
+    view.unmount()
+    localStorage.clear()
+    fetchPrefsSpy.mockResolvedValue(null)                          // a failed read, same rule
+    await boot()
+    await act(async () => { outcome = await api.current.togglePin('photos') })
+    expect(outcome).toBe('error')
+    expect(saveSpy).not.toHaveBeenCalled()
+  })
+
+  it('…and a FRESH read makes the list known: the next tap saves on top of the server’s list', async () => {
+    fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: ['seeds'], can_edit_bar: false })
+    await boot()
+    await act(async () => { await api.current.togglePin('photos') })
+    expect(saveSpy.mock.calls[0][0].ids).toEqual(['seeds', 'photos'])
+  })
+
+  // Regression M5, the bar half: after this person's own Save (applyLayout), a later landing — the
+  // editor's re-read joining a GET that left before the save — must not put the old bar in the cache.
+  // KILLING MUTATION: drop the barTouched guard. RESULT: RED — the cache holds the pre-save layout and
+  // the next launch draws the old bar.
+  it('after applyLayout, a later (older) landing never rewrites the bar cache', async () => {
+    await boot()                                                   // server layout: null
+    const saved = { order: [...DEFAULT_BAR.split(',')], hidden: ['garden'] }
+    act(() => { api.current.applyLayout(saved) })
+    fetchPrefsSpy.mockResolvedValueOnce({ bar_layout: null, more_pins: null, can_edit_bar: true })
+    await act(async () => { await api.current.refreshPrefs() })
+    expect(read(BAR_LAYOUT_CACHE_KEY).layout).toEqual(saved)
+    expect(text('bar')).toBe('today,create,harvests,put-up')
+    expect(text('edit')).toBe('true')                              // who-may-edit still updates
+  })
+})
+
 // QA IMPORTANT-1 — A SESSION THAT ENDS WITHOUT THE SIGN-OUT FUNNEL. An expired or revoked Clerk session
 // never runs clearClientPrefs(), so the previous person's caches are still on the phone when the next
 // person signs in. NOTHING IN THIS BLOCK CLEARS STORAGE between the two people: that is the whole point
