@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Viewport copied from ./index.html for the same reason it is copied there. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Today care row — Skip target + Skip undo, real browser</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #faf8f3; }
+      #verdict {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 99999;
+        font: 11px/1.4 ui-monospace, monospace; color: #fff; background: #2d6a4f; padding: 4px 8px; white-space: pre-wrap;
+      }
+      /* 16px sides = Today's own container (src/pages/Today.jsx: padding 16), so a row here is exactly as
+         wide as it is in the app at the same viewport. The app shell adds no horizontal padding. */
+      #root { padding: 60px 16px 24px; }
+    </style>
+  </head>
+  <body>
+    <div id="verdict">booting…</div>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/careskip.jsx"></script>
+  </body>
+</html>

@@ -63,6 +63,23 @@ function writeSkipped(set) {
   try { localStorage.setItem(skipKeyName(), JSON.stringify([...set])) } catch { return }
 }
 
+// BUG-TODAYSKIPNOUNDO-001 — keys UN-skipped on this device today, i.e. Skip's Undo.
+//
+// The mount-time merge below UNIONS the server's set into the local one. While the set could only
+// grow within a day, a union could never be wrong. With Undo it can: undo a skip while the server
+// still holds the older snapshot — the Undo's own sync failed in a dead spot, lost the race with the
+// skip's sync, or has not landed when Today remounts a second later — and the union puts the key
+// straight back, silently hiding the plant again after Dave undid it. A key in this set is never
+// re-added from the server today. Same date-keyed, self-expiring shape as the skip set above.
+function unskipKeyName() { return 'today-unskipped:' + todayLocalISO() }
+function readUnskipped() {
+  try { return new Set(JSON.parse(localStorage.getItem(unskipKeyName()) || '[]')) }
+  catch { return new Set() }
+}
+function writeUnskipped(set) {
+  try { localStorage.setItem(unskipKeyName(), JSON.stringify([...set])) } catch { return }
+}
+
 // `eventType` overrides the row's primary type — the moisture check posts through this same body so
 // the two writes cannot drift in shape. Omitted => the row's own mapped type, as before.
 function eventBody(row, eventType) {
@@ -119,6 +136,18 @@ function CareChipButton({ row, pending, onLog }) {
 // thing that shrinks is the tap target, and Dave is on Android where Material's minimum is 48dp.
 // So 48 is the floor, and the row is now exactly its buttons — no whitespace left to give back.
 const ROW_TAP_MIN = 48
+
+// BUG-TODAYSKIPNOUNDO-001 — Skip's target, and the dead space that separates it from the next control.
+// Skip was 42px wide and flush against Moist or Water: under Android's 48dp minimum, and a thumb that
+// missed it by a few pixels wrote an event instead of skipping. 48 wide matches ROW_TAP_MIN, so the
+// target is 48 in both directions. The 8px after it is Material's minimum spacing between targets and
+// is deliberately NOT tappable — a near-miss does nothing, rather than log a watering.
+// THE COST, measured in real Chrome at Dave's 426px viewport (tests/harness/careskip.*): the name
+// column on a water row goes 204 -> 190px (166 -> 152 beside a thumbnail). Against the 253 live care
+// rows of 2026-09-24 that ellipsizes 11 more names, all 20-23 characters — 37 cut instead of 26.
+// SKIP_GAP is the dial: 4 would cut 8 more instead of 11, 0 would cut 3 but drop the separation.
+const SKIP_W = 48
+const SKIP_GAP = 8
 
 // Same shape as the one in forms/PlantingSelect.jsx. NOT `display:none` and not width/height 0 —
 // both remove the node from the accessibility tree, which would defeat the entire point.
@@ -194,7 +223,7 @@ function Row({ row, pending, onLog, onSkip, onMoist }) {
       </Link>
       {/* Skip (suppress-for-today) — quiet secondary control, to the LEFT of the care chip. */}
       <button type="button" onClick={() => onSkip(row)} aria-label={'Skip ' + row.name + ' today'}
-        style={{ flexShrink: 0, width: 42, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.light, cursor: 'pointer', fontSize: '0.7rem' }}>
+        style={{ flexShrink: 0, width: SKIP_W, marginRight: SKIP_GAP, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.light, cursor: 'pointer', fontSize: '0.7rem' }}>
         Skip
       </button>
       {/* Ordered by escalating commitment left-to-right: do nothing today -> record what you found
@@ -286,8 +315,14 @@ export default function CareNeeded({ plan }) {
   // made moments ago offline on this phone the instant a stale server value arrived. Union is also
   // the correct merge for what this set actually is: within a single day it only ever grows, and
   // the two devices are both appending to it. The cost of union is that an un-skip cannot
-  // propagate — there is no un-skip affordance, so that cost is currently zero, and this comment
-  // is here so that whoever adds one knows to revisit the merge rather than discover it.
+  // propagate.
+  //
+  // BUG-TODAYSKIPNOUNDO-001 added the un-skip (Skip's Undo) and revisited this merge, as the note
+  // that stood here asked. On THIS device an undone key is vetoed (readUnskipped), so a stale server
+  // snapshot cannot re-hide a plant Dave just brought back. ACROSS devices it still cannot propagate:
+  // a second device that already pulled the key keeps it, and its next skip re-publishes it. Fixing
+  // that needs tombstones on the server — a wire change — and the set is per user, so it only bites
+  // someone who skips on one device and undoes on another.
   //
   // Writes the merged set back to localStorage so the union survives the next cold start even if
   // the network is gone by then. Best-effort throughout: fetchNotificationPrefs never throws and
@@ -299,10 +334,11 @@ export default function CareNeeded({ plan }) {
       if (!alive || !prefs) return
       const remote = readTodaySkipped(prefs, todayLocalISO())
       if (remote.length === 0) return
+      const unskipped = readUnskipped()
       setSkipped(prev => {
         const merged = new Set(prev)
         let added = false
-        for (const k of remote) if (!merged.has(k)) { merged.add(k); added = true }
+        for (const k of remote) if (!merged.has(k) && !unskipped.has(k)) { merged.add(k); added = true }
         if (!added) return prev            // identity-stable: no needless re-render or re-write
         writeSkipped(merged)
         return merged
@@ -586,6 +622,30 @@ export default function CareNeeded({ plan }) {
     }
   }, [fetch, toast, pendingKeys, rows.length, setPending, announce])
 
+  // BUG-TODAYSKIPNOUNDO-001 — Skip's Undo. Same order as skipRow: the local write first and
+  // synchronously, then the fire-and-forget sync, which still sends the WHOLE set (the column is a
+  // snapshot).
+  //
+  // Reads the set FRESH from localStorage rather than through a state updater, on purpose. The toast
+  // layer lives at the app root and outlives Today: skip, tap into the planting, tap Undo, and this
+  // component has unmounted — a state updater would never run, and the plant would stay skipped while
+  // the toast claimed otherwise. localStorage is what the next mount reads, so writing it directly is
+  // what makes the Undo true whether or not the list is still mounted. The state update only repaints.
+  const unskipRow = useCallback((row) => {
+    const n = readSkipped()
+    n.delete(row.key)
+    writeSkipped(n)
+    const u = readUnskipped()
+    u.add(row.key)
+    writeUnskipped(u)
+    saveTodaySkipped({ getToken, date: todayLocalISO(), keys: [...n] })
+    setSkipped(prev => {
+      if (!prev.has(row.key)) return prev
+      const next = new Set(prev); next.delete(row.key); return next
+    })
+    announce(row.name + ' is back on today’s list')
+  }, [announce, getToken])
+
   const skipRow = useCallback((row) => {
     setSkipped(prev => {
       const n = new Set(prev).add(row.key)
@@ -598,8 +658,21 @@ export default function CareNeeded({ plan }) {
       saveTodaySkipped({ getToken, date: todayLocalISO(), keys: [...n] })
       return n
     })
+    // Skipping again after an Undo is a fresh decision, so this device stops vetoing the key on merge.
+    const u = readUnskipped()
+    if (u.delete(row.key)) writeUnskipped(u)
     announce('Skipped ' + row.name + ' for today')
-  }, [announce, getToken])
+    // BUG-TODAYSKIPNOUNDO-001 — the visible undo logging always had. Skip was the one action on this
+    // row with no way back, and it is the one that silently drops a plant from today's list; the
+    // announce() above is screen-reader-only. Coalesces like the log toast, under its own group, so a
+    // run of skips reads "Skipped 3 plants for today" and never merges into a watering count.
+    toast.showUndo({
+      message: 'Skipped ' + row.name + ' for today',
+      group: 'care-skip',
+      groupMessage: (n) => 'Skipped ' + n + ' plants for today',
+      onUndo: () => unskipRow(row),
+    })
+  }, [announce, getToken, toast, unskipRow])
 
   // Bulk: the candidate set for an event_type = visible rows of that type, MINUS in-ground beds when
   // bed-wait is active (watering only). Client-side fan-out of single POSTs (the batch endpoint is
