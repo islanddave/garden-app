@@ -1,10 +1,10 @@
 {
-  "version": "4.149.0",
+  "version": "4.150.0",
   "date": "2026-09-24",
   "highlights": [
-    "Seeds: Back from a seed card's \"Saved from…\" link now returns you to the same spot in Saved seeds instead of the top. The same fix keeps your place when you come back to My seeds and the other lists that remember where you were.",
-    "Seeds: opening a seed packet or lot now starts at the top of its page instead of scrolled down at the edit form, and \"Set parent plant →\" takes you straight to the parent-plant card.",
-    "My seeds: the heat estimate (SHU) is never hidden on a row, F2 saved seed included. When a row is full, the heat moves to the next line whole.",
-    "Search: every seed packet and lot that matches now shows under Seeds, not just the first 20."
+    "Voice harvest: naming a different plant partway through now clears the amounts you'd already said for the one before, so they can't be saved under the wrong plant. The card tells you what it cleared.",
+    "Voice harvest on a slow connection: anything you say while the last harvest is still saving is kept, the next plant you name is no longer marked \"not captured\", and saying \"next\" again shows \"Still saving the last one.\" instead of saving the harvest twice.",
+    "Today: a plant you skip in your own list no longer comes back after a skip in the household list, and Undo in either list updates both.",
+    "Undo: the Undo and × on every \"Logged …\" message are now full finger-height targets. The message looks the same."
   ]
 }
