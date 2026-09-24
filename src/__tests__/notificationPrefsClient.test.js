@@ -2,6 +2,8 @@
 // Mirrors src/__tests__/critterClient.test.js patterns.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const TOKEN = 'tk-abc'
 const PREFS_OK = { critter_visit: 'in_app_only', quiet_hours_start: '21:00:00', quiet_hours_end: '07:00:00' }
@@ -128,17 +130,17 @@ describe('notificationPrefsClient', () => {
     })
   })
 
-  // V5-ADMINCENTER-001 — saveNavTabs USED TO LIVE HERE and its tests moved with it to
-  // src/__tests__/appConfigClient.test.js. Dave ruled 2026-09-08 that the nav order is GLOBAL, so it
-  // is no longer a user_notification_prefs write at all. This assertion is what stops it coming back
-  // by habit: every writer in this module is per-user because the table is keyed by created_by.
-  it('exports no nav_tabs writer — that scope belongs to appConfigClient', async () => {
+  // V5-ADMINCENTER-001 wrote a GLOBAL nav_tabs order; V5-NAVCUSTOM-001 retired that path from the SPA
+  // (D4, Dave 2026-09-24: only his bar changes). The per-person bar is saveBarLayout over bar_layout —
+  // a different key and shape — so a nav_tabs writer has no business existing anywhere now.
+  it('exports no nav_tabs writer — the per-person bar is saveBarLayout', async () => {
     const mod = await loadModule('https://staging.example.com')
     expect(mod.saveNavTabs).toBeUndefined()
     // Anti-vacuity: the module still loads and still exports its per-user writers, so the assertion
     // above is about one missing export and not about a failed import.
     expect(typeof mod.fetchNotificationPrefs).toBe('function')
-    expect(typeof mod.patchNotificationPrefs).toBe('function')
+    expect(typeof mod.saveBarLayout).toBe('function')
+    expect(typeof mod.saveMorePins).toBe('function')
   })
 
   describe('patchNotificationPrefs', () => {
@@ -411,5 +413,129 @@ describe('notificationPrefsClient — Phase B fire-and-forget POSTs', () => {
       const { recordOptInDismissed } = await loadModule('https://critter.test/')
       expect(await recordOptInDismissed({ getToken: () => Promise.resolve(TOKEN) })).toBeNull()
     })
+  })
+})
+
+// ─── V5-NAVCUSTOM-001 — the two REPORTED savers (pins, the per-person bar) ─────────────────────
+//
+// Unlike every writer above, these report { ok } | { ok:false, status } — NavPrefsContext decides
+// keep-and-retry (status 0, 5xx) versus roll-back (4xx) from that split, so a status that lies is a
+// pin that silently vanishes or silently never saves. Each case names the mutation that reds it.
+describe('notificationPrefsClient — saveMorePins / saveBarLayout (reported)', () => {
+  const BASE = 'https://staging.example.com'
+  const okJson = { ok: true, status: 200, json: async () => ({}) }
+  const body = (i = 0) => JSON.parse(global.fetch.mock.calls[i][1].body)
+
+  beforeEach(() => { global.fetch = vi.fn() })
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks() })
+
+  it('saveMorePins PATCHes exactly { more_pins } to the prefs route and reports ok', async () => {
+    const mod = await loadModule(BASE)
+    global.fetch.mockResolvedValueOnce(okJson)
+    expect(await mod.saveMorePins({ getToken: async () => TOKEN, ids: ['seeds', 'photos'] })).toEqual({ ok: true })
+    const [url, init] = global.fetch.mock.calls[0]
+    expect(url).toBe(`${BASE}/api/notifications/prefs`)
+    expect(init.method).toBe('PATCH')
+    expect(init.headers.Authorization).toBe(`Bearer ${TOKEN}`)
+    expect(body()).toEqual({ more_pins: ['seeds', 'photos'] })
+  })
+
+  // U4 / CONTRACT §3 — the route merges with COALESCE, so null means "unchanged". Removing the last
+  // pin has to send an EMPTY ARRAY or the pin stays on the server forever.
+  // KILLING MUTATION: skip the request (or send null) for an empty list. RESULT: RED.
+  it('sends [] — not null, not nothing — when the last pin goes', async () => {
+    const mod = await loadModule(BASE)
+    global.fetch.mockResolvedValueOnce(okJson)
+    expect(await mod.saveMorePins({ getToken: async () => TOKEN, ids: [] })).toEqual({ ok: true })
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    expect(global.fetch.mock.calls[0][1].body).toBe('{"more_pins":[]}')
+  })
+
+  it('saveBarLayout PATCHes exactly { bar_layout: { order, hidden } }, dropping any other key', async () => {
+    const mod = await loadModule(BASE)
+    global.fetch.mockResolvedValueOnce(okJson)
+    const layout = { order: ['today', 'create', 'garden', 'harvests', 'put-up'], hidden: ['put-up'], bar: ['x'], moved: ['put-up'] }
+    expect(await mod.saveBarLayout({ getToken: async () => TOKEN, layout })).toEqual({ ok: true })
+    expect(body()).toEqual({ bar_layout: { order: ['today', 'create', 'garden', 'harvests', 'put-up'], hidden: ['put-up'] } })
+  })
+
+  // The server's own answer is passed through verbatim. KILLING MUTATION: collapse every failure to
+  // status 0. RESULT: RED — a refused pin would be retried forever instead of rolled back.
+  it('reports the server’s status on a non-OK response', async () => {
+    const mod = await loadModule(BASE)
+    for (const status of [400, 401, 403, 500, 503]) {
+      global.fetch.mockResolvedValueOnce({ ok: false, status })
+      expect(await mod.saveMorePins({ getToken: async () => TOKEN, ids: ['seeds'] })).toEqual({ ok: false, status })
+      global.fetch.mockResolvedValueOnce({ ok: false, status })
+      expect(await mod.saveBarLayout({ getToken: async () => TOKEN, layout: { order: ['today', 'garden', 'create', 'harvests', 'put-up'], hidden: [] } }))
+        .toEqual({ ok: false, status })
+    }
+  })
+
+  // status 0 = never reached the server. KILLING MUTATION: report a missing token as 401 (the old
+  // saveNavTabs shape). RESULT: RED — offline, the safe getToken returns null, and a 401 would make
+  // NavPrefsContext roll back a pin the person just made instead of keeping it pending.
+  it('reports status 0 — never reached the server — for no token, a network error and an unset base', async () => {
+    const mod = await loadModule(BASE)
+    expect(await mod.saveMorePins({ getToken: async () => null, ids: ['seeds'] })).toEqual({ ok: false, status: 0 })
+    global.fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    expect(await mod.saveMorePins({ getToken: async () => TOKEN, ids: ['seeds'] })).toEqual({ ok: false, status: 0 })
+    const unset = await loadModule('')
+    expect(await unset.saveBarLayout({ getToken: async () => TOKEN, layout: { order: ['today', 'garden', 'create', 'harvests', 'put-up'], hidden: [] } }))
+      .toEqual({ ok: false, status: 0 })
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  // The house 15s bound, from api.js — not a second constant. KILLING MUTATIONS: drop the signal
+  // (the request hangs past 15s), or bound it with a different number. RESULT: RED on the abort.
+  it('aborts at api.js’s API_TIMEOUT_MS and reports status 0', async () => {
+    const mod = await loadModule(BASE)
+    const { API_TIMEOUT_MS } = await import('../lib/api.js')
+    expect(API_TIMEOUT_MS).toBe(15000)
+    vi.useFakeTimers()
+    let signal
+    global.fetch.mockImplementation((_url, init) => new Promise((_, reject) => {
+      signal = init.signal
+      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+    }))
+    const pending = mod.saveMorePins({ getToken: async () => TOKEN, ids: ['seeds'] })
+    await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS - 1)
+    expect(signal, 'no AbortSignal was passed to fetch').toBeTruthy()
+    expect(signal.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(signal.aborted).toBe(true)
+    expect(await pending).toEqual({ ok: false, status: 0 })
+  })
+
+  it('carries no timeout literal of its own — the bound is imported', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/lib/notificationPrefsClient.js'), 'utf8')
+    expect(src).toMatch(/import \{ API_TIMEOUT_MS \} from '\.\/api\.js'/)
+    expect(src).not.toMatch(/\b15_?000\b/)
+  })
+
+  // Local refusal: the payload the contract refuses is not sent. KILLING MUTATION: delete a shape
+  // check. RESULT: RED — the request goes out (and would 400 on the server).
+  it('refuses, without a request, pin lists the contract rejects', async () => {
+    const mod = await loadModule(BASE)
+    const refused = { ok: false, status: 400, local: true }
+    const bad = [
+      null, 'seeds', ['Seeds'], ['/seeds'], [7], ['seeds', 'seeds'],
+      Array.from({ length: 33 }, (_, i) => `row-${i}`),
+    ]
+    for (const ids of bad) expect(await mod.saveMorePins({ getToken: async () => TOKEN, ids }), JSON.stringify(ids)).toEqual(refused)
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('refuses, without a request, layouts the contract rejects — hiding ＋ or Today, a short order', async () => {
+    const mod = await loadModule(BASE)
+    const refused = { ok: false, status: 400, local: true }
+    const bad = [
+      null, {}, { order: ['today', 'garden', 'create', 'harvests'], hidden: [] },
+      { order: ['today', 'garden', 'create', 'harvests', 'put-up'], hidden: ['create'] },
+      { order: ['today', 'garden', 'create', 'harvests', 'put-up'], hidden: ['today'] },
+      { order: ['today', 'garden', 'create', 'harvests', 'put-up'] },
+    ]
+    for (const layout of bad) expect(await mod.saveBarLayout({ getToken: async () => TOKEN, layout }), JSON.stringify(layout)).toEqual(refused)
+    expect(global.fetch).not.toHaveBeenCalled()
   })
 })
