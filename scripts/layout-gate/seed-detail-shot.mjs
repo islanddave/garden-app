@@ -41,6 +41,12 @@
 //       seedLots.js), whole inside the packet card; and "Change stage in Saved seeds →" is present.
 //   (g) REACH — each of the page's seed controls (Sow this, See the planting, Edit sow details, every
 //       Sown-from row, Change stage) scrolled to the middle of the visible band hit-tests to itself.
+//   (h) THE REFUSED REMOVE (BUG-INVDELETEERROROFFSCREEN-001), its own state at both viewports: "Remove
+//       item" and then the dialog's "Remove", both real taps, against a harness that answers the DELETE
+//       with the Lambda's 409 sentence (remove=refuse). The dialog must still be up, wholly inside the
+//       viewport, with the sentence INSIDE it as role="alert", every text run whole, directly above the
+//       Remove / Keep it row, shown exactly once on the page; both buttons on the tap floor and hitting
+//       themselves; exactly one DELETE sent; the page not left.
 //
 // THE INSTRUMENT CHECK comes first, and a mismatch stops that state before any invariant is read: the
 // page must self-report the viewport it was asked for (trap 1), must have raised no error, must still be
@@ -127,10 +133,12 @@ const VIEWPORTS = [[360, 640], [390, 844]]
 // NAMED TAP-FLOOR EXEMPTIONS, from the first measured run (2026-09-24). Each is matched by what the
 // control IS on this page — its place in the structure, never a label alone — printed with its size on
 // every run, and reported INERT once every match clears the floor. NONE is part of the Seeds release.
-// The two inline links are WCAG 2.5.8's own exemption (a target inside a line of text). The other three
+// The two inline links are WCAG 2.5.8's own exemption (a target inside a line of text). The other two
 // are PRE-EXISTING tap-floor misses in code this gate's brief does not own (the frozen forms pickers'
-// clear ✕, the app-wide Favorite toggle, the delete button); they were REPORTED for a decision
+// clear ✕, the app-wide Favorite toggle); they were REPORTED for a decision
 // (lane-seedpolish-20260924 report) rather than fixed here, and each should leave this list when fixed.
+// (The delete button's `remove-item` entry left it with BUG-SEEDPAGETAPFLOORS-001: "Remove item" now
+// sits on the floor and is held to it by the census like every other control.)
 const EXEMPTIONS = [
   { key: 'breadcrumb', why: 'the "Seeds" link inline in the breadcrumb line — WCAG 2.5.8 inline exemption',
     match: (t) => t.inBreadcrumb },
@@ -140,8 +148,6 @@ const EXEMPTIONS = [
     match: (t) => t.favorite },
   { key: 'picker-clear', why: 'the ✕ on a chosen value in the frozen forms pickers (SourcePicker\'s "Clear supplier", PlantingSelect\'s "Clear planting selection"), drawn at 30px by their chipClearBtn — pre-existing, REPORTED',
     match: (t) => t.pickerClear },
-  { key: 'remove-item', why: 'the "Remove item" text button — pre-existing, REPORTED',
-    match: (t) => t.removeItem },
 ]
 
 const failures = []
@@ -296,8 +302,7 @@ const MEASURE = `(() => {
         favorite: el.tagName === 'BUTTON' && el.getAttribute('aria-label') === 'Favorite' && !!(titleRow && titleRow.contains(el)),
         // The pickers' chosen-value chip: [value … ✕] with the picker's own "Change" button beside it.
         pickerClear: el.tagName === 'BUTTON' && /^Clear /.test(el.getAttribute('aria-label') || '') &&
-          !!(el.parentElement && el.parentElement.nextElementSibling && text(el.parentElement.nextElementSibling) === 'Change'),
-        removeItem: el.tagName === 'BUTTON' && text(el) === 'Remove item' && !!el.closest('form') }
+          !!(el.parentElement && el.parentElement.nextElementSibling && text(el.parentElement.nextElementSibling) === 'Change') }
     })
 
   // (c) the "Sown from this packet" card.
@@ -451,6 +456,108 @@ async function sow(at) {
   await toTop()
   console.log(`[seed-detail] ${at}: sown — Sow this and Add planting tapped, sheet closed, "Sown ✓" line up`)
   return null
+}
+
+// ── (h) THE REFUSED REMOVE — BUG-INVDELETEERROROFFSCREEN-001 ─────────────────────────────────────────
+// The defect this state exists for: a refused delete closed the dialog and wrote its reason to the
+// form banner, above the whole form — off-screen on a phone, with nothing changed near the finger. So
+// the question is geometric, and jsdom cannot ask it: after the refusal, is the reason ON SCREEN, in
+// the dialog, beside the buttons the finger is on?
+const REMOVE_DIALOG = `document.querySelector('${tid('inventory-remove-dialog')}')`
+const MEASURE_REMOVE = `(() => {
+  const d = document, w = window, de = d.documentElement
+  const R = n => Math.round(n * 10) / 10
+  const box = el => { const r = el.getBoundingClientRect(); return {
+    t: R(r.top), l: R(r.left), r: R(r.right), b: R(r.bottom), w: R(r.width), h: R(r.height) } }
+  const runsOf = el => { const out = [], tw = d.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    for (let t = tw.nextNode(); t; t = tw.nextNode()) {
+      if (!t.textContent.trim()) continue
+      const rg = d.createRange(); rg.selectNodeContents(t)
+      for (const r of rg.getClientRects()) if (r.width > 0.5 && r.height > 0.5) out.push(r)
+    }
+    return out }
+  const inside = (r, c) => r.left >= c.left - 0.5 && r.right <= c.right + 0.5 && r.top >= c.top - 0.5 && r.bottom <= c.bottom + 0.5
+  const view = { left: 0, top: 0, right: w.innerWidth, bottom: w.innerHeight }
+  const hitsSelf = el => { const r = el.getBoundingClientRect(), x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2
+    const at = d.elementFromPoint(x, y); return at === el || (at != null && el.contains(at)) }
+  const dlg = ${REMOVE_DIALOG}
+  const err = d.querySelector('${tid('inventory-remove-error')}')
+  const confirm = d.querySelector('${tid('inventory-remove-confirm')}')
+  const keep = dlg ? [...dlg.querySelectorAll('button')].find(b => (b.textContent || '').trim() === 'Keep it') || null : null
+  const refusal = window.__h ? window.__h.refusal() : null
+  const head = refusal ? refusal.slice(0, 30) : null
+  const shownAt = head ? [...d.querySelectorAll('body *')].filter(el =>
+    [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.includes(head))).length : 0
+  const er = err ? err.getBoundingClientRect() : null
+  const row = err ? err.nextElementSibling : null
+  const runs = err ? runsOf(err) : []
+  return {
+    vw: w.innerWidth, vh: w.innerHeight, docScrollW: de.scrollWidth, docClientW: de.clientWidth,
+    leftPage: !!d.querySelector('[data-testid="harness-left-page"]'), refusal, shownAt,
+    dialog: dlg ? { box: box(dlg), inView: inside(dlg.getBoundingClientRect(), view) } : null,
+    error: err ? { box: box(err), role: err.getAttribute('role'), text: (err.textContent || '').trim(),
+      inDialog: !!dlg && dlg.contains(err) && inside(er, dlg.getBoundingClientRect()), inView: inside(er, view),
+      runs: runs.length, runsWhole: runs.every(r => inside(r, er) && inside(r, view)),
+      rowHoldsButtons: !!row && !!confirm && !!keep && row.contains(confirm) && row.contains(keep),
+      gapToButtons: row ? R(row.getBoundingClientRect().top - er.bottom) : null } : null,
+    confirm: confirm ? { h: box(confirm).h, hits: hitsSelf(confirm), inView: inside(confirm.getBoundingClientRect(), view) } : null,
+    keep: keep ? { h: box(keep).h, hits: hitsSelf(keep), inView: inside(keep.getBoundingClientRect(), view) } : null,
+    deletes: window.__h ? (window.__h.hits()['item-delete'] || 0) : null,
+    errors: window.__h ? window.__h.errors() : ['window.__h missing'],
+  }
+})()`
+
+async function removeRefused(vw, vh) {
+  const at = `remove-refused@${vw}x${vh}`
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: vw, height: vh, deviceScaleFactor: 2, mobile: true }, cdp.sessionId)
+  const url = `http://localhost:${PORT}/tests/harness/seeddetail.html?case=packet&remove=refuse&topbar=${TOP_CHROME_PX}&vp=${vw}x${vh}-remove&verdict=0`
+  const nav = await cdp.send('Page.navigate', { url }, cdp.sessionId)
+  if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
+  await sleep(200)
+  await evalSettled(`(async()=>{for(let i=0;i<200;i++){if(window.__h&&window.__h.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('harness never reached ready() on remove=refuse')})()`)
+  await evalSettled('document.fonts ? document.fonts.ready.then(() => 1) : 1')
+  if (!await evalSettled('window.__h.arrived()')) return fail(`${at}: the page never arrived — nothing to measure`)
+  if (MUTATE_CSS) {
+    await evalSettled(`(() => { const st = document.createElement('style'); st.textContent = ${JSON.stringify(MUTATE_CSS)}; document.head.appendChild(st); return 1 })()`)
+  }
+  await waitSettled('true', 2000)
+  // Both taps real, hit-tested at their centres, exactly as the finger would land.
+  const why = await tap(`document.querySelector('${tid('inventory-remove')}')`, '"Remove item"')
+  if (why) return fail(`${at}: (h) ${why}`)
+  if (!await waitSettled(`!!${REMOVE_DIALOG}`)) return fail(`${at}: (h) "Remove item" was tapped and no "Remove item?" dialog opened`)
+  const why2 = await tap(`document.querySelector('${tid('inventory-remove-confirm')}')`, 'the dialog\'s "Remove"')
+  if (why2) return fail(`${at}: (h) ${why2}`)
+  // Settles on whichever happens: the reason appears, the dialog goes away, or the page leaves. The
+  // measurement below says which, and only the first is a pass.
+  if (!await waitSettled(`!!document.querySelector('${tid('inventory-remove-error')}') || !${REMOVE_DIALOG} || !!document.querySelector('[data-testid="harness-left-page"]')`)) {
+    return fail(`${at}: (h) the refusal never showed — the dialog is still up with no reason in it`)
+  }
+  const m = await evalSettled(MEASURE_REMOVE)
+  if (m.vw !== vw || m.vh !== vh) return fail(`${at}: page self-reports ${m.vw}x${m.vh} — emulation did not take`)
+  if (m.errors.length) return fail(`${at}: the page raised ${m.errors.length} error(s): ${m.errors.join(' | ')}`)
+  if (!m.refusal) return fail(`${at}: the harness is not refusing (remove=refuse not honoured) — the state measures nothing`)
+  if (m.leftPage) return fail(`${at}: (h) the page LEFT after a refused delete`)
+  if (m.deletes !== 1) fail(`${at}: (h) ${m.deletes} DELETE request(s) sent, expected exactly 1`)
+  if (m.docScrollW > m.docClientW + 1) fail(`${at}: (a) document scrollWidth ${m.docScrollW} > clientWidth ${m.docClientW} — the page scrolls sideways`)
+  if (!m.dialog) return fail(`${at}: (h) the dialog CLOSED on the refusal — the reason is not where the tap was`)
+  if (!m.dialog.inView) fail(`${at}: (h) the dialog spans y${m.dialog.box.t}-${m.dialog.box.b} x${m.dialog.box.l}-${m.dialog.box.r}, not wholly inside the ${vw}x${vh} viewport`)
+  const e = m.error
+  if (!e) return fail(`${at}: (h) no reason in the dialog`)
+  if (e.role !== 'alert') fail(`${at}: (h) the reason is not role="alert" (it is ${JSON.stringify(e.role)}) — a screen reader would not announce it`)
+  if (e.text !== m.refusal) fail(`${at}: (h) the dialog shows "${e.text}", expected the server's sentence "${m.refusal}"`)
+  if (m.shownAt !== 1) fail(`${at}: (h) the sentence is on the page ${m.shownAt} times, expected once (in the dialog only)`)
+  if (!e.inDialog) fail(`${at}: (h) the reason is not inside the dialog's box`)
+  if (!e.inView) fail(`${at}: (h) the reason spans y${e.box.t}-${e.box.b}, not wholly inside the ${vw}x${vh} viewport`)
+  if (!e.runs || !e.runsWhole) fail(`${at}: (h) the reason is not whole — ${e.runs} text run(s), some painted outside its box or the viewport`)
+  if (!e.rowHoldsButtons) fail(`${at}: (h) the element after the reason is not the Remove / Keep it row — the reason is not beside the buttons`)
+  if (e.gapToButtons == null || e.gapToButtons < 0 || e.gapToButtons > 24) fail(`${at}: (h) the reason ends ${e.gapToButtons}px above the buttons, expected 0-24px`)
+  for (const [what, b] of [['Remove', m.confirm], ['Keep it', m.keep]]) {
+    if (!b) { fail(`${at}: (h) the dialog has no "${what}" button`); continue }
+    if (b.h < TAP_MIN_HEIGHT_PX) fail(`${at}: (h) "${what}" is ${b.h}px tall, under the ${TAP_MIN_HEIGHT_PX}px tap floor`)
+    if (!b.inView || !b.hits) fail(`${at}: (h) "${what}" is off-screen or covered (inView=${b.inView}, hitsSelf=${b.hits})`)
+  }
+  shots.push(await shoot(join(OUTDIR, `seed-detail-remove-refused-${vw}x${vh}.png`)))
+  console.log(`[seed-detail] ${at}: dialog y${m.dialog.box.t}-${m.dialog.box.b} · reason ${e.box.w}x${e.box.h}px at y${e.box.t}-${e.box.b}, ${e.gapToButtons}px above the buttons · Remove ${m.confirm?.h}px · Keep it ${m.keep?.h}px · DELETEs ${m.deletes}`)
 }
 
 let harness, chrome
@@ -628,6 +735,7 @@ try {
       console.log(`[seed-detail] ${at}: reach ${reached.join(' · ') || 'none'}${m.unstubbed.length ? ` · unstubbed requests: ${[...new Set(m.unstubbed)].join(', ')}` : ''}`)
     }
   }
+  for (const [vw, vh] of VIEWPORTS) await removeRefused(vw, vh)
 } catch (err) {
   fail(`gate could not complete: ${err.message}`)
 } finally {

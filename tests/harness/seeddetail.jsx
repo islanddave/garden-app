@@ -20,6 +20,10 @@
 //                   the box is the "Add packet photo" button.
 //     topbar=52     the top-chrome stand-in's height; the gate passes TopChrome.jsx's BAR_H
 //     verdict=0     hide the measurement bar, for a screenshot of the surface alone
+//     remove=refuse the item's DELETE answers 409 with the sentence the Lambda sends when plantings were
+//                   sown from the packet (BUG-INVREFSTRAND-001) — built by the Lambda's own
+//                   blockingMessage, so the gate measures the real words' length. Without it a DELETE
+//                   answers 200 and the page leaves (the "left the page" marker).
 //
 // THE APP'S CHROME IS MOUNTED, as in seeds.jsx: App.jsx renders TopChrome (sticky, BAR_H) above every
 // signed-in route and <BottomNav /> fixed at BOTTOM_NAV_HEIGHT_PX below it. Both stand-ins carry the
@@ -50,10 +54,14 @@ import { ToastProvider } from '../../src/context/ToastContext.jsx'
 import InventoryDetail from '../../src/pages/InventoryDetail.jsx'
 import { etDay } from '../../src/lib/harvestSummary.js'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
+import { blockingMessage } from '../../lambda/inventory-items/delete-guard.js'
 
 const q = new URLSearchParams(location.search)
 const CASE = q.get('case') || 'packet'
 const TOP_CHROME_PX = Number(q.get('topbar') || 52)
+const REMOVE_REFUSES = q.get('remove') === 'refuse'
+// The longest shape the sentence takes for a packet: two plantings, one of them archived.
+const REFUSAL = blockingMessage([{ table: 'plants', count: 2, archived: 1 }], 'seeds')
 
 // Every load is a first visit: the page's Sow sheet stash ('sow-packet') lives in sessionStorage, and
 // a stash left by an interrupted earlier load would reopen the sheet on this one.
@@ -171,6 +179,12 @@ window.fetch = (url, opts = {}, ...rest) => {
     posts.push(JSON.parse(opts.body || '{}'))
     return hit('plant-create', { id: 'pl-new', name: JSON.parse(opts.body || '{}').name ?? null, status: 'seed' }, 201)
   }
+  // The page's own delete. Refused on remove=refuse, exactly as the Lambda answers a sown packet.
+  if (method === 'DELETE' && /\/api\/inventory-items\/[^/?]+(\?|$)/.test(u)) {
+    return REMOVE_REFUSES
+      ? hit('item-delete', { error: REFUSAL, blocking: [{ table: 'plants', column: 'source_inventory_item_id', count: 2 }] }, 409)
+      : hit('item-delete', { ok: true })
+  }
   if (method !== 'GET') return hit('write', { ok: true })
   const stage = u.match(/\/api\/inventory-items\/([^/?]+)\/seed-stage/)
   if (stage) return hit('seed-stage', STAGE_LOG[stage[1]] ?? [])
@@ -257,6 +271,7 @@ async function run() {
     hits: () => ({ ...hits }),
     posts: () => posts.map((p) => ({ ...p })),
     unstubbed: () => [...unstubbed],
+    refusal: () => (REMOVE_REFUSES ? REFUSAL : null),
     fixture: () => ({ case: CASE, itemId: ITEM_ID, name: ITEMS[ITEM_ID].name, sownFrom: ITEMS[ITEM_ID].sown_from.length }),
     all: measure,
   }
