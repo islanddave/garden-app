@@ -679,7 +679,7 @@ export default function CareNeeded({ plan }) {
   //
   // WHY NOT POST /api/events/batch (re-checked 2026-09-24, BUG-RUNBULKPARTIALUNDO-001). This comment
   // used to say the batch endpoint "cannot name this id-subset"; that is stale — scope.type 'ids' names
-  // one exactly. The fan-out stays for reasons that ARE current, and they move together or not at all:
+  // one exactly. The fan-out stays for three reasons that ARE current; revisit them together:
   //   · moisture_check (the overwintering rows' bulk) is in BATCH_EXCLUDED_TYPES by design — a 400.
   //   · under 'ids' ONE planting closed since the plan ran (this list is a cron snapshot) 409s the
   //     WHOLE tap and writes nothing, where this path logs the rest.
