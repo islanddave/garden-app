@@ -613,6 +613,20 @@ function heldLandingOf(held, qty, weight, selected) {
   return { axis: built.kind, value: built.value, unit: built.unit }
 }
 
+// BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — THE ONE WORDING of amounts a crop change took off the record: the note
+// for the banner and the row for the strip. Shared by the switch itself and by a failed save that had sent
+// them (review IMPORTANT-1), so the row reads the same whichever of the two finds it true.
+function switchWords(amountsCleared, planting) {
+  const amounts = amountsCleared.map((v) => `${v.value} ${v.unit}`).join(' · ')
+  const from = [...new Set(amountsCleared.map((v) => v.saidFor.name || v.saidFor.variety_ref?.name))].join(' and ')
+  const to = planting.name || planting.variety_ref?.name
+  return {
+    amounts, from, to, planting, slots: amountsCleared,
+    note: `cleared ${amounts} from ${from}`,
+    row: `Cleared ${amounts} for ${from} — the crop changed to ${to} before it was saved.`,
+  }
+}
+
 const TONE = {
   ok:   { bg: P.greenPale, border: P.green,       fg: P.dark },
   warn: { bg: P.warn,      border: P.warnBorder,  fg: P.dark },
@@ -722,6 +736,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // { plantingId, text } or null. saveRecord says it again, because a switch and a save in one breath
   // ("suyo long 3 231 next") leave the save's banner as the only one on screen.
   const switchedRef = useRef(null)
+  // Review IMPORTANT-1 / PE-1 — THE SAVES WHOSE POST IS STILL OUT, oldest first: { plantId, slots, rechosen }.
+  // `slots` are the exact count and weight objects sent. They stay on the record until the POST answers, so
+  // the page keeps showing what is being saved, and they are compared BY IDENTITY: a value said again while
+  // the POST is out is a new object even when it reads the same. `rechosen` marks the saved crop chosen again
+  // while its POST was out. `sendingLossRef` holds what a crop change would have said about taking sent values
+  // off the record (switchWords), until their POSTs answer; `savedSlotsRef` holds every value a POST saved.
+  const inFlightRef = useRef([])
+  const sendingLossRef = useRef([])
+  const savedSlotsRef = useRef(new WeakSet())
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
@@ -953,24 +976,56 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   //   * said for this planting — kept (the same crop chosen again, by any name or door);
   //   * said before any crop was chosen — kept, and from now on this crop's ("5 count", "Stupice").
   // Returns the words for the read-back, or null when nothing was cleared.
+  //
+  // Review IMPORTANT-1 — AN AMOUNT A SAVE HAS ALREADY SENT LEAVES THE RECORD WITHOUT A WORD. It is not lost, it is
+  // on its way: naming the next crop while the POST was out wrote "Cleared 5 count for Stupice — the crop changed
+  // to Suyo Long before it was saved" beside Stupice's own saved row, "1 saved · 1 not captured" for a harvest
+  // that saved — the false-miss class QA F1 closed once already. Its words are held back (sendingLossRef) and
+  // said only if no POST saves it, the one case where they are true. It still leaves the record: kept, "next"
+  // would save it again under the new crop, which is the leak this function exists to close.
   const clearForSwitch = useCallback((planting) => {
     const cleared = []
+    const sending = []
     for (const [ref, set] of [[qtyRef, setQty], [weightRef, setWeight]]) {
       const v = ref.current
       if (!v) continue
       const next = !v.saidFor ? { ...v, saidFor: planting } : v.saidFor.id === planting.id ? v : null
-      if (!next) cleared.push(v)
+      if (!next) (inFlightRef.current.some((f) => f.slots.includes(v)) ? sending : cleared).push(v)
       if (next !== v) { ref.current = next; set(next) }
     }
+    // PE-1 — the crop being saved, chosen again while its POST is out, is a choice that POST must not undo.
+    for (const f of inFlightRef.current) if (f.plantId === planting.id) f.rechosen = true
+    if (sending.length) {
+      const held = switchWords(sending, planting)
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-sending ${held.amounts} (${held.from} -> ${held.to})`)
+      sendingLossRef.current = [...sendingLossRef.current, held]
+    }
     if (!cleared.length) { switchedRef.current = null; return null }
-    const amounts = cleared.map((v) => `${v.value} ${v.unit}`).join(' · ')
-    const from = [...new Set(cleared.map((v) => v.saidFor.name || v.saidFor.variety_ref?.name))].join(' and ')
-    const to = planting.name || planting.variety_ref?.name
-    recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-cleared ${amounts} (${from} -> ${to})`)
-    noteMiss(`Cleared ${amounts} for ${from} — the crop changed to ${to} before it was saved.`)
-    const text = `cleared ${amounts} from ${from}`
-    switchedRef.current = { plantingId: planting.id, text }
-    return text
+    const words = switchWords(cleared, planting)
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-cleared ${words.amounts} (${words.from} -> ${words.to})`)
+    noteMiss(words.row)
+    switchedRef.current = { plantingId: planting.id, text: words.note }
+    return words.note
+  }, [noteMiss])
+
+  // Review IMPORTANT-1 — a POST has answered. What a crop change took off the record while values were being
+  // sent is said now for every one of them that no POST saved, once no POST is still sending any of them — a
+  // second "next" during a slow save sends the same values twice, and either POST saving them makes the words
+  // false. Returns what it said, for the failed save's banner.
+  const settleSendingLosses = useCallback(() => {
+    const said = []
+    sendingLossRef.current = sendingLossRef.current.filter((held) => {
+      if (held.slots.some((v) => inFlightRef.current.some((f) => f.slots.includes(v)))) return true
+      const lost = held.slots.filter((v) => !savedSlotsRef.current.has(v))
+      if (lost.length) {
+        const words = switchWords(lost, held.planting)
+        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-cleared ${words.amounts} (${words.from} -> ${words.to}) after a failed save`)
+        noteMiss(words.row)
+        said.push(words)
+      }
+      return false
+    })
+    return said
   }, [noteMiss])
 
   // BUG-VOICEALIASHITCOUNT-001 — which taught alias, if any, chose the planting now on the record.
@@ -1040,6 +1095,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — what the change to this crop cleared, said again on both
     // banners below: "cucumber one", "next" refuses for want of the count he said for Stupice a moment ago.
     const switchNote = plant && switchedRef.current?.plantingId === plant.id ? ` (${switchedRef.current.text})` : ''
+    const noteAtSave = switchedRef.current
 
     // REFUSE LOUDLY AND KEEP THE RECORD. Advancing over an unsaveable record is how a picking gets
     // silently lost, which is the one failure mode this flow is least allowed to have.
@@ -1065,6 +1121,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // The slots whose unit the app INFERRED, quantity's first. ONE list feeds both the metadata below
     // and the saved banner/row, so what Dave is told and what the server records cannot disagree.
     const assumed = [q, w].filter((s) => s?.assumed)
+    // Review IMPORTANT-1 / PE-1 — what this POST sends, while it is out (inFlightRef).
+    const flight = { plantId: plant.id, slots: [q, w].filter(Boolean), rechosen: false }
+    inFlightRef.current = [...inFlightRef.current, flight]
+    const land = () => { inFlightRef.current = inFlightRef.current.filter((f) => f !== flight) }
     try {
       const res = await apiFetch('/api/events', {
         method: 'POST',
@@ -1107,6 +1167,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           },
         }),
       })
+      land()
       // THE KEY THE API ACTUALLY RETURNS. lambda/events/index.js:3890 answers `resp(201, {
       // ...newEvent, … })` where newEvent is the event_log row (`:3495`), so the id is a TOP-LEVEL
       // `id` — there is no `eventId` key and no nested `event` object anywhere in lambda/events.
@@ -1137,8 +1198,24 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         + (assumed.length ? ` (${assumed.map(assumedPhrase).join(', ')})` : '')
       say('ok', `Saved ${label} — ${said}${switchNote}`)
       setRows((r) => [...r, { kind: 'save', eventId, label, said, at: Date.now() }])
-      clearRecord()
-      switchedRef.current = null
+      for (const s of flight.slots) savedSlotsRef.current.add(s)
+      settleSendingLosses()
+      // PE-1 — CLEAR ONLY WHAT WAS SAVED. This cleared the whole record, and the record is not only what was
+      // sent: whatever was said while the POST was out went with it, without a word. On c016dcde, "stupice 5
+      // count 231 grams next" then "suyo long 3 count 231 grams" during a slow POST lost the Suyo Long harvest
+      // ("1 saved", no row). So each value sent leaves the record BY IDENTITY, and what was said while it was
+      // out stays: a new amount (even one that reads the same), a held number, another crop, the same crop
+      // chosen again, a list or a teach box — and the crop, when anything was said for it. A record holding
+      // none of that is cleared exactly as before. Identity, not "is the record unchanged": after "3 count" for
+      // the same crop the record still holds the weight just saved, and keeping that would save it twice.
+      if (qtyRef.current === q) { qtyRef.current = null; setQty(null) }
+      if (w && weightRef.current === w) { weightRef.current = null; setWeight(null) }
+      if (aliasUseRef.current === aliasUse) aliasUseRef.current = null
+      const movedOn = qtyRef.current != null || weightRef.current != null || heldNumRef.current != null
+        || selectedRef.current?.id !== plant.id || flight.rechosen
+      if (!movedOn) clearRecord()
+      // The note was said on this banner; one set while the POST was out belongs to the record still standing.
+      if (switchedRef.current === noteAtSave) switchedRef.current = null
       // BUG-VOICEALIASHITCOUNT-001 — a taught alias chose this crop, and the harvest it named has
       // landed: count the use. AFTER the save, never awaited, never throwing (recordAliasUse), so the
       // count can cost this save nothing. An Undo does not un-count it: the alias did its job.
@@ -1146,12 +1223,25 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     } catch (err) {
       // The row did not land. Say so on every channel, keep the record so nothing is retyped, and
       // release the cooldown so "next" is a real retry.
+      land()
+      const why = err?.message || 'the save failed'
       cue(hapticSaveFailed)
-      say('fail', `NOT SAVED — ${err?.message || 'the save failed'}. Say "next" to try again.`)
-      noteMiss(`NOT SAVED — ${err?.message || 'the save failed'}.`)
+      noteMiss(`NOT SAVED — ${why}.`)
+      // Review IMPORTANT-1 — UNLESS A CROP CHANGE TOOK IT OFF THE RECORD WHILE IT WAS SENDING. Then it is gone
+      // after all: the row the switch held back is written now, when it is true, and the banner asks for it
+      // again, because "next" saves the record on screen — the new crop's, never this one (the lane's R1).
+      const lost = settleSendingLosses()
+      const here = lost.find((l) => l.planting.id === selectedRef.current?.id)
+      if (here) {
+        const before = switchedRef.current?.plantingId === here.planting.id ? `${switchedRef.current.text}; ` : ''
+        switchedRef.current = { plantingId: here.planting.id, text: `${before}${here.note}` }
+      }
+      say('fail', lost.length
+        ? `NOT SAVED — ${why}. The record has moved on (${lost.map((l) => l.note).join('; ')}) — say it again to log it.`
+        : `NOT SAVED — ${why}. Say "next" to try again.`)
       debRef.current?.invalidateLastWrite(token)
     }
-  }, [apiFetch, clearRecord, cue, noteMiss, say])
+  }, [apiFetch, clearRecord, cue, noteMiss, say, settleSendingLosses])
 
   const undoRow = useCallback(async (idx) => {
     const row = rows[idx]

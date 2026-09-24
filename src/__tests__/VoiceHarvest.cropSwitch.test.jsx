@@ -148,6 +148,21 @@ describe('a spoken name for a different crop clears what was said for the old on
     await say(rec, 'next')
     expect(saved()).toEqual([])
   })
+
+  // Review MINOR-1 — the two slot writers no other test here reaches: the nameless pair ("Dave's common case")
+  // and the values of a one-breath sentence with units. Written straight to the slot instead of through
+  // fillSlot, each loses its crop stamp and the leak comes back (review mutants X3 and X4).
+  it.each([
+    ['the nameless pair', ['Stupice', '5 count 231 grams', 'Suyo Long', 'next'],
+      'Cleared 5 count · 231 g for Stupice — the crop changed to Suyo Long before it was saved.'],
+    ['a one-breath sentence with units', ['suyo long 3 count 231 grams', 'Stupice', 'next'],
+      'Cleared 3 count · 231 g for Suyo Long — the crop changed to Stupice before it was saved.'],
+  ])('amounts from %s go too', async (_label, lines, row) => {
+    const rec = await startListening()
+    await say(rec, ...lines)
+    expect(saved()).toEqual([])
+    expect(cleared()).toEqual([row])
+  })
 })
 
 describe('a tap on a different crop clears too', () => {
@@ -311,5 +326,184 @@ describe('what must not change', () => {
     await say(rec, 'Stupice', '5 count', 'Suyo Long', '3 count', 'next')
     await say(rec, 'Suyo Long', '4 count', 'next')
     expect(statusText()).toBe('Saved Suyo Long — 4 count · no weight was said')
+  })
+
+  // Review MINOR-2 — a crop chosen with nothing to clear drops the last switch's note, or a record started over
+  // (by "clear", or after a name that matched nothing) repeats a clear that belonged to the one abandoned
+  // (review mutant X1).
+  it.each([
+    ['after "clear"', ['Stupice', '5 count', 'Suyo Long', 'clear', 'Suyo Long', '3 count', 'next']],
+    ['after a name that matched nothing', ['Stupice', '5 count', 'Suyo Long', 'zzqq quux', 'Suyo Long', '3 count', 'next']],
+  ])('an earlier switch’s note is not repeated %s', async (_label, lines) => {
+    const rec = await startListening()
+    await say(rec, ...lines)
+    expect(saved()).toEqual([['Suyo Long', 3, 'count', null, []]])
+    expect(statusText()).toBe('Saved Suyo Long — 3 count · no weight was said')
+  })
+})
+
+// Review IMPORTANT-1 and PE-1 — THE WINDOW A SLOW SAVE OPENS. Every test above answers each POST at once, and
+// that hides it: "next" sends the record, and until the POST answers the values sent are still on it. Naming a
+// crop in that window wrote a false "Cleared … before it was saved" row beside the row that saved them, and the
+// save's answer then cleared the whole record — wiping whatever had been said while it was out. These hold the
+// POST open.
+function holdPosts() {
+  const held = []
+  apiFetchSpy.mockImplementation((url, opts) => {
+    if (String(url).startsWith('/api/plants')) return Promise.resolve({ plants: VOCAB })
+    if (url === ALIAS_URL && !opts?.method) return Promise.resolve({ aliases: LIVE })
+    if (url === '/api/events' && opts?.method === 'POST') {
+      return new Promise((resolve, reject) => { held.push({ resolve, reject }) })
+    }
+    return Promise.resolve({ id: 'evt-1' })
+  })
+  const answer = async (fn) => { await act(async () => { fn() }); await advance(50) }
+  return {
+    count: () => held.length,
+    resolve: (i = 0) => answer(() => held[i].resolve({ id: `evt-${i + 1}` })),
+    reject: (i = 0) => answer(() => held[i].reject(new Error('Network error'))),
+  }
+}
+const header = () => screen.getByTestId('voice-harvest-ledger').firstChild.textContent
+const record = () => [slot('Crop'), slot('Quantity'), slot('Weight')]
+
+describe('a save still being sent when the next crop is named', () => {
+  it('the POST lands: no Cleared row, "1 saved", and the new crop’s amounts stay', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    expect(posts.count()).toBe(1)
+    await say(rec, 'Suyo Long')
+    // The 5 count is being sent, not lost: nothing is said about it.
+    expect(statusText()).toBe('Suyo Long — now say the count or the weight.')
+    await say(rec, '3 count')
+    await posts.resolve()
+    expect(statusText()).toBe('Saved Stupice — 5 count · no weight was said')
+    expect(header()).toBe('1 saved')
+    expect(misses()).toEqual([])
+    expect(record()).toEqual(['Suyo Long', '3 count', '—'])
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Suyo Long', 3, 'count', null, []]])
+  })
+
+  it('the POST fails: the Cleared row is true now, and "next" still cannot move the count to the new crop', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, 'Suyo Long')
+    expect(misses()).toEqual([])
+    await posts.reject()
+    expect(misses()).toEqual([
+      'NOT SAVED — Network error.',
+      'Cleared 5 count for Stupice — the crop changed to Suyo Long before it was saved.',
+    ])
+    // Not "say next to try again": next saves the record on screen, which is Suyo Long's.
+    expect(statusText()).toBe('NOT SAVED — Network error. The record has moved on (cleared 5 count from Stupice) — say it again to log it.')
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []]])
+    expect(statusText()).toBe('Not saved — still need a quantity. Say it, then "next". (cleared 5 count from Stupice)')
+  })
+
+  it('a record for another crop said while the POST is out is still there when it lands, and saves on "next"', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, 'suyo long 3 count 231 grams')
+    await posts.resolve()
+    expect(header()).toBe('1 saved')
+    expect(misses()).toEqual([])
+    expect(record()).toEqual(['Suyo Long', '3 count', '231 g'])
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Suyo Long', 3, 'count', 231, []]])
+  })
+
+  it('an amount for the same crop said while the POST is out stays, and the weight just saved does not go twice', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count')
+    await posts.resolve()
+    expect(record()).toEqual(['Stupice', '3 count', '—'])
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', null, []]])
+  })
+
+  it('the crop being saved, named again while the POST is out, stays chosen', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, 'stupid chica')
+    await posts.resolve()
+    expect(record()).toEqual(['Stupice', '—', '—'])
+    await say(rec, '4 count', 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Stupice', 4, 'count', null, []]])
+  })
+
+  it('nothing said while the POST is out: the record clears exactly as before', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    expect(record()).toEqual(['Stupice', '5 count', '—'])
+    await posts.resolve()
+    expect(record()).toEqual(['—', '—', '—'])
+    expect(header()).toBe('1 saved')
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []]])
+    expect(statusText()).toBe('Not saved — still need a crop and a quantity. Say it, then "next".')
+  })
+
+  it('an amount said after "next" but never sent is still cleared out loud, and its note rides to the new crop’s save', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, '231 grams', 'Suyo Long')
+    expect(statusText()).toBe('Suyo Long — cleared 231 g from Stupice. Now say the count or the weight.')
+    await posts.resolve()
+    // The 5 count was saved, so only the 231 g is a Cleared row.
+    expect(cleared()).toEqual(['Cleared 231 g for Stupice — the crop changed to Suyo Long before it was saved.'])
+    await say(rec, '3 count', 'next')
+    await posts.resolve(1)
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Suyo Long', 3, 'count', null, []]])
+    expect(statusText()).toBe('Saved Suyo Long — 3 count · no weight was said (cleared 231 g from Stupice)')
+  })
+
+  it('a taught name that chose the crop is counted once, even when a record for that crop is kept after the save', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupid chica', '5 count', 'next')
+    await say(rec, '4 count')
+    await posts.resolve()
+    await say(rec, 'next')
+    await posts.resolve(1)
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Stupice', 4, 'count', null, []]])
+    const uses = apiFetchSpy.mock.calls.filter(([url, opts]) => url === ALIAS_URL && opts?.method === 'PATCH')
+    expect(uses).toHaveLength(1)
+  })
+
+  it('a record kept for the same crop does not repeat the note already said on the save', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Suyo Long', '5 count', 'Stupice', '3 count', 'next')
+    await say(rec, '4 count')
+    await posts.resolve()
+    expect(statusText()).toBe('Saved Stupice — 3 count · no weight was said (cleared 5 count from Suyo Long)')
+    await say(rec, 'next')
+    await posts.resolve(1)
+    expect(statusText()).toBe('Saved Stupice — 4 count · no weight was said')
+  })
+
+  // Two POSTs of one record: a second "next" said more than 1.5 s into a slow save is not a duplicate to the
+  // debouncer and sends the record again (pre-existing, out of this change's scope). Amounts both POSTs carry
+  // are lost only if neither saves them. A change that stops the second POST changes this test's premise.
+  it('when two POSTs carry the same amounts, the one that fails does not call them lost while the other saves them', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next', 'next')
+    expect(posts.count()).toBe(2)
+    await say(rec, 'Suyo Long')
+    await posts.reject(0)
+    await posts.resolve(1)
+    expect(cleared()).toEqual([])
+    expect(header()).toBe('1 saved · 1 not captured')
   })
 })
