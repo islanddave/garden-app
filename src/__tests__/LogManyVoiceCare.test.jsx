@@ -19,6 +19,7 @@ import { installFakeSpeechRecognition } from './helpers/fakeSpeechRecognition.js
 import { U, LOCATIONS, byName, dryRunResponse, locationByPath } from './voiceCare.fixture.js'
 import { looseKey } from '../lib/comboboxInput.js'
 import { resetMicArbiter } from '../lib/micArbiter.js'
+import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
 
 installStoragePolyfill()
 
@@ -78,6 +79,7 @@ const DAVE_ALIASES = [
 
 let mic
 let writeReply
+let deleteReply
 const posts = []
 const deletes = []
 
@@ -86,7 +88,9 @@ beforeEach(() => {
   posts.length = 0
   deletes.length = 0
   writeReply = null
+  deleteReply = null
   resetMicArbiter()
+  clearReloadBlocks()
   try { sessionStorage.clear(); localStorage.clear() } catch { /* noop */ }
   mic = installFakeSpeechRecognition(vi)
   apiFetch.mockReset()
@@ -108,6 +112,7 @@ beforeEach(() => {
     }
     if (String(path).startsWith('/api/events/batch/') && opts.method === 'DELETE') {
       deletes.push(path)
+      if (typeof deleteReply === 'function') return deleteReply(path)
       return Promise.resolve({ undone: true, batch_id: path.split('/').pop() })
     }
     return Promise.resolve(null)
@@ -395,8 +400,37 @@ describe('the page’s own form, mid-edit', () => {
     expect(w).not.toHaveProperty('notes')
     expect(screen.queryByTestId('logmany-note-recorded')).toBeNull()
 
+    // The note was NOT written, so the reload guard must still be holding it on the result screen.
+    expect(isReloadBlocked()).toBe(true)
+
     fireEvent.click(screen.getByRole('button', { name: 'Log more' }))
     expect((await screen.findByLabelText('Event date (leave as today, or back-date)')).value).toBe('2026-09-20')
     expect(screen.getByLabelText('Notes for this batch').value).toBe('soaker hose')
+  })
+
+  it('Undo of a voice batch leaves the form’s own draft alone', async () => {
+    await openPage()
+    fireEvent.click(screen.getByTestId('logmany-notes-disclosure'))
+    fireEvent.change(screen.getByLabelText('Notes for this batch'), { target: { value: 'side-dressed' } })
+    fireEvent.click(screen.getByTestId('lmv-start'))
+    await speak('water all bag area')
+    await screen.findByTestId('lmv-readback')
+    await waitFor(() => expect(mic.latest().started).toBe(true))
+    await speak('next', mic.latest())
+    await screen.findByText('✓ 101 plantings watered')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Undo' })) })
+    expect(deletes).toEqual(['/api/events/batch/b-voice-1'])
+    expect((await screen.findByLabelText('Notes for this batch')).value).toBe('side-dressed')
+    expect(sessionStorage.getItem('gardenApp.draft.logmany')).toContain('side-dressed')
+  })
+
+  it('Undo that finds the batch already gone (404) is not reported as a failure', async () => {
+    const rec = await sayCommandToReadBack('water all bag area')
+    await speak('next', rec)
+    await screen.findByText('✓ 101 plantings watered')
+    deleteReply = () => Promise.reject(Object.assign(new Error('Not found'), { status: 404 }))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Undo' })) })
+    await screen.findByTestId('lmv-start')
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
