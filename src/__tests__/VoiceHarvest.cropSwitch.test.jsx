@@ -492,18 +492,93 @@ describe('a save still being sent when the next crop is named', () => {
     expect(statusText()).toBe('Saved Stupice — 4 count · no weight was said')
   })
 
-  // Two POSTs of one record: a second "next" said more than 1.5 s into a slow save is not a duplicate to the
-  // debouncer and sends the record again (pre-existing, out of this change's scope). Amounts both POSTs carry
-  // are lost only if neither saves them. A change that stops the second POST changes this test's premise.
-  it('when two POSTs carry the same amounts, the one that fails does not call them lost while the other saves them', async () => {
+})
+
+// Lane V3 F3.2 — A SAVE WORD WHILE THE LAST HARVEST IS STILL BEING SENT. The write cooldown lasts 1.5 s and a slow
+// POST lasts longer, so a repeated "next" sent the same harvest twice ("2 saved"). It is refused and said, and
+// only while the record holds a value that POST is sending: a record said since saves as always.
+describe('a save word while the last harvest is still being sent', () => {
+  // One line said and its session ended, then `ms` passed — finer than say(), to land inside the 1.5 s cooldown.
+  async function sayWithin(rec, line, ms) {
+    await act(async () => { rec.deliverFinal(line) })
+    await act(async () => { rec.endSession() })
+    await advance(ms)
+  }
+
+  it('a second "next" sends nothing and says so; the save lands once', async () => {
     const rec = await startListening()
     const posts = holdPosts()
     await say(rec, 'Stupice', '5 count', 'next', 'next')
+    expect(posts.count()).toBe(1)
+    expect(statusText()).toBe('Still saving the last one.')
+    expect(misses()).toEqual([])
+    await posts.resolve()
+    expect(statusText()).toBe('Saved Stupice — 5 count · no weight was said')
+    expect(header()).toBe('1 saved')
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []]])
+  })
+
+  it('naming the same crop again before "next" is still the same harvest', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, 'Stupice', 'next')
+    expect(posts.count()).toBe(1)
+    expect(statusText()).toBe('Still saving the last one.')
+  })
+
+  it('if that POST fails, the normal NOT SAVED shows and a later "next" retries', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next', 'next')
+    await posts.reject()
+    expect(statusText()).toBe('NOT SAVED — Network error. Say "next" to try again.')
+    await say(rec, 'next')
     expect(posts.count()).toBe(2)
-    await say(rec, 'Suyo Long')
-    await posts.reject(0)
     await posts.resolve(1)
-    expect(cleared()).toEqual([])
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Stupice', 5, 'count', null, []]])
+    expect(statusText()).toBe('Saved Stupice — 5 count · no weight was said')
     expect(header()).toBe('1 saved · 1 not captured')
+  })
+
+  it('a new record for another crop said while the POST is out still saves on "next"', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, 'Suyo Long', '3 count', 'next')
+    expect(posts.count()).toBe(2)
+    await posts.resolve(0)
+    await posts.resolve(1)
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Suyo Long', 3, 'count', null, []]])
+    expect(header()).toBe('2 saved')
+    expect(misses()).toEqual([])
+  })
+
+  it('a new amount for the same crop waits until the amount still being sent has landed', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count', 'next')
+    // Sending now would send the 231 g a second time.
+    expect(posts.count()).toBe(1)
+    expect(statusText()).toBe('Still saving the last one — say "next" again once it has saved.')
+    await posts.resolve()
+    expect(record()).toEqual(['Stupice', '3 count', '—'])
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', null, []]])
+  })
+
+  it('the refused "next" does not swallow a real one said within 1.5 s of it', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await sayWithin(rec, 'next', 600)
+    expect(statusText()).toBe('Still saving the last one.')
+    await sayWithin(rec, 'Suyo Long', 100)
+    await sayWithin(rec, '3 count', 100)
+    await sayWithin(rec, 'next', 600)
+    expect(posts.count()).toBe(2)
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Suyo Long', 3, 'count', null, []]])
+    expect(statusText()).not.toContain('saved once')
   })
 })

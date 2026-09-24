@@ -1009,9 +1009,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   }, [noteMiss])
 
   // Review IMPORTANT-1 — a POST has answered. What a crop change took off the record while values were being
-  // sent is said now for every one of them that no POST saved, once no POST is still sending any of them — a
-  // second "next" during a slow save sends the same values twice, and either POST saving them makes the words
-  // false. Returns what it said, for the failed save's banner.
+  // sent is said now for every one of them that no POST saved, once no POST is still sending any of them. Two
+  // POSTs cannot carry one value while a save word is refused during a send (lane V3 F3.2, saveRecord); the
+  // check stays so the words can never be false if that refusal is ever relaxed. Returns what it said, for the
+  // failed save's banner.
   const settleSendingLosses = useCallback(() => {
     const said = []
     sendingLossRef.current = sendingLossRef.current.filter((held) => {
@@ -1096,6 +1097,25 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // banners below: "cucumber one", "next" refuses for want of the count he said for Stupice a moment ago.
     const switchNote = plant && switchedRef.current?.plantingId === plant.id ? ` (${switchedRef.current.text})` : ''
     const noteAtSave = switchedRef.current
+
+    // Lane V3 F3.2 — A SAVE WORD WHILE THE RECORD IS STILL BEING SENT SENDS NOTHING. The write cooldown is the only
+    // duplicate guard and it lasts 1.5 s; a slow POST lasts longer, and the record stays on screen until it
+    // answers, so a second "next" — the natural reaction to a save that seems not to have happened — sent the same
+    // harvest again: two rows, "2 saved". IDENTITY decides it, as it decides what the POST's answer clears: the
+    // record holds a value a POST still out is sending (inFlightRef). That is the whole record when nothing was
+    // said since "next", or the crop was only named again; it is part of it when a new amount was said for the
+    // same crop while the other is still on its way, and sending that would save the other twice. A record said
+    // since, for this crop or another, holds no such value and saves as always. Not a failure, so no miss row and
+    // no buzz — the save's own buzz comes when it lands — and the cooldown claim is given back, as the refusal
+    // below gives it back, so a real "next" said straight after is not swallowed as a duplicate.
+    const sending = [q, w].filter((s) => s && inFlightRef.current.some((f) => f.slots.includes(s)))
+    if (sending.length) {
+      const newer = [q, w].some((s) => s && !sending.includes(s))
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `save-while-sending${newer ? ' (a new amount waits)' : ''}`)
+      say('warn', newer ? 'Still saving the last one — say "next" again once it has saved.' : 'Still saving the last one.')
+      queueMicrotask(() => debRef.current?.invalidateLastWrite(token))
+      return
+    }
 
     // REFUSE LOUDLY AND KEEP THE RECORD. Advancing over an unsaveable record is how a picking gets
     // silently lost, which is the one failure mode this flow is least allowed to have.
