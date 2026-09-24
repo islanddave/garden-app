@@ -574,6 +574,9 @@ describe('every other category is untouched', () => {
 })
 
 // ── Byte pins against base a3eb208 ───────────────────────────────────────────────────────────────
+// RE-CAPTURED ONCE, 2026-09-24 (BUG-SEEDPAGETAPFLOORS-001, lane invrefguard): "Remove item" went onto the
+// 44px floor and gained its testid on every category. Old-vs-new diff of both fixtures, token by token:
+// that one <button>'s attributes and nothing else. Everything else is still a3eb208's markup.
 // React 18's client useId is a module-global counter (":r<n>:"), so the ids one render receives depend
 // on how many ids every EARLIER test in this file mounted. They are renamed by order of first
 // appearance: a changed id STRUCTURE (one added, one dropped, a label moved to another control) still
