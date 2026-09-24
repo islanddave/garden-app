@@ -613,35 +613,81 @@ def test_smoke_step_names_a_dispatch_that_got_no_http_answer(tmp_path, github, s
 
 
 # ── promote-gate.yml: the prod schema gate (OPS-PROMOTESCHEMAGATE-001) ──────────────────────────────────────────
-# dev-main-schema-audit.py: 0 = PASS, 1 = FAIL (or a crash), anything else = inconclusive. Enforced, ONLY exit 0
-# passes: every other exit, a missing secret and a checkout that is not dev_sha refuse with one ::error (exit 1).
-# require_schema_audit=false turns each of those into a ::warning and a pass, and the audit still runs. python3 and
-# git are stubs here; the audit itself against prod, and its non-vacuity, are proven out of band (lane report).
+# The body runs the promoted tree's three DB-free parser self-tests, then dev-main-schema-audit.py --gate, each inside
+# `timeout`. Enforced, ONLY a clean run passes: a failed or hung self-test, any audit exit but 0 (124/137 = timed out),
+# a missing secret and a checkout that is not dev_sha each refuse with exactly one ::error (exit 1), and its text names
+# the cause and remedy read from the audit's own FAIL/ERROR line. require_schema_audit=false turns every refusal into a
+# ::warning and a pass. python3 and git are stubs: the python3 stub tells a self-test from the audit by its first
+# argument, prints a sentinel plus whatever the test hands it, and exits as told. On a host with no GNU `timeout`
+# (macOS) a pass-through stand-in goes on PATH. It enforces no time, so the timed-out path is modelled by a stub that
+# exits 124, which is what timeout returns. The audit against prod, and its non-vacuity, are proven out of band
+# (lane report).
 
 SCHEMA = "Prod schema gate — promoted Lambdas' column refs must exist in PROD (L-081; pre-FF, fail-closed)"
 SCHEMA_INSTALL = "Install psycopg2 (prod schema gate)"
 RESOLVE = ("promote-gate.yml", "resolve", "Resolve promote inputs (dispatch OR promote-v* tag)")
+SELF_TESTS = [f"scripts/test-schema-audit-phase{t}.py" for t in (1, 2, 4)]
+AUDIT_ARGV = ["scripts/dev-main-schema-audit.py", "--repo-root", ".", "--gate"]
+TIMEOUT_STAND_IN = """#!/bin/sh
+# GNU timeout stand-in for a host without one: drops the options and the duration, then runs the command, so its exit
+# status passes through as timeout's does for a command that finishes in time. It enforces no time.
+while [ $# -gt 0 ]; do
+  case "$1" in -k|-s) shift 2 ;; --) shift; break ;; -*) shift ;; *) break ;; esac
+done
+shift
+exec "$@"
+"""
+PY_STUB = """#!/bin/sh
+echo "$@" >> "$STUB_CALLED"
+echo "$1 dsn=${NEON_DATABASE_URL:+set}" >> "$STUB_DSN"
+case "$1" in
+  scripts/test-schema-audit-phase*)
+    echo "SENTINEL self-test $1"
+    [ "$1" = "scripts/test-schema-audit-phase$FAIL_PHASE.py" ] && exit "$PHASE_RC"
+    exit 0 ;;
+esac
+echo "SENTINEL audit output"
+[ -z "$AUDIT_OUT" ] || printf '%s\\n' "$AUDIT_OUT"
+exit "$AUDIT_RC"
+"""
+SKIP_LINE = ("ERROR: --gate: 1 Phase-1 contract file(s) could not be parsed, so their columns were NOT checked "
+             "against prod (cannot verify): lambda/x/select-columns.test.js")
+MISSING_LINE = ("FAIL: 1 of 2121 column refs are MISSING in prod Neon (Phase 1: 0, Phase 2: 1, Phase 3 soft-delete: 0):"
+                "\n  t:\n    - zz_new  [P2] (lambda/x/index.js:3)")
+REGRESSED_LINE = "FAIL: joined-relation coverage REGRESSED -- 48 uncovered, baseline 47."
 
 
-def _run_schema_gate(tmp_path, rc, req="true", url="postgresql://prod.invalid/db", head=DEV_SHA, prologue=""):
-    """The gate body, the runner's way, with python3 exiting `rc` and `git rev-parse HEAD` answering `head`
-    ("" = git fails, as outside a checkout). Returns (proc, python3 argv log)."""
-    _, step = _step(PROMOTE, "promote", SCHEMA)
+def _bindir(tmp_path):
     bindir = tmp_path / "bin"
     bindir.mkdir(exist_ok=True)
+    if not shutil.which("timeout"):
+        (bindir / "timeout").write_text(TIMEOUT_STAND_IN)
+        (bindir / "timeout").chmod(0o755)
+    return bindir
+
+
+def _run_schema_gate(tmp_path, rc, req="true", url="postgresql://prod.invalid/db", head=DEV_SHA, prologue="",
+                     audit_out="", fail_phase="none", phase_rc=1):
+    """The gate body, the runner's way. The audit stub prints `audit_out` and exits `rc`; self-test `fail_phase`
+    (1, 2 or 4) exits `phase_rc` and the others 0; `git rev-parse HEAD` answers `head` ("" = git fails, as outside a
+    checkout). Returns (proc, the python3 argv lists in call order)."""
+    _, step = _step(PROMOTE, "promote", SCHEMA)
+    bindir = _bindir(tmp_path)
     called = tmp_path / "called"
     stubs = {
-        "python3": f'echo "$@" >> "{called}"\nexit {rc}',
-        "git": (f'[ "$*" = "rev-parse HEAD" ] && echo {head} && exit 0\nexit 128' if head else "exit 128"),
+        "python3": PY_STUB,
+        "git": "#!/bin/sh\n" + (f'[ "$*" = "rev-parse HEAD" ] && echo {head} && exit 0\nexit 128\n' if head else
+                                "exit 128\n"),
     }
     for name, body in stubs.items():
-        (bindir / name).write_text("#!/bin/sh\n" + body + "\n")
+        (bindir / name).write_text(body)
         (bindir / name).chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("NEON_", "PG"))}
     env.update(PATH=f"{bindir}:{os.environ['PATH']}", NEON_DATABASE_URL=url, REQ_SCHEMA=req, DEV_SHA=DEV_SHA,
-               GITHUB_STEP_SUMMARY=str(tmp_path / "summary"))
+               GITHUB_STEP_SUMMARY=str(tmp_path / "summary"), STUB_CALLED=str(called), STUB_DSN=str(tmp_path / "dsn"),
+               AUDIT_RC=str(rc), AUDIT_OUT=audit_out, FAIL_PHASE=str(fail_phase), PHASE_RC=str(phase_rc))
     proc = _run_as_runner(tmp_path, prologue + step["run"], env)
-    return proc, (called.read_text() if called.exists() else "")
+    return proc, ([ln.split() for ln in called.read_text().splitlines()] if called.exists() else [])
 
 
 def _warnings(proc):
@@ -659,26 +705,132 @@ def test_schema_gate_is_wired_pre_ff_on_the_promoted_checkout_with_the_prod_secr
     checkout = next(i for i, n in enumerate(names) if n.startswith("Checkout dev_sha"))
     install, gate = names.index(SCHEMA_INSTALL), names.index(SCHEMA)
     assert names.index(SKEW) < checkout < install < gate < names.index(SMOKE) < names.index("Fast-forward main -> dev SHA")
+    # Exactly ONE checkout in the job. A second one (review T7: `ref: main`, before the gate) was invisible to a test
+    # that pinned only the first, and the runtime HEAD check catches it only when the gate is enforced.
+    checkouts = [s for s in steps if str(s.get("uses", "")).startswith("actions/checkout@")]
+    assert checkouts == [steps[checkout]], checkouts
     assert steps[checkout]["with"]["ref"] == "${{ needs.resolve.outputs.dev_sha }}"
-    assert steps[gate]["env"]["NEON_DATABASE_URL"] == "${{ secrets.NEON_DATABASE_URL }}"
-    assert steps[gate]["env"]["REQ_SCHEMA"] == "${{ needs.resolve.outputs.require_schema_audit }}"
-    assert steps[gate]["env"]["DEV_SHA"] == "${{ needs.resolve.outputs.dev_sha }}"
+    env = steps[gate]["env"]
+    assert env["NEON_DATABASE_URL"] == "${{ secrets.NEON_DATABASE_URL }}"
+    assert env["REQ_SCHEMA"] == "${{ needs.resolve.outputs.require_schema_audit }}"
+    assert env["DEV_SHA"] == "${{ needs.resolve.outputs.dev_sha }}"
+    assert env["PGCONNECT_TIMEOUT"] == "30"  # review T2: without it a black-holed connect waits out the audit bound
+    assert isinstance(steps[gate].get("timeout-minutes"), int)  # review T1: the backstop; its value is pinned below
     for s in (steps[install], steps[gate]):  # an `if:` could skip the gate, continue-on-error would make it advisory
         assert "if" not in s and "continue-on-error" not in s
 
 
+def test_schema_gate_every_python3_is_bounded_inside_the_body_and_under_the_step_backstop():
+    """A hang must end inside the body, where refuse() and the opt-out decide (review MINOR 2); timeout-minutes is only
+    the backstop, so it must outlast the worst case of every inner bound together."""
+    _, step = _step(PROMOTE, "promote", SCHEMA)
+    body = step["run"]
+    assert len(re.findall(r"\bpython3\b", body)) == len(re.findall(r"\btimeout -k \d+ \d+ python3\b", body)) == 2
+    self_test = re.search(r'timeout -k (\d+) (\d+) python3 "scripts/test-schema-audit-phase\$t\.py"', body)
+    audit = re.search(r"timeout -k (\d+) (\d+) python3 scripts/dev-main-schema-audit\.py --repo-root \. --gate ", body)
+    loop = re.search(r"^\s*for t in ([\d ]+); do$", body, re.M)
+    assert self_test and audit and loop, "self-tests and audit must each run as `timeout -k K D python3 ...`"
+    assert loop.group(1).split() == ["1", "2", "4"]
+    worst = 3 * sum(map(int, self_test.groups())) + sum(map(int, audit.groups()))
+    assert (int(audit.group(2)), worst) == (240, 355)
+    assert worst + 30 <= step["timeout-minutes"] * 60, (worst, step["timeout-minutes"])
+
+
 @pytest.mark.parametrize("prologue", ["", "set -euo pipefail\n"], ids=["as-written", "house-prologue"])
-@pytest.mark.parametrize("rc,step_rc", [(0, 0), (1, 1), (2, 1), (127, 1)])
-def test_schema_gate_enforced_passes_only_an_audit_that_exits_0(tmp_path, rc, step_rc, prologue):
-    proc, called = _run_schema_gate(tmp_path, rc, prologue=prologue)
-    assert proc.returncode == step_rc, proc.stdout + proc.stderr
-    assert called.split() == ["scripts/dev-main-schema-audit.py", "--repo-root", "."]
-    if rc == 0:
-        assert _annotations(proc) == [] and "prod schema gate ok" in proc.stdout
-    else:
-        errors = _errors(proc)
-        assert len(errors) == 1 and errors[0].startswith("::error title=Prod schema gate::"), errors
-        assert f"(exit {rc}) at {DEV_SHA}" in errors[0] and "main has NOT been touched" in errors[0]
+def test_schema_gate_passes_after_the_self_tests_and_a_clean_audit_and_shows_their_output(tmp_path, prologue):
+    proc, calls = _run_schema_gate(tmp_path, 0, prologue=prologue)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert calls == [[t] for t in SELF_TESTS] + [AUDIT_ARGV]
+    assert _errors(proc) == [] and _warnings(proc) == [] and "prod schema gate ok" in proc.stdout
+    # Review T3: output sent anywhere but the job log leaves every refusal saying "listed above" over nothing.
+    assert "SENTINEL audit output" in proc.stdout
+    assert all(f"SENTINEL self-test {t}" in proc.stdout for t in SELF_TESTS)
+
+
+@pytest.mark.parametrize("prologue", ["", "set -euo pipefail\n"], ids=["as-written", "house-prologue"])
+@pytest.mark.parametrize("rc,why", [
+    (1, "with no verdict line this gate recognises"), (2, "with no verdict line this gate recognises"),
+    (127, "with no verdict line this gate recognises"),
+    (124, "did not finish in 240 s"), (137, "did not finish in 240 s"),
+])
+def test_schema_gate_enforced_refuses_every_other_audit_exit(tmp_path, rc, why, prologue):
+    proc, calls = _run_schema_gate(tmp_path, rc, prologue=prologue)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert calls[-1] == AUDIT_ARGV and "SENTINEL audit output" in proc.stdout
+    errors = _errors(proc)
+    assert len(errors) == 1 and errors[0].startswith("::error title=Prod schema gate::"), errors
+    assert why in errors[0] and DEV_SHA in errors[0] and "main has NOT been touched" in errors[0]
+
+
+# Review IMPORTANT 3: the refusal names the cause and remedy from the audit's own verdict line. "Re-run / re-dispatch
+# the same SHA" only for what applying DDL to prod can fix; a new SHA for what only dev can fix; a retry for a crash.
+@pytest.mark.parametrize("rc,out,cause,remedy", [
+    (1, "Traceback (most recent call last):\npsycopg2.OperationalError: connection refused", "the audit CRASHED",
+     "a crash, not a verdict: re-run the failed jobs"),
+    (1, "FAIL: 1 relation(s) queried by a handler do NOT exist in prod:\n    - zz_t  (queried by lambda/x)",
+     "a relation the promoted handlers query does NOT exist in prod",
+     "apply its DDL to prod, then re-run the failed jobs or re-dispatch the same SHA"),
+    (1, MISSING_LINE, "a column the promoted code names is MISSING in prod",
+     "apply its DDL to prod, then re-run the failed jobs or re-dispatch the same SHA"),
+    (1, REGRESSED_LINE, "Phase-4 coverage regressed", "on dev and promote the new SHA"),
+    (2, SKIP_LINE + "\nUNVERIFIED (--gate): exit 2", "column contract could NOT be parsed",
+     "fix the contract on dev and promote the new SHA"),
+    # A skip can CAUSE a Phase-4 regression (it un-declares a relation): the contract is the thing to fix.
+    (1, SKIP_LINE + "\n" + REGRESSED_LINE, "column contract could NOT be parsed", "fix the contract on dev"),
+    (2, "ERROR: relation 'zz' (resolved from lambda/x/a-columns.test.js) has ZERO columns in prod information_schema",
+     "a contract names a relation prod has no columns for", "fix the table name on dev"),
+    (2, "FAIL: psycopg2 not installed. Install: pip install psycopg2-binary", "psycopg2 is not installed",
+     "re-run the failed jobs"),
+], ids=["crash", "missing-relation", "missing-column", "coverage", "unparseable", "unparseable-caused-regression",
+        "empty-relation", "no-psycopg2"])
+def test_schema_gate_refusal_names_the_cause_and_remedy_from_the_audits_own_line(tmp_path, rc, out, cause, remedy):
+    proc, _ = _run_schema_gate(tmp_path, rc, audit_out=out)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    errors = _errors(proc)
+    assert len(errors) == 1 and cause in errors[0] and remedy in errors[0], errors
+    assert "ALSO" not in errors[0]
+
+
+def test_schema_gate_a_definite_fail_also_names_a_contract_that_could_not_be_parsed(tmp_path):
+    proc, _ = _run_schema_gate(tmp_path, 1, audit_out=SKIP_LINE + "\n" + MISSING_LINE)
+    errors = _errors(proc)
+    assert len(errors) == 1 and "is MISSING in prod" in errors[0], errors
+    assert "ALSO a Phase-1 contract could not be parsed" in errors[0]
+
+
+def test_schema_gate_stale_waiver_is_a_warning_not_a_refusal(tmp_path):
+    out = ("WARN: 1 STALE waiver(s) in schema-audit-allowlist.json — the column now exists in prod (--gate: not a "
+           "refusal, prod already has it):\n    - t.c  (delete this entry on dev)\nPASS: 2120 column refs")
+    proc, _ = _run_schema_gate(tmp_path, 0, audit_out=out)
+    assert proc.returncode == 0 and _errors(proc) == [], proc.stdout + proc.stderr
+    warnings = _warnings(proc)
+    assert len(warnings) == 1 and warnings[0].startswith("::warning title=Prod schema gate - stale waiver::"), warnings
+
+
+@pytest.mark.parametrize("phase", [1, 2, 4])
+def test_schema_gate_a_failed_parser_self_test_refuses_before_the_audit(tmp_path, phase):
+    proc, calls = _run_schema_gate(tmp_path, 0, fail_phase=phase)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert AUDIT_ARGV not in calls and calls[-1] == [f"scripts/test-schema-audit-phase{phase}.py"]
+    errors = _errors(proc)
+    assert len(errors) == 1 and f"scripts/test-schema-audit-phase{phase}.py failed (exit 1" in errors[0], errors
+    assert "fix the parser on dev and promote the new SHA" in errors[0]
+    assert f"SENTINEL self-test scripts/test-schema-audit-phase{phase}.py" in proc.stdout
+
+
+@pytest.mark.parametrize("phase_rc", [124, 137])
+def test_schema_gate_a_hung_parser_self_test_is_a_retry_not_a_verdict(tmp_path, phase_rc):
+    proc, calls = _run_schema_gate(tmp_path, 0, fail_phase=2, phase_rc=phase_rc)
+    assert proc.returncode == 1 and AUDIT_ARGV not in calls
+    errors = _errors(proc)
+    assert len(errors) == 1 and "did not finish in 30 s" in errors[0] and "re-run the failed jobs" in errors[0]
+
+
+def test_schema_gate_self_tests_never_see_the_prod_dsn(tmp_path):
+    proc, _ = _run_schema_gate(tmp_path, 0)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    seen = dict(ln.split(" dsn=") for ln in (tmp_path / "dsn").read_text().splitlines())
+    assert seen == {**{t: "" for t in SELF_TESTS}, AUDIT_ARGV[0]: "set"}
 
 
 @pytest.mark.parametrize("req", ["", "true", "TRUE", "yes"])
@@ -687,37 +839,44 @@ def test_schema_gate_enforces_unless_the_input_is_exactly_false(tmp_path, req):
     assert proc.returncode == 1 and len(_errors(proc)) == 1
 
 
-@pytest.mark.parametrize("rc", [0, 1, 2, 127])
+@pytest.mark.parametrize("rc", [0, 1, 2, 124, 127])
 def test_schema_gate_opt_out_warns_loudly_still_audits_and_passes(tmp_path, rc):
-    proc, called = _run_schema_gate(tmp_path, rc, req="false")
+    proc, calls = _run_schema_gate(tmp_path, rc, req="false")
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert _errors(proc) == [] and called.split()[0] == "scripts/dev-main-schema-audit.py"
+    assert _errors(proc) == [] and calls[-1] == AUDIT_ARGV
     warnings = _warnings(proc)
     assert warnings[0].startswith("::warning title=Prod schema gate NOT enforced::")
     assert len(warnings) == (1 if rc == 0 else 2)
 
 
+def test_schema_gate_opt_out_also_passes_a_failed_self_test(tmp_path):
+    proc, calls = _run_schema_gate(tmp_path, 0, req="false", fail_phase=1)
+    assert proc.returncode == 0 and _errors(proc) == [] and AUDIT_ARGV not in calls
+    assert len(_warnings(proc)) == 2
+
+
 @pytest.mark.parametrize("req,step_rc,level", [("true", 1, "::error"), ("false", 0, "::warning")])
-def test_schema_gate_missing_secret_never_calls_the_audit(tmp_path, req, step_rc, level):
-    proc, called = _run_schema_gate(tmp_path, 0, req=req, url="")
-    assert proc.returncode == step_rc and called == ""
+def test_schema_gate_missing_secret_runs_nothing(tmp_path, req, step_rc, level):
+    proc, calls = _run_schema_gate(tmp_path, 0, req=req, url="")
+    assert proc.returncode == step_rc and calls == []
     assert [a for a in _annotations(proc) if a.startswith(level) and "NEON_DATABASE_URL is not readable" in a]
 
 
 @pytest.mark.parametrize("head", ["f" * 40, ""], ids=["another-sha", "git-fails"])
 def test_schema_gate_refuses_a_checkout_that_is_not_the_promoted_sha(tmp_path, head):
-    proc, called = _run_schema_gate(tmp_path, 0, head=head)
-    assert proc.returncode == 1 and called == ""
+    proc, calls = _run_schema_gate(tmp_path, 0, head=head)
+    assert proc.returncode == 1 and calls == []
     errors = _errors(proc)
     assert len(errors) == 1 and "so the audit would check the wrong code" in errors[0], errors
 
 
 def test_schema_gate_install_step_cannot_red_the_job_and_says_why(tmp_path):
-    """A failed install must surface as the gate's own refusal (audit exit 2), so require_schema_audit=false can still
-    promote when PyPI is down. Both install forms are tried first."""
+    """A failed or hung install must surface as the gate's own refusal (audit exit 2), so require_schema_audit=false can
+    still promote when PyPI is down. Both install forms are tried first, each inside `timeout`."""
     _, step = _step(PROMOTE, "promote", SCHEMA_INSTALL)
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
+    installs = [ln for ln in step["run"].splitlines() if "pip install" in ln]
+    assert len(installs) == 2 and all(re.search(r"\btimeout -k \d+ \d+ python3 -m pip install\b", ln) for ln in installs)
+    bindir = _bindir(tmp_path)
     called = tmp_path / "called"
     (bindir / "python3").write_text(f'#!/bin/sh\necho "$@" >> "{called}"\nexit 1\n')
     (bindir / "python3").chmod(0o755)
