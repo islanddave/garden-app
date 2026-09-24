@@ -117,28 +117,24 @@ export function stateChips(i, { now = new Date(), year = now.getFullYear() } = {
   return chips
 }
 
-// ── Line 2's layout: ONE line that gives way — or, on an F2 row, a line that WRAPS ──────────────────
-// MySeeds renders line 2 from this, so the shape is decided here, once (UX spec §1.3):
-//   · every row but an F2 row: ONE line. The live state chip (a lot in process) is an item of the line,
-//     never cut. The neutral chips, the amount, the heat and the tail ride the give-way flow in that
-//     order — the amount first of the facts, so it is never the one that wraps out of sight; the heat
-//     after it, dropped WHOLE when it does not fit; neutral chips ellipsise before the heat does; the
-//     tail is cut first.
-//   · an F2 row (BUG-MYSEEDSF2HIDESSHU-001, Dave 2026-09-24): the F2 chip never costs the heat. Dave, on
-//     his phone at 426px, seeing "[F2 — won't come true] 175 seeds" and room to spare: "I want the shu
-//     shown" — "I still prefer seeing heat even if it might not be bred true - it is info for
-//     decisions/guidance for me." So the line WRAPS (`wraps`) instead of dropping: the live chip, the F2
-//     chip, the amount and the heat are all whole items of the line, and when one line cannot hold them
-//     the heat moves to a second line, whole — a heat is still shown whole or not at all, and here it is
-//     always shown. Any OTHER neutral chip still gives way (ellipsised) before the heat has to move; the
-//     tail follows the heat and is cut first. This reverses the slice 3 amendment (abf8bf1), under which
-//     the F2 chip outranked the estimated heat and the heat was dropped. Bought packets and every non-F2
-//     row keep the one-line layout exactly.
+// ── Line 2's layout: which chips are WHOLE ITEMS of the line and which GIVE WAY ─────────────────────
+// MySeeds renders line 2 from this (UX spec §1.3). Every row's line 2 is ONE line that WRAPS rather than
+// drop the heat (BUG-MYSEEDSF2HIDESSHU-001, Dave 2026-09-24, on his phone at 426px: "I want the shu
+// shown" — "I still prefer seeing heat … it is info for decisions/guidance for me"). The supplier chip,
+// the live state chip (a lot in process), the F2 chip, the amount and the heat are whole items of the
+// line; when one line cannot hold them, what does not fit — in practice the heat — moves to the next
+// line, whole. A heat is shown whole or not at all, and it is always shown. The other chips
+// (`giveWayChips`: "Archived for this season", a status, "Not started") ellipsise before the heat has to
+// move; the tail (where from · how old) follows the heat and is cut first. A row that fits stays one line.
+//   · an F2 row: the F2 chip is a whole item of the line, after any live chip, and the amount follows it —
+//     the chip never costs the heat (the slice 3 amendment, abf8bf1, dropped the heat for it). Any other
+//     chip comes after the amount.
+//   · every other row: the chips that give way come before the amount, as they always have.
 export function lineLayout(i, { now, year } = {}) {
   const chips = stateChips(i, { now, year })
   const live = chips[0] && chips[0].tone !== 'neutral' ? chips[0] : null
   const f2 = chips.find((c) => c.key === 'f2') ?? null
-  return { live, f2, flowChips: chips.filter((c) => c !== live && c !== f2), wraps: f2 != null }
+  return { live, f2, giveWayChips: chips.filter((c) => c !== live && c !== f2) }
 }
 
 // Where from, for the TAIL of line 2: a saved lot's origin words. A bought packet's vendor is not
@@ -148,16 +144,16 @@ export function originNote(i) {
 }
 
 // Line 2 as one string, in the order it renders (lineLayout's): the supplier chip's label, the state
-// chips, the amount, the heat, then the tail (origin words, how old) — on an F2 row's wrapping line the
-// live chip, the F2 chip and the amount lead, then any other chips. Also what row uniqueness is computed
-// over, because it is what the eye reads.
+// chips, the amount, the heat, then the tail (origin words, how old) — on an F2 row the live chip, the F2
+// chip and the amount lead, then any other chips. Also what row uniqueness is computed over, because it
+// is what the eye reads.
 export function lineText(i, { vendorOf, now, year } = {}) {
   const vendor = vendorOf ? String(vendorOf(i) ?? '').trim() : ''
-  const { live, f2, flowChips, wraps } = lineLayout(i, { now, year })
+  const { live, f2, giveWayChips } = lineLayout(i, { now, year })
   const amount = howMuch(i)
-  const chips = flowChips.map((c) => c.label)
+  const chips = giveWayChips.map((c) => c.label)
   const rest = [heatLabel(i), originNote(i), howOld(i)]
-  const ordered = wraps
+  const ordered = f2
     ? [live?.label, f2?.label, amount, ...chips, ...rest]
     : [live?.label, ...chips, amount, ...rest]
   return [vendor ? supplierLabel(vendor) : '', ...ordered].filter(Boolean).join(' · ')

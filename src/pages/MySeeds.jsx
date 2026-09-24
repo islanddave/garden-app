@@ -593,18 +593,16 @@ function hostOf(url) {
 function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, onToggle, onGoToLot }) {
   // Line 2, in order: the supplier chip, the state chips, the amount ("1 packet" is not printed), the
   // heat, then the tail — origin words and how old. What gives way first on a crowded line is set by
-  // the styles below (giveWayBox), not by this order. The FIRST chip is a lot's live state when its
-  // tone says so (fermenting, drying) and never gives way; every later chip is neutral bookkeeping.
-  // WHICH shape line 2 takes is mySeedsModel.lineLayout's call: an F2 row's line WRAPS (WrapLine) — its
-  // F2 chip, amount and heat all whole, the heat on a second line when one cannot hold them — so the
-  // chip never costs the heat (BUG-MYSEEDSF2HIDESSHU-001). Every other row keeps the one line.
-  const { live, f2, flowChips, wraps } = lineLayout(item)
+  // the styles below (lineStyle, WrapLine), not by this order. The FIRST chip is a lot's live state when
+  // its tone says so (fermenting, drying) and never gives way; every later chip is neutral bookkeeping —
+  // which of them give way is mySeedsModel.lineLayout's call (an F2 row's chip never does). The line
+  // WRAPS rather than drop the heat (BUG-MYSEEDSF2HIDESSHU-001): see WrapLine.
+  const { live, f2, giveWayChips } = lineLayout(item)
   const amount = howMuch(item)
   const heat = rowHeat(item)
   const tail = [originNote(item), howOld(item)].filter(Boolean).join(' · ')
-  // A chip anywhere on the line makes it one chip tall; a line with nothing to print stays empty.
-  const chipTall = !!vendor || !!live || !!f2 || flowChips.length > 0
-  const hasLine = chipTall || !!(amount || heat || tail)
+  // A line with nothing to print stays empty.
+  const hasLine = !!(vendor || live || f2 || giveWayChips.length > 0 || amount || heat || tail)
   const inProcess = isInProcess(item)
   const colors = vendor ? supplierColors(vendor) : null
   // The list row carries the photo's id and no URL (BUG-SEEDLISTSIGNING-001). A row that draws its
@@ -632,7 +630,6 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
   const [failedKey, setFailedKey] = useState(null)
   const onPhotoTerminal = useCallback(() => setFailedKey(photoKey), [photoKey])
   const thumbPhoto = photoKey != null && failedKey === photoKey ? null : photo
-  const sep = (has) => (has ? ' · ' : '')
 
   return (
     <div
@@ -665,33 +662,9 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
             {ordinal && <span data-testid="my-seed-ordinal" style={ordinalStyle}>{ordinal}</span>}
             <span aria-hidden="true" style={chevronStyle}>{expanded ? '▾' : '▸'}</span>
           </span>
-          <span data-testid="my-seed-line" style={wraps ? wrapLineStyle : lineStyle}>
-            {hasLine && wraps && (
-              <WrapLine vendor={vendor} live={live} f2={f2} flowChips={flowChips} amount={amount} heat={heat} tail={tail} />
-            )}
-            {hasLine && !wraps && (
-              <>
-                {vendor && <SupplierChip name={vendor} data-testid="my-seed-supplier" style={{ marginRight: 6 }} />}
-                {live && (
-                  <Badge tone={live.tone} data-testid="my-seed-chip" data-tone={live.tone} style={liveChipStyle}>{live.label}</Badge>
-                )}
-                <span style={giveWayBox}>
-                  <span style={giveWayFlow}>
-                    <LineStrut chip={chipTall} />
-                    {flowChips.length > 0 && (
-                      <span style={chipsBox}>
-                        {flowChips.map((c) => (
-                          <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" data-tone={c.tone} style={chipStyle}>{c.label}</Badge>
-                        ))}
-                      </span>
-                    )}
-                    {amount && <span data-testid="my-seed-amount" style={amountStyle}>{amount}</span>}
-                    {heat && <span data-testid="my-seed-heat" style={heatStyle}>{sep(!!amount)}{heat}</span>}
-                    {tail && <span data-testid="my-seed-rest" style={restStyle}>{sep(!!(amount || heat))}{tail}</span>}
-                  </span>
-                </span>
-                <LineStrut chip={chipTall} />
-              </>
+          <span data-testid="my-seed-line" style={lineStyle}>
+            {hasLine && (
+              <WrapLine vendor={vendor} live={live} f2={f2} chips={giveWayChips} amount={amount} heat={heat} tail={tail} />
             )}
           </span>
         </span>
@@ -717,47 +690,47 @@ function SeedRow({ item, title, ordinal, vendor, withPhoto, expanded, outlined, 
   )
 }
 
-// What holds line 2 open: the facts that give way sit in an absolutely positioned flow that adds no
-// height, so the line gets it from an invisible stand-in. With a chip on the row, that is the chips'
-// own Badge with its sideways padding and border taken off and an empty 1lh body — a chip's height by
-// construction, zero wide, no text (the line's textContent is untouched). Without one, it is one text
-// line. Either way the row keeps the height it had: 58px with a chip, 54 without.
-function LineStrut({ chip }) {
-  if (!chip) return <span aria-hidden="true" style={textStrut} />
-  return (
-    <Badge aria-hidden="true" style={chipStrut}>
-      <span style={oneLineTall} />
-    </Badge>
+// Line 2 (BUG-MYSEEDSF2HIDESSHU-001): every piece is an item of ONE WRAPPING line (lineStyle), in
+// lineText's order — so nothing the row must show is ever dropped to make room, and nothing is cut. The
+// supplier, live and F2 chips, the amount and the heat are rigid and whole; when the line has no room
+// left for one of them it moves to the next line, whole — in practice only the heat ever does, and a row
+// that fits stays one line. The heat's " · " is drawn in the gap before it and OUTSIDE its box
+// (wrapSep): mid-line it sits in that gap; on a new line it falls left of the line's clipped edge, so
+// the line starts with the number and never with a separator. The item before the heat carries that gap
+// (SEP_W). The chips that give way sit in one box with a 0 basis, so they never push anything to the
+// next line — they ellipsise into the room their line has left — and the tail follows the heat and is
+// cut first. The line is as tall as what it shows: one chip tall, or a text line more when the heat moves
+// down. On an F2 row the F2 chip and the amount lead and any other chip comes after them; on every other
+// row the chips that give way come first (lineLayout).
+function WrapLine({ vendor, live, f2, chips, amount, heat, tail }) {
+  const dot = !!(amount && heat)   // the heat opens with " · " only after an amount, as it always has
+  const amountEl = (gap) => amount && (
+    <span data-testid="my-seed-amount" style={{ ...amountStyle, marginRight: gap }}>{amount}</span>
   )
-}
-
-// An F2 row's line 2 (lineLayout's `wraps`, BUG-MYSEEDSF2HIDESSHU-001): every piece is an item of ONE
-// WRAPPING line (wrapLineStyle), in lineText's order — so nothing is dropped to make room, and nothing
-// the row must show is cut. The chips, the amount and the heat are rigid and whole; when the line has
-// no room left for the heat, the heat moves to a second line, whole. Its " · " is drawn in the gap
-// before it and OUTSIDE its box (wrapSep): mid-line it sits in that gap; on a second line it falls left
-// of the line's clipped edge, so the line starts with the number and never with a separator. The item
-// before the heat carries that gap (SEP_W). Any other neutral chip still gives way first (chipsBox: a 0
-// basis, so it never pushes the heat down, ellipsised); the tail follows the heat and is cut first.
-// The line's height is its own content's, so no LineStrut.
-function WrapLine({ vendor, live, f2, flowChips, amount, heat, tail }) {
-  const dot = !!(amount && heat)   // as on every row: the heat opens with " · " only after an amount
+  const chipsEl = (gap) => chips.length > 0 && (
+    <span style={{ ...chipsBox, marginRight: gap }}>
+      {chips.map((c) => (
+        <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" data-tone={c.tone} style={chipStyle}>{c.label}</Badge>
+      ))}
+    </span>
+  )
   return (
     <>
       {vendor && <SupplierChip name={vendor} data-testid="my-seed-supplier" style={{ marginRight: 6 }} />}
       {live && (
         <Badge tone={live.tone} data-testid="my-seed-chip" data-tone={live.tone} style={liveChipStyle}>{live.label}</Badge>
       )}
-      <Badge tone={f2.tone} data-testid="my-seed-chip" data-tone={f2.tone} style={f2ChipStyle}>{f2.label}</Badge>
-      {amount && (
-        <span data-testid="my-seed-amount" style={{ ...amountStyle, marginRight: flowChips.length > 0 ? 6 : dot ? SEP_W : 0 }}>{amount}</span>
-      )}
-      {flowChips.length > 0 && (
-        <span style={{ ...chipsBox, marginRight: dot ? SEP_W : 6 }}>
-          {flowChips.map((c) => (
-            <Badge key={c.key} tone={c.tone} data-testid="my-seed-chip" data-tone={c.tone} style={chipStyle}>{c.label}</Badge>
-          ))}
-        </span>
+      {f2 ? (
+        <>
+          <Badge tone={f2.tone} data-testid="my-seed-chip" data-tone={f2.tone} style={f2ChipStyle}>{f2.label}</Badge>
+          {amountEl(chips.length > 0 ? 6 : dot ? SEP_W : 0)}
+          {chipsEl(dot ? SEP_W : 6)}
+        </>
+      ) : (
+        <>
+          {chipsEl(6)}
+          {amountEl(dot ? SEP_W : 0)}
+        </>
       )}
       {heat && (
         <span style={wrapHeatItem}>
@@ -847,65 +820,48 @@ const titleStyle = {
 }
 const ordinalStyle = { flex: '0 0 auto', whiteSpace: 'nowrap', fontSize: T.type.xs2, color: P.mid }
 const chevronStyle = { flex: '0 0 auto', color: P.light, fontSize: T.type.xs2 }
+// LINE 2 (UX spec §1.3, as amended 2026-09-24 by BUG-MYSEEDSF2HIDESSHU-001) is ONE flex line that WRAPS
+// rather than drop anything the row must show. From never cut to cut first:
+//   1. never cut: the supplier chip, the amount, the first state chip when it is a lot's LIVE state
+//      (tone info, warn or danger: fermenting, drying), an F2 lot's "F2 — won’t come true" chip — and
+//      the ordinal, on line 1;
+//   2. the heat, never cut and never dropped: when the line cannot hold it, it moves to the next line,
+//      whole — a cut Scoville number is a wrong number, and a missing one is a fact Dave decides with
+//      (Dave: "I want the shu shown" — "I still prefer seeing heat … it is info for decisions/guidance
+//      for me"). It only moves once the chips that give way have given all they can;
+//   3. the chips that give way ("Archived for this season", a status, "Not started"), ellipsised;
+//   4. cut first: the tail (where from · how old), which follows the heat onto whichever line it is on.
+// Items 1 and 2 are rigid flex items; when one does not fit, the line breaks before it, so it lands on
+// the next line whole and nothing is sliced. The chips that give way sit in chipsBox: a 0 basis, so it
+// never pushes anything to the next line, and a 1000 grow capped at its own content, so it takes the free
+// space on its line before the tail does; the tail has a 0 basis and ellipsises. A row whose rigid items
+// fit stays ONE line, exactly as tall as before: a chip's height, or a text line with no chip. `clip`, not
+// `hidden`, so nothing (find-in-page, a focus) can scroll the line; what it clips is wrapSep's dot when
+// the heat starts a line. No flex gap: the chips carry their own margin, the heat's " · " sits in its own
+// gap (SEP_W), and the tail opens with a NON-BREAKING space so "12.5 g · Saved from my plant" stays a
+// phrase. (Until 2026-09-24 the facts rode an absolutely positioned flow that hid whatever did not fit,
+// the heat included; F2 rows came off it first, the same day.)
 const lineStyle = {
-  display: 'flex', alignItems: 'center', minWidth: 0, fontSize: T.type.xs2, color: P.mid,
-  whiteSpace: 'nowrap', overflow: 'hidden',
-}
-// LINE 2 GIVES WAY IN A FIXED ORDER (UX spec §1.3), from never cut to cut first:
-//   1. never cut: the supplier chip, the amount, and the first state chip when it is a lot's LIVE
-//      state (tone info, warn or danger: fermenting, drying) — and the ordinal, on line 1;
-//   2. then the heat, dropped WHOLE — never partly shown: a cut Scoville number is a wrong number;
-//   3. then the neutral chips ("Archived for this season", a status, "Not started"), ellipsised;
-//   4. cut first: the tail (where from · how old).
-// AN F2 ROW IS THE EXCEPTION (BUG-MYSEEDSF2HIDESSHU-001; mySeedsModel.lineLayout's `wraps`): its line
-// WRAPS instead (wrapLineStyle, WrapLine), so step 2 never happens there — the "F2 — won’t come true"
-// chip stays whole beside the amount and the heat moves to a second line, whole, rather than go.
-// The supplier and live chips are the line's own rigid items. Everything else sits in giveWayBox: a
-// clipped box whose absolutely positioned child is a WRAPPING flex row with a huge row gap, so an item
-// that does not fit on the first line wraps to a second one far below the clip — hidden whole, never
-// sliced. In that row the neutral chips' box has a 0 basis, so it never pushes the heat off the line,
-// and a 1000 grow capped at its own content, so it takes the free space before the tail does; the
-// amount and the heat are rigid; the tail has a 0 basis and ellipsises. The ORDER does the rest: the
-// amount comes before the heat, so the heat wraps first, and the tail after the heat, so a dropped heat
-// takes its " · " and the tail with it — no separator is ever left dangling. `clip`, not `hidden`, so
-// nothing (find-in-page, a focus) can scroll the wrapped line into view. No flex gap on either row:
-// the chips carry their own margin, and the facts open with a NON-BREAKING space so "2 packets ·
-// 30K–50K SHU" reads as one phrase. The flow adds no height; LineStrut holds the line.
-const giveWayBox = { flex: '1 1 0', minWidth: 0, alignSelf: 'stretch', position: 'relative', overflow: 'clip' }
-const giveWayFlow = {
-  position: 'absolute', inset: 0, display: 'flex', flexWrap: 'wrap', alignContent: 'flex-start', alignItems: 'center',
-  rowGap: 100, columnGap: 0,
+  display: 'flex', flexWrap: 'wrap', alignItems: 'center', rowGap: 3, minWidth: 0, fontSize: T.type.xs2,
+  color: P.mid, whiteSpace: 'nowrap', overflow: 'clip',
 }
 const chipsBox = { display: 'flex', gap: 6, flex: '1000 1 0', minWidth: 0, maxWidth: 'max-content', overflow: 'hidden', marginRight: 6 }
 const chipStyle = {
   display: 'block', flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: T.type.xs,
 }
 const liveChipStyle = { ...chipStyle, flex: '0 0 auto', maxWidth: '100%', marginRight: 6 }
+// The F2 chip: as rigid as a live one (maxWidth 100% only so a line narrower than the chip could never
+// overflow).
+const f2ChipStyle = { ...chipStyle, flex: '0 0 auto', maxWidth: '100%', marginRight: 6 }
 const amountStyle = { flex: '0 0 auto', whiteSpace: 'nowrap' }
 const heatStyle = { flex: '0 0 auto', whiteSpace: 'nowrap', color: P.dark }
 const restStyle = { flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
-// AN F2 ROW'S LINE (WrapLine): the same line, allowed to WRAP. Its items are rigid and whole — the F2 chip
-// as rigid as a live one (maxWidth 100% only so a line narrower than the chip could never overflow) —
-// so an item the line cannot hold moves to the next line whole; in practice only the heat ever does.
-// Nothing is absolutely positioned, so the line is as tall as what it shows: one chip tall on one line,
-// as every row, and a text line more when the heat moves down. `clip` hides wrapSep's dot when its heat
-// starts a line, left of the line's edge (and, as on every row, lets nothing scroll the line).
-const wrapLineStyle = { ...lineStyle, flexWrap: 'wrap', rowGap: 3, overflow: 'clip' }
-const f2ChipStyle = { ...chipStyle, flex: '0 0 auto', maxWidth: '100%', marginRight: 6 }
-// The heat's " · " on the wrapping line: a dot centred in the SEP_W gap the item before the heat leaves
-// (its marginRight), drawn OUTSIDE the heat's own box so the heat — [data-testid="my-seed-heat"], the
-// number alone — is exactly what the eye reads as the heat, whichever line it is on.
+// The heat's " · ": a dot centred in the SEP_W gap the item before the heat leaves (its marginRight),
+// drawn OUTSIDE the heat's own box so the heat — [data-testid="my-seed-heat"], the number alone — is
+// exactly what the eye reads as the heat, whichever line it is on.
 const SEP_W = 10
 const wrapHeatItem = { flex: '0 0 auto', position: 'relative', whiteSpace: 'nowrap' }
 const wrapSep = { position: 'absolute', top: 0, right: '100%', width: SEP_W, textAlign: 'center', color: P.dark }
-// LineStrut's pieces. `1lh` is one line box of the element's own font and line-height — Badge's 1.4 at
-// the chips' size for the chip stand-in, the line's own for the text one.
-const oneLineTall = { display: 'block', width: 0, height: '1lh' }
-const textStrut = { ...oneLineTall, flex: '0 0 auto' }
-const chipStrut = {
-  flex: '0 0 auto', width: 0, paddingLeft: 0, paddingRight: 0, borderLeftWidth: 0, borderRightWidth: 0,
-  fontSize: T.type.xs, visibility: 'hidden',
-}
 const expandedStyle = {
   padding: '10px 12px 12px', borderTop: `1px solid ${P.border}`, display: 'flex', flexDirection: 'column', gap: 10,
 }

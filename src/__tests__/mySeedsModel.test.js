@@ -162,33 +162,35 @@ describe('lineText — the second line as the eye reads it (and as uniqueness is
   })
 })
 
-// BUG-MYSEEDSF2HIDESSHU-001 (Dave, 2026-09-24 — "I want the shu shown"): on an F2 row the F2 chip never
-// costs the heat. The line WRAPS instead of dropping it — reversing the slice 3 amendment, under which the
-// chip outranked the estimated heat and the heat was dropped whole. lineLayout is the one place that
-// decides the line's shape; MySeeds renders from it.
-describe('lineLayout — one line that gives way, or an F2 row\'s line that wraps', () => {
+// BUG-MYSEEDSF2HIDESSHU-001 (Dave, 2026-09-24 — "I want the shu shown"): the heat is never dropped, on any
+// row. Every row's line 2 WRAPS instead, so lineLayout no longer picks a shape per row (the `amountOnLine`
+// of the slice 3 amendment, then an F2-only `wraps`); what it still decides is which chips are whole items
+// of the line — the live state, an F2 lot's chip — and which give way.
+describe('lineLayout — which chips are whole items of line 2 and which give way', () => {
   const at = { now: NOW, year: 2026 }
-  it('an F2 row WRAPS: its F2 chip is an item of the line and nothing is dropped for it', () => {
-    const lay = lineLayout(saved({ breeding_system: 'f1', seed_count: 175, seed_count_estimated: true }), at)
-    expect(lay.f2).toEqual({ key: 'f2', label: 'F2 — won’t come true', tone: 'neutral' })
-    expect(lay.wraps).toBe(true)
-    expect(lay.live).toBeNull()
-    expect(lay.flowChips).toEqual([])
-    // The flag it replaced said the opposite: the amount on the line so that the heat could go first.
-    expect(lay).not.toHaveProperty('amountOnLine')
+  it('decides chips only: no per-row layout mode is left, because every row\'s line wraps', () => {
+    for (const row of [saved({ breeding_system: 'f1', seed_count: 175 }), bought({ sow_archived_season: 2026 }), saved()]) {
+      expect(Object.keys(lineLayout(row, at)).sort()).toEqual(['f2', 'giveWayChips', 'live'])
+    }
   })
 
-  it('an F2 row in process wraps too: the live state keeps the first place; any other chip still gives way', () => {
+  it('an F2 row: its F2 chip is a whole item of the line, never one of the chips that give way', () => {
+    const lay = lineLayout(saved({ breeding_system: 'f1', seed_count: 175, seed_count_estimated: true }), at)
+    expect(lay.f2).toEqual({ key: 'f2', label: 'F2 — won’t come true', tone: 'neutral' })
+    expect(lay.live).toBeNull()
+    expect(lay.giveWayChips).toEqual([])
+  })
+
+  it('an F2 row in process: the live state keeps the first place; any other chip still gives way', () => {
     const lay = lineLayout(saved({
       breeding_system: 'f1', seed_stage: 'fermenting', stage_entered_at: '2026-09-17', sow_archived_season: 2026,
     }), at)
     expect(lay.live.key).toBe('fermenting')
     expect(lay.f2.key).toBe('f2')
-    expect(lay.flowChips.map((c) => c.key)).toEqual(['archived'])
-    expect(lay.wraps).toBe(true)
+    expect(lay.giveWayChips.map((c) => c.key)).toEqual(['archived'])
   })
 
-  it('bought packets (F1 or not) and every non-F2 row keep the one line exactly', () => {
+  it('bought packets (F1 or not) and every non-F2 row: the live state on the line, every other chip gives way', () => {
     for (const row of [
       bought({ breeding_system: 'f1', sow_archived_season: 2026 }),
       bought({ status: 'retired' }),
@@ -198,9 +200,8 @@ describe('lineLayout — one line that gives way, or an F2 row\'s line that wrap
     ]) {
       const lay = lineLayout(row, at)
       expect(lay.f2).toBeNull()
-      expect(lay.wraps).toBe(false)
       // The chips in the engine's order, the first one on the line only when it is a live state.
-      expect([lay.live, ...lay.flowChips].filter(Boolean)).toEqual(stateChips(row, at))
+      expect([lay.live, ...lay.giveWayChips].filter(Boolean)).toEqual(stateChips(row, at))
       if (lay.live) expect(lay.live.tone).not.toBe('neutral')
     }
   })
