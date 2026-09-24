@@ -63,6 +63,23 @@ function writeSkipped(set) {
   try { localStorage.setItem(skipKeyName(), JSON.stringify([...set])) } catch { return }
 }
 
+// BUG-TODAYSKIPNOUNDO-001 — keys UN-skipped on this device today, i.e. Skip's Undo.
+//
+// The mount-time merge below UNIONS the server's set into the local one. While the set could only
+// grow within a day, a union could never be wrong. With Undo it can: undo a skip while the server
+// still holds the older snapshot — the Undo's own sync failed in a dead spot, lost the race with the
+// skip's sync, or has not landed when Today remounts a second later — and the union puts the key
+// straight back, silently hiding the plant again after Dave undid it. A key in this set is never
+// re-added from the server today. Same date-keyed, self-expiring shape as the skip set above.
+function unskipKeyName() { return 'today-unskipped:' + todayLocalISO() }
+function readUnskipped() {
+  try { return new Set(JSON.parse(localStorage.getItem(unskipKeyName()) || '[]')) }
+  catch { return new Set() }
+}
+function writeUnskipped(set) {
+  try { localStorage.setItem(unskipKeyName(), JSON.stringify([...set])) } catch { return }
+}
+
 // `eventType` overrides the row's primary type — the moisture check posts through this same body so
 // the two writes cannot drift in shape. Omitted => the row's own mapped type, as before.
 function eventBody(row, eventType) {
@@ -119,6 +136,18 @@ function CareChipButton({ row, pending, onLog }) {
 // thing that shrinks is the tap target, and Dave is on Android where Material's minimum is 48dp.
 // So 48 is the floor, and the row is now exactly its buttons — no whitespace left to give back.
 const ROW_TAP_MIN = 48
+
+// BUG-TODAYSKIPNOUNDO-001 — Skip's target, and the dead space that separates it from the next control.
+// Skip was 42px wide and flush against Moist or Water: under Android's 48dp minimum, and a thumb that
+// missed it by a few pixels wrote an event instead of skipping. 48 wide matches ROW_TAP_MIN, so the
+// target is 48 in both directions. The 8px after it is Material's minimum spacing between targets and
+// is deliberately NOT tappable — a near-miss does nothing, rather than log a watering.
+// THE COST, measured in real Chrome at Dave's 426px viewport (tests/harness/careskip.*): the name
+// column on a water row goes 204 -> 190px (166 -> 152 beside a thumbnail). Against the 253 live care
+// rows of 2026-09-24 that ellipsizes 11 more names, all 20-23 characters — 37 cut instead of 26.
+// SKIP_GAP is the dial: 4 would cut 8 more instead of 11, 0 would cut 3 but drop the separation.
+const SKIP_W = 48
+const SKIP_GAP = 8
 
 // Same shape as the one in forms/PlantingSelect.jsx. NOT `display:none` and not width/height 0 —
 // both remove the node from the accessibility tree, which would defeat the entire point.
@@ -194,7 +223,7 @@ function Row({ row, pending, onLog, onSkip, onMoist }) {
       </Link>
       {/* Skip (suppress-for-today) — quiet secondary control, to the LEFT of the care chip. */}
       <button type="button" onClick={() => onSkip(row)} aria-label={'Skip ' + row.name + ' today'}
-        style={{ flexShrink: 0, width: 42, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.light, cursor: 'pointer', fontSize: '0.7rem' }}>
+        style={{ flexShrink: 0, width: SKIP_W, marginRight: SKIP_GAP, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.light, cursor: 'pointer', fontSize: '0.7rem' }}>
         Skip
       </button>
       {/* Ordered by escalating commitment left-to-right: do nothing today -> record what you found
@@ -286,8 +315,14 @@ export default function CareNeeded({ plan }) {
   // made moments ago offline on this phone the instant a stale server value arrived. Union is also
   // the correct merge for what this set actually is: within a single day it only ever grows, and
   // the two devices are both appending to it. The cost of union is that an un-skip cannot
-  // propagate — there is no un-skip affordance, so that cost is currently zero, and this comment
-  // is here so that whoever adds one knows to revisit the merge rather than discover it.
+  // propagate.
+  //
+  // BUG-TODAYSKIPNOUNDO-001 added the un-skip (Skip's Undo) and revisited this merge, as the note
+  // that stood here asked. On THIS device an undone key is vetoed (readUnskipped), so a stale server
+  // snapshot cannot re-hide a plant Dave just brought back. ACROSS devices it still cannot propagate:
+  // a second device that already pulled the key keeps it, and its next skip re-publishes it. Fixing
+  // that needs tombstones on the server — a wire change — and the set is per user, so it only bites
+  // someone who skips on one device and undoes on another.
   //
   // Writes the merged set back to localStorage so the union survives the next cold start even if
   // the network is gone by then. Best-effort throughout: fetchNotificationPrefs never throws and
@@ -299,10 +334,11 @@ export default function CareNeeded({ plan }) {
       if (!alive || !prefs) return
       const remote = readTodaySkipped(prefs, todayLocalISO())
       if (remote.length === 0) return
+      const unskipped = readUnskipped()
       setSkipped(prev => {
         const merged = new Set(prev)
         let added = false
-        for (const k of remote) if (!merged.has(k)) { merged.add(k); added = true }
+        for (const k of remote) if (!merged.has(k) && !unskipped.has(k)) { merged.add(k); added = true }
         if (!added) return prev            // identity-stable: no needless re-render or re-write
         writeSkipped(merged)
         return merged
@@ -586,6 +622,30 @@ export default function CareNeeded({ plan }) {
     }
   }, [fetch, toast, pendingKeys, rows.length, setPending, announce])
 
+  // BUG-TODAYSKIPNOUNDO-001 — Skip's Undo. Same order as skipRow: the local write first and
+  // synchronously, then the fire-and-forget sync, which still sends the WHOLE set (the column is a
+  // snapshot).
+  //
+  // Reads the set FRESH from localStorage rather than through a state updater, on purpose. The toast
+  // layer lives at the app root and outlives Today: skip, tap into the planting, tap Undo, and this
+  // component has unmounted — a state updater would never run, and the plant would stay skipped while
+  // the toast claimed otherwise. localStorage is what the next mount reads, so writing it directly is
+  // what makes the Undo true whether or not the list is still mounted. The state update only repaints.
+  const unskipRow = useCallback((row) => {
+    const n = readSkipped()
+    n.delete(row.key)
+    writeSkipped(n)
+    const u = readUnskipped()
+    u.add(row.key)
+    writeUnskipped(u)
+    saveTodaySkipped({ getToken, date: todayLocalISO(), keys: [...n] })
+    setSkipped(prev => {
+      if (!prev.has(row.key)) return prev
+      const next = new Set(prev); next.delete(row.key); return next
+    })
+    announce(row.name + ' is back on today’s list')
+  }, [announce, getToken])
+
   const skipRow = useCallback((row) => {
     setSkipped(prev => {
       const n = new Set(prev).add(row.key)
@@ -598,12 +658,33 @@ export default function CareNeeded({ plan }) {
       saveTodaySkipped({ getToken, date: todayLocalISO(), keys: [...n] })
       return n
     })
+    // Skipping again after an Undo is a fresh decision, so this device stops vetoing the key on merge.
+    const u = readUnskipped()
+    if (u.delete(row.key)) writeUnskipped(u)
     announce('Skipped ' + row.name + ' for today')
-  }, [announce, getToken])
+    // BUG-TODAYSKIPNOUNDO-001 — the visible undo logging always had. Skip was the one action on this
+    // row with no way back, and it is the one that silently drops a plant from today's list; the
+    // announce() above is screen-reader-only. Coalesces like the log toast, under its own group, so a
+    // run of skips reads "Skipped 3 plants for today" and never merges into a watering count.
+    toast.showUndo({
+      message: 'Skipped ' + row.name + ' for today',
+      group: 'care-skip',
+      groupMessage: (n) => 'Skipped ' + n + ' plants for today',
+      onUndo: () => unskipRow(row),
+    })
+  }, [announce, getToken, toast, unskipRow])
 
   // Bulk: the candidate set for an event_type = visible rows of that type, MINUS in-ground beds when
-  // bed-wait is active (watering only). Client-side fan-out of single POSTs (the batch endpoint is
-  // scope-based single-type — it cannot name this id-subset). Best-effort; aggregate undo.
+  // bed-wait is active (watering only). Client-side fan-out of single POSTs. Best-effort; aggregate undo.
+  //
+  // WHY NOT POST /api/events/batch (re-checked 2026-09-24, BUG-RUNBULKPARTIALUNDO-001). This comment
+  // used to say the batch endpoint "cannot name this id-subset"; that is stale — scope.type 'ids' names
+  // one exactly. The fan-out stays for three reasons that ARE current; revisit them together:
+  //   · moisture_check (the overwintering rows' bulk) is in BATCH_EXCLUDED_TYPES by design — a 400.
+  //   · under 'ids' ONE planting closed since the plan ran (this list is a cron snapshot) 409s the
+  //     WHOLE tap and writes nothing, where this path logs the rest.
+  //   · a batch is ONE reward action (lambda/events/batchSideEffects.js, Decision 1); this is N. Moving
+  //     it changes what a Today bulk earns — Dave's call, not a transport swap.
   const bedWait = useMemo(() => bedWaitActive(plan), [plan])
   const candidatesFor = useCallback((etype) => rows.filter(r => {
     if (r.eventType !== etype) return false
@@ -649,43 +730,59 @@ export default function CareNeeded({ plan }) {
     setBulkProgress(null)
   }, [candidatesFor])
 
+  // BUG-RUNBULKPARTIALUNDO-001 — the whole fan-out's in-flight guard, as a REF for the reason
+  // writeInFlightRef above spells out: `disabled={!!bulkProgress}` is applied by the render that has
+  // not flushed, so two bulk taps landing in one React batch (the pill and a section header, or one
+  // button twice) both start a fan-out and every row in it is logged twice.
+  const bulkInFlightRef = useRef(false)
+
   const runBulk = useCallback(async (etype, keys) => {
+    if (bulkInFlightRef.current) return
     const targets = candidatesFor(etype).filter(r => keys.has(r.key))
     if (!targets.length) { setBulkType(null); return }
-    setBulkProgress({ done: 0, total: targets.length })
-    const created = []   // { id, key } per successfully-created row (id known = undoable)
-    let failures = 0
-    for (let i = 0; i < targets.length; i++) {
-      const row = targets[i]
-      try {
-        const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
-        created.push({ id: (res && res.id) || null, key: row.key })
-      } catch { failures++ }
-      setBulkProgress({ done: i + 1, total: targets.length })
+    bulkInFlightRef.current = true
+    try {
+      setBulkProgress({ done: 0, total: targets.length })
+      const created = []   // { id, key } per successfully-created row (id known = undoable)
+      let failures = 0
+      for (let i = 0; i < targets.length; i++) {
+        const row = targets[i]
+        try {
+          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
+          created.push({ id: (res && res.id) || null, key: row.key })
+        } catch { failures++ }
+        setBulkProgress({ done: i + 1, total: targets.length })
+      }
+      const doneKeys = created.map(c => c.key)
+      if (doneKeys.length) setLogged(prev => { const n = new Set(prev); doneKeys.forEach(k => n.add(k)); return n })
+      setBulkType(null); setBulkProgress(null)
+      const okMsg = 'Logged ' + doneKeys.length + (failures ? ' — ' + failures + ' failed' : '')
+      announce(okMsg)
+      // BUG-RUNBULKPARTIALUNDO-001 — undo whatever LANDED, failures or not. The undo used to be offered
+      // only when nothing failed, so one blip in a 60-row run left the 59 that did log with no way back.
+      // The failed rows never joined `logged`, so they are still on the list to retry, and the message
+      // carries the failure count. Only a run where nothing landed keeps the bare error toast.
+      if (!created.length) toast.show({ message: okMsg, tone: 'error' })
+      else toast.showUndo({
+        message: okMsg,
+        // WS-A5: await each DELETE; only un-fade rows whose delete is confirmed (or 404 = already
+        // gone). Rows we can't confirm stay hidden, so a failed undo can't re-surface → re-log a dup.
+        onUndo: async () => {
+          const undoneKeys = []
+          await Promise.all(created.map(async c => {
+            if (!c.id) return
+            try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undoneKeys.push(c.key) }
+            catch (e) { if (e?.status === 404) undoneKeys.push(c.key) }
+          }))
+          if (undoneKeys.length) setLogged(prev => { const n = new Set(prev); undoneKeys.forEach(k => n.delete(k)); return n })
+          if (undoneKeys.length < created.length) {
+            toast.show({ message: 'Couldn’t undo ' + (created.length - undoneKeys.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
+          }
+        },
+      })
+    } finally {
+      bulkInFlightRef.current = false
     }
-    const doneKeys = created.map(c => c.key)
-    if (doneKeys.length) setLogged(prev => { const n = new Set(prev); doneKeys.forEach(k => n.add(k)); return n })
-    setBulkType(null); setBulkProgress(null)
-    const okMsg = 'Logged ' + doneKeys.length + (failures ? ' — ' + failures + ' failed' : '')
-    announce(okMsg)
-    if (failures) toast.show({ message: okMsg, tone: 'error' })
-    else toast.showUndo({
-      message: okMsg,
-      // WS-A5: await each DELETE; only un-fade rows whose delete is confirmed (or 404 = already
-      // gone). Rows we can't confirm stay hidden, so a failed undo can't re-surface → re-log a dup.
-      onUndo: async () => {
-        const undoneKeys = []
-        await Promise.all(created.map(async c => {
-          if (!c.id) return
-          try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undoneKeys.push(c.key) }
-          catch (e) { if (e?.status === 404) undoneKeys.push(c.key) }
-        }))
-        if (undoneKeys.length) setLogged(prev => { const n = new Set(prev); undoneKeys.forEach(k => n.delete(k)); return n })
-        if (undoneKeys.length < created.length) {
-          toast.show({ message: 'Couldn’t undo ' + (created.length - undoneKeys.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
-        }
-      },
-    })
   }, [fetch, toast, candidatesFor, announce])
 
   const isExpanded = (g) => (g.key in overrides) ? overrides[g.key] : autoKeys.has(g.key)
