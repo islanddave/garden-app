@@ -16,6 +16,9 @@ The fallible command is a python3 stub on PATH. Bodies run in tmp_path, so relat
 The same errexit trap in its assignment form, `X=$(curl ... | python3 ...)` read bare, is guarded for promote-gate.yml's
 version/tag skew gate and staging smoke gate (OPS-PROMOTEGATEERREXIT2-001): those bodies run against an in-process
 stand-in for api.github.com, with the real curl and python3.
+
+promote-gate.yml's prod schema gate and the `resolve` inputs that feed it (OPS-PROMOTESCHEMAGATE-001) run here with
+python3 and git stubbed: what is pinned is the step's exit-code mapping, not the audit's verdict on prod.
 """
 import datetime
 import glob
@@ -607,6 +610,164 @@ def test_smoke_step_names_a_dispatch_that_got_no_http_answer(tmp_path, github, s
     errors = _errors(proc)
     assert len(errors) == 1 and errors[0].startswith("::error::deploy-staging dispatch failed (HTTP 000)"), errors
     assert api.reads(RUNS) == 0
+
+
+# ── promote-gate.yml: the prod schema gate (OPS-PROMOTESCHEMAGATE-001) ──────────────────────────────────────────
+# dev-main-schema-audit.py: 0 = PASS, 1 = FAIL (or a crash), anything else = inconclusive. Enforced, ONLY exit 0
+# passes: every other exit, a missing secret and a checkout that is not dev_sha refuse with one ::error (exit 1).
+# require_schema_audit=false turns each of those into a ::warning and a pass, and the audit still runs. python3 and
+# git are stubs here; the audit itself against prod, and its non-vacuity, are proven out of band (lane report).
+
+SCHEMA = "Prod schema gate — promoted Lambdas' column refs must exist in PROD (L-081; pre-FF, fail-closed)"
+SCHEMA_INSTALL = "Install psycopg2 (prod schema gate)"
+RESOLVE = ("promote-gate.yml", "resolve", "Resolve promote inputs (dispatch OR promote-v* tag)")
+
+
+def _run_schema_gate(tmp_path, rc, req="true", url="postgresql://prod.invalid/db", head=DEV_SHA, prologue=""):
+    """The gate body, the runner's way, with python3 exiting `rc` and `git rev-parse HEAD` answering `head`
+    ("" = git fails, as outside a checkout). Returns (proc, python3 argv log)."""
+    _, step = _step(PROMOTE, "promote", SCHEMA)
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    called = tmp_path / "called"
+    stubs = {
+        "python3": f'echo "$@" >> "{called}"\nexit {rc}',
+        "git": (f'[ "$*" = "rev-parse HEAD" ] && echo {head} && exit 0\nexit 128' if head else "exit 128"),
+    }
+    for name, body in stubs.items():
+        (bindir / name).write_text("#!/bin/sh\n" + body + "\n")
+        (bindir / name).chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("NEON_", "PG"))}
+    env.update(PATH=f"{bindir}:{os.environ['PATH']}", NEON_DATABASE_URL=url, REQ_SCHEMA=req, DEV_SHA=DEV_SHA,
+               GITHUB_STEP_SUMMARY=str(tmp_path / "summary"))
+    proc = _run_as_runner(tmp_path, prologue + step["run"], env)
+    return proc, (called.read_text() if called.exists() else "")
+
+
+def _warnings(proc):
+    return [a for a in _annotations(proc) if a.startswith("::warning")]
+
+
+def test_schema_gate_runs_under_the_shell_the_harness_models():
+    wf, step = _step(PROMOTE, "promote", SCHEMA)
+    assert _declared_shell(wf, "promote", step) is None
+
+
+def test_schema_gate_is_wired_pre_ff_on_the_promoted_checkout_with_the_prod_secret():
+    steps = _workflow(PROMOTE)["jobs"]["promote"]["steps"]
+    names = [s.get("name") or s.get("uses") for s in steps]
+    checkout = next(i for i, n in enumerate(names) if n.startswith("Checkout dev_sha"))
+    install, gate = names.index(SCHEMA_INSTALL), names.index(SCHEMA)
+    assert names.index(SKEW) < checkout < install < gate < names.index(SMOKE) < names.index("Fast-forward main -> dev SHA")
+    assert steps[checkout]["with"]["ref"] == "${{ needs.resolve.outputs.dev_sha }}"
+    assert steps[gate]["env"]["NEON_DATABASE_URL"] == "${{ secrets.NEON_DATABASE_URL }}"
+    assert steps[gate]["env"]["REQ_SCHEMA"] == "${{ needs.resolve.outputs.require_schema_audit }}"
+    assert steps[gate]["env"]["DEV_SHA"] == "${{ needs.resolve.outputs.dev_sha }}"
+    for s in (steps[install], steps[gate]):  # an `if:` could skip the gate, continue-on-error would make it advisory
+        assert "if" not in s and "continue-on-error" not in s
+
+
+@pytest.mark.parametrize("prologue", ["", "set -euo pipefail\n"], ids=["as-written", "house-prologue"])
+@pytest.mark.parametrize("rc,step_rc", [(0, 0), (1, 1), (2, 1), (127, 1)])
+def test_schema_gate_enforced_passes_only_an_audit_that_exits_0(tmp_path, rc, step_rc, prologue):
+    proc, called = _run_schema_gate(tmp_path, rc, prologue=prologue)
+    assert proc.returncode == step_rc, proc.stdout + proc.stderr
+    assert called.split() == ["scripts/dev-main-schema-audit.py", "--repo-root", "."]
+    if rc == 0:
+        assert _annotations(proc) == [] and "prod schema gate ok" in proc.stdout
+    else:
+        errors = _errors(proc)
+        assert len(errors) == 1 and errors[0].startswith("::error title=Prod schema gate::"), errors
+        assert f"(exit {rc}) at {DEV_SHA}" in errors[0] and "main has NOT been touched" in errors[0]
+
+
+@pytest.mark.parametrize("req", ["", "true", "TRUE", "yes"])
+def test_schema_gate_enforces_unless_the_input_is_exactly_false(tmp_path, req):
+    proc, _ = _run_schema_gate(tmp_path, 1, req=req)
+    assert proc.returncode == 1 and len(_errors(proc)) == 1
+
+
+@pytest.mark.parametrize("rc", [0, 1, 2, 127])
+def test_schema_gate_opt_out_warns_loudly_still_audits_and_passes(tmp_path, rc):
+    proc, called = _run_schema_gate(tmp_path, rc, req="false")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _errors(proc) == [] and called.split()[0] == "scripts/dev-main-schema-audit.py"
+    warnings = _warnings(proc)
+    assert warnings[0].startswith("::warning title=Prod schema gate NOT enforced::")
+    assert len(warnings) == (1 if rc == 0 else 2)
+
+
+@pytest.mark.parametrize("req,step_rc,level", [("true", 1, "::error"), ("false", 0, "::warning")])
+def test_schema_gate_missing_secret_never_calls_the_audit(tmp_path, req, step_rc, level):
+    proc, called = _run_schema_gate(tmp_path, 0, req=req, url="")
+    assert proc.returncode == step_rc and called == ""
+    assert [a for a in _annotations(proc) if a.startswith(level) and "NEON_DATABASE_URL is not readable" in a]
+
+
+@pytest.mark.parametrize("head", ["f" * 40, ""], ids=["another-sha", "git-fails"])
+def test_schema_gate_refuses_a_checkout_that_is_not_the_promoted_sha(tmp_path, head):
+    proc, called = _run_schema_gate(tmp_path, 0, head=head)
+    assert proc.returncode == 1 and called == ""
+    errors = _errors(proc)
+    assert len(errors) == 1 and "so the audit would check the wrong code" in errors[0], errors
+
+
+def test_schema_gate_install_step_cannot_red_the_job_and_says_why(tmp_path):
+    """A failed install must surface as the gate's own refusal (audit exit 2), so require_schema_audit=false can still
+    promote when PyPI is down. Both install forms are tried first."""
+    _, step = _step(PROMOTE, "promote", SCHEMA_INSTALL)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    called = tmp_path / "called"
+    (bindir / "python3").write_text(f'#!/bin/sh\necho "$@" >> "{called}"\nexit 1\n')
+    (bindir / "python3").chmod(0o755)
+    proc = _run_as_runner(tmp_path, step["run"], dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}"))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert [ln.split() for ln in called.read_text().splitlines()] == [
+        ["-m", "pip", "install", "--quiet", "psycopg2-binary"],
+        ["-m", "pip", "install", "--quiet", "--break-system-packages", "psycopg2-binary"]]
+    warnings = _warnings(proc)
+    assert len(warnings) == 1 and "require_schema_audit=false" in warnings[0]
+
+
+def _resolve(tmp_path, **env_extra):
+    _, step = _step(*RESOLVE)
+    out = tmp_path / "output"
+    out.write_text("")
+    env = dict(os.environ, GITHUB_OUTPUT=str(out), GH_SHA=DEV_SHA, GH_REF_NAME="dev", IN_DEV_SHA=DEV_SHA,
+               IN_SNAP="v1.2.3", IN_REQINT="", IN_REQSCHEMA="")
+    env.update(env_extra)
+    proc = _run_as_runner(tmp_path, step["run"], env)
+    return proc, dict(ln.split("=", 1) for ln in out.read_text().splitlines())
+
+
+def test_require_schema_audit_is_a_boolean_input_defaulting_true_and_a_resolve_output():
+    wf = _workflow(PROMOTE)
+    inp = wf.get(True, wf.get("on"))["workflow_dispatch"]["inputs"]["require_schema_audit"]
+    assert (inp["type"], inp["default"], inp["required"]) == ("boolean", True, False)
+    assert wf["jobs"]["resolve"]["outputs"]["require_schema_audit"] == "${{ steps.r.outputs.require_schema_audit }}"
+
+
+@pytest.mark.parametrize("given,want", [("", "true"), ("true", "true"), ("false", "false")])
+def test_resolve_dispatch_defaults_the_schema_gate_on(tmp_path, given, want):
+    """An API dispatch that omits the key must not downgrade the gate: the fallback mirrors the declared default."""
+    proc, out = _resolve(tmp_path, EVENT="workflow_dispatch", IN_REQSCHEMA=given)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert out["require_schema_audit"] == want
+
+
+def test_resolve_tag_path_enforces_the_schema_gate_but_not_integration(tmp_path):
+    proc, out = _resolve(tmp_path, EVENT="push", GH_REF_NAME="promote-v1.2.3", IN_REQINT="true", IN_REQSCHEMA="false")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert out == {"dev_sha": DEV_SHA, "snap_version": "v1.2.3", "require_integration": "false",
+                   "require_schema_audit": "true"}
+
+
+@pytest.mark.parametrize("given", ["True", "yes", "0"])
+def test_resolve_refuses_a_schema_gate_value_that_is_not_true_or_false(tmp_path, given):
+    proc, out = _resolve(tmp_path, EVENT="workflow_dispatch", IN_REQSCHEMA=given)
+    assert proc.returncode == 1 and out == {}
+    assert _errors(proc) == [f"::error::require_schema_audit must be true or false, got '{given}'"]
 
 
 # ── every step of every workflow: no exit-status read that errexit has already decided ─────────────────────
