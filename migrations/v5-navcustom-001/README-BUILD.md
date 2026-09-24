@@ -62,13 +62,20 @@ name, and it runs on every user's boot. A critter Lambda that selects `more_pins
 in its environment 500s **every user's boot prefs read**: PrefsProvider then gets null and every
 per-person preference silently resets (Garden grouping, today's skips, the What's-New dot, the Log-many
 default). The PATCH's INSERT column list names both columns too, so every prefs save 500s as well.
-The same order is what keeps CI honest:
+**Only the staging half of that order is machine-enforced. The prod half is this runbook and nothing
+else** (pre-promote review, 2026-09-24, finding B1): the promote runs no schema check against prod, so a
+promote with prod unapplied deploys a critter Lambda whose every prefs read 500s. The prod apply, with its
+post gates cited, therefore happens BEFORE the dev push, not "before the promote". Follow-up to make it a
+machine gate: ledger `OPS-PROMOTESCHEMAGATE-001`. What CI does see:
 
-- the L-081 schema audit (`schema-audit.yml`, Phase 2) checks every INSERT column list under `lambda/`
-  against **prod's** information_schema, so the dev push reds it if prod lacks the columns;
+- the L-081 schema audit (`schema-audit.yml`) checks prod's information_schema against the prefs INSERT
+  list (Phase 2) and, via `lambda/critter/prefs-columns.test.js`, the `readUserPrefs` SELECT list
+  (Phase 1). It is **ADVISORY**: a red run reports and never blocks a promote, and it is path-filtered, so
+  a later commit on top can leave no run at the promoted SHA;
 - the integration job forks its Neon branch from **staging**;
 - `deploy-staging.yml` deploys the critter Lambda to staging and its smoke (`tests/smoke/run-smoke.sh`,
-  block L) writes and reads back both fields there, so staging must carry the DDL first.
+  block M) writes and reads back both fields there, so a staging Lambda without the DDL reds the
+  promote's staging-smoke gate.
 
 **Old code + new schema is inert**, so steps 1–3 can land any time before step 4 and the gap can be as
 long as needed. The deployed critter Lambda names neither column (explicit SELECT, INSERT and RETURNING
