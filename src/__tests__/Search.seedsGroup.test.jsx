@@ -3,8 +3,9 @@
 // The server slice returns seed packets and saved lots in its `inventory` list, told apart by their own
 // `category`. Seed has its own page now, so a packet under "Inventory" pointed at a heading that holds
 // no seed anywhere else. Pinned: seed rows sit under Seeds and open their packet/lot page; every other
-// inventory row stays under Inventory, unchanged; either group is absent when it has nothing; and the
-// Varieties group keeps its own door. No jest-dom (L-182).
+// inventory row stays under Inventory, unchanged; either group is absent when it has nothing; the
+// Varieties group keeps its own door; and the Seeds group lists every seed row the server sends, in its
+// order (BUG-SEARCHSEEDCAP20-001). No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -114,5 +115,23 @@ describe('Search — seed rows are grouped under "Seeds"', () => {
     await waitFor(() => expect(screen.queryByText('Pepper seed packet')).toBeTruthy(), { timeout: 2000 })
     expect(groupOf(rowFor('Pepper Mix Heirloom'))).toBe('Varieties')
     expect(rowFor('Pepper Mix Heirloom').getAttribute('href')).toBe('/varieties/v1/edit')
+  })
+
+  // BUG-SEARCHSEEDCAP20-001 — the cap that showed 20 of 94 was the SERVER's (one LIMIT 20 across every
+  // inventory category, lambda/dashboard/handlers.js searchInventory). This pins that the page adds no
+  // cap of its own and keeps the server's order: 94 is the q=pepper seed count on prod, 2026-09-24.
+  it('lists every seed row the server sends under Seeds, in the server\'s order — no cap of its own', async () => {
+    const seeds = Array.from({ length: 94 }, (_, i) => ({
+      id: `i-seed-${i}`, name: `Pepper packet ${String(i + 1).padStart(3, '0')}`, category: 'seeds', status: 'active', location_text: null,
+    }))
+    searchImpl = async () => payload([...seeds, SPRAYER])
+    renderPage()
+    await type('pepper')
+    await waitFor(() => expect(screen.queryByText('Pepper sprayer')).toBeTruthy(), { timeout: 2000 })
+    const shown = [...document.querySelectorAll('a[href^="/inventory/i-seed-"]')].map((a) => a.getAttribute('href'))
+    expect(shown).toEqual(seeds.map((s) => `/inventory/${s.id}`))
+    // Either side of the old cut, and the last row, all sit in the Seeds group.
+    for (const s of [seeds[0], seeds[19], seeds[20], seeds[93]]) expect(groupOf(rowFor(s.name))).toBe('Seeds')
+    expect(groupOf(rowFor('Pepper sprayer'))).toBe('Inventory')
   })
 })
