@@ -26,6 +26,7 @@ vi.mock('../lib/haptics.js', () => ({
 }))
 
 import VoiceHarvest from '../pages/VoiceHarvest.jsx'
+import { hapticSaveCommitted, hapticSaveFailed } from '../lib/haptics.js'
 import { looseKey } from '../lib/comboboxInput.js'
 import { VOCAB, byName } from './voiceHarvest.vocabulary.fixture.js'
 
@@ -567,18 +568,24 @@ describe('a save word while the last harvest is still being sent', () => {
     expect(header()).toBe('1 saved · 1 not captured')
   })
 
-  it('a new amount for the same crop waits until the amount still being sent has landed', async () => {
+  it('a new amount for the same crop waits until the amount still being sent has landed, then saves by itself', async () => {
     const rec = await startListening()
     const posts = holdPosts()
     await say(rec, 'stupice 5 count 231 grams next')
     await say(rec, '3 count', 'next')
     // Sending now would send the 231 g a second time.
     expect(posts.count()).toBe(1)
-    expect(statusText()).toBe('Still saving the last one — say "next" again once it has saved.')
+    expect(statusText()).toBe('Still saving the last one — then 3 count.')
     await posts.resolve()
-    expect(record()).toEqual(['Stupice', '3 count', '—'])
-    await say(rec, 'next')
+    // Lane V3 F8 — the queued "next" goes through once the POST in its way has answered: 3 count alone.
+    expect(posts.count()).toBe(2)
+    await posts.resolve(1)
     expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', null, []]])
+    expect(statusText()).toBe('Saved Stupice — 3 count · no weight was said')
+    expect(header()).toBe('2 saved')
+    expect(misses()).toEqual([])
+    // Its own buzz: by feel, a queued save that went through is not the same as one that never did.
+    expect(hapticSaveCommitted).toHaveBeenCalledTimes(2)
   })
 
   it('the refused "next" does not swallow a real one said within 1.5 s of it', async () => {
@@ -794,5 +801,139 @@ describe('a failed save, when something was said while it was out', () => {
       'NOT SAVED — Network error. Stupice · 5 count was not saved; say it again to log it.',
     ])
     expect(within(screen.getByTestId('voice-harvest-teach')).getByText('What did you mean by “zzqq quux”?')).toBeTruthy()
+  })
+})
+
+// Lane V3 F8 — A "NEXT" FOR A NEW AMOUNT, SAID WHILE THE LAST HARVEST IS STILL SAVING, IS QUEUED. Refused and told to
+// say it again, it could end in nothing: the POST landed with the success buzz and the new amount sat on the card
+// unsaved and uncounted (Seat A, v4.150.0 delta pass). Now it goes through when the POST in its way answers, as a
+// spoken "next" would. The shape where the POST lands and 3 count saves by itself is the test above ("…then saves by
+// itself"). Later words: the same crop's amounts join it; another crop or "clear" cancels it; "next" again replaces
+// it; a repeated "next" with nothing new queues nothing.
+describe('a "next" queued behind the save still being sent', () => {
+  it('only a weight said since "next" cannot be saved alone: the queued "next" refuses out loud when the POST lands', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, '231 grams', 'next')
+    expect(statusText()).toBe('Still saving the last one — 231 g still needs a quantity.')
+    await posts.resolve()
+    expect(posts.count()).toBe(1)
+    expect(statusText()).toBe('Not saved — still need a quantity. Say it, then "next".')
+    expect(misses()).toEqual(['Not saved — still need a quantity.'])
+    expect(header()).toBe('1 saved · 1 not captured')
+    expect(record()).toEqual(['Stupice', '—', '231 g'])
+    expect(hapticSaveFailed).toHaveBeenCalledTimes(1)
+  })
+
+  it('…and a quantity said before the POST lands completes it, and it saves by itself', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, '231 grams', 'next', '3 count')
+    await posts.resolve()
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Stupice', 3, 'count', 231, []]])
+  })
+
+  it('a repeated "next" with nothing new queues nothing: one POST, and nothing more is said when it lands', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next', 'next')
+    expect(statusText()).toBe('Still saving the last one.')
+    await posts.resolve()
+    await advance(2000)
+    expect(posts.count()).toBe(1)
+    expect(statusText()).toBe('Saved Stupice — 5 count · no weight was said')
+    expect(misses()).toEqual([])
+    expect(hapticSaveCommitted).toHaveBeenCalledTimes(1)
+  })
+
+  it('an amount said after a repeated "next" is a new record: it waits for its own "next"', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next', 'next', '3 count')
+    await posts.resolve()
+    expect(posts.count()).toBe(1)
+    expect(record()).toEqual(['Stupice', '3 count', '—'])
+  })
+
+  it('the POST in its way fails: the failed record is named, and the queued "next" still saves what was said since', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count', 'next')
+    await posts.reject()
+    expect(misses()).toEqual(['NOT SAVED — Network error. Stupice · 5 count · 231 g was not saved; say it again to log it.'])
+    expect(posts.count()).toBe(2)
+    await posts.resolve(1)
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', null, []]])
+    expect(statusText()).toBe('Saved Stupice — 3 count · no weight was said')
+    expect(header()).toBe('1 saved · 1 not captured')
+  })
+
+  it('the POST in its way fails after a repeated "next": nothing retries by itself, and a later "next" does', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next', 'next')
+    await posts.reject()
+    await advance(2000)
+    expect(posts.count()).toBe(1)
+    expect(statusText()).toBe('NOT SAVED — Network error. Say "next" to try again.')
+    await say(rec, 'next')
+    expect(posts.count()).toBe(2)
+  })
+
+  it('a weight said before the POST lands joins the queued save', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count', 'next', '200 grams')
+    await posts.resolve()
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', 200, []]])
+  })
+
+  it('"next" said again before the POST lands replaces the queued save: one save, not two', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count', 'next', 'next')
+    expect(statusText()).toBe('Still saving the last one — then 3 count.')
+    await posts.resolve()
+    expect(posts.count()).toBe(2)
+    await posts.resolve(1)
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', null, []]])
+    expect(header()).toBe('2 saved')
+  })
+
+  it('another crop named before the POST lands cancels it: the amount is cleared and said, and the new crop waits for its own "next"', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count', 'next', 'Suyo Long', '4 count')
+    expect(cleared()).toEqual(['Cleared 3 count for Stupice — the crop changed to Suyo Long before it was saved.'])
+    await posts.resolve()
+    expect(posts.count()).toBe(1)
+    expect(record()).toEqual(['Suyo Long', '4 count', '—'])
+  })
+
+  it('"clear" before the POST lands cancels it', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count', 'next', 'clear', 'Stupice', '4 count')
+    await posts.resolve()
+    expect(posts.count()).toBe(1)
+    expect(record()).toEqual(['Stupice', '4 count', '—'])
+  })
+
+  it('a name that matched nothing before the POST lands: the queued "next" refuses out loud for want of a crop', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count', 'next', 'zzqq quux')
+    await posts.resolve()
+    expect(posts.count()).toBe(1)
+    expect(statusText()).toBe('Not saved — still need a crop. Say it, then "next".')
+    expect(misses()).toEqual(['Nothing matched “zzqq quux”.', 'Not saved — still need a crop.'])
   })
 })

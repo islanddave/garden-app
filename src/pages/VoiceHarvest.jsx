@@ -748,6 +748,12 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   const inFlightRef = useRef([])
   const sendingLossRef = useRef([])
   const savedSlotsRef = useRef(new WeakSet())
+  // Lane V3 F8 — A "NEXT" QUEUED BEHIND THE SEND IN ITS WAY: { flight, plantId, token } or null. Set when a "next"
+  // is refused because the record also holds a value that POST is sending, and something new besides; that "next"
+  // then goes through as a spoken one would when the POST answers (saveRecord). Cancelled by a record started over
+  // (clearRecord) or another crop (clearForSwitch).
+  const pendingSaveRef = useRef(null)
+  const applyOneUtteranceRef = useRef(null)
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
@@ -951,6 +957,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // let a count spoken for one crop attach itself to another — the silent wrong save this flow
     // exists to prevent, reached by the back door.
     heldNumRef.current = null; setHeldNum(null)
+    // Lane V3 F8 — a queued "next" was for the record being cleared.
+    pendingSaveRef.current = null
   }, [])
 
   // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — every amount on the record carries the crop it was SAID FOR: the
@@ -998,6 +1006,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     }
     // PE-1 — the crop being saved, chosen again while its POST is out, is a choice that POST must not undo.
     for (const f of inFlightRef.current) if (f.plantId === planting.id) f.rechosen = true
+    // Lane V3 F8 — a "next" queued for another crop's record does not carry over to this one; what it was for is
+    // cleared above, and said, like anything else unsaved.
+    if (pendingSaveRef.current && pendingSaveRef.current.plantId !== planting.id) pendingSaveRef.current = null
     if (sending.length) {
       const held = switchWords(sending, planting)
       recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-sending ${held.amounts} (${held.from} -> ${held.to})`)
@@ -1125,11 +1136,26 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // since, for this crop or another, holds no such value and saves as always. Not a failure, so no miss row and
     // no buzz — the save's own buzz comes when it lands — and the cooldown claim is given back, as the refusal
     // below gives it back, so a real "next" said straight after is not swallowed as a duplicate.
+    //
+    // Lane V3 F8 — AND A "NEXT" FOR A NEW AMOUNT IS QUEUED, NOT DROPPED. Refused and told to say it again, it could
+    // end in nothing: "stupice 5 count 231 grams next", "3 count", "next" during the save, then the POST landed
+    // with the success buzz and the 3 count sat on the card unsaved and uncounted (Seat A's delta pass, v4.150.0).
+    // So the refusal promises the new amount ("then 3 count") and queues the "next" behind the POST in the way;
+    // when that POST answers, the "next" goes through as a spoken one would (settleQueuedNext below) — a save,
+    // with its own banner and buzz, or a loud refusal when the record cannot be saved (only a weight: it needs a
+    // quantity, and says so now). A pure repeat queues nothing: that harvest is on its way already. Without a
+    // crop, the refusal below answers as it would for any record without one.
     const sending = [q, w].filter((s) => s && inFlightRef.current.some((f) => f.slots.includes(s)))
-    if (sending.length) {
-      const newer = [q, w].some((s) => s && !sending.includes(s))
-      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `save-while-sending${newer ? ' (a new amount waits)' : ''}`)
-      say('warn', newer ? 'Still saving the last one — say "next" again once it has saved.' : 'Still saving the last one.')
+    const unsent = [q, w].filter((s) => s && !sending.includes(s))
+    if (sending.length && (plant || !unsent.length)) {
+      const amounts = unsent.map((v) => `${v.value} ${v.unit}`).join(' · ')
+      if (unsent.length) {
+        pendingSaveRef.current = { flight: inFlightRef.current.find((f) => sending.some((s) => f.slots.includes(s))), plantId: plant.id, token }
+      }
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `save-while-sending${unsent.length ? ` (queued: ${amounts})` : ''}`)
+      say('warn', !unsent.length ? 'Still saving the last one.'
+        : unsent.includes(q) ? `Still saving the last one — then ${amounts}.`
+          : `Still saving the last one — ${amounts} still needs a quantity.`)
       queueMicrotask(() => debRef.current?.invalidateLastWrite(token))
       return
     }
@@ -1162,6 +1188,21 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const flight = { plantId: plant.id, slots: [q, w].filter(Boolean), rechosen: false }
     inFlightRef.current = [...inFlightRef.current, flight]
     const land = () => { inFlightRef.current = inFlightRef.current.filter((f) => f !== flight) }
+    // Lane V3 F8 — this record is being sent, so nothing is left queued for it.
+    pendingSaveRef.current = null
+    // Lane V3 F8 — THE "NEXT" QUEUED BEHIND THIS POST GOES THROUGH NOW, as a spoken one would: through the command
+    // path, so a held number is placed exactly as it would be. Only when the record holds something this POST did
+    // not send; otherwise there is nothing it was for, and it is dropped without a word. Run last, after this
+    // POST's own answer has settled the record.
+    const settleQueuedNext = () => {
+      const pending = pendingSaveRef.current
+      if (!pending || pending.flight !== flight) return
+      pendingSaveRef.current = null
+      const fresh = [qtyRef.current, weightRef.current].some((s) => s && !flight.slots.includes(s)) || heldNumRef.current != null
+      if (!fresh) return
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', 'queued-next')
+      applyOneUtteranceRef.current?.({ kind: 'command', command: 'save_and_advance', transcript: '' }, { atMs: pending.token })
+    }
     try {
       const res = await apiFetch('/api/events', {
         method: 'POST',
@@ -1257,6 +1298,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // landed: count the use. AFTER the save, never awaited, never throwing (recordAliasUse), so the
       // count can cost this save nothing. An Undo does not un-count it: the alias did its job.
       if (aliasUse?.plantingId === plant.id) recordAliasUse(apiFetch, [aliasUse])
+      settleQueuedNext()
     } catch (err) {
       // The row did not land. Say so on every channel, keep the record so nothing is retyped, and
       // release the cooldown so "next" is a real retry — when nothing has been said since "next".
@@ -1297,6 +1339,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       }
       say('fail', saidSince ? notSaved : `NOT SAVED — ${why}. Say "next" to try again.`)
       debRef.current?.invalidateLastWrite(token)
+      // Lane V3 F8 — a "next" queued behind this failed POST goes through for what was said since. It never
+      // retries this record: with nothing new said, nothing is queued, and a later "next" retries it (Dave's call).
+      settleQueuedNext()
     }
   }, [apiFetch, clearRecord, cue, noteMiss, say, settleSendingLosses])
 
@@ -1797,6 +1842,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // alone asks him to remember which of forty utterances it was.
     noteMiss(`Didn't catch that — heard “${String(result.transcript ?? '')}”.`)
   }, [clearForSwitch, clearRecord, cue, fillSlot, noteAliasUse, noteMiss, saveRecord, say])
+  // Lane V3 F8 — for the "next" a save queues behind a POST (saveRecord is declared first, so it reaches this by ref).
+  applyOneUtteranceRef.current = applyOneUtterance
 
   // ── V5-VOICEVOCAB-001 (lane D4): apply a one-breath record said without its units ───────────────
   //
