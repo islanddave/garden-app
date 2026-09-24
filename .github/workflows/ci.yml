@@ -555,7 +555,10 @@ jobs:
         # fails the 12 Back checks and nothing else; with ONLY the lot page reverted, the 8 lot-page
         # checks and nothing else. A My seeds that forgets its open row fails (c)'s "row still open"
         # alone, and `npm run gate:seeds-scroll:probe-nothing` exits 1 on all six flows. It passes
-        # under node 20.19.0 and with every font forced to Verdana (a wide-font proxy for this runner).
+        # under node 20.19.0, with every font forced to Verdana (a wide-font proxy for this runner) and
+        # with its tabs' CPU throttled 6x (GATE_CPU_THROTTLE, a slow-runner rehearsal), with the same
+        # numbers; the pre-fix tree fails the same 20 checks at 6x too. A frame that reloads mid-flow
+        # (Vite re-optimizing a dependency) is named as such rather than measured.
         # NO continue-on-error, per the policy note above. ~30 s locally.
         env:
           GATE_CHROME_FLAGS: --no-sandbox

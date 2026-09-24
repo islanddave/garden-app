@@ -43,8 +43,10 @@
 // anything a one-screen loading shell can hold, so a clobbered offset cannot coincide with the real
 // one), each tap must hit-test to its target in place — the gate never scrolls a target into view, since
 // the scroll position IS the measurement — the tap must push a NEW history entry onto the expected
-// route, and Back must return to the very entry the offset was taken on (same react-router key). A
-// selector that matched nothing is a FAILURE, never a quiet pass. `--probe-nothing` points every app
+// route, and Back must return to the very entry the offset was taken on (same react-router key). The
+// frame must stay ONE document from the first tap to the last read: a reload mid-flow (Vite
+// re-optimizing a dependency reloads the frame at whatever router URL it is on) is named, never measured.
+// A selector that matched nothing is a FAILURE, never a quiet pass. `--probe-nothing` points every app
 // testid at one nothing renders; it MUST exit 1.
 //
 // NON-VACUITY: see ci.yml's gate:seeds-scroll step for the measured runs — the whole pre-fix tree
@@ -374,6 +376,8 @@ const storeLine = (store) => (store ? Object.entries(store).map(([k, v]) => `${k
 
 async function runFlow(cdp, flow, vw, vh) {
   const at = `(${flow.key})@${vw}x${vh}`
+  const firstFailure = failures.length
+  let reloaded = async () => ''
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' })
   try {
     const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
@@ -386,6 +390,14 @@ async function runFlow(cdp, flow, vw, vh) {
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000)) return fail(`${at}: the harness never came up in the frame — nothing to measure`)
     await t.ev(`(async () => { ${FRAME_VARS}; if (d.fonts) await d.fonts.ready; return 1 })()`)
+    // The frame's document id. A reload mid-flow (Vite re-optimizing a dependency reloads the frame at
+    // whatever router URL it is on) would make every later wait time out for a reason that is not the
+    // page's; say so by name.
+    const boot0 = await t.read(`return w.__h.boot()`)
+    reloaded = async () => {
+      const b = await t.read(`return w.__h && w.__h.boot ? w.__h.boot() : null`).catch(() => null)
+      return b === boot0 ? '' : ' — and the frame RELOADED mid-flow (a new document: Vite re-optimizing a dependency does this), so this run did not measure the flow'
+    }
 
     // ── INSTRUMENT CHECK: the geometry and the chrome.
     const g = await t.read(`${BAND}
@@ -408,7 +420,7 @@ async function runFlow(cdp, flow, vw, vh) {
     const arrived = flow.view === 'saved' ? `${viewSel} && ${SEL.card}` : `${viewSel} && ${SEL.pepperHeader}`
     if (!await t.waitIn(`w.location.pathname === '/seeds' && (${arrived})`, 15000)) {
       const dg = await t.read(DIAG)
-      return fail(`${at}: the Seeds page never showed ${flow.view === 'saved' ? 'Saved seeds with the Ristra card' : 'My seeds with the Pepper header'} (errors: ${dg?.errors?.join(' | ') || 'none'})`)
+      return fail(`${at}: the Seeds page never showed ${flow.view === 'saved' ? 'Saved seeds with the Ristra card' : 'My seeds with the Pepper header'} (errors: ${dg?.errors?.join(' | ') || 'none'})${await reloaded()}`)
     }
     await t.settle(300, 5000)
 
@@ -447,6 +459,8 @@ async function runFlow(cdp, flow, vw, vh) {
     }
     await t.settle(400, 5000)
     const before = await t.read(READ_PAGE(targetSel))
+    const rlList = await reloaded()
+    if (rlList) return fail(`${at}: the list is not the document the flow started on${rlList}`)
     if (!before || before.top == null) return fail(`${at}: the flow's card/row is gone before the tap`)
     if (before.y < DEEP_MIN_PX) return fail(`${at}: the list is only ${R1(before.y)}px down before the tap (need >= ${DEEP_MIN_PX}) — a clobbered offset could equal it, so the flow proves nothing`)
     if (flow.view === 'mine' && !await t.read(`return ${SEL.rowOpen}`)) return fail(`${at}: the Ristra row is not open before the tap`)
@@ -460,19 +474,23 @@ async function runFlow(cdp, flow, vw, vh) {
       const ok = await t.waitIn(`w.location.pathname === '${LOT_PATH}' && d.querySelector('form') && d.querySelector('h1') && ${SEL.stageHistory} && !/Loading/.test(${SEL.stageHistory}.textContent || '')`, 15000)
       if (!ok) {
         const dg = await t.read(DIAG)
-        return fail(`${at}: ${tapWhat} was tapped and the lot page never arrived (form, h1, stage history)${dg?.leftPage ? ' — the router LEFT for an unexpected route' : ''}${dg?.errors?.length ? ` · errors: ${dg.errors.join(' | ')}` : ''}`)
+        return fail(`${at}: ${tapWhat} was tapped and the lot page never arrived (form, h1, stage history)${dg?.leftPage ? ' — the router LEFT for an unexpected route' : ''}${dg?.errors?.length ? ` · errors: ${dg.errors.join(' | ')}` : ''}${await reloaded()}`)
       }
       await t.settle(500, 6000)
       lot = await t.read(READ_LOT)
       await t.shoot(join(OUTDIR, `seeds-scroll-${flow.key}-lot-${vw}x${vh}.png`))
+      const rl = await reloaded()
+      if (rl) return fail(`${at}: the lot page is not the document the list was on${rl}`)
       if (lot.key == null || lot.key === before.key) return fail(`${at}: the lot page is on history key ${lot.key}, the list was on ${before.key} — the tap did not PUSH a new entry, so Back has nothing to return from`)
       if (!lot.h1 || !lot.h1.text.includes(LOT_TITLE)) return fail(`${at}: the lot page's h1 reads "${lot.h1?.text}", expected it to name "${LOT_TITLE}" — the wrong lot opened`)
     } else {
       const ok = await t.waitIn(`w.location.pathname === '${PLANTING_PATH}' && d.querySelector('[data-testid="harness-planting"]')`, 15000)
-      if (!ok) return fail(`${at}: ${tapWhat} was tapped and the planting (${PLANTING_PATH}) never arrived`)
+      if (!ok) return fail(`${at}: ${tapWhat} was tapped and the planting (${PLANTING_PATH}) never arrived${await reloaded()}`)
       await t.settle(400, 6000)
       const p = await t.read(READ_PAGE('null'))
       await t.shoot(join(OUTDIR, `seeds-scroll-${flow.key}-planting-${vw}x${vh}.png`))
+      const rl = await reloaded()
+      if (rl) return fail(`${at}: the planting is not the document the list was on${rl}`)
       if (p.key == null || p.key === before.key) return fail(`${at}: the planting is on history key ${p.key}, the list was on ${before.key} — the tap did not PUSH a new entry`)
     }
     const away = await t.read(DIAG)
@@ -480,12 +498,14 @@ async function runFlow(cdp, flow, vw, vh) {
     // ── Back: a real history traversal onto the list's own entry.
     await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
     const backSel = flow.view === 'saved' ? SEL.card : SEL.row
-    if (!await t.waitIn(`w.location.pathname === '/seeds' && ${backSel}`, 15000)) return fail(`${at}: Back never brought the Seeds page back with the ${flow.view === 'saved' ? 'Ristra card' : 'Ristra row'} on it`)
+    if (!await t.waitIn(`w.location.pathname === '/seeds' && ${backSel}`, 15000)) return fail(`${at}: Back never brought the Seeds page back with the ${flow.view === 'saved' ? 'Ristra card' : 'Ristra row'} on it${await reloaded()}`)
     const st = await t.settle(800, 10000)
     const after = await t.read(READ_PAGE(backSel))
     const open = flow.view === 'mine' ? await t.read(`return ${SEL.rowOpen}`) : null
     const dg = await t.read(DIAG)
     await t.shoot(join(OUTDIR, `seeds-scroll-${flow.key}-back-${vw}x${vh}.png`))
+    const rl = await reloaded()
+    if (rl) return fail(`${at}: the flow ran across two documents${rl}`)
     if (dg.errors.length) return fail(`${at}: the page raised ${dg.errors.length} error(s): ${dg.errors.join(' | ')}`)
     if (after.key !== before.key) return fail(`${at}: Back landed on history key ${after.key}, not the list's own ${before.key} — the Back measured is not the one the offset was taken on`)
     if (`${after.path}${after.search}` !== `${before.path}${before.search}`) return fail(`${at}: Back landed on ${after.path}${after.search}, the list was ${before.path}${before.search}`)
@@ -505,6 +525,11 @@ async function runFlow(cdp, flow, vw, vh) {
 
     console.log(`[seeds-scroll] ${at} ${flow.label}: before y${R1(before.y)} (${flow.view === 'saved' ? 'card' : 'row'} top y${R1(before.top)}, page ${Math.round(before.docH)}px) · ${lotMsg} · stored ${storeLine(away.store)} · Back y${R1(after.y)} in ${st.ms}ms, ${flow.view === 'saved' ? 'card' : 'row'} top y${R1(after.top)}${open != null ? `, row ${open ? 'open' : 'CLOSED'}` : ''}${dg.unstubbed.length ? ` · unstubbed: ${[...new Set(dg.unstubbed)].join(', ')}` : ''}`)
   } finally {
+    // Whatever this flow failed on, a reload in the middle of it is the first thing to know.
+    if (failures.length > firstFailure) {
+      const rl = await reloaded().catch(() => '')
+      if (rl) for (let i = firstFailure; i < failures.length; i++) if (!failures[i].includes('RELOADED')) failures[i] += rl
+    }
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
   }
 }

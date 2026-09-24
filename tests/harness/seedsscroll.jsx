@@ -245,7 +245,11 @@ createRoot(document.getElementById('root')).render(
   </AuthProvider>,
 )
 
+// One id per document: the gate reads it at the start and end of a flow, so a reload in between (Vite
+// re-optimizing a dependency reloads the frame at whatever router URL it is on) is named as such.
+const BOOT = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 window.__h = {
+  boot: () => BOOT,
   ready: () => !!document.querySelector('[data-testid="harness-to-saved"]') || location.pathname !== '/today',
   errors: () => [...errors],
   unstubbed: () => [...unstubbed],
