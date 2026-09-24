@@ -287,7 +287,8 @@ function hit(rows, how, heard, exact, term = null) {
   return { rows, how, heard, exact, term }
 }
 
-// "the Rescue pair", "watermelon", "green bean": a display word for a group's shared term.
+// The word a group is read back by — "Celebrity", "green bean", "watermelon" (a crop slug, so its
+// underscores become spaces).
 function groupTerm(rows, k) {
   for (const t of classTerms(rows[0].p)) {
     if (voiceKey(t) === k) return t.replace(/_/g, ' ')
