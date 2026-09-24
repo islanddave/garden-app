@@ -3,7 +3,7 @@
   "date": "2026-09-24",
   "highlights": [
     "Voice harvest: naming a different plant partway through now clears the amounts you'd already said for the one before, so they can't be saved under the wrong plant. The card tells you what it cleared.",
-    "Voice harvest on a slow connection: anything you say while the last harvest is still saving is kept, the next plant you name is no longer marked \"not captured\", and saying \"next\" again shows \"Still saving the last one.\" instead of saving the harvest twice.",
+    "Voice harvest on a slow connection: anything you say while the last harvest is still saving is kept, nothing that did save is marked \"not captured\", and saying \"next\" again shows \"Still saving the last one.\" instead of saving the harvest twice.",
     "Today: a plant you skip in your own list no longer comes back after a skip in the household list, and Undo in either list updates both.",
     "Undo: the Undo and × on every \"Logged …\" message are now full finger-height targets. The message looks the same."
   ]
