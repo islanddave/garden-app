@@ -18,6 +18,11 @@ import WaterDepthChips, { WaterDepthDrops } from '../components/WaterDepthChips.
 import {
   WATER_DEPTH_DEFAULT, isWaterDepth, isWaterDepthType, waterDepthMetadata, waterDepthLabel, WATER_DEPTH_CHIPS,
 } from '../lib/waterDepth.js'
+// V5-VOICECARE-001 — the voice path. It never writes into this form's state; a logged voice batch
+// is handed back through onVoiceLogged and shown on this page's own result card (`via: 'voice'`).
+import LogManyVoice from '../components/LogManyVoice.jsx'
+import { careLocations } from '../lib/voiceCareResolve.js'
+import { undoCareBatch } from '../lib/voiceCareBatch.js'
 
 // Bulk "Quick Log" (Unit A). Apply ONE event type to MANY plantings at once —
 // one event per planting — without per-item tapping. Scope: All active / By Project /
@@ -99,6 +104,9 @@ export default function LogMany() {
 
   const [projects, setProjects]   = useState([])
   const [locations, setLocations] = useState([])
+  // V5-VOICECARE-001: the same GET, joined with its locations_with_path half — the spoken area is
+  // matched against a location's name AND its full path ("pasture in ground").
+  const [careLocs, setCareLocs] = useState([])
   const [ready, setReady]   = useState(false)
   const [loadErr, setLoadErr] = useState(null)
 
@@ -120,6 +128,9 @@ export default function LogMany() {
   const [showNotes, setShowNotes] = useState(false)
   const [scope, setScope]   = useState({ type: 'all' })
   const [selection, setSelection] = useState(null) // { committedCount, excludedIds, selectionState } from ScopeChecklist
+  // The latest selection for a callback that must not be re-created on every toggle (onVoiceLogged).
+  const selectionRef = useRef(null)
+  selectionRef.current = selection
   // V4-LOGMANYUXREFRESH-001 S0 — the restore seed for ScopeChecklist's decisions map. Held
   // SEPARATELY from `selection` above, and set exactly twice (draft restore, logMore), because
   // `selection` is written by the child on every toggle: feeding that straight back down as the
@@ -163,6 +174,7 @@ export default function LogMany() {
       .then(([proj, locs]) => {
         if (!on) return
         // V3-ARCHIVE-001: archived projects must not appear in the Log Many scope picker.
+        setCareLocs(careLocations(locs ?? []))
         proj = (proj ?? []).filter(pr => !pr.archived_at); locs = normalizeLocations(locs)
         setProjects(proj); setLocations(locs)
         const seedProject = params.get('project_id')
@@ -318,7 +330,10 @@ export default function LogMany() {
   // link or a save; the stored "start with everything selected" preference moves `baseline`, not
   // `touched`. Ungated by `depthApplies` (unlike the depth terms) because the selection is on screen
   // for every event type.
-  const hasUnsavedInput = !result && !!(eventDate || notes || selectionTouched || (depthApplies && (batchDepthTouched || rowDepthCount > 0)))
+  // V5-VOICECARE-001: a VOICE result does not release the guards. It wrote only what was said, never
+  // this form, so the form's date / note / amount / picks are still unsaved underneath the result card.
+  const formWritten = !!result && result.via !== 'voice'
+  const hasUnsavedInput = !formWritten && !!(eventDate || notes || selectionTouched || (depthApplies && (batchDepthTouched || rowDepthCount > 0)))
 
   // §4 (b): report in-progress content to the hosting Sheet — a stray backdrop tap no-ops while
   // there is unsaved input. No-op on the full page (no provider); the draft stash above covers
@@ -487,6 +502,15 @@ export default function LogMany() {
   async function undo() {
     if (!result) return
     const id = result.batch_id
+    // V5-VOICECARE-001 — a voice batch undoes through the voice client, and touches nothing of the
+    // form's: its draft, key and selection were never the voice batch's to clear. A 404 there means
+    // already undone (undoCareBatch says so), which is not a failure to report.
+    if (result.via === 'voice') {
+      const r = await undoCareBatch(fetch, id)
+      if (!r.ok) { setError(r.spoken); return }
+      setResult(null); setError(null)
+      return
+    }
     try {
       await fetch('/api/events/batch/' + id, { method: 'DELETE' })
       idemRef.current = null
@@ -509,22 +533,56 @@ export default function LogMany() {
   // DIFFERENT batch, and silently re-applying last batch's hand-picked set to a new one is the same
   // data-quality defect. `null` is what makes the remounted ScopeChecklist seed from the stored
   // preference again.
-  function logMore() { idemRef.current = null; clearDraft(DRAFT_KEY); setResult(null); setError(null); setNotes(''); setShowNotes(false); setRestoredSelection(null) }
+  function logMore() {
+    // V5-VOICECARE-001: after a VOICE batch the form was never written, so "Log more" goes back to it
+    // exactly as it was — clearing its note or draft here would destroy unsaved input.
+    if (result?.via === 'voice') { setResult(null); setError(null); return }
+    idemRef.current = null; clearDraft(DRAFT_KEY); setResult(null); setError(null); setNotes(''); setShowNotes(false); setRestoredSelection(null)
+  }
+
+  // V5-VOICECARE-001 — a voice batch landed. The page's own result card shows it (count from the
+  // server, Undo, Log more, Done) and the critter check wakes exactly as after a manual batch. The
+  // form's selection is carried back through the same seed Undo uses, because the result card
+  // unmounts the checklist and a hand-made selection is the most expensive thing on this form.
+  const onVoiceLogged = useCallback((res, plan) => {
+    setRestoredSelection(selectionRef.current?.selectionState ?? null)
+    setError(null)
+    setResult({
+      via: 'voice',
+      batch_id: res.batchId,
+      count: res.count,
+      warning: res.warning ?? null,
+      ...(res.warning && res.requested !== res.count ? { requested_count: res.requested } : {}),
+      eventType: plan.eventType,
+      areaLabel: plan.location.full_path ?? plan.location.name,
+    })
+    navigate('.', { state: { ...(background ? { background } : {}), critterCheck: Date.now() }, replace: true })
+  }, [navigate, background])
 
   if (!ready) return <Shell><Spinner block /></Shell>
   if (loadErr) return <Shell><ErrMsg msg={loadErr} /></Shell>
 
   // ── Result (ambient confirmation + durable undo) ──
   if (result) {
+    // V5-VOICECARE-001 — a VOICE batch names its own type and area; the form's type, scope, amount
+    // and note are not what was written, so none of them may be read back on this card.
+    const byVoice = result.via === 'voice'
+    const resultType = byVoice ? result.eventType : evMeta.value
+    const resultVerb = byVoice ? (EVENT_TYPE_META[result.eventType]?.label ?? result.eventType).toLowerCase() : verbLabel
     return (
       <Shell>
         <Header />
         <div style={{ backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: 10, padding: 20, textAlign: 'center' }}>
-          <div style={{ marginBottom: 6, color: P.green }}><Icon name={`event.${evMeta.value}`} size={32} decorative /></div>
+          <div style={{ marginBottom: 6, color: P.green }}><Icon name={`event.${resultType}`} size={32} decorative /></div>
           <p style={{ margin: '0 0 4px', fontWeight: 700, color: P.green, fontSize: '1.05rem' }} role="status">
-            ✓ {result.count} {result.count === 1 ? 'planting' : 'plantings'} {verbLabel}
+            ✓ {result.count} {result.count === 1 ? 'planting' : 'plantings'} {resultVerb}
           </p>
-          <p style={{ margin: '0 0 16px', color: P.mid, fontSize: '0.85rem' }}>in {scopeLabel}</p>
+          <p style={{ margin: '0 0 16px', color: P.mid, fontSize: '0.85rem' }}>in {byVoice ? result.areaLabel : scopeLabel}</p>
+          {byVoice && (
+            <p data-testid="logmany-voice-recorded" style={{ margin: '-8px 0 16px', color: P.mid, fontSize: '0.82rem' }}>
+              Logged by voice, for today.
+            </p>
+          )}
           {/* V4-LOGMANYUXREFRESH-001 S4 / BD-073 — THE SECOND HALF OF THE COUNT ASSERTION, MADE
               VISIBLE. The events Lambda has re-read event_log after every batch since
               BUG-LOGMANYPROJECTLESS-001 and returned `warning` + `skipped_plant_ids` whenever the
@@ -545,7 +603,7 @@ export default function LogMany() {
           )}
           {/* V4-WATERMATH-001 F0: state the class that was RECORDED, beside the undo that can take
               it back. Operational, not celebratory (Reward-UX V101) — it reports a stored value. */}
-          {depthApplies && (
+          {!byVoice && depthApplies && (
             <p data-testid="logmany-depth-recorded" style={{ margin: '-8px 0 16px', color: P.mid, fontSize: '0.82rem' }}>
               Recorded as {waterDepthLabel(batchDepth)}
               {Object.keys(rowDepth).length > 0 && ` · ${Object.keys(rowDepth).length} changed`}
@@ -555,7 +613,7 @@ export default function LogMany() {
               that can take it back. Same operational register as the depth line above (Reward-UX
               V101 — it reports a stored value, it does not celebrate one). Showing the text itself
               is what makes "did my note go through?" answerable without opening an event. */}
-          {notes.trim() && (
+          {!byVoice && notes.trim() && (
             <p data-testid="logmany-note-recorded" style={{ margin: '-8px 0 16px', color: P.mid, fontSize: '0.82rem', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
               Note saved on {result.count === 1 ? 'it' : `all ${result.count}`}: “{notes.trim()}”
             </p>
@@ -591,6 +649,25 @@ export default function LogMany() {
   return (
     <Shell>
       <Header />
+
+      {/* V5-VOICECARE-001 — first on the page, so it needs no scroll in either host; everything after
+          the tap happens in its own full-screen frame with the actions in the bottom (thumb) track.
+          Renders nothing where the browser cannot listen. `formState` is only what the voice write
+          will NOT carry, so the read-back can say so; the component never writes to this form. */}
+      <LogManyVoice
+        apiFetch={fetch}
+        careLocations={careLocs}
+        projects={projects}
+        locations={locations}
+        runDryRun={runDryRun}
+        formState={{
+          backDated: !!eventDate && eventDate !== todayYMD(),
+          hasNote: !!notes.trim(),
+          depthChosen: depthApplies && (batchDepthTouched || rowDepthCount > 0),
+          picksMade: selectionTouched,
+        }}
+        onLogged={onVoiceLogged}
+      />
 
       <Section label="What happened?" style={SECTION_SPACING}>
         {/* V4-EVENTSEL-003: the SAME tile-grid selector as Log Event (EventNew). primaries =
