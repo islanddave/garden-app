@@ -1483,6 +1483,18 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // A trailing MISHEARD command ("231 grams text") applies the record and refuses the save: the
   // values were spoken clearly and dropping them is the lost-log failure this page exists around,
   // while committing on a near-miss is the silent-wrong-write it exists around even harder.
+  // Does the UNIT reader — classify()'s value branch, the unit one-breath (resolveOneBreath over
+  // segmentCandidates) or the nameless unit pair (parseValueSequence) — read this text as ONE record?
+  // The same three readers applyOneUtterance runs, asked in the same order with the same vocabulary,
+  // so "it reads" here means "applying it will not end in Didn't catch that".
+  const unitReaderReads = useCallback((text) => {
+    const r = classify(text)
+    if (r.kind === 'quantity' || r.kind === 'weight') return true
+    if (r.kind !== 'unparsed') return false
+    return resolveOneBreath(plantingsRef.current, segmentCandidates(text), aliasRef.current) != null
+      || parseValueSequence(text) != null
+  }, [])
+
   const applyCommitted = useCallback((raw, meta) => {
     // The debouncer hands us a CLASSIFIED RESULT, not a string — it calls classify() itself to
     // decide the commit path. So the split reads `transcript`, and the head is re-classified before
@@ -1505,8 +1517,21 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       const token = meta?.atMs
       queueMicrotask(() => debRef.current?.invalidateLastWrite(token))
     }
-    if (bare?.kind === 'refuse') { refuseBareOneBreath(bare, info, heard); releaseUnwritten(); return }
     const split = splitTrailingCommand(heard)
+    // V5-VOICEVOCAB-001 (lane D4, review BLOCKING-1) — A BARE REFUSAL NEVER PRE-EMPTS THE UNIT READER.
+    // The bare reader sees only splits that leave at least one amount WITHOUT a unit, so for
+    // "cherry rescue 1 3 count" its one reading is "cherry rescue" + 1, 3 count — refused, because 1
+    // is the planting's own number. The unit reader, asked about the same words, finds "cherry rescue
+    // 1" + 3 count, which prod saves. The regression-impact review measured 58 of 200 real-name
+    // sentences like that refused on this lane's build and saved on prod: names ending in their number
+    // with ONE unit amount, word-form names ("danvers one twenty six three count"), and "1884 3 count
+    // 231 grams next" with another crop selected. So a refusal stands only when the unit reader has no
+    // reading of its own; when it has one, the sentence goes the ordinary way, exactly as on prod.
+    const unitHead = split ? split.head : heard
+    const unitReads = unitReaderReads(unitHead)
+    if (bare?.kind === 'refuse' && !unitReads) {
+      refuseBareOneBreath(bare, info, heard); releaseUnwritten(); return
+    }
     // A `bare` head is only ever the reader's above. Sent down the split path it would be SEARCHED
     // and the record standing would then be saved — so when the reader declines it, the whole
     // sentence goes the ordinary way, exactly as it did before bare heads could split.
@@ -1536,7 +1561,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       try { recRef.current?.stop() } catch { /* already stopping */ }
       say('warn', 'Stopped listening.')
     }
-  }, [applyBareOneBreath, applyOneUtterance, clearRecord, cue, noteMiss, refuseBareOneBreath, saveRecord, say])
+  }, [applyBareOneBreath, applyOneUtterance, clearRecord, cue, noteMiss, refuseBareOneBreath, saveRecord, say, unitReaderReads])
 
   // ── the recogniser ──────────────────────────────────────────────────────────────────────────────
   const scheduleTickRef = useRef(null)
