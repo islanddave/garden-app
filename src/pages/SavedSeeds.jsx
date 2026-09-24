@@ -37,8 +37,10 @@ import { SEED_STAGES } from '../components/seed/seedStages.js'
 // V5-SEEDSTAB-001 — the lot vocabulary moved to a leaf module this page shares with My seeds; see
 // seedLots.js for the vendor and calendar-day fixes that landed with the move.
 import {
-  prettySlug, candidateFacts, labelCandidates, lotMeasure, elapsedLabel, fermentUrgency,
+  prettySlug, candidateFacts, labelCandidates, lotMeasure, elapsedLabel, fermentUrgency, isNotStartedLot,
 } from '../components/seed/seedLots.js'
+// Where a Not started lot came from, in My seeds' words for the same lot one tap away.
+import { originNote } from '../components/seed/mySeedsModel.js'
 import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
 import { useLotOutline, outlineStyle } from '../components/seed/useLotOutline.js'
 // SeedCountBasis alongside the sheet itself: V5-SEEDESTTOGGLE-001's control is shared by the two
@@ -546,6 +548,30 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
     () => (items ?? []).filter((i) => !STAGES.includes(i.seed_stage) && i.status === 'active'),
     [items],
   )
+  // V5-SEEDSTAB-001 slice 2 — "Not started": seed you SAVED (off one of your plants, or out of produce)
+  // that has not entered a stage. Before this group such a lot had no card here at all, so a save made
+  // with "Not yet" confirmed with a toast and nothing else (design V102 §16), and the lot could only be
+  // found again inside the track picker, among the bought packets. The ORIGIN decides membership
+  // (seedLots.isNotStartedLot), so a bought packet never appears. ACTIVE only, the same strict equality
+  // the picker's candidates use: a lot retired or used up is not waiting to be started, and "Start" on
+  // it would open a process the picker itself would not offer.
+  // Oldest first, by when the lot was added, for the stage sections' reason: the lot that has waited
+  // longest is the one to deal with. No date sorts last.
+  const unstarted = useMemo(
+    () => (items ?? [])
+      .filter((i) => isNotStartedLot(i) && i.status === 'active')
+      .sort((a, b) => {
+        const A = a.created_at, B = b.created_at
+        if (!A && !B) return 0
+        if (!A) return 1
+        if (!B) return -1
+        return String(A).localeCompare(String(B))
+      }),
+    [items],
+  )
+  // Every lot this page files, in page order. The crop filter and a lot the shell asks to outline both
+  // range over all of it, not only the staged lots.
+  const pageLots = useMemo(() => [...unstarted, ...tracked], [unstarted, tracked])
   // ── V5-SEEDSAVEDFILTER-001 — the crop facet ─────────────────────────────────────────────────────
   // Options come from the ROWS, not from the crop-type vocabulary: a chip that matches nothing is a
   // control that can only disappoint, and 62 of the app's crop types have no packet here at all.
@@ -624,7 +650,10 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   // list grow, and a filter that only appears once the list is already unmanageable is a filter that
   // arrives late. It renders whenever it can actually DO something (more than one crop among the
   // lots) and is otherwise absent — which is a statement about capability, not about a tap budget.
-  const trackedFacet = useCropFacetOptions(tracked, cropSlugOf)
+  // V5-SEEDSTAB-001 slice 2 — over every lot on the page, Not started included: a chip for a crop
+  // whose only lots are not started yet would otherwise be missing, and choosing any other crop would
+  // hide them with no chip to bring them back.
+  const trackedFacet = useCropFacetOptions(pageLots, cropSlugOf)
   const trackedCropOptions = trackedFacet.options
   const trackedCropPinned = trackedFacet.pinned
 
@@ -643,6 +672,10 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       ? visibleTracked.filter((i) => !trackedCropSel.has(i.crop_slug) && fermentUrgency(i)).length
       : 0),
     [visibleTracked, trackedCropSel])
+  // A lot that has not started carries no ferment clock, so the filter simply applies.
+  const visibleUnstarted = useMemo(
+    () => (trackedCropSel.size ? unstarted.filter((i) => trackedCropSel.has(i.crop_slug)) : unstarted),
+    [unstarted, trackedCropSel])
 
   const byStage = useMemo(() => {
     const m = Object.fromEntries(STAGES.map((s) => [s, []]))
@@ -845,8 +878,10 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   // V5-SEEDSTAB-001 — a lot the shell asked to show must be ON SCREEN, so a page crop filter that
   // would hide it is cleared, and the page says why its filter just changed.
   const [clearedFor, setClearedFor] = useState(null)
+  // Any lot this page files — slice 2 put a save made with "Not yet" here too, in Not started, so the
+  // shell's outline of that save finally has a card to land on instead of confirming with a toast alone.
   const highlightLot = highlight?.id != null
-    ? tracked.find((i) => String(i.id) === String(highlight.id)) ?? null
+    ? pageLots.find((i) => String(i.id) === String(highlight.id)) ?? null
     : null
   // Once per highlight: a filter the user picks AFTER the outline is theirs, and a later reload of the
   // rows must not clear it again on the strength of an old request.
@@ -864,7 +899,8 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   // Ready only once the lot's card is actually ON the page. `items != null` alone let the outline — and
   // its one scrollIntoView — fire in the render right after a save, before the reload brought the new
   // card in, so nothing scrolled to it when it landed (lane T4). My seeds already waited for its row.
-  const highlightShown = highlightLot != null && visibleTracked.some((i) => String(i.id) === String(highlightLot.id))
+  const highlightShown = highlightLot != null
+    && [...visibleUnstarted, ...visibleTracked].some((i) => String(i.id) === String(highlightLot.id))
   const outlined = useLotOutline(highlight, { ready: items != null && highlightShown, skipArrival: restoredState !== undefined })
 
   if (embedded && (items === null || loadErr)) {
@@ -937,10 +973,12 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
         </p>
       )}
 
-      {tracked.length === 0 && (
+      {pageLots.length === 0 && (
         // The empty state does the teaching, because on the day this ships EVERY visit is empty —
         // there are no tracked lots and no seed_saved events anywhere in the app. An empty page with
         // a bare "nothing here" would send Dave straight back out again.
+        // V5-SEEDSTAB-001 slice 2 — a Not started lot counts: someone who has saved seed is past the
+        // lesson this panel teaches.
         <div data-testid="saved-seeds-empty" style={emptyStyle}>
           <p style={{ margin: '0 0 10px', fontWeight: 600, color: P.green }}>Nothing in flight yet.</p>
           <p style={{ margin: '0 0 14px', color: P.mid, fontSize: '0.86rem', lineHeight: 1.55 }}>
@@ -1029,10 +1067,79 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
       {/* Two emptinesses on this list too, and the teaching empty state above answers only the first.
           Without this branch, filtering to a crop you have no lots of would render the whole
           "here is how to save seed" panel at someone who has already saved seed. */}
-      {tracked.length > 0 && visibleTracked.length === 0 && (
+      {pageLots.length > 0 && visibleTracked.length === 0 && visibleUnstarted.length === 0 && (
         <p data-testid="tracked-no-match" style={{ color: P.mid, fontSize: '0.85rem', marginBottom: 16 }}>
           No saved lots match this filter.
         </p>
+      )}
+
+      {/* V5-SEEDSTAB-001 slice 2 — Not started, FIRST: it is the step before the first stage, and the
+          sections below run in process order. The stages' card, with two differences. Its status line
+          says how long ago the lot was added, since it has no stage clock. And "Start →" sits where
+          they carry their advance: it opens the process question for THIS lot, the step the track sheet
+          asks once a packet is picked. So the process is still chosen once, and this page stays the
+          only stage writer. No "Change stage" (there is no stage to correct), and no "Set parent plant":
+          every lot here already names where it came from, which is how it got here. */}
+      {visibleUnstarted.length > 0 && (
+        <section data-testid="stage-section-unstarted" style={{ marginBottom: 22 }}>
+          <h2 style={sectionHeadStyle}>Not started</h2>
+          <p style={sectionSubStyle}>Saved, with no process started yet</p>
+          {visibleUnstarted.map((item) => {
+            const measure = lotMeasure(item)
+            const added = elapsedLabel(item.created_at)
+            const title = item.variety_name || item.name
+            const parentName = item.source_plant_id ? plantNameById.get(String(item.source_plant_id)) : null
+            return (
+              <div
+                key={item.id} data-testid="seed-lot-card"
+                data-lot-id={item.id}
+                data-outlined={outlined === String(item.id) ? 'true' : undefined}
+                style={{ ...cardStyle, ...(outlined === String(item.id) ? outlineStyle(P.green) : null) }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Link
+                    to={`/inventory/${item.id}`}
+                    state={SAVED_RETURN_STATE}
+                    data-testid="seed-lot-title"
+                    style={{ display: 'flex', alignItems: 'center', minHeight: T.tapMinHeight, color: P.green, fontWeight: 600, textDecoration: 'none' }}
+                  >
+                    {title}
+                  </Link>
+                  <div data-testid="lot-unstarted-line" style={{ color: P.mid, fontSize: '0.78rem', marginTop: 3 }}>
+                    Not started{added ? ` · added ${added === 'today' ? 'today' : `${added} ago`}` : ''}
+                  </div>
+                  {measure && (
+                    <div data-testid="lot-seed-measure" style={{ color: P.mid, fontSize: '0.78rem', marginTop: 3 }}>
+                      {measure}
+                    </div>
+                  )}
+                  {item.source_plant_id
+                    ? (parentName && <ParentPlantLink plantId={item.source_plant_id} name={parentName} />)
+                    : (
+                      <div data-testid="lot-origin" style={{ color: P.light, fontSize: '0.78rem', marginTop: 2 }}>
+                        {originNote(item)}
+                      </div>
+                    )}
+                </div>
+                <button
+                  type="button"
+                  data-testid="start-lot"
+                  aria-label={`Start ${title}`}
+                  onClick={() => {
+                    // The track button's own rule for the chip row, so "← Pick a different packet"
+                    // lands on the same list whichever door opened the sheet.
+                    setCropFacetOn(untracked.length > MAX_CANDIDATES)
+                    setStartItem(item)
+                    setStarting(true)
+                  }}
+                  style={advanceBtnStyle}
+                >
+                  Start →
+                </button>
+              </div>
+            )
+          })}
+        </section>
       )}
 
       {STAGES.map((s) => {
@@ -1152,12 +1259,12 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                         the same paint on a warm entry. Setting it happens on /inventory/:id rather
                         than in a fourth sheet here: that page owns this column, is one tap away,
                         and is the only surface that reaches an UNTRACKED lot (which is every lot
-                        that never gets a stage). */}
+                        that never gets a stage).
+                        V5-SEEDSTAB-001 slice 2 — the name is now a door to that planting
+                        (ParentPlantLink); it was text, a dead end. */}
                     {item.source_plant_id
                       ? (plantNameById.get(String(item.source_plant_id)) && (
-                          <div data-testid="lot-source-plant" style={{ color: P.light, fontSize: '0.78rem', marginTop: 2 }}>
-                            Saved from {plantNameById.get(String(item.source_plant_id))}
-                          </div>
+                          <ParentPlantLink plantId={item.source_plant_id} name={plantNameById.get(String(item.source_plant_id))} />
                         ))
                       : (
                         // BUG-SEEDTAPTARGET-001 — 44px, measured not assumed. The layout gate's tap
@@ -1600,6 +1707,19 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   )
 }
 
+// V5-SEEDSTAB-001 slice 2 — "Saved from <planting>" is a door to that planting (design V102 §8). A plain
+// PUSH to the canonical planting route, so Back pops straight back to this view, which restores its
+// own scroll; the state is the one every page this view pushes carries. The whole line is the target,
+// 44px tall, for the reason `set-source-plant` gives (BUG-SEEDTAPTARGET-001): a card action on a page
+// reached with wet hands, not a link inside a sentence.
+function ParentPlantLink({ plantId, name }) {
+  return (
+    <Link to={`/plantings/${plantId}`} state={SAVED_RETURN_STATE} data-testid="lot-source-plant" style={parentLinkStyle}>
+      Saved from {name} →
+    </Link>
+  )
+}
+
 function EmbeddedFrame({ children }) {
   return <div data-testid="saved-seeds-view">{children}</div>
 }
@@ -1636,6 +1756,12 @@ const advanceBtnStyle = {
 // the 44px box IS the tap target and the label stays centred in it, exactly as `set-source-plant`
 // above it does. Wrapped in a plain <div> at the call site so it starts its own line: the
 // `set-source-plant` link is inline-flex too, and the two would otherwise sit side by side.
+// The same box as `set-source-plant`, which it replaces on a card whose lot names its parent.
+const parentLinkStyle = {
+  display: 'inline-flex', alignItems: 'center',
+  minHeight: T.tapMinHeight, marginTop: 2, paddingRight: 8,
+  color: P.green, fontSize: '0.78rem',
+}
 const changeStageBtnStyle = {
   display: 'inline-flex', alignItems: 'center',
   minHeight: 44, padding: '0 8px 0 0',

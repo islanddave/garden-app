@@ -67,6 +67,7 @@ import PhotoView from '../components/photo/PhotoView.jsx'
 import { TIER } from '../lib/photoModel.js'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 import SeedLotsFromPlanting, { useSeedLotsFromPlanting, seedLotsWorthRendering } from '../components/planting/SeedLotsFromPlanting.jsx'
+import { lotHref } from '../components/seed/seedLots.js'
 import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { plantingIsHarvestTracked } from '../lib/harvestTracked.js'
 import { formatBotanical } from '../lib/keyFact.js'
@@ -434,6 +435,14 @@ export default function PlantingDetail() {
   // rendered at all on a planting with no saved seed, so the heading and the card chrome cannot be
   // wrapped around a child that decides for itself. Self-fetching; does not widen /api/plants/:id.
   const seedLots = useSeedLotsFromPlanting(plantingId, fetch)
+  // V5-SEEDSTAB-001 slice 2 — a `seed_saved` event names the lot it made (metadata.seed_lot_id, written
+  // by SaveSeedSheet), and the lots saved from THIS planting are the list just read. Resolved against
+  // that list, not fetched per event: a lot that was soft-deleted, or no longer names this planting as
+  // its parent, is simply not in it, so its event keeps the row it always had and no link to nowhere.
+  const seedLotById = useMemo(
+    () => new Map(seedLots.lots.map((l) => [String(l.id), l])),
+    [seedLots.lots],
+  )
 
   // Planting photos (V1 display-only). V4-PHOTOGALLERY-001: the gallery shows every photo ATTACHED to
   // this planting — directly via plant_id, OR through one of its events — no matter which container the
@@ -1223,35 +1232,52 @@ export default function PlantingDetail() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {events.slice(0, eventsShown).map(ev => (
-              <Link
-                key={ev.id}
-                to={`/events/${ev.id}`}
-                style={{ textDecoration: 'none', color: 'inherit', display: 'flex', gap: 12, alignItems: 'flex-start' }}
-              >
-                <span aria-hidden="true" style={{
-                  width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-                  backgroundColor: P.cream, border: `1px solid ${P.border}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: T.type.md,
-                }}>
-                  <Icon name={`event.${ev.event_type}`} size={18} decorative style={{ color: P.green }} />
-                </span>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.875rem' }}>
-                    {ev.title || (ev.event_type || '').replace(/_/g, ' ')}
+            {events.slice(0, eventsShown).map(ev => {
+              const row = (
+                <Link
+                  key={ev.id}
+                  to={`/events/${ev.id}`}
+                  style={{ textDecoration: 'none', color: 'inherit', display: 'flex', gap: 12, alignItems: 'flex-start' }}
+                >
+                  <span aria-hidden="true" style={{
+                    width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                    backgroundColor: P.cream, border: `1px solid ${P.border}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: T.type.md,
+                  }}>
+                    <Icon name={`event.${ev.event_type}`} size={18} decorative style={{ color: P.green }} />
+                  </span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.875rem' }}>
+                      {ev.title || (ev.event_type || '').replace(/_/g, ' ')}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginTop: 1 }}>
+                      <span style={{ fontSize: T.type.xs2, color: P.light }}>
+                        {fmtDate(ev.event_date) ?? ''}
+                      </span>
+                      <HarvestWeightChip entry={harvestByEvent?.get(ev.id)} />
+                    </div>
+                    {ev.notes && (
+                      <p style={{ margin: '4px 0 0', color: P.mid, fontSize: T.type.sm, lineHeight: 1.5 }}>{ev.notes}</p>
+                    )}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginTop: 1 }}>
-                    <span style={{ fontSize: T.type.xs2, color: P.light }}>
-                      {fmtDate(ev.event_date) ?? ''}
-                    </span>
-                    <HarvestWeightChip entry={harvestByEvent?.get(ev.id)} />
-                  </div>
-                  {ev.notes && (
-                    <p style={{ margin: '4px 0 0', color: P.mid, fontSize: T.type.sm, lineHeight: 1.5 }}>{ev.notes}</p>
-                  )}
+                </Link>
+              )
+              // V5-SEEDSTAB-001 slice 2 — a `seed_saved` event is a door to the lot it made: Saved seeds
+              // on that lot while it is fermenting or drying, else the lot's own page (lotHref). A SIBLING
+              // of the row's link, never inside it (an anchor inside an anchor is invalid and its tap is
+              // swallowed). Every other row, and a seed_saved row whose lot is gone, renders as before.
+              const lot = ev.metadata?.seed_lot_id != null ? seedLotById.get(String(ev.metadata.seed_lot_id)) : null
+              const lotTo = lot ? lotHref(lot) : null
+              if (!lotTo) return row
+              return (
+                <div key={ev.id}>
+                  {row}
+                  <Link to={lotTo} data-testid="event-seed-lot-link" style={eventSeedLotLinkStyle}>
+                    Open the seed lot →
+                  </Link>
                 </div>
-              </Link>
-            ))}
+              )
+            })}
             {/* V4-EVENTHISTPAGE-001 — full-width, 44pt-min so it is a comfortable thumb target at the
                 bottom of a long scroll on a 390px phone. Label carries the REMAINING count, not a
                 fixed "50 more", so the last page never over-promises. */}
@@ -1529,7 +1555,13 @@ function Shell({ children }) {
 }
 
 const cardStyle = { backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusCard, padding: 24 }
-const btnLink = { backgroundColor: P.green, color: P.white, textDecoration: 'none', borderRadius: 6, padding: '9px 18px', fontSize: T.type.sm2, fontWeight: 600, display: 'inline-block' }
+// The Event log's seed_saved → lot door: under the row's text column (32px glyph + 12px gap), and a
+// full tap-height box rather than a line of text.
+const eventSeedLotLinkStyle = {
+  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, marginLeft: 32 + 12,
+  color: P.green, fontSize: T.type.sm, fontWeight: 600, textDecoration: 'none',
+}
+const btnLink ={ backgroundColor: P.green, color: P.white, textDecoration: 'none', borderRadius: 6, padding: '9px 18px', fontSize: T.type.sm2, fontWeight: 600, display: 'inline-block' }
 // V4-PLANTINGRAWDETAIL-001 — the Details value cell, hoisted out of the JSX now that the All tab
 // needs a second variant. detailValueStyle is byte-identical to the inline object it replaces.
 const detailValueStyle = { fontSize: T.type.base, color: P.dark, lineHeight: 1.5, wordBreak: 'break-word' }

@@ -348,7 +348,15 @@ export default function Search() {
     // while rendering nothing). Flag OFF keeps srv.projects.length in the sum (byte-identical).
     + (PROJECTS_HIDDEN ? 0 : srv.projects.length) + srv.events.length + srv.inventory.length + srv.photos.length
 
-  const Row = ({ to, name, sub, onPeek, peekLabel }) => {
+  // V5-SEEDSTAB-001 slice 2 (design V102 §8) — seed packets and saved lots get their own "Seeds" group.
+  // Seed left the Inventory page for the Seeds page, so a packet filed under "Inventory" here sent the
+  // eye to a heading that no longer holds seed anywhere else in the app. Split on the row's own
+  // `category`, which the server already returns; every other row stays under Inventory as before, and
+  // `total` above is unchanged because the two groups partition the same list.
+  const seedHits = srv.inventory.filter(it => it.category === 'seeds')
+  const inventoryHits = srv.inventory.filter(it => it.category !== 'seeds')
+
+  const Row =({ to, name, sub, onPeek, peekLabel }) => {
     const inner = (<><div style={{ flex: 1 }}><div style={nameStyle}>{name}</div>{sub && <div style={subStyle}>{sub}</div>}</div>{chev}</>)
     // No peek offered -> the historical single-element row, byte for byte. Every non-planting group
     // (locations, varieties, projects, events, inventory, photos) takes this branch untouched.
@@ -526,10 +534,19 @@ export default function Search() {
           </>
         )}
 
-        {!loading && query && srv.inventory.length > 0 && (
+        {/* In the Inventory group's slot, just ahead of it, and to the same page: a seed row opens its
+            packet or lot. The subtitle drops the category word, which the heading now says. */}
+        {!loading && query && seedHits.length > 0 && (
+          <>
+            <div style={sectionHead}>Seeds</div>
+            {seedHits.map(it => <Row key={it.id} to={`/inventory/${it.id}`} name={it.name} sub={it.location_text || null} />)}
+          </>
+        )}
+
+        {!loading && query && inventoryHits.length > 0 && (
           <>
             <div style={sectionHead}>Inventory</div>
-            {srv.inventory.map(it => <Row key={it.id} to={`/inventory/${it.id}`} name={it.name} sub={[it.category, it.location_text].filter(Boolean).join(' · ') || null} />)}
+            {inventoryHits.map(it => <Row key={it.id} to={`/inventory/${it.id}`} name={it.name} sub={[it.category, it.location_text].filter(Boolean).join(' · ') || null} />)}
           </>
         )}
 
