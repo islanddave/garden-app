@@ -1386,6 +1386,13 @@ describe('BUG-VOICETWOBARENUM-001 — two bare numbers are a count and a weight'
     expect(posts[0].metadata).toEqual({ harvest_input_source: 'voice', assumed_units: ['count', 'g'] })
   })
 
+  it('the held second number shows in the WEIGHT slot — a "—" there would say it was never spoken', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '2', '165']) await speak(rec, line)
+    expect(record()).toContain('Quantity2 count')
+    expect(record()).toContain('Weight165 … needs a unit')
+  })
+
   it('the count already said: the first bare number is the weight; the second has no slot and is dropped, out loud', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()

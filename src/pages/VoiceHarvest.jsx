@@ -1586,7 +1586,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         <Slot label="Quantity"
               value={qty ? `${qty.value} ${qty.unit}`
                 : heldNum != null ? `${heldNum} … needs a unit` : null} />
-        <Slot label="Weight"   value={weight ? `${weight.value} ${weight.unit}` : null} />
+        {/* BUG-VOICETWOBARENUM-001 — AND IN THE WEIGHT SLOT once the quantity is filled, because that is
+            where placeHeld puts it next. After "2, 165" the card read Quantity "2 count", Weight "—"
+            while 165 sat held: a "—" for words that HAVE been said breaks the one reading this card
+            promises. With both slots filled the number has nowhere to show; the banner says it will be
+            dropped unless a unit comes with it. */}
+        <Slot label="Weight"
+              value={weight ? `${weight.value} ${weight.unit}`
+                : qty && heldNum != null ? `${heldNum} … needs a unit` : null} />
         <div style={{ marginTop: 6, fontSize: '0.78rem', color: P.light, fontStyle: 'italic' }} data-testid="voice-harvest-heard">
           hearing: {heard ? (heard.transcript || '—') : '—'}
         </div>
