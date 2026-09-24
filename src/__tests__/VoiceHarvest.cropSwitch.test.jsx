@@ -394,11 +394,11 @@ describe('a save still being sent when the next crop is named', () => {
     expect(misses()).toEqual([])
     await posts.reject()
     expect(misses()).toEqual([
-      'NOT SAVED — Network error.',
+      'NOT SAVED — Network error. Stupice · 5 count was not saved; say it again to log it.',
       'Cleared 5 count for Stupice — the crop changed to Suyo Long before it was saved.',
     ])
     // Not "say next to try again": next saves the record on screen, which is Suyo Long's.
-    expect(statusText()).toBe('NOT SAVED — Network error. The record has moved on (cleared 5 count from Stupice) — say it again to log it.')
+    expect(statusText()).toBe('NOT SAVED — Network error. Stupice · 5 count was not saved; say it again to log it.')
     await say(rec, 'next')
     expect(saved()).toEqual([['Stupice', 5, 'count', null, []]])
     expect(statusText()).toBe('Not saved — still need a quantity. Say it, then "next". (cleared 5 count from Stupice)')
@@ -621,10 +621,10 @@ describe('the other doors that take values off the record while a save is still 
     await posts.reject()
     expect(misses()).toEqual([
       "Didn't catch that — heard “danvers 126 200”.",
-      'NOT SAVED — Network error.',
+      'NOT SAVED — Network error. Suyo Long · 3 count was not saved; say it again to log it.',
       'Cleared 3 count for Suyo Long — the record was started over after a sentence that could not be read.',
     ])
-    expect(statusText()).toBe('NOT SAVED — Network error. The record has moved on (cleared 3 count) — say it again to log it.')
+    expect(statusText()).toBe('NOT SAVED — Network error. Suyo Long · 3 count was not saved; say it again to log it.')
     expect(header()).toBe('0 saved · 3 not captured')
   })
 
@@ -648,11 +648,11 @@ describe('the other doors that take values off the record while a save is still 
     await say(rec, '2 165')
     await posts.reject()
     expect(misses()).toEqual([
-      'NOT SAVED — Network error.',
+      'NOT SAVED — Network error. Suyo Long · 3 count · 231 g was not saved; say it again to log it.',
       'Replaced 3 count with 2 count (assumed) — the amounts were said again without units.',
       'Replaced 231 g with 165 g (assumed) — the amounts were said again without units.',
     ])
-    expect(statusText()).toBe('NOT SAVED — Network error. The record has moved on (replaced 3 count with 2 count; replaced 231 g with 165 g) — say it again to log it.')
+    expect(statusText()).toBe('NOT SAVED — Network error. Suyo Long · 3 count · 231 g was not saved; say it again to log it.')
     expect(header()).toBe('0 saved · 3 not captured')
   })
 
@@ -713,5 +713,86 @@ describe('what was said while a save was out survives the save landing', () => {
     expect(within(screen.getByTestId('voice-harvest-teach')).getByText('What did you mean by “zzqq quux”?')).toBeTruthy()
     expect(record()).toEqual(['—', '—', '—'])
     expect(header()).toBe('1 saved · 1 not captured')
+  })
+})
+
+// Review v4.150.0 QA M2 — A FAILED SAVE AFTER SOMETHING WAS SAID FOR THE RECORD. The landing already keeps only what
+// was said since "next"; a failed POST kept the whole record, so a retry merged the two: "stupice 5 count 231 grams
+// next", "3 count", a failed POST and "next" saved Stupice · 3 count · 231 g, and the 5 count was never saved or named.
+// Now the sent values leave the record, the row names what did not save, and the banner asks for it again. With
+// nothing said since — or only the same crop named again — the record stays whole for the retry, as before.
+describe('a failed save, when something was said while it was out', () => {
+  it('nothing new said (the same crop only named again): the record stays whole and "next" retries it', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, 'Stupice')
+    await posts.reject()
+    expect(record()).toEqual(['Stupice', '5 count', '231 g'])
+    expect(misses()).toEqual(['NOT SAVED — Network error.'])
+    expect(statusText()).toBe('NOT SAVED — Network error. Say "next" to try again.')
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 5, 'count', 231, []]])
+  })
+
+  it('an amount said since "next": the sent record leaves and is named; "next" saves only what was said since', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count')
+    await posts.reject()
+    expect(record()).toEqual(['Stupice', '3 count', '—'])
+    expect(misses()).toEqual(['NOT SAVED — Network error. Stupice · 5 count · 231 g was not saved; say it again to log it.'])
+    expect(statusText()).toBe('NOT SAVED — Network error. Stupice · 5 count · 231 g was not saved; say it again to log it.')
+    await say(rec, 'next')
+    // Not 3 count · 231 g: the weight went with the 5 count it was weighed with.
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', null, []]])
+  })
+
+  it('an amount said since "next" into an empty slot is not merged with the failed record either', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, '231 grams')
+    await posts.reject()
+    expect(record()).toEqual(['Stupice', '—', '231 g'])
+    expect(misses()).toEqual(['NOT SAVED — Network error. Stupice · 5 count was not saved; say it again to log it.'])
+  })
+
+  it('the same amount said again since "next" is kept: it is new, not the one that failed', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, '5 count')
+    await posts.reject()
+    expect(record()).toEqual(['Stupice', '5 count', '—'])
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', null, []], ['Stupice', 5, 'count', null, []]])
+  })
+
+  it('a bare number held since "next" keeps its crop, and the failed record is named', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '4')
+    await posts.reject()
+    expect(record()).toEqual(['Stupice', '4 count (assumed unless you say a unit)', '—'])
+    expect(misses()).toEqual(['NOT SAVED — Network error. Stupice · 5 count · 231 g was not saved; say it again to log it.'])
+    await say(rec, 'next')
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 4, 'count', null, ['count']]])
+  })
+
+  it('a name that matched nothing since "next": the failed record is named and its teach box stays', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'Stupice', '5 count', 'next')
+    await say(rec, 'zzqq quux')
+    await posts.reject()
+    expect(record()).toEqual(['—', '—', '—'])
+    expect(misses()).toEqual([
+      'Nothing matched “zzqq quux”.',
+      'NOT SAVED — Network error. Stupice · 5 count was not saved; say it again to log it.',
+    ])
+    expect(within(screen.getByTestId('voice-harvest-teach')).getByText('What did you mean by “zzqq quux”?')).toBeTruthy()
   })
 })

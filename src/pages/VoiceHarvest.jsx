@@ -1259,25 +1259,43 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       if (aliasUse?.plantingId === plant.id) recordAliasUse(apiFetch, [aliasUse])
     } catch (err) {
       // The row did not land. Say so on every channel, keep the record so nothing is retyped, and
-      // release the cooldown so "next" is a real retry.
+      // release the cooldown so "next" is a real retry — when nothing has been said since "next".
       land()
       const why = err?.message || 'the save failed'
       cue(hapticSaveFailed)
-      noteMiss(`NOT SAVED — ${why}.`)
-      // Review IMPORTANT-1 — UNLESS A CROP CHANGE TOOK IT OFF THE RECORD WHILE IT WAS SENDING. Then it is gone
-      // after all: the row the switch held back is written now, when it is true, and the banner asks for it
-      // again, because "next" saves the record on screen — the new crop's, never this one (the lane's R1).
-      // BUG-VOICESLOWSAVEFALSEROWS-001 — the same for a sentence refused and started over, or amounts said again
-      // without units, each in its own words. Only a crop change has a crop to carry the note to.
+      // Review v4.150.0 QA M2 — ONCE ANYTHING HAS BEEN SAID SINCE "NEXT", THE RECORD IS WHAT WAS SAID SINCE, as it
+      // is when the POST lands: a new amount (even one that reads the same), a held number, another crop or none,
+      // or a door that took a sent value off. Kept whole, the record would merge the two at the retry: "stupice
+      // 5 count 231 grams next", then "3 count", a failed POST and "next" saved Stupice · 3 count · 231 g — the
+      // 231 g weighed with 5 filed under 3, and the 5 count never saved or named. So what was sent leaves the
+      // record by identity, the row names what did not save, and the banner asks for it again rather than
+      // offering "next", which saves what is on screen. It is the rule Dave chose for a crop change: clear it,
+      // and say it again. The same crop named again changes nothing, and a record that is still exactly what
+      // was sent stays whole for the retry, as before.
+      const saidSince = [qtyRef.current, weightRef.current].some((s) => s && !flight.slots.includes(s))
+        || heldNumRef.current != null || selectedRef.current?.id !== plant.id
+        || flight.slots.some((s) => s !== qtyRef.current && s !== weightRef.current)
+      const notSaved = saidSince
+        ? `NOT SAVED — ${why}. ${label} · ${q.value} ${q.unit}${w ? ` · ${w.value} ${w.unit}` : ''} was not saved; say it again to log it.`
+        : `NOT SAVED — ${why}.`
+      noteMiss(notSaved)
+      if (saidSince) {
+        for (const [ref, set, sent] of [[qtyRef, setQty, q], [weightRef, setWeight, w]]) {
+          if (sent && ref.current === sent) { ref.current = null; set(null) }
+        }
+      }
+      // Review IMPORTANT-1 — A DOOR THAT TOOK A SENT VALUE OFF THE RECORD WHILE IT WAS SENDING held back its row,
+      // which is written now, when it is true, and says why: a crop change (the lane's R1 — "next" then saves the
+      // new crop's record, never this one), or BUG-VOICESLOWSAVEFALSEROWS-001's sentence refused and started over,
+      // or amounts said again without units, each in its own words. Only a crop change has a crop to carry the
+      // note to.
       const lost = settleSendingLosses()
       const here = lost.find((l) => l.planting && l.planting.id === selectedRef.current?.id)
       if (here) {
         const before = switchedRef.current?.plantingId === here.planting.id ? `${switchedRef.current.text}; ` : ''
         switchedRef.current = { plantingId: here.planting.id, text: `${before}${here.note}` }
       }
-      say('fail', lost.length
-        ? `NOT SAVED — ${why}. The record has moved on (${lost.map((l) => l.note).join('; ')}) — say it again to log it.`
-        : `NOT SAVED — ${why}. Say "next" to try again.`)
+      say('fail', saidSince ? notSaved : `NOT SAVED — ${why}. Say "next" to try again.`)
       debRef.current?.invalidateLastWrite(token)
     }
   }, [apiFetch, clearRecord, cue, noteMiss, say, settleSendingLosses])
