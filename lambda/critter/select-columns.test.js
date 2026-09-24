@@ -51,14 +51,13 @@ const SQL = walk(__dirname).map((f) => sqlOf(readFileSync(f, 'utf8'))).join('\n'
 // L-081 declared contract (Phase 1): the prod relation every `*_COLUMNS` array here must exist in.
 // ONE table, deliberately — the auditor cross-products every array against every declared table.
 //
-// KNOWN GAP, recorded rather than papered over (V4-USERPREFS-001, 2026-08-17). This Lambda also
-// SELECTs from user_notification_prefs, and that table is NOT audited here. It cannot simply be
-// added: dev-main-schema-audit.py collects every `*_COLUMNS` array and cross-products it against
-// every entry in AUDIT_TABLES, so a second table would require species_id/earned_at/faded_at to
-// exist on user_notification_prefs too and would fail on its first run. Auditing both needs a
-// per-table column mapping in the auditor, which is OPS-L081COLS-001's scope, not a migration
-// lane's. Until then: a column added to the user_notification_prefs SELECT list is unaudited by
-// Phase 1, and this file's green result is NOT evidence about that table.
+// user_notification_prefs, which this Lambda also reads and writes, is audited by its OWN file,
+// prefs-columns.test.js (V5-NAVCUSTOM-001, 2026-09-24), in the keyed AUDIT_COLUMNS form the auditor
+// gained on 2026-08-28. It must NOT be added here: dev-main-schema-audit.py cross-products every
+// `*_COLUMNS` array in an AUDIT_TABLES file against every declared table (so species_id would be
+// demanded of user_notification_prefs), and a keyed block dropped into this file would make
+// parse_test_file return early and silently drop critter_state. This file's green result is evidence
+// about critter_state only. (The gap was recorded here on 2026-08-17 by V4-USERPREFS-001.)
 const AUDIT_TABLES = ['critter_state'];
 
 const AUDITED_COLUMNS = [
