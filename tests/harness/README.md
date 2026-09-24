@@ -221,6 +221,31 @@ the per-sowing list widens the page when a planting name is long.
 1) is the instrument; it writes the first screen and an evidence shot per state and viewport to
 `artifacts/layout-gate/`.
 
+## `seedsscroll.*` — Back and lot-page arrival on the Seeds page, added 2026-09-24
+
+The two v4.148.0 scroll fixes (BUG-SAVEDSEEDSBACKTOP-001, BUG-SEEDLOTOPENSATFORM-001) turn on things
+only a browser does: Chrome clamping `scrollY` when a long page is swapped for a one-screen loading
+shell, and scroll anchoring re-applying a carried offset when content lands. This entry mounts the real
+`<Seeds />` and `<InventoryDetail />` under **`BrowserRouter`** — not a `MemoryRouter`, because both
+fixes key on react-router's per-entry `window.history.state.key` and Back must be a real `popstate` —
+in App.jsx's shell (top bar and bottom nav stand-ins at their real heights, the flex column whose
+padding reserves the nav). It starts on a `/today` stand-in, so `/seeds` is a push; `/plantings/:id` is
+a stand-in with PlantingDetail's loading Shell and its mount-time scroll reset. The network answers
+after a loading phase (300ms for the lot and the seed list), because both bugs need one.
+
+```
+http://localhost:5311/tests/harness/viewport.html?page=seedsscroll.html&vw=426&vh=836
+    topbar=52     the top-bar stand-in's height; the gate passes TopChrome.jsx's BAR_H
+    itemms=300    latency of the lot's GET;  rowsms=300  latency of the seed list's GET
+```
+
+Frame it with `viewport.html` (it has no verdict bar). `__h.key()` reads the current history entry's
+key, `__h.store()` the scroll-restore store (diagnostic only), `__h.mark()`/`__h.trace()` a scroll-event
+trace. `scripts/layout-gate/seeds-scroll.mjs` (`gate:seeds-scroll`, and `:probe-nothing`, which must
+exit 1) is the instrument: it opens each flow in a fresh tab and drives it with real taps, wheel
+scrolling and `history.back()`, and writes the lot page / planting and the post-Back screen per flow and
+viewport to `artifacts/layout-gate/`.
+
 ## Limits — what this harness CANNOT prove
 
 State these whenever a number from here is quoted.
