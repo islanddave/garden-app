@@ -713,3 +713,44 @@ describe('QA F6 — an assumed value above the plausible line is flagged on the 
     expect(statusText()).toBe('Didn\'t catch that — say "next" again. (60000 g assumed — that looks high)')
   })
 })
+
+// ── QA F4 — the card never reads "—" for a number that has been said ──────────────────────────────
+//
+// QA probe P16: after "Suyo Long", "2", "165" the card read Quantity "2 count", Weight "—" while 165 was
+// held — on exactly the path the release notes advertise, against the card's own promise that "—" means
+// the words have not been said. D3's slice B (312c90c) had the idea; the wording now matches the banner
+// ("assumed … say a unit") instead of the stale "needs a unit" — units are optional.
+describe('QA F4 — a held number shows where it will land, marked as assumed', () => {
+  it('between the second number and "next", the Weight slot shows the held 165', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '2', '165']) await speak(rec, line)
+    expect(record()).toContain('Quantity2 count')
+    expect(record()).toContain('Weight165 g (assumed unless you say a unit)')
+    expect(record()).not.toContain('Weight—')
+  })
+
+  it('the same after the one-breath "Suyo Long 2 165", and it becomes a plain 165 g once placed', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long 2 165')
+    expect(record()).toContain('Weight165 g (assumed unless you say a unit)')
+    await speak(rec, 'grams')
+    expect(record()).toContain('Weight165 g')
+    expect(record()).not.toContain('assumed unless you say a unit')
+  })
+
+  it('a first held number shows in the Quantity slot, in the crop\'s unit', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '5']) await speak(rec, line)
+    expect(record()).toContain('Quantity5 count (assumed unless you say a unit)')
+    expect(record()).toContain('Weight—')
+  })
+
+  it('with both slots filled the held number has nowhere to land, and the card does not pretend it does', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', 'three count', '231 grams', '85']) await speak(rec, line)
+    expect(record()).toContain('Quantity3 count')
+    expect(record()).toContain('Weight231 g')
+    expect(record()).not.toContain('85')
+    expect(statusText()).toContain('both filled')
+  })
+})
