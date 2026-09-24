@@ -53,6 +53,13 @@ export const CLIENT_PREF_KEY_PREFIXES = [
   // Carrying one person's skips into the other's session would HIDE care rows from them, which is
   // the most consequential of the three — a plant goes unwatered and nothing on screen says why.
   'today-skipped:',
+  // BUG-TODAYSKIPNOUNDO-001 — the skip set's companion: keys this device UN-skipped today
+  // ('today-unskipped:YYYY-MM-DD'), which CareNeeded's mount merge refuses to re-add from the server.
+  // Left behind, the next person to sign in has THEIR own server skips of those rows ignored, so the
+  // rows show for them. It can only un-hide a row, never hide one — but it is one person's decision
+  // applied to the other, which is the whole class this file exists to close. Same prefix shape, same
+  // dated accumulation.
+  'today-unskipped:',
 ]
 
 // try/catch per the house convention (cropLogLedger.readStore, EventNew.readLastHarvestUnit): an
