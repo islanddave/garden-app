@@ -892,6 +892,20 @@ describe('a "next" queued behind the save still being sent', () => {
     expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', 200, []]])
   })
 
+  it('a queued record completed and sent before the POST lands leaves nothing queued behind it', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    // "200 grams" takes the weight's place, so nothing on the record is being sent and this "next" sends at once.
+    await say(rec, '3 count', 'next', '200 grams', 'next')
+    expect(posts.count()).toBe(2)
+    await posts.resolve(0)
+    expect(statusText()).toBe('Saved Stupice — 5 count · 231 g')
+    expect(posts.count()).toBe(2)
+    await posts.resolve(1)
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', 200, []]])
+  })
+
   it('"next" said again before the POST lands replaces the queued save: one save, not two', async () => {
     const rec = await startListening()
     const posts = holdPosts()
