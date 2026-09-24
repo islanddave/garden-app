@@ -27,6 +27,8 @@
 #        deleted → the packet's DELETE answers 200 {"ok":true} and the packet reads back 404
 #        (F3d, the allowed half of the same DELETE)
 #     G) favorites toggle → assert favorited on, then off
+#     L) a taught name (voice alias) for block D's variety → one use through PATCH /api/varieties/voice-aliases
+#        → the GET reads its hit_count exactly one higher, with a last_used_at (BUG-VOICEALIASHITCOUNT-001)
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
 #   Per L-108 (ratified 2026-05-25): every write-path surface gets a write→read-back assert.
@@ -1144,9 +1146,81 @@ else
       else
         echo "❌ FAIL [crud:POST /events (del fixture)] HTTP $DEL_EV_HTTP"; FAIL=$((FAIL+1))
       fi
+
+      # ── L) A taught name (voice alias) → one use → its hit_count read back exactly +1 (BUG-VOICEALIASHITCOUNT-001, L-108) ──
+      # PATCH /api/varieties/voice-aliases is the voice page's fire-and-forget "this taught name was just used"
+      # write (hit_count + 1, last_used_at = now()), sent after a harvest or a Log many batch saves. Until this
+      # block nothing on the deployed stack called it, nor the teach POST that creates the row it counts. The
+      # smoke user teaches a run-unique phrase for block D's throwaway variety, reads it back through the GET
+      # the voice page loads its list from, sends ONE use, and the GET must then read exactly one more use and
+      # a last_used_at: a bare 2xx would pass a PATCH that counts nothing, and "exactly" also catches a double
+      # count. The PATCH's result line stays visible (block E's lesson).
+      # Cleanup: no route removes an alias (voice_alias has no soft delete; the path answers DELETE with 405),
+      # so the row rides on the variety it names. voice_alias.variety_id is ON DELETE CASCADE (prod and staging
+      # catalogs, 2026-09-24), and the workflow's L-058 sweep hard-deletes block D's variety by its smoke name,
+      # which takes the alias with it. No sweep line is needed.
+      if [[ -n "${STAGING_API_VARIETIES:-}" && -n "${CREATED_VARIETY_ID:-}" ]]; then
+        CLERK_JWT=$(mint_session_token)
+        VA_URL="${STAGING_API_VARIETIES%/}/api/varieties/voice-aliases"
+        # A heard_key is lowercase with no whitespace or punctuation, 4-120 characters (the route's checks and
+        # the table's CHECKs). uuidgen answers upper-case on macOS, so fold it before stripping.
+        VA_KEY="smokealias$(printf '%s' "$TEST_RUN_ID" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+        # "<hit_count> <last_used_at|none>" for THIS phrase from the GET; "absent" when the list does not carry
+        # it; "no-aliases:<type>" when the list itself is missing (the idiom of F3's sown_from read).
+        va_read() {
+          local TMP
+          TMP=$(mktemp)
+          curl -s --compressed --max-time 30 --connect-timeout 10 \
+            -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$TMP" "$VA_URL" >/dev/null 2>&1 || true
+          jq -r --arg k "$VA_KEY" \
+            'if (.aliases | type) == "array" then ([.aliases[] | select(.heard_key == $k) | "\(.hit_count) \(.last_used_at // "none")"][0] // "absent") else "no-aliases:" + (.aliases | type) end' \
+            "$TMP" 2>/dev/null || echo "unparseable"
+          rm -f "$TMP"
+        }
+        VA_TEACH_BODY=$(mktemp)
+        VA_TEACH_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+          -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$VA_TEACH_BODY" -w "%{http_code}" "$VA_URL" \
+          -d "{\"heard_key\": \"$VA_KEY\", \"heard_text\": \"smoke alias $TEST_RUN_ID\", \"variety_id\": \"$CREATED_VARIETY_ID\"}") || VA_TEACH_HTTP="000"
+        VA_TAUGHT=$(jq -r '.heard_key // empty' "$VA_TEACH_BODY" 2>/dev/null || echo "")
+        rm -f "$VA_TEACH_BODY"
+        if [[ "$VA_TEACH_HTTP" == "200" && "$VA_TAUGHT" == "$VA_KEY" ]]; then
+          echo "✅ PASS [crud:POST /varieties/voice-aliases (teach)] HTTP 200, '$VA_KEY' for variety $CREATED_VARIETY_ID"
+          PASS=$((PASS+1))
+          VA_BEFORE=$(va_read)
+          VA_PATCH_BODY=$(mktemp)
+          VA_PATCH_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+            -X PATCH -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$VA_PATCH_BODY" -w "%{http_code}" "$VA_URL" \
+            -d "{\"used\": [{\"heard_key\": \"$VA_KEY\", \"variety_id\": \"$CREATED_VARIETY_ID\"}]}") || VA_PATCH_HTTP="000"
+          VA_COUNTED=$(jq -r '.counted // empty' "$VA_PATCH_BODY" 2>/dev/null || echo "")
+          rm -f "$VA_PATCH_BODY"
+          echo "   PATCH /varieties/voice-aliases, one use of '$VA_KEY' → HTTP $VA_PATCH_HTTP, counted '$VA_COUNTED'"
+          VA_AFTER=$(va_read)
+          # Exactly one more than the read before the PATCH, and only when that read was a number.
+          VA_WANT="?"
+          if [[ "${VA_BEFORE%% *}" =~ ^[0-9]+$ ]]; then VA_WANT="$(( ${VA_BEFORE%% *} + 1 ))"; fi
+          if [[ "$VA_PATCH_HTTP" == "200" && "${VA_AFTER%% *}" == "$VA_WANT" && "${VA_AFTER#* }" != "none" ]]; then
+            echo "✅ PASS [write:voice-alias-use-readback] hit_count ${VA_BEFORE%% *} → ${VA_AFTER%% *} through the GET, last_used_at ${VA_AFTER#* }"
+            PASS=$((PASS+1))
+          else
+            echo "❌ FAIL [write:voice-alias-use-readback] PATCH HTTP $VA_PATCH_HTTP, counted '$VA_COUNTED'; the GET read '$VA_BEFORE' before and '$VA_AFTER' after (expected hit_count $VA_WANT and a last_used_at)"
+            FAIL=$((FAIL+1))
+          fi
+        else
+          echo "❌ FAIL [crud:POST /varieties/voice-aliases (teach)] HTTP $VA_TEACH_HTTP, heard_key '$VA_TAUGHT' (expected 200 and '$VA_KEY')"
+          FAIL=$((FAIL+1))
+        fi
+      elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+        echo "❌ FAIL [write:voice-alias-use-readback] STAGING_API_VARIETIES unset or block D made no variety — the ship gate may not skip this assert"
+        FAIL=$((FAIL+1))
+      else
+        echo "⚠️  WARN [write:voice-alias-use-readback] STAGING_API_VARIETIES unset or no variety from block D — taught-name count assert NOT run"
+      fi
     else
       echo "   WARNING: POST succeeded but no id in response — skipping fetch (response: ${CREATE_RESPONSE:0:200})"
-      # Every write-path block above (A-K, F3 included) hangs off this project id, so this branch skips all
+      # Every write-path block above (A-L, F3 included) hangs off this project id, so this branch skips all
       # of them. Under the ship gate that is a FAIL, like a missing Clerk secret, never a pass on
       # reachability plus one bare 2xx (pre-ship QA, smoke fail-closed completeness).
       if [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
