@@ -246,9 +246,10 @@ describe('BUG-TODAYSKIPNOUNDO-001 — the server merge after an Undo', () => {
   })
 
   // Skip -> Undo -> Skip again is a fresh decision, so the veto must lift. Modelled by losing the
-  // local set while the server keeps it (storage eviction, or the household lens's second list
-  // writing its own set over this one) and remounting. Mutation: drop the veto lift in skipRow ->
-  // the stale veto wins and the plant Dave re-skipped comes back, red.
+  // local set while the server keeps it (storage eviction; until BUG-TODAYHOUSEHOLDSKIPCLOBBER-001
+  // also the household lens's second list writing its own set over this one) and remounting.
+  // Mutation: drop the veto lift in skipRow -> the stale veto wins and the plant Dave re-skipped
+  // comes back, red.
   it('skipping again after an Undo is honoured by the merge', async () => {
     await mountHost()
     skip('Habanero')

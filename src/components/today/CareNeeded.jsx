@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import React, { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import { SEVERITY_STYLES } from '../../lib/waterDue.js'
@@ -54,13 +54,61 @@ function todayLocalISO() {
 // LOCAL IS AUTHORITATIVE ON WRITE, ALWAYS. Every skip lands here first and synchronously — the
 // server call is fire-and-forget after the fact. A skip made standing in a dead spot in the garden
 // must behave identically to one made on wifi.
+//
+// ONE SET PER PAGE, NOT ONE PER LIST (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001). Today mounts a CareNeeded
+// for Dave's own care and another for the rest of the household, and both write this one key and the
+// one per-user server column. Each list used to keep the set in its own React state, read once at
+// mount, and write THAT whole — so a skip in one list erased the other list's skips from storage and
+// from the server, and the erased plant came back on the next visit. A list mounted later (the
+// household toggle) also held a stale copy that re-published a skip Dave had since undone.
+//
+// So the set lives here, at module scope, and every list reads it through useSyncExternalStore
+// (subscribeSkipped/skippedSnapshot). Every write starts from the shared set (readSkipped), and
+// writeSkipped notifies every mounted list, so the two lists agree on screen without a reload — and an
+// Undo raised by a list that has since unmounted still repaints the list now on screen. Chosen over
+// "re-read storage before each write" because that fixes the stored set but leaves each list's screen
+// state private, so a plant in both lists, or an Undo after a remount, still disagrees until reload.
+//
+// localStorage stays the durable copy and the snapshot re-reads it each render, so anything that
+// changes the key outside this module (sign-out's clearClientPrefs, a test) is seen at once. The only
+// thing held in memory alone is a write localStorage refused (quota, blocked storage): it stays
+// visible, as the old per-list state did, until storage changes under it or the last list unmounts —
+// the reset in subscribeSkipped, which also keeps it from outliving the session into the next sign-in.
 function skipKeyName() { return 'today-skipped:' + todayLocalISO() }
-function readSkipped() {
-  try { return new Set(JSON.parse(localStorage.getItem(skipKeyName()) || '[]')) }
-  catch { return new Set() }
+function storedSkipRaw(name) {
+  try { return localStorage.getItem(name) } catch { return null }
 }
+const NO_SKIP_MEM = Object.freeze({ name: null, raw: null, set: new Set() })
+let skipMem = NO_SKIP_MEM
+const skipListeners = new Set()
+// The useSyncExternalStore snapshot. Must return the SAME Set while nothing changed (React re-renders
+// forever otherwise) and a NEW one on any change (React drops the update otherwise), so it is keyed on
+// the raw stored string. Treat the result as frozen: callers that edit take readSkipped()'s copy.
+function skippedSnapshot() {
+  const name = skipKeyName()
+  const raw = storedSkipRaw(name)
+  if (skipMem.name === name && skipMem.raw === raw) return skipMem.set
+  let set
+  try { set = new Set(JSON.parse(raw || '[]')) } catch { set = new Set() }
+  skipMem = { name, raw, set }
+  return set
+}
+function subscribeSkipped(fn) {
+  skipListeners.add(fn)
+  return () => {
+    skipListeners.delete(fn)
+    if (skipListeners.size === 0) skipMem = NO_SKIP_MEM
+  }
+}
+// A private copy of the shared set — the only thing a write may start from.
+function readSkipped() { return new Set(skippedSnapshot()) }
 function writeSkipped(set) {
-  try { localStorage.setItem(skipKeyName(), JSON.stringify([...set])) } catch { return }
+  const name = skipKeyName()
+  let raw = JSON.stringify([...set])
+  // Refused: remember what storage still holds, so the snapshot keeps this set only until that changes.
+  try { localStorage.setItem(name, raw) } catch { raw = storedSkipRaw(name) }
+  skipMem = { name, raw, set }
+  for (const fn of [...skipListeners]) fn()
 }
 
 // BUG-TODAYSKIPNOUNDO-001 — keys UN-skipped on this device today, i.e. Skip's Undo.
@@ -339,7 +387,8 @@ export default function CareNeeded({ plan }) {
   const [mode, setMode] = useState('location')
   const [logged, setLogged] = useState(() => new Set())   // optimistic local drop (V3-TODAYDONE parity)
   const [pendingKeys, setPendingKeys] = useState(() => new Set())
-  const [skipped, setSkipped] = useState(readSkipped)
+  // The page's one skip set (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001), shared with the household list.
+  const skipped = useSyncExternalStore(subscribeSkipped, skippedSnapshot)
 
   // V4-TODAYLOC-002 — pull the other device's skips in once on mount, UNIONED into the local set.
   //
@@ -359,6 +408,10 @@ export default function CareNeeded({ plan }) {
   // Writes the merged set back to localStorage so the union survives the next cold start even if
   // the network is gone by then. Best-effort throughout: fetchNotificationPrefs never throws and
   // returns null on env-unset/unauth/failure, in which case the local set simply stands.
+  //
+  // Merges into the SHARED set as it stands when the response lands (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001),
+  // never into a copy taken at mount: both lists run this, the responses land in either order, and a
+  // merge of a stale copy wrote over a skip the other list made while this response was in flight.
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -367,14 +420,10 @@ export default function CareNeeded({ plan }) {
       const remote = readTodaySkipped(prefs, todayLocalISO())
       if (remote.length === 0) return
       const unskipped = readUnskipped()
-      setSkipped(prev => {
-        const merged = new Set(prev)
-        let added = false
-        for (const k of remote) if (!merged.has(k) && !unskipped.has(k)) { merged.add(k); added = true }
-        if (!added) return prev            // identity-stable: no needless re-render or re-write
-        writeSkipped(merged)
-        return merged
-      })
+      const merged = readSkipped()
+      let added = false
+      for (const k of remote) if (!merged.has(k) && !unskipped.has(k)) { merged.add(k); added = true }
+      if (added) writeSkipped(merged)     // nothing new: no write, no re-render
     })()
     return () => { alive = false }
   }, [getToken])
@@ -658,11 +707,13 @@ export default function CareNeeded({ plan }) {
   // synchronously, then the fire-and-forget sync, which still sends the WHOLE set (the column is a
   // snapshot) — but queued, so a coalesced Undo of N skips sends ONE sync, not N (queueUnskipSync).
   //
-  // Reads the set FRESH from localStorage rather than through a state updater, on purpose. The toast
-  // layer lives at the app root and outlives Today: skip, tap into the planting, tap Undo, and this
+  // Writes the SHARED set directly rather than through a state updater, on purpose. The toast layer
+  // lives at the app root and outlives Today: skip, tap into the planting, tap Undo, and this
   // component has unmounted — a state updater would never run, and the plant would stay skipped while
   // the toast claimed otherwise. localStorage is what the next mount reads, so writing it directly is
-  // what makes the Undo true whether or not the list is still mounted. The state update only repaints.
+  // what makes the Undo true whether or not the list is still mounted. writeSkipped then repaints
+  // whichever lists ARE mounted — including one that remounted after this toast was raised, which a
+  // repaint of this instance's own state never reached (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001).
   const unskipRow = useCallback((row) => {
     const n = readSkipped()
     n.delete(row.key)
@@ -671,25 +722,21 @@ export default function CareNeeded({ plan }) {
     u.add(row.key)
     writeUnskipped(u)
     queueUnskipSync(getToken)
-    setSkipped(prev => {
-      if (!prev.has(row.key)) return prev
-      const next = new Set(prev); next.delete(row.key); return next
-    })
     announce(row.name + ' is back on today’s list')
   }, [announce, getToken])
 
   const skipRow = useCallback((row) => {
-    setSkipped(prev => {
-      const n = new Set(prev).add(row.key)
-      writeSkipped(n)
-      // V4-TODAYLOC-002 — fire-and-forget cross-device sync, AFTER the local write. Deliberately
-      // not awaited and deliberately not error-handled here: saveTodaySkipped never throws and the
-      // skip is already applied locally, so a dead network costs nothing but the sync. Sends the
-      // WHOLE set rather than a delta — the column is a snapshot, the set is small, and a
-      // last-write-wins snapshot cannot half-apply the way an append protocol can drop one entry.
-      saveTodaySkipped({ getToken, date: todayLocalISO(), keys: [...n] })
-      return n
-    })
+    // From the SHARED set, never from this list's view of it: the household list writes the same key
+    // and the same server column (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001).
+    const n = readSkipped()
+    n.add(row.key)
+    writeSkipped(n)
+    // V4-TODAYLOC-002 — fire-and-forget cross-device sync, AFTER the local write. Deliberately
+    // not awaited and deliberately not error-handled here: saveTodaySkipped never throws and the
+    // skip is already applied locally, so a dead network costs nothing but the sync. Sends the
+    // WHOLE set rather than a delta — the column is a snapshot, the set is small, and a
+    // last-write-wins snapshot cannot half-apply the way an append protocol can drop one entry.
+    saveTodaySkipped({ getToken, date: todayLocalISO(), keys: [...n] })
     // Skipping again after an Undo is a fresh decision, so this device stops vetoing the key on merge.
     const u = readUnskipped()
     if (u.delete(row.key)) writeUnskipped(u)
