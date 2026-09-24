@@ -18,7 +18,7 @@
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, fireEvent } from '@testing-library/react'
 
 const { prefsRef, fetchPrefsSpy, modeRef } = vi.hoisted(() => {
   const prefsRef = { current: null }
@@ -234,6 +234,33 @@ describe('I5 — legacy, absent and malformed values draw today’s bar', () => 
     fetchPrefsSpy.mockResolvedValueOnce(null)
     await act(async () => { render(<PrefsProvider><NavPrefsProvider><BottomNav /></NavPrefsProvider></PrefsProvider>) })
     expect(labels()).toEqual(SHIPPED)
+  })
+})
+
+// I5, the SHEET half: a value that moves nothing (null, a pure reorder in any of the 120 orders, a
+// malformed value) draws today's More sheet — the shipped rows, in the shipped order, and no moved-tab
+// rows. KILLING MUTATION: draw every tab in More regardless of `hidden`, or re-derive the sheet from
+// `order`. RESULT: RED.
+describe('I5 — a value that moves nothing draws today’s sheet, with no extra rows', () => {
+  const permutations = (list) => list.length <= 1 ? [list]
+    : list.flatMap((x, i) => permutations([...list.slice(0, i), ...list.slice(i + 1)]).map(p => [x, ...p]))
+  const sheetHrefs = () => [...screen.getByRole('dialog', { name: 'More navigation options' }).querySelectorAll('a[href]')]
+    .map(a => a.getAttribute('href'))
+
+  it('null, all 120 orders and malformed values: the shipped sheet, row for row', async () => {
+    const reference = await renderWithLayout(undefined)
+    fireEvent.click(screen.getByRole('button', { name: 'More navigation options' }))
+    const shipped = sheetHrefs()
+    expect(shipped).not.toContain('/put-up')
+    expect(shipped.length).toBeGreaterThanOrEqual(14)
+    reference.unmount()
+    const values = [...permutations(DEFAULT_NAV_TABS).map(order => layout(order)), ['today', 'garden'], { hidden: 'put-up' }]
+    for (const value of values) {
+      const view = await renderWithLayout(value)
+      fireEvent.click(screen.getByRole('button', { name: 'More navigation options' }))
+      expect(sheetHrefs(), JSON.stringify(value)).toEqual(shipped)
+      view.unmount()
+    }
   })
 })
 

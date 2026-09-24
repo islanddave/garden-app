@@ -183,6 +183,26 @@ describe('resolvePins — entry by entry, never throws', () => {
     resolvePins(raw)
     expect(raw).toEqual(['sow', 'photos', 'photos'])
   })
+
+  // I4, client vs contract (CONTRACT §3): whatever the column holds, the list this build keeps — and
+  // therefore sends back on the next save — is one the server's more_pins validator accepts: strings
+  // matching the pattern, no repeats, at most 32. Restated from the contract text (the Lambda cannot
+  // be imported from src/); the integration step adds the parity run against validators.js.
+  // KILLING MUTATION: any resolvePins rule removed above. RESULT: RED on the input that rule covers.
+  it('I4 — every output is a list the contract accepts', () => {
+    const accepts = (ids) => Array.isArray(ids) && ids.length <= 32 && new Set(ids).size === ids.length &&
+      ids.every(id => typeof id === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(id))
+    const hostile = [
+      null, 'seeds', 42, {}, [], [null, 7, {}, ['seeds']], ['Seeds', '/seeds', 'seeds', 'seeds'],
+      ['sow', 'saved-seeds', 'seeds'], Array.from({ length: 60 }, (_, i) => `row-${i % 45}`),
+      ['a'.repeat(41), 'a'.repeat(40), 'constructor', '__proto__'],
+    ]
+    for (const raw of hostile) expect(accepts(resolvePins(raw)), JSON.stringify(raw)).toBe(true)
+    // The client constant IS the contract's pattern, character for character.
+    expect(MORE_PIN_ID_RE.source).toBe('^[a-z][a-z0-9-]{0,39}$')
+    expect(MORE_PINS_MAX_STORED).toBe(32)
+    expect(MORE_PINS_MAX_SHOWN).toBe(4)
+  })
 })
 
 describe('layoutMoreSheet — I1 at the data level: exactly one door per destination', () => {
