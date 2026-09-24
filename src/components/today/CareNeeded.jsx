@@ -11,7 +11,7 @@ import Icon from '../Icon.jsx'
 import PhotoView from '../photo/PhotoView.jsx'
 import { TIER } from '../../lib/photoModel.js'
 import {
-  buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, waterStaleness, capStaleRows,
+  buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, capStaleRows,
   dormantRows, feedSuppressedRows, FEED_SUPPRESSED_LISTED, droughtRows,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
   canMoistureCheck, MOISTURE_CHECK_EVENT,
@@ -396,9 +396,9 @@ export default function CareNeeded({ plan }) {
     () => allRows.filter(r => !skipped.has(r.key)).map(enrich),
     [allRows, skipped, enrich],
   )
-  // Staleness state (skeptic seat): when half the water list rests on a record >= WATER_STALE_DAYS
-  // old, the honest claim is "no recent record", not "N plantings are thirsty" — so the note below
-  // says so and each group renders at most WATER_STALE_CAP water rows until Dave asks for the rest.
+  // Length cap: each group renders at most WATER_STALE_CAP water rows until Dave asks for the rest,
+  // and the note below says rows were withheld (V5-TODAYCAP-001 below explains why this no longer
+  // depends on whether the watering record is stale).
   //
   // The cap is applied PER GROUP, after grouping. Capping the flat row list globally (most-overdue
   // first) would undo the group-severity fix in the same breath: on live 2026-08-17 the 20
@@ -409,7 +409,6 @@ export default function CareNeeded({ plan }) {
   // The cap does NOT touch the bulk candidate set below. "Log all watering (194)" is Dave asserting
   // what HE did — an input, not a claim this surface is making — and 92% of his watering goes
   // through that one action, so taxing it to make a display point would be the wrong trade.
-  const staleness = useMemo(() => waterStaleness(plan), [plan])
   const [showCapped, setShowCapped] = useState(false)
   // V5-TODAYCAP-001 — cap by LENGTH always, not only when the record is stale.
   //
@@ -433,8 +432,9 @@ export default function CareNeeded({ plan }) {
   //     (194)" still logs everything. The cap withholds rows from the display, not from the garden.
   //   · Still an input to `pinnedGroups` below, computed from the arrival snapshot, so this does NOT
   //     re-open BUG-TODAYCAREREORDER-001 (a section sliding out from under his finger).
-  // Staleness keeps its real job — the "last watered Nd ago" honesty labels — and no longer decides
-  // page length. Zero watering-LOGIC changes, per the crucible boss ruling: the work is legibility.
+  // The honesty job belongs to the per-row "last watered Nd ago" labels, which careNeeded.js builds
+  // for each row; record staleness no longer decides page length here. Zero watering-LOGIC changes,
+  // per the crucible boss ruling: the work is legibility.
   const capping = !showCapped
   // BD-036 — the pinned layout, computed once per (plan, mode, capping) from `orderingRows`. It
   // supplies BOTH the group order and the auto-expand set, because both were functions of the
