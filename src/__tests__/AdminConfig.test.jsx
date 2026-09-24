@@ -19,7 +19,7 @@
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, act, within } from '@testing-library/react'
+import { render, screen, fireEvent, act, within, cleanup } from '@testing-library/react'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -294,6 +294,59 @@ describe('after a successful Save, the re-read cannot take the saved bar away', 
     expect(inBar('Garden').checked).toBe(false)
     expect(saveButton().disabled).toBe(true)
     expect(preview()).toEqual(['today', 'create', 'harvests', 'put-up', 'more'])
+  })
+})
+
+// QA RE-3 — a prefs body the service worker served from its cache (marked like fetchNotificationPrefs
+// marks one) is this phone's LAST COPY, not the server's value: shown and labelled, never saved on top
+// of. And the editor re-reads once when it opens on such a body, so it is not stuck until a cold start.
+describe('a body served from the SW cache is this phone’s last copy, not the server’s value', () => {
+  const FROM_CACHE = Symbol.for('garden-app.fromCache')
+  const marked = (body) => Object.defineProperty(body, FROM_CACHE, { value: true, enumerable: false })
+  const HARVESTS_MOVED = { order: [...DEFAULT_NAV_TABS], hidden: ['harvests'] }
+  const settle = () => act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
+  // The QA probe (qa2.adminseed): a marked body with Harvests moved.
+  // KILLING MUTATION: count a last copy as read (serverLayout from any body). RESULT: RED — Save
+  // enables after one edit, on a starting point nobody checked.
+  it('shows it, says what it is, and keeps Save off even after an edit', async () => {
+    await open(marked(prefs(HARVESTS_MOVED)))                 // the re-read answers the same copy
+    await settle()
+    expect(inBar('Harvests').checked).toBe(false)            // shown…
+    expect(screen.getByTestId('bar-last-copy').textContent).toMatch(/last copy of your tab bar saved on this phone/)
+    expect(screen.queryByTestId('bar-read-failed')).toBeNull()
+    moveDown('Today')
+    expect(saveButton().disabled).toBe(true)                 // …but never saved on top of
+  })
+
+  // KILLING MUTATION: drop the re-read on open. RESULT: RED — one read only, and the editor stays on
+  // the last copy with Save off until the next cold start.
+  it('re-reads once on open: a fresh answer replaces the last copy and Save works', async () => {
+    fetchPrefsSpy.mockResolvedValueOnce(marked(prefs(HARVESTS_MOVED)))
+    fetchPrefsSpy.mockResolvedValueOnce(prefs({ order: [...DEFAULT_NAV_TABS], hidden: ['garden'] }))
+    await act(async () => { render(tree()) })
+    await settle()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId('bar-last-copy')).toBeNull()
+    expect(inBar('Garden').checked).toBe(false)              // the fresh value, not the copy
+    expect(inBar('Harvests').checked).toBe(true)
+    fireEvent.click(inBar('Garden'))
+    expect(saveButton().disabled).toBe(false)
+  })
+
+  // Once per visit: a copy that comes back again cannot turn the re-read into a loop.
+  // KILLING MUTATION: drop the once-per-visit latch. RESULT: RED — reads keep going out.
+  it('re-reads at most once per visit, and a failed boot read is re-read the same way', async () => {
+    fetchPrefsSpy.mockImplementation(async () => marked(prefs(HARVESTS_MOVED)))
+    await act(async () => { render(tree()) })
+    await settle()
+    await settle()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
+    cleanup()
+    fetchPrefsSpy.mockReset().mockResolvedValue(null)       // the boot read fails, and so does the retry
+    await act(async () => { render(tree()) })
+    await settle()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
   })
 })
 

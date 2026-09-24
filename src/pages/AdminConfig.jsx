@@ -29,13 +29,20 @@
 // value nobody chose. Now the editor follows the SERVER's value until the person edits, and Save stays
 // disabled until that value has been read. If the read failed, Save stays disabled and one line says
 // the current bar could not be read.
-import React, { useCallback, useMemo, useState } from 'react'
+//
+// A BODY THE SERVICE WORKER SERVED FROM ITS CACHE IS NOT THE SERVER'S VALUE (QA RE-3). It is shown —
+// it is this phone's last copy and the best picture on hand — and labelled as exactly that, but Save
+// stays off: saving on top of it would be the stale-seed bug again by another route. And because
+// prefs are otherwise read once per launch, the editor re-reads ONCE when it opens on a body it cannot
+// save from (served from cache, or missing) — so it is not stuck until the next cold start, the same
+// lesson the pin list taught (QA RE-1).
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { usePrefs } from '../context/PrefsContext.jsx'
-import { useNavLayout } from '../context/NavPrefsContext.jsx'
+import { useNavLayout, servedFromCache } from '../context/NavPrefsContext.jsx'
 import { DEFAULT_NAV_TABS, MOVABLE_TAB_KEYS, TAB_REGISTRY, resolveBarLayout } from '../lib/navConfig.js'
 import { saveBarLayout } from '../lib/notificationPrefsClient.js'
 
@@ -110,12 +117,16 @@ export default function AdminConfig() {
   // good (QA MINOR-1), and a re-read that joined a GET issued BEFORE the Save must not roll the editor
   // back to the old bar (regression M5; the bar cache has the same guard in NavPrefsContext).
   const [savedLayout, setSavedLayout] = useState(null)
-  // What the server holds, once read. Until then the editor shows the bar this device is drawing.
-  const serverLayout = useMemo(
-    () => savedLayout ?? (prefsLoaded && prefs ? resolveBarLayout(prefs.bar_layout) : null),
-    [savedLayout, prefs, prefsLoaded],
+  // The body on hand, and whether it is only this phone's last copy (served from the SW's cache).
+  const bodyLayout = useMemo(
+    () => (prefsLoaded && prefs ? resolveBarLayout(prefs.bar_layout) : null),
+    [prefs, prefsLoaded],
   )
-  const base = serverLayout ?? current
+  const lastCopy = !savedLayout && !!bodyLayout && servedFromCache(prefs)
+  // What the server holds — the only value Save may build on. A last copy is not it (QA RE-3).
+  const serverLayout = savedLayout ?? (lastCopy ? null : bodyLayout)
+  // What the editor SHOWS: the server's value, else the last copy, else the bar this device draws.
+  const base = savedLayout ?? bodyLayout ?? current
   // null until the person edits: an untouched editor follows the server value as it arrives.
   const [draft, setDraft] = useState(null)
   const shown = draft ?? { order: base.order, hidden: base.hidden }
@@ -143,6 +154,17 @@ export default function AdminConfig() {
   const readFailed = prefsLoaded && !prefs && !savedLayout
   const dirty = serverLayout ? !sameLayout(shown, serverLayout) : draft != null
   const canSave = !!serverLayout && dirty && status !== 'saving'
+
+  // Re-read ONCE per visit when the editor opens on a body it cannot save from — missing or served from
+  // the SW's cache — so it is not left unsaveable until the next cold start. Once per visit, so a read
+  // that fails again cannot loop; never after this visit's own Save (its 200 is the server's value).
+  const reread = useRef(false)
+  useEffect(() => {
+    if (reread.current || !prefsLoaded || savedLayout) return
+    if (prefs && !servedFromCache(prefs)) return
+    reread.current = true
+    refreshPrefs()
+  }, [prefsLoaded, prefs, savedLayout, refreshPrefs])
 
   const onSave = useCallback(async () => {
     setStatus('saving')
@@ -228,6 +250,12 @@ export default function AdminConfig() {
       {readFailed && (
         <p data-testid="bar-read-failed" style={{ fontSize: '0.84rem', color: P.terra, marginTop: 12 }}>
           Your current tab bar could not be read, so it can’t be saved right now.
+        </p>
+      )}
+      {lastCopy && (
+        <p data-testid="bar-last-copy" style={{ fontSize: '0.84rem', color: P.terra, marginTop: 12 }}>
+          This is the last copy of your tab bar saved on this phone. It couldn’t be checked with the
+          server, so it can’t be saved right now.
         </p>
       )}
 

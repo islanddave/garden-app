@@ -71,8 +71,9 @@ export const MORE_PINS_PENDING_KEY = 'nav.morePins.pending.v1'
 
 // api.js's SW offline-cache marker, read through the global Symbol registry rather than by importing
 // isFromCache — the dependency-free seam dataCache.js and HarvestExportSheet.jsx already use.
+// Exported for AdminConfig, which must not treat such a body as the server's value either.
 const FROM_CACHE = Symbol.for('garden-app.fromCache')
-const servedFromCache = (v) => !!v && typeof v === 'object' && v[FROM_CACHE] === true
+export const servedFromCache = (v) => !!v && typeof v === 'object' && v[FROM_CACHE] === true
 
 // try/catch per the house convention (clientPrefs.js): an unavailable or throwing localStorage
 // degrades to "no cache", never to an error on the nav's render path.
