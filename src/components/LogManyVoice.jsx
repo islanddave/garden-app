@@ -562,6 +562,9 @@ export default function LogManyVoice({
                 runDryRun={voiceDryRun}
                 onSelectionChange={onVoiceSelection}
                 initialSelection={seed}
+                // Review MINOR-5: "Start with everything selected" writes his STORED default for every
+                // future batch. A read-back must never be able to change it, so the twin hides it.
+                showDefaultToggle={false}
               />
             )}
             {phase === 'cancelled' && view.readBack && (
