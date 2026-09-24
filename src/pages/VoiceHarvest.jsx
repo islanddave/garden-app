@@ -613,6 +613,20 @@ function heldLandingOf(held, qty, weight, selected) {
   return { axis: built.kind, value: built.value, unit: built.unit }
 }
 
+// BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — THE ONE WORDING of amounts a crop change took off the record: the note
+// for the banner and the row for the strip. Shared by the switch itself and by a failed save that had sent
+// them (review IMPORTANT-1), so the row reads the same whichever of the two finds it true.
+function switchWords(amountsCleared, planting) {
+  const amounts = amountsCleared.map((v) => `${v.value} ${v.unit}`).join(' · ')
+  const from = [...new Set(amountsCleared.map((v) => v.saidFor.name || v.saidFor.variety_ref?.name))].join(' and ')
+  const to = planting.name || planting.variety_ref?.name
+  return {
+    amounts, from, to, planting, slots: amountsCleared,
+    note: `cleared ${amounts} from ${from}`,
+    row: `Cleared ${amounts} for ${from} — the crop changed to ${to} before it was saved.`,
+  }
+}
+
 const TONE = {
   ok:   { bg: P.greenPale, border: P.green,       fg: P.dark },
   warn: { bg: P.warn,      border: P.warnBorder,  fg: P.dark },
@@ -718,6 +732,19 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // utterance wrote, not the one their closure captured; `heldNum` is the render-visible mirror so
   // the half-finished value is never invisible on screen.
   const heldNumRef  = useRef(null)
+  // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — what the last crop change cleared, for the crop it changed to:
+  // { plantingId, text } or null. saveRecord says it again, because a switch and a save in one breath
+  // ("suyo long 3 231 next") leave the save's banner as the only one on screen.
+  const switchedRef = useRef(null)
+  // Review IMPORTANT-1 / PE-1 — THE SAVES WHOSE POST IS STILL OUT, oldest first: { plantId, slots, rechosen }.
+  // `slots` are the exact count and weight objects sent. They stay on the record until the POST answers, so
+  // the page keeps showing what is being saved, and they are compared BY IDENTITY: a value said again while
+  // the POST is out is a new object even when it reads the same. `rechosen` marks the saved crop chosen again
+  // while its POST was out. `sendingLossRef` holds what a crop change would have said about taking sent values
+  // off the record (switchWords), until their POSTs answer; `savedSlotsRef` holds every value a POST saved.
+  const inFlightRef = useRef([])
+  const sendingLossRef = useRef([])
+  const savedSlotsRef = useRef(new WeakSet())
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
@@ -923,6 +950,84 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     heldNumRef.current = null; setHeldNum(null)
   }, [])
 
+  // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — every amount on the record carries the crop it was SAID FOR: the
+  // planting chosen when it was said, or null before one was. It rides on the slot value like `assumed`,
+  // so it goes wherever the value goes and is cleared with it. Every write of a count or weight is here.
+  const fillSlot = useCallback((axis, v) => {
+    const slot = { ...v, saidFor: selectedRef.current }
+    if (axis === 'weight') { setWeight(slot); weightRef.current = slot } else { setQty(slot); qtyRef.current = slot }
+  }, [])
+
+  // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — A CROP CHANGE CLEARS THE AMOUNTS SAID FOR THE OLD CROP, AND SAYS SO.
+  //
+  // Dave, 2026-09-24, chose "clear them on a switch" over "keep them and say so" and "leave it as is". A
+  // spoken name kept the amounts standing, so "Stupice", "5 count", "cucumber one", "next" saved Suyo Long ·
+  // 5 count: Stupice's count under another crop, and nothing said. The trade he accepted: a correction
+  // ("Stupice… no, cucumber one") means saying the amounts again.
+  //
+  // Called by EVERY door that chooses a planting, before it does: a spoken name, a tap in the list or the
+  // teach box, and the one-breath readers (which already start a new record, and now say what went). Keyed
+  // on what each amount was SAID FOR, not on the crop on screen: the list and the teach box only show once
+  // a search has unselected the crop, so at a tap nothing is selected, yet the amounts are still the old
+  // crop's. Each amount on the record is:
+  //   * said for another planting — cleared, on the banner and in a miss row. ANOTHER PLANTING BY ID, the
+  //     row the harvest is saved under, so a second planting of the same variety ("Super Sweet 100 Rescue")
+  //     is a different crop, as the one-breath readers already treated it;
+  //   * said for this planting — kept (the same crop chosen again, by any name or door);
+  //   * said before any crop was chosen — kept, and from now on this crop's ("5 count", "Stupice").
+  // Returns the words for the read-back, or null when nothing was cleared.
+  //
+  // Review IMPORTANT-1 — AN AMOUNT A SAVE HAS ALREADY SENT LEAVES THE RECORD WITHOUT A WORD. It is not lost, it is
+  // on its way: naming the next crop while the POST was out wrote "Cleared 5 count for Stupice — the crop changed
+  // to Suyo Long before it was saved" beside Stupice's own saved row, "1 saved · 1 not captured" for a harvest
+  // that saved — the false-miss class QA F1 closed once already. Its words are held back (sendingLossRef) and
+  // said only if no POST saves it, the one case where they are true. It still leaves the record: kept, "next"
+  // would save it again under the new crop, which is the leak this function exists to close.
+  const clearForSwitch = useCallback((planting) => {
+    const cleared = []
+    const sending = []
+    for (const [ref, set] of [[qtyRef, setQty], [weightRef, setWeight]]) {
+      const v = ref.current
+      if (!v) continue
+      const next = !v.saidFor ? { ...v, saidFor: planting } : v.saidFor.id === planting.id ? v : null
+      if (!next) (inFlightRef.current.some((f) => f.slots.includes(v)) ? sending : cleared).push(v)
+      if (next !== v) { ref.current = next; set(next) }
+    }
+    // PE-1 — the crop being saved, chosen again while its POST is out, is a choice that POST must not undo.
+    for (const f of inFlightRef.current) if (f.plantId === planting.id) f.rechosen = true
+    if (sending.length) {
+      const held = switchWords(sending, planting)
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-sending ${held.amounts} (${held.from} -> ${held.to})`)
+      sendingLossRef.current = [...sendingLossRef.current, held]
+    }
+    if (!cleared.length) { switchedRef.current = null; return null }
+    const words = switchWords(cleared, planting)
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-cleared ${words.amounts} (${words.from} -> ${words.to})`)
+    noteMiss(words.row)
+    switchedRef.current = { plantingId: planting.id, text: words.note }
+    return words.note
+  }, [noteMiss])
+
+  // Review IMPORTANT-1 — a POST has answered. What a crop change took off the record while values were being
+  // sent is said now for every one of them that no POST saved, once no POST is still sending any of them — a
+  // second "next" during a slow save sends the same values twice, and either POST saving them makes the words
+  // false. Returns what it said, for the failed save's banner.
+  const settleSendingLosses = useCallback(() => {
+    const said = []
+    sendingLossRef.current = sendingLossRef.current.filter((held) => {
+      if (held.slots.some((v) => inFlightRef.current.some((f) => f.slots.includes(v)))) return true
+      const lost = held.slots.filter((v) => !savedSlotsRef.current.has(v))
+      if (lost.length) {
+        const words = switchWords(lost, held.planting)
+        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-cleared ${words.amounts} (${words.from} -> ${words.to}) after a failed save`)
+        noteMiss(words.row)
+        said.push(words)
+      }
+      return false
+    })
+    return said
+  }, [noteMiss])
+
   // BUG-VOICEALIASHITCOUNT-001 — which taught alias, if any, chose the planting now on the record.
   // Called wherever spoken words select a planting; a selection by any other door leaves null.
   const noteAliasUse = useCallback((spoken, planting) => {
@@ -943,13 +1048,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // silently did nothing would let them believe it was fixed and meet the same failure tomorrow.
   const pickPlanting = useCallback(async (p) => {
     const phrase = unmatchedRef.current
+    const switched = clearForSwitch(p)
     setSelected(p); selectedRef.current = p
     // A pick from a learned alias's list ("Which one?" for a variety with two plantings) is a use of
     // it. A pick that TEACHES a new phrase is not: the phrase is not in the list yet, so this is null.
     noteAliasUse(phrase, p)
     setCandidates([]); setUnmatched(null)
     const label = p.name || p.variety_ref?.name
-    say('ok', `${label} — now say the count or the weight.`)
+    say(switched ? 'warn' : 'ok', `${label} — ${switched ? `${switched}. Now say` : 'now say'} the count or the weight.`)
 
     const varietyId = p?.variety_ref?.id
     // Nothing to learn when the phrase already resolved strictly, and nothing to learn it AGAINST
@@ -971,11 +1077,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // the load that lands later cannot undo this teach. The state is NOT set to 'ready' here: one name
       // taught is not the rest of the list.
       taughtRowsRef.current = [...taughtRowsRef.current, taughtRow]
-      say('ok', `${label} — learned “${phrase}”. Now say the count or the weight.`)
+      say(switched ? 'warn' : 'ok', `${label} — learned “${phrase}”${switched ? `, ${switched}` : ''}. Now say the count or the weight.`)
     } catch (err) {
-      say('warn', `${label} selected, but I could not remember “${phrase}” — ${err?.message || 'the save failed'}.`)
+      say('warn', `${label} selected, but I could not remember “${phrase}” — ${err?.message || 'the save failed'}.${switched ? ` (${switched})` : ''}`)
     }
-  }, [apiFetch, noteAliasUse, say])
+  }, [apiFetch, clearForSwitch, noteAliasUse, say])
 
   // ── the save ────────────────────────────────────────────────────────────────────────────────────
   // Returns nothing and throws nothing: every outcome is a banner, a haptic and (on success) a row.
@@ -986,13 +1092,17 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const q = qtyRef.current
     const w = weightRef.current
     const aliasUse = aliasUseRef.current
+    // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — what the change to this crop cleared, said again on both
+    // banners below: "cucumber one", "next" refuses for want of the count he said for Stupice a moment ago.
+    const switchNote = plant && switchedRef.current?.plantingId === plant.id ? ` (${switchedRef.current.text})` : ''
+    const noteAtSave = switchedRef.current
 
     // REFUSE LOUDLY AND KEEP THE RECORD. Advancing over an unsaveable record is how a picking gets
     // silently lost, which is the one failure mode this flow is least allowed to have.
     if (!plant || !q) {
       const missing = !plant && !q ? 'a crop and a quantity' : !plant ? 'a crop' : 'a quantity'
       cue(hapticSaveFailed)
-      say('fail', `Not saved — still need ${missing}. Say it, then "next".`)
+      say('fail', `Not saved — still need ${missing}. Say it, then "next".${switchNote}`)
       noteMiss(`Not saved — still need ${missing}.`)
       // BUG-VOICEREFUSEDNEXT-001 — RELEASED ONE MICROTASK LATER, OR NOT AT ALL. This refusal runs
       // synchronously INSIDE the debouncer's commit handler, and the debouncer arms the write
@@ -1011,6 +1121,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // The slots whose unit the app INFERRED, quantity's first. ONE list feeds both the metadata below
     // and the saved banner/row, so what Dave is told and what the server records cannot disagree.
     const assumed = [q, w].filter((s) => s?.assumed)
+    // Review IMPORTANT-1 / PE-1 — what this POST sends, while it is out (inFlightRef).
+    const flight = { plantId: plant.id, slots: [q, w].filter(Boolean), rechosen: false }
+    inFlightRef.current = [...inFlightRef.current, flight]
+    const land = () => { inFlightRef.current = inFlightRef.current.filter((f) => f !== flight) }
     try {
       const res = await apiFetch('/api/events', {
         method: 'POST',
@@ -1053,6 +1167,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           },
         }),
       })
+      land()
       // THE KEY THE API ACTUALLY RETURNS. lambda/events/index.js:3890 answers `resp(201, {
       // ...newEvent, … })` where newEvent is the event_log row (`:3495`), so the id is a TOP-LEVEL
       // `id` — there is no `eventId` key and no nested `event` object anywhere in lambda/events.
@@ -1081,9 +1196,26 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // correct it later if it is wrong") and it has to say which values were guesses.
       const said = `${q.value} ${q.unit}${w ? ` · ${w.value} ${w.unit}` : ' · no weight was said'}`
         + (assumed.length ? ` (${assumed.map(assumedPhrase).join(', ')})` : '')
-      say('ok', `Saved ${label} — ${said}`)
+      say('ok', `Saved ${label} — ${said}${switchNote}`)
       setRows((r) => [...r, { kind: 'save', eventId, label, said, at: Date.now() }])
-      clearRecord()
+      for (const s of flight.slots) savedSlotsRef.current.add(s)
+      settleSendingLosses()
+      // PE-1 — CLEAR ONLY WHAT WAS SAVED. This cleared the whole record, and the record is not only what was
+      // sent: whatever was said while the POST was out went with it, without a word. On c016dcde, "stupice 5
+      // count 231 grams next" then "suyo long 3 count 231 grams" during a slow POST lost the Suyo Long harvest
+      // ("1 saved", no row). So each value sent leaves the record BY IDENTITY, and what was said while it was
+      // out stays: a new amount (even one that reads the same), a held number, another crop, the same crop
+      // chosen again, a list or a teach box — and the crop, when anything was said for it. A record holding
+      // none of that is cleared exactly as before. Identity, not "is the record unchanged": after "3 count" for
+      // the same crop the record still holds the weight just saved, and keeping that would save it twice.
+      if (qtyRef.current === q) { qtyRef.current = null; setQty(null) }
+      if (w && weightRef.current === w) { weightRef.current = null; setWeight(null) }
+      if (aliasUseRef.current === aliasUse) aliasUseRef.current = null
+      const movedOn = qtyRef.current != null || weightRef.current != null || heldNumRef.current != null
+        || selectedRef.current?.id !== plant.id || flight.rechosen
+      if (!movedOn) clearRecord()
+      // The note was said on this banner; one set while the POST was out belongs to the record still standing.
+      if (switchedRef.current === noteAtSave) switchedRef.current = null
       // BUG-VOICEALIASHITCOUNT-001 — a taught alias chose this crop, and the harvest it named has
       // landed: count the use. AFTER the save, never awaited, never throwing (recordAliasUse), so the
       // count can cost this save nothing. An Undo does not un-count it: the alias did its job.
@@ -1091,12 +1223,25 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     } catch (err) {
       // The row did not land. Say so on every channel, keep the record so nothing is retyped, and
       // release the cooldown so "next" is a real retry.
+      land()
+      const why = err?.message || 'the save failed'
       cue(hapticSaveFailed)
-      say('fail', `NOT SAVED — ${err?.message || 'the save failed'}. Say "next" to try again.`)
-      noteMiss(`NOT SAVED — ${err?.message || 'the save failed'}.`)
+      noteMiss(`NOT SAVED — ${why}.`)
+      // Review IMPORTANT-1 — UNLESS A CROP CHANGE TOOK IT OFF THE RECORD WHILE IT WAS SENDING. Then it is gone
+      // after all: the row the switch held back is written now, when it is true, and the banner asks for it
+      // again, because "next" saves the record on screen — the new crop's, never this one (the lane's R1).
+      const lost = settleSendingLosses()
+      const here = lost.find((l) => l.planting.id === selectedRef.current?.id)
+      if (here) {
+        const before = switchedRef.current?.plantingId === here.planting.id ? `${switchedRef.current.text}; ` : ''
+        switchedRef.current = { plantingId: here.planting.id, text: `${before}${here.note}` }
+      }
+      say('fail', lost.length
+        ? `NOT SAVED — ${why}. The record has moved on (${lost.map((l) => l.note).join('; ')}) — say it again to log it.`
+        : `NOT SAVED — ${why}. Say "next" to try again.`)
       debRef.current?.invalidateLastWrite(token)
     }
-  }, [apiFetch, clearRecord, cue, noteMiss, say])
+  }, [apiFetch, clearRecord, cue, noteMiss, say, settleSendingLosses])
 
   const undoRow = useCallback(async (idx) => {
     const row = rows[idx]
@@ -1184,9 +1329,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // then "85 G"; or a later "3 count"), and clearRecord() nulls it with the record. saveRecord
         // turns it into metadata.assumed_units — the only way the server can tell this unit from a
         // spoken one. A separate per-record flag would need clearing at every write site instead.
-        const slot = { value: built.value, unit: built.unit, assumed: true, ...(built.implausible ? { implausible: true } : {}) }
-        if (built.kind === 'weight') { setWeight(slot); weightRef.current = slot }
-        else { setQty(slot); qtyRef.current = slot }
+        fillSlot(built.kind, { value: built.value, unit: built.unit, assumed: true, ...(built.implausible ? { implausible: true } : {}) })
         assumedApplied = built
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `assumed-unit ${built.value} ${built.unit} (held number resolved)`)
         return
@@ -1390,16 +1533,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // Merging would let a weight spoken for the previous crop survive onto this one — the
         // record would look complete and be wrong, which is the failure mode this page is built
         // around. The same planting is a correction and keeps whatever axis was not restated.
-        if (selectedRef.current?.id !== one.planting.id) clearRecord()
+        // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — and what was said for the old crop is named on the way out.
+        let switched = null
+        if (selectedRef.current?.id !== one.planting.id) { switched = clearForSwitch(one.planting); clearRecord() }
         heldNumRef.current = null; setHeldNum(null)
         setSelected(one.planting); selectedRef.current = one.planting
         noteAliasUse(one.name, one.planting)
         setCandidates([]); setUnmatched(null); unmatchedRef.current = null
-        for (const v of one.values) {
-          const next = { value: v.value, unit: v.unit }
-          if (v.kind === 'weight') { setWeight(next); weightRef.current = next }
-          else { setQty(next); qtyRef.current = next }
-        }
+        for (const v of one.values) fillSlot(v.kind, { value: v.value, unit: v.unit })
         const label = one.planting.name || one.planting.variety_ref?.name
         const said = one.values.map((v) => `${v.value} ${v.unit}`).join(' · ')
         const implausible = one.values.some((v) => v.implausible)
@@ -1407,7 +1548,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath ${label} ${said} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
         // Read back in full, for the same reason a fuzzy rescue is: the app chose a split point the
         // words did not settle, so Dave sees the reading it picked before "next" commits it.
-        say(implausible || noteWarns() ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${dropNote}${assumedNote}`)
+        say(implausible || noteWarns() || switched ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${switched ? ` (${switched})` : ''}${dropNote}${assumedNote}`)
         return
       }
 
@@ -1427,11 +1568,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // still refuses without a crop, so an early pair waits for one exactly as a single amount does.
       const seq = valueSeq
       if (seq && seq.length) {
-        for (const v of seq) {
-          const next = { value: v.value, unit: v.unit }
-          if (v.kind === 'weight') { setWeight(next); weightRef.current = next }
-          else { setQty(next); qtyRef.current = next }
-        }
+        for (const v of seq) fillSlot(v.kind, { value: v.value, unit: v.unit })
         const said = seq.map((v) => `${v.value} ${v.unit}`).join(' · ')
         const implausible = seq.some((v) => v.implausible)
         cue(hapticDigitAccepted)
@@ -1497,6 +1634,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // already being computed for the banner — the cue just was not reading it.
         if (rescued !== null) cue(hapticMatchUncertain)
         else cue(hapticDigitAccepted)
+        const switched = clearForSwitch(hits[0])
         setSelected(hits[0]); selectedRef.current = hits[0]
         noteAliasUse(result.text, hits[0])
         setCandidates([])
@@ -1511,11 +1649,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // trailing unit ("three count"), so a bare "three" returns `unparsed` either way — the
         // default unit had no utterance it could rescue. A quantity now exists only if it was said.
         const chosen = hits[0].name || hits[0].variety_ref?.name
-        say(noteWarns() ? 'warn' : 'ok', (rescued
+        say(noteWarns() || switched ? 'warn' : 'ok', (rescued
           // The heard text is quoted back verbatim so the swap is legible at a glance. Without the
           // "heard X" half, a rescue of the WRONG planting reads exactly like a correct match.
-          ? `Heard “${result.text}” — matched ${chosen}. Say the count, or say it again to change it.`
-          : `${chosen} — now say the count or the weight.`) + dropNote + assumedNote)
+          ? `Heard “${result.text}” — matched ${chosen}${switched ? `, ${switched}` : ''}. Say the count, or say it again to change it.`
+          : `${chosen} — ${switched ? `${switched}. Now say` : 'now say'} the count or the weight.`) + dropNote + assumedNote)
         return
       }
       cue(hapticDigitRejected)
@@ -1548,8 +1686,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
 
     if (result.kind === 'quantity') {
       cue(hapticDigitAccepted)
-      const next = { value: result.value, unit: result.unit }
-      setQty(next); qtyRef.current = next
+      fillSlot('quantity', { value: result.value, unit: result.unit })
       say(result.implausible || noteWarns() ? 'warn' : 'ok',
         result.implausible ? `${result.value} ${result.unit}${joinNote}${assumedNote} — that looks high. Say it again to correct it.${dropNote}`
           : `${result.value} ${result.unit}${joinNote}${assumedNote}${dropNote}`)
@@ -1558,8 +1695,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
 
     if (result.kind === 'weight') {
       cue(hapticDigitAccepted)
-      const next = { value: result.value, unit: result.unit }
-      setWeight(next); weightRef.current = next
+      fillSlot('weight', { value: result.value, unit: result.unit })
       say(result.implausible || noteWarns() ? 'warn' : 'ok',
         result.implausible ? `${result.value} ${result.unit}${joinNote}${assumedNote} — that looks high. Say it again to correct it.${dropNote}`
           : `${result.value} ${result.unit}${joinNote}${assumedNote}${dropNote}`)
@@ -1603,7 +1739,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // WHAT it heard — "Didn't catch that ← "text"" is actionable minutes later; "Didn't catch that"
     // alone asks him to remember which of forty utterances it was.
     noteMiss(`Didn't catch that — heard “${String(result.transcript ?? '')}”.`)
-  }, [clearRecord, cue, noteAliasUse, noteMiss, saveRecord, say])
+  }, [clearForSwitch, clearRecord, cue, fillSlot, noteAliasUse, noteMiss, saveRecord, say])
 
   // ── V5-VOICEVOCAB-001 (lane D4): apply a one-breath record said without its units ───────────────
   //
@@ -1639,6 +1775,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
         droppedNote = ` (dropped ${held} — no unit was said)`
       }
+      const switched = clearForSwitch(planting)
+      if (switched) droppedNote += ` (${switched})`
       clearRecord()
     } else if (d.groups.length === 2) {
       const held = heldNumRef.current
@@ -1685,7 +1823,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       const last = statusRef.current
       say(droppedNote ? 'warn' : (last?.tone ?? 'ok'), `${label ? `${label} — ` : ''}${last?.text ?? ''}${droppedNote}`)
     }
-  }, [applyOneUtterance, clearRecord, cue, noteAliasUse, noteMiss, say])
+  }, [applyOneUtterance, clearForSwitch, clearRecord, cue, noteAliasUse, noteMiss, say])
 
   // QA F2 — the one-breath sentence whose ONE amount may be two numbers run together ("Suyo Long 2165
   // next"). The name was read cleanly, so it is applied exactly as the one-breath would apply it (a
@@ -1693,9 +1831,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // row — and nothing is written.
   const refuseMergedAmount = useCallback((d, heard) => {
     const n = d.groups[0].value
+    let switched = null
     if (d.planting && selectedRef.current?.id !== d.planting.id) {
       const held = heldNumRef.current
       if (held != null) noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
+      switched = clearForSwitch(d.planting)
       clearRecord()
       setSelected(d.planting); selectedRef.current = d.planting
       noteAliasUse(d.name, d.planting)
@@ -1704,9 +1844,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     cue(hapticDigitRejected)
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath-bare refused (merged ${n}) <- ${JSON.stringify(heard)}`)
     const label = d.planting ? `${d.planting.name || d.planting.variety_ref?.name} — ` : ''
-    say('warn', `${label}heard ${n} as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.`)
+    say('warn', `${label}heard ${n} as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.${switched ? ` (${switched})` : ''}`)
     noteMiss(`Not kept — heard “${heard}”: ${n} may be two numbers run together.`)
-  }, [clearRecord, cue, noteAliasUse, noteMiss, say])
+  }, [clearForSwitch, clearRecord, cue, noteAliasUse, noteMiss, say])
 
   // A one-breath sentence whose split is not unique, or whose name is too vague, or whose numbers
   // cannot be read: refused LOUDLY — reject haptic, a banner saying why, a miss row quoting what was
