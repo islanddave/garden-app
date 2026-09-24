@@ -19,6 +19,7 @@ import { looseIncludesCropType } from '../lib/comboboxInput.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P, statusLabel } from '../lib/constants.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { T } from '../components/forms/formStyles.js'
 
 const norm = s => (s || '').toString().toLowerCase()
 const asArray = (d, key) => (Array.isArray(d) ? d : (d?.[key] ?? []))
@@ -43,11 +44,14 @@ const SERVER_MIN_LEN = 2
 const EMPTY_SERVER = { plantings: [], projects: [], locations: [], varieties: [], events: [], inventory: [], photos: [] }
 
 // Hoisted from inside Search() unchanged (same values, same keys). They close over nothing but the
-// module-level palette, and PeekCard below has to be a MODULE-scope component: while the peek is up
+// module-level palette and tokens, and PeekCard below has to be a MODULE-scope component: while the peek is up
 // the debounced server search still resolves and re-renders Search, and a component declared inside
 // the render body is a new type on every render -> remount -> the focus we just moved to the peek
 // heading is thrown on the floor mid-read.
-const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, textDecoration: 'none', marginBottom: 8 }
+// minHeight: a row with no subtitle is one line — 2x11 padding + 2x1 border + an ~18.75px line, about
+// 43px, under the tap floor. The Seeds group drops the category subtitle, so a seed row with no
+// location_text is exactly that row (V5-SEEDSTAB-001 pre-ship QA). Two-line rows are ~56px and do not move.
+const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, padding: '11px 12px', minHeight: T.tapMinHeight, background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, textDecoration: 'none', marginBottom: 8 }
 const nameStyle = { fontWeight: 700, color: P.dark, fontSize: '0.92rem' }
 const subStyle = { fontSize: '0.75rem', color: P.light }
 const sectionHead = { fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', color: P.mid, margin: '16px 2px 8px' }
