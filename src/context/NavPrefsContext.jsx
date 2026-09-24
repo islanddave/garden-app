@@ -27,9 +27,14 @@ import { onReconnect } from '../lib/reconnect.js'
 // THE LAUNCH CACHES ARE CACHES OF SERVER STATE, not a store of record (precedent: clientPrefs.js).
 // They are read SYNCHRONOUSLY so the first paint draws this person's bar rather than the shipped one,
 // and they are in CLIENT_PREF_KEYS so sign-out clears them on a shared phone.
-//   nav.barLayout.v1        { layout: <raw server bar_layout>, canEdit: <last can_edit_bar> }
-//   nav.morePins.v1         the pin list as last shown (unknown ids included)
-//   nav.morePins.pending.v1 true while the server has not confirmed that list
+//   nav.barLayout.v1        { userId, layout: <raw server bar_layout>, canEdit: <last can_edit_bar> }
+//   nav.morePins.v1         { userId, pins: <the pin list as last shown, unknown ids included> }
+//   nav.morePins.pending.v1 <userId> while the server has not confirmed that person's list
+// EVERY CACHE CARRIES ITS OWNER (the Clerk sub), and one stamped for anybody else — or not stamped at
+// all — is NO cache. Sign-out's clearClientPrefs() is not the only way a session ends: an expired or
+// revoked Clerk session never runs it, and the next person to sign in on the same phone would
+// otherwise draw the previous person's bar, see their "Edit tab bar" door, and — worst — have the
+// previous person's pending pin list PATCHed onto their own row with their own token.
 //
 // THE BAR NEVER RE-LAYS ITSELF OUT UNDER A THUMB. First paint uses the cache. When prefs land the
 // cache is rewritten, but the new value is applied at once ONLY if there was no cache at launch (a
@@ -65,8 +70,20 @@ function writeJson(key, value) {
   } catch { /* unavailable/denied — the cache is an optimisation, the server is the record */ }
 }
 
-// Everything the first paint needs, read synchronously. A malformed cache is NO cache: it cannot
-// make the launch worse than a first launch.
+// The writers: every write stamps the owner. `pending` is the owner's sub, never a bare `true`.
+const writeBarCache = (userId, layout, canEdit) => writeJson(BAR_LAYOUT_CACHE_KEY, { userId, layout: layout ?? null, canEdit: canEdit === true })
+const writePinsCache = (userId, pins) => writeJson(MORE_PINS_CACHE_KEY, { userId, pins })
+const writePending = (userId, on) => writeJson(MORE_PINS_PENDING_KEY, on ? userId : undefined)
+
+// A cache entry counts only if it is an object stamped with THIS person's sub. A legacy unstamped
+// shape (a bare array of pins, `{layout, canEdit}`, `true`) and another person's stamp both fail here,
+// and both mean "no cache": the shipped first paint, no editor door, and this person's own server
+// value applied at once when it lands.
+const ownedBy = (value, userId) =>
+  !!userId && !!value && typeof value === 'object' && !Array.isArray(value) && value.userId === userId
+
+// Everything the first paint needs, read synchronously. A malformed or foreign cache is NO cache: it
+// cannot make the launch worse than a first launch.
 //
 // `touched` is the pins' session rule: once this person has changed their pins in this session (or
 // launched with a change still pending), the local list is the authority until the next launch, and
@@ -75,9 +92,11 @@ function writeJson(key, value) {
 // arrives at the next launch — the same "read at boot" rule every other pref here follows.
 function readLaunch(userId) {
   const bar = readJson(BAR_LAYOUT_CACHE_KEY)
-  const hadBarCache = !!bar && typeof bar === 'object' && !Array.isArray(bar) && Object.hasOwn(bar, 'layout')
-  const pinsRaw = readJson(MORE_PINS_CACHE_KEY)
-  const pending = Array.isArray(pinsRaw) && readJson(MORE_PINS_PENDING_KEY) === true
+  const hadBarCache = ownedBy(bar, userId) && Object.hasOwn(bar, 'layout')
+  const pinsCache = readJson(MORE_PINS_CACHE_KEY)
+  const hadPinsCache = ownedBy(pinsCache, userId) && Array.isArray(pinsCache.pins)
+  // Pending only for THIS person's own list: another person's unsent list is never re-sent.
+  const pending = hadPinsCache && readJson(MORE_PINS_PENDING_KEY) === userId
   return {
     epoch: {},
     userId,
@@ -86,7 +105,7 @@ function readLaunch(userId) {
     barAdopted: false,
     cachedCanEdit: hadBarCache && bar.canEdit === true,
     serverCanEdit: null,
-    pins: resolvePins(pinsRaw),
+    pins: hadPinsCache ? resolvePins(pinsCache.pins) : [],
     confirmed: null,
     pending,
     touched: pending,
@@ -121,10 +140,12 @@ export function NavPrefsProvider({ children }) {
   const seq = useRef(0)              // monotonic save counter; only the latest save's answer applies
   const settled = useRef(0)
 
-  // A different person: sign-out has already cleared the caches (CLIENT_PREF_KEYS), so this re-reads
-  // an empty launch. The prefs object on hand belongs to the previous person — mark it as seen so it
-  // is never folded into the new session. Derived-state-on-key-change, done during render so no
-  // child ever draws the previous person's bar.
+  // A different person. Sign-out normally cleared the caches (CLIENT_PREF_KEYS), but an expired or
+  // revoked session never runs sign-out — which is why readLaunch accepts only entries stamped with
+  // the NEW person's sub, and treats the previous person's leftovers as no cache at all. The prefs
+  // object on hand belongs to the previous person — mark it as seen so it is never folded into the new
+  // session. Derived-state-on-key-change, done during render so no child ever draws the previous
+  // person's bar.
   if (s.userId !== userId) {
     const next = readLaunch(userId)
     live.current = next
@@ -148,16 +169,17 @@ export function NavPrefsProvider({ children }) {
     const res = await saveMorePins({ getToken: tokenRef.current, ids: list })
     if (mine !== seq.current || epoch !== live.current.epoch) return null
     settled.current = mine
+    const owner = live.current.userId
     if (res.ok) {
-      writeJson(MORE_PINS_PENDING_KEY, undefined)
+      writePending(owner, false)
       commit({ confirmed: list, pending: false })
     } else if (res.status > 0 && res.status < 500) {
       // Refused. Back to what the server last confirmed. If it has not answered this session, back to
       // what was on screen before this change — and let the next prefs read decide (touched=false).
       const known = live.current.confirmed
       const back = known ?? before
-      writeJson(MORE_PINS_CACHE_KEY, back)
-      writeJson(MORE_PINS_PENDING_KEY, undefined)
+      writePinsCache(owner, back)
+      writePending(owner, false)
       commit({ pins: back, pending: false, touched: known != null })
     }
     // status 0 / 5xx: keep the list and the pending flag; the online event or the next launch retries.
@@ -182,7 +204,7 @@ export function NavPrefsProvider({ children }) {
     const cur = live.current
     const serverCanEdit = prefs.can_edit_bar === true
     const barRaw = prefs.bar_layout ?? null
-    writeJson(BAR_LAYOUT_CACHE_KEY, { layout: barRaw, canEdit: serverCanEdit })
+    writeBarCache(cur.userId, barRaw, serverCanEdit)
     const patch = { serverCanEdit }
     // First launch after sign-in: nothing was drawn from a cache, so apply at once. Otherwise the
     // cache now holds the new value and the NEXT launch draws it.
@@ -190,7 +212,7 @@ export function NavPrefsProvider({ children }) {
     const server = resolvePins(prefs.more_pins)
     if (!cur.touched) {
       // Nothing local to protect: the server's list is the list.
-      writeJson(MORE_PINS_CACHE_KEY, server)
+      writePinsCache(cur.userId, server)
       Object.assign(patch, { pins: server, confirmed: server })
     } else if (cur.confirmed == null) {
       // A local change is pending: keep it on screen, remember the server's copy as the rollback
@@ -207,7 +229,7 @@ export function NavPrefsProvider({ children }) {
   // The editor's own Save: applies at once (the only mid-session re-layout) and becomes the cache.
   const applyLayout = useCallback((raw) => {
     const cur = live.current
-    writeJson(BAR_LAYOUT_CACHE_KEY, { layout: raw ?? null, canEdit: (cur.serverCanEdit ?? cur.cachedCanEdit) === true })
+    if (cur.userId) writeBarCache(cur.userId, raw, cur.serverCanEdit ?? cur.cachedCanEdit)
     commit({ barRaw: raw ?? null, barAdopted: true })
   }, [commit])
 
@@ -215,6 +237,8 @@ export function NavPrefsProvider({ children }) {
   const togglePin = useCallback(async (id) => {
     if (typeof id !== 'string' || !MORE_PIN_ID_RE.test(id)) return 'error'
     const cur = live.current
+    // Nobody signed in: there is no row to save to and no owner to stamp a cache with.
+    if (!cur.userId) return 'error'
     const wasPinned = cur.pins.includes(id)
     if (!wasPinned) {
       const moved = resolveBarLayout(cur.barRaw).moved
@@ -222,8 +246,8 @@ export function NavPrefsProvider({ children }) {
       if (cur.pins.length >= MORE_PINS_MAX_STORED) return 'full'
     }
     const next = wasPinned ? cur.pins.filter(p => p !== id) : [...cur.pins, id]
-    writeJson(MORE_PINS_CACHE_KEY, next)
-    writeJson(MORE_PINS_PENDING_KEY, true)
+    writePinsCache(cur.userId, next)
+    writePending(cur.userId, true)
     commit({ pins: next, pending: true, touched: true })
     const res = await sendPins(next, cur.pins)
     if (res && !res.ok && res.status > 0 && res.status < 500) return 'error'

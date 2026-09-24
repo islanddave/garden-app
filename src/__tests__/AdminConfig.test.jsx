@@ -120,7 +120,7 @@ describe('THE STALE-SEED FIX — Save never writes a value nobody chose', () => 
   // page seeded from the default right here and a Save wrote it.
   // KILLING MUTATION: enable Save whenever dirty (drop the serverLayout requirement). RESULT: RED.
   it('Save is disabled until the server’s value has been read, even after an edit', async () => {
-    localStorage.setItem(BAR_LAYOUT_CACHE_KEY, JSON.stringify({ layout: null, canEdit: true }))
+    localStorage.setItem(BAR_LAYOUT_CACHE_KEY, JSON.stringify({ userId: 'dave', layout: null, canEdit: true }))
     let answer
     fetchPrefsSpy.mockReturnValue(new Promise(r => { answer = r }))
     await act(async () => { render(tree()) })
@@ -133,7 +133,7 @@ describe('THE STALE-SEED FIX — Save never writes a value nobody chose', () => 
   // KILLING MUTATION: seed once at mount (useState(base)) instead of following the server value until
   // the person edits. RESULT: RED — the editor keeps showing the default the slow read left behind.
   it('an untouched editor switches to the server’s value when it lands — not the default', async () => {
-    localStorage.setItem(BAR_LAYOUT_CACHE_KEY, JSON.stringify({ layout: null, canEdit: true }))
+    localStorage.setItem(BAR_LAYOUT_CACHE_KEY, JSON.stringify({ userId: 'dave', layout: null, canEdit: true }))
     let answer
     fetchPrefsSpy.mockReturnValue(new Promise(r => { answer = r }))
     await act(async () => { render(tree()) })
@@ -146,7 +146,7 @@ describe('THE STALE-SEED FIX — Save never writes a value nobody chose', () => 
 
   // KILLING MUTATION: drop the readFailed line, or treat a failed read as loaded. RESULT: RED.
   it('a FAILED read keeps Save off and says the current bar could not be read', async () => {
-    localStorage.setItem(BAR_LAYOUT_CACHE_KEY, JSON.stringify({ layout: null, canEdit: true }))
+    localStorage.setItem(BAR_LAYOUT_CACHE_KEY, JSON.stringify({ userId: 'dave', layout: null, canEdit: true }))
     await open(null)
     expect(screen.getByTestId('bar-read-failed').textContent).toMatch(/could not be read/)
     moveDown('Today')

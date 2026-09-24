@@ -37,6 +37,10 @@ import {
 const DEFAULT_BAR = 'today,garden,create,harvests,put-up'
 const read = (k) => JSON.parse(localStorage.getItem(k) ?? 'null')
 const seed = (k, v) => localStorage.setItem(k, JSON.stringify(v))
+// The launch caches' stamped shapes (NavPrefsContext.jsx header). Every entry carries its owner.
+const ME = 'dave'
+const barCache = (layout, canEdit = false, userId = ME) => ({ userId, layout, canEdit })
+const pinsCache = (pins, userId = ME) => ({ userId, pins })
 
 // A probe that exposes the hooks' state as text and their functions through a ref.
 const api = { current: null }
@@ -78,7 +82,7 @@ describe('the bar — first paint, landing, and the next launch', () => {
   // KILLING MUTATION: seed barRaw from null instead of the cache. RESULT: RED — the first frame is the
   // shipped bar and the saved one arrives later: the re-layout under a thumb this cache exists to stop.
   it('the FIRST paint draws the cached bar, before prefs have answered', () => {
-    seed(BAR_LAYOUT_CACHE_KEY, { layout: { order: ['harvests', 'today', 'create', 'garden', 'put-up'], hidden: ['put-up'] }, canEdit: true })
+    seed(BAR_LAYOUT_CACHE_KEY, barCache({ order: ['harvests', 'today', 'create', 'garden', 'put-up'], hidden: ['put-up'] }, true))
     fetchPrefsSpy.mockReturnValue(new Promise(() => {}))   // prefs never land
     render(tree())
     expect(text('bar')).toBe('harvests,today,create,garden')
@@ -88,11 +92,11 @@ describe('the bar — first paint, landing, and the next launch', () => {
 
   // KILLING MUTATION: apply every landing at once (drop the hadBarCache check). RESULT: RED.
   it('with a cache at launch, a NEW server value waits for the next launch — but is cached now', async () => {
-    seed(BAR_LAYOUT_CACHE_KEY, { layout: null, canEdit: false })
+    seed(BAR_LAYOUT_CACHE_KEY, barCache(null, false))
     fetchPrefsSpy.mockResolvedValue({ bar_layout: { order: ['today', 'create', 'garden', 'harvests', 'put-up'], hidden: ['garden'] }, more_pins: null, can_edit_bar: true })
     await boot()
     expect(text('bar')).toBe(DEFAULT_BAR)                       // unchanged this session
-    expect(read(BAR_LAYOUT_CACHE_KEY)).toEqual({ layout: { order: ['today', 'create', 'garden', 'harvests', 'put-up'], hidden: ['garden'] }, canEdit: true })
+    expect(read(BAR_LAYOUT_CACHE_KEY)).toEqual(barCache({ order: ['today', 'create', 'garden', 'harvests', 'put-up'], hidden: ['garden'] }, true))
     expect(text('edit')).toBe('true')                           // the editor flag is live, not a layout
   })
 
@@ -118,7 +122,7 @@ describe('the bar — first paint, landing, and the next launch', () => {
 
   // KILLING MUTATION: make applyLayout write the cache but not commit. RESULT: RED.
   it('applyLayout — the editor’s own Save — applies at once and becomes the cache', async () => {
-    seed(BAR_LAYOUT_CACHE_KEY, { layout: null, canEdit: true })
+    seed(BAR_LAYOUT_CACHE_KEY, barCache(null, true))
     await boot()
     const layout = { order: ['garden', 'today', 'create', 'harvests', 'put-up'], hidden: ['put-up'] }
     act(() => { api.current.applyLayout(layout) })
@@ -134,7 +138,7 @@ describe('the bar — first paint, landing, and the next launch', () => {
   })
 
   it('a failed prefs read changes nothing: the cached bar stands and the cache is not overwritten', async () => {
-    const cached = { layout: { order: [...DEFAULT_BAR.split(',')], hidden: ['put-up'] }, canEdit: true }
+    const cached = barCache({ order: [...DEFAULT_BAR.split(',')], hidden: ['put-up'] }, true)
     seed(BAR_LAYOUT_CACHE_KEY, cached)
     fetchPrefsSpy.mockResolvedValue(null)
     await boot()
@@ -146,7 +150,7 @@ describe('the bar — first paint, landing, and the next launch', () => {
   // KILLING MUTATION: canEditBar = cachedCanEdit only (ignore the server). RESULT: RED — Dave's
   // editor door would stay open after the server withdrew it (or closed after it granted it).
   it('can_edit_bar comes from the server once it answers, and is false by default', async () => {
-    seed(BAR_LAYOUT_CACHE_KEY, { layout: null, canEdit: true })
+    seed(BAR_LAYOUT_CACHE_KEY, barCache(null, true))
     fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: null, can_edit_bar: false })
     await boot()
     expect(text('edit')).toBe('false')
@@ -167,7 +171,7 @@ describe('the bar — first paint, landing, and the next launch', () => {
 
 describe('pins — optimistic, durable, and rolled back only on a refusal', () => {
   it('first paint draws the cached pins; a landing with nothing local adopts the server list', async () => {
-    seed(MORE_PINS_CACHE_KEY, ['photos'])
+    seed(MORE_PINS_CACHE_KEY, pinsCache(['photos']))
     fetchPrefsSpy.mockReturnValue(new Promise(() => {}))
     const view = render(tree())
     expect(text('pins')).toBe('photos')
@@ -176,7 +180,7 @@ describe('pins — optimistic, durable, and rolled back only on a refusal', () =
     await boot()
     // resolvePins ran: 'sow' collapsed into 'seeds', the unknown id was KEPT.
     expect(text('pins')).toBe('seeds,future-row')
-    expect(read(MORE_PINS_CACHE_KEY)).toEqual(['seeds', 'future-row'])
+    expect(read(MORE_PINS_CACHE_KEY)).toEqual(pinsCache(['seeds', 'future-row']))
   })
 
   // KILLING MUTATION: await the save before committing the new list. RESULT: RED — the button would
@@ -218,8 +222,8 @@ describe('pins — optimistic, durable, and rolled back only on a refusal', () =
     expect(outcome).toBe('pinned')
     expect(text('pins')).toBe('photos')
     expect(text('pending')).toBe('true')
-    expect(read(MORE_PINS_PENDING_KEY)).toBe(true)
-    expect(read(MORE_PINS_CACHE_KEY)).toEqual(['photos'])
+    expect(read(MORE_PINS_PENDING_KEY)).toBe(ME)
+    expect(read(MORE_PINS_CACHE_KEY)).toEqual(pinsCache(['photos']))
     // KILLING MUTATION (this half): drop the onReconnect subscription. RESULT: RED — never re-sent.
     saveSpy.mockResolvedValueOnce({ ok: true })
     await act(async () => { window.dispatchEvent(new Event('online')) })
@@ -249,7 +253,7 @@ describe('pins — optimistic, durable, and rolled back only on a refusal', () =
     expect(outcome).toBe('error')
     expect(text('pins')).toBe('seeds')
     expect(text('pending')).toBe('false')
-    expect(read(MORE_PINS_CACHE_KEY)).toEqual(['seeds'])
+    expect(read(MORE_PINS_CACHE_KEY)).toEqual(pinsCache(['seeds']))
     expect(localStorage.getItem(MORE_PINS_PENDING_KEY)).toBeNull()
   })
 
@@ -276,8 +280,8 @@ describe('pins — optimistic, durable, and rolled back only on a refusal', () =
   // KILLING MUTATION: drop the [s.epoch] launch effect (leaving only the on-landing re-send).
   // RESULT: RED — with prefs never answering, nothing is sent.
   it('a pending list is re-sent at launch even when prefs never answer', async () => {
-    seed(MORE_PINS_CACHE_KEY, ['photos'])
-    seed(MORE_PINS_PENDING_KEY, true)
+    seed(MORE_PINS_CACHE_KEY, pinsCache(['photos']))
+    seed(MORE_PINS_PENDING_KEY, ME)
     fetchPrefsSpy.mockReturnValue(new Promise(() => {}))
     await act(async () => { render(tree()) })
     expect(saveSpy).toHaveBeenCalledTimes(1)
@@ -286,8 +290,8 @@ describe('pins — optimistic, durable, and rolled back only on a refusal', () =
   })
 
   it('a list left pending by the last session is re-sent at launch, and the server copy does not overwrite it', async () => {
-    seed(MORE_PINS_CACHE_KEY, ['seeds', 'photos'])
-    seed(MORE_PINS_PENDING_KEY, true)
+    seed(MORE_PINS_CACHE_KEY, pinsCache(['seeds', 'photos']))
+    seed(MORE_PINS_PENDING_KEY, ME)
     fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: ['seeds'], can_edit_bar: false })
     await boot()
     expect(saveSpy).toHaveBeenCalledTimes(1)
@@ -351,6 +355,104 @@ describe('a different person on the same phone', () => {
     expect(text('bar')).toBe(DEFAULT_BAR)
     expect(text('pins')).toBe('')
     expect(text('edit')).toBe('false')
+  })
+})
+
+// QA IMPORTANT-1 — A SESSION THAT ENDS WITHOUT THE SIGN-OUT FUNNEL. An expired or revoked Clerk session
+// never runs clearClientPrefs(), so the previous person's caches are still on the phone when the next
+// person signs in. NOTHING IN THIS BLOCK CLEARS STORAGE between the two people: that is the whole point
+// (the case above clears it itself, so it can only ever test the funnel). Each case names the mutation.
+describe('the same phone, a session that ended WITHOUT sign-out (storage never cleared)', () => {
+  const DAVE_LAYOUT = { order: [...DEFAULT_BAR.split(',')], hidden: ['put-up'] }
+  const JEN_LAYOUT = { order: [...DEFAULT_BAR.split(',')], hidden: ['garden'] }
+  const seedDaveLeftovers = () => {
+    seed(BAR_LAYOUT_CACHE_KEY, barCache(DAVE_LAYOUT, true, 'dave'))
+    seed(MORE_PINS_CACHE_KEY, pinsCache(['seeds', 'photos'], 'dave'))
+    seed(MORE_PINS_PENDING_KEY, 'dave')                 // Dave pinned offline; never confirmed
+  }
+
+  // KILLING MUTATIONS: readLaunch ignores the stamp (`ownedBy` → any object); the pending check
+  // ignores whose sub it holds. RESULT: RED — Jen's first frame is Dave's bar with Dave's editor door,
+  // and Dave's unsent list is PATCHed onto Jen's row with Jen's token.
+  it('Jen, launching on Dave’s leftovers: shipped first paint, no editor door, and Dave’s pending list is NEVER sent', async () => {
+    seedDaveLeftovers()
+    userRef.current = { id: 'jen' }
+    let answer
+    fetchPrefsSpy.mockReturnValue(new Promise(r => { answer = r }))
+    await act(async () => { render(tree()) })
+    expect(text('bar')).toBe(DEFAULT_BAR)
+    expect(text('moved')).toBe('')
+    expect(text('edit')).toBe('false')
+    expect(text('pins')).toBe('')
+    expect(text('pending')).toBe('false')
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    await flush()
+    expect(saveSpy).not.toHaveBeenCalled()
+    // Her OWN server bar applies at once when it lands — for her this is a first launch.
+    await act(async () => { answer({ bar_layout: JEN_LAYOUT, more_pins: null, can_edit_bar: false }) })
+    expect(text('bar')).toBe('today,create,harvests,put-up')
+    expect(text('moved')).toBe('garden')
+    expect(saveSpy).not.toHaveBeenCalled()
+    // …and the caches now belong to her.
+    expect(read(BAR_LAYOUT_CACHE_KEY)).toEqual(barCache(JEN_LAYOUT, false, 'jen'))
+    expect(read(MORE_PINS_CACHE_KEY)).toEqual(pinsCache([], 'jen'))
+  })
+
+  // The same, inside ONE mounted provider — the real shape: the provider sits above the routes, the
+  // Clerk identity goes dave → null → jen, and nothing runs sign-out in between.
+  // KILLING MUTATION: the identity-change reset re-reads the caches without the owner check.
+  // RESULT: RED.
+  it('dave → (session expires) → jen in one mounted app: Dave’s offline pin is never re-sent as Jen', async () => {
+    fetchPrefsSpy.mockResolvedValue({ bar_layout: DAVE_LAYOUT, more_pins: ['seeds'], can_edit_bar: true })
+    const view = await boot()
+    expect(text('bar')).toBe('today,garden,create,harvests')
+    saveSpy.mockResolvedValueOnce({ ok: false, status: 0 })          // offline
+    await act(async () => { await api.current.togglePin('photos') })
+    expect(read(MORE_PINS_PENDING_KEY)).toBe('dave')
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    // No sign-out: the session simply ends, and Jen signs in on the same phone.
+    userRef.current = null
+    await act(async () => { view.rerender(tree()) })
+    fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: null, can_edit_bar: false })
+    userRef.current = { id: 'jen' }
+    await act(async () => { view.rerender(tree()) })
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    await flush()
+    expect(saveSpy).toHaveBeenCalledTimes(1)                          // only Dave's own, earlier save
+    expect(text('bar')).toBe(DEFAULT_BAR)
+    expect(text('edit')).toBe('false')
+    expect(text('pins')).toBe('')
+  })
+
+  // A value written before this fix (or by hand) carries no owner; it is not trusted either.
+  // KILLING MUTATION: accept an unstamped shape. RESULT: RED.
+  it('a legacy unstamped cache counts as no cache', async () => {
+    seed(BAR_LAYOUT_CACHE_KEY, { layout: DAVE_LAYOUT, canEdit: true })
+    seed(MORE_PINS_CACHE_KEY, ['seeds'])
+    seed(MORE_PINS_PENDING_KEY, true)
+    let answer
+    fetchPrefsSpy.mockReturnValue(new Promise(r => { answer = r }))
+    await act(async () => { render(tree()) })
+    expect(text('bar')).toBe(DEFAULT_BAR)
+    expect(text('edit')).toBe('false')
+    expect(text('pins')).toBe('')
+    expect(saveSpy).not.toHaveBeenCalled()
+    await act(async () => { answer({ bar_layout: JEN_LAYOUT, more_pins: ['photos'], can_edit_bar: true }) })
+    expect(text('bar')).toBe('today,create,harvests,put-up')   // applied at once: no trusted cache
+    expect(text('pins')).toBe('photos')
+  })
+
+  // Control: the owner's OWN stamped caches are still honoured — the stamp is a filter, not a wipe.
+  it('the owner’s own stamped caches still draw the first paint and re-send her own pending list', async () => {
+    seed(BAR_LAYOUT_CACHE_KEY, barCache(JEN_LAYOUT, false, 'jen'))
+    seed(MORE_PINS_CACHE_KEY, pinsCache(['photos'], 'jen'))
+    seed(MORE_PINS_PENDING_KEY, 'jen')
+    userRef.current = { id: 'jen' }
+    fetchPrefsSpy.mockReturnValue(new Promise(() => {}))
+    await act(async () => { render(tree()) })
+    expect(text('bar')).toBe('today,create,harvests,put-up')
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(saveSpy.mock.calls[0][0].ids).toEqual(['photos'])
   })
 })
 
