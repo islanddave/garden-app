@@ -47,6 +47,7 @@ import {
   phReadingText, describeLastPhReading, phPromptAnchor, phPrompt, phRecorderVisible, phStagePatch,
   PH_PROMPT, PH_CHECK_DAYS, PH_STAGE_KIND, PH_SCALE_MIN, PH_SCALE_MAX, PH_SCALE_HINT,
   PH_RECORD_CTA, PH_INSTRUMENT_NOTE, PH_LINK_URL, PH_LINK_LABEL, SUBMERSION_PROMPT,
+  fermentStallPrompt, fermentPrompts, FERMENT_STALL_DAYS, FERMENT_STALL_PROMPT, FERMENT_STALL_NOTE,
 } from '../components/putup/goingNow.js'
 
 // jsdom normalises every inline colour to `rgb(r, g, b)`, so a regex over the palette's HEX values
@@ -112,6 +113,19 @@ const DRY = {
 const FERMENT_READ = {
   ...FERMENT, id: 'kb-read', label: 'Kraut crock',
   last_ph_reading: '4.60', last_ph_read_at: local('2026-09-02T09:00:00'),
+}
+// ⚠ ADDED BY THE §4 STALL PROMPT, and the reason is a real behaviour change rather than a test
+// convenience. FERMENT is FOURTEEN days old, so it is now past the one-week deadline and its card
+// asks the STALL question instead of the cadence question — fermentPrompts renders one pH question
+// per card, never two. Every assertion below that is about the CADENCE prompt therefore needs a
+// ferment INSIDE the deadline, which is what this is: started five days before NOW, no reading, so
+// the cadence rule is satisfied (>= 2 days since the anchor) and the deadline rule is not.
+// It is a separate fixture rather than an edit to FERMENT because FERMENT's fourteen days are load-
+// bearing for the elapsed-line assertions in the sibling suite.
+const FERMENT_YOUNG = {
+  ...FERMENT, id: 'kb-young', label: 'Dilly beans',
+  started_at: local('2026-08-30T09:00:00'), first_recorded_at: local('2026-08-30T09:00:00'),
+  current_stage_entered_at: local('2026-08-30T09:00:00'),
 }
 
 function renderView(batches, extra = {}) {
@@ -300,7 +314,9 @@ describe('phStagePatch — what gets sent, and what never does', () => {
 
 describe('GoingNowView — the prompt and the recorded line on the card', () => {
   it('renders the question in the card\'s ordinary ink, never as a badge or a warning colour', () => {
-    renderView([FERMENT])
+    // FERMENT_YOUNG: FERMENT is past the §4 deadline and now shows the stall question instead. The
+    // stall question's own ink is asserted in the stall suite below, against this same helper.
+    renderView([FERMENT_YOUNG])
     const line = screen.getByTestId('going-batch-ph-prompt')
     expect(line.textContent).toBe('Measured the pH in the last day or two?')
     expect(line.style.color).toBe(toRgb(P.mid))
@@ -317,11 +333,14 @@ describe('GoingNowView — the prompt and the recorded line on the card', () => 
   // down: a PAUSED ferment was still being asked whether it had been measured. Both arms in one
   // render off one fixture, so the absence cannot pass because the selector was wrong.
   it('asks nothing of a PAUSED ferment, while its unpaused twin is still asked', () => {
-    const setDown = { ...FERMENT, id: 'kb-setdown', label: 'Set down', suspended_at: '2026-08-25T12:00:00.000Z' }
-    renderView([FERMENT, setDown])
+    // FERMENT_YOUNG, not FERMENT: past the §4 deadline the cadence question is replaced by the stall
+    // question, and this assertion is about the cadence one. The stall prompt's own suspension arm is
+    // asserted separately below, off its own fixture, so neither absence can pass on the other's gate.
+    const setDown = { ...FERMENT_YOUNG, id: 'kb-setdown', label: 'Set down', suspended_at: '2026-08-31T12:00:00.000Z' }
+    renderView([FERMENT_YOUNG, setDown])
     const byId = Object.fromEntries(screen.getAllByTestId('going-batch')
       .map(c => [c.getAttribute('data-batch-id'), c]))
-    expect(within(byId['kb-ferment']).getByTestId('going-batch-ph-prompt').textContent).toBe(PH_PROMPT)
+    expect(within(byId['kb-young']).getByTestId('going-batch-ph-prompt').textContent).toBe(PH_PROMPT)
     expect(within(byId['kb-setdown']).queryByTestId('going-batch-ph-prompt')).toBeNull()
     // The RECORDER is deliberately not gated the same way — a reading taken on a paused ferment is
     // still a fact, and the door the cook opens makes no claim about the batch.
@@ -532,13 +551,21 @@ describe('the rendered surface makes no assessment', () => {
   // "safely" as part of the destination's slug. A link to a published page is not the app making a
   // claim; the label the app writes beside it is, and the label is in textContent.
   it('renders no verdict vocabulary and no acid-line number anywhere', () => {
-    renderView([FERMENT, FERMENT_READ, MASH, DRY])
+    // FERMENT_YOUNG added so the CADENCE copy is on the surface at all — FERMENT is now past the §4
+    // deadline and carries the stall copy instead, and a sweep whose green control has quietly gone
+    // absent is a sweep over a surface missing the thing it polices.
+    renderView([FERMENT, FERMENT_YOUNG, FERMENT_READ, MASH, DRY])
     fireEvent.click(screen.getAllByTestId('going-ph-open')[0])
     const view = screen.getByTestId('going-now-view')
     // Green control: the surface really is rendering this lane's copy.
     expect(view.textContent).toContain(PH_PROMPT)
     expect(view.textContent).toContain('pH 4.60 recorded Sep 2')
     expect(view.textContent).toContain(PH_INSTRUMENT_NOTE)
+    // …and the §4 copy, which this sweep now also polices. Without this arm the vocabulary and
+    // acid-number claims below would be asserted over a surface that does not render the newest
+    // food-safety copy at all, which is how a sweep silently stops covering what it was widened for.
+    expect(view.textContent).toContain(FERMENT_STALL_PROMPT)
+    expect(view.textContent).toContain(FERMENT_STALL_NOTE)
     // The claim.
     expect(view.textContent).not.toMatch(
       /\bsafe\b|\bsafety\b|\bunsafe\b|\bdanger\w*\b|botulis\w*|botulinum|acidif\w*|shelf.stable|shelf.life|spoil\w*|\bready\b|\bdone\b|\bgood\b/i)
@@ -546,5 +573,165 @@ describe('the rendered surface makes no assessment', () => {
       if (n === '4.60') continue    // the recorded reading itself, which is the one number allowed
       expect(`shown ${n}: ${acidRe(n).test(view.innerHTML)}`).toBe(`shown ${n}: false`)
     }
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+// §4 — THE ONE-WEEK STALL PROMPT
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+// FOODSAFETY-RULING-V101 §4: elapsed time is an invalid ACCEPTANCE input and a valid REJECTION input,
+// and V100's flat ban suppressed the corpus's only rule telling a cook to throw a batch away — a
+// restrictive ruling producing a permissive outcome. Every assertion below names which half of the
+// ruling it holds, because the two halves are one edit apart.
+//
+// ⚠ THE RULING'S OWN EXAMPLE COPY NAMES AN ACID NUMBER AND THIS IMPLEMENTATION DOES NOT. That is a
+// deliberate loss to the census at the bottom of this file, which forbids the literal in SOURCE and in
+// the DOM across fifteen files on the reasoning that a number on this surface is a threshold whether
+// or not any code compares to it. The census is green-controlled and its regex is proven non-vacuous;
+// the ruling's illustrative sentence is neither. What §4 REQUIRES — a time-keyed failure prompt
+// carrying its scope condition — survives without the figure, and both are asserted here.
+const DAY = 86400000
+const deadlineOf = (batch) => new Date(batch.started_at).getTime() + FERMENT_STALL_DAYS * DAY
+
+describe('goingNow — the one-week stall prompt (ruling §4)', () => {
+  // ⚠ WRITTEN OUT, NOT DERIVED FROM THE CONSTANT UNDER TEST. The first draft of this computed the
+  // deadline as `started_at + FERMENT_STALL_DAYS * DAY`, which moves with the constant — so it agreed
+  // with the function whatever the constant said, and a mutation to SIX DAYS SURVIVED it. It proved
+  // the two halves of the module matched each other and nothing at all about the published figure.
+  // The instants below are literals and the constant is pinned separately, so either can red alone.
+  it('holds the published one-week figure', () => {
+    expect(FERMENT_STALL_DAYS).toBe(7)
+  })
+
+  it('is silent before the deadline and speaks on it', () => {
+    // FERMENT_YOUNG starts 2026-08-30T09:00 local, so one week is 2026-09-06T09:00 local. BOTH SIDES
+    // OF THE BOUNDARY off one fixture — two fixtures, one per side, lets an off-by-one hide in the gap.
+    expect(fermentStallPrompt(FERMENT_YOUNG, new Date('2026-09-06T08:59:59').getTime())).toBeNull()
+    expect(fermentStallPrompt(FERMENT_YOUNG, new Date('2026-09-06T09:00:00').getTime()))
+      .toBe(FERMENT_STALL_PROMPT)
+    // SIX days in. A shorter clock would already be speaking here, which is the assertion that makes
+    // the two literals above load-bearing rather than self-confirming.
+    expect(fermentStallPrompt(FERMENT_YOUNG, new Date('2026-09-05T09:00:00').getTime())).toBeNull()
+  })
+
+  it('is silent on every kind but a known ferment', () => {
+    for (const kind of [null, undefined, 'other', 'dehydrate', 'candy', 'cure', 'infuse', 'age']) {
+      expect(fermentStallPrompt({ ...FERMENT, kind }, NOW)).toBeNull()
+    }
+    // GREEN CONTROL on the same fixture: with the ferment kind it DOES speak, so the absences above
+    // are the kind gate rather than some other predicate silencing the whole set.
+    expect(fermentStallPrompt(FERMENT, NOW)).toBe(FERMENT_STALL_PROMPT)
+  })
+
+  it('is silent on a paused ferment', () => {
+    expect(fermentStallPrompt({ ...FERMENT, suspended_at: '2026-08-25T12:00:00.000Z' }, NOW)).toBeNull()
+  })
+
+  // §4 retracted V100's "a perfectly known start date tells you nothing a guessed one doesn't" in
+  // terms: a one-week deadline is not evaluable against a start known only to the month. This is the
+  // one affordance where precision carries information for the REJECTION test.
+  it('is silent at every precision coarser than a day, and speaks at day or better', () => {
+    for (const p of ['week', 'month', 'unknown', null, 'a value this client has never seen']) {
+      expect(fermentStallPrompt({ ...FERMENT, start_precision: p }, NOW)).toBeNull()
+    }
+    for (const p of ['exact', 'hour', 'day']) {
+      expect(fermentStallPrompt({ ...FERMENT, start_precision: p }, NOW)).toBe(FERMENT_STALL_PROMPT)
+    }
+  })
+
+  it('never counts the deadline from first_recorded_at', () => {
+    const noStart = { ...FERMENT, started_at: null, start_precision: 'exact' }
+    // CONTROL: the fallback candidate is present and old enough to fire, so the silence below is the
+    // refusal to use it rather than an absent column.
+    expect(new Date(noStart.first_recorded_at).getTime() + FERMENT_STALL_DAYS * DAY).toBeLessThan(NOW)
+    expect(fermentStallPrompt(noStart, NOW)).toBeNull()
+  })
+
+  it('is answered by a reading taken AFTER the deadline, and not by one taken before', () => {
+    const d = deadlineOf(FERMENT)
+    expect(fermentStallPrompt({ ...FERMENT, last_ph_read_at: new Date(d + 1000).toISOString() }, NOW)).toBeNull()
+    expect(fermentStallPrompt({ ...FERMENT, last_ph_read_at: new Date(d - 1000).toISOString() }, NOW))
+      .toBe(FERMENT_STALL_PROMPT)
+  })
+
+  // ⚠ THE LINE, AND THE ASSERTION THAT KEEPS IT. The prompt goes quiet on the ACT of measuring and
+  // never on what was measured. If any comparison to a threshold existed anywhere in this path, the
+  // two loops below would disagree with each other.
+  it('reads only WHEN a reading was taken, never the reading itself', () => {
+    const stamp = new Date(deadlineOf(FERMENT) + 1000).toISOString()
+    for (const v of ['3.10', '9.90', '0', '', null, 'not a number']) {
+      expect(fermentStallPrompt({ ...FERMENT, last_ph_reading: v, last_ph_read_at: stamp }, NOW)).toBeNull()
+    }
+    for (const v of ['3.10', '9.90', null]) {
+      expect(fermentStallPrompt({ ...FERMENT, last_ph_reading: v, last_ph_read_at: null }, NOW))
+        .toBe(FERMENT_STALL_PROMPT)
+    }
+  })
+
+  it('treats an unparseable read instant as no answer rather than as an answer', () => {
+    expect(fermentStallPrompt({ ...FERMENT, last_ph_read_at: 'whenever' }, NOW)).toBe(FERMENT_STALL_PROMPT)
+  })
+
+  it('asks ONE pH question per card, never two, and always returns both keys', () => {
+    expect(fermentPrompts(FERMENT, NOW)).toEqual({ stall: FERMENT_STALL_PROMPT, cadence: null })
+    expect(fermentPrompts(FERMENT_YOUNG, NOW)).toEqual({ stall: null, cadence: PH_PROMPT })
+    // Both keys present even when neither fires, so a destructuring caller cannot read `undefined`
+    // off a key that silently stopped existing.
+    expect(fermentPrompts(DRY, NOW)).toEqual({ stall: null, cadence: null })
+  })
+})
+
+describe('GoingNowView — the stall prompt on the card (ruling §4)', () => {
+  it('renders the question and its attribution in ordinary ink, never as an alarm', () => {
+    renderView([FERMENT])
+    expect(screen.getByTestId('going-batch-stall').style.color).toBe(toRgb(P.mid))
+    expect(screen.getByTestId('going-batch-stall-note').textContent).toBe(FERMENT_STALL_NOTE)
+    const card = screen.getByTestId('going-batch')
+    expect(card.outerHTML).toContain(toRgb(P.border))
+    expect(card.querySelectorAll('[data-alarm-ink-exempt]')).toHaveLength(0)
+    expect(hasNoAlarmInk(card)).toBe(true)
+  })
+
+  // §4: "Carry the scope condition… Say which." The deadline is borrowed from guidance written for
+  // businesses, and the corpus's tighter figures would fire sooner on a jar sitting on a counter.
+  it('names whose guidance the deadline is, and the tighter limits beside it', () => {
+    renderView([FERMENT])
+    const note = screen.getByTestId('going-batch-stall-note').textContent
+    expect(note).toContain('small businesses and retail food establishments')
+    expect(note).toContain('BC CDC')
+    expect(note).toContain('three days at room temperature')
+  })
+
+  it('replaces the cadence question rather than stacking under it', () => {
+    renderView([FERMENT])
+    expect(screen.getByTestId('going-batch-stall').textContent).toContain(FERMENT_STALL_PROMPT)
+    expect(screen.queryByTestId('going-batch-ph-prompt')).toBeNull()
+  })
+
+  it('is absent on a paused ferment and on a known non-ferment', () => {
+    renderView([{ ...FERMENT, id: 'kb-paused', suspended_at: '2026-08-25T12:00:00.000Z' }, DRY, FERMENT])
+    const byId = Object.fromEntries(screen.getAllByTestId('going-batch')
+      .map(c => [c.getAttribute('data-batch-id'), c]))
+    expect(within(byId['kb-paused']).queryByTestId('going-batch-stall')).toBeNull()
+    expect(within(byId['kb-dry']).queryByTestId('going-batch-stall')).toBeNull()
+    // GREEN CONTROL on the same render: the testid IS reachable here, so the two absences are gates
+    // rather than a selector that matches nothing on this surface.
+    expect(within(byId['kb-ferment']).getByTestId('going-batch-stall')).toBeTruthy()
+  })
+
+  // The readiness ban is UNCHANGED by §4 — this asserts the card gained a rejection prompt and NOT an
+  // acceptance affordance along with it.
+  it('adds no countdown, no verdict vocabulary and no acid number', () => {
+    renderView([FERMENT])
+    const card = screen.getByTestId('going-batch')
+    expect(card.textContent).not.toMatch(/\bdue\b|\bremaining\b|\boverdue\b|\bready\b|\bdays left\b|\blate\b/i)
+    expect(card.textContent).not.toMatch(/\bday \d+ of \d+\b|\d\s?%/)
+    expect(card.querySelector('progress')).toBeNull()
+    expect(card.textContent).not.toMatch(/\bsafe\b|\bsafety\b|acidif\w*|botulis\w*|spoil\w*|shelf.life/i)
+    for (const n of ACID_LINE_NUMBERS) {
+      expect(`stall card shows ${n}: ${acidRe(n).test(card.innerHTML)}`).toBe(`stall card shows ${n}: false`)
+    }
+    // GREEN CONTROL: the copy every arm above is sweeping is actually on this card.
+    expect(card.textContent).toContain(FERMENT_STALL_PROMPT)
   })
 })

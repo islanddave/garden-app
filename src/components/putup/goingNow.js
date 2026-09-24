@@ -342,6 +342,94 @@ export function phStagePatch(raw, atIso) {
   return { stage_kind: PH_STAGE_KIND, ph_reading: text, ph_read_at: atIso }
 }
 
+// ── the one-week stall prompt ────────────────────────────────────────────────────────────────────
+// FOODSAFETY-RULING-V101 §4. The corpus's ONE time-keyed rule that tells a cook to throw a batch
+// away, and V100 banned it along with every other elapsed-time affordance — a restrictive ruling
+// producing a permissive outcome, which is the failure §4 exists to correct.
+//
+// ⚠ WHY THIS IS NOT THE THING ELAPSED TIME IS BANNED FOR, and the distinction is the whole ruling:
+// elapsed time is an invalid ACCEPTANCE input and a valid REJECTION input. A readiness claim made
+// from a clock ("it's been long enough") is a fabrication; a question asked because a published
+// deadline has passed is a prompt to go and measure. Every readiness affordance stays banned at every
+// precision — nothing below adds a countdown, a progress figure, a completion or a verdict, and no
+// function here reads a recorded value back.
+//
+// ⚠ NO ACID NUMBER, IN THE COPY OR IN THIS FILE. The ruling's own example sentence names one and it is
+// deliberately not written here. This file is one of fifteen swept by src/__tests__/PutUpPhReading
+// .test.jsx ("the acid line appears nowhere in this lane's source"), which forbids the literal in
+// SOURCE and in the DOM on the stated reasoning that a number on this surface is a threshold whether
+// or not any code compares to it. That census carries a green control and a proven-non-vacuous regex,
+// so it is a decision rather than an oversight, and the ruling's illustrative copy loses to it. What
+// §4 actually REQUIRES is a time-keyed failure prompt carrying its scope condition; both survive
+// without the figure, and the figure keeps its source and its scope at the end of the link-out.
+//
+// ⚠ IT IS ANSWERED BY THE ACT OF MEASURING, NEVER BY THE VALUE — and that distinction is the whole
+// reason this is allowed to go quiet at all. Silencing on a reading that "looked acceptable" would be
+// the app comparing a number to a threshold, which is the one thing the pH affordance above exists not
+// to do, and it would do it against the cook's own unvalidated typing. Silencing because a reading was
+// TAKEN after the deadline reads nothing: it asks "have you been to look since this came due", the
+// cook answers by going to look, and a question nobody can answer is a nag rather than a prompt. A
+// reading taken BEFORE the deadline does not answer it — that measurement predates the question.
+// Otherwise it stops only on a pause, and on a close (a closed batch is not on this surface).
+export const FERMENT_STALL_DAYS = 7
+
+// A QUESTION, and it stops — the same shape and the same ink as SUBMERSION_PROMPT and PH_PROMPT. It
+// asks whether the reading has moved. It does not say where it should have got to, it does not claim
+// anything about this batch, and it carries no urgency tone (ruling 4 refuses one).
+export const FERMENT_STALL_PROMPT = "It's been a week — has the pH come down yet?"
+
+// SAY WHICH, per §4, because the deadline is borrowed and the borrowing is load-bearing: the one-week
+// figure is authored for businesses, and the tighter figures elsewhere in the same corpus would fire
+// sooner on a jar sitting on a counter. Rendered as attribution beneath the question, never as a
+// verdict, and spelled rather than digitised so no numeral on this line can read as a threshold.
+export const FERMENT_STALL_NOTE =
+  'Snyder et al., writing for small businesses and retail food establishments, treat a ferment that '
+  + 'has not come down within a week as a failed one and say to throw it out. BC CDC uses tighter '
+  + 'limits for kimchi — three days at room temperature, one week refrigerated.'
+
+// ANCHORED ON THE START, AND GATED ON ITS PRECISION. This is the one affordance in this file where a
+// coarse start silences a question for the OPPOSITE reason to describeExpectedWindow's gate: §4
+// retracted V100's "a perfectly known start date tells you nothing a guessed one doesn't" in terms —
+// a one-week deadline is not evaluable against a start known only to the month. Precision carries
+// information HERE, for the rejection test, which is the test the evidence supports.
+//
+// first_recorded_at is deliberately NOT a fallback, unlike phPromptAnchor's chain next door. That
+// column is when the row reached the database, not when the ferment began, and counting a deadline
+// from it would invent one. A ferment whose start nobody knows gets no deadline rather than a
+// fabricated one — and it still gets the cadence prompt, which makes no claim needing a start.
+export function fermentStallPrompt(batch, nowMs) {
+  if (!batch || batch.kind !== SUBMERSION_KIND) return null
+  if (isSuspended(batch)) return null
+  if (!startIsDayOrBetter(batch)) return null
+  const since = batch.started_at
+  if (!since) return null
+  const then = new Date(since).getTime()
+  if (Number.isNaN(then)) return null
+  const deadline = then + FERMENT_STALL_DAYS * DAY_MS
+  if (nowMs < deadline) return null
+  // The ONLY thing read off a reading anywhere in this module: WHEN it was taken. Never `ph_reading`,
+  // which this function does not touch and must never touch. An unparseable instant is treated as no
+  // reading at all rather than as an answer — the fail direction that keeps asking.
+  const read = batch.last_ph_read_at ? new Date(batch.last_ph_read_at).getTime() : NaN
+  if (!Number.isNaN(read) && read >= deadline) return null
+  return FERMENT_STALL_PROMPT
+}
+
+// THE CARD ASKS ONE pH QUESTION, NEVER TWO. Both predicates can be live at once — a fortnight-old
+// ferment nobody has measured satisfies the cadence rule and the deadline rule simultaneously — and
+// two questions about the same act, stacked, is the noise the four retired signalling surfaces died
+// of. The stall prompt WINS because it is the cadence question plus the thing the cook does not
+// already know; suppressing it in favour of the cadence line would drop information.
+//
+// The suppression lives HERE and not in the view, for the same seam reason as everything else in this
+// module: the .jsx paints what it is handed and decides nothing. Returning both keys always — rather
+// than one prompt string — keeps the two testids independent, so a future change cannot silently
+// merge them into one line that no assertion distinguishes.
+export function fermentPrompts(batch, nowMs) {
+  const stall = fermentStallPrompt(batch, nowMs)
+  return { stall, cadence: stall ? null : phPrompt(batch, nowMs) }
+}
+
 // ── the missing-datum CTA ────────────────────────────────────────────────────────────────────────
 // THE THREE STATES ARE NOT TWO. The 0a DDL is explicit that the two started_at-NULL states are
 // different claims: "an un-asked batch may prompt, an `unknown` one must never prompt again."
