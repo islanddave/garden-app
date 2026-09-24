@@ -590,47 +590,7 @@ describe('notificationPrefsClient — saveMorePins / saveBarLayout (reported)', 
   })
 })
 
-// I6, re-aimed (design §8): AN OLD CLIENT IGNORES THE NEW PREFS FIELDS. A bundle from before this
-// release keeps running on a phone until its service worker updates, and it saves prefs through these
-// same fire-and-forget writers. The route merges column by column with COALESCE, so a key a request
-// does not carry is left alone — which is only safe if no writer ever carries more_pins, bar_layout
-// or can_edit_bar by accident (say, by echoing the prefs object it read). Each writer sends exactly
-// its own key. KILLING MUTATION: have any writer spread the prefs it was handed into its body.
-// RESULT: RED — an old bundle's harmless save would then clear Dave's pins or his bar.
-describe('I6 — every other prefs writer names only its own key', () => {
-  const NEW_FIELDS = ['more_pins', 'bar_layout', 'can_edit_bar']
-  beforeEach(() => { global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({}) })) })
-  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks() })
-
-  it('no fire-and-forget writer sends a pin, a layout or the editor flag', async () => {
-    const mod = await loadModule('https://staging.example.com')
-    const getToken = async () => TOKEN
-    const writers = {
-      saveGardenGroupBy: () => mod.saveGardenGroupBy({ getToken, value: 'type' }),
-      saveGardenSortOrder: () => mod.saveGardenSortOrder({ getToken, value: 'alpha' }),
-      saveGardenExpanded: () => mod.saveGardenExpanded({ getToken, ids: ['a'] }),
-      saveGardenBloomSeen: () => mod.saveGardenBloomSeen({ getToken, ids: ['robin'] }),
-      saveGardenHelperRung1: () => mod.saveGardenHelperRung1({ getToken }),
-      patchNotificationPrefs: () => mod.patchNotificationPrefs({ getToken, critterVisit: 'off' }),
-      saveTodaySkipped: () => mod.saveTodaySkipped({ getToken, date: '2026-09-24', keys: ['k'] }),
-      saveLogManyAllSelected: () => mod.saveLogManyAllSelected({ getToken, value: false }),
-      saveHandedness: () => mod.saveHandedness({ getToken, value: 'left' }),
-      saveWhatsNewSeen: () => mod.saveWhatsNewSeen({ getToken, version: '4.146.0' }),
-    }
-    for (const [name, call] of Object.entries(writers)) {
-      global.fetch.mockClear()
-      await call()
-      expect(global.fetch, name).toHaveBeenCalledTimes(1)
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body)
-      expect(Object.keys(body), `${name} sent more than its own key`).toHaveLength(1)
-      for (const f of NEW_FIELDS) expect(Object.hasOwn(body, f), `${name} sent ${f}`).toBe(false)
-    }
-    // …and the two new writers send ONLY their own field.
-    global.fetch.mockClear()
-    await mod.saveMorePins({ getToken, ids: ['seeds'] })
-    expect(Object.keys(JSON.parse(global.fetch.mock.calls[0][1].body))).toEqual(['more_pins'])
-    global.fetch.mockClear()
-    await mod.saveBarLayout({ getToken, layout: { order: ['today', 'garden', 'create', 'harvests', 'put-up'], hidden: [] } })
-    expect(Object.keys(JSON.parse(global.fetch.mock.calls[0][1].body))).toEqual(['bar_layout'])
-  })
-})
+// I6 (design §8: an old client ignores the new prefs fields) is a STATIC scan now, in
+// prefsWriters.static.test.js. The runtime version that stood here called ten hand-listed writers with
+// fixed arguments, so none was ever handed a prefs object and the mutation it named could not happen;
+// a new writer, or a PATCH from another file, was not covered at all (QA MINOR-4).
