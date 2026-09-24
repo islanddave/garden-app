@@ -614,16 +614,18 @@ function heldLandingOf(held, qty, weight, selected) {
 }
 
 // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — THE ONE WORDING of amounts a crop change took off the record: the note
-// for the banner and the row for the strip. Shared by the switch itself and by a failed save that had sent
-// them (review IMPORTANT-1), so the row reads the same whichever of the two finds it true.
+// for the banner, the row for the strip and the debug mark. Shared by the switch itself and by a failed save
+// that had sent them (review IMPORTANT-1), so the row reads the same whichever of the two finds it true.
+// BUG-VOICESLOWSAVEFALSEROWS-001 — the other doors that take values off the record build the same three.
 function switchWords(amountsCleared, planting) {
   const amounts = amountsCleared.map((v) => `${v.value} ${v.unit}`).join(' · ')
   const from = [...new Set(amountsCleared.map((v) => v.saidFor.name || v.saidFor.variety_ref?.name))].join(' and ')
   const to = planting.name || planting.variety_ref?.name
   return {
-    amounts, from, to, planting, slots: amountsCleared,
+    amounts, from, to, planting,
     note: `cleared ${amounts} from ${from}`,
     row: `Cleared ${amounts} for ${from} — the crop changed to ${to} before it was saved.`,
+    mark: `switch-cleared ${amounts} (${from} -> ${to})`,
   }
 }
 
@@ -740,8 +742,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // `slots` are the exact count and weight objects sent. They stay on the record until the POST answers, so
   // the page keeps showing what is being saved, and they are compared BY IDENTITY: a value said again while
   // the POST is out is a new object even when it reads the same. `rechosen` marks the saved crop chosen again
-  // while its POST was out. `sendingLossRef` holds what a crop change would have said about taking sent values
-  // off the record (switchWords), until their POSTs answer; `savedSlotsRef` holds every value a POST saved.
+  // while its POST was out. `sendingLossRef` holds what a door would have said about taking sent values off the
+  // record — { slots, words }, `words(values)` building that door's own row, note and mark — until their POSTs
+  // answer; `savedSlotsRef` holds every value a POST saved.
   const inFlightRef = useRef([])
   const sendingLossRef = useRef([])
   const savedSlotsRef = useRef(new WeakSet())
@@ -998,7 +1001,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     if (sending.length) {
       const held = switchWords(sending, planting)
       recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-sending ${held.amounts} (${held.from} -> ${held.to})`)
-      sendingLossRef.current = [...sendingLossRef.current, held]
+      sendingLossRef.current = [...sendingLossRef.current, { slots: sending, words: (vs) => switchWords(vs, planting) }]
     }
     if (!cleared.length) { switchedRef.current = null; return null }
     const words = switchWords(cleared, planting)
@@ -1008,19 +1011,19 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     return words.note
   }, [noteMiss])
 
-  // Review IMPORTANT-1 — a POST has answered. What a crop change took off the record while values were being
-  // sent is said now for every one of them that no POST saved, once no POST is still sending any of them. Two
-  // POSTs cannot carry one value while a save word is refused during a send (lane V3 F3.2, saveRecord); the
-  // check stays so the words can never be false if that refusal is ever relaxed. Returns what it said, for the
-  // failed save's banner.
+  // Review IMPORTANT-1 — a POST has answered. What a door took off the record while values were being sent is
+  // said now, in that door's own words, for every one of them that no POST saved, once no POST is still sending
+  // any of them. Two POSTs cannot carry one value while a save word is refused during a send (lane V3 F3.2,
+  // saveRecord); the check stays so the words can never be false if that refusal is ever relaxed. Returns what
+  // it said, for the failed save's banner.
   const settleSendingLosses = useCallback(() => {
     const said = []
     sendingLossRef.current = sendingLossRef.current.filter((held) => {
       if (held.slots.some((v) => inFlightRef.current.some((f) => f.slots.includes(v)))) return true
       const lost = held.slots.filter((v) => !savedSlotsRef.current.has(v))
       if (lost.length) {
-        const words = switchWords(lost, held.planting)
-        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-cleared ${words.amounts} (${words.from} -> ${words.to}) after a failed save`)
+        const words = held.words(lost)
+        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `${words.mark} after a failed save`)
         noteMiss(words.row)
         said.push(words)
       }
@@ -1028,6 +1031,20 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     })
     return said
   }, [noteMiss])
+
+  // BUG-VOICESLOWSAVEFALSEROWS-001 — THE OTHER DOORS THAT TAKE VALUES OFF THE RECORD HOLD BACK THEIR WORDS THE SAME
+  // WAY. A sentence refused and started over (QA F10) and amounts said again without units (review MINOR-6) each
+  // wrote a "Cleared …" / "Replaced …" row for whatever the record held — including values a POST was still
+  // sending, which then saved: "1 saved · 2 not captured" for a record that saved whole. This splits off the
+  // values being sent and hands `words(values)` — the door's own row, note and mark for them — to
+  // settleSendingLosses, which says them only if no POST saves those values. Returns the values it held back; the
+  // door says the rest now, exactly as before. What the door does to the record is not touched. (The switch
+  // splits its own, value by value, because it also keeps and adopts.)
+  const holdBackSending = useCallback((values, words) => {
+    const sending = values.filter((v) => v && inFlightRef.current.some((f) => f.slots.includes(v)))
+    if (sending.length) sendingLossRef.current = [...sendingLossRef.current, { slots: sending, words }]
+    return sending
+  }, [])
 
   // BUG-VOICEALIASHITCOUNT-001 — which taught alias, if any, chose the planting now on the record.
   // Called wherever spoken words select a planting; a selection by any other door leaves null.
@@ -1250,8 +1267,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // Review IMPORTANT-1 — UNLESS A CROP CHANGE TOOK IT OFF THE RECORD WHILE IT WAS SENDING. Then it is gone
       // after all: the row the switch held back is written now, when it is true, and the banner asks for it
       // again, because "next" saves the record on screen — the new crop's, never this one (the lane's R1).
+      // BUG-VOICESLOWSAVEFALSEROWS-001 — the same for a sentence refused and started over, or amounts said again
+      // without units, each in its own words. Only a crop change has a crop to carry the note to.
       const lost = settleSendingLosses()
-      const here = lost.find((l) => l.planting.id === selectedRef.current?.id)
+      const here = lost.find((l) => l.planting && l.planting.id === selectedRef.current?.id)
       if (here) {
         const before = switchedRef.current?.plantingId === here.planting.id ? `${switchedRef.current.text}; ` : ''
         switchedRef.current = { plantingId: here.planting.id, text: `${before}${here.note}` }
@@ -1822,9 +1841,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       const now = (axis === 'weight' ? weightRef.current : qtyRef.current)
         ?? (landing?.axis === axis ? { value: landing.value, unit: landing.unit, assumed: true } : null)
       if (now && (!now.assumed || (now.value === was.value && now.unit === was.unit))) continue
-      const what = now ? `Replaced ${was.value} ${was.unit} with ${now.value} ${now.unit} (assumed)` : `Cleared ${was.value} ${was.unit}`
-      noteMiss(`${what} — the amounts were said again without units.`)
-      droppedNote += ` (${now ? `replaced ${was.value} ${was.unit} with ${now.value} ${now.unit}` : `cleared ${was.value} ${was.unit}`})`
+      const words = {
+        note: now ? `replaced ${was.value} ${was.unit} with ${now.value} ${now.unit}` : `cleared ${was.value} ${was.unit}`,
+        row: `${now ? `Replaced ${was.value} ${was.unit} with ${now.value} ${now.unit} (assumed)` : `Cleared ${was.value} ${was.unit}`} — the amounts were said again without units.`,
+        mark: `restated ${was.value} ${was.unit}${now ? ` -> ${now.value} ${now.unit}` : ''}`,
+      }
+      // BUG-VOICESLOWSAVEFALSEROWS-001 — a value a POST is still sending was not erased: it is on its way.
+      if (holdBackSending([was], () => words).length) continue
+      noteMiss(words.row)
+      droppedNote += ` (${words.note})`
     }
 
     if (d.nearCommand) {
@@ -1843,7 +1868,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       const last = statusRef.current
       say(droppedNote ? 'warn' : (last?.tone ?? 'ok'), `${label ? `${label} — ` : ''}${last?.text ?? ''}${droppedNote}`)
     }
-  }, [applyOneUtterance, clearForSwitch, clearRecord, cue, noteAliasUse, noteMiss, say])
+  }, [applyOneUtterance, clearForSwitch, clearRecord, cue, holdBackSending, noteAliasUse, noteMiss, say])
 
   // QA F2 — the one-breath sentence whose ONE amount may be two numbers run together ("Suyo Long 2165
   // next"). The name was read cleanly, so it is applied exactly as the one-breath would apply it (a
@@ -1884,15 +1909,28 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     let droppedNote = ''
     if (!info.nameless) {
       const crop = selectedRef.current ? (selectedRef.current.name || selectedRef.current.variety_ref?.name) : null
-      const amounts = [qtyRef.current, weightRef.current].filter(Boolean).map((v) => `${v.value} ${v.unit}`)
+      const restarted = (vs) => {
+        const amounts = vs.map((v) => `${v.value} ${v.unit}`).join(' · ')
+        return {
+          note: `cleared ${amounts}`,
+          row: `Cleared ${amounts}${crop ? ` for ${crop}` : ''} — the record was started over after a sentence that could not be read.`,
+          mark: `restart-cleared ${amounts}`,
+        }
+      }
+      // BUG-VOICESLOWSAVEFALSEROWS-001 — values a POST is still sending leave with the record but were not lost:
+      // their row waits for that POST (holdBackSending), and only the rest is said now.
+      const values = [qtyRef.current, weightRef.current].filter(Boolean)
+      const sending = holdBackSending(values, restarted)
+      const unsent = values.filter((v) => !sending.includes(v))
       const held = heldNumRef.current
       if (held != null) {
         noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
         droppedNote += ` (dropped ${held} — no unit was said)`
       }
-      if (amounts.length) {
-        noteMiss(`Cleared ${amounts.join(' · ')}${crop ? ` for ${crop}` : ''} — the record was started over after a sentence that could not be read.`)
-        droppedNote += ` (cleared ${amounts.join(' · ')})`
+      if (unsent.length) {
+        const words = restarted(unsent)
+        noteMiss(words.row)
+        droppedNote += ` (${words.note})`
       }
       clearRecord()
     }
@@ -1911,7 +1949,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       : 'the name and the numbers could be split more than one way — say the planting, then the amounts'
     say('warn', `Didn't catch that — ${why}.${droppedNote}`)
     noteMiss(`Didn't catch that — heard “${heard}”.`)
-  }, [clearRecord, cue, noteMiss, say])
+  }, [clearRecord, cue, holdBackSending, noteMiss, say])
 
   // ── V5-VOICEONEBREATH-002: a trailing command rides on the record it follows ────────────────────
   //
