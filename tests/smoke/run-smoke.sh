@@ -18,7 +18,8 @@
 #        a variety PUT of origin_country read back through GET /api/varieties/:id
 #     E) locations create → read-back name
 #     F) inventory-items create → read-back name (durable+tools dodges the L-058 seeds CHECK)
-#     F3) a seed packet (on block D's variety) → a planting sown from it → the packet's detail GET
+#     F3) a seed packet (on block D's variety), found through GET /api/search as a seeds row
+#        (F3-search, BUG-SEARCHSEEDCAP20-001) → a planting sown from it → the packet's detail GET
 #        answers 200 with that planting inside sown_from (V5-SEEDSTAB-001 slice 3); then that planting
 #        archived through PATCH /api/plants/:id/archive → the packet's sown_from no longer lists it
 #        (F3b, Archive-Hiding on the deployed stack); then DELETE on the packet → 409 with the
@@ -746,6 +747,33 @@ else
         if [[ "${SEEDPKT_HTTP:0:1}" == "2" && -n "$CREATED_SEEDPKT_ID" ]]; then
           echo "✅ PASS [crud:POST /inventory-items (seed packet)] HTTP $SEEDPKT_HTTP (id: $CREATED_SEEDPKT_ID)"
           PASS=$((PASS+1))
+          # ── F3-search) This packet through header Search (BUG-SEARCHSEEDCAP20-001, v4.148.0 review I2, L-108). ──
+          # GET /api/search runs its seven section queries under Promise.allSettled, so a broken inventory query
+          # still answers 200, with the Seeds AND Inventory groups empty and one CloudWatch line; nothing else in
+          # this script calls the route. Searched by a word only this run's packet carries, here, while the
+          # packet is live (F3d deletes it). PASS needs >=1 seeds row in results.inventory AND this packet among
+          # them; "no-inventory:<type>" when the list is missing. Its own token, its own temp file.
+          CLERK_JWT=$(mint_session_token)
+          SRCH_Q="seedpkt-$TEST_RUN_ID"
+          SRCH_BODY=$(mktemp)
+          SRCH_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+            -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$SRCH_BODY" -w "%{http_code}" \
+            "${STAGING_API_DASHBOARD%/}/api/search?q=$(jq -rn --arg q "$SRCH_Q" '$q | @uri')") || SRCH_HTTP="000"
+          SRCH_N=$(jq -r 'if (.results.inventory | type) == "array" then ([.results.inventory[] | select(.category == "seeds")] | length) else 0 end' "$SRCH_BODY" 2>/dev/null || echo 0)
+          SRCH_HAS=$(jq -r --arg id "$CREATED_SEEDPKT_ID" \
+            'if (.results.inventory | type) == "array" then ([.results.inventory[] | select(.id == $id and .category == "seeds")] | length > 0) else "no-inventory:" + (.results.inventory | type) end' \
+            "$SRCH_BODY" 2>/dev/null || echo "unparseable")
+          SRCH_SNIP=$(head -c 200 "$SRCH_BODY" 2>/dev/null || echo "")
+          rm -f "$SRCH_BODY"
+          if [[ "$SRCH_HTTP" == "200" && "$SRCH_N" =~ ^[0-9]+$ && "$SRCH_N" -ge 1 && "$SRCH_HAS" == "true" ]]; then
+            echo "✅ PASS [read:search-seed-packet] HTTP 200, q='$SRCH_Q': $SRCH_N seeds row(s) in results.inventory, packet $CREATED_SEEDPKT_ID among them"
+            PASS=$((PASS+1))
+          else
+            echo "❌ FAIL [read:search-seed-packet] HTTP $SRCH_HTTP, q='$SRCH_Q': $SRCH_N seeds row(s), packet $CREATED_SEEDPKT_ID listed: '$SRCH_HAS' (expected 200, >=1, 'true')"
+            echo "   Body: $SRCH_SNIP"
+            FAIL=$((FAIL+1))
+          fi
           SOWN_NAME_WRITTEN="smoke-test-sownplant-$TEST_RUN_ID"
           SOWN_BODY=$(mktemp)
           SOWN_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
