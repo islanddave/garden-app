@@ -42,10 +42,13 @@ const KILLERS = [
   // would silently remove a per-region entry. That is what makes it an independent second killer
   // for the small regions rather than a restatement of the first.
   ['region-headcount', /regions render in this state/],
-  ['budget-integrity', /UNGUARDED here/],
+  ['budget-integrity', /UNGUARDED here|budget entry predates/],
   // The per-control census (CONTROLS in the gate): its own budget field (`controlCensus`), its own
   // selectors, so a control that vanishes while every row and region stays put still has a family.
   ['control-census', /control '[^']+' \(.*\): \d+ visible, expected exactly/],
+  // The expanded panels' direct-child counts (`panelChildren`): rows + sub-headers + the Show-more
+  // door, read off the panel element rather than any child's testid.
+  ['panel-structure', /direct children, expected exactly/],
   ['visibility', /occupies NO SPACE|present but renders h=|panel holding \d+ children renders|are mounted but not visible/],
   ['row-height-floor', /under the \d+px floor — present, non-zero/],
   ['region-floor', /under its \d+px floor/],

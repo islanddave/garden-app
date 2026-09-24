@@ -19,8 +19,12 @@
 //       force, weather stubbed, every fixture non-empty, and the region census matching the counts
 //       the fixture promises. Each of these is a way this file could print PASS while measuring
 //       nothing.
-//   (b) VISIBILITY, per care row — `checkVisibility()` AND `getBoundingClientRect().height > 0`.
-//       This is the assertion that kills clipRowPanel and that no vitest test can make.
+//   (b) VISIBILITY, per care row and per expanded panel — `checkVisibility()` AND a non-zero rect
+//       AND some of that rect surviving every clipping ancestor. The per-row half is the assertion
+//       no vitest test can make. CORRECTED 2026-09-24: this line used to say the per-row check was
+//       what killed clipRowPanel. Measured, it never fired: a row inside the height:0 panel keeps
+//       its own 48px box and checkVisibility() true, so the kill came from the per-PANEL check alone.
+//       The ancestor-clip term is what makes the per-row claim true (see `clippedArea` below).
 //   (c) FLOOR AND CEILING, in that order. `careRowCount === expected` and `scrollHeight > floor`
 //       come FIRST; the ceiling comes after. A density gate that only caps height rewards deleting
 //       content, and an empty page scores best on every metric such a gate checks.
@@ -113,6 +117,14 @@ const RECORD = process.argv.includes('--record')
 // gate:putup — a third pattern here would be a third thing to keep true.
 const PROBE_NOTHING = process.argv.includes('--probe-nothing')
 const SUFFIX = PROBE_NOTHING ? '-PROBE-NOTHING' : ''
+// DIAGNOSTIC ONLY — the same hook gate:seeds-page carries, under the same name. CSS injected into
+// every state once the page is ready and before it settles, so a stress test can be measured against
+// the budget without editing anything: e.g. the CI-font proxy
+//   GATE_MUTATE_CSS='*{font-family:Verdana,"DejaVu Sans",sans-serif!important}' npm run gate:today-shape
+// (Verdana is a PESSIMISTIC stand-in for the Linux runner's DejaVu Sans, not a predictor — CI's own
+// log is the truth). Refused under --record: a mutated page must never become the baseline.
+const MUTATE_CSS = process.env.GATE_MUTATE_CSS || ''
+if (RECORD && MUTATE_CSS) { console.error('[today-shape] REFUSING TO RECORD with GATE_MUTATE_CSS set — the baseline would encode the injected CSS.'); process.exit(1) }
 const tid = (name) => `[data-testid="${name}${SUFFIX}"]`
 
 // ── THE REGION CONTRACT ─────────────────────────────────────────────────────────────────────────
@@ -266,7 +278,29 @@ const MEASURE = `(() => {
   // content-visibility:hidden subtree all report an offsetParent and read as visible through it.
   // Paired with a non-zero rect because checkVisibility() alone returns true for a height:0 box —
   // which is the exact mutant this gate exists to catch.
-  const shown = el => (!el.checkVisibility || el.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true })) && el.getBoundingClientRect().height > 0
+  //
+  // AND with the area left after every CLIPPING ANCESTOR (added 2026-09-24). Neither of the two
+  // checks above sees an ancestor's overflow clip: under clipRowPanel every row inside the height:0
+  // panel still reports its own 48px box and checkVisibility() true, so per-row "visibility" passed
+  // over a list nobody could see and only the panel's own zero height caught it. Intersecting the
+  // element's rect with each ancestor that clips (overflow other than visible, per axis) is what
+  // lets a row, or a Moist button, report "present and clipped away". display:contents ancestors
+  // have no box and are skipped rather than read as a zero-size clip.
+  const clippedArea = el => {
+    const r = el.getBoundingClientRect()
+    let t = r.top, b = r.bottom, l = r.left, rr = r.right
+    for (let a = el.parentElement; a && a !== de && a !== d.body; a = a.parentElement) {
+      const cs = w.getComputedStyle(a)
+      if (cs.display === 'contents') continue
+      const cy = cs.overflowY !== 'visible', cx = cs.overflowX !== 'visible'
+      if (!cy && !cx) continue
+      const ar = a.getBoundingClientRect()
+      if (cy) { t = Math.max(t, ar.top); b = Math.min(b, ar.bottom) }
+      if (cx) { l = Math.max(l, ar.left); rr = Math.min(rr, ar.right) }
+    }
+    return Math.max(0, b - t) * Math.max(0, rr - l)
+  }
+  const shown = el => (!el.checkVisibility || el.checkVisibility({ contentVisibilityAuto: true, opacityProperty: true, visibilityProperty: true })) && el.getBoundingClientRect().height > 0 && clippedArea(el) > 0
   const all = sel => [...d.querySelectorAll(sel)]
 
   const regions = ${JSON.stringify(REGIONS)}.map(reg => {
@@ -286,7 +320,7 @@ const MEASURE = `(() => {
   // while its children are clipped and vice versa.
   const rows = all('${tid('care-row')}').map((el, i) => {
     const r = box(el)
-    return { i, h: r.h, w: r.w, t: r.t, visible: shown(el),
+    return { i, h: r.h, w: r.w, t: r.t, visible: shown(el), area: Math.round(clippedArea(el)),
              text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 34) }
   })
   const panels = all('${tid('care-group-panel')}').map(el => { const r = box(el); return { h: r.h, visible: shown(el), children: el.children.length } })
@@ -398,6 +432,7 @@ try {
   chrome = await startChrome(udd)
   cdp = await attach(chrome.version.webSocketDebuggerUrl)
   if (PROBE_NOTHING) console.log('[today-shape] --probe-nothing: every region selector points at a testid nothing renders. This run MUST fail.')
+  if (MUTATE_CSS) console.log(`[today-shape] MUTATED RUN — GATE_MUTATE_CSS is injected into every state: ${MUTATE_CSS}`)
 
   for (const state of STATES) {
     const at = `${state}@${VIEWPORT.w}x${VIEWPORT.h}`
@@ -413,6 +448,7 @@ try {
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     await sleep(200)
     await evalSettled(`(async()=>{for(let i=0;i<250;i++){if(window.__h&&window.__h.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('Today never rendered (${state})')})()`)
+    if (MUTATE_CSS) await evalSettled(`(()=>{const s=document.createElement('style');s.setAttribute('data-gate-mutate','1');s.textContent=${JSON.stringify(MUTATE_CSS)};document.head.appendChild(s);return 1})()`)
     await evalSettled(`new Promise(r=>setTimeout(r,2500))`)   // self-fetching bands + fonts settle
     const m = await evalSettled(MEASURE)
 
@@ -537,10 +573,17 @@ try {
     if (b) {
       // ── (b) THE KILLING ASSERTION — per care row, checkVisibility() AND a non-zero rect.
       const clipped = m.rows.filter(r => !r.visible || r.h <= 0)
-      for (const r of clipped.slice(0, 6)) fail(`${at}: care row ${r.i} ("${r.text}") is mounted and queryable but occupies NO SPACE (h=${r.h}px, checkVisibility ${r.visible}). This is the clipRowPanel shape: present, accessible, invisible — and 9,239 of 9,241 unit tests passed over it when it was measured.`)
+      for (const r of clipped.slice(0, 6)) fail(`${at}: care row ${r.i} ("${r.text}") is mounted and queryable but occupies NO SPACE on screen (own box h=${r.h}px, ${r.area}px² left after its clipping ancestors). This is the clipRowPanel shape: present, accessible, invisible — and 9,239 of 9,241 unit tests passed over it when it was measured.`)
       if (clipped.length > 6) fail(`${at}: …and ${clipped.length - 6} further care row(s) in the same state`)
       const clippedPanels = m.panels.filter(p => p.children > 0 && (!p.visible || p.h <= 0))
-      for (const p of clippedPanels) fail(`${at}: a care-group panel holding ${p.children} children renders h=${p.h}px (checkVisibility ${p.visible}) — the list is clipped, not collapsed`)
+      for (const p of clippedPanels) fail(`${at}: a care-group panel holding ${p.children} children renders h=${p.h}px (shown ${p.visible}) — the list is clipped, not collapsed`)
+      // PANEL STRUCTURE — each expanded panel's exact number of direct children: its rows, any
+      // Containers/In-ground sub-headers, and the "Show N more" door. Added 2026-09-24 because the
+      // door had exactly ONE killer (the control census): at 44px its loss moves every coarse floor
+      // by less than that floor's tolerance. This is a different budget field read through a
+      // different selector, so disarming one of the two leaves the other standing.
+      if (!('panelChildren' in b)) fail(`${at}: the budget entry predates the panel-structure census (no 'panelChildren' key) — re-record with this gate version; until then the open list can lose its Show-more door and pass`)
+      else if (JSON.stringify(m.panels.map(p => p.children)) !== JSON.stringify(b.panelChildren)) fail(`${at}: the expanded group panel(s) hold [${m.panels.map(p => p.children).join(', ')}] direct children, expected exactly [${b.panelChildren.join(', ')}] — a row, a sub-header or the Show-more door has appeared in or gone from the open list`)
       // PER-ROW HEIGHT FLOOR. `h > 0` alone is not enough: a row clamped to a 1px sliver keeps its
       // count, reports checkVisibility() true and a non-zero rect, and is unreadable.
       //
@@ -688,6 +731,7 @@ try {
       firstControlYCeiling: m.firstControlY == null ? null : Math.round(m.firstControlY + 24),
       // Exact, like careRowCount: this state's fixture produces exactly this many of each.
       controlCensus: Object.fromEntries(CONTROLS.map(c => [c.id, m.controlCensus[c.id].visible])),
+      panelChildren: m.panels.map(p => p.children),
       measured: { scrollHeight: m.scrollHeight, contentBottom: m.contentBottom, inkPct: m.inkPct, controls: m.controls, firstControlY: m.firstControlY },
       order: m.regions.filter(r => r.count > 0).sort((x, y) => x.boxes[0].t - y.boxes[0].t).map(r => r.id),
       regions: Object.fromEntries(m.regions.map(r => [r.id, {

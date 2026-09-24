@@ -3,7 +3,7 @@
 //   TODAY_SHAPE_MUT=clipRowPanel node scripts/layout-gate/today-shape.mjs   (via GATE_HARNESS_CONFIG)
 //
 // WHY A SEPARATE CONFIG RATHER THAN A FLAG ON THE SHARED ONE. tests/harness/vite.harness.config.mjs
-// is loaded by eleven other layout gates and by every manual harness session; a mutation switch
+// is loaded by every other layout gate and by every manual harness session; a mutation switch
 // living there is a switch that can be left on. This file spreads that config and adds exactly one
 // plugin, so the shared file is untouched and a run is mutant if and only if it was pointed here.
 //
