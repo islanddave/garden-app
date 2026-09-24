@@ -117,6 +117,26 @@ describe('Search — seed rows are grouped under "Seeds"', () => {
     expect(rowFor('Pepper Mix Heirloom').getAttribute('href')).toBe('/varieties/v1/edit')
   })
 
+  // v4.148.0 review M4 — Row is a module-scope component. Declared inside Search() it was a new component
+  // type on every render, so every keystroke unmounted and remounted every result row, and with the Seeds
+  // group uncapped that is hundreds of rows. A trailing space re-renders Search (the box's value changes)
+  // while the trimmed query, and so every result, stays the same.
+  it('a result row\'s DOM node survives a re-render that leaves the results unchanged', async () => {
+    searchImpl = async () => payload([SEED_PACKET, SPRAYER])
+    renderPage()
+    await type('pepper')
+    await waitFor(() => expect(screen.queryByText('Pepper seed packet')).toBeTruthy(), { timeout: 2000 })
+    const packet = rowFor('Pepper seed packet')
+    const sprayer = rowFor('Pepper sprayer')
+    const variety = rowFor('Pepper Mix Heirloom')
+    await type('pepper ')
+    expect(screen.getByLabelText('Search your garden').value).toBe('pepper ')
+    expect(rowFor('Pepper seed packet')).toBe(packet)
+    expect(rowFor('Pepper sprayer')).toBe(sprayer)
+    expect(rowFor('Pepper Mix Heirloom')).toBe(variety)
+    expect(packet.isConnected).toBe(true)
+  })
+
   // BUG-SEARCHSEEDCAP20-001 — the cap that showed 20 of 94 was the SERVER's (one LIMIT 20 across every
   // inventory category, lambda/dashboard/handlers.js searchInventory). This pins that the page adds no
   // cap of its own and keeps the server's order: 94 is the q=pepper seed count on prod, 2026-09-24.
