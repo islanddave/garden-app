@@ -214,7 +214,7 @@ const ADD_PACKET_HREF = addPacketHref(SAVED_VIEW_HREF)
 const SAVED_RETURN_STATE = seedsReturnState(SAVED_VIEW_HREF)
 // BUG-SEEDLOTOPENSATFORM-001 — "Set parent plant →" is an EDIT door: it opens the lot's page to set one
 // field, so it names that part beside the return state and the page lands on its "Saved from" card.
-// Every other door here opens the lot to look at it, and the page opens at its top.
+// The card titles open the same page to look at the lot, so they add nothing and it opens at its top.
 const SET_PARENT_STATE = { ...SAVED_RETURN_STATE, [LOT_SECTION_KEY]: LOT_SECTION_SOURCE_PLANT }
 
 // ── BUG-SEEDCANDIDATEAMBIG-001 — the untracked-packet picker ──────────────────────────────────────
