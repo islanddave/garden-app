@@ -64,6 +64,10 @@ const PROD_METADATA_KEYS = [
   // Not from the 09-03 census: V5-VOICEVOCAB-001 starts writing it on every voice harvest, so it is
   // decided here BEFORE its first live row rather than after it has rendered raw (0 rows as added).
   ['assumed_units', 0],
+  // Not from the 09-03 census either: V5-VOICECARE-001 (voice care on Log many) stamps it on EVERY row
+  // of a voice batch — 101 events for one "water all bag area". Decided before its first live row
+  // (0 rows in prod on 2026-09-24, read-only census by the pre-promote seat).
+  ['care_input_source', 0],
 ]
 
 describe('BUG-EVTMETARAWKEYS-001 — no live metadata key renders raw', () => {

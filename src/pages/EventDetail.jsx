@@ -138,11 +138,16 @@ const METADATA_LABELS = {
 // than heard — the same "which input path" provenance as harvest_input_source, and an array that
 // would render as a bare word or, when empty, as a key with no value. Hidden in the change that
 // starts writing it, like seed_lot_id.
+//
+// `care_input_source` (V5-VOICECARE-001) is voice care's twin of harvest_input_source: 'voice' on
+// every row of a batch logged by voice on Log many, so voice care can be measured later. Machine
+// provenance, and it lands on every event of the batch (101 for one "water all bag area") — hidden
+// before its first live row, caught by the pre-promote seat (review-logmany-voice.md IMPORTANT-1).
 const METADATA_HIDDEN_KEYS = new Set([
   'water_depth_source', 'seed_lot_id',
   'batch_id', 'batch_v', 'precip_source', 'station_series', 'rain_backfill', 'auto_logged',
   'entity_level', 'schema', 'source', 'harvest_input_source', 'migrate_to_location',
-  'target_location_id', 'scope_intended', 'assumed_units',
+  'target_location_id', 'scope_intended', 'assumed_units', 'care_input_source',
 ])
 
 // V4-EVTDELCONFIRM-001 — coverFor for the confirm sheet: the union of every photo's cover_for
