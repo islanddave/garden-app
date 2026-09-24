@@ -247,8 +247,13 @@ export function NavPrefsProvider({ children }) {
     }
     const server = resolvePins(prefs.more_pins)
     if (!cur.touched) {
-      // Nothing local to protect: the server's list is the list.
+      // Nothing local to protect: the server's list is the list. And nothing of THIS person's is
+      // pending, so a pending stamp still on the phone is another session's leftover — possibly this
+      // person's own, from before someone else used the phone. It can only ever re-send a list this
+      // cache no longer holds, over a newer server list (QA RE-2: A → B → A without sign-out, then an
+      // edit on another device), so it goes with the old cache.
       writePinsCache(cur.userId, server)
+      writePending(cur.userId, false)
       Object.assign(patch, { pins: server, confirmed: server })
     } else if (cur.confirmed == null) {
       // A local change is pending: keep it on screen, remember the server's copy as the rollback

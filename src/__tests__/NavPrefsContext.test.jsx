@@ -535,6 +535,48 @@ describe('the same phone, a session that ended WITHOUT sign-out (storage never c
     expect(text('pins')).toBe('')
   })
 
+  // QA RE-2, PROBE D. An owner-stamped pending flag used to outlive the list it was for: Dave pins
+  // offline → his session ends without sign-out → Jen uses the phone (her read rewrites the pin cache
+  // as hers, the flag still says "dave") → her session ends the same way → Dave's own read rewrites
+  // the cache as his → Dave edits his pins on ANOTHER device → at the next launch here the stale flag
+  // re-sent the old list over the newer one, and the other device's pin was lost.
+  // KILLING MUTATION: drop writePending(…, false) from the landing's nothing-pending branch.
+  // RESULT: RED — the relaunch PATCHes ['seeds'] over ['seeds','helper'].
+  it('PROBE D — dave → jen → dave without sign-out, then an edit elsewhere: the relaunch sends nothing', async () => {
+    // 1. Dave, fresh read ['seeds']; pins Photos while offline → pending "dave".
+    fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: ['seeds'], can_edit_bar: true })
+    const view = await boot()
+    saveSpy.mockResolvedValueOnce({ ok: false, status: 0 })
+    await act(async () => { await api.current.togglePin('photos') })
+    expect(read(MORE_PINS_PENDING_KEY)).toBe('dave')
+    // 2. His session ends (no sign-out); Jen signs in and her read lands.
+    userRef.current = null
+    await act(async () => { view.rerender(tree()) })
+    fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: null, can_edit_bar: false })
+    userRef.current = { id: 'jen' }
+    await act(async () => { view.rerender(tree()) })
+    expect(read(MORE_PINS_CACHE_KEY)).toEqual(pinsCache([], 'jen'))
+    // 3. Her session ends the same way; Dave signs back in and his own read lands (server: ['seeds']).
+    userRef.current = null
+    await act(async () => { view.rerender(tree()) })
+    fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: ['seeds'], can_edit_bar: true })
+    userRef.current = { id: 'dave' }
+    await act(async () => { view.rerender(tree()) })
+    expect(read(MORE_PINS_CACHE_KEY)).toEqual(pinsCache(['seeds'], 'dave'))
+    expect(localStorage.getItem(MORE_PINS_PENDING_KEY)).toBeNull()   // the leftover flag is gone
+    view.unmount()
+    // Meanwhile Dave pins Garden Helper on another device: the server now holds ['seeds','helper'].
+    // 4. Next launch on this phone. Nothing may be sent before (or after) his read lands.
+    saveSpy.mockClear()
+    let answer
+    fetchPrefsSpy.mockReturnValue(new Promise(r => { answer = r }))
+    await act(async () => { render(tree()) })
+    expect(saveSpy).not.toHaveBeenCalled()
+    await act(async () => { answer({ bar_layout: null, more_pins: ['seeds', 'helper'], can_edit_bar: true }) })
+    expect(saveSpy).not.toHaveBeenCalled()
+    expect(text('pins')).toBe('seeds,helper')
+  })
+
   // A value written before this fix (or by hand) carries no owner; it is not trusted either.
   // KILLING MUTATION: accept an unstamped shape. RESULT: RED.
   it('a legacy unstamped cache counts as no cache', async () => {
