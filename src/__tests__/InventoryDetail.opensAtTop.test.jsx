@@ -96,6 +96,15 @@ describe('the lot page opens at the top', () => {
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0)
   })
 
+  // The document's first entry carries no router key: the PWA opened straight onto this lot, a bookmark, a
+  // reload of that entry. Nothing says it is a return, so it is a door (qa-v4148 MINOR, mutant M7: a null key
+  // treated as a return left the page wherever the browser put it).
+  it('an entry with no history key (the first entry of the document) opens at the top', async () => {
+    window.history.replaceState(null, '')
+    await renderPage()
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0)
+  })
+
   it('a Back onto an entry the page was already opened on (an edit round trip) keeps the restored position', async () => {
     const key = freshKey()
     arriveOn(key); await renderPage()                    // the first visit: a fresh entry, so the top
