@@ -62,16 +62,19 @@ name, and it runs on every user's boot. A critter Lambda that selects `more_pins
 in its environment 500s **every user's boot prefs read**: PrefsProvider then gets null and every
 per-person preference silently resets (Garden grouping, today's skips, the What's-New dot, the Log-many
 default). The PATCH's INSERT column list names both columns too, so every prefs save 500s as well.
-**Only the staging half of that order is machine-enforced. The prod half is this runbook and nothing
-else** (pre-promote review, 2026-09-24, finding B1): the promote runs no schema check against prod, so a
-promote with prod unapplied deploys a critter Lambda whose every prefs read 500s. The prod apply, with its
-post gates cited, therefore happens BEFORE the dev push, not "before the promote". Follow-up to make it a
-machine gate: ledger `OPS-PROMOTESCHEMAGATE-001`. What CI does see:
+**At the pre-promote review only the staging half of that order was machine-enforced; the prod half was
+this runbook and nothing else** (2026-09-24, finding B1): the promote ran no schema check against prod, so
+a promote with prod unapplied would deploy a critter Lambda whose every prefs read 500s. The prod apply,
+with its post gates cited, therefore happens BEFORE the dev push, not "before the promote". The prod half
+now has a machine gate as well (`OPS-PROMOTESCHEMAGATE-001`): `promote-gate.yml` refuses such a promote
+before `main` moves. The runbook order still stands; the gate is its backstop. What CI does see:
 
-- the L-081 schema audit (`schema-audit.yml`) checks prod's information_schema against the prefs INSERT
-  list (Phase 2) and, via `lambda/critter/prefs-columns.test.js`, the `readUserPrefs` SELECT list
-  (Phase 1). It is **ADVISORY**: a red run reports and never blocks a promote, and it is path-filtered, so
-  a later commit on top can leave no run at the promoted SHA;
+- the L-081 schema audit checks prod's information_schema against the prefs INSERT list (Phase 2) and,
+  via `lambda/critter/prefs-columns.test.js`, the `readUserPrefs` SELECT list (Phase 1). On dev pushes
+  `schema-audit.yml` runs it **ADVISORY** (a red run blocks nothing, and it is path-filtered, so a later
+  commit on top can leave no run at the promoted SHA). At promote, `promote-gate.yml`'s "Prod schema gate"
+  step runs it on the exact promoted SHA before `main` moves and refuses on a miss, unless dispatched with
+  `require_schema_audit=false`;
 - the integration job forks its Neon branch from **staging**;
 - `deploy-staging.yml` deploys the critter Lambda to staging and its smoke (`tests/smoke/run-smoke.sh`,
   block M) writes and reads back both fields there, so a staging Lambda without the DDL reds the

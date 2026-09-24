@@ -17,11 +17,17 @@ name: L-081 Schema Audit (dev)
 # column sources), plus migrations/** as the schema-change signal and the
 # audit script + this workflow themselves.
 #
-# Advisory: a genuine FAIL (missing column) fails this workflow, but nothing
-# gates on it yet. The fail-soft paths (missing secret, inconclusive) no
-# longer exit 0 silently — they emit a loud UNVERIFIED warning + job summary.
-# Resurrect observably first; consider wiring into the pre-promote impact
-# pass once a green history exists.
+# Advisory HERE: a genuine FAIL (missing column) fails this workflow, but no
+# promote waits on this workflow's result. The fail-soft paths (missing secret,
+# inconclusive) no longer exit 0 silently — they emit a loud UNVERIFIED
+# warning + job summary.
+# ENFORCED AT PROMOTE (OPS-PROMOTESCHEMAGATE-001, added 2026-09-24):
+# promote-gate.yml's "Prod schema gate" step runs this same script on the exact
+# dev SHA being promoted, against prod, before main moves, and refuses the
+# promote on exit 1 OR 2 and on a missing secret, unless dispatched with
+# require_schema_audit=false. This workflow stays the early warning on each dev
+# push (path-filtered, so a later commit can leave no run at the promoted SHA);
+# the promote gate is the one that blocks, and it runs at every promoted SHA.
 #
 # Audit script: scripts/dev-main-schema-audit.py (canonical here in garden-app/).
 # A reference copy lives in claude-ops/scripts/ for local sandbox invocation. Keep in sync.
