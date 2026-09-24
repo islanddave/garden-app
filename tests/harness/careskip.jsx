@@ -9,8 +9,9 @@
 // falls back to a no-op), so it cannot show the toast this change adds. Wrapped here in the real
 // provider the app mounts at its root.
 //
-// Names are live data, not invented: today's care rows on prod (2026-09-24) run p50 13 characters,
-// p90 24, max 52 — the longest three below are real plantings, and the rest sit at p50 and p90.
+// Names are sized from live data: today's care rows on prod (2026-09-24) run p50 13 characters, p90
+// 24, max 52. The four longest below are real plantings from that list; the rest are stand-ins at
+// about p50 and p90 length.
 // One water_due row per length (Skip then Moist then Water), one no_history row (Skip directly
 // beside Water) and one fertilize row (Skip beside Feed), so every neighbour Skip can have appears.
 import React from 'react'
