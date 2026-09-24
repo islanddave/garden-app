@@ -322,6 +322,22 @@ Launch entry `sheetcensus-harness` (port 5326 — 5325 is the photo-sheet entry,
 servers on one port measure each other's code). Findings:
 `Projects/Gardening/_lane_reports/sheetoverflow-20260831.md`.
 
+## `undotap.*` — the shared undo toast's tap targets, added 2026-09-24
+
+Every undo toast in the app is `ToastContext`'s `UndoToast` (BUG-UNDOTOASTTAPTARGET-001). This entry
+mounts the real `ToastProvider` around the real `CareNeeded`, and a bottom-nav stand-in whose
+`--bottom-nav-height` is set **inline on `<html>` from `BOTTOM_NAV_HEIGHT_PX`**, the way `BottomNav`
+does it. (A `:root` rule in the entry's own `<style>` loses to the injected global style's
+`--bottom-nav-height: 0px`, which lands later in `<head>`.) `__h.measureCallers(48)` raises one toast
+per production caller's message shape; `__h.stack(48)` taps Water, Skip and Feed on real rows.
+Targets are read by hit-testing (`elementFromPoint` extents and a 5x5 grid), not from boxes, and the
+stack census counts list controls by area hidden, excluding the toasts' own buttons.
+
+`scripts/layout-gate/undo-toast-target.mjs` is the instrument, hand-run (not in CI): it emulates
+426x836 at DPR 3, refuses to report unless the page says so, and writes PNGs with a dashed outline
+over what takes the tap. `--baseline <full sha>` measures the code before a change;
+`--measure-only` prints without asserting.
+
 ## Retired entries
 
 **`photostrips.*` — removed 2026-08-30, V4-PHOTOBULK-001 D4b.** It measured the staged-photo strip
