@@ -62,7 +62,10 @@ export const MORE_ROWS = [
   { id: 'settings-controls', to: '/settings/controls', label: 'Controls', iconName: 'action.settings', section: 'help' },
   { id: 'about',      to: '/about',      label: 'About',     iconName: 'action.info',    section: 'help' },
   { id: 'releases',   to: '/releases',   label: 'Release Notes', iconName: 'nav.notes',  section: 'help', adornment: 'whatsNew' },
-  // OPS-DEBUGMENU-001 — the ONLY nav door to every /admin/* page (DebugMenu.reachability.test.jsx).
+  // OPS-DEBUGMENU-001 — the ONLY nav door to every /admin/* page (DebugMenu.reachability.test.jsx):
+  // an installed PWA has no address bar. Last by design (least used). NOT client-gated — the app's
+  // convention is server-side ADMIN_CLERK_SUBS with no client admin list; hiding a row is
+  // discoverability, not authorisation (Dave 2026-08-27: "this is still only me using it right now").
   { id: 'admin',      to: '/admin',      label: 'Debug & smoke', iconName: 'mode.desk',  section: 'debug' },
 ]
 
@@ -115,11 +118,15 @@ export function resolvePins(raw, { retired = RETIRED_MORE_IDS, aliases = MORE_ID
   return out
 }
 
-// A moved bar tab drawn as a More row. Same id, route, label and icon as its bar slot, plus the
-// subtitle that says where it came from — the one line that answers "where did Put-Up go?" in place.
+// A moved bar tab drawn as a More row. Same id, route, label and icon as its bar slot — including
+// the bar's COLOUR variant, so the picture a thumb learned on the bar is the one it finds here — plus
+// the subtitle that says where it came from: the one line that answers "where did Put-Up go?".
 export function movedTabRow(key) {
   const tab = TAB_REGISTRY[key]
-  return { id: key, to: tab.to, label: tab.label, iconName: tab.iconName, section: 'garden', sub: MOVED_SUB, moved: true }
+  return {
+    id: key, to: tab.to, label: tab.label, iconName: tab.iconName, iconVariant: 'filled',
+    section: 'garden', sub: MOVED_SUB, moved: true,
+  }
 }
 
 // Every row the sheet can draw right now: moved tabs FIRST (in bar order), then the registry rows

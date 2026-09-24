@@ -83,7 +83,12 @@ function focusablesIn(panel) {
 // OFF for the same reason armsBack does: one hook call serves 18 sites, and `dirty` does not mean
 // the same thing at all of them. Only the three PlantingEditor hosts opt in today. See the deciders
 // in lib/dismissLayers.js and lib/backNav.js for why the per-entry term exists at all.
-export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null, confirmOnDirty = false, confirmTitle = null, confirmBody = null }) {
+// V5-NAVCUSTOM-001 — `headerStart` fills the header row's EMPTY LEFT SLOT on a sheet with no
+// title (BottomNav's More sheet puts its "Edit tab bar" door there). Additive: absent, the spacer
+// renders exactly as before, so every other render site is byte-identical. Ignored when `title` is
+// set — the title owns that slot. Whatever goes here is the caller's: in an armsBack sheet, a
+// control that NAVIGATES must be a SheetRowLink, or it strands the armed Back entry.
+export default function Sheet({ open, onClose, title, ariaLabel, children, size = 'peek', dirty = false, busy = false, closeLabel = 'Close', kind = 'modal', armsBack = false, backIntercept = null, confirmOnDirty = false, confirmTitle = null, confirmBody = null, headerStart = null }) {
   const panelRef = useRef(null)
   const restoreRef = useRef(null)
   const { registered, isTopmost, requestDismiss } = useDismissable({
@@ -238,6 +243,8 @@ export default function Sheet({ open, onClose, title, ariaLabel, children, size 
             <div style={{ flex: 1, padding: '4px 16px 4px', fontSize: '1rem', fontWeight: 700, color: P.dark }}>
               {title}
             </div>
+          ) : headerStart ? (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', minWidth: 0 }}>{headerStart}</div>
           ) : (
             <div style={{ flex: 1 }} />
           )}

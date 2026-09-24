@@ -542,6 +542,9 @@ describe('BottomNav — +LOG create action sheet (Increment 1 FAB)', () => {
 })
 
 // MVP-Critter Session 4 Phase A — Settings entry placement.
+// V5-NAVCUSTOM-001: this renders with NO pins, so it pins the home order itself. With pins a row
+// leaves its section for the Pinned block; the order AMONG THE UNPINNED rows, and Sign out last, are
+// pinned under pins in SpacePhotos.flagOn.test.jsx.
 describe('Settings entry in More menu', () => {
   it('renders Settings link between Garden Helper and Sign out', () => {
     render(<BottomNav />)

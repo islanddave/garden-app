@@ -258,7 +258,7 @@ describe('layoutMoreSheet — I1 at the data level: exactly one door per destina
     expect(layoutMoreSheet({ pins: ['locations'], rows: relabelled }).pinned[0]).toMatchObject({ id: 'locations', label: 'Spaces' })
   })
 
-  it('movedTabRow carries the tab’s own route, label and icon', () => {
-    expect(movedTabRow('put-up')).toMatchObject({ id: 'put-up', to: '/put-up', label: 'Put-Up', iconName: 'nav.putup' })
+  it('movedTabRow carries the tab’s own route, label and icon — in the bar’s colour variant', () => {
+    expect(movedTabRow('put-up')).toMatchObject({ id: 'put-up', to: '/put-up', label: 'Put-Up', iconName: 'nav.putup', iconVariant: 'filled' })
   })
 })
