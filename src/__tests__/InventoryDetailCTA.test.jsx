@@ -90,7 +90,7 @@ beforeEach(() => {
   paramsRef.current = { id: 'item-seed-1' }
 })
 
-describe('InventoryDetail — Sow this CTA visibility (the S4b rule, unchanged)', () => {
+describe('InventoryDetail — Sow this CTA visibility (the S4b rule, minus lots still in process)', () => {
   it('shows CTA when category=seeds and quantity_on_hand > 0', async () => {
     fetchSpy.mockResolvedValueOnce(SEED_WITH_STOCK)
     render(<ToastProvider><InventoryDetail /></ToastProvider>)
@@ -129,6 +129,21 @@ describe('InventoryDetail — Sow this CTA visibility (the S4b rule, unchanged)'
     await waitFor(() => screen.getByText('Black Krim seeds'))
     expect(screen.queryByTestId('sow-this')).toBeNull()
     expect(screen.queryByText('Sow this')).toBeNull()
+  })
+
+  // Same sheet as Sow now, same answer: Sow now withholds a lot that is still fermenting or drying.
+  it.each(['fermenting', 'drying', ' Drying '])('hides CTA on a saved lot whose stage is %j', async (stage) => {
+    fetchSpy.mockResolvedValueOnce({ ...SEED_WITH_STOCK, source_plant_id: 'plant-1', seed_stage: stage })
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
+    await waitFor(() => screen.getByText('Black Krim seeds'))
+    expect(screen.queryByTestId('sow-this')).toBeNull()
+    expect(screen.queryByText('Sow this')).toBeNull()
+  })
+
+  it('shows CTA on a saved lot once it is stored', async () => {
+    fetchSpy.mockResolvedValueOnce({ ...SEED_WITH_STOCK, source_plant_id: 'plant-1', seed_stage: 'stored' })
+    render(<ToastProvider><InventoryDetail /></ToastProvider>)
+    await waitFor(() => expect(screen.getByTestId('sow-this')).toBeDefined())
   })
 })
 

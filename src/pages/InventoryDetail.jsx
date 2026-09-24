@@ -32,6 +32,7 @@ import { seedsHref, seedsReturnFromHistory } from '../lib/seedsRoutes.js'
 import { readDraft } from '../lib/draftStash.js'
 import { T } from '../components/forms/formStyles.js'
 import SowSheet, { sowPacketFromItem } from '../components/seed/SowSheet.jsx'
+import { isInProcess } from '../lib/sowEngine.js'
 
 // V5-SEEDSTAB-001 — seed left the Inventory list, so a seed row's exits go to Seeds › My seeds.
 const SEEDS_MINE = seedsHref('mine')
@@ -1144,9 +1145,12 @@ export default function InventoryDetail() {
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
 // Who gets "Sow this": seed rows with stock on hand — the rule the Plant-from-packet CTA it replaced
-// shipped with (VARIETY-REF S4b), kept as it was. `?? 0`: an untracked (null) quantity shows no CTA.
+// shipped with (VARIETY-REF S4b) — and NOT a lot still fermenting or drying. Sow now withholds those
+// (wet seed in a jar is not sowable), and this is the same sheet, so the two doors answer alike; the
+// page's "Change stage in Saved seeds" link is the way on for such a lot. `isInProcess` is the engine's
+// own predicate, not a copy. `?? 0`: an untracked (null) quantity shows no CTA.
 function canSowFrom(item) {
-  return item?.category === 'seeds' && Number(item.quantity_on_hand ?? 0) > 0
+  return item?.category === 'seeds' && Number(item.quantity_on_hand ?? 0) > 0 && !isInProcess(item)
 }
 
 // V5-SEEDSTAB-001 slice 2a — the S4b card-button, re-pointed at the Sow sheet: same footprint (full
