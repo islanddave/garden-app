@@ -812,7 +812,8 @@ const lineStyle = {
 //   1. never cut: the supplier chip, the amount, and the first state chip when it is a lot's LIVE
 //      state (tone info, warn or danger: fermenting, drying) — and the ordinal, on line 1;
 //   2. then the heat, dropped WHOLE — never partly shown: a cut Scoville number is a wrong number;
-//   3. then the neutral chips ("Archived for this season", a status, "Not started"), ellipsised;
+//   3. then the neutral chips ("Archived for this season", a status, "Not started", a saved lot's
+//      "F2 — won’t come true"), ellipsised;
 //   4. cut first: the tail (where from · how old).
 // The supplier and live chips are the line's own rigid items. Everything else sits in giveWayBox: a
 // clipped box whose absolutely positioned child is a WRAPPING flex row with a huge row gap, so an item

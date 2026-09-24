@@ -116,6 +116,21 @@ describe('stateChips — the engine’s predicates, the engine’s order', () =>
     expect(tone('2026-09-14')).toBe('warn')
     expect(tone('2026-09-16')).toBe('info')
   })
+
+  // V5-SEEDSTAB-001 slice 3 — the one chip that is not an engine state. LAST (the live state keeps the
+  // first place, §16) and NEUTRAL (it gives way with the bookkeeping chips; MySeeds treats only a
+  // non-neutral FIRST chip as the rigid live one, and gate:seeds-page (n) reads data-tone the same way).
+  it('a lot saved off an F1 plant carries "F2 — won’t come true", last and neutral; a bought F1 packet never does', () => {
+    const f2 = (over) => stateChips(saved({ breeding_system: 'f1', ...over }), { now: NOW, year: 2026 })
+    expect(f2({}).map((c) => [c.key, c.label, c.tone])).toEqual([['f2', 'F2 — won’t come true', 'neutral']])
+    expect(labels(saved({ breeding_system: 'f1', seed_stage: 'drying' }))).toEqual(['Drying', 'F2 — won’t come true'])
+    expect(f2({ seed_stage: 'drying' })[0].tone).toBe('info')
+    expect(labels(saved({ breeding_system: 'f1', seed_stage: 'fermenting', stage_entered_at: '2026-09-17', sow_archived_season: 2026 })))
+      .toEqual(['Ferment · day 1', 'Archived for this season', 'F2 — won’t come true'])
+    expect(labels(bought({ breeding_system: 'f1' }))).toEqual([])
+    expect(labels(saved({ breeding_system: 'open_pollinated' }))).toEqual([])
+    expect(labels(saved({ breeding_system: null }))).toEqual([])
+  })
 })
 
 describe('lineText — the second line as the eye reads it (and as uniqueness is computed)', () => {
@@ -128,6 +143,10 @@ describe('lineText — the second line as the eye reads it (and as uniqueness is
     const pkt = bought({ quantity_on_hand: 2, purchase_date: '2025-01-01', scoville_min: 2500, scoville_max: 8000 })
     expect(lineText(pkt, { vendorOf, now: NOW, year: 2026 })).toBe('Botanical · 2 packets · 2.5K–8K SHU · bought 2025')
     expect(lineText(pkt, { vendorOf, now: NOW, year: 2026 })).not.toContain('Interests')
+  })
+  it('an F2 lot\'s chip is part of the line uniqueness is computed over — after the state, before the amount', () => {
+    const lot = saved({ seed_stage: 'drying', seed_count: 40, breeding_system: 'f1', stage_entered_at: '2026-09-10T12:00:00Z' })
+    expect(lineText(lot, { now: NOW, year: 2026 })).toBe('Drying · F2 — won’t come true · 40 seeds · Saved from my plant · harvested 2026')
   })
   it('originNote names a saved lot\'s origin and never a bought packet\'s vendor', () => {
     expect(originNote(saved())).toBe('Saved from my plant')

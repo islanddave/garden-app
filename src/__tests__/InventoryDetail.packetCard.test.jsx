@@ -381,6 +381,16 @@ describe('the packet card — facts, in one fixed order, with the row\'s words',
     ])
   })
 
+  // V5-SEEDSTAB-001 slice 3 — the packet card reads the same vocabulary as My seeds' expanded row, so a
+  // jar of seed saved off an F1 plant is not called "F1 hybrid" here either.
+  it('a lot saved off an F1 plant reads F2 from an F1 parent in Breeding; the bought F1 packet keeps "F1 hybrid"', async () => {
+    const { unmount } = await renderPage({ ...PEPPER, breeding_system: 'f1', seed_stage: 'stored', source_plant_id: 'pl-1' })
+    expect(Object.fromEntries(factRows()).Breeding).toBe('F2 — won’t come true (parent F1 hybrid)')
+    unmount()
+    await renderPage({ ...PEPPER, breeding_system: 'f1' })
+    expect(Object.fromEntries(factRows()).Breeding).toBe('F1 hybrid')
+  })
+
   it('"unknown" breeding and an unset maturity basis state nothing they do not know', async () => {
     await renderPage({ ...PEPPER, breeding_system: 'unknown', dtm_basis: null, origin_region: null })
     const got = Object.fromEntries(factRows())

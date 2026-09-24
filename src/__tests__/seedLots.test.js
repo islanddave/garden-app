@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest'
 import {
   elapsedDays, elapsedLabel, fermentUrgency, dueFerments, hasLotInProcess, isSavedLot,
   candidateFacts, labelCandidates, seedCountLabel, lotMeasure,
-  FERMENT_WARN_DAYS, FERMENT_ALARM_DAYS,
+  FERMENT_WARN_DAYS, FERMENT_ALARM_DAYS, isF2Lot, F2_LABEL,
 } from '../components/seed/seedLots.js'
 
 // 08:00 Eastern on 18 Sep 2026 (EDT, UTC-4).
@@ -79,6 +79,33 @@ describe('isSavedLot — own seed vs a bought packet', () => {
     expect(isSavedLot({ source_id: 'src-fedco', source: 'Order #1' })).toBe(false)
     expect(isSavedLot({ source_plant_id: '', source_kind: '', seed_stage: '' })).toBe(false)
     expect(isSavedLot(null)).toBe(false)
+  })
+})
+
+// V5-SEEDSTAB-001 slice 3 (design §2 rule 8, §5.4) — the one F2 predicate and the one label.
+describe('isF2Lot / F2_LABEL — seed saved off an F1 plant', () => {
+  it('a SAVED lot of an F1 cultivar is F2, by each of the three facts that make a lot saved', () => {
+    expect(isF2Lot({ source_plant_id: 'p1', breeding_system: 'f1' })).toBe(true)
+    expect(isF2Lot({ source_kind: 'farm_stand', breeding_system: 'f1' })).toBe(true)
+    expect(isF2Lot({ seed_stage: 'drying', breeding_system: 'f1' })).toBe(true)
+  })
+
+  it('a BOUGHT F1 packet is never F2 — it sows true as the F1 (rule 8: no badge on bought packets)', () => {
+    expect(isF2Lot({ source_id: 'src-johnny', breeding_system: 'f1' })).toBe(false)
+    expect(isF2Lot({ source_plant_id: null, source_kind: null, seed_stage: null, breeding_system: 'f1' })).toBe(false)
+  })
+
+  it('only f1 speaks: open-pollinated, landrace, "unknown", NULL and an absent key say nothing', () => {
+    for (const breeding_system of ['open_pollinated', 'landrace', 'unknown', null, undefined, 'F1', '']) {
+      expect(isF2Lot({ source_plant_id: 'p1', breeding_system }), String(breeding_system)).toBe(false)
+    }
+    expect(isF2Lot({ source_plant_id: 'p1' })).toBe(false)
+    expect(isF2Lot(null)).toBe(false)
+  })
+
+  it('the label names the consequence and never calls saving F2 seed a mistake', () => {
+    expect(F2_LABEL).toBe('F2 — won’t come true')
+    expect(F2_LABEL).not.toMatch(/mistake|wrong|bad|avoid|don.t save|shouldn.t/i)
   })
 })
 

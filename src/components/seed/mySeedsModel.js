@@ -12,7 +12,7 @@
 // of these here would let the two views disagree about one jar.
 import { formatQty } from '../../lib/format.js'
 import { isInProcess, isUnstartedSave, isDepleted, isArchivedForSeason } from '../../lib/sowEngine.js'
-import { elapsedDays, fermentUrgency, lotMeasure, isSavedLot } from './seedLots.js'
+import { elapsedDays, fermentUrgency, lotMeasure, isSavedLot, isF2Lot, F2_LABEL } from './seedLots.js'
 import { shuLabel } from '../../lib/varietySpec.js'
 import { supplierKey, supplierLabel } from '../../lib/supplierPalette.js'
 
@@ -109,6 +109,12 @@ export function stateChips(i, { now = new Date(), year = now.getFullYear() } = {
   if (isArchivedForSeason(i, year)) chips.push({ key: 'archived', label: 'Archived for this season', tone: 'neutral' })
   const status = String(i?.status ?? 'active')
   if (status !== 'active') chips.push({ key: 'status', label: status[0].toUpperCase() + status.slice(1), tone: 'neutral' })
+  // V5-SEEDSTAB-001 slice 3 — the one chip that is not an engine state: a lot saved off an F1 plant is
+  // F2 seed (seedLots.isF2Lot). LAST and NEUTRAL, deliberately. Last, so a live state ("Ferment · day
+  // 5", "Drying") keeps the first place and stays whole; neutral, so it gives way with the other
+  // bookkeeping chips and never squeezes the amount (§16's shrink order, gate (g)). A fact about the
+  // seed, not an alarm, so it takes no warning colour. Bought F1 packets never get it.
+  if (isF2Lot(i)) chips.push({ key: 'f2', label: F2_LABEL, tone: 'neutral' })
   return chips
 }
 

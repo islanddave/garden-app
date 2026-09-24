@@ -38,6 +38,7 @@ import { SEED_STAGES } from '../components/seed/seedStages.js'
 // seedLots.js for the vendor and calendar-day fixes that landed with the move.
 import {
   prettySlug, candidateFacts, labelCandidates, lotMeasure, elapsedLabel, fermentUrgency,
+  isF2Lot, F2_LABEL,
 } from '../components/seed/seedLots.js'
 import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
 import { useLotOutline, outlineStyle } from '../components/seed/useLotOutline.js'
@@ -1120,6 +1121,14 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                         <div style={{ color: urgency.ink, fontSize: '0.75rem', marginTop: 3 }}>
                           {urgency.note}
                         </div>
+                      </div>
+                    )}
+                    {/* V5-SEEDSTAB-001 slice 3 — seed saved off an F1 plant is F2 and will not come
+                        true (seedLots.isF2Lot, the one predicate My seeds' chip and the Breeding fact
+                        read too). A fact about the seed, not a stage warning, so the neutral chip. */}
+                    {isF2Lot(item) && (
+                      <div style={{ marginTop: 5 }}>
+                        <Badge tone="neutral" data-testid="lot-f2" style={{ whiteSpace: 'normal' }}>{F2_LABEL}</Badge>
                       </div>
                     )}
                     {/* V5-SEEDCOUNTCARD-001 — how much seed is in the jar, on the surface that
