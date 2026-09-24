@@ -124,6 +124,23 @@ const TRACKED = [
   { id: 'i4', name: 'Crookneck packet',     variety_name: 'Pennsylvania Dutch Crookneck',                 crop_slug: 'summer_squash', status: 'active', seed_stage: 'stored',     seed_process: null,  updated_at: daysAgo(40),
     seed_count: 185,  seed_weight_g: null,     seed_count_estimated: false },
 ]
+// V5-SEEDSTAB-001 slice 2 — the NOT STARTED group: saved lots with no stage, decided by their origin.
+// Without rows of that shape the group never renders under the gate, and its card — a "Start →" button
+// in place of the advance, an origin line, a 44px "Saved from" link — would be measured by nothing.
+// Prod holds none today (every saved lot got a stage), so these are the two SHAPES the group exists for:
+//   i5  store-bought produce, source_kind 'store' — Dave's own founding case for the origin column, a
+//       Carolina Reaper bought to eat (InventoryDetail.jsx, V4-SEEDORIGIN-001). No measure line.
+//   i6  off one of his plants (p3), with the fixture's second-longest real name beside "Start →", and
+//       a counted-but-estimated measure, so the Not started card carries every line a card can.
+// Active, no stage, so both are ALSO candidates in the track picker, exactly as on prod.
+const NOT_STARTED = [
+  { id: 'i5', name: 'Carolina Reaper — saved 2026', variety_name: 'Carolina Reaper', crop_slug: 'pepper', status: 'active', seed_stage: null, seed_process: null,
+    source_kind: 'store', created_at: daysAgo(6), updated_at: daysAgo(6),
+    seed_count: null, seed_weight_g: null, seed_count_estimated: null },
+  { id: 'i6', name: 'Red Mustard — saved 2026', variety_name: 'Red Mustard (heirloom, unspecified variety)', crop_slug: 'mustard', status: 'active', seed_stage: null, seed_process: null,
+    source_plant_id: 'p3', created_at: daysAgo(1), updated_at: daysAgo(1),
+    seed_count: 40, seed_weight_g: null, seed_count_estimated: true },
+]
 // `crop_slug` is the `pv.crop_type_slug` alias the list query added for V5-SEEDSAVEDFILTER-001, and
 // it is on these rows so the crop facet actually RENDERS under the gate. It would otherwise be
 // measured by nothing: the facet needs more than MAX_CANDIDATES (25) untracked rows AND at least two
@@ -160,7 +177,13 @@ const PLANTINGS = [
 
 // Empty is the live prod state: 260 packets, none staged. The picker still has candidates, because
 // untracked is "everything without a stage" — which on that day is all 260.
-const ROWS = CASE === 'empty' ? UNTRACKED : [...TRACKED, ...UNTRACKED]
+// NOT_STARTED goes LAST, after UNTRACKED, on purpose. They are candidates too, and the picker shows the
+// first 25 candidates in row order inside a 340px scroll box. Placed first, they pushed every row in that
+// box down by i6's two-line name, and gate:seeds-saved's hit test then met a row whose centre sat just
+// below the box's clip edge and read it as "occluded" (measured 2026-09-23, 390x844 and 390x667). A row
+// scrolled half out of its own list is not a defect, so the picker's window is kept exactly as it was.
+// The page files these two by its own order (Not started, oldest first), whatever their place here.
+const ROWS = CASE === 'empty' ? UNTRACKED : [...TRACKED, ...UNTRACKED, ...NOT_STARTED]
 
 // The two controlled vocabularies the shell's views read. Crop types label the crop chips (without
 // them the chips fall back to a slug prettifier, a degrade path, not the prod label); sources
