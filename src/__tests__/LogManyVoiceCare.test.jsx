@@ -359,7 +359,8 @@ describe('the go-ahead — only "next" or a tap; everything else writes NOTHING'
     // back from a mic the user just tapped.
     let otherStopped = false
     act(() => { acquireMic('search-field', () => { otherStopped = true }) })
-    await screen.findByText(/Another microphone on this screen took over/)
+    // Said AT ONCE (the check in onEnd), not after the re-arm's re-checks run out.
+    expect(screen.getByText(/Another microphone on this screen took over/)).toBeTruthy()
     await act(async () => { await new Promise((r) => setTimeout(r, 400)) })   // longer than a re-arm
     expect(micHolder()).toBe('search-field')
     expect(otherStopped).toBe(false)
