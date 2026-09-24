@@ -7,6 +7,8 @@
 //   2. The helper is actually WIRED to AuthContext.signOut(), before the Clerk call. A helper
 //      nobody invokes is the failure mode this ticket exists to avoid.
 import React, { useEffect } from 'react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, act } from '@testing-library/react'
 
@@ -95,7 +97,7 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     }
   })
 
-  it('the enumerated list is exactly the six keys plus the two prefixes', () => {
+  it('the enumerated list is exactly the six keys plus the three prefixes', () => {
     // Pins the SCOPE, not the behaviour: widening this set is a deliberate decision, not a drive-by.
     // Widened by V4-USERPREFS-001 (2026-08-17), deliberately: the three keys added there are
     // per-device CACHES of per-user server state, read synchronously to seed first render. That
@@ -103,11 +105,37 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     // they belong here for the same reason the original three did.
     // Widened again by V4-HANDEDNESSCONTROLS-001 (2026-08-25): same shape, higher stakes — the
     // inherited value decides which side a destructive control sits on, not merely a sort order.
+    // Widened by BUG-TODAYSKIPNOUNDO-001 (2026-09-24): 'today-unskipped:', the skip set's companion,
+    // shipped without an entry here and the release review caught it.
     expect(CLIENT_PREF_KEYS).toEqual([
       'croprank.v1', 'logone.lastPlant', 'lastHarvestUnit',
       'quicklog.defaultAllSelected', 'garden.releasesSeenVersion', 'ui.handedness',
     ])
-    expect(CLIENT_PREF_KEY_PREFIXES).toEqual(['lastHarvestUnit:', 'today-skipped:'])
+    expect(CLIENT_PREF_KEY_PREFIXES).toEqual(['lastHarvestUnit:', 'today-skipped:', 'today-unskipped:'])
+  })
+
+  // BUG-TODAYSKIPNOUNDO-001 — the Undo veto set, cleared like the skip set it vetoes. Left behind,
+  // the next person on the phone has their own server skips of those rows ignored the same day.
+  it('clears EVERY dated un-skip key too', () => {
+    localStorage.setItem('today-unskipped:2026-09-24', '["p1:water_due"]')
+    localStorage.setItem('today-unskipped:2026-09-23', '["p2:water_due"]')
+    localStorage.setItem('today-skipped:2026-09-24', '["p3:water_due"]')
+    localStorage.setItem('unrelated.key', 'keep me')
+    clearClientPrefs()
+    expect(localStorage.getItem('today-unskipped:2026-09-24')).toBeNull()
+    expect(localStorage.getItem('today-unskipped:2026-09-23')).toBeNull()
+    expect(localStorage.getItem('today-skipped:2026-09-24')).toBeNull()
+    expect(localStorage.getItem('unrelated.key')).toBe('keep me')
+  })
+
+  // The census that would have caught the miss above: every dated 'today-…:' storage family the Today
+  // care list writes must be scrubbed at sign-out. Read off CareNeeded's SOURCE so a new family added
+  // there without an entry here fails the suite. Non-vacuous: CareNeeded writes two families today.
+  it('every today-…: storage family CareNeeded writes is in the prefix list', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/components/today/CareNeeded.jsx'), 'utf8')
+    const families = [...new Set([...src.matchAll(/'(today-[a-z-]+:)'/g)].map(m => m[1]))]
+    expect(families.sort()).toEqual(['today-skipped:', 'today-unskipped:'])
+    for (const f of families) expect(CLIENT_PREF_KEY_PREFIXES).toContain(f)
   })
 
   // V4-USERPREFS-001 — behavioural, not just enumerative. The list above could be right while the

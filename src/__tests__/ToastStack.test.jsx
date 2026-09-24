@@ -108,6 +108,65 @@ describe('toast stack — hard cap', () => {
   })
 })
 
+// 2026-09-24 (BUG-TODAYSKIPNOUNDO-001 review): `priority: 'low'` marks the toast that yields a slot
+// first. Today's Skip toast uses it so it can never push a watering or feeding Undo off screen; the
+// cap itself names no feature. Every case below goes through the real provider.
+describe('toast stack — eviction order at the cap', () => {
+  // One distinct group per message, so nothing coalesces and every push is a new toast.
+  const push = (api, message, priority) =>
+    api.current.showUndo({ message, group: 'g:' + message, onUndo: () => {}, ...(priority ? { priority } : {}) })
+  // Undo toasts on screen, oldest first, by their message line.
+  const onScreen = () => undoToasts().map(b => b.closest('[role="status"]').querySelector('span span').textContent)
+
+  // Mutation: capped() back to a plain front-trim -> ['Skip','Feed','Moist'], red.
+  it('a low-priority toast goes before any normal one, however much older the normal one is', () => {
+    const api = mount()
+    act(() => { push(api, 'Water'); push(api, 'Skip', 'low'); push(api, 'Feed'); push(api, 'Moist') })
+    expect(onScreen()).toEqual(['Water', 'Feed', 'Moist'])
+  })
+
+  // Mutation: evict the NEWEST low toast first -> ['Low 1','Normal 1','Normal 2'], red.
+  it('among low-priority toasts the oldest goes first, then the next', () => {
+    const api = mount()
+    act(() => { push(api, 'Low 1', 'low'); push(api, 'Low 2', 'low'); push(api, 'Normal 1'); push(api, 'Normal 2') })
+    expect(onScreen()).toEqual(['Low 2', 'Normal 1', 'Normal 2'])
+    act(() => { push(api, 'Normal 3') })
+    expect(onScreen()).toEqual(['Normal 1', 'Normal 2', 'Normal 3'])
+  })
+
+  // The stated cost of the rule, pinned so it stays a decision: arriving on a full stack of normal
+  // toasts, the low one is the toast that is dropped. Mutation: exempt the newcomer -> the oldest
+  // normal toast goes instead, red.
+  it('a low-priority newcomer on a stack full of normal toasts is the one dropped', () => {
+    const api = mount()
+    act(() => { push(api, 'A'); push(api, 'B'); push(api, 'C'); push(api, 'Skip', 'low') })
+    expect(onScreen()).toEqual(['A', 'B', 'C'])
+  })
+
+  // Like the wording, a group's FIRST call owns the priority. The low toast sits mid-stack so the two
+  // rules give different answers. Mutation: a merge adopts the merging call's priority -> the skip
+  // toast turns normal, the oldest (Water) goes instead: ['Skipped 2','Feed','Moist'], red.
+  it('a merge cannot promote a low group', () => {
+    const api = mount()
+    const skipCall = (priority) => api.current.showUndo({
+      message: 'Skipped one', group: 'care-skip', groupMessage: (n) => 'Skipped ' + n, onUndo: () => {},
+      ...(priority ? { priority } : {}),
+    })
+    act(() => { push(api, 'Water'); skipCall('low'); push(api, 'Feed') })
+    act(() => { skipCall() })                          // merges; passes no priority
+    expect(onScreen()).toEqual(['Water', 'Skipped 2', 'Feed'])
+    act(() => { push(api, 'Moist') })
+    expect(onScreen()).toEqual(['Water', 'Feed', 'Moist'])
+  })
+
+  // Every other caller passes no priority; for them the rule must be the original one exactly.
+  it('with no low-priority toast on screen, the oldest goes — unchanged', () => {
+    const api = mount()
+    act(() => { push(api, 'A'); push(api, 'B'); push(api, 'C'); push(api, 'D') })
+    expect(onScreen()).toEqual(['B', 'C', 'D'])
+  })
+})
+
 describe('toast stack — timers own their own lifetime', () => {
   it('a later toast does NOT restart an earlier toast’s dismiss timer', () => {
     vi.useFakeTimers()
