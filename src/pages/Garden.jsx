@@ -242,6 +242,12 @@ export default function Garden() {
   // location state to null, which would silently drop a carried `background` (or any other state). Read
   // the live state so every strip below can spread it through (behavior-neutral when state is null).
   const location = useLocation()
+  // The packet deep link (`?source_inventory_item_id=…&variety_id=…`) has NO IN-APP PRODUCER since
+  // V5-SEEDSTAB-001 slice 2a: its only one, the seed detail page's "Plant from this packet", now opens
+  // the shared Sow sheet in place ("Sow this", components/seed/SowSheet.jsx). KEPT, deliberately
+  // (design-seedshome-V102 §6 "decide in slice 2"): a typed, bookmarked or restored URL of this shape
+  // must still open a working add form rather than a Garden page that silently ignores it, and removing
+  // the reader would delete the pins in Garden.editor.test.jsx that guard it. Its tests stay live.
   const sourceInventoryItemId = searchParams.get('source_inventory_item_id') || null
   const queryVarietyId        = searchParams.get('variety_id') || null
   const [editor, setEditor] = useState(null)

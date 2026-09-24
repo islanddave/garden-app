@@ -196,6 +196,12 @@ const SHEET_SITES = [
   // close is NOT idempotent: a second POST returns 409, so a backdrop tap mid-write would discard
   // the surface over a write that may already have committed.
   'components/putup/BatchCloseField.jsx',
+  // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
+  // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
+  // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's
+  // in-flight write), so the registered role="dialog" surface is still Sheet's and no DIALOG_SURFACES
+  // entry is owed. pages/SowNow.jsx left this list in the same change; the count of sites is unchanged.
+  'components/seed/SowSheet.jsx',
   'components/today/CareNeeded.jsx',
   'pages/AddSeeds.jsx',
   'pages/EventDetail.jsx',
@@ -203,7 +209,6 @@ const SHEET_SITES = [
   'pages/Harvests.jsx',
   'pages/PlantingDetail.jsx',
   'pages/SavedSeeds.jsx',
-  'pages/SowNow.jsx',
 ]
 
 function diff(found, frozen) {

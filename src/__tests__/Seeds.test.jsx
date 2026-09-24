@@ -77,6 +77,9 @@ function mount(entries = ['/seeds'], initialIndex = entries.length - 1, { before
       { path: '/today', element: <div data-testid="today" /> },
       { path: '/inventory/add', element: <div data-testid="add-form" /> },
       { path: '/inventory/:id', element: <div data-testid="detail" /> },
+      // V5-SEEDSTAB-001 slice 2a — the two new destinations Sow now's cards reach.
+      { path: '/varieties/:varietyId/edit', element: <div data-testid="variety-editor" /> },
+      { path: '/plantings/:plantingId', element: <div data-testid="planting" /> },
     ],
     { initialEntries: entries, initialIndex },
   )
@@ -339,11 +342,27 @@ describe('Seeds — every door that pushes a page off Seeds carries the way back
     expect(landed(router)).toEqual({ action: 'PUSH', path: '/inventory/add', state: { seedsReturn: '/seeds?view=mine' } })
   })
 
-  it('Sow now card: a packet link (Add sow details) returns to Sow now', async () => {
+  // V5-SEEDSTAB-001 slice 2a (§8) — RE-POINTED from the packet's page (which cannot edit a sow profile)
+  // to the cultivar's variety editor. The editor leaves with navigate(-1) on save and cancel, so a PUSH
+  // is the whole of "the way back": one Back lands on Sow now again. The packet-page door this test used
+  // to pin is still live on the "Sowed previously" card — pinned in the next test, so no state-carrying
+  // push lost its guard.
+  it('Sow now card: Add sow details pushes the variety editor, so its Back returns to Sow now', async () => {
     candidates = [{ inventory_item_id: 'pkt-1', item_name: 'Sungold', variety_name: 'Sungold', variety_id: 'v-b' }]
     const router = mount(['/today', '/seeds?view=sow'])
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add sow details for Sungold' })).toBeTruthy())
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Add sow details for Sungold' })) })
+    expect(landed(router)).toMatchObject({ action: 'PUSH', path: '/varieties/v-b/edit' })
+    await act(async () => { router.navigate(-1) })
+    expect(router.state.location.pathname + search(router)).toBe('/seeds?view=sow')
+  })
+
+  it('Sow now card: Details on a used-up packet returns to Sow now', async () => {
+    candidates = [{ inventory_item_id: 'pkt-1', item_name: 'Sungold', variety_name: 'Sungold', variety_id: 'v-b', quantity_on_hand: '0', start_method: 'indoors_only', lifecycle: 'annual' }]
+    const router = mount(['/today', '/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByRole('button', { name: /Sowed previously/ })).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Sowed previously/ })) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'View details for Sungold' })) })
     expect(landed(router)).toEqual({ action: 'PUSH', path: '/inventory/pkt-1', state: { seedsReturn: '/seeds?view=sow' } })
   })
 
@@ -629,6 +648,73 @@ describe('Seeds — every view sees the others’ writes without a reload', () =
     writeDraft('sow-now', { inventoryItemId: 'pkt-1' })
     mount(['/seeds?view=sow'])
     await waitFor(() => expect(screen.getByRole('dialog', { name: /Sow Sungold/ })).toBeTruthy())
+  })
+
+  // V5-SEEDSTAB-001 slice 2a — the packet page's own stash key ('sow-packet') is not Sow now's: an
+  // interrupted sow on a packet's page must not reopen itself here, on a page never left mid-sow.
+  it('a Sow sheet interrupted on a packet\'s page does NOT reopen on Seeds › Sow now', async () => {
+    candidates = [{ inventory_item_id: 'pkt-1', item_name: 'Sungold', variety_name: 'Sungold', variety_id: 'v-b' }]
+    writeDraft('sow-packet', { inventoryItemId: 'pkt-1' })
+    mount(['/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Archive Sungold for this season' })).toBeTruthy())
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+// V5-SEEDSTAB-001 slice 2a (§8) — Sow now's dead ends, through the REAL shell and router.
+describe('Seeds › Sow now — no dead ends', () => {
+  const SUNGOLD = {
+    inventory_item_id: 'pkt-1', item_name: 'Sungold', variety_name: 'Sungold', variety_id: 'v-b',
+    quantity_on_hand: '1', unit: 'packet', crop_type_slug: 'tomato', lifecycle: 'annual',
+    start_method: 'indoors_only', sun_requirements: 'full_sun',
+  }
+
+  it('"Still in process" → Saved seeds on that lot: the view switch REPLACES and the lot is outlined', async () => {
+    seedRows = [FERMENTING, BOUGHT]
+    candidates = [{ inventory_item_id: 'lot-ferm', item_name: FERMENTING.name, variety_name: 'Big Boy', variety_id: 'v-b', quantity_on_hand: '1', seed_stage: 'fermenting', source_plant_id: 'pl-bigboy', start_method: 'indoors_only', lifecycle: 'annual' }]
+    const router = mount(['/today', '/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Change stage in Saved seeds for Big Boy' })).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Change stage in Saved seeds for Big Boy' })) })
+    expect(search(router)).toBe('?view=saved')
+    // Same entry, not a new one: the shell's in-page door, like the ferment line.
+    expect(router.state.historyAction).toBe('REPLACE')
+    await waitFor(() => {
+      const card = document.querySelector('[data-lot-id="lot-ferm"]')
+      expect(card?.getAttribute('data-outlined')).toBe('true')
+    })
+  })
+
+  it('"Sown ✓ · See the planting" survives a trip to My seeds and back, and opens the new planting', async () => {
+    seedRows = [BOUGHT]
+    candidates = [SUNGOLD]
+    const base = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((path, opts) => {
+      const p = String(path)
+      if (!opts?.method && p === '/api/inventory-items/pkt-1') return Promise.resolve({ id: 'pkt-1', name: 'Sungold', metadata: {} })
+      if (!opts?.method && p === '/api/projects') return Promise.resolve([{ id: 'proj-1', name: 'Garden' }])
+      if (opts?.method === 'POST' && p === '/api/plants') return Promise.resolve({ id: 'plant-9' })
+      return base(path, opts)
+    })
+    const router = mount(['/today', '/seeds?view=sow'])
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Sow Sungold' })).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Sow Sungold' })) })
+    const sheet = screen.getByRole('dialog', { name: /Sow Sungold/ })
+    await waitFor(() => expect(within(sheet).getByDisplayValue('Sungold')).toBeTruthy())
+    await act(async () => { fireEvent.click(within(sheet).getByRole('button', { name: /Add planting/i })) })
+    await waitFor(() => expect(screen.getByText('See the planting')).toBeTruthy())
+
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'My seeds' })) })
+    await waitFor(() => expect(screen.getByTestId('my-seeds-view')).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByRole('radio', { name: 'Sow now' })) })
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
+    const link = screen.getByRole('link', { name: 'See the planting' })
+    expect(link.getAttribute('href')).toBe('/plantings/plant-9')
+
+    await act(async () => { fireEvent.click(link) })
+    expect(router.state.historyAction).toBe('PUSH')
+    expect(router.state.location.pathname).toBe('/plantings/plant-9')
+    await act(async () => { router.navigate(-1) })
+    expect(router.state.location.pathname + search(router)).toBe('/seeds?view=sow')
   })
 })
 

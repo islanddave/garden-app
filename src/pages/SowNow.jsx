@@ -1,31 +1,34 @@
 // src/pages/SowNow.jsx — DRG-SOWNOW-001 /sow surface.
 // Fetches GET /api/inventory-items/sow-candidates (v_sow_candidates rows), runs them
 // through the pure sowEngine bucketizer for today, and renders action-bucket sections
-// in fixed order. Actionable cards open a Sheet mini-form that POSTs /api/plants with
-// the exact seed-provenance wire shape (source_type 'seed_packet' — dropdownRegistry
-// PLANT_SOURCE_OPTIONS seed value). NO quantity decrement (decision: quantity_on_hand
+// in fixed order. Actionable cards open the Sow sheet (components/seed/SowSheet.jsx since
+// V5-SEEDSTAB-001 slice 2a — the seed's detail page opens the same one), which POSTs
+// /api/plants with the seed-provenance wire shape: source_type 'seed_packet' for a bought
+// packet, 'saved_seed' for seed Dave saved himself (dropdownRegistry PLANT_SOURCE_OPTIONS).
+// NO quantity decrement (decision: quantity_on_hand
 // = packets owned; sowing doesn't consume a packet) — so a packet only reaches zero when
 // Dave edits it down, which is what makes zero a trustworthy "used up" signal for the
 // V4-SEEDZEROVIEW-001 `sowed_previously` section rather than an artefact of sowing.
-import React, { useState, useEffect, useMemo, useCallback, useRef, useId } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { bucketize, isInProcess, isUnstartedSave } from '../lib/sowEngine.js'
 import { P } from '../lib/tokens.js'
+import { T } from '../components/forms/formStyles.js'
 import { formatDate } from '../lib/format.js'
 import { useToast } from '../context/ToastContext.jsx'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
-import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
-import { setReloadBlocked } from '../lib/reloadGate.js'
-import { Sheet, Badge } from '../components/forms'
-import PlantingEditor from '../components/PlantingEditor.jsx'
+import { readDraft } from '../lib/draftStash.js'
+import { Badge } from '../components/forms'
+import SowSheet, { sowPacketFromCandidate } from '../components/seed/SowSheet.jsx'
 import useScrollRestore from '../hooks/useScrollRestore.js'
 import { seedsHref, addPacketHref, seedsReturnState } from '../lib/seedsRoutes.js'
 
 // V5-SEEDSTAB-001 — where this view sends the add form and a packet's detail page back to.
 const SOW_VIEW_HREF = seedsHref('sow')
 
-// V4-RELOADGATEWIRE-001 — this page's draft-stash route key.
+// V4-RELOADGATEWIRE-001 — this page's draft-stash route key. The Sow sheet writes and clears it; this
+// page restores from it. Its own key, never the packet page's (see SowSheet.jsx, "per-host draft key").
 const DRAFT_KEY = 'sow-now'
 
 // Section order is FIXED per the panel deltas spec. Third element = optional subtitle.
@@ -136,7 +139,11 @@ function localTodayISO() {
 // body, and a confirmation held here died with it — so a packet sown seconds ago was offered again on
 // the way back, and switching views is a lighter gesture than leaving a page. `onArchived(id, season)`
 // lets the shell patch its seed rows so My seeds' "Archived for this season" chip agrees at once.
-export default function SowNow({ todayISO = localTodayISO(), embedded = false, sownIds: sownIdsProp, onSown, onArchived }) {
+// V5-SEEDSTAB-001 slice 2a — `sownIds` is a Map, packet id -> the id of the planting that sow created
+// (null if the create answered without one), because the chip now carries a persistent "See the
+// planting" link; `onSown(packetId, plantingId)`. `onGoToLot(id)` is the shell's in-page door to a lot
+// in Saved seeds (switch the view, outline the lot) — the "Still in process" cards use it.
+export default function SowNow({ todayISO = localTodayISO(), embedded = false, sownIds: sownIdsProp, onSown, onArchived, onGoToLot }) {
   const navigate = useNavigate()
   const { fetch } = useApiFetch()
   const { show } = useToast()
@@ -144,7 +151,7 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
   const [candidates, setCandidates] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [localSownIds, setLocalSownIds] = useState(() => new Set())
+  const [localSownIds, setLocalSownIds] = useState(() => new Map())
   const sownIds = sownIdsProp ?? localSownIds
   // Best-effort Back restore (V5-SEEDSTAB-001). The open disclosures ride with the offset: a restored
   // position measured against sections that have since collapsed lands somewhere else entirely.
@@ -158,23 +165,14 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
   // In-flight archive PATCHes, by inventory_item_id — disables the button so a double-tap on a
   // slow phone connection cannot fire two writes.
   const [archiveBusy, setArchiveBusy] = useState(() => new Set())
-  const [projects, setProjects] = useState([])
 
-  // Sheet target — null when closed, else the bucket entry being sown. The sheet hosts the
-  // canonical PlantingEditor (add-from-packet), so a sown planting gets a real place + full
-  // details and can never land orphaned (BUG-ORPHANNAV-001, the old mini-form's project_id:null).
+  // Sheet target — null when closed, else the bucket entry being sown. The Sow sheet (SowSheet.jsx)
+  // hosts the canonical PlantingEditor (add-from-packet), so a sown planting gets a real place + full
+  // details and can never land orphaned (BUG-ORPHANNAV-001, the old mini-form's project_id:null). The
+  // sheet owns everything past WHICH packet: its projects fetch, the editor's dirty/busy signals, the
+  // reload hold, and the stash's write and clear.
   const [sowTarget, setSowTarget] = useState(null)
   // V4-BACKNAV-001 Slice P (extended) — the sow sheet closes in place (setSowTarget(null)).
-  // V4-PLANTEDITORWIRE-001: mirror of the embedded editor's own clean/dirty state, reported through
-  // its `onDirty` prop. This is the ONLY thing this page can know about content typed INSIDE the
-  // sheet — `sowTarget` says which packet is being sown, never whether anything has been entered.
-  const [editorDirty, setEditorDirty] = useState(false)
-  // BUG-DIRTYDISMISSGAP-001 — the editor's in-flight-write signal, which this page alone of the
-  // three PlantingEditor hosts never subscribed to (Garden.jsx and PlantingDetail.jsx both did).
-  // Without it decideBack's BLOCKED branch could never fire here, so the sow sheet was dismissable
-  // mid-POST as well as mid-typing: closing unmounts the editor, so a create that FAILED had nothing
-  // left to render its error into and looked exactly like one that succeeded.
-  const [editorBusy, setEditorBusy] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -195,15 +193,6 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
     return () => { alive = false }
   }, [fetch])
 
-  // Projects for the embedded PlantingEditor's place picker.
-  useEffect(() => {
-    let alive = true
-    fetch('/api/projects')
-      .then((data) => { if (alive) setProjects(Array.isArray(data) ? data : []) })
-      .catch(() => { if (alive) setProjects([]) })
-    return () => { alive = false }
-  }, [fetch])
-
   const buckets = useMemo(
     () => (candidates ? bucketize(candidates, todayISO) : null),
     [candidates, todayISO]
@@ -212,8 +201,8 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
   // V4-RELOADGATEWIRE-001 — the ONLY local state in this file that represents content the user
   // explicitly typed or picked/overrode is `sowTarget`: which packet's Sow sheet is open, set from
   // either an ordinary Sow tap or the "Sow anyway" engine-override tap on a gated hold. Everything
-  // else here is fetched data (candidates/projects), UI view state (disclosure open/closed, archive
-  // busy), or a post-save confirmation cache (sownIds) — none of it is unsaved input, and the
+  // else here is fetched data (candidates), UI view state (disclosure open/closed, archive busy), or
+  // a post-save confirmation cache (sownIds) — none of it is unsaved input, and the
   // per-candidate windowLabel/daysLeft annotations are computed by sowEngine and always regenerable
   // from fresh candidates, never something a reload could "lose". PlantingEditor owns its own field
   // state (place/quantity/notes) internally, so this predicate — like the stash and the
@@ -221,19 +210,19 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
   // the sheet itself.
   //
   // Hoisted to a named value (not inlined per-consumer) for the same reason EventNew's
-  // hasUnsavedInput is: it feeds three channels below (draft persist, the overlay-dirty report, the
-  // reload gate) and letting them drift to slightly different predicates is how one ends up defended
-  // and the others not.
+  // hasUnsavedInput is: it feeds three channels (the draft persist and the reload hold, both inside
+  // SowSheet as "a packet is open", and the overlay-dirty report below) and letting them drift to
+  // slightly different predicates is how one ends up defended and the others not.
   //
   // V4-PLANTEDITORWIRE-001 — `editorDirty` is deliberately NOT a term here, and the reason is
-  // arithmetic rather than taste: PlantingEditor is rendered ONLY inside `{sowTarget && …}` and its
+  // arithmetic rather than taste: PlantingEditor is rendered ONLY while a packet is open and its
   // unmount releases, so editorDirty ⟹ sowTarget and `dirty || editorDirty` is exactly `dirty`. A
   // term that cannot change the value of the expression it is in cannot be tested, and an untestable
   // OR is how a predicate ends up looking guarded while proving nothing. Nor is the editor's signal
   // used to NARROW this to `sowTarget && editorDirty`: the stash restores the open sheet on a packet
   // the user chose, and that choice is worth holding a deploy for whether or not a field is filled.
-  // The place the editor's signal is genuinely load-bearing is the Sheet's backdrop guard below,
-  // which is the one discard path on this page that `dirty` never covered.
+  // The place the editor's signal is genuinely load-bearing is the Sheet's backdrop guard in
+  // SowSheet, which is the one discard path on this page that `dirty` never covered.
   const dirty = !!sowTarget
 
   // Restore a dismissed/reloaded Sow sheet, once candidates have loaded. Gated on `buckets` rather
@@ -248,9 +237,9 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
   // No such landmine here — but NOT because there is a single writer: `sowTarget` is also set by
   // openSowSheet (both the Sow and the "Sow anyway" taps), cleared by closeSowSheet, and cleared
   // again on a successful create. What makes the restore safe is that nothing treats a sowTarget
-  // CHANGE as a fresh selection to reset from: the only readers are the render below and the two
-  // effects immediately following, which key on `dirty`/`sowTarget` to mirror the value outward
-  // (stash, overlay-dirty, reload gate) and reset no state of their own.
+  // CHANGE as a fresh selection to reset from: the only readers are the render below, the
+  // overlay-dirty report, and SowSheet's stash and reload-hold effects, which key on the open packet
+  // to mirror it outward and reset no state of their own.
   const restoredDraftRef = useRef(false)
   useEffect(() => {
     if (restoredDraftRef.current || !buckets) return
@@ -265,23 +254,8 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
     if (entry) setSowTarget(entry)
   }, [buckets])
 
-  // Persist while the sheet holds a target — for ABNORMAL exits only (see closeSowSheet: an
-  // explicit dismissal clears it, unlike EventNew/LogMany).
-  //
-  // WHAT THIS RECOVERS, PRECISELY: the inventory_item_id, i.e. WHICH packet was mid-sow, and
-  // nothing else. It does NOT preserve anything typed or picked inside the sheet — place/project,
-  // location, quantity, planting notes, dates — because PlantingEditor owns that state internally.
-  // So a mid-sheet SW reload that beats the gate re-opens the right packet on an EMPTY form.
-  //
-  // V4-PLANTEDITORWIRE-001 did NOT change that, and it is worth being precise about why: `onDirty`
-  // reports a BOOLEAN — that unsaved work exists — not the values, so it lets this page DEFEND the
-  // fields (backdrop guard below) but still gives it nothing to write down. A stash that claimed to
-  // restore a form it cannot read would be worse than one that honestly restores only the target.
-  // Widening the payload needs a values-level channel on PlantingEditor, which does not exist.
-  useEffect(() => {
-    if (!dirty) return
-    writeDraft(DRAFT_KEY, { inventoryItemId: sowTarget.candidate.inventory_item_id })
-  }, [dirty, sowTarget])
+  // The stash is WRITTEN by SowSheet while it holds a packet — for ABNORMAL exits only — and cleared
+  // by its every deliberate close; what it does and does not recover is recorded there.
 
   // Tells the hosting overlay Sheet (if any) not to let a stray backdrop tap silently discard this
   // page while a sow is mid-flight.
@@ -292,44 +266,36 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
   // OverlayDirtyProvider is ever mounted above this page and
   // this hook reports into nothing. It is kept as forward-compat: it costs nothing, it keeps the
   // page in the standard three-guard shape, and adding `overlayable` later then needs no follow-up
-  // here. The guard that actually runs on this surface is the reload gate below. The suite's
-  // dirty-channel assertions manufacture their own provider and are labelled forward-compat to
-  // match — they pin the contract, they do not evidence a live guard.
+  // here. The guard that actually runs on this surface is the reload hold SowSheet takes while it is
+  // open. The suite's dirty-channel assertions manufacture their own provider and are labelled
+  // forward-compat to match — they pin the contract, they do not evidence a live guard. It stays HERE
+  // rather than in SowSheet: the channel is one value per page, and the packet page reports its own
+  // form's state into it too.
   useReportOverlayDirty(dirty)
-
-  // V4-RELOADGATEWIRE-001 — hold the service-worker reload while the Sow sheet is open. This is the
-  // guard that actually matters on this full-page-only surface (see the no-op note above). Cleanup
-  // releases the key so a closed or unmounted sheet can never wedge updates (BUG-STALECLIENT-001).
-  const reloadGateKey = `sow-now:${useId()}`
-  useEffect(() => {
-    setReloadBlocked(reloadGateKey, dirty)
-    return () => setReloadBlocked(reloadGateKey, false)
-  }, [reloadGateKey, dirty])
 
   const openSowSheet = useCallback((entry) => {
     setSowTarget(entry)
   }, [])
 
-  // V4-RELOADGATEWIRE-001 — the single close path for the Sow sheet: the Sheet's Close control,
-  // Escape, an un-dirty backdrop tap, the back gesture, and the editor's own Cancel all land here.
-  //
-  // CLEARS THE STASH, which is the opposite of what EventNew and LogMany do on a dismiss — and the
-  // difference is not an inconsistency, it is the difference between what is being restored. Their
-  // drafts refill FIELDS in a form the user is already looking at; this one restores a MODAL'S OPEN
-  // STATE. Keeping it through a deliberate Close means the sheet re-opens itself on the next visit
-  // to /sow in the same tab, and the next, with no way to stop it short of actually sowing the
-  // packet — a dismissal the app refuses to accept. An exit the guards could NOT defer (SW reload,
-  // hard refresh, navigating away mid-sheet) never runs this, so the recovery case still works: the
-  // stash survives precisely the exits the user did not choose.
+  // V4-RELOADGATEWIRE-001 — where every close of the Sow sheet ends: the Sheet's Close control,
+  // Escape, an un-dirty backdrop tap, the back gesture, the editor's own Cancel and a successful
+  // create. SowSheet has already CLEARED THE STASH and reset the editor's busy signal by the time this
+  // runs (the reasoning — why a dismissal clears the stash here and not in EventNew/LogMany — is
+  // recorded on SowSheet's `close`); what is left for the page is to forget the target.
   const closeSowSheet = useCallback(() => {
-    clearDraft(DRAFT_KEY)
     setSowTarget(null)
-    // Cleared here as well as by PlantingEditor's unmount release, which lands a commit later: a
-    // stale `true` would leave the NEXT sow sheet undismissable from its first frame — the stuck-busy
-    // trap the bounded Back guard exists to survive, reached with no write in flight at all. Same
-    // reasoning PlantingDetail.jsx records on its own closeEditor.
-    setEditorBusy(false)
   }, [])
+
+  // The packet the sheet is open on, in the one shape both of its hosts hand it. Memoised on the
+  // target so a re-render of this page is not a new packet to the sheet.
+  const sowPacket = useMemo(() => (sowTarget ? sowPacketFromCandidate(sowTarget.candidate) : null), [sowTarget])
+
+  // "Sown ✓" is recorded with the planting the sow created, so the card can offer the way to it.
+  const handleSown = useCallback((packet, planting) => {
+    const plantingId = planting?.id ?? null
+    if (onSown) onSown(packet.id, plantingId)
+    else setLocalSownIds((prev) => new Map(prev).set(packet.id, plantingId))
+  }, [onSown])
 
   // V4-SOWARCHIVE-001. Archive/un-archive a packet for THIS season.
   //
@@ -380,6 +346,46 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
     if (embedded) navigate(`/inventory/${id}`, { state: seedsReturnState(SOW_VIEW_HREF) })
     else navigate(`/inventory/${id}`)
   }, [embedded, navigate])
+
+  // V5-SEEDSTAB-001 slice 2a (§8) — "Add sow details" goes where sow details ARE edited: the cultivar's
+  // variety editor. It used to open the packet's page, which cannot edit a single sow-profile field (they
+  // live on the cultivar, and the variety editor is their only editor), so the card's one fix was a dead
+  // end. A plain push: the editor leaves with navigate(-1) on save and on cancel, which lands back on
+  // this view, and Sow now refetches on the way in — a filled profile moves the packet out of "Needs a
+  // sow profile" by itself. The editor says for itself when the viewer cannot edit this cultivar. Every
+  // seed row carries a variety (chk_inventory_seed_requires_variety); a row that somehow does not keeps
+  // the old door rather than getting none.
+  const editSowDetails = useCallback((c) => {
+    if (c.variety_id) navigate(`/varieties/${c.variety_id}/edit`)
+    else openPacket(c.inventory_item_id)
+  }, [navigate, openPacket])
+
+  // V5-SEEDSTAB-001 slice 2a (§8) — a lot still in process, in Saved seeds: the one place its stage moves
+  // (V5-SEEDSTAGEONEPLACE-001), which is the only thing that will ever put it back on this list. Inside
+  // the Seeds page that is the shell's in-page door — the view switch replaces and the lot is outlined,
+  // as the ferment line and My seeds' own "Change stage" do. Standalone (the harness and the unit
+  // suites; /sow itself redirects into Seeds) it is the Seeds URL for that lot.
+  const goToLot = useCallback((id) => {
+    if (onGoToLot) onGoToLot(id)
+    else navigate(seedsHref('saved', { lot: id }))
+  }, [onGoToLot, navigate])
+
+  // "Sown ✓" plus, once the create named its planting, a persistent way to it (§8: a link, not a toast —
+  // it stays on the card for the visit, across view switches, because the shell holds it). Operational
+  // confirmation of a task Dave started, so it is the same quiet chip it always was.
+  function renderSown(c) {
+    const plantingId = sownIds.get(c.inventory_item_id)
+    return (
+      <>
+        <span style={sownChip} role="status">Sown &#10003;</span>
+        {plantingId && (
+          <Link to={`/plantings/${plantingId}`} data-testid="sow-see-planting" style={seePlantingLink}>
+            See the planting
+          </Link>
+        )}
+      </>
+    )
+  }
 
   function renderCard(entry, bucketKey) {
     const c = entry.candidate
@@ -485,7 +491,7 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
         <div style={cardActions}>
         {ACTIONABLE.has(bucketKey) && (
           sown ? (
-            <span style={sownChip} role="status">Sown &#10003;</span>
+            renderSown(c)
           ) : (
             <button
               type="button"
@@ -504,7 +510,8 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
             may know better than. `in_process` is not a judgement, it is a physical fact about the
             seed — it is wet, in a jar, in pulp — and there is no override that makes it sowable
             today. A "Sow anyway" here would offer the exact mis-sow this whole guard exists to
-            prevent. The lot is still fully on the page and still one tap from Inventory. */}
+            prevent. The lot is still fully on the page, and one tap from Saved seeds, where its
+            stage moves (the door below). */}
         {/* BUG-SEEDZEROSOWABLE-001 CARVE-OUT, and it is narrower than it looks. The withholding
             above is kept for every lot whose seed is physically not seed yet; `unstartedSave` is
             the one member of this bucket where that is not the claim being made. Nobody said an
@@ -517,7 +524,7 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
             general rule this bucket was carved out of in the first place. */}
         {!ACTIONABLE.has(bucketKey) && (bucketKey !== 'in_process' || entry.unstartedSave) && entry.gated && (
           sown ? (
-            <span style={sownChip} role="status">Sown &#10003;</span>
+            renderSown(c)
           ) : (
             <button
               type="button"
@@ -532,11 +539,39 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
         {bucketKey === 'needs_profile' && (
           <button
             type="button"
-            onClick={() => openPacket(c.inventory_item_id)}
+            onClick={() => editSowDetails(c)}
             aria-label={`Add sow details for ${title}`}
             style={profileBtn}
           >
             Add sow details
+          </button>
+        )}
+        {/* V5-SEEDSTAB-001 slice 2a (§8) — a "Still in process" card was a dead end: it said the lot
+            could not be sown until it was dry and stored, and offered no way to where that happens.
+            Fermenting or drying → Saved seeds, on this lot (the only stage writer). A lot whose process
+            never started is NOT listed there (Saved seeds shows staged lots), so it goes to its own
+            page, where its count and origin are recorded. Keyed on the CANDIDATE's state, the same
+            predicates the chip above reads, so the door and the chip can never disagree. */}
+        {bucketKey === 'in_process' && isInProcess(c) && (
+          <button
+            type="button"
+            onClick={() => goToLot(c.inventory_item_id)}
+            aria-label={`Change stage in Saved seeds for ${title}`}
+            data-testid="sow-lot-stage-door"
+            style={profileBtn}
+          >
+            Change stage in Saved seeds &rarr;
+          </button>
+        )}
+        {bucketKey === 'in_process' && !isInProcess(c) && isUnstartedSave(c) && (
+          <button
+            type="button"
+            onClick={() => openPacket(c.inventory_item_id)}
+            aria-label={`View details for ${title}`}
+            data-testid="sow-lot-details-door"
+            style={profileBtn}
+          >
+            Details
           </button>
         )}
         {/* V4-SEEDZEROVIEW-001. The point of this section is review — "so i can review … all the
@@ -665,61 +700,12 @@ export default function SowNow({ todayISO = localTodayISO(), embedded = false, s
       </>
   )
 
+  // Sow sheet — the canonical PlantingEditor (add-from-packet): required place, location and full
+  // details, pre-seeded seed/today/source type. Orphan-safe. Its guards (backdrop, ConfirmSheet on a
+  // dirty dismiss, BLOCKED mid-POST, the reload hold and the stash) live in SowSheet.jsx, which the
+  // seed's detail page opens too.
   const sheet = (
-      /* Sow sheet — hosts the canonical PlantingEditor (add-from-packet): required place
-          picker + location + full details, pre-seeded seed/today/seed_packet. Orphan-safe. */
-      <Sheet
-        armsBack
-        open={!!sowTarget}
-        onClose={closeSowSheet}
-        // V4-PLANTEDITORWIRE-001 — the guard the reload gate above could not give this page. A
-        // backdrop tap is the one exit that is neither deliberate nor deferrable: Sheet no-ops it
-        // while dirty (Sheet.jsx §5.2) and leaves Escape and the labelled Close live, which is
-        // exactly right here — a stray tap beside a half-filled sow form must not discard it, but a
-        // user who means to leave still has two ways out and needs no confirm dialog to use them.
-        // Gated on the EDITOR's signal, not on `dirty` (= sheet-open): passing sheet-open would make
-        // the backdrop inert for every sow, including the far more common one where the sheet was
-        // opened by mistake and holds nothing.
-        dirty={editorDirty}
-        // BUG-DIRTYDISMISSGAP-001 — this was the app's genuinely UNGUARDED editor surface, and the
-        // worst-exposed of the three hosts. closeSowSheet clears the stash as its FIRST act, so an
-        // unconfirmed dismiss destroyed both the typed fields and the {inventoryItemId} crumb that
-        // would have said which packet was mid-sow (see the stash note at the top of this file).
-        // Net recovery was zero. Escape and Android Back now raise the registry's ConfirmSheet.
-        confirmOnDirty
-        confirmTitle="Discard this sowing?"
-        confirmBody="This packet has not been sown yet. What you typed will be lost, and the sheet will not reopen on this packet."
-        // The in-flight-write half of the same gap — see the editorBusy declaration above.
-        busy={editorBusy}
-        title={sowTarget ? `Sow ${sowTarget.candidate.variety_name || sowTarget.candidate.item_name}` : undefined}
-      >
-        {sowTarget && (
-          <div style={{ padding: '0 16px 4px' }}>
-            <PlantingEditor
-              mode="add"
-              fetch={fetch}
-              projects={projects.filter((p) => !p.archived_at)}
-              sourceInventoryItemId={sowTarget.candidate.inventory_item_id}
-              varietyId={sowTarget.candidate.variety_id}
-              addDefaults={{ status: 'seed', sown_at: todayISO, source_type: 'seed_packet' }}
-              onCreated={() => {
-                const sownId = sowTarget.candidate.inventory_item_id
-                if (onSown) onSown(sownId)
-                else setLocalSownIds((prev) => new Set(prev).add(sownId))
-                show({ message: 'Planted!' })
-                closeSowSheet()
-              }}
-              onClose={closeSowSheet}
-              // V4-PLANTEDITORWIRE-001. The setter itself, not an inline arrow — PlantingEditor
-              // keeps `onDirty` behind a ref so an unstable prop cannot fire a spurious release,
-              // and a stable identity means this page never has to rely on that.
-              onDirty={setEditorDirty}
-              // Same contract, same reasoning — feeds <Sheet busy> above.
-              onBusy={setEditorBusy}
-            />
-          </div>
-        )}
-      </Sheet>
+    <SowSheet packet={sowPacket} draftKey={DRAFT_KEY} todayISO={todayISO} onSown={handleSown} onClose={closeSowSheet} />
   )
 
   // V5-SEEDSTAB-001 — embedded, the Seeds shell supplies the page and its frame (one max-width and
@@ -897,6 +883,20 @@ const sownChip = {
   backgroundColor: P.greenPale,
   borderRadius: 999,
   padding: '6px 14px',
+  flexShrink: 0,
+}
+
+// V5-SEEDSTAB-001 slice 2a — the way to the planting a sow just made, beside its chip. A text link in
+// the chip's green, never a second filled button (the chip is the answer; this is where it went), at
+// the 44px tap floor like every other action on the card.
+const seePlantingLink = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  minHeight: T.tapMinHeight,
+  padding: `0 ${T.space.xs}px`,
+  color: P.green,
+  fontSize: T.type.sm,
+  fontWeight: 700,
   flexShrink: 0,
 }
 

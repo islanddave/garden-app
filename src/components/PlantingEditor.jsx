@@ -1,8 +1,10 @@
 // PlantingEditor — V3-IA: the add/edit/delete planting machinery folded out of the
 // retired Plants page into the unified Garden page. Hosted by Garden.jsx, opened via
 // /garden?add=1 (FAB create sheet), /garden?source_inventory_item_id=&variety_id=
-// (InventoryDetail plant-from-packet), or /garden?edit=<plantingId> (PlantingDetail
-// V3-EDIT-001 affordance). Owns the /api/plants wire contract previously in Plants.jsx:
+// (a packet deep link with no in-app producer since V5-SEEDSTAB-001 slice 2a — kept for typed
+// and bookmarked URLs), or /garden?edit=<plantingId> (PlantingDetail V3-EDIT-001 affordance);
+// and by components/seed/SowSheet.jsx, the Sow sheet Sow now and the seed's detail page share.
+// Owns the /api/plants wire contract previously in Plants.jsx:
 // dual-write variety (variety_id canonical + flat text), COALESCE-merge PUT, '' -> null
 // coercions for source/status, source_inventory_item_id passthrough on POST.
 import React, { useState, useEffect, useRef } from 'react'

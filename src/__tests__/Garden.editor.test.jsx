@@ -1,7 +1,9 @@
 // Garden PlantingEditor — V3-IA merge coverage. The add/edit/delete machinery that
 // lived in the retired Plants page now opens inside Garden via query params:
 //   ?add=1 (FAB create sheet) · ?edit=<id> (PlantingDetail V3-EDIT-001) ·
-//   ?source_inventory_item_id/&variety_id (InventoryDetail plant-from-packet).
+//   ?source_inventory_item_id/&variety_id (InventoryDetail plant-from-packet until V5-SEEDSTAB-001
+//   slice 2a; since then no in-app door produces it — the reader is KEPT for typed/bookmarked URLs, and
+//   so are its tests below, which still guard it).
 // Wire-contract assertions (dual-write variety, planting-details union, COALESCE PUT)
 // ported from the old Plants.test.jsx.
 //

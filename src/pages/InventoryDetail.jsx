@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useId } from 'react'
+import React, { useState, useEffect, useId, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useInventory } from '../hooks/useInventory.js'
 import { useApiFetch } from '../lib/api.js'
@@ -29,9 +29,17 @@ import { seedFacts } from '../components/seed/seedFacts.js'
 import { PUTUP_SOURCE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { formatQtyExact } from '../lib/format.js'
 import { seedsHref, seedsReturnFromHistory } from '../lib/seedsRoutes.js'
+import { readDraft } from '../lib/draftStash.js'
+import { T } from '../components/forms/formStyles.js'
+import SowSheet, { sowPacketFromItem } from '../components/seed/SowSheet.jsx'
 
 // V5-SEEDSTAB-001 — seed left the Inventory list, so a seed row's exits go to Seeds › My seeds.
 const SEEDS_MINE = seedsHref('mine')
+
+// V5-SEEDSTAB-001 slice 2a — this page's Sow sheet stash. Its OWN key, never Sow now's 'sow-now': a
+// shared key would let a sow interrupted here reopen itself on Seeds › Sow now, and the other way round.
+// One key for every packet page, holding the packet's id; a page restores only its own packet's sheet.
+const SOW_DRAFT_KEY = 'sow-packet'
 
 // Inventory enums centralized in src/lib/inventoryEnums.js (live prod CHECK sets);
 // the former local duplicates here were removed (Lane D dedup).
@@ -92,6 +100,12 @@ export default function InventoryDetail() {
   const [sourceKind,     setSourceKind]     = useState('')
   const [sourceKindBusy, setSourceKindBusy] = useState(false)
   const [sourceKindErr,  setSourceKindErr]  = useState(null)
+
+  // ── V5-SEEDSTAB-001 slice 2a — "Sow this" opens THE Sow sheet on this packet ───────────────────
+  // The packet the sheet is open on (null = closed), and — once a sow from this page lands — the
+  // planting it made, so the page can say so and offer the way to it for the rest of the visit.
+  const [sowPacket, setSowPacket] = useState(null)
+  const [sown,      setSown]      = useState(null)
 
   // ── V5-SEEDCARDS-001 — the packet card's supplier, by name ─────────────────────────────────
   // The registry is what turns `source_id` into a name (and the name into the supplier's colours).
@@ -392,8 +406,11 @@ export default function InventoryDetail() {
   //
   // Nothing else on this page carries unsaved state. PhotoUpload posts the file the instant it is
   // chosen (there is no staged-file step, unlike EventNew's), `confirmDelete` is a transient
-  // confirmation, the Plant-from-packet CTA is pure navigation, and the V4-SEEDLINK-001 "Saved
+  // confirmation, and the V4-SEEDLINK-001 "Saved
   // from" picker PATCHes on selection — so its value is on the server before this could observe it.
+  // The Sow sheet (V5-SEEDSTAB-001 slice 2a, replacing the Plant-from-packet navigation) guards
+  // itself — it takes its own reload hold and writes its own stash while open — and joins only the
+  // overlay report below, which is one value per page.
   // The seed-processing card holds nothing at all since V5-SEEDSTAGEONEPLACE-001 moved its stage
   // control (and the count prompt that hung off it) to /seeds/saved: what is left is a read-only
   // history panel.
@@ -405,7 +422,24 @@ export default function InventoryDetail() {
     form && baseline && Object.keys(baseline).some(k => form[k] !== baseline[k])
   )
 
-  useReportOverlayDirty(hasUnsavedInput)
+  // Forward-compat, like SowNow's: /inventory/:id is not an overlayable route, so no provider listens
+  // today. The open Sow sheet is folded in HERE rather than reported by the sheet itself, because the
+  // channel keeps one value per page and a second reporter would overwrite this form's.
+  useReportOverlayDirty(hasUnsavedInput || !!sowPacket)
+
+  // V5-SEEDSTAB-001 slice 2a — reopen a Sow sheet an ABNORMAL exit interrupted (SW reload, hard
+  // refresh) on THIS packet. Validated against the live row, the rule SowNow applies against its
+  // buckets: the stash names a packet id, and only that packet's page — still sowable — reopens it. Once
+  // per packet id, so a later re-read of the row (the packet photo's) can never reopen a sheet the user
+  // has since closed. A deliberate close cleared the stash (SowSheet), so this never resurrects one.
+  const restoredSowRef = useRef(null)
+  useEffect(() => {
+    if (!item || restoredSowRef.current === item.id) return
+    restoredSowRef.current = item.id
+    if (!canSowFrom(item)) return
+    if (readDraft(SOW_DRAFT_KEY)?.inventoryItemId !== item.id) return
+    setSowPacket(sowPacketFromItem(item))
+  }, [item])
 
   // The reload-gate half. Key is per-instance for the reason EventNew.jsx:985 gives — reloadGate
   // holds a Set, so a shared literal key would let one instance's unmount release another's hold.
@@ -468,19 +502,59 @@ export default function InventoryDetail() {
           />
         )}
 
-        {/* Plant-from-packet CTA — VARIETY-REF S4b.
-            Visible only for seed packets with stock on hand. Tap-target ≥44px (Jen iPhone-primary).
-            Carries source_inventory_item_id + variety_id as query params; Garden reads them and
-            opens the PlantingEditor add form pre-filled. */}
-        {item.category === 'seeds' && Number(item.quantity_on_hand ?? 0) > 0 && (
-          <PlantFromPacketCTA
-            item={item}
-            onClick={() => {
-              const params = new URLSearchParams()
-              params.set('source_inventory_item_id', item.id)
-              if (item.variety_id) params.set('variety_id', item.variety_id)
-              navigate(`/garden?${params.toString()}`)
-            }}
+        {/* ── V5-SEEDSTAB-001 slice 2a (§6) — Sow this ─────────────────────────────────────────
+            Replaces VARIETY-REF S4b's "Plant from this packet", which navigated to
+            /garden?source_inventory_item_id=…&variety_id=… — Garden's generic add form, with other
+            defaults (no status, no sow date, no source type) and an emoji for an icon. This opens
+            THE Sow sheet Sow now opens, on this packet, so a sow from here and a sow from there send
+            the same POST. Same visibility rule as before: seed rows with stock on hand. The page's
+            LIVE provenance rides along (a parent picked in "Saved from" a moment ago counts), since
+            it decides whether the planting records saved seed or a bought packet. */}
+        {item.category === 'seeds' && (canSowFrom(item) || sown || item.variety_id) && (
+          <div data-testid="sow-actions" style={sowActions}>
+            {canSowFrom(item) && (
+              <SowThisCTA
+                item={item}
+                onClick={() => setSowPacket(sowPacketFromItem({
+                  ...item,
+                  source_plant_id: sourcePlantId || null,
+                  source_kind: sourceKind || null,
+                }))}
+              />
+            )}
+            {/* What that sow made, for the rest of the visit, with the way to it — a line on the
+                page, not a toast (the sheet's own "Planted!" toast is the transient half).
+                Operational, so it is the same quiet green Sow now's "Sown ✓" chip is. */}
+            {sown && (
+              <div data-testid="sow-this-sown" role="status" style={sownLine}>
+                <span style={{ fontWeight: 700 }}>Sown ✓</span>
+                {sown.plantingId && (
+                  <Link to={`/plantings/${sown.plantingId}`} data-testid="sow-this-see-planting" style={sownLink}>
+                    See the planting
+                  </Link>
+                )}
+              </div>
+            )}
+            {/* V5-SEEDSTAB-001 slice 2a (§6) — Edit sow details. A packet's sow profile (timing,
+                depth, spacing, days to germinate) belongs to its CULTIVAR, and the variety editor is
+                the only editor of those fields; this page could only read them. A plain push: the
+                editor leaves with navigate(-1) on save and cancel, which lands back here, and it says
+                for itself when the viewer cannot edit this cultivar. Every seed row carries a variety
+                (chk_inventory_seed_requires_variety); the guard only keeps a row that somehow does
+                not from linking to /varieties/undefined/edit. */}
+            {item.variety_id && (
+              <Link to={`/varieties/${item.variety_id}/edit`} data-testid="edit-sow-details" style={editSowDetailsLink}>
+                Edit sow details →
+              </Link>
+            )}
+          </div>
+        )}
+        {canSowFrom(item) && (
+          <SowSheet
+            packet={sowPacket}
+            draftKey={SOW_DRAFT_KEY}
+            onSown={(_packet, planting) => setSown({ plantingId: planting?.id ?? null })}
+            onClose={() => setSowPacket(null)}
           />
         )}
 
@@ -544,7 +618,7 @@ export default function InventoryDetail() {
             /seeds/saved empty state telling Dave to log a `seed_saved` event — a dead end with 0
             events ever logged and no side effect of any kind.
 
-            SEEDS ONLY, gated exactly like the Plant-from-packet CTA above. It never appears on
+            SEEDS ONLY, gated like the packet card above. It never appears on
             tools, media or containers.
 
             THIS PAGE IS THE PLACEMENT THAT MATTERS. /seeds/saved only lists lots that carry a
@@ -689,7 +763,7 @@ export default function InventoryDetail() {
         )}
 
         {/* V2-PHOTO-F1 Session 2: inventory item photo upload.
-            Belongs just below the S4b Plant-from-packet CTA per Session 2 spec.
+            Belongs just below the S4b CTA per Session 2 spec (Sow this since V5-SEEDSTAB-001 slice 2a).
             Useful for capturing seed-packet photos, durable-tool photos, etc.
             V5-SEEDCARDS-001: not for seeds — their upload lives in the packet card above, so the
             page never carries two. Every other category renders this card exactly as before. */}
@@ -1069,40 +1143,65 @@ export default function InventoryDetail() {
 // second hand-maintained copy here; see SavedSeeds.storedCount.test.jsx.
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
-function PlantFromPacketCTA({ item, onClick }) {
+// Who gets "Sow this": seed rows with stock on hand — the rule the Plant-from-packet CTA it replaced
+// shipped with (VARIETY-REF S4b), kept as it was. `?? 0`: an untracked (null) quantity shows no CTA.
+function canSowFrom(item) {
+  return item?.category === 'seeds' && Number(item.quantity_on_hand ?? 0) > 0
+}
+
+// V5-SEEDSTAB-001 slice 2a — the S4b card-button, re-pointed at the Sow sheet: same footprint (full
+// width, 56px, the 44px floor with room to spare at 360px), the colour registry sprout instead of the
+// 🌱 emoji (the same glyph BottomNav's "Sow from seed" and the packet box use). The accessible name
+// starts with the visible words ("Sow this"), so a voice command naming the button still reaches it.
+function SowThisCTA({ item, onClick }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={`Plant from ${item.name}`}
+      aria-label={`Sow this: ${item.name}`}
+      data-testid="sow-this"
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 12,
         width: '100%',
-        marginBottom: 20,
         padding: '14px 16px',
         backgroundColor: P.greenPale,
         border: `2px solid ${P.green}`,
-        borderRadius: 10,
+        borderRadius: T.radiusCard,
         cursor: 'pointer',
         minHeight: 56,
         textAlign: 'left',
         fontFamily: 'inherit',
       }}
     >
-      <span aria-hidden="true" style={{ fontSize: '1.4rem', lineHeight: 1 }}>🌱</span>
+      <Icon name="lifecycle.sprout" size={24} decorative style={{ flexShrink: 0 }} />
       <span style={{ flex: 1 }}>
-        <span style={{ display: 'block', fontWeight: 700, color: P.green, fontSize: '0.95rem' }}>
-          Plant from this packet
+        <span style={{ display: 'block', fontWeight: 700, color: P.green, fontSize: T.type.md }}>
+          Sow this
         </span>
         <span style={{ display: 'block', fontSize: '0.78rem', color: P.mid, marginTop: 2 }}>
-          Opens a new plant pre-filled with this variety.
+          Starts a planting from this packet, sown today.
         </span>
       </span>
       <span aria-hidden="true" style={{ color: P.green, fontSize: '1.1rem' }}>›</span>
     </button>
   )
+}
+
+// The group under the packet card: Sow this, what a sow from here made, and Edit sow details. One
+// bottom margin for the group, so the link reads as part of the sowing actions, not a stray line.
+const sowActions = { display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: T.space.xs, marginBottom: T.space.lg }
+const sownLine = {
+  display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: T.space.sm,
+  color: P.green, fontSize: T.type.sm,
+}
+const sownLink = { display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, color: P.green, fontWeight: 700 }
+// The same shape as "Change stage in Saved seeds →" further down this page: a text link, underlined,
+// on the 44px floor.
+const editSowDetailsLink = {
+  display: 'inline-flex', alignItems: 'center', alignSelf: 'flex-start', minHeight: T.tapMinHeight,
+  paddingRight: 8, color: P.green, fontSize: T.type.sm,
 }
 
 // ── V5-SEEDCARDS-001 — the packet card (UX spec §7.2) ─────────────────────────────────────────────
