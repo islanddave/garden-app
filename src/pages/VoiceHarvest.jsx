@@ -55,7 +55,7 @@ import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
 import { fetchAliases, indexAliases, resolveAlias, teachAlias } from '../lib/voiceAliases.js'
 import {
   buildValue, classify, classifyPartial, foldNumberWords, isNumberPhrase, normalise, segmentCandidates,
-  splitTrailingCommand, parseValueSequence,
+  splitTrailingCommand, parseValueSequence, oneBreathReadings, NUMBER_HOMOPHONES,
 } from '../lib/voiceHarvestGrammar.js'
 import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
 import { createCommitDebouncer } from '../lib/voiceCommitDebounce.js'
@@ -358,6 +358,109 @@ export function resolveOneBreath(plantings, candidates, aliasIndex = null) {
   return agreed ? first : null
 }
 
+// ── V5-VOICEVOCAB-001 (lane D4) — the one-breath record said WITHOUT (all of) its units ─────────────
+//
+// Dave's own example, "planting 2 165", as ONE final. oneBreathReadings (the grammar) returns every
+// way to split the final into a name and one or two amounts; this decides which of them are real,
+// using the two things the grammar cannot see — the planting vocabulary and the current selection.
+//
+// THE RULE: a one-breath final is read exactly as its parts would be read as separate finals, and it
+// is REFUSED when the split into parts is not unique. Measured against the 244 real plantings, the
+// hazard is a number that could sit on either side of the name boundary: "super sweet 100 3 200",
+// "cherry rescue 1 200", "danvers 126 200", "peach tree 200" ("tree" is the recogniser's "three").
+// A reading survives only if:
+//   * its name resolves to exactly ONE planting that OWNS every number left in the name
+//     (plantingOwnsNumbers) — and a name made only of numbers resolves by exact equality or not at
+//     all (plantingsNamedExactly), because "2" is a substring of Danvers 1*2*6;
+//   * no bare amount is itself a planting's whole name ("1884"): said alone, that is the planting;
+//   * nameless, a planting is already selected — "a bare number before a planting is chosen is a
+//     search" stands unless the same final names one.
+// A reading is AMBIGUOUS — and the whole final is refused, never guessed — when its first bare amount
+// is a number the planting's own name carries ("clemson 80 200": is 80 the name's or the count?), when
+// the name holds a number-homophone the planting's name does not ("suyo long to 165"), or when a name
+// ending in a homophone reads differently with that word as the first amount ("peach tree 200" vs
+// "peach" + 3, 200). Two surviving readings that disagree are ambiguous too.
+//
+// Returns null when the final is not this reader's (the ordinary path handles it exactly as before),
+// { kind: 'apply', planting, groups, command, nearCommand } — planting null means the selected one —
+// or { kind: 'refuse', reason: 'ambiguous' | 'crowded' | 'run' | 'numbers', name?, hits? }.
+const sameGroups = (a, b) => a.length === b.length
+  && a.every((g, i) => g.value === b[i].value && g.unit === b[i].unit)
+
+const plantingNumbers = (planting) => new Set(plantingAliases(planting).flatMap(digitRuns))
+
+function plantingOwnsHomophones(planting, name) {
+  const words = normalise(name).split(' ').filter((t) => Object.prototype.hasOwnProperty.call(NUMBER_HOMOPHONES, t))
+  if (!words.length) return true
+  const aliasWords = plantingAliases(planting).map((a) => normalise(a).split(/[^a-z0-9]+/))
+  return words.every((w) => aliasWords.some((ws) => ws.includes(w)))
+}
+
+function judgeBareReading(plantings, r, ctx) {
+  // A bare amount that IS a planting's whole name is that planting, exactly as it is said alone
+  // (namesAPlantingExactly is the hold gate's own bound) — so this reading is not the real one.
+  if (r.groups.some((g) => g.unit == null && namesAPlantingExactly(plantings, String(g.value)))) {
+    return { kind: 'invalid' }
+  }
+  if (!r.name) return ctx.selected ? { kind: 'valid', planting: null, groups: r.groups } : { kind: 'invalid' }
+  const hits = isNumberPhrase(r.name)
+    ? plantingsNamedExactly(plantings, r.name)
+    : matchPlantingsWithRescue(plantings, r.name, ctx.aliasIndex).hits
+  if (hits.length !== 1) {
+    // Several plantings answer to a real name ("super sweet 100" is two of them): not specific
+    // enough to guess between, and worth offering as a list. One that does not own its numbers is
+    // not a name at all.
+    return hits.length > 1 && hits.every((h) => plantingOwnsNumbers(h, r.name))
+      ? { kind: 'crowded', name: r.name, hits } : { kind: 'invalid' }
+  }
+  const [planting] = hits
+  if (!plantingOwnsNumbers(planting, r.name)) return { kind: 'invalid' }
+  if (!plantingOwnsHomophones(planting, r.name)) return { kind: 'ambiguous' }
+  const first = r.groups[0]
+  if (first.unit == null && plantingNumbers(planting).has(String(first.value))) return { kind: 'ambiguous' }
+  const words = normalise(r.name).split(' ')
+  const last = words[words.length - 1]
+  if (words.length > 1 && Object.prototype.hasOwnProperty.call(NUMBER_HOMOPHONES, last)) {
+    const altGroups = [{ value: NUMBER_HOMOPHONES[last], unit: null, text: last }, ...r.groups]
+      .filter((g, i, all) => !(i > 0 && g.unit == null && all[i - 1].unit == null && all[i - 1].value === g.value))
+    if (altGroups.length <= 2) {
+      const alt = judgeBareReading(plantings, { name: words.slice(0, -1).join(' '), groups: altGroups }, ctx)
+      if (alt.kind === 'valid' && !(alt.planting?.id === planting.id && sameGroups(alt.groups, r.groups))) {
+        return { kind: 'ambiguous' }
+      }
+    }
+  }
+  return { kind: 'valid', planting, groups: r.groups }
+}
+
+export function resolveBareOneBreath(plantings, info, { selected = null, aliasIndex = null } = {}) {
+  if (!info) return null
+  // The whole head IS a planting's name ("cherry rescue 1", "eighteen eighty four"): a name, not a
+  // record — the ordinary search selects it, with or without a trailing command, exactly as before.
+  if (plantingsNamedExactly(plantings, info.head).length) return null
+  const judged = info.readings.map((r) => judgeBareReading(plantings, r, { selected, aliasIndex }))
+  if (judged.some((j) => j.kind === 'ambiguous')) return { kind: 'refuse', reason: 'ambiguous' }
+  const valid = judged.filter((j) => j.kind === 'valid')
+  if (valid.length) {
+    const [first] = valid
+    const agree = valid.every((v) => (v.planting?.id ?? null) === (first.planting?.id ?? null)
+      && sameGroups(v.groups, first.groups))
+    return agree
+      ? { kind: 'apply', planting: first.planting, groups: first.groups, command: info.command, nearCommand: info.nearCommand }
+      : { kind: 'refuse', reason: 'ambiguous' }
+  }
+  // The longest name that several plantings answer to — readings run shortest name first.
+  const crowded = judged.filter((j) => j.kind === 'crowded').pop()
+  if (crowded) return { kind: 'refuse', reason: 'crowded', name: crowded.name, hits: crowded.hits }
+  // Numbers only, and a crop chosen: an amount that cannot be read is refused in place rather than
+  // sent to the search, which would clear the crop (the hold gate's reason for existing).
+  if (info.nameless && selected && (info.badRun || info.overfull)) {
+    return { kind: 'refuse', reason: info.badRun ? 'run' : 'numbers' }
+  }
+  if (!info.nameless && info.badRun) return { kind: 'refuse', reason: 'run' }
+  return null
+}
+
 // THE GUARD THE GRAMMAR ASKS FOR AT THE CALL SITE, in its own words: "do not treat a whole-utterance
 // command match as a command while the chooser's live result set contains an exact name match for
 // that same text." A planting name is free text with no vocabulary file, so the grammar cannot check
@@ -492,7 +595,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   useEffect(() => { plantingsRef.current = plantings }, [plantings])
   useEffect(() => { runningRef.current = running }, [running])
 
-  const say = useCallback((tone, text) => setStatus({ tone, text }), [])
+  // The banner as last SAID, synchronously. A one-breath sentence runs several parts through the
+  // ordinary path in one tick, and its read-back prefixes the planting to what the last part said.
+  const statusRef = useRef(null)
+  const say = useCallback((tone, text) => { statusRef.current = { tone, text }; setStatus({ tone, text }) }, [])
 
   // BUG-VOICEFAILSILENT-001 R4 — FIRE A CUE AND READ WHETHER IT LANDED.
   //
@@ -1266,6 +1372,93 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     noteMiss(`Didn't catch that — heard “${String(result.transcript ?? '')}”.`)
   }, [clearRecord, cue, noteMiss, saveRecord, say])
 
+  // ── V5-VOICEVOCAB-001 (lane D4): apply a one-breath record said without its units ───────────────
+  //
+  // THE PARTS GO THROUGH THE ORDINARY PATH, in the order spoken, so "Suyo Long 2 165 next" does
+  // exactly what "Suyo Long", "2", "165", "next" does: BUG-VOICETWOBARENUM-001's pairing, the hold
+  // that lets a unit in the next final still rejoin, the equality rule, the axis rule and every
+  // announcement are reused, not copied. Only the NAME is applied here, because it was resolved under
+  // stricter rules than a search (resolveBareOneBreath) and must not be re-resolved by the looser ones.
+  //   * a DIFFERENT planting starts a new record, and a held number from the old one is dropped, said;
+  //   * the SAME planting with both amounts restates the record — nothing is lost that the sentence
+  //     does not say again; with one amount it continues the record, as a bare number would.
+  const applyBareOneBreath = useCallback((d, heard, meta) => {
+    const planting = d.planting
+    const label = planting ? (planting.name || planting.variety_ref?.name) : null
+    let droppedNote = ''
+    if (planting) {
+      if (selectedRef.current?.id !== planting.id) {
+        const held = heldNumRef.current
+        if (held != null) {
+          noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
+          droppedNote = ` (dropped ${held} — no unit was said)`
+        }
+        clearRecord()
+      } else if (d.groups.length === 2) {
+        const held = heldNumRef.current
+        if (held != null && !d.groups.some((g) => g.value === held)) {
+          noteMiss(`Dropped ${held} — no unit was said, and the record was said again without it.`)
+          droppedNote = ` (dropped ${held} — no unit was said)`
+        }
+        setQty(null); qtyRef.current = null; setWeight(null); weightRef.current = null
+        heldNumRef.current = null; setHeldNum(null)
+      }
+      setSelected(planting); selectedRef.current = planting
+      setCandidates([]); setUnmatched(null); unmatchedRef.current = null
+    }
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision',
+      `one-breath-bare ${label ?? '(selected crop)'} ${d.groups.map((g) => g.text).join(' | ')}${d.command ? ` + ${d.command}` : ''} <- ${JSON.stringify(heard)}`)
+    for (const g of d.groups) applyOneUtterance(classify(g.text), { ...(meta ?? {}), fromOneBreath: true })
+
+    if (d.nearCommand) {
+      cue(hapticDigitRejected)
+      say('warn', 'Kept that. Didn\'t catch the last word — say "next" again.')
+      noteMiss(`Kept the amount; didn't catch the command — heard “${heard}”.`)
+      return
+    }
+    // The command resolves the last held number through the same resolution site a separate "next"
+    // would. Empty transcript: a trailing command is never a planting name (resolveCommandCollision
+    // guards a WHOLE-utterance command only, as the unit-bearing trailing split already assumes).
+    if (d.command) { applyOneUtterance({ kind: 'command', command: d.command, transcript: '' }, meta); return }
+    // No command: read the planting back in front of what the last part said, the way every other
+    // one-breath reading is read back — the app chose the split, so Dave sees which one before "next".
+    if (label) {
+      const last = statusRef.current
+      say(droppedNote ? 'warn' : (last?.tone ?? 'ok'), `${label} — ${last?.text ?? ''}${droppedNote}`)
+    }
+  }, [applyOneUtterance, clearRecord, cue, noteMiss, say])
+
+  // A one-breath sentence whose split is not unique, or whose name is too vague, or whose numbers
+  // cannot be read: refused LOUDLY — reject haptic, a banner saying why, a miss row quoting what was
+  // heard. One that named a planting also unselects the old crop, as a failed search does, so a later
+  // "next" cannot save a record he had moved on from; the held number goes with it, said. A refused
+  // sentence of numbers only changes nothing.
+  const refuseBareOneBreath = useCallback((d, info, heard) => {
+    cue(hapticDigitRejected)
+    let droppedNote = ''
+    if (!info.nameless) {
+      setSelected(null); selectedRef.current = null
+      const held = heldNumRef.current
+      if (held != null) {
+        heldNumRef.current = null; setHeldNum(null)
+        noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
+        droppedNote = ` (dropped ${held} — no unit was said)`
+      }
+    }
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath-bare refused (${d.reason}) <- ${JSON.stringify(heard)}`)
+    if (d.reason === 'crowded') {
+      setCandidates(d.hits); setUnmatched(null); unmatchedRef.current = null
+      say('warn', `${d.hits.length} match “${d.name}” — tap one, then say the amounts again.${droppedNote}`)
+      noteMiss(`Not kept — “${heard}”: “${d.name}” matches ${d.hits.length} plantings.`)
+      return
+    }
+    const why = d.reason === 'run' ? 'two numbers ran together — say them with a pause, or with their units'
+      : d.reason === 'numbers' ? 'more amounts than one record holds — say the count and the weight again'
+      : 'the name and the numbers could be split more than one way — say the planting, then the amounts'
+    say('warn', `Didn't catch that — ${why}.${droppedNote}`)
+    noteMiss(`Didn't catch that — heard “${heard}”.`)
+  }, [cue, noteMiss, say])
+
   // ── V5-VOICEONEBREATH-002: a trailing command rides on the record it follows ────────────────────
   //
   // "cucumber, three count, two thirty one grams, next" in ONE breath, which is how Dave asked for
@@ -1285,8 +1478,33 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // decide the commit path. So the split reads `transcript`, and the head is re-classified before
     // it goes downstream, because applyOneUtterance's whole contract is "a result object".
     const heard = typeof raw === 'string' ? raw : String(raw?.transcript ?? '')
+    // V5-VOICEVOCAB-001 (lane D4) — a record said without (all of) its units, in one breath. Asked
+    // first: when it answers, the sentence is its; when it does not, nothing below changes.
+    const info = oneBreathReadings(heard)
+    const bare = resolveBareOneBreath(plantingsRef.current, info,
+      { selected: selectedRef.current, aliasIndex: aliasRef.current })
+    if (bare?.kind === 'apply') { applyBareOneBreath(bare, heard, meta); return }
+    // A one-breath final ending in a save word CLAIMS the debouncer's one-write cooldown when it
+    // commits (splitTrailingCommand marks it `bare`), which is what stops a re-delivered final saving
+    // twice. When it turns out NOT to write — refused here, or declined and read the ordinary way —
+    // the claim is released, or a genuine "next" said straight after would be swallowed as a duplicate
+    // and told "saved once". The debouncer arms the claim only after this handler returns (it arms on
+    // a handler that returned), so the release waits one microtask for it.
+    const releaseUnwritten = () => {
+      if (info?.command !== 'save_and_advance' && info?.command !== 'save') return
+      const token = meta?.atMs
+      queueMicrotask(() => debRef.current?.invalidateLastWrite(token))
+    }
+    if (bare?.kind === 'refuse') { refuseBareOneBreath(bare, info, heard); releaseUnwritten(); return }
     const split = splitTrailingCommand(heard)
-    if (!split) { applyOneUtterance(raw, meta); return }
+    // A `bare` head is only ever the reader's above. Sent down the split path it would be SEARCHED
+    // and the record standing would then be saved — so when the reader declines it, the whole
+    // sentence goes the ordinary way, exactly as it did before bare heads could split.
+    if (!split || split.bare) {
+      applyOneUtterance(raw, meta)
+      if (split?.bare) releaseUnwritten()
+      return
+    }
 
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision',
       `trailing-command ${split.command ?? 'near-miss'} <- ${JSON.stringify(heard)}`)
@@ -1308,7 +1526,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       try { recRef.current?.stop() } catch { /* already stopping */ }
       say('warn', 'Stopped listening.')
     }
-  }, [applyOneUtterance, clearRecord, cue, noteMiss, saveRecord, say])
+  }, [applyBareOneBreath, applyOneUtterance, clearRecord, cue, noteMiss, refuseBareOneBreath, saveRecord, say])
 
   // ── the recogniser ──────────────────────────────────────────────────────────────────────────────
   const scheduleTickRef = useRef(null)

@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest'
 import {
   classify, parseNumber, normalise, collapseAdjacentDupes, COMMANDS, COMMAND_PHRASES, UNIT_ALIASES,
   COMMAND_NEAR_MISSES, foldNumberWords, classifyPartial, buildValue, segmentCandidates,
-  splitTrailingCommand, parseValueSequence,
+  splitTrailingCommand, parseValueSequence, oneBreathReadings, isNumberPhrase,
 } from '../lib/voiceHarvestGrammar.js'
 import { HARVEST_UNITS, WEIGHT_UNITS } from '../lib/harvest-constants.js'
 
@@ -660,5 +660,95 @@ describe('V5-VOICEVOCAB-001 — adjacent number words compose only as tens + uni
     expect(classify('five two count')).toMatchObject({ kind: 'unparsed', reason: 'ambiguous-number' })
     expect(classify('ten five grams')).toMatchObject({ kind: 'unparsed', reason: 'ambiguous-number' })
     expect(classify('twenty five grams')).toMatchObject({ kind: 'weight', value: 25 })
+  })
+})
+
+// ── V5-VOICEVOCAB-001 (lane D4) — the one-breath record said without its units ─────────────────────
+//
+// "planting 2 165" as ONE final. On cb32814 "165 next", "2 165" and "suyo long 2 165 next" were each a
+// planting SEARCH (nothing matched, crop cleared, numbers dropped). oneBreathReadings offers every
+// split of name and amounts; which one is real is the page's decision against the vocabulary
+// (VoiceHarvest.oneBreath.test.jsx). These pin what is offered, and what is NOT this reader's.
+describe('V5-VOICEVOCAB-001 — oneBreathReadings offers every name/amount split, decides none', () => {
+  const show = (s) => {
+    const r = oneBreathReadings(s)
+    return r && r.readings.map((x) => [x.name, x.groups.map((g) => (g.unit ? `${g.value} ${g.unit}` : g.value))])
+  }
+
+  it("reads Dave's own example in one final, with and without the crop and the save word", () => {
+    expect(show('2 165')).toEqual([['', [2, 165]], ['2', [165]]])
+    expect(show('165 next')).toEqual([['', [165]]])
+    expect(show('Suyo Long, 2, 165, next.')).toEqual([['suyo long', [2, 165]], ['suyo long 2', [165]]])
+    const r = oneBreathReadings('suyo long 2 165 next')
+    expect(r).toMatchObject({ command: 'save_and_advance', nearCommand: false, nameless: false })
+  })
+
+  it('offers both sides of a digit-named planting and leaves the choice to the vocabulary', () => {
+    expect(show('super sweet 100 3 200')).toEqual([['super sweet 100', [3, 200]], ['super sweet 100 3', [200]]])
+    expect(show('eighteen eighty four 2 165')).toEqual([
+      ['eighteen eighty four', [2, 165]], ['eighteen eighty four 2', [165]],
+    ])
+    expect(show('danvers 126 200')).toEqual([['danvers', [126, 200]], ['danvers 126', [200]]])
+  })
+
+  it('reads a bare count beside a weight that kept its unit — "drop count, keep grams"', () => {
+    expect(show('2 165 grams')).toEqual([['', [2, '165 g']]])
+    expect(show('cucumber 3 231 grams')).toEqual([['cucumber', [3, '231 g']]])
+    expect(show('suyo long 3 count 165')).toEqual([['suyo long', ['3 count', 165]], ['suyo long 3 count', [165]]])
+  })
+
+  it('flags a number-word run that is not ONE cardinal instead of summing it', () => {
+    expect(oneBreathReadings('ten five')).toMatchObject({ badRun: true, nameless: true })
+    expect(oneBreathReadings('three two hundred thirty one')).toMatchObject({ badRun: true })
+  })
+
+  it('flags three amounts with no name — a record has two slots', () => {
+    expect(oneBreathReadings('2 165 7')).toMatchObject({ overfull: true, nameless: true })
+  })
+
+  it('the same bare number twice in a row is one number', () => {
+    expect(show('2 2 165')[0]).toEqual(['', [2, 165]])
+  })
+
+  it('filler is never part of a name', () => {
+    expect(show('a hundred next')).toEqual([['', [100]]])
+    expect(show('suyo long about 165')).toEqual([['suyo long', [165]]])
+  })
+
+  it("is NOT this reader's: a lone number, an all-unit record, a name, a command, prose", () => {
+    for (const t of ['165', 'twenty five', 'a hundred', 'three count', '231 grams', '3 count 231 grams',
+      'suyo long three count 231 grams next', 'suyo long', 'next', 'next to the fence', 'cucumber next', '']) {
+      expect(oneBreathReadings(t), t).toBeNull()
+    }
+  })
+
+  it('isNumberPhrase — digits and cardinal words only; a homophone is a word', () => {
+    expect(isNumberPhrase('1884')).toBe(true)
+    expect(isNumberPhrase('eighteen eighty four')).toBe(true)
+    expect(isNumberPhrase('peach tree')).toBe(false)
+    expect(isNumberPhrase('to')).toBe(false)
+  })
+})
+
+// The trailing save word splits off a unit-less record too, MARKED `bare` so the page reads it only
+// through the one-breath reader. The mark is what the commit debouncer reads to give such a final the
+// one-write cooldown: a re-delivered "suyo long 2 165 next" must not save twice.
+describe('V5-VOICEVOCAB-001 — splitTrailingCommand marks a unit-less record `bare`', () => {
+  it('splits and marks the new shapes', () => {
+    expect(splitTrailingCommand('165 next')).toMatchObject({ head: '165', command: 'save_and_advance', bare: true })
+    expect(splitTrailingCommand('suyo long 2 165 next')).toMatchObject({ head: 'suyo long 2 165', bare: true })
+    expect(splitTrailingCommand('2 165 text')).toMatchObject({ head: '2 165', command: null, nearCommand: true, bare: true })
+  })
+
+  it('leaves every unit-bearing split unmarked — the old path still owns those', () => {
+    expect(splitTrailingCommand('231 grams next').bare).toBeUndefined()
+    expect(splitTrailingCommand('cucumber three count 231 grams next').bare).toBeUndefined()
+    expect(splitTrailingCommand('2 165 grams next').bare).toBeUndefined()
+  })
+
+  it('still refuses a head with no number in it — a search word never conjures a save', () => {
+    expect(splitTrailingCommand('cucumber next')).toBeNull()
+    expect(splitTrailingCommand('big boy next')).toBeNull()
+    expect(splitTrailingCommand('next to the fence')).toBeNull()
   })
 })
