@@ -38,6 +38,11 @@ import { looseKey } from './comboboxInput.js'
 // teaching one could only ever create a row nothing reads.
 export const MIN_ALIAS_CHARS = 4
 
+// The most taught names one use count may carry — the PATCH /api/varieties/voice-aliases limit
+// (lambda/varieties/index.js), which refuses the whole request past it. One number on both sides:
+// lambda/varieties/voice-alias-use.test.js runs the handler at exactly this and at one more.
+export const MAX_ALIAS_USES = 20
+
 /**
  * Index the server's alias rows for lookup. Pure — no fetch, so the resolver is testable alone.
  * Returns a Map from heard_key to variety_id.
@@ -110,10 +115,24 @@ export async function fetchAliases(apiFetch) {
  *
  * PATCH on the route that already exists, not a new one: the varieties Lambda owns voice_alias, and a
  * new endpoint is the four-wiring hazard lambda/varieties/index.js records above these routes.
+ *
+ * AT MOST MAX_ALIAS_USES KEYS, DISTINCT FIRST (review v4.147 MINOR). The server refuses a longer list
+ * outright — a 400 for the whole request, which this function swallows by contract — so an uncapped
+ * list of 21 would count NOTHING, silently. A repeated phrase is one use and must not take a slot, so
+ * duplicates go first (the first occurrence of a key wins), then the list stops at the cap. This is
+ * the one place a count is sent from, so it caps the harvest page and Log many alike.
  */
 export function recordAliasUse(apiFetch, uses) {
-  const used = (uses ?? []).filter((u) => u?.heard_key && u?.variety_id)
-    .map((u) => ({ heard_key: String(u.heard_key), variety_id: String(u.variety_id) }))
+  const seen = new Set()
+  const used = []
+  for (const u of uses ?? []) {
+    if (!u?.heard_key || !u?.variety_id) continue
+    const key = String(u.heard_key)
+    if (seen.has(key)) continue
+    seen.add(key)
+    used.push({ heard_key: key, variety_id: String(u.variety_id) })
+    if (used.length === MAX_ALIAS_USES) break
+  }
   if (!used.length) return
   try {
     Promise.resolve(apiFetch('/api/varieties/voice-aliases', {

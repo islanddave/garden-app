@@ -10,7 +10,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { looseKey } from '../lib/comboboxInput.js'
 import {
-  indexAliases, resolveAlias, fetchAliases, teachAlias, recordAliasUse, MIN_ALIAS_CHARS,
+  indexAliases, resolveAlias, fetchAliases, teachAlias, recordAliasUse, MIN_ALIAS_CHARS, MAX_ALIAS_USES,
 } from '../lib/voiceAliases.js'
 import { matchPlantingsWithRescue } from '../pages/VoiceHarvest.jsx'
 
@@ -204,5 +204,54 @@ describe('recordAliasUse', () => {
   it('a count whose transport throws outright never throws at the caller', () => {
     expect(() => recordAliasUse(() => { throw new Error('boom') }, [{ heard_key: 'cucumberone', variety_id: 'v-suyo' }]))
       .not.toThrow()
+  })
+
+  // Review v4.147 MINOR — the server refuses more than MAX_ALIAS_USES entries for the WHOLE request, and
+  // this function swallows that 400 by contract, so an uncapped list of 21 counted nothing at all.
+  describe('at most 20 keys, distinct first', () => {
+    const use = (i, variety = `v-${i}`) => ({ heard_key: `taughtalias${String.fromCharCode(97 + i)}`, variety_id: variety })
+    const sent = (api) => JSON.parse(api.mock.calls[0][1].body).used
+
+    it('25 distinct keys send the first 20', () => {
+      const api = vi.fn().mockResolvedValue({ counted: 20 })
+      recordAliasUse(api, Array.from({ length: 25 }, (_, i) => use(i)))
+      expect(MAX_ALIAS_USES).toBe(20)
+      expect(api).toHaveBeenCalledTimes(1)
+      expect(sent(api)).toEqual(Array.from({ length: 20 }, (_, i) => use(i)))
+    })
+
+    it('a repeated key never takes a slot — duplicates go first, then the cap', () => {
+      // 25 distinct keys behind six repeats of the first two. Capping BEFORE removing the repeats would
+      // keep only 16 distinct keys; removing them first keeps 20.
+      const api = vi.fn().mockResolvedValue({ counted: 20 })
+      recordAliasUse(api, [use(0), use(0), use(1), use(0), use(1), use(1), ...Array.from({ length: 23 }, (_, i) => use(i + 2))])
+      expect(sent(api)).toEqual(Array.from({ length: 20 }, (_, i) => use(i)))
+    })
+
+    it('the first occurrence of a key wins, and a list at the cap is sent whole', () => {
+      const api = vi.fn().mockResolvedValue({ counted: 20 })
+      recordAliasUse(api, [use(0, 'v-first'), use(0, 'v-second'), ...Array.from({ length: 19 }, (_, i) => use(i + 1))])
+      expect(sent(api)).toEqual([use(0, 'v-first'), ...Array.from({ length: 19 }, (_, i) => use(i + 1))])
+    })
+  })
+
+  // The cap is only a cap if every count goes through it: the one client file that spells the route is
+  // this module, so the harvest page and Log many cannot send a list around it. A second spelling of the
+  // route in client source would be a way past the cap and turns this red.
+  it('the route is spelled in exactly one client module, so both callers go through the cap', async () => {
+    const { readFileSync, readdirSync, statSync } = await import('node:fs')
+    const { join, resolve } = await import('node:path')
+    const root = resolve(process.cwd(), 'src')
+    const files = []
+    const walk = (dir) => {
+      for (const name of readdirSync(dir)) {
+        const p = join(dir, name)
+        if (statSync(p).isDirectory()) { if (name !== '__tests__') walk(p) } else if (/\.(js|jsx)$/.test(name)) files.push(p)
+      }
+    }
+    walk(root)
+    expect(files.length).toBeGreaterThan(50)   // the walk found the client tree
+    const spelling = files.filter((f) => readFileSync(f, 'utf8').includes('/api/varieties/voice-aliases'))
+    expect(spelling.map((f) => f.slice(root.length + 1))).toEqual(['lib/voiceAliases.js'])
   })
 })
