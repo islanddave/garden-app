@@ -10,7 +10,7 @@ import {
   loggedSpoken, CARE_INPUT_SOURCE, SCOPE_CHANGED_SPOKEN, NOT_CONFIRMED_SPOKEN, REJECTED_SPOKEN,
   UNDONE_SPOKEN, UNDO_FAILED_SPOKEN, careAliasUses,
 } from '../lib/voiceCareBatch.js'
-import { indexAliases } from '../lib/voiceAliases.js'
+import { indexAliases, recordAliasUse, MAX_ALIAS_USES } from '../lib/voiceAliases.js'
 import { looseKey } from '../lib/comboboxInput.js'
 import { validateBatchBody, buildBatchMetadataPlan } from '../../lambda/events/validators.js'
 import { LOCATIONS, U, byName, dryRunResponse, locationByPath } from './voiceCare.fixture.js'
@@ -317,5 +317,25 @@ describe('careAliasUses — the taught names a plan used', () => {
     expect(careAliasUses({ exclusions }, null)).toEqual([])
     expect(careAliasUses({ exclusions }, new Map())).toEqual([])
     expect(careAliasUses(null, idx)).toEqual([])
+  })
+
+  // Review v4.147 MINOR — Log many is the one caller that can name more than 20 taught skips in a single
+  // command, and the server refuses such a count outright. What the host hands the transport
+  // (LogManyVoice: recordAliasUse(apiFetch, plan.aliasUses)) is capped there: the first 20, once each.
+  it('a plan with more taught skips than one count carries sends the first 20, once each', () => {
+    const WORDS = ['apple', 'banana', 'cherry', 'damson', 'elder', 'fennel', 'grape', 'hazel', 'iris', 'juniper',
+      'kale', 'lemon', 'mango', 'nectar', 'olive', 'peach', 'quince', 'radish', 'sage', 'thyme', 'ugli', 'vetch',
+      'walnut', 'yarrow', 'zinnia']
+    const heards = WORDS.map((w) => `taught ${w}`)
+    expect(new Set(heards.map(looseKey)).size).toBe(25)   // 25 distinct taught names
+    const index = indexAliases(heards.map((h, i) => ({ heard_key: looseKey(h), variety_id: `v-${i}` })))
+    const exclusions = [...heards, heards[0], heards[1]].map((heard) => ({ how: 'alias', heard }))
+    const uses = careAliasUses({ exclusions }, index)
+    expect(uses).toHaveLength(25)
+    const api = vi.fn().mockResolvedValue({ counted: MAX_ALIAS_USES })
+    recordAliasUse(api, uses)
+    const sent = JSON.parse(api.mock.calls[0][1].body).used
+    expect(sent).toHaveLength(20)
+    expect(sent).toEqual(uses.slice(0, 20))
   })
 })

@@ -7,6 +7,8 @@
 // deleted_at and no RLS, so the WHERE below is the whole of the scoping.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { stubState, resetStubs } from '../_test-stubs/state.js';
+// The client's cap on one count (review v4.147 MINOR) — pinned against this route's own limit below.
+import { MAX_ALIAS_USES } from '../../src/lib/voiceAliases.js';
 
 const { handler } = await import('./index.js');
 
@@ -81,6 +83,20 @@ describe('PATCH /api/varieties/voice-aliases — count a use', () => {
     stubState.verifyTokenResult = new Error('bad token');
     const r = parse(await call('PATCH', { used: [{ heard_key: 'cucumberone', variety_id: SUYO }] }));
     expect(r.status).toBe(401);
+    expect(stubState.sqlCalls).toEqual([]);
+  });
+
+  it('accepts exactly the client\'s cap and refuses one more — the limit is one number on both sides', async () => {
+    // src/lib/voiceAliases.js recordAliasUse sends at most MAX_ALIAS_USES keys because this route refuses a
+    // longer list outright, and the client swallows that 400 — a disagreement would count nothing, silently.
+    const entry = (i) => ({ heard_key: `taughtalias${String.fromCharCode(97 + i)}`, variety_id: SUYO });
+    const at = parse(await call('PATCH', { used: Array.from({ length: MAX_ALIAS_USES }, (_, i) => entry(i)) }));
+    expect(at.status).toBe(200);
+    expect(updates()).toHaveLength(1);
+    expect(updates()[0].values[0]).toHaveLength(MAX_ALIAS_USES);
+    stubState.sqlCalls = [];
+    const over = parse(await call('PATCH', { used: Array.from({ length: MAX_ALIAS_USES + 1 }, (_, i) => entry(i)) }));
+    expect(over.status).toBe(400);
     expect(stubState.sqlCalls).toEqual([]);
   });
 
