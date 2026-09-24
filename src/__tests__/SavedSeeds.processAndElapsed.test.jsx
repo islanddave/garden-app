@@ -20,6 +20,13 @@
 // assertions read the same divergence a user sees and no timer mock can make them pass vacuously —
 // updated_at is deliberately NEWER than stage_entered_at in every case, which is exactly the shape
 // the trigger produces. No jest-dom (L-182).
+//
+// A STAGE IS ANCHORED TO A CALENDAR DAY, NOT TO AN HOUR COUNT (2026-09-24). Since BUG-SEEDSOWRELDAY-001
+// the card counts CALENDAR days in Eastern, so the old `daysAgo(4.2)` — 100.8 hours back — read "4 days"
+// from ~04:48 to midnight and "5 days" between midnight and ~04:48 Eastern: two tests failed every night
+// (measured at 00:02 EDT, on the pre-fix code too). stageDaysAgo(n) puts the stage on the Eastern date n
+// days before today, at mid-day, so the card says "n days" at every hour of the day and either side of a
+// DST change — with the clock still real.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
@@ -38,8 +45,15 @@ vi.mock('react-router-dom', () => ({
 
 import SavedSeeds from '../pages/SavedSeeds.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { etDay } from '../lib/harvestSummary.js'
 
-const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
+const DAY = 86400000
+const daysAgo = (d) => new Date(Date.now() - d * DAY).toISOString()
+// The Eastern calendar date `n` days before today, at 16:00Z — noon EDT / 11:00 EST, the same date either
+// way (tests/harness/seeds.jsx's stageDaysAgo). "Today" is read when the fixture is built, right before
+// the render that reads it.
+const stageDaysAgo = (n) =>
+  `${new Date(Date.parse(`${etDay(new Date())}T00:00:00Z`) - n * DAY).toISOString().slice(0, 10)}T16:00:00Z`
 
 // `status` is on the fixture because it is on every real row and because the untracked-packet
 // picker now filters on it — V4-SEEDSTOREDQTY-001.
@@ -49,7 +63,7 @@ const lot = (over = {}) => ({
   status: 'active', source_plant_id: null,
   // The trigger's signature: the row was touched a moment ago, the STAGE was entered days ago.
   updated_at: daysAgo(0.01),
-  stage_entered_at: daysAgo(4.2),
+  stage_entered_at: stageDaysAgo(4),
   ...over,
 })
 
@@ -194,7 +208,8 @@ describe('BUG-SEEDELAPSEDUPDATED-001 — elapsed measures the stage, not the las
   it('reads stage_entered_at even when the row was updated seconds ago', async () => {
     await mount([lot()])
     const card = screen.getByTestId('seed-lot-card').textContent
-    // updated_at is ~15 minutes old in this fixture; reading it would render "today".
+    // updated_at is ~15 minutes old in this fixture; reading it would render "today" (or "1 day" in the
+    // quarter hour after midnight) — never "4 days".
     //
     // BOUNDED, not `toContain`. This assertion read `toContain('4 days in drying')` until
     // 2026-09-04, and `'14 days in drying'.includes('4 days in drying')` is `true` — so it passed on
@@ -209,7 +224,7 @@ describe('BUG-SEEDELAPSEDUPDATED-001 — elapsed measures the stage, not the las
   // single-point test. This pair is also what proves the boundary above is real rather than
   // decorative: under the old `toContain` assertion, BOTH of these cases passed either way.
   it('renders the whole number, not a suffix of it, at two digits', async () => {
-    await mount([lot({ stage_entered_at: daysAgo(14.2) })])
+    await mount([lot({ stage_entered_at: stageDaysAgo(14) })])
     const card = screen.getByTestId('seed-lot-card').textContent
     expect(card).toMatch(/(?:^|\D)14 days in drying(?:\D|$)/)
     expect(card).not.toMatch(/(?:^|\D)4 days in drying(?:\D|$)/)
