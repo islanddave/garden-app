@@ -530,6 +530,11 @@ try {
   try { rmSync(udd, { recursive: true, force: true }) } catch { /* best effort */ }
 }
 
+// A non-clean run echoes what its harness said it served ("[harness] serving src/** from git …", or a
+// custom config's own tagged lines), so the record names the source it measured.
+if (BASELINE_SHA || CUSTOM_CONFIG) {
+  for (const line of harnessLog.split('\n').filter((l) => /^\[[a-z][a-z-]*\] /.test(l))) console.log(`[seeds-scroll] harness said: ${line}`)
+}
 if (shots.length) console.log(`[seeds-scroll] screenshots: ${shots.map((p) => p.replace(`${ROOT}/`, '')).join(', ')}`)
 // Exit codes are NOT inverted under --probe-nothing: both outcomes there are red, and the banner says which.
 if (failures.length) {
