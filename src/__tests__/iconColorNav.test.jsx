@@ -104,3 +104,48 @@ describe('V4-ICONCOLOR-001 — bottom-bar filled variants', () => {
     }
   })
 })
+
+// V5-NAVCUSTOM-001 — action.pin, the More sheet's pin button. Same four silent failure modes as the
+// tab glyphs above, plus the one this mark was drawn to avoid: converging on facet.location, the
+// map-marker pin that sits a few rows away on the same sheet (Zones).
+describe('V5-NAVCUSTOM-001 — action.pin: outline = not pinned, colour = pinned', () => {
+  const WHITE = '#ffffff'
+  const pin = getIcon('action.pin')
+
+  it('base is a mono outline and `filled` is a colour-candidate (only the pinned state is coloured)', () => {
+    expect(pin.class).toBe('mono')
+    expect(markupOf('action.pin')).not.toMatch(/#[0-9a-f]{6}/i)
+    expect(pin.variants?.filled?.class).toBe('color-candidate')
+    expect(pin.accessibleName).toEqual({ outline: 'Pin to the top', filled: 'Unpin' })
+  })
+
+  // KILLING MUTATION: typo a colorFills token ('pinHed') or drop a region's data-region attribute.
+  // RESULT: RED — the pinned state would render mono and read as "not pinned".
+  it('filled resolves every region to a real hex, at 24 AND 18', () => {
+    for (const size of [24, 18]) {
+      const { container } = render(<Icon name="action.pin" variant="filled" size={size} decorative />)
+      const html = container.querySelector('svg').innerHTML
+      cleanup()
+      for (const r of Object.keys(pin.colorFills)) {
+        expect(html, `${size}: region "${r}" never got a hex`).toMatch(new RegExp(`data-region="${r}"[^>]*?(?:fill|stroke)="#[0-9a-f]{6}"`, 'i'))
+      }
+      expect(html).not.toMatch(/data-region="[^"]+"[^>]*?(?:fill|stroke)="currentColor"/)
+    }
+  })
+
+  it('maps every region to a token that exists, at or above 3:1 on the sheet’s white and on cream', () => {
+    for (const [region, token] of Object.entries(pin.colorFills)) {
+      expect(ICON_COLORS[token], `${region} -> ${token}`).toBeTruthy()
+      for (const bg of [WHITE, CREAM]) {
+        expect(contrast(ICON_COLORS[token], bg), `${region} on ${bg}`).toBeGreaterThanOrEqual(3)
+      }
+    }
+  })
+
+  it('the two states differ by SHAPE, not only hue — and the mark is not the map-marker pin', () => {
+    const decolour = (h) => h.replace(/#[0-9a-f]{6}/gi, 'currentColor')
+    expect(decolour(markupOf('action.pin', 'filled'))).not.toBe(markupOf('action.pin'))
+    expect(pin.svg24).not.toBe(getIcon('facet.location').svg24)
+    expect(pin.svg18).not.toBe(getIcon('facet.location').svg18)
+  })
+})

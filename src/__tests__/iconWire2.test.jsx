@@ -33,7 +33,11 @@ installStoragePolyfill()
 // fileURLToPath rejects it. Same convention as weighInSessionBaseBytes.test.jsx.
 const src = (rel) => readFileSync(resolve(process.cwd(), 'src', rel), 'utf8')
 
-const WIRED = ['pages/EventNew.jsx', 'components/BottomNav.jsx', 'lib/todayBand.js']
+// V5-NAVCUSTOM-001 (I13): lib/moreRegistry.js holds the More sheet's rows as DATA now, icon names
+// included, so it is WIRED (the emoji scan) and therefore SCANNED (every key resolves). Left out, a
+// typo'd iconName there would render the silent neutral dot with nothing failing — the same blind
+// spot navConfig.js's tab rows sat in.
+const WIRED = ['pages/EventNew.jsx', 'components/BottomNav.jsx', 'lib/todayBand.js', 'lib/moreRegistry.js']
 
 // The pictographic ranges, both as literal characters and in escaped form — todayBand.js carried
 // its two glyphs ESCAPED, which is precisely the shape a naive emoji grep misses.
@@ -106,6 +110,16 @@ describe('V4-ICON-001 — every registry key named in the wired files resolves',
   it.each(SCANNED)('%s names only real registry entries', (rel) => {
     const missing = keysIn(rel).filter(k => getIcon(k) === NEUTRAL_ICON)
     expect(missing, `${rel} would render the silent neutral dot for these`).toEqual([])
+  })
+
+  // I13 (V5-NAVCUSTOM-001). KILLING MUTATION: drop 'lib/moreRegistry.js' from WIRED. RESULT: RED here
+  // — and without that membership, a typo'd iconName in the registry ('nav.dashbord') would sail
+  // through every other case in this file. The key floor proves the scan actually reads its rows.
+  it('I13 — the More registry is in the scan, and the scan finds its row icons', () => {
+    expect(SCANNED).toContain('lib/moreRegistry.js')
+    const keys = keysIn('lib/moreRegistry.js')
+    expect(keys.length).toBeGreaterThanOrEqual(12)
+    expect(keys).toEqual(expect.arrayContaining(['nav.dashboard', 'media.camera', 'lifecycle.sprout', 'mode.desk']))
   })
 
   it('the keys this lane introduced are present by name', () => {
