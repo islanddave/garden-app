@@ -97,6 +97,20 @@ const VOICE_DEBUG_SRC = 'voiceharvest'
 // same number the UI caps at rather than a copy of it that can drift out from under it.
 export const CANDIDATE_LIMIT = 8
 
+// BUG-VOICEALIASFAILSOFT-001 — THE LONGEST anything said may wait for his taught names to load, once per
+// visit. What is said in that window is HELD, in order, and read the moment the list answers; the
+// hold ends early whenever it does. Sized on the varieties Lambda's own record (review-regression-
+// impact.md F.5, 14 days: request p95 1.56 s across its routes, cold-start init p95 0.55 s, 0 errors):
+// a list still loading 2.5 s after the first thing he says is past the slow tail, and waiting longer
+// buys little. The first utterance usually lands seconds after the page opens (tap Start, speak,
+// Chrome's endpointing), so on a normal load nothing waits at all. When the wait runs out the held
+// words are read with the names unknown, which the one-breath reader handles by not reading a named
+// sentence at all (resolveBareOneBreath's `aliasesKnown`) — never by guessing.
+export const ALIAS_WAIT_MS = 2500
+// When the list FAILED to load it is asked for again after each of these delays, and again on every
+// Start while it still has not loaded. Until it does, named one-breath sentences go the ordinary way.
+export const ALIAS_RETRY_MS = [2000, 5000, 15000]
+
 // One-line rendering of a classify() result for the debug log. EXPORTED AND PURE so the log format
 // is testable without a recogniser. Quotes the transcript on every branch: the whole point of the
 // capture is to pair what was heard with what was done, and a decision line without the words is
@@ -490,8 +504,20 @@ function judgeBareReading(plantings, r, ctx) {
   return { kind: 'valid', planting, groups: r.groups }
 }
 
-export function resolveBareOneBreath(plantings, info, { selected = null, aliasIndex = null, aliasNames = aliasIndex } = {}) {
+// BUG-VOICEALIASFAILSOFT-001 — `aliasesKnown: false` says his taught names could not be read (the list
+// failed, or has not loaded yet), which is not the same as "he taught none". Every guard above that
+// keeps a taught name whole ("cucumber one" is Suyo Long, not "cucumber" + 1) reads that list, so
+// without it a NAMED sentence is not this reader's: it goes the ordinary way, which is what the live
+// app did with these sentences before this reader existed — "cucumber one" is then searched as the
+// words it is, and a search cannot put a number in a slot. A sentence of numbers alone is still read
+// here: no live alias is numbers only (33 of 33 carry a word, prod 2026-09-24), and "3 231" with a
+// crop chosen is the most common thing said on this page. Default true, so a caller with no list to
+// pass — every pure test — keeps meaning "none taught".
+export function resolveBareOneBreath(plantings, info, {
+  selected = null, aliasIndex = null, aliasNames = aliasIndex, aliasesKnown = true,
+} = {}) {
   if (!info) return null
+  if (!aliasesKnown && !info.nameless) return null
   // The whole head IS a planting's name ("cherry rescue 1", "eighteen eighty four"), or a name Dave
   // taught ("cucumber one", BLOCKING-2): a name, not a record — the ordinary search selects it, with or
   // without a trailing command, exactly as before.
@@ -634,6 +660,18 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // BLOCKING-2 — the same aliases as NAMES (indexAliasNames): what the one-breath readers ask "is this
   // phrase a name Dave taught?". Loaded and taught alongside aliasRef, never instead of it.
   const aliasNamesRef = useRef(null)
+  // BUG-VOICEALIASFAILSOFT-001 — WHETHER HIS TAUGHT NAMES ARE KNOWN: 'loading' until the first GET
+  // answers, 'ready' once a list loaded (an empty list too — then he has taught none), 'failed' when it
+  // could not be read. Only 'ready' lets the one-breath reader treat a name and a number as a record.
+  const aliasStateRef = useRef('loading')
+  // Names taught in THIS visit, laid over every (re)load, so a list that lands after a teach keeps it.
+  const taughtRowsRef = useRef([])
+  // What was said while the list was still loading — { items: [[result, meta]], timer } — or null.
+  const heldRef = useRef(null)
+  const waitSpentRef = useRef(false)
+  const reloadAliasesRef = useRef(null)
+  const releaseHeldRef = useRef(null)
+  const applyCommittedRef = useRef(null)
   const unmatchedRef = useRef(null)
   // BUG-VOICECOUNTSPLIT-001 — a number whose unit has not arrived yet. A REF because the recogniser
   // callbacks that read it fire outside React's render cycle and must see the value the previous
@@ -791,18 +829,46 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       .catch((e) => { if (live) setLoadError(e?.message || 'Could not load your plantings') })
 
     // V5-VOICEALIAS-001 — learned mishearings, fetched ALONGSIDE the plantings rather than gating
-    // them. fetchAliases never rejects (it fails soft to []), and this deliberately sets no
-    // loadError: a chooser that refuses to start because a cache of corrections could not load is
-    // worse than one that has forgotten a few. Losing this degrades the page to its v4.78.0
-    // behaviour — strict, then fuzzy — which is a working page. It also forgets the taught NAMES
-    // (BLOCKING-2): "cucumber one" then reads as the crop plus an amount of 1, announced as assumed.
-    fetchAliases(apiFetch).then((rows) => {
-      if (!live) return
-      aliasRef.current = indexAliases(rows)
-      aliasNamesRef.current = indexAliasNames(rows)
-    })
+    // them. fetchAliases never rejects, and this deliberately sets no loadError: a chooser that
+    // refuses to start because a cache of corrections could not load is worse than one that has
+    // forgotten a few. Losing this degrades the search to its v4.78.0 behaviour — strict, then fuzzy
+    // — which is a working page.
+    //
+    // BUG-VOICEALIASFAILSOFT-001 — BUT IT NO LONGER PRETENDS HE TAUGHT NOTHING. fetchAliases answers
+    // null for "could not read", and the state says so (aliasStateRef): the one-breath reader then
+    // leaves named sentences to the ordinary path instead of splitting "cucumber one" into the crop
+    // and an amount of 1 (review MINOR-9: "cucumber one", "next" saved a 1 count he never said, where
+    // the live app refused). A failed load is asked for again (ALIAS_RETRY_MS, and on every Start), and
+    // whatever was held while it loaded is read the moment it answers either way.
+    let retry = null
+    let attempts = 0
+    let inFlight = false
+    const load = () => {
+      inFlight = true
+      fetchAliases(apiFetch).then((rows) => {
+        inFlight = false
+        if (!live) return
+        if (rows == null) {
+          aliasStateRef.current = 'failed'
+          recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `aliases-unavailable (attempt ${attempts + 1})`)
+          if (attempts < ALIAS_RETRY_MS.length) {
+            clearTimeout(retry)
+            retry = setTimeout(() => { if (live && !inFlight && aliasStateRef.current === 'failed') load() },
+              ALIAS_RETRY_MS[attempts++])
+          }
+        } else {
+          const all = [...rows, ...taughtRowsRef.current]
+          aliasRef.current = indexAliases(all)
+          aliasNamesRef.current = indexAliasNames(all)
+          aliasStateRef.current = 'ready'
+        }
+        releaseHeldRef.current?.()
+      })
+    }
+    reloadAliasesRef.current = () => { if (live && !inFlight && aliasStateRef.current === 'failed') load() }
+    load()
 
-    return () => { live = false }
+    return () => { live = false; clearTimeout(retry); reloadAliasesRef.current = null }
   }, [apiFetch])
 
   const clearRecord = useCallback(() => {
@@ -846,8 +912,12 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       const next = new Map(aliasRef.current ?? [])
       next.set(looseKey(phrase), varietyId)
       aliasRef.current = next
-      aliasNamesRef.current = indexAliasNames([{ heard_key: looseKey(phrase), heard_text: phrase, variety_id: varietyId }],
-        aliasNamesRef.current)
+      const taughtRow = { heard_key: looseKey(phrase), heard_text: phrase, variety_id: varietyId }
+      aliasNamesRef.current = indexAliasNames([taughtRow], aliasNamesRef.current)
+      // BUG-VOICEALIASFAILSOFT-001 — kept for a list that is still loading or being asked for again, so
+      // the load that lands later cannot undo this teach. The state is NOT set to 'ready' here: one name
+      // taught is not the rest of the list.
+      taughtRowsRef.current = [...taughtRowsRef.current, taughtRow]
       say('ok', `${label} — learned “${phrase}”. Now say the count or the weight.`)
     } catch (err) {
       say('warn', `${label} selected, but I could not remember “${phrase}” — ${err?.message || 'the save failed'}.`)
@@ -1650,8 +1720,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // V5-VOICEVOCAB-001 (lane D4) — a record said without (all of) its units, in one breath. Asked
     // first: when it answers, the sentence is its; when it does not, nothing below changes.
     const info = oneBreathReadings(heard)
-    const bare = resolveBareOneBreath(plantingsRef.current, info,
-      { selected: selectedRef.current, aliasIndex: aliasRef.current, aliasNames: aliasNamesRef.current })
+    const bare = resolveBareOneBreath(plantingsRef.current, info, {
+      selected: selectedRef.current, aliasIndex: aliasRef.current, aliasNames: aliasNamesRef.current,
+      aliasesKnown: aliasStateRef.current === 'ready',
+    })
     // A one-breath final ending in a save word CLAIMS the debouncer's one-write cooldown when it
     // commits (splitTrailingCommand marks it `bare`), which is what stops a re-delivered final saving
     // twice. When it turns out NOT to write — refused here, or declined and read the ordinary way —
@@ -1742,6 +1814,45 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       say('warn', 'Stopped listening.')
     }
   }, [applyBareOneBreath, applyOneUtterance, clearRecord, cue, noteMiss, refuseBareOneBreath, refuseMergedAmount, saveRecord, say, unitReaderReads])
+  applyCommittedRef.current = applyCommitted
+
+  // ── BUG-VOICEALIASFAILSOFT-001: nothing is read before his taught names are known, for a moment ──
+  //
+  // The list is fetched when the page opens and usually lands long before the first thing he says. If
+  // it has not, what he says is HELD — in order, every utterance, commands included, so a "next" can
+  // never overtake the name it belongs to — and read the moment the list answers, or after
+  // ALIAS_WAIT_MS at most, whichever comes first. Once per visit: when the wait runs out, the rest of
+  // the visit is read at once with the names unknown, so a list that never loads cannot slow every
+  // sentence by the same wait. Reading "cucumber one" before the list lands is the whole defect (review
+  // MINOR-9 — a 1-second-late GET was enough): Suyo Long plus an amount of 1. Waiting a moment instead
+  // reads it the way he taught it, and "cucumber 3" is only ever late by the wait, never lost.
+  //
+  // The banner says why nothing has happened yet; the outcome is announced when the words are read.
+  // A write held here has already claimed the debouncer's cooldown (it arms on a handler that
+  // returned), and it releases or keeps that claim with the same token when it is read — see saveRecord.
+  const releaseHeld = useCallback(() => {
+    const held = heldRef.current
+    if (!held) return
+    heldRef.current = null
+    clearTimeout(held.timer)
+    waitSpentRef.current = true
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `aliases-${aliasStateRef.current} read ${held.items.length} held`)
+    for (const [result, meta] of held.items) applyCommittedRef.current?.(result, meta)
+  }, [])
+  releaseHeldRef.current = releaseHeld
+
+  const commitWhenNamesKnown = useCallback((result, meta) => {
+    const held = heldRef.current
+    if (!held && (aliasStateRef.current !== 'loading' || waitSpentRef.current)) {
+      applyCommitted(result, meta)
+      return
+    }
+    if (held) held.items.push([result, meta])
+    else heldRef.current = { items: [[result, meta]], timer: setTimeout(releaseHeld, ALIAS_WAIT_MS) }
+    const said = String(result?.transcript ?? '')
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-for-aliases <- ${JSON.stringify(said)}`)
+    say('warn', `Heard “${said}” — one moment, loading the names you taught me.`)
+  }, [applyCommitted, releaseHeld, say])
 
   // ── the recogniser ──────────────────────────────────────────────────────────────────────────────
   const scheduleTickRef = useRef(null)
@@ -1923,8 +2034,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // A FRESH DEBOUNCER PER RUN. resetSession() would clear duplicate-suppression memory while a
     // pending utterance from the previous run might still be held, which its own docstring warns
     // hosts against. A new instance has no history to mis-clear.
+    // BUG-VOICEALIASFAILSOFT-001 — a list that failed to load is asked for again with each run.
+    reloadAliasesRef.current?.()
     debRef.current = createCommitDebouncer({
-      onCommit: applyCommitted,
+      onCommit: commitWhenNamesKnown,
       onPending: (r) => setHeard(r),
       onSuppressed: (r, reason) => {
         // A swallowed command with no signal is indistinguishable from a dead mic. Say which.
@@ -1952,7 +2065,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       noteMiss(`Stopped after ${RUN_BUDGET.label}.`)
       releaseWakeLock()
     }, RUN_BUDGET.runMs)
-  }, [applyCommitted, arm, cue, noteMiss, releaseWakeLock, requestWakeLock, say])
+  }, [arm, commitWhenNamesKnown, cue, noteMiss, releaseWakeLock, requestWakeLock, say])
 
   const stop = useCallback(() => {
     stopRef.current = true
@@ -1973,6 +2086,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     stopRef.current = true
     if (wallRef.current) clearTimeout(wallRef.current)
     if (tickRef.current) clearTimeout(tickRef.current)
+    // Words held for the alias list die with the page, like a pending utterance in the debouncer below.
+    if (heldRef.current) { clearTimeout(heldRef.current.timer); heldRef.current = null }
     releaseRecogniser()
     releaseWakeLock()
     releaseMic(micTokenRef.current)

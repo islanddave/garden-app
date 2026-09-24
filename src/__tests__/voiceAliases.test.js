@@ -118,14 +118,26 @@ describe('layer order — the safety argument', () => {
 })
 
 describe('the fail asymmetry', () => {
-  it('a failed READ is swallowed — the chooser keeps working', () => {
+  // BUG-VOICEALIASFAILSOFT-001 — swallowed, but answered as UNKNOWN (null), never as "none taught" ([]).
+  // The harvest page's one-breath reader keeps a taught name like "cucumber one" whole only when it
+  // knows the list; handed [] for a failed read it split the name into a crop and an amount of 1.
+  it('a failed READ never rejects, and answers null — unknown, not "none taught"', () => {
     const boom = vi.fn().mockRejectedValue(new Error('offline'))
-    return expect(fetchAliases(boom)).resolves.toEqual([])
+    return expect(fetchAliases(boom)).resolves.toBeNull()
   })
 
-  it('a malformed READ response is swallowed too', async () => {
-    expect(await fetchAliases(vi.fn().mockResolvedValue({ aliases: 'not an array' }))).toEqual([])
-    expect(await fetchAliases(vi.fn().mockResolvedValue(null))).toEqual([])
+  it('a malformed READ response is unknown too — only an aliases array is an answer', async () => {
+    expect(await fetchAliases(vi.fn().mockResolvedValue({ aliases: 'not an array' }))).toBeNull()
+    expect(await fetchAliases(vi.fn().mockResolvedValue(null))).toBeNull()
+    expect(await fetchAliases(vi.fn().mockResolvedValue({ id: 'evt-1' }))).toBeNull()
+  })
+
+  it('a loaded list is the rows, and an empty list is [] — he has taught nothing', async () => {
+    const rows = [{ heard_key: 'studiolong', heard_text: 'studio long', variety_id: 'v-suyo', hit_count: 0, last_used_at: null }]
+    expect(await fetchAliases(vi.fn().mockResolvedValue({ aliases: rows }))).toEqual(rows)
+    expect(await fetchAliases(vi.fn().mockResolvedValue({ aliases: [] }))).toEqual([])
+    // null still indexes to an empty map, so a caller that only searches keeps v4.78.0's behaviour.
+    expect(indexAliases(null).size).toBe(0)
   })
 
   it('a failed WRITE THROWS — the user must be told', async () => {

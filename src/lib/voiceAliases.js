@@ -19,6 +19,13 @@
 //   * a failed WRITE must be LOUD. The moment someone teaches a correction is the moment they have
 //     already been let down once, and a teach that silently did nothing would let them believe it was
 //     fixed and meet the same failure tomorrow. So teachAlias REJECTS and the caller says so.
+//
+// BUG-VOICEALIASFAILSOFT-001 — A FAILED READ IS null, NOT []. "He has taught nothing" and "his taught
+// names could not be read" were the same empty list, and the harvest page's one-breath reader acts on
+// the difference: with his list loaded, "cucumber one" is a NAME (taught 2026-09-15 for Suyo Long);
+// with it missing, the same words read as the crop "cucumber" plus an amount of 1, and "cucumber one",
+// "next" saved a 1 count he never said. Soft still means never rejecting — the caller decides what
+// "unknown" costs.
 
 // The client's normalisation contract, imported rather than re-derived: heard_key must be exactly
 // what looseKey produces, or a stored alias can never match a live utterance. The server enforces the
@@ -71,16 +78,20 @@ export function resolveAlias(aliasIndex, spoken, plantings) {
 }
 
 /**
- * Fetch the caller's aliases. FAILS SOFT — returns [] on any error, because a chooser that refuses to
- * work because a cache could not load is worse than one that has forgotten a few corrections.
+ * Fetch the caller's aliases. FAILS SOFT — never rejects, because a chooser that refuses to work
+ * because a cache could not load is worse than one that has forgotten a few corrections.
  * `apiFetch` is injected so this is testable without the Clerk-authenticated wrapper.
+ *
+ * Returns the rows when the list LOADED — [] means he has taught nothing — and null when it did not:
+ * any error, or a payload with no `aliases` array (the GET always sends one, so anything else is not
+ * an answer). null is "unknown", and a caller that treats it as [] is guessing his taught names away.
  */
 export async function fetchAliases(apiFetch) {
   try {
     const res = await apiFetch('/api/varieties/voice-aliases')
-    return Array.isArray(res?.aliases) ? res.aliases : []
+    return Array.isArray(res?.aliases) ? res.aliases : null
   } catch {
-    return []
+    return null
   }
 }
 
