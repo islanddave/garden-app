@@ -357,6 +357,9 @@ export default function Search() {
   // eye to a heading that no longer holds seed anywhere else in the app. Split on the row's own
   // `category`, which the server already returns; every other row stays under Inventory as before, and
   // `total` above is unchanged because the two groups partition the same list.
+  // BUG-SEARCHSEEDCAP20-001: the server caps the two sides separately — every matching seed row (up to
+  // its SEARCH_SEED_CAP safety ceiling), other inventory at 20 — so this must stay the same
+  // `=== 'seeds'` split lambda/dashboard/handlers.js searchInventory caps by, and add no cap of its own.
   const seedHits = srv.inventory.filter(it => it.category === 'seeds')
   const inventoryHits = srv.inventory.filter(it => it.category !== 'seeds')
 
