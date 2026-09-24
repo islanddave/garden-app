@@ -541,6 +541,17 @@ export function resolveCommandCollision(result, plantings) {
 // The flag rides on the slot (like `assumed`), so the saved banner and row say it too.
 const assumedPhrase = (v) => `${v.value} ${v.unit} assumed${v.implausible ? ' — that looks high' : ''}`
 
+// Where a held number will land if nothing changes it — the same slot order placeHeld uses (the crop's
+// default unit into an empty quantity, else grams into an empty weight), and the axis from buildValue.
+// Shared by the held-number card (QA F4) and the restatement's replaced-value note (review MINOR-6).
+function heldLandingOf(held, qty, weight, selected) {
+  if (held == null) return null
+  const unit = qty == null ? (selected?.variety_ref?.default_unit || 'count') : weight == null ? 'g' : null
+  const built = unit ? buildValue(held, unit, '') : null
+  if (!built || (built.kind === 'weight' ? weight : qty) != null) return null
+  return { axis: built.kind, value: built.value, unit: built.unit }
+}
+
 const TONE = {
   ok:   { bg: P.greenPale, border: P.green,       fg: P.dark },
   warn: { bg: P.warn,      border: P.warnBorder,  fg: P.dark },
@@ -1478,10 +1489,18 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // "2 165 next" in one session) and a re-delivered final 274 ms later (BUG-VOICEDUPE). Continuing the
   // record the second time found both slots already filled and wrote two FALSE "Dropped …" rows —
   // "1 saved · 2 not captured" for a record saved exactly right. The named form restated already.
+  // Review MINOR-6 — A RESTATEMENT NEVER ERASES A SPOKEN AMOUNT SILENTLY. placeHeld's rule is that an
+  // assumption never overwrites a filled slot, and the restatement gets round it by clearing the slots
+  // first: "Suyo Long", "3 count", "2 165", "next" saved 2 count · 165 g with no word about the 3 count he
+  // had SAID. It still restates (a second "2 165" must stay a no-op, QA F1), but every spoken slot it
+  // replaces with an assumed value — or with nothing — gets a miss row and a banner note. A slot the
+  // sentence says again WITH its unit is a correction, as it is on the ordinary path, and an unchanged
+  // amount is not a replacement.
   const applyBareOneBreath = useCallback((d, heard, meta) => {
     const planting = d.planting
     const label = planting ? (planting.name || planting.variety_ref?.name) : null
     let droppedNote = ''
+    let spoken = []
     if (planting && selectedRef.current?.id !== planting.id) {
       const held = heldNumRef.current
       if (held != null) {
@@ -1495,6 +1514,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         noteMiss(`Dropped ${held} — no unit was said, and the record was said again without it.`)
         droppedNote = ` (dropped ${held} — no unit was said)`
       }
+      spoken = [['quantity', qtyRef.current], ['weight', weightRef.current]].filter(([, v]) => v && !v.assumed)
       setQty(null); qtyRef.current = null; setWeight(null); weightRef.current = null
       heldNumRef.current = null; setHeldNum(null)
     }
@@ -1505,6 +1525,16 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision',
       `one-breath-bare ${label ?? '(selected crop)'} ${d.groups.map((g) => g.text).join(' | ')}${d.command ? ` + ${d.command}` : ''} <- ${JSON.stringify(heard)}`)
     for (const g of d.groups) applyOneUtterance(classify(g.text), { ...(meta ?? {}), fromOneBreath: true })
+    for (const [axis, was] of spoken) {
+      // What that slot holds now — or, still held, the value the next word or "next" will put there.
+      const landing = heldLandingOf(heldNumRef.current, qtyRef.current, weightRef.current, selectedRef.current)
+      const now = (axis === 'weight' ? weightRef.current : qtyRef.current)
+        ?? (landing?.axis === axis ? { value: landing.value, unit: landing.unit, assumed: true } : null)
+      if (now && (!now.assumed || (now.value === was.value && now.unit === was.unit))) continue
+      const what = now ? `Replaced ${was.value} ${was.unit} with ${now.value} ${now.unit} (assumed)` : `Cleared ${was.value} ${was.unit}`
+      noteMiss(`${what} — the amounts were said again without units.`)
+      droppedNote += ` (${now ? `replaced ${was.value} ${was.unit} with ${now.value} ${now.unit}` : `cleared ${was.value} ${was.unit}`})`
+    }
 
     if (d.nearCommand) {
       cue(hapticDigitRejected)
@@ -2007,14 +2037,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   }, [arm, noteScreenSleep, releaseRecogniser, reportRefusedCues, requestWakeLock, say])
 
   const tone = TONE[status.tone] ?? TONE.idle
-  // Where a held number will land if nothing changes it — the same slot order placeHeld uses (the crop's
-  // default unit into an empty quantity, else grams into an empty weight), and the axis from buildValue.
+  // Where a held number will land if nothing changes it (heldLandingOf), shown in that slot.
   const heldLanding = useMemo(() => {
-    if (heldNum == null) return null
-    const unit = qty == null ? (selected?.variety_ref?.default_unit || 'count') : weight == null ? 'g' : null
-    const built = unit ? buildValue(heldNum, unit, '') : null
-    if (!built || (built.kind === 'weight' ? weight : qty) != null) return null
-    return { axis: built.kind, text: `${heldNum} ${built.unit} (assumed unless you say a unit)` }
+    const landing = heldLandingOf(heldNum, qty, weight, selected)
+    return landing && { axis: landing.axis, text: `${heldNum} ${landing.unit} (assumed unless you say a unit)` }
   }, [heldNum, qty, weight, selected])
   const savedCount = rows.filter((r) => r.kind === 'save' && !r.undone).length
   const missCount  = rows.filter((r) => r.kind === 'miss').length
