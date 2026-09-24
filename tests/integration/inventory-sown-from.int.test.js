@@ -6,7 +6,7 @@
 // parses SQL), and every seed page in prod answered 500. sown_from is a NEW statement on that same
 // route — a garden_node read joined to container — so it gets the check that bug did not: the real
 // handler, the real driver, a real branch of staging's schema. lambda/inventory-items/sown-from.test.js
-// holds the statement's WHERE to the plants Lambda's default views; this file proves Postgres runs it
+// holds the statement's WHERE to the plants Lambda's grid/picker views; this file proves Postgres runs it
 // and that each clause does what it says on rows built to trip it.
 //
 // THE CONTRACT (lambda/inventory-items/index.js, the seeds branch of the by-id GET):

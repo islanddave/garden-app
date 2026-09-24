@@ -990,11 +990,12 @@ export const handler = async (event) => {
         // count (0 of 39 on prod, 2026-09-23), and it stays byte-identical. This is every live one.
         //
         // WHICH plantings, and why each predicate is here:
-        //   * household scope and the container-deleted gate are the plants Lambda's own default-view
+        //   * household scope and the container-deleted gate are the plants Lambda's own grid/picker-view
         //     ownership arms, copied rather than re-derived (its ?view=grid and ?view=picker branches):
         //     a planting in a household container that still exists, or a container-less one the
         //     household created. The germination read above scopes only through the item; a link
-        //     is a door, so it answers to the planting's own ownership as well.
+        //     is a door, so it answers to the planting's own ownership as well. NOT the bare
+        //     GET /api/plants list, which omits the container-archived clause.
         //   * p.deleted_at IS NULL: a soft-deleted planting is retracted (Soft-Delete-Only Rule).
         //   * p.archived_at IS NULL AND pp.archived_at IS NULL: the Archive-Hiding Rule. Archived rows
         //     are filtered HERE, in SQL, never loaded and dropped client-side, and by the same two
@@ -1002,12 +1003,18 @@ export const handler = async (event) => {
         //     for the container half): a planting Garden does not show is never linked from here.
         // sown-from.test.js holds this WHERE to the plants Lambda's text, so the two cannot drift.
         //
-        // Run beside the germination read in one Promise.all: one round trip, not two, on a page Dave
-        // opens to answer one question. NO BACKTICKS in the SQL comments of either template.
+        // Run beside the germination read, together: one round trip, not two, on a page Dave opens to
+        // answer one question. NO BACKTICKS in the SQL comments of either template.
+        //
+        // SETTLED, NOT ALL-OR-NOTHING (pre-promote review, the BUG-SEEDDETAIL500-001 class): a failed
+        // sown_from read degrades to sown_from: null — the page draws no card, as for an old Lambda — and
+        // says so in CloudWatch by item and error class, instead of 500ing the whole packet page for the
+        // sake of its links. A failed germination read still fails the request, exactly as it did before
+        // sown_from existed.
         let germination = null;
         let sown_from = null;
         if (row.category === 'seeds') {
-          const [g, sownFrom] = await Promise.all([
+          const [germRead, sownFromRead] = await Promise.allSettled([
             sql`
               SELECT p.id, p.display_name AS name, p.sown_at, p.seeds_sown, p.seeds_germinated
                 FROM public.garden_node p
@@ -1029,7 +1036,18 @@ export const handler = async (event) => {
                ORDER BY p.sown_at DESC NULLS LAST, p.id
             `,
           ]);
-          sown_from = sownFrom;
+          if (germRead.status === 'rejected') throw germRead.reason;
+          const g = germRead.value;
+          if (sownFromRead.status === 'fulfilled') {
+            sown_from = sownFromRead.value;
+          } else {
+            const err = sownFromRead.reason;
+            console.error(JSON.stringify({
+              tag: 'inv-sown-from-failed', item: itemId,
+              error: err?.name ?? err?.constructor?.name ?? typeof err, code: err?.code ?? null,
+              message: err?.message ?? String(err),
+            }));
+          }
           const sown = g.reduce((n, r) => n + Number(r.seeds_sown ?? 0), 0);
           const up = g.reduce((n, r) => n + Number(r.seeds_germinated ?? 0), 0);
           germination = {
@@ -1043,7 +1061,8 @@ export const handler = async (event) => {
         }
         // hero_photo_id (V5-SEEDCARDS-001) repeats the effective id under the name the seed list uses,
         // so the one client adapter (src/components/seed/lotPhoto.js) reads one name on both surfaces.
-        // sown_from is null off the seeds branch, like germination: not "none sown", not applicable.
+        // sown_from is null off the seeds branch, like germination: not "none sown", not applicable. On a
+        // seed row it is null only when its read failed (unknown) — never [], which would say none sown.
         return resp(200, {
           ...rest, featured_photo_id: row.effective_featured_photo_id, hero_photo_id: row.effective_featured_photo_id,
           featured_photo_view_url, germination, sown_from,
