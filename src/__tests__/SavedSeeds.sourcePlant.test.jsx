@@ -96,6 +96,8 @@ describe('SavedSeeds — provenance (V4-SEEDLINK-001)', () => {
     await mount([lot({ source_plant_id: 'pl-melon' })])
     await waitFor(() =>
       expect(screen.getByTestId('lot-source-plant').textContent).toContain('Green Flesh'))
+    // V5-SEEDSTAB-001 slice 2 — and the name is a door to that planting, not a dead end.
+    expect(screen.getByTestId('lot-source-plant').getAttribute('href')).toBe('/plantings/pl-melon')
   })
 
   it('offers a way in on an UNlinked lot instead of naming nothing', async () => {
