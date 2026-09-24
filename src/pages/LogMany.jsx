@@ -72,6 +72,16 @@ export function normalizeLocations(x) {
   return Array.isArray(x) ? x : (x?.locations ?? [])
 }
 
+// V5-VOICECARE-001 / review MINOR-4 — the voice path's view of the same GET: name + full path per
+// location (careLocations). DERIVED INSIDE A GUARD because it runs in this page's only load `.then`:
+// careLocations dereferences every row of BOTH halves of the response, and the `locations_with_path`
+// half is read by nothing else on this page, so one row it cannot read would have sent the WHOLE
+// manual form to its error screen over a voice-only derivation. null = voice is off (no card); the
+// manual form loads exactly as it did before voice existed.
+export function voiceCareLocations(res) {
+  try { return careLocations(res ?? []) } catch { return null }
+}
+
 
 function genKey() {
   try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID() } catch (e) {}
@@ -105,8 +115,9 @@ export default function LogMany() {
   const [projects, setProjects]   = useState([])
   const [locations, setLocations] = useState([])
   // V5-VOICECARE-001: the same GET, joined with its locations_with_path half — the spoken area is
-  // matched against a location's name AND its full path ("pasture in ground").
-  const [careLocs, setCareLocs] = useState([])
+  // matched against a location's name AND its full path ("pasture in ground"). null until loaded, and
+  // null for good when the response cannot be read for voice (voiceCareLocations): no voice card.
+  const [careLocs, setCareLocs] = useState(null)
   const [ready, setReady]   = useState(false)
   const [loadErr, setLoadErr] = useState(null)
 
@@ -173,8 +184,10 @@ export default function LogMany() {
     Promise.all([fetch('/api/projects'), fetch('/api/locations')])
       .then(([proj, locs]) => {
         if (!on) return
+        // V5-VOICECARE-001: from the RAW response (normalizeLocations below keeps only its
+        // `locations` half), and guarded so it can never take this load down — voiceCareLocations.
+        setCareLocs(voiceCareLocations(locs))
         // V3-ARCHIVE-001: archived projects must not appear in the Log Many scope picker.
-        setCareLocs(careLocations(locs ?? []))
         proj = (proj ?? []).filter(pr => !pr.archived_at); locs = normalizeLocations(locs)
         setProjects(proj); setLocations(locs)
         const seedProject = params.get('project_id')
@@ -652,22 +665,25 @@ export default function LogMany() {
 
       {/* V5-VOICECARE-001 — first on the page, so it needs no scroll in either host; everything after
           the tap happens in its own full-screen frame with the actions in the bottom (thumb) track.
-          Renders nothing where the browser cannot listen. `formState` is only what the voice write
-          will NOT carry, so the read-back can say so; the component never writes to this form. */}
-      <LogManyVoice
-        apiFetch={fetch}
-        careLocations={careLocs}
-        projects={projects}
-        locations={locations}
-        runDryRun={runDryRun}
-        formState={{
-          backDated: !!eventDate && eventDate !== todayYMD(),
-          hasNote: !!notes.trim(),
-          depthChosen: depthApplies && (batchDepthTouched || rowDepthCount > 0),
-          picksMade: selectionTouched,
-        }}
-        onLogged={onVoiceLogged}
-      />
+          Renders nothing where the browser cannot listen, and is not mounted at all when the
+          locations could not be read for voice (review MINOR-4). `formState` is only what the voice
+          write will NOT carry, so the read-back can say so; the component never writes to this form. */}
+      {careLocs && (
+        <LogManyVoice
+          apiFetch={fetch}
+          careLocations={careLocs}
+          projects={projects}
+          locations={locations}
+          runDryRun={runDryRun}
+          formState={{
+            backDated: !!eventDate && eventDate !== todayYMD(),
+            hasNote: !!notes.trim(),
+            depthChosen: depthApplies && (batchDepthTouched || rowDepthCount > 0),
+            picksMade: selectionTouched,
+          }}
+          onLogged={onVoiceLogged}
+        />
+      )}
 
       <Section label="What happened?" style={SECTION_SPACING}>
         {/* V4-EVENTSEL-003: the SAME tile-grid selector as Log Event (EventNew). primaries =
