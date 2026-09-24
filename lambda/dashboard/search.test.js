@@ -16,8 +16,10 @@
 //   S11 handleSearch: one section rejects → 200, that section [], others intact
 //   S12 handleSearch: wildcard query '%' binds escaped, not raw
 //   S13 parent-liveness: plantings/events join container with deleted_at+archived_at filters
+//   S14–S19 BUG-SEARCHSEEDCAP20-001: seed rows take SEARCH_SEED_CAP, other inventory keeps LIMIT 20,
+//       one shared predicate, unchanged ordering, a logged ceiling, no re-cap in handleSearch
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   classifyRoute,
   normalizeSearchQuery,
@@ -31,6 +33,7 @@ import {
   searchInventory,
   searchPhotos,
   SEARCH_SECTIONS,
+  SEARCH_SEED_CAP,
 } from './handlers.js';
 
 const sqlCalls = [];
@@ -259,5 +262,111 @@ describe('V4-SEARCHCROPTYPE-001 — crop type is a match axis (BD-072)', () => {
       expect(ilikes.length).toBeGreaterThan(0);
       for (const t of ilikes) expect(t, `unescaped ILIKE in: ${sql}`).toMatch(/ESCAPE/);
     }
+  });
+});
+
+// ── BUG-SEARCHSEEDCAP20-001 ───────────────────────────────────────────────────────────────────────
+// Header search files seed packets and saved lots under "Seeds", split client-side on `category`
+// (src/pages/Search.jsx), out of the one `inventory` list this Lambda returns. That list ended in a
+// single LIMIT 20 across every category, so the Seeds group stopped at 20 and said nothing: on prod
+// 2026-09-24, q=pepper matched 94 live seed rows and showed 20. Dave chose to show every match.
+//
+// WHAT THESE CAN AND CANNOT PROVE — the same limit the crop-type block above states. `makeSql` returns
+// [] and never applies a LIMIT, so these pin the SHAPE: which branch carries which cap, that the two
+// groups share one predicate, and what the handler does with the rows it is given. Whether 94 seed
+// rows actually come back from Postgres is tests/integration/search-seeds-cap.int.test.js.
+describe('BUG-SEARCHSEEDCAP20-001 — seed rows are not capped at 20 (S14–S19)', () => {
+  const inventorySql = async () => {
+    await searchInventory(makeSql(), USER, PAT, PREFIX);
+    return sqlCalls[sqlCalls.length - 1];
+  };
+  // The LIMIT that ends the branch opened by `where`. Anchored on the branch's own filter, and
+  // bounded: the slice from that filter to its LIMIT must be short, or the match borrowed a LIMIT from
+  // somewhere else in the query.
+  const branchLimit = (sql, where) => {
+    const at = sql.indexOf(where);
+    expect(at, `no branch filtered by ${where} in: ${sql}`).toBeGreaterThan(-1);
+    const m = sql.slice(at).match(/LIMIT\s+(\$\d+|\d+)/);
+    expect(m, `no LIMIT after ${where}`).toBeTruthy();
+    expect(m.index, `the LIMIT after ${where} is not that branch's own`).toBeLessThan(160);
+    return m[1];
+  };
+
+  it('S14 the seed branch is capped by SEARCH_SEED_CAP; every other category keeps LIMIT 20', async () => {
+    const call = await inventorySql();
+    const seedLimit = branchLimit(call.resolved, "WHERE category = 'seeds'");
+    expect(seedLimit, 'the seed cap is a bound value, not a literal').toMatch(/^\$\d+$/);
+    expect(call.values[Number(seedLimit.slice(1)) - 1]).toBe(SEARCH_SEED_CAP);
+    // IS DISTINCT FROM, the complement of the seed branch even for a NULL category (Search.jsx files
+    // anything that is not exactly 'seeds' under Inventory, so the two sides must partition alike).
+    expect(branchLimit(call.resolved, "WHERE category IS DISTINCT FROM 'seeds'")).toBe('20');
+    // Exactly those two. A third LIMIT after the branches are joined would re-cap the Seeds group.
+    expect(call.resolved.match(/\bLIMIT\b/g)).toHaveLength(2);
+  });
+
+  // A ceiling that sits near the real count is the BUG-VARIETIESLIMIT500-001 trap (LIMIT 500 against
+  // 495 cultivars, lambda/varieties/index.js). Prod had 351 live seed rows on 2026-09-24, and q=seed
+  // matches every one of them through the category column. A floor, not a pin: raising it never reds.
+  it('S15 SEARCH_SEED_CAP is a safety ceiling far above the real seed count, not a page size', () => {
+    expect(Number.isInteger(SEARCH_SEED_CAP)).toBe(true);
+    expect(SEARCH_SEED_CAP).toBeGreaterThanOrEqual(1000);
+  });
+
+  it('S16 one predicate serves both groups: same scope, soft-delete filter and matched columns', async () => {
+    const { resolved: sql, values } = await inventorySql();
+    // Written once, so the Seeds and Inventory groups cannot drift apart on who sees what.
+    expect(sql.match(/FROM inventory_items\b/g)).toHaveLength(1);
+    expect(sql.match(/created_by = ANY\(\$\d+\)/g)).toHaveLength(1);
+    expect(values.some(v => Array.isArray(v) && v.includes(USER))).toBe(true);
+    expect(sql).toMatch(/i\.deleted_at IS NULL/);
+    // The six columns the query has always matched — no more, no fewer.
+    const matched = [...sql.matchAll(/i\.(\w+) ILIKE \$(\d+) ESCAPE/g)]
+      .filter(([, , n]) => values[Number(n) - 1] === PAT)
+      .map(([, col]) => col);
+    expect(matched.sort()).toEqual(['brand', 'category', 'location_text', 'model', 'name', 'notes']);
+  });
+
+  it('S17 ordering is unchanged: name-prefix matches first, then name — in each branch and overall', async () => {
+    const { resolved: sql, values } = await inventorySql();
+    const rank = sql.match(/CASE WHEN i\.name ILIKE \$(\d+) ESCAPE '[^']*' THEN 0 ELSE 1 END AS prefix_rank/);
+    expect(rank, 'prefix_rank is the name-prefix test').toBeTruthy();
+    expect(values[Number(rank[1]) - 1]).toBe(PREFIX);
+    expect(sql.match(/ORDER BY prefix_rank, name ASC/g)).toHaveLength(3);
+    // The final ORDER BY is the last clause, so rows leave the query in the order they always did.
+    expect(sql.trimEnd()).toMatch(/ORDER BY prefix_rank, name ASC$/);
+  });
+
+  describe('S18 reaching the ceiling is logged, not silent', () => {
+    let errSpy;
+    beforeEach(() => { errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); });
+    afterEach(() => { errSpy.mockRestore(); });
+    const sqlReturning = rows => () => Promise.resolve(rows);
+    const seedRows = n => Array.from({ length: n }, (_, i) => ({ id: `s${i}`, name: `seed ${i}`, category: 'seeds' }));
+    const toolRows = n => Array.from({ length: n }, (_, i) => ({ id: `t${i}`, name: `tool ${i}`, category: 'tools' }));
+
+    it('a full seed branch logs the ceiling to CloudWatch and returns every row it was given', async () => {
+      const rows = [...seedRows(SEARCH_SEED_CAP), ...toolRows(20)];
+      const out = await searchInventory(sqlReturning(rows), USER, PAT, PREFIX);
+      expect(out).toEqual(rows);
+      expect(errSpy).toHaveBeenCalledTimes(1);
+      expect(errSpy.mock.calls[0].join(' ')).toMatch(/SEARCH_SEED_CAP/);
+    });
+
+    it('below the ceiling nothing is logged — and non-seed rows never count toward it', async () => {
+      const rows = [...seedRows(SEARCH_SEED_CAP - 1), ...toolRows(20)];
+      expect(await searchInventory(sqlReturning(rows), USER, PAT, PREFIX)).toEqual(rows);
+      expect(errSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // handleSearch is the only server-side consumer of the list. It must hand the Seeds group every
+  // row the query returned — a slice to SEARCH_LIMIT here would put the bug straight back.
+  it('S19 handleSearch passes every inventory row through, in order — no re-cap after the query', async () => {
+    const seeds = Array.from({ length: 94 }, (_, i) => ({ id: `s${i}`, name: `Pepper ${i}`, category: 'seeds' }));
+    const tools = Array.from({ length: 20 }, (_, i) => ({ id: `t${i}`, name: `Pepper tool ${i}`, category: 'tools' }));
+    const sql = (strings) => Promise.resolve(strings.join('').includes('FROM inventory_items') ? [...seeds, ...tools] : []);
+    const res = await handleSearch(sql, USER, 'pepper');
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).results.inventory.map(r => r.id)).toEqual([...seeds, ...tools].map(r => r.id));
   });
 });
