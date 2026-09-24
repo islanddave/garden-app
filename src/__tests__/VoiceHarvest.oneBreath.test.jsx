@@ -640,3 +640,76 @@ describe('QA F1 — a nameless no-unit pair said twice writes no false "not capt
     expect(misses()).toEqual(['Dropped 7 — no unit was said, and the record was said again without it.'])
   })
 })
+
+// ── QA F2 — one big number where a count goes may be two numbers run together ────────────────────
+//
+// QA probe P18: "Suyo Long 2165 next" (Chrome writing "two, one sixty-five" as one number) SAVED 2165
+// count on the lane build — under MAX_PLAUSIBLE, so nothing warned; prod refused it. The rule: in a
+// one-breath final, a LONE amount of 4+ digits, no unit, landing in the COUNT slot, is refused.
+describe('QA F2 — a lone 4-digit amount that would be the count is refused, not saved', () => {
+  it('P18: "Suyo Long 2165 next" saves nothing, says why, and keeps the planting it named', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long 2165 next')
+    await settle()
+    expect(posts()).toEqual([])
+    expect(statusText()).toBe('Suyo Long — heard 2165 as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.')
+    expect(misses()).toEqual(['Not kept — heard “Suyo Long 2165 next”: 2165 may be two numbers run together.'])
+    expect(haptics.hapticDigitRejected).toHaveBeenCalled()
+    expect(record()).toContain('Suyo Long')
+    // …and the corrected sentence straight after is not swallowed by the refused one's save word.
+    await speak(rec, '2 165 next')
+    await settle()
+    expect(posts().map((b) => [b.plant_id, b.harvest])).toEqual([['p1', H(2, 'count', 165)]])
+  })
+
+  it('the same number where the WEIGHT goes is left alone — a count was already said', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3 count', '2165 next']) await speak(rec, line)
+    await settle()
+    expect(posts().map((b) => [b.harvest, b.metadata.assumed_units])).toEqual([[H(3, 'count', 2165), ['g']]])
+  })
+
+  it('said with its unit it is a weight, as before — the refusal is for the bare form only', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long 2165 grams')
+    expect(record()).toContain('2165 g')
+    expect(misses()).toEqual([])
+  })
+
+  it('a 3-digit lone amount is read as before (the rule is 4+ digits)', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long 216 next')
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(216, 'count')])
+  })
+})
+
+// ── QA F6 — an assumed value that looks high says so, like a spoken one ───────────────────────────
+//
+// QA probe P20: "Suyo Long", "3", "60000", "next" saved 60000 g with no "that looks high" — the spoken
+// "60000 grams" warns (P21). The warning now comes when the number is HELD (where it would land), and
+// the placed slot carries it into the saved banner and row.
+describe('QA F6 — an assumed value above the plausible line is flagged on the way in and on the save', () => {
+  it('P20: the held 60000 is flagged before "next", and the save says the guessed weight looks high', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3', '60000']) await speak(rec, line)
+    expect(statusText()).toBe('60000 — as grams that looks high. Say it again to correct it, or say a unit to change it. (3 count assumed)')
+    await speak(rec, 'next')
+    await settle()
+    expect(posts().map((b) => [b.harvest, b.metadata.assumed_units])).toEqual([[H(3, 'count', 60000), ['count', 'g']]])
+    expect(statusText()).toBe('Saved Suyo Long — 3 count · 60000 g (3 count assumed, 60000 g assumed — that looks high)')
+    expect(screen.getByTestId('voice-harvest-row').textContent).toContain('60000 g assumed — that looks high')
+  })
+
+  it('a plausible held weight is not flagged — the control', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3', '600']) await speak(rec, line)
+    expect(statusText()).toBe('600 — say a unit to change it, or carry on. (3 count assumed)')
+  })
+
+  it('placed by an utterance that does not save, the flag rides on the banner with a warn tone', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3 count', '60000', 'text']) await speak(rec, line)
+    expect(statusText()).toBe('Didn\'t catch that — say "next" again. (60000 g assumed — that looks high)')
+  })
+})
