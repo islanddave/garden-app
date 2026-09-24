@@ -146,6 +146,11 @@ post:
   # while this gate stayed green, because the thing it asserts was exactly what was going wrong.
   # v6 makes the precondition explicit; where the two demonstrably disagree (>6.5x), the reference
   # wins. Remove this conjunct when V4-DUALHARVEST-001 lands and the guard stops firing.
+  # AMENDED 2026-09-24 (BUG-HARVSAMPLEGATEN5-001): the hatch reads independent_n, as the resolver has
+  # since v4-cal1-indep-001 (2026-08-06); every post gate below that splits corroborated from
+  # uncorroborated now uses the resolver's exact predicate or its exact negation. Full note on
+  # v4-cal1-sampleconf-001/post_corroborated_still_outranks_reference. The PRE gate above keeps
+  # sample_n on purpose: it describes the pre-v5 schema, where independent_n did not exist.
   - name: post_corroborated_grams_unchanged_and_now_labelled_sample
     sql: |
       SELECT 1
@@ -154,7 +159,7 @@ post:
         JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
         CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
        WHERE v.deleted_at IS NULL
-         AND (d.confidence IN ('high','medium') OR d.sample_n >= 5)
+         AND (d.confidence IN ('high','medium') OR d.independent_n >= 5)
          AND NOT (
                (v.unit_weights ->> d.unit) IS NOT NULL
            AND (d.grams_per_unit / NULLIF((v.unit_weights ->> d.unit)::numeric, 0))
@@ -176,7 +181,7 @@ post:
         JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
         CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
        WHERE v.deleted_at IS NULL
-         AND d.confidence = 'provisional' AND d.sample_n < 5
+         AND NOT (d.confidence IN ('high','medium') OR d.independent_n >= 5)
          AND (v.unit_weights ->> d.unit) IS NULL
          AND (round(r.weight_grams, 4) <> round(d.grams_per_unit, 4)
               OR r.weight_basis <> 'cultivar_sample')
@@ -194,7 +199,7 @@ post:
         JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
         CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
        WHERE v.deleted_at IS NULL
-         AND d.confidence = 'provisional' AND d.sample_n < 5
+         AND NOT (d.confidence IN ('high','medium') OR d.independent_n >= 5)
          AND (v.unit_weights ->> d.unit) IS NOT NULL
          AND (round(r.weight_grams, 4) <> round((v.unit_weights ->> d.unit)::numeric, 4)
               OR r.weight_basis <> 'cultivar')
@@ -209,7 +214,7 @@ post:
     env: prod
     sql: |
       SELECT 1 FROM public.cultivar_weight_derived
-       WHERE confidence IN ('high','medium') OR sample_n >= 5
+       WHERE confidence IN ('high','medium') OR independent_n >= 5
     expect: rowcount_gte
     value: 1
 

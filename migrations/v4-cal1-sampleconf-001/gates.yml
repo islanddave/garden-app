@@ -64,6 +64,8 @@ post:
   # Replaces slicec-001's post_sample_tier_outranks_reference. An UNCORROBORATED derived row must no
   # longer beat a curated reference: for every (cultivar, unit) that is 'provisional' AND has a
   # variety reference, the resolver must return the reference, not the sample.
+  # AMENDED 2026-09-24 (BUG-HARVSAMPLEGATEN5-001): "uncorroborated" is now the exact negation of the
+  # resolver's promotion predicate — see the note on post_corroborated_still_outranks_reference below.
   - name: post_provisional_does_not_outrank_reference
     sql: |
       SELECT 1
@@ -72,7 +74,7 @@ post:
         JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
         CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
        WHERE v.deleted_at IS NULL
-         AND d.confidence = 'provisional' AND d.sample_n < 5
+         AND NOT (d.confidence IN ('high','medium') OR d.independent_n >= 5)
          AND (v.unit_weights ->> d.unit) IS NOT NULL
          AND round(r.weight_grams, 4) <> round((v.unit_weights ->> d.unit)::numeric, 4)
     expect: rowcount_eq
@@ -97,6 +99,16 @@ post:
   #
   # WHEN THE PRODUCT AXIS LANDS (V4-DUALHARVEST-001), crown and side shoot stop sharing a reference,
   # the guard stops firing, and this conjunct becomes inert rather than wrong. Remove it then.
+  #
+  # AMENDED 2026-09-24 (BUG-HARVSAMPLEGATEN5-001). The accumulation hatch now reads independent_n,
+  # matching the resolver. v4-cal1-indep-001 (5ae8cd5, 2026-08-06) moved the resolver's hatch from
+  # sample_n >= 5 to independent_n >= 5 so that several rows describing ONE weighing cannot buy
+  # promotion, and moved the ratchet, the JS oracle and the tests with it — but not this gate or the
+  # harvbasis-sample-001 gates, which kept counting rows. The mismatch was latent until 2026-09-23,
+  # when Ancho reached 5 sample rows with 4 independent weighings: the resolver (correctly, by its
+  # own rule) kept the 60 g reference, and this gate went red on prod. Verified against prod with the
+  # real runner: with independent_n both bundles pass; a >= 4 mutant fails each on 7 rows, so the
+  # amended gates can still fail. No harvest_log value moves; gates are SELECT-only.
   - name: post_corroborated_still_outranks_reference
     sql: |
       SELECT 1
@@ -105,7 +117,7 @@ post:
         JOIN public.cultivar_weight_derived d ON d.cultivar_id = v.id
         CROSS JOIN LATERAL public.resolve_harvest_weight(pl.id, d.unit, 1, NULL) r
        WHERE v.deleted_at IS NULL
-         AND (d.confidence IN ('high','medium') OR d.sample_n >= 5)
+         AND (d.confidence IN ('high','medium') OR d.independent_n >= 5)
          -- the v6 category-error exception: a sample that contradicts its reference by >6.5x is not
          -- calibration of it, and is deliberately demoted below it.
          AND NOT (
@@ -129,7 +141,7 @@ post:
     env: prod
     sql: |
       SELECT 1 FROM public.cultivar_weight_derived
-       WHERE confidence IN ('high','medium') OR sample_n >= 5
+       WHERE confidence IN ('high','medium') OR independent_n >= 5
     expect: rowcount_gte
     value: 1
 

@@ -109,7 +109,8 @@ crossunit AS (
 -- Mirrors resolver v5's gate (confidence high/medium OR independent_n >= 5) so the outlier scan looks
 -- at exactly the factors the resolver will actually USE. Against a pre-v5 resolver the second
 -- disjunct differs (it reads raw sample_n there), which can only make this scan STRICTER, never
--- laxer — and no live group has sample_n >= 5, so the two agree today.
+-- laxer. Prod has run v5+ since 2026-08-06, so the two read the same predicate. (An earlier note here
+-- said no live group had sample_n >= 5; that stopped being true — e.g. Pineapple Tomatillo, 72.)
 promoted AS (
   SELECT d.cultivar_id, d.unit, d.grams_per_unit, d.sample_n, d.confidence,
          i.independent_n, i.distinct_ratios,
