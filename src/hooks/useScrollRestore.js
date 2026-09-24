@@ -133,6 +133,9 @@ export function __peekScrollRestoreEntry(id) { return readEntry(entryKey(id)) }
 export default function useScrollRestore({ id, ready, stateAtTop = false }) {
   const keyRef = useRef(null)
   if (keyRef.current === null) keyRef.current = entryKey(id)
+  // The id that key was built from, so `write` can re-derive it and ask whether this mount's entry is
+  // still the current one. A ref rather than a dep keeps write, and so saveState, stable.
+  const idRef = useRef(id)
 
   // Snapshotted at first render, before any save can run, so it is immune to the writes this same
   // mount is about to make.
@@ -150,6 +153,15 @@ export default function useScrollRestore({ id, ready, stateAtTop = false }) {
 
   const write = useCallback(() => {
     if (!openRef.current) return
+    // ONLY THE ENTRY THIS MOUNT BELONGS TO MAY BE WRITTEN (BUG-SAVEDSEEDSBACKTOP-001). Once the router
+    // has pushed or popped, window.scrollY describes the NEXT page. The unmount cleanup runs after React
+    // has swapped the DOM, when Chrome has already clamped the offset to that page's short first paint
+    // (Saved seeds → a planting's "Loading…" read 56 and overwrote the 4,147 the listener had saved),
+    // and a scroll event that clamp fires can land before the cleanup does. react-router writes
+    // history.state synchronously in the click, and the browser does before popstate, so by either read
+    // the key has moved on and the last write made while the entry was current stands. A sheet's Back
+    // marker keeps the key (DismissRegistry merges it), so saving continues under an open sheet.
+    if (entryKey(idRef.current) !== keyRef.current) return
     writeEntry(keyRef.current, window.scrollY, stateRef.current)
   }, [])
 
@@ -180,6 +192,8 @@ export default function useScrollRestore({ id, ready, stateAtTop = false }) {
     return () => {
       window.removeEventListener('scroll', onScroll)
       window.removeEventListener('pagehide', onHide)
+      // write() saves only while this entry is still current (see write): an unmount caused by a
+      // navigation leaves the listener's last write in place. flush() persists either way.
       write(); flush()
     }
   }, [write])
