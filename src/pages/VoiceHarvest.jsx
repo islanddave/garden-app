@@ -718,6 +718,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // utterance wrote, not the one their closure captured; `heldNum` is the render-visible mirror so
   // the half-finished value is never invisible on screen.
   const heldNumRef  = useRef(null)
+  // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — what the last crop change cleared, for the crop it changed to:
+  // { plantingId, text } or null. saveRecord says it again, because a switch and a save in one breath
+  // ("suyo long 3 231 next") leave the save's banner as the only one on screen.
+  const switchedRef = useRef(null)
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { qtyRef.current = qty }, [qty])
   useEffect(() => { weightRef.current = weight }, [weight])
@@ -923,6 +927,52 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     heldNumRef.current = null; setHeldNum(null)
   }, [])
 
+  // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — every amount on the record carries the crop it was SAID FOR: the
+  // planting chosen when it was said, or null before one was. It rides on the slot value like `assumed`,
+  // so it goes wherever the value goes and is cleared with it. Every write of a count or weight is here.
+  const fillSlot = useCallback((axis, v) => {
+    const slot = { ...v, saidFor: selectedRef.current }
+    if (axis === 'weight') { setWeight(slot); weightRef.current = slot } else { setQty(slot); qtyRef.current = slot }
+  }, [])
+
+  // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — A CROP CHANGE CLEARS THE AMOUNTS SAID FOR THE OLD CROP, AND SAYS SO.
+  //
+  // Dave, 2026-09-24, chose "clear them on a switch" over "keep them and say so" and "leave it as is". A
+  // spoken name kept the amounts standing, so "Stupice", "5 count", "cucumber one", "next" saved Suyo Long ·
+  // 5 count: Stupice's count under another crop, and nothing said. The trade he accepted: a correction
+  // ("Stupice… no, cucumber one") means saying the amounts again.
+  //
+  // Called by EVERY door that chooses a planting, before it does: a spoken name, a tap in the list or the
+  // teach box, and the one-breath readers (which already start a new record, and now say what went). Keyed
+  // on what each amount was SAID FOR, not on the crop on screen: the list and the teach box only show once
+  // a search has unselected the crop, so at a tap nothing is selected, yet the amounts are still the old
+  // crop's. Each amount on the record is:
+  //   * said for another planting — cleared, on the banner and in a miss row. ANOTHER PLANTING BY ID, the
+  //     row the harvest is saved under, so a second planting of the same variety ("Super Sweet 100 Rescue")
+  //     is a different crop, as the one-breath readers already treated it;
+  //   * said for this planting — kept (the same crop chosen again, by any name or door);
+  //   * said before any crop was chosen — kept, and from now on this crop's ("5 count", "Stupice").
+  // Returns the words for the read-back, or null when nothing was cleared.
+  const clearForSwitch = useCallback((planting) => {
+    const cleared = []
+    for (const [ref, set] of [[qtyRef, setQty], [weightRef, setWeight]]) {
+      const v = ref.current
+      if (!v) continue
+      const next = !v.saidFor ? { ...v, saidFor: planting } : v.saidFor.id === planting.id ? v : null
+      if (!next) cleared.push(v)
+      if (next !== v) { ref.current = next; set(next) }
+    }
+    if (!cleared.length) { switchedRef.current = null; return null }
+    const amounts = cleared.map((v) => `${v.value} ${v.unit}`).join(' · ')
+    const from = [...new Set(cleared.map((v) => v.saidFor.name || v.saidFor.variety_ref?.name))].join(' and ')
+    const to = planting.name || planting.variety_ref?.name
+    recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `switch-cleared ${amounts} (${from} -> ${to})`)
+    noteMiss(`Cleared ${amounts} for ${from} — the crop changed to ${to} before it was saved.`)
+    const text = `cleared ${amounts} from ${from}`
+    switchedRef.current = { plantingId: planting.id, text }
+    return text
+  }, [noteMiss])
+
   // BUG-VOICEALIASHITCOUNT-001 — which taught alias, if any, chose the planting now on the record.
   // Called wherever spoken words select a planting; a selection by any other door leaves null.
   const noteAliasUse = useCallback((spoken, planting) => {
@@ -943,13 +993,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // silently did nothing would let them believe it was fixed and meet the same failure tomorrow.
   const pickPlanting = useCallback(async (p) => {
     const phrase = unmatchedRef.current
+    const switched = clearForSwitch(p)
     setSelected(p); selectedRef.current = p
     // A pick from a learned alias's list ("Which one?" for a variety with two plantings) is a use of
     // it. A pick that TEACHES a new phrase is not: the phrase is not in the list yet, so this is null.
     noteAliasUse(phrase, p)
     setCandidates([]); setUnmatched(null)
     const label = p.name || p.variety_ref?.name
-    say('ok', `${label} — now say the count or the weight.`)
+    say(switched ? 'warn' : 'ok', `${label} — ${switched ? `${switched}. Now say` : 'now say'} the count or the weight.`)
 
     const varietyId = p?.variety_ref?.id
     // Nothing to learn when the phrase already resolved strictly, and nothing to learn it AGAINST
@@ -971,11 +1022,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // the load that lands later cannot undo this teach. The state is NOT set to 'ready' here: one name
       // taught is not the rest of the list.
       taughtRowsRef.current = [...taughtRowsRef.current, taughtRow]
-      say('ok', `${label} — learned “${phrase}”. Now say the count or the weight.`)
+      say(switched ? 'warn' : 'ok', `${label} — learned “${phrase}”${switched ? `, ${switched}` : ''}. Now say the count or the weight.`)
     } catch (err) {
-      say('warn', `${label} selected, but I could not remember “${phrase}” — ${err?.message || 'the save failed'}.`)
+      say('warn', `${label} selected, but I could not remember “${phrase}” — ${err?.message || 'the save failed'}.${switched ? ` (${switched})` : ''}`)
     }
-  }, [apiFetch, noteAliasUse, say])
+  }, [apiFetch, clearForSwitch, noteAliasUse, say])
 
   // ── the save ────────────────────────────────────────────────────────────────────────────────────
   // Returns nothing and throws nothing: every outcome is a banner, a haptic and (on success) a row.
@@ -986,13 +1037,16 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const q = qtyRef.current
     const w = weightRef.current
     const aliasUse = aliasUseRef.current
+    // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — what the change to this crop cleared, said again on both
+    // banners below: "cucumber one", "next" refuses for want of the count he said for Stupice a moment ago.
+    const switchNote = plant && switchedRef.current?.plantingId === plant.id ? ` (${switchedRef.current.text})` : ''
 
     // REFUSE LOUDLY AND KEEP THE RECORD. Advancing over an unsaveable record is how a picking gets
     // silently lost, which is the one failure mode this flow is least allowed to have.
     if (!plant || !q) {
       const missing = !plant && !q ? 'a crop and a quantity' : !plant ? 'a crop' : 'a quantity'
       cue(hapticSaveFailed)
-      say('fail', `Not saved — still need ${missing}. Say it, then "next".`)
+      say('fail', `Not saved — still need ${missing}. Say it, then "next".${switchNote}`)
       noteMiss(`Not saved — still need ${missing}.`)
       // BUG-VOICEREFUSEDNEXT-001 — RELEASED ONE MICROTASK LATER, OR NOT AT ALL. This refusal runs
       // synchronously INSIDE the debouncer's commit handler, and the debouncer arms the write
@@ -1081,9 +1135,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // correct it later if it is wrong") and it has to say which values were guesses.
       const said = `${q.value} ${q.unit}${w ? ` · ${w.value} ${w.unit}` : ' · no weight was said'}`
         + (assumed.length ? ` (${assumed.map(assumedPhrase).join(', ')})` : '')
-      say('ok', `Saved ${label} — ${said}`)
+      say('ok', `Saved ${label} — ${said}${switchNote}`)
       setRows((r) => [...r, { kind: 'save', eventId, label, said, at: Date.now() }])
       clearRecord()
+      switchedRef.current = null
       // BUG-VOICEALIASHITCOUNT-001 — a taught alias chose this crop, and the harvest it named has
       // landed: count the use. AFTER the save, never awaited, never throwing (recordAliasUse), so the
       // count can cost this save nothing. An Undo does not un-count it: the alias did its job.
@@ -1184,9 +1239,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // then "85 G"; or a later "3 count"), and clearRecord() nulls it with the record. saveRecord
         // turns it into metadata.assumed_units — the only way the server can tell this unit from a
         // spoken one. A separate per-record flag would need clearing at every write site instead.
-        const slot = { value: built.value, unit: built.unit, assumed: true, ...(built.implausible ? { implausible: true } : {}) }
-        if (built.kind === 'weight') { setWeight(slot); weightRef.current = slot }
-        else { setQty(slot); qtyRef.current = slot }
+        fillSlot(built.kind, { value: built.value, unit: built.unit, assumed: true, ...(built.implausible ? { implausible: true } : {}) })
         assumedApplied = built
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `assumed-unit ${built.value} ${built.unit} (held number resolved)`)
         return
@@ -1390,16 +1443,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // Merging would let a weight spoken for the previous crop survive onto this one — the
         // record would look complete and be wrong, which is the failure mode this page is built
         // around. The same planting is a correction and keeps whatever axis was not restated.
-        if (selectedRef.current?.id !== one.planting.id) clearRecord()
+        // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — and what was said for the old crop is named on the way out.
+        let switched = null
+        if (selectedRef.current?.id !== one.planting.id) { switched = clearForSwitch(one.planting); clearRecord() }
         heldNumRef.current = null; setHeldNum(null)
         setSelected(one.planting); selectedRef.current = one.planting
         noteAliasUse(one.name, one.planting)
         setCandidates([]); setUnmatched(null); unmatchedRef.current = null
-        for (const v of one.values) {
-          const next = { value: v.value, unit: v.unit }
-          if (v.kind === 'weight') { setWeight(next); weightRef.current = next }
-          else { setQty(next); qtyRef.current = next }
-        }
+        for (const v of one.values) fillSlot(v.kind, { value: v.value, unit: v.unit })
         const label = one.planting.name || one.planting.variety_ref?.name
         const said = one.values.map((v) => `${v.value} ${v.unit}`).join(' · ')
         const implausible = one.values.some((v) => v.implausible)
@@ -1407,7 +1458,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath ${label} ${said} <- ${JSON.stringify(String(result.transcript ?? ''))}`)
         // Read back in full, for the same reason a fuzzy rescue is: the app chose a split point the
         // words did not settle, so Dave sees the reading it picked before "next" commits it.
-        say(implausible || noteWarns() ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${dropNote}${assumedNote}`)
+        say(implausible || noteWarns() || switched ? 'warn' : 'ok', `${label} — ${said}${implausible ? ' — that looks high. Say it again to correct it.' : ''}${switched ? ` (${switched})` : ''}${dropNote}${assumedNote}`)
         return
       }
 
@@ -1427,11 +1478,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // still refuses without a crop, so an early pair waits for one exactly as a single amount does.
       const seq = valueSeq
       if (seq && seq.length) {
-        for (const v of seq) {
-          const next = { value: v.value, unit: v.unit }
-          if (v.kind === 'weight') { setWeight(next); weightRef.current = next }
-          else { setQty(next); qtyRef.current = next }
-        }
+        for (const v of seq) fillSlot(v.kind, { value: v.value, unit: v.unit })
         const said = seq.map((v) => `${v.value} ${v.unit}`).join(' · ')
         const implausible = seq.some((v) => v.implausible)
         cue(hapticDigitAccepted)
@@ -1497,6 +1544,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // already being computed for the banner — the cue just was not reading it.
         if (rescued !== null) cue(hapticMatchUncertain)
         else cue(hapticDigitAccepted)
+        const switched = clearForSwitch(hits[0])
         setSelected(hits[0]); selectedRef.current = hits[0]
         noteAliasUse(result.text, hits[0])
         setCandidates([])
@@ -1511,11 +1559,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         // trailing unit ("three count"), so a bare "three" returns `unparsed` either way — the
         // default unit had no utterance it could rescue. A quantity now exists only if it was said.
         const chosen = hits[0].name || hits[0].variety_ref?.name
-        say(noteWarns() ? 'warn' : 'ok', (rescued
+        say(noteWarns() || switched ? 'warn' : 'ok', (rescued
           // The heard text is quoted back verbatim so the swap is legible at a glance. Without the
           // "heard X" half, a rescue of the WRONG planting reads exactly like a correct match.
-          ? `Heard “${result.text}” — matched ${chosen}. Say the count, or say it again to change it.`
-          : `${chosen} — now say the count or the weight.`) + dropNote + assumedNote)
+          ? `Heard “${result.text}” — matched ${chosen}${switched ? `, ${switched}` : ''}. Say the count, or say it again to change it.`
+          : `${chosen} — ${switched ? `${switched}. Now say` : 'now say'} the count or the weight.`) + dropNote + assumedNote)
         return
       }
       cue(hapticDigitRejected)
@@ -1548,8 +1596,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
 
     if (result.kind === 'quantity') {
       cue(hapticDigitAccepted)
-      const next = { value: result.value, unit: result.unit }
-      setQty(next); qtyRef.current = next
+      fillSlot('quantity', { value: result.value, unit: result.unit })
       say(result.implausible || noteWarns() ? 'warn' : 'ok',
         result.implausible ? `${result.value} ${result.unit}${joinNote}${assumedNote} — that looks high. Say it again to correct it.${dropNote}`
           : `${result.value} ${result.unit}${joinNote}${assumedNote}${dropNote}`)
@@ -1558,8 +1605,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
 
     if (result.kind === 'weight') {
       cue(hapticDigitAccepted)
-      const next = { value: result.value, unit: result.unit }
-      setWeight(next); weightRef.current = next
+      fillSlot('weight', { value: result.value, unit: result.unit })
       say(result.implausible || noteWarns() ? 'warn' : 'ok',
         result.implausible ? `${result.value} ${result.unit}${joinNote}${assumedNote} — that looks high. Say it again to correct it.${dropNote}`
           : `${result.value} ${result.unit}${joinNote}${assumedNote}${dropNote}`)
@@ -1603,7 +1649,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // WHAT it heard — "Didn't catch that ← "text"" is actionable minutes later; "Didn't catch that"
     // alone asks him to remember which of forty utterances it was.
     noteMiss(`Didn't catch that — heard “${String(result.transcript ?? '')}”.`)
-  }, [clearRecord, cue, noteAliasUse, noteMiss, saveRecord, say])
+  }, [clearForSwitch, clearRecord, cue, fillSlot, noteAliasUse, noteMiss, saveRecord, say])
 
   // ── V5-VOICEVOCAB-001 (lane D4): apply a one-breath record said without its units ───────────────
   //
@@ -1639,6 +1685,8 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
         droppedNote = ` (dropped ${held} — no unit was said)`
       }
+      const switched = clearForSwitch(planting)
+      if (switched) droppedNote += ` (${switched})`
       clearRecord()
     } else if (d.groups.length === 2) {
       const held = heldNumRef.current
@@ -1685,7 +1733,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       const last = statusRef.current
       say(droppedNote ? 'warn' : (last?.tone ?? 'ok'), `${label ? `${label} — ` : ''}${last?.text ?? ''}${droppedNote}`)
     }
-  }, [applyOneUtterance, clearRecord, cue, noteAliasUse, noteMiss, say])
+  }, [applyOneUtterance, clearForSwitch, clearRecord, cue, noteAliasUse, noteMiss, say])
 
   // QA F2 — the one-breath sentence whose ONE amount may be two numbers run together ("Suyo Long 2165
   // next"). The name was read cleanly, so it is applied exactly as the one-breath would apply it (a
@@ -1693,9 +1741,11 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // row — and nothing is written.
   const refuseMergedAmount = useCallback((d, heard) => {
     const n = d.groups[0].value
+    let switched = null
     if (d.planting && selectedRef.current?.id !== d.planting.id) {
       const held = heldNumRef.current
       if (held != null) noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
+      switched = clearForSwitch(d.planting)
       clearRecord()
       setSelected(d.planting); selectedRef.current = d.planting
       noteAliasUse(d.name, d.planting)
@@ -1704,9 +1754,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     cue(hapticDigitRejected)
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath-bare refused (merged ${n}) <- ${JSON.stringify(heard)}`)
     const label = d.planting ? `${d.planting.name || d.planting.variety_ref?.name} — ` : ''
-    say('warn', `${label}heard ${n} as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.`)
+    say('warn', `${label}heard ${n} as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.${switched ? ` (${switched})` : ''}`)
     noteMiss(`Not kept — heard “${heard}”: ${n} may be two numbers run together.`)
-  }, [clearRecord, cue, noteAliasUse, noteMiss, say])
+  }, [clearForSwitch, clearRecord, cue, noteAliasUse, noteMiss, say])
 
   // A one-breath sentence whose split is not unique, or whose name is too vague, or whose numbers
   // cannot be read: refused LOUDLY — reject haptic, a banner saying why, a miss row quoting what was

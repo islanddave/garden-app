@@ -1508,7 +1508,11 @@ describe('BUG-VOICETWOBARENUM-001 — two bare numbers are a count and a weight'
     const rec = await startListening()
     for (const line of ['Suyo Long', '2', '165', 'Marketmore']) await speak(rec, line)
     expect(statusText()).toContain('dropped 165')
-    expect(misses()).toEqual(['Dropped 165 — no unit was said, and the crop changed before one was.'])
+    // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — and the 2 already placed for Suyo Long goes with the crop.
+    expect(misses()).toEqual([
+      'Dropped 165 — no unit was said, and the crop changed before one was.',
+      'Cleared 2 count for Suyo Long — the crop changed to Marketmore before it was saved.',
+    ])
   })
 
   it('"next" that resolves the held number SAYS which units were assumed — banner and row', async () => {
