@@ -540,6 +540,9 @@ describe('BUG-VOICENUMWORD-001 — spoken number words reach a digit-named plant
 // number and the unit. `speak()` ends a session after every utterance, which is exactly that shape,
 // so these tests reproduce the defect rather than approximate it.
 describe('BUG-VOICECOUNTSPLIT-001 — a value split across two utterances', () => {
+  // A failing assertion would otherwise leave fake timers installed for the next test.
+  afterEach(() => { vi.useRealTimers() })
+
   it('rejoins "three" + "count" into the quantity that was actually spoken', async () => {
     const rec = await startListening()
     await speak(rec, 'Suyo Long')
@@ -654,7 +657,9 @@ describe('BUG-VOICECOUNTSPLIT-001 — a value split across two utterances', () =
   })
 
   it('saves without either unit word — crop, count, weight', async () => {
-    // Dave's target phrasing with both unit words dropped.
+    // Dave's target phrasing with both unit words dropped. BUG-VOICETWOBARENUM-001: this test used to
+    // assert only that "231" appeared somewhere in the POST — just as true of the WRONG row the page
+    // actually wrote (231 count, no weight, the spoken 3 lost). It now pins the whole row.
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()
     await speak(rec, 'Suyo Long')
@@ -664,8 +669,10 @@ describe('BUG-VOICECOUNTSPLIT-001 — a value split across two utterances', () =
     await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
 
     expect(harvestPosts()).toHaveLength(1)
-    const body = harvestPosts()[0]
-    expect(JSON.stringify(body)).toContain('231')
+    const body = JSON.parse(harvestPosts()[0][1].body)
+    expect(body.harvest)
+      .toEqual({ quantity: 3, unit: 'count', quality_rating: null, weight: 231, weight_unit: 'g' })
+    expect(body.metadata).toEqual({ harvest_input_source: 'voice', assumed_units: ['count', 'g'] })
     vi.useRealTimers()
   })
 
@@ -692,7 +699,30 @@ describe('BUG-VOICECOUNTSPLIT-001 — a value split across two utterances', () =
     expect(statusText()).not.toContain('assumed')
   })
 
-  it('a second number replaces the first — that is a correction, not a pair', async () => {
+  // BUG-VOICETWOBARENUM-001 — THIS PAIR REPLACES, AND INVERTS, "a second number replaces the first —
+  // that is a correction, not a pair" (ae83521, 2026-08-31). That test encoded the decision of its day:
+  // a bare number could not become an amount without its unit, so "three" then "fifteen" could only be
+  // a self-correction. Dave's V5-VOICEVOCAB-001 directive (2026-09-13: "assume the unit and assume
+  // grams, so 'planting 2 165' replaces 'planting 2 count 165 grams'") replaced it — two bare numbers
+  // are now the count and the weight — and the replace rule then saved his own example as 165 count
+  // with no weight. The old sequence ended in "count", which is why it stayed green through that
+  // defect: what it really pinned was the CORRECTION case, and the second test keeps that protection.
+  it('a second bare number is the WEIGHT, not a correction — "planting 2 165"', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(rec, 'three')
+    await speak(rec, 'fifteen')
+    expect(record()).toContain('3 count')
+    await speak(rec, 'next')
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200) })
+
+    expect(harvestPosts()).toHaveLength(1)
+    expect(JSON.parse(harvestPosts()[0][1].body).harvest)
+      .toEqual({ quantity: 3, unit: 'count', quality_rating: null, weight: 15, weight_unit: 'g' })
+  })
+
+  it('a correction said WITH its unit still replaces the count — what the old test protected', async () => {
     const rec = await startListening()
     await speak(rec, 'Suyo Long')
     await speak(rec, 'three')
@@ -700,6 +730,7 @@ describe('BUG-VOICECOUNTSPLIT-001 — a value split across two utterances', () =
     await speak(rec, 'count')
     expect(record()).toContain('15 count')
     expect(record()).not.toContain('3 count')
+    expect(record()).toContain('Weight—')
   })
 
   it('does not hold a number before a planting is chosen — a bare number still searches', async () => {
@@ -1319,5 +1350,171 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     const [body] = await saveAfter(rec, 'Marketmore', 'two count', '100 grams', 'next')
     expect(body.plant_id).toBe('p2')
     expect(body.metadata.assumed_units).toEqual([])
+  })
+})
+
+// ── BUG-VOICETWOBARENUM-001 — two bare numbers are a count and a weight ───────────────────────────
+//
+// Dave's V5-VOICEVOCAB-001 directive (2026-09-13), in the ledger's words: "assume the unit and assume
+// grams, so 'planting 2 165' replaces 'planting 2 count 165 grams'". e142054 shipped the assumed unit
+// and described the rule for a second bare number — "the held one was the count; apply it, hold the
+// new one" — but the hold branch answered first and simply re-held, so that exact phrase saved 165
+// count and no weight, and the save banner never said a unit had been assumed. Reproduced through
+// this page on 15db68c before the fix. These pin the rule as the directive states it, what fills the
+// slot when one amount was already said, what happens to a number with no slot left, and that every
+// assumption is said at the save as well as before it.
+describe('BUG-VOICETWOBARENUM-001 — two bare numbers are a count and a weight', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  async function saveAfter(rec, ...lines) {
+    for (const line of lines) await speak(rec, line)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    return harvestPosts().map(([, opts]) => JSON.parse(opts.body))
+  }
+  const misses = () => screen.queryAllByTestId('voice-harvest-miss').map((m) => m.textContent)
+  const ledgerHead = () => screen.getByTestId('voice-harvest-ledger').firstChild.textContent
+  const NO_SLOT = (n) => `Dropped ${n} — no unit was said, and the quantity and weight were already filled.`
+
+  it('Dave\'s own example: "planting 2 165" then "next" posts 2 count and 165 g, both assumed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const posts = await saveAfter(rec, 'Suyo Long', '2', '165', 'next')
+    expect(posts).toHaveLength(1)
+    expect(posts[0].plant_id).toBe('p1')
+    expect(posts[0].harvest)
+      .toEqual({ quantity: 2, unit: 'count', quality_rating: null, weight: 165, weight_unit: 'g' })
+    expect(posts[0].metadata).toEqual({ harvest_input_source: 'voice', assumed_units: ['count', 'g'] })
+  })
+
+  it('the count already said: the first bare number is the weight; the second has no slot and is dropped, out loud', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    for (const line of ['Suyo Long', 'three count', '231', '85']) await speak(rec, line)
+    // Said while he can still act on it, not only in the miss row after the save.
+    expect(statusText()).toContain('85 — the quantity and weight are both filled')
+    expect(statusText()).toContain('(231 g assumed)')
+    const [body] = await saveAfter(rec, 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 3, unit: 'count', quality_rating: null, weight: 231, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['g'])
+    expect(misses()).toEqual([NO_SLOT(85)])
+    expect(ledgerHead()).toBe('1 saved · 1 not captured')
+  })
+
+  it('the weight already said: the first bare number is the count', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', '231 grams', '3', '5', 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 3, unit: 'count', quality_rating: null, weight: 231, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['count'])
+    expect(misses()).toEqual([NO_SLOT(5)])
+  })
+
+  it('a THIRD bare number is dropped and said — never guessed onto a filled slot', async () => {
+    // "2, 165, 7" does not say whether the 7 corrects the count or the weight. Either guess can write
+    // a value he never meant over one he did; dropping it cannot, and it is said on the banner and the
+    // hand the moment it lands, then kept in the miss row.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '2', '165']) await speak(rec, line)
+    haptics.hapticDigitAccepted.mockClear(); haptics.hapticDigitRejected.mockClear()
+    await speak(rec, '7')
+    expect(statusText()).toContain('7 — the quantity and weight are both filled')
+    expect(statusText()).toContain('or it will be dropped')
+    expect(haptics.hapticDigitRejected).toHaveBeenCalled()
+    expect(haptics.hapticDigitAccepted).not.toHaveBeenCalled()
+    const [body] = await saveAfter(rec, 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 2, unit: 'count', quality_rating: null, weight: 165, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['count', 'g'])
+    expect(misses()).toEqual([NO_SLOT(7)])
+  })
+
+  it('a bare number after BOTH units were spoken no longer overwrites the spoken weight', async () => {
+    // Before the fix the resolution site sent any held number to grams once the count was filled,
+    // whether or not a weight was already there: this saved 3 count and 85 g, the spoken 231 g gone.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', 'three count', '231 grams', '85', 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 3, unit: 'count', quality_rating: null, weight: 231, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual([])
+    expect(misses()).toEqual([NO_SLOT(85)])
+  })
+
+  it('"say it with a unit to replace one" is true — a third number with its unit replaces that slot', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', '2', '165', '7', 'count', 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 7, unit: 'count', quality_rating: null, weight: 165, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['g'])
+    expect(misses()).toEqual([])
+  })
+
+  it('the second number still rejoins a unit that follows it — "165" then "grams" is spoken', async () => {
+    // The reason the number is HELD at all (Chrome splits "165 grams" into two sessions); the second
+    // bare number must keep that, or the pair would consume it before its unit could land.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', '2', '165', 'grams', 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 2, unit: 'count', quality_rating: null, weight: 165, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['count'])
+  })
+
+  it('the second number restated with its unit is that number — "165" then "165 G"', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', '2', '165', '165 G', 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 2, unit: 'count', quality_rating: null, weight: 165, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['count'])
+  })
+
+  it('the SAME bare number twice is one number — a re-delivered final is not a count and a weight', async () => {
+    // BUG-VOICEHELDREPEAT-001's equality rule, for the bare form. A duplicate final that crosses a
+    // session boundary reaches the page as a second utterance; pairing it would save 85 count AND 85 g
+    // from one spoken number.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', '85', '85', 'next')
+    expect(body.harvest).toEqual({ quantity: 85, unit: 'count', quality_rating: null })
+    expect(body.metadata.assumed_units).toEqual(['count'])
+  })
+
+  it('a search still drops the number being HELD — the second one — and says so', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '2', '165', 'Marketmore']) await speak(rec, line)
+    expect(statusText()).toContain('dropped 165')
+    expect(misses()).toEqual(['Dropped 165 — no unit was said, and the crop changed before one was.'])
+  })
+
+  it('"next" that resolves the held number SAYS which units were assumed — banner and row', async () => {
+    // The save used to overwrite the "(165 g assumed)" note in the same utterance, before it was ever
+    // shown: "Saved Suyo Long — 165 count · no weight was said" read exactly like a spoken count.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await saveAfter(rec, 'Suyo Long', '2', '165', 'next')
+    expect(statusText()).toBe('Saved Suyo Long — 2 count · 165 g (2 count assumed, 165 g assumed)')
+    // The row is the durable half — the banner is overwritten by the next utterance, and the row is
+    // what he reads when he corrects a guess later.
+    expect(screen.getByTestId('voice-harvest-row').textContent).toContain('(2 count assumed, 165 g assumed)')
+  })
+
+  it('a weightless save names its assumed count as well as the missing weight', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await saveAfter(rec, 'Suyo Long', '3', 'next')
+    expect(statusText()).toBe('Saved Suyo Long — 3 count · no weight was said (3 count assumed)')
+  })
+
+  it('says nothing is assumed when both units were spoken — non-vacuity for the note', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    await saveAfter(rec, 'Suyo Long', 'three count', '231 grams', 'next')
+    expect(statusText()).toBe('Saved Suyo Long — 3 count · 231 g')
+    expect(screen.getByTestId('voice-harvest-row').textContent).not.toContain('assumed')
   })
 })
