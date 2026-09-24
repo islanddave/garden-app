@@ -675,8 +675,16 @@ export default function CareNeeded({ plan }) {
   }, [announce, getToken, toast, unskipRow])
 
   // Bulk: the candidate set for an event_type = visible rows of that type, MINUS in-ground beds when
-  // bed-wait is active (watering only). Client-side fan-out of single POSTs (the batch endpoint is
-  // scope-based single-type — it cannot name this id-subset). Best-effort; aggregate undo.
+  // bed-wait is active (watering only). Client-side fan-out of single POSTs. Best-effort; aggregate undo.
+  //
+  // WHY NOT POST /api/events/batch (re-checked 2026-09-24, BUG-RUNBULKPARTIALUNDO-001). This comment
+  // used to say the batch endpoint "cannot name this id-subset"; that is stale — scope.type 'ids' names
+  // one exactly. The fan-out stays for reasons that ARE current, and they move together or not at all:
+  //   · moisture_check (the overwintering rows' bulk) is in BATCH_EXCLUDED_TYPES by design — a 400.
+  //   · under 'ids' ONE planting closed since the plan ran (this list is a cron snapshot) 409s the
+  //     WHOLE tap and writes nothing, where this path logs the rest.
+  //   · a batch is ONE reward action (lambda/events/batchSideEffects.js, Decision 1); this is N. Moving
+  //     it changes what a Today bulk earns — Dave's call, not a transport swap.
   const bedWait = useMemo(() => bedWaitActive(plan), [plan])
   const candidatesFor = useCallback((etype) => rows.filter(r => {
     if (r.eventType !== etype) return false
@@ -722,43 +730,59 @@ export default function CareNeeded({ plan }) {
     setBulkProgress(null)
   }, [candidatesFor])
 
+  // BUG-RUNBULKPARTIALUNDO-001 — the whole fan-out's in-flight guard, as a REF for the reason
+  // writeInFlightRef above spells out: `disabled={!!bulkProgress}` is applied by the render that has
+  // not flushed, so two bulk taps landing in one React batch (the pill and a section header, or one
+  // button twice) both start a fan-out and every row in it is logged twice.
+  const bulkInFlightRef = useRef(false)
+
   const runBulk = useCallback(async (etype, keys) => {
+    if (bulkInFlightRef.current) return
     const targets = candidatesFor(etype).filter(r => keys.has(r.key))
     if (!targets.length) { setBulkType(null); return }
-    setBulkProgress({ done: 0, total: targets.length })
-    const created = []   // { id, key } per successfully-created row (id known = undoable)
-    let failures = 0
-    for (let i = 0; i < targets.length; i++) {
-      const row = targets[i]
-      try {
-        const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
-        created.push({ id: (res && res.id) || null, key: row.key })
-      } catch { failures++ }
-      setBulkProgress({ done: i + 1, total: targets.length })
+    bulkInFlightRef.current = true
+    try {
+      setBulkProgress({ done: 0, total: targets.length })
+      const created = []   // { id, key } per successfully-created row (id known = undoable)
+      let failures = 0
+      for (let i = 0; i < targets.length; i++) {
+        const row = targets[i]
+        try {
+          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
+          created.push({ id: (res && res.id) || null, key: row.key })
+        } catch { failures++ }
+        setBulkProgress({ done: i + 1, total: targets.length })
+      }
+      const doneKeys = created.map(c => c.key)
+      if (doneKeys.length) setLogged(prev => { const n = new Set(prev); doneKeys.forEach(k => n.add(k)); return n })
+      setBulkType(null); setBulkProgress(null)
+      const okMsg = 'Logged ' + doneKeys.length + (failures ? ' — ' + failures + ' failed' : '')
+      announce(okMsg)
+      // BUG-RUNBULKPARTIALUNDO-001 — undo whatever LANDED, failures or not. The undo used to be offered
+      // only when nothing failed, so one blip in a 60-row run left the 59 that did log with no way back.
+      // The failed rows never joined `logged`, so they are still on the list to retry, and the message
+      // carries the failure count. Only a run where nothing landed keeps the bare error toast.
+      if (!created.length) toast.show({ message: okMsg, tone: 'error' })
+      else toast.showUndo({
+        message: okMsg,
+        // WS-A5: await each DELETE; only un-fade rows whose delete is confirmed (or 404 = already
+        // gone). Rows we can't confirm stay hidden, so a failed undo can't re-surface → re-log a dup.
+        onUndo: async () => {
+          const undoneKeys = []
+          await Promise.all(created.map(async c => {
+            if (!c.id) return
+            try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undoneKeys.push(c.key) }
+            catch (e) { if (e?.status === 404) undoneKeys.push(c.key) }
+          }))
+          if (undoneKeys.length) setLogged(prev => { const n = new Set(prev); undoneKeys.forEach(k => n.delete(k)); return n })
+          if (undoneKeys.length < created.length) {
+            toast.show({ message: 'Couldn’t undo ' + (created.length - undoneKeys.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
+          }
+        },
+      })
+    } finally {
+      bulkInFlightRef.current = false
     }
-    const doneKeys = created.map(c => c.key)
-    if (doneKeys.length) setLogged(prev => { const n = new Set(prev); doneKeys.forEach(k => n.add(k)); return n })
-    setBulkType(null); setBulkProgress(null)
-    const okMsg = 'Logged ' + doneKeys.length + (failures ? ' — ' + failures + ' failed' : '')
-    announce(okMsg)
-    if (failures) toast.show({ message: okMsg, tone: 'error' })
-    else toast.showUndo({
-      message: okMsg,
-      // WS-A5: await each DELETE; only un-fade rows whose delete is confirmed (or 404 = already
-      // gone). Rows we can't confirm stay hidden, so a failed undo can't re-surface → re-log a dup.
-      onUndo: async () => {
-        const undoneKeys = []
-        await Promise.all(created.map(async c => {
-          if (!c.id) return
-          try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undoneKeys.push(c.key) }
-          catch (e) { if (e?.status === 404) undoneKeys.push(c.key) }
-        }))
-        if (undoneKeys.length) setLogged(prev => { const n = new Set(prev); undoneKeys.forEach(k => n.delete(k)); return n })
-        if (undoneKeys.length < created.length) {
-          toast.show({ message: 'Couldn’t undo ' + (created.length - undoneKeys.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
-        }
-      },
-    })
   }, [fetch, toast, candidatesFor, announce])
 
   const isExpanded = (g) => (g.key in overrides) ? overrides[g.key] : autoKeys.has(g.key)
