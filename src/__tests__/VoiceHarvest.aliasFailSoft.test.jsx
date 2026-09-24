@@ -74,8 +74,9 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(
 
 async function mountPage() {
   vi.useFakeTimers({ shouldAdvanceTime: true })
-  render(<VoiceHarvest />)
+  const view = render(<VoiceHarvest />)
   await waitFor(() => expect(apiFetchSpy).toHaveBeenCalledWith(ALIAS_URL))
+  return view
 }
 async function startListening() {
   await mountPage()
@@ -284,6 +285,33 @@ describe('the list is LATE — what is said waits for it, in order, then reads a
     for (const line of ['cucumber one', '5', 'next']) await speak(rec, line)
     await settle()
     expect(saved()).toEqual([['Suyo Long', 3, 'count', 231], ['Suyo Long', 5, 'count', null]])
+  })
+
+  // Review v4.147 MINOR — WORDS HELD FOR THE LIST DIE WITH THE PAGE. The unmount cleanup that drops them
+  // was load-bearing and unpinned: with it deleted, a slow list plus "Suyo Long", "3 count", "next", then
+  // leaving the page, POSTed a harvest after the page was gone — no row, no Undo, nothing on screen to see
+  // it by. Left at 1.8 s: "next" has long since left the debouncer (its 500 ms settle tick) and sits in
+  // the hold, which runs out at 2.5 s. One script, run twice; only the leaving differs, so the page that
+  // stays is the control that the same words really are saved — at the deadline, and only once, with the
+  // list landing later (5.5 s) adding nothing.
+  it.each([
+    ['left at 1.8 s, with "next" held: nothing is written after the page is gone', true, []],
+    ['stayed: the same held words are read when the wait runs out, and save once', false, [['Suyo Long', 3, 'count', null]]],
+  ])('%s', async (_what, leave, rows) => {
+    answers = [{ lateMs: ALIAS_WAIT_MS + 3000 }]
+    const { unmount } = await mountPage()
+    await act(async () => { fireEvent.click(screen.getByTestId('voice-harvest-toggle')) })
+    const rec = mic.latest()
+    for (const line of ['Suyo Long', '3 count', 'next']) await speak(rec, line)
+    await advance(1800)
+    // "next" is out of the debouncer and in the hold: the banner says so, and nothing is written yet.
+    expect(statusText()).toBe('Heard “next” — one moment, loading the names you taught me.')
+    expect(saved()).toEqual([])
+    if (leave) unmount()
+    await advance(ALIAS_WAIT_MS - 1800 + 300)   // just past the hold's deadline
+    expect(saved()).toEqual(rows)
+    await advance(ALIAS_WAIT_MS + 6000)          // and well past the list landing
+    expect(saved()).toEqual(rows)
   })
 })
 
