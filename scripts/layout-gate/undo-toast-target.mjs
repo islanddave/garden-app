@@ -225,7 +225,7 @@ try {
 
   const { three } = await cdp.evalIn(`window.__h.stack(${TAP})`)
   result.stack = three
-  await cdp.evalIn(`window.__h.badge('innerWidth '+innerWidth+' · innerHeight '+innerHeight+' · dpr '+devicePixelRatio+' · ${LABEL} · Water, Skip, Feed · stack y${three.stackTop}-${three.stackBottom} · nav y${three.navTop} · list controls under a toast ${three.controlsCovered}/${three.controlsOnScreen}')`)
+  await cdp.evalIn(`window.__h.badge('innerWidth '+innerWidth+' · innerHeight '+innerHeight+' · dpr '+devicePixelRatio+' · ${LABEL} · Water, Skip, Feed · stack y${three.stackTop}-${three.stackBottom} · nav y${three.navTop} · list controls half+ hidden ${three.controlsCovered}/${three.controlsOnScreen}, any part ${three.controlsTouched}')`)
   result.shots.push(await cdp.shot(join(OUT, `undotap-stack-${LABEL}-426x836.png`)))
   await cdp.evalIn('window.__h.outline(true)')
   result.shots.push(await cdp.shot(join(OUT, `undotap-stack-hitbox-${LABEL}-426x836.png`)))
@@ -233,7 +233,7 @@ try {
   const give = await cdp.evalIn(`window.__h.stackGiveWay(${TAP})`)
   result.giveWay = give
 
-  console.log(`[undo-toast-target] ${LABEL} · stack Water+Skip+Feed: ${three.count} toasts y${three.stackTop}-${three.stackBottom} (h${three.stackH}) · nav top y${three.navTop} · clearance ${three.clearanceAboveNav}px · overlaps ${three.overlaps} · list controls under a toast ${three.controlsCovered}/${three.controlsOnScreen}`)
+  console.log(`[undo-toast-target] ${LABEL} · stack Water+Skip+Feed: ${three.count} toasts y${three.stackTop}-${three.stackBottom} (h${three.stackH}) · nav top y${three.navTop} · clearance ${three.clearanceAboveNav}px · overlaps ${three.overlaps} · list controls half+ hidden ${three.controlsCovered}/${three.controlsOnScreen}, any part ${three.controlsTouched}`)
   for (const m of three.toasts) console.log(`[undo-toast-target] ${LABEL} ·   ${JSON.stringify(m.message)}: ${fmt(m)}`)
   console.log(`[undo-toast-target] ${LABEL} · after Moist: ${give.after.count} toasts ${JSON.stringify(give.after.toasts.map(t => t.message))} y${give.after.stackTop}-${give.after.stackBottom}`)
 

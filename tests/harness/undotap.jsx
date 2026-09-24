@@ -216,18 +216,25 @@ function measureStack(side) {
   for (let i = 1; i < boxes.length; i++) if (boxes[i].top < boxes[i - 1].bottom - 0.5) overlaps++
   const top = boxes.length ? boxes[0].top : null
   const bottom = boxes.length ? boxes[boxes.length - 1].bottom : null
-  // Every control on the list that is on screen, and which of them a tap would now land on a toast
-  // instead of: elementFromPoint at the control's centre.
+  // Every LIST control on screen, and how much of each the stack hides. Two traps, both hit while
+  // building this: the toast layer renders inside #root (so its own Undo/Dismiss must be excluded),
+  // and a centre-point hit-test lets a row dodge the count by centring in the 8px gap between two
+  // toasts while most of it is buried. So: area overlap against the toast boxes, which never overlap
+  // each other. `covered` = at least half hidden; `touched` = any of it hidden.
+  const inToast = e => ts.some(t => t.contains(e))
   const controls = [...document.getElementById('root').querySelectorAll('button, a[href]')].filter(e => {
-    if (!e.checkVisibility()) return false
+    if (inToast(e) || !e.checkVisibility()) return false
     const q = rect(e)
     return q.height > 0 && q.bottom > 0 && q.top < innerHeight
   })
-  const covered = controls.filter(e => {
+  const hidden = e => {
     const q = rect(e)
-    const h = document.elementFromPoint((q.left + q.right) / 2, (q.top + q.bottom) / 2)
-    return !!h && ts.some(t => t.contains(h))
-  })
+    let a = 0
+    for (const t of boxes) a += Math.max(0, Math.min(q.right, t.right) - Math.max(q.left, t.left)) * Math.max(0, Math.min(q.bottom, t.bottom) - Math.max(q.top, t.top))
+    return a / (q.width * q.height)
+  }
+  const covered = controls.filter(e => hidden(e) >= 0.5)
+  const touched = controls.filter(e => hidden(e) > 0)
   return {
     count: ts.length,
     toasts: ts.map(t => measureToast(t, side)),
@@ -235,7 +242,8 @@ function measureStack(side) {
     stackH: top == null ? 0 : r1(bottom - top),
     navTop: r1(nav.top), clearanceAboveNav: bottom == null ? null : r1(nav.top - bottom),
     overlaps,
-    controlsOnScreen: controls.length, controlsCovered: covered.length, coveredLabels: covered.map(labelOf),
+    controlsOnScreen: controls.length, controlsCovered: covered.length, controlsTouched: touched.length,
+    coveredLabels: covered.map(labelOf),
   }
 }
 
