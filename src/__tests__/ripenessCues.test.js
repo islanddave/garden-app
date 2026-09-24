@@ -145,3 +145,38 @@ describe('grain discipline — crop-level cues must not make cultivar-varying co
     }
   })
 })
+
+describe('20260924 pepper pass — Patrick’s order #7879', () => {
+  // The names are the prod plant_varieties.name values, read 2026-09-24; variety_ref.name carries
+  // exactly that (the cultivar view's display_name is plant_varieties.name). A mistyped key renders
+  // nothing and reads as "no cue for this pepper", so each entry is reached through its real name,
+  // must name the ripe colour the research found, and must cite the page it was read off.
+  const PASS = [
+    ["Devil's Tongue White", /\bwhite is ripe\b/i, 'pepperjoe.com'],
+    ["Devil's Tongue Peach", /\bmatures to peach\b/i, 'bohicapepperhut.com'],
+    ['Aji Charapita Peach', /\bripens to peach\b/i, 'patrickspepperpatch.com'],
+    ['Bahamian Goat', /\bpeach-orange\b/i, 'bohicapepperhut.com'],
+    ['Brain Collapse Orange', /\bripen to bright orange\b/i, 'pepperseeds.ca'],
+    ['Chiltepin Amarillo', /\byellow when fully ripe\b/i, 'hrseeds.com'],
+    ['Chiltepin Cappuccino', /\bbrown when fully ripe\b/i, 'hrseeds.com'],
+    ['Purple Ghost Scorpion', /\bripens to red\b/i, 'texashotpeppers.net'],
+  ]
+
+  it.each(PASS)('%s resolves to a cue naming its ripe colour', (name, colour, host) => {
+    const { target } = resolveRipenessCues({ crop_type_slug: 'pepper', name })
+    expect(target, name).toBeTruthy()
+    expect(target.cue).toMatch(colour)
+    const h = new URL(target.source_url).hostname
+    expect(h === host || h.endsWith(`.${host}`), `${name} cites ${h}`).toBe(true)
+  })
+
+  // Deliberately absent, and staying that way. The three strain-less rows keep the Habanero ruling
+  // (the new Devil's Tongue keys are strain-suffixed and must never reach the bare row, which still
+  // has a live planting of unknown strain). Boia Quatrefoil Mustard is research done and come back
+  // empty: no page states its ripe colour in words.
+  it.each(['Habanero', 'Scotch Bonnet', "Devil's Tongue", 'Boia Quatrefoil Mustard'])(
+    '%s still carries no cultivar cue', (name) => {
+      expect(resolveRipenessCues({ crop_type_slug: 'pepper', name }).target).toBeNull()
+    },
+  )
+})

@@ -50,6 +50,8 @@
 // `caveat` is optional at any tier and renders verbatim under the cue when present.
 
 const DAY = '2026-08-04'
+// The Patrick's order #7879 pass: every cue in it was re-read off its cited page on this date.
+const DAY_0924 = '2026-09-24'
 
 // ── MECHANIC, crop-level, colour-agnostic ───────────────────────────────────────────────────────
 export const CUES_BY_CROP_TYPE = {
@@ -774,6 +776,106 @@ export const CUES_BY_CULTIVAR = {
   // the record next to it. The crop mechanic ("full size, firm and glossy, you never have to wait
   // for red") is correct for every strain and is what these three should render. Pin the strain on
   // the variety row and these become high-confidence entries immediately.
+  // 20260924: Devil's Tongue's strain arrived as two NEW rows, not as a pin on the old one —
+  // 'Devil's Tongue White' and 'Devil's Tongue Peach', from Patrick's Pepper Patch order #7879.
+  // They carry entries in the pass below. The strain-less "Devil's Tongue" row is untouched, still
+  // names no strain, and so still gets nothing; a test pins that its key stays absent.
+
+  // ── 20260924 PEPPER PASS: Patrick's Pepper Patch order #7879 ─────────────────────────────────
+  // Twenty cultivars from that order were loaded and researched on 2026-09-24 (gardening-docs
+  // `seeds/_intake_patricks_20260924/deep_research/R1-R5.json`, each variety's pod.ripe_colour with
+  // its sources). This pass takes the ones whose ripe colour is not red, plus one red one whose
+  // name points at the unripe stage. Each cue was re-read off the cited page, not copied from the
+  // research notes, and the quotes are in the comment above each entry.
+  // SEED-ONLY WHEN WRITTEN. None of these had a planting, and CropCard on PlantingDetail is the only
+  // renderer, so they show nothing until one is planted. That is the footing the "pin the strain"
+  // promise above already assumed: an entry keys on the variety row, not on a planting.
+  // ALSO ABSENT, from the same order: Boia Quatrefoil Mustard. No page states its ripe colour in
+  // words. "Mustard" is only in the name, and the breeder's page (Drax Diego, via Wayback) and
+  // Patrick's both describe the cross, not the colour. A shade read off a photo is not a source.
+
+  // Pepper Joe's: "ripening from light lime green to a purple color, before finally changing to
+  // white at its final stage. However, the chili does have a slight yellow tint when at full
+  // maturity." Bohica: "Initially green, it matures into a striking pure white, eventually
+  // developing a creamy hue if left to ripen longer." Patrick's, who sold this seed, and Trade Winds
+  // say only green to white, so the purple stage is written as one that may appear. Two pages
+  // composed into one cue, so medium.
+  devilstonguewhite: {
+    cue: 'White is ripe — pods go green to white, and a purple stage on the way is not ripe yet. A cream or faint yellow tint at full maturity is normal.',
+    source: 'Pepper Joe’s / Bohica Pepper Hut',
+    source_url: 'https://pepperjoe.com/products/white-devils-tongue',
+    confidence: 'medium',
+    asserted_on: DAY_0924,
+  },
+  // Bohica: "Starts off green and matures to peach." Patrick's calls it a variant of Devil's Tongue
+  // White and names it Peach, but states no colour in words.
+  devilstonguepeach: {
+    cue: 'Starts green and matures to peach — peach is the ripe colour here, so pick it at full peach.',
+    source: 'Bohica Pepper Hut',
+    source_url: 'https://bohicapepperhut.com/products/devils-tongue-peach-seeds',
+    confidence: 'high',
+    asserted_on: DAY_0924,
+  },
+  // Patrick's, who sold this seed: "just like the Aji Charapita except it ripens to peach instead of
+  // yellow." HR Seeds: "a green to peach then after ripening."
+  ajicharapitapeach: {
+    cue: 'Ripens to peach instead of the usual charapita yellow — peach is ripe on these marble-sized pods.',
+    source: 'Patrick’s Pepper Patch',
+    source_url: 'https://patrickspepperpatch.com/product/aji-charapita-peach/',
+    confidence: 'high',
+    asserted_on: DAY_0924,
+  },
+  // Bohica: "Starts green and matures to a light orange/ peach color." Trade Winds agrees: "ripen to
+  // a light peach color". The pale end is the one that reads as underripe, so the cue names it.
+  bahamiangoat: {
+    cue: 'Starts green and matures to a light peach-orange — that pale colour is ripe, not underripe.',
+    source: 'Bohica Pepper Hut',
+    source_url: 'https://bohicapepperhut.com/products/bahamian-goat-seeds',
+    confidence: 'high',
+    asserted_on: DAY_0924,
+  },
+  // Atlantic Pepper Seeds: "Pods start out kinda lite green before they ripen to the nice orange
+  // color that they are", on "bright orange pods".
+  braincollapseorange: {
+    cue: 'Pods start light green and ripen to bright orange — orange is this pepper’s ripe colour.',
+    source: 'Atlantic Pepper Seeds',
+    source_url: 'https://pepperseeds.ca/index.php?route=product/product&product_id=2561',
+    confidence: 'high',
+    asserted_on: DAY_0924,
+  },
+  // HR Seeds: "turns from green to yellow when fully ripe"; Patrick's text says yellow too. But
+  // Pepperfriends files it as "Frutto: Arancio", synonym "Chiltepin Orange", so the shade is
+  // unsettled. The actionable half, that it is finished and not heading for red, holds either way:
+  // the yellowbrandywine treatment, and medium for the same reason.
+  chiltepinamarillo: {
+    cue: 'Turns from green to yellow when fully ripe, though some listings call it orange. Either shade is ripe; it does not go on to red.',
+    source: 'HR Seeds / Pepperfriends',
+    source_url: 'https://www.hrseeds.com/product-page/chiltepin-amarillo-pepper',
+    confidence: 'medium',
+    asserted_on: DAY_0924,
+  },
+  // HR Seeds ("Cappuccino Chilitepin"): "turns from green to brown skin when fully ripe". Fatalii:
+  // "Where the wild tepin goes red, this one matures to a deep coffee brown". Spicemad adds a
+  // "dirty green" stage on the way, and that a ripe one "falls away from the calyx very easily".
+  chiltepincappuccino: {
+    cue: 'Turns from green to brown when fully ripe — brown is the ripe colour here, not a sign the pod has gone bad.',
+    source: 'HR Seeds',
+    source_url: 'https://www.hrseeds.com/product-page/cappuccino-chilitepin-pepper',
+    confidence: 'high',
+    asserted_on: DAY_0924,
+  },
+  // It DOES ripen red. It earns an entry only because the purple in its name is the unripe stage,
+  // which is the Black Hungarian shape. Texas Hot Peppers: "unripe pods are green/purple, then
+  // ripen to red with purple streaks (especially the inner walls of the pod)". Towns-End, where
+  // Patrick's got this seed, agrees: immature "Purple/Green with blushing", mature "Red with hints
+  // of purple blushing". Patrick's: "ripens red with purple inside".
+  purpleghostscorpion: {
+    cue: 'Green-purple pods are unripe; it ripens to red with purple streaks, heaviest on the inner walls. A mostly purple pod is not ready.',
+    source: 'Texas Hot Peppers',
+    source_url: 'https://texashotpeppers.net/products/purple-ghost-scorpion',
+    confidence: 'high',
+    asserted_on: DAY_0924,
+  },
 
   // ── TOMATOES that never turn red, or whose "unripe" look is actually ripe ────────────────────
   // The highest-value entries in the file: each one corrects an intuition rather than confirming
