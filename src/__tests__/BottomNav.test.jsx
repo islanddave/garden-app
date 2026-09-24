@@ -107,21 +107,18 @@ describe('BottomNav — V3-IA layout', () => {
   // nothing in the previous four is displaceable for put-up. Keep it exact — a 7th slot should
   // have to argue for itself here the same way this one did.
   //
-  // V5-ADMINCENTER-001 — WHAT THIS ASSERTION NOW MEANS, CHANGED DELIBERATELY AND IN THE SAME COMMIT
-  // AS THE CODE THAT CHANGED IT. The order is INSTALLATION config (public.app_config key
-  // 'nav_tabs' — global, one order for the whole app per Dave's 2026-09-08 ruling), and this suite
-  // renders <BottomNav /> with no AppConfigProvider — so what is pinned below is no longer "the
-  // shipped bar" but "the bar the DEFAULT config renders", which is the same six slots and is what
-  // an unconfigured installation, a failed config read and an offline boot all get.
+  // V5-NAVCUSTOM-001 — WHAT THIS ASSERTION MEANS. The layout is PER PERSON
+  // (user_notification_prefs.bar_layout, D4 — Dave 2026-09-24), and this suite renders <BottomNav />
+  // with no NavPrefsProvider — so what is pinned below is "the bar with no layout", which is the
+  // shipped six slots and is what a first launch, a failed prefs read and an offline boot all get.
   //
-  // THE CAP SURVIVES AS A CAP, which was the condition for making the nav configurable at all. It
-  // just moved: the arity rule in resolveNavTabs() means the rendered bar is a permutation of the
-  // shipped five plus the pinned More button, WHATEVER the config says, so a seven-key config
-  // renders six slots rather than seven. That property is not observable from this file — nothing
-  // here can set a config — so it is pinned in BottomNav.navConfig.test.jsx alongside the reorder
-  // cases, and the two files are the cap together. A 7th slot still has to argue for itself: in
-  // DEFAULT_NAV_TABS, in this count, and in that file's cap case.
-  it('FAB keeps the center slot: the DEFAULT config renders Today · Garden · ＋ · Harvests · Put-Up · More', () => {
+  // THE CAP SURVIVES AS A CAP. resolveBarLayout requires `order` to be a permutation of the shipped
+  // five and only lets MOVABLE tabs out, so the bar is at most the five plus More and at least
+  // Today · ＋ · More, WHATEVER the stored value says. Nothing here can set a layout, so that is
+  // pinned in BottomNav.navConfig.test.jsx (I2, the seven-key case); the two files are the cap
+  // together. A 7th slot still has to argue for itself: in DEFAULT_NAV_TABS, in this count, and in
+  // that file's cap case.
+  it('FAB keeps the center slot: with no layout the bar is Today · Garden · ＋ · Harvests · Put-Up · More', () => {
     render(<BottomNav />)
     const nav = screen.getByLabelText('Main navigation')
     expect(nav.children.length).toBe(6)

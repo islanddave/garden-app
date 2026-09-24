@@ -54,15 +54,16 @@ import { useNavLayout } from '../context/NavPrefsContext.jsx'
 // `overlayable: true` in App.jsx, so the three PREFILL doors that need the flyover keep it
 // (EventNew PreserveOffer, PutUpFromPlanting, PutUpUseSoonBand). PutUp already defaults a BARE open
 // to its 'stores' view, so the tab lands on "what have I got", not on an empty form.
-// V5-ADMINCENTER-001 — THE FIVE ROWS THAT USED TO BE HERE NOW LIVE IN src/lib/navConfig.js, and the
-// ORDER they render in is INSTALLATION config (public.app_config key 'nav_tabs', read once at boot
-// by AppConfigProvider). Global, not per-user: Dave ruled 2026-09-08 that there is one nav order for
-// the app, so Dave and Jen see the same bar. Nothing about the bar's CONTENTS moved: v1 is
-// reorder-only, and resolveNavTabs accepts a config only if it is a permutation of the shipped five,
-// so config can shuffle these slots and can neither drop nor add one. Null config — including an
-// absent app_config row, a failed GET, or an offline boot — renders the exact bar above unchanged.
-// The +LOG FAB is still identified by `highlight`, and "More" is still emitted after the map below
-// as a hardcoded button, so it stays pinned last by being outside the array entirely.
+// V5-ADMINCENTER-001 moved THE FIVE ROWS THAT USED TO BE HERE into src/lib/navConfig.js.
+// V5-NAVCUSTOM-001 made the bar PER PERSON (D4, Dave 2026-09-24: "only my bar changes" — this
+// reverses the 2026-09-08 one-global-order ruling). The slots come from useNavLayout(): this person's
+// user_notification_prefs.bar_layout, resolved by resolveBarLayout and drawn from a launch cache at
+// first paint, so Jen's bar never shifts because Dave changed his. A person may reorder the five and
+// move Garden, Harvests or Put-Up into More — a moved tab is not gone, it is drawn at the top of
+// "Your garden" in the More sheet below. Today and the ＋ FAB can never leave. A missing, malformed
+// or unreadable layout renders the exact shipped bar. The +LOG FAB is still identified by
+// `highlight`, and "More" is still emitted after the map below as a hardcoded button, so it stays
+// last by being outside the array entirely — no layout can move it or remove it.
 
 // +LOG FAB -> create action sheet. Slice 9: trimmed to 3 first-class quick-hit actions.
 // Log + Log many are the two rapid-capture verbs — Log many stays FIRST-CLASS (a direct
