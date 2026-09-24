@@ -778,16 +778,27 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // count or the weight, and either guess can write a value he never meant over one he did —
     // including over a weight he SPOKE ("3 count, 231 grams, 85" used to save 85 g). Saying it with a
     // unit replaces a slot; that path is untouched and is the way to correct one.
-    const placeHeld = (value) => {
+    //
+    // V5-VOICEVOCAB-001 (lane D4) — NOR A SLOT THE RESOLVING UTTERANCE IS ABOUT TO FILL. `fills` is the
+    // set of axes the utterance that resolves the hold writes itself. Without it, "231" then "3 count"
+    // assumed 231 COUNT and the quantity branch overwrote it with the spoken 3 a moment later: 231 was
+    // lost and the banner read "3 count (231 count assumed)" — an assumption that no longer existed.
+    // Measured on cb32814, on both axes ("three count", "231", "85 grams" lost 231 the same way). The
+    // held number goes to the first empty slot the resolving utterance does NOT fill, and when it
+    // fills the last one the number is dropped and said, never written under a spoken value.
+    // `takenBy` is that utterance's own readback, for the miss row.
+    const placeHeld = (value, fills = null, takenBy = null) => {
+      const qtyOpen = qtyRef.current == null && !fills?.has('quantity')
+      const weightOpen = weightRef.current == null && !fills?.has('weight')
       // default_unit comes from crop_types via the ?view=picker projection and CAN BE NULL (there is
       // no cultivar-level column; see lambda/plants/grid-view.test.js:333-337), hence the fallback.
-      const unit = qtyRef.current == null
+      const unit = qtyOpen
         ? (selectedRef.current?.variety_ref?.default_unit || 'count')
-        : weightRef.current == null ? 'g' : null
+        : weightOpen ? 'g' : null
       const built = unit ? buildValue(value, unit, '') : null
       // The axis comes from buildValue, not from the branch above, so a mass default_unit (legal in
       // the CHECK, absent from prod today) is checked against the slot it would actually land in.
-      if (built && (built.kind === 'weight' ? weightRef : qtyRef).current == null) {
+      if (built && (built.kind === 'weight' ? weightOpen : qtyOpen)) {
         // `assumed` RIDES ON THE SLOT VALUE, not beside it, so it cannot outlive the value it
         // describes: every spoken write builds a fresh { value, unit } without it ("85" assumed,
         // then "85 G"; or a later "3 count"), and clearRecord() nulls it with the record. saveRecord
@@ -801,13 +812,28 @@ export default function VoiceHarvest({ embedded = false } = {}) {
         return
       }
       // Honest losses rather than guesses, each an R3 permanent row: default_unit is outside
-      // HARVEST_UNITS (it is a crop_types value and may be), or there is no empty slot left for it.
+      // HARVEST_UNITS (it is a crop_types value and may be), or there is no empty slot left for it —
+      // either because both were filled before, or because the resolving utterance takes the last one.
       dropped = value
-      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-dropped ${value} (${unit && !built ? 'no usable default unit' : 'no empty slot'})`)
+      const takenNow = takenBy && (qtyRef.current == null || weightRef.current == null)
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-dropped ${value} (${unit && !built ? 'no usable default unit' : takenNow ? `slot taken by ${takenBy}` : 'no empty slot'})`)
       noteMiss(unit && !built
         ? `Dropped ${value} — no unit was said, and this crop has no usable default unit.`
-        : `Dropped ${value} — no unit was said, and the quantity and weight were already filled.`)
+        : takenNow
+          ? `Dropped ${value} — no unit was said, and ${takenBy} left no open slot for it.`
+          : `Dropped ${value} — no unit was said, and the quantity and weight were already filled.`)
     }
+
+    // The two readers of an `unparsed` utterance, read ONCE, here, because two places need their
+    // answer: the hold resolution below (which slots will this utterance fill, and does it change the
+    // crop?) and the one-breath branches further down that apply them. A value rejoined from a bare
+    // unit is never `unparsed`, so a rejoin cannot make these stale.
+    const oneBreath = result.kind === 'unparsed'
+      ? resolveOneBreath(plantingsRef.current, segmentCandidates(result.transcript), aliasRef.current)
+      : null
+    const valueSeq = result.kind === 'unparsed' && !oneBreath ? parseValueSequence(result.transcript) : null
+    const axesOf = (values) => new Set(values.map((v) => v.kind))
+    const readback = (values) => values.map((v) => `${v.value} ${v.unit}`).join(' · ')
 
     const partial = classifyPartial(result.transcript)
     if (partial?.kind === 'unit' && heldNumRef.current != null) {
@@ -937,9 +963,23 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // before that record is replaced is the same value in a different grave. So this case keeps
       // BUG-VOICEFAILSILENT-001's original answer: drop it, and SAY so. Assuming is for the
       // utterances that leave the record standing — a save command, or something unrecognised.
-      if (result.kind === 'search') {
+      //
+      // V5-VOICEVOCAB-001 (lane D4) — A ONE-BREATH SENTENCE NAMING A DIFFERENT PLANTING IS A CROP
+      // CHANGE TOO. It used to reach placeHeld, which assumed the number onto the OLD record a moment
+      // before the one-breath branch cleared that record: on cb32814 "Suyo Long", "5", "Marketmore
+      // three count 231 grams" announced "(5 count assumed)" for a 5 that no longer existed anywhere.
+      // Every other resolving utterance places the number on a slot IT does not fill (see placeHeld).
+      const changesCrop = result.kind === 'search'
+        || (oneBreath != null && selectedRef.current?.id !== oneBreath.planting.id)
+      if (changesCrop) {
         dropped = heldVal
+        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-dropped ${heldVal} (crop changed)`)
         noteMiss(`Dropped ${dropped} — no unit was said, and the crop changed before one was.`)
+      } else if (result.kind === 'quantity' || result.kind === 'weight') {
+        placeHeld(heldVal, axesOf([result]), readback([result]))
+      } else if (oneBreath || valueSeq) {
+        const values = oneBreath ? oneBreath.values : valueSeq
+        placeHeld(heldVal, axesOf(values), readback(values))
       } else {
         placeHeld(heldVal)
       }
@@ -955,9 +995,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     // but "Didn't catch that", so there is no behaviour to regress. classify() answers first and
     // always; this only picks up what it declined.
     if (result.kind === 'unparsed') {
-      const one = resolveOneBreath(
-        plantingsRef.current, segmentCandidates(result.transcript), aliasRef.current,
-      )
+      const one = oneBreath
       if (one) {
         // A DIFFERENT planting means a NEW record, so the old one is cleared rather than merged.
         // Merging would let a weight spoken for the previous crop survive onto this one — the
@@ -997,7 +1035,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // pair the one amount that could not be said before the crop: device trace 2026-09-16 +27268,
       // "4 count 4 G" came back "Didn't catch that" and the weight had to be said again. saveRecord
       // still refuses without a crop, so an early pair waits for one exactly as a single amount does.
-      const seq = parseValueSequence(result.transcript)
+      const seq = valueSeq
       if (seq && seq.length) {
         for (const v of seq) {
           const next = { value: v.value, unit: v.unit }

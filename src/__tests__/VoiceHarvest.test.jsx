@@ -1518,3 +1518,91 @@ describe('BUG-VOICETWOBARENUM-001 — two bare numbers are a count and a weight'
     expect(screen.getByTestId('voice-harvest-row').textContent).not.toContain('assumed')
   })
 })
+
+// ── V5-VOICEVOCAB-001 (lane D4) — a held number goes to the slot the resolving utterance does NOT fill ─
+//
+// BUG-VOICETWOBARENUM-001's out-of-scope finding 3, reproduced through this page on cb32814: "231"
+// then "3 count" assumed 231 COUNT and the quantity branch overwrote it with the spoken 3 in the same
+// utterance — 231 lost, and the banner said "3 count (231 count assumed)" about an assumption that no
+// longer existed. The same held on the weight axis, and for a one-breath sentence that named a
+// different planting (the 5 was assumed onto the record that sentence then cleared).
+describe('V5-VOICEVOCAB-001 — a held number is never assumed onto the slot the next utterance fills', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  async function saveAfter(rec, ...lines) {
+    for (const line of lines) await speak(rec, line)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    return harvestPosts().map(([, opts]) => JSON.parse(opts.body))
+  }
+  const misses = () => screen.queryAllByTestId('voice-harvest-miss').map((m) => m.textContent)
+
+  it('"231" then "3 count": the 231 is the WEIGHT, and the banner says so truthfully', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '231', '3 count']) await speak(rec, line)
+    expect(statusText()).toBe('3 count (231 g assumed)')
+    const [body] = await saveAfter(rec, 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 3, unit: 'count', quality_rating: null, weight: 231, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['g'])
+    expect(misses()).toEqual([])
+  })
+
+  it('the count already said and a weight said next: the held number has no slot — dropped and said, never written under the spoken weight', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    for (const line of ['Suyo Long', 'three count', '231', '85 grams']) await speak(rec, line)
+    expect(statusText()).toBe('85 g (dropped 231 — no unit was said)')
+    const [body] = await saveAfter(rec, 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 3, unit: 'count', quality_rating: null, weight: 85, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual([])
+    expect(misses()).toEqual(['Dropped 231 — no unit was said, and 85 g left no open slot for it.'])
+  })
+
+  it('an open slot is still used — "231" then "85 grams" with nothing else said is 231 count', async () => {
+    // Non-vacuity for the rule above: excluding the axis the utterance fills must not become
+    // "drop whenever a unit follows".
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', '231', '85 grams', 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 231, unit: 'count', quality_rating: null, weight: 85, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['count'])
+  })
+
+  it('a one-breath sentence naming a DIFFERENT planting drops the held number — it belonged to the old crop', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '5', 'Marketmore three count 231 grams']) await speak(rec, line)
+    expect(statusText()).toBe('Marketmore — 3 count · 231 g (dropped 5 — no unit was said)')
+    const [body] = await saveAfter(rec, 'next')
+    expect(body.plant_id).toBe('p2')
+    expect(body.harvest)
+      .toEqual({ quantity: 3, unit: 'count', quality_rating: null, weight: 231, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual([])
+    expect(misses()).toEqual(['Dropped 5 — no unit was said, and the crop changed before one was.'])
+  })
+
+  it('a one-breath sentence for the SAME planting fills its axis and the held number takes the other', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', '5', 'Suyo Long 231 grams', 'next')
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest)
+      .toEqual({ quantity: 5, unit: 'count', quality_rating: null, weight: 231, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['count'])
+  })
+
+  it('a nameless count-and-weight pair fills both slots — the held number is dropped and said', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '5', 'three count 231 grams']) await speak(rec, line)
+    expect(statusText()).toBe('3 count · 231 g (dropped 5 — no unit was said)')
+    const [body] = await saveAfter(rec, 'next')
+    expect(body.harvest)
+      .toEqual({ quantity: 3, unit: 'count', quality_rating: null, weight: 231, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual([])
+    expect(misses()).toEqual(['Dropped 5 — no unit was said, and 3 count · 231 g left no open slot for it.'])
+  })
+})
