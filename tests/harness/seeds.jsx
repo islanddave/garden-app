@@ -29,7 +29,7 @@
 // putupclose.jsx), no controls, and exactly the real heights, and the gate checks those heights.
 //
 // FIXTURE — the brief's shape, and each property is here to exercise a named check:
-//   · 30 seed rows over 8 crops, pepper-dominant then tomato, with a tail — the prod distribution's
+//   · 32 seed rows over 8 crops, pepper-dominant then tomato, with a tail — the prod distribution's
 //     shape (pepper 103 and tomato 52 of 327 on 2026-09-19), scaled down. Pepper and Tomato are the
 //     two most-counted crops, so they are the crop chips pinned in the chip row AND the first two
 //     folded headers (UX spec §3.2: pinned crops first, then A→Z).
@@ -44,7 +44,7 @@
 //     they do on prod (139 and 53), so they are the two pinned supplier chips — plus Johnny's,
 //     Sandia, and ONE supplier the palette does not know (Fedco Seeds: a fallback slot, a
 //     default-rule short label). `source` holds an ORDER REFERENCE, which is what prod keeps there
-//     — the page must print the supplier, never the order text. Five rows have no supplier (four
+//     — the page must print the supplier, never the order text. Eight rows have no supplier (seven
 //     saved lots and a packet whose vendor was never entered): no chip, no stripe, and the thumbnail
 //     must still start at the same x as a striped row's.
 //   · HEAT on the peppers, from the cultivar facts the list row carries: a sweet 0–0 ("Sweet · 0
@@ -81,9 +81,14 @@
 //       (a "100K–350K SHU" there left 23.5px — gone at ~10% wider text, a false shrink-order red).
 //   · A retired packet (status chip), a seeds-each packet, an ounce-unit packet, a drying lot, a
 //     second fermenting lot at day 1 (under the warn threshold, so exactly ONE ferment is due), and
-//     a stored saved lot with a counted yield. Saved seeds counts FIVE saved lots in three stages
-//     (the drying Hot Paper Lantern is the fifth); gate:seeds-saved has its own harness and does
-//     not move.
+//     a stored saved lot with a counted yield. Saved seeds counts SEVEN saved lots in three stages
+//     (the drying Hot Paper Lantern is the fifth, the two F2 lots below the sixth and seventh);
+//     gate:seeds-saved has its own harness and does not move.
+//   · F2 (V5-SEEDSTAB-001 slice 3): two lots saved off F1 plants, each carrying the NEUTRAL
+//     "F2 — won’t come true" chip — "Ristra Cayenne II Saved seed 2026" stored (the chip is its only
+//     chip, in front of an amount the gate's (g) holds whole) and "Thai Dragon" drying (the chip follows
+//     the live "Drying" chip, which (n) holds whole). The bought F1 packets (Sungold F1, the Megatron
+//     pair) carry breeding_system 'f1' too and must show no F2 chip (design §2 rule 8).
 //
 // DATES are relative to the run, like seedssaved.jsx, and stage dates are pinned to MID-DAY Eastern:
 // elapsedDays() counts CALENDAR days in Eastern (seedLots.js), so an instant 5x24h ago read at 00:30
@@ -204,8 +209,8 @@ const IDENTICAL = 'Megatron F1 (jumbo jalapeno)'
 const BASE_ROWS = [
   // pepper — the dominant crop: every heat shape, the identical pair, the broken photo.
   bought('Serrano', 'pepper', 'src-fedco', '2026-01-14', { ...heat(null, 23000), ...annuum, ...photo('square') }),
-  bought(IDENTICAL, 'pepper', 'src-johnny', '2026-02-11', { ...heat(2500, 8000), ...annuum, ...photo('tall') }),
-  bought(IDENTICAL, 'pepper', 'src-johnny', '2026-02-11', { ...heat(2500, 8000), ...annuum, ...photo('tall') }),
+  bought(IDENTICAL, 'pepper', 'src-johnny', '2026-02-11', { ...heat(2500, 8000), ...annuum, breeding_system: 'f1', ...photo('tall') }),
+  bought(IDENTICAL, 'pepper', 'src-johnny', '2026-02-11', { ...heat(2500, 8000), ...annuum, breeding_system: 'f1', ...photo('tall') }),
   bought('Hot Portugal', 'pepper', 'src-bentley', '2025-12-30', { quantity_on_hand: 2, ...heat(5000, 15000), ...annuum, ...photo('wide') }),
   bought('Biquinho Red & Yellow Blend', 'pepper', 'src-botanical', '2026-02-11', { ...heat(500, 1000), species: 'Capsicum chinense' }),
   bought('Jimmy Nardello', 'pepper', 'src-botanical', '2026-01-14', { ...heat(0, 0), ...annuum, origin_country: 'Italy', origin_region: 'Basilicata', ...photo('tall') }),
@@ -242,7 +247,7 @@ const BASE_ROWS = [
     name: 'Cherokee Purple — saved 2026', seed_stage: 'fermenting', seed_process: 'wet',
     stage_entered_at: stageDaysAgo(1), source_plant_id: 'pl-cherokee',
   }),
-  bought('Sungold F1', 'tomato', 'src-johnny', '2026-01-14', photo('square')),
+  bought('Sungold F1', 'tomato', 'src-johnny', '2026-01-14', { breeding_system: 'f1', ...photo('square') }),
   bought("Brandywine (Sudduth's Strain)", 'tomato', 'src-bentley', '2025-01-05', photo('tall')),
   bought('Green Zebra', 'tomato', 'src-fedco', '2026-01-14'),
   bought('Amish Paste', 'tomato', 'src-botanical', '2024-12-01', { quantity_on_hand: 2 }),
@@ -264,6 +269,21 @@ const BASE_ROWS = [
   bought('Early Prolific Straightneck', 'summer_squash', 'src-fedco', '2026-01-14'),
   bought('Red Mustard (heirloom, unspecified variety)', 'mustard', 'src-botanical', '2026-01-14'),
   bought('Provider Bush Bean', 'bean', 'src-johnny', '2026-03-01', { unit: 'oz', quantity_on_hand: 2 }),
+  // V5-SEEDSTAB-001 slice 3 — two lots saved off F1 plants, in the two shapes prod holds (2026-09-23:
+  // Gong Bao and Ristra Cayenne II stored with a count and a heat, Big Boy and Thai Dragon drying). Each
+  // carries the NEUTRAL "F2 — won’t come true" chip: the stored one as its only chip, in front of an
+  // amount that must stay whole (g); the drying one after its live "Drying" chip, which stays first and
+  // whole (n). Appended, so no earlier row's id, created_at or photo number moves. The bought F1 packets
+  // above (Sungold F1, the Megatron pair) carry breeding_system 'f1' and must stay unbadged.
+  seed('Ristra Cayenne II', 'pepper', {
+    name: 'Ristra Cayenne II Saved seed 2026', seed_stage: 'stored', stage_entered_at: stageDaysAgo(9),
+    source_plant_id: 'pl-ristra', year_harvested: YEAR, seed_count: 175, seed_count_estimated: true,
+    breeding_system: 'f1', ...heat(25000, 35000), ...annuum,
+  }),
+  seed('Thai Dragon', 'pepper', {
+    name: 'Thai Dragon — saved 2026', seed_stage: 'drying', seed_process: 'wet', stage_entered_at: stageDaysAgo(4),
+    source_plant_id: 'pl-thai', breeding_system: 'f1', ...heat(50000, 100000), ...annuum,
+  }),
 ]
 // ?bulk=N — gate:seeds-page (o) ONLY, on its own page load: N more pepper packets, each with its own
 // packet photo, so one open group holds well over a first image page (IMAGE_WINDOW_PAGE) and runs far
@@ -285,6 +305,8 @@ const PLANTINGS = [
   { id: 'pl-cherokee', name: 'Cherokee Purple, bed 3', quantity: 2, variety_id: null, variety_ref: null, sown_at: '2026-04-20', succession_order: 1 },
   { id: 'pl-charapita', name: 'Aji Charapita pot', quantity: 1, variety_id: null, variety_ref: null, sown_at: '2026-03-02', succession_order: null },
   { id: 'pl-lantern', name: 'Hot Paper Lantern, bed 2', quantity: 1, variety_id: null, variety_ref: null, sown_at: '2026-03-02', succession_order: null },
+  { id: 'pl-ristra', name: 'Ristra Cayenne II, pot 6', quantity: 1, variety_id: null, variety_ref: null, sown_at: '2026-03-02', succession_order: null },
+  { id: 'pl-thai', name: 'Thai Dragon, bed 1', quantity: 1, variety_id: null, variety_ref: null, sown_at: '2026-03-02', succession_order: null },
 ]
 
 // v_sow_candidates rows for the Sow now view: the ACTIVE rows, keyed the way the view keys them, with

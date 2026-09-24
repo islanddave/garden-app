@@ -89,6 +89,12 @@
 //   (h) SOW NOW NAMES ARE NOT SQUEEZED — every open Sow now card's title column is at least
 //       SowNow.jsx's TITLE_COL_MIN_PX (read from the source); wider action pairs wrap under the name.
 //       Promoted from a REPORTED finding (a needs-profile card left its name 76px, five lines).
+//   (p) F2 (V5-SEEDSTAB-001 slice 3) — the "F2 — won’t come true" chip (its words read from
+//       src/components/seed/seedLots.js) is on exactly the fixture's two lots saved off F1 plants and on
+//       no bought packet (three bought F1 packets are in the fixture: design §2 rule 8), and it is NEUTRAL,
+//       never a live chip — so (g) and (n) keep holding the amount and the live state whole on those rows.
+//       How much of the row chip shows at each width is REPORTED. On Saved seeds each F2 badge is whole
+//       and inside its card.
 //
 // "ITS LINE-HEIGHT", MADE PRECISE, because the literal reading is wrong for this element. The second
 // line is a flex row of Badges and facts spans; its own computed line-height is `normal` at 12px
@@ -171,6 +177,15 @@ function exportedNumber(file, name) {
 }
 const IMAGE_PAGE = exportedNumber('src/hooks/useImageWindow.js', 'IMAGE_WINDOW_PAGE')
 const REACH_PX = exportedNumber('src/hooks/useNearViewport.js', 'REACH_PX')
+// (p): the F2 chip's words (V5-SEEDSTAB-001 slice 3), read from the one module that defines them — a gate
+// spelling its own copy would keep finding a label the page no longer prints.
+function f2Label() {
+  const src = readFileSync(resolve(ROOT, 'src/components/seed/seedLots.js'), 'utf8')
+  const found = [...src.matchAll(/export const F2_LABEL = '([^']+)'/g)].map(m => m[1])
+  if (found.length !== 1) throw new Error(`seedLots.js exports F2_LABEL ${found.length} times; expected exactly 1 — (p) cannot find the F2 chip`)
+  return found[0]
+}
+const F2_LABEL = f2Label()
 
 // Tolerances. 2px is "the same line" for boxes whose centres a flex row aligns exactly; 1.5 is the
 // brief's own one-line ratio (a second line of any of this text at least doubles the box).
@@ -238,25 +253,30 @@ const VIEWS = [
     // Folded, fresh session: the fixture's eight crops, Sowed previously (the used-up Salad Bowl Blend),
     // the two most-counted crops and suppliers pinned in their chip rows.
     cropHeaders: 8, sowedHeaders: 1, pinnedCrops: ['Pepper', 'Tomato'], pinnedSuppliers: ['Botanical', 'Bentley'],
-    // Every group open: 30 rows. The amount shows on 10 (every "1 packet" row prints none: Hot Portugal,
+    // Every group open: 32 rows. The amount shows on 11 (every "1 packet" row prints none: Hot Portugal,
     // Shishito, Amish Paste and Hungarian Hot Wax's 2-3 packets, the Reaper's 25 seeds, the bean's 2 oz,
-    // the used-up 0 packets, and the three MEASURED saved lots — 1884's 185, the Money Plant's approx.
-    // 120 and Hot Paper Lantern's approx. 1200 seeds · 12.5 g).
-    rows: 30, longRowChips: 2, ordinalRows: 2, amountRows: 10, stripeless: 6, expandedControls: 3,
+    // the used-up 0 packets, and the four MEASURED saved lots — 1884's 185, the Money Plant's approx.
+    // 120, Hot Paper Lantern's approx. 1200 seeds · 12.5 g and Ristra Cayenne II's approx. 175).
+    rows: 32, longRowChips: 2, ordinalRows: 2, amountRows: 11, stripeless: 8, expandedControls: 3,
     // One chip per bought packet, by short label — Fedco is the one supplier the palette does not know.
     suppliers: { Botanical: 8, Bentley: 6, "Johnny's": 4, Fedco: 4, Sandia: 2 },
-    // Twelve of the thirteen peppers carry heat (Lemon Drop has no figure on record); these four labels
+    // Fourteen of the fifteen peppers carry heat (Lemon Drop has no figure on record); these four labels
     // are the shapes that have to be on screen: sweet, the longest, a single bound, the saved lot's estimate.
-    heatRows: 12, heatLabels: ['Sweet · 0 SHU', '1.2M–2M SHU', '23K SHU', 'est. 30K–50K SHU'],
-    // (n): a LIVE first chip (tone info/warn/danger) on four lots in process — the Money Plant's ferment
-    // (day 5, danger), Cherokee Purple's (day 1, info), and two drying lots (Aji Charapita, Hot Paper Lantern).
-    liveChips: 4,
+    heatRows: 14, heatLabels: ['Sweet · 0 SHU', '1.2M–2M SHU', '23K SHU', 'est. 30K–50K SHU'],
+    // (n): a LIVE first chip (tone info/warn/danger) on five lots in process — the Money Plant's ferment
+    // (day 5, danger), Cherokee Purple's (day 1, info), and three drying lots (Aji Charapita, Hot Paper
+    // Lantern, Thai Dragon).
+    liveChips: 5,
     // 13 rows carry a packet photo (one of them the broken URL, which ends as the sprout box, so 12 photo
-    // elements remain once everything settles). 11 are among the first IMAGE_WINDOW_PAGE (24) rows on
-    // screen; the two tail photos mount only once the page is scrolled near them.
-    photoRows: 13, brokenPhotos: 1, firstPagePhotos: 11,
+    // elements remain once everything settles). 10 are among the first IMAGE_WINDOW_PAGE (24) rows on
+    // screen (the two F2 peppers pushed Winter Density to row 26); the three tail photos mount only once
+    // the page is scrolled near them.
+    photoRows: 13, brokenPhotos: 1, firstPagePhotos: 10,
+    // V5-SEEDSTAB-001 slice 3: exactly the two lots saved off F1 plants carry the F2 chip — never a
+    // bought packet, though three of them (Sungold F1, the Megatron pair) are F1 too (design §2 rule 8).
+    f2Rows: ['Ristra Cayenne II Saved seed 2026', 'Thai Dragon'], f1BoughtRows: ['Megatron F1 (jumbo jalapeno)', 'Sungold F1'],
   } },
-  { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 5, sections: 3 } },
+  { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 7, sections: 3, f2Cards: 2 } },
   { view: 'sow', label: 'Sow now', body: 'sow-now-view', expect: { actions: 0, minSowButtons: 10, minSowHeadings: 2 } },
 ]
 const VIEWPORTS = [[360, 640], [390, 844]]
@@ -629,6 +649,11 @@ const MEASURE = (v) => `(() => {
       text: (ferment.textContent || '').trim().replace(/\\s+/g, ' ') } : null,
     taps, rows, mine,
     cards: d.querySelectorAll('${tid('seed-lot-card')}').length,
+    // (p): Saved seeds' F2 badges — which card each sits on, and whether it shows whole.
+    f2Badges: [...d.querySelectorAll('${tid('lot-f2')}')].map(b => { const card = b.closest('${tid('seed-lot-card')}')
+      const title = card ? card.querySelector('${tid('seed-lot-title')}') : null
+      return { text: (b.textContent || '').trim(), card: title ? (title.textContent || '').trim() : null, ...box(b),
+        cardR: card ? R(card.getBoundingClientRect().right) : null, cut: b.scrollWidth > b.clientWidth + 1 } }),
     sections: d.querySelectorAll('${tidPrefix('stage-section-')}').length,
     sow: sowView ? { buttons: [...sowView.querySelectorAll('button')].filter(shown).length,
       headings: sowView.querySelectorAll('h2').length, cards: sowCards } : null,
@@ -795,7 +820,7 @@ async function allOpened(v, at, vw, vh) {
   if (!opened) mismatch.push(`tapping Expand all did not open every group into ${e.rows} rows (${m.rows.length} rows, headers ${m.mine ? m.mine.headers.map(h => `${h.label}=${h.expanded}`).join(' ') : 'none'})`)
   if (why) mismatch.push(`${why} — no expanded row for the census`)
   else if (opened && !expandedRow) mismatch.push(`tapping the "${EXPAND_ROW}" row did not expand it`)
-  if (m.rows.length !== e.rows) mismatch.push(`${m.rows.length} seed rows, expected ${e.rows} (27 in their crop groups + the used-up packet under Sowed previously)`)
+  if (m.rows.length !== e.rows) mismatch.push(`${m.rows.length} seed rows, expected ${e.rows} (${e.rows - 1} in their crop groups + the used-up packet under Sowed previously)`)
   const long = m.rows.find(r => r.title && r.title.text === LONG_NAME)
   if (!long) mismatch.push(`the 44-character row ("${LONG_NAME}") is not on the page`)
   else {
@@ -825,6 +850,11 @@ async function allOpened(v, at, vw, vh) {
   // Non-vacuity for (n): the live chips, found by the tone each row states on its chip.
   const liveCount = m.rows.reduce((s, r) => s + (r.line ? r.line.liveChips.length : 0), 0)
   if (liveCount !== e.liveChips) mismatch.push(`${liveCount} live state chip(s) (tone ${LIVE_TONES.join('/')}), expected ${e.liveChips} — (n) would be holding the wrong chips whole`)
+  // Non-vacuity for (p): both F2 lots and the three bought F1 packets are on the page, by title.
+  const byTitle = t => m.rows.filter(r => r.title && r.title.text === t)
+  const f2LotRows = e.f2Rows.flatMap(byTitle), f1BoughtRows = e.f1BoughtRows.flatMap(byTitle)
+  if (f2LotRows.length !== e.f2Rows.length) mismatch.push(`${f2LotRows.length} of the ${e.f2Rows.length} F2 lots (${e.f2Rows.map(t => `"${t}"`).join(', ')}) are on the page — (p) has no F2 chip to find`)
+  if (f1BoughtRows.length !== 3 || !f1BoughtRows.every(r => r.line && r.line.supplier)) mismatch.push(`the bought F1 packets (${e.f1BoughtRows.map(t => `"${t}"`).join(', ')}) are ${f1BoughtRows.length} row(s), expected 3, each with a supplier chip — (p)'s "never on a bought packet" would check nothing`)
   // The two shrink-order rows, with the facts that crowd them. Whether they ARE crowded at this width is
   // read after the assertions, so a real shrink-order defect is never reported as a fixture fault.
   const dropRow = m.rows.find(r => r.title && r.title.text === HEAT_DROPPED_ROW)
@@ -896,6 +926,18 @@ async function allOpened(v, at, vw, vh) {
   if (!gL.heat.shown) fail(`${at}: (k) shrink order — "${NEUTRAL_GIVES_ROW}" dropped its heat "${gL.heat.text}" while its neutral chip "${gN.text}" showed ${gN.w}px of ${gN.full}px — a neutral chip gives way before the heat does (UX spec §1.3)`)
   else if (!gN.cut) fail(`${at}: (k) non-vacuity — "${NEUTRAL_GIVES_ROW}"'s "${gN.text}" fits whole beside its heat at ${vw}px, so no row makes a neutral chip give way to a heat`)
 
+  // ── (p) F2 (V5-SEEDSTAB-001 slice 3) — the chip rides on exactly the lots saved off F1 plants and on
+  // no bought packet (design §2 rule 8), and it is NEUTRAL: it gives way with the bookkeeping chips, so it
+  // can never take a live state's never-cut first place nor squeeze an amount — (g) and (n) above hold
+  // those on these rows too. How much of the chip shows at this width is REPORTED, not asserted.
+  const f2Rows = m.rows.filter(r => r.line && r.line.chipLabels.includes(F2_LABEL))
+  const f2Titles = f2Rows.map(r => r.title.text).sort()
+  if (JSON.stringify(f2Titles) !== JSON.stringify([...e.f2Rows].sort())) fail(`${at}: (p) the F2 chip "${F2_LABEL}" is on ${JSON.stringify(f2Titles)}, expected exactly ${JSON.stringify(e.f2Rows)} — it belongs to lots saved off F1 plants and to nothing else`)
+  for (const r of f2Rows) {
+    if (r.line.supplier) fail(`${at}: (p) "${r.title.text}" carries a supplier chip AND the F2 chip — a bought packet is never labelled F2`)
+    if (r.line.liveChips.some(c => c.text === F2_LABEL)) fail(`${at}: (p) "${r.title.text}": the F2 chip carries a live tone — it would take the first chip's never-cut place`)
+  }
+
   // ── (l) THE THUMBNAIL BOX — before any image has landed.
   const before = thumbBoxes(at, m, 'before any packet image landed')
 
@@ -913,6 +955,8 @@ async function allOpened(v, at, vw, vh) {
   console.log(`${P}: the 44-char row: title ${long.title.w}px column, ink ${long.title.inkW}px, ellipsis ${long.title.ellipsis} · line "${long.line.text}" ${long.line.h}px/${long.line.oneLineH}px, chips [${long.line.chipLabels.join(' | ')}], amount "${long.line.amount.text}" ${long.line.amount.w}px (whole: ${!!(long.line.amount.inLine && !long.line.amount.cut)}), rest ${long.line.restW}px of ${long.line.restInkW}px ink`)
   const gave = lr.filter(r => r.line.chipsCutLabels.length > 0 || (r.line.restW != null && r.line.restInkW > r.line.restW + 1))
   console.log(`${P}: [REPORTED — gives way by design, the never-cut items asserted whole in (g)(i)(j)(n), the heat whole or dropped in (k)] ${gave.length} row(s) whose chips or where-from/how-old are cut at this width: ${gave.map(r => `"${r.title.text}" (${r.line.chipsCutLabels.length ? `chip(s) cut: ${r.line.chipsCutLabels.map(c => `"${c}"`).join(', ')}` : 'no chip cut'}, rest ${r.line.restW}px of ${r.line.restInkW}px)`).join('; ') || 'none'}`)
+  console.log(`${P}: (p) F2 chip "${F2_LABEL}" — ${f2Rows.map(r => { const c = r.line.neutral.find(n => n.text === F2_LABEL)
+    return `"${r.title.text}" [${r.line.chipLabels.join(' | ')}]: ${c ? (c.cut ? `gives way, ${c.w}px of ${c.full}px shown` : `whole, ${c.w}px`) : 'NOT a neutral chip'}, amount ${r.line.amount ? `"${r.line.amount.text}" ${r.line.amount.w}px` : 'none'}, heat ${r.line.heat ? (r.line.heat.shown ? `${r.line.heat.w}px` : 'dropped') : 'none'}` }).join(' · ')} · ${f1BoughtRows.length} bought F1 packet(s), none carrying it`)
   const hiddenWrap = lr.filter(r => r.line.domLines > r.line.lines)
   console.log(`${P}: (k)/(n) SHRINK ORDER — "${HEAT_DROPPED_ROW}": live chip ${dL.liveChips.map(c => `"${c.text}" ${c.w}px`).join(', ')}, amount "${dL.amount.text}" ${dL.amount.w}px, heat "${dL.heat.text.replace(/^·\s*/, '')}" ${dL.heat.shown ? `SHOWN ${dL.heat.w}px` : 'dropped whole'}, ${dL.slack}px to spare · "${NEUTRAL_GIVES_ROW}": "${gN.text}" ${gN.cut ? `ellipsised to ${gN.w}px of ${gN.full}px` : `whole, ${gN.w}px`}, heat "${gL.heat.text.replace(/^·\s*/, '')}" ${gL.heat.shown ? `whole, ${gL.heat.w}px` : 'DROPPED'}, ${gL.slack}px to spare · ${liveCount} live chips · [REPORTED] ${hiddenWrap.length} row(s) whose facts wrapped out of sight (in the DOM on ${hiddenWrap.map(r => r.line.domLines).join('/') || '-'} bands; (f) reads the one line shown): ${hiddenWrap.map(r => `"${r.title.text}"`).join(', ') || 'none'}`)
 
@@ -1193,6 +1237,8 @@ try {
       if (v.view === 'saved') {
         if (m.cards !== e.cards) mismatch.push(`${m.cards} seed-lot cards, expected ${e.cards}`)
         if (m.sections !== e.sections) mismatch.push(`${m.sections} stage sections, expected ${e.sections}`)
+        // (p) on Saved seeds: the fixture's two F2 lots are tracked, so each card carries the badge.
+        if (m.f2Badges.length !== e.f2Cards) mismatch.push(`${m.f2Badges.length} F2 badge(s) on Saved seeds (${m.f2Badges.map(b => `"${b.card}"`).join(', ') || 'none'}), expected ${e.f2Cards}`)
       }
       if (v.view === 'sow') {
         if (!m.sow || m.sow.buttons < e.minSowButtons) mismatch.push(`${m.sow ? m.sow.buttons : 0} buttons in Sow now, expected >=${e.minSowButtons} (the date-independent cards and toggles alone)`)
@@ -1287,7 +1333,14 @@ try {
       console.log(`${P}: ${m.taps.length} controls, shortest floored ${minFloored}px (floor ${TAP_MIN_HEIGHT_PX}px) · NAMED EXEMPTION ${exempt.length} SegmentedControl radio(s) at ${[...new Set(exempt.map(t => t.h))].join('/')}px (floor ${SEGMENTED_RADIO_MIN_PX}px): ${[...new Set(exempt.map(t => t.group))].join(', ')}${exempt.length && exempt.every(t => t.h >= TAP_MIN_HEIGHT_PX) ? ' — INERT, every one clears the real floor: delete it' : ''}`)
       console.log(`${P}: ferment line ${m.ferment.h}px, ${m.ferment.lines} line(s): "${m.ferment.text}"`)
       if (firstScreen) console.log(`${P}: ${firstScreen}`)
-      if (v.view === 'saved') console.log(`${P}: ${m.cards} lot cards in ${m.sections} stage sections`)
+      if (v.view === 'saved') {
+        // (p) on Saved seeds: each F2 badge shows WHOLE (it may wrap — the card has room to — but it is
+        // never ellipsised) and stays inside its card.
+        for (const b of m.f2Badges) {
+          if (b.cut || !(b.w > 0) || (b.cardR != null && b.r > b.cardR + 0.5)) fail(`${at}: (p) the F2 badge on "${b.card}" is not whole — ${b.w}px at x${b.l}-${b.r}${b.cut ? ', ellipsised' : ''} in a card ending x${b.cardR}`)
+        }
+        console.log(`${P}: ${m.cards} lot cards in ${m.sections} stage sections · (p) F2 badges ${m.f2Badges.map(b => `"${b.card}" ${b.w}x${b.h}px`).join(', ') || 'none'}`)
+      }
       if (v.view === 'sow') {
         const squeezed = m.sow.cards.filter(c => c.titleLines > 2)
         console.log(`${P}: ${m.sow.buttons} buttons, ${m.sow.headings} open sections, ${m.sow.cards.length} open cards · (h) title column widths ${m.sow.cards.map(c => c.colW).join('/')}px (floor ${SOW_TITLE_COL_MIN_PX}px); [REPORTED] ${squeezed.length} card title(s) over 2 lines: ${squeezed.map(c => `"${c.title}" ${c.titleLines}L in ${c.colW}px`).join('; ') || 'none'}`)
@@ -1313,6 +1366,19 @@ try {
         await evalSettled('new Promise(r=>setTimeout(r,250))')
         const extraPath = await shoot(join(OUTDIR, `seeds-page-${v.view}-${vw}x${vh}-${v.view === 'mine' ? 'longrow' : 'squeezed'}.png`))
         console.log(`${P}: evidence screenshot ${extraPath}`)
+      }
+      // (p)'s evidence: on My seeds the two F2 lots, three rows apart in the open Pepper group — what (p)
+      // REPORTS about how much of each F2 chip shows is what this picture shows; on Saved seeds the first
+      // card carrying the F2 badge.
+      const f2Evidence = v.view === 'mine'
+        ? `(${rowByTitle(VIEWS[0].expect.f2Rows[0])})`
+        : v.view === 'saved'
+          ? `(() => { const b = document.querySelector('${tid('lot-f2')}'); return b && b.closest('${tid('seed-lot-card')}') })()`
+          : null
+      if (f2Evidence && await evalSettled(`(() => { const el = ${f2Evidence}; if (!el) return false; el.scrollIntoView({ block: 'center' }); return true })()`)) {
+        await evalSettled('new Promise(r=>setTimeout(r,250))')
+        const f2Path = await shoot(join(OUTDIR, `seeds-page-${v.view}-${vw}x${vh}-f2.png`))
+        console.log(`${P}: evidence screenshot ${f2Path}`)
       }
     }
   }
