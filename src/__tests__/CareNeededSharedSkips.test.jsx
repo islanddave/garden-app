@@ -290,6 +290,46 @@ describe('BUG-TODAYHOUSEHOLDSKIPCLOBBER-001 — when localStorage refuses the wr
     expect(own().getByText('Habanero')).toBeTruthy()
     expect(household().getByText('Sungold')).toBeTruthy()
   })
+
+  // ...but only the LAST one. The memory copy belongs to the page, and the household toggle unmounts
+  // one list while the other stays up. Ported from the v4.150.0 QA seat's probe P-K2 (review-v4150-qa
+  // M3). Mutation K2 (reset on ANY unmount) -> Habanero is back in the own list, red.
+  // BOTH toggles are load-bearing: the reset runs in the unmounting list's effect cleanup, after the own
+  // list has already rendered for that tap, so a check after the first toggle passes on K2 too (the
+  // seat's first probe did). Turning the household list back on is what re-renders the own list.
+  it('the household list going off and on does not forget a skip the own list still shows', async () => {
+    const restore = refuseSkipWrites()
+    try {
+      await mount()
+      skipIn(own(), 'Habanero')
+      expect(own().queryByText('Habanero')).toBeNull()
+      await tap('toggle household')    // one list unmounts; the own list stays mounted
+      await tap('toggle household')    // and back: the own list re-renders from the snapshot
+      expect(household().getByText('Sungold')).toBeTruthy()
+      expect(own().getByText('Bhut Jolokia')).toBeTruthy()
+      expect(own().queryByText('Habanero')).toBeNull()
+    } finally { restore() }
+  })
+})
+
+describe('BUG-TODAYHOUSEHOLDSKIPCLOBBER-001 — a change to the stored key from outside', () => {
+  // Storage is the truth; the memory copy only stands in for a write storage REFUSED. Sign-out's
+  // clearClientPrefs removes the key while Today is still mounted (AuthContext.signOut clears BEFORE
+  // Clerk's signOut). Nothing notifies the lists of that, so they follow it on their NEXT render — the
+  // toggle below is that render. Ported from the v4.150.0 QA seat's probe P-K5 (review-v4150-qa M3).
+  // Mutation K5 (snapshot keyed on the day only, blind to the stored string) -> both rows stay hidden,
+  // red.
+  it('sign-out clearing the key brings the rows back on the next render', async () => {
+    await mount()
+    skipIn(own(), 'Habanero')
+    skipIn(household(), 'Sungold')
+    expect(own().queryByText('Habanero')).toBeNull()
+    clearClientPrefs()
+    expect(stored()).toEqual([])      // the precondition: the clear really took the key
+    await tap('toggle household'); await tap('toggle household')
+    expect(own().getByText('Habanero')).toBeTruthy()
+    expect(household().getByText('Sungold')).toBeTruthy()
+  })
 })
 
 describe('BUG-TODAYHOUSEHOLDSKIPCLOBBER-001 — the day boundary', () => {

@@ -69,11 +69,13 @@ function todayLocalISO() {
 // "re-read storage before each write" because that fixes the stored set but leaves each list's screen
 // state private, so a plant in both lists, or an Undo after a remount, still disagrees until reload.
 //
-// localStorage stays the durable copy and the snapshot re-reads it each render, so anything that
-// changes the key outside this module (sign-out's clearClientPrefs, a test) is seen at once. The only
-// thing held in memory alone is a write localStorage refused (quota, blocked storage): it stays
-// visible, as the old per-list state did, until storage changes under it or the last list unmounts —
-// the reset in subscribeSkipped, which also keeps it from outliving the session into the next sign-in.
+// localStorage stays the durable copy and the snapshot re-reads it on every render, so anything that
+// changes the key outside this module (sign-out's clearClientPrefs, a test) is picked up on each list's
+// NEXT render — not at once: nothing notifies the lists of a change they did not make. The only thing
+// held in memory alone is a write localStorage refused (quota, blocked storage): it stays visible, as
+// the old per-list state did, until storage changes under it or the LAST list unmounts (not any list:
+// the household toggle unmounts one while the other stays up) — the reset in subscribeSkipped, which
+// also keeps it from outliving the session into the next sign-in.
 function skipKeyName() { return 'today-skipped:' + todayLocalISO() }
 function storedSkipRaw(name) {
   try { return localStorage.getItem(name) } catch { return null }
