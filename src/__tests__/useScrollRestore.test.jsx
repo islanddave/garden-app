@@ -314,6 +314,19 @@ describe('useScrollRestore — persistence across a document swap', () => {
     expect(blob['surf|entry-A']).toEqual({ y: 640, s: 48 })
   })
 
+  // pagehide, not unmount: an installed PWA is frozen or discarded rather than unloaded, and no unmount
+  // runs when Chrome tears the document down (qa-v4148 MINOR — nothing tested this path). The page is
+  // still mounted and its entry still current. The listener saved 640; a fling left it at 700 before any
+  // scroll event arrived, so pagehide has to read the offset itself, not just flush the last save.
+  it('persists the current offset on pagehide, with the page still mounted (the PWA discard path)', () => {
+    render(<Probe ready state={48} />)
+    act(() => { setScrollY(640); window.dispatchEvent(new Event('scroll')) })
+    act(() => { setScrollY(700) })
+    act(() => { window.dispatchEvent(new Event('pagehide')) })
+    const blob = JSON.parse(window.sessionStorage.getItem('garden.scrollRestore.v1'))
+    expect(blob?.['surf|entry-A']).toEqual({ y: 700, s: 48 })
+  })
+
   it('hydrates from sessionStorage on a cold module load', () => {
     window.sessionStorage.setItem('garden.scrollRestore.v1',
       JSON.stringify({ 'surf|entry-A': { y: 900, s: 48 } }))
