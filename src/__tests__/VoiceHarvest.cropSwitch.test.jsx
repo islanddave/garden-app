@@ -940,6 +940,17 @@ describe('a "next" queued behind the save still being sent', () => {
     expect(record()).toEqual(['Stupice', '4 count', '—'])
   })
 
+  it('a new amount and "next" with no crop chosen is refused at once for a crop, and nothing is queued', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, 'zzqq quux', '3 count', 'next')
+    expect(statusText()).toBe('Not saved — still need a crop. Say it, then "next".')
+    expect(misses()).toEqual(['Nothing matched “zzqq quux”.', 'Not saved — still need a crop.'])
+    await posts.resolve()
+    expect(posts.count()).toBe(1)
+  })
+
   it('a name that matched nothing before the POST lands: the queued "next" refuses out loud for want of a crop', async () => {
     const rec = await startListening()
     const posts = holdPosts()
