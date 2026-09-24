@@ -38,7 +38,7 @@ const apiFetch = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: apiFetch, getToken: vi.fn(async () => null) }) }))
 
 import LogMany from '../pages/LogMany.jsx'
-import { CONFIRM_WINDOW_MS } from '../components/LogManyVoice.jsx'
+import { CONFIRM_WINDOW_MS, REARM_DELAY_MS, HELD_RECHECKS } from '../components/LogManyVoice.jsx'
 
 const BAG = locationByPath('Pasture > Bag Area')
 const IN_GROUND = locationByPath('Pasture > In-Ground')
@@ -351,6 +351,80 @@ describe('the go-ahead — only "next" or a tap; everything else writes NOTHING'
       .toBe('The list was changed, so it no longer matches what was read back.')
     await speak('next', rec)
     expect(writes()).toEqual([])
+  })
+})
+
+// REVIEW MINOR-1 (review-logmany-voice.md) — only a TAP takes the mic. The seat reproduced the voice
+// listener taking the mic BACK from another surface: Chrome ends an empty "next" session, the re-arm is
+// 150 ms away, the other surface acquires inside that gap, and the re-arm evicted it. The seat's
+// control ordering — the other surface acquiring while a voice session is LIVE — is the test above
+// ("another mic taking over … is not stolen back"), and it was already right.
+describe('the microphone — only a tap takes it (review MINOR-1)', () => {
+  it('the race: another surface takes the mic in the re-arm gap, and it is NOT taken back', async () => {
+    const rec = await sayCommandToReadBack('water all bag area')
+    // CONTROL: with nobody else on the mic, an empty session that Chrome ends IS re-armed — so the
+    // "no new session" assertion below is able to fail.
+    await act(async () => { rec.endSession() })
+    await waitFor(() => expect(mic.latest()).not.toBe(rec))
+    const rearmed = mic.latest()
+    expect(rearmed.started).toBe(true)
+    expect(micHolder()).toBe('log-many-voice')
+
+    // THE RACE: Chrome ends the next empty session, and inside the gap before the re-arm another
+    // surface — the checklist's own search mic, the only other one reachable here — takes the mic.
+    let otherStopped = false
+    await act(async () => { rearmed.endSession() })
+    act(() => { acquireMic('search-field', () => { otherStopped = true }) })
+    const sessions = mic.instances.length
+    await screen.findByText(/Another microphone on this screen took over/)
+    // Well past the re-arm and every re-check a held mic gets.
+    await act(async () => { await new Promise((r) => setTimeout(r, REARM_DELAY_MS * (HELD_RECHECKS + 3))) })
+    expect(micHolder()).toBe('search-field')
+    expect(otherStopped).toBe(false)
+    expect(mic.instances.length).toBe(sessions)
+    expect(writes()).toEqual([])
+    // The plan is still armed for the tap.
+    fireEvent.click(inFrame().getByTestId('lmv-confirm'))
+    await screen.findByText('✓ 101 plantings watered')
+    expect(writes()).toHaveLength(1)
+  })
+
+  it('the TAP on "Log by voice" still takes the mic from another surface (newest user start wins)', async () => {
+    // The fix must not over-reach: every other mic in the app takes the mic on its user's tap
+    // (micArbiter.js), and so must this one — a running harvest capture under the overlay included.
+    await openPage()
+    let otherStopped = false
+    act(() => { acquireMic('voice-harvest', () => { otherStopped = true }) })
+    fireEvent.click(screen.getByTestId('lmv-start'))
+    expect(otherStopped).toBe(true)
+    expect(micHolder()).toBe('log-many-voice')
+    expect(mic.latest().started).toBe(true)
+    await speak('water all bag area')
+    await screen.findByTestId('lmv-readback')
+  })
+
+  it('our OWN cancelled session still releasing is not "another microphone": the retry listens', async () => {
+    // A confirm TAP cancels the live "next" session before writing. Chrome delivers that session's
+    // `end` — the moment transcribe.js releases the hold — ASYNCHRONOUSLY after abort(); modelled here
+    // on this one instance. A write that fails at once (offline) reopens the window inside that gap.
+    let n = 0
+    writeReply = (body) => (++n === 1
+      ? Promise.reject(Object.assign(new Error('offline'), { status: 0 }))
+      : Promise.resolve({ batch_id: 'b-voice-1', count: body.scope.plant_ids.length, idempotent: true }))
+    const rec = await sayCommandToReadBack('water all bag area')
+    const realAbort = rec.abort.bind(rec)
+    rec.abort = () => { setTimeout(realAbort, REARM_DELAY_MS / 2) }
+    fireEvent.click(inFrame().getByTestId('lmv-confirm'))
+    await screen.findByTestId('lmv-retry-note')
+    await waitFor(() => expect(mic.latest()).not.toBe(rec))
+    expect(mic.latest().started).toBe(true)
+    expect(micHolder()).toBe('log-many-voice')
+    expect(screen.queryByText(/Another microphone on this screen took over/)).toBeNull()
+    await speak('next', mic.latest())
+    await screen.findByText('✓ 101 plantings watered')
+    const w = writes()
+    expect(w).toHaveLength(2)
+    expect(w[1].idempotency_key).toBe(w[0].idempotency_key)
   })
 })
 

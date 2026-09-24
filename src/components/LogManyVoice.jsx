@@ -61,7 +61,14 @@ export const COMMAND_WINDOW_MS = 10000
 export const CONFIRM_WINDOW_MS = 20000
 export const COMMAND_SETTLE_MS = 2000
 export const CONFIRM_SETTLE_MS = 1200
-const REARM_DELAY_MS = 150
+export const REARM_DELAY_MS = 150
+// An AUTOMATIC start that finds the mic held waits this many re-arm delays for it to clear, then gives
+// up with 'taken'. It never TAKES the mic — the check and the acquire run in one synchronous call, so
+// nothing can slip between them. The wait exists for one case: OUR OWN session, cancelled a moment
+// ago (a confirm TAP cancels the live "next" session before writing), whose hold Chrome releases only
+// when it delivers `end`, asynchronously after abort(). A retry reopened in that instant would
+// otherwise read our own hold as someone else's and tell him another microphone took over.
+export const HELD_RECHECKS = 2
 // A window that keeps being handed empty sessions this many times is not "quiet", it is broken.
 const MAX_REARMS = 12
 const MIC_LABEL = 'log-many-voice'
@@ -192,11 +199,15 @@ export default function LogManyVoice({
 
   // ── the listening window ──────────────────────────────────────────────────────────────────────
   // Exactly one of onWords / onSilence / onMicError fires, once. An EMPTY session is re-armed until
-  // the deadline — never if another surface now holds the mic: the arbiter's rule is that the newest
-  // USER start wins, and a background re-arm taking it back would steal a mic he just tapped.
-  const openWindow = useCallback(({ deadline, settleMs, onWords, onSilence, onMicError }) => {
+  // the deadline — never over another surface's mic: the arbiter's rule is that the newest USER start
+  // wins, and a background re-arm taking it back would steal a mic he just tapped. `tapStart` marks
+  // the one start that IS a user start — the tap that opened the command window (see arm()).
+  const openWindow = useCallback(({ deadline, settleMs, onWords, onSilence, onMicError, tapStart = false }) => {
     closeWindow()
-    const w = { deadline, settleMs, handle: null, words: false, lastError: null, rearms: 0, timers: {} }
+    const w = {
+      deadline, settleMs, tapStart, handle: null, words: false, lastError: null,
+      rearms: 0, starts: 0, heldChecks: 0, timers: {},
+    }
     windowRef.current = w
     const finish = (fire) => {
       if (windowRef.current !== w) return
@@ -206,6 +217,21 @@ export default function LogManyVoice({
     }
     const arm = () => {
       if (windowRef.current !== w) return
+      // REVIEW MINOR-1 (review-logmany-voice.md). Only the TAP that opened a window may take the mic
+      // from another surface — that is the arbiter's newest-user-start rule, and the tap is this
+      // surface's user start. Every other start is AUTOMATIC: a re-arm after Chrome ends an empty
+      // session, the "next" window opening by itself under the read-back, a relisten, a retry. None
+      // of those may evict a mic the user tapped since. The only check used to sit in onEnd, 150 ms
+      // BEFORE the re-arm, so a mic taken inside that gap was taken straight back (reproduced by the
+      // seat with this component's own harness). It is made HERE, in the same synchronous call as the
+      // acquire inside startLiveTranscription, so nothing can slip between the check and the acquire.
+      if (!(w.tapStart && w.starts === 0) && isMicHeld()) {
+        if (w.heldChecks++ < HELD_RECHECKS) { w.timers.rearm = setTimeout(arm, REARM_DELAY_MS); return }
+        finish(() => onMicError('taken'))
+        return
+      }
+      w.starts += 1
+      w.heldChecks = 0
       w.words = false
       w.lastError = null
       w.handle = startLiveTranscription({
@@ -236,6 +262,8 @@ export default function LogManyVoice({
           if (text) { finish(() => onWords(text)); return }
           if (w.lastError === 'aborted') { finish(() => onMicError('aborted')); return }
           if (Date.now() >= w.deadline) { finish(onSilence); return }
+          // Our own hold was released in `onend` before this callback runs, so a hold now is someone
+          // else's — say so at once. arm() re-checks, for a mic taken in the gap before the re-arm.
           if (isMicHeld()) { finish(() => onMicError('taken')); return }
           if (++w.rearms > MAX_REARMS) { finish(() => onMicError('failed')); return }
           w.timers.rearm = setTimeout(arm, REARM_DELAY_MS)
@@ -380,6 +408,9 @@ export default function LogManyVoice({
       onWords: processCommand,
       onSilence: () => setView({ phase: 'mic', code: 'nothing' }),
       onMicError: (code) => setView({ phase: 'mic', code }),
+      // The tap IS the user start: its first session takes the mic even from another surface,
+      // exactly as every other mic in the app does (micArbiter.js). Its re-arms do not.
+      tapStart: true,
     })
   }, [closeWindow, ensureVocab, openWindow, processCommand])
 
