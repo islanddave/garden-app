@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.145.0",
+    "date": "2026-09-24",
+    "highlights": [
+      "Today's watering list now always shows the 20 longest-waiting plants in each group, with a Show more button. Each group header still shows the true count, and Log all watering still logs every plant.",
+      "Put-Up: when a ferment has gone a week from a start date you gave to the day, with no pH reading since, its card asks: It's been a week, has the pH come down yet?",
+      "More, Debug and smoke now shows your phone's real screen width (Viewport)."
+    ]
+  },
+  {
     "version": "4.144.0",
     "date": "2026-09-24",
     "highlights": [
