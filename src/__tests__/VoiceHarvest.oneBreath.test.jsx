@@ -41,6 +41,9 @@ const PLANTS = [planting('p1', 'Suyo Long', 'cucumber'), planting('p2', 'Marketm
 let mic
 let plantsNow = PLANTS
 beforeEach(() => {
+  // Call history is per TEST: restoreAllMocks (afterEach) does not clear a vi.fn's calls, so without
+  // this a haptic assertion would see every cue fired by the tests before it.
+  vi.clearAllMocks()
   mic = installFakeSpeechRecognition(vi)
   plantsNow = PLANTS
   apiFetchSpy.mockReset()
@@ -556,5 +559,84 @@ describe('IMPORTANT-1 — a refused sentence never lets its save word save the r
     for (const line of ['Suyo Long', '5 count', 'suyo long 231 grams next']) await speak(rec, line)
     await settle()
     expect(posts().map((b) => [b.plant_id, b.harvest])).toEqual([[byName('Suyo Long').id, H(5, 'count', 231)]])
+  })
+})
+
+// ── QA F1 — a nameless pair applied twice is applied ONCE ──────────────────────────────────────────
+//
+// Chrome delivers the same pair twice in two measured shapes: a growing phrase whose partial a tick
+// commits after a pause (the 2026-09-16 real-page trace: "pineapple" committed by tick 17 ms before
+// "pineapple tomatillo"), and a re-delivered final in the next session 274 ms after its twin
+// (BUG-VOICEDUPE). The row was saved right either way, but the second application found both slots
+// full and wrote two FALSE "Dropped …" rows — "1 saved · 2 not captured" (QA probes P3/P4/P5/P12).
+describe('QA F1 — a nameless no-unit pair said twice writes no false "not captured" rows', () => {
+  const ledgerHead = () => screen.getByTestId('voice-harvest-ledger').firstChild.textContent
+  // Several finals in ONE session, `gapMs` apart, then the session ends — Chrome's growing phrase.
+  async function growing(finals, gapMs) {
+    const rec = mic.latest()
+    for (let i = 0; i < finals.length; i++) {
+      await act(async () => { rec.deliverFinal(finals[i]) })
+      if (i < finals.length - 1) await act(async () => { await vi.advanceTimersByTimeAsync(gapMs) })
+    }
+    await act(async () => { rec.endSession() })
+  }
+
+  it('P3: "2 165" then, after an 800 ms pause in the same session, "2 165 next"', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await growing(['2 165', '2 165 next'], 800)
+    await settle()
+    expect(posts().map((b) => [b.plant_id, b.harvest, b.metadata.assumed_units]))
+      .toEqual([['p1', H(2, 'count', 165), ['count', 'g']]])
+    expect(misses()).toEqual([])
+    expect(ledgerHead()).toBe('1 saved')
+  })
+
+  it('P4: "2", then "2 165", then "2 165 next", 800 ms apart in one session', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await growing(['2', '2 165', '2 165 next'], 800)
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
+    expect(misses()).toEqual([])
+    expect(ledgerHead()).toBe('1 saved')
+  })
+
+  it('P5: "2 165" re-delivered 274 ms later in the next session, then "next"', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(mic.latest(), '2 165')
+    await act(async () => { await vi.advanceTimersByTimeAsync(274) })
+    await speak(mic.latest(), '2 165')
+    expect(haptics.hapticDigitRejected).not.toHaveBeenCalled()
+    expect(statusText()).not.toContain('both filled')
+    await speak(mic.latest(), 'next')
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
+    expect(misses()).toEqual([])
+    expect(ledgerHead()).toBe('1 saved')
+  })
+
+  it('P12: the "drop count, keep grams" pair "2 165 grams" re-delivered, then "next"', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(mic.latest(), '2 165 grams')
+    await act(async () => { await vi.advanceTimersByTimeAsync(274) })
+    await speak(mic.latest(), '2 165 grams')
+    await speak(mic.latest(), 'next')
+    await settle()
+    expect(posts().map((b) => [b.harvest, b.metadata.assumed_units])).toEqual([[H(2, 'count', 165), ['count']]])
+    expect(misses()).toEqual([])
+    expect(ledgerHead()).toBe('1 saved')
+  })
+
+  it('a pair restates the record: a held number it leaves out is dropped AND said', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '7', '2 165']) await speak(rec, line)
+    expect(statusText()).toBe('165 — say a unit to change it, or carry on. (2 count assumed) (dropped 7 — no unit was said)')
+    await speak(rec, 'next')
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
+    expect(misses()).toEqual(['Dropped 7 — no unit was said, and the record was said again without it.'])
   })
 })

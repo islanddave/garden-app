@@ -1390,29 +1390,35 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // announcement are reused, not copied. Only the NAME is applied here, because it was resolved under
   // stricter rules than a search (resolveBareOneBreath) and must not be re-resolved by the looser ones.
   //   * a DIFFERENT planting starts a new record, and a held number from the old one is dropped, said;
-  //   * the SAME planting with both amounts restates the record — nothing is lost that the sentence
-  //     does not say again; with one amount it continues the record, as a bare number would.
+  //   * BOTH amounts — for the same planting, or with no name at all — restate the record: nothing is
+  //     lost that the sentence does not say again. With one amount it continues the record, as a bare
+  //     number would.
+  // QA F1 — THE NAMELESS PAIR RESTATES TOO, so applying it twice is applying it once. Chrome delivers the
+  // same pair twice in two measured shapes: a growing phrase whose partial a tick commits ("2 165", then
+  // "2 165 next" in one session) and a re-delivered final 274 ms later (BUG-VOICEDUPE). Continuing the
+  // record the second time found both slots already filled and wrote two FALSE "Dropped …" rows —
+  // "1 saved · 2 not captured" for a record saved exactly right. The named form restated already.
   const applyBareOneBreath = useCallback((d, heard, meta) => {
     const planting = d.planting
     const label = planting ? (planting.name || planting.variety_ref?.name) : null
     let droppedNote = ''
-    if (planting) {
-      if (selectedRef.current?.id !== planting.id) {
-        const held = heldNumRef.current
-        if (held != null) {
-          noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
-          droppedNote = ` (dropped ${held} — no unit was said)`
-        }
-        clearRecord()
-      } else if (d.groups.length === 2) {
-        const held = heldNumRef.current
-        if (held != null && !d.groups.some((g) => g.value === held)) {
-          noteMiss(`Dropped ${held} — no unit was said, and the record was said again without it.`)
-          droppedNote = ` (dropped ${held} — no unit was said)`
-        }
-        setQty(null); qtyRef.current = null; setWeight(null); weightRef.current = null
-        heldNumRef.current = null; setHeldNum(null)
+    if (planting && selectedRef.current?.id !== planting.id) {
+      const held = heldNumRef.current
+      if (held != null) {
+        noteMiss(`Dropped ${held} — no unit was said, and the crop changed before one was.`)
+        droppedNote = ` (dropped ${held} — no unit was said)`
       }
+      clearRecord()
+    } else if (d.groups.length === 2) {
+      const held = heldNumRef.current
+      if (held != null && !d.groups.some((g) => g.value === held)) {
+        noteMiss(`Dropped ${held} — no unit was said, and the record was said again without it.`)
+        droppedNote = ` (dropped ${held} — no unit was said)`
+      }
+      setQty(null); qtyRef.current = null; setWeight(null); weightRef.current = null
+      heldNumRef.current = null; setHeldNum(null)
+    }
+    if (planting) {
       setSelected(planting); selectedRef.current = planting
       setCandidates([]); setUnmatched(null); unmatchedRef.current = null
     }
@@ -1432,9 +1438,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     if (d.command) { applyOneUtterance({ kind: 'command', command: d.command, transcript: '' }, meta); return }
     // No command: read the planting back in front of what the last part said, the way every other
     // one-breath reading is read back — the app chose the split, so Dave sees which one before "next".
-    if (label) {
+    if (label || droppedNote) {
       const last = statusRef.current
-      say(droppedNote ? 'warn' : (last?.tone ?? 'ok'), `${label} — ${last?.text ?? ''}${droppedNote}`)
+      say(droppedNote ? 'warn' : (last?.tone ?? 'ok'), `${label ? `${label} — ` : ''}${last?.text ?? ''}${droppedNote}`)
     }
   }, [applyOneUtterance, clearRecord, cue, noteMiss, say])
 
