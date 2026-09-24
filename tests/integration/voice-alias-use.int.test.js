@@ -13,7 +13,8 @@
 //      to a DIFFERENT variety starts it again at 0;
 //   4. a use sent for the variety the phrase USED to mean counts nothing (the variety must match);
 //   5. another person's alias is never counted, whatever the body says (user_id = the verified caller);
-//   6. a malformed body is refused before anything is written, including one bad entry among good ones.
+//   6. a malformed body is refused before anything is written, including one bad entry among good ones;
+//   7. a variety's hard delete takes its aliases with it (the premise the staging smoke's cleanup rests on).
 // Read-backs go through directSql, never the handler's echo. The tests run in file order and each starts
 // from the state the previous one left, so the sequence reads as one person's alias over a season.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -170,5 +171,20 @@ describe('BUG-VOICEALIASHITCOUNT-001 — a malformed count is refused before any
     expect(r.status, JSON.stringify(r.body)).toBe(400)
     expect(r.body.error).toMatch(error)
     expect(await everyAlias()).toEqual(before)
+  })
+})
+
+describe("BUG-VOICEALIASHITCOUNT-001 — the staging smoke's cleanup premise", () => {
+  // tests/smoke/run-smoke.sh block L cannot remove the alias it teaches (no route deletes one), so it relies on
+  // this: deploy-staging's L-058 sweep hard-deletes the smoke's variety, and voice_alias.variety_id is ON
+  // DELETE CASCADE. On a branch cut from staging, this is that schema's own answer.
+  it("a variety's hard delete takes its aliases with it, and no one else's", async () => {
+    const mine = await alias(USER)
+    expect(await alias(OTHER)).toMatchObject({ variety_id: suyoId })
+    // plant_varieties_entity_ins made an entity row for the cultivar; entity is ON DELETE RESTRICT.
+    await directSql`DELETE FROM entity WHERE entity_type = 'cultivar' AND cultivar_ref_id = ${suyoId}`
+    await directSql`DELETE FROM plant_varieties WHERE id = ${suyoId}`
+    expect(await alias(OTHER)).toBeNull()
+    expect(await alias(USER)).toEqual(mine)
   })
 })
