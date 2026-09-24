@@ -654,7 +654,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           // the moment the default changes — staying SILENT is the pattern, which is why the key is
           // absent and this comment stands in its place (EventNew.jsx:1746-1749 says the same).
           has_photo: false,
-          metadata: { harvest_input_source: 'voice' },   // C8 — see the note below
+          // C8 — the row says how it was captured. V5-VOICEVOCAB-001 — and which of its units the
+          // app INFERRED rather than heard, quantity's first; [] when both were spoken. Without this
+          // the no-unit path was measurable only from a debug trace Dave had to switch on and copy.
+          // ALWAYS SENT, so a row without the key means a bundle from before this change, never
+          // "nothing assumed". Machine provenance: EventDetail.jsx hides it like the key above it.
+          metadata: {
+            harvest_input_source: 'voice',
+            assumed_units: [q, w].filter((s) => s?.assumed).map((s) => s.unit),
+          },
           harvest: {
             quantity: Number(q.value),
             unit: q.unit,
@@ -844,7 +852,12 @@ export default function VoiceHarvest({ embedded = false } = {}) {
           : 'g'
       const heldBuilt = heldUnit ? buildValue(heldVal, heldUnit, '') : null
       if (heldBuilt) {
-        const slot = { value: heldBuilt.value, unit: heldBuilt.unit }
+        // `assumed` RIDES ON THE SLOT VALUE, not beside it, so it cannot outlive the value it
+        // describes: every spoken write builds a fresh { value, unit } without it ("85" assumed,
+        // then "85 G"; or a later "3 count"), and clearRecord() nulls it with the record. saveRecord
+        // turns it into metadata.assumed_units — the only way the server can tell this unit from a
+        // spoken one. A separate per-record flag would need clearing at every write site instead.
+        const slot = { value: heldBuilt.value, unit: heldBuilt.unit, assumed: true }
         if (heldBuilt.kind === 'weight') { setWeight(slot); weightRef.current = slot }
         else { setQty(slot); qtyRef.current = slot }
         assumedApplied = heldBuilt

@@ -1208,3 +1208,116 @@ describe('BUG-VOICEVALPAIRNOSEL-001 — a count and weight said before the crop'
       .toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
   })
 })
+
+// ── V5-VOICEVOCAB-001 — the saved row says which unit was ASSUMED ─────────────────────────────────
+//
+// The no-unit path shipped, and the ledger still needs device confirmation that Dave's real harvests
+// use it. The only evidence source was the localStorage debug trace he had to switch on and copy by
+// hand, because an assumed unit and a spoken one produced byte-identical rows. metadata.assumed_units
+// makes every ordinary voice harvest a data point, and these pin what it has to mean: the units THIS
+// record's values got by inference — no more (a unit he then says is spoken) and no longer (a new
+// record starts clean). A marker that over- or under-counts would confirm the wrong thing.
+describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  // Speak each line, then let the write tick land. 2000 ms rather than the 1200 used above so a
+  // second record's "next" clears the 1500 ms write cooldown the first one armed.
+  async function saveAfter(rec, ...lines) {
+    for (const line of lines) await speak(rec, line)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    return harvestPosts().map(([, opts]) => JSON.parse(opts.body))
+  }
+
+  it('(a) no unit words at all: both units recorded as assumed, quantity first', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    // "text" (the measured mishear of "next") is unparsed, so it resolves the held 3 by slot order
+    // without touching the crop; "next" then resolves the held 231 onto the weight axis and saves.
+    const [body] = await saveAfter(rec, 'Suyo Long', 'three', 'text', '231', 'next')
+    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+    expect(body.metadata).toEqual({ harvest_input_source: 'voice', assumed_units: ['count', 'g'] })
+  })
+
+  it('(a) a bare count followed by a weight WITH its unit marks only the count', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', 'three', '231 grams', 'next')
+    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['count'])
+  })
+
+  it('(a) a bare weight after a spoken count marks only the weight', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', 'three count', '231', 'next')
+    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['g'])
+  })
+
+  it('(a) records the unit it actually assumed — the crop type default, not a fixed "count"', async () => {
+    // The per-unit count is the measurement, so a marker that always said "count" would be wrong for
+    // every crop that has a default_unit.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    apiFetchSpy.mockImplementation((url) => (String(url).startsWith('/api/plants')
+      ? Promise.resolve({ plants: [planting('p9', 'Green Magic', 'broccoli', 'head')] })
+      : Promise.resolve(createdEvent())))
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Green Magic', 'two', '150 grams', 'next')
+    expect(body.harvest).toMatchObject({ quantity: 2, unit: 'head', weight: 150, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual(['head'])
+  })
+
+  it('(b) both units spoken: the key is still sent, and empty', async () => {
+    // Present-and-empty, not absent, so a row WITHOUT the key can only be a bundle that predates it.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', 'three count', '231 grams', 'next')
+    expect(body.metadata).toEqual({ harvest_input_source: 'voice', assumed_units: [] })
+  })
+
+  it('(b) the one-breath path is spoken too — empty', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long three count 231 grams next')
+    expect(body.metadata.assumed_units).toEqual([])
+  })
+
+  it('(c) "85" then "85 G" — a number restated with its unit is not assumed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [body] = await saveAfter(rec, 'Suyo Long', 'three count', '85', '85 G', 'next')
+    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 85, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual([])
+  })
+
+  it('(c) a unit that WAS assumed and is then said out loud is no longer assumed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    for (const line of ['Suyo Long', 'three', 'text', '85', 'text']) await speak(rec, line)
+    // Precondition, so this cannot pass by never assuming anything: both slots were inferred.
+    expect(statusText()).toContain('85 g assumed')
+    expect(record()).toContain('3 count')
+    const [body] = await saveAfter(rec, 'three count', '85 G', 'next')
+    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 85, weight_unit: 'g' })
+    expect(body.metadata.assumed_units).toEqual([])
+  })
+
+  it('(d) does not carry into the next record after a save', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    const [first] = await saveAfter(rec, 'Suyo Long', 'three', '231 grams', 'next')
+    expect(first.metadata.assumed_units).toEqual(['count'])
+    const [, second] = await saveAfter(rec, 'Marketmore', 'two count', '100 grams', 'next')
+    expect(second.plant_id).toBe('p2')
+    expect(second.metadata.assumed_units).toEqual([])
+  })
+
+  it('(d) does not carry into the next record after "clear"', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const rec = await startListening()
+    for (const line of ['Suyo Long', 'three', 'text', 'clear']) await speak(rec, line)
+    const [body] = await saveAfter(rec, 'Marketmore', 'two count', '100 grams', 'next')
+    expect(body.plant_id).toBe('p2')
+    expect(body.metadata.assumed_units).toEqual([])
+  })
+})

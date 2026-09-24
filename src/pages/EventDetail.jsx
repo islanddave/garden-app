@@ -129,11 +129,16 @@ const METADATA_LABELS = {
 // `migrate_to_location` is hidden rather than labelled ON PURPOSE despite the readable name: its
 // value shape was not verified and a label that renders a uuid is worse than no row at all. If it
 // turns out to hold a place name, label it — that is a strict improvement, and the reverse is not.
+//
+// `assumed_units` (V5-VOICEVOCAB-001) is VoiceHarvest's record of which units it inferred rather
+// than heard — the same "which input path" provenance as harvest_input_source, and an array that
+// would render as a bare word or, when empty, as a key with no value. Hidden in the change that
+// starts writing it, like seed_lot_id.
 const METADATA_HIDDEN_KEYS = new Set([
   'water_depth_source', 'seed_lot_id',
   'batch_id', 'batch_v', 'precip_source', 'station_series', 'rain_backfill', 'auto_logged',
   'entity_level', 'schema', 'source', 'harvest_input_source', 'migrate_to_location',
-  'target_location_id', 'scope_intended',
+  'target_location_id', 'scope_intended', 'assumed_units',
 ])
 
 // V4-EVTDELCONFIRM-001 — coverFor for the confirm sheet: the union of every photo's cover_for
