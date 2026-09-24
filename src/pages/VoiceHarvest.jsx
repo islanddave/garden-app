@@ -104,11 +104,11 @@ export const CANDIDATE_LIMIT = 8
 // a list still loading 2.5 s after the first thing he says is past the slow tail, and waiting longer
 // buys little. The first utterance usually lands seconds after the page opens (tap Start, speak,
 // Chrome's endpointing), so on a normal load nothing waits at all. When the wait runs out the held
-// words are read with the names unknown, which the one-breath reader handles by not reading a named
-// sentence at all (resolveBareOneBreath's `aliasesKnown`) — never by guessing.
+// words are read with the names unknown, which the one-breath reader handles by refusing a named
+// sentence out loud (resolveBareOneBreath's `aliasesKnown`) — never by guessing.
 export const ALIAS_WAIT_MS = 2500
 // When the list FAILED to load it is asked for again after each of these delays, and again on every
-// Start while it still has not loaded. Until it does, named one-breath sentences go the ordinary way.
+// Start while it still has not loaded. Until it does, named one-breath sentences are refused.
 export const ALIAS_RETRY_MS = [2000, 5000, 15000]
 
 // One-line rendering of a classify() result for the debug log. EXPORTED AND PURE so the log format
@@ -506,22 +506,25 @@ function judgeBareReading(plantings, r, ctx) {
 
 // BUG-VOICEALIASFAILSOFT-001 — `aliasesKnown: false` says his taught names could not be read (the list
 // failed, or has not loaded yet), which is not the same as "he taught none". Every guard above that
-// keeps a taught name whole ("cucumber one" is Suyo Long, not "cucumber" + 1) reads that list, so
-// without it a NAMED sentence is not this reader's: it goes the ordinary way, which is what the live
-// app did with these sentences before this reader existed — "cucumber one" is then searched as the
-// words it is, and a search cannot put a number in a slot. A sentence of numbers alone is still read
-// here: no live alias is numbers only (33 of 33 carry a word, prod 2026-09-24), and "3 231" with a
-// crop chosen is the most common thing said on this page. Default true, so a caller with no list to
-// pass — every pure test — keeps meaning "none taught".
+// keeps a taught name whole ("cucumber one" is Suyo Long, not "cucumber" + 1) reads that list, and any
+// name followed by a bare number could be one he taught, so without it a NAMED sentence cannot be
+// split safely: it is REFUSED ('names'), and the caller clears the record as for any refused named
+// sentence (QA F10). Refused rather than sent the ordinary way, which was measured and is worse: the
+// ordinary search re-selects the crop and KEEPS the amounts already on the record, so "Stupice",
+// "5 count", "suyo long 3 231", "next" saved Suyo Long · 5 count — Stupice's count under another crop.
+// A planting's own whole name still passes (the guard below is first). A sentence of numbers alone is
+// still read: no live alias is numbers only (33 of 33 carry a word, prod 2026-09-24), and "3 231"
+// with a crop chosen is the most common thing said on this page. Default true, so a caller with no
+// list to pass — every pure test — keeps meaning "none taught".
 export function resolveBareOneBreath(plantings, info, {
   selected = null, aliasIndex = null, aliasNames = aliasIndex, aliasesKnown = true,
 } = {}) {
   if (!info) return null
-  if (!aliasesKnown && !info.nameless) return null
   // The whole head IS a planting's name ("cherry rescue 1", "eighteen eighty four"), or a name Dave
   // taught ("cucumber one", BLOCKING-2): a name, not a record — the ordinary search selects it, with or
   // without a trailing command, exactly as before.
   if (plantingsNamedExactly(plantings, info.head).length || aliasVarietyOf(aliasNames, info.head) != null) return null
+  if (!aliasesKnown && !info.nameless) return { kind: 'refuse', reason: 'names' }
   const judged = info.readings.map((r) => judgeBareReading(plantings, r, { selected, aliasIndex, aliasNames }))
   if (judged.some((j) => j.kind === 'ambiguous')) return { kind: 'refuse', reason: 'ambiguous' }
   const valid = judged.filter((j) => j.kind === 'valid')
@@ -836,9 +839,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     //
     // BUG-VOICEALIASFAILSOFT-001 — BUT IT NO LONGER PRETENDS HE TAUGHT NOTHING. fetchAliases answers
     // null for "could not read", and the state says so (aliasStateRef): the one-breath reader then
-    // leaves named sentences to the ordinary path instead of splitting "cucumber one" into the crop
-    // and an amount of 1 (review MINOR-9: "cucumber one", "next" saved a 1 count he never said, where
-    // the live app refused). A failed load is asked for again (ALIAS_RETRY_MS, and on every Start), and
+    // refuses a named sentence out loud instead of splitting "cucumber one" into the crop and an
+    // amount of 1 (review MINOR-9: "cucumber one", "next" saved a 1 count he never said, where the
+    // live app refused). A failed load is asked for again (ALIAS_RETRY_MS, and on every Start), and
     // whatever was held while it loaded is read the moment it answers either way.
     let retry = null
     let attempts = 0
@@ -1681,6 +1684,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     }
     const why = d.reason === 'run' ? 'two numbers ran together — say them with a pause, or with their units'
       : d.reason === 'numbers' ? 'more amounts than one record holds — say the count and the weight again'
+      // BUG-VOICEALIASFAILSOFT-001 — his taught names did not load, so a name and a number cannot be
+      // told apart; the planting's own name still works, and so does saying the parts separately.
+      : d.reason === 'names' ? 'the names you taught me have not loaded, so I cannot tell a name from an amount — say the planting, then the amounts'
       : 'the name and the numbers could be split more than one way — say the planting, then the amounts'
     say('warn', `Didn't catch that — ${why}.${droppedNote}`)
     noteMiss(`Didn't catch that — heard “${heard}”.`)

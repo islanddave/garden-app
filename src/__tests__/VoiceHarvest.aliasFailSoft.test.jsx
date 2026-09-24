@@ -9,7 +9,8 @@
 //
 // The fix under test, in one line each:
 //   * a failed or unreadable list is UNKNOWN (fetchAliases → null), and while it is unknown a NAMED
-//     one-breath sentence goes the ordinary way — a search cannot put a number in a slot;
+//     one-breath sentence is refused out loud and the record cleared, as for any refused named
+//     sentence — never split into a crop and an amount;
 //   * what is said before the list has loaded is HELD, in order, until it answers or ALIAS_WAIT_MS
 //     passes, so a merely slow list costs a moment, not the taught name;
 //   * a failed list is asked for again.
@@ -115,8 +116,8 @@ describe('the list is a loaded answer — the taught name is a name', () => {
 })
 
 describe('the list FAILED — nothing is saved from a taught name read as a crop and a number', () => {
-  // The ordinary path's answer to "cucumber one" with no taught names is "Nothing matched" — the live
-  // app's answer too — so every one of these ends with nothing saved, never with a guess.
+  // With his taught names unknown "cucumber one" is refused out loud (the live app, before the one-breath
+  // reader, answered "Nothing matched"), so every one of these ends with nothing saved, never a guess.
   it.each(['fail', 'malformed'].flatMap((how) => TAUGHT.map(([lines]) => [how, lines])))(
     '%s: %j saves nothing — no 1 count, no 1 g', async (how, lines) => {
       answers = [how]
@@ -136,16 +137,39 @@ describe('the list FAILED — nothing is saved from a taught name read as a crop
     expect(saved()).toEqual([['Suyo Long', 3, 'count', 231], ['Stupice', 3, 'count', 85]])
   })
 
-  it('a named one-breath sentence is left to the ordinary path — never split with the names unknown', async () => {
+  it('a named no-unit sentence is refused out loud — never split with the names unknown', async () => {
     answers = ['fail']
     const rec = await startListening()
     await speak(rec, 'suyo long 2 165 next')
     await settle()
     expect(saved()).toEqual([])
+    expect(statusText()).toBe("Didn't catch that — the names you taught me have not loaded, so I cannot tell a name from an amount — say the planting, then the amounts.")
     // Said with units, the unit reader owns it and the names do not matter to it.
     await speak(rec, 'suyo long three count 231 grams next')
     await settle()
     expect(saved()).toEqual([['Suyo Long', 3, 'count', 231]])
+  })
+
+  // Measured on the first cut of this fix, which sent a named sentence the ORDINARY way instead of
+  // refusing it: the search re-selected the new crop and kept the amounts already on the record, so the
+  // next "next" saved one crop's count under another (Suyo Long · 5 count for Stupice's 5). Refusing
+  // clears the record, as QA F10 does for every refused named sentence.
+  it.each([
+    [['Stupice', '5 count', 'suyo long 3 231', 'next']],
+    [['Stupice', '5 count', 'cucumber 3 231', 'next']],
+    [['Stupice', '5 count', 'cucumber one 3', 'next']],
+    [['Stupice', '5 count', 'stupice 3 231', 'next']],
+    [['Stupice', '5 count', 'danvers 126 200', 'next']],
+    [['Stupice', '5 count', 'peach tree 200', 'next']],
+    [['Stupice', '5 count', '231 grams', 'suyo long 3 231', 'next']],
+  ])('%j with the names unknown saves nothing — no amount moves to another crop', async (lines) => {
+    answers = ['fail']
+    const rec = await startListening()
+    for (const line of lines) await speak(rec, line)
+    await settle()
+    expect(saved()).toEqual([])
+    expect(screen.queryAllByTestId('voice-harvest-miss').map((m) => m.textContent).join(' '))
+      .toMatch(/Cleared 5 count/)
   })
 
   it('an EMPTY list is an answer — he taught nothing, and the one-breath reader reads names', async () => {
@@ -174,13 +198,15 @@ describe('the list FAILED — nothing is saved from a taught name read as a crop
     answers = ['fail', 'fail', 'live']
     const rec = await startListening()
     expect(aliasGets()).toBe(2)
-    await speak(rec, 'zzqq three')
+    // A phrase with no number: one ending in a number is refused while the list is unknown, and that
+    // refusal offers no teach — the case this reader cannot tell apart is the one it will not learn.
+    await speak(rec, 'zzqq quux')
     const teach = screen.getByTestId('voice-harvest-teach')
-    fireEvent.change(within(teach).getByLabelText('What did you mean by zzqq three'), { target: { value: 'suyo' } })
+    fireEvent.change(within(teach).getByLabelText('What did you mean by zzqq quux'), { target: { value: 'suyo' } })
     await act(async () => { fireEvent.click(within(teach).getByRole('button', { name: /Suyo Long/ })) })
     await advance(ALIAS_RETRY_MS[0] + ALIAS_RETRY_MS[1])
-    expect(aliasGets()).toBeGreaterThan(1)
-    for (const line of ['zzqq three', '3 count', 'next']) await speak(rec, line)
+    expect(aliasGets()).toBe(3)
+    for (const line of ['zzqq quux', '3 count', 'next']) await speak(rec, line)
     await settle()
     expect(saved()).toEqual([['Suyo Long', 3, 'count', null]])
   })
@@ -263,10 +289,16 @@ describe('the list is LATE — what is said waits for it, in order, then reads a
 
 describe('resolveBareOneBreath — aliasesKnown', () => {
   const suyo = byName('Suyo Long')
-  it('with the names unknown a NAMED sentence is not this reader\'s', () => {
-    for (const said of ['cucumber one', 'cucumber one next', 'cucumber one 3 200', 'suyo long 2 165', 'suyo long 2 165 next']) {
+  it('with the names unknown a NAMED sentence is refused — the list is what tells a name from an amount', () => {
+    for (const said of ['cucumber one', 'cucumber one next', 'cucumber one 3 200', 'suyo long 2 165', 'suyo long 2 165 next', 'big boy 2 3 count']) {
+      expect(resolveBareOneBreath(VOCAB, oneBreathReadings(said), { aliasesKnown: false }), said).toEqual({ kind: 'refuse', reason: 'names' })
+      expect(resolveBareOneBreath(VOCAB, oneBreathReadings(said), { selected: suyo, aliasesKnown: false }), said).toEqual({ kind: 'refuse', reason: 'names' })
+    }
+  })
+
+  it('a planting\'s own whole name is still a name with the names unknown', () => {
+    for (const said of ['cherry rescue 1', 'cherry rescue one', 'eighteen eighty four', '1884 next', 'danvers 126']) {
       expect(resolveBareOneBreath(VOCAB, oneBreathReadings(said), { aliasesKnown: false }), said).toBeNull()
-      expect(resolveBareOneBreath(VOCAB, oneBreathReadings(said), { selected: suyo, aliasesKnown: false }), said).toBeNull()
     }
   })
 
