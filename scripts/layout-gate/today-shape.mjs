@@ -247,13 +247,17 @@ async function attach(wsUrl) {
   const pending = new Map()
   ws.onmessage = e => {
     const m = JSON.parse(e.data)
-    if (m.id != null && pending.has(m.id)) { const { res, rej } = pending.get(m.id); pending.delete(m.id); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result) }
+    if (m.id != null && pending.has(m.id)) { const { res, rej, timer } = pending.get(m.id); clearTimeout(timer); pending.delete(m.id); m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result) }
   }
+  // The per-call timeout is CLEARED when the reply lands. Measured 2026-09-24: left armed, every
+  // answered call kept a 120s timer on the event loop, so a GREEN run finished measuring in ~12s and
+  // then sat for two more minutes before node could exit (a red run exits through process.exit and
+  // never showed it). In CI that is ~2 minutes of every green build.
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
     const mid = ++id
-    pending.set(mid, { res, rej })
+    const timer = setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, 120000)
+    pending.set(mid, { res, rej, timer })
     ws.send(JSON.stringify({ id: mid, method, params, ...(sessionId ? { sessionId } : {}) }))
-    setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, 120000)
   })
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
@@ -786,3 +790,4 @@ if (PROBE_NOTHING) {
   process.exit(1)
 }
 console.log('[today-shape] PASS')
+process.exit(0)
