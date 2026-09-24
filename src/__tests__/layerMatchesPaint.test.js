@@ -60,6 +60,11 @@ const SURFACES = [
   // Escape aimed at the picker would resolve to the route overlay under it and dismiss the whole
   // page mid-selection. It stays UNDER SYSTEM so a discard confirm still outranks it.
   { file: 'components/forms/ScopeChecklist.jsx', layer: 'DIALOG', paints: Z.dialog },
+  // V5-VOICECARE-001. Log many's voice frame — the same `position: fixed; inset: 0` geometry as the
+  // pick frame above, on the same page and in the same two hosts, so the same registration: it must
+  // clear the Sheet panel (200) it renders inside, or Escape would dismiss the whole page from under
+  // a read-back. `busy` while the write is in flight.
+  { file: 'components/LogManyVoice.jsx', layer: 'DIALOG', paints: Z.dialog },
   // V5-SOURCEPICKER-001. Same registration and the same reasoning as PlantingSelect above, because
   // it is the same kind of object: a combobox panel that is a DESCENDANT of the form hosting it, so
   // it paints inside that form's stacking context and is peer to it rather than a system-level
