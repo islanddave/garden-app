@@ -1,9 +1,10 @@
 {
-  "version": "4.147.0",
+  "version": "4.148.0",
   "date": "2026-09-24",
   "highlights": [
-    "Today: Skip now has an Undo, the same as logging a watering, and several skips in a row share one Undo. Skip is also a bigger target with a little space before the Moist or Water button, so a near-miss does nothing.",
-    "Today: when one plant fails during Water all or Log all, the ones that saved still get an Undo, and the one that failed stays on the list to try again.",
-    "Voice harvest: if your taught names haven't loaded yet, the app waits a moment for them, and it no longer reads a taught name like 'cucumber one' as a crop plus the number 1. If they can't load at all, say the planting first and then the amounts. Log many's voice asks for your taught names again if they didn't load, and the app now counts how often each taught name is used."
+    "Seeds: Back from a seed card's \"Saved from…\" link now returns you to the same spot in Saved seeds instead of the top. The same fix keeps your place when you come back to My seeds and the other lists that remember where you were.",
+    "Seeds: opening a seed packet or lot now starts at the top of its page instead of scrolled down at the edit form, and \"Set parent plant →\" takes you straight to the parent-plant card.",
+    "My seeds: the heat estimate (SHU) is never hidden on a row, F2 saved seed included. When a row is full, the heat moves to the next line whole.",
+    "Search: every seed packet and lot that matches now shows under Seeds, not just the first 20."
   ]
 }
