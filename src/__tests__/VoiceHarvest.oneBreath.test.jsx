@@ -922,6 +922,61 @@ describe('QA F1 — a nameless no-unit pair said twice writes no false "not capt
   })
 })
 
+// ── review MINOR-6 — a restatement never erases a SPOKEN amount silently ─────────────────────────────
+//
+// The seat's probe: "Suyo Long", "3 count", "2 165", "next" saved 2 count · 165 g, both assumed, and
+// nothing said the 3 count he had SPOKEN was gone. The restatement stands (QA F1); the loss is announced.
+describe('MINOR-6 — a spoken amount replaced by a restated pair is announced', () => {
+  it('the seat\'s probe: "3 count", then "2 165", then "next" — saved, and the replaced 3 count is a miss row', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3 count', '2 165', 'next']) await speak(rec, line)
+    await settle()
+    expect(posts().map((b) => [b.harvest, b.metadata.assumed_units])).toEqual([[H(2, 'count', 165), ['count', 'g']]])
+    expect(misses()).toEqual(['Replaced 3 count with 2 count (assumed) — the amounts were said again without units.'])
+    expect(statusText()).toBe('Saved Suyo Long — 2 count · 165 g (2 count assumed, 165 g assumed)')
+  })
+
+  it('both spoken slots replaced, no save word — the banner says so too, and a weight still held is named', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3 count', '231 grams', '2 165']) await speak(rec, line)
+    expect(statusText()).toBe('165 — say a unit to change it, or carry on. (2 count assumed)'
+      + ' (replaced 3 count with 2 count) (replaced 231 g with 165 g)')
+    expect(misses()).toEqual([
+      'Replaced 3 count with 2 count (assumed) — the amounts were said again without units.',
+      'Replaced 231 g with 165 g (assumed) — the amounts were said again without units.',
+    ])
+  })
+
+  it('the named form restates the same way — "suyo long 2 165 next" after a spoken 3 count', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3 count', 'suyo long 2 165 next']) await speak(rec, line)
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
+    expect(misses()).toEqual(['Replaced 3 count with 2 count (assumed) — the amounts were said again without units.'])
+  })
+
+  it.each([
+    [['Suyo Long', '3 count', '3 165', 'next'], H(3, 'count', 165)],               // the same amount, said again
+    [['Suyo Long', '3 count', '231 grams', '2 165 grams', 'next'], H(2, 'count', 165)],   // 165 g said WITH its unit
+  ])('%j — an unchanged amount, or one said again with its unit, is not a replacement', async (lines, harvest) => {
+    const rec = await startListening()
+    for (const line of lines) await speak(rec, line)
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([harvest])
+    // Only the count said without its unit over a SPOKEN 3 count is a replacement in the second script.
+    expect(misses()).toEqual(lines.includes('2 165 grams')
+      ? ['Replaced 3 count with 2 count (assumed) — the amounts were said again without units.'] : [])
+  })
+
+  it('an ASSUMED amount restated is not announced — it is the re-read QA F1 exists for; a held number left out still is', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3', '231', '2 165', 'next']) await speak(rec, line)
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
+    expect(misses()).toEqual(['Dropped 231 — no unit was said, and the record was said again without it.'])
+  })
+})
+
 // ── QA F2 — one big number where a count goes may be two numbers run together ────────────────────
 //
 // QA probe P18: "Suyo Long 2165 next" (Chrome writing "two, one sixty-five" as one number) SAVED 2165
