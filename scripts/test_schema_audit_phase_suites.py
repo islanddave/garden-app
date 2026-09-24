@@ -68,6 +68,30 @@ def test_the_suites_never_see_the_prod_dsn(monkeypatch):
     assert "NEON_DATABASE_URL" not in _env()
 
 
+@pytest.mark.parametrize("contract,want", [
+    # A real `name` on ANOTHER relation: only the exact-relation-set pin reds (it is meant to: a new relation needs
+    # its pin edit). The ban stays quiet; before 2026-09-24 it read every relation's columns and red here too.
+    ("garden_node: ['id', 'display_name'],\n  container: ['id'],\n  source: ['id', 'name'],",
+     ["garden-node guard declares garden_node and the container it joins"]),
+    # `name` on garden_node itself, the column that did not exist (BUG-SEEDDETAIL500-001): the ban reds.
+    ("garden_node: ['id', 'display_name', 'name'],\n  container: ['id'],",
+     ["garden-node guard does NOT declare `name` on garden_node (the column that did not exist)"]),
+], ids=["name-on-another-relation", "name-on-garden_node"])
+def test_phase4_name_ban_reads_garden_node_alone(tmp_path, contract, want):
+    """phase4 against a scratch tree: its own copy, the real auditor, and a synthetic garden-node guard. The
+    watch-route.js and merge.js checks are skipped there by the suite's own `if exists()`; section 8 runs in full."""
+    (tmp_path / "scripts").mkdir()
+    for name in ("test-schema-audit-phase4.py", "dev-main-schema-audit.py"):
+        with open(os.path.join(HERE, name)) as src, open(tmp_path / "scripts" / name, "w") as dst:
+            dst.write(src.read())
+    guard = tmp_path / "lambda" / "inventory-items" / "garden-node-columns.test.js"
+    guard.parent.mkdir(parents=True)
+    guard.write_text("const AUDIT_COLUMNS = {\n  " + contract + "\n};\n")
+    proc = _run(str(tmp_path / "scripts" / "test-schema-audit-phase4.py"))
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert [ln[len("FAIL - "):] for ln in proc.stdout.splitlines() if ln.startswith("FAIL - ")] == want, proc.stdout
+
+
 def test_a_red_suite_reads_red(tmp_path):
     """The runner and the assertion both carry the child's failure: an exit 1 is a red test, with its output."""
     red = tmp_path / "red.py"
