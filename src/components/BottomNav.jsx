@@ -373,13 +373,16 @@ export default function BottomNav() {
     setShowMore(!showMore)
   }
 
-  // 'full' and 'error' answer at the row that was tapped, in words, and only while the sheet is still
-  // open to show them — never as a toast.
+  // 'full', 'not-loaded' and 'error' answer at the row that was tapped, in words, and only while the
+  // sheet is still open to show them — never as a toast. 'not-loaded' is its own sentence because
+  // "try again" would be wrong there: nothing was refused, the pin list simply has not arrived yet
+  // (the provider has already sent for it — QA RE-1).
   async function onTogglePin(id) {
     setPinNote(null)
     const outcome = await togglePin(id)
     if (!moreOpen.current) return
     if (outcome === 'full') setPinNote({ id, text: 'Unpin one first' })
+    else if (outcome === 'not-loaded') setPinNote({ id, text: "Can't pin yet — your pins haven't loaded" })
     else if (outcome === 'error') setPinNote({ id, text: 'Not saved. Try again.' })
   }
 

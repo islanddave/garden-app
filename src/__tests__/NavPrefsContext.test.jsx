@@ -394,7 +394,7 @@ describe('a prefs body that is not fresh', () => {
     expect(text('bar')).toBe(DEFAULT_BAR)                          // not adopted either
     let outcome
     await act(async () => { outcome = await api.current.togglePin('photos') })
-    expect(outcome).toBe('error')
+    expect(outcome).toBe('not-loaded')
     expect(saveSpy).not.toHaveBeenCalled()
     expect(localStorage.getItem(MORE_PINS_CACHE_KEY)).toBeNull()
     view.unmount()
@@ -402,13 +402,53 @@ describe('a prefs body that is not fresh', () => {
     fetchPrefsSpy.mockResolvedValue(null)                          // a failed read, same rule
     await boot()
     await act(async () => { outcome = await api.current.togglePin('photos') })
-    expect(outcome).toBe('error')
+    expect(outcome).toBe('not-loaded')
     expect(saveSpy).not.toHaveBeenCalled()
   })
 
   it('…and a FRESH read makes the list known: the next tap saves on top of the server’s list', async () => {
     fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: ['seeds'], can_edit_bar: false })
     await boot()
+    await act(async () => { await api.current.togglePin('photos') })
+    expect(saveSpy.mock.calls[0][0].ids).toEqual(['seeds', 'photos'])
+  })
+
+  // QA RE-1, the C1 sequence. Prefs are read once per identity, so before this fix a failed boot read
+  // left every later tap refused until the next cold start — "trying again" could never succeed.
+  // Now the refused tap SENDS FOR the list, and the next tap after it lands saves on top of it.
+  // KILLING MUTATION: drop learnPins() from the refused tap. RESULT: RED — no second GET, and the
+  // next tap is refused again.
+  it('C1 — failed boot read → tap (refused, re-reads) → fresh body lands → next tap sends server list + id', async () => {
+    fetchPrefsSpy.mockResolvedValueOnce(null)                         // the boot read fails
+    await boot()
+    fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: ['seeds'], can_edit_bar: false })
+    let outcome
+    await act(async () => { outcome = await api.current.togglePin('photos') })
+    expect(outcome).toBe('not-loaded')
+    expect(saveSpy).not.toHaveBeenCalled()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)                    // a re-read went out
+    await flush()
+    expect(text('pins')).toBe('seeds')                               // …and its fresh body landed
+    await act(async () => { outcome = await api.current.togglePin('photos') })
+    expect(outcome).toBe('pinned')
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(saveSpy.mock.calls[0][0].ids).toEqual(['seeds', 'photos'])
+  })
+
+  // The same on reconnect — while the list is unknown, and only then.
+  // KILLING MUTATIONS: drop learnPins() from the `online` handler (RED: no GET on online); re-read on
+  // every `online` whether or not the list is known (RED: a third GET).
+  it('C1 — `online` re-reads while the list is unknown, and stops once it is known', async () => {
+    fetchPrefsSpy.mockResolvedValueOnce(null)
+    await boot()
+    fetchPrefsSpy.mockResolvedValue({ bar_layout: null, more_pins: ['seeds'], can_edit_bar: false })
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    await flush()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
+    expect(text('pins')).toBe('seeds')
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    await flush()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)                    // known now: no further reads
     await act(async () => { await api.current.togglePin('photos') })
     expect(saveSpy.mock.calls[0][0].ids).toEqual(['seeds', 'photos'])
   })

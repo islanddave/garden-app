@@ -15,11 +15,16 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act, within } from '@testing-library/react'
 
-const { prefsRef, saveSpy, navigateSpy } = vi.hoisted(() => ({
-  prefsRef: { current: null },
-  saveSpy: vi.fn(),
-  navigateSpy: vi.fn(),
-}))
+const { prefsRef, saveSpy, navigateSpy, fetchPrefsSpy } = vi.hoisted(() => {
+  const prefsRef = { current: null }
+  return {
+    prefsRef,
+    saveSpy: vi.fn(),
+    navigateSpy: vi.fn(),
+    // Answers with whatever prefsRef holds at the moment of the call, and counts the reads.
+    fetchPrefsSpy: vi.fn(async () => prefsRef.current),
+  }
+})
 
 // Link serialises state.background (the BottomNav.test.jsx convention) so "opens as a page, not an
 // overlay" is observable.
@@ -46,7 +51,7 @@ vi.mock('../lib/mode.js', () => ({
 }))
 vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
   ...(await orig()),
-  fetchNotificationPrefs: vi.fn(async () => prefsRef.current),
+  fetchNotificationPrefs: fetchPrefsSpy,
   saveMorePins: saveSpy,
 }))
 
@@ -81,6 +86,7 @@ const homeOrder = () => [...sheet().querySelectorAll('[data-more-row]')].map(r =
 beforeEach(() => {
   saveSpy.mockReset().mockResolvedValue({ ok: true })
   navigateSpy.mockClear()
+  fetchPrefsSpy.mockClear()
 })
 
 // The oracle is the LITERAL census of the doors shipped at ff1e03ea (helpers/shippedDoors.js), not
@@ -287,6 +293,30 @@ describe('the pin button (D2)', () => {
     await act(async () => { fireEvent.click(pinOf('photos')) })
     expect(pinOf('photos').getAttribute('aria-pressed')).toBe('false')
     expect(within(sheet().querySelector('[data-more-row="photos"]')).getByRole('status').textContent).toBe('Not saved. Try again.')
+  })
+
+  // QA RE-1 — a tap before this phone has ever read the person's pins (a failed boot read, no launch
+  // cache). Nothing was refused, so "Not saved. Try again." would be the wrong sentence: the row says
+  // what is true, saves nothing, and the list is sent for — so the NEXT tap works.
+  // KILLING MUTATIONS: map 'not-loaded' onto the 'error' note; drop learnPins() from the tap.
+  // RESULT: RED — the wrong words, or no second read and a second refusal.
+  it('a tap before the pins have loaded says so at the row, saves nothing, and sends for them', async () => {
+    localStorage.clear()
+    prefsRef.current = null                                           // the boot read fails
+    await act(async () => { render(<PrefsProvider><NavPrefsProvider><BottomNav /></NavPrefsProvider></PrefsProvider>) })
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(1)
+    prefsRef.current = { bar_layout: null, more_pins: ['seeds'], can_edit_bar: false }   // back online
+    openMore()
+    await act(async () => { fireEvent.click(pinOf('photos')) })
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    const row = sheet().querySelector('[data-more-row="photos"]')
+    expect(within(row).getByRole('status').textContent).toBe("Can't pin yet — your pins haven't loaded")
+    expect(pinOf('photos').getAttribute('aria-pressed')).toBe('false')
+    expect(saveSpy).not.toHaveBeenCalled()
+    expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)                    // the list was sent for
+    await act(async () => { fireEvent.click(pinOf('photos')) })
+    expect(saveSpy.mock.calls[0][0].ids).toEqual(['seeds', 'photos'])
+    expect(pinOf('photos').getAttribute('aria-pressed')).toBe('true')
   })
 
   it('an unpin of a pinned row from the Pinned block keeps it there until the next open', async () => {
