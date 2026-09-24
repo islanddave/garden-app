@@ -50,7 +50,9 @@
 //       phone SHOWS: My seeds drops a fact by wrapping it onto a hidden second line of its give-way
 //       flow, which is in the DOM and is not a line anyone sees (see WHAT IS PAINTED in MEASURE) —
 //       and none of what it shows may be sliced by the line's top or bottom edge, the shape a wrap
-//       takes inside that absolutely positioned flow, which never makes the line taller.
+//       takes inside that absolutely positioned flow, which never makes the line taller. ONE EXCEPTION:
+//       an F2 row's line 2 WRAPS BY DESIGN (BUG-MYSEEDSF2HIDESSHU-001) and is held by (p) instead — it
+//       may take a second line, only where it must, and nothing it shows may be sliced either.
 //   (g) THE AMOUNT IS NEVER CUT — every row that states an amount ([data-testid="my-seed-amount"])
 //       shows ALL of it: the span is inside its line's box on BOTH axes and inside everything that
 //       clips it, has width, and its text is not ellipsised — an amount wrapped out of sight below
@@ -92,11 +94,14 @@
 //   (p) F2 (V5-SEEDSTAB-001 slice 3) — the "F2 — won’t come true" chip (its words read from
 //       src/components/seed/seedLots.js) is on exactly the fixture's two lots saved off F1 plants and on
 //       no bought packet (three bought F1 packets are in the fixture: design §2 rule 8), and it is never
-//       a live chip — so (g) and (n) keep holding the amount and the live state whole on those rows. On
-//       an F2 row it OUTRANKS THE ESTIMATED HEAT (amended 2026-09-24): on both fixture F2 rows it is
-//       WHOLE at both widths, a heat is never shown beside a cut F2 chip, and at least one F2 row drops
-//       its heat to keep the chip whole (non-vacuity). On Saved seeds each F2 badge is whole and inside
-//       its card.
+//       a live chip — so (g) and (n) keep holding the amount and the live state whole on those rows. The
+//       F2 chip NEVER COSTS THE HEAT (BUG-MYSEEDSF2HIDESSHU-001, Dave 2026-09-24, reversing the slice 3
+//       amendment under which the chip outranked the heat and the heat was dropped): an F2 row's line
+//       WRAPS, so on both fixture F2 rows, at every width, the chip is WHOLE and the heat is SHOWN WHOLE;
+//       the line wraps ONLY WHERE IT MUST (an item that starts a later line did not fit in what the line
+//       above left — measured, not assumed); no line starts with a separator (a wrapped heat starts with
+//       its number); at most two lines; and at least one F2 row wraps its heat onto a second line at the
+//       width (non-vacuity). On Saved seeds each F2 badge is whole and inside its card.
 //
 // "ITS LINE-HEIGHT", MADE PRECISE, because the literal reading is wrong for this element. The second
 // line is a flex row of Badges and facts spans; its own computed line-height is `normal` at 12px
@@ -281,7 +286,15 @@ const VIEWS = [
   { view: 'saved', label: 'Saved seeds', body: 'saved-seeds-view', expect: { actions: 1, cards: 7, sections: 3, f2Cards: 2 } },
   { view: 'sow', label: 'Sow now', body: 'sow-now-view', expect: { actions: 0, minSowButtons: 10, minSowHeadings: 2 } },
 ]
-const VIEWPORTS = [[360, 640], [390, 844]]
+// CI's pair. GATE_VIEWPORTS="426x836,360x640" measures others on demand — 426x836 is Dave's own handset
+// (read off it 2026-09-24). The fixture's forcing rows were sized for 360 and 390, so at another width
+// a non-vacuity check can report a fixture that no longer forces its case rather than a defect.
+const VIEWPORTS = process.env.GATE_VIEWPORTS
+  ? process.env.GATE_VIEWPORTS.split(',').map(s => s.trim().split('x').map(Number))
+  : [[360, 640], [390, 844]]
+if (!VIEWPORTS.length || VIEWPORTS.some(v => v.length !== 2 || !v.every(n => Number.isInteger(n) && n > 0))) {
+  throw new Error(`GATE_VIEWPORTS="${process.env.GATE_VIEWPORTS}" is not a list of WxH`)
+}
 
 const failures = []
 const fail = m => failures.push(m)
@@ -406,7 +419,7 @@ const MEASURE = (v) => `(() => {
     for (let t = tw.nextNode(); t; t = tw.nextNode()) {
       if (!t.textContent.trim()) continue
       const rg = d.createRange(); rg.selectNodeContents(t)
-      for (const r of rg.getClientRects()) if (r.width > 0.5 && r.height > 0.5) out.push({ r, host: t.parentElement })
+      for (const r of rg.getClientRects()) if (r.width > 0.5 && r.height > 0.5) out.push({ r, host: t.parentElement, txt: t.textContent })
     }
     return out }
   const textRects = el => runsOf(el).map(x => x.r)
@@ -575,6 +588,41 @@ const MEASURE = (v) => `(() => {
         // (p): the F2 chip, measured the way (g)/(n) measure what must be whole — found by its words.
         f2: (() => { const c = chips.find(x => (x.textContent || '').trim() === ${JSON.stringify(F2_LABEL)})
           return c ? { ...whole(c, line, row), full: c.scrollWidth + c.offsetWidth - c.clientWidth, onLine: c.parentElement === line } : null })(),
+        // (p): a WRAPPING line (an F2 row's, BUG-MYSEEDSF2HIDESSHU-001), read as the browser broke it. Its
+        // items are grouped into the flex lines they landed on (a line starts below the last one's
+        // bottom), each with what it NEEDS on a line — its CONTENT (the extent of its own text, plus its
+        // padding and border) and its margins, never its box: an item stretched to force a wrap must not
+        // pass for one that needed the room. A 0-basis item (a give-way chip box, the tail) needs only its
+        // margins, and the heat's item is measured by the heat itself — the number, not the dot drawn
+        // outside it. An item that starts a later line must need more than the line above left
+        // ("needless" otherwise), and the first text each visual line PAINTS must not be a separator.
+        wrap: w.getComputedStyle(line).flexWrap !== 'wrap' ? null : (() => {
+          const fls = []
+          for (const el of items) {
+            const cs = w.getComputedStyle(el), b = el.getBoundingClientRect()
+            const heatIn = el.matches('${tid('my-seed-heat')}') ? el : el.querySelector('${tid('my-seed-heat')}')
+            const ink = textRects(heatIn || el)
+            const inkW = ink.length ? Math.max(...ink.map(k => k.right)) - Math.min(...ink.map(k => k.left)) : 0
+            const own = /^0(px|%)?$/.test(cs.flexBasis) ? 0
+              : inkW + px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth)
+            const it = { text: (el.textContent || '').trim(), heat: !!heatIn, need: own + px(cs.marginLeft) + px(cs.marginRight) }
+            const cur = fls[fls.length - 1]
+            if (cur && b.top < cur.bottom - 0.5) { cur.items.push(it); cur.bottom = Math.max(cur.bottom, b.bottom) }
+            else fls.push({ items: [it], bottom: b.bottom })
+          }
+          const width = line.clientWidth
+          const spare = fls.map(fl => width - fl.items.reduce((s, x) => s + x.need, 0))
+          const needless = fls.map((fl, k) => ({ line: k, text: fl.items[0].text, need: R(fl.items[0].need), room: k ? R(spare[k - 1]) : null }))
+            .filter(x => x.line > 0 && x.need <= x.room - 0.5)
+          const vb = []
+          for (const x of shownRuns(line, row).sort((a, b) => a.r.top - b.r.top)) { const last = vb[vb.length - 1]
+            if (last && x.r.top < last.bottom - 1) { last.runs.push(x); last.bottom = Math.max(last.bottom, x.r.bottom) }
+            else vb.push({ runs: [x], bottom: x.r.bottom }) }
+          const leads = vb.map(v => v.runs.reduce((a, c) => (c.r.left < a.r.left ? c : a)).txt.trim())
+          return { lines: fls.length, width: R(width), heatLine: fls.findIndex(fl => fl.items.some(x => x.heat)), spare: spare.map(R), needless,
+            danglers: leads.map((text, k) => ({ line: k, text })).filter(x => x.text.startsWith('·')),
+            needs: fls.map(fl => fl.items.map(x => '"' + x.text.slice(0, 22) + '" ' + R(x.need)).join(' + ')) }
+        })(),
         lineL: R(lb.left), lineR: R(lb.right), lineT: R(lb.top), lineB: R(lb.bottom),
         slack: fixed.length ? R(lb.right - Math.max(...fixed) + gives) : null,
         // REPORTED: what gives way on a crowded line, by design — chips ellipsised, then where-from/how-old.
@@ -899,7 +947,10 @@ async function allOpened(v, at, vw, vh) {
   for (const r of m.rows) {
     const L = r.line, L1 = r.line1, TT = r.title
     const name = TT ? TT.text : r.id
-    if (L && L.text && (L.ratio > ONE_LINE_RATIO || L.lines !== 1)) fail(`${at}: (f) "${name}": its second line is ${L.h}px against a one-line ${L.oneLineH}px (x${L.ratio}) across ${L.lines} visual line(s) — ${L.lines ? 'it wrapped' : 'it has text and no measurable line'}`)
+    // An F2 row's line 2 wraps by design (BUG-MYSEEDSF2HIDESSHU-001): (p) holds it — where it may wrap,
+    // how many lines, and that it shows text at all. Its text still may not be sliced (below).
+    const wrapsByDesign = !!(L && L.chipLabels.includes(F2_LABEL))
+    if (L && L.text && !wrapsByDesign && (L.ratio > ONE_LINE_RATIO || L.lines !== 1)) fail(`${at}: (f) "${name}": its second line is ${L.h}px against a one-line ${L.oneLineH}px (x${L.ratio}) across ${L.lines} visual line(s) — ${L.lines ? 'it wrapped' : 'it has text and no measurable line'}`)
     // One entry per run and position: an ellipsised text node hands back more than one rect for one run.
     if (L && L.sliced.length) fail(`${at}: (f) "${name}": its second line shows text cut by the line's edge — ${[...new Set(L.sliced.map(s => `"${s.text}" at y${s.t}-${s.b}`))].join(', ')} in a line spanning y${L.lineT}-${L.lineB} — it wrapped inside the line`)
     if (L1 && (L1.ratio > ONE_LINE_RATIO || L1.lines !== 1)) fail(`${at}: (f) "${name}": its first line is ${L1.h}px against a one-line ${L1.oneLineH}px (x${L1.ratio}) across ${L1.lines} visual line(s) — ${L1.lines ? 'it wrapped' : 'it has no measurable line'}`)
@@ -934,24 +985,36 @@ async function allOpened(v, at, vw, vh) {
   // ── (p) F2 (V5-SEEDSTAB-001 slice 3) — the chip rides on exactly the lots saved off F1 plants and on
   // no bought packet (design §2 rule 8), and it is neutral in tone, never a live chip — so it can never
   // take a live state's never-cut first place, and (g) and (n) above still hold the amount and the live
-  // state whole on these rows. AMENDED 2026-09-24 (orchestrator decision, reported to Dave): on an F2 row
-  // the chip OUTRANKS THE ESTIMATED HEAT — it is an item of the line, the heat rides the give-way box — so:
-  //   · on both fixture F2 rows the chip is WHOLE (not ellipsised, inside its line) at both widths;
-  //   · on ANY F2 row a heat is never shown beside a cut F2 chip (the heat gives way first);
-  //   · non-vacuity: at least one F2 row has DROPPED its heat to keep the chip whole at this width — a
-  //     row where everything fits would pass the order check for nothing.
+  // state whole on these rows. THE CHIP NEVER COSTS THE HEAT (BUG-MYSEEDSF2HIDESSHU-001, Dave 2026-09-24:
+  // "I want the shu shown" — reversing the slice 3 amendment, under which the chip outranked the heat and
+  // the heat was dropped): an F2 row's line WRAPS instead, so on each fixture F2 row, at every width:
+  //   · the chip is WHOLE (not ellipsised, inside its line) and the heat is SHOWN WHOLE — never dropped,
+  //     so (k)'s "or dropped whole" half does not apply to these rows;
+  //   · the line wraps ONLY WHERE IT MUST — whatever starts a later line needed more room than the line
+  //     above had left, by the line's own measurements; a heat pushed down with room to spare is red;
+  //   · no visual line starts with a separator — a wrapped heat starts with its number;
+  //   · it takes at most two lines (the chips and the amount, then the heat and the tail);
+  //   · non-vacuity: at least one F2 row has its heat on a SECOND line at this width — a row where
+  //     everything fits one line would pass all of the above for nothing.
   const f2Rows = m.rows.filter(r => r.line && r.line.chipLabels.includes(F2_LABEL))
   const f2Titles = f2Rows.map(r => r.title.text).sort()
   if (JSON.stringify(f2Titles) !== JSON.stringify([...e.f2Rows].sort())) fail(`${at}: (p) the F2 chip "${F2_LABEL}" is on ${JSON.stringify(f2Titles)}, expected exactly ${JSON.stringify(e.f2Rows)} — it belongs to lots saved off F1 plants and to nothing else`)
   for (const r of f2Rows) {
-    const L = r.line, lb = { l: L.lineL, r: L.lineR, t: L.lineT, b: L.lineB }
-    if (L.supplier) fail(`${at}: (p) "${r.title.text}" carries a supplier chip AND the F2 chip — a bought packet is never labelled F2`)
-    if (L.liveChips.some(c => c.text === F2_LABEL)) fail(`${at}: (p) "${r.title.text}": the F2 chip carries a live tone — it would take the first chip's never-cut place`)
-    if (!L.f2) { fail(`${at}: (p) "${r.title.text}": the F2 chip could not be measured`); continue }
-    if (e.f2Rows.includes(r.title.text) && notWhole(L.f2)) fail(`${at}: (p) "${r.title.text}": the F2 chip is not whole — ${cutMsg(L.f2, lb)} (${L.f2.full}px whole); on an F2 row it outranks the estimated heat and gives way only to the amount, a live state or a supplier`)
-    if (L.heat && L.heat.shown && notWhole(L.f2)) fail(`${at}: (p) shrink order — "${r.title.text}" shows its heat "${L.heat.text}" while its F2 chip is cut (${L.f2.w}px of ${L.f2.full}px) — on an F2 row the estimated heat gives way first`)
+    const L = r.line, lb = { l: L.lineL, r: L.lineR, t: L.lineT, b: L.lineB }, name = r.title.text
+    if (L.supplier) fail(`${at}: (p) "${name}" carries a supplier chip AND the F2 chip — a bought packet is never labelled F2`)
+    if (L.liveChips.some(c => c.text === F2_LABEL)) fail(`${at}: (p) "${name}": the F2 chip carries a live tone — it would take the first chip's never-cut place`)
+    if (!L.f2) { fail(`${at}: (p) "${name}": the F2 chip could not be measured`); continue }
+    if (!e.f2Rows.includes(name)) continue
+    if (notWhole(L.f2)) fail(`${at}: (p) "${name}": the F2 chip is not whole — ${cutMsg(L.f2, lb)} (${L.f2.full}px whole)`)
+    if (!L.heat) fail(`${at}: (p) "${name}" states no heat — the fixture's F2 lots are peppers with a heat on record, so the rule under test has nothing to hold`)
+    else if (!L.heat.shown || notWhole(L.heat) || !L.heat.inkIn) fail(`${at}: (p) "${name}": its heat "${L.heat.text}" is ${L.heat.shown ? `not whole — ${cutMsg(L.heat, lb)}` : 'DROPPED'} — on an F2 row the heat is never given up for the chip; the line wraps instead`)
+    const W = L.wrap
+    if (!W) { fail(`${at}: (p) "${name}": its line does not wrap (flex-wrap is not wrap) — an F2 row's line takes a second line rather than drop the heat`); continue }
+    for (const n of W.needless) fail(`${at}: (p) "${name}": "${n.text}" was moved to line ${n.line + 1} though the line above had ${n.room}px left and it needs ${n.need}px — an F2 row's line wraps only where it must (lines: ${W.needs.join(' | ')}; ${W.width}px wide)`)
+    for (const dl of W.danglers) fail(`${at}: (p) "${name}": its line ${dl.line + 1} starts with a separator ("${dl.text}") — a wrapped heat starts with its number`)
+    if (W.lines > 2) fail(`${at}: (p) "${name}": its line took ${W.lines} lines (${W.needs.join(' | ')}) — the fixture's F2 rows need at most two: the chips and the amount, then the heat`)
   }
-  if (!f2Rows.some(r => r.line.heat && !r.line.heat.shown && r.line.f2 && !notWhole(r.line.f2))) fail(`${at}: (p) non-vacuity — no F2 row dropped its heat to keep its F2 chip whole at ${vw}px (${f2Rows.map(r => `"${r.title.text}": heat ${r.line.heat ? (r.line.heat.shown ? 'shown' : 'dropped') : 'none'}`).join(', ')}), so nothing shows the chip outranking the heat`)
+  if (!f2Rows.some(r => r.line.wrap && r.line.wrap.heatLine > 0 && r.line.heat && r.line.heat.shown)) fail(`${at}: (p) non-vacuity — no F2 row has its heat on a second line at ${vw}px (${f2Rows.map(r => `"${r.title.text}": heat ${r.line.heat ? (r.line.heat.shown ? `shown on line ${r.line.wrap ? r.line.wrap.heatLine + 1 : '?'}` : 'dropped') : 'none'}`).join(', ')}), so nothing shows the heat moving down instead of being dropped`)
 
   // ── (l) THE THUMBNAIL BOX — before any image has landed.
   const before = thumbBoxes(at, m, 'before any packet image landed')
@@ -970,8 +1033,10 @@ async function allOpened(v, at, vw, vh) {
   console.log(`${P}: the 44-char row: title ${long.title.w}px column, ink ${long.title.inkW}px, ellipsis ${long.title.ellipsis} · line "${long.line.text}" ${long.line.h}px/${long.line.oneLineH}px, chips [${long.line.chipLabels.join(' | ')}], amount "${long.line.amount.text}" ${long.line.amount.w}px (whole: ${!!(long.line.amount.inLine && !long.line.amount.cut)}), rest ${long.line.restW}px of ${long.line.restInkW}px ink`)
   const gave = lr.filter(r => r.line.chipsCutLabels.length > 0 || (r.line.restW != null && r.line.restInkW > r.line.restW + 1))
   console.log(`${P}: [REPORTED — gives way by design, the never-cut items asserted whole in (g)(i)(j)(n), the heat whole or dropped in (k)] ${gave.length} row(s) whose chips or where-from/how-old are cut at this width: ${gave.map(r => `"${r.title.text}" (${r.line.chipsCutLabels.length ? `chip(s) cut: ${r.line.chipsCutLabels.map(c => `"${c}"`).join(', ')}` : 'no chip cut'}, rest ${r.line.restW}px of ${r.line.restInkW}px)`).join('; ') || 'none'}`)
-  console.log(`${P}: (p) F2 chip "${F2_LABEL}" — ${f2Rows.map(r => { const c = r.line.f2
-    return `"${r.title.text}" [${r.line.chipLabels.join(' | ')}]: ${c ? `${notWhole(c) ? `CUT, ${c.w}px of ${c.full}px shown` : `whole, ${c.w}px`}${c.onLine ? ' (item of the line)' : ' (in the give-way flow)'}` : 'not measured'}, amount ${r.line.amount ? `"${r.line.amount.text}" ${r.line.amount.w}px` : 'none'}, heat ${r.line.heat ? (r.line.heat.shown ? `SHOWN ${r.line.heat.w}px` : 'dropped whole') : 'none'}, ${R1(r.line.lineR - Math.max(...[c, r.line.amount, ...r.line.liveChips].filter(Boolean).map(x => x.r)))}px of the line left after the chip, the amount and any live chip` }).join(' · ')} · ${f1BoughtRows.length} bought F1 packet(s), none carrying it`)
+  // Each F2 row's lines as the browser broke them, with what every item needs and what each line had to
+  // spare — line 1's spare is what a wider font (CI's) can take before the amount moves down too.
+  console.log(`${P}: (p) F2 chip "${F2_LABEL}" — ${f2Rows.map(r => { const c = r.line.f2, W = r.line.wrap, h = r.line.heat
+    return `"${r.title.text}" [${r.line.chipLabels.join(' | ')}]: chip ${c ? (notWhole(c) ? `CUT, ${c.w}px of ${c.full}px shown` : `whole, ${c.w}px`) : 'not measured'}, amount ${r.line.amount ? `"${r.line.amount.text}" ${r.line.amount.w}px` : 'none'}, heat ${h ? (h.shown ? `"${h.text}" SHOWN ${h.w}px on line ${W ? W.heatLine + 1 : '?'}` : 'DROPPED') : 'none'}${W ? ` — ${W.lines} line(s) of ${W.width}px: ${W.needs.map((n, k) => `[${n}] ${W.spare[k]}px spare`).join(' / ')}` : ' — NOT WRAPPING'}` }).join(' · ')} · ${f1BoughtRows.length} bought F1 packet(s), none carrying it`)
   const hiddenWrap = lr.filter(r => r.line.domLines > r.line.lines)
   console.log(`${P}: (k)/(n) SHRINK ORDER — "${HEAT_DROPPED_ROW}": live chip ${dL.liveChips.map(c => `"${c.text}" ${c.w}px`).join(', ')}, amount "${dL.amount.text}" ${dL.amount.w}px, heat "${dL.heat.text.replace(/^·\s*/, '')}" ${dL.heat.shown ? `SHOWN ${dL.heat.w}px` : 'dropped whole'}, ${dL.slack}px to spare · "${NEUTRAL_GIVES_ROW}": "${gN.text}" ${gN.cut ? `ellipsised to ${gN.w}px of ${gN.full}px` : `whole, ${gN.w}px`}, heat "${gL.heat.text.replace(/^·\s*/, '')}" ${gL.heat.shown ? `whole, ${gL.heat.w}px` : 'DROPPED'}, ${gL.slack}px to spare · ${liveCount} live chips · [REPORTED] ${hiddenWrap.length} row(s) whose facts wrapped out of sight (in the DOM on ${hiddenWrap.map(r => r.line.domLines).join('/') || '-'} bands; (f) reads the one line shown): ${hiddenWrap.map(r => `"${r.title.text}"`).join(', ') || 'none'}`)
 
@@ -1382,8 +1447,8 @@ try {
         const extraPath = await shoot(join(OUTDIR, `seeds-page-${v.view}-${vw}x${vh}-${v.view === 'mine' ? 'longrow' : 'squeezed'}.png`))
         console.log(`${P}: evidence screenshot ${extraPath}`)
       }
-      // (p)'s evidence: on My seeds the two F2 lots, three rows apart in the open Pepper group — what (p)
-      // REPORTS about how much of each F2 chip shows is what this picture shows; on Saved seeds the first
+      // (p)'s evidence: on My seeds the two F2 lots, three rows apart in the open Pepper group — the lines
+      // (p) REPORTS for each F2 row, heat and all, are what this picture shows; on Saved seeds the first
       // card carrying the F2 badge.
       const f2Evidence = v.view === 'mine'
         ? `(${rowByTitle(VIEWS[0].expect.f2Rows[0])})`
