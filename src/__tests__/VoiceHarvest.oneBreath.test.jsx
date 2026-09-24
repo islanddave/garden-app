@@ -41,6 +41,9 @@ const PLANTS = [planting('p1', 'Suyo Long', 'cucumber'), planting('p2', 'Marketm
 let mic
 let plantsNow = PLANTS
 beforeEach(() => {
+  // Call history is per TEST: restoreAllMocks (afterEach) does not clear a vi.fn's calls, so without
+  // this a haptic assertion would see every cue fired by the tests before it.
+  vi.clearAllMocks()
   mic = installFakeSpeechRecognition(vi)
   plantsNow = PLANTS
   apiFetchSpy.mockReset()
@@ -196,10 +199,14 @@ describe('V5-VOICEVOCAB-001 — "planting 2 165" said in one breath', () => {
 
   it('a misheard save word keeps the amounts and refuses the save — "2 165 text"', async () => {
     const rec = await startListening()
-    for (const line of ['Suyo Long', '2 165 text']) await speak(rec, line)
+    await speak(rec, 'Suyo Long')
+    haptics.hapticDigitRejected.mockClear()
+    await speak(rec, '2 165 text')
     await settle()
     expect(posts()).toEqual([])
     expect(statusText()).toBe('Kept that. Didn\'t catch the last word — say "next" again.')
+    // QA F5 — the refused save word is felt as well as read.
+    expect(haptics.hapticDigitRejected).toHaveBeenCalledTimes(1)
     await speak(rec, 'next')
     await settle()
     expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
@@ -333,13 +340,21 @@ describe('V5-VOICEVOCAB-001 — one breath against the real planting names', () 
     ['peach tree 200'], ['suyo long to 165'], ['okra 80 200'],
   ])('%j is refused — the name and the numbers split more than one way', async (said) => {
     const rec = await startListening(VOCAB)
-    for (const line of ['Suyo Long', '3 count', said, 'next']) await speak(rec, line)
+    for (const line of ['Suyo Long', '3 count']) await speak(rec, line)
+    haptics.hapticDigitRejected.mockClear()
+    await speak(rec, said)
+    // QA F5 — the third channel: the refusal is felt, not only read.
+    expect(haptics.hapticDigitRejected).toHaveBeenCalledTimes(1)
+    await speak(rec, 'next')
     await settle()
     expect(posts()).toEqual([])
-    expect(misses()).toContain(`Didn't catch that — heard “${said}”.`)
-    // The sentence named a planting, so the old crop does not stay selected behind the refusal —
-    // the "next" after it cannot save Suyo Long's record.
-    expect(misses()).toContain('Not saved — still need a crop.')
+    // The sentence named a planting, so the record it could not read is not left standing behind the
+    // refusal — neither the crop nor (QA F10) its amounts — and the "next" after it saves nothing.
+    expect(misses()).toEqual([
+      'Cleared 3 count for Suyo Long — the record was started over after a sentence that could not be read.',
+      `Didn't catch that — heard “${said}”.`,
+      'Not saved — still need a crop and a quantity.',
+    ])
   })
 
   // DEFENSIVE, and said so: a homophone that is not the planting's own is caught for a name ENDING in
@@ -434,13 +449,17 @@ describe('V5-VOICEVOCAB-001 — census: no digit of a real name lands in a value
         }
       }
     }
-    // Not a vacuous sweep: most of it must actually APPLY.
-    // Not a vacuous sweep: most of it must actually APPLY (measured 2026-09-24: 75 of 105), and the
-    // refusals are the names that end in their own number followed by ONE amount, and Super Sweet 100.
-    expect(outcomes.filter(([, k]) => k === 'apply').length).toBeGreaterThanOrEqual(60)
+    // QA F7 — PINNED EXACTLY, not floored: the fixture is frozen, so any movement is a change in the
+    // rules. Measured 2026-09-24 (lane D4) and independently by the QA seat: 105 sentences, 75 apply
+    // and 30 refuse — the refusals are the names that end in their own number followed by ONE bare
+    // amount ("cherry rescue 1 7"), and every Super Sweet 100 form (two plantings share that name).
+    // A floor would let 15 applies turn silently into refusals.
+    const kinds = outcomes.reduce((c, [, k]) => ({ ...c, [k]: (c[k] ?? 0) + 1 }), {})
+    expect(kinds).toEqual({ apply: 75, refuse: 30 })
   })
 
   it("the name's OWN number as the first amount is never read as an amount", () => {
+    const kinds = {}
     for (const { planting: p, alias } of CENSUS) {
       for (const d of digitRuns(alias)) {
         for (const name of spokenForms(alias)) {
@@ -451,6 +470,7 @@ describe('V5-VOICEVOCAB-001 — census: no digit of a real name lands in a value
           const cut = words.slice(0, at).join(' ')
           for (const said of [`${cut} ${d} 200`, `${cut} ${SPOKEN[d]} 200`, `${name} 200`]) {
             const r = decide(said)
+            kinds[r?.kind ?? 'not-mine'] = (kinds[r?.kind ?? 'not-mine'] ?? 0) + 1
             if (r?.kind !== 'apply') continue
             // Allowed only as the name reading: the number stays in the name, 200 is the one amount.
             expect(r.groups.map((g) => g.value), `${said} → ${r.planting?.name}`).not.toContain(Number(d))
@@ -459,6 +479,9 @@ describe('V5-VOICEVOCAB-001 — census: no digit of a real name lands in a value
         }
       }
     }
+    // QA F7 — the adversarial half is pinned too, or a loop that refused EVERYTHING would pass: 84
+    // sentences, 69 refuse, 15 apply (each apply keeps the number in the name, checked above).
+    expect(kinds).toEqual({ refuse: 69, apply: 15 })
   })
 
   it('with the census planting already selected, bare amounts attach to it and never re-select by digit', () => {
@@ -500,5 +523,297 @@ describe('V5-VOICEVOCAB-001 — two valid readings that disagree are refused', (
   it('while the unambiguous sentences for each still apply', () => {
     expect(resolveBareOneBreath(TWO, oneBreathReadings('alpha 3 200'))).toMatchObject({ kind: 'apply', planting: { id: 'a' } })
     expect(resolveBareOneBreath(TWO, oneBreathReadings('alpha 7 3 200'))).toMatchObject({ kind: 'apply', planting: { id: 'a7' } })
+  })
+})
+
+// ── review IMPORTANT-1 — a save word saves only what its own sentence set ──────────────────────────
+//
+// With a record standing ("Suyo Long", "5 count") a sentence naming another planting whose head is
+// refused used to save the STANDING record — "danvers 12 three count 231 grams next" answered "Saved
+// Suyo Long — 5 count" (lane build), and prod does the same for 20 of the review's 120 standing-record
+// scripts. Every one of those 22 shapes, measured on the prod replica and the lane build (review §6):
+describe('IMPORTANT-1 — a refused sentence never lets its save word save the record from before', () => {
+  const STANDING_SAVED_ON_PROD_OR_LANE = [
+    'super sweet 100 3 count next', 'super sweet 100 three count 231 grams next',
+    'super sweet 100 3 count 231 grams next', 'super sweet 100 231 grams next',
+    'super sweet one hundred 3 count next', 'super sweet one hundred three count 231 grams next',
+    'super sweet one hundred 3 count 231 grams next', 'super sweet one hundred 231 grams next',
+    'tomato 1884 3 count next', 'tomato 1884 three count 231 grams next', 'tomato 1884 3 count 231 grams next',
+    'tomato 1884 231 grams next', 'marketmore 3 count next', 'marketmore three count 231 grams next',
+    'marketmore 3 count 231 grams next', 'marketmore 231 grams next', 'clemson 80 3 count next',
+    'clemson 80 three count 231 grams next', 'clemson 80 3 count 231 grams next', 'clemson 80 231 grams next',
+    'danvers 12 three count 231 grams next', 'danvers 12 3 count 231 grams next',
+  ]
+  it.each(STANDING_SAVED_ON_PROD_OR_LANE)('"Suyo Long", "5 count", %j saves nothing', async (said) => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '5 count', said]) await speak(rec, line)
+    await settle()
+    expect(posts()).toEqual([])
+    expect(statusText()).not.toContain('Saved')
+  })
+
+  it('a refused unit head says nothing was saved, and the "next" he says after it is not swallowed', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '5 count', 'danvers 12 three count 231 grams next']) await speak(rec, line)
+    expect(statusText()).toBe("Didn't catch that — say the planting, then the amount separately. Nothing was saved.")
+    await settle()
+    expect(posts()).toEqual([])
+    // The refused sentence changed nothing: the record on the card is still Suyo Long's, and a real
+    // "next" saves it — the cooldown the dropped save word claimed was given back.
+    expect(record()).toContain('Suyo Long')
+    expect(record()).toContain('5 count')
+    await speak(rec, 'next')
+    await settle()
+    expect(posts().map((b) => [b.plant_id, b.harvest])).toEqual([[byName('Suyo Long').id, H(5, 'count')]])
+  })
+
+  it('"clear" after a refused head still clears — only the save is withheld', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '5 count', 'tomato 1884 3 count clear']) await speak(rec, line)
+    expect(statusText()).toBe('Cleared. Say a crop to start the next one.')
+    expect(record()).not.toContain('5 count')
+  })
+
+  it('a head that applies still saves with its own save word — the control', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '5 count', 'suyo long 231 grams next']) await speak(rec, line)
+    await settle()
+    expect(posts().map((b) => [b.plant_id, b.harvest])).toEqual([[byName('Suyo Long').id, H(5, 'count', 231)]])
+  })
+})
+
+// ── QA F1 — a nameless pair applied twice is applied ONCE ──────────────────────────────────────────
+//
+// Chrome delivers the same pair twice in two measured shapes: a growing phrase whose partial a tick
+// commits after a pause (the 2026-09-16 real-page trace: "pineapple" committed by tick 17 ms before
+// "pineapple tomatillo"), and a re-delivered final in the next session 274 ms after its twin
+// (BUG-VOICEDUPE). The row was saved right either way, but the second application found both slots
+// full and wrote two FALSE "Dropped …" rows — "1 saved · 2 not captured" (QA probes P3/P4/P5/P12).
+describe('QA F1 — a nameless no-unit pair said twice writes no false "not captured" rows', () => {
+  const ledgerHead = () => screen.getByTestId('voice-harvest-ledger').firstChild.textContent
+  // Several finals in ONE session, `gapMs` apart, then the session ends — Chrome's growing phrase.
+  async function growing(finals, gapMs) {
+    const rec = mic.latest()
+    for (let i = 0; i < finals.length; i++) {
+      await act(async () => { rec.deliverFinal(finals[i]) })
+      if (i < finals.length - 1) await act(async () => { await vi.advanceTimersByTimeAsync(gapMs) })
+    }
+    await act(async () => { rec.endSession() })
+  }
+
+  it('P3: "2 165" then, after an 800 ms pause in the same session, "2 165 next"', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await growing(['2 165', '2 165 next'], 800)
+    await settle()
+    expect(posts().map((b) => [b.plant_id, b.harvest, b.metadata.assumed_units]))
+      .toEqual([['p1', H(2, 'count', 165), ['count', 'g']]])
+    expect(misses()).toEqual([])
+    expect(ledgerHead()).toBe('1 saved')
+  })
+
+  it('P4: "2", then "2 165", then "2 165 next", 800 ms apart in one session', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await growing(['2', '2 165', '2 165 next'], 800)
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
+    expect(misses()).toEqual([])
+    expect(ledgerHead()).toBe('1 saved')
+  })
+
+  it('P5: "2 165" re-delivered 274 ms later in the next session, then "next"', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(mic.latest(), '2 165')
+    await act(async () => { await vi.advanceTimersByTimeAsync(274) })
+    await speak(mic.latest(), '2 165')
+    expect(haptics.hapticDigitRejected).not.toHaveBeenCalled()
+    expect(statusText()).not.toContain('both filled')
+    await speak(mic.latest(), 'next')
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
+    expect(misses()).toEqual([])
+    expect(ledgerHead()).toBe('1 saved')
+  })
+
+  it('P12: the "drop count, keep grams" pair "2 165 grams" re-delivered, then "next"', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long')
+    await speak(mic.latest(), '2 165 grams')
+    await act(async () => { await vi.advanceTimersByTimeAsync(274) })
+    await speak(mic.latest(), '2 165 grams')
+    await speak(mic.latest(), 'next')
+    await settle()
+    expect(posts().map((b) => [b.harvest, b.metadata.assumed_units])).toEqual([[H(2, 'count', 165), ['count']]])
+    expect(misses()).toEqual([])
+    expect(ledgerHead()).toBe('1 saved')
+  })
+
+  it('a pair restates the record: a held number it leaves out is dropped AND said', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '7', '2 165']) await speak(rec, line)
+    expect(statusText()).toBe('165 — say a unit to change it, or carry on. (2 count assumed) (dropped 7 — no unit was said)')
+    await speak(rec, 'next')
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(2, 'count', 165)])
+    expect(misses()).toEqual(['Dropped 7 — no unit was said, and the record was said again without it.'])
+  })
+})
+
+// ── QA F2 — one big number where a count goes may be two numbers run together ────────────────────
+//
+// QA probe P18: "Suyo Long 2165 next" (Chrome writing "two, one sixty-five" as one number) SAVED 2165
+// count on the lane build — under MAX_PLAUSIBLE, so nothing warned; prod refused it. The rule: in a
+// one-breath final, a LONE amount of 4+ digits, no unit, landing in the COUNT slot, is refused.
+describe('QA F2 — a lone 4-digit amount that would be the count is refused, not saved', () => {
+  it('P18: "Suyo Long 2165 next" saves nothing, says why, and keeps the planting it named', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long 2165 next')
+    await settle()
+    expect(posts()).toEqual([])
+    expect(statusText()).toBe('Suyo Long — heard 2165 as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.')
+    expect(misses()).toEqual(['Not kept — heard “Suyo Long 2165 next”: 2165 may be two numbers run together.'])
+    expect(haptics.hapticDigitRejected).toHaveBeenCalled()
+    expect(record()).toContain('Suyo Long')
+    // …and the corrected sentence straight after is not swallowed by the refused one's save word.
+    await speak(rec, '2 165 next')
+    await settle()
+    expect(posts().map((b) => [b.plant_id, b.harvest])).toEqual([['p1', H(2, 'count', 165)]])
+  })
+
+  it('the same number where the WEIGHT goes is left alone — a count was already said', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3 count', '2165 next']) await speak(rec, line)
+    await settle()
+    expect(posts().map((b) => [b.harvest, b.metadata.assumed_units])).toEqual([[H(3, 'count', 2165), ['g']]])
+  })
+
+  it('said with its unit it is a weight, as before — the refusal is for the bare form only', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long 2165 grams')
+    expect(record()).toContain('2165 g')
+    expect(misses()).toEqual([])
+  })
+
+  it('a 3-digit lone amount is read as before (the rule is 4+ digits)', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long 216 next')
+    await settle()
+    expect(posts().map((b) => b.harvest)).toEqual([H(216, 'count')])
+  })
+})
+
+// ── QA F6 — an assumed value that looks high says so, like a spoken one ───────────────────────────
+//
+// QA probe P20: "Suyo Long", "3", "60000", "next" saved 60000 g with no "that looks high" — the spoken
+// "60000 grams" warns (P21). The warning now comes when the number is HELD (where it would land), and
+// the placed slot carries it into the saved banner and row.
+describe('QA F6 — an assumed value above the plausible line is flagged on the way in and on the save', () => {
+  it('P20: the held 60000 is flagged before "next", and the save says the guessed weight looks high', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3', '60000']) await speak(rec, line)
+    expect(statusText()).toBe('60000 — as grams that looks high. Say it again to correct it, or say a unit to change it. (3 count assumed)')
+    await speak(rec, 'next')
+    await settle()
+    expect(posts().map((b) => [b.harvest, b.metadata.assumed_units])).toEqual([[H(3, 'count', 60000), ['count', 'g']]])
+    expect(statusText()).toBe('Saved Suyo Long — 3 count · 60000 g (3 count assumed, 60000 g assumed — that looks high)')
+    expect(screen.getByTestId('voice-harvest-row').textContent).toContain('60000 g assumed — that looks high')
+  })
+
+  it('a plausible held weight is not flagged — the control', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3', '600']) await speak(rec, line)
+    expect(statusText()).toBe('600 — say a unit to change it, or carry on. (3 count assumed)')
+  })
+
+  it('placed by an utterance that does not save, the flag rides on the banner with a warn tone', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '3 count', '60000', 'text']) await speak(rec, line)
+    expect(statusText()).toBe('Didn\'t catch that — say "next" again. (60000 g assumed — that looks high)')
+  })
+})
+
+// ── QA F4 — the card never reads "—" for a number that has been said ──────────────────────────────
+//
+// QA probe P16: after "Suyo Long", "2", "165" the card read Quantity "2 count", Weight "—" while 165 was
+// held — on exactly the path the release notes advertise, against the card's own promise that "—" means
+// the words have not been said. D3's slice B (312c90c) had the idea; the wording now matches the banner
+// ("assumed … say a unit") instead of the stale "needs a unit" — units are optional.
+describe('QA F4 — a held number shows where it will land, marked as assumed', () => {
+  it('between the second number and "next", the Weight slot shows the held 165', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '2', '165']) await speak(rec, line)
+    expect(record()).toContain('Quantity2 count')
+    expect(record()).toContain('Weight165 g (assumed unless you say a unit)')
+    expect(record()).not.toContain('Weight—')
+  })
+
+  it('the same after the one-breath "Suyo Long 2 165", and it becomes a plain 165 g once placed', async () => {
+    const rec = await startListening()
+    await speak(rec, 'Suyo Long 2 165')
+    expect(record()).toContain('Weight165 g (assumed unless you say a unit)')
+    await speak(rec, 'grams')
+    expect(record()).toContain('Weight165 g')
+    expect(record()).not.toContain('assumed unless you say a unit')
+  })
+
+  it('a first held number shows in the Quantity slot, in the crop\'s unit', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', '5']) await speak(rec, line)
+    expect(record()).toContain('Quantity5 count (assumed unless you say a unit)')
+    expect(record()).toContain('Weight—')
+  })
+
+  it('with both slots filled the held number has nowhere to land, and the card does not pretend it does', async () => {
+    const rec = await startListening()
+    for (const line of ['Suyo Long', 'three count', '231 grams', '85']) await speak(rec, line)
+    expect(record()).toContain('Quantity3 count')
+    expect(record()).toContain('Weight231 g')
+    expect(record()).not.toContain('85')
+    expect(statusText()).toContain('both filled')
+  })
+})
+
+// ── QA F10 — a refused NAMED one-breath clears the record it abandons, and says what went ──────────
+//
+// QA probe P7: "Suyo Long", "3 count", "danvers 126 200" (refused), "danvers 126", "next" SAVED Danvers
+// 126 Carrot · 3 count — a count said for Suyo Long, under a crop named afterwards, while the reselect
+// banner said only "now say the count or the weight". Decision: the refusal clears the amounts along with
+// the crop (it already dropped the crop), because clearing is the option that cannot save them under a
+// different crop at all; what is cleared is said on the banner and in a miss row.
+describe('QA F10 — a refused named sentence cannot carry old amounts onto the next crop', () => {
+  it('P7: the 3 count said for Suyo Long is cleared and said, and cannot save under Danvers', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '3 count', 'danvers 126 200']) await speak(rec, line)
+    expect(statusText()).toBe("Didn't catch that — the name and the numbers could be split more than one way — say the planting, then the amounts. (cleared 3 count)")
+    expect(record()).toContain('Crop—')
+    expect(record()).toContain('Quantity—')
+    await speak(rec, 'danvers 126')
+    expect(statusText()).toBe('Danvers 126 Carrot — now say the count or the weight.')
+    await speak(rec, 'next')
+    await settle()
+    expect(posts()).toEqual([])
+    expect(misses()).toEqual([
+      'Cleared 3 count for Suyo Long — the record was started over after a sentence that could not be read.',
+      "Didn't catch that — heard “danvers 126 200”.",
+      'Not saved — still need a quantity.',
+    ])
+  })
+
+  it('a refused crowded name clears too, and offers the plantings to pick from', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '3 count', '231 grams', 'super sweet 100 3 200']) await speak(rec, line)
+    expect(statusText()).toBe('2 match “super sweet 100” — tap one, then say the amounts again. (cleared 3 count · 231 g)')
+    expect(record()).toContain('Quantity—')
+    expect(record()).toContain('Weight—')
+    expect(screen.getByTestId('voice-harvest-candidates').textContent).toContain('Super Sweet 100 Rescue')
+  })
+
+  it('a refused sentence of numbers only changes nothing — the control', async () => {
+    const rec = await startListening(VOCAB)
+    for (const line of ['Suyo Long', '3 count', 'ten five']) await speak(rec, line)
+    expect(record()).toContain('Suyo Long')
+    expect(record()).toContain('Quantity3 count')
   })
 })

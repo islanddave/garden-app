@@ -738,7 +738,7 @@ describe('BUG-VOICECOUNTSPLIT-001 — a value split across two utterances', () =
     // legitimately be a search term; only after one is chosen can it only be an amount.
     const rec = await startListening()
     await speak(rec, 'three')
-    expect(record()).not.toContain('needs a unit')
+    expect(record()).not.toContain('assumed unless you say a unit')
     expect(statusText()).toContain('Nothing matched')
   })
 
@@ -987,7 +987,7 @@ describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a n
     expect(statusText()).toContain('now say the count or the weight')
     expect(record()).toContain('1884')
     expect(record()).not.toContain('Suyo Long')
-    expect(record()).not.toContain('needs a unit')
+    expect(record()).not.toContain('assumed unless you say a unit')
   })
 
   it('still HOLDS a number that merely appears inside a name — the guard is not reopened', async () => {
@@ -1001,7 +1001,7 @@ describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a n
     await speak(rec, 'two')
     expect(record()).toContain('Suyo Long')
     expect(record()).not.toContain('Brentwood')
-    expect(record()).toContain('needs a unit')
+    expect(record()).toContain('Quantity2 count (assumed unless you say a unit)')
   })
 
   it('holds a number WORD even when a planting is named for it — the digit bound', async () => {
@@ -1016,7 +1016,7 @@ describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a n
     await speak(rec, 'Suyo Long')
     await speak(rec, 'three')
     expect(record()).toContain('Suyo Long')
-    expect(record()).toContain('needs a unit')
+    expect(record()).toContain('Quantity3 count (assumed unless you say a unit)')
   })
 
   it('takes a count against the planting it switched to — the fall-through lands somewhere usable', async () => {
@@ -1040,7 +1040,7 @@ describe('BUG-VOICECOUNTSPLIT-001 residuals — a number that is a NAME, and a n
     await speak(rec, 'Brentwood')
     expect(record()).toContain('Brentwood')
     expect(statusText()).toContain('dropped 3')
-    expect(record()).not.toContain('needs a unit')
+    expect(record()).not.toContain('assumed unless you say a unit')
   })
 
   it('APPLIES the held number on an utterance it did not understand — no longer a loss', async () => {
@@ -1135,7 +1135,7 @@ describe('BUG-VOICEHELDREPEAT-001 — a held number restated with its unit is th
     await speak(rec, 'Suyo Long')
     await holdByTick(rec, '87')
     // Precondition, so this cannot pass by never reaching the hold.
-    expect(record()).toContain('87 … needs a unit')
+    expect(record()).toContain('Quantity87 count (assumed unless you say a unit)')
 
     await act(async () => { rec.deliverFinal('87 G') })   // next index, same session
     await act(async () => { rec.endSession() })
@@ -1253,6 +1253,12 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
 
   // Speak each line, then let the write tick land. 2000 ms rather than the 1200 used above so a
   // second record's "next" clears the 1500 ms write cooldown the first one armed.
+  // QA F8 — exact rows, like the D3/D4 blocks: quality_rating and any stray key are pinned, and so is the
+  // planting the row was written against.
+  const H = (quantity, unit, weight) => (weight == null
+    ? { quantity, unit, quality_rating: null }
+    : { quantity, unit, quality_rating: null, weight, weight_unit: 'g' })
+
   async function saveAfter(rec, ...lines) {
     for (const line of lines) await speak(rec, line)
     await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
@@ -1265,7 +1271,8 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     // "text" (the measured mishear of "next") is unparsed, so it resolves the held 3 by slot order
     // without touching the crop; "next" then resolves the held 231 onto the weight axis and saves.
     const [body] = await saveAfter(rec, 'Suyo Long', 'three', 'text', '231', 'next')
-    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest).toEqual(H(3, 'count', 231))
     expect(body.metadata).toEqual({ harvest_input_source: 'voice', assumed_units: ['count', 'g'] })
   })
 
@@ -1273,7 +1280,8 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()
     const [body] = await saveAfter(rec, 'Suyo Long', 'three', '231 grams', 'next')
-    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest).toEqual(H(3, 'count', 231))
     expect(body.metadata.assumed_units).toEqual(['count'])
   })
 
@@ -1281,7 +1289,8 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()
     const [body] = await saveAfter(rec, 'Suyo Long', 'three count', '231', 'next')
-    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 231, weight_unit: 'g' })
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest).toEqual(H(3, 'count', 231))
     expect(body.metadata.assumed_units).toEqual(['g'])
   })
 
@@ -1294,7 +1303,8 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
       : Promise.resolve(createdEvent())))
     const rec = await startListening()
     const [body] = await saveAfter(rec, 'Green Magic', 'two', '150 grams', 'next')
-    expect(body.harvest).toMatchObject({ quantity: 2, unit: 'head', weight: 150, weight_unit: 'g' })
+    expect(body.plant_id).toBe('p9')
+    expect(body.harvest).toEqual(H(2, 'head', 150))
     expect(body.metadata.assumed_units).toEqual(['head'])
   })
 
@@ -1303,6 +1313,8 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()
     const [body] = await saveAfter(rec, 'Suyo Long', 'three count', '231 grams', 'next')
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest).toEqual(H(3, 'count', 231))
     expect(body.metadata).toEqual({ harvest_input_source: 'voice', assumed_units: [] })
   })
 
@@ -1310,6 +1322,8 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()
     const [body] = await saveAfter(rec, 'Suyo Long three count 231 grams next')
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest).toEqual(H(3, 'count', 231))
     expect(body.metadata.assumed_units).toEqual([])
   })
 
@@ -1317,7 +1331,8 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()
     const [body] = await saveAfter(rec, 'Suyo Long', 'three count', '85', '85 G', 'next')
-    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 85, weight_unit: 'g' })
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest).toEqual(H(3, 'count', 85))
     expect(body.metadata.assumed_units).toEqual([])
   })
 
@@ -1329,7 +1344,8 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     expect(statusText()).toContain('85 g assumed')
     expect(record()).toContain('3 count')
     const [body] = await saveAfter(rec, 'three count', '85 G', 'next')
-    expect(body.harvest).toMatchObject({ quantity: 3, unit: 'count', weight: 85, weight_unit: 'g' })
+    expect(body.plant_id).toBe('p1')
+    expect(body.harvest).toEqual(H(3, 'count', 85))
     expect(body.metadata.assumed_units).toEqual([])
   })
 
@@ -1337,9 +1353,12 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const rec = await startListening()
     const [first] = await saveAfter(rec, 'Suyo Long', 'three', '231 grams', 'next')
+    expect(first.plant_id).toBe('p1')
+    expect(first.harvest).toEqual(H(3, 'count', 231))
     expect(first.metadata.assumed_units).toEqual(['count'])
     const [, second] = await saveAfter(rec, 'Marketmore', 'two count', '100 grams', 'next')
     expect(second.plant_id).toBe('p2')
+    expect(second.harvest).toEqual(H(2, 'count', 100))
     expect(second.metadata.assumed_units).toEqual([])
   })
 
@@ -1349,6 +1368,7 @@ describe('V5-VOICEVOCAB-001 — the saved row records which unit was assumed', (
     for (const line of ['Suyo Long', 'three', 'text', 'clear']) await speak(rec, line)
     const [body] = await saveAfter(rec, 'Marketmore', 'two count', '100 grams', 'next')
     expect(body.plant_id).toBe('p2')
+    expect(body.harvest).toEqual(H(2, 'count', 100))
     expect(body.metadata.assumed_units).toEqual([])
   })
 })
