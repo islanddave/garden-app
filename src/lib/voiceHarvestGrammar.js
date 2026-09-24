@@ -384,6 +384,23 @@ export function foldNumberWords(text) {
 }
 
 /**
+ * V5-VOICEVOCAB-001 (lane D4) — is this phrase made of NOTHING BUT numbers?
+ *
+ * Digit literals and the canonical number words a name is spoken with (NAME_NUMBER_WORDS plus the
+ * scales). A phrase like that — "2", "1884", "eighteen eighty four" — can only ever be a planting's
+ * name by EXACT equality, never by the substring or fuzzy layers: "2" is a substring of Danvers 1*2*6,
+ * "18" of 1884, and the one-breath reader offering "2" as a name is how "2 165 grams" switched the crop
+ * to Danvers 126 Carrot (measured on cb32814 against the 244 real plantings). The homophones in
+ * NUMBER_WORDS (to/for/tree/…) are deliberately not numbers here: "peach tree" is a name.
+ */
+export function isNumberPhrase(raw) {
+  const toks = normalise(raw).split(' ').filter(Boolean)
+  return toks.length > 0 && toks.every((t) => /^\d+(\.\d+)?$/.test(t)
+    || Object.prototype.hasOwnProperty.call(NAME_NUMBER_WORDS, t)
+    || Object.prototype.hasOwnProperty.call(SCALES, t))
+}
+
+/**
  * Classify one utterance from a continuous recognition session.
  *
  * Returns one of:

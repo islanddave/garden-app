@@ -54,7 +54,7 @@ import { useCropTypes } from '../hooks/useCropTypes.js'
 import { fuzzyMatch } from '../lib/voiceFuzzyMatch.js'
 import { fetchAliases, indexAliases, resolveAlias, teachAlias } from '../lib/voiceAliases.js'
 import {
-  buildValue, classify, classifyPartial, foldNumberWords, normalise, segmentCandidates,
+  buildValue, classify, classifyPartial, foldNumberWords, isNumberPhrase, normalise, segmentCandidates,
   splitTrailingCommand, parseValueSequence,
 } from '../lib/voiceHarvestGrammar.js'
 import { recordVoiceEvent, recordVoiceMark } from '../lib/voiceDebug.js'
@@ -263,6 +263,46 @@ export function matchPlantingsWithRescue(plantings, spoken, aliasIndex = null) {
   return { hits: [], rescued: null }
 }
 
+// V5-VOICEVOCAB-001 (lane D4) — the NUMBERS in a name, as whole digit runs. Number words are folded to
+// the digits a planting is named with ("marvel of four" → 4, "cherry rescue one" → 1), and a digit run
+// glued to letters is split off them ("5-Color", "F1") so it compares as a run of its own.
+export function digitRuns(text) {
+  return foldNumberWords(text)
+    .replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2')
+    .split(/[^a-z0-9]+/)
+    .filter((t) => /^\d+$/.test(t))
+}
+
+// V5-VOICEVOCAB-001 (lane D4) — does this planting OWN every number left in the name that reached it?
+//
+// THE RULE THAT KEEPS A DIGIT FROM CHANGING SIDES. Every digit run in the spoken name must be a WHOLE
+// digit run of one of the planting's own aliases, counted with multiplicity. "danvers 126" owns 126;
+// "danvers 12" does not own 12 even though looseIncludes finds "danvers12" inside "danvers126carrot";
+// "suyo long 2" does not own 2 even though the fuzzy layer resolves it to Suyo Long (measured: it does).
+// A name that fails this is not a name — the number in it was an amount the split put on the wrong side.
+export function plantingOwnsNumbers(planting, name) {
+  const wanted = digitRuns(name)
+  if (!wanted.length) return true
+  return plantingAliases(planting).some((alias) => {
+    const pool = digitRuns(alias)
+    return wanted.every((d) => {
+      const i = pool.indexOf(d)
+      if (i < 0) return false
+      pool.splice(i, 1)
+      return true
+    })
+  })
+}
+
+// V5-VOICEVOCAB-001 (lane D4) — plantings whose alias IS this phrase, raw or with number words folded.
+// The only matcher a number-only phrase may use (see isNumberPhrase): whole-key equality cannot be
+// satisfied by a proper substring, which is the same bound namesAPlantingExactly puts on a bare digit.
+export function plantingsNamedExactly(plantings, spoken) {
+  const keys = new Set([looseKey(spoken), looseKey(foldNumberWords(spoken))].filter(Boolean))
+  return (plantings ?? []).filter((p) => plantingAliases(p)
+    .some((a) => keys.has(looseKey(a)) || keys.has(looseKey(foldNumberWords(a)))))
+}
+
 // V5-VOICEONEBREATH-001 — pick the ONE reading of a one-breath sentence that the live planting
 // vocabulary actually supports, or none.
 //
@@ -283,11 +323,25 @@ export function matchPlantingsWithRescue(plantings, spoken, aliasIndex = null) {
 // values, no reading is chosen — the caller falls through to "say the parts separately". A wrong
 // harvest committed silently is the one outcome this flow is not allowed to have, and a one-breath
 // sentence is where it is most reachable.
+//
+// V5-VOICEVOCAB-001 (lane D4) — TWO BOUNDS ON THE NAME HALF, both measured on cb32814 against the 244
+// real plantings, where "Suyo Long", "2 165 grams" SWITCHED the crop to Danvers 126 Carrot ("4 …" to
+// 1884, "5 …" to Chinese 5-Color, "6 …" to Danvers) and "cucumber 3 231 grams" kept Suyo Long's 231 g
+// while the 3 vanished into the name:
+//   * A name made ONLY of numbers resolves by exact equality or not at all (plantingsNamedExactly) —
+//     "2" offered as a name hit Danvers 1*2*6 through the substring layer.
+//   * Every number left in a name must be the planting's own (plantingOwnsNumbers) — "cucumber 3"
+//     reached Suyo Long through the fuzzy layer with the 3 still in it.
+// Neither bound touches a name without digits, and every digit-named planting still resolves by its
+// own name ("1884 two count", "super sweet one hundred three count", "danvers 126 3 count").
 export function resolveOneBreath(plantings, candidates, aliasIndex = null) {
   const survivors = []
   for (const c of candidates) {
-    const { hits } = matchPlantingsWithRescue(plantings, c.name, aliasIndex)
+    const hits = isNumberPhrase(c.name)
+      ? plantingsNamedExactly(plantings, c.name)
+      : matchPlantingsWithRescue(plantings, c.name, aliasIndex).hits
     if (hits.length !== 1) continue
+    if (!plantingOwnsNumbers(hits[0], c.name)) continue
     const keys = [looseKey(c.name), looseKey(foldNumberWords(c.name))]
     const exact = plantingAliases(hits[0]).some((a) => keys.includes(looseKey(a)))
     survivors.push({ ...c, planting: hits[0], exact })
