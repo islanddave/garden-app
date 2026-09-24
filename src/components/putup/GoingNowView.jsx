@@ -30,7 +30,7 @@ import { ErrorBanner } from '../forms'
 import {
   partitionGoing, describeAge, describeStage, describeExpectedWindow, startPromptState,
   submersionPrompt, START_CHIPS, startChipPatch, pickedDatePatch, startPatchViolatesPairing,
-  phPrompt, describeLastPhReading, phRecorderVisible,
+  fermentPrompts, FERMENT_STALL_NOTE, describeLastPhReading, phRecorderVisible,
   PAUSE_CTA, RESUME_CTA, OPEN_BATCH_CTA, CLOSED_DOOR_CTA, pausePatch,
 } from './goingNow.js'
 import PhReadingField from './PhReadingField.jsx'
@@ -187,7 +187,9 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, paused }) {
   const window = describeExpectedWindow(batch)
   const prompt = startPromptState(batch) === 'prompt'
   const submersion = submersionPrompt(batch, nowMs)
-  const phAsk = phPrompt(batch, nowMs)
+  // ONE pH question per card, chosen in goingNow.js — see fermentPrompts. Destructured rather than
+  // held as an object so a future edit cannot render both by reaching past the decision.
+  const { stall, cadence: phAsk } = fermentPrompts(batch, nowMs)
   const lastPh = describeLastPhReading(batch)
   // Both halves or neither: a reading whose date will not render is not a dated line, so it does not
   // render at all rather than becoming a bare "current pH".
@@ -238,6 +240,21 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, paused }) {
       {phAsk && (
         <div data-testid="going-batch-ph-prompt" style={{ marginTop: 4, color: P.mid, fontSize: '0.82rem' }}>
           {phAsk}
+        </div>
+      )}
+      {/* The one-week stall prompt (FOODSAFETY-RULING-V101 §4). It replaces the cadence line above
+          rather than stacking under it — the choice is made in goingNow.js, not here. Ordinary ink,
+          no badge, no warning colour and no urgency tone: the app is repeating a published deadline
+          and asking you to go and measure, which is the only thing it is entitled to do. The
+          attribution beneath it is not decoration — the deadline is borrowed from guidance written
+          for businesses, and §4 requires the card to say whose it is. */}
+      {stall && (
+        <div data-testid="going-batch-stall" style={{ marginTop: 4, color: P.mid, fontSize: '0.82rem' }}>
+          {stall}
+          <div data-testid="going-batch-stall-note"
+            style={{ marginTop: 3, color: P.light, fontSize: '0.78rem', lineHeight: 1.45 }}>
+            {FERMENT_STALL_NOTE}
+          </div>
         </div>
       )}
       {/* The newest reading, VERBATIM, with the date it was taken. Never a count, never a streak,
