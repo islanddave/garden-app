@@ -53,8 +53,9 @@ vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
 import BottomNav from '../components/BottomNav.jsx'
 import { PrefsProvider } from '../context/PrefsContext.jsx'
 import { NavPrefsProvider } from '../context/NavPrefsContext.jsx'
-import { DEFAULT_NAV_TABS, MOVABLE_TAB_KEYS, TAB_REGISTRY } from '../lib/navConfig.js'
-import { MORE_ROWS, MOVED_SUB } from '../lib/moreRegistry.js'
+import { DEFAULT_NAV_TABS, MOVABLE_TAB_KEYS } from '../lib/navConfig.js'
+import { MOVED_SUB } from '../lib/moreRegistry.js'
+import { SHIPPED_TAB_HREFS, SHIPPED_MORE_HREFS } from './helpers/shippedDoors.js'
 
 async function renderNav({ bar_layout = null, more_pins = null, can_edit_bar = false } = {}) {
   localStorage.clear()
@@ -82,26 +83,45 @@ beforeEach(() => {
   navigateSpy.mockClear()
 })
 
+// The oracle is the LITERAL census of the doors shipped at ff1e03ea (helpers/shippedDoors.js), not
+// anything derived from the registry this change ships — QA MINOR-3: an oracle built from MORE_ROWS
+// loses a door together with its row, so retiring a row stayed green here.
 describe('I1 — exactly one door per destination, bar ∪ sheet, for every move × pin state', () => {
-  const tabDoors = DEFAULT_NAV_TABS.filter(k => !TAB_REGISTRY[k].highlight).map(k => TAB_REGISTRY[k].to)
-  const rowDoors = MORE_ROWS.filter(r => r.enabled !== false && !r.component).map(r => r.to)
+  const CENSUS = [...SHIPPED_TAB_HREFS, ...SHIPPED_MORE_HREFS]
   const subsets = [[], ['garden'], ['harvests'], ['put-up'], ['garden', 'harvests'], ['garden', 'put-up'], ['harvests', 'put-up'], [...MOVABLE_TAB_KEYS]]
   const pinSets = [null, ['seeds', 'photos'], ['put-up', 'seeds'], ['future-row', 'sow', 'catch-up'], ['admin', 'releases', 'garden', 'seeds', 'photos']]
+  const doors = () => [
+    ...[...screen.getByLabelText('Main navigation').querySelectorAll('a[href]')].map(a => a.getAttribute('href')),
+    ...rowLinks().map(a => a.getAttribute('href')),
+  ]
+
+  it('SELF-TEST: the census is the 4 tab doors and the 15 More doors, with no repeats', () => {
+    expect(SHIPPED_TAB_HREFS).toHaveLength(4)
+    expect(SHIPPED_MORE_HREFS).toHaveLength(15)
+    expect(new Set(CENSUS).size).toBe(19)
+  })
 
   // KILLING MUTATIONS: draw a moved tab nowhere (a door lost); keep it on the bar AND add its row (a
-  // duplicate); draw a pinned row in Pinned AND at home (a duplicate). RESULT: RED for each.
-  it('every destination has one door and only one', async () => {
+  // duplicate); draw a pinned row in Pinned AND at home (a duplicate); RETIRE a More row (drop it from
+  // MORE_ROWS and put its id in RETIRED_MORE_IDS — the sanctioned removal path). RESULT: RED for each.
+  it('every shipped destination has one door and only one', async () => {
     for (const hidden of subsets) {
       for (const more_pins of pinSets) {
         const view = await renderNav({ bar_layout: { order: [...DEFAULT_NAV_TABS], hidden }, more_pins })
         openMore()
-        const bar = [...screen.getByLabelText('Main navigation').querySelectorAll('a[href]')].map(a => a.getAttribute('href'))
-        const doors = [...bar, ...rowLinks().map(a => a.getAttribute('href'))]
         const label = JSON.stringify({ hidden, more_pins })
-        expect([...doors].sort(), label).toEqual([...tabDoors, ...rowDoors].sort())
+        expect([...doors()].sort(), label).toEqual([...CENSUS].sort())
         view.unmount()
       }
     }
+  })
+
+  // The one door this change ADDS, and only for the person the server lets edit (D3): the header's
+  // "Edit tab bar" → /admin/config. Everything else is the census, unchanged.
+  it('with the editor allowed: the census plus exactly one /admin/config door', async () => {
+    await renderNav({ bar_layout: { order: [...DEFAULT_NAV_TABS], hidden: ['put-up'] }, more_pins: ['seeds'], can_edit_bar: true })
+    openMore()
+    expect([...doors()].sort()).toEqual([...CENSUS, '/admin/config'].sort())
   })
 })
 

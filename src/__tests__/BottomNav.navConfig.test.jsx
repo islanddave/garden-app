@@ -62,6 +62,7 @@ import BottomNav, { BOTTOM_NAV_HEIGHT_PX } from '../components/BottomNav.jsx'
 import { PrefsProvider } from '../context/PrefsContext.jsx'
 import { NavPrefsProvider } from '../context/NavPrefsContext.jsx'
 import { DEFAULT_NAV_TABS, MOVABLE_TAB_KEYS } from '../lib/navConfig.js'
+import { SHIPPED_MORE_HREFS } from './helpers/shippedDoors.js'
 
 const SHIPPED = ['Today', 'Garden', 'Create', 'Harvests', 'Put-Up', 'More']
 
@@ -247,14 +248,11 @@ describe('I5 — a value that moves nothing draws today’s sheet, with no extra
   const sheetHrefs = () => [...screen.getByRole('dialog', { name: 'More navigation options' }).querySelectorAll('a[href]')]
     .map(a => a.getAttribute('href'))
 
+  // The reference is the LITERAL sheet shipped at ff1e03ea (helpers/shippedDoors.js), in order — not
+  // this change's own null-layout render, which would drift with any row the registry lost (QA MINOR-3).
   it('null, all 120 orders and malformed values: the shipped sheet, row for row', async () => {
-    const reference = await renderWithLayout(undefined)
-    fireEvent.click(screen.getByRole('button', { name: 'More navigation options' }))
-    const shipped = sheetHrefs()
-    expect(shipped).not.toContain('/put-up')
-    expect(shipped.length).toBeGreaterThanOrEqual(14)
-    reference.unmount()
-    const values = [...permutations(DEFAULT_NAV_TABS).map(order => layout(order)), ['today', 'garden'], { hidden: 'put-up' }]
+    const shipped = SHIPPED_MORE_HREFS
+    const values = [undefined, ...permutations(DEFAULT_NAV_TABS).map(order => layout(order)), ['today', 'garden'], { hidden: 'put-up' }]
     for (const value of values) {
       const view = await renderWithLayout(value)
       fireEvent.click(screen.getByRole('button', { name: 'More navigation options' }))
