@@ -67,30 +67,34 @@
 //   · A used-up packet (quantity 0), which My seeds files under "Sowed previously".
 //   · An identical pair (same cultivar, vendor, year and count) with a LONG name, so line 1 carries
 //     the ordinal ("1 of 2 identical") beside a title that has to ellipsise to make room for it.
-//   · THE SHRINK ORDER (UX spec §1.3: the supplier chip, the amount and a live state chip are never
-//     cut; then the heat is dropped whole; then neutral chips ellipsise; the tail is cut first) —
-//     one row per step that a crowded line takes, both peppers, both forced at 360 AND 390:
+//   · THE SHRINK ORDER (UX spec §1.3, amended 2026-09-24 by BUG-MYSEEDSF2HIDESSHU-001: the supplier
+//     chip, the amount and a live state chip are never cut; the heat is never cut or dropped — when
+//     the line has no room it moves to the next line, whole; neutral chips ellipsise before it has to;
+//     the tail is cut first) — one row per step that a crowded line takes, both peppers, both forced at
+//     360 AND 390 (and at 426, Dave's phone):
 //       "Hot Paper Lantern", a saved lot DRYING with "approx. 1200 seeds · 12.5 g" and an estimated
-//       heat: the live "Drying" chip and the amount fill the line, so the heat must go, whole (the
-//       lane brief counted four such lots on prod, 2026-09-19: drying peppers with a seed measure
-//       and a heat figure, whose "Drying" chip the old line clipped);
+//       heat: the live "Drying" chip and the amount fill the line, so the heat must move to the next
+//       line, whole (until 2026-09-24 it was dropped; the lane brief counted four such lots on prod,
+//       2026-09-19: drying peppers with a seed measure and a heat figure, whose "Drying" chip the old
+//       line clipped);
 //       "Hungarian Hot Wax", an ARCHIVED Sandia packet, 2 packets, with a heat figure: the heat fits
-//       only if "Archived for this season" gives way — so the chip ellipsises and the heat stays. Its
-//       heat is a SHORT one on purpose ("5K–15K SHU"): the row keeps ~45px of the chip at 360 on the
-//       Mac, so a font ~20% wider still fits the heat, and a CI run can never drop it for width alone
-//       (a "100K–350K SHU" there left 23.5px — gone at ~10% wider text, a false shrink-order red).
+//       only if "Archived for this season" gives way — so the chip ellipsises and the heat stays on
+//       line 1. Its heat is a SHORT one on purpose ("5K–15K SHU"): the row keeps ~45px of the chip at
+//       360 on the Mac, so a font ~20% wider still fits the heat, and a CI run can never push it down
+//       for width alone (a "100K–350K SHU" there left 23.5px — gone at ~10% wider text, a false
+//       shrink-order red).
 //   · A retired packet (status chip), a seeds-each packet, an ounce-unit packet, a drying lot, a
 //     second fermenting lot at day 1 (under the warn threshold, so exactly ONE ferment is due), and
 //     a stored saved lot with a counted yield. Saved seeds counts SEVEN saved lots in three stages
 //     (the drying Hot Paper Lantern is the fifth, the two F2 lots below the sixth and seventh);
 //     gate:seeds-saved has its own harness and does not move.
 //   · F2 (V5-SEEDSTAB-001 slice 3): two lots saved off F1 plants, each carrying the
-//     "F2 — won’t come true" chip, which never costs the heat (BUG-MYSEEDSF2HIDESSHU-001): an F2 row's
-//     line wraps instead — "Ristra Cayenne II Saved seed 2026" stored (the chip leads the line, whole,
-//     with the amount the gate's (g) holds whole beside it, and the heat on a second line at 360 and 390)
-//     and "Thai Dragon" drying (the chip follows the live "Drying" chip, which (n) holds whole; its heat
-//     on a second line too). The bought F1 packets (Sungold F1, the Megatron pair) carry breeding_system
-//     'f1' too and must show no F2 chip (design §2 rule 8).
+//     "F2 — won’t come true" chip, which never costs the heat (BUG-MYSEEDSF2HIDESSHU-001): the line
+//     wraps instead, as every row's does — "Ristra Cayenne II Saved seed 2026" stored (the chip leads
+//     the line, whole, with the amount the gate's (g) holds whole beside it, and the heat on a second
+//     line at 360 and 390) and "Thai Dragon" drying (the chip follows the live "Drying" chip, which (n)
+//     holds whole; its heat on a second line too). The bought F1 packets (Sungold F1, the Megatron
+//     pair) carry breeding_system 'f1' too and must show no F2 chip (design §2 rule 8).
 //
 // DATES are relative to the run, like seedssaved.jsx, and stage dates are pinned to MID-DAY Eastern:
 // elapsedDays() counts CALENDAR days in Eastern (seedLots.js), so an instant 5x24h ago read at 00:30
