@@ -43,9 +43,16 @@ const SRC = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
 const GARDEN_NODE_SQLS = [...SRC.matchAll(/sql`[^`]*garden_node[^`]*`/g)].map((m) => m[0]);
 
 // The germination summary — the query BUG-SEEDDETAIL500-001 actually occurred in. Isolated by the
-// column only it selects, so the display_name assertions below cannot be satisfied by the
+// predicate only it carries, so the display_name assertions below cannot be satisfied by the
 // ownership gate's SQL (which selects no name at all) nor drift onto it if the order changes.
-const GERMINATION_SQL = GARDEN_NODE_SQLS.find((s) => /source_inventory_item_id/.test(s)) ?? '';
+// V5-SEEDSTAB-001 slice 3: it was isolated by `source_inventory_item_id`, which sown_from now shares —
+// and sown_from sits beside it in one Promise.all, so "the first one that mentions it" stopped naming
+// one query. `seeds_sown IS NOT NULL` is the germination read's alone.
+const GERMINATION_SQL = GARDEN_NODE_SQLS.find((s) => /seeds_sown\s+IS\s+NOT\s+NULL/.test(s)) ?? '';
+// V5-SEEDSTAB-001 slice 3 — sown_from, the plantings sown from the packet: the one garden_node read
+// that joins the container and tests archived_at (sown-from.test.js holds its WHERE to the plants
+// Lambda's). Isolated by that archive clause.
+const SOWN_FROM_SQL = GARDEN_NODE_SQLS.find((s) => /\bp\.archived_at\s+IS\s+NULL/.test(s)) ?? '';
 
 // L-081 KEYED contract (Phase 1, keyed form added 2026-08-28). Verified present on
 // public.garden_node in prod 2026-08-28 via information_schema.
@@ -69,6 +76,22 @@ const AUDIT_COLUMNS = {
     // V4-SEEDLINK-001 — the /source-plant ownership gate's predicate column. Verified present on
     // public.garden_node in prod 2026-09-02 via information_schema, like every entry above it.
     'created_by',
+    // V5-SEEDSTAB-001 slice 3 — sown_from: the planting's status for its link, its container for the
+    // ownership arms, and archived_at for the Archive-Hiding Rule. Verified present on
+    // public.garden_node in prod AND staging 2026-09-23 via information_schema.
+    'status',
+    'container_id',
+    'archived_at',
+  ],
+  // V5-SEEDSTAB-001 slice 3 — the first container read in this directory: sown_from LEFT JOINs it for
+  // the plants Lambda's ownership arm, container-deleted gate and archived-container clause. Declared
+  // here so the joined relation is audited (Phase 4 census). Verified present on public.container in
+  // prod AND staging 2026-09-23 via information_schema.
+  container: [
+    'id',
+    'created_by',
+    'deleted_at',
+    'archived_at',
   ],
 };
 
@@ -123,5 +146,52 @@ describe('BUG-SEEDDETAIL500-001 — garden_node column contract', () => {
     const page = readFileSync(resolve(__dirname, '../../src/pages/InventoryDetail.jsx'), 'utf8');
     expect(page).toMatch(/sowings\.map/);
     expect(page).toMatch(/\{s\.name\}/);
+  });
+
+  // ── V5-SEEDSTAB-001 slice 3 — sown_from, the second garden_node read on the detail GET ───────────
+  it('isolates sown_from as its own statement, distinct from the germination summary', () => {
+    expect(SOWN_FROM_SQL, 'the sown_from read must still be findable').toBeTruthy();
+    expect(SOWN_FROM_SQL).not.toBe(GERMINATION_SQL);
+    expect(GERMINATION_SQL).not.toMatch(/archived_at/);
+    expect(SOWN_FROM_SQL).not.toMatch(/seeds_sown/);
+  });
+
+  it('sown_from selects display_name as name (the same alias, the same 500 if it slips) and a link\'s four fields', () => {
+    expect(SOWN_FROM_SQL).toMatch(/SELECT\s+p\.id,\s*p\.display_name\s+AS\s+name,\s*p\.sown_at,\s*p\.status\s+FROM\s+public\.garden_node\s+p\b/i);
+    const page = readFileSync(resolve(__dirname, '../../src/pages/InventoryDetail.jsx'), 'utf8');
+    // The page renders exactly those: the link target, the name, the date and the status words.
+    expect(page).toMatch(/sown_from\.map/);
+    expect(page).toMatch(/\/plantings\/\$\{p\.id\}/);
+    expect(page).toMatch(/\{p\.name\}/);
+    expect(page).toMatch(/p\.sown_at/);
+    expect(page).toMatch(/statusLabel\(p\.status\)/);
+  });
+
+  it('every container column a garden_node read reaches for (pp.<col>) is a real container column', () => {
+    // The garden_node sweep above cannot see these: `\bp\.` never matches inside `pp.`. The contract is
+    // what Phase 1 audits against prod, so a pp.<col> missing from it is a column nothing checks.
+    const referenced = [...new Set(GARDEN_NODE_SQLS.flatMap(
+      (q) => [...q.matchAll(/\bpp\.([a-z_][a-z0-9_]*)\b/gi)].map((m) => m[1]),
+    ))].sort();
+    expect(referenced).toEqual([...AUDIT_COLUMNS.container].sort());
+    // Joined as the plants Lambda joins it, so pp is the planting's own container and nothing else.
+    expect(SOWN_FROM_SQL).toMatch(/LEFT\s+JOIN\s+public\.container\s+pp\s+ON\s+pp\.id\s*=\s*p\.container_id/);
+  });
+
+  it('declares its contract in the one shape scripts/dev-main-schema-audit.py can read', () => {
+    // The auditor's own regexes (_AUDIT_COLUMNS_DECL, _AUDIT_COLUMNS_PAIR, the quoted-identifier
+    // collector), run over this file: what it will audit against prod must be exactly the literal the
+    // assertions above use. The terminating `};` is mandatory — without it the auditor skips the block.
+    const self = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    const decl = self.match(/const\s+AUDIT_COLUMNS\s*=\s*\{([\s\S]*?)\};/);
+    expect(decl, 'AUDIT_COLUMNS literal not found by the auditor pattern').toBeTruthy();
+    // The match must stop at the block's OWN `};`, not run on to the next one in the file.
+    expect(decl[1]).not.toMatch(/\bconst\b/);
+    const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
+    expect(pairs.map((m) => m[1]).sort()).toEqual(Object.keys(AUDIT_COLUMNS).sort());
+    for (const [, table, body] of pairs) {
+      const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);
+      expect(cols, table).toEqual(AUDIT_COLUMNS[table]);
+    }
   });
 });

@@ -45,6 +45,23 @@ describe('seedFacts', () => {
     expect(seedFacts({ breeding_system: 'open_pollinated' })[0].value).toBe('Open-pollinated')
     expect(seedFacts({ breeding_system: 'landrace' })[0].value).toBe('Landrace')
   })
+
+  // V5-SEEDSTAB-001 slice 3 — the facts must not tell Dave a jar of F2 seed is "F1 hybrid". Both
+  // readers (My seeds' expanded row, the detail page's packet card) change together, here.
+  it('a lot saved off an F1 plant reads as F2 from an F1 parent — never "F1 hybrid"; a bought packet keeps "F1 hybrid"', () => {
+    const breeding = (i) => seedFacts(i).find((f) => f.key === 'breeding')?.value
+    for (const saved of [{ seed_stage: 'stored' }, { source_plant_id: 'pl-1' }, { source_kind: 'farm_stand' }]) {
+      expect(breeding({ breeding_system: 'f1', ...saved })).toBe('F2 — won’t come true (parent F1 hybrid)')
+      expect(breeding({ breeding_system: 'f1', ...saved })).not.toBe('F1 hybrid')
+    }
+    expect(breeding({ breeding_system: 'f1' })).toBe('F1 hybrid')
+    expect(breeding({ breeding_system: 'f1', source_id: 'src-sandia' })).toBe('F1 hybrid')
+    // A saved lot of any other cultivar keeps the cultivar's own word — it is only F1 that turns over.
+    expect(breeding({ breeding_system: 'open_pollinated', seed_stage: 'stored' })).toBe('Open-pollinated')
+    expect(breeding({ breeding_system: 'unknown', seed_stage: 'stored' })).toBeUndefined()
+    // Same place in the fixed order: last.
+    expect(seedFacts({ ...PEPPER, seed_stage: 'stored' }).map((f) => f.key)).toEqual(['heat', 'origin', 'species', 'dtm', 'breeding'])
+  })
 })
 
 describe('heatFact', () => {

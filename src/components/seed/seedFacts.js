@@ -6,7 +6,7 @@
 // it is the fact looked for on a pepper, so "not recorded" goes where the eye goes. Pure: each fact
 // is { key, label, value, italic? } with a string value, and the pages own the markup.
 import { heatOf } from './mySeedsModel.js'
-import { isSavedLot } from './seedLots.js'
+import { isSavedLot, isF2Lot, F2_LABEL } from './seedLots.js'
 import { fmtShu } from '../../lib/varietySpec.js'
 
 // Where a Scoville figure came from, in words (UX spec §2). Never the LOT's supplier: heat is a
@@ -68,7 +68,9 @@ export function seedFacts(i, { from = '', compact = false } = {}) {
       value: `${lo === hi ? lo : `${lo}–${hi}`} days${DTM_BASIS_SUFFIX.get(i?.dtm_basis) ?? ''}`,
     })
   }
-  const breeding = BREEDING_LABEL.get(i?.breeding_system)
+  // V5-SEEDSTAB-001 slice 3 — a lot saved off an F1 plant is not "F1 hybrid": the cultivar is, the seed
+  // in this jar is its F2 (seedLots.isF2Lot). A bought packet keeps the cultivar's own word.
+  const breeding = isF2Lot(i) ? `${F2_LABEL} (parent F1 hybrid)` : BREEDING_LABEL.get(i?.breeding_system)
   if (breeding) out.push({ key: 'breeding', label: 'Breeding', value: breeding })
   return out
 }

@@ -25,6 +25,7 @@ import MySeeds from '../pages/MySeeds.jsx'
 import { useSeedItems } from '../hooks/useSeedItems.js'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { supplierColors } from '../lib/supplierPalette.js'
+import { F2_LABEL } from '../components/seed/seedLots.js'
 
 const SOURCES = [
   { id: 'src-fedco', name: 'Fedco' },
@@ -315,6 +316,120 @@ describe('My seeds — what each card says', () => {
     expect(heat.style.flex).toBe('0 0 auto')
     expect(within(lineOf('svd')).getByTestId('my-seed-heat').textContent).toContain('est. 50K–100K SHU')
     expect(within(lineOf('tom')).queryByTestId('my-seed-heat')).toBeNull()
+  })
+
+  // V5-SEEDSTAB-001 slice 3 (design §2 rule 8, §5.4). Prod's four such lots, 2026-09-23: Gong Bao and
+  // Ristra Cayenne II stored with a count and an estimated heat, Big Boy and Thai Dragon drying.
+  // AMENDED 2026-09-24 (orchestrator decision, reported to Dave): on an F2 row the F2 chip OUTRANKS THE
+  // ESTIMATED HEAT. It is an item of the LINE — shrinkable, so the amount, a live state and a supplier
+  // never give way to it — and so is the amount, rigid, right after it; the heat rides the give-way box
+  // and is dropped whole first. A live state keeps the first place (§16). Bought packets and non-F2 rows
+  // keep the old layout exactly. Geometry is gate:seeds-page (p)(g)(k)(n); this pins the structure the
+  // geometry rests on.
+  const F2_ROWS = () => [
+    pepper({
+      id: 'gongbao', name: 'Gong Bao (Kung Pao) — saved 2026', variety_name: 'Gong Bao (Kung Pao)', source_plant_id: 'pl',
+      seed_stage: 'stored', seed_count: 85, seed_count_estimated: true, year_harvested: 2026, breeding_system: 'f1',
+      scoville_min: 5000, scoville_max: 12000,
+    }),
+    pkt({
+      id: 'bigboy', name: 'Big Boy Saved seed 2026', variety_name: 'Big Boy', source_plant_id: 'pl', seed_stage: 'drying',
+      stage_entered_at: new Date().toISOString(), breeding_system: 'f1',
+    }),
+    pkt({ id: 'sungold', name: 'Sungold F1', source_id: 'src-fedco', breeding_system: 'f1' }),
+    pkt({ id: 'brandy', name: 'Brandywine — saved 2026', variety_name: 'Brandywine', source_plant_id: 'pl', seed_stage: 'stored', breeding_system: 'open_pollinated' }),
+  ]
+  const f2ChipOf = (id) => within(lineOf(id)).queryAllByTestId('my-seed-chip').find((c) => c.textContent === F2_LABEL) ?? null
+
+  it('a lot saved off an F1 plant says "F2 — won’t come true" as an item of the LINE, ahead of the amount and the heat', async () => {
+    rows = F2_ROWS()
+    await mount()
+    await openAll()
+    // Stored: the F2 chip is the line's own item — neutral, SHRINKABLE (a 0 floor) — then the amount,
+    // rigid, also an item of the line; the heat is left to the give-way flow behind them.
+    const line = lineOf('gongbao')
+    const chip = f2ChipOf('gongbao')
+    expect(chip, 'the stored F2 lot carries no F2 chip').toBeTruthy()
+    expect(chip.getAttribute('data-tone')).toBe('neutral')
+    expect(chip.parentElement).toBe(line)
+    expect([chip.style.flexGrow, chip.style.flexShrink, chip.style.minWidth]).toEqual(['0', '1', '0'])
+    const amount = within(line).getByTestId('my-seed-amount')
+    expect(amount.textContent).toBe('approx. 85 seeds')
+    expect(chip.nextElementSibling).toBe(amount)
+    expect(amount.parentElement).toBe(line)
+    expect(amount.style.flex).toBe('0 0 auto')
+    const heat = within(line).getByTestId('my-seed-heat')
+    const flow = heat.parentElement
+    expect(flow.style.flexWrap).toBe('wrap')
+    expect(flow.parentElement).toBe(amount.nextElementSibling)
+    expect(flow.contains(chip) || flow.contains(amount)).toBe(false)
+    expect(heat.textContent).toBe(' · est. 5K–12K SHU')
+    // Drying: the live state keeps the first place, rigid; F2 follows it, shrinkable — both items of the line.
+    const chips = within(lineOf('bigboy')).getAllByTestId('my-seed-chip')
+    expect(chips.map((c) => c.textContent)).toEqual(['Drying', F2_LABEL])
+    expect(chips.map((c) => c.parentElement === lineOf('bigboy'))).toEqual([true, true])
+    expect(chips[0].style.flex).toBe('0 0 auto')
+    expect(chips[1].style.flexShrink).toBe('1')
+    // Rule 8: never on a bought packet, and only F1 speaks.
+    expect(f2ChipOf('sungold')).toBeNull()
+    expect(f2ChipOf('brandy')).toBeNull()
+    expect(screen.getByTestId('my-seeds-view').textContent.split(F2_LABEL).length - 1).toBe(2)
+  })
+
+  it('a bought F1 packet and every non-F2 row keep the old layout: amount and heat ride the flow, no chip on the line but a live one', async () => {
+    rows = [
+      pepper({ id: 'f1pkt', name: 'Megatron F1', variety_name: 'Megatron F1', source_id: 'src-fedco', breeding_system: 'f1',
+        quantity_on_hand: 2, scoville_min: 2500, scoville_max: 8000, sow_archived_season: new Date().getFullYear() }),
+      pepper({ id: 'oplot', name: 'Aji Charapita — saved 2026', variety_name: 'Aji Charapita', source_plant_id: 'pl',
+        seed_stage: 'drying', stage_entered_at: new Date().toISOString(), breeding_system: 'open_pollinated',
+        seed_count: 40, seed_count_estimated: true, scoville_min: 30000, scoville_max: 50000 }),
+    ]
+    await mount()
+    await openAll()
+    for (const id of ['f1pkt', 'oplot']) {
+      const line = lineOf(id)
+      const amount = within(line).getByTestId('my-seed-amount')
+      const heat = within(line).getByTestId('my-seed-heat')
+      expect(amount.parentElement, `${id}: the amount left the flow`).not.toBe(line)
+      expect(amount.parentElement).toBe(heat.parentElement)
+      expect(amount.nextElementSibling).toBe(heat)
+      const onLine = within(line).queryAllByTestId('my-seed-chip').filter((c) => c.parentElement === line)
+      expect(onLine.map((c) => c.getAttribute('data-tone')).every((t) => t !== 'neutral'), `${id}: a neutral chip is an item of the line`).toBe(true)
+    }
+    // The bought F1 packet's archive chip still gives way inside the flow, before its amount.
+    const archived = within(lineOf('f1pkt')).getAllByTestId('my-seed-chip')
+    expect(archived.map((c) => c.textContent)).toEqual(['Archived for this season'])
+    expect(archived[0].parentElement.nextElementSibling).toBe(within(lineOf('f1pkt')).getByTestId('my-seed-amount'))
+  })
+
+  it('on an F2 row any OTHER neutral chip stays in the flow, still giving way before the heat', async () => {
+    rows = [pepper({
+      id: 'f2arch', name: 'Ristra Cayenne II Saved seed 2026', variety_name: 'Ristra Cayenne II', source_plant_id: 'pl',
+      seed_stage: 'stored', seed_count: 175, seed_count_estimated: true, breeding_system: 'f1',
+      sow_archived_season: new Date().getFullYear(), scoville_min: 25000, scoville_max: 35000,
+    })]
+    await mount()
+    await openAll()
+    const line = lineOf('f2arch')
+    const [f2, archived] = within(line).getAllByTestId('my-seed-chip')
+    expect([f2.textContent, archived.textContent]).toEqual([F2_LABEL, 'Archived for this season'])
+    expect(f2.parentElement).toBe(line)
+    const box = archived.parentElement
+    expect(box).not.toBe(line)
+    expect(box.style.flexBasis).toBe('0px')
+    // In the flow, straight before the heat: it gives way before the heat does, as on any row.
+    expect(box.nextElementSibling).toBe(within(line).getByTestId('my-seed-heat'))
+  })
+
+  it('the expanded F2 lot\'s Breeding fact says F2 from an F1 parent; the bought F1 packet keeps "F1 hybrid"', async () => {
+    rows = F2_ROWS()
+    await mount()
+    await openAll()
+    const breeding = (id) => within(rowFor(id)).getByTestId('my-seed-facts').querySelector('[data-fact="Breeding"]').textContent
+    await expandRow('gongbao')
+    expect(breeding('gongbao')).toBe(`${F2_LABEL} (parent F1 hybrid)`)
+    await expandRow('sungold')
+    expect(breeding('sungold')).toBe('F1 hybrid')
   })
 
   it('the thumbnail asks for the PHOTO id at the thumb tier, never the lot id, minted by id; no photo shows the sprout box', async () => {

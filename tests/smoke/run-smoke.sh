@@ -18,6 +18,8 @@
 #        a variety PUT of origin_country read back through GET /api/varieties/:id
 #     E) locations create → read-back name
 #     F) inventory-items create → read-back name (durable+tools dodges the L-058 seeds CHECK)
+#     F3) a seed packet (on block D's variety) → a planting sown from it → the packet's detail GET
+#        answers 200 with that planting inside sown_from (V5-SEEDSTAB-001 slice 3)
 #     G) favorites toggle → assert favorited on, then off
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
@@ -47,6 +49,8 @@ CREATED_VARIETY_ID=""
 CREATED_PLANT_ID=""
 CREATED_LOCATION_ID=""
 CREATED_INV_ID=""
+CREATED_SEEDPKT_ID=""
+CREATED_SOWN_PLANT_ID=""
 CREATED_FAVORITE_DONE=false
 DATA_CREATED=false
 CLERK_JWT=""
@@ -66,6 +70,22 @@ cleanup() {
         "${STAGING_API_PLANTS%/}/api/plants/${CREATED_PLANT_ID}" -o /dev/null 2>&1 \
         && echo "✅ Cleanup: test plant deleted" \
         || echo "WARNING: plant cleanup failed (id: $CREATED_PLANT_ID)"
+    fi
+    # F3's pair: the planting before the packet it was sown from (plants.source_inventory_item_id is
+    # ON DELETE RESTRICT; these are soft-deletes, the workflow's L-058 sweep hard-deletes in the same order).
+    if [[ -n "$CREATED_SOWN_PLANT_ID" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${STAGING_API_PLANTS%/}/api/plants/${CREATED_SOWN_PLANT_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test sown planting deleted" \
+        || echo "WARNING: sown planting cleanup failed (id: $CREATED_SOWN_PLANT_ID)"
+    fi
+    if [[ -n "$CREATED_SEEDPKT_ID" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_SEEDPKT_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: test seed packet deleted" \
+        || echo "WARNING: seed packet cleanup failed (id: $CREATED_SEEDPKT_ID)"
     fi
     if [[ -n "$CREATED_VARIETY_ID" ]]; then
       curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
@@ -685,6 +705,73 @@ else
         fi
       else
         echo "⚠️  WARN [write:inventory] STAGING_API_INVENTORY unset — inventory assert NOT run (the staging workflow sets it)"
+      fi
+
+      # ── F3) Seed packet → a planting sown from it → the packet's sown_from (V5-SEEDSTAB-001 slice 3, L-108) ──
+      # GET /api/inventory-items/:id on a SEEDS row runs two garden_node reads beside the item: germination and,
+      # since slice 3, sown_from (it also joins container). BUG-SEEDDETAIL500-001 was a seed-detail SELECT naming a
+      # column garden_node does not have: every seed page 500'd in prod behind a green unit suite. Staging holds NO
+      # planting that references an inventory item (0 on 2026-09-23), so a bare GET would pass on an empty list
+      # whatever the join did; this block builds its own row. A seeds packet on block D's variety (seeds require
+      # one), a planting sown from it under the test project, then the packet's detail must answer 200 with that
+      # planting — its id AND the name written — inside sown_from. Both rows are 'smoke-test-*': the trap's API
+      # deletes and the workflow's L-058 sweep remove them, plants before inventory_items (RESTRICT).
+      if [[ -n "${STAGING_API_INVENTORY:-}" && -n "${CREATED_VARIETY_ID:-}" ]]; then
+        CLERK_JWT=$(mint_session_token)
+        SEEDPKT_BODY=$(mktemp)
+        SEEDPKT_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+          -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$SEEDPKT_BODY" -w "%{http_code}" "$STAGING_API_INVENTORY" \
+          -d "{\"name\": \"smoke-test-seedpkt-$TEST_RUN_ID\", \"type\": \"consumable\", \"category\": \"seeds\", \"unit\": \"packet\", \"quantity_on_hand\": 1, \"variety_id\": \"$CREATED_VARIETY_ID\"}") || SEEDPKT_HTTP="000"
+        CREATED_SEEDPKT_ID=$(jq -r '.id // empty' "$SEEDPKT_BODY" 2>/dev/null || echo "")
+        rm -f "$SEEDPKT_BODY"
+        if [[ "${SEEDPKT_HTTP:0:1}" == "2" && -n "$CREATED_SEEDPKT_ID" ]]; then
+          echo "✅ PASS [crud:POST /inventory-items (seed packet)] HTTP $SEEDPKT_HTTP (id: $CREATED_SEEDPKT_ID)"
+          PASS=$((PASS+1))
+          SOWN_NAME_WRITTEN="smoke-test-sownplant-$TEST_RUN_ID"
+          SOWN_BODY=$(mktemp)
+          SOWN_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+            -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$SOWN_BODY" -w "%{http_code}" "$STAGING_API_PLANTS" \
+            -d "{\"project_id\": \"$CREATED_PROJECT_ID\", \"name\": \"$SOWN_NAME_WRITTEN\", \"variety_id\": \"$CREATED_VARIETY_ID\", \"source_inventory_item_id\": \"$CREATED_SEEDPKT_ID\", \"sown_at\": \"$(date -u -d '7 days ago' +%Y-%m-%d)\", \"status\": \"seedling\"}") || SOWN_HTTP="000"
+          CREATED_SOWN_PLANT_ID=$(jq -r '.id // empty' "$SOWN_BODY" 2>/dev/null || echo "")
+          rm -f "$SOWN_BODY"
+          if [[ "${SOWN_HTTP:0:1}" == "2" && -n "$CREATED_SOWN_PLANT_ID" ]]; then
+            echo "✅ PASS [crud:POST /plants (sown from the packet)] HTTP $SOWN_HTTP (id: $CREATED_SOWN_PLANT_ID)"
+            PASS=$((PASS+1))
+            DETAIL_BODY=$(mktemp)
+            DETAIL_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+              -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+              -o "$DETAIL_BODY" -w "%{http_code}" \
+              "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_SEEDPKT_ID}") || DETAIL_HTTP="000"
+            # The name stored for the planting sown from this packet, read back out of sown_from — "absent"
+            # when the planting is not listed, "no-sown_from:<type>" when the key itself is missing or wrong.
+            SOWN_NAME_READ=$(jq -r --arg id "$CREATED_SOWN_PLANT_ID" \
+              'if (.sown_from | type) == "array" then ([.sown_from[] | select(.id == $id) | .name][0] // "absent") else "no-sown_from:" + (.sown_from | type) end' \
+              "$DETAIL_BODY" 2>/dev/null || echo "unparseable")
+            DETAIL_SNIP=$(head -c 200 "$DETAIL_BODY" 2>/dev/null || echo "")
+            rm -f "$DETAIL_BODY"
+            if [[ "$DETAIL_HTTP" == "200" && "$SOWN_NAME_READ" == "$SOWN_NAME_WRITTEN" ]]; then
+              echo "✅ PASS [write:seed-detail-sown-from] HTTP 200, planting $CREATED_SOWN_PLANT_ID is in the packet's sown_from as '$SOWN_NAME_READ'"
+              PASS=$((PASS+1))
+            else
+              echo "❌ FAIL [write:seed-detail-sown-from] HTTP $DETAIL_HTTP, sown_from entry for $CREATED_SOWN_PLANT_ID: '$SOWN_NAME_READ' (expected '$SOWN_NAME_WRITTEN')"
+              echo "   Body: $DETAIL_SNIP"
+              FAIL=$((FAIL+1))
+            fi
+          else
+            echo "❌ FAIL [crud:POST /plants (sown from the packet)] HTTP $SOWN_HTTP"
+            FAIL=$((FAIL+1))
+          fi
+        else
+          echo "❌ FAIL [crud:POST /inventory-items (seed packet)] HTTP $SEEDPKT_HTTP"
+          FAIL=$((FAIL+1))
+        fi
+      elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+        echo "❌ FAIL [write:seed-detail-sown-from] STAGING_API_INVENTORY unset or block D made no variety — the ship gate may not skip this assert"
+        FAIL=$((FAIL+1))
+      else
+        echo "⚠️  WARN [write:seed-detail-sown-from] STAGING_API_INVENTORY unset or no variety from block D — sown_from assert NOT run"
       fi
 
       # ── G) Favorites toggle round-trip (POST favorite → assert on → DELETE → assert off) ─────

@@ -195,7 +195,11 @@ if gn.exists():
     res = audit.parse_test_file(gn)
     tables = {t for t, _ in res}
     check("garden-node guard is now PARSEABLE by the auditor", bool(res))
-    check("garden-node guard declares garden_node", tables == {"garden_node"})
+    # V5-SEEDSTAB-001 slice 3: the seed detail's sown_from read LEFT JOINs container, so the guard
+    # now declares that relation beside garden_node (keyed pairs, one relation each). Still exact:
+    # losing garden_node reds this as before, and so does an undeclared third relation.
+    check("garden-node guard declares garden_node and the container it joins",
+          tables == {"garden_node", "container"})
     cols = {c for _, cs in res for c in cs}
     check("garden-node guard declares display_name (the column the 500 was about)",
           "display_name" in cols)

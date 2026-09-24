@@ -38,6 +38,7 @@ import { SEED_STAGES } from '../components/seed/seedStages.js'
 // seedLots.js for the vendor and calendar-day fixes that landed with the move.
 import {
   prettySlug, candidateFacts, labelCandidates, lotMeasure, elapsedLabel, fermentUrgency, isNotStartedLot,
+  isF2Lot, F2_LABEL,
 } from '../components/seed/seedLots.js'
 // Where a Not started lot came from, in My seeds' words for the same lot one tap away.
 import { originNote } from '../components/seed/mySeedsModel.js'
@@ -1108,6 +1109,13 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                   <div data-testid="lot-unstarted-line" style={{ color: P.mid, fontSize: '0.78rem', marginTop: 3 }}>
                     Not started{added ? ` · added ${added === 'today' ? 'today' : `${added} ago`}` : ''}
                   </div>
+                  {/* Same F2 badge as the stage cards: a lot saved off an F1 plant is F2 before its
+                      process starts too (seedLots.isF2Lot, the one predicate). */}
+                  {isF2Lot(item) && (
+                    <div style={{ marginTop: 5 }}>
+                      <Badge tone="neutral" data-testid="lot-f2" style={{ whiteSpace: 'normal' }}>{F2_LABEL}</Badge>
+                    </div>
+                  )}
                   {measure && (
                     <div data-testid="lot-seed-measure" style={{ color: P.mid, fontSize: '0.78rem', marginTop: 3 }}>
                       {measure}
@@ -1227,6 +1235,14 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                         <div style={{ color: urgency.ink, fontSize: '0.75rem', marginTop: 3 }}>
                           {urgency.note}
                         </div>
+                      </div>
+                    )}
+                    {/* V5-SEEDSTAB-001 slice 3 — seed saved off an F1 plant is F2 and will not come
+                        true (seedLots.isF2Lot, the one predicate My seeds' chip and the Breeding fact
+                        read too). A fact about the seed, not a stage warning, so the neutral chip. */}
+                    {isF2Lot(item) && (
+                      <div style={{ marginTop: 5 }}>
+                        <Badge tone="neutral" data-testid="lot-f2" style={{ whiteSpace: 'normal' }}>{F2_LABEL}</Badge>
                       </div>
                     )}
                     {/* V5-SEEDCOUNTCARD-001 — how much seed is in the jar, on the surface that

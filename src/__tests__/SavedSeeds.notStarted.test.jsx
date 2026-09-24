@@ -38,7 +38,7 @@ import Seeds from '../pages/Seeds.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
 import { readMarker } from '../lib/backNav.js'
-import { isNotStartedLot } from '../components/seed/seedLots.js'
+import { isNotStartedLot, F2_LABEL } from '../components/seed/seedLots.js'
 import { isUnstartedSave } from '../lib/sowEngine.js'
 
 const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString()
@@ -127,6 +127,15 @@ describe('Saved seeds — the Not started group', () => {
     await waitFor(() => expect(section()).toBeTruthy())
     const order = [...document.querySelectorAll('section[data-testid^="stage-section-"]')].map((s) => s.getAttribute('data-testid'))
     expect(order).toEqual(['stage-section-unstarted', 'stage-section-drying'])
+  })
+
+  it('a not-started lot off an F1 plant carries the same F2 badge as the stage cards; others carry none', async () => {
+    await mountPage([{ ...OWN, breeding_system: 'f1' }, { ...PRODUCE, breeding_system: 'open_pollinated' }])
+    await waitFor(() => expect(section()).toBeTruthy())
+    const f1Card = section().querySelector('[data-lot-id="lot-own"]')
+    const opCard = section().querySelector('[data-lot-id="lot-stand"]')
+    expect(within(f1Card).getByTestId('lot-f2').textContent).toBe(F2_LABEL)
+    expect(within(opCard).queryByTestId('lot-f2')).toBeNull()
   })
 
   it('leaves out a lot that is retired or used up — it is not waiting to be started', async () => {

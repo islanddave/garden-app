@@ -4,7 +4,7 @@ import { useInventory } from '../hooks/useInventory.js'
 import { useApiFetch } from '../lib/api.js'
 import { useReportOverlayDirty } from '../context/OverlayContext.jsx'
 import { setReloadBlocked } from '../lib/reloadGate.js'
-import { P } from '../lib/constants.js'
+import { P, statusLabel } from '../lib/constants.js'
 import { useToast } from '../context/ToastContext.jsx'
 import FavoriteToggle from '../components/FavoriteToggle.jsx'
 import PhotoUpload from '../components/PhotoUpload.jsx'
@@ -27,7 +27,7 @@ import { seedFacts } from '../components/seed/seedFacts.js'
 // chk_inventory_source_kind). preservationProvenance.test.js pins this list against the JS
 // canonical; the migration's post_vocabulary_exact gate pins the DB against it.
 import { PUTUP_SOURCE_OPTIONS } from '../lib/dropdownRegistry.js'
-import { formatQtyExact } from '../lib/format.js'
+import { formatQtyExact, formatDate } from '../lib/format.js'
 import { seedsHref, seedsReturnFromHistory } from '../lib/seedsRoutes.js'
 import { readDraft } from '../lib/draftStash.js'
 import { T } from '../components/forms/formStyles.js'
@@ -557,6 +557,31 @@ export default function InventoryDetail() {
             onSown={(_packet, planting) => setSown({ plantingId: planting?.id ?? null })}
             onClose={() => setSowPacket(null)}
           />
+        )}
+
+        {/* ── V5-SEEDSTAB-001 slice 3 (§9) — the plantings sown from this packet ────────────────────
+            GET /:id's sown_from: every live planting whose source_inventory_item_id is this packet,
+            archived ones already filtered out by the route (Archive-Hiding Rule), newest sowing first.
+            One 44px link each, to the planting. Rendered only when there is one — a packet nobody has
+            sown from shows nothing, not an empty heading. Directly under Sow this, whose "Sown ✓" line
+            covers a sow made on this visit (the list is the page as loaded), and above the
+            germination record of those same sowings. */}
+        {item.category === 'seeds' && Array.isArray(item.sown_from) && item.sown_from.length > 0 && (
+          <div data-testid="packet-sown-from" style={sownFromCard}>
+            <div style={sownFromHeading}>Sown from this packet</div>
+            {item.sown_from.map(p => (
+              <Link key={p.id} to={`/plantings/${p.id}`} data-testid="sown-from-link" style={sownFromLink}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontWeight: 600, overflowWrap: 'anywhere' }}>{p.name}</span>
+                  <span style={{ display: 'block', fontSize: T.type.xs2, color: P.mid }}>
+                    {[p.sown_at ? `Sown ${formatDate(p.sown_at)}` : '', p.status ? statusLabel(p.status) : '']
+                      .filter(Boolean).join(' · ')}
+                  </span>
+                </span>
+                <span aria-hidden="true" style={{ flexShrink: 0, fontSize: '1.1rem' }}>›</span>
+              </Link>
+            ))}
+          </div>
         )}
 
         {/* ── V4-SEEDGERMRATE-001 (BD-057) — this packet's germination record ─────────────────────
@@ -1206,6 +1231,21 @@ const sownLink = { display: 'inline-flex', alignItems: 'center', minHeight: T.ta
 const editSowDetailsLink = {
   display: 'inline-flex', alignItems: 'center', alignSelf: 'flex-start', minHeight: T.tapMinHeight,
   paddingRight: 8, color: P.green, fontSize: T.type.sm,
+}
+// V5-SEEDSTAB-001 slice 3 — "Sown from this packet": the germination panel's card and heading, so the
+// two records of this packet's sowings read as one family; each planting a full-width row link on the
+// 44px floor (the whole row is the target, not the name).
+const sownFromCard = {
+  marginBottom: 20, padding: '8px 16px',
+  backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
+}
+const sownFromHeading = {
+  fontSize: '0.78rem', fontWeight: 700, color: P.mid, margin: '6px 0 2px',
+  letterSpacing: '0.3px', textTransform: 'uppercase',
+}
+const sownFromLink = {
+  display: 'flex', alignItems: 'center', gap: T.space.sm, minHeight: T.tapMinHeight,
+  padding: '6px 0', color: P.green, fontSize: T.type.sm, textDecoration: 'none',
 }
 
 // ── V5-SEEDCARDS-001 — the packet card (UX spec §7.2) ─────────────────────────────────────────────
