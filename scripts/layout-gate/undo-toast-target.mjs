@@ -58,8 +58,11 @@ const LABEL = arg('--label') || 'run'
 const JSON_OUT = arg('--json')
 const BASELINE = arg('--baseline')
 const MEASURE_ONLY = process.argv.includes('--measure-only')
-const PORT = Number(process.env.GATE_HARNESS_PORT || 5325)
-const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9435)
+// Unused elsewhere (2026-09-24): the other gates hold 5312-5323 / 9422-9433, and .claude/launch.json's
+// harness previews hold 5311, 5325 and 5326. --strictPort makes a clash a loud failure, never a
+// measurement of somebody else's server.
+const PORT = Number(process.env.GATE_HARNESS_PORT || 5329)
+const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9439)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 // Launch flags another environment needs (CI: --no-sandbox). Rendering-affecting flags do not belong here.
 const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).filter(Boolean)
