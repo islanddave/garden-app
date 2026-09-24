@@ -14,7 +14,7 @@
 // names, asserting the POSTed rows and what the banner says.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor, within, cleanup } from '@testing-library/react'
 import { installFakeSpeechRecognition } from './helpers/fakeSpeechRecognition.js'
 
 const { apiFetchSpy } = vi.hoisted(() => ({ apiFetchSpy: vi.fn() }))
@@ -960,5 +960,38 @@ describe('a "next" queued behind the save still being sent', () => {
     expect(posts.count()).toBe(1)
     expect(statusText()).toBe('Not saved — still need a crop. Say it, then "next".')
     expect(misses()).toEqual(['Nothing matched “zzqq quux”.', 'Not saved — still need a crop.'])
+  })
+
+  // Review v4.150.0 QA delta D1 (probe P-Q5): the one F8 rule that had no test. Re-naming the crop the
+  // queued save belongs to must not cancel it — only ANOTHER crop does (clearForSwitch's plantId check).
+  it('the same crop named again before the POST lands keeps the queued save: it still goes through', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count', 'next')
+    expect(statusText()).toBe('Still saving the last one — then 3 count.')
+    await say(rec, 'Stupice')
+    await posts.resolve()
+    expect(posts.count()).toBe(2)
+    await posts.resolve(1)
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', null, []]])
+    expect(header()).toBe('2 saved')
+  })
+
+  // Review v4.150.0 QA delta D2, decided by the parent session: leaving the page does NOT cancel a queued
+  // "next". Dave said "next" for it and was told it would save; dropping it on unmount would lose it
+  // silently, the one failure this page is least allowed to have. Its banner and row go to a page no
+  // longer on screen (as for any POST answering after leave); the harvest shows on the Harvests page.
+  it('leaving the page does not cancel a queued "next": it still saves when the POST in its way lands', async () => {
+    const rec = await startListening()
+    const posts = holdPosts()
+    await say(rec, 'stupice 5 count 231 grams next')
+    await say(rec, '3 count', 'next')
+    expect(posts.count()).toBe(1)
+    cleanup()
+    await posts.resolve()
+    await advance(2000)
+    expect(posts.count()).toBe(2)
+    expect(saved()).toEqual([['Stupice', 5, 'count', 231, []], ['Stupice', 3, 'count', null, []]])
   })
 })
