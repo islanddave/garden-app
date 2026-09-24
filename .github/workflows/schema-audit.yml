@@ -1,9 +1,11 @@
 name: L-081 Schema Audit (dev)
 
 # Verifies lambda code's column references are present in prod Neon's
-# information_schema.columns: Phase 1 = lambda/**/select-columns.test.js
-# assertions; Phases 2-3 = INSERT column lists + soft-delete deleted_at refs
-# in lambda/**/index.js.
+# information_schema.columns. Phase 1 = the columns declared in
+# lambda/**/*columns.test.js contracts; Phase 2 = INSERT column lists and
+# Phase 3 = soft-delete deleted_at targets, in every non-test lambda/**/*.js;
+# Phase 4 = every relation a handler queries exists in prod, plus the
+# joined-relation coverage ratchet (scripts/schema-audit-join-baseline.json).
 # Catches the L-081 bug class (local_3f62f153 2026-05-19 prod incident):
 # lambda code references columns that exist in staging but not prod, deploy
 # succeeds, every endpoint 500s.
@@ -22,12 +24,18 @@ name: L-081 Schema Audit (dev)
 # inconclusive) no longer exit 0 silently — they emit a loud UNVERIFIED
 # warning + job summary.
 # ENFORCED AT PROMOTE (OPS-PROMOTESCHEMAGATE-001, added 2026-09-24):
-# promote-gate.yml's "Prod schema gate" step runs this same script on the exact
-# dev SHA being promoted, against prod, before main moves, and refuses the
-# promote on exit 1 OR 2 and on a missing secret, unless dispatched with
-# require_schema_audit=false. This workflow stays the early warning on each dev
-# push (path-filtered, so a later commit can leave no run at the promoted SHA);
-# the promote gate is the one that blocks, and it runs at every promoted SHA.
+# promote-gate.yml's "Prod schema gate" step runs this same script, with
+# --gate, on the exact dev SHA being promoted, against prod, before main moves,
+# and refuses the promote on any non-zero exit and on a missing secret, unless
+# dispatched with require_schema_audit=false. This workflow stays the early
+# warning on each dev push (path-filtered, so a later commit can leave no run
+# at the promoted SHA); the promote gate is the one that blocks, and it runs
+# at every promoted SHA.
+# A GREEN RUN HERE DOES NOT PREDICT THE GATE, in either direction. Exit 2
+# (inconclusive) and a missing secret read GREEN here (a warning, exit 0) but
+# are refused at the gate, and so is a Phase-1 contract the parser cannot read
+# (only a stderr WARN here; exit 2 under --gate). The other way, a STALE waiver
+# reds this run but is only a warning at the gate: prod already has the column.
 #
 # Audit script: scripts/dev-main-schema-audit.py (canonical here in garden-app/).
 # A reference copy lives in claude-ops/scripts/ for local sandbox invocation. Keep in sync.

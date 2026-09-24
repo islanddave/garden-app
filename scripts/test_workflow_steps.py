@@ -814,7 +814,9 @@ def test_schema_gate_a_failed_parser_self_test_refuses_before_the_audit(tmp_path
     assert AUDIT_ARGV not in calls and calls[-1] == [f"scripts/test-schema-audit-phase{phase}.py"]
     errors = _errors(proc)
     assert len(errors) == 1 and f"scripts/test-schema-audit-phase{phase}.py failed (exit 1" in errors[0], errors
-    assert "fix the parser on dev and promote the new SHA" in errors[0]
+    # A pinned contract edited without its pin fails the same way as a parser regression: name both.
+    assert "the audit's parser, or a contract whose exact column set that test pins, changed" in errors[0]
+    assert "fix it on dev and promote the new SHA" in errors[0]
     assert f"SENTINEL self-test scripts/test-schema-audit-phase{phase}.py" in proc.stdout
 
 

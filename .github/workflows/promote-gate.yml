@@ -436,7 +436,7 @@ jobs:
             case "$RC" in
               0) ;;
               124|137) refuse "the audit parser self-test scripts/test-schema-audit-phase$t.py did not finish in 30 s — a hang, not a verdict: re-run the failed jobs" ;;
-              *) refuse "the promoted tree's audit parser self-test scripts/test-schema-audit-phase$t.py failed (exit $RC, output above), so the audit's verdict cannot be trusted — fix the parser on dev and promote the new SHA" ;;
+              *) refuse "the promoted tree's audit parser self-test scripts/test-schema-audit-phase$t.py failed (exit $RC, output above): the audit's parser, or a contract whose exact column set that test pins, changed without the other, so the audit's verdict cannot be trusted — fix it on dev and promote the new SHA" ;;
             esac
           done
           # 2) The audit itself, --gate mode, bounded.
