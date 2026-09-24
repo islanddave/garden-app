@@ -112,30 +112,33 @@ export function stateChips(i, { now = new Date(), year = now.getFullYear() } = {
   // V5-SEEDSTAB-001 slice 3 — the one chip that is not an engine state: a lot saved off an F1 plant is
   // F2 seed (seedLots.isF2Lot). LAST and NEUTRAL, deliberately. Last, so a live state ("Ferment · day
   // 5", "Drying") keeps the first place and stays whole; neutral in tone, because it is a fact about the
-  // seed, not an alarm. Where it sits in the give-way order is lineLayout's call, below. Bought F1
-  // packets never get it.
+  // seed, not an alarm. Where it sits on line 2 is lineLayout's call, below. Bought F1 packets never get it.
   if (isF2Lot(i)) chips.push({ key: 'f2', label: F2_LABEL, tone: 'neutral' })
   return chips
 }
 
-// ── Line 2's layout: which pieces are RIGID ITEMS OF THE LINE and which ride the GIVE-WAY FLOW ──────
-// MySeeds renders line 2 from this, so the shrink order is decided here, once (UX spec §1.3):
-//   · every row: the live state chip (a lot in process) is an item of the line, never cut. The neutral
-//     chips, the amount, the heat and the tail ride the flow in that order — the amount first of the
-//     facts, so it is never the one that wraps out of sight; the heat after it, dropped WHOLE when it
-//     does not fit; neutral chips ellipsise before the heat does; the tail is cut first.
-//   · an F2 row (V5-SEEDSTAB-001 slice 3 amendment, orchestrator decision 2026-09-24, reported to Dave):
-//     the F2 chip OUTRANKS THE ESTIMATED HEAT. It and the amount become items of the line — the chip
-//     shrinkable, the amount rigid — so the heat, left only what the give-way box has, is dropped whole
-//     before the chip gives up a pixel, and the chip still gives way (ellipsised) to the amount, a live
-//     state or a supplier. For F2 seed the cultivar's heat range is the least reliable number on the
-//     row; the words that say so are not. Any OTHER neutral chip stays in the flow, still giving way
-//     before the heat. Bought packets and every non-F2 row keep today's layout exactly.
+// ── Line 2's layout: ONE line that gives way — or, on an F2 row, a line that WRAPS ──────────────────
+// MySeeds renders line 2 from this, so the shape is decided here, once (UX spec §1.3):
+//   · every row but an F2 row: ONE line. The live state chip (a lot in process) is an item of the line,
+//     never cut. The neutral chips, the amount, the heat and the tail ride the give-way flow in that
+//     order — the amount first of the facts, so it is never the one that wraps out of sight; the heat
+//     after it, dropped WHOLE when it does not fit; neutral chips ellipsise before the heat does; the
+//     tail is cut first.
+//   · an F2 row (BUG-MYSEEDSF2HIDESSHU-001, Dave 2026-09-24): the F2 chip never costs the heat. Dave, on
+//     his phone at 426px, seeing "[F2 — won't come true] 175 seeds" and room to spare: "I want the shu
+//     shown" — "I still prefer seeing heat even if it might not be bred true - it is info for
+//     decisions/guidance for me." So the line WRAPS (`wraps`) instead of dropping: the live chip, the F2
+//     chip, the amount and the heat are all whole items of the line, and when one line cannot hold them
+//     the heat moves to a second line, whole — a heat is still shown whole or not at all, and here it is
+//     always shown. Any OTHER neutral chip still gives way (ellipsised) before the heat has to move; the
+//     tail follows the heat and is cut first. This reverses the slice 3 amendment (abf8bf1), under which
+//     the F2 chip outranked the estimated heat and the heat was dropped. Bought packets and every non-F2
+//     row keep the one-line layout exactly.
 export function lineLayout(i, { now, year } = {}) {
   const chips = stateChips(i, { now, year })
   const live = chips[0] && chips[0].tone !== 'neutral' ? chips[0] : null
   const f2 = chips.find((c) => c.key === 'f2') ?? null
-  return { live, f2, flowChips: chips.filter((c) => c !== live && c !== f2), amountOnLine: f2 != null }
+  return { live, f2, flowChips: chips.filter((c) => c !== live && c !== f2), wraps: f2 != null }
 }
 
 // Where from, for the TAIL of line 2: a saved lot's origin words. A bought packet's vendor is not
@@ -145,16 +148,16 @@ export function originNote(i) {
 }
 
 // Line 2 as one string, in the order it renders (lineLayout's): the supplier chip's label, the state
-// chips, the amount, the heat, then the tail (origin words, how old) — on an F2 row the live chip, the
-// F2 chip and the amount lead, then any other chips. Also what row uniqueness is computed over, because
-// it is what the eye reads.
+// chips, the amount, the heat, then the tail (origin words, how old) — on an F2 row's wrapping line the
+// live chip, the F2 chip and the amount lead, then any other chips. Also what row uniqueness is computed
+// over, because it is what the eye reads.
 export function lineText(i, { vendorOf, now, year } = {}) {
   const vendor = vendorOf ? String(vendorOf(i) ?? '').trim() : ''
-  const { live, f2, flowChips, amountOnLine } = lineLayout(i, { now, year })
+  const { live, f2, flowChips, wraps } = lineLayout(i, { now, year })
   const amount = howMuch(i)
   const chips = flowChips.map((c) => c.label)
   const rest = [heatLabel(i), originNote(i), howOld(i)]
-  const ordered = amountOnLine
+  const ordered = wraps
     ? [live?.label, f2?.label, amount, ...chips, ...rest]
     : [live?.label, ...chips, amount, ...rest]
   return [vendor ? supplierLabel(vendor) : '', ...ordered].filter(Boolean).join(' · ')
