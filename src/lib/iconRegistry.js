@@ -65,6 +65,10 @@ const ANCHOR_META = {
   'facet.location': { accessibleName: 'Location' },
   'severity.high':  { accessibleName: 'High severity' },
   'action.heart':   { accessibleName: { outline: 'Add to favorites', filled: 'Remove from favorites' } },
+  // V5-NAVCUSTOM-001 — two-state like the heart: outline = not pinned, filled = pinned. The More
+  // sheet's pin button names itself per row ("Pin Seeds to the top" / "Unpin Seeds") and draws this
+  // decoratively; these names are the registry's own, for any consumer that renders it as an image.
+  'action.pin':     { accessibleName: { outline: 'Pin to the top', filled: 'Unpin' } },
   'care.pause':     { accessibleName: 'Pause' },
   'care.sun':       { accessibleName: 'Sun' },
   'lifecycle.sprout': { accessibleName: 'Sprout' },

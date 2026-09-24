@@ -4,11 +4,12 @@
 // mocked true — otherwise a typo'd import or a dead branch would read as "correctly inert".
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 
-const { navigateSpy, locationRef } = vi.hoisted(() => ({
+const { navigateSpy, locationRef, prefsRef } = vi.hoisted(() => ({
   navigateSpy: vi.fn(),
   locationRef: { pathname: '/dashboard' },
+  prefsRef: { current: null },
 }))
 
 // Full flag surface, SPACE_PHOTOS_ENABLED flipped. The other values mirror the shipped defaults so
@@ -40,8 +41,16 @@ vi.mock('../lib/mode.js', () => ({
   useMode: () => ({ mode: 'desk', isField: false, isDesk: true, setMode: vi.fn(), toggleMode: vi.fn() }),
   MODE: { FIELD: 'field', DESK: 'desk' },
 }))
+// V5-NAVCUSTOM-001 — the network edge of the prefs read, for the pinned-row ordering case.
+vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
+  ...(await orig()),
+  fetchNotificationPrefs: vi.fn(async () => prefsRef.current),
+  saveMorePins: vi.fn(async () => ({ ok: true })),
+}))
 
 import BottomNav from '../components/BottomNav.jsx'
+import { PrefsProvider } from '../context/PrefsContext.jsx'
+import { NavPrefsProvider } from '../context/NavPrefsContext.jsx'
 
 beforeEach(() => { document.body.innerHTML = '' })
 
@@ -118,5 +127,33 @@ describe('flag ON — the More sheet gains a Space row and disambiguates the zon
     openMore()
     const hrefs = [...document.querySelectorAll('a')].map(a => a.getAttribute('href'))
     expect(hrefs.indexOf('/space')).toBeLessThan(hrefs.indexOf('/locations'))
+  })
+
+  // V5-NAVCUSTOM-001 — REWRITTEN for pins: the order that matters is the order AMONG THE ROWS THAT
+  // ARE NOT PINNED, because a pinned row leaves its section. Space above Zones still holds there; a
+  // pinned Space sits in the Pinned block once; Sign out stays last whatever is pinned.
+  // KILLING MUTATIONS: re-sort the home rows (e.g. alphabetically) once something is pinned; draw a
+  // pinned row at home as well; emit Sign out before the sections. RESULT: RED for each.
+  it('with pins: home rows keep their order, a pinned Space is drawn once, Sign out stays last', async () => {
+    for (const more_pins of [['zones-not-an-id'], ['locations'], ['space'], ['helper', 'settings']]) {
+      localStorage.clear()
+      prefsRef.current = { bar_layout: null, more_pins, can_edit_bar: false }
+      let view
+      await act(async () => {
+        view = render(<PrefsProvider><NavPrefsProvider><BottomNav /></NavPrefsProvider></PrefsProvider>)
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'More navigation options' }))
+      const label = JSON.stringify(more_pins)
+      const pinned = [...(screen.queryByTestId('more-pinned')?.querySelectorAll('[data-more-row]') ?? [])].map(r => r.getAttribute('data-more-row'))
+      const home = [...document.querySelectorAll('[data-more-row]')].map(r => r.getAttribute('data-more-row')).filter(id => !pinned.includes(id))
+      const expectedHome = ['dashboard', 'findings', 'photos', 'space', 'locations', 'inventory', 'seeds', 'achievements',
+        'collection', 'helper', 'settings', 'settings-controls', 'about', 'releases', 'admin'].filter(id => !pinned.includes(id))
+      expect(home, label).toEqual(expectedHome)
+      expect(document.querySelectorAll('a[href="/space"]'), label).toHaveLength(1)
+      // Sign out is the last control in the sheet.
+      const controls = [...screen.getByRole('dialog', { name: 'More navigation options' }).querySelectorAll('a, button')]
+      expect(controls.at(-1).textContent, label).toContain('Sign out')
+      view.unmount()
+    }
   })
 })

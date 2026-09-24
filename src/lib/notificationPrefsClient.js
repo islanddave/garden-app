@@ -14,6 +14,9 @@
 // quiet_hours_start='21:00:00', quiet_hours_end='07:00:00'.
 
 import { HANDS } from './handedness.js'
+import { API_TIMEOUT_MS, FROM_CACHE, FROM_CACHE_HEADER } from './api.js'
+import { MORE_PIN_ID_RE, MORE_PINS_MAX_STORED } from './moreRegistry.js'
+import { resolveBarLayout } from './navConfig.js'
 
 const CRITTER_BASE = (import.meta.env.VITE_API_CRITTERS ?? '').replace(/\/$/, '')
 
@@ -159,6 +162,15 @@ let inFlight = null
 
 // fetchNotificationPrefs — GETs current prefs, joining any request already in flight.
 // Returns the prefs object on success, null on no-op or failure (NEVER throws).
+//
+// V5-NAVCUSTOM-001 — A BODY THE SERVICE WORKER SERVED FROM ITS CACHE IS MARKED, exactly as apiFetch
+// marks one (api.js, SW-STALEAPI-001): public/sw.js answers a GET whose network attempt failed
+// outright from its per-user API cache, still HTTP 200, stamped X-From-Cache. This client bypasses
+// apiFetch (the prefs route lives on the critter Lambda), so without this the stamp died here and a
+// days-old body read as fresh — it un-pinned pins this device had already confirmed and rewrote the
+// launch caches with an older bar. The marker is api.js's FROM_CACHE: a non-enumerable global-registry
+// Symbol, invisible to Object.keys, spread and JSON, so no existing caller sees a shape change.
+// NavPrefsContext reads it; every other caller is unaffected.
 export async function fetchNotificationPrefs({ getToken } = {}) {
   if (!CRITTER_BASE) return null
   if (inFlight) return inFlight
@@ -172,7 +184,15 @@ export async function fetchNotificationPrefs({ getToken } = {}) {
       })
       if (!res.ok) return null
       const json = await res.json().catch(() => null)
-      return json && typeof json === 'object' ? json : null
+      if (!json || typeof json !== 'object') return null
+      // Optional chaining is load-bearing, as in apiFetch: most tests stub fetch with a bare
+      // { ok, json } that has no headers, and "no header surface" means "not from cache".
+      if (res.headers?.get?.(FROM_CACHE_HEADER)) {
+        try {
+          Object.defineProperty(json, FROM_CACHE, { value: true, enumerable: false, configurable: true })
+        } catch { /* frozen body — marking is best-effort */ }
+      }
+      return json
     } catch {
       return null
     } finally {
@@ -401,13 +421,73 @@ export async function saveHandedness({ getToken, value } = {}) {
   }
 }
 
-// V5-ADMINCENTER-001 — saveNavTabs USED TO LIVE HERE and deliberately does not any more. It PATCHed
-// user_notification_prefs.nav_tabs, a per-user row; Dave ruled 2026-09-08 that the nav order is
-// GLOBAL, one order for the installation. It now lives in src/lib/appConfigClient.js over
-// public.app_config. Do not re-add a nav_tabs writer to this file: every function in it is per-user
-// because the table it writes is keyed by created_by, and that is the property the ruling turned on.
-// `nav_tabs` is likewise absent from the critter Lambda's HAS_UPDATABLE allowlist and must stay
-// absent — PATCH /api/notifications/prefs is the wrong door regardless of ordering.
+// V5-NAVCUSTOM-001 — THE TWO SAVERS BELOW REPORT THEIR OUTCOME, unlike every writer above them.
+//
+// The fire-and-forget writers above are right for what they save: the caller has already applied the
+// change locally and a lost sync costs nothing visible. These two are the opposite. A pin that fails
+// silently reappears unpinned at the next launch, and the bar editor's Save is a page whose only job
+// is that write — a save that reports nothing is a save that lies. So both return
+// { ok: true } | { ok: false, status }, where status 0 is the house convention for "never reached the
+// server" (offline, no token, timed out, env unset) and anything else is the server's own answer.
+// NavPrefsContext reads that split: 0 and 5xx keep the change and retry, a 4xx rolls it back.
+//
+// THE 15-SECOND BOUND IS api.js's API_TIMEOUT_MS, not a second constant. These cannot go through
+// apiFetch itself — its prefix table routes /api/notifications to the EVENTS Lambda, and the prefs
+// route lives on the critter Lambda this module has always called directly — so the bound is applied
+// here with the same AbortController pattern, around the fetch only, exactly as apiFetch applies it.
+//
+// NO keepalive, deliberately. A reported save needs its response. Durability across an app close is
+// NavPrefsContext's pending flag, which is written BEFORE the request goes out.
+//
+// NOT nav_tabs. The retired global order (public.app_config, V5-ADMINCENTER-001) never belonged on
+// this per-user table and still does not: bar_layout below is a different key with a different
+// shape, and it IS per-user — Dave ruled on 2026-09-24 (D4) that only his bar changes, never Jen's.
+//
+// A payload the contract refuses is reported as the 400 the server would return, with `local: true`,
+// without spending the round trip. The client check is not the boundary — the Lambda validator is.
+async function patchPrefsReported(getToken, body) {
+  if (!CRITTER_BASE) return { ok: false, status: 0 }
+  try {
+    const token = await (typeof getToken === 'function' ? getToken() : null)
+    if (!token) return { ok: false, status: 0 }
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS)
+    try {
+      const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      return res.ok ? { ok: true } : { ok: false, status: res.status }
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    return { ok: false, status: 0 }
+  }
+}
+
+const LOCAL_REFUSAL = { ok: false, status: 400, local: true }
+
+// saveMorePins — the caller's ordered pin list, WHOLE. `[]` is a real value and MUST be sent: the
+// route merges each column with COALESCE(new, old), so null or an absent key means "unchanged" and
+// removing the last pin by sending nothing would leave it pinned on the server forever.
+export async function saveMorePins({ getToken, ids } = {}) {
+  if (!Array.isArray(ids) || ids.length > MORE_PINS_MAX_STORED) return LOCAL_REFUSAL
+  if (ids.some(id => typeof id !== 'string' || !MORE_PIN_ID_RE.test(id))) return LOCAL_REFUSAL
+  if (new Set(ids).size !== ids.length) return LOCAL_REFUSAL
+  return patchPrefsReported(getToken, { more_pins: ids })
+}
+
+// saveBarLayout — the caller's own bar, as { order, hidden }. Self-scoped: the route writes the
+// caller's row and is NOT admin-gated; can_edit_bar only decides who sees the editor (D3). Only the
+// two contract keys are sent, whatever else the object carries.
+export async function saveBarLayout({ getToken, layout } = {}) {
+  const r = resolveBarLayout(layout)
+  if (!r.applied.order || !r.applied.hidden) return LOCAL_REFUSAL
+  return patchPrefsReported(getToken, { bar_layout: { order: r.order, hidden: r.hidden } })
+}
 
 // V4-USERPREFS-001 (V4-WHATSNEW-002) — last-seen release version, per user.
 // whatsNew.js's header said cross-device sync was "deferred to V4-WHATSNEW-002"; this is it.

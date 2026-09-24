@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { getRouteClass, isKnownClass, ROOT_TABS, CAPTURE_ROUTES } from '../lib/routeClass.js'
+import { TAB_REGISTRY } from '../lib/navConfig.js'
 
 // Guard test (V4-APPBAR-002): every app route MUST resolve to a known header class, and the
 // resolver must never yield "no header". Enumerates the App.jsx route table so a NEW route that
@@ -46,5 +47,16 @@ describe('routeClass — header IA guard', () => {
 
   it('ROOT_TABS covers the primary bottom-nav destinations (a journey start carries no Back)', () => {
     for (const t of ['/today', '/garden', '/findings']) expect(ROOT_TABS).toContain(t)
+  })
+
+  // I8 (V5-NAVCUSTOM-001, BUG-PUTUPROOTTAB-001). Derived from TAB_REGISTRY rather than a copied list:
+  // the hand list above is exactly how /harvests (V4-NAVHARVEST-001) and then /put-up
+  // (V4-PUTUPENGINE-001) each shipped as a bar tab with a navigate(-1) Back arrow, green throughout.
+  // RED on dev ff1e03ea (no /put-up). KILLING MUTATION: remove '/put-up' from ROOT_TABS.
+  it('I8 — ROOT_TABS ⊇ every bar destination in TAB_REGISTRY (the FAB is an action, not a page)', () => {
+    const destinations = Object.values(TAB_REGISTRY).filter(t => !t.highlight).map(t => t.to)
+    expect(destinations.length).toBeGreaterThanOrEqual(4)
+    expect(destinations.filter(p => !ROOT_TABS.includes(p))).toEqual([])
+    for (const p of destinations) expect(getRouteClass(p, { user: { id: 'u1' } }), p).toBe('root')
   })
 })

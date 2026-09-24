@@ -20,7 +20,7 @@
 // Every assertion is mechanical (route table, rendered nav rows), not a screenshot claim.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 
 // The lever, held OFF. Other values mirror the shipped defaults so nothing else changes shape.
 // PARTIAL mock (importOriginal spread): the enumerated form broke on every new flag added
@@ -32,9 +32,11 @@ vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
   OVERLAY_ROUTES_ENABLED: true,
 }))
 
-const { navigateSpy, locationRef } = vi.hoisted(() => ({
+const { navigateSpy, locationRef, prefsRef, saveSpy } = vi.hoisted(() => ({
   navigateSpy: vi.fn(),
   locationRef: { pathname: '/dashboard' },
+  prefsRef: { current: null },
+  saveSpy: vi.fn(async () => ({ ok: true })),
 }))
 
 // Partial mock: BottomNav renders bare (no Router), so Link/useLocation/useNavigate are stubbed —
@@ -59,8 +61,16 @@ vi.mock('../lib/mode.js', () => ({
   useMode: () => ({ mode: 'desk', isField: false, isDesk: true, setMode: vi.fn(), toggleMode: vi.fn() }),
   MODE: { FIELD: 'field', DESK: 'desk' },
 }))
+// V5-NAVCUSTOM-001 — the network edge of the prefs read and the pin save, for the pinned-Space case.
+vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({
+  ...(await orig()),
+  fetchNotificationPrefs: vi.fn(async () => prefsRef.current),
+  saveMorePins: saveSpy,
+}))
 
 import BottomNav from '../components/BottomNav.jsx'
+import { PrefsProvider } from '../context/PrefsContext.jsx'
+import { NavPrefsProvider } from '../context/NavPrefsContext.jsx'
 import { SPACE_PHOTOS_ENABLED } from '../lib/featureFlags.js'
 import { resolveSpaceId, spaceHeroPath, isPinnedFeatured } from '../lib/spaceId.js'
 
@@ -149,6 +159,28 @@ describe('flag OFF — the More sheet is byte-identical to today', () => {
     const row = screen.getByText('Zones')
     expect(row.closest('a').getAttribute('href')).toBe('/locations')
     expect(screen.queryByText('Spaces')).toBeNull()
+  })
+
+  // V5-NAVCUSTOM-001 — a PINNED Space under the lever held off. The pin must not draw a door to a
+  // route the table no longer has (/space falls through to /today), in Pinned or at home — and it
+  // must SLEEP, not die: it rides along in the next save so the rollback lever flipping back on
+  // brings the pin back with the row.
+  // KILLING MUTATIONS: draw pinned rows without the flag filter (a dead door); drop unknown/sleeping
+  // ids from the saved list (the pin dies). RESULT: RED for each.
+  it('a pinned Space draws nothing while the lever is off, and its pin survives the next save', async () => {
+    localStorage.clear()
+    prefsRef.current = { bar_layout: null, more_pins: ['space', 'seeds'], can_edit_bar: false }
+    await act(async () => {
+      render(<PrefsProvider><NavPrefsProvider><BottomNav /></NavPrefsProvider></PrefsProvider>)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'More navigation options' }))
+    expect(document.querySelector('a[href="/space"]')).toBeNull()
+    expect(screen.queryByText('Space')).toBeNull()
+    // Seeds is the only drawn pin; the Pinned block does not hold a hole where Space would be.
+    const pinned = [...screen.getByTestId('more-pinned').querySelectorAll('[data-more-row]')].map(r => r.getAttribute('data-more-row'))
+    expect(pinned).toEqual(['seeds'])
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Pin Photos to the top' })) })
+    expect(saveSpy.mock.calls.at(-1)[0].ids).toEqual(['space', 'seeds', 'photos'])
   })
 })
 

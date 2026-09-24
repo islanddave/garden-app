@@ -6,11 +6,14 @@ import { fetchNotificationPrefs } from '../lib/notificationPrefsClient.js'
 // PrefsContext — V5-ADMINCENTER-001. The app-level, once-at-boot read of user_notification_prefs.
 // Design: project-state/design-admincentre-V100-20260908.md §3, §4.
 //
-// PER-USER, AND ONLY PER-USER. This provider held useNavTabs until Dave ruled on 2026-09-08 that the
-// nav order is GLOBAL — one order for the installation, not one per person. The nav config moved to
-// AppConfigContext over public.app_config; user_notification_prefs is keyed by created_by and cannot
-// express an installation-wide fact. Do not route a global setting back through here: the table's
-// key is the reason, not convention.
+// PER-USER, AND ONLY PER-USER. user_notification_prefs is keyed by created_by, so nothing
+// installation-wide belongs here — the table's key is the reason, not convention. The tab bar has
+// been on both sides of that line: V5-ADMINCENTER-001 moved it OUT to a global app_config value
+// after Dave's 2026-09-08 "one nav order" ruling, and V5-NAVCUSTOM-001 moved it back IN when he
+// reversed that ruling on 2026-09-24 (D4: "only my bar changes" — order AND which tabs sit on the
+// bar are personal). The bar (bar_layout), the More pins (more_pins) and the editor flag
+// (can_edit_bar, computed per request, never stored) ride this provider's one read;
+// NavPrefsContext, directly beneath it, turns them into the bar, the pins and their launch caches.
 //
 // WHY A PROVIDER AND NOT ANOTHER fetch(). GET /api/notifications/prefs is this app's per-user
 // cross-device preference store (~10 columns of pure UI state live on it) and it had EIGHT
