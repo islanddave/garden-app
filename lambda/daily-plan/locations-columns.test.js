@@ -16,7 +16,8 @@
 // lambda/**/*.js (this file included). dev-main-schema-audit.py Phase 1 globs lambda/**/*columns.test.js,
 // REGEX-parses the AUDIT_COLUMNS literal out of this file's TEXT (it never runs it), and checks each
 // (table, column) against prod's information_schema.columns: a missing one exits 1 and reds the workflow.
-// That workflow is ADVISORY (promote-gate.yml does not require it). This vitest file is what keeps the
+// That workflow is advisory, but promote-gate.yml runs the same audit (--gate) on the promoted SHA before main
+// moves and refuses the promote on a miss (OPS-PROMOTESCHEMAGATE-001). This vitest file is what keeps the
 // declared list honest in both directions: every declared column is really read by the daily-plan SQL,
 // and every `locations` column that SQL reads is declared, so the next `l.<col>` cannot ship unaudited.
 //

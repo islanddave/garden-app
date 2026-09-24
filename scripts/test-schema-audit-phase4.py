@@ -203,8 +203,13 @@ if gn.exists():
     cols = {c for _, cs in res for c in cs}
     check("garden-node guard declares display_name (the column the 500 was about)",
           "display_name" in cols)
-    check("garden-node guard does NOT declare `name` (the column that did not exist)",
-          "name" not in cols)
+    # The ban is garden_node's: the 500 was `p.name` selected from garden_node, whose column is display_name.
+    # Written 2026-08-28 (7b3b66e) when garden_node was the only declared relation; once container joined the
+    # contract (bc8ae1f) it read every relation's columns, so a real `name` on another relation (source.name)
+    # would red it and, through promote-gate's self-tests, refuse a promote prod was fine with. Garden_node only.
+    gn_cols = {c for t, cs in res if t == "garden_node" for c in cs}
+    check("garden-node guard does NOT declare `name` on garden_node (the column that did not exist)",
+          "name" not in gn_cols)
     # The widened Phase 1 glob is what makes the file visible at all. Assert against the
     # auditor's OWN constant, not a copy of the pattern -- a test that hardcodes the glob
     # passes just as happily after the glob is narrowed back, which is the one regression

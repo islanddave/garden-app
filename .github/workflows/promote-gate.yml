@@ -17,8 +17,49 @@ name: promote-gate
 # (a snap failure reds the promote). Then the `deploy` job (workflow_call into deploy.yml) builds + deploys the SPA
 # under that same approval-free production ref policy, making promote->deploy deterministic (no reliance on
 # push:main retriggering) — it is a second environment binding, NOT a second approval.
-# Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL.
+# Secrets: GARDEN_BOT_APP_ID, GARDEN_BOT_PRIVATE_KEY, NEON_API_KEY, NEON_PROJECT_ID, NEON_BACKUP_URL, NEON_DATABASE_URL.
 # Vars: SNAP_AWS_ROLE_ARN, SNAP_BUCKET, PHOTOS_BUCKET, SNAP_RETENTION.
+#
+# PRE-FF CHECKS, in job order. Each fails the promote job before "Fast-forward main", so a red one leaves main,
+# the tags and prod untouched:
+#   1. Preflight — dev unmoved since dispatch; build-and-test = success; integration-tests = success
+#      (require_integration, default true).
+#   2. Version/tag skew gate — snap_version == v<package.json at dev_sha>, and that tag not already consumed.
+#   3. Prod schema gate — the L-081 audit of the promoted tree against PROD (require_schema_audit, default true).
+#   4. Write-path staging smoke gate — deploy-staging on the exact dev SHA, smoke-tests = success.
+# Then the Lambda deploy decision, which fails CLOSED to "deploy", never to "skip".
+#
+# PROD SCHEMA GATE (OPS-PROMOTESCHEMAGATE-001, added 2026-09-24). Until then nothing on this path read PROD's
+# schema: integration-tests forks its Neon branch from STAGING and the staging smoke runs against staging. A
+# promote whose Lambdas name a column prod lacks passed every check, deploy-lambdas shipped it, every request on
+# that route 500'd in prod, and the SPA deploy still went ahead, because a zip upload succeeds (review B1 of
+# V5-NAVCUSTOM-001). The gate runs scripts/dev-main-schema-audit.py, the audit schema-audit.yml runs ADVISORY on
+# dev pushes, over the checked-out promoted tree (it refuses if HEAD != dev_sha) against secrets.NEON_DATABASE_URL.
+# That is a repo secret; the production environment carries no secret of its own to shadow it. Read-only:
+# information_schema SELECTs. First the promoted tree's own DB-free parser self-tests
+# (scripts/test-schema-audit-phase{1,2,4}.py), because a parser regression is silent downstream. Then the audit
+# with --gate, inside `timeout 240`, so a hung query still ends in the step's own refuse()/opt-out logic; the
+# step's timeout-minutes is only the backstop.
+# REFUSED: a missing column or relation, a Phase-4 coverage regression, a crash (all exit 1); a contract the parser
+# cannot read (--gate exit 2, "cannot verify"), no psycopg2, unreadable config (exit 2); a hang; a failed self-test;
+# a missing secret; a checkout that is not dev_sha. NOT refused: a STALE waiver (--gate makes it a ::warning::;
+# prod already has the column). The refusal ::error:: names the cause and remedy from the audit's own FAIL/ERROR
+# line, never from the exit code alone:
+#   - column or relation MISSING in prod  -> apply its DDL to prod, then re-run the failed jobs or re-dispatch the
+#                                            SAME SHA (on the tag path, re-run the failed run: the tag can't move);
+#   - coverage REGRESSED, a contract that cannot be parsed, a failed self-test
+#                                          -> fix it on dev and promote the NEW SHA (on the tag path that
+#                                            promote-v* tag is spent: dispatch the new SHA, or tag a new version);
+#   - traceback, connection error, hang   -> a crash, not a verdict: re-run the failed jobs.
+# Coverage is the audit's, no more: Phase 1 = columns declared in lambda/**/*columns.test.js contracts, Phase 2 =
+# INSERT column lists, Phase 3 = soft-delete deleted_at targets, Phase 4 = that every relation a handler queries
+# exists. A SELECT/WHERE/SET column with no contract is NOT checked. WAIVERS: a flag-gated column that lands ahead
+# of its prod DDL is waived in scripts/schema-audit-allowlist.json (self-expiring), not by switching the gate off.
+# A relation a handler SELECTs/JOINs (Phase 4), or a contract names (Phase 1), cannot be waived: it needs its prod
+# DDL before ANY promote (the house rule: additive DDL before the code that reads it). A table a handler only
+# INSERTs into is waived column by column (Phase 2). require_schema_audit=false is the dispatch-only escape hatch:
+# every refusal becomes a loud ::warning::, and the audit still runs report-only whenever it can: a failed or hung
+# self-test falls through to it; only a missing secret or a checkout that is not dev_sha stops it.
 #
 # WRITE-PATH SMOKE GATE (PHASE2-CI-001 / L-145, added 2026-06-04): before the FF, this job dispatches
 # deploy-staging.yml for the exact dev SHA, polls the run to completion, and requires its `smoke-tests` job
@@ -52,6 +93,11 @@ name: promote-gate
 # NOTE: the promote-v* TAG trigger still hardcodes require_integration=false in `resolve` below — a tag push carries
 # no inputs, so it has no way to opt out if it were forced true, and that path (ship-garden.sh) is the break-glass
 # remote ship route. That asymmetry is deliberate and flagged for Dave, not an oversight.
+# require_schema_audit deliberately does NOT follow it: the tag path resolves it to TRUE. The schema gate reads prod
+# directly, so it has no in-flight check to race, and shipping a column prod lacks is exactly the outage it exists
+# for. Recovery per cause is in PROD SCHEMA GATE above.
+# Tag-path consequence: from the moment a handler on dev SELECTs/JOINs a new table or view, or a contract names one,
+# every promote-v* tag refuses until that relation's DDL is on prod (no waiver, no opt-out on that path).
 
 on:
   workflow_dispatch:
@@ -66,6 +112,11 @@ on:
         type: string
       require_integration:
         description: 'Enforce the integration-tests check on the dev SHA (default true = fail-closed; set false ONLY to deliberately promote past a red or absent integration-tests run)'
+        required: false
+        default: true
+        type: boolean
+      require_schema_audit:
+        description: 'Refuse the promote (before main moves) unless every column the promoted Lambdas name exists in PROD - the L-081 audit (default true = fail-closed; set false ONLY to deliberately promote past a red or inconclusive audit)'
         required: false
         default: true
         type: boolean
@@ -110,6 +161,7 @@ jobs:
       dev_sha: ${{ steps.r.outputs.dev_sha }}
       snap_version: ${{ steps.r.outputs.snap_version }}
       require_integration: ${{ steps.r.outputs.require_integration }}
+      require_schema_audit: ${{ steps.r.outputs.require_schema_audit }}
     steps:
       - name: Resolve promote inputs (dispatch OR promote-v* tag)
         id: r
@@ -118,6 +170,7 @@ jobs:
           IN_DEV_SHA: ${{ github.event.inputs.dev_sha }}
           IN_SNAP: ${{ github.event.inputs.snap_version }}
           IN_REQINT: ${{ github.event.inputs.require_integration }}
+          IN_REQSCHEMA: ${{ github.event.inputs.require_schema_audit }}
           GH_SHA: ${{ github.sha }}
           GH_REF_NAME: ${{ github.ref_name }}
         run: |
@@ -128,9 +181,13 @@ jobs:
             # Fallback MUST mirror the declared input default (true) so an API dispatch that omits the
             # key entirely cannot silently downgrade the gate to advisory. Fail-closed on absence.
             REQINT="${IN_REQINT:-true}"
+            # Same rule for the prod schema gate (OPS-PROMOTESCHEMAGATE-001).
+            REQSCHEMA="${IN_REQSCHEMA:-true}"
           else
             DEV_SHA="$GH_SHA"
             REQINT="false"
+            # NOT copied from REQINT: the tag path ENFORCES the prod schema gate (header, PROD SCHEMA GATE).
+            REQSCHEMA="true"
             case "$GH_REF_NAME" in
               promote-*) SNAP="${GH_REF_NAME#promote-}" ;;
               *) echo "::error::unexpected trigger ref '$GH_REF_NAME' (expected promote-v*)"; exit 1 ;;
@@ -142,12 +199,17 @@ jobs:
           if ! printf '%s' "$SNAP" | grep -Eq '^v[0-9]+(\.[0-9]+){0,2}$'; then
             echo "::error::snap_version '$SNAP' fails ^v[0-9]+(\.[0-9]+){0,2}\$"; exit 1
           fi
+          case "$REQSCHEMA" in
+            true|false) ;;
+            *) echo "::error::require_schema_audit must be true or false, got '$REQSCHEMA'"; exit 1 ;;
+          esac
           {
             echo "dev_sha=$DEV_SHA"
             echo "snap_version=$SNAP"
             echo "require_integration=$REQINT"
+            echo "require_schema_audit=$REQSCHEMA"
           } >> "$GITHUB_OUTPUT"
-          echo "resolved: event=$EVENT dev_sha=$DEV_SHA snap_version=$SNAP require_integration=$REQINT"
+          echo "resolved: event=$EVENT dev_sha=$DEV_SHA snap_version=$SNAP require_integration=$REQINT require_schema_audit=$REQSCHEMA"
 
   promote:
     needs: resolve
@@ -156,10 +218,16 @@ jobs:
     # OPS-PROMOTERACE-001: consumed by the deploy-lambdas job below to decide whether to run at all.
     outputs:
       lambda_changed: ${{ steps.lam.outputs.changed }}
-    # 50 (was 30): the staging write-path smoke gate below polls up to ~27.5min + ~5min locate;
-    # FF+snap need ~10min after. Widened 2026-07-23 after two promotes fail-closed when a runner-queue
-    # backlog pushed the ~16min staging pipeline past the old window (staging was green both times).
-    timeout-minutes: 50
+    # 60 (30 until 2026-07-23, then 50). Widened 2026-07-23 after two promotes fail-closed when a runner-queue backlog pushed the ~16min
+    # staging pipeline past the old window (staging was green both times). Worst case for a promote that reaches
+    # the FF: ~1 min before the smoke gate (token, preflight, skew, checkout, psycopg2 install, and a schema gate
+    # that PASSES in seconds) + up to 34.5 min in the staging smoke gate (5 locate + 27.5 poll + 2 jobs read) +
+    # ~10 min FF and snap = ~45.5 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
+    # <=250 s, about 9 min together) end in a refusal BEFORE the FF, so they stack with snap only on a
+    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~54.5
+    # min, which passed the old 50 and would have ended the job inside snap, after the FF (review MINOR 2) — main
+    # moved, nothing deployed. 60 (was 50, raised 2026-09-24 with the schema gate) covers that worst case.
+    timeout-minutes: 60
     steps:
       - name: Mint garden-bot installation token
         id: bot
@@ -269,6 +337,149 @@ jobs:
             echo "tag $SNAP is free"
           fi
           echo "version/tag skew gate ok: $SNAP == v$PKG, tag not previously consumed"
+
+      # The promoted commit. Moved up again 2026-09-24 (OPS-PROMOTESCHEMAGATE-001) from just before the Lambda
+      # decision: the prod schema gate below audits THIS tree and runs before the staging smoke. The decision
+      # script and snap.py still come from it.
+      - name: Checkout dev_sha (schema audit + scripts/check-lambda-current.py + scripts/snap.py)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve.outputs.dev_sha }}
+
+      # Never fails the step. A failed install makes the audit below exit 2 (no psycopg2), which the gate refuses
+      # like any inconclusive run; keeping the refusal in that ONE step is what lets require_schema_audit=false
+      # still promote when PyPI is down, and `timeout` does the same for a hung one. Plain form first (proven on
+      # these runners, "Install python deps" below); the fallback covers a PEP-668 externally-managed image, same
+      # shape as ci.yml's pytest step.
+      - name: Install psycopg2 (prod schema gate)
+        run: |
+          timeout -k 5 90 python3 -m pip install --quiet psycopg2-binary \
+            || timeout -k 5 90 python3 -m pip install --quiet --break-system-packages psycopg2-binary \
+            || echo "::warning::psycopg2-binary did not install; the prod schema gate below will be inconclusive (exit 2) and refuse the promote unless require_schema_audit=false"
+
+      # OPS-PROMOTESCHEMAGATE-001 — see PROD SCHEMA GATE in the header. PRE-FF and before the staging smoke, like
+      # the skew gate: a refusal here costs about a minute and no staging deploy, and main is untouched.
+      #
+      # ERREXIT — keep every `|| RC=$?`, `|| HEAD=""` and `|| refuse`. GitHub runs this step as `bash -e {0}`, so a
+      # bare call would end the step on exit 1 or 2 with no annotation, and a bare `X=$(...)` would end it
+      # unexplained. scripts/test_workflow_steps.py runs this body the runner's way. Every failure goes through
+      # refuse(), which errors (exit 1) unless require_schema_audit=false, and then warns and passes; a failed or hung
+      # self-test under the opt-out warns and falls through to the audit instead. Only an audit that exits 0 on the
+      # promoted tree, after its parser self-tests pass, passes an enforced gate.
+      #
+      # BOUNDS. Each python3 runs inside `timeout`, so a hang ends in refuse() and the opt-out still decides:
+      # self-tests 3 x (30 + 5) s, audit 240 + 10 s, about 6 min together. timeout-minutes stays above that sum as
+      # the backstop (scripts/test_workflow_steps.py pins the arithmetic). 124 = timed out; 137 = had to be KILLed.
+      - name: Prod schema gate — promoted Lambdas' column refs must exist in PROD (L-081; pre-FF, fail-closed)
+        timeout-minutes: 7
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          REQ_SCHEMA: ${{ needs.resolve.outputs.require_schema_audit }}
+          DEV_SHA: ${{ needs.resolve.outputs.dev_sha }}
+          # libpq reads it when the URL sets no connect_timeout: a black-holed connect fails in 30 s, not at 240 s.
+          PGCONNECT_TIMEOUT: '30'
+        run: |
+          set -uo pipefail
+          ENFORCE=true
+          if [ "${REQ_SCHEMA:-true}" = "false" ]; then
+            ENFORCE=false
+            echo "::warning title=Prod schema gate NOT enforced::require_schema_audit=false — this promote proceeds even if prod lacks a column the promoted Lambdas name, which 500s every request on that route in prod. The audit still runs, report-only, whenever it can."
+          fi
+          refuse() {
+            if [ "$ENFORCE" = "false" ]; then
+              echo "::warning title=Prod schema gate (not enforced)::$1 — promoting anyway because require_schema_audit=false."
+              exit 0
+            fi
+            echo "::error title=Prod schema gate::$1 — refusing to promote (fail-closed). main has NOT been touched."
+            exit 1
+          }
+          # The cause and its remedy come from the audit's own FAIL/ERROR line, never from its exit code alone
+          # (review IMPORTANT 3): the same exit 1 means "apply DDL, re-run this SHA", "fix dev, new SHA" or "retry".
+          remedy() {
+            PARSE_CAUSE=no
+            if grep -q '^Traceback' "$1"; then
+              WHY="the audit CRASHED (exit $2, traceback above; e.g. a refused or dropped Neon connection) — a crash, not a verdict: re-run the failed jobs"
+            elif grep -q 'relation(s) queried by a handler do NOT exist in prod' "$1"; then
+              WHY="a relation the promoted handlers query does NOT exist in prod (listed above; a relation a handler SELECTs/JOINs cannot be waived) — apply its DDL to prod, then re-run the failed jobs or re-dispatch the same SHA"
+            elif grep -q 'column refs are MISSING in prod' "$1"; then
+              WHY="a column the promoted code names is MISSING in prod (listed above) — apply its DDL to prod, then re-run the failed jobs or re-dispatch the same SHA"
+            elif grep -q 'contract file(s) could not be parsed' "$1"; then
+              PARSE_CAUSE=yes
+              WHY="a Phase-1 column contract could NOT be parsed, so its columns were not checked (named above) — fix the contract on dev and promote the new SHA"
+            elif grep -q 'coverage REGRESSED' "$1"; then
+              WHY="a handler queries a relation with no column contract (Phase-4 coverage regressed, listed above) — declare it in that lambda's *columns.test.js on dev and promote the new SHA"
+            elif grep -q 'has ZERO columns in prod' "$1"; then
+              WHY="a contract names a relation prod has no columns for (above) — fix the table name on dev and promote the new SHA, or, if the relation is new, apply its DDL to prod and re-run"
+            elif grep -q 'psycopg2 not installed' "$1"; then
+              WHY="psycopg2 is not installed (see the install step's warning) — infrastructure, not a verdict: re-run the failed jobs"
+            else
+              WHY="the audit exited $2 with no verdict line this gate recognises (output above), so prod's schema was NOT verified"
+            fi
+            # Phase 4's extractor can misread SQL as a relation (review re-check MINOR): a set-returning function lists
+            # under its own name (`FROM jsonb_to_recordset(...)`), and a non-public schema qualifier lists truncated
+            # (`FROM pg_catalog.pg_class` as `pg_catalo`). No DDL fixes either. Flag a listed name when the promoted
+            # tree has it followed by `(`, or as the start of a longer name followed by `.`.
+            MISREAD=""
+            for REL in $(sed -n 's/^    - \([A-Za-z0-9_][A-Za-z0-9_]*\)  (queried by lambda\/.*)$/\1/p' "$1"); do
+              if grep -rEqs --include='*.js' --exclude-dir=node_modules "(FROM|JOIN)[[:space:]]+(public\.)?${REL}[[:space:]]*\(" lambda \
+                || grep -rEqs --include='*.js' --exclude-dir=node_modules "(FROM|JOIN)[[:space:]]+${REL}[A-Za-z0-9_]+[[:space:]]*\." lambda; then
+                MISREAD="$MISREAD $REL"
+              fi
+            done
+            if [ -n "$MISREAD" ]; then
+              WHY="$WHY; NOTE:$MISREAD may be an extractor misread (a function call, or a schema-qualified name Phase 4 truncated), which no DDL can fix: fix it on dev and promote the new SHA"
+            fi
+            # A skipped contract rides along with a definite FAIL (exit 1 wins), so say so: the re-run would refuse on it.
+            if [ "$PARSE_CAUSE" = "no" ] && grep -q 'contract file(s) could not be parsed' "$1"; then
+              WHY="$WHY; ALSO a Phase-1 contract could not be parsed (named above): fix it on dev too, or the next run refuses on it"
+            fi
+            echo "$WHY"
+          }
+          if [ -z "${NEON_DATABASE_URL:-}" ]; then
+            refuse "NEON_DATABASE_URL is not readable by this job, so prod's schema was NOT checked"
+          fi
+          HEAD=$(git rev-parse HEAD 2>/dev/null) || HEAD=""
+          if [ "$HEAD" != "$DEV_SHA" ]; then
+            refuse "the checked-out tree is '${HEAD:-unreadable}', not the promoted $DEV_SHA, so the audit would check the wrong code"
+          fi
+          LOGS=$(mktemp -d) || refuse "could not create a temp dir for the audit's output"
+          # Enforced, a failed or hung self-test refuses. Opted out, it warns and FALLS THROUGH, so the audit still
+          # runs report-only (review re-check MINOR): pin drift is the likeliest reason to opt out, and it must not
+          # also buy zero verification. scripts/test_schema_audit_phase_suites.py runs the same suites in
+          # build-and-test, so drift should red the dev push long before it reaches this step.
+          selftest_failed() {
+            if [ "$ENFORCE" = "false" ]; then
+              echo "::warning title=Prod schema gate (not enforced)::$1 — running the audit anyway, report-only, because require_schema_audit=false."
+            else
+              refuse "$1"
+            fi
+          }
+          # 1) The promoted tree's own parser self-tests, DB-free: schema-audit.yml runs them first for the same
+          #    reason, a Phase-1 parser regression is silent downstream (review MINOR 1). No DSN reaches them.
+          for t in 1 2 4; do
+            RC=0
+            env -u NEON_DATABASE_URL timeout -k 5 30 python3 "scripts/test-schema-audit-phase$t.py" > "$LOGS/phase$t.log" 2>&1 || RC=$?
+            echo "::group::audit parser self-test phase$t (exit $RC)"
+            cat "$LOGS/phase$t.log"
+            echo "::endgroup::"
+            case "$RC" in
+              0) ;;
+              124|137) selftest_failed "the audit parser self-test scripts/test-schema-audit-phase$t.py did not finish in 30 s — a hang, not a verdict: re-run the failed jobs" ;;
+              *) selftest_failed "the promoted tree's audit parser self-test scripts/test-schema-audit-phase$t.py failed (exit $RC, output above): the audit's parser, or a contract whose exact column set that test pins, changed without the other, so the audit's verdict cannot be trusted — fix it on dev and promote the new SHA" ;;
+            esac
+          done
+          # 2) The audit itself, --gate mode, bounded.
+          RC=0
+          timeout -k 10 240 python3 scripts/dev-main-schema-audit.py --repo-root . --gate > "$LOGS/audit.log" 2>&1 || RC=$?
+          cat "$LOGS/audit.log"
+          if grep -q 'STALE waiver' "$LOGS/audit.log"; then
+            echo "::warning title=Prod schema gate - stale waiver::scripts/schema-audit-allowlist.json waives a column prod now has (listed above). Not a refusal; delete the entry on dev (the advisory schema-audit run fails until you do)."
+          fi
+          case "$RC" in
+            0) echo "prod schema gate ok: every column ref the L-081 audit covers at $DEV_SHA exists in prod" ;;
+            124|137) refuse "the audit did not finish in 240 s at $DEV_SHA (a hung Neon connection or query) — a hang, not a verdict: re-run the failed jobs" ;;
+            *) refuse "L-081 audit exit $RC at $DEV_SHA: $(remedy "$LOGS/audit.log" "$RC")" ;;
+          esac
 
       - name: Write-path staging smoke gate (PHASE2-CI-001 / L-145)
         env:
@@ -412,11 +623,7 @@ jobs:
           role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      # Moved with it: the decision script and snap.py both come from the promoted commit.
-      - name: Checkout dev_sha (scripts/check-lambda-current.py + scripts/snap.py)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ needs.resolve.outputs.dev_sha }}
+      # (The dev_sha checkout the decision script and snap.py read moved above the prod schema gate, 2026-09-24.)
 
       # OPS-LAMSKIPVSMAIN-001 (2026-09-18) — decide whether the Lambdas need deploying by asking THE
       # RUNNING FUNCTIONS, not `main`.
