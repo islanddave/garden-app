@@ -7,34 +7,60 @@ information_schema.columns. Catches the L-081 bug class (local_3f62f153
 2026-05-19 prod incident E-local_3f62f153-001): code references columns that
 exist in staging but not prod, deploy succeeds, every endpoint 500s.
 
-Two phases (both run; failure in either fails the audit):
+Four phases (all run; a failure in any fails the audit):
 
-  Phase 1 - select-columns.test.js assertions.
-    Every column asserted in `lambda/**/select-columns.test.js` arrays must
-    exist in prod. Covers SELECT/RETURNING response-shape columns that have a
-    static-source contract test.
+  Phase 1 - column contracts.
+    Every column declared in a `lambda/**/*columns.test.js` contract (the keyed
+    `const AUDIT_COLUMNS = {...};` form, or `const AUDIT_TABLES = [...]` plus
+    `const *_COLUMNS = [...];` arrays) must exist in prod. Covers the
+    SELECT/RETURNING columns that have a static-source contract test. A file it
+    cannot parse is SKIPPED with a WARN (and refused under --gate, below).
 
-  Phase 3 - soft-delete column presence (added 2026-05-22, L-096).\n    Every table soft-deleted via `UPDATE <table> SET ... deleted_at` must have a\n    deleted_at column in prod. Catches the project_types.deleted_at class that\n    Phases 1/2 miss (SET/WHERE refs). Narrow by design (UPDATE write target only).\n\n  Phase 2 - INSERT column lists (added 2026-05-19, local_ba595ceb).
+  Phase 2 - INSERT column lists (added 2026-05-19, local_ba595ceb).
     Every column named in an `INSERT INTO <table> ( ... ) VALUES|SELECT`
     column list across `lambda/**/*.js` (excluding node_modules and *.test.js)
     must exist in prod. Widened from index.js-only 2026-08-19. This is the
     write-path blind spot Phase 1 missed: PATCH/POST handlers that INSERT into
     a column the prod schema lacks would 500 (or violate a constraint) with no
-    select-columns.test.js coverage. Scope is deliberately limited to the
-    parenthesized column list immediately preceding VALUES/SELECT - the
-    unambiguous, regex-tractable subset of inline SQL. Column refs buried in
+    contract coverage. Scope is deliberately limited to the parenthesized
+    column list immediately preceding VALUES/SELECT - the unambiguous,
+    regex-tractable subset of inline SQL. Column refs buried in
     SELECT/WHERE/SET/jsonb_build_object/RETURNING are NOT audited here (full
     SQL parse is a separate, fragility-prone effort - intentionally deferred).
 
-Pre-flight gate. Run before any dev->main promote on garden-app.
-Returns PASS / FAIL with specific (file, table, column) tuples on FAIL.
-Wired into `.github/workflows/schema-audit.yml`, which runs on pushes to dev
-(path-filtered to the audited sources; advisory -- trigger re-homed 2026-07-22,
-OPS-GUARDINTEG-001, after the original pull_request->main trigger went
-structurally dead under OPS-GATE-001).
+  Phase 3 - soft-delete column presence (added 2026-05-22, L-096).
+    Every table soft-deleted via `UPDATE <table> SET ... deleted_at` must have a
+    deleted_at column in prod. Catches the project_types.deleted_at class that
+    Phases 1/2 miss (SET/WHERE refs). Narrow by design (UPDATE write target only).
+
+  Phase 4 - joined relations (added 2026-08-28, BUG-SEEDDETAIL500-001).
+    Every relation a handler names in FROM/JOIN inside sql`` must exist in prod
+    (hard FAIL), and the count of touched relations with no column contract in
+    the handler's own directory may fall but never rise past
+    scripts/schema-audit-join-baseline.json (ratchet FAIL).
+
+Waivers (scripts/schema-audit-allowlist.json) cover COLUMNS only: a waived
+`table.column` missing from prod is reported, not failed. A relation prod lacks
+cannot be waived; its DDL has to reach prod first.
+
+Runs in two places:
+  - `.github/workflows/schema-audit.yml` on pushes to dev that touch the audited
+    sources (advisory: a FAIL reds that workflow and nothing waits on it;
+    trigger re-homed 2026-07-22, OPS-GUARDINTEG-001, after the original
+    pull_request->main trigger went structurally dead under OPS-GATE-001);
+  - `.github/workflows/promote-gate.yml`, "Prod schema gate" step, with --gate,
+    on the exact dev SHA being promoted, before main moves: any non-zero exit
+    refuses the promote (OPS-PROMOTESCHEMAGATE-001, 2026-09-24).
+
+--gate (the promote gate's mode; without it the audit behaves exactly as before):
+  - a Phase-1 contract that could not be parsed exits 2 ("cannot verify"),
+    unless a FAIL above already exits 1;
+  - a STALE waiver (its column now exists in prod) is a loud WARN, not a FAIL:
+    prod has the column, so nothing is unsafe; deleting the entry is hygiene
+    for the advisory run, which still fails on it.
 
 Usage:
-    python3 scripts/dev-main-schema-audit.py [--repo-root PATH] [--env-file PATH] [--verbose]
+    python3 scripts/dev-main-schema-audit.py [--repo-root PATH] [--env-file PATH] [--verbose] [--gate]
 
 Default repo-root: current directory (when invoked from CI checkout)
                   or /Users/davenichols/AI/Claude/Projects/Gardening/garden-app (local dev)
@@ -42,9 +68,15 @@ Default env-file:  {repo-root}/.env.local  (reads NEON_DATABASE_URL per L-067)
 Env var:          NEON_DATABASE_URL takes precedence over .env.local (CI path)
 
 Exit codes:
-    0 = PASS  (all referenced columns present in prod)
-    1 = FAIL  (one or more columns missing in prod -- halt squash-merge)
-    2 = error (config / connection / parse failure -- inconclusive)
+    0 = PASS  (every audited column and relation present in prod)
+    1 = FAIL  (a column or relation missing in prod, a Phase-4 coverage
+               regression, or a stale waiver outside --gate: refuse the
+               promote). An uncaught error, e.g. a refused or dropped Neon
+               connection, also exits 1, with a Python traceback: a crash,
+               not a verdict.
+    2 = error (config / parse failure, no psycopg2, a contract naming a
+               relation with no columns in prod, or an unparseable contract
+               under --gate -- inconclusive)
 
 Related: L-081 in /Users/davenichols/AI/Claude/learning/lessons.md
 Canonical home: garden-app/scripts/ (CI + local invocation against garden-app).
@@ -316,6 +348,13 @@ def main() -> int:
         default=None,
         help="waived column refs (default: {repo-root}/scripts/schema-audit-allowlist.json)",
     )
+    # OPS-PROMOTESCHEMAGATE-001. promote-gate.yml's "Prod schema gate" passes this. Every difference from the
+    # advisory run is guarded by `if args.gate`, so without the flag the output and exit code are unchanged.
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="promote-gate mode: an unparseable Phase-1 contract exits 2; a stale waiver warns instead of failing",
+    )
     args = parser.parse_args()
 
     repo = Path(args.repo_root).resolve()
@@ -501,6 +540,19 @@ def main() -> int:
         p1_summary += f" -- UNAUDITED: {', '.join(p1_skipped)}"
         print(f"WARN: {p1_summary}", file=sys.stderr)
     print(p1_summary)
+    # --gate: a skipped contract is an unaudited one, and the promote gate must not pass on what it could not
+    # check (review IMPORTANT 1: an `Object.freeze([...])` wrapper hid a missing column behind exit 0, with P4
+    # unchanged). Reported where it happens; the exit 2 is taken just before PASS, so a definite FAIL below still
+    # exits 1 and names its own remedy.
+    if args.gate and p1_skipped:
+        print(
+            f"ERROR: --gate: {len(p1_skipped)} Phase-1 contract file(s) could not be parsed, so their columns "
+            f"were NOT checked against prod (cannot verify): {', '.join(p1_skipped)}"
+        )
+        print(
+            "    Each *columns.test.js must declare `const AUDIT_COLUMNS = { table: ['col', ...] };`, or "
+            "`const AUDIT_TABLES = ['table'];` plus `const X_COLUMNS = ['col', ...];`, as plain string literals."
+        )
 
     # ── Phase 4 report: existence (hard) then coverage (ratchet) ──────────────────────────────
     if absent_rels:
@@ -561,6 +613,8 @@ def main() -> int:
     #   2. it SELF-EXPIRES — once prod actually has the column the waiver is stale, and a stale
     #      waiver is a hard FAIL demanding its deletion. That is what stops this file rotting
     #      into a permanent silencer, which is how allowlists usually die.
+    # Waivers cover COLUMNS only. A relation prod lacks fails Phase 4 (or Phase 1's empty-relation guard)
+    # above, before this point, so a new table or view needs its prod DDL before any promote.
     allow_path = Path(args.allowlist) if args.allowlist else repo / "scripts" / "schema-audit-allowlist.json"
     waived: dict = {}
     if allow_path.exists():
@@ -575,7 +629,17 @@ def main() -> int:
         if "." in key
         and key.split(".", 1)[1] in table_cache.get(key.split(".", 1)[0], set())
     ]
-    if stale:
+    if stale and args.gate:
+        # --gate: prod HAS these columns, so nothing here is unsafe to ship. As a refusal it would block every
+        # promote between the DDL and the dev commit that deletes the entry, and no re-run of the same SHA could
+        # clear it (review IMPORTANT 3). The advisory run (no --gate) still fails on it, which is the nudge.
+        print(
+            f"WARN: {len(stale)} STALE waiver(s) in {allow_path.name} — the column now exists in prod "
+            f"(--gate: not a refusal, prod already has it):"
+        )
+        for key in sorted(stale):
+            print(f"    - {key}  (delete this entry on dev; the advisory schema-audit run fails until you do)")
+    elif stale:
         print(f"FAIL: {len(stale)} STALE waiver(s) in {allow_path.name} — the column now exists in prod:")
         for key in sorted(stale):
             print(f"    - {key}  (remove this entry; the audit should be enforcing it again)")
@@ -609,11 +673,21 @@ def main() -> int:
             for col, ref, phase in by_table[table]:
                 print(f"    - {col}  [{phase}] ({ref})")
         print()
-        print(
-            "L-081 enforcement: HALT before squash-merge. Apply the additive migration "
-            "to prod Neon first per CLAUDE.md Migration Authoring Rule §1 exception."
-        )
+        if args.gate:
+            print(
+                "L-081 (--gate): apply the additive migration to prod Neon first (Migration Authoring Rule §1 "
+                "exception), then re-run the refused promote on the same SHA."
+            )
+        else:
+            print(
+                "L-081 enforcement: HALT before squash-merge. Apply the additive migration "
+                "to prod Neon first per CLAUDE.md Migration Authoring Rule §1 exception."
+            )
         return 1
+
+    if args.gate and p1_skipped:
+        print(f"UNVERIFIED (--gate): exit 2 -- the {len(p1_skipped)} contract file(s) reported above could not be parsed.")
+        return 2
 
     print(
         f"PASS: {total} column refs "
