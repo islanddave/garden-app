@@ -22,13 +22,17 @@ vi.mock('../lib/api.js', () => ({
   apiFetch: (...a) => fetchSpy(...a),
 }))
 vi.mock('react-router-dom', () => ({
-  Link: ({ children, to, state, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
+  // `state` is read back off data-state: which doors add an arrival hint to it is part of the contract.
+  Link: ({ children, to, state, ...r }) => (
+    <a href={typeof to === 'string' ? to : '#'} data-state={state ? JSON.stringify(state) : undefined} {...r}>{children}</a>
+  ),
   // V5-SEEDSTAB-001 — the track sheet's "Add the packet" is a SheetRowLink now, which navigates.
   useNavigate: () => () => {},
 }))
 
 import SavedSeeds from '../pages/SavedSeeds.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { seedsReturnState, LOT_SECTION_KEY, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
 
 const PARENT = {
   id: 'pl-melon', name: 'Green Flesh', quantity: 1, variety_id: 'v-melon', project_name: null,
@@ -104,6 +108,18 @@ describe('SavedSeeds — provenance (V4-SEEDLINK-001)', () => {
     await mount([lot()])
     expect(screen.queryByTestId('lot-source-plant')).toBeNull()
     expect(screen.getByTestId('set-source-plant').getAttribute('href')).toBe('/inventory/inv-1')
+  })
+
+  it('BUG-SEEDLOTOPENSATFORM-001 — that way in is an EDIT door: the lot page lands on its Saved from card', async () => {
+    // Dave: the lot page's top "is desired behavior when not going directly from an edit option of some
+    // sort". This link opens the lot to set its parent, so it names that part in the same return state
+    // (the page's exits still go Back here). The card's title opens the lot to look at it: no hint, top.
+    await mount([lot()])
+    const stateOf = (testId) => JSON.parse(screen.getByTestId(testId).getAttribute('data-state'))
+    expect(stateOf('set-source-plant')).toEqual({
+      ...seedsReturnState('/seeds?view=saved'), [LOT_SECTION_KEY]: LOT_SECTION_SOURCE_PLANT,
+    })
+    expect(stateOf('seed-lot-title')).toEqual(seedsReturnState('/seeds?view=saved'))
   })
 
   it('does NOT fetch plantings when no lot carries a link', async () => {
