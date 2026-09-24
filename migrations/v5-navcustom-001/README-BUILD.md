@@ -9,10 +9,16 @@ writes them, and the SPA draws from them. Design: `project-state/design-navcusto
 
 | Step | State |
 |---|---|
-| `0a` / `0c` staging | **NOT APPLIED** |
-| `0a` / `0c` prod | **NOT APPLIED** |
-| Critter Lambda (`lambda/critter/`) | API lane branch `lane-navcustom-api-20260924`, **not pushed to dev** |
-| SPA (`src/`) | SPA lane branch `lane-navcustom-spa-20260924`, **not pushed to dev** |
+| `0a` / `0c` staging | **APPLIED** 2026-09-24 15:56:59Z — pre 6/6, sweep 2/2 (before and after 0a), post 8/8; whole corpus `--continuous-only` 0 FAIL / 0 ERROR |
+| `0a` / `0c` prod | **NOT APPLIED** — needs Dave's OK |
+| Critter Lambda (`lambda/critter/`) | integration branch `integ-navcustom-20260924`, **not pushed to dev** |
+| SPA (`src/`) | integration branch `integ-navcustom-20260924`, **not pushed to dev** |
+
+Rehearsed first on a throwaway local PostgreSQL 17.10 carrying prod's table definition (pg_dump
+`--schema-only` as `garden_ro`): CHECK accept/reject probes, the self-armed post gates vacuous before the
+apply, one gate proved non-vacuous by a planted vocabulary CHECK, `0r` then `0a`+`0c` re-applied twice, and
+the critter Lambda's real PATCH upsert run through four save shapes. Detail:
+`project-state/_navcustom-build-20260924/integration-report.md`.
 
 ## Files
 
