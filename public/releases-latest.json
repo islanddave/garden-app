@@ -1,9 +1,10 @@
 {
-  "version": "4.143.1",
+  "version": "4.144.0",
   "date": "2026-09-24",
   "highlights": [
-    "Harvest by voice: you can leave off count and grams. Suyo Long, 2, 165, next, whether in pieces or in one breath, saves 2 count and 165 grams. Before, the second number replaced the first.",
-    "The saved line now says which unit was guessed. A number the app cannot place, or one that could be part of a plant's name, is left out with a note instead of guessed.",
-    "Fixed: saying next again right after a refused next could show saved once without saving anything."
+    "Seeds: Sow this on a packet's page opens the same sow form as Sow now, and Edit sow details opens the variety's sow settings. Sow now's dead ends now lead somewhere.",
+    "Seed saved off an F1 plant now says F2 — won't come true, on My seeds, Saved seeds and the packet page.",
+    "A packet's page lists the plantings sown from it. Saved seeds gains a Not started group, and its parent-plant names, seed-saved events and search results open the right page.",
+    "Variety editor: varieties added by the app's own scripts can be edited again, and a read-only variety now looks read-only."
   ]
 }
