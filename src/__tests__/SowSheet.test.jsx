@@ -292,6 +292,27 @@ describe('per-host stash keys — an interrupted sow reopens where it was, and n
     expect(screen.queryByTestId('sow-this')).toBeNull()
   })
 
+  // The restore guard (`if (!canSowFrom(item)) return`) cannot be seen through the sheet: SowSheet is
+  // not mounted for an unsowable packet, so a restore past the guard opens nothing (QA Q05: deleting the
+  // guard left the test above green). It is still a defect — the page would hold a sow open in its state,
+  // report itself dirty, and reopen the stale sheet if the packet became sowable later in the tab. The
+  // overlay-dirty report is the channel the mount gate does not hide.
+  it.each([
+    ['used up', { ...ITEM, quantity_on_hand: 0 }],
+    ['still drying', { ...SAVED_ITEM, seed_stage: 'drying' }],
+    ['still fermenting', { ...SAVED_ITEM, seed_stage: 'fermenting' }],
+  ])('a stash naming a %s packet never reports the page dirty', async (_label, unsowable) => {
+    seedStash('sow-packet', { inventoryItemId: 'pkt-1' })
+    item = unsowable
+    const dirtySpy = vi.fn()
+    await renderDetail((n) => <OverlayDirtyProvider onDirtyChange={dirtySpy}>{n}</OverlayDirtyProvider>)
+    await act(async () => {})
+    // Positive evidence the page reported at all — a spy never called passes "never true" vacuously.
+    expect(dirtySpy).toHaveBeenCalledWith(false)
+    expect(dirtySpy).not.toHaveBeenCalledWith(true)
+    expect(sowDialog()).toBeNull()
+  })
+
   it('a deliberate Close clears the stash, so the next visit does not reopen it', async () => {
     const { unmount } = await renderDetail()
     await act(async () => { fireEvent.click(screen.getByTestId('sow-this')) })
