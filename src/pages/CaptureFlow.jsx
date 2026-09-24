@@ -646,7 +646,7 @@ export default function CaptureFlow() {
   const [undone, setUndone] = useState(false)
   async function doUndo() {
     if (!result?.undo) return
-    setSaving(true)
+    setSaving(true); setErr(null)
     try { await result.undo(); setUndone(true) } catch (e) { setErr(e?.message || 'Undo failed') }
     setSaving(false)
   }
@@ -939,6 +939,10 @@ export default function CaptureFlow() {
             </span>
             {!undone && <Button data-testid="cap-undo" variant="secondary" disabled={saving} onClick={doUndo} style={{ minHeight: 34, padding: '5px 12px' }}>Undo</Button>}
           </div>
+          {/* BUG-INVREFSTRAND-001 — a failed Undo says why, on this card. doUndo always set `err`, but
+              the only place `err` rendered was the form step, so a refused or failed Undo changed
+              nothing on screen. Undo stays above, so it can be tried again. */}
+          {err && <p role="alert" data-testid="cap-undo-error" style={{ color: P.terra, fontSize: '0.85rem', margin: '0 0 14px' }}>{err}</p>}
           {/* V5-INFLIGHTBATCH-001 — an optional second confirmation line, currently used only by the
               kitchen destination for the write-on-the-lid instruction. Its own row, above the exit
               buttons: it is a thing to DO in the next ten seconds, not a control, so it must not sit

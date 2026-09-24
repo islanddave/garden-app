@@ -64,6 +64,8 @@ export default function InventoryDetail() {
   const [errors,       setErrors]       = useState({})
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting,     setDeleting]     = useState(false)
+  // BUG-INVDELETEERROROFFSCREEN-001 — why the last delete failed, shown INSIDE the "Remove item?" dialog.
+  const [deleteErr,    setDeleteErr]    = useState(null)
   // V4-DIRTYGUARDSWEEP-001 — the last form snapshot that is known to be ON THE SERVER. Kept
   // separately from `item` because handleSave deliberately does NOT re-set `item` (the breadcrumb
   // and heading keep showing the loaded name until a reload), so diffing against `item` would leave
@@ -376,13 +378,18 @@ export default function InventoryDetail() {
   }
 
   // ── Delete (soft) ──────────────────────────────────────────────────────────
+  // BUG-INVDELETEERROROFFSCREEN-001 — a failed delete says why WHERE THE TAP WAS. It used to close the
+  // dialog and put the reason in the form banner, which sits above the whole form: on a phone the
+  // dialog vanished and nothing changed near the finger. Now the dialog stays open with the reason
+  // beside its buttons — for ANY delete error, the 409 "This packet can't be removed: …" among them
+  // (BUG-INVREFSTRAND-001), whose sentence already says what to do instead.
   async function handleDelete() {
     setDeleting(true)
+    setDeleteErr(null)
     const { error } = await deleteItem(id)
     setDeleting(false)
     if (error) {
-      setErrors({ _form: error })
-      setConfirmDelete(false)
+      setDeleteErr(error)
     } else if (item?.category === 'seeds') {
       // V5-SEEDSTAB-001 — Back never reopens the lot just removed. Pushed by a Seeds view: go BACK to
       // it (Seeds remounts and refetches, so the row is gone). A replace there left two identical
@@ -1103,12 +1110,17 @@ export default function InventoryDetail() {
                 </Link>
               )}
             </div>
+            {/* BUG-SEEDPAGETAPFLOORS-001 — on the 44px floor (T.tapMinHeight). It was a bare text
+                button about 19px tall, the layout gate's `remove-item` exemption. Opening the dialog
+                starts it clean: a reason from an earlier attempt is not this attempt's. */}
             <button
               type="button"
-              onClick={() => setConfirmDelete(true)}
+              data-testid="inventory-remove"
+              onClick={() => { setDeleteErr(null); setConfirmDelete(true) }}
               style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: P.light, fontSize: '0.82rem', textDecoration: 'underline', padding: 0,
+                display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+                background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                color: P.light, fontSize: T.type.sm, textDecoration: 'underline', padding: 0,
               }}
             >
               Remove item
@@ -1123,7 +1135,7 @@ export default function InventoryDetail() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             zIndex: 500, padding: 20,
           }}>
-            <div style={{
+            <div data-testid="inventory-remove-dialog" style={{
               backgroundColor: P.white, borderRadius: 12,
               padding: '28px 24px', maxWidth: 380, width: '100%',
               boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
@@ -1132,18 +1144,30 @@ export default function InventoryDetail() {
               <p style={{ margin: '0 0 24px', fontSize: '0.88rem', color: P.mid }}>
                 "{item.name}" will be hidden from your inventory. This can't be undone from the app.
               </p>
+              {/* BUG-INVDELETEERROROFFSCREEN-001 — the reason sits directly above the buttons, in the
+                  dialog the tap came from, and is announced (role="alert"). */}
+              {deleteErr && (
+                <p role="alert" data-testid="inventory-remove-error" style={{
+                  margin: '-8px 0 16px', padding: '10px 12px', borderRadius: 8,
+                  backgroundColor: P.alert, border: `1px solid ${P.alertBorder}`,
+                  fontSize: '0.85rem', lineHeight: 1.4, color: P.bannerInk,
+                }}>
+                  {deleteErr}
+                </p>
+              )}
               <div style={{ display: 'flex', gap: 12 }}>
                 <Button
                   variant="danger"
                   loading={deleting}
                   loadingLabel="Removing…"
                   onClick={handleDelete}
+                  data-testid="inventory-remove-confirm"
                 >
                   Remove
                 </Button>
                 <Button
                   variant="secondary"
-                  onClick={() => setConfirmDelete(false)}
+                  onClick={() => { setConfirmDelete(false); setDeleteErr(null) }}
                 >
                   Keep it
                 </Button>

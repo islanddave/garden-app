@@ -21,7 +21,9 @@
 #     F3) a seed packet (on block D's variety) → a planting sown from it → the packet's detail GET
 #        answers 200 with that planting inside sown_from (V5-SEEDSTAB-001 slice 3); then that planting
 #        archived through PATCH /api/plants/:id/archive → the packet's sown_from no longer lists it
-#        (F3b, Archive-Hiding on the deployed stack)
+#        (F3b, Archive-Hiding on the deployed stack); then DELETE on the packet → 409 with the
+#        "1 archived planting was sown from it" sentence, and the packet still reads back 200
+#        (F3c, BUG-INVREFSTRAND-001: archived plantings still block a delete)
 #     G) favorites toggle → assert favorited on, then off
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
@@ -798,6 +800,33 @@ else
                 if [[ "$HIDDEN_HTTP" == "200" && "$SOWN_AFTER_ARCHIVE" == "absent" ]]; then
                   echo "✅ PASS [write:seed-detail-sown-from-archived-hidden] HTTP 200, archived planting $CREATED_SOWN_PLANT_ID is gone from the packet's sown_from"
                   PASS=$((PASS+1))
+                  # ── F3c) The packet's delete is REFUSED while a planting sown from it exists, archived or
+                  # not (BUG-INVREFSTRAND-001, option C). The planting above is archived now, so this is the
+                  # case Dave decided: DELETE must answer 409 with the sentence the page shows, and must
+                  # write nothing — the packet still reads back 200 (L-108: a 409 that deleted anyway would
+                  # strand the planting and say nothing). Cleanup is unchanged: the trap soft-deletes the
+                  # planting FIRST, which lets the packet's own delete through, and the L-058 sweep
+                  # hard-deletes both rows either way.
+                  CLERK_JWT=$(mint_session_token)
+                  DEL_BODY=$(mktemp)
+                  DEL_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+                    -X DELETE -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                    -o "$DEL_BODY" -w "%{http_code}" \
+                    "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_SEEDPKT_ID}") || DEL_HTTP="000"
+                  DEL_ERROR=$(jq -r '.error // empty' "$DEL_BODY" 2>/dev/null || echo "")
+                  rm -f "$DEL_BODY"
+                  DEL_EXPECTED="This packet can't be removed: 1 archived planting was sown from it. To mark it used up, set its Status to \"depleted\" instead."
+                  KEPT_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+                    -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+                    -o /dev/null -w "%{http_code}" \
+                    "${STAGING_API_INVENTORY%/}/api/inventory-items/${CREATED_SEEDPKT_ID}") || KEPT_HTTP="000"
+                  if [[ "$DEL_HTTP" == "409" && "$DEL_ERROR" == "$DEL_EXPECTED" && "$KEPT_HTTP" == "200" ]]; then
+                    echo "✅ PASS [write:inventory-delete-refused-when-sown] HTTP 409 with the sentence; the packet still reads back 200"
+                    PASS=$((PASS+1))
+                  else
+                    echo "❌ FAIL [write:inventory-delete-refused-when-sown] DELETE HTTP $DEL_HTTP, error '$DEL_ERROR' (expected 409 + '$DEL_EXPECTED'); the packet's GET afterwards HTTP $KEPT_HTTP (expected 200)"
+                    FAIL=$((FAIL+1))
+                  fi
                 else
                   echo "❌ FAIL [write:seed-detail-sown-from-archived-hidden] HTTP $HIDDEN_HTTP, archived planting $CREATED_SOWN_PLANT_ID in sown_from: '$SOWN_AFTER_ARCHIVE' (expected 'absent')"
                   echo "   Body: $HIDDEN_SNIP"
