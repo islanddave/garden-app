@@ -1,0 +1,443 @@
+# BUG-VOICEDUPE-002 raw Web Speech capture — 139 entries
+# started 2026-09-16T14:34:06.488Z
+# +ms  source  kind  resultIndex/len  then one line per result: [index] FINAL|interim "text"
+
++     0  voiceharvest  start
++  1895  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++  1979  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++  2081  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++  2701  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
++  2706  voiceharvest  end
++  2715  voiceharvest  decision search "cucumber" <- "cucumber"
++  2733  voiceharvest  start
++  3790  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++  4358  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   "count"
++  4362  voiceharvest  end
++  4364  voiceharvest  decision unparsed unit-without-number <- "count"
++  4473  voiceharvest  start
++  5487  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++  5549  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++  5964  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++  6114  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "87"
++  6631  voiceharvest  decision held-number 87 <- "87"
++  6665  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "87"
+         [4] FINAL   "87 grounds"
++  6667  voiceharvest  end
++  6669  voiceharvest  decision search "87 grounds" <- "87 grounds"
++  6693  voiceharvest  start
++ 10307  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 10332  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 10380  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++ 11012  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
++ 11016  voiceharvest  end
++ 11017  voiceharvest  decision search "cucumber" <- "cucumber"
++ 11162  voiceharvest  start
++ 12240  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 12434  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 12973  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "to"
++ 12982  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "to"
+         [3] FINAL   "to count"
++ 12985  voiceharvest  end
++ 12986  voiceharvest  decision quantity 2 count <- "to count"
++ 13016  voiceharvest  start
++ 14065  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 14252  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 14684  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "7"
++ 14921  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "7"
+         [3] FINAL   "7 G"
++ 14927  voiceharvest  end
++ 14928  voiceharvest  decision weight 7 g <- "7 G"
++ 14942  voiceharvest  start
++ 16536  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 17141  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   "next"
++ 17145  voiceharvest  end
++ 17185  voiceharvest  start
++ 17650  voiceharvest  decision command save_and_advance <- "next"
++ 22536  voiceharvest  nomatch
++ 22537  voiceharvest  end
++ 22558  voiceharvest  start
++ 25173  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 25383  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 25853  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "four"
++ 25900  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "four"
+         [3] FINAL   "four count"
++ 26315  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "four"
+         [3] FINAL   "four count"
+         [4] FINAL   "four count"
++ 26521  voiceharvest  result  resultIndex=5 len=6
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "four"
+         [3] FINAL   "four count"
+         [4] FINAL   "four count"
+         [5] FINAL   ""
++ 26820  voiceharvest  decision quantity 4 count <- "four count"
++ 26988  voiceharvest  result  resultIndex=6 len=7
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "four"
+         [3] FINAL   "four count"
+         [4] FINAL   "four count"
+         [5] FINAL   ""
+         [6] FINAL   "4 count 4 G"
++ 27261  voiceharvest  result  resultIndex=7 len=8
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "four"
+         [3] FINAL   "four count"
+         [4] FINAL   "four count"
+         [5] FINAL   ""
+         [6] FINAL   "4 count 4 G"
+         [7] FINAL   "4 count 4 G"
++ 27266  voiceharvest  end
++ 27268  voiceharvest  decision unparsed ambiguous-number <- "4 count 4 G"
++ 27319  voiceharvest  start
++ 28861  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 29049  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 29128  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++ 29268  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
++ 29619  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
+         [4] FINAL   "cucamela"
++ 29624  voiceharvest  end
++ 29625  voiceharvest  decision search "cucamela" <- "cucamela"
++ 29742  voiceharvest  start
++ 32762  voiceharvest  nomatch
++ 32763  voiceharvest  end
++ 32786  voiceharvest  start
++ 34430  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 34545  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 35048  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "4"
++ 35233  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "4"
+         [3] FINAL   "4 G"
++ 35241  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "4"
+         [3] FINAL   "4 G"
+         [4] FINAL   "4 G"
++ 35243  voiceharvest  end
++ 35243  voiceharvest  decision weight 4 g <- "4 G"
++ 35252  voiceharvest  start
++ 36946  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 37607  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   "next"
++ 37612  voiceharvest  end
++ 37635  voiceharvest  start
++ 38113  voiceharvest  decision command save_and_advance <- "next"
++ 40072  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 40191  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 40322  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++ 40661  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
++ 40757  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
+         [4] FINAL   ""
++ 40911  voiceharvest  result  resultIndex=5 len=6
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
+         [4] FINAL   ""
+         [5] FINAL   ""
++ 40936  voiceharvest  result  resultIndex=6 len=7
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
+         [4] FINAL   ""
+         [5] FINAL   ""
+         [6] FINAL   "pineapple"
++ 41032  voiceharvest  result  resultIndex=7 len=8
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
+         [4] FINAL   ""
+         [5] FINAL   ""
+         [6] FINAL   "pineapple"
+         [7] FINAL   "pineapple"
++ 41535  voiceharvest  decision search "pineapple" <- "pineapple"
++ 41547  voiceharvest  result  resultIndex=8 len=9
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
+         [4] FINAL   ""
+         [5] FINAL   ""
+         [6] FINAL   "pineapple"
+         [7] FINAL   "pineapple"
+         [8] FINAL   "pineapple tomatillo"
++ 41549  voiceharvest  end
++ 41552  voiceharvest  decision search "pineapple tomatillo" <- "pineapple tomatillo"
++ 41564  voiceharvest  start
++ 42677  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 42959  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 43254  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "one"
++ 43420  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "one"
+         [3] FINAL   "one count"
++ 43773  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "one"
+         [3] FINAL   "one count"
+         [4] FINAL   "one count"
++ 43980  voiceharvest  result  resultIndex=5 len=6
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "one"
+         [3] FINAL   "one count"
+         [4] FINAL   "one count"
+         [5] FINAL   "one count"
++ 44484  voiceharvest  decision quantity 1 count <- "one count"
++ 44551  voiceharvest  result  resultIndex=6 len=7
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "one"
+         [3] FINAL   "one count"
+         [4] FINAL   "one count"
+         [5] FINAL   "one count"
+         [6] FINAL   "one count 1 G"
++ 44554  voiceharvest  end
++ 44556  voiceharvest  decision value-sequence 1 count · 1 g <- "one count 1 G"
++ 44568  voiceharvest  start
++ 46017  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 46396  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   "next"
++ 46401  voiceharvest  end
++ 46523  voiceharvest  start
++ 46902  voiceharvest  decision command save_and_advance <- "next"
++ 48619  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 48776  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 49123  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
++ 49398  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
++ 49470  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
+         [4] FINAL   "big boy"
++ 49792  voiceharvest  result  resultIndex=5 len=6
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
+         [4] FINAL   "big boy"
+         [5] FINAL   "big boy"
++ 50080  voiceharvest  result  resultIndex=6 len=7
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
+         [4] FINAL   "big boy"
+         [5] FINAL   "big boy"
+         [6] FINAL   "big boy one"
++ 50399  voiceharvest  result  resultIndex=7 len=8
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
+         [4] FINAL   "big boy"
+         [5] FINAL   "big boy"
+         [6] FINAL   "big boy one"
+         [7] FINAL   "big boy one count"
++ 50803  voiceharvest  result  resultIndex=8 len=9
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
+         [4] FINAL   "big boy"
+         [5] FINAL   "big boy"
+         [6] FINAL   "big boy one"
+         [7] FINAL   "big boy one count"
+         [8] FINAL   "big boy one count"
++ 51088  voiceharvest  result  resultIndex=9 len=10
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
+         [4] FINAL   "big boy"
+         [5] FINAL   "big boy"
+         [6] FINAL   "big boy one"
+         [7] FINAL   "big boy one count"
+         [8] FINAL   "big boy one count"
+         [9] FINAL   "big boy one count"
++ 51329  voiceharvest  result  resultIndex=10 len=11
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
+         [4] FINAL   "big boy"
+         [5] FINAL   "big boy"
+         [6] FINAL   "big boy one"
+         [7] FINAL   "big boy one count"
+         [8] FINAL   "big boy one count"
+         [9] FINAL   "big boy one count"
+         [10] FINAL   "big boy one count 100"
++ 51539  voiceharvest  result  resultIndex=11 len=12
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
+         [4] FINAL   "big boy"
+         [5] FINAL   "big boy"
+         [6] FINAL   "big boy one"
+         [7] FINAL   "big boy one count"
+         [8] FINAL   "big boy one count"
+         [9] FINAL   "big boy one count"
+         [10] FINAL   "big boy one count 100"
+         [11] FINAL   "big boy one count 100 G"
++ 51800  voiceharvest  result  resultIndex=12 len=13
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   "big"
+         [3] FINAL   "big boy"
+         [4] FINAL   "big boy"
+         [5] FINAL   "big boy"
+         [6] FINAL   "big boy one"
+         [7] FINAL   "big boy one count"
+         [8] FINAL   "big boy one count"
+         [9] FINAL   "big boy one count"
+         [10] FINAL   "big boy one count 100"
+         [11] FINAL   "big boy one count 100 G"
+         [12] FINAL   "big boy one count 100 G"
++ 51805  voiceharvest  end
++ 51814  voiceharvest  decision one-breath Big Boy 1 count · 100 g <- "big boy one count 100 G"
++ 51835  voiceharvest  start
++ 53266  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 53938  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   "next"
++ 53944  voiceharvest  end
++ 53961  voiceharvest  start
++ 54454  voiceharvest  decision command save_and_advance <- "next"
++ 55468  voiceharvest  nomatch
++ 55469  voiceharvest  end
