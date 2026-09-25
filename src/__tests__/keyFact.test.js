@@ -231,9 +231,36 @@ describe('selectCropType — V4-ABOVEFOLD-001 crop-type chip', () => {
     expect(selectCropType({ variety_ref: { type: 'root_vegetable' } })).toBe('Root vegetable')
   })
 
-  it('falls back to pepper/tomato family detection by name', () => {
-    expect(selectCropType({ name: 'Habanero Orange', variety_ref: {} })).toBe('Pepper')
-    expect(selectCropType({ name: 'Sungold Tomato', variety_ref: {} })).toBe('Tomato')
+  // Prod rows (plants Lambda variety_ref, 2026-09-25). The name detectors pick WHICH plantings get a chip;
+  // the words are the cultivar's crop type.
+  const live = (name, crop_type_slug, cultivar = name) => ({ name, variety_ref: { name: cultivar, crop_type_slug } })
+
+  it('a pepper/tomato found by name shows its crop type', () => {
+    expect(selectCropType(live('Habanero', 'pepper'))).toBe('Pepper')
+    expect(selectCropType(live('Megatron Jalapeños', 'pepper', 'Megatron F1 (jumbo jalapeno)'))).toBe('Pepper')
+    expect(selectCropType(live('Tie-Dye Tomato', 'tomato', 'Tie-Dye'))).toBe('Tomato')
+  })
+
+  // Until 2026-09-25 the chip said "Tomato" on both live tomatillos and "Pepper" on Peppermint.
+  it('the words are the crop type, never the name match: a tomatillo is a Tomatillo, Peppermint is Mint', () => {
+    expect(selectCropType(live('Purple Blush Tomatillo', 'tomatillo', 'Purple blush'))).toBe('Tomatillo')
+    expect(selectCropType(live('Pineapple Tomatillo', 'tomatillo'))).toBe('Tomatillo')
+    expect(selectCropType(live('Peppermint', 'mint'))).toBe('Mint')
+    // "Pepper squash" is a real name for acorn squash; a multi-word crop type reads as the plantings list's groups.
+    expect(selectCropType(live('Pepper Squash', 'winter_squash', 'Table Queen'))).toBe('Winter Squash')
+  })
+
+  // Not a rollout: plantings the name test misses (230 of 246 live) still have no chip.
+  it('where the chip shows is unchanged: none where the name test finds nothing', () => {
+    expect(selectCropType(live('Black Olive', 'pepper'))).toBeNull()
+    expect(selectCropType(live('Cherokee Green', 'tomato'))).toBeNull()
+    expect(selectCropType(live('Cisneros', 'tomatillo'))).toBeNull()
+  })
+
+  it('no crop type is no chip, whatever the name says', () => {
+    expect(selectCropType({ name: 'Habanero Orange', variety_ref: {} })).toBeNull()
+    expect(selectCropType({ name: 'Sungold Tomato' })).toBeNull()
+    expect(selectCropType({ name: 'Peppermint', variety_ref: { name: 'Peppermint', crop_type_slug: '  ' } })).toBeNull()
   })
 
   it('returns null when no crop signal exists', () => {
@@ -246,5 +273,8 @@ describe('selectCropType — V4-ABOVEFOLD-001 crop-type chip', () => {
     const out = selectCropType({ variety_ref: { type: 'a'.repeat(40) } })
     expect(out.length).toBeLessThanOrEqual(22)
     expect(out.endsWith('…')).toBe(true)
+    const slugOut = selectCropType(live('Hot Pepper', 'b'.repeat(40)))
+    expect(slugOut.length).toBeLessThanOrEqual(22)
+    expect(slugOut.endsWith('…')).toBe(true)
   })
 })

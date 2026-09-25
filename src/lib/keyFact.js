@@ -6,10 +6,13 @@
 // Both read JSON fields defensively (optional-chaining + type guards): the cultivar substrate
 // is sparse and heterogeneous, so any missing/garbage field must degrade to "skip", never throw.
 //
-// "dependency-free" above is now two imports short of literal: V4-CONSUMABLECLASS-001 (BD-042) added
-// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing, and the determinacy
-// and sun rungs read lib/varietySpec.js (determinacyLabel, sunLabel), which imports nothing either. The
-// property that mattered — no React, no network, no clock, unit-testable in isolation — is intact.
+// "dependency-free" above is now three imports short of literal: V4-CONSUMABLECLASS-001 (BD-042) added
+// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing; the determinacy and sun
+// rungs read lib/varietySpec.js (determinacyLabel, sunLabel), which imports nothing either; and the
+// crop-type chip words its crop type with lib/projectTree.js's cropTypeLabel (projectTree imports only
+// constants.js and does nothing at import). The property that mattered — no React, no network, no
+// clock, unit-testable in isolation — is intact.
+import { cropTypeLabel } from './projectTree.js'
 import { plantingIsHarvestTracked } from './harvestTracked.js'
 import { shuLabel, determinacyLabel, sunLabel } from './varietySpec.js'
 
@@ -24,6 +27,8 @@ function cropSignal(planting) {
   return parts.join(' ').toLowerCase()
 }
 
+// A NAME heuristic ("Peppermint" matches it). For the crop-type chip (selectCropType) it decides only
+// WHETHER the chip shows, never what it says.
 export function isPepper(planting) {
   const v = planting?.variety_ref || {}
   if (typeof v.type === 'string' && v.type.toLowerCase().includes('pepper')) return true
@@ -31,8 +36,9 @@ export function isPepper(planting) {
   return /\bpepper|chil[ei]|jalape|habanero|serrano|cayenne\b/.test(cropSignal(planting))
 }
 
-// A NAME heuristic, kept for the crop-type chip (selectCropType) and nothing else. The key-fact ladder
-// decides "tomato" from the cultivar's crop type instead — see rung (2).
+// A NAME heuristic ("Tomatillo" matches it), kept for the crop-type chip (selectCropType) and nothing
+// else, where it decides only WHETHER the chip shows, never what it says. The key-fact ladder decides
+// "tomato" from the cultivar's crop type instead — see rung (2).
 export function isTomato(planting) {
   const v = planting?.variety_ref || {}
   if (typeof v.type === 'string' && v.type.toLowerCase().includes('tomato')) return true
@@ -58,18 +64,25 @@ export function cropFamilyGlyph(planting) {
 // prefers an explicit structured crop field on the cultivar, then falls back to the pepper/tomato
 // family detectors, then null (the chip is simply omitted). Title-cased for display; long values
 // are clamped so the pill stays compact.
+//
+// The detectors decide only WHETHER the chip shows. Its words are the cultivar's crop type
+// (variety_ref.crop_type_slug, worded as the plantings list words its crop groups). Until 2026-09-25 the
+// detectors chose the words too, so both live tomatillos wore "Tomato" and Peppermint (crop type mint)
+// wore "Pepper". Where it shows is deliberately unchanged (16 of 246 live plantings): a chip on every
+// planting is a design call, not this fix. No crop type (no cultivar) is no chip, whatever the name says.
+const clampChip = (s) => (s.length > 22 ? s.slice(0, 21).trimEnd() + '…' : s)
+
 export function selectCropType(planting) {
   const v = planting?.variety_ref || {}
   const explicit = [v.type, v.group, v.category, v.crop, v.crop_family]
     .find(s => typeof s === 'string' && s.trim())
   if (explicit) {
     const t = explicit.trim().replace(/[_-]+/g, ' ')
-    const titled = t.charAt(0).toUpperCase() + t.slice(1)
-    return titled.length > 22 ? titled.slice(0, 21).trimEnd() + '…' : titled
+    return clampChip(t.charAt(0).toUpperCase() + t.slice(1))
   }
-  if (isPepper(planting)) return 'Pepper'
-  if (isTomato(planting)) return 'Tomato'
-  return null
+  if (!isPepper(planting) && !isTomato(planting)) return null
+  const slug = typeof v.crop_type_slug === 'string' ? v.crop_type_slug.trim() : ''
+  return slug ? clampChip(cropTypeLabel(slug)) : null
 }
 
 // Read a field that may live on the variety, on planting.metadata, or on an attr_override.
