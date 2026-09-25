@@ -90,9 +90,18 @@ if (BASELINE && !/^[0-9a-f]{40}$/.test(BASELINE)) {
 const failures = []
 const fail = m => failures.push(m)
 
+// A port that already answers belongs to somebody else — typically this gate running in a sibling
+// worktree. strictPort makes OUR vite exit, but the readiness poll below would accept the sibling's
+// answer and measure the sibling's tree: a false PASS (review v4.152 QA M1). Refuse up front.
+async function assertPortFree(url, what) {
+  try { await fetch(url, { signal: AbortSignal.timeout(1500) }) } catch { return }
+  throw new Error(`${what} port is already serving (${url}) — another harness or Chrome is running there. Set GATE_HARNESS_PORT / GATE_CDP_PORT to free ports; measuring through it would measure that process's page.`)
+}
+
 async function startHarness() {
   const bin = resolve(ROOT, 'node_modules/vite/bin/vite.js')
   if (!existsSync(bin)) throw new Error(`vite not installed at ${bin} — run npm ci --legacy-peer-deps`)
+  await assertPortFree(`http://localhost:${PORT}/`, 'harness')
   const env = { ...process.env }
   if (BASELINE) env.HARNESS_BASELINE_SHA = BASELINE; else delete env.HARNESS_BASELINE_SHA
   const proc = spawn(process.execPath, [bin, '--config', 'tests/harness/vite.harness.config.mjs', '--port', String(PORT), '--strictPort'], {
@@ -120,6 +129,7 @@ async function startHarness() {
 
 async function startChrome(userDataDir) {
   if (!existsSync(CHROME)) throw new Error(`Chrome not found at ${CHROME} — set CHROME_PATH`)
+  await assertPortFree(`http://127.0.0.1:${CDP_PORT}/json/version`, 'CDP')
   const proc = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${userDataDir}`,
     '--window-size=900,1100', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
