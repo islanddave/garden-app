@@ -97,6 +97,8 @@ function renderings(p, units) {
   const rerendered = units
     ? [{ text: cat(p.say, cTok, w), pause: true }, { text: cat(p.say, cTok, wTok) }]
     : [{ text: cat(p.say, cTok, wTok), pause: true }]
+  // The same re-render arriving INSIDE the settle window, no pause; `head` is everything before the weight.
+  const rerenderedNow = (head) => (units ? [{ text: cat(head, w) }, { text: cat(head, wTok) }] : [{ text: cat(head, wTok) }])
   const h = HOMOPHONE[p.c]
   if (h) {
     const hTok = units ? `${h} count` : h
@@ -111,6 +113,20 @@ function renderings(p, units) {
       sessions: [[...grow(cat(p.say, hTok), [n]), ...rerendered], NEXT] })
     out.push({ id: 'R4d', label: `R2 shape, "${cat(p.say, h)}" kept, "${cat(p.say, hTok, wTok)}"`,
       sessions: [grow(cat(p.say, hTok, wTok), [n, n + nWords(hTok)]), NEXT] })
+    // DEVICE-CONFIRMED SHAPE, 2026-09-25 capture (M2): the homophone is re-rendered as digits in the NEXT
+    // final of the same session, inside the settle window — "1" -> "1 to" -> "1 243", 339 ms — not after a
+    // pause. Added beyond the brief's R4 list: R4e with the name, R8hc as its own session after the name.
+    out.push({ id: 'R4e', label: `"${cat(p.say, h)}" re-rendered inside the settle window`,
+      sessions: [[...grow(cat(p.say, hTok)), ...rerenderedNow(cat(p.say, cTok))], NEXT] })
+    out.push({ id: 'R8hc', label: `"<name>" | "${h}" -> "${cat(cTok, wTok)}" inside the window | "next"`,
+      sessions: [grow(p.say), [...grow(hTok), ...rerenderedNow(cTok)], NEXT] })
+  }
+  // The same device shape with the homophone at the start of the WEIGHT ("forty three" heard first as
+  // "for"), which is where the 09-25 capture had it ("two forty three" -> "to").
+  const hw = p.w >= 40 && p.w < 50 ? 'for' : p.w >= 200 && p.w < 300 ? 'to' : (p.w >= 80 && p.w < 90) || (p.w >= 800 && p.w < 900) ? 'ate' : null
+  if (hw) {
+    out.push({ id: 'R8hw', label: `"<name>" | "${cTok}" -> "${cat(cTok, hw)}" -> "${cat(cTok, wTok)}" inside the window | "next"`,
+      sessions: [grow(p.say), [...grow(cTok), { text: cat(cTok, hw) }, ...rerenderedNow(cTok)], NEXT] })
   }
   const word = WORD[p.c]
   if (word) {
@@ -246,7 +262,7 @@ describe.skipIf(!OUT)('V5-VOICEVOCAB-001 under Chrome-shaped delivery — one re
   })
 })
 
-const SEQ = !OUT ? [] : [false, true].flatMap((units) => ['R1', 'R2', 'R3', 'R3n', 'R4a', 'R4b', 'R4c', 'R4d', 'R5', 'R6', 'R6s', 'R7', 'R7n', 'R8']
+const SEQ = !OUT ? [] : [false, true].flatMap((units) => ['R1', 'R2', 'R3', 'R3n', 'R4a', 'R4b', 'R4c', 'R4d', 'R4e', 'R5', 'R6', 'R6s', 'R7', 'R7n', 'R8', 'R8hc', 'R8hw']
   .map((id) => ({ units, id, plants: PLANTS.filter((p) => renderings(p, units).some((r) => r.id === id)) }))
   .filter((s) => s.plants.length))
   .flatMap((s) => POST_MS.map((post) => ({ ...s, post, key: `${s.units ? 'C' : 'U'} ${s.id} x${s.plants.length} post=${post}ms` })))
