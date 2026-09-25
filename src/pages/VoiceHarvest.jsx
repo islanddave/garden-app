@@ -613,6 +613,17 @@ function heldLandingOf(held, qty, weight, selected) {
   return { axis: built.kind, value: built.value, unit: built.unit }
 }
 
+// QA F2 — THE ONE WORDING of a lone amount refused as two numbers run together ("2126", Chrome's rendering of
+// "two, one twenty-six"): the banner and the miss row. Shared by the one-breath reader's refusal
+// (refuseMergedAmount) and the hold's (the same number in a session of its own — QA F2 parity), so one shape
+// is refused in one voice however it arrived.
+function mergedWords(n, heard) {
+  return {
+    banner: `heard ${n} as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.`,
+    row: `Not kept — heard “${heard}”: ${n} may be two numbers run together.`,
+  }
+}
+
 // BUG-VOICECROPSWITCHKEEPSAMOUNTS-001 — THE ONE WORDING of amounts a crop change took off the record: the note
 // for the banner, the row for the strip and the debug mark. Shared by the switch itself and by a failed save
 // that had sent them (review IMPORTANT-1), so the row reads the same whichever of the two finds it true.
@@ -1545,6 +1556,31 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // duplicate "85" arrives here as a second utterance. Pairing it would save 85 count AND 85 g
       // from one spoken number. What this reads wrongly is a real count and weight that share a
       // number: the weight stays empty and the save says "no weight was said".
+      //
+      // QA F2 PARITY (voice-replay-20260925 R6s) — A LONE 4+-DIGIT NUMBER HEADED FOR THE COUNT IS REFUSED
+      // HERE TOO, by the one-breath reader's own rule (applyCommitted, QA F2): same test, same banner and
+      // miss row (mergedWords), same reject buzz, and nothing is held. Chrome writes "two, one twenty-six" as
+      // "2126" at times; said in a session of its own, that number reaches this branch rather than the
+      // one-breath reader, and was HELD — then "next" put it in the empty count slot and saved 2126 count,
+      // under MAX_PLAUSIBLE (10000), so nothing warned (the battery's R6s: Suyo Long 2126, Peach tree 8763;
+      // its 2- and 3-digit merges, "13" to "343", sit under the rule's line here as they do in QA F2's).
+      // Only where the number would take the COUNT:
+      // the quantity is empty and no other held number will take it first (a held number equal to this one
+      // is the same number, as in QA F2). With the count filled, spoken or assumed, a 4-digit number is the
+      // weight and is held as before. Digits only: said in words, or with its unit, it is not this shape.
+      // Never for the parts of a one-breath sentence (fromOneBreath): QA F2 refuses only a LONE amount
+      // there, and the reader has already judged that one before it gets here.
+      if (!meta?.fromOneBreath && qtyRef.current == null
+          && (heldNumRef.current == null || heldNumRef.current === partial.value)
+          && normalise(result.transcript).split(' ').some((t) => /^\d{4,}$/.test(t))) {
+        const heard = String(result.transcript ?? '')
+        const words = mergedWords(partial.value, heard)
+        cue(hapticDigitRejected)
+        recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-refused (merged ${partial.value}) <- ${JSON.stringify(heard)}`)
+        say('warn', words.banner)
+        noteMiss(words.row)
+        return
+      }
       const repeat = partial.value === heldNumRef.current
       if (heldNumRef.current != null && !repeat) placeHeld(heldNumRef.current)
       heldNumRef.current = partial.value; setHeldNum(partial.value)
@@ -1989,8 +2025,9 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     cue(hapticDigitRejected)
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath-bare refused (merged ${n}) <- ${JSON.stringify(heard)}`)
     const label = d.planting ? `${d.planting.name || d.planting.variety_ref?.name} — ` : ''
-    say('warn', `${label}heard ${n} as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.${switched ? ` (${switched})` : ''}`)
-    noteMiss(`Not kept — heard “${heard}”: ${n} may be two numbers run together.`)
+    const words = mergedWords(n, heard)
+    say('warn', `${label}${words.banner}${switched ? ` (${switched})` : ''}`)
+    noteMiss(words.row)
   }, [clearForSwitch, clearRecord, cue, noteAliasUse, noteMiss, say])
 
   // A one-breath sentence whose split is not unique, or whose name is too vague, or whose numbers

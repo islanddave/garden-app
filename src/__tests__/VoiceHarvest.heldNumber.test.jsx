@@ -7,6 +7,10 @@
 // "(crop changed)" although "cucumber" IS Suyo Long, the planting already chosen. A search whose hits are
 // exactly the chosen planting now keeps the number held; every other search still drops it and says so.
 //
+// QA F2 PARITY (voice-replay-20260925 R6s): "2126" — Chrome's rendering of "two, one twenty-six" — said in a
+// session of its own was HELD, and "next" saved it as 2126 count with no warning. The one-breath reader has
+// refused a lone 4+-digit amount headed for the count since QA F2; the hold now refuses it the same way.
+//
 // Page-level, through the shared fake recogniser, the real 244-name vocabulary and two of Dave's taught
 // names, asserting the record card, the banner, the miss rows and the POSTed rows.
 import React from 'react'
@@ -23,6 +27,7 @@ vi.mock('../lib/haptics.js', () => ({
 }))
 
 import VoiceHarvest from '../pages/VoiceHarvest.jsx'
+import { hapticDigitRejected } from '../lib/haptics.js'
 import { looseKey } from '../lib/comboboxInput.js'
 import { VOCAB, byName } from './voiceHarvest.vocabulary.fixture.js'
 
@@ -143,5 +148,58 @@ describe('BUG-VOICESAMECROPDROP-001 — the same crop named again keeps the held
       'Dropped 243 — no unit was said, and the crop changed before one was.',
       'Nothing matched “zzqq quux”.',
     ])
+  })
+})
+
+describe('QA F2 parity (voice-replay-20260925 R6s) — a lone 4+-digit number headed for the count is refused', () => {
+  const MERGED = 'heard 2126 as one number. If that was a count and a weight, say them with a pause between, or say it with its unit.'
+
+  it('"Suyo Long", "2126", "next" — refused out loud, nothing held, nothing saved', async () => {
+    const rec = await startListening()
+    await say(rec, 'Suyo Long', '2126')
+    // Was: held, then "next" saved Suyo Long · 2126 count "(2126 count assumed)" with no warning.
+    expect(statusText()).toBe(MERGED)
+    expect(misses()).toEqual(['Not kept — heard “2126”: 2126 may be two numbers run together.'])
+    expect(hapticDigitRejected).toHaveBeenCalledTimes(1)
+    expect([slot('Crop'), slot('Quantity'), slot('Weight')]).toEqual(['Suyo Long', '—', '—'])
+    await say(rec, 'next')
+    expect(saved()).toEqual([])
+    expect(statusText()).toBe('Not saved — still need a quantity. Say it, then "next".')
+    // The crop it was said for stays chosen, so saying the two numbers apart is all it takes.
+    await say(rec, '2', '126', 'next')
+    expect(saved()).toEqual([['Suyo Long', 2, 'count', 126, ['count', 'g']]])
+  })
+
+  it('"Suyo Long", "3 count", "2126", "next" — with the count filled it is the weight: 3 count · 2126 g', async () => {
+    const rec = await startListening()
+    await say(rec, 'Suyo Long', '3 count', '2126', 'next')
+    expect(saved()).toEqual([['Suyo Long', 3, 'count', 2126, ['g']]])
+    expect(misses()).toEqual([])
+  })
+
+  it('a held number takes the count first, so the 2126 after it is the weight', async () => {
+    const rec = await startListening()
+    await say(rec, 'Suyo Long', '3', '2126', 'next')
+    expect(saved()).toEqual([['Suyo Long', 3, 'count', 2126, ['count', 'g']]])
+    expect(misses()).toEqual([])
+  })
+
+  it.each([
+    ['under the line (3 digits)', '212', ['Suyo Long', 212, 'count', null, ['count']]],
+    ['said in words', 'two thousand', ['Suyo Long', 2000, 'count', null, ['count']]],
+    ['said with its unit', '2126 count', ['Suyo Long', 2126, 'count', null, []]],
+  ])('%s it is read as before: "%s"', async (_why, line, row) => {
+    const rec = await startListening()
+    await say(rec, 'Suyo Long', line, 'next')
+    expect(saved()).toEqual([row])
+    expect(misses()).toEqual([])
+  })
+
+  it('the parts of a one-breath sentence are not refused one by one — QA F2 refuses only a LONE amount there', async () => {
+    // Pinned as the parity line, not as a judgment of the reading: two bare amounts in one breath are a
+    // count and a weight, as they were before this rule.
+    const rec = await startListening()
+    await say(rec, 'Suyo Long', '2126 165', 'next')
+    expect(saved()).toEqual([['Suyo Long', 2126, 'count', 165, ['count', 'g']]])
   })
 })
