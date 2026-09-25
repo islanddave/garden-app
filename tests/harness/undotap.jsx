@@ -201,7 +201,7 @@ function measureToast(t, side) {
     message: msg ? msg.textContent : null,
     detail: textCol && textCol.children[1] ? textCol.children[1].textContent : null,
     lines,
-    toast: { ...box(t), padY: r1(parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)) },
+    toast: { ...box(t), padY: r1(parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)), padRight: r1(parseFloat(cs.paddingRight)) },
     textCol: textCol ? box(textCol) : null,
     undo: control(undo, side),
     pill: pill ? box(pill) : null,
