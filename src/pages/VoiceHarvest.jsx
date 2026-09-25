@@ -728,6 +728,10 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // construction — { heard_key, variety_id, plantingId } or null — counted once that record saves.
   const aliasUsesRef = useRef(null)
   const aliasUseRef = useRef(null)
+  // The words the one-breath reader's "crowded" list answers ("striped roman 3 40 next", a taught name of a
+  // variety with two plantings). That list teaches nothing, so unmatchedRef stays null — but a pick from it
+  // was chosen by these words, and pickPlanting reads them for the use (scripts/layout-gate/alias-use-wire.mjs, C10).
+  const crowdedNameRef = useRef(null)
   const unmatchedRef = useRef(null)
   // BUG-VOICECOUNTSPLIT-001 — a number whose unit has not arrived yet. A REF because the recogniser
   // callbacks that read it fire outside React's render cycle and must see the value the previous
@@ -953,6 +957,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     selectedRef.current = null; qtyRef.current = null; weightRef.current = null
     unmatchedRef.current = null
     aliasUseRef.current = null
+    crowdedNameRef.current = null
     // A held number belongs to the record being cleared. Carrying it into the NEXT planting would
     // let a count spoken for one crop attach itself to another — the silent wrong save this flow
     // exists to prevent, reached by the back door.
@@ -1077,11 +1082,15 @@ export default function VoiceHarvest({ embedded = false } = {}) {
   // silently did nothing would let them believe it was fixed and meet the same failure tomorrow.
   const pickPlanting = useCallback(async (p) => {
     const phrase = unmatchedRef.current
+    const listName = crowdedNameRef.current
+    crowdedNameRef.current = null
     const switched = clearForSwitch(p)
     setSelected(p); selectedRef.current = p
     // A pick from a learned alias's list ("Which one?" for a variety with two plantings) is a use of
     // it. A pick that TEACHES a new phrase is not: the phrase is not in the list yet, so this is null.
-    noteAliasUse(phrase, p)
+    // BUG-VOICEALIASHITCOUNT-001 — nor is a pick from the one-breath reader's list any less of a use: it
+    // teaches nothing (no phrase), and the words it answers decide the use instead.
+    noteAliasUse(phrase ?? listName, p)
     setCandidates([]); setUnmatched(null)
     const label = p.name || p.variety_ref?.name
     say(switched ? 'warn' : 'ok', `${label} — ${switched ? `${switched}. Now say` : 'now say'} the count or the weight.`)
@@ -2002,6 +2011,7 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `one-breath-bare refused (${d.reason}) <- ${JSON.stringify(heard)}`)
     if (d.reason === 'crowded') {
       setCandidates(d.hits); setUnmatched(null); unmatchedRef.current = null
+      crowdedNameRef.current = d.name
       say('warn', `${d.hits.length} match “${d.name}” — tap one, then say the amounts again.${droppedNote}`)
       noteMiss(`Not kept — “${heard}”: “${d.name}” matches ${d.hits.length} plantings.`)
       return
