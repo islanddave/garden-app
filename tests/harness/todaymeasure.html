@@ -33,7 +33,12 @@
         // the fixtures were dumped from (dump-prod.mjs, 2026-09-24), so the plan's "as of" stamp,
         // the watch list's et_today and the sow windows all describe the same morning. Moving this
         // without re-dumping measures a page whose data and clock disagree; re-record after either.
-        var PIN = Date.parse(raw || '2026-09-24T14:30:00.000Z')
+        //
+        // EXCEPT ?state=storage, which exists to measure StorageDeadlineAlert and is pinned one week
+        // on, to 10:30 ET on 2026-10-01: that alert renders NOTHING until the sweet-potato check
+        // window opens on 09-28 (src/data/storageDeadlines.json), so no instant inside the fixtures'
+        // own morning can show it. The state re-dates its plan to the same day (todaymeasure.jsx).
+        var PIN = Date.parse(raw || (p.get('state') === 'storage' ? '2026-10-01T14:30:00.000Z' : '2026-09-24T14:30:00.000Z'))
         if (!isFinite(PIN)) return
         var Real = Date
         var boot = Real.now()

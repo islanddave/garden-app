@@ -19,6 +19,10 @@
 //   ?state=busyhh   — busy with the household lens open (recorder only, not in the gate budget)
 //   ?state=quiet    — a plan exists but every list in it is empty and every band is empty
 //   ?state=noplan   — has_plan false: the first-run / engine-hasn't-run empty state
+//   ?state=storage  — `quiet`, one week on (clock and plan dated 2026-10-01, see todaymeasure.html),
+//                     plus the two regions no 2026-09-24 payload can show: StorageDeadlineAlert inside
+//                     the sweet-potato check window and PutUpUseSoonBand with jars in their window,
+//                     each from real prod rows with one field moved (storage-grafts.json)
 //
 // window.__h is the measurement surface. It reports geometry, computed CSS and an ink profile; it
 // never asserts. Analysis happens in _todaymeasure/drive.mjs and downstream, so a change of opinion
@@ -81,6 +85,7 @@ const SOWCAND = (await j('/tests/harness/_todaymeasure/sowcandidates.json'))
 const BATCHWIN = (await j('/tests/harness/_todaymeasure/harvests.batchwindow.json'))
 const JENPLAN = (await j('/tests/harness/_todaymeasure/dailyplan.jen.json'))
 const GRAFTS = (await j('/tests/harness/_todaymeasure/busyfull-grafts.json'))
+const STORAGE_GRAFTS = (await j('/tests/harness/_todaymeasure/storage-grafts.json'))
 
 // The household lens is ONE TAP from the default and Dave has a second caretaker, so what it costs
 // in scroll is a real number, not a hypothetical. localStorage is seeded before mount because the
@@ -151,13 +156,30 @@ function graftBusyfull(plan, g) {
   return out
 }
 
+// storage — the quiet plan RE-DATED one week on. todaymeasure.html pins this state's clock to 10:30
+// ET on 2026-10-01 (the sweet-potato check window opens 09-28), so the plan it serves is dated that
+// same morning: the date subtitle and the "as of" stamp then describe the instant measured, as they
+// do in every other state. Its /api/plants is the real list with ONE planting's status moved, and
+// its /api/preservation/use-soon is the real stored jars with their window status forced — both
+// named, with provenance, in storage-grafts.json.
+const STORAGE_DAYS = 7
+const addDays = (iso, n) => (iso ? new Date(new Date(iso).getTime() + n * 86400000).toISOString() : iso)
+const STORAGE_PLANTS = PLANTS.map(p => (p.id === STORAGE_GRAFTS?.sweet_potato_planting?.id ? { ...p, status: STORAGE_GRAFTS.sweet_potato_planting.status } : p))
+
 const PAYLOAD = {
   busy:     { ...D, has_plan: true },
   busyfull: { ...D, has_plan: true, plan: graftBusyfull(D?.plan, GRAFTS) },
   busyhh:   { ...D, has_plan: true, household_plans: JENPLAN ? [{ user_id: 'member_jen', generated_at: D?.generated_at ?? null, plan: JENPLAN }] : [] },
   quiet:  { plan: quietPlan, plan_date: D?.plan_date ?? null, generated_at: D?.generated_at ?? null, has_plan: true },
   noplan: { plan: null, plan_date: D?.plan_date ?? null, generated_at: null, has_plan: false },
+  storage: {
+    plan: quietPlan,
+    plan_date: D?.plan_date ? addDays(D.plan_date + 'T12:00:00.000Z', STORAGE_DAYS).slice(0, 10) : null,
+    generated_at: addDays(D?.generated_at ?? null, STORAGE_DAYS),
+    has_plan: true,
+  },
 }[STATE]
+const STORAGE = STATE === 'storage'
 
 const EMPTY = !STATE.startsWith('busy')
 const requests = []
@@ -213,9 +235,9 @@ window.fetch = async (input, init = {}) => {
   // First names only (privacy sweep 2026-09-24). Today prints only the first token of a member's
   // display_name (Today.jsx nameFor), so a surname here buys no geometry and exposes a person.
   else if (p === '/api/members') body = { members: EMPTY ? [] : [{ id: 'harness_user', display_name: 'Dave' }, { id: 'member_jen', display_name: 'Jen' }] }
-  else if (p === '/api/plants') body = EMPTY ? [] : PLANTS
+  else if (p === '/api/plants') body = STORAGE ? STORAGE_PLANTS : (EMPTY ? [] : PLANTS)
   else if (p === '/api/locations/with-path') body = LOCATIONS
-  else if (p === '/api/preservation/use-soon') body = EMPTY ? [] : (USESOON ?? [])
+  else if (p === '/api/preservation/use-soon') body = STORAGE ? (STORAGE_GRAFTS?.use_soon?.value ?? { items: [] }) : (EMPTY ? [] : (USESOON ?? []))
   else if (p === '/api/harvests/watch') body = EMPTY ? [] : (WATCH ?? [])
   else if (p === '/api/harvests') body = EMPTY ? [] : (STATE === 'busyfull' ? rebase(BATCHWIN) : (HARVESTS ?? []))
   else if (p === '/api/inventory-items/sow-candidates') body = EMPTY ? [] : (SOWCAND ?? [])

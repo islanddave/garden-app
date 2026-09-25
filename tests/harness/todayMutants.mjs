@@ -65,7 +65,7 @@ export const MUTANTS = {
     'src/pages/Today.jsx',
     '<CultivationLead />',
     '<></>',
-    'the page loses its durable door to /sow. It is the ONLY region present in all four states.',
+    'the page loses its durable door to /sow. It renders in every state, the empty ones included.',
   ],
   dropHouseholdToggle: [
     'src/pages/Today.jsx',
@@ -171,5 +171,18 @@ export const MUTANTS = {
     '<FeedSuppressedList plan={plan} />',
     '<></>',
     'the "No feed schedule for N plantings" disclosure goes, and those plantings look forgotten rather than deliberately unfed.',
+  ],
+  // 2026-09-25 (V5-TODAYSHAPECI-001 item 9) — the two regions only the `storage` state can show.
+  dropStorageDeadline: [
+    'src/pages/Today.jsx',
+    '<StorageDeadlineAlert />',
+    '<></>',
+    'the storage-crop lift alert ("dig the sweet potatoes this week or lose them") is unmounted. It renders nothing on most days by design, so its absence reads as an ordinary day to everything but a state inside its window.',
+  ],
+  dropUseSoonBand: [
+    'src/pages/Today.jsx',
+    '<PutUpUseSoonBand />',
+    '<></>',
+    'the "From your stores — cook these next" band is unmounted, and jars reaching their use-by date stop surfacing on Today.',
   ],
 }

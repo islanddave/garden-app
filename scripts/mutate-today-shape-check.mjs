@@ -15,7 +15,7 @@
 // than two INDEPENDENT killers — two assertions that die to the same defect for the same reason are
 // one guard with two names, and one careless rename from vacuous.
 //
-// COST: one Vite boot + one Chrome + four page loads per mutant, plus the unmutated control run —
+// COST: one Vite boot + one Chrome + five page loads per mutant, plus the unmutated control run —
 // the 24-mutant matrix is a command, not a per-push CI step. Run it after any edit to the gate, the
 // region anchors, the fixtures, or the Today composition.
 import { spawnSync } from 'node:child_process'
