@@ -1,10 +1,12 @@
 // BUG-SEEDLOTOPENSATFORM-001 follow-up (v4.148.0 regression-impact review, I3) — the lot page's "a key seen
 // before is a Back" rule, against the one flow that mints a key while the page stays MOUNTED: an overlay
-// over it (header Search is on every page) closed by its Close, backdrop or Escape. useOverlayDismiss
-// REPLACES the entry with a fresh key (OverlayContext.jsx), and the page, rendered as the overlay's
+// over it (header Search is on every page) closed by its Close, backdrop or Escape. Since
+// BUG-OVERLAYDISMISSREKEY-001 a close walks back to the page's own entry when it can prove where that entry
+// is, and REPLACES the entry with a fresh key only when it cannot (an overlay opened by the previous bundle,
+// among others: OverlayContext.jsx planOverlayClose). In the replace case the page, rendered as the overlay's
 // background, is not remounted. If the page files keys only when it opens, that key is unknown to it, so a
 // later Back onto it reads as a fresh door and snaps the page to the top, overriding the position the
-// browser restored.
+// browser restored. Both closes are pinned below.
 //
 // And the other side of filing keys on every commit: BrowserRouter commits a route inside a transition,
 // after the push has already written the next entry. An urgent commit of this page in between must not file
@@ -16,7 +18,7 @@
 import React, { useState, useEffect } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, fireEvent, cleanup } from '@testing-library/react'
-import { BrowserRouter, Routes, Route, Link, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom'
 
 const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
@@ -48,6 +50,12 @@ function SearchStub() {
   const dismiss = useOverlayDismiss()
   return <button type="button" data-testid="close" onClick={dismiss}>close</button>
 }
+// Header Search as the PREVIOUS bundle opened it: a background with no historyEntry, which a close can only
+// replace to.
+function LegacySearchLink() {
+  const loc = useLocation()
+  return <Link to="/search" state={{ background: loc }} data-testid="open-search-legacy">search (old bundle)</Link>
+}
 function Shell() {
   const { pageLocation, overlayLocation, background } = useOverlay()
   const navigate = useNavigate()
@@ -61,6 +69,7 @@ function Shell() {
   return (
     <>
       <OverlayLink to="/search" data-testid="open-search">search</OverlayLink>
+      <LegacySearchLink />
       <Link to="/elsewhere" data-testid="to-elsewhere">elsewhere</Link>
       <button type="button" data-testid="to-lot-y-urgent"
         onClick={() => { setRenders(renders + 1); navigate('/inventory/lot-y') }}>lot y</button>
@@ -121,11 +130,28 @@ describe('a Back onto the lot page after an overlay over it closed by its Close'
     expect(tops).toBe(1)
   })
 
-  it('lot → header Search → Close (a replace, new key, page not remounted) → elsewhere → Back: no snap to the top', async () => {
+  it('lot → header Search → Close (walks back to the lot\'s own entry) → elsewhere → Back: no snap to the top', async () => {
     await arrive()
     expect(tops).toBe(1)
     const k1 = key()
     await tap('open-search')
+    await waitFor(() => expect(screen.getByTestId('close')).toBeTruthy())
+    await tap('close')
+    await waitFor(() => expect(screen.queryByTestId('close')).toBeNull())
+    // The instrument: the close landed on the lot's own entry, and the page was never remounted.
+    expect(key()).toBe(k1)
+    expect(window.location.pathname).toBe('/inventory/lot-x')
+    expect(lotFetches('lot-x')).toBe(1)
+    await leaveAndComeBack()
+    expect(key()).toBe(k1)
+    expect(tops).toBe(1)
+  })
+
+  it('lot → header Search opened by the previous bundle → Close (the replace fallback: new key, page not remounted) → elsewhere → Back: no snap to the top', async () => {
+    await arrive()
+    expect(tops).toBe(1)
+    const k1 = key()
+    await tap('open-search-legacy')
     await waitFor(() => expect(screen.getByTestId('close')).toBeTruthy())
     await tap('close')
     await waitFor(() => expect(screen.queryByTestId('close')).toBeNull())

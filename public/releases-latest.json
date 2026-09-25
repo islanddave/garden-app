@@ -1,10 +1,8 @@
 {
-  "version": "4.150.0",
-  "date": "2026-09-24",
+  "version": "4.151.0",
+  "date": "2026-09-25",
   "highlights": [
-    "Voice harvest: naming a different plant partway through now clears the amounts you'd already said for the one before, so they can't be saved under the wrong plant. The card tells you what it cleared.",
-    "Voice harvest on a slow connection: what you say while the last harvest is still saving is no longer wiped when it lands, and a harvest on its way is no longer marked \"not captured\" when you move on. Saying \"next\" again shows \"Still saving the last one.\" instead of saving it twice, and a count you said first saves by itself once the last one lands, unless you name another plant. If a save fails after you've moved on, it names exactly what didn't save.",
-    "Today: a plant you skip in your own list no longer comes back after a skip in the household list, and Undo in either list updates both.",
-    "Undo: the Undo and × on every \"Logged …\" message are now full finger-height targets. The message looks the same."
+    "Closing Search, a Log sheet or Put Up with ✕, a tap outside it or Escape now returns you to the page exactly as you left it: lists keep your place when you come back to them, and the next Back leaves the page on the first press instead of doing nothing. Closing Log many while it is still saving no longer re-opens it empty.",
+    "Ripe colour: the planting page now says what ripe looks like for eight of the new Patrick's Pepper Patch peppers: seven that ripen to a colour other than red, and Purple Ghost Scorpion, which does go red but is named for its unripe pods. It shows once one of them is planted."
   ]
 }

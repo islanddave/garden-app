@@ -9,8 +9,98 @@
 import React, { createContext, useContext, useMemo, useCallback, useEffect } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { OVERLAY_ROUTES_ENABLED } from '../lib/featureFlags.js'
+import { readAnyMarker } from '../lib/backNav.js'
 
 const OverlayContext = createContext(null)
+
+// ─── BUG-OVERLAYDISMISSREKEY-001 — close by walking back to the page's OWN history entry ──────────
+//
+// Closing by replace (the only close there was) put a NEW entry, with a new react-router key, where the
+// overlay's entry had been: [.., k1:page, k2:/search] -> [.., k1:page, k3:page]. Two defects followed.
+// The page stayed mounted under a key it never opened on, so useScrollRestore — which may write only
+// while its own entry is current (BUG-SAVEDSEEDSBACKTOP-001) — saved nothing for the rest of the visit
+// and Back from a detail landed at the top. And the stack held the page twice, so the first system Back
+// after a close went k3 -> k1, the same URL: a press that did nothing. The system Back never had either
+// problem, because it pops to k1.
+//
+// So a close now does what Back does, whenever the page's entry is PROVABLY behind us: the background
+// carries where its entry sits (react-router's `idx`, which BrowserRouter writes into history.state and
+// which EventNew's weigh-frame close already reads) and which document wrote it. The walk is refused —
+// and the old replace stands — when any of that cannot be shown: an entry written before this release
+// (no historyEntry), MemoryRouter (window.history never moves, so the distance is 0), a DismissRegistry
+// Back marker on top (it copies the idx of the entry under it, so the arithmetic would stop one short
+// and close a sheet instead), an entry from before a reload (history.go across documents is a full page
+// load, not a close), or a distance past MAX_CLOSE_STEPS.
+//
+// ONE DOOR OPENS BY REPLACE: a row in an armed sheet (BottomNav's +LOG "Log an event" / "Log many",
+// SheetRowLink) collapses the sheet's Back marker INTO the overlay rather than stranding it. The marker
+// is its own entry one above the page's, but it copied the page's idx, and a replace keeps the idx — so
+// that overlay sits one entry above the page while reading the page's idx. withHistoryEntry records
+// that (markerSlot) and the walk counts it. A replace-open over anything that is NOT a marker has
+// overwritten the page's own entry, so there is nothing to walk back to and nothing is recorded.
+// (design review: Projects/Gardening/_seedstab11_20260925/design-critique-pwa.md F1.)
+
+// Which document wrote an entry. `location.reload()` (the service worker's post-deploy controllerchange)
+// keeps history.state but not this module, so a background from the old document is recognisable.
+const DOC_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+// An overlay is one entry deep, two with a Search peek pushed inside it. Anything past this is not a
+// stack this file built.
+const MAX_CLOSE_STEPS = 10
+// How long a started walk may take to land before a second close stops waiting for it and replaces.
+// A same-document traversal lands in a frame or two; this only bounds a walk that never lands (a
+// cancelled traversal, a truncated restored stack), which would otherwise leave X, Escape and Done dead.
+const WALK_LANDS_WITHIN_MS = 1500
+
+function historyState() {
+  try { return window.history.state } catch { return null }
+}
+// react-router's own fallback for an entry that carries no key yet (createLocation: `state.key || 'default'`).
+function routerKey(state) {
+  return (state && state.key) || 'default'
+}
+// The location an overlay opens over, plus where its history entry sits. `replacing` is the open's own
+// replace flag (see ONE DOOR OPENS BY REPLACE above).
+function withHistoryEntry(location, replacing = false) {
+  // Under an open overlay the page tree's location IS the background, historyEntry included, so a
+  // branch that records nothing must also carry nothing stale forward.
+  const { historyEntry: _stale, ...bare } = location
+  const state = historyState()
+  const idx = state?.idx
+  if (!Number.isInteger(idx)) return bare
+  if (!replacing) return { ...bare, historyEntry: { idx, doc: DOC_ID } }
+  if (!readAnyMarker(state)) return bare
+  return { ...bare, historyEntry: { idx, doc: DOC_ID, markerSlot: true } }
+}
+
+// How to close the overlay whose background is `background`, standing on history state `state`:
+//   { kind: 'back', steps } — the page's own entry is `steps` behind us; go there.
+//   { kind: 'none' }        — we are already standing on it (a walk or a system Back has landed and
+//                             React has not committed yet — BrowserRouter commits every location in a
+//                             transition — so the overlay is still on screen). Nothing to do.
+//   { kind: 'replace' }     — cannot prove where it is; replace to the background URL, as before.
+// Pure, and exported for its tests.
+export function planOverlayClose(background, state, doc = DOC_ID) {
+  const at = background && background.historyEntry
+  const bgKey = background && background.key
+  // Already home, checked FIRST: in that window the replace below would overwrite the page's OWN
+  // entry — the very re-key this fix removes. A real router key only: a MemoryRouter or hand-built
+  // background may carry none, and 'default' is shared by every entry react-router has not keyed.
+  if (bgKey && bgKey !== 'default' && state && state.key === bgKey) return { kind: 'none' }
+  const cur = state && Number.isInteger(state.idx) ? state.idx : null
+  // Evidence next: without an entry this document recorded there is nothing to reason from.
+  if (!at || at.doc !== doc || !Number.isInteger(at.idx) || cur == null) return { kind: 'replace' }
+  if (routerKey(state) === (bgKey || 'default')) return { kind: 'none' }
+  if (readAnyMarker(state)) return { kind: 'replace' }
+  const steps = cur - at.idx + (at.markerSlot ? 1 : 0)
+  if (steps < 1 || steps > MAX_CLOSE_STEPS) return { kind: 'replace' }
+  return { kind: 'back', steps }
+}
+
+// The walk a close has already started: the entry it left and when. A replace was idempotent — pressing
+// twice landed on the same URL — but a walk is not: a second press before the first lands would go back
+// again, off the page. Cleared by OverlayProvider on every location change, so an entry re-entered by
+// Forward can be closed again.
+let closingFrom = null
 
 // Signals to route content that it is rendering INSIDE an overlay Sheet (vs full-page). OverlayHost
 // provides `true`; everywhere else it defaults false. Lets a route (e.g. Search) drop its full-page
@@ -57,6 +147,8 @@ export function OverlayProvider({ children }) {
   const location = useLocation()
   const background = OVERLAY_ROUTES_ENABLED ? validBackground(location.state?.background) : undefined
 
+  useEffect(() => { closingFrom = null }, [location.key])
+
   const value = useMemo(
     () => ({
       background, // undefined unless an overlay is open (flag on)
@@ -94,7 +186,7 @@ export function useOverlayNavigate() {
   return useCallback(
     (to, opts = {}) => {
       if (!OVERLAY_ROUTES_ENABLED) { navigate(to, opts); return }
-      navigate(to, { ...opts, state: { ...opts.state, background: location } })
+      navigate(to, { ...opts, state: { ...opts.state, background: withHistoryEntry(location, !!opts.replace) } })
     },
     [navigate, location]
   )
@@ -103,7 +195,9 @@ export function useOverlayNavigate() {
 // Declarative equivalent of useOverlayNavigate. Flag off -> a plain <Link>, same DOM/props.
 export function OverlayLink({ to, state, children, ...rest }) {
   const location = useLocation()
-  const linkState = OVERLAY_ROUTES_ENABLED ? { ...state, background: location } : state
+  // Read at render, not at click: OverlayLink re-renders on every location change (useLocation), and the
+  // only thing that moves history.state between those renders is a Back marker, which copies the idx.
+  const linkState = OVERLAY_ROUTES_ENABLED ? { ...state, background: withHistoryEntry(location, !!rest.replace) } : state
   return (
     <Link to={to} state={linkState} {...rest}>
       {children}
@@ -111,18 +205,34 @@ export function OverlayLink({ to, state, children, ...rest }) {
   )
 }
 
-// Dismiss (§4): NEVER bare navigate(-1) (history.back() at idx 0 is a no-op — the overlay would
-// stick open). Replace to the background URL (immune to history index), else /today. `replace`
-// avoids growing history. Resilient outside a provider (useContext, not useOverlay) so overlay
-// route content (LogMany "Done") can call it in isolated unit tests that render without a provider —
-// there background is simply undefined and it falls back to /today (same as flag-off / no overlay).
+// Dismiss (§4): NEVER a bare navigate(-1) (history.back() at idx 0 is a no-op — the overlay would
+// stick open). Walk back to the page's own entry when planOverlayClose can prove where it is (see
+// BUG-OVERLAYDISMISSREKEY-001 above); otherwise replace to the background URL, else /today.
+// Resilient outside a provider (useContext, not useOverlay) so overlay route content (LogMany "Done")
+// can call it in isolated unit tests that render without a provider — there background is simply
+// undefined and it falls back to /today (same as flag-off / no overlay).
 export function useOverlayDismiss() {
   const navigate = useNavigate()
   const ctx = useContext(OverlayContext)
   const background = ctx ? ctx.background : undefined
   return useCallback(() => {
-    if (background) navigate(background.pathname + background.search, { replace: true })
-    else navigate('/today', { replace: true })
+    if (!background) { navigate('/today', { replace: true }); return }
+    const state = historyState()
+    const plan = planOverlayClose(background, state)
+    if (plan.kind === 'none') return
+    if (plan.kind === 'back') {
+      const from = routerKey(state)
+      const inFlight = closingFrom && closingFrom.from === from
+      if (inFlight && Date.now() - closingFrom.at < WALK_LANDS_WITHIN_MS) return
+      if (!inFlight) {
+        closingFrom = { from, at: Date.now() }
+        navigate(-plan.steps)
+        return
+      }
+      // A walk started from this entry and never landed: stop waiting and close the old way.
+      closingFrom = null
+    }
+    navigate(background.pathname + background.search, { replace: true })
   }, [navigate, background])
 }
 

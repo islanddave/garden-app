@@ -1,5 +1,13 @@
 [
   {
+    "version": "4.151.0",
+    "date": "2026-09-25",
+    "highlights": [
+      "Closing Search, a Log sheet or Put Up with ✕, a tap outside it or Escape now returns you to the page exactly as you left it: lists keep your place when you come back to them, and the next Back leaves the page on the first press instead of doing nothing. Closing Log many while it is still saving no longer re-opens it empty.",
+      "Ripe colour: the planting page now says what ripe looks like for eight of the new Patrick's Pepper Patch peppers: seven that ripen to a colour other than red, and Purple Ghost Scorpion, which does go red but is named for its unripe pods. It shows once one of them is planted."
+    ]
+  },
+  {
     "version": "4.150.0",
     "date": "2026-09-24",
     "highlights": [

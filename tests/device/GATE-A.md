@@ -16,7 +16,7 @@ If you're on an old copy of the app, everything below tells us nothing. The app 
 2. Open it again.
 3. Go to **Settings → About** and read the version number.
 
-**PASS if:** it matches the version we just shipped (I'll tell you the number when we ship — it will be **3.104.0**).
+**PASS if:** it matches the version we just shipped. I'll tell you the number when we ship: **__________**. (The first run of this file was for 3.104.0; every run since names its own.)
 **If it does not match:** stop. Everything after this is meaningless. Give it a few minutes, force-close and reopen, and check again.
 
 Version shown: ______   ☐ matches → carry on   ☐ doesn't match → **stop here**
@@ -103,12 +103,33 @@ Try **both** ways on **both** of these:
 
 ## Step 5 — Can you still scroll? (check after every step above)
 
-After each of steps 1–4, just try scrolling the page up and down.
+After each of steps 1–4 and 6, just try scrolling the page up and down.
 
 **PASS if:** it scrolls normally.
 **FAIL if:** the page is frozen and won't scroll. This is the one problem with no way out inside the app — you'd have to force-close it. That's exactly why it gets checked five times instead of once.
 
-☐ after 1 ☐ after 2 ☐ after 3 ☐ after 4 — notes: _____________________
+☐ after 1 ☐ after 2 ☐ after 3 ☐ after 4 ☐ after 6 — notes: _____________________
+
+---
+
+## Step 6 — Closing Search or Log with ✕ (added with the overlay-close fix, BUG-OVERLAYDISMISSREKEY-001)
+
+Before this fix, closing Search or a Log sheet with its ✕ left the page underneath in your history twice. So the first Back afterwards did nothing, and the list stopped remembering how far down you were. Open each sheet **fresh**: one left open from before the update still closes the old way, and it will look like a fail when it isn't.
+
+- **6a.** Open a page by tapping into it from another page (for example a planting from your Garden list). Tap **Search** at the top, then close it with **✕**. Press **Back once.**
+  **PASS if:** you leave that page. **FAIL if:** the first Back does nothing. (On the page the app opens on, leaving means the app closes. That is a PASS too.) ☐ PASS ☐ FAIL
+- **6b.** Tap **+LOG** at the bottom, choose **Log an event**, then close it with **✕**. Press **Back once.** Same PASS/FAIL as 6a. ☐ PASS ☐ FAIL
+- **6c.** Tap **Search**, search for one of your plantings, and tap **Peek** on it. Then close Search with **✕**. Press **Back once.**
+  **PASS if:** you leave the page, and Search does **not** pop back up. ☐ PASS ☐ FAIL
+- **6d.** Go to **Seeds → Saved seeds** and scroll well down. Open **Search** and close it with **✕**. The list should not move. Then open a seed lot and press **Back**.
+  **PASS if:** the list stayed put when Search closed, and Back puts you at the same spot. **FAIL if:** it jumps, or Back lands at or near the top. ☐ PASS ☐ FAIL
+- **6e (only if it happens to come up).** If the app asks you to refresh for an update while Search is open, refresh and then close Search with **✕**.
+  **PASS if:** you land on the page with no start-up screen. ☐ PASS ☐ FAIL ☐ didn't come up
+
+*Not on this list on purpose:* a double tap on **✕** is checked by machine (gate:seeds-scroll flow g), because on a phone a second tap can land on the page under it.
+*Known, and not part of this fix:* **Search → open a result → Back** (Search comes back up) **→ ✕** still loses your place in the list. It is filed separately.
+
+Notes: ______________________________________________
 
 ---
 

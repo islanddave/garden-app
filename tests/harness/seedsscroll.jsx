@@ -18,9 +18,19 @@
 // DismissRegistryProvider and ToastProvider. The shell is AppShell's (src/App.jsx): a sticky top bar of
 // TopChrome's BAR_H, then a flex column minHeight 100dvh whose paddingBottom reserves --bottom-nav-height,
 // one route ErrorBoundary per page, and a fixed nav of BOTTOM_NAV_HEIGHT_PX that sets that variable in a
-// layout effect as BottomNav does. Both stand-ins carry the real tags and heights (the gate checks them);
-// they carry no controls. TodayBand is off in prod (TODAY_BAND_HIDDEN), so --today-band-height is unset.
-// The document's height — which is what the clamp and the anchoring act on — is therefore the app's.
+// layout effect as BottomNav does. Both stand-ins carry the real tags and heights (the gate checks them).
+// Each carries ONE control, because BUG-OVERLAYDISMISSREKEY-001 (flows d, e and f) is about closing an
+// overlay opened over the Seeds page: the top bar header Search, the nav BottomNav's +LOG door. TodayBand is off in prod
+// (TODAY_BAND_HIDDEN), so --today-band-height is unset. The document's height — which is what the clamp
+// and the anchoring act on — is therefore the app's.
+//
+// THE OVERLAY is App.jsx's machinery, not a model of it: the real OverlayProvider, the page tree rendered
+// at pageLocation and the overlay tree at the real location only while a background exists (AppRoutes),
+// header Search as a real OverlayLink (TopChrome's), and the real Sheet with kind="route" whose close is
+// the real useOverlayDismiss. HarnessOverlayHost is App.jsx's OverlayHost line for line; it is copied
+// rather than imported because importing App.jsx would pull every page of the app into this harness. Only
+// the Search page inside the sheet is a stand-in (a block of the peek sheet's height) — what is under test
+// is how the sheet closes, not what it shows.
 //
 // WHAT IS A STAND-IN, and why that is enough:
 //   /today — two links in (Saved seeds, My seeds), so /seeds is a PUSH from an earlier entry, as it is
@@ -59,6 +69,11 @@ import { BrowserRouter, Routes, Route, Link, useLocation, useParams } from 'reac
 import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import { ToastProvider } from '../../src/context/ToastContext.jsx'
 import { DismissRegistryProvider } from '../../src/context/DismissRegistry.jsx'
+import {
+  OverlayProvider, useOverlay, OverlayLink, useOverlayDismiss, OverlaySurfaceProvider, OverlayDirtyProvider,
+} from '../../src/context/OverlayContext.jsx'
+import Sheet from '../../src/components/forms/Sheet.jsx'
+import SheetRowLink from '../../src/components/SheetRowLink.jsx'
 import ErrorBoundary from '../../src/components/ErrorBoundary.jsx'
 import Seeds from '../../src/pages/Seeds.jsx'
 import InventoryDetail from '../../src/pages/InventoryDetail.jsx'
@@ -203,18 +218,83 @@ function LeftThePage() {
   const loc = useLocation()
   return <div data-testid="harness-left-page">left the page for {loc.pathname}</div>
 }
+// BottomNav's +LOG door, as BottomNav builds it: an ARMED sheet (armsBack — the registry pushes a Back
+// marker entry that copies the page's idx) whose row is a SheetRowLink with `overlay`, which on tap closes
+// the sheet and REPLACE-opens the overlay into the marker's slot. The real rows go to /log and /log/many;
+// this one goes to /search, the harness's only overlay route — the door's history shape is what is under
+// test (flow f), not the form behind it.
 function BottomNavStandIn() {
+  const [create, setCreate] = useState(false)
   // BottomNav writes --bottom-nav-height in a layout effect; AppShell's paddingBottom reads it.
   useLayoutEffect(() => {
     document.documentElement.style.setProperty('--bottom-nav-height', `${BOTTOM_NAV_HEIGHT_PX}px`)
   }, [])
   return (
-    <nav aria-label="Main navigation"
-      style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: BOTTOM_NAV_HEIGHT_PX, zIndex: 100,
-        background: '#fff', borderTop: '1px solid #d4c9be', boxSizing: 'border-box' }} />
+    <>
+      <nav aria-label="Main navigation"
+        style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: BOTTOM_NAV_HEIGHT_PX, zIndex: 100,
+          background: '#fff', borderTop: '1px solid #d4c9be', boxSizing: 'border-box', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <button type="button" data-testid="harness-plus-log" onClick={() => setCreate(true)} style={{ height: 44, minWidth: 64 }}>+LOG</button>
+      </nav>
+      <Sheet open={create} onClose={() => setCreate(false)} ariaLabel="Create new" armsBack>
+        <SheetRowLink to="/search" overlay onClick={() => setCreate(false)} data-testid="harness-create-log"
+          style={{ display: 'flex', alignItems: 'center', minHeight: 48, padding: '12px 24px' }}>Log an event</SheetRowLink>
+      </Sheet>
+    </>
   )
 }
 const routeEl = (el) => <ErrorBoundary scope="route" fallback={<div data-testid="harness-route-fallback">route fallback</div>}>{el}</ErrorBoundary>
+
+// App.jsx's OverlayHost, line for line (see the header for why it is copied).
+function HarnessOverlayHost({ ariaLabel, size = 'peek', children }) {
+  const dismiss = useOverlayDismiss()
+  const [dirty, setDirty] = React.useState(false)
+  return (
+    <Sheet open onClose={dismiss} ariaLabel={ariaLabel} size={size} dirty={dirty} kind="route">
+      <OverlaySurfaceProvider>
+        <OverlayDirtyProvider onDirtyChange={setDirty}>{children}</OverlayDirtyProvider>
+      </OverlaySurfaceProvider>
+    </Sheet>
+  )
+}
+// The Search page's stand-in: a block of the height the peek sheet shows, so its X sits where it does.
+function SearchStandIn() {
+  return <div data-testid="harness-search" style={{ height: 360, padding: 20, boxSizing: 'border-box' }}>Search</div>
+}
+
+// AppShell's shape: the top bar (with header Search), the page tree at pageLocation, the overlay tree at the
+// real location only while an overlay has a background, and the bottom nav.
+function Shell() {
+  const { pageLocation, overlayLocation, background } = useOverlay()
+  return (
+    <>
+      <header data-app-chrome="top"
+        style={{ position: 'sticky', top: 0, zIndex: 80, height: TOP_CHROME_PX, boxSizing: 'border-box',
+          background: '#e8efe4', borderBottom: '1px solid #d4c9be', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingRight: 8 }}>
+        <OverlayLink to="/search" aria-label="Search your garden" data-testid="harness-open-search"
+          style={{ width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>⌕</OverlayLink>
+      </header>
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh',
+        paddingBottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' }}>
+        <div style={{ flex: 1 }}>
+          <Routes location={pageLocation}>
+            <Route path="/today" element={routeEl(<TodayStandIn />)} />
+            <Route path="/seeds" element={routeEl(<Seeds />)} />
+            <Route path="/inventory/:id" element={routeEl(<InventoryDetail />)} />
+            <Route path="/plantings/:plantingId" element={routeEl(<PlantingStandIn />)} />
+            <Route path="*" element={<LeftThePage />} />
+          </Routes>
+        </div>
+      </div>
+      {background && (
+        <Routes location={overlayLocation}>
+          <Route path="/search" element={<HarnessOverlayHost ariaLabel="Search your garden" size="peek"><SearchStandIn /></HarnessOverlayHost>} />
+        </Routes>
+      )}
+      <BottomNavStandIn />
+    </>
+  )
+}
 
 // Start on /today, so the Seeds entry the gate taps into is a PUSH from an earlier entry.
 window.history.replaceState(null, '', '/today')
@@ -222,24 +302,11 @@ createRoot(document.getElementById('root')).render(
   <AuthProvider>
     <BrowserRouter>
       <DismissRegistryProvider>
-        <ToastProvider>
-          <header data-app-chrome="top"
-            style={{ position: 'sticky', top: 0, zIndex: 80, height: TOP_CHROME_PX, boxSizing: 'border-box',
-              background: '#e8efe4', borderBottom: '1px solid #d4c9be' }} />
-          <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh',
-            paddingBottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' }}>
-            <div style={{ flex: 1 }}>
-              <Routes>
-                <Route path="/today" element={routeEl(<TodayStandIn />)} />
-                <Route path="/seeds" element={routeEl(<Seeds />)} />
-                <Route path="/inventory/:id" element={routeEl(<InventoryDetail />)} />
-                <Route path="/plantings/:plantingId" element={routeEl(<PlantingStandIn />)} />
-                <Route path="*" element={<LeftThePage />} />
-              </Routes>
-            </div>
-          </div>
-          <BottomNavStandIn />
-        </ToastProvider>
+        <OverlayProvider>
+          <ToastProvider>
+            <Shell />
+          </ToastProvider>
+        </OverlayProvider>
       </DismissRegistryProvider>
     </BrowserRouter>
   </AuthProvider>,

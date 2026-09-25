@@ -151,6 +151,14 @@ export default function LogMany() {
   const [result, setResult] = useState(null)       // { batch_id, count }
   const [error, setError]   = useState(null)
   const idemRef = useRef(null)
+  // BUG-LOGMANYLATECRITTERREPLACE-001 — a batch that lands AFTER this page is gone (the sheet closed by
+  // its X or Escape while the POST was in flight, or a full-page Back) must not navigate. useNavigate
+  // outlives the component, so the post-batch replace below would overwrite whatever entry is current
+  // by then: since BUG-OVERLAYDISMISSREKEY-001 that is the page's own entry, which it re-keys, and it
+  // re-opened an EMPTY Log many over it (the result lived in this unmounted instance). The batch is
+  // already in the DB and its draft is cleared either way; only the screen that no longer exists is skipped.
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
 
   // V4-WATERMATH-001 F0: batch-level amount class + sparse per-row overrides ({plant_id: depth}).
   // `batchDepthTouched` drives water_depth_source for every row the batch chip covers, exactly as
@@ -502,6 +510,7 @@ export default function LogMany() {
       // includes location.state — pushing a new state object (same pathname, replace:true)
       // triggers a re-poll. Critter is in DB before this resolves (Lambda awards inline).
       clearDraft(DRAFT_KEY)   // batch is in the DB — no longer a resumable draft
+      if (!mountedRef.current) return
       setResult(r)
       // §4 FIX: spread the existing state so the carried `background` survives this same-path push.
       // The bug: replacing state wholesale destroyed `background` → the overlay unmounted → `result`
@@ -558,6 +567,7 @@ export default function LogMany() {
   // form's selection is carried back through the same seed Undo uses, because the result card
   // unmounts the checklist and a hand-made selection is the most expensive thing on this form.
   const onVoiceLogged = useCallback((res, plan) => {
+    if (!mountedRef.current) return   // landed after the page closed: see mountedRef
     setRestoredSelection(selectionRef.current?.selectionState ?? null)
     setError(null)
     setResult({

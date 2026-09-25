@@ -5,7 +5,7 @@
 // reachable Undo render, and (b) the same-path push PRESERVES `background`.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 
 installStoragePolyfill()
@@ -84,5 +84,29 @@ describe('LogMany — post-batch result + Undo reachable (§4 spread-state fix)'
     expect(call[1].replace).toBe(true)
     expect(call[1].state.background).toEqual({ pathname: '/today', search: '' })
     expect(typeof call[1].state.critterCheck).toBe('number')
+  })
+
+  // BUG-LOGMANYLATECRITTERREPLACE-001 — the sheet closed (X or Escape) while the batch POST was in flight.
+  // useNavigate outlives the page, so without the guard that same-path replace lands on whatever entry is
+  // current: the page underneath's own entry, since BUG-OVERLAYDISMISSREKEY-001.
+  it('a batch that lands after the page has gone does not navigate', async () => {
+    let release = null
+    apiFetch.mockImplementation((path, opts = {}) => {
+      if (path === '/api/projects') return Promise.resolve([])
+      if (path === '/api/locations') return Promise.resolve({ locations: [] })
+      if (path === '/api/events/batch' && opts.method === 'POST') {
+        if (JSON.parse(opts.body).dry_run) return Promise.resolve({ count: 4 })
+        return new Promise((r) => { release = () => r({ batch_id: 'b-1', count: 4 }) })
+      }
+      return Promise.resolve(null)
+    })
+    const { unmount } = render(<LogMany />)
+    fireEvent.click(await screen.findByText('commit-scope'))
+    fireEvent.click(await screen.findByText(/^Log watered on 4$/))
+    // The instrument: the real POST is in flight, not merely the dry run.
+    await waitFor(() => expect(typeof release).toBe('function'))
+    unmount()
+    await act(async () => { release(); await new Promise((r) => setTimeout(r, 20)) })
+    expect(navigate.mock.calls.find(([to]) => to === '.')).toBeUndefined()
   })
 })
