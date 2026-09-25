@@ -88,9 +88,12 @@ function flush() {
 // background, not the overlay's own entry, and an entry an overlay's replace-close left behind answers
 // to the page entry it continues (BUG-OVERLAYRELOADKEY-001, src/lib/pageEntry.js).
 function entryKey(id) {
-  let k = null
-  try { k = pageEntryKey(window.history && window.history.state) } catch { /* opaque origin */ }
-  return `${id}|${k || 'default'}`
+  // Only the history.state read is guarded (an opaque origin throws there). pageEntryKey stays outside
+  // the try, so a fault in it — a suite's partial featureFlags mock, say — surfaces instead of quietly
+  // keying every entry 'default' and letting that suite pass over nothing.
+  let state = null
+  try { state = window.history && window.history.state } catch { /* opaque origin */ }
+  return `${id}|${pageEntryKey(state) || 'default'}`
 }
 
 function readEntry(key) { return store().get(key) }

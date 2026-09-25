@@ -172,6 +172,17 @@ describe('a page that mounts under an open overlay files its place under its OWN
     expect(stored()['list|' + k1].y).toBe(1200)
   })
 
+  // The window scrolls the page under the sheet, never the overlay's content, so the page keeps filing while
+  // an overlay is open over it (it used to stop the moment the overlay's entry was pushed).
+  it('a page mounted before the overlay keeps filing its place under its own entry while the overlay is open', async () => {
+    const k1 = await toList()
+    await userScrollsTo(900)
+    await openOverlay()
+    await userScrollsTo(1100)
+    await act(async () => { window.dispatchEvent(new Event('pagehide')) })
+    expect(stored()['list|' + k1].y).toBe(1100)
+  })
+
   it('the push off the overlay does not file the next page\'s clamped offset under the list', async () => {
     const k1 = await toList()
     await userScrollsTo(900)
@@ -204,7 +215,9 @@ describe('an overlay closed by replace leaves the page one identity', () => {
     await waitFor(() => expect(window.scrollY).toBe(1500))
   })
 
-  it('mounted under the overlay (a reload or tab restore with it open): restores, then keeps saving through the replace', async () => {
+  // jsdom cannot reload a document; this forces the branch a reload takes (a background the close cannot
+  // walk back to) through a legacy open. The real reload is gate:seeds-scroll flow i.
+  it('mounted under the overlay, then closed by the replace branch a reload takes: restores, then keeps saving', async () => {
     const k1 = await toList()
     await userScrollsTo(800)
     await openOverlay('open-legacy')

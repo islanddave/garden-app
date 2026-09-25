@@ -63,6 +63,13 @@
 // EVERY LOAD IS A FIRST VISIT: sessionStorage is cleared before anything mounts, so no earlier load's
 // stored offset or view state can be restored into this one (the gate also opens every flow in a fresh
 // tab, whose sessionStorage and history are its own).
+//
+// EXCEPT A RELOAD THE GATE ASKS FOR (flow i, BUG-OVERLAYRELOADKEY-001): __h.reloadHere() reloads this
+// document ON the current history entry, keeping sessionStorage and history.state, as the service
+// worker's post-update reload and an Android tab restore reload the app. The dev server answers a
+// router URL (/search) with the APP's index.html, so the entry's URL is swapped to this page's own for the
+// reload and swapped back — same entry, same state — before React mounts. The app sees what it sees in
+// prod: a new document at /search whose history entry carries the overlay's background.
 import React, { useEffect, useLayoutEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Link, useLocation, useParams } from 'react-router-dom'
@@ -85,7 +92,17 @@ const ITEM_MS = Number(q.get('itemms') ?? 300)
 const ROWS_MS = Number(q.get('rowsms') ?? 300)
 const PLANTING_MS = 300
 
-try { window.sessionStorage.clear() } catch { /* private mode: nothing was remembered either */ }
+// This page's own URL, before the router moves it: where a reload has to land.
+const HARNESS_URL = location.pathname + location.search
+const RELOAD_TO_KEY = 'harness.seedsscroll.reloadTo'
+const RELOAD_TO = (() => {
+  try {
+    if (performance.getEntriesByType('navigation')[0]?.type !== 'reload') return null
+    return window.sessionStorage.getItem(RELOAD_TO_KEY)
+  } catch { return null }
+})()
+if (RELOAD_TO) { try { window.sessionStorage.removeItem(RELOAD_TO_KEY) } catch { /* ignore */ } }
+else { try { window.sessionStorage.clear() } catch { /* private mode: nothing was remembered either */ } }
 
 // ── fixture ──────────────────────────────────────────────────────────────────────────────────────────
 const DAY = 86400000
@@ -311,8 +328,10 @@ function Shell() {
   )
 }
 
-// Start on /today, so the Seeds entry the gate taps into is a PUSH from an earlier entry.
-window.history.replaceState(null, '', '/today')
+// Start on /today, so the Seeds entry the gate taps into is a PUSH from an earlier entry. A requested
+// reload instead goes back to the router URL it was on, keeping the entry's state (see the header).
+if (RELOAD_TO) window.history.replaceState(window.history.state, '', RELOAD_TO)
+else window.history.replaceState(null, '', '/today')
 createRoot(document.getElementById('root')).render(
   <AuthProvider>
     <BrowserRouter>
@@ -342,6 +361,15 @@ window.__h = {
   store: () => { try { return JSON.parse(window.sessionStorage.getItem('garden.scrollRestore.v1')) } catch { return null } },
   // How many times the Seeds page has mounted in this document (flow h's precondition).
   seedsMounts: () => seedsMounts,
+  // Flow i: reload this document on the current history entry (see the header), and whether this
+  // document IS such a reload.
+  reloadHere: () => {
+    window.sessionStorage.setItem(RELOAD_TO_KEY, location.pathname + location.search + location.hash)
+    window.history.replaceState(window.history.state, '', HARNESS_URL)
+    location.reload()
+    return true
+  },
+  reloadedDoc: () => !!RELOAD_TO,
   mark: () => { trace.length = 0; return true },
   trace: () => trace.slice(),
   fixture: () => ({ rows: ROWS.length, lotId: RISTRA_ID, lotName: RISTRA.name, parent: 'pl-ristra', itemMs: ITEM_MS, rowsMs: ROWS_MS }),

@@ -25,7 +25,7 @@
 // Back is a real history traversal (history.back() in the frame: popstate, as the Android back gesture).
 // Each flow opens in a FRESH TAB, so its history, sessionStorage and module state are its own.
 //
-// EIGHT FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
+// NINE FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
 //   (a) Saved seeds, scrolled deep (the Ristra card wheeled to the middle of the visible band) → tap the
 //       card's title → the lot page lands at scrollY 0 with its h1 inside the visible band; then Back →
 //       scrollY equals the pre-tap value exactly and the card's viewport top is unchanged (±1px).
@@ -52,6 +52,12 @@
 //       the NEW place. A page that mounts under an overlay used to key its offsets by the OVERLAY's entry:
 //       it read nothing on the way in and, once the X had walked it home, saved nothing, so Back landed on
 //       the offset saved before Search.
+//   (i) BUG-OVERLAYRELOADKEY-001, the other half: Saved seeds deep → header Search → the app RELOADS under
+//       it (a new document on Search's own entry, sessionStorage kept: the service worker's post-update
+//       reload, an Android tab restore) → the X, which must REPLACE now that it cannot walk across
+//       documents → the list back where it was; then scrolled on → (a)'s tap and Back onto the new place.
+//       Red with either half of the fix removed: the page keying by the overlay's entry, or the replace
+//       leaving an entry the page cannot claim.
 // Every number is printed on pass as well as fail.
 //
 // THE INSTRUMENT CHECK comes first in every flow, and a mismatch stops that flow before any invariant is
@@ -72,15 +78,17 @@
 // (HARNESS_BASELINE_SHA=c016dcde…) and each fix reverted alone (GATE_HARNESS_CONFIG, a config that serves
 // one file from the base commit) — each red by name with the base numbers. Flows (d) and (e) were measured
 // the same way against the tree before BUG-OVERLAYDISMISSREKEY-001 (HARNESS_BASELINE_SHA=2e576239…): see
-// Projects/Gardening/_seedstab11_20260925/ in the gardening-docs repo for the recorded runs. Flow (h) against
-// the tree before BUG-OVERLAYRELOADKEY-001 (HARNESS_BASELINE_SHA=73686a22…): Projects/Gardening/
-// _seedstab12_20260925/.
+// Projects/Gardening/_seedstab11_20260925/ in the gardening-docs repo for the recorded runs. Flows (h) and
+// (i) against the tree before BUG-OVERLAYRELOADKEY-001 (HARNESS_BASELINE_SHA=73686a22…) and with each half
+// of that fix reverted alone (h reds without the page-entry key and passes without the replace stamp; i
+// reds without either): Projects/Gardening/_seedstab12_20260925/gate-flowi-*.txt.
 //
 // SEAMS (never set in CI; a run with any of them set says so in its first lines, so it cannot pass for
 // clean):
 //   HARNESS_BASELINE_SHA — serve src/** from a git object (tests/harness/baselinePlugin.mjs). The gate
 //     refuses a baseline run whose Vite never printed that it is serving the object.
 //   GATE_HARNESS_CONFIG — a different Vite config for the harness (repo-relative or absolute).
+//   GATE_ONLY — a comma-separated list of flow keys to run (e.g. h,i), for a quick re-run of one flow.
 //   GATE_CPU_THROTTLE — CDP CPU throttling for each tab (e.g. 6 = six times slower): a slow CI runner,
 //     rehearsed on this tab alone rather than by loading the machine other sessions share.
 //
@@ -151,6 +159,7 @@ const HARNESS_CONFIG = process.env.GATE_HARNESS_CONFIG || 'tests/harness/vite.ha
 const CUSTOM_CONFIG = HARNESS_CONFIG !== 'tests/harness/vite.harness.config.mjs'
 const BASELINE_SHA = process.env.HARNESS_BASELINE_SHA || ''
 const CPU_THROTTLE = Number(process.env.GATE_CPU_THROTTLE || 1)
+const ONLY = (process.env.GATE_ONLY || '').split(',').map((s) => s.trim()).filter(Boolean)
 if (!(CPU_THROTTLE >= 1)) throw new Error(`GATE_CPU_THROTTLE="${process.env.GATE_CPU_THROTTLE}" is not a rate >= 1`)
 const outArg = process.argv.indexOf('--outdir')
 const OUTDIR = outArg > -1 ? resolve(process.argv[outArg + 1]) : resolve(ROOT, 'artifacts/layout-gate')
@@ -223,6 +232,7 @@ const FLOWS = [
   { key: 'f', name: 'pluslog-close-back', label: 'Saved seeds → +LOG → "Log an event" → its X → Back leaves Seeds', entry: 'toSaved', view: 'saved', dest: 'leave', search: 'pluslog' },
   { key: 'g', name: 'search-double-x', label: 'Saved seeds → header Search → its X double-tapped → Back leaves Seeds', entry: 'toSaved', view: 'saved', dest: 'leave', search: 'header', doubleTap: true },
   { key: 'h', name: 'search-result-back-x', label: 'Saved seeds deep → header Search → a result → Back → its X → scrolled on → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot', search: 'header', searchAtDepth: true, viaResult: true, nudge: true },
+  { key: 'i', name: 'search-reload-x', label: 'Saved seeds deep → header Search → the app reloads under it → its X → scrolled on → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot', search: 'header', searchAtDepth: true, reloadUnder: true, nudge: true },
 ]
 
 const failures = []
@@ -468,7 +478,7 @@ async function runFlow(cdp, flow, vw, vh) {
     // The frame's document id. A reload mid-flow (Vite re-optimizing a dependency reloads the frame at
     // whatever router URL it is on) would make every later wait time out for a reason that is not the
     // page's; say so by name.
-    const boot0 = await t.read(`return w.__h.boot()`)
+    let boot0 = await t.read(`return w.__h.boot()`)
     reloaded = async () => {
       const b = await t.read(`return w.__h && w.__h.boot ? w.__h.boot() : null`).catch(() => null)
       return b === boot0 ? '' : ' — and the frame RELOADED mid-flow (a new document: Vite re-optimizing a dependency does this), so this run did not measure the flow'
@@ -527,6 +537,22 @@ async function runFlow(cdp, flow, vw, vh) {
         if (o.idx !== idx0 || o.marker) return `${at}: the +LOG row did not open the overlay by REPLACE into the marker's slot (overlay idx ${o.idx}, Seeds idx ${idx0}, marker still current: ${o.marker}) — this is not the door under test`
       }
       await t.settle(200, 3000)
+      if (flow.reloadUnder) {
+        // (i) The app reloads with Search open (the service worker's post-update reload, an Android tab
+        // restore): a NEW document on Search's own entry, sessionStorage kept. Seeds re-mounts under the
+        // sheet, and the X can no longer walk back across documents, so it must REPLACE.
+        const bootA = await t.read(`return w.__h.boot()`)
+        await t.ev(`(() => { ${FRAME_VARS}; w.__h.reloadHere(); return 1 })()`)
+        if (!await t.waitIn(`w.__h && w.__h.boot() !== '${bootA}' && w.__h.reloadedDoc() && w.location.pathname === '/search' && ${SEL.sheetClose} && ${SEL.card}`, 30000)) {
+          return `${at}: the reload under Search never came back with Search open over the Seeds page (on ${await t.read(`return w.location.pathname`).catch(() => 'an unreadable frame')})`
+        }
+        boot0 = await t.read(`return w.__h.boot()`)   // this reload is the one under test, not a Vite one
+        const kR = await t.read(`return w.__h.key()`)
+        if (kR !== kOpen) return `${at}: after the reload the frame is on key ${kR}, not Search's own ${kOpen} — the reload did not keep the history entry`
+        await t.settle(500, 8000)
+        const underR = await t.read(`return w.scrollY`)
+        searchNote += ` · the app reloaded under Search: Seeds re-mounted at y${R1(underR)}`
+      }
       if (flow.viaResult) {
         // (h) Out to a result and Back: Search re-opens on its own entry over a Seeds page that has just
         // re-MOUNTED under the sheet — the precondition, checked by the harness's mount count, not assumed.
@@ -567,6 +593,12 @@ async function runFlow(cdp, flow, vw, vh) {
       await t.settle(300, 5000)
       const kClosed = await t.read(`return w.__h.key()`)
       if (flow.doubleTap) goCalls = await t.read(`return w.__goCalls || null`)
+      if (flow.reloadUnder) {
+        // The precondition of (i): a close after a reload cannot prove where Seeds' entry is, so it replaces.
+        if (kClosed === k0) return `${at}: ${flow.label}: after the reload the X walked back onto Seeds' own entry instead of replacing — not the path under test`
+        const stamp = await t.read(`return w.history.state && w.history.state.usr ? (w.history.state.usr.continuesEntry ?? null) : null`)
+        searchNote += ` · the X replaced (stamped to continue ${stamp})`
+      }
       searchNote += ` · the overlay closed onto key ${kClosed} (Seeds' own entry ${k0}: ${kClosed === k0 ? 'the same' : 'A NEW ONE'})${goCalls ? ` · history.go calls ${JSON.stringify(goCalls)}` : ''}`
       // A double-tapped X must not re-key the page: the second press lands in the window where history
       // is already back on Seeds' entry but the sheet is still on screen, and a replace there overwrites it.
@@ -605,10 +637,12 @@ async function runFlow(cdp, flow, vw, vh) {
         if (why) return fail(why)
         const post = await t.read(READ_PAGE(SEL.card))
         if (Math.round(post.y) !== Math.round(pre.y) || Math.abs(post.top - pre.top) > TOP_TOL_PX) {
-          const what = flow.viaResult ? 'after a result and Back, the X did not bring the list back where it was' : 'closing the overlay moved the list'
+          const what = flow.viaResult ? 'after a result and Back, the X did not bring the list back where it was'
+            : flow.reloadUnder ? 'after the app reloaded under Search, the X did not bring the list back where it was'
+            : 'closing the overlay moved the list'
           return fail(`${at}: ${flow.label}: ${what}: scrollY ${R1(pre.y)} → ${R1(post.y)}, the card's top y${R1(pre.top)} → y${R1(post.top)}${searchNote}`)
         }
-        searchNote += ` · the list ${flow.viaResult ? 'was back' : 'held'} at y${R1(post.y)} through the close`
+        searchNote += ` · the list ${flow.viaResult || flow.reloadUnder ? 'was back' : 'held'} at y${R1(post.y)} through the close`
       }
       if (flow.nudge) {
         // (h) Scrolled on after the X, the new place must be what Back from the lot restores. A page that
@@ -708,7 +742,7 @@ async function runFlow(cdp, flow, vw, vh) {
     }
     if (!st.settled) fail(`${at}: ${flow.label}: after Back the list never held still for 800ms within 10s (last y${R1(st.y)})`)
     if (Math.round(after.y) !== Math.round(before.y)) {
-      fail(`${at}: ${flow.label}: Back landed at scrollY ${R1(after.y)}, the list was at ${R1(before.y)} — the place was lost (${flow.viaResult ? 'BUG-OVERLAYRELOADKEY-001' : 'BUG-SAVEDSEEDSBACKTOP-001'}) · stored offsets when the tap had left: ${storeLine(away.store)}`)
+      fail(`${at}: ${flow.label}: Back landed at scrollY ${R1(after.y)}, the list was at ${R1(before.y)} — the place was lost (${flow.viaResult || flow.reloadUnder ? 'BUG-OVERLAYRELOADKEY-001' : 'BUG-SAVEDSEEDSBACKTOP-001'}) · stored offsets when the tap had left: ${storeLine(away.store)}`)
     }
     if (Math.abs(after.top - before.top) > TOP_TOL_PX) fail(`${at}: ${flow.label}: after Back the ${flow.view === 'saved' ? 'card' : 'row'}'s top is at y${R1(after.top)}, it was at y${R1(before.top)} (±${TOP_TOL_PX}px) — not where the finger left it${after.top > after.band[1] ? ', OFF SCREEN below the band' : ''}`)
     if (flow.view === 'mine' && !open) fail(`${at}: ${flow.label}: after Back the Ristra row is CLOSED — it was open when the finger left`)
@@ -729,6 +763,8 @@ const udd = mkdtempSync(join(tmpdir(), 'gate-seedsscroll-'))
 try {
   if (BASELINE_SHA) console.log(`[seeds-scroll] BASELINE RUN — HARNESS_BASELINE_SHA=${BASELINE_SHA}: src/** is served from that commit. This is not a clean run.`)
   if (CUSTOM_CONFIG) console.log(`[seeds-scroll] CUSTOM HARNESS CONFIG — GATE_HARNESS_CONFIG=${HARNESS_CONFIG}. This is not a clean run.`)
+  if (ONLY.length) console.log(`[seeds-scroll] GATE_ONLY=${ONLY.join(',')} — only those flows ran. This is not a clean run.`)
+  if (ONLY.some((k) => !FLOWS.some((fl) => fl.key === k))) throw new Error(`GATE_ONLY names a flow that does not exist (${ONLY.join(',')}) — the run would pass over nothing`)
   if (CPU_THROTTLE > 1) console.log(`[seeds-scroll] CPU THROTTLED — GATE_CPU_THROTTLE=${CPU_THROTTLE}: every tab runs ${CPU_THROTTLE}x slower. This is not a clean run.`)
   if (PROBE_NOTHING) console.log('[seeds-scroll] --probe-nothing: every app testid points at one nothing renders. This run MUST fail.')
   for (const d of harnessCopyDrift()) fail(`harness drift: ${d}`)
@@ -740,7 +776,7 @@ try {
   chrome = await startChrome(udd)
   cdp = await connect(chrome.version.webSocketDebuggerUrl)
   for (const [vw, vh] of VIEWPORTS) {
-    for (const flow of FLOWS) {
+    for (const flow of FLOWS.filter((fl) => !ONLY.length || ONLY.includes(fl.key))) {
       try { await runFlow(cdp, flow, vw, vh) } catch (err) { fail(`(${flow.key})@${vw}x${vh}: the flow could not complete: ${err.message}`) }
     }
   }
