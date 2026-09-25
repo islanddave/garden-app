@@ -25,6 +25,25 @@ describe('mapOpenMeteoDailyToHydrology', () => {
     const h = mapOpenMeteoDailyToHydrology({ daily: { precipitation_sum: [null, 0.03, 0.6, 0.2, 0.1], precipitation_probability_max: [] } })
     expect(h.today_pop).toBeNull()
     expect(h.tomorrow_pop).toBeNull()
+    expect(h.day2_pop).toBeNull()
+  })
+
+  // BUG-RAINFCSTONEMODEL-001 (b) — D2 on its own, labelled by Open-Meteo's own ET date, for the card's
+  // following-day line. Index 4 is the same D2 that upcoming_precip_in already sums.
+  it('maps D2 amount, chance and date for the following-day line', () => {
+    const time = ['2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26', '2026-09-27']
+    const h = mapOpenMeteoDailyToHydrology({ daily: { ...daily, precipitation_sum: [0, 0, 0, 0.142, 1.716], precipitation_probability_max: [0, 0, 5, 37, 82], time } })
+    expect(h.day2_precip_in).toBe(1.72)
+    expect(h.day2_pop).toBe(82)
+    expect(h.day2_date).toBe('2026-09-27')
+    expect(h.upcoming_precip_in).toBe(1.86)   // still D1 + D2, unchanged
+  })
+  it('D2 is null, never 0, when the payload stops at D1 or carries no dates', () => {
+    const short = mapOpenMeteoDailyToHydrology({ daily: { precipitation_sum: [0, 0, 0, 0.2], precipitation_probability_max: [0, 0, 0, 30] } })
+    expect(short.day2_precip_in).toBeNull()
+    expect(short.day2_pop).toBeNull()
+    expect(short.day2_date).toBeNull()
+    expect(mapOpenMeteoDailyToHydrology({ daily }).day2_date).toBeNull()   // no `time` array
   })
 
   // ── BUG-LIVEWEATHERNUMOR0-001 ─────────────────────────────────────────────────────────────────
@@ -91,6 +110,36 @@ describe('fetchLiveRain', () => {
     expect(r.hydrology.today_precip_in).toBe(0.61)
     expect(typeof r.refreshedAt).toBe('string')
   })
+  // BUG-RAINFCSTONEMODEL-001 — the five-model day-ahead request, beside the base one.
+  describe('the five-model day-ahead overlay', () => {
+    const time = ['2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26', '2026-09-27']
+    const base = { daily: { time, precipitation_sum: [0, 0, 0, 0.142, 1.716], precipitation_probability_max: [0, 0, 5, 37, 82] } }
+    const models = { daily: {
+      time: ['2026-09-25', '2026-09-26', '2026-09-27'],
+      precipitation_sum_gfs_global: [0, 0.37, 1.087], precipitation_sum_ecmwf_ifs025: [0, 0.846, 1.043],
+      precipitation_sum_gem_seamless: [0, 0.949, 0.611], precipitation_sum_icon_seamless: [0, 0.555, 2.524],
+      precipitation_sum_ncep_nbm_conus: [0, 0.165, 0.846] } }
+    const route = (onBase, onModels) => vi.fn(async (url) => (/models=/.test(url) ? onModels() : onBase()))
+    const ok = (body) => () => ({ ok: true, json: async () => body })
+
+    it('replaces the day-ahead fields and keeps today on best_match', async () => {
+      const r = await fetchLiveRain(coords, { fetchImpl: route(ok(base), ok(models)) })
+      expect(r.hydrology).toMatchObject({ tomorrow_precip_in: 0.58, tomorrow_pop: 100, day2_precip_in: 1.22, day2_pop: 100,
+        day2_date: '2026-09-27', today_pop: 5, bm_tomorrow_precip_in: 0.14, bm_tomorrow_pop: 37, forecast_source: 'mean5-v1' })
+    })
+    it('a failed, rejected or incomplete five-model answer leaves the best_match overlay whole', async () => {
+      const incomplete = { daily: { ...models.daily, precipitation_sum_gem_seamless: undefined } }
+      for (const onModels of [() => ({ ok: false }), () => { throw new Error('net') }, ok(incomplete), ok(base)]) {
+        const r = await fetchLiveRain(coords, { fetchImpl: route(ok(base), onModels) })
+        expect(r.hydrology).toMatchObject({ tomorrow_precip_in: 0.14, tomorrow_pop: 37, day2_precip_in: 1.72 })
+        expect(r.hydrology.forecast_source).toBeUndefined()
+      }
+    })
+    it('never stands in for a failed base request — no base, no overlay', async () => {
+      expect(await fetchLiveRain(coords, { fetchImpl: route(() => ({ ok: false }), ok(models)) })).toBeNull()
+    })
+  })
+
   it('returns null on no coords / http error / network throw / malformed body (never breaks Today)', async () => {
     expect(await fetchLiveRain(null, { fetchImpl: vi.fn() })).toBeNull()
     expect(await fetchLiveRain(coords, { fetchImpl: vi.fn().mockResolvedValue({ ok: false }) })).toBeNull()

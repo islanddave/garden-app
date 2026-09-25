@@ -251,7 +251,8 @@ if [[ $DIFF -eq 1 ]]; then
 import json, sys
 resp = json.load(open(sys.argv[1])); stored_rows = json.load(open(sys.argv[2]))
 BUCKETS = ('water_due','no_history','fertilize','pest','cold','dormant','rain_skipped')
-HYKEYS = ('recent_precip_in','today_precip_in','today_pop','tomorrow_precip_in','tomorrow_pop','upcoming_precip_in','rain_coming','rain_horizon')
+HYKEYS = ('recent_precip_in','today_precip_in','today_pop','tomorrow_precip_in','tomorrow_pop','upcoming_precip_in','rain_coming','rain_horizon',
+          'day2_precip_in','day2_pop','forecast_source','bm_tomorrow_precip_in','bm_tomorrow_pop')   # BUG-RAINFCSTONEMODEL-001
 computed = {p['user_id']: p for p in resp.get('plans') or []}
 stored = {r['user_id']: r.get('items') or {} for r in stored_rows or []}
 drift = []

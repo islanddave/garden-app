@@ -50,7 +50,9 @@
 /** Mirrored server-side by lambda/daily-plan-read/cue-impression.js, pinned in lockstep by its test.
  *  Bump when the WORDING changes, not when the engine's gates do — this constant partitions
  *  impressions by the model that produced the line the reader saw. */
-export const WX_CUE_MODEL_VERSION = 'wxcue-v1'
+// v2 (BUG-RAINFCSTONEMODEL-001, 2026-09-25): the rain cue's condition half now prints the amount and the
+// chance side by side (`0.58" rain tomorrow (100% chance)`) instead of amount x PoP, from a five-model forecast.
+export const WX_CUE_MODEL_VERSION = 'wxcue-v2'
 
 /** engine.js computeCallout's five icons -> the form each renders in. Closed set: a cue not named
  *  here renders nothing, so a sixth engine rule cannot ship an un-reviewed wording by inheritance. */

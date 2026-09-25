@@ -20,10 +20,17 @@ const midRain = { ...settled, today_observed_in: 0.14, today_remaining_in: 0.15 
 // no bound gauge — the pre-existing forecast wording must be untouched
 const noGauge = { recent_precip_in: 0.05, today_precip_in: 0.21, today_pop: 88, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true }
 
+// BUG-RAINFCSTONEMODEL-001 — 2026-09-25 17:30 ET, the evening Today printed "0.05″ rain expected tomorrow"
+// (best_match 0.14″ x 37%). The five-model day-ahead figures from that hour, with the following-day line.
+const sep25 = { recent_precip_in: 0, today_precip_in: 0, today_pop: 5, tomorrow_precip_in: 0.58, tomorrow_pop: 100,
+  upcoming_precip_in: 1.8, day2_precip_in: 1.22, day2_pop: 100, day2_date: '2026-09-27', rain_coming: true,
+  forecast_source: 'mean5-v1', bm_tomorrow_precip_in: 0.14, bm_tomorrow_pop: 37, status: { ok: true, uncertainty: { flag: false } } }
+
 const CASES = [
   ['15:30 — 0.29" measured, nothing more coming', settled],
   ['05:30 — 0.14" measured, 0.15" still expected (longest form)', midRain],
   ['no gauge — forecast wording unchanged', noGauge],
+  ['2026-09-25 — five-model tomorrow + the Sunday line', sep25],
 ]
 
 createRoot(document.getElementById('root')).render(

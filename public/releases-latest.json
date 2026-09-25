@@ -1,7 +1,8 @@
 {
-  "version": "4.153.0",
+  "version": "4.154.0",
   "date": "2026-09-25",
   "highlights": [
-    "Search, then Back, then close: open a result from Search, come Back and close Search, and the list you came from is still where you left it — on My seeds the pepper you had open stays open. It also holds if the app refreshes for an update while Search is open."
+    "Today's rain forecast now averages five weather models instead of one, and shows the amount and the chance side by side instead of multiplying them, so a likely half inch no longer reads as 0.05 in.",
+    "When the day after tomorrow brings more rain, Today adds a second line for it, like '1.22 in Sunday, 100% chance'."
   ]
 }

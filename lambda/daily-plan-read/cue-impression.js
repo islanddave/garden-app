@@ -38,7 +38,7 @@ export const ET_TZ = 'America/New_York';
 // (same mechanism as ready-impression.js READY_MODEL_VERSION — the Lambda and src/ are separate
 // module graphs and cannot share a constant). Used ONLY as the fallback when a request omits
 // model_version: the client owns the model identity here, because the client owns the wording.
-export const WX_CUE_MODEL_VERSION = 'wxcue-v1';
+export const WX_CUE_MODEL_VERSION = 'wxcue-v2';   // v2: BUG-RAINFCSTONEMODEL-001 rain-cue wording
 
 // Closed vocabularies, mirroring weather_cue_impression_cue_chk / _form_chk. CUES is engine.js
 // computeCallout's five rules in priority order; FORMS is the render's two wordings. Rejecting here

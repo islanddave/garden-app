@@ -60,12 +60,29 @@ const PAL = {
   warnBg: '#fbf3df', warnBorder: P.gold, warnInk: P.gold,
 }
 
-// DRG-WXPROB-001 — probability-gate the INFORMATIONAL rain AMOUNT. (unchanged) The deterministic
-// Open-Meteo precipitation_sum over-reports the expected amount when the chance is low; below this PoP
-// threshold we suppress the amount and show only the chance. At/above it we show a probability-weighted
-// amount. Presentation only — the stored hydrology numbers + watering lanes are untouched.
-const RAIN_POP_DISPLAY_THRESHOLD = 30 // percent; tunable display gate for the rain-amount figure
+// DRG-WXPROB-001 — probability-gate the INFORMATIONAL rain line. Below this PoP the line still opens only
+// when some other reason does (an amount, a showery day, the live overlay, a gauge reading).
+//
+// BUG-RAINFCSTONEMODEL-001 (b) — the amount is NO LONGER multiplied by the chance. DRG-WXPROB-001 printed
+// `amount × PoP / 100`, an expected value, to stop a low-chance forecast overstating rain. On 2026-09-25 it
+// did the opposite: a forecast of 0.14″ at 37% printed as "0.05″ rain expected tomorrow" while every other
+// source was saying 0.4–0.95″, and Dave read it as the app forecasting a dry day. An expected value is
+// neither what falls if it rains nor how likely rain is, so the card now prints both, side by side, and the
+// reader combines them. Dave's call (2026-09-25): "Amount + chance".
+const RAIN_POP_DISPLAY_THRESHOLD = 30 // percent; display gate for the rain line
+// The following-day line (see nextNote below) opens only for a measurable rain. 0.10″ is the drought
+// signal's `light` tier and the smallest bucket the gauge comparison scores, so below it the line would
+// be announcing a trace.
+const NEXT_DAY_MIN_IN = 0.1
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100
+// 'YYYY-MM-DD' (an America/New_York civil day, as Open-Meteo labels its daily rows) -> 'Sunday'. Read at
+// noon UTC so no offset can move it across midnight. Anything else -> null, and the caller prints nothing.
+function weekdayOf(ymd) {
+  if (typeof ymd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null
+  const d = new Date(`${ymd}T12:00:00Z`)
+  if (isNaN(d.getTime())) return null
+  return new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(d)
+}
 
 // One rail can. Was a 64-viewBox hand-roll with four off-token strokes (2.6/3.4/3.6/2.2), a
 // module-level mutable counter minting a per-instance clipPath id, and a partial state faked by
@@ -376,8 +393,9 @@ export default function WeatherWidget({
   const rainIn = showToday ? todayIn : (rainSrc.tomorrow_precip_in ?? null)
   const rainPop = showToday ? todayPop : (rainSrc.tomorrow_pop ?? 0)
   const rainWhen = showToday ? 'today' : 'tomorrow'
-  const rainAmtKnown = rainIn != null
-  const rainAmtWeighted = rainAmtKnown ? round2(rainIn * rainPop / 100) : null
+  // BUG-RAINFCSTONEMODEL-001 (b) — "known" now also means non-zero: a known 0.00″ has no amount worth
+  // printing beside its chance, so it keeps the chance-only sentence it always got.
+  const rainAmtKnown = rainIn != null && round2(rainIn) > 0
 
   // BUG-RAINCARDFORECASTONLY-001 — the card used to print a PoP-WEIGHTED FORECAST as the day's rain figure even
   // when the WS-2902 in the yard had already measured the rain. Reported by Dave 2026-09-06: the card read
@@ -423,9 +441,24 @@ export default function WeatherWidget({
     ? (rainAmtKnown && rainIn >= 0.1
         ? `~${rainIn.toFixed(2)}″ ${rainWhen} · ${rainPop}% — could climb`
         : `${rainPop}% chance ${rainWhen} · little so far, could climb`)
-    : (!rainAmtKnown || rainPop < RAIN_POP_DISPLAY_THRESHOLD
+    : (!rainAmtKnown
         ? `${rainPop}% chance of rain ${rainWhen}`
-        : `${rainAmtWeighted.toFixed(2)}″ rain expected ${rainWhen} · ${rainPop}%`)
+        : `${rainIn.toFixed(2)}″ ${rainWhen} · ${rainPop}% chance`)
+
+  // BUG-RAINFCSTONEMODEL-001 (b) — the FOLLOWING day, on its own line, when it brings more rain than the
+  // line above describes. The card showed one day and one day only, so on 2026-09-25 a forecast 1.72″
+  // Sunday was nowhere on it while the line read 0.05″ for Saturday. "The line above" is today whenever
+  // the gauge has measured rain or today is the rainy day, and tomorrow otherwise; the next line is the day
+  // after that. It reads `rainSrc` like the forecast half above (live overlay when present), and it is a
+  // separate sentence, so it never mixes a forecast basis into the measured one.
+  const firstIsToday = gaugeMeasured || showToday
+  const firstAmt = gaugeMeasured ? measuredToday + (remainingToday ?? 0) : (rainAmtKnown ? rainIn : 0)
+  const nextIn = firstIsToday ? (rainSrc.tomorrow_precip_in ?? null) : (rainSrc.day2_precip_in ?? null)
+  const nextPop = firstIsToday ? (rainSrc.tomorrow_pop ?? null) : (rainSrc.day2_pop ?? null)
+  const nextWhen = firstIsToday ? 'tomorrow' : weekdayOf(rainSrc.day2_date)
+  const nextNote = (Number.isFinite(nextIn) && round2(nextIn) >= NEXT_DAY_MIN_IN && round2(nextIn) > round2(firstAmt) && nextWhen)
+    ? `${nextIn.toFixed(2)}″ ${nextWhen}${nextPop != null ? ` · ${nextPop}% chance` : ''}`
+    : null
 
   // Derived headline (NET-NEW). Both lane verdicts -> one no-wrap sentence; the lanes + rain note restate it.
   const containersDo = pillState(scale.containers) === 'do'
@@ -551,6 +584,14 @@ export default function WeatherWidget({
               blue before and after — the hand-roll's cloud was the same dropBody at 0.55 opacity. */}
           <Icon name="care.rainPct" size={13} decorative style={{ color: ICON_COLORS.dropBody }} />
           {rainNote}
+        </div>
+      )}
+      {/* BUG-RAINFCSTONEMODEL-001 (b) — its own gate: the following day's rain can matter on a card whose
+          own day is dry and quiet, which is exactly when the line above stays shut. */}
+      {nextNote && (
+        <div data-testid="weather-next-rain" style={{ marginTop: tokens.space.xs, textAlign: 'center', fontSize: tokens.type.xs, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: PAL.micro }}>
+          <Icon name="care.rainPct" size={13} decorative style={{ color: ICON_COLORS.dropBody }} />
+          {nextNote}
         </div>
       )}
 

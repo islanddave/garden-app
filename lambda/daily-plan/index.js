@@ -17,6 +17,7 @@ const ws = require('ws');
 neonConfig.webSocketConstructor = ws;
 const { run, resolveInvokeOptions } = require('./handler');
 const { stationConfig } = require('./station'); // DRG-WXSTATION-001
+const rainForecast = require('./rainForecast'); // BUG-RAINFCSTONEMODEL-001
 
 const SECRET_NAME = process.env.SECRET_NAME || 'garden-app/secrets';
 let _secrets;
@@ -265,6 +266,13 @@ async function fetchPrecip(lat, lng) {
       // however much rain it claims. Extracted now so the two-day horizon can be reasoned about at all.
       // Same null-not-zero convention as its siblings — a missing probability must never read as 0%.
       upcoming_pop: pop[4] != null ? pop[4] : null,
+      // BUG-RAINFCSTONEMODEL-001 (b) — D2 on its own, with the date that labels it, for Today's following-day
+      // rain line ("1.72″ Sunday · 82% chance"). The same D2 that upcoming_precip_in already sums and whose
+      // probability is upcoming_pop; named for the card so the card never has to subtract D1 back out.
+      // Display only: no watering decision reads these.
+      day2_precip_in: round2OrNull(numOrNull(ps[4])),
+      day2_pop: pop[4] != null ? pop[4] : null,
+      day2_date: typeof times[4] === 'string' ? times[4] : null,
       // BUG-TODAYWATER-001 actuals backfill: D-1 OBSERVED rain as its own field — recent_precip_in is the
       // D-2+D-1 SUM, so what actually fell on a given day was unrecoverable BY CONSTRUCTION, which made a
       // busted today-forecast undetectable after the fact. Consumed ONLY by handler.backfillYesterdayActual
@@ -375,6 +383,24 @@ async function fetchPrecip(lat, lng) {
   }
 }
 
+// BUG-RAINFCSTONEMODEL-001 — tomorrow's and the day after's rain from five models (see rainForecast.js for the
+// evidence). Its OWN request, deliberately never folded into fetchPrecip's URL: `models=` there suffixes every
+// daily and hourly key or, with one model, moves the frost lows. Placed after fetchPrecip and named without its
+// prefix because the source-text harnesses (openmeteo-indices, fetchprecip-errorbody, nightly-timeout) cut
+// fetchPrecip out by name. Any failure returns null, and the run keeps best_match for every day-ahead field.
+async function fetchRainForecast(lat, lng, today) {
+  try {
+    const r = await fetch(rainForecast.rainForecastUrl(lat, lng), { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) throw new Error(`Open-Meteo HTTP ${r.status}`);
+    const rf = rainForecast.fromOpenMeteoModels(await r.json(), today);
+    if (!rf) throw new Error('five-model body incomplete for D1/D2');
+    return rf;
+  } catch (e) {
+    console.warn(JSON.stringify({ msg: 'fetchRainForecast failed — day-ahead stays best_match', lat, lng, error: e.message }));
+    return null;
+  }
+}
+
 // DRG-WXSTATION-001 — on-site AmbientWeather WS-2902. Read lazily + fully guarded so a missing/broken AWN
 // secret or a station outage NEVER empties the nightly plan (V200 B6): any failure returns null and the run
 // falls back to Open-Meteo/NWS. Kept in a SEPARATE secret (garden-app/awn-keys) from the NEON/CLERK blob.
@@ -460,7 +486,7 @@ exports.handler = async (event) => {
     console.warn(JSON.stringify({ msg: 'db-pool-idle-error', error: err && err.message, code: (err && err.code) || null, ms: Date.now() - started }));
   });
   try {
-    const res = await run({ pg: pool, today, dryRun, flagOverrides, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour: hourET(), event });
+    const res = await run({ pg: pool, today, dryRun, flagOverrides, geocodeZip, fetchNWS, fetchPrecip, fetchRainForecast, fetchStation, publishAlert, etHour: hourET(), event });
     console.log(JSON.stringify({ msg: 'daily-plan', today, dryRun, rows: res.rows, ms: Date.now() - started }));
     // A0.3-DRY-PLANS sentinel — DRY responses carry the computed plans so scripts/rerun-daily-plan.sh
     // --diff can compare a zero-write replay against the stored rows (it preflight-greps the deployed zip

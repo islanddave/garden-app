@@ -64,7 +64,7 @@ describe('the spec table — rows 1-12, before -> after (plan date Fri 2026-10-0
     expect(await billedModel(a.cueLine)).toBe(row.after.model)
   })
 
-  it('the impression rows the spec names: 2 agreed, 4 and 12 wxcue-v1, 1/7/10 none', () => {
+  it('the impression rows the spec names: 2 agreed, 4 and 12 wxcue-v2, 1/7/10 none', () => {
     const model = (n) => ROWS.find((r) => r.n === n).after.model
     expect(model(2)).toBe(AGREED_CUE_MODEL_VERSION)
     expect(AGREED_CUE_MODEL_VERSION).toBe('wxcue-v1-agreed')
@@ -255,9 +255,9 @@ describe('buildCueLine carries the model version; the impression bills it', () =
     for (const mv of ['', 5, null, {}]) expect(buildCueLine({ icon: 'freeze', text: 'Freeze tonight', modelVersion: mv })).not.toHaveProperty('modelVersion')
   })
 
-  it('the beacon bills the line\'s own model version, else wxcue-v1', async () => {
+  it('the beacon bills the line\'s own model version, else wxcue-v2', async () => {
     expect(await billedModel({ cue: 'freeze', form: 'imperative', modelVersion: AGREED_CUE_MODEL_VERSION })).toBe('wxcue-v1-agreed')
-    expect(await billedModel({ cue: 'freeze', form: 'imperative' })).toBe('wxcue-v1')
+    expect(await billedModel({ cue: 'freeze', form: 'imperative' })).toBe('wxcue-v2')
   })
 })
 

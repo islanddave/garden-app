@@ -1,9 +1,16 @@
 // DRG-WXROLL-001 — intraday weather freshness (client-side). The Today rain figure is otherwise a FROZEN
 // ~2AM snapshot (the nightly daily-plan engine); in showery/convective regimes the amount can move several-
-// fold by midday. This module re-fetches precip LIVE from Open-Meteo using the EXACT same endpoint + field
-// mapping as the engine's lambda/daily-plan/index.js fetchPrecip, so the displayed figure can be refreshed
-// to "now" without re-running the engine. DISPLAY ONLY: the watering recommendation stays the server's
-// plan. Open-Meteo is keyless + CORS-enabled.
+// fold by midday. This module re-fetches precip LIVE from Open-Meteo with the same field MAPPING as the
+// engine's lambda/daily-plan/index.js fetchPrecip, so the displayed figure can be refreshed to "now" without
+// re-running the engine. DISPLAY ONLY: the watering recommendation stays the server's plan. Open-Meteo is
+// keyless + CORS-enabled.
+//
+// CORRECTED (BUG-RAINFCSTONEMODEL-001, 2026-09-25): this header said "the EXACT same endpoint". It was not —
+// the engine's call asks for ten daily and five hourly fields and four forecast days; this one asks for two
+// and three — and nothing tested the pairing. What IS shared is the model (best_match) and the mapping of
+// the fields below. The day-ahead fields now come from a second, five-model request that the engine makes
+// too (src/lib/rainForecast.js, mirrored and parity-tested against the Lambda copy), so the card and the
+// callout under it print the same method's figures.
 //
 // CORRECTION (BUG-TODAYWATER-001, 2026-08-03): this comment used to justify display-only by saying a
 // re-run "would clobber per-plant task/done state". That is FALSE and has been since V3-TODAYDONE-001 —
@@ -14,6 +21,8 @@
 // .github/workflows/deploy-lambda.yml). This module stays display-only for a different and still-valid
 // reason: it is a client-side fetch, and the watering DECISION must come from the server so that every
 // device and every reader agrees on one answer.
+
+import { rainForecastUrl, fromOpenMeteoModels, applyRainForecast } from './rainForecast.js'
 
 const round2 = (n) => (n == null ? null : Math.round((n + Number.EPSILON) * 100) / 100)
 
@@ -57,6 +66,11 @@ export function mapOpenMeteoDailyToHydrology(json) {
     upcoming_precip_in: round2(sumOrNull(tomorrow, numOrNull(ps[4]))),       // D1 + D2
     tomorrow_precip_in: round2(tomorrow),                                    // D1
     tomorrow_pop: pop[3] != null ? pop[3] : null,
+    // BUG-RAINFCSTONEMODEL-001 (b) — D2 on its own, for the card's following-day line. Same null-not-zero
+    // rule as every field above; the date labels the line ("Sunday") and is Open-Meteo's own ET day.
+    day2_precip_in: round2(numOrNull(ps[4])),                                // D2
+    day2_pop: pop[4] != null ? pop[4] : null,
+    day2_date: Array.isArray(d.time) && typeof d.time[4] === 'string' ? d.time[4] : null,
   }
 }
 
@@ -66,13 +80,30 @@ export function mapOpenMeteoDailyToHydrology(json) {
 export async function fetchLiveRain(coords, { fetchImpl, signal } = {}) {
   const f = fetchImpl || (typeof fetch !== 'undefined' ? fetch : null)
   if (!coords || coords.lat == null || coords.lng == null || !f) return null
+  // BUG-RAINFCSTONEMODEL-001 — the five-model day-ahead request runs BESIDE the base one, never instead of it.
+  // It cannot fail the overlay: any failure resolves to null, and the day-ahead fields keep best_match, as
+  // the engine does. It cannot stand in for a failed base either: no base hydrology, no overlay at all.
+  const models = fetchModels(f, coords, signal)
   try {
     const res = await f(OPEN_METEO_PRECIP_URL(coords.lat, coords.lng), { signal })
     if (!res || !res.ok) return null
     const json = await res.json()
-    const hydrology = mapOpenMeteoDailyToHydrology(json)
-    if (!hydrology) return null
+    const base = mapOpenMeteoDailyToHydrology(json)
+    if (!base) return null
+    // The ET day the base body calls today (index 2 with past_days=2) picks tomorrow out of the models body
+    // by date, so the two requests cannot disagree about which day is "tomorrow".
+    const today = Array.isArray(json.daily.time) ? json.daily.time[2] : null
+    const hydrology = applyRainForecast(base, fromOpenMeteoModels(await models, today))
     return { hydrology, refreshedAt: new Date().toISOString() }
+  } catch (_) {
+    return null
+  }
+}
+
+async function fetchModels(f, coords, signal) {
+  try {
+    const res = await f(rainForecastUrl(coords.lat, coords.lng), { signal })
+    return res && res.ok ? await res.json() : null
   } catch (_) {
     return null
   }

@@ -42,7 +42,7 @@ const DAY = '2026-09-02'
 // pins these against the REAL engine output; here they are inputs, so they are written literally.
 const FREEZE = { icon: 'freeze', text: 'Freeze tonight (34°F) — cover or bring peppers & tomatoes in' }
 const HEAT = { icon: 'heat', text: 'Hot day (91°F) — deep-water thirsty crops, shade if wilting' }
-const RAIN = { icon: 'rain', text: '0.36" rain tomorrow — water containers today, let in-ground beds wait' }
+const RAIN = { icon: 'rain', text: '0.60" rain tomorrow (60% chance) — water containers today, let in-ground beds wait' }
 
 const impressions = () => fetchMock.mock.calls.filter((c) => c[0] === CUE_IMPRESSIONS_PATH)
 const lastBody = () => JSON.parse(impressions().at(-1)[1].body)
@@ -116,11 +116,11 @@ describe('(b) check-form for the imperative rules, imperative for freeze', () =>
     expect(el.textContent).not.toMatch(/deep-water thirsty crops/)
   })
 
-  it('rain renders as a check and keeps the engine\'s probability-weighted figure', () => {
+  it('rain renders as a check and keeps the engine\'s amount and chance', () => {
     render(<WeatherCueLine callout={RAIN} planDate={DAY} />)
     const el = screen.getByTestId('weather-cue-line')
     expect(el.dataset.cueForm).toBe('check')
-    expect(el.textContent).toBe(`0.36" rain tomorrow — ${CHECK_CLAUSE.rain}`)
+    expect(el.textContent).toBe(`0.60" rain tomorrow (60% chance) — ${CHECK_CLAUSE.rain}`)
   })
 
   it('freeze does NOT become a check — it keeps the engine sentence verbatim', () => {

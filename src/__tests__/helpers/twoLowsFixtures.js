@@ -82,7 +82,8 @@ export const freezeText = (t) => `Freeze tonight (${t}°F) — cover or bring pe
 export const coldText = (t) => `Cool night (${t}°F) — protect flowering peppers/tomatoes`
 export const lineTonight = (t) => `Frost possible tonight — low ${t}°F. Plan cover for tender plants.`
 export const lineTomorrow = (t) => `Frost possible tomorrow night — low ${t}°F. Plan cover for tender plants.`
-export const RAIN_CUE = '0.36" rain tomorrow — did the containers get watered today? In-ground beds can wait for it.'
+// BUG-RAINFCSTONEMODEL-001: was '0.36"' — RAINY's 0.45" x 80%. The callout now prints the amount and the chance.
+export const RAIN_CUE = '0.45" rain tomorrow (80% chance) — did the containers get watered today? In-ground beds can wait for it.'
 export const BRING = 'bring inside tonight'
 export const OPTIONAL = 'optional: protect flowering plant'
 export const TROPICAL = 'tender tropical — bring in tonight'
@@ -102,13 +103,13 @@ export const ROWS = [
     after: { card: '38', cue: freezeText(38), line: lineTonight(38), model: 'wxcue-v1-agreed', protect: [BRING, TROPICAL] } },
   { n: 4, low: 36, entries: [tonight(37.6)], hy: DRY,
     before: { card: '36', cue: freezeText(36), line: lineTonight(38), protect: [`${BRING} (low 36°F)`, `${TROPICAL} (low 36°F ≤ 60°F)`] },
-    after: { card: '36', cue: freezeText(36), line: lineTonight(36), model: 'wxcue-v1', protect: [BRING, TROPICAL] } },
+    after: { card: '36', cue: freezeText(36), line: lineTonight(36), model: 'wxcue-v2', protect: [BRING, TROPICAL] } },
   { n: 5, low: 55, entries: [tomorrowNight(36.4)], hy: DRY,
     before: { card: '55', cue: null, line: lineTomorrow(36), protect: [`${TROPICAL} (low 55°F ≤ 60°F)`] },
     after: { card: '55', cue: null, line: lineTomorrow(36), model: null, protect: [`${TROPICAL} (low 55°F ≤ 60°F)`] } },
   { n: 6, low: 43, entries: [], hy: DRY,
     before: { card: '43', cue: coldText(43), line: null, protect: [`${OPTIONAL} (low 43°F)`, `${TROPICAL} (low 43°F ≤ 60°F)`] },
-    after: { card: '43', cue: coldText(43), line: null, model: 'wxcue-v1', protect: [`${OPTIONAL} (low 43°F)`, `${TROPICAL} (low 43°F ≤ 60°F)`] } },
+    after: { card: '43', cue: coldText(43), line: null, model: 'wxcue-v2', protect: [`${OPTIONAL} (low 43°F)`, `${TROPICAL} (low 43°F ≤ 60°F)`] } },
   // A radiative-only advisory is stored in the same shape (frostWeatherFacts, nightOffset 0).
   { n: 7, low: 47, entries: [tonight(42, { key: `sp1|${PLAN_DATE}|advisory|advisory|rad` })], hy: DRY,
     before: { card: '47', cue: null, line: lineTonight(42), protect: [`${TROPICAL} (low 47°F ≤ 60°F)`] },
@@ -124,10 +125,10 @@ export const ROWS = [
     after: { card: '38', cue: null, line: lineTonight(38), model: null, protect: [] } },
   { n: 11, low: 36, entries: [imminent(36)], hy: DRY,
     before: { card: '36', cue: freezeText(36), line: null, protect: [`${BRING} (low 36°F)`, `${TROPICAL} (low 36°F ≤ 60°F)`] },
-    after: { card: '36', cue: freezeText(36), line: null, model: 'wxcue-v1', protect: [`${BRING} (low 36°F)`, `${TROPICAL} (low 36°F ≤ 60°F)`] } },
+    after: { card: '36', cue: freezeText(36), line: null, model: 'wxcue-v2', protect: [`${BRING} (low 36°F)`, `${TROPICAL} (low 36°F ≤ 60°F)`] } },
   { n: 12, low: 50, entries: [tonight(37.6)], hy: RAINY,
     before: { card: '50', cue: RAIN_CUE, line: lineTonight(38), protect: [`${TROPICAL} (low 50°F ≤ 60°F)`] },
-    after: { card: '38', cue: RAIN_CUE, line: lineTonight(38), model: 'wxcue-v1', protect: [TROPICAL] } },
+    after: { card: '38', cue: RAIN_CUE, line: lineTonight(38), model: 'wxcue-v2', protect: [TROPICAL] } },
 ]
 
 // The spec's grid (§4 Tests): plan low x entry, over the REAL callout.

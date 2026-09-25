@@ -10,6 +10,7 @@ const { frostEval, frostCoverage, sentCoverage, isFrostSeason, resolveFrostRun, 
 const { nightsFrom } = require('./radiativeFrost');                              // V5-RADIATIVEFROST-001
 const { resolveRainRun, rainDecision, previousDay, rainMetadata } = require('./rainLog'); // V4-RAINAUTOLOG-001 pt2
 const drought = require('./droughtSignal');                                      // V5-LEGACYEXCEPTIONCARE-001
+const { applyRainForecast } = require('./rainForecast');                         // BUG-RAINFCSTONEMODEL-001
 
 // The machine actor for rows this Lambda writes on nobody's behalf. Same source as the SYSTEM_SUBS
 // set built further down, and FIRST-of-list because that variable is documented as accepting a
@@ -1258,7 +1259,7 @@ async function logRainEvents(pg, { today, dryRun, event, etHour }) {
   }
 }
 
-async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchStation, publishAlert, etHour, event, flagOverrides = null }) {
+async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip, fetchRainForecast, fetchStation, publishAlert, etHour, event, flagOverrides = null }) {
   const _ovr = (dryRun === true && flagOverrides && typeof flagOverrides === 'object') ? flagOverrides : null;
   const _flag = (name, envOn) => (_ovr && typeof _ovr[name] === 'boolean' ? _ovr[name] : envOn);
   if (_ovr) console.log(JSON.stringify({ msg: 'flag-overrides (dry-run shadow)', overrides: _ovr }));
@@ -1524,6 +1525,21 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
       console.error(JSON.stringify({ msg: 'hydrology-fetch-failed', degraded: 'hydrology_fetch_failed', space: s.id, error: e?.message || String(e) }));
       wxDegradeMarkers.push(`hydrology_fetch_failed (space ${s.id})`);
     }
+    // BUG-RAINFCSTONEMODEL-001 — tomorrow's and the day after's rain from five models, overlaid onto the
+    // hydrology BEFORE the gauge merge (which never touches day-ahead fields) and before anything reads it.
+    // Optional dependency: a caller that passes no fetchRainForecast — every existing run() test — gets the
+    // best_match hydrology it always got. Same seam discipline as the two fetches above: the shipped fetcher
+    // returns null on any failure, and a fetcher that THROWS degrades this Space to best_match, never the run.
+    let coords;
+    if (hy && fetchRainForecast) {
+      try {
+        coords = await coordsForSpace(s, { geocodeZip });
+        hy = applyRainForecast(hy, coords ? await fetchRainForecast(coords.lat, coords.lng, today) : null);
+      } catch (e) {
+        console.error(JSON.stringify({ msg: 'rain-forecast-failed', degraded: 'rain_forecast_failed', space: s.id, error: e?.message || String(e) }));
+        wxDegradeMarkers.push(`rain_forecast_failed (space ${s.id})`);
+      }
+    }
     // Field-granular station merge (B2/B3): station rain overrides recent_precip_in on the hydrology path;
     // station temp calibrates tonightLow on the weather path; forecast fields stay from Open-Meteo/NWS.
     const st = bindStationToSpace(s, station);
@@ -1540,7 +1556,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     wxBySpace[s.id] = wx;
     hyBySpace[s.id] = hy;
     stationProvBySpace[s.id] = prov;
-    coordsBySpace[s.id] = await coordsForSpace(s, { geocodeZip });               // DRG-WXROLL-001: for client live-refresh
+    coordsBySpace[s.id] = coords !== undefined ? coords : await coordsForSpace(s, { geocodeZip });   // DRG-WXROLL-001: for client live-refresh (resolved once above when the rain forecast needed it)
     console.log(JSON.stringify({ msg: 'space-wx', space: s.id, ms: Date.now() - t0, wx: !!wx, hy: !!hy }));
     // V4-WATERMATH-001 F1 — persist this Space's completed days, then (ONLY behind the flag) read the
     // fold window back. Order matters: the write goes first so a same-night backfill of a gap is

@@ -60,12 +60,12 @@ function harness(runImpl) {
   const run = vi.fn(runImpl);
   const compiled = new Function(
     'Pool', 'getSecrets', 'run', 'resolveInvokeOptions', 'todayET', 'hourET',
-    'geocodeZip', 'fetchNWS', 'fetchPrecip', 'fetchStation', 'publishAlert', 'console', 'process',
+    'geocodeZip', 'fetchNWS', 'fetchPrecip', 'fetchRainForecast', 'fetchStation', 'publishAlert', 'console', 'process',
     `const exports = {};\n${HANDLER}\nreturn exports.handler;`,
   );
   const handler = compiled(
     FakePool, async () => ({ NEON_DATABASE_URL: DSN }), run, h.resolveInvokeOptions,
-    () => '2026-09-19', () => 17, null, null, null, null, null, out, { env: { DRY_RUN: 'false' } },
+    () => '2026-09-19', () => 17, null, null, null, null, null, null, out, { env: { DRY_RUN: 'false' } },
   );
   return { handler, pools, out, run };
 }

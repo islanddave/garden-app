@@ -108,7 +108,7 @@ describe('BUG-WXBANNERSHOWERYCOPY-001 — missing forecast gets its own caveat, 
     card(h)
     expect(screen.getByText(LEAD).textContent).toMatch(/still counts recent rain\.$/)
     // the figures that DID arrive print in the ordinary wording — not the showery "could climb" hedge
-    expect(screen.getByText(/0\.04″ rain expected today · 40%/)).toBeTruthy()
+    expect(screen.getByText(/0\.10″ today · 40% chance/)).toBeTruthy()
     expect(screen.queryByText(/could climb/)).toBeNull()
   })
 
@@ -132,7 +132,7 @@ describe('BUG-WXBANNERSHOWERYCOPY-001 — missing forecast gets its own caveat, 
     const live = { today_precip_in: 0.3, today_pop: 60, tomorrow_precip_in: 0.1, tomorrow_pop: 20 }
     card(stored(null), { liveHydrology: live, refreshedAt: '2026-07-06T16:10:00Z' })
     expect(screen.getByText(LEAD)).toBeTruthy()
-    expect(screen.getByText(/rain expected today · 60%/)).toBeTruthy()
+    expect(screen.getByText(/0\.30″ today · 60% chance/)).toBeTruthy()
     expect(screen.queryByText(/could climb/)).toBeNull()
   })
 })

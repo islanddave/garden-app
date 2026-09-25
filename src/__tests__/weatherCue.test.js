@@ -50,8 +50,8 @@ describe('condition (b) — imperative rules render in CHECK-FORM, freeze and co
 
     expect(line.form).toBe('check')
     expect(line.text).not.toBe(callout.text)
-    // The condition half is the ENGINE's, verbatim — including the probability-weighted rain figure
-    // DRG-WXPROB-001 computes. Only the action half is replaced.
+    // The condition half is the ENGINE's, verbatim — including the rain amount and its chance
+    // (BUG-RAINFCSTONEMODEL-001 (b)). Only the action half is replaced.
     const condition = callout.text.slice(0, callout.text.indexOf(CUE_SEPARATOR))
     expect(condition.length).toBeGreaterThan(0)
     expect(line.text).toBe(`${condition}${CUE_SEPARATOR}${CHECK_CLAUSE[cue]}`)
@@ -103,6 +103,6 @@ describe('no threshold and no forecast-amount gate lives in the reader', () => {
   })
 
   it('pins the model version the impression rows are partitioned by', () => {
-    expect(WX_CUE_MODEL_VERSION).toBe('wxcue-v1')
+    expect(WX_CUE_MODEL_VERSION).toBe('wxcue-v2')
   })
 })

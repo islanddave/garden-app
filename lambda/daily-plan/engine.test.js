@@ -126,24 +126,41 @@ describe('DRG-WATERSTAGE-001: plantings under a planning-stage project are exclu
   });
 });
 
-// DRG-WXPROB-001 — the nightly rain-AMOUNT callout mirrors the Today widget's probability gating.
-// The GATE (whether the rain callout fires at all) is unchanged — only the displayed amount is weighted.
-describe('DRG-WXPROB-001: rain callout shows a probability-weighted amount', () => {
+// BUG-RAINFCSTONEMODEL-001 (b) — the nightly rain callout mirrors the Today widget: the amount and the chance
+// side by side, never their product (DRG-WXPROB-001 printed amount × PoP / 100, which turned 0.14″ at 37% into
+// "0.05″" on the card on 2026-09-25). The GATE (whether the rain callout fires at all) is unchanged.
+describe('BUG-RAINFCSTONEMODEL-001: rain callout prints the amount and the chance, not their product', () => {
   const { computeCallout } = engine;
   const baseWx = { tonightLow: 60, highToday: 80 }; // no freeze/cold/heat -> rain branch can win
 
-  it('weights the displayed amount by PoP when the rain callout fires (pop >= 30)', () => {
+  it('prints the raw amount with its chance when the rain callout fires', () => {
     const c = computeCallout(baseWx, { recent_precip_in: 0.05, tomorrow_precip_in: 1.00, tomorrow_pop: 60 });
     expect(c).toBeTruthy();
     expect(c.icon).toBe('rain');
-    // 1.00 * 60% = 0.60 (not the raw 1.00)
-    expect(c.text).toBe('0.6" rain tomorrow — water containers today, let in-ground beds wait');
+    // Not 0.6 (1.00 * 60%): the weighted figure is exactly what this change removes.
+    expect(c.text).toBe('1.00" rain tomorrow (60% chance) — water containers today, let in-ground beds wait');
   });
 
-  it('keeps the raw amount when PoP is null (cannot weight an unknown probability)', () => {
+  it('prints the amount alone when PoP is null', () => {
     const c = computeCallout(baseWx, { recent_precip_in: 0.05, tomorrow_precip_in: 0.5, tomorrow_pop: null });
     expect(c.icon).toBe('rain');
-    expect(c.text).toBe('0.5" rain tomorrow — water containers today, let in-ground beds wait');
+    expect(c.text).toBe('0.50" rain tomorrow — water containers today, let in-ground beds wait');
+  });
+
+  it('stores D2 for the card only when the hydrology carries it (every older fixture stays byte-identical)', () => {
+    const base = { recent_precip_in: 0, today_precip_in: 0, today_pop: 5, upcoming_precip_in: 1.86, tomorrow_precip_in: 0.14, tomorrow_pop: 37 };
+    const run = (hy) => generatePlan({ plantings: [], cadence: cad, fertModel: fm, today: '2026-09-25', weather: baseWx, hydrology: hy, ownerFallback: 'dave' }).hydrology;
+    const withD2 = run({ ...base, day2_precip_in: 1.72, day2_pop: 82, day2_date: '2026-09-27' });
+    expect(withD2).toMatchObject({ day2_precip_in: 1.72, day2_pop: 82, day2_date: '2026-09-27' });
+    const without = run(base);
+    expect('day2_precip_in' in without || 'day2_pop' in without || 'day2_date' in without).toBe(false);
+    // A null D2 (the fetch stopped at D1) is still a present key: the card treats it as unknown, not as 0.
+    expect(run({ ...base, day2_precip_in: null, day2_pop: null, day2_date: null })).toMatchObject({ day2_precip_in: null, day2_pop: null, day2_date: null });
+  });
+
+  it('keeps the gate: below 0.3" or below 50% there is no rain callout', () => {
+    expect(computeCallout(baseWx, { recent_precip_in: 0, tomorrow_precip_in: 0.29, tomorrow_pop: 90 })).toBeNull();
+    expect(computeCallout(baseWx, { recent_precip_in: 0, tomorrow_precip_in: 1.5, tomorrow_pop: 49 })).toBeNull();
   });
 });
 

@@ -1,7 +1,7 @@
 // V3-WXFRESH-001 — honest-presentation layer for the Today weather snapshot.
 import React from 'react'
 import { describe, it, expect } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import WeatherWidget, { hydrologySourceLabel } from '../components/today/WeatherWidget.jsx'
 
 const weather = { tonightLow: 50, highToday: 78, code: 3, hot: false }
@@ -93,7 +93,7 @@ describe('WeatherWidget — DRG-WX Phase 2 snapshot-volatility caveat', () => {
     const h = { recent_precip_in: 0.05, today_precip_in: 0.21, today_pop: 88, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }
     render(<WeatherWidget weather={weather} hydrology={h} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
     expect(screen.queryByText(/Showery pattern/i)).toBeNull()
-    expect(screen.getByText(/rain expected/i)).toBeTruthy()
+    expect(screen.getByText(/0\.21″ today · 88% chance/)).toBeTruthy()
   })
 
   it('prior-day stale warning takes precedence over the showery caveat (no double-up)', () => {
@@ -121,7 +121,10 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
     // at the end of this file, so neither null below is carrying the new behaviour's proof.
     render(<WeatherWidget weather={weather} hydrology={nightlyUncertain} liveHydrology={live}
       refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-20T06:00:41Z" planDate="2026-06-22" />)
-    expect(screen.getByText(/0\.56/)).toBeTruthy()        // live D0 amount probability-weighted (0.61 * 92%), not the raw 0.61 or the 0.21 nightly
+    // The live D0 amount beside its chance — not the 0.21 nightly, and not 0.56 (0.61 x 92%), the product
+    // BUG-RAINFCSTONEMODEL-001 (b) removed.
+    expect(screen.getByText(/0\.61″ today · 92% chance/)).toBeTruthy()
+    expect(screen.queryByText(/0\.56/)).toBeNull()
     expect(screen.getByText(/· live/i)).toBeTruthy()
     expect(screen.queryByText(/As of/i)).toBeNull()       // live stamp still replaces the as-of stamp
     expect(screen.getByText(/older snapshot/i)).toBeTruthy()   // NO LONGER suppressed by the overlay
@@ -142,9 +145,9 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
     render(<WeatherWidget weather={weather} hydrology={{ ...dry }} liveHydrology={dry}
       refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
     expect(screen.getByText(/· live/i)).toBeTruthy()
-    // tomorrow_pop 5 is below the display threshold -> chance-only line, no amount (DRG-WXPROB-001)
+    // A known 0.00 is no amount to print -> chance-only line (BUG-RAINFCSTONEMODEL-001 (b) keeps this).
     expect(screen.getByText(/5% chance of rain/i)).toBeTruthy()
-    expect(screen.queryByText(/rain expected/i)).toBeNull()
+    expect(screen.queryByText(/\d″/)).toBeNull()   // no "0.00″" beside it
   })
 
   // ── BUG-LIVEWEATHERNUMOR0-001, the consumer half ────────────────────────────────────────────────
@@ -162,7 +165,7 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
       render(<WeatherWidget weather={weather} hydrology={nightlyUncertain} liveHydrology={liveNoAmount}
         refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
       expect(screen.getByText(/63% chance of rain tomorrow/i)).toBeTruthy()
-      expect(screen.queryByText(/rain expected/i)).toBeNull()
+      expect(screen.queryByText(/″ tomorrow/)).toBeNull()
       expect(screen.queryByText(/0\.00/)).toBeNull()
     })
 
@@ -178,10 +181,10 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
       expect(screen.getByText(/Showery pattern/i)).toBeTruthy()
     })
 
-    it('a known amount still renders exactly as before — the fix is not a suppression', () => {
+    it('a known amount still renders — the fix is not a suppression', () => {
       render(<WeatherWidget weather={weather} hydrology={nightlyUncertain} liveHydrology={live}
         refreshedAt="2026-06-22T17:15:00Z" generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
-      expect(screen.getByText(/0\.56/)).toBeTruthy()
+      expect(screen.getByText(/0\.61″ today · 92% chance/)).toBeTruthy()
     })
 
     // WAS: 'on the NIGHTLY path an unknown amount renders no rain line at all — CHARACTERIZED, not fixed
@@ -200,45 +203,115 @@ describe('WeatherWidget — DRG-WXROLL-001 live intraday rain overlay', () => {
         generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
       expect(screen.getByText(/63% chance of rain tomorrow/i)).toBeTruthy()
       // Still no invented AMOUNT — the honest half is the probability, and only the probability.
-      expect(screen.queryByText(/rain expected/i)).toBeNull()
+      expect(screen.queryByText(/″ tomorrow/)).toBeNull()
       unmount()
-      // ANTI-VACUITY: the same queries DO find a line when the amount is known, so the nulls above
-      // are the widget's behaviour and not a query that matches nothing.
+      // ANTI-VACUITY: the same query DOES find a line when the amount is known, so the null above
+      // is the widget's behaviour and not a query that matches nothing.
       render(<WeatherWidget weather={weather} hydrology={{ ...nightlyNoAmount, tomorrow_precip_in: 0.84 }}
         generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
-      expect(screen.getByText(/0\.53″ rain expected tomorrow · 63%/)).toBeTruthy()
+      expect(screen.getByText(/0\.84″ tomorrow · 63% chance/)).toBeTruthy()
     })
   })
 })
 
 
-describe('WeatherWidget — DRG-WXPROB-001 probability-gated rain AMOUNT', () => {
-  // Clean nightly snapshot (no uncertainty flag, no live overlay) — the branch the deterministic
-  // Open-Meteo amount over-reports on. Below the PoP threshold the amount is suppressed; at/above it
-  // the displayed amount is probability-weighted. Hydrology numbers + watering pills are untouched.
+describe('WeatherWidget — BUG-RAINFCSTONEMODEL-001 (b) amount and chance, side by side', () => {
+  // Supersedes the DRG-WXPROB-001 block that stood here, which pinned `amount x PoP / 100` and hid the amount
+  // below 30%. Dave's call 2026-09-25: print both and let the reader combine them. Hydrology numbers and the
+  // watering lanes are untouched — this is the informational line only.
   const w = { tonightLow: 50, highToday: 78, code: 3, hot: false }
+  const at = { generatedAt: '2026-09-25T20:00:00Z', planDate: '2026-09-25' }
 
-  it('suppresses the amount and shows ONLY "% chance of rain" when tomorrow_pop < 30', () => {
+  it('2026-09-25: prints 0.14″ at 37% as itself, and the 1.72″ Sunday it had been hiding', () => {
+    // The stored hydrology behind Dave's report, with the day-after fields this change adds.
+    const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 5, tomorrow_precip_in: 0.14, tomorrow_pop: 37,
+      upcoming_precip_in: 1.86, day2_precip_in: 1.72, day2_pop: 82, day2_date: '2026-09-27' }
+    const { container } = render(<WeatherWidget weather={w} hydrology={h} {...at} />)
+    expect(screen.getByText(/0\.14″ tomorrow · 37% chance/)).toBeTruthy()
+    expect(screen.getByTestId('weather-next-rain').textContent).toBe('1.72″ Sunday · 82% chance')
+    // 0.14 x 37% = 0.05, the figure Dave saw; 1.72 x 82% = 1.41.
+    expect(container.textContent).not.toMatch(/0\.05/)
+    expect(container.textContent).not.toMatch(/1\.41/)
+  })
+
+  it('shows the amount beside a LOW chance instead of hiding it', () => {
     const h = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 10, tomorrow_precip_in: 0.84, tomorrow_pop: 20 }
-    render(<WeatherWidget weather={w} hydrology={h} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
-    expect(screen.getByText(/20% chance of rain tomorrow/i)).toBeTruthy()
-    expect(screen.queryByText(/rain expected/i)).toBeNull()  // no amount shown
-    expect(screen.queryByText(/0\.84/)).toBeNull()           // the raw over-reporting figure is gone
+    render(<WeatherWidget weather={w} hydrology={h} {...at} />)
+    expect(screen.getByText(/0\.84″ tomorrow · 20% chance/)).toBeTruthy()
+    expect(screen.queryByText(/0\.17/)).toBeNull()   // 0.84 x 20%
   })
 
-  it('shows a probability-weighted amount (not the raw figure) when tomorrow_pop >= 30', () => {
-    const h = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 10, tomorrow_precip_in: 0.84, tomorrow_pop: 63 }
-    render(<WeatherWidget weather={w} hydrology={h} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
-    // 0.84 * 63% = 0.5292 -> round2 -> 0.53
-    expect(screen.getByText(/0\.53″ rain expected tomorrow · 63%/)).toBeTruthy()
-    expect(screen.queryByText(/0\.84/)).toBeNull()           // raw deterministic amount is never shown
+  it('never prints the product at any chance', () => {
+    for (const [amt, pop, product] of [[0.84, 63, '0.53'], [1.0, 30, '0.30'], [0.5, 100, null]]) {
+      const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: amt, tomorrow_pop: pop }
+      const { container, unmount } = render(<WeatherWidget weather={w} hydrology={h} {...at} />)
+      expect(container.textContent).toContain(`${amt.toFixed(2)}″ tomorrow · ${pop}% chance`)
+      if (product) expect(container.textContent).not.toContain(product)
+      unmount()
+    }
   })
 
-  it('treats pop exactly at the threshold (30) as the show-weighted-amount branch', () => {
-    const h = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 10, tomorrow_precip_in: 1.00, tomorrow_pop: 30 }
-    render(<WeatherWidget weather={w} hydrology={h} generatedAt="2026-06-22T06:00:41Z" planDate="2026-06-22" />)
-    // 1.00 * 30% = 0.30
-    expect(screen.getByText(/0\.30″ rain expected tomorrow · 30%/)).toBeTruthy()
+  it('keeps the chance-only sentence for a known 0.00, and prints no amount', () => {
+    const h = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 40 }
+    const { container } = render(<WeatherWidget weather={w} hydrology={h} {...at} />)
+    expect(screen.getByText(/40% chance of rain tomorrow/)).toBeTruthy()
+    expect(container.textContent).not.toMatch(/\d″/)
+  })
+
+  describe('the following-day line', () => {
+    const base = { recent_precip_in: 0, today_precip_in: 0, today_pop: 5, tomorrow_precip_in: 0.14, tomorrow_pop: 37,
+      day2_precip_in: 1.72, day2_pop: 82, day2_date: '2026-09-27' }
+    const next = (h, extra = {}) => {
+      render(<WeatherWidget weather={w} hydrology={h} {...at} {...extra} />)
+      return screen.queryByTestId('weather-next-rain')
+    }
+
+    it('stays shut when the following day is not the bigger rain', () => {
+      expect(next({ ...base, day2_precip_in: 0.14 })).toBeNull()   // equal is not more
+    })
+
+    it('stays shut below a measurable 0.10″, however much bigger than a dry tomorrow', () => {
+      expect(next({ ...base, tomorrow_precip_in: 0, day2_precip_in: 0.09 })).toBeNull()
+    })
+
+    it('opens at exactly 0.10″ over a dry tomorrow — the card\'s own line is shut, this one is not', () => {
+      const el = next({ ...base, tomorrow_precip_in: 0, tomorrow_pop: 10, day2_precip_in: 0.1, day2_pop: 40 })
+      expect(el.textContent).toBe('0.10″ Sunday · 40% chance')
+    })
+
+    it('prints nothing it cannot name: no date, or an unknown amount', () => {
+      expect(next({ ...base, day2_date: null })).toBeNull()
+      cleanup()
+      expect(next({ ...base, day2_precip_in: null })).toBeNull()
+      cleanup()
+      expect(next(base)).toBeTruthy()   // anti-vacuity: the same fixture, whole, does open it
+    })
+
+    it('prints the amount alone when the following day has no chance figure', () => {
+      expect(next({ ...base, day2_pop: null }).textContent).toBe('1.72″ Sunday')
+    })
+
+    it('is absent on a plan that predates the day2 fields (every stored plan before this change)', () => {
+      const { day2_precip_in, day2_pop, day2_date, ...old } = base
+      expect(next({ ...old, upcoming_precip_in: 1.86 })).toBeNull()
+    })
+
+    it('after a measured day, the following day is TOMORROW, compared against what fell', () => {
+      // Forecast fields zeroed for today, as Open-Meteo leaves a day whose rain has already fallen: the
+      // gauge alone makes today "the line above", so the next line must be tomorrow, not D2.
+      const gauged = { recent_precip_in: 0, today_precip_in: 0, today_observed_in: 0.29, today_remaining_in: 0,
+        today_pop: 0, tomorrow_precip_in: 1.5, tomorrow_pop: 80, day2_precip_in: 0.2, day2_pop: 30, day2_date: '2026-09-27' }
+      expect(next(gauged).textContent).toBe('1.50″ tomorrow · 80% chance')
+      cleanup()
+      expect(next({ ...gauged, tomorrow_precip_in: 0.25 })).toBeNull()   // 0.25 < 0.29 fallen
+    })
+
+    it('reads the live overlay when there is one, and its own date', () => {
+      const liveH = { recent_precip_in: 0, today_precip_in: 0, today_pop: 5, tomorrow_precip_in: 0.2, tomorrow_pop: 50,
+        day2_precip_in: 0.9, day2_pop: 70, day2_date: '2026-09-28' }
+      const el = next(base, { liveHydrology: liveH, refreshedAt: '2026-09-25T21:00:00Z' })
+      expect(el.textContent).toBe('0.90″ Monday · 70% chance')
+    })
   })
 })
 
@@ -459,7 +532,7 @@ describe('WeatherWidget — a measurement outranks a forecast (BUG-RAINCARDFOREC
     expect(screen.getByText(/0\.29″ fallen today/)).toBeTruthy()
     // the specific wrong number from the report: 0.29 x 40% = 0.12, and the live-forecast form was ~0.03
     expect(screen.queryByText(/0\.12″/)).toBeNull()
-    expect(screen.queryByText(/rain expected/)).toBeNull()
+    expect(screen.queryByText(/% chance/)).toBeNull()   // no forecast sentence in place of the measurement
   })
 
   it('shows BOTH halves when rain has fallen and more is still coming', () => {
@@ -478,9 +551,9 @@ describe('WeatherWidget — a measurement outranks a forecast (BUG-RAINCARDFOREC
 
   // Fail-safe: no gauge (or a dry day) must leave the pre-existing forecast sentence byte-identical, or this
   // change would have silently rewritten the card for every plan that has no bound station.
-  it('leaves the forecast wording untouched when there is no measured rain', () => {
+  it('leaves the forecast wording in place when there is no measured rain', () => {
     render(<WeatherWidget weather={weather} hydrology={hydrology} />)
-    expect(screen.getByText(/rain expected/)).toBeTruthy()
+    expect(screen.getByText(/0\.21″ today · 88% chance/)).toBeTruthy()
     expect(screen.queryByText(/fallen/)).toBeNull()
   })
 
@@ -598,7 +671,8 @@ describe('WeatherWidget — a live stamp covers only what is live (BUG-WXLIVESTA
       refreshedAt={REFRESHED} generatedAt={GEN} planDate={DAY} />)
     expect(screen.getByText(/Showery pattern/i)).toBeTruthy()      // banner: shown
     expect(screen.queryByText(/could climb/i)).toBeNull()          // note hedge: still live-gated
-    expect(screen.getByText(/0\.47″ rain expected today · 90%/)).toBeTruthy()  // 0.52 * 90% — the live figure, still PoP-weighted
+    expect(screen.getByText(/0\.52″ today · 90% chance/)).toBeTruthy()  // the live figure, beside its chance
+    expect(screen.queryByText(/0\.47/)).toBeNull()                      // not 0.52 x 90%
   })
 })
 

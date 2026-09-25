@@ -371,3 +371,19 @@ describe('consumers — a bound but STALE gauge: provenance stops claiming a for
     expect(hydrologySourceLabel(old.prov)).toBe('forecast · gauge offline');
   });
 });
+
+// BUG-RAINFCSTONEMODEL-001 (b) — the real fetchPrecip names D2 for Today's following-day line: the same
+// index 4 that upcoming_precip_in sums and upcoming_pop already carries, plus Open-Meteo's own date for it.
+describe('fetchPrecip — D2 for the card (BUG-RAINFCSTONEMODEL-001)', () => {
+  it('maps D2 amount, chance and date from a healthy body, beside the unchanged upcoming sum', async () => {
+    const { fp } = realFetchPrecip(respond(HEALTHY));
+    const hy = await fp(42.5, -72.6);
+    expect(hy).toMatchObject({ day2_precip_in: 0.45, day2_pop: 81, day2_date: '2026-09-04', upcoming_pop: 81, upcoming_precip_in: 0.75 });
+  });
+  it('a D2 hole is null, never 0 — and the date alone does not invent an amount', async () => {
+    const holed = { ...HEALTHY, daily: { ...HEALTHY.daily, precipitation_sum: [0.1, 0.213, 0.05, 0.3, null, 0.102],
+      precipitation_probability_max: [1, 52, 20, 70, null, 72] } };
+    const hy = await realFetchPrecip(respond(holed)).fp(42.5, -72.6);
+    expect(hy).toMatchObject({ day2_precip_in: null, day2_pop: null, day2_date: '2026-09-04' });
+  });
+});

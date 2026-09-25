@@ -207,11 +207,27 @@ const OPEN_METEO_STUB = {
   },
 }
 
+// BUG-RAINFCSTONEMODEL-001 — the card's day-ahead line now comes from a SECOND, five-model request
+// (src/lib/rainForecast.js). Answered with the single-model body above it would parse to null and the gate
+// would silently measure the best_match fallback instead of the branch prod renders. Same D1/D2 means as
+// the stub above (0.22″, 0.09″) with 3 of 5 models wet, so the line reads "… · 60% chance".
+const OPEN_METEO_MODELS_STUB = {
+  daily: {
+    time: [0, 1, 2].map(etDayOffset),
+    precipitation_sum_gfs_global: [0.02, 0.5, 0.2],
+    precipitation_sum_ecmwf_ifs025: [0.03, 0.3, 0.15],
+    precipitation_sum_gem_seamless: [0.05, 0.3, 0.1],
+    precipitation_sum_icon_seamless: [0.08, 0, 0],
+    precipitation_sum_ncep_nbm_conus: [0.02, 0, 0],
+  },
+}
+
 window.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input.url
   if (!WX_LIVE && /open-meteo\.com/.test(url)) {
-    requests.push({ path: 'open-meteo (STUBBED)', method: init.method || 'GET' })
-    return new Response(JSON.stringify(OPEN_METEO_STUB), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    const multi = /[?&]models=/.test(url)
+    requests.push({ path: multi ? 'open-meteo models (STUBBED)' : 'open-meteo (STUBBED)', method: init.method || 'GET' })
+    return new Response(JSON.stringify(multi ? OPEN_METEO_MODELS_STUB : OPEN_METEO_STUB), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
   // Any other third-party read still goes to the network. Nothing on this page makes one today; the
   // passthrough stays so a newly-added one is visible in requests() rather than silently mocked.

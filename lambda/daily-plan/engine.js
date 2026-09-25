@@ -21,8 +21,6 @@ const lw = require('./leafWetness');
 // the dormancy_suppressed arm only, and INERT unless the handler threads a state in: an un-updated caller
 // passes nothing, droughtNote returns null, and the emitted row is byte-identical.
 const dr = require('./droughtSignal');
-// DRG-WXPROB-001 — display gate for the nightly rain-AMOUNT callout (mirrors the Today widget). Presentation only.
-const RAIN_POP_DISPLAY_THRESHOLD = 30; // percent
 // DRG-WATERCREDIT-004: fabric grow bags have breathable sidewalls and dry top-to-bottom fast in heat, so a
 // light/moderate rain that would credit a rigid pot or bed does NOT keep a fabric bag wet on a hot day. On
 // days at/above this threshold we withhold rain credit for fabric_bag vessels (outdoor only) so a real
@@ -1384,14 +1382,13 @@ function computeCallout(weather, hy){
   if(low!=null && low<45) return {icon:'cold', text:`Cool night (${low}°F) — protect flowering peppers/tomatoes`};
   if(high!=null && high>=88) return {icon:'heat', text:`Hot day (${high}°F) — deep-water thirsty crops, shade if wilting`};
   if(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null || hy.tomorrow_pop>=50)){
-    // DRG-WXPROB-001 — mirror the Today widget's probability-gated rain AMOUNT in this nightly snapshot
-    // string. The GATE (whether the action callout fires) is unchanged — that's a watering decision. Only
-    // the DISPLAYED amount is probability-weighted, and only when a PoP is known (>= the display threshold;
-    // a null PoP keeps the raw figure). Presentation only — stored hydrology numbers + watering logic untouched.
-    const _amt = (hy.tomorrow_pop!=null && hy.tomorrow_pop>=RAIN_POP_DISPLAY_THRESHOLD)
-      ? Math.round((hy.tomorrow_precip_in*hy.tomorrow_pop/100 + Number.EPSILON)*100)/100
-      : hy.tomorrow_precip_in;
-    return {icon:'rain', text:`${_amt}" rain tomorrow — water containers today, let in-ground beds wait`};
+    // BUG-RAINFCSTONEMODEL-001 (b) — mirror the Today widget, which since 2026-09-25 prints the amount and the
+    // chance side by side instead of their product (DRG-WXPROB-001 printed amount × PoP / 100 here too). The
+    // GATE is unchanged — whether this fires is a watering decision. A null PoP prints the amount alone, as
+    // before. The text before ' — ' is what weatherCue.buildCueLine keeps, so the chance travels with it.
+    // Two decimals, as the card prints it, so the two lines stacked on Today show the same figure.
+    const _pop = hy.tomorrow_pop!=null ? ` (${hy.tomorrow_pop}% chance)` : '';
+    return {icon:'rain', text:`${hy.tomorrow_precip_in.toFixed(2)}" rain tomorrow${_pop} — water containers today, let in-ground beds wait`};
   }
   if(hy && hy.recent_precip_in>=0.4)
     return {icon:'wet', text:`${hy.recent_precip_in}" fell recently — soil is wet, skip outdoor watering`};
@@ -1420,8 +1417,14 @@ function hydrologyStatus(hy){
     return {ok:false, uncertainty:{flag:true, reason: (hy && hy.recent_precip_in!=null)
       ? 'precip data incomplete — watering advice still credits recent rain'
       : 'precip data incomplete — watering advice assumes no rain credit'}};
-  const tPop=hy.today_pop, mPop=hy.tomorrow_pop;
-  const tIn=hy.today_precip_in??0, mIn=hy.tomorrow_precip_in??0;
+  // BUG-RAINFCSTONEMODEL-001 — the tomorrow half reads the DISPLACED best_match pair when the five-model
+  // forecast replaced it (rainForecast.applyRainForecast keeps it as bm_tomorrow_*). SHOWERY_POP 50 was set
+  // against best_match's max-hourly PoP; the five-model share clears 50 on ~45% of summer days (37 of 82,
+  // 2026-07-05..09-24) against ~11% (9 of 82), which would put the gold banner on Today every other day — the
+  // "wallpaper" failure WeatherCueLine.jsx names. The banner is metadata that no watering decision reads, so
+  // it keeps its calibrated trigger until someone re-derives one for the new quantity.
+  const tPop=hy.today_pop, mPop=('bm_tomorrow_pop' in hy) ? hy.bm_tomorrow_pop : hy.tomorrow_pop;
+  const tIn=hy.today_precip_in??0, mIn=(('bm_tomorrow_precip_in' in hy) ? hy.bm_tomorrow_precip_in : hy.tomorrow_precip_in)??0;
   let reason=null;
   if(tPop!=null && tPop>=SHOWERY_POP)
     reason = tIn<0.1
@@ -1471,6 +1474,13 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
     // a run with no bound station emits a byte-identical payload (the keys are absent, not null).
     hydrology: hy ? {recent_precip_in:hy.recent_precip_in, today_precip_in:hy.today_precip_in, today_pop:hy.today_pop, upcoming_precip_in:hy.upcoming_precip_in, tomorrow_precip_in:hy.tomorrow_precip_in, tomorrow_pop:hy.tomorrow_pop,
       ...(hy.today_observed_in!=null?{today_observed_in:hy.today_observed_in}:{}), ...(hy.today_remaining_in!=null?{today_remaining_in:hy.today_remaining_in}:{}),
+      // BUG-RAINFCSTONEMODEL-001 (b) — D2 for Today's following-day line, the fallback when the card's live
+      // overlay is absent. Display only. Spread on the key's PRESENCE (as the two above are on non-null), so a
+      // hydrology without it — every parity fixture — emits a byte-identical payload.
+      ...('day2_precip_in' in hy ? {day2_precip_in:hy.day2_precip_in, day2_pop:hy.day2_pop??null, day2_date:hy.day2_date??null} : {}),
+      // BUG-RAINFCSTONEMODEL-001 — which method made the day-ahead figures, and the best_match pair it displaced
+      // (the shadow series for re-scoring after a full year). Present only when the five-model forecast ran.
+      ...(hy.forecast_source!=null ? {forecast_source:hy.forecast_source, bm_tomorrow_precip_in:hy.bm_tomorrow_precip_in??null, bm_tomorrow_pop:hy.bm_tomorrow_pop??null} : {}),
       rain_coming:rainComing, rain_horizon:rainHorizon, status:hs} : {status:hs},
     // V5-LEAFWETNESS-001 — SPREAD CONDITIONALLY, not emitted as an always-present null. The first cut
     // wrote `leaf_wetness: <result-or-null>` unconditionally and the G-PARITY gate caught it: a new
