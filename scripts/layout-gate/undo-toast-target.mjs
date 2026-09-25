@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// undo-toast-target.mjs — BUG-UNDOTOASTTAPTARGET-001's real-engine check. Runnable by hand; not wired
-// into CI (see "CI WIRING" below).
+// undo-toast-target.mjs — BUG-UNDOTOASTTAPTARGET-001's real-engine check. `npm run gate:undo-toast`;
+// runs in CI's build-and-test (OPS-UNDOTOASTGATECI-001).
 //
 //   node scripts/layout-gate/undo-toast-target.mjs [--out <dir>] [--label <name>] [--json <file>]
 //                                                  [--baseline <full sha>] [--measure-only]
@@ -27,14 +27,26 @@
 //   (d) STACK — Water, Skip, Feed tapped on real rows is 3 toasts, none overlapping, ending above the
 //       bottom nav; a fourth (Moist) takes a slot from the low-priority Skip toast, not from a log.
 //   (e) NAME — the Undo control's accessible name is still exactly "Undo".
+//   (f) GLYPH — the × glyph stays out of the toast's right padding band (its right edge at least the
+//       toast's padding-right inside the toast's edge). × takes that padding as TAP area while its glyph
+//       stays where it always sat; mutant U1 (× loses the padding that holds the glyph, so the glyph
+//       slides 14px to the edge and × narrows 35.4 -> 21.4px) kept every other assertion here green,
+//       and 0 of CI's 35 toast unit tests failed on it (review-v4150-qa M4). Added 2026-09-25.
 //
 // NON-VACUITY: --baseline <sha> serves src/** from that commit (HARNESS_BASELINE_SHA), so the same
 // instrument measures the code before a change. Against the pre-fix dev SHA
-// 3c83e8b02877bcec3744c441f514010fd14fbffc this gate exits 1 on (a) and (c) for every caller.
+// 3c83e8b02877bcec3744c441f514010fd14fbffc this gate exits 1 on (a) and (c) for every caller; against
+// a U1 commit it exits 1 on (f) for every toast.
 //
-// CI WIRING it would need (deliberately not done in this lane): a `gate:undo-toast` script in
-// package.json, and a step in .github/workflows/ci.yml beside gate:log-chooser — same Chrome install,
-// same GATE_CHROME_FLAGS=--no-sandbox. Node 20 on CI has no global WebSocket; cdp-socket.mjs covers it.
+// FONT (OPS-UNDOTOASTGATECI-001, 2026-09-25). The harness entry lays its text out in Roboto from the
+// exact-pinned @fontsource/roboto (tests/harness/robotoPin.js), so a wrap measured on the Mac
+// is the wrap CI's runner measures and the one Dave's Android renders. This gate's assertions are
+// relative and were built to survive font changes, but the stack's line counts and clearance still
+// move with the font. It refuses a run whose pin did not load, and fails when Chrome reports a host
+// font painting anything but the allowlisted symbols (scripts/layout-gate/font-census.mjs).
+//
+// CI: package.json `gate:undo-toast`, a build-and-test step beside the other real-Chrome gates with
+// GATE_CHROME_FLAGS=--no-sandbox. Node 20 on CI has no global WebSocket; cdp-socket.mjs covers it.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -43,6 +55,7 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { T } from '../../src/components/forms/formStyles.js'
 import { resolveWebSocket } from './cdp-socket.mjs'
+import { fontCensus, fmtCensus, fontProbe } from './font-census.mjs'
 
 // Read from the token, never spelled here: a gate carrying its own copy of the target is a gate that
 // keeps passing after someone lowers the real one. buttonMinHeight is the frozen 48 tap target.
@@ -137,15 +150,18 @@ async function attach(wsUrl) {
   ws.onmessage = e => {
     const m = JSON.parse(e.data)
     if (m.id != null && pending.has(m.id)) {
-      const { res, rej } = pending.get(m.id); pending.delete(m.id)
+      const { res, rej, timer } = pending.get(m.id); clearTimeout(timer); pending.delete(m.id)
       m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result)
     }
   }
+  // The timeout is CLEARED when the reply lands (2026-09-25, as today-shape.mjs does). Left armed, every
+  // answered call held a 90s timer on the event loop, so a green run sat ~90s after PASS before node
+  // could exit — in CI, a minute and a half of every green build.
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
     const mid = ++id
-    pending.set(mid, { res, rej })
+    const timer = setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, 90000)
+    pending.set(mid, { res, rej, timer })
     ws.send(JSON.stringify({ id: mid, method, params, ...(sessionId ? { sessionId } : {}) }))
-    setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, 90000)
   })
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
@@ -183,13 +199,17 @@ function checkToast(where, m) {
   if (c.ownGrid.ok !== c.ownGrid.of) fail(`${where}: only ${c.ownGrid.ok}/${c.ownGrid.of} points of Dismiss's own box hit Dismiss`)
   if (c.right < m.toast.right - 0.5) fail(`${where}: Dismiss stops ${r1(m.toast.right - c.right)}px short of the toast's right edge — that padding is dead space again`)
   if (m.gapUndoToClose < MIN_TARGET_GAP) fail(`${where}: Undo and Dismiss are ${m.gapUndoToClose}px apart, under ${MIN_TARGET_GAP}px`)
+  // (f) The inset is set by padding, not by the glyph's width, so it reads the same in any font.
+  if (!m.closeGlyph) fail(`${where}: no painted × glyph found in Dismiss`)
+  else if (glyphInset(m) < m.toast.padRight - 0.5) fail(`${where}: the × glyph sits ${glyphInset(m)}px from the toast's right edge, inside its ${m.toast.padRight}px padding — the glyph slid toward the edge (U1: Dismiss lost the padding that holds it in place)`)
 }
 const r1 = n => Math.round(n * 10) / 10
+const glyphInset = m => r1(m.toast.right - (m.closeGlyph.left + m.closeGlyph.w))
 const fmt = m => `toast ${m.toast.w}x${m.toast.h} (${m.lines} line${m.lines === 1 ? '' : 's'}${m.detail ? ' + detail' : ''}) · text col ${m.textCol.w}px`
   + ` · Undo box ${m.undo.w}x${m.undo.h} hit ${m.undo.hitW}x${m.undo.hitH} grid ${m.undo.grid.ok}/${m.undo.grid.of}`
   + (m.pill ? ` · pill ${m.pill.w}x${m.pill.h}` : '')
   + ` · x box ${m.close.w}x${m.close.h} hit ${m.close.hitW}x${m.close.hitH} own-box grid ${m.close.ownGrid.ok}/${m.close.ownGrid.of}`
-  + ` · x to toast edge ${r1(m.toast.right - m.close.right)}px · Undo-x gap ${m.gapUndoToClose}px`
+  + ` · x to toast edge ${r1(m.toast.right - m.close.right)}px · x glyph inset ${m.closeGlyph ? glyphInset(m) : '?'}px (pad ${m.toast.padRight}) · Undo-x gap ${m.gapUndoToClose}px`
 
 let harness, chrome, cdp
 const udd = mkdtempSync(join(tmpdir(), 'gate-undotoast-'))
@@ -209,6 +229,12 @@ try {
   result.page = vp
   if (vp.vw !== VIEWPORT.w || vp.vh !== VIEWPORT.h) throw new Error(`page reports ${vp.vw}x${vp.vh}, expected ${VIEWPORT.w}x${VIEWPORT.h} — emulation did not take, every number would be void`)
   if (vp.dpr !== VIEWPORT.dpr) fail(`page reports dpr ${vp.dpr}, expected ${VIEWPORT.dpr}`)
+  // The font the toast is laid out in, checked as strictly as the viewport: a pin that did not load
+  // measures the host's font (San Francisco here, DejaVu Sans on CI) and every wrap below with it.
+  const pin = await cdp.evalIn('window.__fontPin || null')
+  result.fontPin = pin
+  if (!pin || !pin.ok) throw new Error(`the Roboto pin is NOT in force (${pin ? `${pin.faces} face(s) loaded, ${pin.failed.length} failed${pin.failed.length ? ': ' + pin.failed.slice(0, 2).join('; ') : ''}` : 'window.__fontPin is missing — tests/harness/robotoPin.js never ran'}) — every wrap would be the host font's`)
+  console.log(`[undo-toast-target] ${LABEL} · font ${pin.source} (${pin.faces} faces) · ${chrome.version.Browser} · probe widths ${JSON.stringify(await fontProbe(cdp.evalIn))}`)
 
   const callers = await cdp.evalIn(`window.__h.measureCallers(${TAP})`)
   result.callers = callers
@@ -220,6 +246,14 @@ try {
 
   // Three caller shapes together (the cap), outlined, for the eye: shortest, EventNew's worst, Skip.
   await cdp.evalIn('window.__h.raise([0, 9, 4])')
+  // Who PAINTED the toasts and the rows behind them — the pin loading above does not prove it. Taken
+  // with three toasts up, before the outline layer (it carries no text) is drawn.
+  const census = await fontCensus(cdp, '#root')
+  result.fonts = census
+  console.log(`[undo-toast-target] ${LABEL} · fonts with three toasts up: ${fmtCensus(census)}`)
+  if (!census.webGlyphs) fail(`font census: not one glyph under #root was painted by the pinned web font (${Object.keys(census.fonts).join(', ') || 'no glyphs at all'})`)
+  for (const v of census.violations.slice(0, 6)) fail(`font census: a HOST font painted text the Roboto pin should own — ${v}`)
+  if (census.violations.length > 6) fail(`font census: …and ${census.violations.length - 6} further host-font element(s)`)
   await cdp.evalIn(`window.__h.outline(true)`)
   await cdp.evalIn(`window.__h.badge('innerWidth '+innerWidth+' · innerHeight '+innerHeight+' · dpr '+devicePixelRatio+' · ${LABEL} · dashed = what takes the tap')`)
   result.shots.push(await cdp.shot(join(OUT, `undotap-callers-${LABEL}-426x836.png`)))

@@ -103,6 +103,7 @@ this one.
 | `stubs/fixtures.js` | 24 plantings / 2 projects / event POST responses |
 | `baselinePlugin.mjs` | serves `src/**` from a git object |
 | `appGlobalStyle.js` | **the app's runtime global stylesheet** — injected into every entry (see below) |
+| `robotoPin.js` | lays an entry's text out in **Roboto** on every machine — imported by `todaymeasure.jsx` and `undotap.jsx` only (see below) |
 | `vite.harness.config.mjs` | port 5311, Clerk alias, baseline plugin, global-style injector |
 | `BASELINE-eeb7019.json` | the recorded baseline this harness was built to capture |
 
@@ -137,6 +138,38 @@ together and fails on drift (verified by mutation, not just by passing). **If yo
 ⚠ **Baselines recorded before this date are not comparable to anything measured after it** —
 `BASELINE-eeb7019.json` and the numbers in the `psheetverify-20260830` and `sheetoverflow-20260831`
 reports were all taken under the old conditions. Re-take rather than diff against them.
+
+## The Roboto pin — `robotoPin.js`, added 2026-09-25 (V5-TODAYSHAPECI-001)
+
+The stylesheet above gives an entry the app's font STACK; the machine decides which face that stack
+lands on. This Mac resolves it to San Francisco, CI's ubuntu runner to DejaVu Sans, Dave's Android to
+Roboto (nothing ahead of Roboto in the stack is installed there). For a gate whose budget is absolute
+geometry that is the difference between passing and failing: a DejaVu-proxy run of the Today gate
+grew the busy page 2.7% past its ceiling.
+
+`robotoPin.js` fixes the face, not the stack. It registers every family the pinned surfaces name
+ahead of a generic — `-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `Roboto`, and the `Inter`
+that `WeatherWidget.jsx` declares inline — as a FontFace alias of the files in the exact-pinned
+devDependency `@fontsource/roboto` (static per-weight files: with the variable font, 600-weight advances differed between macOS and Linux; one sub-pixel gap at 700 / 13.6px remains, see the file's header), fetched from this Vite server (no network, no copied
+font files), and loads every face before the entry renders. The app's own `font-family`
+declarations are untouched; they just resolve to Roboto, as on the phone. A `font-family` override
+would have missed `WeatherWidget`'s inline stack. `window.__fontPin` reports what loaded.
+
+**Scoped, not global.** Only `todaymeasure.jsx` and `undotap.jsx` import it — the two entries whose
+gates run in CI on this pin (`gate:today-shape`, `gate:undo-toast`). Every other entry, and every
+other layout gate, still measures in the host's font exactly as before, because nothing they load
+changed (`appGlobalStyle.js` and `vite.harness.config.mjs` are untouched). Pinning globally would
+move every gate's numbers at once and needs every budget re-recorded; it is a change of its own.
+
+**What it cannot pin**, and how that is caught: generic families (`system-ui`, `sans-serif`,
+`monospace`) cannot be aliased, and a glyph Roboto lacks falls through to the host's fallback.
+`scripts/layout-gate/font-census.mjs` asks Chrome (`CSS.getPlatformFontsForNode`) which font painted
+each element under `#root`; both gates fail on any host-font text except two symbols Roboto 5.3.0
+does not carry — `▾` (the care-group chevron) and `⋯` (the bulk chooser) — which were measured to move
+no box. Their glyph rects still take the host font's height, so the Today gate leaves them out of its
+ink count (on busyfull they were the whole 54.5% / 54.4% Mac–CI difference). To pin another entry:
+import `./robotoPin.js` first, re-record its baselines, and run the census on it; a new family in a
+pinned surface's stack belongs in `ALIASES`.
 
 ## `seedssaved.*` — Saved seeds, added 2026-09-01
 
@@ -333,10 +366,12 @@ per production caller's message shape; `__h.stack(48)` taps Water, Skip and Feed
 Targets are read by hit-testing (`elementFromPoint` extents and a 5x5 grid), not from boxes, and the
 stack census counts list controls by area hidden, excluding the toasts' own buttons.
 
-`scripts/layout-gate/undo-toast-target.mjs` is the instrument, hand-run (not in CI): it emulates
-426x836 at DPR 3, refuses to report unless the page says so, and writes PNGs with a dashed outline
-over what takes the tap. `--baseline <full sha>` measures the code before a change;
-`--measure-only` prints without asserting.
+`scripts/layout-gate/undo-toast-target.mjs` is the instrument, `npm run gate:undo-toast`, in CI's
+build-and-test since 2026-09-25 (OPS-UNDOTOASTGATECI-001): it emulates 426x836 at DPR 3, refuses to
+report unless the page says so and unless the Roboto pin loaded (the entry imports `robotoPin.js`),
+and writes PNGs with a dashed outline over what takes the tap. It also holds the × glyph out of the
+toast's right padding, which is what catches mutant U1. `--baseline <full sha>` measures the code
+before a change; `--measure-only` prints without asserting.
 
 ## Retired entries
 

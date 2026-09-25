@@ -72,8 +72,11 @@ export default function PutUpUseSoonBand() {
   const shown = items.slice(0, 5)
   const more = items.length - shown.length
 
+  // data-testid: a region anchor for the Today layout gate (scripts/layout-gate/today-shape.mjs). It
+  // adds no node, no style and no behaviour.
   return (
     <section
+      data-testid="putup-use-soon"
       aria-label="From your stores — cook these next"
       style={{
         backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 12,

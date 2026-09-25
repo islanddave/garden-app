@@ -35,6 +35,7 @@
     "gate:today-shape:preflight": "node scripts/layout-gate/todayshape-fixture-preflight.mjs",
     "gate:today-shape:preflight:self-test": "node scripts/layout-gate/todayshape-fixture-preflight.mjs --self-test",
     "gate:today-shape:record": "node scripts/layout-gate/today-shape.mjs --record",
+    "gate:undo-toast": "node scripts/layout-gate/undo-toast-target.mjs",
     "todaymeasure": "node tests/harness/_todaymeasure/drive.mjs",
     "todaymeasure:dump": "node tests/harness/_todaymeasure/dump-prod.mjs",
     "mutate:today-shape": "node scripts/mutate-today-shape-check.mjs",
@@ -63,6 +64,7 @@
   "devDependencies": {
     "@babel/parser": "^7.29.2",
     "@eslint/js": "^9.39.5",
+    "@fontsource/roboto": "5.3.0",
     "@resvg/resvg-js": "^2.6.2",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.0.0",

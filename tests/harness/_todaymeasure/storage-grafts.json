@@ -1,0 +1,19 @@
+{
+  "_": "Grafts for ?state=storage (V5-TODAYSHAPECI-001 item 9). The two regions this state exists for render NOTHING on any real 2026-09-24 payload: StorageDeadlineAlert needs an unfinished sweet-potato planting inside the check window, and both of Dave's are 'ended'; PutUpUseSoonBand needs a stored row inside its use-by window, and prod had none. So each is driven by REAL prod rows with the one field that keeps it silent moved, named per key below. Read-only from prod Neon 2026-09-25 (plants.json for the planting; preservation_log joined to storage_location and crop_types for the jars). Everything else about each row is as stored.",
+  "sweet_potato_planting": {
+    "provenance": "plants.json row 'Sweet Potatoes' (fabric_bag, variety_ref.crop_type_slug sweet_potato). Real status 'ended'; StorageDeadlineAlert drops ended and failed plantings, so the status is moved to 'vegetative'. SYNTHETIC status, real row.",
+    "id": "3c3fd1aa-ddcf-42d1-b8e8-33aa29b19d63",
+    "status": "vegetative"
+  },
+  "use_soon": {
+    "provenance": "The four stored preservation_log rows that carry a use_by_target (a fifth, Cucumber, has none and the route excludes it), projected as GET /api/preservation/use-soon projects them (lambda/preservation/index.js), in its use_by_target order. Their real use-by dates are in 2027, so the route returns none today; use_by_status is FORCED — Summer Squash, the earliest, to 'past_use_by' (the band's calm 'past date' tag), the other three to 'use_soon'. quantity_value is the driver's numeric string, as the route returns it.",
+    "value": {
+      "items": [
+        { "id": "2afee2e3-e6f1-4475-b39f-1dd1eb3a7c1f", "crop_type_slug": "squash", "crop_display_name": "Summer Squash", "quantity_value": "2.50", "quantity_unit": "quarts", "method": "whole_freeze", "storage_label": "Chest Freezer 1", "source_kind": null, "source_label": null, "preserved_at": "2026-07-20", "use_by_target": "2027-07-20", "remaining_count": 3, "use_by_status": "past_use_by" },
+        { "id": "64b9cc17-b5a4-4c8d-a0c2-b74d07b8277d", "crop_type_slug": "plum", "crop_display_name": "Plum", "quantity_value": "2.00", "quantity_unit": "cups", "method": "whole_freeze", "storage_label": "Chest Freezer 2", "source_kind": "farm_stand", "source_label": "Dave's Natural Garden", "preserved_at": "2026-08-19", "use_by_target": "2027-08-19", "remaining_count": 1, "use_by_status": "use_soon" },
+        { "id": "b7111a27-d5e5-4947-aba1-a676f054028d", "crop_type_slug": "basil", "crop_display_name": "Basil", "quantity_value": "1.00", "quantity_unit": "quarts", "method": "passata", "storage_label": "Chest Freezer 2", "source_kind": "own_garden", "source_label": null, "preserved_at": "2026-08-19", "use_by_target": "2027-08-19", "remaining_count": 1, "use_by_status": "use_soon" },
+        { "id": "d6cb0640-44a1-492c-87d3-4e46ae3733a4", "crop_type_slug": "basil", "crop_display_name": "Basil", "quantity_value": "1.00", "quantity_unit": "cups", "method": "passata", "storage_label": "Chest Freezer 2", "source_kind": "own_garden", "source_label": null, "preserved_at": "2026-08-19", "use_by_target": "2027-08-19", "remaining_count": 1, "use_by_status": "use_soon" }
+      ]
+    }
+  }
+}
