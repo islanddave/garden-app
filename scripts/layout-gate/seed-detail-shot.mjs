@@ -12,7 +12,8 @@
 // getBoundingClientRect(), so the unit suites pin style strings and never a box.
 //
 // MEASURES tests/harness/seeddetail.{html,jsx} — the real <InventoryDetail /> under the app's 52px top
-// bar and 56px bottom nav stand-ins — at a TRUE 360x640 and 390x844, in three states:
+// bar and 56px bottom nav stand-ins — at a TRUE 360x640, 390x844 and 426x836 (Dave's own handset, read
+// off it 2026-09-24; added with (k)), in three states:
 //   packet  a BOUGHT packet with stock and two plantings in sown_from, as loaded;
 //   sown    the same page after a REAL sow — Sow this tapped, then the sheet's "Add planting", each a
 //           hit-tested tap through the browser's input pipeline, never element.click() — so the page
@@ -51,12 +52,20 @@
 //       so their FOOTPRINT (border box plus computed margins, what the host lays out) must still be the
 //       old one: the heart's glyph advance + 8 by its font-size + 8 (FavoriteToggle's old padding: 4px),
 //       the ✕'s 30x30. (b) holds the hit box to the floor; this holds the host's layout still.
-//   (j) THE REFUSED REMOVE (BUG-INVDELETEERROROFFSCREEN-001), its own state at both viewports: "Remove
+//   (j) THE REFUSED REMOVE (BUG-INVDELETEERROROFFSCREEN-001), its own state at every viewport: "Remove
 //       item" and then the dialog's "Remove", both real taps, against a harness that answers the DELETE
 //       with the Lambda's 409 sentence (remove=refuse). The dialog must still be up, wholly inside the
 //       viewport, with the sentence INSIDE it as role="alert", every text run whole, directly above the
 //       Remove / Keep it row, shown exactly once on the page; both buttons on the tap floor and hitting
 //       themselves; exactly one DELETE sent; the page not left.
+//   (k) THE SEED COUNT, SURFACED (Dave, 2026-09-25: a saved seed's page "never surfaces the count" and
+//       "seems to default to showing 1 packet"). On the saved lot, the packet card's FIRST fact reads
+//       exactly "Seed count" / "175 seeds" (the fixture's count), whole inside the card and the viewport,
+//       not overflowing, and inside the visible band at scrollTop 0 — on the screen the page opens on,
+//       not somewhere below it. On the bought packet, which measured nothing, there is no count fact at
+//       all. The saved lot's form carries the seed fields (Seed count, the counted/estimated switch,
+//       Weight (g), All used up) and the bought packet's does not — the instrument check counts both, so
+//       (b)'s census and (g)'s reach below are measuring the new controls, not passing over their absence.
 //
 // THE INSTRUMENT CHECK comes first, and a mismatch stops that state before any invariant is read: the
 // page must self-report the viewport it was asked for (trap 1), must have raised no error, must still be
@@ -138,18 +147,23 @@ const GERM_SOWINGS = [
 ]
 // pickerClears: the chosen-value ✕ each state carries — the packet's supplier in the form's SourcePicker,
 // the F2 lot's parent in "Saved from" (PlantingSelect).
+// seedCount: the packet card's count fact, exactly — the F2 lot's fixture count; null = must be ABSENT (the
+// bought packet measured nothing). seedForm: the saved lot's seed fields in the form (1 = present, 0 = the
+// bought packet's Qty on hand / Unit instead), counted by the Seed count box and the All used up control.
+const SAVED_COUNT = { label: 'Seed count', value: '175 seeds' }
 const STATES = [
   { name: 'packet', harness: 'packet', sow: false,
     expect: { h1: PACKET_NAME, sowThis: 1, sownLine: 0, sownFrom: SOWN_FROM, f2: false, stageLink: 1, editSow: 1, germ: GERM_SOWINGS,
-      pickerClears: ['Clear supplier'] } },
+      pickerClears: ['Clear supplier'], seedCount: null, seedForm: 0 } },
   { name: 'sown', harness: 'packet', sow: true,
     expect: { h1: PACKET_NAME, sowThis: 1, sownLine: 1, sownFrom: SOWN_FROM, f2: false, stageLink: 1, editSow: 1, germ: GERM_SOWINGS,
-      pickerClears: ['Clear supplier'] } },
+      pickerClears: ['Clear supplier'], seedCount: null, seedForm: 0 } },
   { name: 'f2', harness: 'f2', sow: false,
     expect: { h1: F2_NAME, sowThis: 0, sownLine: 0, sownFrom: [], f2: true, stageLink: 1, editSow: 1, germ: [],
-      pickerClears: ['Clear planting selection'] } },
+      pickerClears: ['Clear planting selection'], seedCount: SAVED_COUNT, seedForm: 1 } },
 ]
-const VIEWPORTS = [[360, 640], [390, 844]]
+// 426x836 is Dave's phone (More › Debug & smoke, 2026-09-24); 390x844 stays as the mid geometry.
+const VIEWPORTS = [[360, 640], [390, 844], [426, 836]]
 
 // NAMED TAP-FLOOR EXEMPTIONS, from the first measured run (2026-09-24). Each is matched by what the
 // control IS on this page — its place in the structure, never a label alone — printed with its size on
@@ -360,6 +374,15 @@ const MEASURE = `(() => {
     whole: pcr ? whole(breedingEl, pcr) : null, lines: breedingEl.children[1] ? lines(breedingEl.children[1]) : 0,
     overflowX: breedingEl.children[1] ? breedingEl.children[1].scrollWidth > breedingEl.children[1].clientWidth + 1 : null } : null
 
+  // (k) the packet card's seed count fact, read at scrollTop 0: where it sits on the screen the page opens on.
+  const factEls = [...d.querySelectorAll('${tid('packet-fact')}')]
+  const countEl = factEls.find(f => f.getAttribute('data-fact') === 'count') || null
+  const seedCount = countEl ? (() => { const r = countEl.getBoundingClientRect(); return {
+    label: text(countEl.children[0]), value: text(countEl.children[1]), box: box(countEl), first: factEls[0] === countEl,
+    whole: pcr ? whole(countEl, pcr) : null, lines: countEl.children[1] ? lines(countEl.children[1]) : 0,
+    overflowX: countEl.children[1] ? countEl.children[1].scrollWidth > countEl.children[1].clientWidth + 1 : null,
+    inBand: r.top >= bandTop - 0.5 && r.bottom <= bandBottom + 0.5 } })() : null
+
   // (i) the footprint the host lays out for each control whose hit box was grown in place: the border box
   // plus its computed margins, beside what the old box would have been.
   const footprints = [...d.querySelectorAll('button')].filter(shown).filter(el => !inChrome(el))
@@ -398,9 +421,11 @@ const MEASURE = `(() => {
       h1: text(h1), dialog: !!d.querySelector('[role="dialog"]') },
     counts: { sowThis: d.querySelectorAll('${tid('sow-this')}').length, sownLine: sownLineEl ? 1 : 0,
       editSow: d.querySelectorAll('${tid('edit-sow-details')}').length, stageLink: stageLink ? 1 : 0,
-      cards: cards.length, controls: taps.length, germPanels: germPanels.length },
+      cards: cards.length, controls: taps.length, germPanels: germPanels.length,
+      seedCountBox: d.querySelectorAll('${tid('inv-seed-count')}').length, usedUp: d.querySelectorAll('${tid('inv-used-up')}').length },
     stageLinkText: text(stageLink),
-    taps, sownFrom, sownLine, breeding, germ, footprints,
+    band: { top: R(bandTop), bottom: R(bandBottom) },
+    taps, sownFrom, sownLine, breeding, seedCount, germ, footprints,
     errors: h ? h.errors() : ['window.__h missing'], unstubbed: h ? h.unstubbed() : [], posts: h ? h.posts() : [],
   }
 })()`
@@ -668,6 +693,11 @@ try {
       if (m.sownFrom && m.sownFrom.rows.length !== e.sownFrom.length) mismatch.push(`sown-from rows ${m.sownFrom.rows.length} != ${e.sownFrom.length}`)
       if (e.f2 && !m.breeding) mismatch.push('no Breeding fact in the packet card — (f) has nothing to read')
       if (m.counts.germPanels !== (e.germ.length ? 1 : 0)) mismatch.push(`germination records ${m.counts.germPanels} != ${e.germ.length ? 1 : 0}`)
+      // (k)'s surfaces: the saved lot's count fact, and its seed fields (Seed count box, All used up). A
+      // saved lot without them would let (b) and (g) pass over controls that were never rendered.
+      if (e.seedCount && !m.seedCount) mismatch.push('no Seed count fact in the packet card — (k) has nothing to read')
+      if (m.counts.seedCountBox !== e.seedForm) mismatch.push(`Seed count fields ${m.counts.seedCountBox} != ${e.seedForm}${e.seedForm ? ' — the saved lot\'s form lost its seed fields' : ' — a BOUGHT packet grew a saved lot\'s seed fields'}`)
+      if (m.counts.usedUp !== e.seedForm) mismatch.push(`"All used up" controls ${m.counts.usedUp} != ${e.seedForm}`)
       if (m.germ && m.germ.rows.length !== e.germ.length) mismatch.push(`germination rows ${m.germ.rows.length} != ${e.germ.length} — (h) has nothing to read`)
       // The two controls that left EXEMPTIONS: (b) holds them to the floor only while they are measured.
       const favs = m.taps.filter((t) => t.favorite).length
@@ -745,6 +775,18 @@ try {
       }
       if (m.counts.stageLink && m.stageLinkText !== STAGE_LINK_WORDS) fail(`${at}: (f) the stage link reads "${m.stageLinkText}", expected "${STAGE_LINK_WORDS}"`)
 
+      // ── (k) THE SEED COUNT, SURFACED.
+      if (e.seedCount) {
+        const c = m.seedCount
+        if (c.label !== e.seedCount.label || c.value !== e.seedCount.value) fail(`${at}: (k) the count fact reads "${c.label}: ${c.value}", expected "${e.seedCount.label}: ${e.seedCount.value}"`)
+        if (!c.first) fail(`${at}: (k) the count is not the packet card's first fact`)
+        if (!c.whole || !c.whole.runs || !c.whole.inside || !c.whole.inViewX) fail(`${at}: (k) the count fact is not whole inside the packet card and the viewport`)
+        if (c.overflowX) fail(`${at}: (k) the count value overflows its own box`)
+        if (!c.inBand) fail(`${at}: (k) the count fact spans y${c.box.t}-${c.box.b}, outside the visible band y${m.band.top}-${m.band.bottom} of the screen the page opens on — it is not surfaced`)
+      } else if (m.seedCount) {
+        fail(`${at}: (k) a bought packet that measured nothing shows a count fact "${m.seedCount.label}: ${m.seedCount.value}"`)
+      }
+
       // ── (h) THE GERMINATION RECORD'S PER-SOWING LIST.
       if (m.germ) {
         const g = m.germ
@@ -780,6 +822,11 @@ try {
         ['Edit sow details', `document.querySelector('${tid('edit-sow-details')}')`],
         ['Change stage in Saved seeds', `document.querySelector('${tid('seed-stage-change-link')}')`],
         ...e.sownFrom.map((_, i) => [`Sown-from row ${i + 1}`, `document.querySelectorAll('${tid('sown-from-link')}')[${i}]`]),
+        // (k) the saved lot's seed fields; present only where the instrument check has required them.
+        ['Seed count', `document.querySelector('${tid('inv-seed-count')}')`],
+        ['Approximate switch', `document.querySelector('${tid('inv-seed-count-estimated')}')`],
+        ['Weight (g)', `document.querySelector('${tid('inv-seed-weight')}')`],
+        ['All used up', `document.querySelector('${tid('inv-used-up')}')`],
       ]
       const reached = []
       for (const [what, expr] of keys) {
@@ -800,6 +847,11 @@ try {
         await waitSettled('true', 3000)
         shots.push(await shoot(join(OUTDIR, `seed-detail-${s.name}-${vw}x${vh}-evidence.png`)))
       }
+      // (k) the saved lot's seed fields, in view — the form half of the change.
+      if (e.seedForm && await evalSettled(`(() => { const el = document.querySelector('${tid('inv-seed-count')}'); if (!el) return false; el.scrollIntoView({ block: 'center' }); return true })()`)) {
+        await waitSettled('true', 3000)
+        shots.push(await shoot(join(OUTDIR, `seed-detail-${s.name}-${vw}x${vh}-seedform.png`)))
+      }
 
       // ── The record, printed on pass as well as fail.
       const floored = m.taps.filter((t) => !exemptOf(t))
@@ -815,6 +867,7 @@ try {
       }
       if (m.sownLine) console.log(`[seed-detail] ${at}: sown line "${m.sownLine.text}" ${m.sownLine.box.w}x${m.sownLine.box.h}px · See the planting ${m.sownLine.see ? `${m.sownLine.see.h}px → ${m.sownLine.see.href}` : 'ABSENT'}`)
       if (m.breeding) console.log(`[seed-detail] ${at}: Breeding "${m.breeding.value}" on ${m.breeding.lines} line(s)`)
+      console.log(`[seed-detail] ${at}: (k) ${m.seedCount ? `count fact "${m.seedCount.label}: ${m.seedCount.value}" at y${m.seedCount.box.t}-${m.seedCount.box.b} in band y${m.band.top}-${m.band.bottom}, ${m.seedCount.lines} line(s)${m.seedCount.first ? ', first fact' : ''}` : 'no count fact'} · seed fields ${m.counts.seedCountBox ? 'present' : 'absent'}`)
       if (m.germ) console.log(`[seed-detail] ${at}: germination record x${m.germ.box.l}-${m.germ.box.r} · rows ${m.germ.rows.map((r) => `${r.box.w}x${r.box.h}px/${r.nameLines}L`).join(', ')}`)
       console.log(`[seed-detail] ${at}: formerly exempt, now floored — ${m.footprints.map((f) => `"${f.label}" hit ${f.hit.w}x${f.hit.h}px, lays out ${f.w}x${f.h}px`).join(', ')}`)
       console.log(`[seed-detail] ${at}: reach ${reached.join(' · ') || 'none'}${m.unstubbed.length ? ` · unstubbed requests: ${[...new Set(m.unstubbed)].join(', ')}` : ''}`)

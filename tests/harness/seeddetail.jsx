@@ -47,6 +47,10 @@
 //     photo.
 //   · the F2 lot carries breeding_system 'f1', a parent planting and a seed_stage of drying, with
 //     stock on hand, so "no Sow this" is decided by the process and not by an empty jar.
+//   · the F2 lot is COUNTED (seed_count 175, hand-counted) and holds one jar (quantity_on_hand 1), so the
+//     gate's (k) reads "Seed count: 175 seeds" as the packet card's first fact and measures the saved
+//     lot's form — Seed count, the counted/estimated switch, Weight (g), All used up — where the bought
+//     packet, which measured nothing, shows no count fact and keeps Qty on hand / Unit.
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
