@@ -38,17 +38,29 @@
 //     topbar=52      the top-bar stand-in's height (TopChrome's BAR_H)
 //     anchor=none    MECHANISM CHECK: * { overflow-anchor: none !important } — scroll anchoring off
 //     locphotos=12   photos in the zone's gallery (LocationDetail)
+//     event=rich     every event detail carries 9 photos, a long note, a private note and Details rows,
+//                    so EventDetail is taller than one screen (the default event fits in one)
+//     reset=entry    MECHANISM CHECK of a fix shape, in THIS shell only (src/ untouched): one app-level
+//                    window.scrollTo(0, 0) when the PAGE's history entry changes by PUSH/REPLACE (the page
+//                    entry is the overlay's background while one is open — pageEntry.js's rule), never on POP
+//     reset=location the naive variant: the same reset keyed on the REAL location's key (ignores overlays)
+//
+// THE OVERLAY: header Search is a real OverlayLink to /search, hosted by a copy of App.jsx's OverlayHost in
+// the overlay tree (seedsscroll.jsx's copy); only the Search page inside it is a stand-in, whose result
+// rows are plain <Link>s as Search.jsx's Row renders them — the everyday "Search → a result" door.
 //
 // EVERY LOAD IS A FIRST VISIT: sessionStorage is cleared before anything mounts (useScrollRestore's store).
-import React, { useLayoutEffect, useState } from 'react'
+import React, { useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Link, useLocation, useNavigationType } from 'react-router-dom'
 import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import { ModeProvider } from '../../src/context/ModeContext.jsx'
 import { FavoritesProvider } from '../../src/context/FavoritesContext.jsx'
 import { ToastProvider } from '../../src/context/ToastContext.jsx'
 import { DismissRegistryProvider } from '../../src/context/DismissRegistry.jsx'
-import { OverlayProvider, useOverlay } from '../../src/context/OverlayContext.jsx'
+import {
+  OverlayProvider, useOverlay, OverlayLink, useOverlayDismiss, OverlaySurfaceProvider, OverlayDirtyProvider,
+} from '../../src/context/OverlayContext.jsx'
 import Sheet from '../../src/components/forms/Sheet.jsx'
 import SheetRowLink from '../../src/components/SheetRowLink.jsx'
 import ErrorBoundary from '../../src/components/ErrorBoundary.jsx'
@@ -69,11 +81,21 @@ const TOP_CHROME_PX = Number(q.get('topbar') || 52)
 const MS = Number(q.get('ms') ?? 300)
 const ANCHOR_NONE = q.get('anchor') === 'none'
 const LOC_PHOTOS = Number(q.get('locphotos') ?? 12)
+const EVENT_RICH = q.get('event') === 'rich'
+const RESET = ['entry', 'location'].includes(q.get('reset')) ? q.get('reset') : ''
+// MECHANISM CHECK (?lock=off): neutralise Sheet's body scroll-lock (its inline overflow:hidden loses to an
+// !important rule), to test whether releasing the lock in the same commit as a page swap drops the carry.
+const LOCK_OFF = q.get('lock') === 'off'
 
 try { window.sessionStorage.clear() } catch { /* private mode: nothing was remembered either */ }
 if (ANCHOR_NONE) {
   const s = document.createElement('style')
   s.textContent = '* { overflow-anchor: none !important; }'
+  document.head.appendChild(s)
+}
+if (LOCK_OFF) {
+  const s = document.createElement('style')
+  s.textContent = 'body { overflow: visible !important; overscroll-behavior: auto !important; }'
   document.head.appendChild(s)
 }
 
@@ -101,16 +123,21 @@ const PLANTING_EVENTS = Array.from({ length: 60 }, (_, i) => ({
   plant_id: PLANTING_ID, project_id: null, planting_name: PLANTING.name, batch_count: 1,
 }))
 // GET /api/events/:id — the detail row (eventdetail.jsx's harvest shape), with a note and three photos.
+// ?event=rich: nine photos (three rows of thumbs), a long note, a private note and four Details rows.
+const photosOf = (id, n) => Array.from({ length: n }, (_, i) => ({ id: `ph-${id}-${i + 1}`, storage_path: `x/${i + 1}.jpg`, cover_for: null }))
+const RICH_NOTE = 'Picked the reddest pods from the south side; the north side is a week behind. Two cracked after the rain on Tuesday, set aside for the dehydrator. Plant is leaning, needs a second stake before the next storm.'
 const eventDetail = (ev) => ({
   id: ev.id, project_id: null, plant_id: PLANTING_ID, location_id: null,
   event_type: ev.event_type, event_date: ev.event_date, title: '',
-  notes: ev.notes || 'Picked the reddest pods; the rest need another week.', private_notes: '', quantity: '', is_public: false,
-  metadata: ev.event_type === 'watering' ? { water_depth: 'deep' } : null, flagged_as_issue: false, severity: null, resolved_at: null,
+  notes: EVENT_RICH ? RICH_NOTE : (ev.notes || 'Picked the reddest pods; the rest need another week.'),
+  private_notes: EVENT_RICH ? 'Try the neighbour\'s trellis idea next year.' : '', quantity: '', is_public: false,
+  metadata: EVENT_RICH ? { count: 7, weight_g: 214, quality: 'good', health: 'fine' } : (ev.event_type === 'watering' ? { water_depth: 'deep' } : null),
+  flagged_as_issue: false, severity: null, resolved_at: null,
   created_at: ev.created_at, updated_at: ev.created_at, project_name: null, planting_name: PLANTING.name,
   harvest: ev.event_type === 'harvest'
     ? { id: `h-${ev.id}`, quantity: 7, unit: 'count', quality_rating: null, weight_grams: 214, weight_estimated: false, weight_basis: null, disposition: null }
     : null,
-  photos: [{ id: `ph-${ev.id}-1`, storage_path: 'x/1.jpg', cover_for: null }, { id: `ph-${ev.id}-2`, storage_path: 'x/2.jpg', cover_for: null }, { id: `ph-${ev.id}-3`, storage_path: 'x/3.jpg', cover_for: null }],
+  photos: photosOf(ev.id, EVENT_RICH ? 9 : 3),
 })
 const EVENTS_BY_ID = Object.fromEntries(PLANTING_EVENTS.map((e) => [e.id, eventDetail(e)]))
 // The /deep list's EventDetail door opens this one: a harvest, the shape Dave taps most.
@@ -224,12 +251,24 @@ window.addEventListener('scroll', () => {
 }, { capture: true, passive: true })
 // Who scrolls: a script (scrollTo / scrollIntoView / focus without preventScroll) or only the browser.
 const calls = []
+const describe = (el) => (el && el.getAttribute ? `${el.tagName.toLowerCase()}${el.getAttribute('data-testid') ? `[${el.getAttribute('data-testid')}]` : ''}${el.getAttribute('aria-label') ? `[aria-label=${el.getAttribute('aria-label')}]` : ''}${el.isConnected ? '' : '(detached)'}` : null)
 const wrap = (obj, name, label) => {
   const orig = obj[name]
   obj[name] = function (...args) {
-    if (calls.length < 200) calls.push({ t: Math.round(performance.now() - T0), call: label, path: location.pathname, args: args.length && typeof args[0] !== 'object' ? args.slice(0, 2) : [] })
+    if (calls.length < 200) {
+      calls.push({ t: Math.round(performance.now() - T0), call: label, path: location.pathname, y: Math.round(window.scrollY),
+        args: args.length && typeof args[0] !== 'object' ? args.slice(0, 2) : (args[0] && typeof args[0] === 'object' ? [JSON.stringify(args[0])] : []),
+        target: this === window ? null : describe(this) })
+    }
     return orig.apply(this, args)
   }
+}
+// MECHANISM CHECK (?focus=noscroll): every focus() call gets preventScroll, to test whether a focus
+// restored AFTER a page swap is what drops the carried offset (the Search-result door).
+const FOCUS_NOSCROLL = q.get('focus') === 'noscroll'
+if (FOCUS_NOSCROLL) {
+  const origFocus = HTMLElement.prototype.focus
+  HTMLElement.prototype.focus = function (opts) { return origFocus.call(this, { ...(opts || {}), preventScroll: true }) }
 }
 wrap(window, 'scrollTo', 'window.scrollTo')
 wrap(Element.prototype, 'scrollIntoView', 'scrollIntoView')
@@ -294,6 +333,49 @@ function LeftThePage() {
   return <div data-testid="harness-left-page">left the page for {loc.pathname}</div>
 }
 
+// App.jsx's OverlayHost, line for line (seedsscroll.jsx carries the same copy; gate:seeds-scroll checks that
+// one for drift against App.jsx).
+function HarnessOverlayHost({ ariaLabel, size = 'peek', children }) {
+  const dismiss = useOverlayDismiss()
+  const [dirty, setDirty] = React.useState(false)
+  return (
+    <Sheet open onClose={dismiss} ariaLabel={ariaLabel} size={size} dirty={dirty} kind="route">
+      <OverlaySurfaceProvider>
+        <OverlayDirtyProvider onDirtyChange={setDirty}>{children}</OverlayDirtyProvider>
+      </OverlaySurfaceProvider>
+    </Sheet>
+  )
+}
+// The Search page's stand-in: its results as Search.jsx's Row renders them, a plain <Link> each.
+const SEARCH_RESULTS = ['event', 'location', 'planting'].map((k) => TARGETS.find((t) => t.key === k))
+function SearchStandIn() {
+  return (
+    <div data-testid="harness-search" style={{ padding: '8px 0' }}>
+      {SEARCH_RESULTS.map((t) => (
+        <Link key={t.key} to={t.to} data-testid={`harness-search-${t.key}`}
+          style={{ display: 'flex', alignItems: 'center', minHeight: 48, padding: '12px 20px', color: '#2f3b2f', textDecoration: 'none' }}>{t.label}</Link>
+      ))}
+    </div>
+  )
+}
+
+// MECHANISM CHECK (?reset=entry|location), off in a plain run. `entry` is pageEntry.js's rule
+// (cbacf94d:src/lib/pageEntry.js locationEntryKey, copied): the page tree's location — the overlay's
+// background while one is open — answers with the entry it continues when stamped, else its own key.
+function useHarnessReset(pageLocation) {
+  const real = useLocation()
+  const navType = useNavigationType()
+  const entry = RESET === 'entry' ? ((pageLocation.state && pageLocation.state.continuesEntry) || pageLocation.key)
+    : RESET === 'location' ? real.key : null
+  const last = useRef(entry)
+  useLayoutEffect(() => {
+    if (!RESET || entry === last.current) return
+    last.current = entry
+    if (navType === 'POP') return
+    window.scrollTo(0, 0)
+  }, [entry, navType])
+}
+
 // The More sheet and two tab links, as BottomNav builds them (see the header).
 const MORE_ROWS = ['dashboard', 'locations', 'inventory', 'achievements', 'releases', 'about'].map((k) => TARGETS.find((t) => t.key === k))
 function BottomNavStandIn() {
@@ -333,15 +415,22 @@ const PAGE_OF = [
   [/^\/releases$/, 'releases'], [/^\/about$/, 'about'],
 ]
 const pageKeyOf = (path) => (PAGE_OF.find(([re]) => re.test(path)) || [null, null])[1]
+// The page tree's path: the overlay's background while one is open (history.state.usr.background).
+const pagePath = () => { try { return window.history.state?.usr?.background?.pathname || location.pathname } catch { return location.pathname } }
 
-// AppShell's shape: the top bar, the page tree at pageLocation, the bottom nav.
+// AppShell's shape: the top bar (with header Search), the page tree at pageLocation, the overlay tree at the
+// real location only while an overlay has a background, and the bottom nav.
 function Shell() {
-  const { pageLocation } = useOverlay()
+  const { pageLocation, overlayLocation, background } = useOverlay()
+  useHarnessReset(pageLocation)
   return (
     <>
       <header data-app-chrome="top"
         style={{ position: 'sticky', top: 0, zIndex: 80, height: TOP_CHROME_PX, boxSizing: 'border-box',
-          background: '#e8efe4', borderBottom: '1px solid #d4c9be' }} />
+          background: '#e8efe4', borderBottom: '1px solid #d4c9be', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingRight: 8 }}>
+        <OverlayLink to="/search" aria-label="Search your garden" data-testid="harness-open-search"
+          style={{ width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>⌕</OverlayLink>
+      </header>
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh',
         paddingBottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' }}>
         <div data-harness-pages="" style={{ flex: 1 }}>
@@ -362,6 +451,11 @@ function Shell() {
           </Routes>
         </div>
       </div>
+      {background && (
+        <Routes location={overlayLocation}>
+          <Route path="/search" element={<HarnessOverlayHost ariaLabel="Search your garden" size="peek"><SearchStandIn /></HarnessOverlayHost>} />
+        </Routes>
+      )}
       <BottomNavStandIn />
     </>
   )
@@ -410,8 +504,9 @@ const BOOT = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8
 window.__h = {
   boot: () => BOOT,
   ready: () => READY.today() || location.pathname !== '/today',
-  pageKey: () => pageKeyOf(location.pathname),
-  pageReady: (key) => { try { return pageKeyOf(location.pathname) === key && !document.querySelector('[data-testid="harness-route-fallback"]') && !!READY[key]?.() } catch { return false } },
+  pageKey: () => pageKeyOf(pagePath()),
+  pageReady: (key) => { try { return pageKeyOf(pagePath()) === key && !document.querySelector('[data-testid="harness-route-fallback"]') && !!READY[key]?.() } catch { return false } },
+  overlayOpen: () => !!document.querySelector('[role="dialog"][aria-label="Search your garden"]'),
   errors: () => [...errors],
   unstubbed: () => [...unstubbed],
   calls: () => calls.slice(),
@@ -431,5 +526,5 @@ window.__h = {
     if (!pick) return null
     return { tag: pick.tagName.toLowerCase(), testid: pick.getAttribute?.('data-testid') || null, text: (pick.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60) }
   },
-  fixture: () => ({ ms: MS, anchorNone: ANCHOR_NONE, locPhotos: LOC_PHOTOS, deepRows: DEEP_ROWS, plantingEvents: PLANTING_EVENTS.length, locations: LOCATIONS.length, targets: TARGETS.map((t) => t.key) }),
+  fixture: () => ({ ms: MS, anchorNone: ANCHOR_NONE, lockOff: LOCK_OFF, focusNoScroll: FOCUS_NOSCROLL, eventRich: EVENT_RICH, reset: RESET, locPhotos: LOC_PHOTOS, deepRows: DEEP_ROWS, plantingEvents: PLANTING_EVENTS.length, locations: LOCATIONS.length, targets: TARGETS.map((t) => t.key) }),
 }

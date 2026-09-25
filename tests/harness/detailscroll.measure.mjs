@@ -3,8 +3,13 @@
 // the instrument is valid, and prints what each page does). In real Chrome: where does a page land when it
 // is opened from a SCROLLED page, and does Back return the scrolled page to its place?
 //
-//   node tests/harness/detailscroll.measure.mjs [--only id,id] [--out file.json] [--shots dir]
+//   node tests/harness/detailscroll.measure.mjs [--set base,rich,overlay,reset-entry,reset-location]
+//                                               [--only id,id] [--out file.json] [--shots dir]
 //     env: DS_HARNESS_PORT (5397) DS_CDP_PORT (9497) DS_VIEWPORT (426x836) DS_MS (300) CHROME_PATH
+//   Sets: base (every page from a scrolled list / BottomNav door, + anchoring off), rich (an EventDetail
+//   taller than one screen), overlay (header Search → a result; open/close holding the page),
+//   reset-entry / reset-location (the harness shell's app-level reset MECHANISM CHECK, see detailscroll.jsx).
+//   Default: base,rich,overlay.
 //
 // DRIVES tests/harness/detailscroll.{html,jsx} inside tests/harness/viewport.html (the IFRAME HOST: headless
 // macOS Chrome floors a window near 500px wide, an iframe is a true layout viewport at any size). Every tap
@@ -36,6 +41,7 @@ const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Conte
 const argv = process.argv.slice(2)
 const argOf = (name) => { const i = argv.indexOf(name); return i > -1 ? argv[i + 1] : null }
 const ONLY = argOf('--only') ? new Set(argOf('--only').split(',')) : null
+const SETS = new Set((argOf('--set') || 'base,rich,overlay').split(','))
 const OUT = argOf('--out') ? resolve(argOf('--out')) : null
 const SHOTS = argOf('--shots') ? resolve(argOf('--shots')) : null
 const TOP_CHROME_PX = 52
@@ -43,7 +49,7 @@ const NAV_PX = 56
 
 // src: where the flow starts. door: how it leaves. target: the arriving page (detailscroll.jsx's keys).
 // depth: the source offset to wheel to before the tap (deep = past anything a loading shell can hold).
-const FLOWS = [
+const BASE = [
   // Real in-page doors.
   { id: 'planting-eventrow>event', src: 'planting', door: 'eventrow', target: 'event', eventIndex: 44 },
   { id: 'locations-row>location', src: 'locations', door: 'locrow', target: 'location', locId: 'loc-blueberry-hedge' },
@@ -72,6 +78,35 @@ const FLOWS = [
   { id: 'deep>event@anchor-none', src: 'deep', door: 'row', target: 'event', depth: 3000, anchorNone: true },
   { id: 'deep>dashboard@anchor-none', src: 'deep', door: 'row', target: 'dashboard', depth: 3000, anchorNone: true },
   { id: 'planting-eventrow>event@anchor-none', src: 'planting', door: 'eventrow', target: 'event', eventIndex: 44, anchorNone: true },
+]
+// EventDetail taller than one screen (?event=rich: nine photos, a long note, Details rows).
+const RICH = [
+  { id: 'deep>event@rich', src: 'deep', door: 'row', target: 'event', depth: 3000, event: 'rich' },
+  { id: 'deep600>event@rich', src: 'deep', door: 'row', target: 'event', depth: 600, event: 'rich' },
+  { id: 'planting-eventrow>event@rich', src: 'planting', door: 'eventrow', target: 'event', eventIndex: 44, event: 'rich' },
+  { id: 'deep>event@rich@anchor-none', src: 'deep', door: 'row', target: 'event', depth: 3000, event: 'rich', anchorNone: true },
+]
+// Header Search over a scrolled page: a result (a plain push out of the overlay), and open/X alone.
+const OVERLAY = [
+  { id: 'search>event@rich', src: 'deep', door: 'search', target: 'event', depth: 3000, event: 'rich' },
+  { id: 'search>location', src: 'deep', door: 'search', target: 'location', depth: 3000 },
+  { id: 'search>planting', src: 'deep', door: 'search', target: 'planting', depth: 3000 },
+  { id: 'overlay-hold', src: 'deep', door: 'overlayhold', depth: 3000 },
+  // Mechanism check for why the Search door does not carry: Sheet's body scroll-lock neutralised.
+  { id: 'search>event@rich@lock-off', src: 'deep', door: 'search', target: 'event', depth: 3000, event: 'rich', lockOff: true },
+  { id: 'more>dashboard@lock-off', src: 'deep', door: 'more', target: 'dashboard', depth: 3000, lockOff: true },
+  // ...and the focus the Sheet restores to its opener after the swap, made preventScroll.
+  { id: 'search>event@rich@focus-noscroll', src: 'deep', door: 'search', target: 'event', depth: 3000, event: 'rich', focusNoScroll: true },
+  { id: 'search>location@focus-noscroll', src: 'deep', door: 'search', target: 'location', depth: 3000, focusNoScroll: true },
+  { id: 'search-closed-then-row>event@rich', src: 'deep', door: 'row', target: 'event', depth: 3000, event: 'rich', preOverlay: true },
+]
+const withReset = (flows, reset) => flows.filter((f) => !f.anchorNone && !f.lockOff && !f.focusNoScroll).map((f) => ({ ...f, id: `${f.id}@reset-${reset}`, reset }))
+const FLOWS = [
+  ...(SETS.has('base') ? BASE : []),
+  ...(SETS.has('rich') ? RICH : []),
+  ...(SETS.has('overlay') ? OVERLAY : []),
+  ...(SETS.has('reset-entry') ? withReset([...BASE, ...RICH, ...OVERLAY], 'entry') : []),
+  ...(SETS.has('reset-location') ? withReset(OVERLAY, 'location') : []),
 ]
 
 async function assertPortFree(url, what) {
@@ -236,7 +271,7 @@ async function runFlow(cdp, flow) {
     await cdp.send('Page.enable', {}, sessionId)
     await cdp.send('Runtime.enable', {}, sessionId)
     const t = tab(cdp, sessionId)
-    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=detailscroll.html&vw=${VW}&vh=${VH}&ms=${MS}${flow.anchorNone ? '&anchor=none' : ''}`
+    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=detailscroll.html&vw=${VW}&vh=${VH}&ms=${MS}${flow.anchorNone ? '&anchor=none' : ''}${flow.event ? `&event=${flow.event}` : ''}${flow.reset ? `&reset=${flow.reset}` : ''}${flow.lockOff ? '&lock=off' : ''}${flow.focusNoScroll ? '&focus=noscroll' : ''}`
     const nav = await cdp.send('Page.navigate', { url }, sessionId)
     if (nav.errorText) throw new Error(`navigation failed: ${nav.errorText}`)
     if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000)) throw new Error('the harness never came up in the frame')
@@ -254,6 +289,10 @@ async function runFlow(cdp, flow) {
     if (g.top !== TOP_CHROME_PX) geo.push(`top bar ${g.top}px`)
     if (g.nav !== NAV_PX) geo.push(`nav ${g.nav}px`)
     if (!!g.fixture.anchorNone !== !!flow.anchorNone) geo.push('anchor switch not applied')
+    if (!!g.fixture.eventRich !== (flow.event === 'rich')) geo.push('event switch not applied')
+    if ((g.fixture.reset || '') !== (flow.reset || '')) geo.push('reset switch not applied')
+    if (!!g.fixture.lockOff !== !!flow.lockOff) geo.push('lock switch not applied')
+    if (!!g.fixture.focusNoScroll !== !!flow.focusNoScroll) geo.push('focus switch not applied')
     if (geo.length) throw new Error(`instrument: ${geo.join('; ')}`)
 
     // Into the source page: a real tap on the /today stand-in's link (a PUSH).
@@ -288,10 +327,53 @@ async function runFlow(cdp, flow) {
     const deepMin = flow.depth != null && flow.depth < 1000 ? 300 : 1000
     if (before.y < deepMin) throw new Error(`the source is only ${R(before.y)}px down before the tap (need >= ${deepMin})`)
 
+    const SEARCH_DIALOG = `d.querySelector('[role="dialog"][aria-label="Search your garden"]')`
+    const SEARCH_X = `d.querySelector('[role="dialog"][aria-label="Search your garden"] [data-sheet-close]')`
+    const openSearch = async () => {
+      const whyS = await t.tap(`d.querySelector('[data-testid="harness-open-search"]')`, 'header Search', { chrome: true })
+      if (whyS) throw new Error(whyS)
+      if (!await t.waitIn(`w.location.pathname === '/search' && ${SEARCH_X}`, 8000)) throw new Error('the Search overlay never opened on /search')
+      await t.settle(400, 5000)
+      out.underSheet = await t.read(READ_HERE(doorSel))
+    }
+
+    // Header Search opened and closed by its X, nothing else: does the page under the overlay hold still?
+    if (flow.door === 'overlayhold') {
+      await t.read(`w.__h.mark(); w.__h.startSampling(); return 1`)
+      await openSearch()
+      const whyX = await t.tap(SEARCH_X, 'the Search sheet\'s X', { chrome: true })
+      if (whyX) throw new Error(whyX)
+      if (!await t.waitIn(`w.location.pathname === '/deep' && !${SEARCH_DIALOG}`, 8000)) throw new Error('the Search overlay never closed back onto the list')
+      await t.settle(600, 6000)
+      out.samples = await t.read(`return w.__h.stopSampling()`)
+      out.afterClose = await t.read(READ_HERE(doorSel))
+      out.calls = await t.read(`return w.__h.calls()`)
+      out.errors = await t.read(`return w.__h.errors()`)
+      out.unstubbed = [...new Set(await t.read(`return w.__h.unstubbed()`))]
+      if (await t.read(`return w.__h.boot()`) !== boot0) throw new Error('the frame RELOADED mid-flow (a new document) — not a measurement')
+      out.ok = true
+      return out
+    }
+
+    // (preOverlay) Search opened and closed by its X first, then the door: is the difference the overlay
+    // being OPEN at the swap, or having been opened at all?
+    if (flow.preOverlay) {
+      await openSearch()
+      const whyX = await t.tap(SEARCH_X, 'the Search sheet\'s X', { chrome: true })
+      if (whyX) throw new Error(whyX)
+      if (!await t.waitIn(`w.location.pathname === '/deep' && !${SEARCH_DIALOG}`, 8000)) throw new Error('the Search overlay never closed back onto the list')
+      await t.settle(600, 6000)
+      out.afterClose = await t.read(READ_HERE(doorSel))
+    }
+
     // Leave: a real tap on the door.
     let tapSel = doorSel
     let chrome = false
-    if (flow.door === 'more') {
+    if (flow.door === 'search') {
+      await openSearch()
+      tapSel = `d.querySelector('[data-testid="harness-search-${flow.target}"]')`
+      chrome = true
+    } else if (flow.door === 'more') {
       const whyM = await t.tap(`d.querySelector('[data-testid="harness-more"]')`, 'More', { chrome: true })
       if (whyM) throw new Error(whyM)
       if (!await t.waitIn(`d.querySelector('[role="dialog"][aria-label="More navigation options"]') && w.history.state && w.history.state.__backnav`, 8000)) throw new Error('the More sheet never opened with its Back marker pushed')
@@ -321,13 +403,15 @@ async function runFlow(cdp, flow) {
     out.newEntry = after.key != null && after.key !== before.key
     if (after.page !== flow.target) throw new Error(`landed on ${after.path} (${after.page}), expected ${flow.target}`)
 
-    // Back: a real traversal onto the source's own entry.
-    await t.read(`w.__h.mark(); return 1`)
+    // Back: a real traversal (onto the source's own entry; after a Search result, onto the overlay's entry,
+    // which re-opens Search over the source).
+    await t.read(`w.__h.mark(); w.__h.startSampling(); return 1`)
     await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
     if (!await t.waitIn(`w.__h.pageReady('${flow.src}')`, 15000)) throw new Error('Back never brought the source page back')
     const stB = await t.settle(800, 10000)
     const back = await t.read(READ_HERE(doorSel))
-    out.back = { ...back, settled: stB, sameKey: back.key === before.key, calls: await t.read(`return w.__h.calls()`) }
+    out.back = { ...back, settled: stB, sameKey: back.key === before.key, overlayOpen: await t.read(`return w.__h.overlayOpen()`),
+      calls: await t.read(`return w.__h.calls()`), samples: await t.read(`return w.__h.stopSampling()`), trace: await t.read(`return w.__h.trace()`) }
     out.errors = await t.read(`return w.__h.errors()`)
     out.unstubbed = [...new Set(await t.read(`return w.__h.unstubbed()`))]
     const boot1 = await t.read(`return w.__h.boot()`)
@@ -358,8 +442,15 @@ try {
     results.push(r)
     if (!r.ok) { console.log(`[detailscroll] ${flow.id}: NOT MEASURED — ${r.error}`); continue }
     const b = r.before, a = r.after, k = r.back
-    console.log(`[detailscroll] ${flow.id}: before y${R(b.y)} (doc ${b.docH}) → landed y${R(a.y)} of max ${R(a.max)} (doc ${a.docH}); h1 ${a.h1 ? `@${a.h1.top}` : 'none'} ${a.h1InBand ? 'IN band' : a.h1Visible ? 'partly visible' : 'NOT visible'}; top of view: ${a.top ? `${a.top.tag}${a.top.testid ? `[${a.top.testid}]` : ''} "${a.top.text}"` : 'n/a'}; newEntry ${r.newEntry}; script scrolls ${r.calls.length ? JSON.stringify(r.calls) : 'none'} · Back y${R(k.y)} (${k.sameKey ? 'same key' : 'OTHER KEY'}), door top ${b.doorTop}→${k.doorTop}${r.errors.length ? ` · ERRORS ${r.errors.join(' | ')}` : ''}${r.unstubbed.length ? ` · unstubbed ${r.unstubbed.join(', ')}` : ''}`)
+    const extras = `${r.errors.length ? ` · ERRORS ${r.errors.join(' | ')}` : ''}${r.unstubbed.length ? ` · unstubbed ${r.unstubbed.join(', ')}` : ''}`
+    if (flow.door === 'overlayhold') {
+      console.log(`[detailscroll] ${flow.id}: before y${R(b.y)} → under the open sheet y${R(r.underSheet.y)} → after X y${R(r.afterClose.y)} (key ${b.key}→${r.afterClose.key}), door top ${b.doorTop}→${r.afterClose.doorTop}; script scrolls ${r.calls.length ? JSON.stringify(r.calls) : 'none'}${extras}`)
+      console.log(`    frames: ${compactSamples(r.samples)}`)
+      continue
+    }
+    console.log(`[detailscroll] ${flow.id}: before y${R(b.y)} (doc ${b.docH})${r.underSheet ? ` → under Search y${R(r.underSheet.y)}` : ''} → landed y${R(a.y)} of max ${R(a.max)} (doc ${a.docH}); h1 ${a.h1 ? `@${a.h1.top}` : 'none'} ${a.h1InBand ? 'IN band' : a.h1Visible ? 'partly visible' : 'NOT visible'}; top of view: ${a.top ? `${a.top.tag}${a.top.testid ? `[${a.top.testid}]` : ''} "${a.top.text}"` : 'n/a'}; newEntry ${r.newEntry}; script scrolls ${r.calls.length ? JSON.stringify(r.calls) : 'none'} · Back y${R(k.y)} (${k.sameKey ? 'same key' : 'OTHER KEY'}${k.overlayOpen ? ', Search re-opened' : ''}), door top ${b.doorTop}→${k.doorTop}${k.calls.length ? `, Back script scrolls ${JSON.stringify(k.calls)}` : ''}${extras}`)
     console.log(`    frames: ${compactSamples(r.samples)}`)
+    console.log(`    Back frames: ${compactSamples(k.samples)}`)
   }
 } catch (err) {
   console.error(`[detailscroll] could not complete: ${err.message}`)
