@@ -21,7 +21,10 @@ import { useSources } from '../hooks/useSources.js'
 import { TIER } from '../lib/photoModel.js'
 import { supplierColors } from '../lib/supplierPalette.js'
 import { seedFacts } from '../components/seed/seedFacts.js'
-import { kindAllowsParentPlant } from '../components/seed/seedLots.js'
+import { kindAllowsParentPlant, isSavedLot, lotCountFact } from '../components/seed/seedLots.js'
+// The count's counted/estimated switch and the weight parser, shared with the Save-seed sheet and the
+// Saved seeds advance sheet, the other two writers of the same three columns.
+import { SeedCountBasis, parseSeedWeight } from '../components/planting/SaveSeedSheet.jsx'
 // V4-SEEDORIGIN-001 — the SAME eight values preservation_log uses, deliberately. This registry is
 // one of the four synchronised homes of that vocabulary (the others: lambda/preservation/
 // provenance.js, the per-Lambda copy in lambda/inventory-items/source-kinds.js, and the DB CHECK
@@ -31,7 +34,7 @@ import { PUTUP_SOURCE_OPTIONS } from '../lib/dropdownRegistry.js'
 import { formatQtyExact, formatDate } from '../lib/format.js'
 import { seedsHref, seedsReturnFromHistory, lotSectionFromHistory, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
 import { readDraft } from '../lib/draftStash.js'
-import { T } from '../components/forms/formStyles.js'
+import { T, helpChrome } from '../components/forms/formStyles.js'
 import SowSheet, { sowPacketFromItem } from '../components/seed/SowSheet.jsx'
 import { isInProcess } from '../lib/sowEngine.js'
 
@@ -238,12 +241,35 @@ export default function InventoryDetail() {
       // done all along; nothing has ever rendered it. '' not null, for the same reason the two
       // source FKs above use '': the baseline diff reads it as a plain blank.
       year_harvested:     i.year_harvested != null ? String(i.year_harvested) : '',
+      // A saved lot's seed measure (V5-SEEDQTY-001), edited below and written ONLY through PUT
+      // /seed-measure — buildChanges() never names these three, and handleSave diffs them against
+      // the baseline to decide whether that second request goes at all. Exact, like the quantities
+      // above: seed_weight_g is numeric(10,3) and arrives as a string ('3.200' -> '3.2').
+      // `=== true`: NULL is "never recorded", which the switch shows as counted, as SavedSeeds does.
+      seed_count:           i.seed_count != null ? String(i.seed_count) : '',
+      seed_count_estimated: i.seed_count_estimated === true,
+      seed_weight_g:        formatQtyExact(i.seed_weight_g),
     }
   }
 
   function set(field, value) {
     setForm(f => ({ ...f, [field]: value }))
     if (errors[field]) setErrors(e => ({ ...e, [field]: null }))
+  }
+
+  // The lot with its LIVE provenance: a parent or an origin picked on this page a moment ago counts.
+  // It decides whether the planting a sow makes records saved seed, and whether the form edits this
+  // lot as saved seed.
+  function liveLot() {
+    return { ...item, source_plant_id: sourcePlantId || null, source_kind: sourceKind || null }
+  }
+
+  // Dave, 2026-09-25: a saved seed's page "never surfaces the count" and "seems to default to showing
+  // 1 packet which is not correct ever". A saved lot's form edits its SEED — count, how it was counted,
+  // weight — in place of the container pair (V5-SEEDQTY-001: quantity_on_hand is the jar, always 1
+  // until used up). Consumable only: chk_inventory_seed_count_seeds_only refuses a count on any other.
+  function showsSeedMeasure() {
+    return form.category === 'seeds' && form.type === 'consumable' && isSavedLot(liveLot())
   }
 
   function validate() {
@@ -265,6 +291,14 @@ export default function InventoryDetail() {
     // Blank stays a legitimate clear; only non-blank-and-not-a-year is an error.
     if (form.year_harvested.trim() !== '' && !/^\d{4}$/.test(form.year_harvested.trim()))
       e.year_harvested = 'Enter a four-digit year, or leave it blank.'
+    // The seed measure, refused before ANY request rather than by /seed-measure after the main save
+    // has landed: a fraction, a negative or a stray letter is something the client can see.
+    if (showsSeedMeasure()) {
+      const count = parseSeedCount(form.seed_count)
+      if (count.error) e.seed_count = count.error
+      const weight = parseSeedWeight(form.seed_weight_g)
+      if (weight.error) e.seed_weight_g = weight.error
+    }
     return e
   }
 
@@ -352,17 +386,37 @@ export default function InventoryDetail() {
     // Anything typed while the PUT is in flight is therefore still unsaved once it lands, and the
     // guard correctly stays held.
     const sent = form
+    // The saved lot's seed measure, diffed against the lot as last saved (see seedMeasureChanges).
+    // Null — no second request at all — for every other row and for a save that did not touch it.
+    const measure = showsSeedMeasure() ? seedMeasureChanges(baseline, sent) : null
     setSaving(true)
     const { error } = await updateItem(id, buildChanges())
-    setSaving(false)
 
     if (error) {
+      setSaving(false)
       setErrors({ _form: error })
-    } else {
-      setBaseline(sent)
-      // Operational confirmation via the GLOBAL toast layer (auto-dismisses).
-      show({ message: '✓ Saved' })
+      return
     }
+    // SECOND, on its own route, and with its own failure — SaveSeedSheet's shape. The main save has
+    // landed and stands; a measure that did not land is named in the toast, and stays unsaved input
+    // (the baseline keeps the old measure), so the guard holds and the next Save sends it again.
+    // On success the card reads the stored measure at once: the route answers the three columns.
+    let missed = null
+    if (measure) {
+      try {
+        const stored = await fetch(`/api/inventory-items/${id}/seed-measure`, {
+          method: 'PUT',
+          body: JSON.stringify(measure),
+        })
+        setItem(prev => (prev ? { ...prev, ...measure, ...measureColumns(stored) } : prev))
+      } catch {
+        missed = measureWords(measure)
+      }
+    }
+    setSaving(false)
+    setBaseline(missed ? { ...sent, ...measureColumns(baseline) } : sent)
+    // Operational confirmation via the GLOBAL toast layer (auto-dismisses).
+    show(missed ? { message: `Saved — couldn't record the ${missed}`, tone: 'error' } : { message: '✓ Saved' })
   }
 
   // ── Save the parent plant (V4-SEEDLINK-001) ────────────────────────────────
@@ -538,6 +592,16 @@ export default function InventoryDetail() {
   const supplierName = savedSourceId
     ? (sources.find(s => String(s.id) === String(savedSourceId))?.name ?? null)
     : null
+  // Saved seed, by the LIVE provenance (liveLot): what the packet card's count fact and the form's
+  // seed fields both answer to, so the two cannot disagree about one jar.
+  const savedLot = item.category === 'seeds' && isSavedLot(liveLot())
+  const seedMeasureForm = showsSeedMeasure()
+  // The container as one yes/no — "All used up" — only while it holds a yes/no's worth: 1 jar, or 0.
+  // Any other amount (prod carries one saved lot at 272 'each') keeps the Qty on hand and Unit pair,
+  // so nothing already recorded becomes uneditable. Read from the lot AS SAVED, never the live field,
+  // so the control cannot swap under a thumb mid-edit.
+  const usedUpToggle = seedMeasureForm
+    && (baseline?.quantity_on_hand === '0' || baseline?.quantity_on_hand === '1')
 
   return (
     <div style={{ minHeight: '100dvh', backgroundColor: P.cream }}>
@@ -566,6 +630,7 @@ export default function InventoryDetail() {
         {item.category === 'seeds' && (
           <PacketCard
             item={item}
+            saved={savedLot}
             supplierName={supplierName}
             packetUrl={baseline?.source_url}
             onUploadComplete={refetchPacketPhoto}
@@ -585,11 +650,7 @@ export default function InventoryDetail() {
             {canSowFrom(item) && (
               <SowThisCTA
                 item={item}
-                onClick={() => setSowPacket(sowPacketFromItem({
-                  ...item,
-                  source_plant_id: sourcePlantId || null,
-                  source_kind: sourceKind || null,
-                }))}
+                onClick={() => setSowPacket(sowPacketFromItem(liveLot()))}
               />
             )}
             {/* What that sow made, for the rest of the visit, with the way to it — a line on the
@@ -946,8 +1007,62 @@ export default function InventoryDetail() {
               />
             </Field>
 
-            {/* Consumable quantity */}
-            {isConsumable && (
+            {/* ── A SAVED lot's seed: how many, how they were counted, what they weigh ─────────────
+                Dave, 2026-09-25: "on a saved seed's detail page, it never surfaces the count. It seems
+                to default to showing 1 packet which is not correct ever." Every saved lot is one jar
+                (quantity_on_hand 1, SaveSeedSheet), so the Qty on hand / Unit pair read "1 packet" and
+                the count sat in columns this page never read. These fields edit those columns, and
+                they are written through PUT /seed-measure only (handleSave), never the wide PUT.
+                Labels and words are the other two writers': the Save-seed sheet's count/weight and the
+                shared counted/estimated switch. The count is WHOLE seeds (an integer column); blank is
+                "not counted", never 0. The weight is text, not a number box, so "250 mg" survives the
+                typing (SaveSeedSheet's reason); a bare number is grams. */}
+            {seedMeasureForm && (
+              <>
+                {/* One group, so the switch sits against the count it qualifies. It carries its own
+                    14px bottom margin (set for a sheet with no flex gap); this card spaces its fields
+                    with a 16px gap already, so the group hands those 14px back. */}
+                <div data-testid="inv-seed-count-group" style={{ marginBottom: -14 }}>
+                  <Field label="Seed count" htmlFor="inv-seed-count" error={errors.seed_count} optional
+                    help="Leave it blank until it’s counted.">
+                    <Input
+                      type="number" inputMode="numeric" min="0" step="1"
+                      placeholder="e.g. 20"
+                      value={form.seed_count}
+                      onChange={e => set('seed_count', e.target.value)}
+                      error={!!errors.seed_count}
+                      data-testid="inv-seed-count"
+                    />
+                  </Field>
+                  <SeedCountBasis
+                    estimated={form.seed_count_estimated}
+                    onChange={v => set('seed_count_estimated', v)}
+                    testId="inv-seed-count-estimated"
+                  />
+                </div>
+                <Field label="Weight (g)" htmlFor="inv-seed-weight" error={errors.seed_weight_g} optional
+                  help="A bare number is grams; type “mg” after it for milligrams, e.g. 250 mg.">
+                  <Input
+                    type="text" inputMode="decimal"
+                    placeholder="e.g. 2.5"
+                    value={form.seed_weight_g}
+                    onChange={e => set('seed_weight_g', e.target.value)}
+                    error={!!errors.seed_weight_g}
+                    data-testid="inv-seed-weight"
+                  />
+                </Field>
+                {usedUpToggle && (
+                  <UsedUpToggle
+                    usedUp={Number(form.quantity_on_hand) === 0}
+                    onChange={usedUp => set('quantity_on_hand', usedUp ? '0' : '1')}
+                  />
+                )}
+              </>
+            )}
+
+            {/* Consumable quantity — every consumable except a saved lot on the "All used up" toggle
+                above (a saved lot holding any other amount keeps this pair; see usedUpToggle). */}
+            {isConsumable && !usedUpToggle && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 {/* BUG-INVQTYROUNDTRIP-001 — step="any" on all four numeric(10,3) boxes (here,
                     both reorder_* below, and Qty purchased), and it is not cosmetic. type="number"
@@ -1287,6 +1402,94 @@ function canSowFrom(item) {
   return item?.category === 'seeds' && Number(item.quantity_on_hand ?? 0) > 0 && !isInProcess(item)
 }
 
+// ── A saved lot's seed measure (the form's Seed count / Weight (g), written via PUT /seed-measure) ──
+const MEASURE_KEYS = ['seed_count', 'seed_count_estimated', 'seed_weight_g']
+
+// The three measure keys a row or a form snapshot carries, and only those.
+function measureColumns(row) {
+  const out = {}
+  for (const k of MEASURE_KEYS) if (row && Object.prototype.hasOwnProperty.call(row, k)) out[k] = row[k]
+  return out
+}
+
+// The Seed count box. Blank is "not counted" (null), never 0: a measured zero is typed. Whole seeds —
+// seed_count is an integer column and /seed-measure 400s a fraction. The same refusals, in the same
+// words, as Saved seeds' parseCountInput and the Save-seed sheet's guards, so the three doors agree.
+function parseSeedCount(raw) {
+  const typed = String(raw ?? '').trim()
+  if (typed === '') return { value: null, error: null }
+  const n = Number(typed)
+  if (!Number.isFinite(n)) return { value: null, error: 'That is not a number.' }
+  if (n < 0) return { value: null, error: 'A count cannot be negative.' }
+  if (!Number.isInteger(n)) return { value: null, error: 'A seed count is a whole number of seeds.' }
+  return { value: n, error: null }
+}
+
+// What PUT /seed-measure carries for one save, or null for no request: only what CHANGED from `from`
+// (the lot as last saved) to `to` (the form as submitted), keyed by presence, which is how the route
+// reads it. Values are compared, not strings — '250 mg' and '0.25' are one weight.
+// The count and its basis are ONE fact in two columns (chk_inventory_seed_count_basis_pairing: both
+// null or both set), so they travel together: a new or re-counted number carries the switch's answer,
+// a cleared count clears the basis in the same body, and a switch flipped on a lot with no count says
+// nothing about any number and sends nothing.
+function seedMeasureChanges(from, to) {
+  const out = {}
+  const was = parseSeedCount(from?.seed_count).value
+  const now = parseSeedCount(to?.seed_count).value
+  const wasBasis = was == null ? null : from.seed_count_estimated === true
+  const nowBasis = now == null ? null : to.seed_count_estimated === true
+  if (was !== now || wasBasis !== nowBasis) {
+    out.seed_count = now
+    out.seed_count_estimated = nowBasis
+  }
+  const wasWeight = parseSeedWeight(from?.seed_weight_g).value
+  const nowWeight = parseSeedWeight(to?.seed_weight_g).value
+  if (wasWeight !== nowWeight) out.seed_weight_g = nowWeight
+  return Object.keys(out).length ? out : null
+}
+
+// The toast's words for a measure that did not land, naming what was entered — SaveSeedSheet's rule.
+function measureWords(m) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(m, k)
+  return has('seed_count') && has('seed_weight_g') ? 'count and weight'
+    : has('seed_weight_g') ? 'weight'
+    : 'count'
+}
+
+// "All used up" — a saved lot's container as the yes/no it is: its one jar (quantity_on_hand 1), or
+// none (0), which files the lot under Sowed previously and takes Sow this away. A button with
+// role="checkbox" rather than <input type="checkbox">, for SeedCountBasis's measured reason: the
+// layout gate holds every visible control to the 44px floor, and a native box is ~13px. Drawn like
+// that switch, which sits two fields above it, so the two toggles in this card read as one family.
+function UsedUpToggle({ usedUp, onChange }) {
+  return (
+    <div>
+      <button
+        type="button" role="checkbox" aria-checked={usedUp}
+        aria-describedby="inv-used-up-help" data-testid="inv-used-up"
+        onClick={() => onChange(!usedUp)} style={usedUpRowStyle(usedUp)}
+      >
+        <span aria-hidden="true" style={usedUpMarkStyle(usedUp)}>{usedUp ? '✓' : ''}</span>
+        All used up
+      </button>
+      <div id="inv-used-up-help" style={helpChrome}>A used-up lot moves to Sowed previously.</div>
+    </div>
+  )
+}
+const usedUpRowStyle = (on) => ({
+  display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+  minHeight: T.tapMinHeight, padding: '0 12px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+  border: `1px solid ${on ? P.green : P.border}`,
+  backgroundColor: on ? P.greenPale : P.white,
+  color: on ? P.dark : P.mid, fontSize: '0.88rem', fontWeight: on ? 600 : 400,
+})
+const usedUpMarkStyle = (on) => ({
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  width: 18, height: 18, borderRadius: 4,
+  border: `1px solid ${on ? P.green : P.border}`,
+  backgroundColor: on ? P.green : P.white, color: P.white, fontSize: '0.7rem', lineHeight: 1,
+})
+
 // V5-SEEDSTAB-001 slice 2a — the S4b card-button, re-pointed at the Sow sheet: same footprint (full
 // width, 56px, the 44px floor with room to spare at 360px), the colour registry sprout instead of the
 // 🌱 emoji (the same glyph BottomNav's "Sow from seed" and the packet box use). The accessible name
@@ -1371,13 +1574,17 @@ const sownFromLink = {
 // WITH NO IMAGE the box is the upload trigger: it clicks the file input of the one PhotoUpload below
 // it, by the `inventory-photo-<id>` id that automated bulk-attach sessions also drive — so there is
 // still exactly one input, one upload path and one contract.
-function PacketCard({ item, supplierName, packetUrl, onUploadComplete }) {
+function PacketCard({ item, saved, supplierName, packetUrl, onUploadComplete }) {
   const [viewerOpen, setViewerOpen] = useState(false)
   const photo = lotPhoto(item)
   // No stripe without a supplier: a grey one would read as a disabled supplier (supplierPalette.js).
   const stripe = supplierColors(supplierName)?.primary ?? null
-  // My seeds' words and order (seedFacts.js); the chip's short numbers, for a ~168 px column.
-  const facts = seedFacts(item, { compact: true })
+  // How much seed LEADS (lotCountFact: "175 seeds", "approx. 40 seeds", or "Not counted yet" on a saved
+  // lot nobody has measured) — the amount this page is opened to read, and on a saved lot the only one
+  // (Dave, 2026-09-25). Then My seeds' words and order (seedFacts.js); the chip's short numbers, for a
+  // ~168 px column. `saved` is the page's live answer, the one its form uses.
+  const count = lotCountFact(item, saved)
+  const facts = [...(count ? [count] : []), ...seedFacts(item, { compact: true })]
   // The lot's own packet page first. Only without one does the cultivar's reference URL stand in, and
   // then it is named for where it goes — it usually points at another seller (UX spec P6).
   const packet = linkTarget(packetUrl)

@@ -23,6 +23,8 @@ import { useApiFetch } from '../lib/api.js'
 import { createQuantityAdjuster } from '../lib/quantityAdjuster.js'
 
 const TOAST_MS = 5000
+// Written only through PUT /api/inventory-items/:id/seed-measure; see updateItem.
+const SEED_MEASURE_KEYS = ['seed_count', 'seed_weight_g', 'seed_count_estimated']
 
 export function useInventory() {
   const { fetch } = useApiFetch()
@@ -120,7 +122,14 @@ export function useInventory() {
     // invokes the current render's instance — but "current item in list" above is only true of the
     // live list, and the two readers of state in this hook should not disagree about which one.
     const current = itemsRef.current.find(i => i.id === id)
-    const fullPayload = current ? { ...current, ...payload } : payload
+    const fullPayload = current ? { ...current, ...payload } : { ...payload }
+    // V5-SEEDQTY-001 — a seed lot's measure never rides this PUT. PUT /:id/seed-measure is the only
+    // writer of these three columns, and the list row merged above carries them (`i.*`) as they stood
+    // when the list loaded: InventoryDetail writes a new count through that route and then, on its
+    // next save, would re-send the old one here. The handler's SET list names none of them today, so
+    // they rode inert; stripped, the body cannot re-assert a stale count the day one is added — the
+    // BUG-INVLOSTUPDATE-001 shape that is the reason the narrow route exists.
+    for (const k of SEED_MEASURE_KEYS) delete fullPayload[k]
     try {
       const updated = await fetch('/api/inventory-items/' + id, {
         method: 'PUT',

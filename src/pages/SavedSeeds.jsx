@@ -1522,11 +1522,13 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
                     keypad advertises an answer the API refuses. Coordinated with the identical
                     change on SaveSeedSheet's capture field in the same round; no other input's
                     inputMode is touched. parseCountInput still refuses a pasted fraction — a
-                    keyboard hint is a hint, not a guard. */}
+                    keyboard hint is a hint, not a guard.
+                    The example is a number of SEEDS, SaveSeedSheet's "e.g. 20": it used to append
+                    the lot's unit, so a saved lot's count field read "e.g. 2 packet" (2026-09-25). */}
                 <input
                   type="number" inputMode="numeric" min="0" step="1" value={qtyInput}
                   onChange={(e) => { setQtyInput(e.target.value); if (qtyErr) setQtyErr(null) }}
-                  placeholder={advancing.item.unit ? `e.g. 2 ${advancing.item.unit}` : 'e.g. 2'}
+                  placeholder="e.g. 20"
                   aria-invalid={qtyErr ? 'true' : undefined}
                   aria-describedby="ss-count-help"
                   data-testid="seed-count-input"

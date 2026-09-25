@@ -49,6 +49,10 @@ export const seedCountLabel = (n, estimated) => {
  * separate them — how much seed, how many containers, who sold it, when it was bought. Absent facts
  * are dropped, never dashed.
  *
+ * A SAVED lot leaves the container count out, lotMeasure's rule: every saved lot is "1 packet", so
+ * "175 seeds · 1 packet" read as though the jar held a packet. Dave, 2026-09-25: it "seems to default
+ * to showing 1 packet which is not correct ever". A bought packet keeps it — "2 packet" is its amount.
+ *
  * `vendorOf(row)` resolves the row's `source_id` to a name. Absent (or answering '') means no
  * vendor segment at all — and never the free-text `source` column, which is an order reference.
  */
@@ -58,7 +62,7 @@ export function candidateFacts(i, vendorOf) {
   if (seeds) parts.push(seeds)
   const weight = formatSeedWeight(i?.seed_weight_g)
   if (weight) parts.push(weight)
-  const qty = formatQty(i?.quantity_on_hand)
+  const qty = isSavedLot(i) ? '' : formatQty(i?.quantity_on_hand)
   if (qty !== '') parts.push(i.unit ? `${qty} ${i.unit}` : qty)
   const vendor = vendorOf ? String(vendorOf(i) ?? '').trim() : ''
   if (vendor) parts.push(vendor)
@@ -78,6 +82,30 @@ export function lotMeasure(i) {
   const weight = formatSeedWeight(i?.seed_weight_g)
   if (weight) parts.push(weight)
   return parts.join(' · ')
+}
+
+/**
+ * The seed detail page's first packet-card fact: how much seed, in lotMeasure's words. Dave,
+ * 2026-09-25: a saved seed's page "never surfaces the count" — the only amount on it was the
+ * container field, "1 packet".
+ *
+ * A SAVED lot with nothing measured states the absence, NOT_COUNTED: the count is the fact looked for
+ * on a jar of saved seed, the reasoning seedFacts gives a pepper's heat. A bought packet with nothing
+ * measured says nothing. Labelled "Seed weight" when only a weight was taken, so a gram figure never
+ * sits under "Seed count". null when there is nothing to say.
+ *
+ * `saved` defaults to isSavedLot(i); the detail page passes its LIVE provenance (a parent picked a
+ * moment ago counts), the answer its form and its Sow sheet use. Not a seedFacts entry, deliberately:
+ * My seeds renders seedFacts in its expanded row, and that row's second line already carries this
+ * measure (howMuch), so a fact there would print it twice.
+ */
+export const NOT_COUNTED = 'Not counted yet'
+export function lotCountFact(i, saved = isSavedLot(i)) {
+  const value = lotMeasure(i)
+  if (value) {
+    return { key: 'count', label: seedCountLabel(i?.seed_count, i?.seed_count_estimated) ? 'Seed count' : 'Seed weight', value }
+  }
+  return saved ? { key: 'count', label: 'Seed count', value: NOT_COUNTED } : null
 }
 
 /**
