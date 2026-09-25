@@ -12,6 +12,12 @@
 // ?case=tomato  1884 — one of the 41/46 live tomato cards that show determinacy TWICE: the green
 //               V4-VARSLUG-001 spec chip (determinacyLabel over growth_habit prose) AND the
 //               V4-CLASSIFY-001 derived determinacy facet chip. That is the "parity" the brief named.
+// ?case=rosso   Rosso Sicilian (lane D, same day) — the one live tomato whose pill was WRONG: prose
+//               "indeterminate vine (semi-determinate per some sources)" painted a green
+//               Semi-determinate pill over an Indeterminate facet chip, because bare `semi` was tested
+//               first. After the lane D fix (leftmost whole term) both read Indeterminate. Run it with
+//               HARNESS_BASELINE_SHA=2e576239cde2200f20ae4792726dac285352530e for the before picture.
+//               The bean case above shows no pill at all after that fix.
 //
 // Fixtures: variety_ref in the plants Lambda's single-planting shape, projected in the tags Lambda's
 // exact projection SQL, both read from prod. Only the far side of /api/entity-tags is stubbed; the
@@ -64,6 +70,27 @@ const CASES = {
         scoville_min: null, scoville_max: null, scoville_source: null, breeding_system: 'open_pollinated',
         sun_requirements: 'full_sun', days_to_maturity_min: 78, days_to_maturity_max: 85,
         expected_yield_notes: 'Heavy yields of 450-900 g pink beefsteak fruits; somewhat ribbed; exceptional flavor; consistent performer in tastings',
+      },
+    },
+    projected: [
+      { facet: 'determinacy', slug: 'indeterminate', label: 'Indeterminate' },
+      { facet: 'type', slug: 'tomato', label: 'Tomato' },
+      { facet: 'lifecycle', slug: 'tender_perennial', label: 'Tender Perennial' },
+    ],
+  },
+  rosso: {
+    planting: {
+      id: 'pl-rosso', name: 'Rosso Sicilian', status: 'harvested',
+      sown_at: null, sown_at_approx: null, germinated_at: null,
+      transplanted_at: '2026-06-07', planted_out_at: null, acquired_mature: null,
+      created_at: '2026-06-07T05:22:01.336299+00:00',
+      variety_ref: {
+        name: 'Rosa Sicilian', genus: 'Solanum', species: 'lycopersicum', crop_type_slug: 'tomato',
+        lifecycle: 'tender_perennial', dtm_basis: 'from-transplant', default_unit: 'count', harvest_habit: 'repeat',
+        growth_habit: 'indeterminate vine (semi-determinate per some sources); deeply ribbed costoluto-type; 5-6 ft; stake or cage required',
+        scoville_min: null, scoville_max: null, scoville_source: null, breeding_system: 'open_pollinated',
+        sun_requirements: 'full_sun', days_to_maturity_min: 75, days_to_maturity_max: 85,
+        expected_yield_notes: 'Small deeply ribbed red costoluto fruits ~115-170 g; excellent for sauce and roasting; thick flavorful flesh',
       },
     },
     projected: [
