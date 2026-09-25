@@ -100,12 +100,23 @@ const OVERLAY = [
   { id: 'search>location@focus-noscroll', src: 'deep', door: 'search', target: 'location', depth: 3000, focusNoScroll: true },
   { id: 'search-closed-then-row>event@rich', src: 'deep', door: 'row', target: 'event', depth: 3000, event: 'rich', preOverlay: true },
 ]
+// What makes Back into an ASYNC page with no restore hook (Locations) keep its place today: Chrome's
+// history restore, or the push's still-pending anchor adjustment? (1) anchoring off; (2) an arriving page
+// TALL enough to satisfy the carried adjustment, so nothing is left pending when Back fires.
+const BACKCHECK = [
+  { id: 'locations-row>location@anchor-none', src: 'locations', door: 'locrow', target: 'location', locId: 'loc-blueberry-hedge', anchorNone: true },
+  { id: 'locations-more>achievements', src: 'locations', door: 'more', target: 'achievements', locId: 'loc-blueberry-hedge' },
+  { id: 'locations-more>dashboard', src: 'locations', door: 'more', target: 'dashboard', locId: 'loc-blueberry-hedge' },
+]
 const withReset = (flows, reset) => flows.filter((f) => !f.anchorNone && !f.lockOff && !f.focusNoScroll).map((f) => ({ ...f, id: `${f.id}@reset-${reset}`, reset }))
 const FLOWS = [
   ...(SETS.has('base') ? BASE : []),
   ...(SETS.has('rich') ? RICH : []),
   ...(SETS.has('overlay') ? OVERLAY : []),
+  ...(SETS.has('backcheck') ? BACKCHECK : []),
   ...(SETS.has('reset-entry') ? withReset([...BASE, ...RICH, ...OVERLAY], 'entry') : []),
+  ...(SETS.has('backcheck-reset') ? withReset(BACKCHECK, 'entry') : []),
+  ...(SETS.has('reset-both') ? withReset([...BASE, ...RICH, ...OVERLAY, ...BACKCHECK], 'both') : []),
   ...(SETS.has('reset-location') ? withReset(OVERLAY, 'location') : []),
 ]
 
@@ -448,7 +459,7 @@ try {
       console.log(`    frames: ${compactSamples(r.samples)}`)
       continue
     }
-    console.log(`[detailscroll] ${flow.id}: before y${R(b.y)} (doc ${b.docH})${r.underSheet ? ` → under Search y${R(r.underSheet.y)}` : ''} → landed y${R(a.y)} of max ${R(a.max)} (doc ${a.docH}); h1 ${a.h1 ? `@${a.h1.top}` : 'none'} ${a.h1InBand ? 'IN band' : a.h1Visible ? 'partly visible' : 'NOT visible'}; top of view: ${a.top ? `${a.top.tag}${a.top.testid ? `[${a.top.testid}]` : ''} "${a.top.text}"` : 'n/a'}; newEntry ${r.newEntry}; script scrolls ${r.calls.length ? JSON.stringify(r.calls) : 'none'} · Back y${R(k.y)} (${k.sameKey ? 'same key' : 'OTHER KEY'}${k.overlayOpen ? ', Search re-opened' : ''}), door top ${b.doorTop}→${k.doorTop}${k.calls.length ? `, Back script scrolls ${JSON.stringify(k.calls)}` : ''}${extras}`)
+    console.log(`[detailscroll] ${flow.id}: before y${R(b.y)} (doc ${b.docH})${r.underSheet ? ` → under Search y${R(r.underSheet.y)}` : ''} → landed y${R(a.y)} of max ${R(a.max)} (doc ${a.docH}); h1 ${a.h1 ? `@${a.h1.top}` : 'none'} ${a.h1InBand ? 'IN band' : a.h1Visible ? 'partly visible' : 'NOT visible'}; top of view: ${a.top ? `${a.top.tag}${a.top.testid ? `[${a.top.testid}]` : ''} "${a.top.text}"` : 'n/a'}; newEntry ${r.newEntry}; script scrolls ${r.calls.length ? JSON.stringify(r.calls) : 'none'} · Back y${R(k.y)} (${k.sameKey ? 'same key' : 'OTHER KEY'}${k.overlayOpen ? ', Search re-opened' : ''}), door top ${b.doorTop}→${k.doorTop}${k.calls.length ? `, Back script scrolls ×${k.calls.length} ${JSON.stringify(k.calls.slice(0, 2))}` : ''}${extras}`)
     console.log(`    frames: ${compactSamples(r.samples)}`)
     console.log(`    Back frames: ${compactSamples(k.samples)}`)
   }

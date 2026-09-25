@@ -44,6 +44,9 @@
 //                    window.scrollTo(0, 0) when the PAGE's history entry changes by PUSH/REPLACE (the page
 //                    entry is the overlay's background while one is open — pageEntry.js's rule), never on POP
 //     reset=location the naive variant: the same reset keyed on the REAL location's key (ignores overlays)
+//     reset=both     reset=entry PLUS an app-level restore on POP: the offset is filed per page entry while
+//                    that entry is current, and a POP re-applies it with a per-frame retry until reached (the
+//                    Garden.jsx restore-driver idea), history.scrollRestoration = 'manual'
 //
 // THE OVERLAY: header Search is a real OverlayLink to /search, hosted by a copy of App.jsx's OverlayHost in
 // the overlay tree (seedsscroll.jsx's copy); only the Search page inside it is a stand-in, whose result
@@ -82,7 +85,7 @@ const MS = Number(q.get('ms') ?? 300)
 const ANCHOR_NONE = q.get('anchor') === 'none'
 const LOC_PHOTOS = Number(q.get('locphotos') ?? 12)
 const EVENT_RICH = q.get('event') === 'rich'
-const RESET = ['entry', 'location'].includes(q.get('reset')) ? q.get('reset') : ''
+const RESET = ['entry', 'location', 'both'].includes(q.get('reset')) ? q.get('reset') : ''
 // MECHANISM CHECK (?lock=off): neutralise Sheet's body scroll-lock (its inline overflow:hidden loses to an
 // !important rule), to test whether releasing the lock in the same commit as a page swap drops the carry.
 const LOCK_OFF = q.get('lock') === 'off'
@@ -362,16 +365,40 @@ function SearchStandIn() {
 // MECHANISM CHECK (?reset=entry|location), off in a plain run. `entry` is pageEntry.js's rule
 // (cbacf94d:src/lib/pageEntry.js locationEntryKey, copied): the page tree's location — the overlay's
 // background while one is open — answers with the entry it continues when stamped, else its own key.
+const savedByEntry = new Map()
+const currentEntry = { key: null }
+if (RESET === 'both') {
+  try { window.history.scrollRestoration = 'manual' } catch { /* ignore */ }
+  window.addEventListener('scroll', () => { if (currentEntry.key) savedByEntry.set(currentEntry.key, window.scrollY) }, { passive: true })
+}
+// Re-apply `target` every frame until it holds, the user takes over, or 4s pass (Garden.jsx's driver shape).
+function driveRestore(target) {
+  let cancelled = false
+  const t0 = performance.now()
+  const stop = () => { cancelled = true }
+  const opts = { passive: true, once: true }
+  window.addEventListener('wheel', stop, opts)
+  window.addEventListener('touchstart', stop, opts)
+  window.addEventListener('keydown', stop, opts)
+  const tick = () => {
+    if (cancelled) return
+    window.scrollTo(0, target)
+    if (Math.abs(window.scrollY - target) < 1 && performance.now() - t0 > 600) return
+    if (performance.now() - t0 < 4000) requestAnimationFrame(tick)
+  }
+  tick()
+}
 function useHarnessReset(pageLocation) {
   const real = useLocation()
   const navType = useNavigationType()
-  const entry = RESET === 'entry' ? ((pageLocation.state && pageLocation.state.continuesEntry) || pageLocation.key)
+  const entry = RESET === 'entry' || RESET === 'both' ? ((pageLocation.state && pageLocation.state.continuesEntry) || pageLocation.key)
     : RESET === 'location' ? real.key : null
   const last = useRef(entry)
   useLayoutEffect(() => {
-    if (!RESET || entry === last.current) return
+    if (!RESET || entry === last.current) { currentEntry.key = entry; return }
     last.current = entry
-    if (navType === 'POP') return
+    currentEntry.key = entry
+    if (navType === 'POP') { if (RESET === 'both') driveRestore(savedByEntry.get(entry) ?? 0); return }
     window.scrollTo(0, 0)
   }, [entry, navType])
 }
