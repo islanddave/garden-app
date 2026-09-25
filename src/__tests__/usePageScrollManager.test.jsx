@@ -16,7 +16,7 @@ import { BrowserRouter, Routes, Route, Link, useNavigate, useNavigationType } fr
 import { OverlayProvider, useOverlay, OverlayLink, useOverlayDismiss } from '../context/OverlayContext.jsx'
 import {
   usePageScrollManager, PageScrollProvider, useClaimPageScroll, usePageScrollReturn, usePageScrollReturnAtMount,
-  currentPageEntry,
+  currentPageEntry, applyBrowserScrollRestoration,
 } from '../hooks/usePageScrollManager.js'
 import { readPageScroll, PAGE_SCROLL_STORE_KEY, RESTORE_HOLD_MS, RESTORE_BUDGET_MS } from '../lib/pageScroll.js'
 import { MARKER_KEY, MARKER_VERSION } from '../lib/backNav.js'
@@ -449,7 +449,9 @@ describe('StrictMode (main.jsx renders under it in dev)', () => {
     sessionStorage.setItem(PAGE_SCROLL_STORE_KEY, JSON.stringify({ '/list|kBoot': 900 }))
     maxScroll = 50
     mount({}, { strict: true })
-    expect(decisions.filter((d) => d.row === '1')).toHaveLength(1)
+    // ONE decision for the one commit: StrictMode's second run of the effect decides nothing at all.
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]).toMatchObject({ row: '1', action: 'RESTORE', y: 900 })
     expect(scrollCalls).toEqual([900])                // one arming
     maxScroll = 2481
     frames(Math.ceil(RESTORE_HOLD_MS / 16) + 3)
@@ -457,13 +459,15 @@ describe('StrictMode (main.jsx renders under it in dev)', () => {
     expect(pending()).toBe(0)
   })
 
-  it('a push under StrictMode is one reset', () => {
+  it('a push under StrictMode is one reset and one decision', () => {
     mount({}, { strict: true })
     go('/list')
     scrollPage(800)
     scrollCalls = []
+    decisions = []
     go('/detail/1')
     expect(scrollCalls).toEqual([0])
+    expect(decisions).toHaveLength(1)
   })
 })
 
@@ -517,20 +521,52 @@ describe('static guards', () => {
     }
   })
 
-  it('main.jsx sets history.scrollRestoration before createRoot, \'manual\' with the flag on and \'auto\' with it off', () => {
+  it('main.jsx sets the browser\'s scroll restoration from the flag, once, before createRoot', () => {
     const m = code('main.jsx')
-    const set = m.indexOf("window.history.scrollRestoration = SCROLL_MANAGER_ENABLED ? 'manual' : 'auto'")
+    const set = m.indexOf('applyBrowserScrollRestoration(SCROLL_MANAGER_ENABLED)')
     expect(set).toBeGreaterThan(-1)
     expect(set).toBeLessThan(m.indexOf('createRoot('))
-    expect(m).toMatch(/'scrollRestoration' in window\.history/)
-    // Never flipped back while the flag is on: that one assignment is the only write.
-    expect(m.match(/scrollRestoration\s*=/g)).toHaveLength(1)
+    expect(m.match(/applyBrowserScrollRestoration\(/g)).toHaveLength(1)
+    // The one write in the app: nothing else flips it (react-router's <ScrollRestoration> flips it on pagehide).
+    const writers = []
+    const walk = (dir) => {
+      for (const n of readdirSync(dir, { withFileTypes: true })) {
+        const p = resolve(dir, n.name)
+        if (n.isDirectory()) { if (n.name !== '__tests__') walk(p) } else if (/\.(jsx?|tsx?)$/.test(n.name) && /scrollRestoration\s*=/.test(readFileSync(p, 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n'))) writers.push(p.slice(p.indexOf('/src/') + 1))
+      }
+    }
+    walk(resolve(__dirname, '..'))
+    expect(writers).toEqual(['src/hooks/usePageScrollManager.js'])
+  })
+
+  it('applyBrowserScrollRestoration: \'manual\' with the flag on, \'auto\' with it off, and a no-op where the browser has no such property', () => {
+    const had = Object.getOwnPropertyDescriptor(window.history, 'scrollRestoration')
+    try {
+      Object.defineProperty(window.history, 'scrollRestoration', { configurable: true, writable: true, value: 'auto' })
+      applyBrowserScrollRestoration(true)
+      expect(window.history.scrollRestoration).toBe('manual')
+      applyBrowserScrollRestoration(false)
+      expect(window.history.scrollRestoration).toBe('auto')
+      delete window.history.scrollRestoration
+      expect('scrollRestoration' in window.history).toBe(false)
+      expect(() => applyBrowserScrollRestoration(true)).not.toThrow()
+      expect('scrollRestoration' in window.history).toBe(false)
+    } finally {
+      delete window.history.scrollRestoration
+      if (had) Object.defineProperty(window.history, 'scrollRestoration', had)
+    }
   })
 
   it('AppShell calls the manager with the page tree\'s location and wraps the shell in its provider', () => {
     const a = code('App.jsx')
     expect(a).toMatch(/usePageScrollManager\(\{ pageLocation, location: overlayLocation, navigationType, ready: !loading \}\)/)
     expect(a).toMatch(/<PageScrollProvider value=\{pageScroll\}>/)
+  })
+
+  it('PlantingDetail\'s and InventoryDetail\'s own resets run only with the manager off (they come back on rollback)', () => {
+    // PlantingDetail's fired on POP too, which is why Back to its Event log landed at the top (4658 → 0).
+    expect(code('pages/PlantingDetail.jsx')).toMatch(/useEffect\(\(\) => \{ if \(!SCROLL_MANAGER_ENABLED\) window\.scrollTo\(0, 0\) \}, \[plantingId\]\)/)
+    expect(code('pages/InventoryDetail.jsx')).toMatch(/\n\s+if \(!SCROLL_MANAGER_ENABLED\) window\.scrollTo\(0, 0\)\n/)
   })
 
   it('no page scrolls itself to the top outside the allow-list: the manager owns the reset', () => {

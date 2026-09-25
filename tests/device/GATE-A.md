@@ -103,12 +103,12 @@ Try **both** ways on **both** of these:
 
 ## Step 5 — Can you still scroll? (check after every step above)
 
-After each of steps 1–4 and 6, just try scrolling the page up and down.
+After each of steps 1–4, 6 and 7, just try scrolling the page up and down.
 
 **PASS if:** it scrolls normally.
-**FAIL if:** the page is frozen and won't scroll. This is the one problem with no way out inside the app — you'd have to force-close it. That's exactly why it gets checked five times instead of once.
+**FAIL if:** the page is frozen and won't scroll. This is the one problem with no way out inside the app — you'd have to force-close it. That's exactly why it gets checked after every step instead of once.
 
-☐ after 1 ☐ after 2 ☐ after 3 ☐ after 4 ☐ after 6 — notes: _____________________
+☐ after 1 ☐ after 2 ☐ after 3 ☐ after 4 ☐ after 6 ☐ after 7 — notes: _____________________
 
 ---
 
@@ -136,6 +136,23 @@ The next three check the follow-up fix (BUG-OVERLAYRELOADKEY-001): coming **Back
   **PASS / FAIL** as 6g. ☐ PASS ☐ FAIL
 
 *Not on this list on purpose:* a double tap on **✕** is checked by machine (gate:seeds-scroll flow g), because on a phone a second tap can land on the page under it.
+
+Notes: ______________________________________________
+
+---
+
+## Step 7 — Pages open at the top, Back keeps your place (BUG-DETAILPAGESCARRYSCROLL-001)
+
+Before this fix, a page you opened from a long, scrolled list often opened part-way down, usually near its bottom, and you had to scroll up to see what it was. Do Step 0 first: an older copy of the app still does the old thing.
+
+- **7a.** Go to **More → Zones** and scroll down until the last few rows are on screen. Tap a place near the bottom.
+  **PASS if:** the place's page opens with its name at the top of the screen, and **Back** returns you to the same row of the list. **FAIL if:** the page opens part-way down, or Back lands somewhere else in the list. ☐ PASS ☐ FAIL
+- **7b.** Open a planting that has a long **Event log**, scroll well down the log, and tap one of its events.
+  **PASS if:** the event opens at its top, and **Back** puts you on the same event in the log. **FAIL if:** Back lands at the top of the planting. (That used to happen every time.) ☐ PASS ☐ FAIL
+- **7c.** Scroll well down your **Garden**, tap the **Today** tab, then tap the **Garden** tab again.
+  **PASS if:** Garden comes back where you left it. ☐ PASS ☐ FAIL
+- **7d.** Somewhere with weak signal, repeat **7a**, and right after pressing **Back** put the phone in your pocket for about 30 seconds. Take it out.
+  **PASS if:** the list is at the row you tapped. **FAIL if:** it is at the top or near it. ☐ PASS ☐ FAIL ☐ no weak signal handy
 
 Notes: ______________________________________________
 

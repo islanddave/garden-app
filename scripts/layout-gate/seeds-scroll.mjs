@@ -160,6 +160,10 @@ function harnessCopyDrift() {
   if (!shell || !managerCall.test(shell[0]) || !managerProvider.test(shell[0])) out.push('src/App.jsx AppShell no longer calls usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, ready }) and wraps the shell in <PageScrollProvider value={pageScroll}> — update tests/harness/seedsscroll.jsx to match, or it models a shell prod no longer has')
   const harness = src('tests/harness/seedsscroll.jsx')
   if (!/from '\.\.\/\.\.\/src\/hooks\/usePageScrollManager\.js'/.test(harness) || !managerCall.test(harness) || !managerProvider.test(harness)) out.push('tests/harness/seedsscroll.jsx no longer mounts the REAL page-scroll manager the way AppShell does — flows a to k would run without the app-level reset and restore')
+  // main.jsx's boot line: the browser's restore mode ('manual' with the manager on). Without the same call the
+  // harness runs Chrome's native restore, which prod does not.
+  const bootCall = /\napplyBrowserScrollRestoration\(SCROLL_MANAGER_ENABLED\)\n/
+  if (!bootCall.test(src('src/main.jsx')) || !bootCall.test(harness)) out.push('src/main.jsx and tests/harness/seedsscroll.jsx no longer both set the browser\'s restore mode with applyBrowserScrollRestoration(SCROLL_MANAGER_ENABLED) — the gate would measure a browser mode prod does not run')
   // The planting stand-in copies PlantingDetail's reset, which the manager's flag gates; the two must agree.
   const gatedReset = /useEffect\(\(\) => \{ if \(!SCROLL_MANAGER_ENABLED\) window\.scrollTo\(0, 0\) \}, \[plantingId\]\)/
   if (!gatedReset.test(src('src/pages/PlantingDetail.jsx')) || !gatedReset.test(harness)) out.push('PlantingDetail\'s [plantingId] reset and the harness planting stand-in no longer gate on SCROLL_MANAGER_ENABLED the same way — flow b\'s Back would run against a reset the app no longer has')
@@ -517,6 +521,12 @@ async function runFlow(cdp, flow, vw, vh) {
     if (g.frame.r > g.host.w || g.frame.b > g.host.h) geo.push(`the frame (${g.frame.r}x${g.frame.b}) does not fit the ${g.host.w}x${g.host.h} host window — taps outside it go nowhere`)
     if (g.top !== TOP_CHROME_PX) geo.push(`the top-bar stand-in is ${g.top}px, expected TopChrome's BAR_H ${TOP_CHROME_PX}px`)
     if (g.nav !== BOTTOM_NAV_HEIGHT_PX) geo.push(`the bottom-nav stand-in is ${g.nav}px, expected BOTTOM_NAV_HEIGHT_PX ${BOTTOM_NAV_HEIGHT_PX}px`)
+    // BUG-DETAILPAGESCARRYSCROLL-001: the browser's restore mode is the one main.jsx sets for the flag this
+    // document was served ('manual' with the page-scroll manager on) — any other mode is a browser prod does
+    // not run.
+    const mgr = await t.read(`return w.__h.manager ? w.__h.manager() : null`)
+    if (!mgr) geo.push('the harness does not report the page-scroll manager\'s flag and mode')
+    else if (mgr.mode !== (mgr.enabled ? 'manual' : 'auto')) geo.push(`history.scrollRestoration is '${mgr.mode}', but with SCROLL_MANAGER_ENABLED=${mgr.enabled} main.jsx sets '${mgr.enabled ? 'manual' : 'auto'}'`)
     if (geo.length) return fail(`${at}: ${geo.join('; ')}`)
 
     // ── Into the Seeds page: a real tap on the /today stand-in's link, a PUSH.

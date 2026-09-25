@@ -7,19 +7,12 @@ import { requestPersistence } from './lib/durableStorage.js'
 import { warmApiOrigins } from './lib/warmOrigins.js'
 import { iconCssVars } from './lib/tokens.js'
 import { SCROLL_MANAGER_ENABLED } from './lib/featureFlags.js'
+import { applyBrowserScrollRestoration } from './hooks/usePageScrollManager.js'
 
-// BUG-DETAILPAGESCARRYSCROLL-001 — the browser's own scroll restoration, set ONCE, here, before createRoot.
-// The mode belongs to each history entry and pushState/replaceState copy the active entry's mode into the
-// new one (HTML spec), so setting it before BrowserRouter's boot replaceState makes every entry this bundle
-// writes 'manual': the app's page-scroll manager (src/hooks/usePageScrollManager.js) restores instead,
-// because Chrome's restore cannot hold an offset on a page whose content lands after the traversal. NEVER
-// flipped back to 'auto' while the flag is on — not on pagehide as react-router's <ScrollRestoration> does:
-// a discard fires no pagehide, and after a bfcache restore it would leave 'auto' for every later push to
-// copy. With the flag OFF this writes 'auto', because the mode survives a reload: an off bundle booting on
-// an entry an on bundle marked 'manual' must put the browser's restore back.
-try {
-  if ('scrollRestoration' in window.history) window.history.scrollRestoration = SCROLL_MANAGER_ENABLED ? 'manual' : 'auto'
-} catch { /* an opaque or locked-down history: the manager still resets and restores */ }
+// BUG-DETAILPAGESCARRYSCROLL-001 — the browser's own scroll restoration, set ONCE, here, before createRoot
+// (and so before BrowserRouter writes its first entry): 'manual' with the page-scroll manager on, 'auto'
+// with it off. Why each, and why it is never flipped back: applyBrowserScrollRestoration's note.
+applyBrowserScrollRestoration(SCROLL_MANAGER_ENABLED)
 
 const globalStyle = document.createElement('style')
 globalStyle.textContent = `

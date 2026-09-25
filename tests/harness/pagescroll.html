@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Viewport copied from ./index.html for the same reason it is copied there. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Page scroll: a page opens at its top, Back returns to the place (real history, real scroll) — gate:page-scroll</title>
+    <!-- No verdict bar: this entry is framed by viewport.html and driven by scripts/layout-gate/page-scroll.mjs,
+         and a fixed bar over the app's own top chrome would sit inside the band the gate measures. -->
+    <style>html, body { margin: 0; padding: 0; background: #faf8f3; }</style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/tests/harness/pagescroll.jsx"></script>
+  </body>
+</html>

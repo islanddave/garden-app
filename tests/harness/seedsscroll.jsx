@@ -87,7 +87,7 @@ import {
 // BUG-DETAILPAGESCARRYSCROLL-001 (rimpact-scrollmanager IMPORTANT-1) — AppShell's page-scroll manager, the
 // REAL module, called exactly as App.jsx calls it; the drift guard in scripts/layout-gate/seeds-scroll.mjs
 // fails if either side stops. Without it this gate would prove a shell prod no longer has.
-import { usePageScrollManager, PageScrollProvider } from '../../src/hooks/usePageScrollManager.js'
+import { usePageScrollManager, PageScrollProvider, applyBrowserScrollRestoration } from '../../src/hooks/usePageScrollManager.js'
 import { SCROLL_MANAGER_ENABLED } from '../../src/lib/featureFlags.js'
 import Sheet from '../../src/components/forms/Sheet.jsx'
 import SheetRowLink from '../../src/components/SheetRowLink.jsx'
@@ -95,6 +95,10 @@ import ErrorBoundary from '../../src/components/ErrorBoundary.jsx'
 import Seeds from '../../src/pages/Seeds.jsx'
 import InventoryDetail from '../../src/pages/InventoryDetail.jsx'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
+
+// main.jsx's boot line, the real function: the browser's own scroll restoration as prod sets it ('manual' with
+// the page-scroll manager on). Without it this entry measures Chrome's native restore, which prod does not run.
+applyBrowserScrollRestoration(SCROLL_MANAGER_ENABLED)
 
 const q = new URLSearchParams(location.search)
 const TOP_CHROME_PX = Number(q.get('topbar') || 52)
@@ -386,5 +390,7 @@ window.__h = {
   reloadedDoc: () => !!RELOAD_TO,
   mark: () => { trace.length = 0; return true },
   trace: () => trace.slice(),
+  // The page-scroll manager's flag as this document was served it, and the mode the browser is in.
+  manager: () => ({ enabled: SCROLL_MANAGER_ENABLED, mode: (() => { try { return window.history.scrollRestoration } catch { return null } })() }),
   fixture: () => ({ rows: ROWS.length, lotId: RISTRA_ID, lotName: RISTRA.name, parent: 'pl-ristra', itemMs: ITEM_MS, rowsMs: ROWS_MS }),
 }

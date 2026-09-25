@@ -40,6 +40,21 @@ import {
 const ClaimContext = createContext(null)
 const ReturnContext = createContext(false)
 
+// The browser's own scroll restoration, set ONCE at boot, before createRoot (src/main.jsx; the real-Chrome
+// harnesses call it too, so the gates measure the mode prod runs in). The mode belongs to each history entry
+// and pushState/replaceState copy the active entry's mode into the new one (HTML spec), so setting it before
+// BrowserRouter's boot replaceState makes every entry this bundle writes 'manual': the manager restores,
+// because Chrome's restore cannot hold an offset on a page whose content lands after the traversal. NEVER
+// flipped back while the flag is on — not on pagehide as react-router's <ScrollRestoration> does: a discard
+// fires no pagehide, and after a bfcache restore it would leave 'auto' for every later push to copy. With the
+// flag OFF it writes 'auto', because the mode survives a reload: an off bundle booting on an entry an on
+// bundle marked 'manual' must put the browser's restore back.
+export function applyBrowserScrollRestoration(enabled = SCROLL_MANAGER_ENABLED) {
+  try {
+    if ('scrollRestoration' in window.history) window.history.scrollRestoration = enabled ? 'manual' : 'auto'
+  } catch { /* an opaque or locked-down history: the manager still resets and restores */ }
+}
+
 function historyState() {
   try { return window.history.state } catch { return null }
 }
