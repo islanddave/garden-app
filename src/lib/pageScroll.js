@@ -36,6 +36,10 @@ export const RESTORE_BUDGET_MS = 15000
 // after a resume would otherwise spend the whole gap at once — a pocketed phone would come back to a
 // restore that had already given up.
 export const RESTORE_DT_CAP_MS = 100
+// The budget above starts only once the user is resolved (Protected's skeleton holds the page for ~2.5 s at
+// a cold start). This bounds the wait itself, in the same visible time: identity can stay 'unknown' for as
+// long as the IdentityUnavailable screen is up, and a restore must not spin a frame loop under it forever.
+export const RESTORE_WAIT_MAX_MS = 60000
 
 // The store key: the page's path AND its history entry. A document's first entry has no router key
 // ('default'), so without the path a keyless first entry in a later document of the same tab (a PWA
@@ -115,7 +119,7 @@ export function decidePageScroll({
 
 // A driver armed at `target` at time `now`.
 export function startDriver(target, now) {
-  return { target, visibleMs: 0, heldMs: 0, lastNow: Number.isFinite(now) ? now : null, lastHeight: null }
+  return { target, visibleMs: 0, waitedMs: 0, heldMs: 0, lastNow: Number.isFinite(now) ? now : null, lastHeight: null }
 }
 
 /**
@@ -130,7 +134,8 @@ export function startDriver(target, now) {
  * @param {{target:number, visibleMs:number, heldMs:number, lastNow:number|null, lastHeight:number|null}} s
  * @param {{now:number, y:number, height:number, ready?:boolean}} f
  *   ready — the user is resolved. Before that the page tree is Protected's skeleton, so no time counts:
- *   neither the budget nor the hold (a hold on a skeleton proves nothing).
+ *   neither the budget nor the hold (a hold on a skeleton proves nothing). The wait itself is capped at
+ *   RESTORE_WAIT_MAX_MS of visible time, ready or not.
  * @returns {{state:object, outcome:'RETRY'|'DONE'|'EXHAUSTED', scroll:boolean}}
  */
 export function driverStep(s, { now, y, height, ready = true }) {
@@ -142,12 +147,13 @@ export function driverStep(s, { now, y, height, ready = true }) {
   const dt = s.lastNow == null ? 0 : Math.min(Math.max(0, now - s.lastNow), RESTORE_DT_CAP_MS)
   const counted = ready ? dt : 0
   const visibleMs = s.visibleMs + counted
+  const waitedMs = (s.waitedMs || 0) + dt
   const at = Math.abs(y - s.target) <= RESTORE_TOLERANCE_PX
   const sameHeight = s.lastHeight == null || height === s.lastHeight
   const heldMs = at && sameHeight ? s.heldMs + counted : 0
-  const state = { ...s, visibleMs, heldMs, lastNow: now, lastHeight: height }
+  const state = { ...s, visibleMs, waitedMs, heldMs, lastNow: now, lastHeight: height }
   if (at && heldMs >= RESTORE_HOLD_MS) return { state, outcome: 'DONE', scroll: false }
-  if (visibleMs >= RESTORE_BUDGET_MS) return { state, outcome: 'EXHAUSTED', scroll: false }
+  if (visibleMs >= RESTORE_BUDGET_MS || waitedMs >= RESTORE_WAIT_MAX_MS) return { state, outcome: 'EXHAUSTED', scroll: false }
   return { state, outcome: 'RETRY', scroll: !at }
 }
 

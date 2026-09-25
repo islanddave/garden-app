@@ -574,6 +574,50 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-scroll
 
+      - name: Page scroll — a page opens at its top, Back returns to the place (BUG-DETAILPAGESCARRYSCROLL-001)
+        # BrowserRouter never resets scroll on a push: the arriving page paints a one-screen loading shell,
+        # Chrome clamps the old offset to it and SCROLL ANCHORING re-applies it once the content lands, so 9
+        # of 10 measured pages opened part-way down, most at their bottom. Today's "Back keeps my place" on
+        # those pages rides the same carry, so a reset alone breaks Back. The fix is ONE app-level manager
+        # (src/hooks/usePageScrollManager.js, decisions in src/lib/pageScroll.js, flag SCROLL_MANAGER_ENABLED):
+        # a reset when the page tree reaches a different page, a restore on POP that re-applies until the
+        # target holds, history.scrollRestoration 'manual'. jsdom has no clamp, no anchoring and no traversal
+        # timing; the unit suites pin the decisions (pageScroll.test.js) and the wiring
+        # (usePageScrollManager.test.jsx) with models.
+        # tests/harness/pagescroll.{html,jsx} mounts the real pages (a planting and its Event log, Zones and a
+        # zone, Garden, Put-Up, Seeds, a seed lot and the variety editor, Harvests, Achievements) under
+        # BrowserRouter in App.jsx's shell, with the REAL manager and main.jsx's real boot mode (the drift
+        # guard fails if either stops matching App.jsx), BottomNav's armed + and More sheets, header Search as
+        # a real OverlayLink, and a network that answers after a loading phase, framed by viewport.html at
+        # 426x836 and 360x640. Real taps (hit-tested in place), real wheel scrolling, history.back(). Every
+        # page a flow pushes onto must land at scrollY 0 with its title in the visible band, and every Back
+        # must land on the exact offset the page was left at, the tapped element at the same viewport top:
+        #   the Event log (two-stage load, 4658), Zones (1645) plain / 5 s slow / left mid-restore, More and
+        #   Search doors, Garden (Back from a planting, tab away and back at 1x and 4x CPU, "Add a planting"
+        #   on the same page), Put-Up's batch (a same-page push), the Seeds view switch and a list's sort (no
+        #   jump), Back into Saved seeds with the manager's store emptied and into Harvests at the top, a list
+        #   blanked behind Search / a Back marker and still short at the close (X, system Back, marker pop),
+        #   the seed lot's variety-editor round trip, an app reload, and 25 pages deep.
+        # It refuses a frame whose viewport, chrome, latency or restore mode is not the one asked for, a
+        # source less than 300px down, a tap that pushed no entry, and a Back onto any entry but the one the
+        # offset was taken on; the script's header lists each flow.
+        # Verified non-vacuous 2026-09-25 (Projects/Gardening/_seedstab12_20260925/scrollmgr-nonvacuity-*.txt
+        # in the gardening-docs repo; mutants served through GATE_HARNESS_CONFIG), each red at both viewports:
+        # the flag OFF reds 15 flows by name (pages land at 56, 188, 3000 or 52 instead of 0, most with the
+        # title off screen or under the top bar; the reload lands at 0 of 1645; the blanked list stays at 52
+        # of 3000) and leaves green the 6 that guard today's working
+        # behaviour (Garden Back and "Add a planting", Put-Up, the Seeds switch, both hook-page Backs); the
+        # pathname rule removed reds garden-add, seeds-switch and same-replace (a same-page write jumps to 0);
+        # the snapshot removed, or filing while covered, reds the three blanked-list closes (y52 of 3000);
+        # writes left open while armed reds leave-during-load; row 5's zero removed reds hook-top; a 4 s budget
+        # reds zones-slow. The "entry still current" write rule has no flow (its window is timing-dependent
+        # under 'manual') and is pinned by usePageScrollManager.test.jsx. `npm run gate:page-scroll:probe-nothing`
+        # exits 1 on every flow. ~5 min locally (21 flows, two viewports; 25-deep ~30 s, 5 s-slow ~18 s).
+        # NO continue-on-error, per the policy note above.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:page-scroll
+
       - name: Kitchen-batch close-out layout and band clearance (V5-KBCLOSE-001)
         # RE-WIRED 2026-09-07 after its first CI run went red and the finding was triaged to TWO
         # false positives in the pre-scroll census, both fixed in the gate rather than worked around:

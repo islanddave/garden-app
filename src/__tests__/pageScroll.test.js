@@ -8,6 +8,7 @@ import {
   decidePageScroll, startDriver, driverStep, pageScrollKey, readPageScroll, filePageScroll, flushPageScroll,
   __resetPageScrollStore, __pageScrollEntries,
   PAGE_SCROLL_STORE_KEY, PAGE_SCROLL_MAX_ENTRIES, RESTORE_HOLD_MS, RESTORE_BUDGET_MS, RESTORE_DT_CAP_MS,
+  RESTORE_WAIT_MAX_MS,
 } from '../lib/pageScroll.js'
 
 // A navigation, spelled the way the manager sees it. K = the page entry, P = its path.
@@ -231,6 +232,14 @@ describe('driverStep — the budget is VISIBLE time', () => {
     const { out, last } = run(1645, f, { ready: (now) => now >= 20000 })
     expect(last.outcome).toBe('DONE')
     expect(out.length * 16).toBeGreaterThan(20000)
+  })
+
+  it('the wait for the user is bounded too: identity unresolved for a minute (the IdentityUnavailable screen) → EXHAUSTED, not an endless frame loop', () => {
+    const { last, out } = run(1645, frames(5000, { y: 50, h: 900 }), { ready: () => false })
+    expect(last.outcome).toBe('EXHAUSTED')
+    expect(out.length * 16).toBeGreaterThanOrEqual(RESTORE_WAIT_MAX_MS)
+    expect(out.length * 16).toBeLessThan(RESTORE_WAIT_MAX_MS + 32)
+    expect(last.state.visibleMs).toBe(0)                // none of it was the restore's own budget
   })
 
   it('a non-finite reading stops the driver (EXHAUSTED) instead of looping on garbage', () => {

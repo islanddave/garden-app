@@ -32,8 +32,10 @@
 //   leave-during-load  as zones with every GET 3 s slow, but away by a tab WHILE the Back is still loading, then
 //                 Back again: the restore's clamped attempts were never filed (rimpact IMPORTANT-3).
 //   more          a long list, deep → More → Achievements (a REPLACE into the Back marker's slot) → Back. Its
-//                 Back frames also carry the 'manual' check: until the path changes, the outgoing page must
-//                 not move (with 'auto' Chrome applies the popped offset to the still-mounted page first).
+//                 Back frames are sampled for the outgoing page moving before the path changes (with 'auto'
+//                 Chrome applies the popped offset to the still-mounted page first). BEST-EFFORT: in this
+//                 harness React swaps the page before the first sampled frame, and the line says so when it
+//                 does; what pins 'manual' is the instrument check (the frame's mode must be main.jsx's).
 //   search        a long list, deep → header Search → a result (a push out of the overlay) → Back: Search
 //                 re-opens over the list AT its place → the X → still there.
 //   garden-back   Garden, deep → a planting → Back → Garden at its spot (Garden restores itself).
@@ -75,9 +77,11 @@
 // measured; the reload flow's own reload is the one exception, checked for instead). A selector that matched
 // nothing is a FAILURE. `--probe-nothing` points every app testid at one nothing renders; it MUST exit 1.
 //
-// NON-VACUITY: see ci.yml's gate:page-scroll step and Projects/Gardening/_seedstab12_20260925/
-// scrollmgr-nonvacuity-*.txt: the flag off reds the new flows by name, and each write rule, the snapshot and
-// the pathname rule removed in turn (GATE_HARNESS_CONFIG) reds its named flow.
+// NON-VACUITY (Projects/Gardening/_seedstab12_20260925/scrollmgr-nonvacuity-*.txt, mutants served through
+// GATE_HARNESS_CONFIG=scrollmgr-mutant.config.mjs; ci.yml's step lists which flow each one reds). One rule has
+// no flow here: "file only while the entry is still the page's" guards scroll events between a history change
+// and the commit, which under 'manual' come only from a user scroll during a pending transition or a native
+// restore of an entry still in 'auto' — timing-dependent, so it is pinned by usePageScrollManager.test.jsx.
 //
 // SEAMS (never set in CI; a run with any of them set says so in its first lines, so it cannot pass for clean):
 //   HARNESS_BASELINE_SHA — serve src/** from a git object (tests/harness/baselinePlugin.mjs).
