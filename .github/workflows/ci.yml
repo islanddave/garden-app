@@ -641,9 +641,11 @@ jobs:
         # jsdom has no layout engine, so the unit suite cannot see a list that is present and takes no
         # space: height:0 + overflow:hidden on CareNeeded's row panel hid 70 care rows (73% of the
         # page) and 9,239 of 9,241 unit tests stayed green (2026-09-08). This drives the REAL Today page
-        # in real Chrome at Dave's handset viewport (426x836 @ DPR 3, self-reported by the page) in four
-        # states (busyfull, busy, quiet, noplan) on prod-derived, scrubbed fixtures, with the clock
-        # pinned, the timezone forced and Open-Meteo stubbed at the wire. It asserts that every care row
+        # in real Chrome at Dave's handset viewport (426x836 @ DPR 3, self-reported by the page) in five
+        # states (busyfull, busy, quiet, noplan, and storage: a week later, inside the sweet-potato
+        # check window with jars due, the only state where StorageDeadlineAlert and the use-soon band
+        # render) on prod-derived, scrubbed fixtures, with each state's clock pinned, the timezone
+        # forced and Open-Meteo stubbed at the wire. It asserts that every care row
         # and expanded panel is visible after its clipping ancestors; exact row, group, panel, control
         # and region counts; floors before ceilings (scroll height, content bottom, ink, controls);
         # region order by measured position (a CSS reorder passes DOM order); and no sideways scroll.
@@ -658,10 +660,10 @@ jobs:
         # measured to move no box), and a budget recorded in another font build.
         #
         # Verified non-vacuous 2026-09-25 on the Roboto budget: `npm run mutate:today-shape` turns it
-        # red on all 24 mutants, each on >=2 independent killers (clipRowPanel, the zero-height panel,
+        # red on all 26 mutants, each on >=2 independent killers (clipRowPanel, the zero-height panel,
         # among them), and `npm run gate:today-shape:probe-nothing` exits 1. The matrix stays out of CI
         # (~5 min); run it after any change to the gate, its anchors, the fixtures, the font or Today's
-        # composition. NO continue-on-error, per the policy note above. ~15 s locally.
+        # composition. NO continue-on-error, per the policy note above. ~17 s locally.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:today-shape
