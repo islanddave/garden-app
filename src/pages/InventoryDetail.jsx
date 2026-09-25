@@ -153,8 +153,10 @@ export default function InventoryDetail() {
     arrivalSectionRef.current = lotSectionFromHistory()
   }, [id])
   // Every later commit files the current key too, AFTER the decision above so it never pre-empts one. An
-  // overlay over this page (header Search, /log) closed by its Close, backdrop or Escape REPLACES the entry
-  // (useOverlayDismiss) without remounting the page, and a Back onto that new key is a return, not a door.
+  // overlay over this page (header Search, /log) closed by its Close, backdrop or Escape walks back to this
+  // entry when it can prove where it is, and otherwise REPLACES the entry (useOverlayDismiss /
+  // planOverlayClose: an overlay opened before an update or a reload) without remounting the page, and a
+  // Back onto that new key is a return, not a door.
   // Only while the entry still shows THIS lot: BrowserRouter commits a route inside a transition, after the
   // push has already written the next entry, so a commit landing in between would otherwise file the next
   // lot's key and its arrival would read as a return (the lot opening at its form again).

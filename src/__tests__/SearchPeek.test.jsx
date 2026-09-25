@@ -201,8 +201,9 @@ function StackProbe() {
 const depth = () => Number(screen.getByTestId('depth').textContent)
 
 // Every committed navigation, in order. This is how "closes ONCE, not twice" is made falsifiable:
-// dismiss is a REPLACE to the background, so a second close would land on the same URL and be
-// invisible to a location assertion — but it cannot hide from the length of this log.
+// dismiss lands on the background's URL (since BUG-OVERLAYDISMISSREKEY-001 by walking back to its own
+// entry, two steps from a peek; by replace when that cannot be proven), so a second close would land on
+// the same URL and be invisible to a location assertion — but it cannot hide from the length of this log.
 const navLog = []
 function NavLog() {
   const loc = useLocation()
@@ -347,6 +348,11 @@ describe('§peek sheet — depth-1 and Android Back (real Sheet + registry + his
     // ONE navigation, not two. A peek-level dismiss handler firing alongside the sheet's would
     // append a second entry here (…, '/search?q=cherokee', '/today') for the same single keypress.
     expect(navLog).toEqual(['/today', '/search', '/search?q=cherokee&peek=p1', '/today'])
+    // BUG-OVERLAYDISMISSREKEY-001: the close WALKED two entries back onto the tab's own entry — the floor
+    // sentinel — rather than replacing the peek with a new copy of /today (which would carry no __floor,
+    // and whose next Back would re-open Search). The peek's background came through useOverlaySwap, so
+    // this also pins that the swap carries historyEntry forward.
+    expect(atFloor()).toBe(true)
   })
 
   it('Open full details leaves the flyover for the full page (background dropped)', async () => {
