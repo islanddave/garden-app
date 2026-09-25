@@ -49,6 +49,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
 import { pageEntryKey } from '../lib/pageEntry.js'
+import { useClaimPageScroll, currentPageEntry } from './usePageScrollManager.js'
 
 const STORE_KEY = 'garden.scrollRestore.v1'
 // Deep enough to cover any realistic back-stack in one session, small enough that the JSON written
@@ -150,6 +151,14 @@ export default function useScrollRestore({ id, ready, stateAtTop = false }) {
   const targetY = saved && Number.isFinite(saved.y) ? saved.y : 0
   const armed = hasRestoreTarget(targetY)
 
+  // BUG-DETAILPAGESCARRYSCROLL-001 — ownership is PER ENTRY (rimpact-scrollmanager IMPORTANT-4). This mount
+  // claims its entry from the app-level page-scroll manager only when it holds a saved value for it; then
+  // the manager zeroes the scroll once in the POP commit and leaves the restore to the loop below. With no
+  // saved value — a fresh push, an entry this hook stopped writing after a same-page re-key — the manager
+  // restores instead, so no entry is left with no owner. Inert outside the manager's provider.
+  const [claimEntry] = useState(() => (saved ? currentPageEntry() : null))
+  useClaimPageScroll(claimEntry)
+
   const stateRef = useRef(saved ? saved.s : undefined)
   // WRITES ARE CLOSED UNTIL THE RESTORE RESOLVES. Otherwise the mount's own scrollY of 0 — or a
   // clamped intermediate offset from our own scrollTo — overwrites the very target we are trying to
@@ -194,13 +203,20 @@ export default function useScrollRestore({ id, ready, stateAtTop = false }) {
   useEffect(() => {
     const onScroll = () => write()
     const onHide = () => { write(); flush() }
+    const onVisibility = () => { if (document.visibilityState === 'hidden') onHide() }
     window.addEventListener('scroll', onScroll, { passive: true })
     // pagehide, not unload: an installed PWA is frozen/discarded rather than unloaded, and unmount
-    // alone does not fire when Chrome tears the document down.
+    // alone does not fire when Chrome tears the document down. And pagehide alone is not enough either
+    // (BUG-DETAILPAGESCARRYSCROLL-001): Android discards a frozen tab with no event at all, so the last
+    // moment Chrome guarantees is visibilitychange → hidden (Page Lifecycle); freeze is flushed too.
     window.addEventListener('pagehide', onHide)
+    document.addEventListener('visibilitychange', onVisibility)
+    document.addEventListener('freeze', onHide)
     return () => {
       window.removeEventListener('scroll', onScroll)
       window.removeEventListener('pagehide', onHide)
+      document.removeEventListener('visibilitychange', onVisibility)
+      document.removeEventListener('freeze', onHide)
       // write() saves only while this entry is still current (see write): an unmount caused by a
       // navigation leaves the listener's last write in place. flush() persists either way.
       write(); flush()

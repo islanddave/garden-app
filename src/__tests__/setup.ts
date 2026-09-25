@@ -6,6 +6,7 @@
 import { vi } from 'vitest';
 import { configure } from '@testing-library/dom';
 import { __resetScrollRestoreStore } from '../hooks/useScrollRestore.js';
+import { __resetPageScrollStore } from '../lib/pageScroll.js';
 
 // Tell React we're in a test environment (suppresses act() warnings)
 // @ts-expect-error — global not typed by default
@@ -109,6 +110,10 @@ beforeEach(() => {
   // back only with a scroll offset (jsdom never scrolls); a page that asks for it at the top
   // (stateAtTop, V5-SEEDSPOLISH-001) would arrive pre-restored. Reset alongside the storage it mirrors.
   __resetScrollRestoreStore();
+  // BUG-DETAILPAGESCARRYSCROLL-001 — the app-level page-scroll manager's store has the same shape of leak
+  // (an in-memory Map loaded once per module) and mounts in every suite that renders App: one test's
+  // filed offset would be the next test's record for the same 'default' entry.
+  __resetPageScrollStore();
 });
 
 // Silence noisy console.error in tests unless you need to debug

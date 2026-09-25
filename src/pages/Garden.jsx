@@ -14,7 +14,8 @@ import { fetchNotificationPrefs, recordGardenViewOpened, recordCoachmarkDismisse
 import CritterCoachmark from '../components/CritterCoachmark.jsx'
 import CritterOptInPrompt from '../components/CritterOptInPrompt.jsx'
 import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
-import { SYSTEM_NOTIFICATIONS_ENABLED, PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { SYSTEM_NOTIFICATIONS_ENABLED, PROJECTS_HIDDEN, SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
+import { useClaimPageScroll, currentPageEntry } from '../hooks/usePageScrollManager.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA } from '../lib/projectTree.js'
 import GroupBySlugSelect from '../components/GroupBySlugSelect.jsx'
@@ -106,8 +107,21 @@ export default function Garden() {
   // V4-NAVSTATE-001: keep Garden's scroll position across a drill-in + back. Save continuously,
   // restore once after content has loaded (height stable). Guarded so it is inert on first visit
   // and in tests (lastGardenScrollY stays 0 until a real scroll happens).
+  //
+  // BUG-DETAILPAGESCARRYSCROLL-001 — with the app-level page-scroll manager on, "your spot" is decided at
+  // FIRST RENDER (the snapshot) and the listener files nothing until the restore below has resolved. The
+  // manager zeroes the scroll in every commit that opens Garden, and that zero fires a scroll event a
+  // frame later; whether it reached this listener before the restore read `lastGardenScrollY` depended on
+  // how long the commit took (UNVERIFIED which side a phone lands on), and when it did, the spot was 0 and
+  // gone. Same rule useScrollRestore keeps: writes are closed until the restore resolves, and a visit left
+  // before it resolved keeps the old spot. Garden claims its entry from the manager only when it has a
+  // spot to restore; at 0 the manager owns the entry like any other page's.
+  const [spotY] = useState(() => lastGardenScrollY)
+  const [spotEntry] = useState(currentPageEntry)
+  useClaimPageScroll(SCROLL_MANAGER_ENABLED && hasRestoreTarget(spotY) ? spotEntry : null)
+  const spotWritesOpenRef = useRef(!SCROLL_MANAGER_ENABLED || !hasRestoreTarget(spotY))
   useEffect(() => {
-    const onScroll = () => { lastGardenScrollY = window.scrollY }
+    const onScroll = () => { if (spotWritesOpenRef.current) lastGardenScrollY = window.scrollY }
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
@@ -130,7 +144,7 @@ export default function Garden() {
   const scrollRestoredRef = useRef(false)
   useEffect(() => {
     if (loading || scrollRestoredRef.current) return
-    const targetY = lastGardenScrollY
+    const targetY = SCROLL_MANAGER_ENABLED ? spotY : lastGardenScrollY
     // Checked BEFORE the latch, unlike v1 — an inert mount must not consume the one-shot, or an
     // offset that arrives late can never be applied.
     if (!hasRestoreTarget(targetY)) return
@@ -140,7 +154,7 @@ export default function Garden() {
     // NEVER fight the user. If they scroll, swipe or key while we are still converging, they have
     // taken over: latch and stop. Restoring position is a courtesy; yanking the viewport out from
     // under a finger already in contact is not.
-    const yield_ = () => { cancelled = true; scrollRestoredRef.current = true }
+    const yield_ = () => { cancelled = true; scrollRestoredRef.current = true; spotWritesOpenRef.current = true }
     const opts = { passive: true, once: true }
     window.addEventListener('wheel', yield_, opts)
     window.addEventListener('touchstart', yield_, opts)
@@ -155,6 +169,7 @@ export default function Garden() {
       // DONE and EXHAUSTED both latch. They differ in whether we landed, which is what an
       // anchor-based fallback will branch on once it exists; today both simply stop.
       scrollRestoredRef.current = true
+      spotWritesOpenRef.current = true
     }
     requestAnimationFrame(tick)
 

@@ -15,10 +15,17 @@
 // Real BrowserRouter + OverlayProvider in App.jsx's two-tree shape (page tree at pageLocation, overlay tree
 // at the real location), because every half of this lives in the router: the replace, the transition and
 // the Back. Leaf mocks as in InventoryDetail.opensAtTop.test.jsx. No jest-dom (L-182).
+//
+// BUG-DETAILPAGESCARRYSCROLL-001 — the shell now carries App.jsx's page-scroll manager too, as AppShell
+// does, so the "top" and the "restore" are the MANAGER's per-entry decisions (rimpact-scrollmanager
+// IMPORTANT-9): the exact count of page resets this suite used to pin became, for each entry, which row the
+// manager decided and what it scrolled to. The property under test is unchanged — a Back onto the lot, after
+// either close, is a RETURN to the lot's own place, never a snap to the top — and it is now asserted as the
+// offset filed for that entry coming back, which is what Dave sees.
 import React, { useState, useEffect } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, fireEvent, cleanup } from '@testing-library/react'
-import { BrowserRouter, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Link, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 
 const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
@@ -30,6 +37,7 @@ vi.mock('../hooks/useInventory.js', () => ({ useInventory: () => ({ updateItem: 
 import InventoryDetail from '../pages/InventoryDetail.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
 import { OverlayProvider, useOverlay, OverlayLink, useOverlayDismiss } from '../context/OverlayContext.jsx'
+import { usePageScrollManager, PageScrollProvider } from '../hooks/usePageScrollManager.js'
 
 const lot = (id, name) => ({
   id, name, category: 'seeds', type: 'consumable',
@@ -58,6 +66,9 @@ function LegacySearchLink() {
 }
 function Shell() {
   const { pageLocation, overlayLocation, background } = useOverlay()
+  const navigationType = useNavigationType()
+  // AppShell's manager, as App.jsx calls it; every decision is recorded with the entry it was made for.
+  const pageScroll = usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, onDecision: (d) => decisions.push(d) })
   const navigate = useNavigate()
   // An urgent re-render of the page tree in the same event as a push to another lot: the state update
   // commits first, with the router still on the old lot, and only then does the route's transition land.
@@ -67,7 +78,7 @@ function Shell() {
     if (renders === 1 && !inBetween) inBetween = { url: window.location.pathname, page: pageLocation.pathname }
   })
   return (
-    <>
+    <PageScrollProvider value={pageScroll}>
       <OverlayLink to="/search" data-testid="open-search">search</OverlayLink>
       <LegacySearchLink />
       <Link to="/elsewhere" data-testid="to-elsewhere">elsewhere</Link>
@@ -83,16 +94,25 @@ function Shell() {
           <Route path="/search" element={<SearchStub />} />
         </Routes>
       )}
-    </>
+    </PageScrollProvider>
   )
 }
 
-let tops = 0
+// The scroll surface: every scrollTo recorded as the offset it asked for (the manager passes an options
+// object, the page's own reset (0, 0)); the page can be scrolled by hand, which files it.
+let calls = []
+let decisions = []
 let inBetween = null
+const setY = (y) => Object.defineProperty(window, 'scrollY', { configurable: true, writable: true, value: y })
+const scrollLotTo = (y) => act(() => { setY(y); window.dispatchEvent(new Event('scroll')) })
 const key = () => window.history.state?.key
 const heading = () => screen.queryByRole('heading', { level: 1 })
 const lotFetches = (id) => fetchSpy.mock.calls.filter(([p, o]) => String(p) === `/api/inventory-items/${id}` && !o).length
 const tap = (id) => act(async () => { fireEvent.click(screen.getByTestId(id)) })
+// The manager's decisions for one page, in order: which row, and what it did.
+const onPage = (path) => decisions.filter((d) => d.path === path).map((d) => (d.action === 'RESTORE' ? `${d.row}:RESTORE ${d.y}` : `${d.row}:${d.action}`))
+// The resets the PAGE made itself (the pre-manager contract): scrollTo(0, 0) in the positional form.
+let pageResets = 0
 
 beforeEach(() => {
   fetchSpy.mockReset()
@@ -100,9 +120,19 @@ beforeEach(() => {
     const m = String(path).match(/^\/api\/inventory-items\/(lot-[xy])$/)
     return Promise.resolve(m && !opts ? { ...LOTS[m[1]] } : [])
   })
-  tops = 0
+  calls = []
+  decisions = []
+  pageResets = 0
   inBetween = null
-  window.scrollTo = vi.fn((x, y) => { if (x === 0 && y === 0) tops += 1 })
+  setY(0)
+  window.scrollTo = vi.fn((a, b) => {
+    if (a && typeof a === 'object') { calls.push(a.top); setY(a.top); return }
+    if (a === 0 && b === 0) pageResets += 1
+    calls.push(b); setY(b)
+  })
+  // The restore driver's frames never run here: its FIRST attempt, in the commit, is what is asserted.
+  window.requestAnimationFrame = () => 1
+  window.cancelAnimationFrame = () => {}
   window.history.replaceState(null, '', '/today')
 })
 afterEach(() => { cleanup() })
@@ -119,38 +149,44 @@ const leaveAndComeBack = async () => {
   await act(async () => { window.history.back() })
   await waitFor(() => expect(heading()?.textContent).toBe(LOTS['lot-x'].name))
 }
+const LOT_X = '/inventory/lot-x'
 
 describe('a Back onto the lot page after an overlay over it closed by its Close', () => {
-  it('control: arriving is a fresh door (top), and lot → elsewhere → Back leaves the restored position alone', async () => {
+  it('control: arriving is a fresh door (top), and lot → elsewhere → Back returns to the lot\'s own place', async () => {
     await arrive()
-    expect(tops).toBe(1)
+    expect(onPage(LOT_X)).toEqual(['2:TOP'])
     const k1 = key()
+    scrollLotTo(700)
     await leaveAndComeBack()
     expect(key()).toBe(k1)
-    expect(tops).toBe(1)
+    expect(onPage(LOT_X)).toEqual(['2:TOP', '4:RESTORE 700'])
+    expect(calls.at(-1)).toBe(700)
+    expect(pageResets).toBe(0)                       // the page itself never resets with the manager on
   })
 
-  it('lot → header Search → Close (walks back to the lot\'s own entry) → elsewhere → Back: no snap to the top', async () => {
+  it('lot → header Search → Close (walks back to the lot\'s own entry) → elsewhere → Back: its place, not the top', async () => {
     await arrive()
-    expect(tops).toBe(1)
     const k1 = key()
+    scrollLotTo(700)
     await tap('open-search')
     await waitFor(() => expect(screen.getByTestId('close')).toBeTruthy())
     await tap('close')
     await waitFor(() => expect(screen.queryByTestId('close')).toBeNull())
     // The instrument: the close landed on the lot's own entry, and the page was never remounted.
     expect(key()).toBe(k1)
-    expect(window.location.pathname).toBe('/inventory/lot-x')
+    expect(window.location.pathname).toBe(LOT_X)
     expect(lotFetches('lot-x')).toBe(1)
     await leaveAndComeBack()
     expect(key()).toBe(k1)
-    expect(tops).toBe(1)
+    // The open and the close kept the page's entry (row 0): nothing moved it.
+    expect(onPage(LOT_X)).toEqual(['2:TOP', '0:NONE', '0:NONE', '4:RESTORE 700'])
+    expect(pageResets).toBe(0)
   })
 
-  it('lot → header Search opened by the previous bundle → Close (the replace fallback: new key, page not remounted) → elsewhere → Back: no snap to the top', async () => {
+  it('lot → header Search opened by the previous bundle → Close (the replace fallback: new key, page not remounted) → elsewhere → Back: its place, not the top', async () => {
     await arrive()
-    expect(tops).toBe(1)
     const k1 = key()
+    scrollLotTo(700)
     await tap('open-search-legacy')
     await waitFor(() => expect(screen.getByTestId('close')).toBeTruthy())
     await tap('close')
@@ -159,25 +195,29 @@ describe('a Back onto the lot page after an overlay over it closed by its Close'
     // The instrument: the Close really replaced the entry (a key the page never opened on) and really left
     // the page mounted (one fetch of the lot), which is the only shape in which the page can miss the key.
     expect(k3).not.toBe(k1)
-    expect(window.location.pathname).toBe('/inventory/lot-x')
+    expect(window.location.pathname).toBe(LOT_X)
     expect(lotFetches('lot-x')).toBe(1)
     await leaveAndComeBack()
     expect(key()).toBe(k3)
     expect(lotFetches('lot-x')).toBe(2)              // the Back remounted the page, so it made its decision
-    expect(tops).toBe(1)                             // ... and that decision was "a return", not a fresh door
+    // ... and the replaced entry, stamped to continue k1, answers to the lot's page entry: the offset filed
+    // before Search comes back. A snap to the top here would read '4:TOP'.
+    expect(onPage(LOT_X)).toEqual(['2:TOP', '0:NONE', '0:NONE', '4:RESTORE 700'])
+    expect(pageResets).toBe(0)
   })
 })
 
 describe('filing keys on every commit never files the NEXT entry\'s key', () => {
   it('lot → another lot, with an urgent commit of the page between the push and the route: still a fresh door', async () => {
     await arrive()
-    expect(tops).toBe(1)
     await tap('to-lot-y-urgent')
     await waitFor(() => expect(heading()?.textContent).toBe(LOTS['lot-y'].name))
     // The instrument: a commit really landed in the window, with history already on lot-y's entry while the
     // page tree still rendered lot-x. Without that window this test could not fail.
     expect(inBetween).toEqual({ url: '/inventory/lot-y', page: '/inventory/lot-x' })
     expect(lotFetches('lot-y')).toBe(1)
-    expect(tops).toBe(2)
+    expect(onPage(LOT_X)).toEqual(['2:TOP'])
+    expect(onPage('/inventory/lot-y')).toEqual(['2:TOP'])
+    expect(pageResets).toBe(0)
   })
 })

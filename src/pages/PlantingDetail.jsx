@@ -73,7 +73,7 @@ import { plantingIsHarvestTracked } from '../lib/harvestTracked.js'
 import { formatBotanical } from '../lib/keyFact.js'
 import { sunLabel } from '../lib/varietySpec.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
-import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
+import { PROJECTS_HIDDEN, SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
 import { describeHarvestWeight, sumHarvestWeights, serverWeightTotal, weightBasisLabel, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { vesselDataGaps } from '../lib/vesselData.js'
 
@@ -246,7 +246,13 @@ export default function PlantingDetail() {
   // Scroll-to-top on open AND on every paging change. PlantingDetail does NOT remount when only
   // the :plantingId param changes (same <Route element>), so this MUST key on plantingId — a
   // mount-only effect would leave a paged planting scrolled to the previous offset.
-  useEffect(() => { window.scrollTo(0, 0) }, [plantingId])
+  //
+  // BUG-DETAILPAGESCARRYSCROLL-001 — ONLY while the app-level page-scroll manager is off. With it on, the
+  // manager opens every push or replace onto a different page at the top (the pager's replace changes the
+  // path, so it is one) and restores a POP. This effect cannot tell the two apart: it also fired on Back,
+  // which is why Back to a planting's Event log landed at the top (measured 4658 → 0) and why a restore
+  // there would have had a second writer to fight. The manager-off bundle keeps it, as today.
+  useEffect(() => { if (!SCROLL_MANAGER_ENABLED) window.scrollTo(0, 0) }, [plantingId])
 
   // PLANTING-PAGER navigation — history REPLACE so Back returns to the originating Garden list
   // instead of replaying every paged step. Commit-locked (navLockRef) until the target loads.

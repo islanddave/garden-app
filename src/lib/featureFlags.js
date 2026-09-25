@@ -261,6 +261,19 @@ export const DISMISS_REGISTRY_ENABLED = true
 // suite in BackNav.history.test.jsx, which also carries the real-history harness self-test.
 export const BACKNAV_ENABLED = true
 
+// BUG-DETAILPAGESCARRYSCROLL-001 — ONE app-level page-scroll manager (src/hooks/usePageScrollManager.js,
+// decisions in src/lib/pageScroll.js). A page opened from a scrolled page opens at its top, and Back
+// returns to the exact place. Measured in real Chrome: 9 of 10 pages opened part-way down, because
+// BrowserRouter never resets scroll and anchoring re-applies the old offset once the content lands.
+// This ONE constant gates all of it: the reset, the filing, the restore and history.scrollRestoration =
+// 'manual' (src/main.jsx). OFF restores today's behaviour exactly: main.jsx writes 'auto' at boot (the mode
+// is per history entry and survives a reload, so an off bundle must write it back), and PlantingDetail's
+// and InventoryDetail's own open-at-top resets come back. Rolling back is a promote plus the service
+// worker's update, and entries the on-bundle marked 'manual' deeper in the stack keep that mode for the
+// rest of that session (no native restore, no manager on Back into them) — a degraded remainder of one
+// session, accepted (rimpact-scrollmanager MINOR-1).
+export const SCROLL_MANAGER_ENABLED = true
+
 // V4-SNAPDEST-001 (BD0806-08, Dave 2026-08-06): "hide Save to Device app-wide".
 // Two surfaces carry the control — Snap (CaptureFlow) and Log event (EventNew) — so "app-wide"
 // means both, and gating them on one const keeps them from drifting apart.

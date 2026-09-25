@@ -9,12 +9,26 @@
 // cannot happen here. This pins the page's half of the contract; the symptom was measured in real Chrome
 // at 426x836 (Saved seeds deep tap: 1742, the page's bottom, before; 0 after).
 // Harness shape from InventoryDetail.seedExits.test.jsx. No jest-dom (L-182).
+//
+// BUG-DETAILPAGESCARRYSCROLL-001 — RE-HOMED, deliberately (rimpact-scrollmanager IMPORTANT-9). With the
+// app-level page-scroll manager on, the top is the app shell's (a push or replace onto a different page),
+// and so is the return (a POP restores the offset filed for its entry). So the page's own reset is pinned
+// here ONLY for the manager-off bundle, which must bring it back exactly (the rollback path), and the
+// manager-on page is pinned to never reset itself. The manager's half — a push lands at 0, a Back lands on
+// the entry's own offset, the first entry of a document (mutant M7) now restores a reload's record rather
+// than opening at the top — lives in usePageScrollManager.test.jsx, pageScroll.test.js and gate:page-scroll.
+// The edit door's arrival hint stays the page's, under both bundles.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, cleanup, fireEvent } from '@testing-library/react'
 
-const { fetchSpy, navigateSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn(), navigateSpy: vi.fn() }))
+const { fetchSpy, navigateSpy, flags } = vi.hoisted(() => ({ fetchSpy: vi.fn(), navigateSpy: vi.fn(), flags: { manager: true } }))
 
+// The real flags, with SCROLL_MANAGER_ENABLED read live so one file can pin both bundles.
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  get SCROLL_MANAGER_ENABLED() { return flags.manager },
+}))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
 vi.mock('react-router-dom', () => ({
   Link: ({ children, to, state: _s, ...r }) => <a href={typeof to === 'string' ? to : '#'} {...r}>{children}</a>,
@@ -37,6 +51,7 @@ vi.mock('../hooks/useInventory.js', () => ({
 
 import InventoryDetail from '../pages/InventoryDetail.jsx'
 import { ToastProvider } from '../context/ToastContext.jsx'
+import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import { seedsReturnState, LOT_SECTION_KEY, LOT_SECTION_SOURCE_PLANT } from '../lib/seedsRoutes.js'
 
 // The saved lot Dave opened: stored, 175 seeds, saved off his F1 plant (so F2).
@@ -79,12 +94,40 @@ afterEach(() => {
   delete Element.prototype.scrollIntoView
 })
 
-const renderPage = async () => {
-  await act(async () => { render(<ToastProvider><InventoryDetail /></ToastProvider>) })
+// `popped`: the page tree arrived by POP, as the manager's provider reports it (a Back, a reload, a tab
+// restore). Outside the provider — every other render here — it is false, as with the manager off.
+const renderPage = async ({ popped = false } = {}) => {
+  const page = <ToastProvider><InventoryDetail /></ToastProvider>
+  await act(async () => { render(popped ? <PageScrollProvider value={{ api: null, isReturn: true }}>{page}</PageScrollProvider> : page) })
   await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(row.name))
 }
 
-describe('the lot page opens at the top', () => {
+describe('manager ON: the page never scrolls itself to the top — the app shell does', () => {
+  beforeEach(() => { flags.manager = true })
+
+  it('a door that pushes the page: no reset from the page (the shell\'s row 2 lands it at 0)', async () => {
+    arriveOn(freshKey()); await renderPage()
+    expect(window.scrollTo).not.toHaveBeenCalled()
+    expect(scrolls).toEqual([])
+  })
+
+  it('the first entry of the document: no reset from the page (the shell restores a reload\'s record, else a new document is at 0)', async () => {
+    window.history.replaceState(null, '')
+    await renderPage()
+    expect(window.scrollTo).not.toHaveBeenCalled()
+  })
+
+  it('a Back onto an entry the page was already opened on: nothing from the page, so the shell\'s restore stands', async () => {
+    const key = freshKey()
+    arriveOn(key); await renderPage()
+    cleanup(); window.scrollTo = vi.fn()
+    arriveOn(key); await renderPage({ popped: true })
+    expect(window.scrollTo).not.toHaveBeenCalled()
+  })
+})
+
+describe('manager OFF (the rollback bundle): the lot page opens at the top by itself, as before', () => {
+  beforeEach(() => { flags.manager = false })
   it('a door that pushes the page (Saved seeds card, My seeds "Open details") scrolls to the top', async () => {
     arriveOn(freshKey()); await renderPage()
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0)
@@ -115,7 +158,9 @@ describe('the lot page opens at the top', () => {
   })
 })
 
-describe('the edit door lands on what it edits', () => {
+describe.each([['manager ON', true], ['manager OFF', false]])('the edit door lands on what it edits (%s)', (_label, on) => {
+  beforeEach(() => { flags.manager = on })
+
   it('Saved seeds "Set parent plant →" lands on the Saved from card, not the top', async () => {
     row = UNPARENTED
     arriveOn(freshKey(), SET_PARENT); await renderPage()
@@ -147,5 +192,25 @@ describe('the edit door lands on what it edits', () => {
     arriveOn(key, SET_PARENT); await renderPage()        // the entry still carries the hint on the way back
     await act(async () => { await new Promise(r => setTimeout(r, 0)) })
     expect(scrolls).toEqual([])
+  })
+})
+
+describe('manager ON: a POP arrival never takes the edit door\'s hint', () => {
+  beforeEach(() => { flags.manager = true })
+
+  // A reload or an Android tab restore empties `openedEntries` (module state), so a Back onto the edit
+  // door's entry afterwards reads to the page as a first open. The shell is restoring that entry's offset;
+  // a centred scrollIntoView on top of it would fight the restore (design-scrollmanager-pwa §2.7).
+  it('the edit door\'s entry reached by POP in a fresh document: no scrollIntoView, no reset', async () => {
+    row = UNPARENTED
+    arriveOn(freshKey(), SET_PARENT); await renderPage({ popped: true })
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    expect(scrolls).toEqual([])
+  })
+
+  it('control: the same entry reached by a push takes the hint', async () => {
+    row = UNPARENTED
+    arriveOn(freshKey(), SET_PARENT); await renderPage()
+    await waitFor(() => expect(scrolls).toEqual([['into', 'seed-source-plant', { block: 'center' }]]))
   })
 })

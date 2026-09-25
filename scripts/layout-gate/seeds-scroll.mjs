@@ -135,7 +135,9 @@ const TOP_CHROME_PX = Number(readOne('src/components/TopChrome.jsx', /const BAR_
 // (copied because importing App.jsx pulls in every page), the header Search door (an OverlayLink to
 // /search in TopChrome) and the +LOG door (BottomNav's armed "Create new" sheet whose rows are
 // SheetRowLinks with `overlay`). If any of them changes, the flows would keep proving the copy. Read
-// from source, like BAR_H above.
+// from source, like BAR_H above. Since BUG-DETAILPAGESCARRYSCROLL-001 it also checks that AppShell and the
+// harness both call the REAL page-scroll manager the same way, and that the planting stand-in's reset
+// is gated as PlantingDetail's is.
 function harnessCopyDrift() {
   const src = (f) => readFileSync(resolve(ROOT, f), 'utf8')
   const norm = (s) => s.replace(/\s+/g, ' ').trim()
@@ -149,6 +151,18 @@ function harnessCopyDrift() {
   if (!app || !copy) out.push(`could not read ${app ? 'HarnessOverlayHost in tests/harness/seedsscroll.jsx' : 'OverlayHost in src/App.jsx'} — the drift guard cannot compare them`)
   else if (app !== copy) out.push('tests/harness/seedsscroll.jsx HarnessOverlayHost no longer matches src/App.jsx OverlayHost — re-copy it, or flows d to h prove a host the app no longer has')
   if (!/<OverlayLink to="\/search"/.test(src('src/components/TopChrome.jsx'))) out.push('TopChrome no longer opens header Search with <OverlayLink to="/search"> — the harness header link no longer models it')
+  // BUG-DETAILPAGESCARRYSCROLL-001 (rimpact-scrollmanager IMPORTANT-1): AppShell's page-scroll manager. The
+  // harness imports the real module and must call it as AppShell does, or every flow here proves a shell
+  // prod no longer has — green while Back and the lot page's top ride on something else entirely.
+  const managerCall = /usePageScrollManager\(\{ pageLocation, location: overlayLocation, navigationType, ready: [^}]+\}\)/
+  const managerProvider = /<PageScrollProvider value=\{pageScroll\}>/
+  const shell = src('src/App.jsx').match(/function AppShell\([\s\S]*?\n\}\n/)
+  if (!shell || !managerCall.test(shell[0]) || !managerProvider.test(shell[0])) out.push('src/App.jsx AppShell no longer calls usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, ready }) and wraps the shell in <PageScrollProvider value={pageScroll}> — update tests/harness/seedsscroll.jsx to match, or it models a shell prod no longer has')
+  const harness = src('tests/harness/seedsscroll.jsx')
+  if (!/from '\.\.\/\.\.\/src\/hooks\/usePageScrollManager\.js'/.test(harness) || !managerCall.test(harness) || !managerProvider.test(harness)) out.push('tests/harness/seedsscroll.jsx no longer mounts the REAL page-scroll manager the way AppShell does — flows a to k would run without the app-level reset and restore')
+  // The planting stand-in copies PlantingDetail's reset, which the manager's flag gates; the two must agree.
+  const gatedReset = /useEffect\(\(\) => \{ if \(!SCROLL_MANAGER_ENABLED\) window\.scrollTo\(0, 0\) \}, \[plantingId\]\)/
+  if (!gatedReset.test(src('src/pages/PlantingDetail.jsx')) || !gatedReset.test(harness)) out.push('PlantingDetail\'s [plantingId] reset and the harness planting stand-in no longer gate on SCROLL_MANAGER_ENABLED the same way — flow b\'s Back would run against a reset the app no longer has')
   const nav = src('src/components/BottomNav.jsx')
   if (!/<Sheet[^>]*ariaLabel="Create new"[^>]*armsBack/.test(nav) || !/<SheetRowLink[\s\S]{0,200}overlay=/.test(nav)) out.push('BottomNav\'s +LOG door is no longer an armed "Create new" sheet of overlay SheetRowLinks — the harness +LOG door (flow f) no longer models it')
   return out

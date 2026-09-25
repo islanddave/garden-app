@@ -39,6 +39,7 @@ import { supplierColors, NO_SUPPLIER } from '../lib/supplierPalette.js'
 import { useCropFacetOptions } from '../hooks/useCropFacetOptions.js'
 import { useSources } from '../hooks/useSources.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
+import { usePageScrollReturnAtMount } from '../hooks/usePageScrollManager.js'
 import { IMAGE_WINDOW_PAGE } from '../hooks/useImageWindow.js'
 import useNearViewport from '../hooks/useNearViewport.js'
 import useDeviceThumb from '../hooks/useDeviceThumb.js'
@@ -120,6 +121,7 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   // stateAtTop (V5-SEEDSPOLISH-001): the expanded card and the folds are set without scrolling, and
   // Back to an unscrolled page used to drop all three.
   const { restoredState, saveState } = useScrollRestore({ id: 'seeds-mine', ready: items != null, stateAtTop: true })
+  const poppedIn = usePageScrollReturnAtMount()
   const [expanded, setExpanded] = useState(() => restoredState?.expanded ?? null)
   const [sowedOpenByUser, setSowedOpenByUser] = useState(() => restoredState?.sowedOpen ?? null)
   // Explicit closes of groups a RULE had opened (a filter, Hottest). Per history entry, and cleared
@@ -236,7 +238,9 @@ export default function MySeeds({ store, highlight = null, onGoToLot }) {
   const targetRendered = !!target && filtered.some((i) => i.id === target.id) && (
     isSowedPreviously(target) ? sowedOpen : (!grouped || isOpen(target.crop_slug || NO_CROP))
   )
-  const outlined = useLotOutline(highlight, { ready: targetRendered, skipArrival: restoredState !== undefined })
+  // A return skips the `?lot=` arrival hint: the hook restoring this view, or (BUG-DETAILPAGESCARRYSCROLL-
+  // 001) the app-level page-scroll manager restoring the page — a POP arrival the hook had no value for.
+  const outlined = useLotOutline(highlight, { ready: targetRendered, skipArrival: restoredState !== undefined || poppedIn })
 
   // ── What is on screen, in order: the rows that render, for uniqueness and the image window ──────────
   const onScreen = useMemo(() => {

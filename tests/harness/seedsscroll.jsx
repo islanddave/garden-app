@@ -37,9 +37,14 @@
 //     from More → Seeds. It is replaced into place before the first render.
 //   /plantings/:id — PlantingDetail's two properties this bug turns on, copied from src/pages/
 //     PlantingDetail.jsx: its loading Shell (minHeight calc(100dvh - 52px), "Loading…") is the short
-//     first paint the old unmount save read, and it resets scroll on mount (useEffect(() =>
-//     window.scrollTo(0, 0), [plantingId])). Its content lands PLANTING_MS later. The planting page itself
-//     is not under test; the Saved seeds entry it is Backed out of is.
+//     first paint the old unmount save read, and its reset on mount (useEffect(() => window.scrollTo(0, 0),
+//     [plantingId])), which since BUG-DETAILPAGESCARRYSCROLL-001 runs only with the app-level page-scroll
+//     manager OFF, exactly as there. Its content lands PLANTING_MS later. The planting page itself is not
+//     under test; the Saved seeds entry it is Backed out of is.
+//
+// THE PAGE-SCROLL MANAGER is AppShell's own (src/hooks/usePageScrollManager.js), imported and called the
+// way App.jsx calls it, so every flow here also runs the app-level reset on a push and restore on a POP
+// (rimpact-scrollmanager IMPORTANT-1). gate:page-scroll covers the manager itself across the app's pages.
 //   Any other route renders a marker the gate refuses ("left the page").
 //
 // THE NETWORK is stubbed at window.fetch WITH LATENCY, because both bugs need a loading phase: the lot's
@@ -72,13 +77,18 @@
 // prod: a new document at /search whose history entry carries the overlay's background.
 import React, { useEffect, useLayoutEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Routes, Route, Link, useLocation, useParams } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Link, useLocation, useParams, useNavigationType } from 'react-router-dom'
 import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import { ToastProvider } from '../../src/context/ToastContext.jsx'
 import { DismissRegistryProvider } from '../../src/context/DismissRegistry.jsx'
 import {
   OverlayProvider, useOverlay, OverlayLink, useOverlayDismiss, OverlaySurfaceProvider, OverlayDirtyProvider,
 } from '../../src/context/OverlayContext.jsx'
+// BUG-DETAILPAGESCARRYSCROLL-001 (rimpact-scrollmanager IMPORTANT-1) — AppShell's page-scroll manager, the
+// REAL module, called exactly as App.jsx calls it; the drift guard in scripts/layout-gate/seeds-scroll.mjs
+// fails if either side stops. Without it this gate would prove a shell prod no longer has.
+import { usePageScrollManager, PageScrollProvider } from '../../src/hooks/usePageScrollManager.js'
+import { SCROLL_MANAGER_ENABLED } from '../../src/lib/featureFlags.js'
 import Sheet from '../../src/components/forms/Sheet.jsx'
 import SheetRowLink from '../../src/components/SheetRowLink.jsx'
 import ErrorBoundary from '../../src/components/ErrorBoundary.jsx'
@@ -220,7 +230,9 @@ function TodayStandIn() {
 function PlantingStandIn() {
   const { plantingId } = useParams()
   const [loading, setLoading] = useState(true)
-  useEffect(() => { window.scrollTo(0, 0) }, [plantingId])
+  // PlantingDetail's reset, gated exactly as PlantingDetail gates it (BUG-DETAILPAGESCARRYSCROLL-001): with
+  // the app-level manager on, the manager owns the top and the return.
+  useEffect(() => { if (!SCROLL_MANAGER_ENABLED) window.scrollTo(0, 0) }, [plantingId])
   useEffect(() => { const t = setTimeout(() => setLoading(false), PLANTING_MS); return () => clearTimeout(t) }, [plantingId])
   // PlantingDetail's Shell, exactly: minHeight calc(100dvh - 52px), maxWidth 720, padding 32px 20px.
   const shell = (children) => (
@@ -298,8 +310,10 @@ function SeedsCounted() {
 // real location only while an overlay has a background, and the bottom nav.
 function Shell() {
   const { pageLocation, overlayLocation, background } = useOverlay()
+  const navigationType = useNavigationType()
+  const pageScroll = usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, ready: true })
   return (
-    <>
+    <PageScrollProvider value={pageScroll}>
       <header data-app-chrome="top"
         style={{ position: 'sticky', top: 0, zIndex: 80, height: TOP_CHROME_PX, boxSizing: 'border-box',
           background: '#e8efe4', borderBottom: '1px solid #d4c9be', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingRight: 8 }}>
@@ -324,7 +338,7 @@ function Shell() {
         </Routes>
       )}
       <BottomNavStandIn />
-    </>
+    </PageScrollProvider>
   )
 }
 

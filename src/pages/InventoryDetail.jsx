@@ -38,6 +38,8 @@ import { readDraft } from '../lib/draftStash.js'
 import { T, helpChrome } from '../components/forms/formStyles.js'
 import SowSheet, { sowPacketFromItem } from '../components/seed/SowSheet.jsx'
 import { isInProcess } from '../lib/sowEngine.js'
+import { SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
+import { usePageScrollReturn } from '../hooks/usePageScrollManager.js'
 
 // V5-SEEDSTAB-001 — seed left the Inventory list, so a seed row's exits go to Seeds › My seeds.
 const SEEDS_MINE = seedsHref('mine')
@@ -150,15 +152,24 @@ export default function InventoryDetail() {
   // landed, clamped to the bottom of this page: the edit form. Keyed on id, as PlantingDetail's reset
   // is. An EDIT door names the part it opened the page to edit (lotSectionFromHistory): the page still
   // holds the top through the spinner, then lands on that part once the lot has rendered.
+  //
+  // BUG-DETAILPAGESCARRYSCROLL-001 — with the app-level page-scroll manager on, the TOP is the manager's
+  // (a different page by push or replace) and so is the return (a POP restores the offset filed for that
+  // entry), so this page no longer scrolls to the top itself; the manager-off bundle keeps the reset, as
+  // today. The edit door's arrival hint stays here, and is taken only when the arrival was not a POP: the
+  // `openedEntries` set is module state, so after a reload or a tab restore a Back into a lot reads as a
+  // first open, and the hint's scrollIntoView would fight the offset the manager is restoring.
   const arrivalSectionRef = useRef(null)
   const sourcePlantCardRef = useRef(null)
+  const poppedRef = useRef(false)
+  poppedRef.current = usePageScrollReturn()
   useEffect(() => {
     const key = historyEntryKey()
     const returning = key != null && openedEntries.has(key)
     if (key != null) openedEntries.add(key)
     if (returning) return
-    window.scrollTo(0, 0)
-    arrivalSectionRef.current = lotSectionFromHistory()
+    if (!SCROLL_MANAGER_ENABLED) window.scrollTo(0, 0)
+    if (!poppedRef.current) arrivalSectionRef.current = lotSectionFromHistory()
   }, [id])
   // Every later commit files the current key too, AFTER the decision above so it never pre-empts one. An
   // overlay over this page (header Search, /log) closed by its Close, backdrop or Escape walks back to this

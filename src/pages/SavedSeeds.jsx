@@ -28,6 +28,7 @@ import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import { useCropFacetOptions } from '../hooks/useCropFacetOptions.js'
 import { useSources } from '../hooks/useSources.js'
 import useScrollRestore from '../hooks/useScrollRestore.js'
+import { usePageScrollReturnAtMount } from '../hooks/usePageScrollManager.js'
 import Icon from '../components/Icon.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import SheetRowLink from '../components/SheetRowLink.jsx'
@@ -539,6 +540,9 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   // is a RETURN to a position the user had: a lot anchor must not yank a restored scroll elsewhere.
   const { restoredState, saveState } = useScrollRestore({ id: 'seeds-saved', ready: items != null })
   useEffect(() => { saveState({ v: 1 }) }, [saveState])
+  // BUG-DETAILPAGESCARRYSCROLL-001 — a return the app-level page-scroll manager restores (a POP arrival the
+  // hook had no offset for) is a return too.
+  const poppedIn = usePageScrollReturnAtMount()
 
   // Tracked = has a stage. Everything else is ordinary bought seed and belongs on Inventory, not
   // here: showing all 260 packets would bury the four things actually in flight.
@@ -908,7 +912,7 @@ export default function SavedSeeds({ embedded = false, store = null, highlight =
   // card in, so nothing scrolled to it when it landed (lane T4). My seeds already waited for its row.
   const highlightShown = highlightLot != null
     && [...visibleUnstarted, ...visibleTracked].some((i) => String(i.id) === String(highlightLot.id))
-  const outlined = useLotOutline(highlight, { ready: items != null && highlightShown, skipArrival: restoredState !== undefined })
+  const outlined = useLotOutline(highlight, { ready: items != null && highlightShown, skipArrival: restoredState !== undefined || poppedIn })
 
   if (embedded && (items === null || loadErr)) {
     return (

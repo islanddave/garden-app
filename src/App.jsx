@@ -1,5 +1,5 @@
 import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation, useNavigationType } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext.jsx'
 import { FavoritesProvider } from './context/FavoritesContext.jsx'
 import { PrefsProvider } from './context/PrefsContext.jsx'
@@ -71,6 +71,7 @@ import UpdateBanner from './components/UpdateBanner.jsx'
 import Sheet from './components/forms/Sheet.jsx'
 import { OverlayProvider, OverlaySurfaceProvider, OverlayDirtyProvider, useOverlay, useOverlayDismiss } from './context/OverlayContext.jsx'
 import { DismissRegistryProvider } from './context/DismissRegistry.jsx'
+import { usePageScrollManager, PageScrollProvider } from './hooks/usePageScrollManager.js'
 import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED, CRITTERS_QUIET } from './lib/featureFlags.js'
 import { loadCollectionChunk, peekCollectionChunk } from './lib/collectionChunk.js'
 
@@ -418,6 +419,13 @@ export function renderRoutes({ overlay, user, loading }) {
 // (if any) renders at the real URL. See OverlayContext.
 function AppShell({ user, loading, identity }) {
   const { pageLocation, overlayLocation, background } = useOverlay()
+  // BUG-DETAILPAGESCARRYSCROLL-001 — the ONE page-scroll manager: a different page opens at its top, Back
+  // returns to the exact place (src/hooks/usePageScrollManager.js, decisions in src/lib/pageScroll.js). It
+  // keys on the PAGE tree's location, so an overlay over the page never moves it. Above the identity gate
+  // because a hook cannot follow an early return; `ready` holds a boot restore's clock while Protected
+  // shows its skeleton. gate:seeds-scroll's drift guard fails if this call or the provider below goes.
+  const navigationType = useNavigationType()
+  const pageScroll = usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, ready: !loading })
 
   // V4-COLDSTART-001 — the ONE place the `unknown` identity renders, and it renders INSTEAD OF the
   // whole tree rather than inside a slot in it.
@@ -435,7 +443,7 @@ function AppShell({ user, loading, identity }) {
   if (identity === 'unknown') return <IdentityUnavailable />
 
   return (
-    <>
+    <PageScrollProvider value={pageScroll}>
       <TopChrome />
       <div style={{
         // The pending state reserves the nav's height from the CONSTANT rather than from
@@ -477,7 +485,7 @@ function AppShell({ user, loading, identity }) {
       {/* BUG-STALECLIENT-001: update affordance renders regardless of auth — a stale shell
           on the login screen needs the Refresh path too. */}
       <UpdateBanner />
-    </>
+    </PageScrollProvider>
   )
 }
 
