@@ -319,6 +319,8 @@ const FERMENT_URGENCY = {
 // exact shape, and a presence guard on the handler would not save it — `{ ...current, ...payload }`
 // in useInventory.updateItem re-inserts the stale value, so hasOwnProperty is TRUE and the guard
 // assigns it. Stripped here, PUT /api/inventory-items/:id/seed-measure is the only writer.
+// (updateItem itself strips these three since 2026-09-25, when /inventory/:id began writing
+// /seed-measure too; this page's own wide PUT does not go through it, hence this list.)
 //
 // MERGE NOTE (2026-09-04): these two arrived from different sessions in the same hour and are a
 // UNION, not a choice. They are the same defect class reached from opposite directions — a stale

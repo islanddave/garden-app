@@ -1385,7 +1385,9 @@ export default function InventoryDetail() {
 // PUT_DERIVED_KEYS / PUT_PRESENCE_GUARDED_KEYS / putPayloadFrom() were removed with the stage
 // control and count prompt that were this page's only wide-PUT writers. This page now reaches the
 // wide PUT solely through useInventory.updateItem(buildChanges()), which emits the edit form's own
-// projection and names no derived or presence-guarded key.
+// projection and names no derived or presence-guarded key. A saved lot's seed measure goes the other
+// way, through PUT /seed-measure (handleSave), and updateItem strips the three measure keys its
+// list-row merge would otherwise carry onto the wide PUT (2026-09-25).
 //
 // The contract they documented is NOT gone — /seeds/saved still round-trips a whole row into that
 // PUT for the count, and LIST_ROW_PUT_STRIP in src/pages/SavedSeeds.jsx carries the same per-key
