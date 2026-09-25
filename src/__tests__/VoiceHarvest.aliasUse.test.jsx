@@ -119,6 +119,21 @@ describe('a save through a taught name counts one use of it, after the save', ()
     expect(counts()).toEqual([['count', [[looseKey('celery tea'), byName('Celebrity').variety_ref.id]]]])
   })
 
+  // The one-breath reader's own list: a sentence whose taught name is a variety of two plantings is refused as
+  // crowded and offers both. That list teaches nothing, but the taught name still chose the variety, so the tap
+  // is a use exactly as a tap on the search's list is (the door the real-Chrome check C10 found uncounted).
+  it('a pick from the list a one-breath sentence offers for a taught name is a use of it', async () => {
+    const rec = await startListening()
+    await speak(rec, 'celery tea 3 200 next')
+    const list = screen.getByTestId('voice-harvest-candidates')
+    await act(async () => { fireEvent.click(within(list).getByRole('button', { name: /Celebrity Rescue/ })) })
+    await speak(rec, '3 count')
+    await speak(rec, 'next')
+    await settle()
+    expect(wire()).toEqual([['save', 'Celebrity Rescue'], ['count', [[looseKey('celery tea'), byName('Celebrity').variety_ref.id]]]])
+    expect(apiFetchSpy.mock.calls.filter(([url, opts]) => url === ALIAS_URL && opts?.method === 'POST')).toEqual([])
+  })
+
   it('each save through the name is one more use', async () => {
     const rec = await startListening()
     for (const line of ['cucumber one', '3', 'next']) await speak(rec, line)
@@ -153,6 +168,19 @@ describe('nothing is counted when the taught name did not choose what was saved'
     await speak(rec, 'next')
     await settle()
     expect(wire().filter(([k]) => k === 'save')).toHaveLength(1)
+    expect(counts()).toEqual([])
+  })
+
+  it('a pick from the one-breath list for a name that is also a real name is not a use', async () => {
+    // "super sweet 100" is taught AND is two plantings' own name: the strict layer chose, as it does in the search.
+    const rec = await startListening()
+    await speak(rec, 'super sweet 100 3 200 next')
+    const list = screen.getByTestId('voice-harvest-candidates')
+    await act(async () => { fireEvent.click(within(list).getByRole('button', { name: /Super Sweet 100 Rescue/ })) })
+    await speak(rec, '3 count')
+    await speak(rec, 'next')
+    await settle()
+    expect(wire().filter(([k]) => k === 'save')).toEqual([['save', 'Super Sweet 100 Rescue']])
     expect(counts()).toEqual([])
   })
 
