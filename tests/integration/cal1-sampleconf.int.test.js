@@ -6,12 +6,15 @@
 // Beefsteak resolved to 140 g against a curated 1750 g. v3 promotes a derived row over the
 // reference only when it is CORROBORATED.
 //
-//   corroborated := confidence IN ('high','medium')   -- the view defines 'provisional' as n < 2,
-//                   OR independent_n >= 5             -- escape hatch for genuinely variable crops
+//   corroborated := ( confidence IN ('high','medium')  -- the view defines 'provisional' as n < 2,
+//                     OR independent_n >= 5 )          -- escape hatch for genuinely variable crops
+//                   AND NOT category_error             -- v6: >6.5x from the reference AND cv >= 0.35
 //
 // v3 counted ROWS (sample_n >= 5). Resolver v5 (migrations/v4-cal1-indep-001/0b-resolver-v5.sql)
 // moved the hatch to independent_n, so several rows describing ONE weighing cannot buy promotion.
-// The drift test below mirrors the resolver's rule, not v3's (BUG-CAL1INTTESTRULE-001).
+// Resolver v6 (migrations/v4-sampleblendguard-001/0a-function.sql) demotes a sample that sits more
+// than 6.5x from its curated reference with cv >= 0.35 (broccoli side shoots priced as a crown).
+// The drift test below mirrors the resolver's whole rule, not v3's (BUG-CAL1INTTESTRULE-001).
 //
 // RESOLUTION ORDER (v3):
 //   1. user-supplied grams          -> 'measured'   estimated false
@@ -134,6 +137,14 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
       [12, 1, '2026-08-07T12:00:00Z'], [18, 1, '2026-08-21T12:00:00Z'],
       [4, 1, '2026-09-11T12:00:00Z'], [4, 1, '2026-09-11T12:00:00Z'],
       [27, 1, '2026-09-23T12:00:00Z']])
+    // The Green Magic shape, copied from prod (BUG-SAMPLEPRODUCTBLEND-001, read 2026-09-25): side-shoot
+    // weighings against a crown reference. Six weighings on six days reach the hatch, but pooled
+    // 117/2.75 = 42.5 g is 0.085x the curated 500 g with cv 0.41, so resolver v6's category-error
+    // guard demotes it and the reference holds. The only fixture the guard term decides.
+    await mk('greenMagic', CROP, 500, [
+      [66, 1, '2026-08-14T12:00:00Z'], [18, 1, '2026-08-15T12:00:00Z'],
+      [4, 0.15, '2026-08-16T12:00:00Z'], [9, 0.2, '2026-08-17T12:00:00Z'],
+      [10, 0.2, '2026-08-19T12:00:00Z'], [10, 0.2, '2026-08-22T12:00:00Z']])
     // One weighing and NO curated reference: the sample is demoted, not discarded.
     await mk('provisionalNoRef', CROP, null, [[33, 1]])
     // Same, on a crop that WOULD permit a crop-level average (500 g). The sample must still win —
@@ -266,15 +277,33 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
       'independent_n=4 is below the hatch and confidence=low, so the 60 g reference holds')
   })
 
+  it('HATCH + category error: a sample 0.085x its reference does not outrank it (the Green Magic case)', async () => {
+    // Six weighings reach the hatch; the v6 guard still demotes a pooled 42.5 g against a curated 500 g
+    // because the two describe different things (side shoot vs crown). 2 count = 2 x 500 g, not 85 g.
+    await expectResolves('greenMagic', 2, 1000, 'cultivar',
+      'ratio 0.085 is outside 0.154-6.5 and cv=0.41 >= 0.35, so the v6 guard keeps the 500 g reference')
+  })
+
   it('the promotion predicate matches the resolver for every fixture (no drift between the two)', async () => {
-    // `corroborated` is the resolver's own predicate (resolve_harvest_weight, v5 onward): the hatch
-    // counts independent weighings. Until BUG-CAL1INTTESTRULE-001 this read `sample_n >= 5`, and no
-    // fixture had a repeated row, so the test could not tell the two rules apart.
+    // `corroborated` is the resolver's own predicate, copied from resolve_harvest_weight v6
+    // (migrations/v4-sampleblendguard-001/0a-function.sql) with p_unit = 'count': the hatch counts
+    // independent weighings, and the category-error guard demotes a scattered sample far from its
+    // reference. Until BUG-CAL1INTTESTRULE-001 this read `sample_n >= 5` with no guard, and no fixture
+    // reached either difference, so the test could not tell the retired rule from the live one.
     const rows = await directSql`
       SELECT v.name, d.sample_n::int AS n, d.independent_n::int AS indep_n, d.confidence,
+             d.cv::float8 AS cv,
              d.grams_per_unit::float8 AS gpu,
              (v.unit_weights->>'count')::float8 AS ref,
-             COALESCE(d.confidence IN ('high','medium') OR d.independent_n >= 5, false) AS corroborated,
+             COALESCE(
+               (d.confidence IN ('high','medium') OR d.independent_n >= 5)
+               AND NOT (
+                 d.grams_per_unit IS NOT NULL
+                 AND (v.unit_weights ->> 'count') IS NOT NULL
+                 AND NULLIF((v.unit_weights ->> 'count')::numeric, 0) IS NOT NULL
+                 AND (d.grams_per_unit / NULLIF((v.unit_weights ->> 'count')::numeric, 0)) NOT BETWEEN 0.154 AND 6.5
+                 AND COALESCE(d.cv, 0) >= 0.35
+               ), false) AS corroborated,
              r.weight_grams::float8 AS resolved
         FROM plant_varieties v
         JOIN plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
@@ -284,16 +313,22 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
     for (const r of rows) {
       const expected = r.corroborated ? r.gpu : (r.ref ?? r.gpu)
       expect(r.resolved, `[${r.name}] rows=${r.n} weighings=${r.indep_n} confidence=${r.confidence} `
-        + `corroborated=${r.corroborated} derived=${r.gpu} g ref=${r.ref} g — resolver returned `
-        + `${r.resolved} g for 1 count, expected ${expected} g`).toBeCloseTo(expected, 6)
+        + `cv=${r.cv} corroborated=${r.corroborated} derived=${r.gpu} g ref=${r.ref} g — resolver `
+        + `returned ${r.resolved} g for 1 count, expected ${expected} g`).toBeCloseTo(expected, 6)
     }
-    expect(rows.length, 'expected all 8 sampled fixtures to appear in cultivar_weight_derived').toBe(8)
-    // The loop can only tell rules apart where they disagree. Pin the fixture that separates rows
-    // from weighings, so a later fixture edit cannot quietly make this test blind again.
+    expect(rows.length, 'expected all 9 sampled fixtures to appear in cultivar_weight_derived').toBe(9)
+    // The loop can only tell rules apart where they disagree. Pin the two fixtures that do — one per
+    // term the retired rule lacked — so a later fixture edit cannot quietly make this test blind again.
     const ancho = rows.find((r) => r.name === `ancho-${RUN}`)
     expect(ancho && { n: ancho.n, indep_n: ancho.indep_n, confidence: ancho.confidence },
       'the ancho fixture must keep 5 rows / 4 weighings / low, the shape where the two rules differ')
       .toEqual({ n: 5, indep_n: 4, confidence: 'low' })
+    const blend = rows.find((r) => r.name === `greenMagic-${RUN}`)
+    expect(blend && {
+      indep_n: blend.indep_n, confidence: blend.confidence,
+      belowBand: blend.gpu / blend.ref < 0.154, scattered: blend.cv >= 0.35,
+    }, 'the greenMagic fixture must reach the hatch yet sit where only the v6 guard demotes it')
+      .toEqual({ indep_n: 6, confidence: 'low', belowBand: true, scattered: true })
   })
 
   // ── the edit-path trap ──────────────────────────────────────────────────────
@@ -389,9 +424,9 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
   it('no sample was voided or removed by the reranking', async () => {
     const n = await directSql`
       SELECT count(*)::int AS n FROM cultivar_weight_sample WHERE created_by = ${USER}`
-    // 1 + 2 + 3 + 2 + 5 + 1 + 1 + 5 fixture samples, plus any auto-captured by the dual-weight POST above.
-    expect(n[0].n, `expected at least the 20 fixture samples to survive, found ${n[0].n}`)
-      .toBeGreaterThanOrEqual(20)
+    // 1 + 2 + 3 + 2 + 5 + 1 + 1 + 5 + 6 fixture samples, plus any auto-captured by the dual-weight POST above.
+    expect(n[0].n, `expected at least the 26 fixture samples to survive, found ${n[0].n}`)
+      .toBeGreaterThanOrEqual(26)
     const voided = await directSql`
       SELECT count(*)::int AS n FROM cultivar_weight_void v
        JOIN cultivar_weight_sample s ON s.id = v.sample_id WHERE s.created_by = ${USER}`
