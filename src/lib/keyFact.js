@@ -31,6 +31,8 @@ export function isPepper(planting) {
   return /\bpepper|chil[ei]|jalape|habanero|serrano|cayenne\b/.test(cropSignal(planting))
 }
 
+// A NAME heuristic, kept for the crop-type chip (selectCropType) and nothing else. The key-fact ladder
+// decides "tomato" from the cultivar's crop type instead — see rung (2).
 export function isTomato(planting) {
   const v = planting?.variety_ref || {}
   if (typeof v.type === 'string' && v.type.toLowerCase().includes('tomato')) return true
@@ -81,7 +83,7 @@ function attr(planting, key) {
 
 // selectKeyFact — priority cascade, FIRST non-null wins. Returns a short display string or null.
 //   (1) pepper -> "{N} SHU"   (when an SHU value is available)
-//   (2) tomato -> "Indeterminate" / "Determinate" / "Semi-determinate"   (growth_habit)
+//   (2) tomato -> "Indeterminate" / "Determinate" / "Semi-determinate"   (crop type; growth_habit)
 //   (3) DTM    -> "{min}–{max} days"
 //   (4) sun    -> short sun requirement
 //   (5) null
@@ -102,7 +104,11 @@ export function selectKeyFact(planting) {
   // live tomatillos wore a sentence in this nowrap pill (the longest 113 characters, "Bushy upright;
   // 3-5 in jalapeño-size fruit, …") and "semi-determinate, …" printed in full. determinacyLabel is the
   // CropCard pill's reader, so the hero and the card name the same class.
-  if (isTomato(planting)) {
+  // "Tomato" is the crop type the cultivar carries (variety_ref.crop_type_slug, which rung 3's harvest
+  // gate also reads), not a name match. Plantings are named by cultivar, so the name test (isTomato) found
+  // 2 of 46 live tomatoes ("Cherokee Green" never says tomato) and took in two tomatillos. No crop type
+  // (no cultivar) means not a tomato here, whatever the name says.
+  if (planting?.variety_ref?.crop_type_slug === 'tomato') {
     const det = determinacyLabel({ growth_habit: attr(planting, 'growth_habit') })
     if (det) return det
   }

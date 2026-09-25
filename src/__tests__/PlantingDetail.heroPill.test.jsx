@@ -33,6 +33,14 @@ const BLUSH = {
     sun_requirements: 'full_sun', growth_habit: BLUSH_PROSE },
 }
 
+// Named by cultivar, like 44 of the 46 live tomato plantings: nothing in the name says tomato.
+const CHEROKEE = {
+  id: 'pl1', name: 'Cherokee Green', project_id: 'proj1', project_name: 'Drive',
+  status: 'harvested', quantity: 1, featured_photo_view_url: null,
+  variety_ref: { name: 'Cherokee Green', crop_type_slug: 'tomato', days_to_maturity_min: 75, days_to_maturity_max: 85,
+    sun_requirements: 'full_sun', growth_habit: 'indeterminate vine; 6-8 ft; stake or cage required' },
+}
+
 function renderPage(planting) {
   apiFetchSpy.mockImplementation((path) => {
     if (path.startsWith('/api/plants/')) return Promise.resolve(planting)
@@ -70,5 +78,15 @@ describe('PlantingDetail — the hero key-fact pill never carries habit prose', 
     await screen.findByRole('heading', { name: 'Purple Blush Tomatillo' })
     expect(heroGoldPills('Purple Blush Tomatillo')).toEqual(['70–75 days'])
     expect(document.body.textContent.toLowerCase()).not.toContain('bushy upright')
+  })
+
+  // The hero follows the cultivar's crop type: a tomato named by cultivar gets its determinacy word, as
+  // the V200 design asks ("SHU for peppers, determinate/indeterminate for tomatoes"). Until 2026-09-25
+  // this hero said "75–85 days". The days stay on the page, in the crop card's Days to maturity row.
+  it('Cherokee Green (a tomato named by cultivar): the pill is Indeterminate; the card keeps the days', async () => {
+    renderPage(CHEROKEE)
+    await screen.findByRole('heading', { name: 'Cherokee Green' })
+    expect(heroGoldPills('Cherokee Green')).toEqual(['Indeterminate'])
+    expect(screen.getAllByText('75–85 days')).toHaveLength(1) // the crop card's row; the hero no longer repeats it
   })
 })

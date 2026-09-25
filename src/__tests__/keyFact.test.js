@@ -24,14 +24,48 @@ describe('selectKeyFact — priority cascade', () => {
     expect(selectKeyFact(pl)).toBe('70–80 days')
   })
 
+  // A tomato is the cultivar's crop type (variety_ref.crop_type_slug), the field the plants Lambda sends.
+  // These fixtures used a variety_ref.type the Lambda never sends, which is how rung 2 passed here while
+  // reaching 2 of 46 live tomatoes.
   it('(2) tomato -> Indeterminate / Determinate from growth_habit', () => {
-    expect(selectKeyFact({ variety_ref: { type: 'Tomato' }, metadata: { growth_habit: 'indeterminate' } })).toBe('Indeterminate')
-    expect(selectKeyFact({ variety_ref: { type: 'tomato' }, attr_override: { growth_habit: 'Determinate' } })).toBe('Determinate')
+    expect(selectKeyFact({ variety_ref: { crop_type_slug: 'tomato' }, metadata: { growth_habit: 'indeterminate' } })).toBe('Indeterminate')
+    expect(selectKeyFact({ variety_ref: { crop_type_slug: 'tomato' }, attr_override: { growth_habit: 'Determinate' } })).toBe('Determinate')
   })
 
   it('(2) tomato without growth_habit falls through to DTM', () => {
-    const pl = { variety_ref: { type: 'Tomato', days_to_maturity_min: 60, days_to_maturity_max: 60 } }
+    const pl = { variety_ref: { crop_type_slug: 'tomato', days_to_maturity_min: 60, days_to_maturity_max: 60 } }
     expect(selectKeyFact(pl)).toBe('60 days')
+  })
+
+  // Prod rows: plantings are named by cultivar, so none of these names says "tomato". Until 2026-09-25
+  // the tomato test read names, and these heroes showed their days (75–85, 65–75, 70–75) instead.
+  it('(2) the crop type makes it a tomato, not the name: live cultivar-named tomatoes get their word', () => {
+    const live = (name, growth_habit, dmin, dmax) => ({ name, variety_ref: { name, crop_type_slug: 'tomato',
+      days_to_maturity_min: dmin, days_to_maturity_max: dmax, sun_requirements: 'full_sun', growth_habit } })
+    expect(selectKeyFact(live('Cherokee Green', 'indeterminate vine; 6-8 ft; stake or cage required', 75, 85))).toBe('Indeterminate')
+    expect(selectKeyFact(live('Cherry Falls', 'trailing/cascading determinate; 24-36 in spreading; bred for hanging baskets and containers; no staking required', 65, 75))).toBe('Determinate')
+    expect(selectKeyFact(live('Celebrity', 'semi-determinate bush, 4-5 ft', 70, 75))).toBe('Semi-determinate')
+  })
+
+  it('(2) a tomato with no habit prose keeps its days, or has no pill', () => {
+    expect(selectKeyFact({ name: 'Large Red Cherry', variety_ref: { name: 'Large Red Cherry', crop_type_slug: 'tomato',
+      days_to_maturity_min: 70, days_to_maturity_max: 80, sun_requirements: 'full_sun', growth_habit: null } })).toBe('70–80 days')
+    expect(selectKeyFact({ name: 'Yellow Brandywine', variety_ref: { name: 'Yellow Brandywine', crop_type_slug: 'tomato',
+      days_to_maturity_min: null, days_to_maturity_max: null, sun_requirements: null, growth_habit: null } })).toBeNull()
+  })
+
+  // The chosen rule when there is no crop type: a name never makes a tomato. On prod no live cultivar lacks
+  // a crop type and the 3 cultivar-less plantings have no habit to read, so this changes nothing live; it
+  // keeps the name test from coming back as a fallback. A tomatillo is its own crop, even with the word.
+  it('(2) a name alone never makes a tomato, and a tomatillo is not one', () => {
+    expect(selectKeyFact({ name: 'Sungold Tomato', variety_ref: { name: 'Sungold', growth_habit: 'indeterminate vine',
+      days_to_maturity_min: 57, days_to_maturity_max: 65 } })).toBe('57–65 days')
+    expect(selectKeyFact({ name: 'Sungold Tomato', variety_ref: { type: 'Tomato', growth_habit: 'indeterminate vine',
+      days_to_maturity_min: 57, days_to_maturity_max: 65 } })).toBe('57–65 days')
+    expect(selectKeyFact({ name: 'Tomato', metadata: { growth_habit: 'determinate' } })).toBeNull()
+    expect(selectKeyFact({ name: 'Cisneros Tomatillo', variety_ref: { name: 'Cisneros', crop_type_slug: 'tomatillo',
+      days_to_maturity_min: 80, days_to_maturity_max: 85, sun_requirements: 'full_sun',
+      growth_habit: 'sprawling indeterminate vine; benefits from tomato cage or trellis; 3-4 ft tall, spreading 3+ ft' } })).toBe('80–85 days')
   })
 
   // Prod rows (plants Lambda variety_ref, 2026-09-25). Rung 2 used to return any habit that did not START
