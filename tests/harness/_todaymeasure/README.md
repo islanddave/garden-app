@@ -69,7 +69,7 @@ in CI (V5-TODAYSHAPECI-001): the 2026-09-24 baseline was San Francisco geometry 
 
 | state | scrollHeight | content ends | ink % | care rows | groups | expanded | Moist | Show more | controls | 1st control |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `busyfull` | **6,620px** (7.92 viewports) | y=6,580 | 54.5 | 66 | 9 | 1 | 20 | 1 | 285 | y=666 |
+| `busyfull` | **6,620px** (7.92 viewports) | y=6,580 | 54.4 | 66 | 9 | 1 | 20 | 1 | 285 | y=666 |
 | `busy` | 6,118px (7.32) | y=6,078 | 54.4 | 66 | 9 | 1 | 20 | 1 | 282 | y=454 |
 | `quiet` | 836px (1.00) | y=508 | 29.7 | 0 | 0 | 0 | 0 | 0 | 1 | y=476 |
 | `noplan` | 836px (1.00) | y=324 | 21.3 | 0 | 0 | 0 | 0 | 0 | 1 | y=293 |
