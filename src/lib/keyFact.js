@@ -6,10 +6,12 @@
 // Both read JSON fields defensively (optional-chaining + type guards): the cultivar substrate
 // is sparse and heterogeneous, so any missing/garbage field must degrade to "skip", never throw.
 //
-// "dependency-free" above is now one import short of literal: V4-CONSUMABLECLASS-001 (BD-042) added
-// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing. The property that
-// mattered — no React, no network, no clock, unit-testable in isolation — is intact.
+// "dependency-free" above is now two imports short of literal: V4-CONSUMABLECLASS-001 (BD-042) added
+// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing, and the sun rung reads
+// lib/varietySpec.js's sunLabel, which imports nothing either. The property that mattered — no React,
+// no network, no clock, unit-testable in isolation — is intact.
 import { plantingIsHarvestTracked } from './harvestTracked.js'
+import { sunLabel } from './varietySpec.js'
 
 // Lower-cased crop-family signal used by both the key-fact cascade and the no-photo fallback
 // glyph picker. Pulls from variety type/group + the planting's own name as a last resort.
@@ -123,11 +125,12 @@ export function selectKeyFact(planting) {
     return `${dmin ?? dmax} days`
   }
 
-  // (4) Sun requirement (short).
-  const sun = v.sun_requirements
-  if (typeof sun === 'string' && sun.trim()) {
+  // (4) Sun requirement (short). The column holds a code ('part_shade'); until 2026-09-25 this pill
+  // printed it as-is on 45 live plantings. sunLabel gives the editor's words ('Part shade').
+  const sun = sunLabel(v.sun_requirements)
+  if (sun) {
     // Keep it pill-short: take the first clause / few words.
-    const short = sun.trim().split(/[,;(]/)[0].trim()
+    const short = sun.split(/[,;(]/)[0].trim()
     return short.length > 18 ? short.slice(0, 17).trimEnd() + '…' : short
   }
 

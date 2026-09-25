@@ -50,6 +50,23 @@ describe('selectKeyFact — priority cascade', () => {
     expect(selectKeyFact({ variety_ref: { name: 'Mint', sun_requirements: 'Partial shade, tolerates full sun' } })).toBe('Partial shade')
   })
 
+  // Prod shape: sun_requirements is a code. Until 2026-09-25 the gold hero pill printed it on 45 live
+  // plantings (29 full_sun, 13 part_shade, 3 part_sun) — mostly ornamentals, which skip the DTM rung.
+  it('(4) a sun code reads as the editor words, never the code', () => {
+    const coleus = {
+      name: 'Fairway Orange Coleus Clone 1',
+      variety_ref: { name: 'Fairway Orange', crop_type_slug: 'coleus', days_to_maturity_min: 60, sun_requirements: 'part_shade' },
+    }
+    expect(selectKeyFact(coleus)).toBe('Part shade')
+    expect(selectKeyFact({ variety_ref: { name: 'Lettuce', sun_requirements: 'full_sun' } })).toBe('Full sun')
+    expect(selectKeyFact({ variety_ref: { name: 'Mint', sun_requirements: 'part_sun' } })).toBe('Part sun')
+    expect(selectKeyFact({ variety_ref: { name: 'Hosta', crop_type_slug: 'hosta', sun_requirements: 'full_shade' } })).toBe('Full shade')
+  })
+
+  it('(4) no sun value still means no pill', () => {
+    expect(selectKeyFact({ variety_ref: { name: 'Fairway Orange', crop_type_slug: 'coleus', sun_requirements: null } })).toBeNull()
+  })
+
   it('(5) returns null when nothing qualifies (no empty pill)', () => {
     expect(selectKeyFact({ variety_ref: { name: 'Mystery' } })).toBeNull()
     expect(selectKeyFact({})).toBeNull()

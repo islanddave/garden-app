@@ -18,6 +18,7 @@ import VarietyEditor, {
   canEditVariety, MANAGED_PRINCIPAL_PATTERNS,
 } from '../components/forms/VarietyEditor.jsx'
 import { P } from '../lib/constants.js'
+import { SUN_OPTIONS } from '../lib/varietySpec.js'
 
 const OWNER = 'user_owner_1'
 // The other household member's sub. The server accepts Dave's edits to this row
@@ -895,5 +896,23 @@ describe('VarietyEditor — origin, breeding and heat source (VARIETYFACTSEDIT)'
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(refusal))
     expect(onSave.mock.calls[0][1].breeding_system).toBe('open_pollinated')
     expect(onSaved).not.toHaveBeenCalled()
+  })
+})
+
+// 2026-09-25: the planting screens printed the stored Sun code ('full_sun') while this pick-list showed
+// words. Both now read lib/varietySpec.js, so the word picked here is the word shown on the planting.
+describe('VarietyEditor — Sun reads the app-wide Sun list', () => {
+  it('the pick-list IS SUN_OPTIONS, not a copy that could drift from the display side', () => {
+    expect(FIELDS.find(f => f.key === 'sun_requirements').options).toBe(SUN_OPTIONS)
+  })
+
+  it('a stored full_sun shows as Full sun, and every option is a word', () => {
+    const { container } = renderEditor()
+    openAllSections(container)
+    const select = container.querySelector('#variety-edit-sun_requirements')
+    expect(select.value).toBe('full_sun')
+    expect(select.selectedOptions[0].textContent).toBe('Full sun')
+    const words = [...select.options].filter(o => o.value).map(o => o.textContent)
+    expect(words).toEqual(['Full sun', 'Part sun', 'Part shade', 'Full shade'])
   })
 })

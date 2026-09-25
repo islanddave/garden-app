@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { shuLabel, determinacyLabel } from '../lib/varietySpec.js'
+import { shuLabel, determinacyLabel, sunLabel, SUN_OPTIONS } from '../lib/varietySpec.js'
 import { parseDeterminacy } from '../../lambda/tags/crop-derive.js'
+import { VALID_SUN } from '../../lambda/varieties/validate.js'
 
 describe('V4-VARSLUG-001 shuLabel', () => {
   it('null when no scoville data', () => expect(shuLabel({})).toBeNull())
@@ -193,5 +194,56 @@ describe('determinacyLabel — a real determinacy term, or nothing', () => {
   it('agrees with the derived determinacy facet on every live sample', () => {
     const asPill = { determinate: 'Determinate', dwarf: 'Determinate', indeterminate: 'Indeterminate', semi_determinate: 'Semi-determinate' }
     for (const s of LIVE) expect(label(s), s).toBe(asPill[parseDeterminacy(s)] ?? null)
+  })
+})
+
+// The Sun words (2026-09-25). sun_requirements is a code the plant_varieties CHECK limits to four
+// values; the CropCard Sun row, the Care tab's Light row and the hero key-fact pill printed the code
+// itself. Live prod that day: full_sun 188, part_shade 13, part_sun 4, null 36 of 244 live plantings.
+describe('sunLabel — the words, never the stored code', () => {
+  const CODES = SUN_OPTIONS.map(([code]) => code)
+
+  it('each code reads as the words the editor offers', () => {
+    expect(sunLabel('full_sun')).toBe('Full sun')
+    expect(sunLabel('part_sun')).toBe('Part sun')
+    expect(sunLabel('part_shade')).toBe('Part shade')
+    expect(sunLabel('full_shade')).toBe('Full shade')
+  })
+
+  it('absent, blank or not a string -> null, so each screen hides its row as it did before', () => {
+    for (const v of [undefined, null, '', '   ', '_', 0, 42, true, {}, []]) {
+      expect(sunLabel(v), JSON.stringify(v)).toBeNull()
+    }
+  })
+
+  it('a value outside the list still reads as words rather than vanishing', () => {
+    expect(sunLabel('dappled_shade')).toBe('Dappled shade')
+    expect(sunLabel('deep_shade_only')).toBe('Deep shade only')
+  })
+
+  it('case and spacing around a known code do not leak the code', () => {
+    expect(sunLabel(' full_sun ')).toBe('Full sun')
+    expect(sunLabel('FULL_SUN')).toBe('Full sun')
+    expect(sunLabel('Part_Shade')).toBe('Part shade')
+  })
+
+  it('prose passes through with only its first letter raised', () => {
+    expect(sunLabel('Full sun')).toBe('Full sun')
+    expect(sunLabel('partial shade, tolerates full sun')).toBe('Partial shade, tolerates full sun')
+  })
+
+  it('never returns a code or an underscore', () => {
+    for (const v of [...CODES, ...CODES.map(c => c.toUpperCase()), 'dappled_shade', 'a_b_c']) {
+      const got = sunLabel(v)
+      expect(CODES.includes(got), `${v} -> ${got}`).toBe(false)
+      expect(got.includes('_'), `${v} -> ${got}`).toBe(false)
+    }
+  })
+
+  // The server's list lives in lambda/varieties/validate.js (src/ may not import it at runtime); a code
+  // added there without words here would fall back to the underscore rule instead of a chosen label.
+  it('the list is exactly the codes the server accepts, in the editor order', () => {
+    expect(CODES).toEqual(VALID_SUN)
+    expect(SUN_OPTIONS.map(([, words]) => words)).toEqual(['Full sun', 'Part sun', 'Part shade', 'Full shade'])
   })
 })

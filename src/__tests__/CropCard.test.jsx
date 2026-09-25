@@ -231,6 +231,37 @@ describe('CropCard — the determinacy pill is a determinacy word or absent', ()
   })
 })
 
+// The Sun row as it paints on prod data. The column holds a code; until 2026-09-25 this row printed it
+// ('full_sun') on 205 of 244 live plantings. The 'Full sun' fixture at the top of this file is a shape
+// the plant_varieties CHECK can never produce, which is how the raw code stayed green.
+describe('CropCard — the Sun row reads as words, never the stored code', () => {
+  const card = variety_ref => render(<CropCard planting={{ id: 'p', variety_ref }} />)
+  // Attr is <div><div>{label}</div><div>{value}</div></div>
+  const sunRow = () => screen.getByText('Sun').parentElement
+
+  it.each([
+    ['full_sun', 'Full sun'], ['part_sun', 'Part sun'], ['part_shade', 'Part shade'], ['full_shade', 'Full shade'],
+  ])('%s paints as %s', (code, words) => {
+    const { container } = card({
+      name: 'Contender', crop_type_slug: 'bean', days_to_maturity_min: 50, days_to_maturity_max: 50, sun_requirements: code,
+    })
+    expect(sunRow().textContent).toBe(`Sun${words}`)
+    expect(container.textContent).not.toContain(code)
+  })
+
+  it('no sun value keeps the old behaviour: no Sun row, and the rest of the card still paints', () => {
+    card({ name: 'Contender', crop_type_slug: 'bean', days_to_maturity_min: 50, days_to_maturity_max: 50, sun_requirements: null })
+    expect(screen.getByText('50 days')).toBeTruthy()
+    expect(screen.queryByText('Sun')).toBeNull()
+  })
+
+  it('a sun code alone still earns the card (a coleus: no dates, no DTM, no chips)', () => {
+    const { container } = card({ name: 'Fairway Orange', crop_type_slug: 'coleus', sun_requirements: 'part_shade' })
+    expect(container.firstChild).not.toBeNull()
+    expect(sunRow().textContent).toBe('SunPart shade')
+  })
+})
+
 // V4-MATURITYREPEAT-001 (BD-024) — the maturity band as it actually paints for the row this item
 // was filed against. computeMaturity() is called with no `today` here, so the clock is pinned:
 // only `Date` is faked, leaving testing-library's own timers alone.

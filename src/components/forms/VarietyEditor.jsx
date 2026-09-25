@@ -46,6 +46,7 @@ import React, { useMemo, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner } from './index.js'
 import { T } from './formStyles.js'
+import { SUN_OPTIONS } from '../../lib/varietySpec.js'
 
 // Mirrors the CHECK constraints on plant_varieties (verified against live Neon, not migrations).
 // Duplicated rather than imported because src/ must not reach into lambda/; the server re-validates,
@@ -54,10 +55,9 @@ const LIFECYCLE = [
   ['annual', 'Annual'], ['tender_perennial', 'Tender perennial'],
   ['perennial', 'Perennial'], ['biennial', 'Biennial'],
 ]
-const SUN = [
-  ['full_sun', 'Full sun'], ['part_sun', 'Part sun'],
-  ['part_shade', 'Part shade'], ['full_shade', 'Full shade'],
-]
+// Sun is the one list kept in lib/varietySpec.js rather than here: the planting screens print the stored
+// code through the same words (sunLabel), so the word picked here is the word shown there.
+const SUN = SUN_OPTIONS
 const DETERMINACY = [
   ['determinate', 'Determinate'], ['semi_determinate', 'Semi-determinate'],
   ['indeterminate', 'Indeterminate'], ['dwarf', 'Dwarf'],

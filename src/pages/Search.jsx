@@ -18,6 +18,7 @@ import { startLiveTranscription, isTranscriptionSupported } from '../lib/transcr
 import { looseIncludesCropType } from '../lib/comboboxInput.js'
 import { useCropTypes } from '../hooks/useCropTypes.js'
 import { P, statusLabel } from '../lib/constants.js'
+import { sunLabel } from '../lib/varietySpec.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { T } from '../components/forms/formStyles.js'
 
@@ -96,7 +97,8 @@ const peekLabelStyle = { fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0
 const peekValueStyle = { fontSize: '0.9rem', color: P.dark, lineHeight: 1.45, wordBreak: 'break-word' }
 const openFullStyle = { display: 'block', marginTop: 14, padding: '12px 14px', background: P.white, border: `1px solid ${P.border}`, borderRadius: 10, textDecoration: 'none', color: P.greenDeep, fontWeight: 700, fontSize: '0.9rem' }
 
-// 'part_shade' -> 'Part shade'. The cultivar columns are snake_case enums and prose alike.
+// 'tender_perennial' -> 'Tender perennial'. The cultivar columns are snake_case enums and prose alike.
+// Sun does not come through here: it reads the app's one Sun list (sunLabel), which the editor offers.
 const humanize = s => {
   const t = (s ?? '').toString().replace(/_/g, ' ').trim()
   return t ? t[0].toUpperCase() + t.slice(1) : ''
@@ -150,7 +152,7 @@ function PeekCard({ planting, locationName, headingRef }) {
       <PeekField label="Where" value={locationName} />
       <PeekField label="Quantity" value={qty == null ? null : String(qty)} />
       <PeekField label="Days to maturity" value={maturityRange(vr)} />
-      <PeekField label="Sun" value={vr?.sun_requirements ? humanize(vr.sun_requirements) : null} />
+      <PeekField label="Sun" value={sunLabel(vr?.sun_requirements)} />
       <PeekField label="Lifecycle" value={vr?.lifecycle ? humanize(vr.lifecycle) : null} />
       <PeekField label="Sown" value={isoDay(planting.sown_at)} />
       <PeekField label="Planted out" value={isoDay(planting.planted_out_at)} />
