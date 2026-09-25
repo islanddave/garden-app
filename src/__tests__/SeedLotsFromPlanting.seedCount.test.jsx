@@ -120,6 +120,9 @@ describe('lotContainerLabel', () => {
     [1, null], ['1.000', null], ['1', null],
     [0, 'used up'], ['0.000', 'used up'],
     [272, '272 on hand'], ['272.000', '272 on hand'], [2, '2 on hand'],
+    // EXACT, not rounded (review MINOR-5): the branch is decided on the exact value, so it prints it.
+    // formatQty would have read 0.5 as "1 on hand" and 0.4 as "0 on hand", beside "used up" for 0.
+    [0.5, '0.5 on hand'], ['0.400', '0.4 on hand'], ['2.500', '2.5 on hand'],
     [null, null], [undefined, null], ['', null],
   ])('%j -> %j', (q, want) => {
     expect(lotContainerLabel(q)).toBe(want)

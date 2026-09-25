@@ -748,13 +748,13 @@ export const handler = async (event) => {
     // There are THREE wide-PUT callers, not two, and the third carries no strip list at all:
     // src/hooks/useInventory.js adjustQuantity sends `{ ...current, [col]: newValue }` — the ENTIRE
     // raw list row — on every +/- tap on /inventory, the highest-frequency write path in the app.
-    // And updateItem merges `{ ...current, ...payload }` against a list the hook reloads on mount,
-    // so hasOwnProperty would be TRUE carrying a STALE value and the CASE arm would assign it: an
-    // unrelated InventoryDetail save silently reverting a count written minutes earlier by
-    // SavedSeeds, answering 200. That is BUG-INVLOSTUPDATE-001's exact shape. Keeping the three
-    // columns out of that statement entirely is the only guard that holds — the source_plant_id
-    // precedent, which src/pages/InventoryDetail.jsx already documents as existing "precisely to
-    // dodge that".
+    // And updateItem merged `{ ...current, ...payload }` against a list the hook reloads on mount, so
+    // hasOwnProperty would be TRUE carrying a STALE value and the CASE arm would assign it: an
+    // unrelated InventoryDetail save silently reverting a count written minutes earlier, answering
+    // 200 — BUG-INVLOSTUPDATE-001's exact shape. (updateItem strips the three keys since 2026-09-25,
+    // when InventoryDetail began writing /seed-measure too; adjustQuantity still sends the whole row.)
+    // Keeping the three columns out of that statement entirely is the only guard that holds for EVERY
+    // caller — the source_plant_id precedent InventoryDetail.jsx documents as "precisely to dodge that".
     //
     // PUT rather than the PATCH the two sibling sub-routes use: that is the verb the callers were
     // built against (CONTRACT-seedqty-20260904 §3). Keys are still read by PRESENCE, so it behaves

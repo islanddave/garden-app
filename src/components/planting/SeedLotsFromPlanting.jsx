@@ -24,21 +24,23 @@ import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
-import { formatQty, formatSeedWeight } from '../../lib/format.js'
+import { formatQtyExact, formatSeedWeight } from '../../lib/format.js'
 import { seedStageLabel } from '../seed/seedStages.js'
 import { seedCountLabel } from '../seed/seedLots.js'
 
 // The container, on a list where every row is a SAVED lot (V5-SEEDQTY-001: quantity_on_hand is the
 // jar). One jar is the convention every saved lot carries, so it says nothing and is left out — Dave,
 // 2026-09-25, of "1 packet": "not correct ever". 0 is the lot used up, said in those words. Any other
-// amount is a real one somebody recorded (prod holds one saved lot at 272 'each') and keeps its number.
+// amount is a real one somebody recorded (prod holds one saved lot at 272 'each') and keeps its number,
+// EXACTLY: the branch is decided on the exact value, so it is printed exact too (formatQtyExact) — a
+// rounded 0.4 would read "0 on hand" beside "used up", and 0.5 would read "1 on hand" (review MINOR-5).
 // NULL is "never recorded" and says nothing, as before. Exported for test.
 export function lotContainerLabel(q) {
   if (q == null || q === '') return null
   const n = Number(q)
   if (n === 1) return null
   if (n === 0) return 'used up'
-  return `${formatQty(q)} on hand`
+  return `${formatQtyExact(q)} on hand`
 }
 
 // { lots, failed, loading }. `loading` renders as nothing at all rather than as a skeleton: the

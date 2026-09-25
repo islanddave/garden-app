@@ -495,10 +495,11 @@ jobs:
         # the "Sown ✓ · See the planting" line, Edit sow details, the "Sown from this packet" card and the
         # F2 breeding fact (pre-ship QA, IMPORTANT #1). tests/harness/seeddetail.{html,jsx} mounts the real
         # InventoryDetail under the 52px top bar and 56px bottom nav stand-ins (heights read and checked)
-        # at a TRUE 360x640 and 390x844, in three states: a bought packet with two plantings in sown_from;
-        # the same page after a REAL sow (Sow this, then the sheet's Add planting, each a hit-tested tap);
-        # and a lot saved off an F1 plant, still drying; plus a fourth, the packet's Remove refused by the
-        # Lambda's 409 sentence.
+        # at a TRUE 360x640, 390x844 and 426x836 (Dave's handset), in three states: a bought packet with
+        # two plantings in sown_from; the same page after a REAL sow (Sow this, then the sheet's Add
+        # planting, each a hit-tested tap); and a lot saved off an F1 plant, still drying, 175 counted;
+        # plus a fourth, the packet's Remove refused by the Lambda's 409 sentence, and a fifth, "175-"
+        # typed into the saved lot's Seed count and Save tapped.
         # Asserts: (a) no sideways scroll; (b) every visible link, button and form control >=
         # T.tapMinHeight and inside the viewport, hit-testing to itself on the first screen, with two
         # NAMED exemptions printed on every run (the two inline links; the pickers' clear ✕, the Favorite
@@ -513,9 +514,12 @@ jobs:
         # a long planting name wrapping (BUG-GERMLISTWIDENS-001); (i) the heart's and the ✕'s grown hit
         # areas leave the host's layout where it was (BUG-SEEDPAGETAPFLOORS-001); (j) a refused Remove
         # keeps the dialog open with the reason inside it, above its buttons
-        # (BUG-INVDELETEERROROFFSCREEN-001). It refuses a page whose viewport, surface, chrome or
-        # fixture counts are not the ones promised.
-        # Verified non-vacuous: `npm run gate:seed-detail:probe-nothing` exits 1 on all eight
+        # (BUG-INVDELETEERROROFFSCREEN-001); (k) the saved lot's packet card leads with "Seed count:
+        # 175 seeds" on the opening screen, and only the saved lot carries the seed fields; (l) the typo
+        # is refused beside the field and NOTHING is written (a type="number" box read "175-" as blank
+        # and saved the count away — review BLOCKING-1, 2026-09-25). It refuses a page whose viewport,
+        # surface, chrome or fixture counts are not the ones promised.
+        # Verified non-vacuous: `npm run gate:seed-detail:probe-nothing` exits 1 on all fifteen
         # state/viewport pairs; and seven real regressions in src/** each red it by name — the 44px
         # floor dropped from the Sown-from rows (row 1 renders 43px), floor and padding dropped (31px), a
         # long planting name made nowrap (sideways scroll at 360, row not whole at 390), See the planting's
