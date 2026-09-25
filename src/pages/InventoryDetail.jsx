@@ -84,6 +84,10 @@ export default function InventoryDetail() {
   const [loadErr,      setLoadErr]      = useState(null)
   const [saving,       setSaving]       = useState(false)
   const [errors,       setErrors]       = useState({})
+  // Bumped on every refused Save; the effect under the reload gate brings the first refused field into
+  // view and focuses it. A counter, not a flag, so a second refusal of the same fields moves again.
+  const [refusal,      setRefusal]      = useState(0)
+  const formRef = useRef(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting,     setDeleting]     = useState(false)
   // BUG-INVDELETEERROROFFSCREEN-001 — why the last delete failed, shown INSIDE the "Remove item?" dialog.
@@ -381,7 +385,7 @@ export default function InventoryDetail() {
   async function handleSave(e) {
     e.preventDefault()
     const errs = validate()
-    if (Object.keys(errs).length) { setErrors(errs); return }
+    if (Object.keys(errs).length) { setErrors(errs); setRefusal(n => n + 1); return }
 
     // Snapshotted BEFORE the await, and it is the same render's `form` that buildChanges() reads.
     // Anything typed while the PUT is in flight is therefore still unsaved once it lands, and the
@@ -577,6 +581,22 @@ export default function InventoryDetail() {
     setReloadBlocked(reloadGateKey, hasUnsavedInput)
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, hasUnsavedInput])
+
+  // ── A refused Save says so WHERE THE THUMB IS (2026-09-25) ─────────────────
+  // Save sits at the bottom of the form and every refusal renders beside its own field, far above it:
+  // measured in gate:seed-detail (l), a Seed count refusal landed 455-680px above the visible band at
+  // 360x640, 390x844 and 426x836, so a refused Save looked like a Save that did nothing — the shape
+  // BUG-INVDELETEERROROFFSCREEN-001 fixed for Remove. After the render that shows the refusals (the
+  // effect runs after it), the FIRST refused field in page order is brought to the middle of the
+  // screen and focused, so the correction is one keystroke away. Page-wide, every field this form
+  // refuses. The scroll is guarded for jsdom, which has no scrollIntoView.
+  useEffect(() => {
+    if (!refusal) return
+    const target = firstRefusedControl(formRef.current)
+    if (!target) return
+    if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'center' })
+    if (typeof target.focus === 'function') target.focus({ preventScroll: true })
+  }, [refusal])
 
   // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) return <Shell><Spinner block /></Shell>
@@ -982,7 +1002,7 @@ export default function InventoryDetail() {
           </div>
         )}
 
-        <form onSubmit={handleSave} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <form ref={formRef} onSubmit={handleSave} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
           {/* ── Core fields ── */}
           <div style={card}>
@@ -1421,6 +1441,22 @@ export default function InventoryDetail() {
 // own predicate, not a copy. `?? 0`: an untracked (null) quantity shows no CTA.
 function canSowFrom(item) {
   return item?.category === 'seeds' && Number(item.quantity_on_hand ?? 0) > 0 && !isInProcess(item)
+}
+
+// The control of the FIRST refused field in page order, for the refused-Save effect. Every refusal on
+// this form is a Field error — role="alert", id "<control id>-error" — rendered inside the Field beside
+// its control, so the first such node in the form is the first refused field. Its control is the text
+// box or select it holds. A source picker showing a chosen value holds no text box; there its Change
+// button stands in — never the ✕, which a stray Enter would turn into a clear. Null when nothing is
+// refused (the caller does nothing) or the field holds no control at all.
+function firstRefusedControl(form) {
+  const alert = form?.querySelector('[role="alert"][id$="-error"]')
+  const field = alert?.parentElement
+  if (!field) return null
+  const controls = [...field.querySelectorAll('input, select, textarea, button')]
+    .filter(el => el.type !== 'hidden' && el.type !== 'file' && !el.disabled
+      && !/^Clear\b/.test(el.getAttribute('aria-label') || ''))
+  return controls.find(el => el.tagName !== 'BUTTON') ?? controls[0] ?? null
 }
 
 // ── A saved lot's seed measure (the form's Seed count / Weight (g), written via PUT /seed-measure) ──

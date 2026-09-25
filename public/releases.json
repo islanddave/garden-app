@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.155.0",
+    "date": "2026-09-25",
+    "highlights": [
+      "Saved seed: a saved lot's page now shows how many seeds it holds, with approx. for an estimate and Not counted yet when nobody has counted, instead of 1 packet. You can set the count, the weight and All used up right on that page. The seed list on a planting's page drops 1 on hand too."
+    ]
+  },
+  {
     "version": "4.154.0",
     "date": "2026-09-25",
     "highlights": [

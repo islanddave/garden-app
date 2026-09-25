@@ -73,8 +73,9 @@
 //       {seed_count:null, seed_count_estimated:null} under a "✓ Saved" toast. Required: the box still holds
 //       "175-"; NOTHING was written (no wide PUT, no /seed-measure — the harness records every write); the
 //       refusal "That is not a number." is inside the Seed count field as role="alert"; the packet card
-//       still reads "175 seeds"; no "Saved" toast. Where the refusal sits relative to the visible band
-//       after the Save tap is printed, not asserted.
+//       still reads "175 seeds"; no "Saved" toast. And (round 3) the refusal is INSIDE the visible band
+//       after the Save tap, with the Seed count box focused: Save sits at the bottom of the form, and a
+//       refusal left where it rendered was 455-680px above the band — a refused Save looked like nothing.
 //
 // THE INSTRUMENT CHECK comes first, and a mismatch stops that state before any invariant is read: the
 // page must self-report the viewport it was asked for (trap 1), must have raised no error, must still be
@@ -671,7 +672,7 @@ const MEASURE_TYPO = `(() => {
   return {
     vw: w.innerWidth, vh: w.innerHeight,
     field: n ? { type: n.getAttribute('type'), value: n.value, badInput: !!(n.validity && n.validity.badInput),
-      invalid: n.getAttribute('aria-invalid') } : null,
+      invalid: n.getAttribute('aria-invalid'), focused: d.activeElement === n } : null,
     error: err ? { role: err.getAttribute('role'), text: (err.textContent || '').replace(/\\s+/g, ' ').trim(),
       besideField: err.parentElement === n.parentElement, t: R(er.top), b: R(er.bottom),
       inBand: er.top >= bandTop - 0.5 && er.bottom <= bandBottom + 0.5,
@@ -741,9 +742,15 @@ async function countTypo(vw, vh) {
     if (e.role !== 'alert') fail(`${at}: (l) the refusal is not role="alert" (it is ${JSON.stringify(e.role)})`)
     if (!e.text.includes('That is not a number.')) fail(`${at}: (l) the refusal reads "${e.text}", expected it to say "That is not a number."`)
     if (!e.besideField) fail(`${at}: (l) the refusal is not inside the Seed count field`)
+    // WHERE THE THUMB IS (round 3): Save sits at the bottom of the form, so a refusal left where it
+    // renders is off-screen and a refused Save looks like a Save that did nothing (measured 2026-09-25:
+    // 455-680px above the band at all three viewports). The page brings the first refused field to the
+    // middle of the visible band and focuses it.
+    if (!e.inBand) fail(`${at}: (l) after the refused Save the refusal spans y${e.t}-${e.b}, outside the visible band y${m.band.top}-${m.band.bottom} — the thumb is on Save and sees nothing happen`)
     if (!e.inViewX) fail(`${at}: (l) the refusal is painted outside the ${vw}px width`)
   }
   if (m.field && m.field.value !== TYPO) fail(`${at}: (l) after Save the box holds "${m.field.value}", expected the typed "${TYPO}" still there to correct`)
+  if (m.field && !m.field.focused) fail(`${at}: (l) after the refused Save the Seed count box does not have focus — the first refused field is where the correction is typed`)
 
   // Evidence: the refused field, scrolled into view.
   if (await evalSettled(`(() => { const n = ${COUNT_BOX}; if (!n) return false; n.scrollIntoView({ block: 'center' }); return true })()`)) {

@@ -517,8 +517,9 @@ jobs:
         # (BUG-INVDELETEERROROFFSCREEN-001); (k) the saved lot's packet card leads with "Seed count:
         # 175 seeds" on the opening screen, and only the saved lot carries the seed fields; (l) the typo
         # is refused beside the field and NOTHING is written (a type="number" box read "175-" as blank
-        # and saved the count away — review BLOCKING-1, 2026-09-25). It refuses a page whose viewport,
-        # surface, chrome or fixture counts are not the ones promised.
+        # and saved the count away — review BLOCKING-1, 2026-09-25), and after the Save tap the refusal
+        # is inside the visible band with the Seed count box focused (it sat 455-680px above the band).
+        # It refuses a page whose viewport, surface, chrome or fixture counts are not the ones promised.
         # Verified non-vacuous: `npm run gate:seed-detail:probe-nothing` exits 1 on all fifteen
         # state/viewport pairs; and seven real regressions in src/** each red it by name — the 44px
         # floor dropped from the Sown-from rows (row 1 renders 43px), floor and padding dropped (31px), a
