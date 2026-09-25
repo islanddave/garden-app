@@ -71,6 +71,7 @@ import { lotHref } from '../components/seed/seedLots.js'
 import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
 import { plantingIsHarvestTracked } from '../lib/harvestTracked.js'
 import { formatBotanical } from '../lib/keyFact.js'
+import { sunLabel } from '../lib/varietySpec.js'
 import { buildLifeStory } from '../lib/lifeStory.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { describeHarvestWeight, sumHarvestWeights, serverWeightTotal, weightBasisLabel, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
@@ -730,7 +731,9 @@ export default function PlantingDetail() {
     ['Next watering', renderNextWatering(pl)],
     ['Last watered', fmtDate(pl.last_watered_at)],
     ['Watering interval', Number.isFinite(pl.watering_interval_days) ? `Every ${pl.watering_interval_days} day${pl.watering_interval_days === 1 ? '' : 's'}` : null],
-    ['Light', pl.variety_ref?.sun_requirements || null],
+    // The words, not the stored code ('full_sun' printed here as-is until 2026-09-25). The All tab
+    // below still shows the code: that tab is the raw record by design.
+    ['Light', sunLabel(pl.variety_ref?.sun_requirements)],
     ['Care notes', pl.care_notes || null],
     ['Soil notes', pl.soil_notes || null],
   ].filter(([, v]) => v)

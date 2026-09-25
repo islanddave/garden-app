@@ -1,6 +1,8 @@
 // V4-VARSLUG-001 — pure formatters for first-class cultivar spec chips (SHU for peppers,
 // determinacy for tomatoes). Sourced from variety_ref (scoville_min/max, growth_habit),
 // plumbed by the plants Lambda. No fabrication: absent data => null (chip hidden).
+// The Sun words (SUN_OPTIONS / sunLabel, at the bottom) live here too: the editor and every display
+// of sun_requirements share them.
 // V5-SEEDCARDS-001 — and a GUESS is never shown as a supplier figure: scoville_source
 // (v5-scovillesource-001) says where the numbers came from, and 'inference' (a best guess) is
 // labelled "est." on the chip. Every other source, and null/absent, renders exactly as before.
@@ -53,4 +55,31 @@ export function determinacyLabel(v) {
   const term = m[1].toLowerCase()
   if (term.startsWith('semi')) return 'Semi-determinate'
   return term === 'indeterminate' ? 'Indeterminate' : 'Determinate'
+}
+
+// The Sun words, one list for the whole app. The four codes are the only values the plant_varieties
+// CHECK allows (plant_varieties_sun_requirements_check, and VALID_SUN in lambda/varieties/validate.js,
+// which varietySpec.test.js diffs against this list), in the editor's order. VarietyEditor's Sun
+// pick-list offers these words and every screen that shows a cultivar's sun needs prints them through
+// sunLabel, so the word you pick is the word you read. Until 2026-09-25 three of those screens printed
+// the code itself: the CropCard Sun row and the Care tab's Light row on 205 of 244 live plantings, and
+// the hero's gold key-fact pill on 45.
+export const SUN_OPTIONS = [
+  ['full_sun', 'Full sun'], ['part_sun', 'Part sun'],
+  ['part_shade', 'Part shade'], ['full_shade', 'Full shade'],
+]
+const SUN_WORDS = new Map(SUN_OPTIONS)
+
+// 'part_shade' -> 'Part shade'. A value outside the list still reads as words rather than vanishing
+// (underscores to spaces, first letter raised: 'dappled_shade' -> 'Dappled shade'), and prose passes
+// through with only its first letter raised. Absent, blank or not a string -> null, so every caller
+// hides its row exactly as it did when it printed the raw column.
+export function sunLabel(value) {
+  if (typeof value !== 'string') return null
+  const t = value.trim()
+  if (!t) return null
+  const known = SUN_WORDS.get(t.toLowerCase())
+  if (known) return known
+  const words = t.replace(/_/g, ' ').trim()
+  return words ? words[0].toUpperCase() + words.slice(1) : null
 }

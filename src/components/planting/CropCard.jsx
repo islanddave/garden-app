@@ -7,7 +7,7 @@ import { computeMaturity } from '../../lib/plantingMaturity.js'
 import { useEntityTags } from '../../hooks/useTags.js'
 import TagChip from '../forms/TagChip.jsx'
 import TransplantDatePrompt from './TransplantDatePrompt.jsx'
-import { shuLabel, determinacyLabel } from '../../lib/varietySpec.js'
+import { shuLabel, determinacyLabel, sunLabel } from '../../lib/varietySpec.js'
 import { resolveRipenessCues } from '../../lib/ripenessCues.js'
 
 // V4-RIPENESSCUES-001: the colour-window dataset is ~110KB gzip of JSON reached ONLY from this
@@ -227,7 +227,10 @@ export default function CropCard({ planting, onUpdated }) {
   // pending/failed and when the record has no window — all indistinguishable by design.
   const win = (vref && hwModule) ? hwModule.resolveHarvestWindow(vref) : null
   const hasWindow = !!(win && (win.cultivar || win.crop))
-  const attrs = [dtm, v.sun_requirements, v.expected_yield_notes].filter(Boolean)
+  // The column holds a code ('full_sun'); until 2026-09-25 the Sun row printed it as-is on 205 of 244
+  // live plantings. sunLabel gives the words VarietyEditor offers; null still hides the row.
+  const sun = sunLabel(v.sun_requirements)
+  const attrs = [dtm, sun, v.expected_yield_notes].filter(Boolean)
   // The early return stays SYNC over today's signals; `!hasWindow` is the async-sparse term — a
   // window-ONLY sparse card renders once the window resolves (pending+sparse renders null,
   // indistinguishable from today; resolved-empty/failed+sparse returns null permanently).
@@ -311,7 +314,7 @@ export default function CropCard({ planting, onUpdated }) {
       {(attrs.length > 0 || hasCue || hasWindow) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <Attr label="Days to maturity" value={dtm} />
-          <Attr label="Sun" value={v.sun_requirements} />
+          <Attr label="Sun" value={sun} />
           <Attr label="Expected yield" value={v.expected_yield_notes} />
           <RipenessCue cues={cues} />
           {/* V4-RIPENESSCUES-001: the window renders BELOW the corrective cue — the cue answers
