@@ -1,8 +1,10 @@
 {
-  "version": "4.151.0",
+  "version": "4.152.0",
   "date": "2026-09-25",
   "highlights": [
-    "Closing Search, a Log sheet or Put Up with ✕, a tap outside it or Escape now returns you to the page exactly as you left it: lists keep your place when you come back to them, and the next Back leaves the page on the first press instead of doing nothing. Closing Log many while it is still saving no longer re-opens it empty.",
-    "Ripe colour: the planting page now says what ripe looks like for eight of the new Patrick's Pepper Patch peppers: seven that ripen to a colour other than red, and Purple Ghost Scorpion, which does go red but is named for its unripe pods. It shows once one of them is planted."
+    "Planting page: the gold label on the top photo now shows a tomato's growth type (Indeterminate, Determinate or Semi-determinate) and a pepper's heat range (for example 2.5K–8K SHU), as the June design intended; days to harvest stay in the crop card below. The two tomatillos no longer show a whole sentence there, and the small crop chip beside it now says Tomatillo on a tomatillo and Mint on Peppermint.",
+    "Planting page: the green growth-type pill on the crop card shows a real growth type or nothing. It no longer copies a plant's whole description onto peppers, basil, beans and 140 other non-tomato plants, and words like semi-woody or semi-upright no longer read as Semi-determinate.",
+    "Sun needs read Full sun, Part sun or Part shade on the crop card, the Details sheet, the top photo and search, instead of full_sun.",
+    "Behind the scenes: the Today page layout check and the Undo button check now run automatically on every change (their test pages draw text in Roboto, your phone's font), the harvest-weight check now tests the exact rule the app uses, and the whole-database data check no longer raises false alarms when another program leaves a shared database connection misconfigured."
   ]
 }
