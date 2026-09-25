@@ -63,14 +63,15 @@ const HANDLERS = readdirSync(__dirname)
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 //
-// V5-SEEDQTY-001 adds seed_count / seed_weight_g to the seed-lots read. Those two are the ONLY
-// entries here NOT yet present on live prod — they land with migrations/v5-seedqty-001/
-// 0a-additive-ddl.sql, so Phase 1 reports them missing until that DDL is applied. That is the
-// intended ordering (the audit is what proves the deploy happened), not a stale contract.
+// V5-SEEDQTY-001 added seed_count / seed_weight_g to the seed-lots read, and 2026-09-25 added
+// seed_count_estimated beside the count (SeedLotsFromPlanting renders "approx. N seeds" from the
+// pair). All three came with migrations/v5-seedqty-001/0a-additive-ddl.sql and were verified present
+// on live prod inventory_items on 2026-09-25 (information_schema: integer / boolean / numeric, all
+// nullable), so the promote's prod schema gate finds every column this contract names.
 const AUDIT_COLUMNS = {
   inventory_items: [
     'created_at', 'created_by', 'deleted_at', 'id', 'name',
-    'quantity_on_hand', 'seed_count', 'seed_stage', 'seed_weight_g',
+    'quantity_on_hand', 'seed_count', 'seed_count_estimated', 'seed_stage', 'seed_weight_g',
     'source_plant_id', 'variety_id',
   ],
 };
@@ -154,6 +155,19 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants inventory_items column contr
     // through a planting the caller can legitimately see.
     expect(stmt.sql).toMatch(/\bi\.created_by\s*=\s*ANY\(\$\{householdIds\}\)/);
     expect(stmt.sql).toMatch(/\bi\.deleted_at\s+IS\s+NULL/);
+  });
+
+  it('carries the seed count WITH its basis — an estimate must not read as a counted number', () => {
+    // 2026-09-25: the read projected seed_count without seed_count_estimated, so the planting page's
+    // list showed a vendor's "approx. 200" as 200 counted seeds (8 of the 13 counted planting-linked
+    // lots on prod were estimates). The tightness check below cannot see a revert that drops the column
+    // from BOTH the SELECT and the contract; this can. The pair is one fact in two columns
+    // (chk_inventory_seed_count_basis_pairing), so one without the other is the defect.
+    const stmt = STATEMENTS.find((s) => s.file === 'index.js');
+    expect(stmt, 'lambda/plants/index.js no longer reads inventory_items').toBeDefined();
+    expect(stmt.sql).toMatch(/\bi\.seed_count\b(?!_)/);
+    expect(stmt.sql).toMatch(/\bi\.seed_count_estimated\b/);
+    expect(INVENTORY_ITEMS_COLUMNS).toContain('seed_count_estimated');
   });
 
   it('accounts for every unaliased inventory_items read', () => {

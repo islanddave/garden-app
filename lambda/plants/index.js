@@ -626,16 +626,18 @@ export const handler = async (event) => {
       // about what "variety_name" means. LEFT JOIN: a seeds row must have a variety_id under
       // chk_inventory_seed_requires_variety, but the join must not be what decides whether a lot
       // is visible.
-      // V5-SEEDQTY-001 — seed_count / seed_weight_g travel with the lot. SeedLotsFromPlanting
-      // renders `${formatQty(lot.quantity_on_hand)} on hand`, and after the backfill puts
-      // quantity_on_hand back to meaning CONTAINERS every saved lot reads "1 on hand" — the count
-      // is the fact the gardener came here for. Without these two the field is not wrong, it is
-      // silently absent, which is the harder failure to notice.
-      // seed_count_estimated is deliberately NOT projected: this list has no room to render "approx"
-      // and an unread column would make this contract assert something the code does not do.
+      // V5-SEEDQTY-001 — seed_count / seed_weight_g travel with the lot. quantity_on_hand means
+      // CONTAINERS (every saved lot is one jar), so the count is the fact the gardener came here
+      // for. Without these two the field is not wrong, it is silently absent, which is the harder
+      // failure to notice.
+      // seed_count_estimated travels WITH the count (2026-09-25). It was left out on the reasoning
+      // that this list had no room for "approx", and the cost was a false fact: measured on live
+      // prod that day, 8 of the 13 counted lots linked to a planting were estimates, and this list
+      // showed every one of them as an exact count. SeedLotsFromPlanting now renders the pair
+      // through seedLots.seedCountLabel ("approx. 185 seeds"), the words every seed surface uses.
       const rows = await sql`
         SELECT i.id, i.name, i.seed_stage, i.quantity_on_hand, i.created_at,
-               i.seed_count, i.seed_weight_g,
+               i.seed_count, i.seed_count_estimated, i.seed_weight_g,
                pv.display_name AS variety_name
           FROM public.inventory_items i
           LEFT JOIN public.cultivar pv ON pv.id = i.variety_id

@@ -119,13 +119,24 @@ describe('PlantingDetail — Seed saved from this plant (V4-SEEDREVERSE-001)', (
   it('distinguishes a counted zero from a lot that was never counted', async () => {
     // quantity_on_hand is NULLABLE and NULL means "never counted", not "none left" — the same
     // reading sowEngine's isDepleted takes of it. Printing 0 for a null would invent a measurement.
+    // 2026-09-25: the zero reads "used up" (it read "0 on hand"); every row here is a saved lot,
+    // whose container is one jar or none — SeedLotsFromPlanting.lotContainerLabel.
     renderWith([
       { id: 'lot-zero', name: 'Used up lot', seed_stage: 'stored', quantity_on_hand: 0, variety_name: null, created_at: '2026-09-01' },
       { id: 'lot-null', name: 'Uncounted lot', seed_stage: 'stored', quantity_on_hand: null, variety_name: null, created_at: '2026-08-01' },
     ])
     expect(await screen.findByText(HEADING)).toBeTruthy()
-    expect(screen.getByText('Stored · 0 on hand')).toBeTruthy()
+    expect(screen.getByText('Stored · used up')).toBeTruthy()
     expect(screen.getByText('Stored')).toBeTruthy()
-    expect(screen.queryByText(/null on hand/)).toBeNull()
+    expect(screen.queryByText(/null on hand|0 on hand/)).toBeNull()
+  })
+
+  it('leaves out the one jar every saved lot is — no "1 on hand" (Dave, 2026-09-25: "not correct ever")', async () => {
+    renderWith([
+      { id: 'lot-one', name: 'Cinderella seed 2026', seed_stage: 'stored', quantity_on_hand: '1.000', seed_count: 60, seed_count_estimated: true, variety_name: 'Cinderella', created_at: '2026-09-01' },
+    ])
+    expect(await screen.findByText(HEADING)).toBeTruthy()
+    expect(screen.getByText('Cinderella · Stored · approx. 60 seeds')).toBeTruthy()
+    expect(screen.queryByText(/on hand/)).toBeNull()
   })
 })

@@ -691,6 +691,9 @@ describe('V5-SEEDQTY-001 — PUT /:id/seed-measure (seed count + weight)', () =>
     expect(row, 'the lot is missing from the reverse read entirely').toBeTruthy()
     expect(row.seed_count).toBe(185)
     expect(Number(row.seed_weight_g)).toBe(0.5)
+    // 2026-09-25 — the basis travels with the count, so the planting page can say "approx." for an
+    // estimate. `false`, not merely falsy: an unprojected column arrives undefined.
+    expect(row.seed_count_estimated, 'seed_count_estimated is not projected by the seed-lots read').toBe(false)
   })
 })
 

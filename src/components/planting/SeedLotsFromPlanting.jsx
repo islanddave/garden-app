@@ -26,6 +26,20 @@ import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { formatQty, formatSeedWeight } from '../../lib/format.js'
 import { seedStageLabel } from '../seed/seedStages.js'
+import { seedCountLabel } from '../seed/seedLots.js'
+
+// The container, on a list where every row is a SAVED lot (V5-SEEDQTY-001: quantity_on_hand is the
+// jar). One jar is the convention every saved lot carries, so it says nothing and is left out — Dave,
+// 2026-09-25, of "1 packet": "not correct ever". 0 is the lot used up, said in those words. Any other
+// amount is a real one somebody recorded (prod holds one saved lot at 272 'each') and keeps its number.
+// NULL is "never recorded" and says nothing, as before. Exported for test.
+export function lotContainerLabel(q) {
+  if (q == null || q === '') return null
+  const n = Number(q)
+  if (n === 1) return null
+  if (n === 0) return 'used up'
+  return `${formatQty(q)} on hand`
+}
 
 // { lots, failed, loading }. `loading` renders as nothing at all rather than as a skeleton: the
 // section has no reserved space on the page, so a placeholder would be a block appearing and
@@ -73,24 +87,23 @@ export default function SeedLotsFromPlanting({ lots, failed }) {
         // its variety (the common case) repeating it reads as a stutter.
         const variety = lot.variety_name && lot.variety_name !== lot.name ? lot.variety_name : null
         const stage = lot.seed_stage ? seedStageLabel(lot.seed_stage) : null
-        // Explicit zero is "none left"; NULL is "never counted", which is not the same claim and
-        // must not render as 0. Same reading sowEngine's isDepleted takes of this column.
-        const qty = lot.quantity_on_hand == null ? null : formatQty(lot.quantity_on_hand)
-        // V5-SEEDQTY-001 — the seeds themselves, which is what a gardener came here to read.
-        // quantity_on_hand is CONTAINERS now, so on a lot saved through this flow it says "1 on
-        // hand" and always will; without these two the interesting number is nowhere on the line.
+        // The jar, by lotContainerLabel's rule: nothing for the one jar every saved lot is, "used up"
+        // for 0 (explicit zero is "none left"; NULL is "never counted" and renders nothing — the
+        // reading sowEngine's isDepleted takes of this column), and "N on hand" for any other amount.
+        const container = lotContainerLabel(lot.quantity_on_hand)
+        // V5-SEEDQTY-001 — the seeds themselves, which is what a gardener came here to read, in the
+        // words every seed surface uses (seedLots.seedCountLabel): "185 seeds", or "approx. 185 seeds"
+        // for a number taken off a packet rather than counted — the route projects
+        // seed_count_estimated since 2026-09-25, when 8 of the 13 counted lots linked to a planting on
+        // prod were estimates this line showed as exact.
         //
-        // ABSENT AND NULL BOTH RENDER NOTHING, and absent is the live case: the columns only reach
-        // this list once lambda/plants/index.js's seed-lots SELECT names them, so until that lands
-        // every lot here is missing the keys entirely. Same == null test covers both, and an
-        // explicit 0 survives it — a counted-empty jar reads "0 seeds", which is a fact somebody
-        // recorded, where nothing at all means nobody has counted.
-        const seeds = lot.seed_count == null
-          ? null
-          : `${formatQty(lot.seed_count)} ${Number(lot.seed_count) === 1 ? 'seed' : 'seeds'}`
+        // ABSENT AND NULL BOTH RENDER NOTHING: a row without the keys (an older Lambda, a stubbed
+        // read) and a lot nobody counted read alike, and an explicit 0 survives — a counted-empty jar
+        // reads "0 seeds", which is a fact somebody recorded, where nothing at all means nobody has
+        // counted. An absent basis reads as counted, the historical default.
+        const seeds = seedCountLabel(lot.seed_count, lot.seed_count_estimated) || null
         const weight = formatSeedWeight(lot.seed_weight_g) || null
-        const meta = [variety, stage, seeds, weight, qty == null ? null : `${qty} on hand`]
-          .filter(Boolean)
+        const meta = [variety, stage, seeds, weight, container].filter(Boolean)
         return (
           <li
             key={lot.id}
