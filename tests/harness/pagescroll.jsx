@@ -39,6 +39,9 @@
 //   http://localhost:5401/tests/harness/viewport.html?page=pagescroll.html&vw=426&vh=836
 //     ms=300         latency of each page's own GETs
 //     topbar=52      the top-bar stand-in's height (TopChrome's BAR_H)
+//     auth=0         ms the user stays UNRESOLVED at every document load: the page tree is Protected's
+//                    one-screen skeleton and the manager's `ready` is false, as App.jsx's `!loading` during the
+//                    Clerk window (~2.5 s measured) — what a boot restore has to wait through (qa-built M9)
 //
 // A FLOW'S FIRST LOAD IS A FIRST VISIT: sessionStorage and localStorage are cleared before anything
 // mounts (both scroll stores, every page's persisted filters), and Garden's crop groups are opened. The one
@@ -54,11 +57,12 @@ import { FavoritesProvider } from '../../src/context/FavoritesContext.jsx'
 import { ToastProvider } from '../../src/context/ToastContext.jsx'
 import { DismissRegistryProvider } from '../../src/context/DismissRegistry.jsx'
 import {
-  OverlayProvider, useOverlay, OverlayLink, useOverlayDismiss, OverlaySurfaceProvider, OverlayDirtyProvider,
+  OverlayProvider, useOverlay, OverlayLink, useOverlayDismiss, useOverlaySwap, OverlaySurfaceProvider, OverlayDirtyProvider,
 } from '../../src/context/OverlayContext.jsx'
 // The REAL manager, as AppShell calls it (scripts/layout-gate/page-scroll.mjs checks both sides match).
 import { usePageScrollManager, PageScrollProvider, applyBrowserScrollRestoration } from '../../src/hooks/usePageScrollManager.js'
 import { __resetPageScrollStore, PAGE_SCROLL_STORE_KEY } from '../../src/lib/pageScroll.js'
+import { __resetScrollRestoreStore } from '../../src/hooks/useScrollRestore.js'
 import { SCROLL_MANAGER_ENABLED } from '../../src/lib/featureFlags.js'
 import Sheet from '../../src/components/forms/Sheet.jsx'
 import SheetRowLink from '../../src/components/SheetRowLink.jsx'
@@ -84,6 +88,7 @@ applyBrowserScrollRestoration(SCROLL_MANAGER_ENABLED)
 const q = new URLSearchParams(location.search)
 const TOP_CHROME_PX = Number(q.get('topbar') || 52)
 const MS = Number(q.get('ms') ?? 300)
+const AUTH_MS = Number(q.get('auth') || 0)
 
 // This page's own URL, before the router moves it: where a reload has to land.
 const HARNESS_URL = location.pathname + location.search
@@ -360,6 +365,9 @@ function sampleFrame() {
 // The manager's decisions, as it reports them (observation only; App.jsx passes no onDecision).
 const decisions = []
 const onDecision = (d) => { if (decisions.length < 400) decisions.push({ t: Math.round(performance.now() - T0), row: d.row, action: d.action, y: d.y, path: d.path, entry: d.entry, nav: d.navType, at: Math.round(d.scrollY) }) }
+// How each restore ended (DONE / EXHAUSTED + reason / TAKEOVER + what took over / SUPERSEDED / CLAIMED).
+const restores = []
+const onRestore = (r) => { if (restores.length < 400) restores.push({ t: Math.round(performance.now() - T0), outcome: r.outcome, reason: r.reason, target: Math.round(r.target), y: Math.round(r.y), max: Math.round(r.max), path: location.pathname }) }
 
 // ── stand-ins ─────────────────────────────────────────────────────────────────────────────────────────
 const TARGETS = [
@@ -378,6 +386,7 @@ function TodayStandIn() {
       {link('/locations', 'harness-to-locations', 'Zones')}
       {link('/put-up', 'harness-to-putup', 'Put-Up')}
       {link('/seeds?view=saved', 'harness-to-saved', 'Saved seeds')}
+      {link(`/seeds?view=saved&lot=${RISTRA_ID}`, 'harness-to-saved-lot', 'Saved seeds, at the Ristra lot')}
       {link('/seeds?view=mine', 'harness-to-mine', 'My seeds')}
       {link(`/inventory/${RISTRA_ID}`, 'harness-to-lot', 'The Ristra lot')}
       {link('/chain/1', 'harness-to-chain', 'Page 1 of a chain')}
@@ -451,13 +460,21 @@ function HarnessOverlayHost({ ariaLabel, size = 'peek', children }) {
     </Sheet>
   )
 }
+// Search's PEEK, as Search.jsx opens it (openPeek): a swap PUSH to /search?peek=… carrying the same
+// background — the one in-overlay navigation that grows history, so the system Back returns to the results.
 function SearchStandIn() {
+  const swap = useOverlaySwap()
+  const loc = useLocation()
+  const peek = new URLSearchParams(loc.search).get('peek')
   return (
     <div data-testid="harness-search" style={{ padding: '8px 0' }}>
+      {peek && <div data-testid="harness-search-peeked" style={{ padding: '8px 20px' }}>Peeking at {peek}</div>}
       {TARGETS.filter((t) => t.key === 'event' || t.key === 'location').map((t) => (
         <Link key={t.key} to={t.to} data-testid={`harness-search-${t.key}`}
           style={{ display: 'flex', alignItems: 'center', minHeight: 48, padding: '12px 20px', color: '#2f3b2f', textDecoration: 'none' }}>{t.label}</Link>
       ))}
+      <button type="button" data-testid="harness-search-peek" onClick={() => swap(`/search?peek=${DEEP_EVENT_ID}`, { replace: false, state: { peekPushed: true } })}
+        style={{ display: 'flex', alignItems: 'center', minHeight: 48, padding: '12px 20px', background: 'none', border: 'none' }}>Peek</button>
     </div>
   )
 }
@@ -514,7 +531,14 @@ const pagePath = () => { try { return window.history.state?.usr?.background?.pat
 function Shell() {
   const { pageLocation, overlayLocation, background } = useOverlay()
   const navigationType = useNavigationType()
-  const pageScroll = usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, ready: true, onDecision })
+  // ?auth=: the user is unresolved for AUTH_MS at every load (Protected's skeleton; App.jsx passes !loading).
+  const [authed, setAuthed] = useState(AUTH_MS <= 0)
+  React.useEffect(() => {
+    if (authed) return undefined
+    const t = setTimeout(() => setAuthed(true), AUTH_MS)
+    return () => clearTimeout(t)
+  }, [authed])
+  const pageScroll = usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, ready: authed, onDecision, onRestore })
   return (
     <PageScrollProvider value={pageScroll}>
       <header data-app-chrome="top"
@@ -527,6 +551,7 @@ function Shell() {
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh',
         paddingBottom: 'calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--today-band-height, 0px))' }}>
         <div data-harness-pages="" style={{ flex: 1 }}>
+          {!authed ? <div data-testid="harness-skeleton" style={{ minHeight: `calc(100dvh - ${TOP_CHROME_PX}px)` }}>Loading…</div> : (
           <Routes location={pageLocation}>
             <Route path="/today" element={routeEl(<TodayStandIn />)} />
             <Route path="/deep" element={routeEl(<DeepListStandIn />)} />
@@ -545,6 +570,7 @@ function Shell() {
             <Route path="/varieties/:varietyId/edit" element={routeEl(<VarietyEdit />)} />
             <Route path="*" element={<LeftThePage />} />
           </Routes>
+          )}
         </div>
       </div>
       {background && (
@@ -615,9 +641,11 @@ window.__h = {
   key: () => { try { return window.history.state?.key ?? null } catch { return null } },
   idx: () => { try { return window.history.state?.idx ?? null } catch { return null } },
   mode: () => { try { return window.history.scrollRestoration } catch { return null } },
-  mark: () => { trace.length = 0; decisions.length = 0; return true },
+  mark: () => { trace.length = 0; decisions.length = 0; restores.length = 0; return true },
   trace: () => trace.slice(),
   decisions: () => decisions.slice(),
+  restores: () => restores.slice(),
+  authed: () => !document.querySelector('[data-testid="harness-skeleton"]'),
   startSampling: () => { samples = []; sampleT0 = performance.now(); sampling = true; requestAnimationFrame(sampleFrame); return true },
   stopSampling: () => { sampling = false; return samples ? samples.slice() : [] },
   // The manager's mirror, for failure messages only.
@@ -626,6 +654,9 @@ window.__h = {
   setDeepRows: (n, regen = false) => { if (!setDeepRowsExternal) return false; setDeepRowsExternal(n, regen); return true },
   // The manager's store emptied, both halves: the state of every entry the previous bundle wrote.
   forgetPageScroll: () => { __resetPageScrollStore(); return true },
+  // useScrollRestore's store emptied, both halves: an entry the hook cannot restore (evicted past its 20, or
+  // written before the hook existed), so the manager is the one restoring it.
+  forgetScrollRestore: () => { __resetScrollRestoreStore(); return true },
   reloadHere: () => {
     window.sessionStorage.setItem(RELOAD_TO_KEY, location.pathname + location.search + location.hash)
     window.history.replaceState(window.history.state, '', HARNESS_URL)
@@ -633,5 +664,5 @@ window.__h = {
     return true
   },
   reloadedDoc: () => !!RELOAD_TO,
-  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS }),
+  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS }),
 }

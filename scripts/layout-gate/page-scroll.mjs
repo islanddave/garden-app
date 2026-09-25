@@ -22,35 +22,61 @@
 // history traversal (history.back() in the frame: popstate, as the Android back gesture). Each flow opens in
 // a FRESH TAB, so its history, storage and module state are its own.
 //
-// THE FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides). Every page a
-// flow PUSHES onto must land at scrollY 0 with its title inside the visible band; every Back must land at the
-// exact scrollY the page was left at, with the element tapped at the same viewport top (±1px):
+// THE FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides), except the five
+// slow ones (eventlog-slow, zones-slow, leave-during-load, reload-skeleton, deep25), which run at the first only:
+// they measure time, not layout, and each has a fast sibling at both. Every page a flow PUSHES onto must land at
+// scrollY 0 (±1px, LAND_TOL_PX) with its title inside the visible band; every Back must land at the exact scrollY the page was left
+// at, with the element tapped at the same viewport top (±1px):
 //   eventlog      a planting's Event log, deep → an event → Back. The page loads in TWO stages (header, then
 //                 the log): the restore has to outlast both. Shipped app: Back lost the place (4658 → 0).
-//   zones         Zones, a row deep in the list → the zone → Back.
+//   eventlog-slow as eventlog, every GET 3 s slow — each stage 3 s: the 4 s prototype landed 2070 of 4658.
+//   eventlog-more the Event log past "Show more" → event 55 → Back. The planting page forgets how many events
+//                 it showed, so the place is beyond the page it comes back as: the restore must stop at the
+//                 closest point it can reach (the page's end) once the page has settled, not pull for 15 s —
+//                 and a "Show more" tap after that must not jump to the old place.
+//   eventlog-more-tap  the same Back, with "Show more" TAPPED (a finger: touch pointerdown, then click) while
+//                 the restore is still pulling: a tap takes the restore over, so the rows it adds never yank
+//                 the page to the old place.
+//   zones         Zones, a row mid-list (not the page's end, so an overshoot shows too) → the zone → Back.
 //   zones-slow    as zones, every page GET 5 s slow (a cold Lambda): the 4 s prototype landed 56 of 1645.
 //   leave-during-load  as zones with every GET 3 s slow, but away by a tab WHILE the Back is still loading, then
 //                 Back again: the restore's clamped attempts were never filed (rimpact IMPORTANT-3).
+//   takeover      as zones, and the wheel turned INSIDE the restore's 1 s hold: the page stays where the user
+//                 scrolled it, never pulled back.
+//   takeover-touch  the same with a finger, every GET 1.5 s slow: a thumb RESTING on the glass from the Back
+//                 through the load does not take over; the same finger MOVING does.
+//   top-back      a long list at its TOP → Achievements → down → Back → the list at its top (the zero on a POP
+//                 with no record: 'manual' leaves the offset undefined, and Chrome's carry would keep 3000).
 //   more          a long list, deep → More → Achievements (a REPLACE into the Back marker's slot) → Back. Its
-//                 Back frames are sampled for the outgoing page moving before the path changes (with 'auto'
-//                 Chrome applies the popped offset to the still-mounted page first). BEST-EFFORT: in this
-//                 harness React swaps the page before the first sampled frame, and the line says so when it
-//                 does; what pins 'manual' is the instrument check (the frame's mode must be main.jsx's).
+//                 Back frames are sampled for the outgoing page moving before the path changes — an
+//                 OBSERVATION, not the pin: React commits the POP before the next frame, so no frame shows it
+//                 in this Chrome with either mode. What pins 'manual' is the instrument check.
 //   search        a long list, deep → header Search → a result (a push out of the overlay) → Back: Search
 //                 re-opens over the list AT its place → the X → still there.
+//   search-peek   a long list, deep → header Search → Peek (a PUSH inside the overlay, Search.jsx's openPeek)
+//                 → the system Back (the results again) → the X: the list never moves.
 //   garden-back   Garden, deep → a planting → Back → Garden at its spot (Garden restores itself).
 //   garden-tab    Garden, deep → Today tab → Garden tab → Garden at its spot ("back to your spot" on a push).
 //   garden-tab-4x as garden-tab with the tab's CPU throttled 4x: Garden's snapshot must not lose the spot to
-//                 the reset's scroll event on a slow commit (rimpact MINOR-2).
+//                 the reset's scroll event on a slow commit (rimpact MINOR-2, both halves).
 //   garden-add    Garden, deep → + → "Add a planting" (/garden?add=1, a REPLACE onto the SAME page) → the
 //                 editor opens (its ?add strip is another same-page REPLACE) → its X → Garden where it was.
 //   putup         Put-Up's Going-now list, deep → a batch (?batch=, a same-page PUSH) → Back → the list's place.
+//                 A MUST-NOT-CHANGE guard: Chromium's own clamp carry restores it with or without the manager.
+//   putup-top     Put-Up's list at its TOP → the first batch (same page) → down → Back → the list at its top
+//                 (rimpact-scrollmanager-built N1: the batch's offset used to come back with it).
 //   seeds-switch  My seeds, a little down → the view switch to Saved seeds (a same-page REPLACE) → no jump.
 //   same-replace  a long list, deep → its sort control (a same-page REPLACE) → no jump → a row → Back → the
 //                 place, now filed under the new entry.
-//   hook-seeded   Saved seeds, deep → a lot → the manager's store EMPTIED (every entry the previous bundle
-//                 wrote) → Back → Saved seeds' own restore puts it back (rimpact BLOCKING-2).
+//   hook-seeded   Saved seeds, deep → a lot → Back → Saved seeds' own restore puts it back. A REGRESSION GUARD
+//                 for the hook's restore: the page claims its entry, so the manager's store — emptied here, as
+//                 for an entry the previous bundle wrote — is never read on that Back (rimpact BLOCKING-2's "no
+//                 held zero" rests on the unit table).
 //   hook-top      Harvests at the top → a long list, deep → Back → Harvests at the top, not the list's carry.
+//   retap-back    Harvests, down → its tab re-tapped (a same-page REPLACE, a new entry, no move) → further down
+//                 → header List → Back → the place: claims are per ENTRY, not per page (rimpact IMPORTANT-4).
+//   lot-back      Saved seeds opened AT a lot (?lot=: the arrival hint scrolls to it) → up the list, away from it
+//                 → header List → the hook's store emptied → Back → the place, not the lot again (IMPORTANT-5).
 //   shrink-x      a long list, deep → header Search → the list blanks behind the sheet (a refetch) and is still
 //                 short at the close → the X → its rows land → the list where it was (rimpact IMPORTANT-2:
 //                 'manual' removed Chrome's restore on the close, so the manager's snapshot must). A list that
@@ -61,10 +87,26 @@
 //                 sees until its pop).
 //   lot-edit      a seed lot, deep → "Edit sow details →" → the variety editor → its Cancel (navigate(-1)) →
 //                 the lot where it was (Dave's "opens at the top unless you arrived from an edit").
-//   reload        Zones, deep → the app reloads on that entry (SW post-update reload, a tab restore) → the place.
+//   reload        Zones, a row mid-list → the app reloads on that entry (SW post-update reload, a tab restore)
+//                 → the place. location.reload() fires BOTH visibilitychange→hidden and pagehide, so this proves
+//                 one of the two flushes works, not which: the Android discard path (hidden, then no pagehide)
+//                 is pinned by the unit suite (usePageScrollManager.test.jsx), not here.
+//   reload-skeleton  as reload with the user unresolved for 3 s at the load (?auth=3000: Protected's skeleton,
+//                 App.jsx's `ready: !loading`): the restore waits through it and counts no time there.
 //   deep25        twenty-five pages deep, each left at its own offset → Back twenty-five times → each place
 //                 (the manager keeps 100 entries; useScrollRestore's own store keeps 20).
-// Every number is printed on pass as well as fail.
+// Every number is printed on pass as well as fail, and the tightest floor and title checks print their margin
+// (the checks CI's Linux fonts could move; a miss there is a hard red, never a false pass).
+//
+// THE CONTRACT A CHECK HOLDS (rimpact-scrollmanager-built N2): the gate reads SCROLL_MANAGER_ENABLED as the
+// harness serves it, so a forward flag-off build — the rollback — is measured against TODAY'S app, not the fix:
+//   · with the manager ON, every check is asserted;
+//   · with it OFF, the gate prints "manager OFF" and asserts only what the app kept before the manager and must
+//     keep with it: history.scrollRestoration back at 'auto', same-page writes and overlays never moving the
+//     page, Garden's and the hook pages' own restores, the pages that reset themselves (PlantingDetail,
+//     InventoryDetail), and a Back to a page left at its top. The manager's own promises — a door opens at its
+//     top, Back puts back the place on a page that cannot, a restore gives way to the user, a reload — are
+//     printed as "manager OFF, not asserted", and a flow that is the manager's from its first step is not run.
 //
 // THE INSTRUMENT CHECK comes first in every flow, and a mismatch stops the flow before any invariant is read:
 // the frame self-reports the viewport asked for (innerWidth/innerHeight, a clientWidth with no gutter), the
@@ -82,6 +124,9 @@
 // no flow here: "file only while the entry is still the page's" guards scroll events between a history change
 // and the commit, which under 'manual' come only from a user scroll during a pending transition or a native
 // restore of an entry still in 'auto' — timing-dependent, so it is pinned by usePageScrollManager.test.jsx.
+// The flows that measure a restore mid-flight (takeover, takeover-touch, eventlog-more-tap) read the harness's
+// restore log (__h.restores(), the manager's onRestore) to prove the restore was still armed when the user
+// acted: a restore that had already finished would make them pass over nothing, and that is a red.
 //
 // SEAMS (never set in CI; a run with any of them set says so in its first lines, so it cannot pass for clean):
 //   HARNESS_BASELINE_SHA — serve src/** from a git object (tests/harness/baselinePlugin.mjs).
@@ -147,6 +192,10 @@ function harnessCopyDrift() {
   if (!/\{ to: '\/garden\?add=1'/.test(nav)) out.push('BottomNav\'s + sheet no longer carries "Add a planting" → /garden?add=1 — flow garden-add models a door the app no longer has')
   if (!/<Sheet[^>]*ariaLabel="Create new"[^>]*armsBack/.test(nav) || !/<Sheet[^>]*ariaLabel="More navigation options"[^>]*armsBack/.test(nav)) out.push('BottomNav\'s + or More sheet is no longer an ARMED Sheet — the harness sheets no longer model them')
   if (!/<OverlayLink to="\/search"/.test(src('src/components/TopChrome.jsx'))) out.push('TopChrome no longer opens header Search with <OverlayLink to="/search"> — the harness header link no longer models it')
+  // Search's peek: a swap PUSH carrying the background (flow search-peek's door).
+  const peek = /swap\([^,]+, \{ replace: false, state: \{ peekPushed: true \} \}\)/
+  if (!peek.test(src('src/pages/Search.jsx'))) out.push('Search.jsx no longer opens its peek with swap(url, { replace: false, state: { peekPushed: true } }) — flow search-peek models a door the app no longer has')
+  if (!peek.test(harness)) out.push('tests/harness/pagescroll.jsx\'s Peek no longer opens the way Search.jsx does')
   return out
 }
 
@@ -186,6 +235,11 @@ const DEEP_MIN_PX = 300
 const SHALLOW_MIN_PX = 40
 // An element's viewport top after Back, against before: sub-pixel layout noise only.
 const TOP_TOL_PX = 1
+// A landing within 1px of the top IS the top. Measured, cause not found: from a mid-list Zones row the zone page
+// sometimes ends at y1 — a browser-side 1px scroll ~660 ms after the manager's reset, which depends on the row and
+// the viewport, with every JS scroll API wrapped (none called), scroll anchoring off (overflow-anchor: none, still
+// y1), the mouse moved off the page and the list positioned without the wheel. Invisible; the bug lands 52px+.
+const LAND_TOL_PX = 1
 const CHAIN_DEPTH = 25
 
 // ── One tab ─────────────────────────────────────────────────────────────────────────────────────────
@@ -203,6 +257,7 @@ const SEL = {
   toLocations: `d.querySelector('${tid('harness-to-locations')}')`,
   toPutUp: `d.querySelector('${tid('harness-to-putup')}')`,
   toSaved: `d.querySelector('${tid('harness-to-saved')}')`,
+  toSavedLot: `d.querySelector('${tid('harness-to-saved-lot')}')`,
   toMine: `d.querySelector('${tid('harness-to-mine')}')`,
   toLot: `d.querySelector('${tid('harness-to-lot')}')`,
   toChain: `d.querySelector('${tid('harness-to-chain')}')`,
@@ -218,13 +273,21 @@ const SEL = {
   searchSheet: `d.querySelector('[role="dialog"][aria-label="Search your garden"]')`,
   searchClose: `d.querySelector('[role="dialog"][aria-label="Search your garden"] [data-sheet-close]')`,
   searchEvent: `d.querySelector('[role="dialog"][aria-label="Search your garden"] ${tid('harness-search-event')}')`,
+  searchPeek: `d.querySelector('[role="dialog"][aria-label="Search your garden"] ${tid('harness-search-peek')}')`,
+  searchPeeked: `d.querySelector('[role="dialog"][aria-label="Search your garden"] ${tid('harness-search-peeked')}')`,
   moreSheet: `d.querySelector('[role="dialog"][aria-label="More navigation options"]')`,
   deepSort: `d.querySelector('${tid('deep-sort')}')`,
   deepRow: (depthExpr) => `(() => { ${BAND_FN} const mid = (bandTop + bandBottom) / 2; let best = null, bd = Infinity
     for (const r of d.querySelectorAll('${tid('deep-row')}')) { const b = r.getBoundingClientRect(); const c = (b.top + b.bottom) / 2; const dd = Math.abs(c - (${depthExpr})); if (dd < bd) { bd = dd; best = r } }
     return best })()`,
+  deepRowN: (n) => `d.querySelector('${tid('deep-row')}[data-row="${n}"]')`,
   eventRow: `d.querySelectorAll('a[href^="/events/"]')[44]`,
-  blueberry: `d.querySelector('a[href="/locations/loc-blueberry-hedge"]')`,
+  eventRowN: (n) => `d.querySelectorAll('a[href^="/events/"]')[${n}]`,
+  eventRows: `d.querySelectorAll('a[href^="/events/"]').length`,
+  showMore: `d.querySelector('${tid('event-log-show-more')}')`,
+  // Zones' door: a row in the MIDDLE of the list (Garden Beds › Bed 3), so the page is not at its end when
+  // left and a restore that overshoots is as visible as one that falls short (qa-scrollmanager-built M6).
+  zoneRow: `d.querySelector('a[href="/locations/loc-bed-3"]')`,
   tile: (n) => `d.querySelectorAll('${tid('planting-tile')}')[${n}]`,
   tileLink: (n) => `d.querySelectorAll('${tid('planting-tile-link')}')[${n}]`,
   addPlantingDialog: `d.querySelector('[role="dialog"][aria-label="Add planting"]')`,
@@ -233,6 +296,10 @@ const SEL = {
   batchOpen: (id) => `d.querySelector('${tid('going-batch')}[data-batch-id="${id}"] ${tid('going-open-batch')}')`,
   batchDetail: (id) => `d.querySelector('${tid('batch-detail-view')}[data-batch-id="${id}"]')`,
   ristraCard: `d.querySelector('${tid('seed-lot-card')}[data-lot-id="lot-ristra"]')`,
+  lotCard: (id) => `d.querySelector('${tid('seed-lot-card')}[data-lot-id="${id}"]')`,
+  lotCardMid: `(() => { ${BAND_FN} const mid = (bandTop + bandBottom) / 2; let best = null, bd = Infinity
+    for (const r of d.querySelectorAll('${tid('seed-lot-card')}')) { const b = r.getBoundingClientRect(); const dd = Math.abs((b.top + b.bottom) / 2 - mid); if (dd < bd) { bd = dd; best = r } }
+    return best })()`,
   ristraTitle: `d.querySelector('${tid('seed-lot-card')}[data-lot-id="lot-ristra"] ${tid('seed-lot-title')}')`,
   savedRadio: `[...d.querySelectorAll('[role="radiogroup"][aria-label="Which seeds"] [role="radio"]')].find((b) => b.textContent.trim() === 'Saved seeds') || null`,
   savedView: `d.querySelector('${tid('saved-seeds-view')}')`,
@@ -243,33 +310,51 @@ const SEL = {
     return best })()`,
 }
 
+// `manager: true` — the flow is the manager's own promise from its first step, so with the manager OFF it is
+// not run (see THE CONTRACT above). `ms` — every GET's latency. `auth` — ms the user stays unresolved at each
+// document load. `cpu` — CDP CPU throttling for the tab. `once` — the first viewport only: the slow flows measure
+// time, not layout, and each has a fast sibling at every viewport (qa-scrollmanager-built §6: every kill was the
+// same at both; this saves ~90 s of CI).
 const FLOWS = [
-  { key: 'eventlog', label: 'a planting\'s Event log, deep → an event → Back' },
-  { key: 'zones', label: 'Zones, a row deep → the zone → Back' },
-  { key: 'zones-slow', label: 'Zones, a row deep → the zone → Back, every GET 5 s slow', ms: 5000 },
-  { key: 'leave-during-load', label: 'Zones, a row deep → the zone → Back, and away again while Zones is still loading → Back', ms: 3000 },
-  { key: 'more', label: 'a long list, deep → More → Achievements → Back (and the outgoing page holds still until the path changes)' },
+  { key: 'eventlog', manager: true, label: 'a planting\'s Event log, deep → an event → Back' },
+  { key: 'eventlog-slow', manager: true, once: true, label: 'a planting\'s Event log, deep → an event → Back, every GET 3 s slow (two stages)', ms: 3000 },
+  { key: 'eventlog-more', manager: true, label: 'a planting\'s Event log past "Show more" → event 55 → Back (out of reach: the restore stops at the page\'s end) → "Show more" does not jump' },
+  { key: 'eventlog-more-tap', manager: true, label: 'a planting\'s Event log past "Show more" → event 55 → Back → a finger taps "Show more" while the restore is still pulling' },
+  { key: 'zones', manager: true, label: 'Zones, a row mid-list → the zone → Back' },
+  { key: 'zones-slow', manager: true, once: true, label: 'Zones, a row mid-list → the zone → Back, every GET 5 s slow', ms: 5000 },
+  { key: 'leave-during-load', manager: true, once: true, label: 'Zones, a row mid-list → the zone → Back, and away again while Zones is still loading → Back', ms: 3000 },
+  { key: 'takeover', manager: true, label: 'Zones, a row mid-list → the zone → Back → the wheel turned inside the restore\'s hold' },
+  { key: 'takeover-touch', manager: true, label: 'Zones, a row mid-list → the zone → Back with a thumb resting through the load → the thumb moves, every GET 1.5 s slow', ms: 1500 },
+  { key: 'top-back', label: 'a long list at its TOP → Achievements → down → Back' },
+  { key: 'more', manager: true, label: 'a long list, deep → More → Achievements → Back' },
   { key: 'search', label: 'a long list, deep → header Search → a result → Back (Search over the list at its place) → the X' },
+  { key: 'search-peek', label: 'a long list, deep → header Search → Peek → the system Back → the X' },
   { key: 'garden-back', label: 'Garden, deep → a planting → Back' },
   { key: 'garden-tab', label: 'Garden, deep → Today tab → Garden tab' },
   { key: 'garden-tab-4x', label: 'Garden, deep → Today tab → Garden tab, CPU 4x slower', cpu: 4 },
   { key: 'garden-add', label: 'Garden, deep → + → "Add a planting" (same page) → the editor\'s X' },
-  { key: 'putup', label: 'Put-Up\'s Going-now list, deep → a batch (same page) → Back' },
+  { key: 'putup', label: 'Put-Up\'s Going-now list, deep → a batch (same page) → Back (a must-not-change guard)' },
+  { key: 'putup-top', label: 'Put-Up\'s Going-now list at its TOP → the first batch (same page) → down → Back' },
   { key: 'seeds-switch', label: 'My seeds, a little down → the switch to Saved seeds (same page)' },
   { key: 'same-replace', label: 'a long list, deep → its sort control (same page) → a row → Back' },
-  { key: 'hook-seeded', label: 'Saved seeds, deep → a lot → the manager\'s store emptied → Back' },
+  { key: 'hook-seeded', label: 'Saved seeds, deep → a lot → Back: the hook\'s own restore (a regression guard; the manager\'s store, emptied, is never read)' },
   { key: 'hook-top', label: 'Harvests at the top → a long list, deep → Back' },
-  { key: 'shrink-x', label: 'a long list, deep → header Search → the list renders short → the X → the list long again' },
-  { key: 'shrink-back', label: 'a long list, deep → header Search → the list renders short → the system Back → the list long again' },
-  { key: 'shrink-marker', label: 'a long list, deep → More → the list renders short → the system Back → the list long again' },
-  { key: 'lot-edit', label: 'a seed lot, deep → "Edit sow details →" → the variety editor → its Cancel' },
-  { key: 'reload', label: 'Zones, deep → the app reloads on that entry' },
-  { key: 'deep25', label: `${CHAIN_DEPTH} pages deep, each at its own offset → Back ${CHAIN_DEPTH} times` },
+  { key: 'retap-back', label: 'Harvests, down → its tab re-tapped (same page, a new entry) → further down → header List → Back' },
+  { key: 'lot-back', label: 'Saved seeds opened at a lot (?lot=) → away from it → header List → the hook\'s store emptied → Back' },
+  { key: 'shrink-x', manager: true, label: 'a long list, deep → header Search → the list renders short → the X → the list long again' },
+  { key: 'shrink-back', manager: true, label: 'a long list, deep → header Search → the list renders short → the system Back → the list long again' },
+  { key: 'shrink-marker', manager: true, label: 'a long list, deep → More → the list renders short → the system Back → the list long again' },
+  { key: 'lot-edit', manager: true, label: 'a seed lot, deep → "Edit sow details →" → the variety editor → its Cancel' },
+  { key: 'reload', manager: true, label: 'Zones, a row mid-list → the app reloads on that entry' },
+  { key: 'reload-skeleton', manager: true, once: true, label: 'Zones, a row mid-list → the app reloads on that entry, the user unresolved for 3 s', auth: 3000 },
+  { key: 'deep25', manager: true, once: true, label: `${CHAIN_DEPTH} pages deep, each at its own offset → Back ${CHAIN_DEPTH} times` },
 ]
 
 const failures = []
 const fail = (m) => failures.push(m)
 const shots = []
+// The flag as each flow's harness served it ('on' / 'off'): one build, so one value.
+const served = new Set()
 
 async function assertPortFree(url, what) {
   try { await fetch(url, { signal: AbortSignal.timeout(1500) }) } catch { return }
@@ -392,6 +477,9 @@ function tab(cdp, sessionId) {
     return { settled: false, ms: ${maxMs}, y: w ? w.scrollY : null }
   })()`)
   const mouse = async (type, x, y, extra = {}) => cdp.send('Input.dispatchMouseEvent', { type, x, y, ...extra }, sessionId)
+  // A finger: real touch input through the browser's gesture pipeline (touchstart/touchmove/touchend, the touch
+  // pointer events, a tap's click, a drag's scroll). `points` is [] for touchEnd.
+  const touch = async (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([x, y]) => ({ x, y })) }, sessionId)
   // A REAL tap, IN PLACE: the target must already be in the visible band and its centre must hit-test to it.
   // `chrome: true` admits a control in the bars or a sheet over them. Returns null, or why no tap was made.
   const tap = async (sel, what, { chrome = false } = {}) => {
@@ -457,7 +545,23 @@ function tab(cdp, sessionId) {
     writeFileSync(path, Buffer.from(shot.data, 'base64'))
     shots.push(path)
   }
-  return { ev, read, waitIn, settle, tap, wheelTo, wheelToY, wheelBy, shoot }
+  // The centre of `sel` in host coordinates, if it sits in the visible band and hit-tests to itself (tap's rule).
+  const aim = async (sel, what) => {
+    const p = await read(`const el = ${sel}; if (!el) return { missing: true }
+      ${BAND_FN}
+      const fr = f.getBoundingClientRect(), r = el.getBoundingClientRect()
+      const x = (r.left + r.right) / 2, y = (r.top + r.bottom) / 2
+      const inBand = y >= bandTop && y <= bandBottom && x >= 0 && x <= w.innerWidth
+      const at = inBand ? d.elementFromPoint(x, y) : null
+      return { x: fr.left + x, y: fr.top + y, inBand, hits: !!at && (at === el || el.contains(at)) }`)
+    if (!p || p.missing) return { why: `${what} is not on the page` }
+    if (!p.inBand) return { why: `${what} is not in the visible band` }
+    if (!p.hits) return { why: `${what} does not hit-test at its centre` }
+    return { x: p.x, y: p.y }
+  }
+  // The middle of the visible band, in host coordinates: where a thumb or the wheel goes.
+  const bandMid = () => read(`${BAND_FN} const fr = f.getBoundingClientRect(); return { x: fr.left + w.innerWidth / 2, y: fr.top + (bandTop + bandBottom) / 2 }`)
+  return { ev, read, waitIn, settle, tap, wheelTo, wheelToY, wheelBy, shoot, mouse, touch, aim, bandMid }
 }
 
 // The frame's page as it stands. `sel` is the element whose viewport top the flow compares.
@@ -465,16 +569,20 @@ const READ_HERE = (sel) => `${BAND_FN}
   const el = ${sel || 'null'}, r = el ? el.getBoundingClientRect() : null
   const h1 = d.querySelector('[data-harness-pages] h1'), hr = h1 ? h1.getBoundingClientRect() : null
   return { path: w.location.pathname, search: w.location.search, key: w.__h ? w.__h.key() : null, page: w.__h ? w.__h.pageKey() : null,
-    y: w.scrollY, docH: d.documentElement.scrollHeight, top: r ? r.top : null,
+    y: w.scrollY, docH: d.documentElement.scrollHeight, max: d.documentElement.scrollHeight - w.innerHeight, top: r ? r.top : null,
     h1: hr ? { t: hr.top, b: hr.bottom, text: (h1.textContent || '').trim().slice(0, 50) } : null,
     h1InBand: !!hr && hr.height > 0 && hr.top >= bandTop - 0.5 && hr.bottom <= bandBottom + 0.5,
     band: [bandTop, bandBottom], mode: w.__h ? w.__h.mode() : null }`
 const DIAG = `return { errors: w.__h ? w.__h.errors() : ['window.__h missing'], unstubbed: w.__h ? w.__h.unstubbed() : [],
-  decisions: w.__h ? w.__h.decisions() : [], trace: w.__h ? w.__h.trace() : [], store: w.__h ? w.__h.store() : null,
-  leftPage: !!d.querySelector('[data-testid="harness-left-page"]'), fallback: !!d.querySelector('[data-testid="harness-route-fallback"]') }`
+  decisions: w.__h ? w.__h.decisions() : [], restores: w.__h ? w.__h.restores() : [], trace: w.__h ? w.__h.trace() : [], store: w.__h ? w.__h.store() : null,
+  leftPage: !!d.querySelector('[data-testid="harness-left-page"]'), fallback: !!d.querySelector('[data-testid="harness-route-fallback"]'),
+  focus: d.activeElement && d.activeElement !== d.body ? (d.activeElement.getAttribute('data-testid') || d.activeElement.tagName.toLowerCase() + (d.activeElement.id ? '#' + d.activeElement.id : '')) : null }`
 
 const R1 = (n) => (n == null ? 'n/a' : Math.round(n * 10) / 10)
 const rowsLine = (decisions) => decisions.slice(-8).map((x) => `${x.path}:${x.row}/${x.action}${x.action === 'RESTORE' ? `→${Math.round(x.y)}` : ''}`).join(' ') || 'none'
+// How each restore ended: OUTCOME[/reason] at its time, target, where the page was and its max then.
+const restoreLine = (r) => `${r.outcome}${r.reason ? `/${r.reason}` : ''} @${r.t}ms (target ${r.target}, y${r.y}, max ${r.max})`
+const restoresLine = (restores) => restores.slice(-4).map(restoreLine).join(' ') || 'none'
 const traceLine = (trace) => {
   const out = []
   for (const e of trace) { const p = out[out.length - 1]; if (!p || p.path !== e.path || p.y !== e.y) out.push(e) }
@@ -496,12 +604,13 @@ async function runFlow(cdp, flow, vw, vh) {
     if (cpu > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: cpu }, sessionId)
     const t = tab(cdp, sessionId)
     const ms = flow.ms ?? 300
+    const auth = flow.auth ?? 0
     // A settle long enough to outlast the flow's own latency: the restore re-applies until the content lands.
-    const slowMax = Math.max(10000, ms * 3 + 6000)
-    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}`
+    const slowMax = Math.max(10000, ms * 3 + 6000) + auth
+    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}`
     const nav = await cdp.send('Page.navigate', { url }, sessionId)
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
-    if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000)) return fail(`${at}: the harness never came up in the frame — nothing to measure`)
+    if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000 + auth)) return fail(`${at}: the harness never came up in the frame — nothing to measure`)
     await t.ev(`(async () => { ${FRAME_VARS}; if (d.fonts) await d.fonts.ready; return 1 })()`)
     let boot0 = await t.read(`return w.__h.boot()`)
     reloaded = async () => {
@@ -522,20 +631,35 @@ async function runFlow(cdp, flow, vw, vh) {
     if (g.top !== TOP_CHROME_PX) geo.push(`the top-bar stand-in is ${g.top}px, expected TopChrome's BAR_H ${TOP_CHROME_PX}px`)
     if (g.nav !== BOTTOM_NAV_HEIGHT_PX) geo.push(`the bottom-nav stand-in is ${g.nav}px, expected BOTTOM_NAV_HEIGHT_PX ${BOTTOM_NAV_HEIGHT_PX}px`)
     if (g.fixture.ms !== ms) geo.push(`the harness answers every GET after ${g.fixture.ms}ms, the flow asked for ${ms}ms`)
+    if (g.fixture.auth !== auth) geo.push(`the harness holds the user unresolved for ${g.fixture.auth}ms at each load, the flow asked for ${auth}ms`)
     for (const [key, v] of Object.entries(FIXTURE)) if (g.fixture[key] !== v) geo.push(`the fixture's ${key} is ${g.fixture[key]}, the gate expects ${v}`)
     // The browser's restore mode is the one main.jsx sets for the flag this document was served: 'manual' with
     // the manager on. A harness in any other mode measures a browser prod does not run.
     const wantMode = g.fixture.manager ? 'manual' : 'auto'
     if (g.mode !== wantMode) geo.push(`history.scrollRestoration is '${g.mode}', but with SCROLL_MANAGER_ENABLED=${g.fixture.manager} main.jsx sets '${wantMode}'`)
     if (geo.length) return fail(`${at}: ${geo.join('; ')}`)
-    note.push(g.fixture.manager ? `manager on, '${g.mode}'` : `MANAGER OFF (the flag as served), '${g.mode}'`)
+    const MANAGER = !!g.fixture.manager
+    served.add(MANAGER ? 'on' : 'off')
+    note.push(MANAGER ? `manager on, '${g.mode}'` : `manager OFF (the flag as served), '${g.mode}'`)
+    if (!MANAGER && flow.manager) {
+      note.push('the manager\'s own flow from its first step, nothing in it is today\'s contract: not run')
+      return
+    }
+    // THE CONTRACT (header): `today` — asserted whatever the flag; otherwise the manager's own promise, asserted
+    // with it on and, with it OFF, printed and not held against today's app.
+    const verdict = (msgs, { today = false } = {}) => {
+      if (!msgs.length) return null
+      if (today || MANAGER) return msgs.join('; ')
+      note.push(`manager OFF, not asserted: ${msgs.join('; ')}`)
+      return null
+    }
 
     // ── Steps, each a failure message or null.
     const page = (key) => t.waitIn(`w.__h.pageReady('${key}')`, slowMax)
     const diag = async () => {
       const dg = await t.read(DIAG).catch(() => null)
       if (!dg) return ''
-      return ` · manager rows: ${rowsLine(dg.decisions)} · scroll trace: ${traceLine(dg.trace)}${dg.errors.length ? ` · errors: ${dg.errors.join(' | ')}` : ''}${dg.leftPage ? ' · the router LEFT for an unexpected route' : ''}${dg.fallback ? ' · a route fell back (the page threw)' : ''}`
+      return ` · manager rows: ${rowsLine(dg.decisions)} · restores: ${restoresLine(dg.restores)} · scroll trace: ${traceLine(dg.trace)}${dg.errors.length ? ` · errors: ${dg.errors.join(' | ')}` : ''}${dg.leftPage ? ' · the router LEFT for an unexpected route' : ''}${dg.fallback ? ' · a route fell back (the page threw)' : ''}${dg.focus ? ` · focus on ${dg.focus}` : ''}`
     }
     const enter = async (sel, key, what, { chrome = false } = {}) => {
       const why = await t.tap(sel, what, { chrome })
@@ -544,8 +668,10 @@ async function runFlow(cdp, flow, vw, vh) {
       await t.settle(400, slowMax)
       return null
     }
-    // A push onto `key`: it must write a new history entry and land at 0 with its title in the band.
-    const land = async (tapSel, tapWhat, key, { chrome = false, titleSel = null, name = key } = {}) => {
+    // A push onto `key`: it must write a new history entry and land at 0 with its title in the band. `today`: the
+    // landing holds without the manager too — the page resets itself (PlantingDetail, InventoryDetail) or the
+    // page it came from was at its top, so there was nothing to carry.
+    const land = async (tapSel, tapWhat, key, { chrome = false, titleSel = null, name = key, today = false } = {}) => {
       const k0 = await t.read(`return w.__h.key()`)
       await t.read(`w.__h.mark(); return 1`)
       const why = await t.tap(tapSel, tapWhat, { chrome })
@@ -555,16 +681,23 @@ async function runFlow(cdp, flow, vw, vh) {
       const here = await t.read(READ_HERE(titleSel))
       await t.shoot(join(OUTDIR, `page-scroll-${flow.key}-${name}-${vw}x${vh}.png`))
       if (here.key == null || here.key === k0) return { why: `${tapWhat} did not write a new history entry (key ${here.key}) — this is not a door onto a new page` }
-      const title = titleSel ? { t: here.top, ok: here.top != null && here.top >= here.band[0] - 0.5 && here.top <= here.band[1] } : { t: here.h1?.t, ok: here.h1InBand }
+      const title = titleSel
+        ? { t: here.top, ok: here.top != null && here.top >= here.band[0] - 0.5 && here.top <= here.band[1], margin: here.top == null ? null : Math.min(here.top - here.band[0], here.band[1] - here.top) }
+        : { t: here.h1?.t, ok: here.h1InBand, margin: here.h1 ? Math.min(here.h1.t - here.band[0], here.band[1] - here.h1.b) : null }
       const msgs = []
-      if (Math.round(here.y) !== 0) msgs.push(`${name} landed at scrollY ${R1(here.y)}, not 0 — it opened part-way down (the bug)`)
-      if (!title.ok) msgs.push(`${name}'s title is at y${R1(title.t)}, not inside the visible band y${R1(here.band[0])}-${R1(here.band[1])}`)
       if (!st.settled) msgs.push(`${name} never held still for 600ms within ${slowMax}ms (last y${R1(st.y)})`)
-      note.push(`${name} y${R1(here.y)} (title y${R1(title.t)})`)
+      const off = []
+      if (Math.abs(here.y) > LAND_TOL_PX) off.push(`${name} landed at scrollY ${R1(here.y)}, not 0 — it opened part-way down (the bug)`)
+      if (!title.ok) off.push(`${name}'s title is at y${R1(title.t)}, not inside the visible band y${R1(here.band[0])}-${R1(here.band[1])}`)
+      const v = verdict(off, { today })
+      if (v) msgs.push(v)
+      note.push(`${name} y${R1(here.y)} (title y${R1(title.t)}${title.ok ? `, ${R1(title.margin)}px inside the band` : ''})`)
       return { here, why: msgs.length ? `${msgs.join('; ')}${await diag()}` : null }
     }
     // Back onto `key`: the very entry `before` was read on, at its exact offset, `sel` at the same viewport top.
-    const back = async (before, key, sel, what, { sample = false } = {}) => {
+    // `today`: the place comes back without the manager too (Garden's own restore, a hook page's, a page left at
+    // its top, a same-page list Chromium's clamp carry restores).
+    const back = async (before, key, sel, what, { sample = false, today = false } = {}) => {
       await t.read(`w.__h.mark(); ${sample ? 'w.__h.startSampling();' : ''} return 1`)
       await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
       if (!await page(key)) return { why: `Back never brought the ${key} page back${await diag()}${await reloaded()}` }
@@ -577,21 +710,33 @@ async function runFlow(cdp, flow, vw, vh) {
       if (after.key !== before.key) return { why: `Back landed on history key ${after.key}, not the ${key} page's own ${before.key} — the Back measured is not the one the offset was taken on` }
       const msgs = []
       if (!st.settled) msgs.push(`after Back the ${key} page never held still for 800ms within ${slowMax}ms (last y${R1(st.y)})`)
-      if (Math.round(after.y) !== Math.round(before.y)) msgs.push(`${what}: Back landed at scrollY ${R1(after.y)}, the page was left at ${R1(before.y)} — the place was lost`)
-      if (sel && (after.top == null || before.top == null || Math.abs(after.top - before.top) > TOP_TOL_PX)) msgs.push(`${what}: after Back the tapped element's top is at y${R1(after.top)}, it was at y${R1(before.top)} (±${TOP_TOL_PX}px)`)
+      const off = []
+      if (Math.round(after.y) !== Math.round(before.y)) off.push(`${what}: Back landed at scrollY ${R1(after.y)}, the page was left at ${R1(before.y)} — the place was lost`)
+      if (sel && (after.top == null || before.top == null || Math.abs(after.top - before.top) > TOP_TOL_PX)) off.push(`${what}: after Back the tapped element's top is at y${R1(after.top)}, it was at y${R1(before.top)} (±${TOP_TOL_PX}px)`)
+      const v = verdict(off, { today })
+      if (v) msgs.push(v)
       note.push(`Back y${R1(after.y)} in ${st.ms}ms (left at y${R1(before.y)})`)
       return { after, samples, why: msgs.length ? `${msgs.join('; ')}${await diag()}` : null }
     }
-    const deep = (y, min = DEEP_MIN_PX) => (y >= min ? null : `the page is only ${R1(y)}px down before the tap (need >= ${min}) — a clobbered offset could equal it, so the flow proves nothing`)
+    // The floor on how far down a page is before its tap. `show` prints the margin — the checks nearest their
+    // floor are the font-sensitive ones (CI's Linux fonts are not this Mac's).
+    const deep = (y, min = DEEP_MIN_PX, { show = false } = {}) => {
+      if (y < min) return `the page is only ${R1(y)}px down before the tap (need >= ${min}) — a clobbered offset could equal it, so the flow proves nothing`
+      if (show) note.push(`${R1(y - min)}px over the ${min}px floor`)
+      return null
+    }
+    // A mid-list source: the page must not be at its end, or a restore that overshoots would pass.
+    const midList = (here, what) => (here.y <= here.max - 40 ? null : `${what} is at the page's end (y${R1(here.y)} of max ${R1(here.max)}) — a restore that overshoots would not show`)
+    const restores = () => t.read(`return w.__h.restores()`)
     const done = (why) => { if (why) fail(`${at}: ${flow.label}: ${why}`) }
 
     // ── The flows.
     const k = flow.key
-    if (k === 'eventlog') {
+    if (k === 'eventlog' || k === 'eventlog-slow') {
       let why = await enter(SEL.toPlanting, 'planting', 'the /today link to the planting')
       if (why) return done(why)
       // The Event log pages its rows; the door is its 45th, which must be on the page.
-      const rows = await t.read(`return d.querySelectorAll('a[href^="/events/"]').length`)
+      const rows = await t.read(`return ${SEL.eventRows}`)
       if (rows < 45) return done(`the Event log shows ${rows} rows; the door (row 45) is not on the page`)
       why = await t.wheelTo(SEL.eventRow, 'the Event log\'s 45th row')
       if (why) return done(why)
@@ -603,32 +748,168 @@ async function runFlow(cdp, flow, vw, vh) {
       const b = await back(before, 'planting', SEL.eventRow, 'the Event log')
       return done(b.why)
     }
-    if (k === 'zones' || k === 'zones-slow' || k === 'reload' || k === 'leave-during-load') {
-      let why = await enter(SEL.toLocations, 'locations', 'the /today link to Zones')
+    if (k === 'eventlog-more' || k === 'eventlog-more-tap') {
+      let why = await enter(SEL.toPlanting, 'planting', 'the /today link to the planting')
       if (why) return done(why)
-      why = await t.wheelTo(SEL.blueberry, 'the Blueberry hedge row')
+      // The Event log shows 50 rows and "Show more" (PlantingDetail's eventsShown: component state, so a page
+      // mounted by Back shows 50 again). The door is a row past them.
+      const shown = await t.read(`return ${SEL.eventRows}`)
+      if (shown !== 50) return done(`the Event log shows ${shown} rows before "Show more", not 50 — the out-of-reach case needs its second page`)
+      why = await t.wheelTo(SEL.showMore, '"Show more"')
+      if (why) return done(why)
+      await t.settle(300, 3000)
+      why = await t.tap(SEL.showMore, '"Show more"')
+      if (why) return done(why)
+      if (!await t.waitIn(`${SEL.eventRows} === ${FIXTURE.plantingEvents}`, 5000)) return done(`"Show more" never showed all ${FIXTURE.plantingEvents} events`)
+      const row = SEL.eventRowN(54)
+      why = await t.wheelTo(row, 'the Event log\'s 55th row')
       if (why) return done(why)
       await t.settle(400, 5000)
-      const before = await t.read(READ_HERE(SEL.blueberry))
+      const before = await t.read(READ_HERE(row))
       if ((why = deep(before.y))) return done(why)
-      if (k === 'reload') {
+      const l = await land(row, 'the Event log\'s 55th row', 'event')
+      if (l.why) return done(l.why)
+      await t.read(`w.__h.mark(); return 1`)
+      await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
+      if (k === 'eventlog-more-tap') {
+        // A finger taps "Show more" the moment it is on screen, while the restore is still pulling toward
+        // event 55. Its touch pointerdown is not a takeover (a resting thumb); the click that lifting it makes
+        // is — before the page's own handler adds the rows that would bring the old place into reach.
+        if (!await t.waitIn(`w.__h.pageReady('planting') && ${SEL.showMore}`, slowMax)) return done(`Back never brought the Event log back with its "Show more"${await diag()}`)
+        const p = await t.aim(SEL.showMore, '"Show more"')
+        if (p.why) return done(`${p.why} while the restore pulled the page toward event 55${await diag()}`)
+        const armed = await restores()
+        if (armed.length) return done(`the restore had already ended (${restoresLine(armed)}) before the tap — the flow measured no tap during a restore${await diag()}`)
+        const y0 = await t.read(`return w.scrollY`)
+        await t.touch('touchStart', [[p.x, p.y]])
+        await t.touch('touchEnd', [])
+        if (!await t.waitIn(`${SEL.eventRows} === ${FIXTURE.plantingEvents}`, 5000)) return done(`the finger's tap on "Show more" never showed all ${FIXTURE.plantingEvents} events${await diag()}`)
+        const st = await t.settle(800, 8000)
+        const after = await t.read(READ_HERE(null))
+        const r = await restores()
+        await t.shoot(join(OUTDIR, `page-scroll-${k}-after-${vw}x${vh}.png`))
+        note.push(`"Show more" tapped at y${R1(y0)} with the restore still armed (event 55 was at y${R1(before.y)}) · after it y${R1(after.y)} · restore: ${restoresLine(r)}`)
+        const msgs = []
+        if (!st.settled) msgs.push(`after the tap the page never held still (last y${R1(st.y)})`)
+        if (!r.length || r[0].outcome !== 'TAKEOVER' || r[0].reason !== 'click') msgs.push(`the tap did not take the restore over (${restoresLine(r)})`)
+        if (Math.abs(after.y - y0) > 40) msgs.push(`the page jumped from y${R1(y0)} to y${R1(after.y)} after "Show more" — the restore pulled it to the old place (y${R1(before.y)})`)
+        return done(msgs.length ? `${msgs.join('; ')}${await diag()}` : null)
+      }
+      if (!await t.waitIn(`w.__h.pageReady('planting')`, slowMax)) return done(`Back never brought the planting back${await diag()}`)
+      // The place is past the end of the page Back brought. Once that page has settled, the restore stops at the
+      // closest point it can reach instead of pulling for its whole budget.
+      if (!await t.waitIn(`w.__h.restores().length > 0`, 8000)) return done(`8 s after Back the restore was still pulling toward y${R1(before.y)}, past the page's end — an unreachable place is pulled for the whole budget, and a "Show more" tap inside it jumps${await diag()}`)
+      const st = await t.settle(800, 8000)
+      const r = await restores()
+      const after = await t.read(READ_HERE(null))
+      await t.shoot(join(OUTDIR, `page-scroll-${k}-back-planting-${vw}x${vh}.png`))
+      if (!(before.y > after.max + 4)) return done(`event 55's place (y${R1(before.y)}) is within the page Back brought (max ${R1(after.max)}) — nothing was out of reach, so the flow proves nothing`)
+      const msgs = []
+      if (!st.settled) msgs.push(`after Back the page never held still (last y${R1(st.y)})`)
+      if (r[0].outcome !== 'EXHAUSTED' || r[0].reason !== 'unreachable') msgs.push(`the restore ended ${restoreLine(r[0])}, not EXHAUSTED/unreachable`)
+      if (Math.abs(after.y - after.max) > 1) msgs.push(`after Back the page is at y${R1(after.y)}, not the closest point it can reach (its end, y${R1(after.max)})`)
+      if (msgs.length) return done(`${msgs.join('; ')}${await diag()}`)
+      note.push(`Back: ${restoreLine(r[0])}, the page's end (event 55 was at y${R1(before.y)})`)
+      // "Show more" after the stop: the rows it adds bring the old place into reach, and nothing may take the
+      // page there.
+      why = await t.wheelTo(SEL.showMore, '"Show more"')
+      if (why) return done(why)
+      await t.settle(300, 3000)
+      const y1 = await t.read(`return w.scrollY`)
+      why = await t.tap(SEL.showMore, '"Show more"')
+      if (why) return done(why)
+      if (!await t.waitIn(`${SEL.eventRows} === ${FIXTURE.plantingEvents}`, 5000)) return done(`"Show more" never showed all ${FIXTURE.plantingEvents} events after Back`)
+      await t.settle(800, 8000)
+      const y2 = await t.read(`return w.scrollY`)
+      note.push(`"Show more" after the stop: y${R1(y1)} → y${R1(y2)}`)
+      if (Math.abs(y2 - y1) > 40) return done(`"Show more" after the stop moved the page y${R1(y1)} → y${R1(y2)} (event 55 was at y${R1(before.y)}) — the restore came back for it${await diag()}`)
+      return
+    }
+    if (k === 'takeover' || k === 'takeover-touch') {
+      let why = await enter(SEL.toLocations, 'locations', 'the /today link to Zones')
+      if (why) return done(why)
+      why = await t.wheelTo(SEL.zoneRow, 'the Bed 3 row')
+      if (why) return done(why)
+      await t.settle(400, 5000)
+      const before = await t.read(READ_HERE(SEL.zoneRow))
+      if ((why = deep(before.y) || midList(before, 'the Bed 3 row'))) return done(why)
+      const l = await land(SEL.zoneRow, 'the Bed 3 row', 'location')
+      if (l.why) return done(l.why)
+      const thumb = await t.bandMid()
+      await t.read(`w.__h.mark(); return 1`)
+      await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
+      // takeover-touch: a thumb lands as Back is made and RESTS there through the load — a touchstart and a touch
+      // pointerdown, neither of which is the user taking over (rimpact IMPORTANT-7).
+      const lift = async () => { if (k === 'takeover-touch') await t.touch('touchEnd', []).catch(() => {}) }
+      if (k === 'takeover-touch') await t.touch('touchStart', [[thumb.x, thumb.y]])
+      // The restore puts the row back and holds it for 1 s: inside that hold, the user scrolls.
+      if (!await t.waitIn(`w.__h.pageReady('locations') && Math.abs(w.scrollY - ${before.y}) <= 4`, slowMax)) {
+        await lift()
+        return done(`Back never put Zones back at y${R1(before.y)}${k === 'takeover-touch' ? ' under the resting thumb' : ''}${await diag()}`)
+      }
+      const r0 = await restores()
+      if (r0.length) {
+        await lift()
+        return done(r0[0].outcome === 'TAKEOVER'
+          ? `the restore gave way to a thumb RESTING on the glass (${restoreLine(r0[0])}) — a thumb resting while the page loads must not lose the place${await diag()}`
+          : `the restore had already ended (${restoreLine(r0[0])}) before the user could scroll — the flow measured no takeover${await diag()}`)
+      }
+      if (k === 'takeover') {
+        await t.mouse('mouseWheel', thumb.x, thumb.y, { deltaX: 0, deltaY: -400 })
+      } else {
+        // ...and now the thumb MOVES down the glass, and the page follows it up. It stops before it lifts, so the
+        // lift is no fling.
+        for (let i = 1; i <= 8; i++) await t.touch('touchMove', [[thumb.x, thumb.y + i * 50]])
+        await sleep(250)
+        await t.touch('touchEnd', [])
+      }
+      const st = await t.settle(800, 8000)
+      const after = await t.read(READ_HERE(SEL.zoneRow))
+      const r = await restores()
+      await t.shoot(join(OUTDIR, `page-scroll-${k}-after-${vw}x${vh}.png`))
+      const how = k === 'takeover' ? 'wheel' : 'touchmove'
+      note.push(`the ${k === 'takeover' ? 'wheel (-400)' : 'thumb, resting then moving 400px'} took Zones from y${R1(before.y)} to y${R1(after.y)} · restore: ${restoresLine(r)}`)
+      const msgs = []
+      if (!st.settled) msgs.push(`after the ${how} Zones never held still (last y${R1(st.y)})`)
+      if (!r.length || r[0].outcome !== 'TAKEOVER' || r[0].reason !== how) msgs.push(`the restore did not give way to the ${how} (${restoresLine(r)})`)
+      if (Math.abs(after.y - before.y) <= 4) msgs.push(`the restore pulled the page back to y${R1(after.y)} after the user scrolled up — it fought the user`)
+      else if (k === 'takeover' && Math.abs(after.y - (before.y - 400)) > 60) msgs.push(`the page is at y${R1(after.y)}; the wheel left it near y${R1(before.y - 400)}`)
+      else if (k === 'takeover-touch' && !(after.y < before.y - 200)) msgs.push(`the page is at y${R1(after.y)}; the finger drew it up from y${R1(before.y)} by about 400px`)
+      return done(msgs.length ? `${msgs.join('; ')}${await diag()}` : null)
+    }
+    if (k === 'zones' || k === 'zones-slow' || k === 'reload' || k === 'reload-skeleton' || k === 'leave-during-load') {
+      let why = await enter(SEL.toLocations, 'locations', 'the /today link to Zones')
+      if (why) return done(why)
+      why = await t.wheelTo(SEL.zoneRow, 'the Bed 3 row')
+      if (why) return done(why)
+      await t.settle(400, 5000)
+      const before = await t.read(READ_HERE(SEL.zoneRow))
+      if ((why = deep(before.y) || midList(before, 'the Bed 3 row'))) return done(why)
+      if (k === 'reload' || k === 'reload-skeleton') {
         // The app reloads ON this entry: a new document, sessionStorage kept (the manager flushed its mirror on
-        // pagehide), history.state kept — the service worker's post-update reload, an Android tab restore.
+        // hidden and on pagehide — location.reload() fires both), history.state kept — the service worker's
+        // post-update reload, an Android tab restore. reload-skeleton: the new document holds the user
+        // unresolved for `auth` ms first, so the restore arms under Protected's skeleton and must count no time
+        // there (a skeleton holds its height with no request in flight: exactly what "settled" looks like).
         await t.ev(`(() => { ${FRAME_VARS}; w.__h.reloadHere(); return 1 })()`)
         if (!await t.waitIn(`w.__h && w.__h.boot() !== '${boot0}' && w.__h.reloadedDoc() && w.__h.pageReady('locations')`, slowMax)) return done(`the reload never came back with Zones loaded${await diag()}`)
         boot0 = await t.read(`return w.__h.boot()`)   // this reload is the one under test
         const st = await t.settle(800, slowMax)
-        const after = await t.read(READ_HERE(SEL.blueberry))
+        // The restore reports once its hold is over, which can be after the page first holds still.
+        await t.waitIn(`w.__h.restores().length > 0`, 4000)
+        const after = await t.read(READ_HERE(SEL.zoneRow))
+        const r = await restores()
         await t.shoot(join(OUTDIR, `page-scroll-${k}-after-${vw}x${vh}.png`))
         if (after.key !== before.key) return done(`after the reload the frame is on key ${after.key}, not Zones' own ${before.key} — the reload did not keep the entry`)
         const msgs = []
         if (!st.settled) msgs.push(`after the reload Zones never held still (last y${R1(st.y)})`)
         if (Math.round(after.y) !== Math.round(before.y)) msgs.push(`after the reload Zones is at scrollY ${R1(after.y)}, it was left at ${R1(before.y)} — the reload lost the place`)
-        if (after.top == null || Math.abs(after.top - before.top) > TOP_TOL_PX) msgs.push(`the Blueberry hedge row is at y${R1(after.top)}, it was at y${R1(before.top)}`)
-        note.push(`reloaded (mode ${after.mode}): y${R1(after.y)} (left at y${R1(before.y)})`)
+        if (after.top == null || Math.abs(after.top - before.top) > TOP_TOL_PX) msgs.push(`the Bed 3 row is at y${R1(after.top)}, it was at y${R1(before.top)}`)
+        if (auth && !msgs.length && !(r.length && r[0].outcome === 'DONE' && r[0].t >= auth)) msgs.push(`the place came back, but not by a restore that finished after the ${auth}ms skeleton (${restoresLine(r)}) — the flow did not measure the wait`)
+        note.push(`reloaded (mode ${after.mode}${auth ? `, user unresolved ${auth}ms` : ''}): y${R1(after.y)} (left at y${R1(before.y)}) · restore: ${restoresLine(r)}`)
         return done(msgs.length ? `${msgs.join('; ')}${await diag()}` : null)
       }
-      const l = await land(SEL.blueberry, 'the Blueberry hedge row', 'location')
+      const l = await land(SEL.zoneRow, 'the Bed 3 row', 'location')
       if (l.why) return done(l.why)
       if (k === 'leave-during-load') {
         // Back, and away again BEFORE Zones' content lands: the restore is armed and every attempt it makes is
@@ -643,10 +924,30 @@ async function runFlow(cdp, flow, vw, vh) {
         const away = await land(SEL.tabToday, 'the Today tab, while Zones was still loading', 'today', { chrome: true, name: 'today' })
         if (away.why) return done(away.why)
       }
-      const b = await back(before, 'locations', SEL.blueberry, 'Zones')
+      const b = await back(before, 'locations', SEL.zoneRow, 'Zones')
       return done(b.why)
     }
-    if (k === 'more' || k === 'search' || k === 'same-replace' || k.startsWith('shrink')) {
+    if (k === 'top-back') {
+      let why = await enter(SEL.toDeep, 'deep', 'the /today link to the long list')
+      if (why) return done(why)
+      // The list at its TOP: its fourth row is the door (row 3, Achievements).
+      const row = SEL.deepRowN(3)
+      const before = await t.read(READ_HERE(row))
+      if (Math.round(before.y) !== 0) return done(`the list opened at y${R1(before.y)}, not its top — nothing to hold at 0`)
+      const l = await land(row, 'the list\'s Achievements row', 'achievements', { today: true })
+      if (l.why) return done(l.why)
+      why = await t.wheelToY(3000)
+      if (why) return done(why)
+      await t.settle(400, 5000)
+      const down = await t.read(`return w.scrollY`)
+      if ((why = deep(down))) return done(`Achievements: ${why}`)
+      note.push(`Achievements scrolled to y${R1(down)}`)
+      // No record for the list (the store never mints a 0), and 'manual' leaves a POP's offset undefined: the
+      // zero on that POP is what keeps Achievements' 3000 from coming back with it.
+      const b = await back(before, 'deep', row, 'the list left at its top', { today: true })
+      return done(b.why)
+    }
+    if (k === 'more' || k === 'search' || k === 'search-peek' || k === 'same-replace' || k.startsWith('shrink')) {
       let why = await enter(SEL.toDeep, 'deep', 'the /today link to the long list')
       if (why) return done(why)
       const row = SEL.deepRow('mid')
@@ -663,13 +964,14 @@ async function runFlow(cdp, flow, vw, vh) {
         const l = await land(SEL.moreAchievements, 'More → Achievements', 'achievements', { chrome: true })
         if (l.why) return done(l.why)
         const b = await back(before, 'deep', row, 'the long list', { sample: true })
-        // 'manual': until the path changes, the still-mounted Achievements page must not have moved. With
-        // 'auto' Chrome applies the list's popped offset to it first (the measurement saw 2880 → 553).
+        // AN OBSERVATION, NOT THE PIN (qa-scrollmanager-built M8): under 'auto' Chrome applies the popped offset
+        // to the still-mounted Achievements page before the path changes (the measurement saw 2880 → 553), but
+        // React commits the POP before the next frame, so in this Chrome no sampled frame can show it with either
+        // mode — the count is 0 on the head. history.scrollRestoration in the instrument check pins 'manual'.
         const s = b.samples || []
         const out = s.filter((x) => x.page === 'achievements')
         const moved = out.filter((x) => Math.abs(x.y - l.here.y) > 1)
-        note.push(`Back frames on Achievements before the swap: ${out.length} (${moved.length} moved)`)
-        if (!out.length) note.push('(the swap happened before the first sampled frame)')
+        note.push(`observed: ${out.length} Back frame(s) on Achievements before the swap, ${moved.length} moved`)
         if (moved.length) fail(`${at}: ${flow.label}: before the path changed back, the outgoing Achievements page moved to y${moved[0].y} (it was at y${R1(l.here.y)}) — the browser restored the popped offset onto it: history.scrollRestoration is not 'manual' on this entry`)
         return done(b.why)
       }
@@ -688,7 +990,42 @@ async function runFlow(cdp, flow, vw, vh) {
         await t.settle(800, slowMax)
         const re = await t.read(READ_HERE(row))
         note.push(`Search re-opened over the list at y${R1(re.y)}`)
-        if (Math.round(re.y) !== Math.round(before.y)) return done(`Back re-opened Search over the list at y${R1(re.y)}, the list was left at y${R1(before.y)}${await diag()}`)
+        if ((why = verdict(Math.round(re.y) !== Math.round(before.y) ? [`Back re-opened Search over the list at y${R1(re.y)}, the list was left at y${R1(before.y)}`] : []))) return done(`${why}${await diag()}`)
+        why = await t.tap(SEL.searchClose, 'Search\'s X', { chrome: true })
+        if (why) return done(why)
+        if (!await t.waitIn(`w.location.pathname === '/deep' && !${SEL.searchSheet}`, 8000)) return done('the X never closed Search back onto the list')
+        await t.settle(600, 6000)
+        const after = await t.read(READ_HERE(row))
+        note.push(`after the X y${R1(after.y)}`)
+        if (after.key !== before.key) return done(`the X landed on key ${after.key}, not the list's own ${before.key}`)
+        if ((why = verdict(Math.round(after.y) !== Math.round(before.y) || Math.abs(after.top - before.top) > TOP_TOL_PX ? [`after the X the list is at y${R1(after.y)} (row top y${R1(after.top)}), it was at y${R1(before.y)} (row top y${R1(before.top)})`] : []))) return done(`${why}${await diag()}`)
+        return
+      }
+      if (k === 'search-peek') {
+        // Search.jsx's peek: a swap PUSH inside the overlay, carrying the same background — so every commit here
+        // keeps the page entry (rows 0 and, on the peek's Back, covered 0). Nothing may move the list.
+        const still = async (when) => {
+          const y = await t.read(`return w.scrollY`)
+          note.push(`${when} y${R1(y)}`)
+          return Math.round(y) !== Math.round(before.y) ? `${when} the list under the sheet is at y${R1(y)}, it was left at y${R1(before.y)}${await diag()}` : null
+        }
+        why = await t.tap(SEL.openSearch, 'header Search', { chrome: true })
+        if (why) return done(why)
+        if (!await t.waitIn(`w.location.pathname === '/search' && ${SEL.searchPeek}`, 8000)) return done('header Search never opened with its Peek')
+        await t.settle(300, 3000)
+        if ((why = await still('Search open:'))) return done(why)
+        const k1 = await t.read(`return w.__h.key()`)
+        await t.read(`w.__h.mark(); return 1`)
+        why = await t.tap(SEL.searchPeek, 'Search\'s Peek', { chrome: true })
+        if (why) return done(why)
+        if (!await t.waitIn(`/peek=/.test(w.location.search) && ${SEL.searchPeeked}`, 8000)) return done('Peek never opened inside Search')
+        await t.settle(400, 4000)
+        if (await t.read(`return w.__h.key()`) === k1) return done('Peek did not push a new history entry — this is not the in-overlay push under test')
+        if ((why = await still('peeking:'))) return done(why)
+        await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
+        if (!await t.waitIn(`w.location.pathname === '/search' && !/peek=/.test(w.location.search) && ${SEL.searchPeek} && !${SEL.searchPeeked}`, 8000)) return done(`the system Back never brought Search's results back from the peek${await diag()}`)
+        await t.settle(500, 4000)
+        if ((why = await still('the peek\'s Back:'))) return done(why)
         why = await t.tap(SEL.searchClose, 'Search\'s X', { chrome: true })
         if (why) return done(why)
         if (!await t.waitIn(`w.location.pathname === '/deep' && !${SEL.searchSheet}`, 8000)) return done('the X never closed Search back onto the list')
@@ -764,9 +1101,9 @@ async function runFlow(cdp, flow, vw, vh) {
       const before = await t.read(READ_HERE(tile))
       if ((why = deep(before.y))) return done(why)
       if (k === 'garden-back') {
-        const l = await land(SEL.tileLink(33), 'the 34th planting\'s tile', 'planting')
+        const l = await land(SEL.tileLink(33), 'the 34th planting\'s tile', 'planting', { today: true })
         if (l.why) return done(l.why)
-        const b = await back(before, 'garden', tile, 'Garden')
+        const b = await back(before, 'garden', tile, 'Garden', { today: true })
         return done(b.why)
       }
       if (k === 'garden-add') {
@@ -816,7 +1153,7 @@ async function runFlow(cdp, flow, vw, vh) {
       if (why) return done(why)
       await t.settle(400, 5000)
       const before = await t.read(READ_HERE(card))
-      if ((why = deep(before.y))) return done(why)
+      if ((why = deep(before.y, DEEP_MIN_PX, { show: true }))) return done(why)
       await t.read(`w.__h.mark(); return 1`)
       why = await t.tap(SEL.batchOpen('kb-9'), 'the ninth batch\'s "Open"')
       if (why) return done(why)
@@ -825,7 +1162,38 @@ async function runFlow(cdp, flow, vw, vh) {
       const detail = await t.read(READ_HERE(null))
       if (detail.key === before.key) return done('opening the batch did not push a new entry — this is not the same-page push under test')
       note.push(`the batch opened on the same page at y${R1(detail.y)}`)
-      const b = await back(before, 'putup', card, 'the Going-now list')
+      // A must-not-change guard, not the row-6 pin: Chromium's own clamp carry puts this list back with or
+      // without the manager (qa-scrollmanager-built M4). putup-top is the flow row 6 can fail.
+      const b = await back(before, 'putup', card, 'the Going-now list', { today: true })
+      return done(b.why)
+    }
+    if (k === 'putup-top') {
+      let why = await enter(SEL.toPutUp, 'putup', 'the /today link to Put-Up')
+      if (why) return done(why)
+      if (!await t.waitIn(`d.querySelectorAll('${tid('going-batch')}').length === ${FIXTURE.going}`, 8000)) return done(`Put-Up never showed the ${FIXTURE.going} going batches (the Going-now segment)`)
+      // The list's first card (the list orders its batches itself).
+      const id = await t.read(`const el = d.querySelector('${tid('going-batch')}'); return el ? el.getAttribute('data-batch-id') : null`)
+      if (!id) return done('Put-Up\'s Going-now list has no first batch')
+      const card = SEL.batch(id)
+      const before = await t.read(READ_HERE(card))
+      if (Math.round(before.y) !== 0) return done(`Put-Up opened at y${R1(before.y)}, not its top — nothing to hold at 0`)
+      await t.read(`w.__h.mark(); return 1`)
+      why = await t.tap(SEL.batchOpen(id), `the first batch's (${id}) "Open"`)
+      if (why) return done(why)
+      if (!await t.waitIn(`${SEL.batchDetail(id)} && /batch=${id}/.test(w.location.search)`, slowMax)) return done(`the batch never opened (on ${await t.read(`return w.location.pathname + w.location.search`)})${await diag()}`)
+      await t.settle(500, slowMax)
+      const detail = await t.read(READ_HERE(null))
+      if (detail.key === before.key) return done('opening the batch did not push a new entry — this is not the same-page push under test')
+      // The batch scrolled to its end: an offset the list must NOT come back with.
+      why = await t.wheelToY(3000)
+      if (why) return done(why)
+      await t.settle(400, 5000)
+      const down = await t.read(`return w.scrollY`)
+      if ((why = deep(down, SHALLOW_MIN_PX, { show: true }))) return done(`the batch: ${why}`)
+      note.push(`the batch opened on the same page, scrolled to y${R1(down)}`)
+      // A same-path POP with no record for the list (it was left at 0, and the store never mints a 0): row 6's
+      // zero (rimpact-scrollmanager-built N1; with the manager off, Chrome's own restore of 0).
+      const b = await back(before, 'putup', card, 'the Going-now list left at its top', { today: true })
       return done(b.why)
     }
     if (k === 'seeds-switch') {
@@ -835,7 +1203,7 @@ async function runFlow(cdp, flow, vw, vh) {
       if (!r0) return done('the Seeds view switch has no "Saved seeds" option')
       await t.wheelBy(Math.round(r0.top - r0.bandTop - 12))
       const before = await t.read(READ_HERE(SEL.savedRadio))
-      if ((why = deep(before.y, SHALLOW_MIN_PX))) return done(why)
+      if ((why = deep(before.y, SHALLOW_MIN_PX, { show: true }))) return done(why)
       why = await t.tap(SEL.savedRadio, 'the switch\'s "Saved seeds"')
       if (why) return done(why)
       if (!await t.waitIn(`${SEL.savedView} && /view=saved/.test(w.location.search) && ${SEL.ristraCard}`, 8000)) return done(`the switch never showed Saved seeds${await diag()}`)
@@ -854,11 +1222,12 @@ async function runFlow(cdp, flow, vw, vh) {
       await t.settle(400, 5000)
       const before = await t.read(READ_HERE(SEL.ristraCard))
       if ((why = deep(before.y))) return done(why)
-      const l = await land(SEL.ristraTitle, 'the Ristra card\'s title', 'lot')
+      // InventoryDetail lands at its top either way: its own reset with the manager off, the manager's with it on.
+      const l = await land(SEL.ristraTitle, 'the Ristra card\'s title', 'lot', { today: true })
       if (l.why) return done(l.why)
       await t.read(`return w.__h.forgetPageScroll()`)
       note.push(`the manager's store emptied (mirror now ${JSON.stringify(await t.read(`return w.__h.store()`))})`)
-      const b = await back(before, 'seeds', SEL.ristraCard, 'Saved seeds')
+      const b = await back(before, 'seeds', SEL.ristraCard, 'Saved seeds', { today: true })
       return done(b.why)
     }
     if (k === 'hook-top') {
@@ -866,7 +1235,7 @@ async function runFlow(cdp, flow, vw, vh) {
       if (why) return done(why)
       const before = await t.read(READ_HERE(null))
       if (Math.round(before.y) !== 0) return done(`Harvests opened at y${R1(before.y)}, not the top — nothing to hold`)
-      const l = await land(SEL.headerDeep, 'the header\'s list link', 'deep', { chrome: true })
+      const l = await land(SEL.headerDeep, 'the header\'s list link', 'deep', { chrome: true, today: true })
       if (l.why) return done(l.why)
       why = await t.wheelToY(3000)
       if (why) return done(why)
@@ -874,10 +1243,72 @@ async function runFlow(cdp, flow, vw, vh) {
       const listY = await t.read(`return w.scrollY`)
       if ((why = deep(listY))) return done(why)
       note.push(`the list scrolled to y${R1(listY)}`)
-      const b = await back(before, 'harvests', null, 'Harvests')
+      const b = await back(before, 'harvests', null, 'Harvests', { today: true })
       if (b.why) return done(b.why)
       if (!b.after.h1InBand) return done(`Harvests' h1 is not in the visible band after Back (y${R1(b.after.h1?.t)})`)
       return
+    }
+    if (k === 'retap-back') {
+      let why = await enter(SEL.tabHarvests, 'harvests', 'the Harvests tab', { chrome: true })
+      if (why) return done(why)
+      const max0 = await t.read(`return d.documentElement.scrollHeight - w.innerHeight`)
+      why = await t.wheelToY(Math.round(0.4 * max0))
+      if (why) return done(why)
+      await t.settle(400, 5000)
+      const mid = await t.read(READ_HERE(null))
+      if ((why = deep(mid.y))) return done(why)
+      // The tab re-tapped: a Link to the page already showing, which react-router REPLACEs — the same page on a
+      // NEW entry. Nothing may move.
+      why = await t.tap(SEL.tabHarvests, 'the Harvests tab, again', { chrome: true })
+      if (why) return done(why)
+      if (!await t.waitIn(`w.__h.key() !== '${mid.key}'`, 5000)) return done('re-tapping the Harvests tab did not re-key the entry — this is not the same-page write under test')
+      await t.settle(500, 5000)
+      const re = await t.read(READ_HERE(null))
+      note.push(`re-tap: y${R1(mid.y)} → y${R1(re.y)} (a new key)`)
+      if (Math.round(re.y) !== Math.round(mid.y)) return done(`re-tapping the Harvests tab moved it: y${R1(mid.y)} → y${R1(re.y)}${await diag()}`)
+      why = await t.wheelToY(Math.round(0.8 * max0))
+      if (why) return done(why)
+      await t.settle(400, 5000)
+      const before = await t.read(READ_HERE(null))
+      if ((why = deep(before.y))) return done(why)
+      if (before.key !== re.key) return done(`scrolling re-keyed the entry (${re.key} → ${before.key})`)
+      const l = await land(SEL.headerDeep, 'the header\'s list link', 'deep', { chrome: true })
+      if (l.why) return done(l.why)
+      // Back onto the RE-KEYED entry: Harvests holds no saved value for it, so it claims nothing and the manager
+      // restores it. A claim by page rather than by entry would zero it (qa-scrollmanager-built Q17).
+      const b = await back(before, 'harvests', null, 'Harvests after its tab was re-tapped')
+      return done(b.why)
+    }
+    if (k === 'lot-back') {
+      // Saved seeds opened AT a lot: the ?lot= arrival hint outlines the Ristra card and scrolls it to the centre.
+      // (Where it ends up is the hint's business, not this flow's. In this fixture the cards above it grow after
+      // the scroll and push it below the fold: every lot is linked to a parent plant, and SavedSeeds fetches the
+      // parent names only once the lots have loaded (V4-SEEDLINK-001's picker read). That is the page's own
+      // timing, with or without the manager; the line prints where the card was left.)
+      let why = await enter(SEL.toSavedLot, 'seeds', 'the /today link to Saved seeds at the Ristra lot')
+      if (why) return done(why)
+      if (!await t.waitIn(`${SEL.ristraCard} && ${SEL.ristraCard}.getAttribute('data-outlined') === 'true'`, 8000)) return done(`the ?lot= door never outlined the Ristra card${await diag()}`)
+      await t.settle(600, 6000)
+      const atLot = await t.read(`return w.scrollY`)
+      if ((why = deep(atLot))) return done(`the arrival scroll toward the lot: ${why}`)
+      note.push(`arrived toward the Ristra lot, y${R1(atLot)} (its card at viewport y${R1(await t.read(`return ${SEL.ristraCard}.getBoundingClientRect().top`))})`)
+      // Up the list, away from the lot: that is the place Back must keep.
+      why = await t.wheelToY(Math.round(atLot / 3))
+      if (why) return done(why)
+      await t.settle(400, 5000)
+      const cardId = await t.read(`const el = ${SEL.lotCardMid}; return el ? el.getAttribute('data-lot-id') : null`)
+      if (!cardId || cardId === 'lot-ristra') return done(`no other lot's card mid-band to hold on (${cardId})`)
+      const card = SEL.lotCard(cardId)
+      const before = await t.read(READ_HERE(card))
+      if ((why = deep(before.y))) return done(why)
+      if (Math.abs(before.y - atLot) < DEEP_MIN_PX) return done(`the place (y${R1(before.y)}) is within ${DEEP_MIN_PX}px of the lot's (y${R1(atLot)}) — a jump back to the lot could pass for it`)
+      const l = await land(SEL.headerDeep, 'the header\'s list link', 'deep', { chrome: true })
+      if (l.why) return done(l.why)
+      // The hook's store emptied — an entry evicted past its 20, or written before the hook existed: the hook has
+      // no saved value, so only "this mount is a return" (usePageScrollReturnAtMount) keeps the hint from firing.
+      await t.read(`return w.__h.forgetScrollRestore()`)
+      const b = await back(before, 'seeds', card, 'Saved seeds opened at a lot')
+      return done(b.why)
     }
     if (k === 'lot-edit') {
       const l0 = await land(SEL.toLot, 'the /today link to the lot', 'lot')
@@ -886,7 +1317,7 @@ async function runFlow(cdp, flow, vw, vh) {
       if (why) return done(why)
       await t.settle(400, 5000)
       const before = await t.read(READ_HERE(SEL.editSow))
-      if ((why = deep(before.y))) return done(why)
+      if ((why = deep(before.y, DEEP_MIN_PX, { show: true }))) return done(why)
       const l = await land(SEL.editSow, '"Edit sow details →"', 'variety', { titleSel: `[...d.querySelectorAll('[data-harness-pages] div')].find((x) => x.childElementCount === 0 && /^Edit Ristra Cayenne II$/.test(x.textContent.trim())) || null` })
       if (l.why) return done(l.why)
       why = await t.wheelTo(SEL.cancel, 'the editor\'s Cancel')
@@ -920,7 +1351,7 @@ async function runFlow(cdp, flow, vw, vh) {
         if (why) return done(`page ${n}: ${why}`)
         if (!await t.waitIn(`w.location.pathname === '/chain/${n + 1}' && w.__h.pageReady('chain')`, 8000)) return done(`page ${n}'s row never opened page ${n + 1}`)
         const top = await t.settle(150, 3000)
-        if (Math.round(top.y) !== 0) return done(`page ${n + 1} landed at y${R1(top.y)}, not 0`)
+        if (Math.abs(top.y) > LAND_TOL_PX) return done(`page ${n + 1} landed at y${R1(top.y)}, not 0`)
       }
       const lost = []
       for (let n = CHAIN_DEPTH; n >= 1; n--) {
@@ -962,8 +1393,8 @@ try {
   chrome = await startChrome(udd)
   cdp = await connect(chrome.version.webSocketDebuggerUrl)
   console.log(`[page-scroll] ${chrome.version.Browser} · harness :${PORT} · CDP :${CDP_PORT}`)
-  for (const [vw, vh] of VIEWPORTS) {
-    for (const flow of FLOWS.filter((fl) => !ONLY.length || ONLY.includes(fl.key))) {
+  for (const [vi, [vw, vh]] of VIEWPORTS.entries()) {
+    for (const flow of FLOWS.filter((fl) => (!ONLY.length || ONLY.includes(fl.key)) && (!fl.once || vi === 0))) {
       try { await runFlow(cdp, flow, vw, vh) } catch (err) { fail(`(${flow.key})@${vw}x${vh}: the flow could not complete: ${err.message}`) }
     }
   }
@@ -981,6 +1412,8 @@ if (BASELINE_SHA || CUSTOM_CONFIG) {
   for (const line of harnessLog.split('\n').filter((l) => /^\[[a-z][a-z-]*\] /.test(l))) console.log(`[page-scroll] harness said: ${line}`)
 }
 if (shots.length) console.log(`[page-scroll] screenshots: ${shots.length} in ${OUTDIR.replace(`${ROOT}/`, '')}`)
+if (served.size > 1) fail(`the harness served the flag both ways in one run (${[...served].join(', ')}) — one build, one flag`)
+if (served.has('off')) console.log('[page-scroll] manager OFF — SCROLL_MANAGER_ENABLED=false as served: TODAY\'S contract was asserted (the rollback build); the manager\'s own checks were printed, not asserted, and its own flows were not run.')
 // Exit codes are NOT inverted under --probe-nothing: both outcomes there are red, and the banner says which.
 if (failures.length) {
   console.error(PROBE_NOTHING
