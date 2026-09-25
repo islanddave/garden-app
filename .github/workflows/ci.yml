@@ -545,6 +545,11 @@ jobs:
         #   (b) Saved seeds deep, the card's "Saved from <planting> →", then Back: as (a);
         #   (c) My seeds, a row opened, its "Open details →": the lot page lands at 0; Back: the same
         #       scrollY and row top, and the row still open.
+        # Flows (d) to (g) close an overlay over Seeds (BUG-OVERLAYDISMISSREKEY-001: header Search, the
+        # +LOG door, a double-tapped X) and (h) to (k) re-mount Seeds UNDER a re-opened Search
+        # (BUG-OVERLAYRELOADKEY-001: a result and Back, an app reload with Search open, My seeds' view
+        # state, the system Back as the close); the script's header lists all eleven and their
+        # non-vacuity records (Projects/Gardening/_seedstab11_20260925/ and _seedstab12_20260925/).
         # It refuses a frame whose viewport or chrome is not the one asked for, a list less than 300px
         # down (a clobbered offset could equal it), a tap that pushed no new history entry, and a Back
         # onto any entry but the list's own.
@@ -554,12 +559,12 @@ jobs:
         # a planting), and Back lands there with the card off screen. With ONLY the hook reverted, it
         # fails the 12 Back checks and nothing else; with ONLY the lot page reverted, the 8 lot-page
         # checks and nothing else. A My seeds that forgets its open row fails (c)'s "row still open"
-        # alone, and `npm run gate:seeds-scroll:probe-nothing` exits 1 on all six flows. It passes
+        # alone, and `npm run gate:seeds-scroll:probe-nothing` exits 1 on every flow. It passes
         # under node 20.19.0, with every font forced to Verdana (a wide-font proxy for this runner) and
         # with its tabs' CPU throttled 6x (GATE_CPU_THROTTLE, a slow-runner rehearsal), with the same
         # numbers; the pre-fix tree fails the same 20 checks at 6x too. A frame that reloads mid-flow
         # (Vite re-optimizing a dependency) is named as such rather than measured.
-        # NO continue-on-error, per the policy note above. ~30 s locally.
+        # NO continue-on-error, per the policy note above. ~95 s locally (eleven flows, two viewports).
         env:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:seeds-scroll

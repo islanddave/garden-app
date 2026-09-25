@@ -25,7 +25,7 @@
 // Back is a real history traversal (history.back() in the frame: popstate, as the Android back gesture).
 // Each flow opens in a FRESH TAB, so its history, sessionStorage and module state are its own.
 //
-// NINE FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
+// ELEVEN FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
 //   (a) Saved seeds, scrolled deep (the Ristra card wheeled to the middle of the visible band) → tap the
 //       card's title → the lot page lands at scrollY 0 with its h1 inside the visible band; then Back →
 //       scrollY equals the pre-tap value exactly and the card's viewport top is unchanged (±1px).
@@ -58,6 +58,11 @@
 //       documents → the list back where it was; then scrolled on → (a)'s tap and Back onto the new place.
 //       Red with either half of the fix removed: the page keying by the overlay's entry, or the replace
 //       leaving an entry the page cannot claim.
+//   (j) As (h) on My seeds, whose place includes VIEW STATE: Pepper open, the Ristra row open → header Search
+//       → a result → Back → the X → the row still open where it was → (c)'s "Open details →" and Back.
+//   (k) As (h), with the SYSTEM Back closing Search instead of the X (Android's gesture).
+//   In (h) to (k) the list must also already sit at its place UNDER the re-opened Search: on the walk path
+//   Chrome's own traversal restore puts it back on the close whether or not the page read its entry.
 // Every number is printed on pass as well as fail.
 //
 // THE INSTRUMENT CHECK comes first in every flow, and a mismatch stops that flow before any invariant is
@@ -232,6 +237,8 @@ const FLOWS = [
   { key: 'f', name: 'pluslog-close-back', label: 'Saved seeds → +LOG → "Log an event" → its X → Back leaves Seeds', entry: 'toSaved', view: 'saved', dest: 'leave', search: 'pluslog' },
   { key: 'g', name: 'search-double-x', label: 'Saved seeds → header Search → its X double-tapped → Back leaves Seeds', entry: 'toSaved', view: 'saved', dest: 'leave', search: 'header', doubleTap: true },
   { key: 'h', name: 'search-result-back-x', label: 'Saved seeds deep → header Search → a result → Back → its X → scrolled on → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot', search: 'header', searchAtDepth: true, viaResult: true, nudge: true },
+  { key: 'j', name: 'mine-result-back-x', label: 'My seeds → Pepper and the Ristra row open → header Search → a result → Back → its X → "Open details →" → Back', entry: 'toMine', view: 'mine', dest: 'lot', search: 'header', searchAtDepth: true, viaResult: true },
+  { key: 'k', name: 'search-result-back-sysback', label: 'Saved seeds deep → header Search → a result → Back → the system Back closes Search → scrolled on → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot', search: 'header', searchAtDepth: true, viaResult: true, nudge: true, closeByBack: true },
   { key: 'i', name: 'search-reload-x', label: 'Saved seeds deep → header Search → the app reloads under it → its X → scrolled on → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot', search: 'header', searchAtDepth: true, reloadUnder: true, nudge: true },
 ]
 
@@ -513,7 +520,13 @@ async function runFlow(cdp, flow, vw, vh) {
     // the real +LOG door, and the real Sheet's close. Instrument checks only — the close's consequences are
     // read by the invariants. Returns a failure message, or null.
     let searchNote = ''
+    // Where the list sat under the re-opened overlay (flows h to k): the fix's READ half. On the walk path
+    // Chrome's own traversal restore puts the list back on the close whether or not the page read its
+    // entry, so the close alone cannot tell (qa-overlayreload MINOR 1); this can.
+    let underY = null
     const openAndClose = async () => {
+      // What proves the Seeds page is up: the Ristra card on Saved seeds, the Pepper header on My seeds.
+      const listSel = flow.view === 'saved' ? SEL.card : SEL.pepperHeader
       const k0 = await t.read(`return w.__h.key()`)
       const idx0 = await t.read(`return w.history.state ? w.history.state.idx : null`)
       if (flow.search === 'pluslog') {
@@ -543,15 +556,15 @@ async function runFlow(cdp, flow, vw, vh) {
         // sheet, and the X can no longer walk back across documents, so it must REPLACE.
         const bootA = await t.read(`return w.__h.boot()`)
         await t.ev(`(() => { ${FRAME_VARS}; w.__h.reloadHere(); return 1 })()`)
-        if (!await t.waitIn(`w.__h && w.__h.boot() !== '${bootA}' && w.__h.reloadedDoc() && w.location.pathname === '/search' && ${SEL.sheetClose} && ${SEL.card}`, 30000)) {
+        if (!await t.waitIn(`w.__h && w.__h.boot() !== '${bootA}' && w.__h.reloadedDoc() && w.location.pathname === '/search' && ${SEL.sheetClose} && ${listSel}`, 30000)) {
           return `${at}: the reload under Search never came back with Search open over the Seeds page (on ${await t.read(`return w.location.pathname`).catch(() => 'an unreadable frame')})`
         }
         boot0 = await t.read(`return w.__h.boot()`)   // this reload is the one under test, not a Vite one
         const kR = await t.read(`return w.__h.key()`)
         if (kR !== kOpen) return `${at}: after the reload the frame is on key ${kR}, not Search's own ${kOpen} — the reload did not keep the history entry`
         await t.settle(500, 8000)
-        const underR = await t.read(`return w.scrollY`)
-        searchNote += ` · the app reloaded under Search: Seeds re-mounted at y${R1(underR)}`
+        underY = await t.read(`return w.scrollY`)
+        searchNote += ` · the app reloaded under Search: Seeds re-mounted at y${R1(underY)}`
       }
       if (flow.viaResult) {
         // (h) Out to a result and Back: Search re-opens on its own entry over a Seeds page that has just
@@ -564,14 +577,14 @@ async function runFlow(cdp, flow, vw, vh) {
         if (kRes == null || kRes === kOpen) return `${at}: Search's result did not PUSH a new entry (key ${kRes}; Search was on ${kOpen})`
         await t.settle(300, 5000)
         await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
-        if (!await t.waitIn(`w.location.pathname === '/search' && ${SEL.sheetClose} && ${SEL.card}`, 15000)) return `${at}: Back from the result never re-opened Search over the Seeds page${await reloaded()}`
+        if (!await t.waitIn(`w.location.pathname === '/search' && ${SEL.sheetClose} && ${listSel}`, 15000)) return `${at}: Back from the result never re-opened Search over the Seeds page${await reloaded()}`
         const kBack = await t.read(`return w.__h.key()`)
         if (kBack !== kOpen) return `${at}: Back from the result landed on key ${kBack}, not Search's own ${kOpen}`
         const m1 = await t.read(`return w.__h.seedsMounts()`)
         if (!(m1 > m0)) return `${at}: the Seeds page did not re-mount under Search after Back (mounts ${m0} → ${m1}) — this is not the path under test`
         await t.settle(500, 8000)
-        const under = await t.read(`return w.scrollY`)
-        searchNote += ` · out to the result and Back: Seeds re-mounted under Search at y${R1(under)}`
+        underY = await t.read(`return w.scrollY`)
+        searchNote += ` · out to the result and Back: Seeds re-mounted under Search at y${R1(underY)}`
       }
       let goCalls = null
       if (flow.doubleTap) {
@@ -585,11 +598,15 @@ async function runFlow(cdp, flow, vw, vh) {
           await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1 }, sessionId)
           await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 }, sessionId)
         }
+      } else if (flow.closeByBack) {
+        // (k) The system Back closes it instead (the Android gesture, Dave's primary one): a traversal the
+        // app did not start, onto Seeds' own entry.
+        await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
       } else {
         const whyC = await t.tap(SEL.sheetClose, 'the overlay sheet\'s X', { chrome: true })
         if (whyC) return `${at}: ${whyC}`
       }
-      if (!await t.waitIn(`w.location.pathname === '/seeds' && !${SEL.searchSheet} && ${SEL.card}`, 8000)) return `${at}: the overlay sheet's X was tapped and the sheet never closed back onto Seeds${await reloaded()}`
+      if (!await t.waitIn(`w.location.pathname === '/seeds' && !${SEL.searchSheet} && ${listSel}`, 8000)) return `${at}: the overlay was closed and the sheet never closed back onto Seeds${await reloaded()}`
       await t.settle(300, 5000)
       const kClosed = await t.read(`return w.__h.key()`)
       if (flow.doubleTap) goCalls = await t.read(`return w.__goCalls || null`)
@@ -642,6 +659,9 @@ async function runFlow(cdp, flow, vw, vh) {
             : 'closing the overlay moved the list'
           return fail(`${at}: ${flow.label}: ${what}: scrollY ${R1(pre.y)} → ${R1(post.y)}, the card's top y${R1(pre.top)} → y${R1(post.top)}${searchNote}`)
         }
+        if ((flow.viaResult || flow.reloadUnder) && (underY == null || Math.round(underY) !== Math.round(pre.y))) {
+          return fail(`${at}: ${flow.label}: under the re-opened Search the re-mounted list sat at y${R1(underY)}, not where it was (y${R1(pre.y)}) — it did not read its own entry's place (BUG-OVERLAYRELOADKEY-001)${searchNote}`)
+        }
         searchNote += ` · the list ${flow.viaResult || flow.reloadUnder ? 'was back' : 'held'} at y${R1(post.y)} through the close`
       }
       if (flow.nudge) {
@@ -676,6 +696,22 @@ async function runFlow(cdp, flow, vw, vh) {
       if (!inBand) {
         const whyD = await t.wheelTo(SEL.rowDetails, '"Open details →"')
         if (whyD) return fail(`${at}: ${whyD}`)
+      }
+      if (flow.searchAtDepth) {
+        // (j) My seeds' view state (the open group and row, restoredState) through a re-mount under Search.
+        await t.settle(400, 5000)
+        const pre = await t.read(READ_PAGE(SEL.row))
+        const why = await openAndClose()
+        if (why) return fail(why)
+        await t.settle(400, 5000)
+        const post = await t.read(READ_PAGE(SEL.row))
+        const openAfter = await t.read(`return ${SEL.rowOpen}`)
+        searchNote += ` · My seeds after the X: y${R1(post?.y)} (was y${R1(pre?.y)}), row ${openAfter ? 'open' : 'CLOSED'}, under Search y${R1(underY)}`
+        if (!openAfter) return fail(`${at}: ${flow.label}: after the X the Ristra row is CLOSED — the re-mounted My seeds lost its open group and row${searchNote}`)
+        if (!post || post.top == null || Math.round(post.y) !== Math.round(pre.y) || Math.abs(post.top - pre.top) > TOP_TOL_PX) return fail(`${at}: ${flow.label}: after the X the list is not where it was${searchNote}`)
+        if (underY == null || Math.round(underY) !== Math.round(pre.y)) return fail(`${at}: ${flow.label}: under the re-opened Search the re-mounted My seeds sat at y${R1(underY)}, not y${R1(pre.y)} (BUG-OVERLAYRELOADKEY-001)${searchNote}`)
+        const inBand2 = await t.read(`const el = ${SEL.rowDetails}; if (!el) return false; ${BAND}; const r = el.getBoundingClientRect(); return r.top >= bandTop && r.bottom <= bandBottom`)
+        if (!inBand2) return fail(`${at}: ${flow.label}: "Open details →" is not in the visible band after the X${searchNote}`)
       }
       targetSel = SEL.row
       tapSel = SEL.rowDetails

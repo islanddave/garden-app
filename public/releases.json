@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.153.0",
+    "date": "2026-09-25",
+    "highlights": [
+      "Search, then Back, then close: open a result from Search, come Back and close Search, and the list you came from is still where you left it — on My seeds the pepper you had open stays open. It also holds if the app refreshes for an update while Search is open."
+    ]
+  },
+  {
     "version": "4.152.0",
     "date": "2026-09-25",
     "highlights": [

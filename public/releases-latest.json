@@ -1,10 +1,7 @@
 {
-  "version": "4.152.0",
+  "version": "4.153.0",
   "date": "2026-09-25",
   "highlights": [
-    "Planting page: the gold label on the top photo now shows a tomato's growth type (Indeterminate, Determinate or Semi-determinate) and a pepper's heat range (for example 2.5K–8K SHU), as the June design intended; days to harvest stay in the crop card below. The two tomatillos no longer show a whole sentence there, and the small crop chip beside it now says Tomatillo on a tomatillo and Mint on Peppermint.",
-    "Planting page: the green growth-type pill on the crop card shows a real growth type or nothing. It no longer copies a plant's whole description onto about 150 non-tomato plants such as peppers, basil and beans, and words like semi-woody or semi-upright no longer read as Semi-determinate.",
-    "Sun needs read Full sun, Part sun or Part shade on the crop card, the Details sheet and the top photo, instead of full_sun.",
-    "Behind the scenes: the Today page layout check and the Undo button check now run automatically on every change (their test pages draw text in Roboto, your phone's font), the harvest-weight check now tests the exact rule the app uses, and the whole-database data check no longer raises false alarms when another program leaves a shared database connection misconfigured."
+    "Search, then Back, then close: open a result from Search, come Back and close Search, and the list you came from is still where you left it — on My seeds the pepper you had open stays open. It also holds if the app refreshes for an update while Search is open."
   ]
 }

@@ -201,6 +201,26 @@ describe('a page that mounts under an open overlay files its place under its OWN
   })
 })
 
+describe('a page on the very first history entry (no router key yet)', () => {
+  // A cold start straight onto a list URL: BrowserRouter leaves that entry with an idx and no key, which
+  // react-router reads as 'default'. The overlay's background carries 'default', and the page's own entry
+  // resolves to none; both must land on the same stored entry (qa-overlayreload MINOR 4).
+  it('mounts under the overlay, closes, and keeps saving under the one entry', async () => {
+    window.history.replaceState(null, '', '/list')
+    render(<BrowserRouter><DismissRegistryProvider><OverlayProvider><Shell /></OverlayProvider></DismissRegistryProvider></BrowserRouter>)
+    await waitFor(() => expect(screen.getByTestId('list')).toBeTruthy())
+    expect(key()).toBe(undefined)
+    await userScrollsTo(900)
+    await openOverlay()
+    await resultThenBack()
+    await waitFor(() => expect(window.scrollY).toBe(900))
+    await closeOnto('/list')
+    await userScrollsTo(1300)
+    await detailAndBack()
+    await waitFor(() => expect(window.scrollY).toBe(1300))
+  })
+})
+
 describe('an overlay closed by replace leaves the page one identity', () => {
   it('mounted before the overlay: after a replace-close the list keeps saving, and Back restores it', async () => {
     const k1 = await toList()

@@ -124,10 +124,18 @@ Before this fix, closing Search or a Log sheet with its ✕ left the page undern
 - **6d.** Go to **Seeds → Saved seeds** and scroll well down. Open **Search** and close it with **✕**. The list should not move. Then open a seed lot and press **Back**.
   **PASS if:** the list stayed put when Search closed, and Back puts you at the same spot. **FAIL if:** it jumps, or Back lands at or near the top. ☐ PASS ☐ FAIL
 - **6e (only if it happens to come up).** If the app asks you to refresh for an update while Search is open, refresh and then close Search with **✕**.
-  **PASS if:** you land on the page with no start-up screen. ☐ PASS ☐ FAIL ☐ didn't come up
+  **PASS if:** you land on the page with no start-up screen, and the list is where you left it. ☐ PASS ☐ FAIL ☐ didn't come up
+
+The next three check the follow-up fix (BUG-OVERLAYRELOADKEY-001): coming **Back** from a Search result re-opens Search over the list, and the list used to forget your place from then on. Don't judge by where the list sits the moment Search closes — the phone puts it back there by itself even without the fix. That is why 6g and 6h scroll a little first.
+
+- **6f.** Go to **Seeds → My seeds**. Open the **Pepper** group, scroll until a pepper near the bottom is in the middle of the screen, and tap it so it opens (you see **Open details →**). Tap **Search**, type *pepper*, and tap the first result's name. A new page opens. Press **Back once** (Search comes back up), then close Search with **✕**.
+  **PASS if:** the pepper you opened is still open, in the same place on screen. **FAIL if:** it is closed, the Pepper group is folded, or the list jumped. ☐ PASS ☐ FAIL
+- **6g.** Go to **Seeds → Saved seeds** and scroll well down. Tap **Search**, type any word, tap the first result's name, press **Back once** (Search comes back up), and close it with **✕**. Now scroll the list **up by about two cards** and note the name of the card in the middle of the screen. Tap that card's name, then press **Back once.**
+  **PASS if:** that same card is in the middle of the screen. **FAIL if:** you land a couple of cards away (where you were before Search) or near the top. ☐ PASS ☐ FAIL
+- **6h.** Same as **6g**, but close Search with the **phone's Back gesture** instead of ✕. After the result, go Back twice: the first brings Search back, the second closes it.
+  **PASS / FAIL** as 6g. ☐ PASS ☐ FAIL
 
 *Not on this list on purpose:* a double tap on **✕** is checked by machine (gate:seeds-scroll flow g), because on a phone a second tap can land on the page under it.
-*Known, and not part of this fix:* **Search → open a result → Back** (Search comes back up) **→ ✕** still loses your place in the list. It is filed separately.
 
 Notes: ______________________________________________
 

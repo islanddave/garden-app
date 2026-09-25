@@ -77,7 +77,13 @@ function Shell() {
   return (
     <>
       <Routes location={pageLocation}>
-        <Route path="/today" element={<Link to="/list" data-testid="to-list">list</Link>} />
+        <Route path="/today" element={(
+          <>
+            <Link to="/list" data-testid="to-list">list</Link>
+            {/* A door that pushes the list WITH state of its own, as the Seeds doors do (seedsReturn). */}
+            <Link to="/list" state={{ seedsReturn: '/seeds?view=saved' }} data-testid="to-list-with-state">list with state</Link>
+          </>
+        )} />
         <Route path="/list" element={(
           <div data-testid="list">
             <OverlayLink to="/search" data-testid="open">open</OverlayLink>
@@ -111,9 +117,9 @@ afterEach(() => {
 })
 
 // /today → /list by a push, so the list has an entry of its own with one behind it.
-async function toList() {
+async function toList(door = 'to-list') {
   render(<BrowserRouter><DismissRegistryProvider><OverlayProvider><Shell /></OverlayProvider></DismissRegistryProvider></BrowserRouter>)
-  await tap('to-list')
+  await tap(door)
   await waitFor(() => expect(screen.getByTestId('list')).toBeTruthy())
   return key()
 }
@@ -329,12 +335,15 @@ describe('when the page\'s entry cannot be proven, the old replace stands', () =
   // BUG-OVERLAYRELOADKEY-001: the replace mints a new key under a page that stays mounted, so the entry is
   // stamped with the page entry it continues (useScrollRestore.underOverlay.test.jsx has the consequence).
   it('the replace stamps the new entry with the page entry it continues; a walk lands on the page\'s own, unstamped', async () => {
-    const k1 = await toList()
+    const k1 = await toList('to-list-with-state')
+    expect(window.history.state?.usr).toEqual({ seedsReturn: '/seeds?view=saved' })   // the instrument
     await open('open-legacy')
     await tapClose()
     await closedOnto('/list')
     expect(key()).not.toBe(k1)
     expect(window.history.state?.usr?.[CONTINUES_ENTRY_KEY]).toBe(k1)
+    // The stamp and nothing else: the page's own state does not ride along (as before the stamp).
+    expect(Object.keys(window.history.state.usr)).toEqual([CONTINUES_ENTRY_KEY])
     // The replaced entry is now the page's: a walk-closed overlay over it lands back on it, stamp intact.
     const k2 = key()
     await open()
@@ -343,10 +352,10 @@ describe('when the page\'s entry cannot be proven, the old replace stands', () =
     expect(key()).toBe(k2)
     expect(window.history.state?.usr?.[CONTINUES_ENTRY_KEY]).toBe(k1)
     // The list's first copy, one Back behind (a replace leaves the page in the stack twice), was never
-    // touched by a replace: no stamp.
+    // touched by a replace: no stamp, its own state intact.
     await act(async () => { window.history.back() })
     await waitFor(() => expect(key()).toBe(k1))
-    expect(window.history.state?.usr?.[CONTINUES_ENTRY_KEY]).toBe(undefined)
+    expect(window.history.state?.usr).toEqual({ seedsReturn: '/seeds?view=saved' })
   })
 
   it('with no background (outside a provider) the /today fallback has no page to continue, and stamps nothing', async () => {
