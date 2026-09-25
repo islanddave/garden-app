@@ -268,29 +268,87 @@ def test_env_both_runs_everywhere(tmp_path):
 
 # ----------------------------------------------------------- integration ----
 
+DEFAULT_SEARCH_PATH = '"$user", public'
+
+
+class FakePgError(Exception):
+    def __init__(self, sqlstate, msg):
+        super().__init__(msg)
+        self.sqlstate = sqlstate
+
+
 class FakeCursor:
-    def __init__(self, outcome):
+    """One gate transaction. Answers the runner's session pin the way PostgreSQL does
+    (backend pid, the search_path this connection arrived with, the server default),
+    then plays the scripted outcome for the gate's own SQL."""
+    def __init__(self, outcome, conn):
         self.outcome = outcome
+        self.conn = conn
+        self.rows = None
     def __enter__(self):
         return self
     def __exit__(self, *a):
         return False
-    def execute(self, sql):
+    def execute(self, sql, prepare=None):
+        if sql == gr.SESSION_PIN_SQL:
+            self.conn.pin_prepare_flags.append(prepare)
+            self.rows = [(self.conn.pid, self.conn.search_path, DEFAULT_SEARCH_PATH,
+                          DEFAULT_SEARCH_PATH)]
+            self.conn.on_pin()
+            return
+        self.conn.on_gate_sql()
         if isinstance(self.outcome, Exception):
             raise self.outcome
+        self.rows = self.outcome
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
     def fetchall(self):
-        return self.outcome
+        return self.rows
 
 
 class FakeConn:
     """Records rollbacks so the transaction-isolation contract is testable."""
-    def __init__(self, outcomes):
+    def __init__(self, outcomes, search_path=DEFAULT_SEARCH_PATH, pid=4242):
         self.outcomes = list(outcomes)
         self.rollbacks = 0
+        self.search_path = search_path
+        self.pid = pid
+        self.pin_prepare_flags = []
     def cursor(self):
-        return FakeCursor(self.outcomes.pop(0))
+        return FakeCursor(self.outcomes.pop(0), self)
+    def on_pin(self):
+        pass
+    def on_gate_sql(self):
+        pass
     def rollback(self):
         self.rollbacks += 1
+
+
+class PooledConnLeftDirty(FakeConn):
+    """A PgBouncer server connection another client left with a SESSION-level search_path.
+
+    pg_dump, pg_dumpall and pg_restore all open with
+    `SELECT pg_catalog.set_config('search_path', '', false)`; through a transaction-mode pooler
+    that setting outlives the tool and rides along into the next client's transactions.
+    Models the two PostgreSQL rules the runner depends on: a transaction-local setting
+    (set_config(..., true)) overrides the session value until the transaction ends, and an
+    unqualified relation is only found if `public` is on the effective search_path.
+    """
+    def __init__(self, outcomes, leaked=""):
+        super().__init__(outcomes, search_path=leaked)
+        self.local_search_path = None
+    def on_pin(self):
+        if "set_config('search_path', default_search_path, true)" in gr.SESSION_PIN_SQL:
+            self.local_search_path = DEFAULT_SEARCH_PATH       # SET LOCAL: this transaction only
+        elif "set_config('search_path', default_search_path, false)" in gr.SESSION_PIN_SQL:
+            self.search_path = DEFAULT_SEARCH_PATH             # session-level: outlives the gate
+    def on_gate_sql(self):
+        effective = self.local_search_path or self.search_path
+        if "public" not in effective:
+            raise FakePgError("42P01", 'relation "inventory_items" does not exist')
+    def rollback(self):
+        super().rollback()
+        self.local_search_path = None                          # LOCAL settings end with the txn
 
 
 def _gate(name, expect="rowcount_eq", value=0):
@@ -337,6 +395,71 @@ def test_results_never_contain_an_unknown_status():
     allowed = {"PASS", "FAIL", "ERROR", "MANUAL", "RETIRED", "NOT_APPLICABLE"}
     assert {r["status"] for r in res} <= allowed
     assert len(res) == len(gates)          # nothing silently dropped
+
+
+# ------------------------- pooled session state (OPS-GATEINVARIANTSFLAKE-001) ----
+
+def test_a_pooled_connection_left_with_an_empty_search_path_cannot_fail_a_gate():
+    """The 2026-09-24 flake. Another client (pg_dump's opening set_config) left
+    search_path='' on a pooled server connection; every later transaction on it lost
+    `public`, so unqualified relations raised 42P01 and gates reported ERROR/FAIL for
+    tables that exist. The runner must reset search_path inside each gate's own
+    transaction before the gate's SQL runs."""
+    conn = PooledConnLeftDirty([[], []], leaked="")
+    res = gr.run_gates(conn, [_gate("a"), _gate("b")], "prod", False)
+    assert [r["status"] for r in res] == ["PASS", "PASS"], res
+
+
+def test_the_reset_is_transaction_local_so_the_runner_leaves_no_state_behind():
+    """A session-level reset would itself be a SET left on a shared connection -- the very
+    thing that caused the flake -- so the reset must end with the gate's ROLLBACK."""
+    conn = PooledConnLeftDirty([[]], leaked="")
+    gr.run_gates(conn, [_gate("a")], "prod", False)
+    assert conn.search_path == ""                  # the connection's session state is untouched
+    assert conn.local_search_path is None
+    assert conn.rollbacks == 1
+
+
+def test_inherited_pooled_state_is_reported_not_silently_absorbed(capsys):
+    conn = PooledConnLeftDirty([[]], leaked="")
+    res = gr.run_gates(conn, [_gate("a")], "prod", False)
+    assert res[0]["status"] == "PASS"
+    assert res[0]["inherited_search_path"] == ""
+    assert res[0]["default_search_path"] == DEFAULT_SEARCH_PATH
+    assert res[0]["backend_pid"] == 4242
+    gr.render(res, "prod")
+    out = capsys.readouterr().out
+    assert "1 gate(s) landed on a pooled connection that another client had left" in out
+    assert "search_path=''" in out and "backend 4242" in out
+
+
+def test_a_clean_connection_adds_nothing_to_a_passing_result(capsys):
+    res = gr.run_gates(FakeConn([[]]), [_gate("a")], "prod", False)
+    assert res[0]["status"] == "PASS"
+    assert not {"backend_pid", "inherited_search_path", "default_search_path"} & set(res[0])
+    gr.render(res, "prod")
+    assert "pooled connection" not in capsys.readouterr().out
+
+
+def test_every_red_result_names_its_backend_and_inherited_search_path(capsys):
+    """The instrument: a red gate says which server connection served it and what
+    search_path it arrived with, in the JSON and on the plain line CI prints."""
+    conn = FakeConn([[(1,)], RuntimeError("boom")], pid=77)
+    res = gr.run_gates(conn, [_gate("a"), _gate("b")], "prod", False)
+    assert [r["status"] for r in res] == ["FAIL", "ERROR"]
+    for r in res:
+        assert r["backend_pid"] == 77
+        assert r["inherited_search_path"] == DEFAULT_SEARCH_PATH
+    gr.render(res, "prod")
+    out = capsys.readouterr().out
+    assert out.count("[backend 77, arrived with search_path='\"$user\", public']") == 2
+
+
+def test_the_session_reset_is_never_server_prepared():
+    """It repeats once per gate; psycopg would server-prepare it after 5 uses."""
+    conn = FakeConn([[]] * 7)
+    gr.run_gates(conn, [_gate(f"g{i}") for i in range(7)], "prod", False)
+    assert conn.pin_prepare_flags == [False] * 7
 
 
 # --------------------------------------------- the real corpus still loads ----

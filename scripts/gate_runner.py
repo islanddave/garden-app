@@ -380,6 +380,53 @@ def connect(url):
     return conn
 
 
+# A POOLED CONNECTION ARRIVES WITH OTHER CLIENTS' SESSION STATE (OPS-GATEINVARIANTSFLAKE-001)
+# ------------------------------------------------------------------------------------------
+# Prod's NEON_DATABASE_URL is the Neon *pooler*: PgBouncer in transaction mode. Each gate's
+# transaction is served by whichever pooled server connection is free, and in that mode
+# PgBouncer does not reset session state between clients -- a session-level SET issued by
+# ANY other client of the pool is still in force when our transaction lands on that
+# connection. The per-gate ROLLBACK below cannot help: it undoes what we did, not what we
+# inherited.
+#
+# Measured 2026-09-24: a whole-corpus prod run returned 2 FAIL + 4 ERROR that no re-run
+# reproduced. Every search_path-sensitive gate after the 45% mark had run with no `public`
+# on the search_path: 42P01 on unqualified inventory_items / cultivar_weight_derived, and
+# pg_get_constraintdef / pg_get_triggerdef printing `public.`-qualified names that two
+# regexes do not expect. Forcing search_path = '' (what pg_dump, pg_dumpall and pg_restore
+# set on connect) reproduces those six results line for line. 0.9 s after that run
+# disconnected, an unrelated psql on the same pooler URL got `relation "daily_plan" does not
+# exist` -- most likely handed the connection the runner had just released.
+#
+# So every gate first runs this, inside its OWN transaction: record which backend served it
+# and the search_path it arrived with, then reset search_path to the server's configured
+# default (pg_settings.reset_val -- what every gate was written and baselined against).
+#   * set_config(..., true) is SET LOCAL: it ends with the gate's ROLLBACK, so the runner
+#     never leaves state of its own on a shared connection.
+#   * The MATERIALIZED CTE reads the inherited value before the reset runs: the outer SELECT
+#     cannot project a row the CTE has not produced.
+#   * Run with prepare=False: this statement repeats ~800 times per run, psycopg would
+#     otherwise server-prepare it after 5, and the gate's correctness should not depend on
+#     the pooler's prepared-statement support.
+# The inherited value is kept on every non-PASS result and on any result where it differed
+# from the default, so a polluted pool is reported rather than silently absorbed.
+SESSION_PIN_SQL = """
+WITH inherited AS MATERIALIZED (
+    SELECT pg_backend_pid() AS pid,
+           current_setting('search_path') AS search_path,
+           reset_val AS default_search_path
+      FROM pg_settings WHERE name = 'search_path')
+SELECT pid, search_path, default_search_path,
+       set_config('search_path', default_search_path, true)
+  FROM inherited
+"""
+
+
+def _search_path_drifted(d):
+    inherited = d.get("inherited_search_path")
+    return inherited is not None and inherited != d.get("default_search_path")
+
+
 def run_gates(conn, gates, env, strict_env, continuous_only=False):
     results = []
     for g in gates:
@@ -399,8 +446,13 @@ def run_gates(conn, gates, env, strict_env, continuous_only=False):
             detail = f"declared env={g['env']}, running against {env}"
             results.append({**base, "status": status, "detail": detail})
             continue
+        session = {}
         try:
             with conn.cursor() as cur:
+                cur.execute(SESSION_PIN_SQL, prepare=False)
+                pid, inherited, default = cur.fetchone()[:3]
+                session = {"backend_pid": pid, "inherited_search_path": inherited,
+                           "default_search_path": default}
                 cur.execute(g["sql"])
                 fetched = cur.fetchall()
             # Every gate is its own transaction. Without this rollback a single
@@ -415,15 +467,17 @@ def run_gates(conn, gates, env, strict_env, continuous_only=False):
             # skip. Keep the sqlstate; drop everything else so no value leaks.
             code = getattr(exc, "sqlstate", None) or type(exc).__name__
             msg = str(exc).strip().splitlines()[0][:200]
-            results.append({**base, "status": "ERROR", "detail": f"{code}: {msg}"})
+            results.append({**base, "status": "ERROR", "detail": f"{code}: {msg}", **session})
             continue
         rows = len(fetched)
         first = fetched[0][0] if rows and fetched[0] else None
         ok, actual = compare(g["expect"], g["value"], rows, first)
+        status = "PASS" if ok else "FAIL"
         results.append({
             **base,
-            "status": "PASS" if ok else "FAIL",
+            "status": status,
             "detail": f"expected {g['expect']}={g['value']!r}, got {actual}",
+            **(session if status != "PASS" or _search_path_drifted(session) else {}),
         })
     return results
 
@@ -545,7 +599,11 @@ def render(results, env):
         for r in rs:
             if r["status"] == "PASS":
                 continue  # only non-green lines get detail; counts come in the summary
-            print(f"   {SYMBOL[r['status']]} {r['phase']}/{r['name']}: {r['detail']}")
+            # Which server connection served a red gate, and what it arrived with -- the two facts
+            # that separate a real finding from a pooled connection someone else left dirty.
+            where = (f" [backend {r['backend_pid']}, arrived with search_path={r['inherited_search_path']!r}]"
+                     if "backend_pid" in r else "")
+            print(f"   {SYMBOL[r['status']]} {r['phase']}/{r['name']}: {r['detail']}{where}")
         n_pass = sum(1 for r in rs if r["status"] == "PASS")
         print(f"   -- {n_pass}/{len(rs)} passed")
 
@@ -556,6 +614,13 @@ def render(results, env):
     print(f"SUMMARY ({env}): " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     if counts.get("MANUAL"):
         print(f"  NOTE: {counts['MANUAL']} manual gate(s) were NOT executed and are NOT passes.")
+    drifted = [r for r in results if _search_path_drifted(r)]
+    if drifted:
+        seen = ", ".join(sorted({repr(r["inherited_search_path"]) for r in drifted}))
+        pids = ", ".join(str(p) for p in sorted({r["backend_pid"] for r in drifted}))
+        print(f"  NOTE: {len(drifted)} gate(s) landed on a pooled connection that another client had left "
+              f"with search_path={seen} (backend {pids}). The runner reset it to the server default "
+              "before each of those gates ran, so their results describe the schema, not that setting.")
 
 
 if __name__ == "__main__":
