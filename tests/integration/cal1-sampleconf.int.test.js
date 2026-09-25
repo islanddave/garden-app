@@ -7,7 +7,11 @@
 // reference only when it is CORROBORATED.
 //
 //   corroborated := confidence IN ('high','medium')   -- the view defines 'provisional' as n < 2,
-//                   OR sample_n >= 5                  -- escape hatch for genuinely variable crops
+//                   OR independent_n >= 5             -- escape hatch for genuinely variable crops
+//
+// v3 counted ROWS (sample_n >= 5). Resolver v5 (migrations/v4-cal1-indep-001/0b-resolver-v5.sql)
+// moved the hatch to independent_n, so several rows describing ONE weighing cannot buy promotion.
+// The drift test below mirrors the resolver's rule, not v3's (BUG-CAL1INTTESTRULE-001).
 //
 // RESOLUTION ORDER (v3):
 //   1. user-supplied grams          -> 'measured'   estimated false
@@ -80,6 +84,9 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
 
   // Fixture weights are chosen so every expected value is an exact integer at the quantities used,
   // which keeps failure messages readable (no floating-point noise in the diff).
+  // `samples` entries are [grams, count, sampledAt?]. Without sampledAt each row gets its own now(),
+  // so every row is a separate weighing. Two rows sharing sampledAt AND grams-per-unit are ONE
+  // weighing to the view (independent_n counts distinct (sampled_at, ratio) pairs).
   const mk = async (label, cropSlug, refGrams, samples) => {
     const cv = await directSql`
       INSERT INTO plant_varieties (name, created_by, crop_type_slug, unit_weights)
@@ -89,10 +96,11 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
     const pl = await directSql`
       INSERT INTO plants (project_id, name, created_by, variety_id)
       VALUES (${projectId}, ${label + '-' + RUN}, ${USER}, ${cv[0].id}) RETURNING id`
-    for (const [grams, count] of samples) {
+    for (const [grams, count, sampledAt = null] of samples) {
       await directSql`
         INSERT INTO cultivar_weight_sample (cultivar_id, unit, total_grams, unit_count, sampled_at, created_by)
-        VALUES (${cv[0].id}, 'count', ${grams}, ${count}, now(), ${USER})`
+        VALUES (${cv[0].id}, 'count', ${grams}, ${count},
+                COALESCE(${sampledAt}::timestamptz, now()), ${USER})`
     }
     P[label] = { plantId: pl[0].id, cultivarId: cv[0].id }
   }
@@ -115,8 +123,17 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
     await mk('medium', CROP, 210, [[120, 1], [100, 1], [80, 1]])
     // n=2 that disagree wildly -> cv 0.63 -> 'low', and n < 5.
     await mk('lowSmallN', CROP, 100, [[20, 1], [60, 1]])
-    // Same dispersion, n=5 -> still 'low' but the escape hatch fires. Mean = 200/5 = 40.
+    // Same dispersion, five separate weighings -> still 'low' but the escape hatch fires. Mean = 200/5 = 40.
     await mk('lowBigN', CROP, 100, [[20, 1], [60, 1], [25, 1], [55, 1], [40, 1]])
+    // The Ancho shape, copied from prod (BUG-HARVSAMPLEGATEN5-001, read 2026-09-25): five sample rows
+    // but FOUR weighings — the two 4 g fruit share one instant and one ratio, so the view counts them
+    // once. sample_n = 5 reaches a row-count hatch; independent_n = 4 does not. cv 0.75 -> 'low'.
+    // Pooled 65/5 = 13 g against a curated 60 g: the resolver keeps the 60 g reference. The only
+    // fixture on which `sample_n >= 5` and `independent_n >= 5` disagree.
+    await mk('ancho', CROP, 60, [
+      [12, 1, '2026-08-07T12:00:00Z'], [18, 1, '2026-08-21T12:00:00Z'],
+      [4, 1, '2026-09-11T12:00:00Z'], [4, 1, '2026-09-11T12:00:00Z'],
+      [27, 1, '2026-09-23T12:00:00Z']])
     // One weighing and NO curated reference: the sample is demoted, not discarded.
     await mk('provisionalNoRef', CROP, null, [[33, 1]])
     // Same, on a crop that WOULD permit a crop-level average (500 g). The sample must still win —
@@ -235,19 +252,29 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
       'confidence=low and n<5, so the 100 g reference holds rather than the 40 g pooled mean')
   })
 
-  it('LOW + n>=5: the sample_n escape hatch promotes a genuinely variable crop', async () => {
+  it('LOW + n>=5: the independent_n escape hatch promotes a genuinely variable crop', async () => {
     // Same dispersion as above, five weighings: pooled 200/5 = 40 g now beats the 100 g reference.
     // Without this, a crop whose cv never drops below 0.35 could never be corrected by real data.
     await expectResolves('lowBigN', 4, 160, SAMPLE_BASIS,
-      'sample_n>=5 promotes despite confidence=low, so the 40 g pooled mean wins')
+      'independent_n>=5 promotes despite confidence=low, so the 40 g pooled mean wins')
+  })
+
+  it('LOW + 5 rows but 4 weighings: a repeated row does not open the hatch (the Ancho case)', async () => {
+    // Pooled 65/5 = 13 g vs the curated 60 g. Counting ROWS (sample_n = 5) would promote the sample
+    // and store 4 x 13 = 52 g; counting WEIGHINGS (independent_n = 4) keeps the reference.
+    await expectResolves('ancho', 4, 240, 'cultivar',
+      'independent_n=4 is below the hatch and confidence=low, so the 60 g reference holds')
   })
 
   it('the promotion predicate matches the resolver for every fixture (no drift between the two)', async () => {
+    // `corroborated` is the resolver's own predicate (resolve_harvest_weight, v5 onward): the hatch
+    // counts independent weighings. Until BUG-CAL1INTTESTRULE-001 this read `sample_n >= 5`, and no
+    // fixture had a repeated row, so the test could not tell the two rules apart.
     const rows = await directSql`
-      SELECT v.name, d.sample_n::int AS n, d.confidence,
+      SELECT v.name, d.sample_n::int AS n, d.independent_n::int AS indep_n, d.confidence,
              d.grams_per_unit::float8 AS gpu,
              (v.unit_weights->>'count')::float8 AS ref,
-             (d.confidence IN ('high','medium') OR d.sample_n >= 5) AS corroborated,
+             COALESCE(d.confidence IN ('high','medium') OR d.independent_n >= 5, false) AS corroborated,
              r.weight_grams::float8 AS resolved
         FROM plant_varieties v
         JOIN plants pl ON pl.variety_id = v.id AND pl.deleted_at IS NULL
@@ -256,11 +283,17 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
        WHERE v.created_by = ${USER}`
     for (const r of rows) {
       const expected = r.corroborated ? r.gpu : (r.ref ?? r.gpu)
-      expect(r.resolved, `[${r.name}] n=${r.n} confidence=${r.confidence} `
+      expect(r.resolved, `[${r.name}] rows=${r.n} weighings=${r.indep_n} confidence=${r.confidence} `
         + `corroborated=${r.corroborated} derived=${r.gpu} g ref=${r.ref} g — resolver returned `
         + `${r.resolved} g for 1 count, expected ${expected} g`).toBeCloseTo(expected, 6)
     }
-    expect(rows.length, 'expected all 7 sampled fixtures to appear in cultivar_weight_derived').toBe(7)
+    expect(rows.length, 'expected all 8 sampled fixtures to appear in cultivar_weight_derived').toBe(8)
+    // The loop can only tell rules apart where they disagree. Pin the fixture that separates rows
+    // from weighings, so a later fixture edit cannot quietly make this test blind again.
+    const ancho = rows.find((r) => r.name === `ancho-${RUN}`)
+    expect(ancho && { n: ancho.n, indep_n: ancho.indep_n, confidence: ancho.confidence },
+      'the ancho fixture must keep 5 rows / 4 weighings / low, the shape where the two rules differ')
+      .toEqual({ n: 5, indep_n: 4, confidence: 'low' })
   })
 
   // ── the edit-path trap ──────────────────────────────────────────────────────
@@ -356,9 +389,9 @@ describe.skipIf(!HAS_CAL1)('CAL-1 confidence-aware sample ranking (V4-CAL1SAMPLE
   it('no sample was voided or removed by the reranking', async () => {
     const n = await directSql`
       SELECT count(*)::int AS n FROM cultivar_weight_sample WHERE created_by = ${USER}`
-    // 1 + 2 + 3 + 2 + 5 + 1 + 1 fixture samples, plus any auto-captured by the dual-weight POST above.
-    expect(n[0].n, `expected at least the 15 fixture samples to survive, found ${n[0].n}`)
-      .toBeGreaterThanOrEqual(15)
+    // 1 + 2 + 3 + 2 + 5 + 1 + 1 + 5 fixture samples, plus any auto-captured by the dual-weight POST above.
+    expect(n[0].n, `expected at least the 20 fixture samples to survive, found ${n[0].n}`)
+      .toBeGreaterThanOrEqual(20)
     const voided = await directSql`
       SELECT count(*)::int AS n FROM cultivar_weight_void v
        JOIN cultivar_weight_sample s ON s.id = v.sample_id WHERE s.created_by = ${USER}`
