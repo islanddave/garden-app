@@ -51,7 +51,7 @@
 // real inter-event gaps, with no fake timers and no flake — the fixture IS the evidence. A
 // production host would own the timer and call `tick()`; `dueAt()` tells it when. That host is
 // deliberately NOT built (BD-068: "do not ship a half-flow off this row").
-import { classify, normalise, splitTrailingCommand } from './voiceHarvestGrammar.js'
+import { classify, normalise, splitTrailingCommand, NUMBER_HOMOPHONES } from './voiceHarvestGrammar.js'
 
 // Settle window. The observed supersede gaps were 195 ms and 353 ms, so 500 ms clears both with
 // margin. It is the single latency/safety dial: shorter feels quicker and risks committing a prefix,
@@ -65,6 +65,53 @@ export const DEFAULT_SETTLE_MS = 500
 // swallowed and Dave says it again; the cost of the alternative is two saves and a skipped planting
 // he never sees. Not symmetric, so not a tunable.
 export const DEFAULT_COMMAND_COOLDOWN_MS = 1500
+
+// BUG-VOICEREVISIONSPLIT-001 — A NUMBER RE-RENDERED INSIDE ONE UTTERANCE IS STILL ONE UTTERANCE.
+//
+// Device-proven on the real page: Dave's Android, 2026-09-25 11:48 ET, prod v4.150.0 (gardening-docs
+// project-state/voice-realpage-trace-20260925.md, M2). Inside ONE session, 339 ms apart, Chrome
+// delivered
+//
+//   14304ms FINAL "1"   ->   14499ms FINAL "1 to"   ->   14838ms FINAL "1 243"
+//
+// — "two forty-three" arrives first as the homophone "to", then re-rendered as digits. Supersede was a
+// TEXT test, and "1 243" does not start with "1 to", so rule 4 in final() committed "1 to" as an
+// utterance of its own: a search, which on the page is a crop change. The held 243 was dropped, the
+// crop unselected, and "1 243" then had no planting to attach to. The record was lost to a rendering,
+// not to anything Dave said. The battery replay of the same shape ("3 count for" -> "3 count 43") shows
+// it defeats even a count said WITH its unit (voice-replay-20260925.md, R8hw).
+//
+// So the pending rules — supersede, exact repeat, regression — are ALSO asked of a FOLDED form of both
+// texts, in which every whole token that is a number word (one..nineteen, twenty..ninety) or a
+// recogniser homophone of one (NUMBER_HOMOPHONES: won/to/too/tree/for/fore/ate) is written as its
+// digits. "1 to" folds to "1 2", a prefix of "1 243"; "3 count for" folds to "3 count 4", a prefix of
+// "3 count 43". TOKEN BY TOKEN, NEVER JOINED: "twenty three" folds to "20 3", not 23. The fold only has
+// to line up two renderings of the same words; reading a name in year-form (foldNumberWords,
+// "eighteen eighty four" -> 1884) is a different grammar and does not belong here.
+//
+// ASKED ONLY WHEN THE RAW TEXT ANSWERS NOTHING, so every pair the raw rules already decide is decided
+// exactly as before, and the fold can only turn a rule-4 commit into a supersede, a repeat or a
+// regression. AND NEVER OF A PENDING COMMAND: "next one" is a save by exact match and its re-render
+// "next 1" is not; folded they are equal, and keeping the later rendering would turn a requested save
+// into a search. A pending command is judged by the raw rules alone, as it always was.
+//
+// Frozen no longer: the boss pass held this layer to reasoning-only changes until a device run existed
+// (ContinuousVoiceProbe.jsx, S0). The real-page runs of 2026-09-16 and 2026-09-25 are that evidence,
+// and this change is read off the second.
+const REVISION_NUMBER_WORDS = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+  ...NUMBER_HOMOPHONES,
+}
+
+/** The folded form final() compares when the raw text answers nothing — see above. Pure. */
+export function foldRevision(text) {
+  return normalise(text).split(' ')
+    .map((t) => (Object.prototype.hasOwnProperty.call(REVISION_NUMBER_WORDS, t) ? String(REVISION_NUMBER_WORDS[t]) : t))
+    .join(' ')
+}
 
 /**
  * @param {object}   opts
@@ -96,7 +143,7 @@ export function createCommitDebouncer({
   staleMs = DEFAULT_SETTLE_MS * 2,
 } = {}) {
   const isWrite = (r) => r.kind === 'command' && !!WRITE_CLASS[r.command]
-  let pending = null          // { text, norm, result, atMs }
+  let pending = null          // { text, norm, fold, result, atMs }
   let lastWrite = null        // { klass, atMs } — see WRITE_CLASS
   const stats = {
     staleDropped: 0,
@@ -172,6 +219,7 @@ export function createCommitDebouncer({
       if (!norm) { stats.droppedEmpty += 1; return }
 
       const result = classify(text)
+      const fold = foldRevision(norm)
 
       if (pending) {
         // 2. SUPERSEDE. A later final whose text EXTENDS the pending one is the same utterance,
@@ -185,7 +233,7 @@ export function createCommitDebouncer({
         //    a search. Without the window, that save has already happened.
         if (norm !== pending.norm && norm.startsWith(pending.norm)) {
           stats.superseded += 1
-          pending = { text, norm, result, atMs: tMs }
+          pending = { text, norm, fold, result, atMs: tMs }
           reportPending()
           return
         }
@@ -193,7 +241,7 @@ export function createCommitDebouncer({
           // Exact repeat: refresh the window without counting a supersede, so a stream of identical
           // finals cannot commit twice and cannot inflate the supersede stat.
           stats.superseded += 1
-          pending = { text, norm, result, atMs: tMs }
+          pending = { text, norm, fold, result, atMs: tMs }
           reportPending()
           return
         }
@@ -203,12 +251,27 @@ export function createCommitDebouncer({
         //    because the alternative silently downgrades a fully-heard utterance to a partial one.
         if (pending.norm.startsWith(norm)) { stats.regressed += 1; return }
 
+        // 3b. BUG-VOICEREVISIONSPLIT-001 — THE SAME THREE RULES ON THE NUMBER-FOLDED FORM (see
+        //     foldRevision). Reached only when the raw text answered nothing, and never for a pending
+        //     command. "1 to" -> "1 243" (the 2026-09-25 device capture) is a supersede here; a
+        //     folded-equal pair ("1 2" / "1 to") is an exact repeat and keeps the later rendering, as
+        //     the raw repeat does; a folded truncation keeps the longer pending, as the raw one does.
+        if (pending.result.kind !== 'command') {
+          if (fold.startsWith(pending.fold)) {
+            stats.superseded += 1
+            pending = { text, norm, fold, result, atMs: tMs }
+            reportPending()
+            return
+          }
+          if (pending.fold.startsWith(fold)) { stats.regressed += 1; return }
+        }
+
         // 4. A genuinely different utterance. The pending one is finished — commit it, then pend
         //    the new one. This is what keeps two real phrases inside one session from collapsing.
         commit(tMs)
       }
 
-      pending = { text, norm, result, atMs: tMs }
+      pending = { text, norm, fold, result, atMs: tMs }
       reportPending()
     },
 

@@ -12,7 +12,7 @@
 // thing that was wrong. Replaying the measured stream is the only version of this test that can
 // falsify the layer.
 import { describe, it, expect, vi } from 'vitest'
-import { createCommitDebouncer, DEFAULT_SETTLE_MS, DEFAULT_COMMAND_COOLDOWN_MS } from '../lib/voiceCommitDebounce.js'
+import { createCommitDebouncer, foldRevision, DEFAULT_SETTLE_MS, DEFAULT_COMMAND_COOLDOWN_MS } from '../lib/voiceCommitDebounce.js'
 
 // Dave's log, verbatim. 'f' = a final result, 'end' = the recogniser's session end.
 const DEVICE_LOG = [
@@ -423,6 +423,118 @@ describe('two genuinely different utterances inside one session', () => {
       { t: 1205, end: true },
     ])
     expect(commits.map(c => c.text)).toEqual(['cucumber', 'tomato'])
+  })
+})
+
+// BUG-VOICEREVISIONSPLIT-001 — the second device fixture in this file, and the first from the REAL page:
+// Dave's Android, 2026-09-25 11:48 ET, prod v4.150.0, transcribed verbatim from the capture he pasted
+// (gardening-docs project-state/voice-realpage-trace-20260925.md, M2; the whole capture replays through
+// the page in VoiceHarvest.traceReplay.test.jsx). One session: four empty heads, then "1" -> "1 to" ->
+// "1 243", 339 ms from first to last. He was saying "one, two forty-three"; Chrome heard "two" as "to"
+// first and re-rendered it with the digits. Timestamps are his.
+const REVISION_LOG = [
+  { t: 13687, f: '' },
+  { t: 13899, f: '' },
+  { t: 14037, f: '' },
+  { t: 14152, f: '' },
+  { t: 14304, f: '1' },
+  { t: 14499, f: '1 to' },
+  { t: 14838, f: '1 243' },   // a RE-RENDER of "1 to" — the raw text does not extend it
+  { t: 14858, end: true },
+]
+
+describe('a number re-rendered inside one utterance is one utterance — BUG-VOICEREVISIONSPLIT-001', () => {
+  it('commits the 2026-09-25 device sequence ONCE, as "1 243" — "1 to" never reaches the host', () => {
+    const { commits, d } = replay(REVISION_LOG)
+    expect(commits).toEqual([expect.objectContaining({ kind: 'search', text: '1 243' })])
+    expect(commits.map((c) => c.text)).not.toContain('1 to')
+    // "1" -> "1 to" is the raw rule; "1 to" -> "1 243" is the folded one.
+    expect(d.stats()).toMatchObject({ droppedEmpty: 4, superseded: 2, regressed: 0, committed: 1 })
+  })
+
+  it('the same sequence with no host timer still commits once, at the session end', () => {
+    const { commits } = replay(REVISION_LOG, { host: 'no-timer' })
+    expect(commits.map((c) => c.text)).toEqual(['1 243'])
+  })
+
+  it('"3 count for" -> "3 count 43" commits once — the homophone on the weight (battery R8hw)', () => {
+    const { commits } = replay([
+      { t: 1000, f: '3' },
+      { t: 1300, f: '3 count' },
+      { t: 1600, f: '3 count for' },
+      { t: 1900, f: '3 count 43' },
+      { t: 1905, end: true },
+    ])
+    expect(commits.map((c) => c.transcript)).toEqual(['3 count 43'])
+  })
+
+  it('"3 count for" -> "3 count 43" -> "3 count 43 G" is one utterance: the fold joins the first pair, the raw rule the second', () => {
+    const { commits } = replay([
+      { t: 1000, f: '3 count for' },
+      { t: 1300, f: '3 count 43' },
+      { t: 1600, f: '3 count 43 G' },
+      { t: 1605, end: true },
+    ])
+    expect(commits).toHaveLength(1)
+    expect(commits[0].transcript).toBe('3 count 43 G')
+  })
+
+  it('a number word re-rendered as its digits is the same utterance: "three" -> "3 counts" is one quantity', () => {
+    const { commits } = replay([{ t: 1000, f: 'three' }, { t: 1200, f: '3 counts' }, { t: 1205, end: true }])
+    expect(commits).toEqual([expect.objectContaining({ kind: 'quantity', value: 3, unit: 'count' })])
+  })
+
+  it('folded-equal is an exact repeat and keeps the LATER rendering, as the raw repeat does', () => {
+    const { commits, d } = replay([{ t: 1000, f: '1 2' }, { t: 1200, f: '1 to' }, { t: 1205, end: true }])
+    expect(commits.map((c) => c.transcript)).toEqual(['1 to'])
+    expect(d.stats().superseded).toBe(1)
+  })
+
+  it('a folded truncation keeps the longer pending: "1 243" then a late "1 to" commits "1 243"', () => {
+    const { commits, d } = replay([{ t: 1000, f: '1 243' }, { t: 1200, f: '1 to' }, { t: 1205, end: true }])
+    expect(commits.map((c) => c.transcript)).toEqual(['1 243'])
+    expect(d.stats().regressed).toBe(1)
+  })
+
+  it('folds token by token and never joins: "twenty three" is "20 3", so it neither extends nor repeats "23"', () => {
+    expect(foldRevision('1 to')).toBe('1 2')
+    expect(foldRevision('3 Count For')).toBe('3 count 4')
+    expect(foldRevision('twenty three')).toBe('20 3')
+    expect(foldRevision('peach tree ate')).toBe('peach 3 8')
+    expect(foldRevision('eighteen eighty four')).toBe('18 80 4')
+    // Only the words named in the rule: zero, scales and dozen are not folded.
+    expect(foldRevision('zero hundred dozen')).toBe('zero hundred dozen')
+    const { commits } = replay([{ t: 1000, f: 'twenty three' }, { t: 1200, f: '23' }, { t: 1205, end: true }])
+    expect(commits.map((c) => c.transcript)).toEqual(['twenty three', '23'])
+  })
+
+  // NEGATIVE CONTROLS — what the fold must not merge.
+  it('two different phrases in one session still commit both: "cucumber" then "three count"', () => {
+    const { commits } = replay([{ t: 1000, f: 'cucumber' }, { t: 1200, f: 'three count' }, { t: 1205, end: true }])
+    expect(commits.map((c) => c.kind)).toEqual(['search', 'quantity'])
+    expect(commits[0].text).toBe('cucumber')
+    expect(commits[1]).toMatchObject({ value: 3, unit: 'count' })
+  })
+
+  it('"next" then "next to the fence" still supersedes — the premature save is still rescued', () => {
+    const { commits } = replay([
+      { t: 1000, f: 'next' }, { t: 1002, end: true },
+      { t: 1200, f: 'next to' }, { t: 1400, f: 'next to the fence' }, { t: 1402, end: true },
+    ])
+    expect(commits).toEqual([expect.objectContaining({ kind: 'search', text: 'next to the fence' })])
+  })
+
+  it('a pending COMMAND is judged by the raw rules alone: "next one" re-rendered "next 1" still saves', () => {
+    // Folded, "next one" and "next 1" are equal, and keeping the later rendering would turn the save
+    // (an exact command phrase) into a search for "next 1". The raw rules commit the save, as before.
+    const { commits } = replay([{ t: 1000, f: 'next one' }, { t: 1200, f: 'next 1' }, { t: 1205, end: true }])
+    expect(commits[0]).toMatchObject({ kind: 'command', command: 'save_and_advance' })
+    expect(commits.map((c) => c.kind)).toEqual(['command', 'search'])   // then "next 1", exactly as before
+  })
+
+  it('but a data pending re-rendered AS a command phrase is one utterance: "next 1" -> "next one" saves once', () => {
+    const { commits } = replay([{ t: 1000, f: 'next 1' }, { t: 1200, f: 'next one' }, { t: 1205, end: true }])
+    expect(commits).toEqual([expect.objectContaining({ kind: 'command', command: 'save_and_advance' })])
   })
 })
 

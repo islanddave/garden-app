@@ -15,9 +15,10 @@
 //
 // THE 09-16 DECISIONS ARE REPORTED, NOT ASSERTED (VOICE_REPLAY_OUT): that run was recorded on an older
 // build, and one of its decisions has since changed on purpose (BUG-VOICEVALPAIRNOSEL-001). THE 09-25
-// DECISIONS ARE ASSERTED, as a CHARACTERIZATION of the build that recorded them: they pin three open
-// defects that capture shows (M1-M3 below), so the fix for each flips its assertion deliberately rather
-// than passing unnoticed. Flip the one you fixed, and say so in the commit.
+// DECISIONS ARE ASSERTED, as a CHARACTERIZATION: first of the build that recorded them (the phone's own
+// decisions, verbatim), now of this build. They pin three defects that capture shows (M1-M3 below), so
+// the fix for each flips its assertion deliberately rather than passing unnoticed. Flip the one you
+// fixed, and say so in the commit; a fix that changes what later decisions see updates those too.
 //
 // Harness as the oneBreath and cropSwitch suites: the shared fake recogniser, the 244-name vocabulary,
 // Dave's taught names, api and haptics mocked. Fake timers with shouldAdvanceTime OFF, so the page's
@@ -184,17 +185,50 @@ describe.each([
   })
 })
 
-// ── CHARACTERIZATION: 2026-09-25, replayed on the build that recorded it ──────────────────────────────
+// ── CHARACTERIZATION: 2026-09-25, replayed on THIS build, with the taught names it was recorded with ───
 //
 // Dave meant Suyo Long, 1 count, 243 g, four times in 38 s (analysis: voice-realpage-trace-20260925.md).
-// Nothing saved. Each pin below is a defect that capture shows, stated as the build does it today; the
-// comment on each says what its fix should turn it into. Flip only the one you fixed.
-describe('the 2026-09-25 capture on the build that recorded it — CHARACTERIZATION of three open defects', () => {
+// Nothing saved. The replay lane pinned three defects that capture shows, as the recording build did them;
+// each fix flips its own pin and says so in its commit, and a fix that changes the record the LATER
+// decisions see updates their pins too, saying so where it does:
+//   M1 — the taught name "cucumber one" takes the spoken count. Open in code by decision: it was resolved as
+//        DATA (Dave deleted the name, voice_alias id 58, 2026-09-25 ~12:15 ET). Pinned with the name loaded.
+//   M2 — Chrome's re-render "1 to" -> "1 243" committed as two utterances. FIXED, BUG-VOICEREVISIONSPLIT-001.
+//   M3 — naming the same crop again drops the held number. Open.
+// On the recording build this list was the phone's own, verbatim (the replay lane's fidelity result).
+const EXPECTED_0925 = [
+  'search "cucumber one" <- "cucumber one"',
+  'one-breath-bare Suyo Long 243 <- "cucumber one 243"',
+  'held-number 243 <- "243"',
+  // M2 FIXED — was: held-dropped 243 (crop changed) · search "1 to" · search "1 243".
+  'one-breath-bare (selected crop) 1 | 243 <- "1 243"',
+  'held-number 1 <- "1"',
+  'assumed-unit 1 count (held number resolved)',
+  'held-number 243 <- "243"',
+  // M3 — "1 243" left 243 held for the weight, so this "cucumber" now has one to drop (was: search only).
+  'held-dropped 243 (crop changed)',
+  'search "cucumber" <- "cucumber"',
+  'search "cucumber one" <- "cucumber one"',
+  'one-breath-bare Suyo Long 243 <- "cucumber one 243"',
+  'held-number 243 <- "243"',
+  'held-dropped 243 (crop changed)',
+  'search "cucumber" <- "cucumber"',
+  'search "cucumber one" <- "cucumber one"',
+  'held-number 3 <- "three"',
+  'held-dropped 3 (crop changed)',
+  'search "cucumber" <- "cucumber"',
+  'search "cucumber" <- "cucumber"',
+  'search "cucumber one" <- "cucumber one"',
+  'one-breath-bare Suyo Long 243 <- "cucumber one 243"',
+  'held-number 243 <- "243"',
+]
+
+describe('the 2026-09-25 capture on this build — CHARACTERIZATION (M1 and M3 open, M2 fixed)', () => {
   const idx = (list, detail, from = 0) => list.findIndex((d, i) => i >= from && d === detail)
 
-  it('reproduces every recorded decision, verbatim and in order, and saves nothing (as on prod)', async () => {
+  it('makes exactly these decisions, in order, and saves nothing (the capture has no "next")', async () => {
     const r = await replayCapture(TRACE_0925)
-    expect(r.decisions.map((d) => d.detail)).toEqual(recordedDecisions(r.parsed.events).map((d) => d.detail))
+    expect(r.decisions.map((d) => d.detail)).toEqual(EXPECTED_0925)
     expect(r.posts).toEqual([])
   })
 
@@ -215,37 +249,45 @@ describe('the 2026-09-25 capture on the build that recorded it — CHARACTERIZAT
     expect(card).toContain('Weight—')
   })
 
-  it('M2 — Chrome\'s re-render "1 to" -> "1 243" is committed as TWO utterances, and the first drops 243 and the crop', async () => {
-    // voiceCommitDebounce.js:186 supersedes only a TEXT extension; "1 243" does not extend "1 to", so
-    // case 4 (:206-208) commits "1 to" as its own utterance — a search, which is a crop change
-    // (VoiceHarvest.jsx:1606). A fix keeps the revision one utterance: no "1 to" search, 243 not dropped.
+  it('M2 FIXED (BUG-VOICEREVISIONSPLIT-001) — Chrome\'s re-render "1 to" -> "1 243" is ONE utterance: no "1 to", the crop and 243 kept', async () => {
+    // WAS, on the recording build: the debouncer superseded only a TEXT extension, "1 243" does not extend
+    // "1 to", so "1 to" committed as its own utterance — a search, a crop change: held-dropped 243 (crop
+    // changed), search "1 to", search "1 243", the crop cleared and "Nothing matched" twice. NOW the
+    // supersede rule is asked of the number-folded text too ("1 to" folds to "1 2", a prefix of "1 243"),
+    // so the revision commits once, at the session end, and is read with Suyo Long still chosen.
     const r = await replayCapture(TRACE_0925)
     const ds = r.decisions.map((d) => d.detail)
-    const i = idx(ds, 'search "1 to" <- "1 to"')
+    expect(ds.filter((d) => d.includes('"1 to"'))).toEqual([])
+    const i = idx(ds, 'one-breath-bare (selected crop) 1 | 243 <- "1 243"')
     expect(i).toBeGreaterThan(0)
-    expect(ds.slice(i - 1, i + 2)).toEqual([
-      'held-dropped 243 (crop changed)', 'search "1 to" <- "1 to"', 'search "1 243" <- "1 243"',
+    expect(ds.slice(i, i + 4)).toEqual([
+      'one-breath-bare (selected crop) 1 | 243 <- "1 243"', 'held-number 1 <- "1"',
+      'assumed-unit 1 count (held number resolved)', 'held-number 243 <- "243"',
     ])
-    expect(r.after.get(14838).record).toContain('Crop—')
-    expect(r.after.get(14838).banner).toBe('Nothing matched “1 to”. Say it again, or pick it below to teach me. (dropped 243 — no unit was said)')
-    expect(r.after.get(14858).banner).toBe('Nothing matched “1 243”. Say it again, or pick it below to teach me.')
+    // "1 243" is still pending when it arrives; nothing was committed in between, so nothing changed.
+    expect(r.after.get(14838).record).toContain('CropSuyo LongQuantity243 count (assumed unless you say a unit)')
+    expect(r.after.get(14858).record).toContain('CropSuyo LongQuantity1 countWeight243 g (assumed unless you say a unit)')
+    expect(r.after.get(14858).banner).toBe('243 — say a unit to change it, or carry on. (1 count assumed)')
+    expect(r.misses.filter((m) => m.startsWith('Nothing matched'))).toEqual([])
   })
 
   it('M3 — "cucumber" re-selecting the SAME planting still drops the held number', async () => {
-    // changesCrop (VoiceHarvest.jsx:1606) is true for every search, so a held number is dropped even when
-    // the search lands on the planting already selected. A fix keeps it ("the same crop named again keeps
-    // it", Dave's rule for the queued "next").
+    // changesCrop (VoiceHarvest.jsx, the held number's resolution site) is true for every search, so a held
+    // number is dropped even when the search lands on the planting already selected. A fix keeps it ("the
+    // same crop named again keeps it", Dave's rule for the queued "next").
+    // With M2 fixed the record holds 1 count and a held 243 from +14858 on, so the first "cucumber"
+    // (+17969) has a number to drop as well: three drops where the recording build made two.
     const r = await replayCapture(TRACE_0925)
     const ds = r.decisions.map((d) => d.detail)
     const droppedBySameCrop = ds.flatMap((d, i) => {
       const m = /^held-dropped (\d+) \(crop changed\)$/.exec(d)
       return m && ds[i + 1] === 'search "cucumber" <- "cucumber"' ? [m[1]] : []
     })
-    expect(droppedBySameCrop).toEqual(['243', '3'])
+    expect(droppedBySameCrop).toEqual(['243', '243', '3'])
     // Before the tick: Suyo Long with a held number. After it: still Suyo Long, the number gone.
-    for (const [before, afterTick, held] of [[25122, 25914, '243'], [32057, 32854, '3']]) {
-      expect(r.after.get(before).record).toContain(`CropSuyo LongQuantity${held} count (assumed`)
-      expect(r.after.get(afterTick).record).toContain('CropSuyo LongQuantity—')
+    for (const [before, afterTick, held] of [[17465, 18252, '243'], [25122, 25914, '243'], [32057, 32854, '3']]) {
+      expect(r.after.get(before).record).toContain(`CropSuyo LongQuantity1 countWeight${held} g (assumed`)
+      expect(r.after.get(afterTick).record).toContain('CropSuyo LongQuantity1 countWeight—')
       expect(r.after.get(afterTick).banner).toBe(`Suyo Long — now say the count or the weight. (dropped ${held} — no unit was said)`)
     }
   })
