@@ -23,6 +23,7 @@ import {
 import Sheet from '../components/forms/Sheet.jsx'
 import SheetRowLink from '../components/SheetRowLink.jsx'
 import { MARKER_KEY, MARKER_VERSION, readMarker } from '../lib/backNav.js'
+import { CONTINUES_ENTRY_KEY } from '../lib/pageEntry.js'
 
 // The overlay: the real Sheet as OverlayHost renders it (onClose = the dismiss), with a Done that calls
 // the same dismiss (LogMany's) and a peek that PUSHES inside the overlay carrying its background, as
@@ -323,6 +324,41 @@ describe('when the page\'s entry cannot be proven, the old replace stands', () =
     await waitFor(() => expect(overlayOpen()).toBe(true))
     expect(window.history.state?.usr?.background?.pathname).toBe('/list')
     expect(window.history.state?.usr?.background?.historyEntry).toBe(undefined)
+  })
+
+  // BUG-OVERLAYRELOADKEY-001: the replace mints a new key under a page that stays mounted, so the entry is
+  // stamped with the page entry it continues (useScrollRestore.underOverlay.test.jsx has the consequence).
+  it('the replace stamps the new entry with the page entry it continues; a walk lands on the page\'s own, unstamped', async () => {
+    const k1 = await toList()
+    await open('open-legacy')
+    await tapClose()
+    await closedOnto('/list')
+    expect(key()).not.toBe(k1)
+    expect(window.history.state?.usr?.[CONTINUES_ENTRY_KEY]).toBe(k1)
+    // The replaced entry is now the page's: a walk-closed overlay over it lands back on it, stamp intact.
+    const k2 = key()
+    await open()
+    await tapClose()
+    await closedOnto('/list')
+    expect(key()).toBe(k2)
+    expect(window.history.state?.usr?.[CONTINUES_ENTRY_KEY]).toBe(k1)
+    // The list's first copy, one Back behind (a replace leaves the page in the stack twice), was never
+    // touched by a replace: no stamp.
+    await act(async () => { window.history.back() })
+    await waitFor(() => expect(key()).toBe(k1))
+    expect(window.history.state?.usr?.[CONTINUES_ENTRY_KEY]).toBe(undefined)
+  })
+
+  it('with no background (outside a provider) the /today fallback has no page to continue, and stamps nothing', async () => {
+    function Bare() {
+      const dismiss = useOverlayDismiss()
+      return <button type="button" data-testid="bare-close" onClick={dismiss}>close</button>
+    }
+    window.history.replaceState(null, '', '/somewhere')
+    render(<BrowserRouter><Routes><Route path="*" element={<Bare />} /></Routes></BrowserRouter>)
+    await tap('bare-close')
+    await waitFor(() => expect(path()).toBe('/today'))
+    expect(window.history.state?.usr?.[CONTINUES_ENTRY_KEY]).toBe(undefined)
   })
 
   it('an overlay opened by replace over the page itself (no marker) closes onto the page, never walking off it', async () => {

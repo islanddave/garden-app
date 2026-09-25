@@ -25,7 +25,7 @@
 // Back is a real history traversal (history.back() in the frame: popstate, as the Android back gesture).
 // Each flow opens in a FRESH TAB, so its history, sessionStorage and module state are its own.
 //
-// SEVEN FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
+// EIGHT FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides):
 //   (a) Saved seeds, scrolled deep (the Ristra card wheeled to the middle of the visible band) → tap the
 //       card's title → the lot page lands at scrollY 0 with its h1 inside the visible band; then Back →
 //       scrollY equals the pre-tap value exactly and the card's viewport top is unchanged (±1px).
@@ -46,6 +46,12 @@
 //   (g) As (e) with the X DOUBLE-tapped: the second press lands after history is back on Seeds' entry
 //       but before React has taken the sheet down (BrowserRouter commits in a transition). The close must
 //       land on Seeds' own key — a replace in that window overwrites it — and one Back must still leave.
+//   (h) BUG-OVERLAYRELOADKEY-001: Saved seeds deep → header Search → its result (a plain push, as Search's
+//       are) → Back, which re-opens Search over a Seeds page that has re-MOUNTED under the sheet → the X →
+//       the list back where it was; then scrolled on (a real wheel) → (a)'s tap and Back, which must land on
+//       the NEW place. A page that mounts under an overlay used to key its offsets by the OVERLAY's entry:
+//       it read nothing on the way in and, once the X had walked it home, saved nothing, so Back landed on
+//       the offset saved before Search.
 // Every number is printed on pass as well as fail.
 //
 // THE INSTRUMENT CHECK comes first in every flow, and a mismatch stops that flow before any invariant is
@@ -66,7 +72,9 @@
 // (HARNESS_BASELINE_SHA=c016dcde…) and each fix reverted alone (GATE_HARNESS_CONFIG, a config that serves
 // one file from the base commit) — each red by name with the base numbers. Flows (d) and (e) were measured
 // the same way against the tree before BUG-OVERLAYDISMISSREKEY-001 (HARNESS_BASELINE_SHA=2e576239…): see
-// Projects/Gardening/_seedstab11_20260925/ in the gardening-docs repo for the recorded runs.
+// Projects/Gardening/_seedstab11_20260925/ in the gardening-docs repo for the recorded runs. Flow (h) against
+// the tree before BUG-OVERLAYRELOADKEY-001 (HARNESS_BASELINE_SHA=73686a22…): Projects/Gardening/
+// _seedstab12_20260925/.
 //
 // SEAMS (never set in CI; a run with any of them set says so in its first lines, so it cannot pass for
 // clean):
@@ -110,7 +118,7 @@ function readOne(file, re, what) {
 }
 const TOP_CHROME_PX = Number(readOne('src/components/TopChrome.jsx', /const BAR_H = (\d+)/g, 'BAR_H'))
 
-// DRIFT GUARD for what the harness copies rather than imports (flows d to g): App.jsx's OverlayHost
+// DRIFT GUARD for what the harness copies rather than imports (flows d to h): App.jsx's OverlayHost
 // (copied because importing App.jsx pulls in every page), the header Search door (an OverlayLink to
 // /search in TopChrome) and the +LOG door (BottomNav's armed "Create new" sheet whose rows are
 // SheetRowLinks with `overlay`). If any of them changes, the flows would keep proving the copy. Read
@@ -126,7 +134,7 @@ function harnessCopyDrift() {
   const app = body(src('src/App.jsx'), 'OverlayHost')
   const copy = body(src('tests/harness/seedsscroll.jsx'), 'HarnessOverlayHost')
   if (!app || !copy) out.push(`could not read ${app ? 'HarnessOverlayHost in tests/harness/seedsscroll.jsx' : 'OverlayHost in src/App.jsx'} — the drift guard cannot compare them`)
-  else if (app !== copy) out.push('tests/harness/seedsscroll.jsx HarnessOverlayHost no longer matches src/App.jsx OverlayHost — re-copy it, or flows d to g prove a host the app no longer has')
+  else if (app !== copy) out.push('tests/harness/seedsscroll.jsx HarnessOverlayHost no longer matches src/App.jsx OverlayHost — re-copy it, or flows d to h prove a host the app no longer has')
   if (!/<OverlayLink to="\/search"/.test(src('src/components/TopChrome.jsx'))) out.push('TopChrome no longer opens header Search with <OverlayLink to="/search"> — the harness header link no longer models it')
   const nav = src('src/components/BottomNav.jsx')
   if (!/<Sheet[^>]*ariaLabel="Create new"[^>]*armsBack/.test(nav) || !/<SheetRowLink[\s\S]{0,200}overlay=/.test(nav)) out.push('BottomNav\'s +LOG door is no longer an armed "Create new" sheet of overlay SheetRowLinks — the harness +LOG door (flow f) no longer models it')
@@ -173,6 +181,11 @@ const PEPPER_ROWS = 13        // 11 pepper lots, Ristra, the Serrano packet
 const DEEP_MIN_PX = 300
 // The card's / row's viewport top after Back, against before: sub-pixel layout noise only.
 const TOP_TOL_PX = 1
+// Flow h scrolls the list on after the X (real wheel input, UP so the card stays in the band at every
+// viewport) and must then find it there after Back. The move has to be large enough that the offset saved
+// before Search can never pass for the new one.
+const NUDGE_PX = 160
+const NUDGE_MIN_PX = 100
 
 const SEL = {
   toSaved: `d.querySelector('[data-testid="harness-to-saved"]')`,
@@ -197,6 +210,8 @@ const SEL = {
   // BottomNav's +LOG door: the nav's button, and the row in the armed "Create new" sheet it opens.
   plusLog: `d.querySelector('[data-testid="harness-plus-log"]')`,
   createRow: `d.querySelector('[role="dialog"][aria-label="Create new"] [data-testid="harness-create-log"]')`,
+  // Search's one result (flow h): a plain link to the planting, inside the sheet.
+  searchResult: `d.querySelector('[role="dialog"][aria-label="Search your garden"] [data-testid="harness-search-result"]')`,
 }
 
 const FLOWS = [
@@ -207,6 +222,7 @@ const FLOWS = [
   { key: 'e', name: 'search-close-back', label: 'Saved seeds → header Search → its X → Back leaves Seeds', entry: 'toSaved', view: 'saved', dest: 'leave', search: 'header' },
   { key: 'f', name: 'pluslog-close-back', label: 'Saved seeds → +LOG → "Log an event" → its X → Back leaves Seeds', entry: 'toSaved', view: 'saved', dest: 'leave', search: 'pluslog' },
   { key: 'g', name: 'search-double-x', label: 'Saved seeds → header Search → its X double-tapped → Back leaves Seeds', entry: 'toSaved', view: 'saved', dest: 'leave', search: 'header', doubleTap: true },
+  { key: 'h', name: 'search-result-back-x', label: 'Saved seeds deep → header Search → a result → Back → its X → scrolled on → the card\'s title → Back', entry: 'toSaved', view: 'saved', dest: 'lot', search: 'header', searchAtDepth: true, viaResult: true, nudge: true },
 ]
 
 const failures = []
@@ -389,13 +405,21 @@ function tab(cdp, sessionId) {
     }
     return `${what} could not be wheeled to the middle of the band in 80 steps`
   }
+  // One real wheel of `deltaY` over the middle of the band, then held still. Returns the settle result.
+  const wheelBy = async (deltaY) => {
+    const s = await read(`${BAND}
+      const fr = f.getBoundingClientRect()
+      return { x: fr.left + w.innerWidth / 2, py: fr.top + (bandTop + bandBottom) / 2 }`)
+    await mouse('mouseWheel', s.x, s.py, { deltaX: 0, deltaY })
+    return settle(300, 5000)
+  }
   const shoot = async (path) => {
     const c = await read(`const r = f.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }`)
     const shot = await cdp.send('Page.captureScreenshot', { format: 'png', clip: { ...c, scale: 1 } }, sessionId)
     writeFileSync(path, Buffer.from(shot.data, 'base64'))
     shots.push(path)
   }
-  return { ev, read, waitIn, settle, tap, wheelTo, shoot }
+  return { ev, read, waitIn, settle, tap, wheelTo, wheelBy, shoot }
 }
 
 // The frame's page as it stands: where it is, what the gate compares.
@@ -475,7 +499,7 @@ async function runFlow(cdp, flow, vw, vh) {
     }
     await t.settle(300, 5000)
 
-    // ── An overlay over Seeds, opened and closed by its X (flows d to g): real taps on a real OverlayLink or
+    // ── An overlay over Seeds, opened and closed by its X (flows d to h): real taps on a real OverlayLink or
     // the real +LOG door, and the real Sheet's close. Instrument checks only — the close's consequences are
     // read by the invariants. Returns a failure message, or null.
     let searchNote = ''
@@ -503,6 +527,26 @@ async function runFlow(cdp, flow, vw, vh) {
         if (o.idx !== idx0 || o.marker) return `${at}: the +LOG row did not open the overlay by REPLACE into the marker's slot (overlay idx ${o.idx}, Seeds idx ${idx0}, marker still current: ${o.marker}) — this is not the door under test`
       }
       await t.settle(200, 3000)
+      if (flow.viaResult) {
+        // (h) Out to a result and Back: Search re-opens on its own entry over a Seeds page that has just
+        // re-MOUNTED under the sheet — the precondition, checked by the harness's mount count, not assumed.
+        const m0 = await t.read(`return w.__h.seedsMounts()`)
+        const whyR = await t.tap(SEL.searchResult, 'Search\'s result', { chrome: true })
+        if (whyR) return `${at}: ${whyR}`
+        if (!await t.waitIn(`w.location.pathname === '${PLANTING_PATH}' && d.querySelector('[data-testid="harness-planting"]')`, 15000)) return `${at}: Search's result was tapped and the planting (${PLANTING_PATH}) never arrived${await reloaded()}`
+        const kRes = await t.read(`return w.__h.key()`)
+        if (kRes == null || kRes === kOpen) return `${at}: Search's result did not PUSH a new entry (key ${kRes}; Search was on ${kOpen})`
+        await t.settle(300, 5000)
+        await t.ev(`(() => { ${FRAME_VARS}; w.history.back(); return 1 })()`)
+        if (!await t.waitIn(`w.location.pathname === '/search' && ${SEL.sheetClose} && ${SEL.card}`, 15000)) return `${at}: Back from the result never re-opened Search over the Seeds page${await reloaded()}`
+        const kBack = await t.read(`return w.__h.key()`)
+        if (kBack !== kOpen) return `${at}: Back from the result landed on key ${kBack}, not Search's own ${kOpen}`
+        const m1 = await t.read(`return w.__h.seedsMounts()`)
+        if (!(m1 > m0)) return `${at}: the Seeds page did not re-mount under Search after Back (mounts ${m0} → ${m1}) — this is not the path under test`
+        await t.settle(500, 8000)
+        const under = await t.read(`return w.scrollY`)
+        searchNote += ` · out to the result and Back: Seeds re-mounted under Search at y${R1(under)}`
+      }
       let goCalls = null
       if (flow.doubleTap) {
         // Two presses on the X's centre back to back, the second landing while the first close is still in
@@ -523,7 +567,7 @@ async function runFlow(cdp, flow, vw, vh) {
       await t.settle(300, 5000)
       const kClosed = await t.read(`return w.__h.key()`)
       if (flow.doubleTap) goCalls = await t.read(`return w.__goCalls || null`)
-      searchNote = ` · the overlay closed onto key ${kClosed} (Seeds' own entry ${k0}: ${kClosed === k0 ? 'the same' : 'A NEW ONE'})${goCalls ? ` · history.go calls ${JSON.stringify(goCalls)}` : ''}`
+      searchNote += ` · the overlay closed onto key ${kClosed} (Seeds' own entry ${k0}: ${kClosed === k0 ? 'the same' : 'A NEW ONE'})${goCalls ? ` · history.go calls ${JSON.stringify(goCalls)}` : ''}`
       // A double-tapped X must not re-key the page: the second press lands in the window where history
       // is already back on Seeds' entry but the sheet is still on screen, and a replace there overwrites it.
       if (flow.doubleTap && kClosed !== k0) return `${at}: ${flow.label}: the double-tapped X re-keyed Seeds${searchNote}`
@@ -561,9 +605,20 @@ async function runFlow(cdp, flow, vw, vh) {
         if (why) return fail(why)
         const post = await t.read(READ_PAGE(SEL.card))
         if (Math.round(post.y) !== Math.round(pre.y) || Math.abs(post.top - pre.top) > TOP_TOL_PX) {
-          return fail(`${at}: ${flow.label}: closing the overlay moved the list: scrollY ${R1(pre.y)} → ${R1(post.y)}, the card's top y${R1(pre.top)} → y${R1(post.top)}${searchNote}`)
+          const what = flow.viaResult ? 'after a result and Back, the X did not bring the list back where it was' : 'closing the overlay moved the list'
+          return fail(`${at}: ${flow.label}: ${what}: scrollY ${R1(pre.y)} → ${R1(post.y)}, the card's top y${R1(pre.top)} → y${R1(post.top)}${searchNote}`)
         }
-        searchNote += ` · the list held at y${R1(post.y)} through the close`
+        searchNote += ` · the list ${flow.viaResult ? 'was back' : 'held'} at y${R1(post.y)} through the close`
+      }
+      if (flow.nudge) {
+        // (h) Scrolled on after the X, the new place must be what Back from the lot restores. A page that
+        // could not save after the close lands on the offset it saved before Search instead.
+        const n0 = await t.read(READ_PAGE(SEL.card))
+        const moved = await t.wheelBy(-NUDGE_PX)
+        const n1 = await t.read(READ_PAGE(SEL.card))
+        if (!moved.settled) return fail(`${at}: after the nudge the list never held still for 300ms within 5s (last y${R1(moved.y)})`)
+        if (Math.abs(n1.y - n0.y) < NUDGE_MIN_PX) return fail(`${at}: the wheel after the close moved the list ${R1(n1.y - n0.y)}px (need >= ${NUDGE_MIN_PX}) — the offset saved before Search could pass for the new one, so the flow would prove nothing`)
+        searchNote += ` · scrolled on after the close: y${R1(n0.y)} → y${R1(n1.y)}`
       }
       targetSel = SEL.card
       tapSel = flow.dest === 'planting' ? SEL.savedFrom : SEL.cardTitle
@@ -653,7 +708,7 @@ async function runFlow(cdp, flow, vw, vh) {
     }
     if (!st.settled) fail(`${at}: ${flow.label}: after Back the list never held still for 800ms within 10s (last y${R1(st.y)})`)
     if (Math.round(after.y) !== Math.round(before.y)) {
-      fail(`${at}: ${flow.label}: Back landed at scrollY ${R1(after.y)}, the list was at ${R1(before.y)} — the place was lost (BUG-SAVEDSEEDSBACKTOP-001) · stored offsets when the tap had left: ${storeLine(away.store)}`)
+      fail(`${at}: ${flow.label}: Back landed at scrollY ${R1(after.y)}, the list was at ${R1(before.y)} — the place was lost (${flow.viaResult ? 'BUG-OVERLAYRELOADKEY-001' : 'BUG-SAVEDSEEDSBACKTOP-001'}) · stored offsets when the tap had left: ${storeLine(away.store)}`)
     }
     if (Math.abs(after.top - before.top) > TOP_TOL_PX) fail(`${at}: ${flow.label}: after Back the ${flow.view === 'saved' ? 'card' : 'row'}'s top is at y${R1(after.top)}, it was at y${R1(before.top)} (±${TOP_TOL_PX}px) — not where the finger left it${after.top > after.band[1] ? ', OFF SCREEN below the band' : ''}`)
     if (flow.view === 'mine' && !open) fail(`${at}: ${flow.label}: after Back the Ristra row is CLOSED — it was open when the finger left`)

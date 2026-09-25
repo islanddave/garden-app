@@ -19,7 +19,7 @@
 // TopChrome's BAR_H, then a flex column minHeight 100dvh whose paddingBottom reserves --bottom-nav-height,
 // one route ErrorBoundary per page, and a fixed nav of BOTTOM_NAV_HEIGHT_PX that sets that variable in a
 // layout effect as BottomNav does. Both stand-ins carry the real tags and heights (the gate checks them).
-// Each carries ONE control, because BUG-OVERLAYDISMISSREKEY-001 (flows d, e and f) is about closing an
+// Each carries ONE control, because BUG-OVERLAYDISMISSREKEY-001 (flows d to g) is about closing an
 // overlay opened over the Seeds page: the top bar header Search, the nav BottomNav's +LOG door. TodayBand is off in prod
 // (TODAY_BAND_HIDDEN), so --today-band-height is unset. The document's height — which is what the clamp
 // and the anchoring act on — is therefore the app's.
@@ -29,8 +29,8 @@
 // header Search as a real OverlayLink (TopChrome's), and the real Sheet with kind="route" whose close is
 // the real useOverlayDismiss. HarnessOverlayHost is App.jsx's OverlayHost line for line; it is copied
 // rather than imported because importing App.jsx would pull every page of the app into this harness. Only
-// the Search page inside the sheet is a stand-in (a block of the peek sheet's height) — what is under test
-// is how the sheet closes, not what it shows.
+// the Search page inside the sheet is a stand-in (a block of the peek sheet's height, with one result
+// link) — what is under test is how the sheet closes and what the page under it keeps, not what it shows.
 //
 // WHAT IS A STAND-IN, and why that is enough:
 //   /today — two links in (Saved seeds, My seeds), so /seeds is a PUSH from an earlier entry, as it is
@@ -257,9 +257,24 @@ function HarnessOverlayHost({ ariaLabel, size = 'peek', children }) {
     </Sheet>
   )
 }
-// The Search page's stand-in: a block of the height the peek sheet shows, so its X sits where it does.
+// The Search page's stand-in: a block of the height the peek sheet shows, so its X sits where it does, and
+// ONE result. A result is what Search.jsx renders it as — a plain <Link> to the page, a PUSH that carries no
+// background — so Back from it re-opens Search over a Seeds page that re-MOUNTS under the sheet (flow h,
+// BUG-OVERLAYRELOADKEY-001). It goes to the planting stand-in, which is not under test.
 function SearchStandIn() {
-  return <div data-testid="harness-search" style={{ height: 360, padding: 20, boxSizing: 'border-box' }}>Search</div>
+  return (
+    <div data-testid="harness-search" style={{ height: 360, padding: 20, boxSizing: 'border-box' }}>
+      <Link to="/plantings/pl-ristra" data-testid="harness-search-result"
+        style={{ display: 'flex', alignItems: 'center', minHeight: 48 }}>Ristra Cayenne II, bed 4</Link>
+    </div>
+  )
+}
+// The Seeds page, counted: flow h has to know the page really re-mounted under Search (its precondition),
+// and a parent mounts and unmounts with its only child. Observation only; it renders the real page as is.
+let seedsMounts = 0
+function SeedsCounted() {
+  useEffect(() => { seedsMounts += 1 }, [])
+  return <Seeds />
 }
 
 // AppShell's shape: the top bar (with header Search), the page tree at pageLocation, the overlay tree at the
@@ -279,7 +294,7 @@ function Shell() {
         <div style={{ flex: 1 }}>
           <Routes location={pageLocation}>
             <Route path="/today" element={routeEl(<TodayStandIn />)} />
-            <Route path="/seeds" element={routeEl(<Seeds />)} />
+            <Route path="/seeds" element={routeEl(<SeedsCounted />)} />
             <Route path="/inventory/:id" element={routeEl(<InventoryDetail />)} />
             <Route path="/plantings/:plantingId" element={routeEl(<PlantingStandIn />)} />
             <Route path="*" element={<LeftThePage />} />
@@ -325,6 +340,8 @@ window.__h = {
   // useScrollRestore's sessionStorage mirror, for the gate's failure messages only (never asserted: the
   // storage shape is the hook's business, Back's landing is the contract).
   store: () => { try { return JSON.parse(window.sessionStorage.getItem('garden.scrollRestore.v1')) } catch { return null } },
+  // How many times the Seeds page has mounted in this document (flow h's precondition).
+  seedsMounts: () => seedsMounts,
   mark: () => { trace.length = 0; return true },
   trace: () => trace.slice(),
   fixture: () => ({ rows: ROWS.length, lotId: RISTRA_ID, lotName: RISTRA.name, parent: 'pl-ristra', itemMs: ITEM_MS, rowsMs: ROWS_MS }),

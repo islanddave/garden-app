@@ -10,6 +10,7 @@ import React, { createContext, useContext, useMemo, useCallback, useEffect } fro
 import { useLocation, useNavigate, Link } from 'react-router-dom'
 import { OVERLAY_ROUTES_ENABLED } from '../lib/featureFlags.js'
 import { readAnyMarker } from '../lib/backNav.js'
+import { CONTINUES_ENTRY_KEY, locationEntryKey } from '../lib/pageEntry.js'
 
 const OverlayContext = createContext(null)
 
@@ -232,7 +233,13 @@ export function useOverlayDismiss() {
       // A walk started from this entry and never landed: stop waiting and close the old way.
       closingFrom = null
     }
-    navigate(background.pathname + background.search, { replace: true })
+    // The replace mints a new key under a page that stays mounted. Stamp the entry with the page entry it
+    // continues, so whatever files state by entry (useScrollRestore) keeps one identity through the close
+    // (BUG-OVERLAYRELOADKEY-001, src/lib/pageEntry.js). Nothing else of the page's own state rides along,
+    // unchanged from before.
+    const continues = locationEntryKey(background)
+    navigate(background.pathname + background.search,
+      continues ? { replace: true, state: { [CONTINUES_ENTRY_KEY]: continues } } : { replace: true })
   }, [navigate, background])
 }
 

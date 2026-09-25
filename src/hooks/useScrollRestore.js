@@ -48,6 +48,7 @@
 // is capped at MAX_ENTRIES, and nothing reads it but this hook.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
+import { pageEntryKey } from '../lib/pageEntry.js'
 
 const STORE_KEY = 'garden.scrollRestore.v1'
 // Deep enough to cover any realistic back-stack in one session, small enough that the JSON written
@@ -83,10 +84,13 @@ function flush() {
 // popstate, so this is stable across a Back and distinct for every forward navigation. The 'default'
 // fallback is the same literal react-router uses for the entry that has no state yet, and it is what
 // jsdom (no history state) sees — inert there, because nothing ever saves a non-zero offset.
+// The entry is the one the PAGE TREE shows (pageEntryKey): under a route overlay that is the overlay's
+// background, not the overlay's own entry, and an entry an overlay's replace-close left behind answers
+// to the page entry it continues (BUG-OVERLAYRELOADKEY-001, src/lib/pageEntry.js).
 function entryKey(id) {
-  let k = 'default'
-  try { k = (window.history && window.history.state && window.history.state.key) || 'default' } catch { /* opaque origin */ }
-  return `${id}|${k}`
+  let k = null
+  try { k = pageEntryKey(window.history && window.history.state) } catch { /* opaque origin */ }
+  return `${id}|${k || 'default'}`
 }
 
 function readEntry(key) { return store().get(key) }
@@ -160,7 +164,9 @@ export default function useScrollRestore({ id, ready, stateAtTop = false }) {
     // and a scroll event that clamp fires can land before the cleanup does. react-router writes
     // history.state synchronously in the click, and the browser does before popstate, so by either read
     // the key has moved on and the last write made while the entry was current stands. A sheet's Back
-    // marker keeps the key (DismissRegistry merges it), so saving continues under an open sheet.
+    // marker keeps the key (DismissRegistry merges it), so saving continues under an open sheet, and a
+    // route overlay's entry resolves to its background (entryKey), so it continues under one of those
+    // too: the window still scrolls the page under the sheet, never the overlay's content.
     if (entryKey(idRef.current) !== keyRef.current) return
     writeEntry(keyRef.current, window.scrollY, stateRef.current)
   }, [])
