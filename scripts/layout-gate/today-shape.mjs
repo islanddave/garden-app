@@ -51,7 +51,7 @@
 // FONT (V5-TODAYSHAPECI-001, 2026-09-25). The budget is ABSOLUTE geometry, so it is only portable if
 // every machine lays the page out in the same glyphs. The harness entry therefore pins its text to
 // Roboto — what Dave's Android renders the app in — from the exact-pinned devDependency
-// @fontsource-variable/roboto (tests/harness/robotoPin.js). Unpinned, this Mac measured San
+// @fontsource/roboto (tests/harness/robotoPin.js). Unpinned, this Mac measured San
 // Francisco and CI's ubuntu runner would measure DejaVu Sans; a DejaVu-proxy run grew the busy page
 // 2.7% past its ceiling. The gate refuses a run whose pin did not load, a run where Chrome reports any
 // glyph painted by a host font other than the allowlisted symbols (scripts/layout-gate/font-census.mjs),
@@ -63,7 +63,7 @@ import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { resolveWebSocket } from './cdp-socket.mjs'
-import { fontCensus, fmtCensus, fontProbe } from './font-census.mjs'
+import { fontCensus, fmtCensus, fontProbe, HOST_FONT_OK } from './font-census.mjs'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -356,6 +356,12 @@ const MEASURE = `(() => {
   // image, svg or form control paints on it, so normal line-leading is correctly NOT counted as
   // waste. This is the density number a redesign moves, and the one an empty page maximises — hence
   // the floors above it.
+  // EXCEPT the symbols Roboto does not carry (font-census.mjs HOST_FONT_OK). They paint in each
+  // machine's own fallback font, and that font's ascent and descent set their glyph rect. Counted,
+  // they add 2 ink rows on busyfull on this Mac (3,605 against 3,603 of 6,620, measured 2026-09-25),
+  // enough to print 54.5% here where the first CI run printed 54.4%. A run made only of them carries
+  // no content, so it is not ink.
+  const hostOnly = new Set(${JSON.stringify(Object.keys(HOST_FONT_OK))})
   const H = Math.ceil(de.scrollHeight)
   const ink = new Uint8Array(H)
   const mark = (top, bottom) => { for (let y = Math.max(0, Math.floor(top)); y < Math.min(H, Math.ceil(bottom)); y++) ink[y] = 1 }
@@ -363,6 +369,7 @@ const MEASURE = `(() => {
   let n
   while ((n = tw.nextNode())) {
     if (!n.nodeValue || !n.nodeValue.trim()) continue
+    if ([...n.nodeValue.replace(/\\s+/g, '')].every(ch => hostOnly.has(ch))) continue
     const cs = n.parentElement && w.getComputedStyle(n.parentElement)
     if (cs && (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0')) continue
     const range = d.createRange(); range.selectNodeContents(n)

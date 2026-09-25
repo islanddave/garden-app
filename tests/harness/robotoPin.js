@@ -21,10 +21,16 @@
 // in a host font, which is what the gates' platform-font census (scripts/layout-gate/font-census.mjs)
 // exists to catch.
 //
-// THE FILES come from the EXACT-pinned devDependency @fontsource-variable/roboto (Google Fonts'
-// Roboto, variable wght axis, every subset, both styles), fetched from the harness's own Vite server.
-// No network, no copied font files. Bumping that package can move glyphs, so a bump is a deliberate
-// re-record of the Today budget, never a routine update.
+// STATIC INSTANCES, NOT THE VARIABLE FONT (changed 2026-09-25, measured). The first version loaded
+// @fontsource-variable/roboto. On its first CI run every height and position on the Today page
+// matched the Mac, but a fixed string's width at weight 600 and 700 did not (Mac 484.781 / 472.531px,
+// CI 484.797 / 472.234px) while 400 matched to the thousandth: macOS and Linux compute a variable
+// font's advances at a non-default weight differently. No line wrapped differently that day; a bold
+// line near its wrap point would. Static per-weight files carry their advances in the file, so both
+// machines read the same numbers. The files come from the EXACT-pinned devDependency @fontsource/roboto (Google
+// Fonts' Roboto; every weight 100-900, both styles, every subset), fetched from the harness's own
+// Vite server — no network, no copied font files. A bump of that package can move glyphs, so a bump
+// is a deliberate re-record of the Today budget, never a routine update.
 //
 // SCOPED, NOT GLOBAL (2026-09-25). Imported FIRST by todaymeasure.jsx and undotap.jsx only — the two
 // entries whose gates run in CI with this pin. The shared appGlobalStyle.js is untouched, so every
@@ -35,10 +41,10 @@
 // the entry's body waits for this module), and the result is published as window.__fontPin. Both
 // gates refuse to measure unless `ok` is true, the same way the Today gate refuses an unpinned clock:
 // a pin that silently failed would measure the host font while the budget claimed Roboto.
-import normalCss from '@fontsource-variable/roboto/index.css?raw'
-import italicCss from '@fontsource-variable/roboto/wght-italic.css?raw'
-import cssHref from '@fontsource-variable/roboto/index.css?url'
-import fontPkg from '@fontsource-variable/roboto/package.json'
+import metadata from '@fontsource/roboto/metadata.json'
+import unicode from '@fontsource/roboto/unicode.json'
+import fontPkg from '@fontsource/roboto/package.json'
+import cssHref from '@fontsource/roboto/index.css?url'
 
 // Every named family ahead of a generic in a stack the Today page or the undo toast declares. Census
 // 2026-09-25: src/main.jsx's body stack and WeatherWidget.jsx's inline stack; every other component on
@@ -46,34 +52,39 @@ import fontPkg from '@fontsource-variable/roboto/package.json'
 // still paints this one.
 export const ALIASES = ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Inter']
 
-// The package's own @font-face blocks, read rather than restated, so its subsets and unicode ranges
-// cannot drift from the files it ships.
-const base = new URL(cssHref, location.href)
+// The package's own inventory, read rather than restated: every subset x weight x style it ships,
+// each with the unicode range it declares, at fontsource's file naming. A file that is not there fails
+// its fetch or its parse, and the pin reports it rather than quietly skipping it.
+const filesBase = new URL('./files/', new URL(cssHref, location.href))
 const files = []
-for (const css of [normalCss, italicCss]) {
-  for (const block of css.match(/@font-face\s*{[^}]*}/g) || []) {
-    const get = (prop) => (block.match(new RegExp(prop + ':\\s*([^;]+);')) || [])[1]
-    const rel = ((block.match(/url\(([^)]+)\)/) || [])[1] || '').replace(/['"]/g, '')
-    if (!rel) continue
-    files.push({ file: rel.split('/').pop(), url: new URL(rel, base).href, style: get('font-style'), weight: get('font-weight'), unicodeRange: get('unicode-range') })
+for (const subset of metadata.subsets) {
+  for (const weight of metadata.weights) {
+    for (const style of metadata.styles) {
+      const file = `${metadata.id}-${subset}-${weight}-${style}.woff2`
+      files.push({ file, url: new URL(file, filesBase).href, style, weight: String(weight), unicodeRange: unicode[subset] })
+    }
   }
 }
 
 const failed = []
-let loaded = 0
-await Promise.all(files.map(async (f) => {
+const loadedFaces = await Promise.all(files.map(async (f) => {
   let buf
   try {
     const r = await fetch(f.url)
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     buf = await r.arrayBuffer()
-  } catch (e) { failed.push(`${f.file}: ${e.message}`); return }
-  await Promise.all(ALIASES.map(async (family) => {
+  } catch (e) { failed.push(`${f.file}: ${e.message}`); return [] }
+  return Promise.all(ALIASES.map(async (family) => {
     // display 'block', not the package's 'swap': nothing may ever paint in a fallback face.
     const face = new FontFace(family, buf, { style: f.style, weight: f.weight, unicodeRange: f.unicodeRange, display: 'block' })
-    try { await face.load(); document.fonts.add(face); loaded++ } catch (e) { failed.push(`${family} ${f.file}: ${e.message}`) }
+    try { await face.load(); return face } catch (e) { failed.push(`${family} ${f.file}: ${e.message}`); return null }
   }))
 }))
+// Added only once every face has loaded, and in the package's own order: where two faces of one family
+// claim a character, the one added later wins, so the order must not depend on which fetch finished
+// first.
+let faces = 0
+for (const face of loadedFaces.flat()) if (face) { document.fonts.add(face); faces++ }
 await document.fonts.ready
 
 window.__fontPin = {
@@ -81,8 +92,8 @@ window.__fontPin = {
   source: `${fontPkg.name}@${fontPkg.version}`,
   aliases: ALIASES,
   files: files.length,
-  faces: loaded,
+  faces,
   failed,
-  // Both styles of every subset parsed (9 + 9 on 5.3.0), every alias registered on every file.
-  ok: files.length >= 18 && failed.length === 0 && loaded === files.length * ALIASES.length,
+  // Every weight of every style of every subset (9 x 2 x 9 on 5.3.0), registered under every alias.
+  ok: files.length >= 162 && failed.length === 0 && faces === files.length * ALIASES.length,
 }

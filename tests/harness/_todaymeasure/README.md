@@ -63,7 +63,7 @@ and carries `--self-test`, which fires every matcher against a known positive bu
 
 Real Chrome, CDP-emulated 426x836 `mobile:true` @ DPR 3 (page self-reports it), clock pinned to
 `2026-09-24T14:30Z` (10:30 ET), timezone `America/New_York`, Open-Meteo stubbed at the wire, and
-the text laid out in `@fontsource-variable/roboto@5.3.0` by `../robotoPin.js` — the face Dave's
+the text laid out in `@fontsource/roboto@5.3.0` by `../robotoPin.js` — the face Dave's
 Android renders, and the same glyphs on the Mac and on CI's runner. That is what lets the gate run
 in CI (V5-TODAYSHAPECI-001): the 2026-09-24 baseline was San Francisco geometry from this Mac.
 

@@ -19,12 +19,14 @@ const MARK = 'data-font-census'
 
 // THE ONLY TEXT ALLOWED TO PAINT IN A HOST FONT: characters the pinned Roboto build does not carry,
 // on elements whose whole text is those characters. Each falls through every aliased family to the
-// host's fallback (measured on the Mac: ▾ in `.SF NS`, ⋯ in PingFang SC), so it is drawn by a
-// different font on every machine, including the phone. Allowed ONLY because it cannot move a box:
-// measured 2026-09-25 on Today busyfull at 426x836, replacing every one of them with Roboto-painted
-// ASCII ('v', '...') left all 9 group cards [3332, 54 x8], all 9 chevron header rows (52px), all 4
-// chooser buttons (36px) and the page (6620px) exactly where they were — the rows and buttons that
-// hold them are fixed-size. A new entry here needs the same measurement, not an assumption.
+// host's fallback (measured: ▾ in `.SF NS` and ⋯ in PingFang SC on the Mac, both in DejaVu Sans on the
+// CI runner), so it is drawn by a different font on every machine, including the phone. Allowed ONLY
+// because it cannot move a box: measured 2026-09-25 on Today busyfull at 426x836, replacing every one
+// of them with Roboto-painted ASCII ('v', '...') left all 9 group cards [3332, 54 x8], all 9 chevron
+// header rows (52px), all 4 chooser buttons (36px) and the page (6620px) exactly where they were —
+// the rows and buttons that hold them are fixed-size. Their glyph RECTS still follow the host font's
+// ascent and descent, so the Today gate's ink count skips them (today-shape.mjs, INK). A new entry
+// here needs the same measurement, not an assumption.
 export const HOST_FONT_OK = {
   '▾': '▾ — the care-group disclosure chevron (CareNeeded.jsx), inside a 52px header row',
   '⋯': '⋯ — the bulk "Choose which … to log" button (CareNeeded.jsx), 34x36 fixed',

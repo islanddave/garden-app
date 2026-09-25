@@ -39,7 +39,7 @@
 // a U1 commit it exits 1 on (f) for every toast.
 //
 // FONT (OPS-UNDOTOASTGATECI-001, 2026-09-25). The harness entry lays its text out in Roboto from the
-// exact-pinned @fontsource-variable/roboto (tests/harness/robotoPin.js), so a wrap measured on the Mac
+// exact-pinned @fontsource/roboto (tests/harness/robotoPin.js), so a wrap measured on the Mac
 // is the wrap CI's runner measures and the one Dave's Android renders. This gate's assertions are
 // relative and were built to survive font changes, but the stack's line counts and clearance still
 // move with the font. It refuses a run whose pin did not load, and fails when Chrome reports a host

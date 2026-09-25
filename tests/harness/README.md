@@ -150,7 +150,7 @@ grew the busy page 2.7% past its ceiling.
 `robotoPin.js` fixes the face, not the stack. It registers every family the pinned surfaces name
 ahead of a generic — `-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `Roboto`, and the `Inter`
 that `WeatherWidget.jsx` declares inline — as a FontFace alias of the files in the exact-pinned
-devDependency `@fontsource-variable/roboto`, fetched from this Vite server (no network, no copied
+devDependency `@fontsource/roboto` (static per-weight files: the variable font's bold advances differed between macOS and Linux), fetched from this Vite server (no network, no copied
 font files), and loads every face before the entry renders. The app's own `font-family`
 declarations are untouched; they just resolve to Roboto, as on the phone. A `font-family` override
 would have missed `WeatherWidget`'s inline stack. `window.__fontPin` reports what loaded.
@@ -166,8 +166,10 @@ move every gate's numbers at once and needs every budget re-recorded; it is a ch
 `scripts/layout-gate/font-census.mjs` asks Chrome (`CSS.getPlatformFontsForNode`) which font painted
 each element under `#root`; both gates fail on any host-font text except two symbols Roboto 5.3.0
 does not carry — `▾` (the care-group chevron) and `⋯` (the bulk chooser) — which were measured to move
-no box. To pin another entry: import `./robotoPin.js` first, re-record its baselines, and run the
-census on it; a new family in a pinned surface's stack belongs in `ALIASES`.
+no box. Their glyph rects still take the host font's height, so the Today gate leaves them out of its
+ink count (on busyfull they were the whole 54.5% / 54.4% Mac–CI difference). To pin another entry:
+import `./robotoPin.js` first, re-record its baselines, and run the census on it; a new family in a
+pinned surface's stack belongs in `ALIASES`.
 
 ## `seedssaved.*` — Saved seeds, added 2026-09-01
 

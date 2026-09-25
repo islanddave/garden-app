@@ -651,7 +651,7 @@ jobs:
         # region order by measured position (a CSS reorder passes DOM order); and no sideways scroll.
         #
         # Its budget (tests/harness/_todaymeasure/today-shape-budget.json) is ABSOLUTE geometry, so the
-        # harness entry lays its text out in Roboto from the exact-pinned @fontsource-variable/roboto
+        # harness entry lays its text out in Roboto from the exact-pinned @fontsource/roboto
         # (tests/harness/robotoPin.js): what Dave's Android renders, and the same glyphs on the Mac that
         # records the budget and on this runner. Unpinned, this runner would lay the page out in DejaVu
         # Sans, and a DejaVu-proxy run grew it 2.7% past its ceiling. The gate refuses a run whose pin
