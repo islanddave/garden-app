@@ -59,25 +59,35 @@ export function pageScrollKey(pathname, entryKey) {
  *                                                   +LOG replace into the marker slot, LogMany '.'
  *   0b   K unchanged          POP            any    RESTORE the snapshot if the page moved while covered
  *                                                   (walk-back close, marker pop), else NONE
- *   1    first commit         POP            app    RESTORE the mirror's record, else NONE
+ *   1    first commit         POP            app    RESTORE the mirror's record, else NONE; NONE for a
+ *                                                   document that arrived by a fresh navigation
  *   1b   first commit         POP            page   NONE (the page restores itself)
  *   2    K and P changed      PUSH/REPLACE   any    TOP — a different page opens at its top
  *   3    K changed, P same    PUSH/REPLACE   any    KEEP — same-page writes never jump; refile under new K
  *   4    K and P changed      POP            app    RESTORE the record, else TOP
  *   5    K and P changed      POP            page   TOP (once, in the commit); the page restores itself
- *   6    K changed, P same    POP            app    RESTORE the record, else NONE
+ *   6    K changed, P same    POP            app    RESTORE the record, else TOP
  *   7    K changed, P same    POP            page   NONE
  *
  * TOP is ONE scrollTo(0, 0) in the commit, never held and never re-applied, so it cannot beat a hook's or
  * Garden's later restore (rimpact-scrollmanager BLOCKING-2). It is needed at all only because 'manual'
  * leaves a POP with no defined offset (HTML spec), and a zero is the one offset scroll anchoring never
- * carries (css-scroll-anchoring §2.1). So an entry whose mode is still 'auto' — written by the bundle
- * before this one, in the first session after the deploy — gets NO zero on rows 4 and 5: the browser
- * restores it natively, exactly as it does today.
+ * carries (css-scroll-anchoring §2.1). The store never mints a 0, so "no record" on a POP means the entry
+ * was left at the top (or was never seen): rows 4 and 6 both put it there. Row 6 is the same-page case —
+ * Put-Up's list left at the top → a batch (a same-path push) → Back used to keep the batch's offset
+ * (rimpact-scrollmanager-built N1: y56 where the pre-manager app lands at 0).
+ * An entry whose mode is 'auto' gets NO zero on rows 4, 5 and 6: the browser restores it natively. That
+ * happens only where the mode cannot be set (main.jsx's write threw or the property is missing) — every
+ * same-document entry this bundle writes copies the 'manual' mode, and an entry the previous bundle wrote
+ * belongs to the previous document, so Back into it is a first commit (row 1), never rows 4-6.
  *
  * @param {object}  i
  * @param {boolean} i.enabled    SCROLL_MANAGER_ENABLED.
  * @param {boolean} i.first      The document's first commit (launch, reload, SW reload, tab restore).
+ * @param {boolean} [i.fresh]    That document arrived by a fresh navigation (a launch, a typed URL, a PWA
+ *                               shortcut into a running app) — not a reload, a Back or a tab restore — so
+ *                               an offset its path filed in an earlier document is not its place
+ *                               (rimpact-scrollmanager-built N3).
  * @param {{key:string,path:string}|null} i.prev  The page entry of the previous commit.
  * @param {{key:string,path:string}}      i.next  The page entry now committing.
  * @param {'POP'|'PUSH'|'REPLACE'} i.navType  react-router's navigation type for this commit.
@@ -90,12 +100,13 @@ export function pageScrollKey(pathname, entryKey) {
  * @returns {{row:string, action:'NONE'|'TOP'|'RESTORE'|'KEEP', y?:number}}
  */
 export function decidePageScroll({
-  enabled, first, prev, next, navType, claimed, record, entryMode, covered = false, y, snapshot,
+  enabled, first, fresh = false, prev, next, navType, claimed, record, entryMode, covered = false, y, snapshot,
 }) {
   if (!enabled) return { row: 'off', action: 'NONE' }
   const pop = navType === 'POP'
   if (first || !prev) {
     if (claimed) return { row: '1b', action: 'NONE' }
+    if (fresh) return { row: '1', action: 'NONE' }
     return hasRestoreTarget(record) ? { row: '1', action: 'RESTORE', y: record } : { row: '1', action: 'NONE' }
   }
   if (prev.key === next.key) {
@@ -110,7 +121,8 @@ export function decidePageScroll({
   const native = entryMode === 'auto'
   if (samePage) {
     if (claimed) return { row: '7', action: 'NONE' }
-    return hasRestoreTarget(record) ? { row: '6', action: 'RESTORE', y: record } : { row: '6', action: 'NONE' }
+    if (hasRestoreTarget(record)) return { row: '6', action: 'RESTORE', y: record }
+    return { row: '6', action: native ? 'NONE' : 'TOP' }
   }
   if (claimed) return { row: '5', action: native ? 'NONE' : 'TOP' }
   if (hasRestoreTarget(record)) return { row: '4', action: 'RESTORE', y: record }
@@ -119,41 +131,60 @@ export function decidePageScroll({
 
 // A driver armed at `target` at time `now`.
 export function startDriver(target, now) {
-  return { target, visibleMs: 0, waitedMs: 0, heldMs: 0, lastNow: Number.isFinite(now) ? now : null, lastHeight: null }
+  return { target, visibleMs: 0, waitedMs: 0, heldMs: 0, settledMs: 0, lastNow: Number.isFinite(now) ? now : null, lastHeight: null }
 }
 
 /**
  * The restore driver, one frame at a time. The wiring calls scrollTo(target) whenever `scroll` is true
- * and stops on DONE or EXHAUSTED; user input (wheel, touchmove, keydown), a new page entry and a late
- * claim by the page stop it from outside.
+ * and stops on DONE or EXHAUSTED; user input, a new page entry and a late claim by the page stop it from
+ * outside.
  *
  * Why re-apply at all: a clamped scrollTo does not survive the way Chrome's own history restore does, so
  * the content landing later (a cold Lambda, weak signal, a page that loads in two stages) finds nothing
  * putting the offset back. Each attempt also grows windowed lists (see scrollRestore.js).
  *
- * @param {{target:number, visibleMs:number, heldMs:number, lastNow:number|null, lastHeight:number|null}} s
- * @param {{now:number, y:number, height:number, ready?:boolean}} f
+ * OUT OF REACH (qa-scrollmanager-built, the Event log past "Show more"). A target can be beyond what the
+ * page will ever show again — PlantingDetail forgets how many events were shown, so Back to event 55 finds
+ * a page of 50. Once the page has SETTLED — its height unchanged and no API request in flight, both for
+ * RESTORE_HOLD_MS of visible time — with the target still below its max, the driver stops (EXHAUSTED,
+ * reason 'unreachable') at the closest reachable point instead of pulling for the whole budget. "No request
+ * in flight" is load-bearing, not a nicety: a loading shell and the first stage of a two-stage page also
+ * hold their height with the target beyond reach, for as long as the network takes (measured: stopping on
+ * the height alone loses Zones at 5 s latency and the Event log at 3 s per stage, exactly as the 4 s
+ * prototype did).
+ *
+ * @param {{target:number, visibleMs:number, heldMs:number, settledMs:number, lastNow:number|null, lastHeight:number|null}} s
+ * @param {{now:number, y:number, height:number, max?:number, ready?:boolean, quiet?:boolean}} f
+ *   max   — the page's maximum scroll now (scrollHeight − viewport height).
  *   ready — the user is resolved. Before that the page tree is Protected's skeleton, so no time counts:
- *   neither the budget nor the hold (a hold on a skeleton proves nothing). The wait itself is capped at
- *   RESTORE_WAIT_MAX_MS of visible time, ready or not.
- * @returns {{state:object, outcome:'RETRY'|'DONE'|'EXHAUSTED', scroll:boolean}}
+ *           not the budget, not the hold, not the settling (a skeleton proves nothing). The wait itself is
+ *           capped at RESTORE_WAIT_MAX_MS of that unresolved time.
+ *   quiet — no API request is in flight (src/lib/netActivity.js). Absent → quiet.
+ * @returns {{state:object, outcome:'RETRY'|'DONE'|'EXHAUSTED', scroll:boolean, reason?:string}}
  */
-export function driverStep(s, { now, y, height, ready = true }) {
+export function driverStep(s, { now, y, height, max, ready = true, quiet = true }) {
   if (!Number.isFinite(s.target) || !Number.isFinite(now) || !Number.isFinite(y) || !Number.isFinite(height)) {
     // A reading we cannot trust: stop rather than loop on garbage. EXHAUSTED re-opens writes, as a
     // finished restore does.
-    return { state: s, outcome: 'EXHAUSTED', scroll: false }
+    return { state: s, outcome: 'EXHAUSTED', scroll: false, reason: 'unreadable' }
   }
   const dt = s.lastNow == null ? 0 : Math.min(Math.max(0, now - s.lastNow), RESTORE_DT_CAP_MS)
   const counted = ready ? dt : 0
   const visibleMs = s.visibleMs + counted
-  const waitedMs = (s.waitedMs || 0) + dt
+  // Only the unresolved time counts toward the wait cap: after a long skeleton the restore still gets its
+  // whole budget (rimpact-scrollmanager-built N5).
+  const waitedMs = (s.waitedMs || 0) + (ready ? 0 : dt)
   const at = Math.abs(y - s.target) <= RESTORE_TOLERANCE_PX
   const sameHeight = s.lastHeight == null || height === s.lastHeight
   const heldMs = at && sameHeight ? s.heldMs + counted : 0
-  const state = { ...s, visibleMs, waitedMs, heldMs, lastNow: now, lastHeight: height }
+  const settledMs = sameHeight && quiet ? (s.settledMs || 0) + counted : 0
+  const state = { ...s, visibleMs, waitedMs, heldMs, settledMs, lastNow: now, lastHeight: height }
   if (at && heldMs >= RESTORE_HOLD_MS) return { state, outcome: 'DONE', scroll: false }
-  if (visibleMs >= RESTORE_BUDGET_MS || waitedMs >= RESTORE_WAIT_MAX_MS) return { state, outcome: 'EXHAUSTED', scroll: false }
+  if (!at && Number.isFinite(max) && s.target > max + RESTORE_TOLERANCE_PX && settledMs >= RESTORE_HOLD_MS) {
+    return { state, outcome: 'EXHAUSTED', scroll: false, reason: 'unreachable' }
+  }
+  if (visibleMs >= RESTORE_BUDGET_MS) return { state, outcome: 'EXHAUSTED', scroll: false, reason: 'budget' }
+  if (waitedMs >= RESTORE_WAIT_MAX_MS) return { state, outcome: 'EXHAUSTED', scroll: false, reason: 'wait' }
   return { state, outcome: 'RETRY', scroll: !at }
 }
 

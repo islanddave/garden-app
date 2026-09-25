@@ -70,6 +70,11 @@ describe('decidePageScroll — the first commit of a document (row 1)', () => {
   it('row 1b: the page claimed its own restore (a useScrollRestore page or Garden with a spot) → nothing', () => {
     expect(decide({ first: true, prev: null, next: LIST, navType: 'POP', record: 1645, claimed: true })).toEqual({ row: '1b', action: 'NONE' })
   })
+  it('a document that arrived by a FRESH navigation (a launch, a typed URL, a shortcut into a running app) restores nothing, record or not (rimpact-built N3)', () => {
+    expect(decide({ first: true, fresh: true, prev: null, next: at('default', '/log/harvest'), navType: 'POP', record: 300 })).toEqual({ row: '1', action: 'NONE' })
+    // Only the first commit: `fresh` says nothing about navigations inside the document.
+    expect(decide({ first: false, fresh: true, prev: at('kEvent', '/events/1'), next: LIST, navType: 'POP', record: 1645 })).toEqual({ row: '4', action: 'RESTORE', y: 1645 })
+  })
 })
 
 describe('decidePageScroll — a different page by PUSH or REPLACE opens at its top (row 2)', () => {
@@ -122,7 +127,7 @@ describe('decidePageScroll — POP onto a different page (rows 4 and 5)', () => 
   it('Search → a result → Back: the page entry is the re-opened overlay\'s background, restored under the sheet', () => {
     expect(decide({ prev: EVENT, next: LIST, navType: 'POP', record: 2988, covered: true })).toEqual({ row: '4', action: 'RESTORE', y: 2988 })
   })
-  it('an entry still in \'auto\' (written by the bundle before this one) gets no zero: the browser restores it natively, as today', () => {
+  it('an entry still in \'auto\' (only where the mode could not be set) gets no zero: the browser restores it natively', () => {
     expect(decide({ prev: EVENT, next: PLANTING, navType: 'POP', entryMode: 'auto' })).toEqual({ row: '4', action: 'NONE' })
     expect(decide({ prev: EVENT, next: at('kSaved', '/seeds'), navType: 'POP', claimed: true, entryMode: 'auto' })).toEqual({ row: '5', action: 'NONE' })
     // ... but a filed offset is still restored (the entry was visited under this bundle).
@@ -134,8 +139,13 @@ describe('decidePageScroll — POP onto the same page under another entry (rows 
   it('row 6: PutUp batch → Back to the list entry → its filed offset', () => {
     expect(decide({ prev: at('kBatch', '/put-up'), next: at('kList', '/put-up'), navType: 'POP', record: 1200 })).toEqual({ row: '6', action: 'RESTORE', y: 1200 })
   })
-  it('row 6 with no record leaves the page where it is (it never left the page)', () => {
-    expect(decide({ prev: at('kBatch', '/put-up'), next: at('kList', '/put-up'), navType: 'POP' })).toEqual({ row: '6', action: 'NONE' })
+  // rimpact-scrollmanager-built N1 (FLIPPED from "leaves the page where it is"): the store never mints a 0, so
+  // no record means the list was left at the TOP. Measured in real Chrome: Put-Up list at the top → a batch →
+  // Back kept the batch's y56, where the pre-manager app lands at 0. One zero, never held — row 4's shape.
+  it('row 6 with no record: the entry was left at the top → ONE zero (\'manual\'), nothing for an \'auto\' entry', () => {
+    expect(decide({ prev: at('kBatch', '/put-up'), next: at('kList', '/put-up'), navType: 'POP' })).toEqual({ row: '6', action: 'TOP' })
+    expect(decide({ prev: at('kBatch', '/put-up'), next: at('kList', '/put-up'), navType: 'POP', record: 0 })).toEqual({ row: '6', action: 'TOP' })
+    expect(decide({ prev: at('kBatch', '/put-up'), next: at('kList', '/put-up'), navType: 'POP', entryMode: 'auto' })).toEqual({ row: '6', action: 'NONE' })
   })
   it('row 7: claimed → nothing', () => {
     expect(decide({ prev: at('k2', '/seeds'), next: at('k1', '/seeds'), navType: 'POP', claimed: true, record: 1200 })).toEqual({ row: '7', action: 'NONE' })
@@ -155,6 +165,8 @@ describe('decidePageScroll — the flag', () => {
 
 // ─── the driver ───────────────────────────────────────────────────────────────────────────────────
 // Run frames against a model page: `page(t)` answers { y-after-clamp for a target, height } at time t.
+// A frame may also carry `m` (the page's max scroll) and `q` (no API request in flight); absent, the
+// out-of-reach stop cannot apply, which is how the budget tests below isolate the budget.
 function run(target, frames, { dt = 16, ready = () => true } = {}) {
   let s = startDriver(target, 0)
   const out = []
@@ -163,7 +175,7 @@ function run(target, frames, { dt = 16, ready = () => true } = {}) {
     const now = i * dt
     const f = frames[i - 1]
     y = f.y !== undefined ? f.y : y
-    const r = driverStep(s, { now, y, height: f.h, ready: ready(now) })
+    const r = driverStep(s, { now, y, height: f.h, max: f.m, quiet: f.q, ready: ready(now) })
     s = r.state
     out.push(r)
     if (r.outcome !== 'RETRY') break
@@ -242,9 +254,71 @@ describe('driverStep — the budget is VISIBLE time', () => {
     expect(last.state.visibleMs).toBe(0)                // none of it was the restore's own budget
   })
 
+  it('after a LONG skeleton the restore still gets its whole budget: only unresolved time counts toward the wait cap (rimpact-built N5)', () => {
+    // 50 s behind the skeleton, then the page shows but the content never reaches the target.
+    const { last, out } = run(5000, frames(6000, { y: 700, h: 1536 }), { ready: (now) => now >= 50000 })
+    expect(last.outcome).toBe('EXHAUSTED')
+    expect(last.reason).toBe('budget')                  // the 60 s wait cap never fired: 10 s after ready it would have
+    expect(out.length * 16).toBeGreaterThanOrEqual(50000 + RESTORE_BUDGET_MS - 16)   // one frame of quantisation
+  })
+
   it('a non-finite reading stops the driver (EXHAUSTED) instead of looping on garbage', () => {
     expect(driverStep(startDriver(900, 0), { now: 16, y: NaN, height: 3000 }).outcome).toBe('EXHAUSTED')
     expect(driverStep(startDriver(NaN, 0), { now: 16, y: 0, height: 3000 }).outcome).toBe('EXHAUSTED')
+  })
+})
+
+// qa-scrollmanager-built: Back to event 55 of a planting whose page forgets "Show more" (50 shown) — the target
+// is beyond anything the page will show again. The decision (coordinator, review round): once the page has
+// SETTLED with the target still beyond its max, stop at the closest reachable point instead of pulling for the
+// whole budget. "Settled" = the height unchanged AND no API request in flight, both for RESTORE_HOLD_MS.
+describe('driverStep — a target out of the settled page\'s reach', () => {
+  // The planting after Back: max 4922, target 5227 (measured at 426x836), content in, nothing in flight.
+  const SETTLED = { y: 4922, h: 5758, m: 4922, q: true }
+
+  it('EXHAUSTED (reason \'unreachable\') once the page has settled for RESTORE_HOLD_MS, at the closest reachable point', () => {
+    const { last, out } = run(5227, frames(400, SETTLED))
+    expect(last.outcome).toBe('EXHAUSTED')
+    expect(last.reason).toBe('unreachable')
+    expect(out.length * 16).toBeGreaterThanOrEqual(RESTORE_HOLD_MS)
+    expect(out.length * 16).toBeLessThan(RESTORE_HOLD_MS + 50)
+  })
+
+  it('NOT while a request is in flight: a loading shell holds its height for as long as the network takes (Zones at 5 s must still land)', () => {
+    // 5 s of loading shell (max 56) with the page's GET on the wire, then the list lands and holds.
+    const f = frames(500, (i) => (i * 16 < 5000 ? { y: 56, h: 892, m: 56, q: false } : { y: 1645, h: 2481, m: 1645, q: true }))
+    const { last } = run(1645, f)
+    expect(last.outcome).toBe('DONE')
+  })
+
+  it('NOT between the stages of a two-stage page: stage 1 holds, the stage-2 request is in flight (the Event log at 3 s per stage)', () => {
+    const f = frames(800, (i) => {
+      const t = i * 16
+      if (t < 3000) return { y: 56, h: 892, m: 56, q: false }             // shell, header request in flight
+      if (t < 6000) return { y: 2070, h: 2906, m: 2070, q: false }        // stage 1, events request in flight
+      return { y: 4658, h: 5758, m: 4922, q: true }                        // stage 2 lands: reachable
+    })
+    const { last } = run(4658, f)
+    expect(last.outcome).toBe('DONE')
+  })
+
+  it('the height alone is not "settled": a change restarts the clock even with nothing in flight', () => {
+    const f = frames(400, (i) => ({ y: 4922, h: i < 40 ? 5000 : 5758, m: 4922, q: true }))
+    const { out } = run(5227, f)
+    const stopAt = out.findIndex((r) => r.outcome === 'EXHAUSTED')
+    expect(stopAt * 16).toBeGreaterThanOrEqual(40 * 16 + RESTORE_HOLD_MS - 16)
+  })
+
+  it('behind Protected\'s skeleton nothing settles (no time counts until the user is resolved)', () => {
+    const f = frames(600, { y: 50, h: 900, m: 50, q: true })
+    const { out } = run(1645, f, { ready: (now) => now >= 5000 })
+    const stopAt = out.findIndex((r) => r.outcome === 'EXHAUSTED')
+    expect(stopAt * 16).toBeGreaterThanOrEqual(5000 + RESTORE_HOLD_MS - 16)
+  })
+
+  it('a reachable target never stops as unreachable: at the target it is the hold that ends it (DONE)', () => {
+    const { last } = run(4658, frames(200, { y: 4658, h: 5758, m: 4922, q: true }))
+    expect(last.outcome).toBe('DONE')
   })
 })
 

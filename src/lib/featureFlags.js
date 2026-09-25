@@ -272,6 +272,15 @@ export const BACKNAV_ENABLED = true
 // worker's update, and entries the on-bundle marked 'manual' deeper in the stack keep that mode for the
 // rest of that session (no native restore, no manager on Back into them) — a degraded remainder of one
 // session, accepted (rimpact-scrollmanager MINOR-1).
+//
+// ROLLBACK RUNBOOK (rimpact-scrollmanager-built N2). Roll this feature back with a FORWARD flag-off build —
+// set this to false on dev and promote — never with a revert. Only an on-to-off bundle writes 'auto' back:
+// Chrome keeps each entry's 'manual' mode across the service worker's update reload, and later pushes copy
+// it, so a bundle from before this release (a revert-gate to an older snap, a redeploy, a git revert) leaves
+// open sessions with no browser restore and no manager — Back loses the place on every page without its own
+// restore until the app is closed. The CI gates and suites are flag-aware, so a flag-off build promotes:
+// gate:page-scroll prints "manager OFF" and asserts the pre-manager contract instead of the fix. And after
+// ANY revert-gate past this release, for any reason: swipe the app away once (a fresh launch starts 'auto').
 export const SCROLL_MANAGER_ENABLED = true
 
 // V4-SNAPDEST-001 (BD0806-08, Dave 2026-08-06): "hide Save to Device app-wide".

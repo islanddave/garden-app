@@ -35,6 +35,7 @@
 import { useAuth } from '@clerk/react'
 import { ClerkOfflineError } from '@clerk/shared/error'
 import { useCallback } from 'react'
+import { trackRequest } from './netActivity.js'
 
 // Exported for src/__tests__/clientRouteLambdaContract.test.js, which resolves every client-side
 // API path through THIS table (via resolveUrl, with probe base URLs) and asserts the Lambda it
@@ -111,7 +112,14 @@ export function isFromCache(value) {
   return !!value && typeof value === 'object' && value[FROM_CACHE] === true
 }
 
-export async function apiFetch(path, options = {}, token) {
+// BUG-DETAILPAGESCARRYSCROLL-001 — every API call is counted while it is in flight (src/lib/netActivity.js):
+// the page-scroll manager's Back restore only gives up on a target the page cannot reach once no request
+// that could still grow the page is pending. Same arguments, same result, same errors.
+export function apiFetch(path, options, token) {
+  return trackRequest(sendApiRequest(path, options, token))
+}
+
+async function sendApiRequest(path, options = {}, token) {
   const url = resolveUrl(path)
   const { timeoutMs = API_TIMEOUT_MS, signal: callerSignal, headers: optHeaders, ...fetchOpts } = options
   const headers = { 'Content-Type': 'application/json', ...(optHeaders ?? {}) }

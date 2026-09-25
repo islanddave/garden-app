@@ -16,12 +16,14 @@ import { BrowserRouter, Routes, Route, Link, useNavigate, useNavigationType } fr
 import { OverlayProvider, useOverlay, OverlayLink, useOverlayDismiss } from '../context/OverlayContext.jsx'
 import {
   usePageScrollManager, PageScrollProvider, useClaimPageScroll, usePageScrollReturn, usePageScrollReturnAtMount,
-  currentPageEntry, applyBrowserScrollRestoration,
+  currentPageEntry, applyBrowserScrollRestoration, usePageScrollYield, __setDocumentArrivedFresh,
 } from '../hooks/usePageScrollManager.js'
 import { readPageScroll, PAGE_SCROLL_STORE_KEY, RESTORE_HOLD_MS, RESTORE_BUDGET_MS } from '../lib/pageScroll.js'
+import { trackRequest, __resetNetActivity } from '../lib/netActivity.js'
 import { MARKER_KEY, MARKER_VERSION } from '../lib/backNav.js'
 
 // ── scroll surface ──────────────────────────────────────────────────────────────────────────────────
+// scrollHeight follows maxScroll, so the driver's "max scroll" (scrollHeight − innerHeight) is the model's.
 let maxScroll = 10000
 let scrollCalls = []
 const setY = (y) => Object.defineProperty(window, 'scrollY', { configurable: true, writable: true, value: y })
@@ -47,7 +49,12 @@ function frames(n, dt = 16) {
 const pending = () => queue.size
 
 // ── the shell ───────────────────────────────────────────────────────────────────────────────────────
+// Each route's element carries its own key: react-router renders every matched element at the same place in
+// the tree, so two routes rendering the same component would REUSE one instance (as PlantingDetail's pager
+// does) and a mount-time reading would describe the first page ever shown, not the arrival.
 let decisions = []
+let restores = []
+let seenOnMount = []
 let nav = null
 let claimNext = false
 function Nav() { nav = useNavigate(); return null }
@@ -55,6 +62,23 @@ function Page({ name }) {
   const returning = usePageScrollReturn()
   const atMount = usePageScrollReturnAtMount()
   return <div data-testid={`page-${name}`} data-return={String(returning)} data-return-at-mount={String(atMount)} />
+}
+// What an arriving page's OWN first passive effect sees: design §2.1's "the reset lands in the swap commit".
+function Arrival() {
+  React.useEffect(() => { seenOnMount.push(window.scrollY) }, [])
+  return <div data-testid="page-arrival" />
+}
+// A page with a text field, a button, and a scroll it does on purpose (useLotOutline's shape: called from an
+// effect, never from a click — a click would take over on its own and hide what this pins).
+let pageYield = null
+function Form() {
+  pageYield = usePageScrollYield()
+  return (
+    <div data-testid="page-form">
+      <input data-testid="field" type="text" />
+      <button type="button" data-testid="button">a button</button>
+    </div>
+  )
 }
 // A page that restores its own offset, the way useScrollRestore and Garden claim: at first render, for the
 // entry it mounted on, only when it has something to restore (`claimNext` stands in for "has a saved value").
@@ -77,7 +101,10 @@ let commits = 0
 function Shell({ enabled = true, hold = false }) {
   const { pageLocation, overlayLocation, background } = useOverlay()
   const navigationType = useNavigationType()
-  const pageScroll = usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, ready: !hold, enabled, onDecision: (d) => decisions.push(d) })
+  const pageScroll = usePageScrollManager({
+    pageLocation, location: overlayLocation, navigationType, ready: !hold, enabled,
+    onDecision: (d) => decisions.push(d), onRestore: (r) => restores.push(r),
+  })
   // Every router commit, flag on or off: what `back` waits for (jsdom delivers popstate a task later).
   React.useLayoutEffect(() => { commits += 1 }, [pageLocation])
   return (
@@ -86,10 +113,12 @@ function Shell({ enabled = true, hold = false }) {
       <OverlayLink to="/search" data-testid="open-search">search</OverlayLink>
       {hold ? <div data-testid="skeleton" /> : (
         <Routes location={pageLocation}>
-          <Route path="/today" element={<Page name="today" />} />
-          <Route path="/list" element={<Page name="list" />} />
-          <Route path="/detail/:id" element={<Page name="detail" />} />
+          <Route path="/today" element={<Page key="today" name="today" />} />
+          <Route path="/list" element={<Page key="list" name="list" />} />
+          <Route path="/detail/:id" element={<Page key="detail" name="detail" />} />
           <Route path="/claimer" element={<Claimer />} />
+          <Route path="/arrival" element={<Arrival />} />
+          <Route path="/form" element={<Form />} />
         </Routes>
       )}
       {background && (
@@ -120,11 +149,16 @@ beforeEach(() => {
   maxScroll = 10000
   scrollCalls = []
   decisions = []
+  restores = []
+  seenOnMount = []
   claimNext = false
   queue = new Map()
   rafId = 0
   now = 1000
   setY(0)
+  __resetNetActivity()
+  __setDocumentArrivedFresh(false)
+  Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, get: () => maxScroll + window.innerHeight })
   window.scrollTo = vi.fn((a, b) => { const y = yOf(a, b); scrollCalls.push(y); setY(Math.min(Math.max(0, y), maxScroll)) })
   window.requestAnimationFrame = (cb) => { const id = ++rafId; queue.set(id, cb); return id }
   window.cancelAnimationFrame = (id) => { queue.delete(id) }
@@ -134,6 +168,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  delete document.documentElement.scrollHeight
+  __setDocumentArrivedFresh(undefined)
   window.history.replaceState(null, '', '/')
 })
 
@@ -170,6 +206,33 @@ describe('a different page opens at its top; Back returns to the place (rows 2 a
     frames(Math.ceil(RESTORE_HOLD_MS / 16) + 2)
     expect(pending()).toBe(0)                         // DONE: the driver has stopped
     expect(filed('/list', kList)).toBe(1645)          // and the clamped attempts never overwrote the target
+  })
+
+  // qa-scrollmanager-built M1 (mutant Q4): design §2.1's "the reset lands in the swap commit, before first
+  // paint" — a layout effect, so the arriving page's OWN passive effects already see the top. As a passive
+  // effect the parent's decision runs after the child's (children first), and the page's first effect would
+  // read the old offset: "expected [1645] to deeply equal [0]".
+  it('the reset lands in the commit: the arriving page\'s own first effect already sees scrollY 0', () => {
+    mount()
+    go('/list')
+    scrollPage(1645)
+    go('/arrival')
+    expect(seenOnMount).toEqual([0])
+  })
+
+  // rimpact-scrollmanager-built N1: the same-page twin of row 4 — Put-Up's list at the top → a batch (a
+  // same-path PUSH) → Back. The store never mints a 0, so the list's entry has no record: one zero.
+  it('row 6: a same-path Back into an entry left at the top is one zero, never a hold', async () => {
+    mount()
+    go('/list')
+    go('/list?batch=9')                               // a same-page PUSH: new key, same path
+    expect(last()).toMatchObject({ row: '3', action: 'KEEP' })
+    scrollPage(56)                                    // the batch detail, scrolled
+    scrollCalls = []
+    await back()
+    expect(last()).toMatchObject({ row: '6', action: 'TOP' })
+    expect(scrollCalls).toEqual([0])
+    expect(pending()).toBe(0)
   })
 
   it('Back to an entry with nothing filed is one zero (\'manual\' leaves it undefined), never a hold', async () => {
@@ -216,7 +279,7 @@ describe('the write rules (rimpact IMPORTANT-3)', () => {
     expect(filed('/list', kList)).toBe(1800)
   })
 
-  it('writes re-open when the budget is spent (EXHAUSTED) — the content is genuinely shorter now', async () => {
+  it('writes re-open when the restore gives up — the content is genuinely shorter now (out of the settled page\'s reach)', async () => {
     mount()
     go('/list')
     const kList = key()
@@ -224,10 +287,29 @@ describe('the write rules (rimpact IMPORTANT-3)', () => {
     go('/detail/1')
     maxScroll = 700
     await back()
-    frames(Math.ceil(RESTORE_BUDGET_MS / 16) + 3)
+    frames(Math.ceil(RESTORE_HOLD_MS / 16) + 3)
     expect(pending()).toBe(0)
+    expect(restores.at(-1)).toMatchObject({ outcome: 'EXHAUSTED', reason: 'unreachable', target: 5000, y: 700 })
     scrollPage(650)
     expect(filed('/list', kList)).toBe(650)
+  })
+
+  it('writes re-open when the visible-time budget is spent — a page never settles while a request stays in flight', async () => {
+    mount()
+    go('/list')
+    const kList = key()
+    scrollPage(5000)
+    go('/detail/1')
+    maxScroll = 700
+    let finish
+    trackRequest(new Promise((r) => { finish = r }))  // a GET on the wire the whole time
+    await back()
+    frames(Math.ceil(RESTORE_BUDGET_MS / 16) + 3)
+    expect(pending()).toBe(0)
+    expect(restores.at(-1)).toMatchObject({ outcome: 'EXHAUSTED', reason: 'budget' })
+    scrollPage(650)
+    expect(filed('/list', kList)).toBe(650)
+    await act(async () => { finish() })
   })
 
   it('nothing is filed while the page is covered by an overlay or a Back marker; the snapshot is what was there before', async () => {
@@ -273,6 +355,20 @@ describe('the write rules (rimpact IMPORTANT-3)', () => {
     await back()
     expect(last()).toMatchObject({ row: '0', action: 'NONE' })
     expect(scrollCalls).toEqual([])
+  })
+
+  // qa-scrollmanager-built M2 (mutant Q13): a same-page re-key while a restore is still pulling toward its
+  // target files the TARGET under the new key, not the loading shell's clamp — or the next Back lands short.
+  it('a same-page re-key during an armed restore carries the restore\'s target, not the clamp', async () => {
+    mount()
+    go('/list?v=a')
+    scrollPage(1645)
+    go('/detail/1')
+    maxScroll = 56                                    // the list comes back as its loading shell
+    await back()
+    expect(pending()).toBe(1)                         // armed; no frame has run
+    go('/list?v=b', { replace: true })                // a view switch while still loading
+    expect(readPageScroll(`/list|${key()}`)).toBe(1645)
   })
 
   it('never deletes a record on a REPLACE, and refiles the current offset under the new key on a same-page write (row 3)', () => {
@@ -352,6 +448,97 @@ describe('the driver\'s exits', () => {
     go('/detail/2')
     frames(3)
     expect(pending()).toBe(0)
+  })
+
+  // A deliberate act takes over too (qa-scrollmanager-built, the Event log past "Show more"; the coordinator's
+  // decision): a click of any pointer, and a mouse or pen press. In the CAPTURE phase, so the restore has
+  // stopped before the page's own handler adds the content that would make the old place reachable.
+  it('a click stops it, in the capture phase — before the tapped control\'s own handler runs', async () => {
+    await armBack()
+    let armedWhenTheHandlerRan = null
+    const onButton = () => { armedWhenTheHandlerRan = pending() }
+    document.body.addEventListener('click', onButton)
+    try { act(() => { document.body.click() }) } finally { document.body.removeEventListener('click', onButton) }
+    expect(armedWhenTheHandlerRan).toBe(0)
+    expect(restores.at(-1)).toMatchObject({ outcome: 'TAKEOVER', reason: 'click' })
+  })
+
+  const press = (pointerType) => act(() => {
+    const e = new Event('pointerdown', { bubbles: true })
+    Object.defineProperty(e, 'pointerType', { value: pointerType })
+    document.body.dispatchEvent(e)
+  })
+
+  it.each(['mouse', 'pen'])('a %s press stops it', async (pointerType) => {
+    await armBack()
+    press(pointerType)
+    frames(3)
+    expect(pending()).toBe(0)
+  })
+
+  it('a TOUCH press does not: it is the resting thumb touchstart is ignored for (the click after a short tap does count)', async () => {
+    await armBack()
+    press('touch')
+    frames(3)
+    expect(pending()).toBe(1)
+  })
+
+  it('focus arriving in a text field stops it (the keyboard is coming up); focus on a button does not', async () => {
+    mount()
+    go('/form')
+    scrollPage(1645)
+    go('/detail/1')
+    maxScroll = 56
+    await back()
+    expect(pending()).toBe(1)
+    act(() => { screen.getByTestId('button').focus() })
+    frames(2)
+    expect(pending()).toBe(1)
+    act(() => { screen.getByTestId('field').focus() })
+    frames(2)
+    expect(pending()).toBe(0)
+    expect(restores.at(-1)).toMatchObject({ outcome: 'TAKEOVER', reason: 'focusin' })
+  })
+
+  it('a page scrolling on purpose (usePageScrollYield, useLotOutline\'s outline) stops it for good (rimpact-built N4)', async () => {
+    mount()
+    go('/form')
+    scrollPage(1645)
+    go('/detail/1')
+    maxScroll = 56
+    await back()
+    expect(pending()).toBe(1)
+    act(() => { pageYield() })
+    frames(2)
+    expect(pending()).toBe(0)
+    expect(restores.at(-1)).toMatchObject({ outcome: 'TAKEOVER', reason: 'page' })
+  })
+
+  it('usePageScrollYield outside the provider is a no-op', () => {
+    let fn = null
+    function Probe() { fn = usePageScrollYield(); return null }
+    render(<Probe />)
+    expect(() => fn()).not.toThrow()
+  })
+})
+
+describe('a target out of the settled page\'s reach (the Event log past "Show more")', () => {
+  it('stops once the page has held its height with nothing in flight — not while a request that could grow it is pending', async () => {
+    mount()
+    go('/list')
+    scrollPage(5227)
+    go('/detail/1')
+    maxScroll = 56                                    // the loading shell
+    let land
+    trackRequest(new Promise((r) => { land = r }))     // the page's GET, on the wire
+    await back()
+    frames(Math.ceil((3 * RESTORE_HOLD_MS) / 16))      // 3 s of shell: no stop while the GET is out
+    expect(pending()).toBe(1)
+    maxScroll = 4922                                  // the page lands, 50 events of 60: 5227 is out of reach
+    await act(async () => { land() })
+    frames(Math.ceil(RESTORE_HOLD_MS / 16) + 3)
+    expect(pending()).toBe(0)
+    expect(restores.at(-1)).toMatchObject({ outcome: 'EXHAUSTED', reason: 'unreachable', target: 5227, y: 4922 })
   })
 })
 
@@ -491,6 +678,41 @@ describe('a return, for pages that must not scroll against the restore (IMPORTAN
     go('/list')
     go('/detail/1')
     return back().then(() => { expect(screen.getByTestId('page-list').dataset.return).toBe('false') })
+  })
+})
+
+// rimpact-scrollmanager-built N3 + N6: react-router's initial action is POP for EVERY load, a typed URL and a
+// PWA shortcut into a running app included. A document that arrived by a fresh navigation is neither a place
+// to restore nor a return: its first location restores nothing, and a door's arrival hint is honoured there.
+describe('a document that arrived by a fresh navigation', () => {
+  it('restores nothing on its first commit, even with a record its path filed in an earlier document', () => {
+    __setDocumentArrivedFresh(true)
+    window.history.replaceState({ key: 'kBoot' }, '', '/list')
+    sessionStorage.setItem(PAGE_SCROLL_STORE_KEY, JSON.stringify({ '/list|kBoot': 900 }))
+    mount()
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]).toMatchObject({ row: '1', action: 'NONE' })
+    expect(scrollCalls).toEqual([])
+    expect(pending()).toBe(0)
+  })
+
+  it('control: the same document arrived by a reload or a tab restore → restored', () => {
+    __setDocumentArrivedFresh(false)
+    window.history.replaceState({ key: 'kBoot' }, '', '/list')
+    sessionStorage.setItem(PAGE_SCROLL_STORE_KEY, JSON.stringify({ '/list|kBoot': 900 }))
+    mount()
+    expect(decisions[0]).toMatchObject({ row: '1', action: 'RESTORE', y: 900 })
+  })
+
+  it('is not a return at its first location — even for a page that mounts later, behind the skeleton — and Back after that is', async () => {
+    __setDocumentArrivedFresh(true)
+    window.history.replaceState(null, '', '/list')
+    const { rerender } = mount({ hold: true })
+    rerender(<BrowserRouter><OverlayProvider><Shell hold={false} /></OverlayProvider></BrowserRouter>)
+    expect(screen.getByTestId('page-list').dataset.returnAtMount).toBe('false')
+    go('/detail/1')
+    await back()
+    expect(screen.getByTestId('page-list').dataset.returnAtMount).toBe('true')
   })
 })
 

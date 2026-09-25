@@ -22,12 +22,20 @@
 // manager decided and what it scrolled to. The property under test is unchanged — a Back onto the lot, after
 // either close, is a RETURN to the lot's own place, never a snap to the top — and it is now asserted as the
 // offset filed for that entry coming back, which is what Dave sees.
+//
+// FLAG-AWARE (rimpact-scrollmanager-built N2): every test runs twice, the flag mocked live. With the manager
+// OFF (the rollback bundle) the page's own reset is back, and the pre-manager contract is asserted exactly as
+// it was: one reset per fresh door, none on a return.
 import React, { useState, useEffect } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, fireEvent, cleanup } from '@testing-library/react'
 import { BrowserRouter, Routes, Route, Link, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 
-const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn() }))
+const { fetchSpy, flags } = vi.hoisted(() => ({ fetchSpy: vi.fn(), flags: { manager: true } }))
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  get SCROLL_MANAGER_ENABLED() { return flags.manager },
+}))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
 vi.mock('../components/FavoriteToggle.jsx', () => ({ default: () => <span /> }))
 vi.mock('../components/PhotoUpload.jsx', () => ({ default: () => <span /> }))
@@ -67,8 +75,10 @@ function LegacySearchLink() {
 function Shell() {
   const { pageLocation, overlayLocation, background } = useOverlay()
   const navigationType = useNavigationType()
-  // AppShell's manager, as App.jsx calls it; every decision is recorded with the entry it was made for.
-  const pageScroll = usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, onDecision: (d) => decisions.push(d) })
+  // AppShell's manager, as App.jsx calls it; every decision is recorded with the entry it was made for. The
+  // flag is passed explicitly: the manager module is loaded by the test setup (through useScrollRestore)
+  // before this file's featureFlags mock exists, so only its parameter can follow the mock.
+  const pageScroll = usePageScrollManager({ pageLocation, location: overlayLocation, navigationType, enabled: flags.manager, onDecision: (d) => decisions.push(d) })
   const navigate = useNavigate()
   // An urgent re-render of the page tree in the same event as a push to another lot: the state update
   // commits first, with the router still on the old lot, and only then does the route's transition land.
@@ -151,17 +161,26 @@ const leaveAndComeBack = async () => {
 }
 const LOT_X = '/inventory/lot-x'
 
+describe.each([['manager ON', true], ['manager OFF (the rollback bundle)', false]])('%s', (_mode, on) => {
+beforeEach(() => { flags.manager = on })
+
 describe('a Back onto the lot page after an overlay over it closed by its Close', () => {
   it('control: arriving is a fresh door (top), and lot → elsewhere → Back returns to the lot\'s own place', async () => {
     await arrive()
-    expect(onPage(LOT_X)).toEqual(['2:TOP'])
+    if (on) expect(onPage(LOT_X)).toEqual(['2:TOP'])
+    else expect(pageResets).toBe(1)                  // the page's own reset: a fresh door
     const k1 = key()
     scrollLotTo(700)
     await leaveAndComeBack()
     expect(key()).toBe(k1)
-    expect(onPage(LOT_X)).toEqual(['2:TOP', '4:RESTORE 700'])
-    expect(calls.at(-1)).toBe(700)
-    expect(pageResets).toBe(0)                       // the page itself never resets with the manager on
+    if (on) {
+      expect(onPage(LOT_X)).toEqual(['2:TOP', '4:RESTORE 700'])
+      expect(calls.at(-1)).toBe(700)
+      expect(pageResets).toBe(0)                     // the page itself never resets with the manager on
+    } else {
+      expect(decisions).toEqual([])                  // the manager is inert
+      expect(pageResets).toBe(1)                     // a return: no second reset
+    }
   })
 
   it('lot → header Search → Close (walks back to the lot\'s own entry) → elsewhere → Back: its place, not the top', async () => {
@@ -179,8 +198,12 @@ describe('a Back onto the lot page after an overlay over it closed by its Close'
     await leaveAndComeBack()
     expect(key()).toBe(k1)
     // The open and the close kept the page's entry (row 0): nothing moved it.
-    expect(onPage(LOT_X)).toEqual(['2:TOP', '0:NONE', '0:NONE', '4:RESTORE 700'])
-    expect(pageResets).toBe(0)
+    if (on) {
+      expect(onPage(LOT_X)).toEqual(['2:TOP', '0:NONE', '0:NONE', '4:RESTORE 700'])
+      expect(pageResets).toBe(0)
+    } else {
+      expect(pageResets).toBe(1)
+    }
   })
 
   it('lot → header Search opened by the previous bundle → Close (the replace fallback: new key, page not remounted) → elsewhere → Back: its place, not the top', async () => {
@@ -201,9 +224,14 @@ describe('a Back onto the lot page after an overlay over it closed by its Close'
     expect(key()).toBe(k3)
     expect(lotFetches('lot-x')).toBe(2)              // the Back remounted the page, so it made its decision
     // ... and the replaced entry, stamped to continue k1, answers to the lot's page entry: the offset filed
-    // before Search comes back. A snap to the top here would read '4:TOP'.
-    expect(onPage(LOT_X)).toEqual(['2:TOP', '0:NONE', '0:NONE', '4:RESTORE 700'])
-    expect(pageResets).toBe(0)
+    // before Search comes back. A snap to the top here would read '4:TOP'. With the manager off, the page
+    // itself decided "a return", which is the pre-manager contract: still exactly one reset.
+    if (on) {
+      expect(onPage(LOT_X)).toEqual(['2:TOP', '0:NONE', '0:NONE', '4:RESTORE 700'])
+      expect(pageResets).toBe(0)
+    } else {
+      expect(pageResets).toBe(1)
+    }
   })
 })
 
@@ -216,8 +244,13 @@ describe('filing keys on every commit never files the NEXT entry\'s key', () => 
     // page tree still rendered lot-x. Without that window this test could not fail.
     expect(inBetween).toEqual({ url: '/inventory/lot-y', page: '/inventory/lot-x' })
     expect(lotFetches('lot-y')).toBe(1)
-    expect(onPage(LOT_X)).toEqual(['2:TOP'])
-    expect(onPage('/inventory/lot-y')).toEqual(['2:TOP'])
-    expect(pageResets).toBe(0)
+    if (on) {
+      expect(onPage(LOT_X)).toEqual(['2:TOP'])
+      expect(onPage('/inventory/lot-y')).toEqual(['2:TOP'])
+      expect(pageResets).toBe(0)
+    } else {
+      expect(pageResets).toBe(2)                     // lot-y's arrival read as a fresh door, not a return
+    }
   })
+})
 })

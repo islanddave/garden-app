@@ -5,11 +5,17 @@
 //
 // The claim goes through the manager's React context, so the provider here carries a spy in place of the
 // manager's api. Outside the provider (every other suite) the hook is exactly what it was.
+//
+// FLAG-AWARE (rimpact-scrollmanager-built N2, N8): the hidden/freeze flush rides SCROLL_MANAGER_ENABLED, so
+// with the manager off only pagehide flushes, as before the manager. The REAL flag is read (the hook is loaded
+// by the test setup before any mock of this file could reach it), so a forward flag-off build asserts the
+// pre-manager contract here.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, act, cleanup } from '@testing-library/react'
 import useScrollRestore, { __resetScrollRestoreStore, __seedScrollRestoreEntry } from '../hooks/useScrollRestore.js'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
+import { SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
 
 const STORE_KEY = 'garden.scrollRestore.v1'
 let claims
@@ -72,7 +78,7 @@ describe('the claim: per entry, only with a saved value', () => {
   })
 })
 
-describe('the flush: hidden and freeze, not only pagehide', () => {
+describe(SCROLL_MANAGER_ENABLED ? 'the flush: hidden and freeze, not only pagehide (manager on)' : 'manager OFF: the flush is pagehide only, as before', () => {
   const stored = () => JSON.parse(window.sessionStorage.getItem(STORE_KEY) || '{}')['surf|entry-A']
 
   it('visibilitychange → hidden files the current offset and persists the store', () => {
@@ -86,7 +92,8 @@ describe('the flush: hidden and freeze, not only pagehide', () => {
       delete document.visibilityState
       if (had) Object.defineProperty(document, 'visibilityState', had)
     }
-    expect(stored()).toEqual({ y: 1200 })
+    if (SCROLL_MANAGER_ENABLED) expect(stored()).toEqual({ y: 1200 })
+    else expect(stored()).toBeUndefined()
   })
 
   it('visibilitychange → visible does not flush (only leaving the screen does)', () => {
@@ -102,7 +109,8 @@ describe('the flush: hidden and freeze, not only pagehide', () => {
     setY(640)
     act(() => { window.dispatchEvent(new Event('scroll')) })
     act(() => { document.dispatchEvent(new Event('freeze')) })
-    expect(stored()).toEqual({ y: 640 })
+    if (SCROLL_MANAGER_ENABLED) expect(stored()).toEqual({ y: 640 })
+    else expect(stored()).toBeUndefined()
   })
 
   it('pagehide still persists it, as before', () => {

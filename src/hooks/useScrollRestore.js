@@ -49,6 +49,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
 import { pageEntryKey } from '../lib/pageEntry.js'
+import { SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
 import { useClaimPageScroll, currentPageEntry } from './usePageScrollManager.js'
 
 const STORE_KEY = 'garden.scrollRestore.v1'
@@ -209,9 +210,13 @@ export default function useScrollRestore({ id, ready, stateAtTop = false }) {
     // alone does not fire when Chrome tears the document down. And pagehide alone is not enough either
     // (BUG-DETAILPAGESCARRYSCROLL-001): Android discards a frozen tab with no event at all, so the last
     // moment Chrome guarantees is visibilitychange → hidden (Page Lifecycle); freeze is flushed too.
+    // Those two ride the page-scroll manager's flag, so with the manager off this hook behaves exactly as it
+    // did before the manager (rimpact-scrollmanager-built N8).
     window.addEventListener('pagehide', onHide)
-    document.addEventListener('visibilitychange', onVisibility)
-    document.addEventListener('freeze', onHide)
+    if (SCROLL_MANAGER_ENABLED) {
+      document.addEventListener('visibilitychange', onVisibility)
+      document.addEventListener('freeze', onHide)
+    }
     return () => {
       window.removeEventListener('scroll', onScroll)
       window.removeEventListener('pagehide', onHide)

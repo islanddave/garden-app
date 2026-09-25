@@ -143,16 +143,25 @@ Notes: ______________________________________________
 
 ## Step 7 — Pages open at the top, Back keeps your place (BUG-DETAILPAGESCARRYSCROLL-001)
 
-Before this fix, a page you opened from a long, scrolled list often opened part-way down, usually near its bottom, and you had to scroll up to see what it was. Do Step 0 first: an older copy of the app still does the old thing.
+Before this fix, a page you opened from a long, scrolled list often opened part-way down, and Back from an event went to the top of its planting. Do Step 0 first. Use normal signal for 7a–7d.
 
-- **7a.** Go to **More → Zones** and scroll down until the last few rows are on screen. Tap a place near the bottom.
-  **PASS if:** the place's page opens with its name at the top of the screen, and **Back** returns you to the same row of the list. **FAIL if:** the page opens part-way down, or Back lands somewhere else in the list. ☐ PASS ☐ FAIL
-- **7b.** Open a planting that has a long **Event log**, scroll well down the log, and tap one of its events.
-  **PASS if:** the event opens at its top, and **Back** puts you on the same event in the log. **FAIL if:** Back lands at the top of the planting. (That used to happen every time.) ☐ PASS ☐ FAIL
-- **7c.** Scroll well down your **Garden**, tap the **Today** tab, then tap the **Garden** tab again.
-  **PASS if:** Garden comes back where you left it. ☐ PASS ☐ FAIL
-- **7d.** Somewhere with weak signal, repeat **7a**, and right after pressing **Back** put the phone in your pocket for about 30 seconds. Take it out.
-  **PASS if:** the list is at the row you tapped. **FAIL if:** it is at the top or near it. ☐ PASS ☐ FAIL ☐ no weak signal handy
+**What "opens at the top" looks like:** the first line under the app's top bar is a small grey trail that starts with **Home ›** (for example "Home › Event"). If that trail is hidden and the page starts at the big title or lower, the page did **not** open at the top.
+
+- **7a — Zones.** Go to **More → Zones** and scroll down until the last rows are on screen. Remember the row you will tap and the row just above it. Tap the row's name.
+  **PASS if:** the new page's first line is the "Home › …" trail with the place's name in big green letters under it. Then press **Back**. PASS if the two rows you remembered are back in the same spots on the screen.
+  **FAIL if:** the trail is hidden when the page opens, or Back shows different rows. ☐ PASS ☐ FAIL
+- **7b — Event log.** Open a planting with at least 20 events. Scroll down its Event log **without tapping "Show more"** until an event near the end of the list is in the middle of the screen. Remember its date. Tap it.
+  **PASS if:** the event page's first line is the "Home › Event" trail. Then press **Back**. PASS if the event with that date is back in the middle of the screen.
+  **FAIL if:** the trail is hidden, or Back lands at the top of the planting or on different events. ☐ PASS ☐ FAIL
+- **7c — Garden, three times.** Scroll well down **Garden** and remember the planting in the middle of the screen. Tap the **Today** tab, then the **Garden** tab. Do this three times, at a different spot each time.
+  **PASS if:** all three times, the planting you remembered is back in the middle of the screen.
+  **FAIL if:** even once Garden comes back at the top or somewhere else. ☐ PASS ☐ FAIL
+- **7d — Back to a page you left at the top.** Go to **Today** and make sure the big **Today** heading and the date are showing. Tap anything on Today that opens a new page. Scroll that page all the way to the bottom, then press **Back**.
+  **PASS if:** Today shows its big heading and the date straight away.
+  **FAIL if:** Today comes back part-way down. ☐ PASS ☐ FAIL
+- **7e (optional — only on weak signal).** Do 7a up to tapping the row. On the place's page press **Back** and at once press the power button to turn the screen off. Wait 30 seconds, then turn the screen on and unlock.
+  **PASS if:** the two rows you remembered are on screen. **FAIL if:** the list is at or near its top.
+  ☐ PASS ☐ FAIL ☐ no weak signal
 
 Notes: ______________________________________________
 

@@ -11,6 +11,13 @@ name: revert-gate
 # workflow is the real thing — REHEARSAL_MODE is OFF, the code legs target real dev/main, and
 # CONFIRM_DATA_LOSS must be "yes".
 #
+# PAGE-SCROLL MANAGER (BUG-DETAILPAGESCARRYSCROLL-001, rimpact-scrollmanager-built N2). Do NOT use this
+# workflow to roll back the page-scroll manager: roll it back with a forward flag-off build
+# (SCROLL_MANAGER_ENABLED = false in src/lib/featureFlags.js, then promote). A bundle from before that release
+# never writes history.scrollRestoration back to 'auto', and Chrome keeps each open entry's 'manual' mode across
+# the update reload, so Back loses the place on most pages until the app is closed. After ANY run of this
+# workflow that lands on a version before the manager, for whatever reason: swipe the app away once.
+#
 # Dispatchability: workflow_dispatch requires the workflow on the default branch (main). It IS on main —
 # see STATUS below. Edits made here on dev do not take effect for a dispatch until the next promote-gate
 # ship carries them to main; the Actions UI keeps running main's copy in the meantime.

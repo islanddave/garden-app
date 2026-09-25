@@ -29,10 +29,20 @@
 // it, never a place. The last offset filed before the cover is the snapshot a walk-back close or a marker
 // pop re-applies if the page moved (IMPORTANT-2), which is what Chrome's own traversal restore did before
 // 'manual' turned it off.
-import { createContext, createElement, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+//
+// WHO TAKES OVER A RESTORE, per owner (qa-scrollmanager-built M12). This manager's driver stops for good on
+// real scrolling — a wheel, a moving finger (touchmove), a key — and on a deliberate act: a click, a
+// mouse/pen press, focus arriving in a text field, or the page itself scrolling on purpose
+// (usePageScrollYield, e.g. useLotOutline's outline). NOT on touchstart, and not on a TOUCH pointerdown,
+// which is the same moment: a thumb resting on the glass while the page loads must not lose the place
+// (rimpact-scrollmanager IMPORTANT-7); lifting it after a short tap is a click, which does count, and a long
+// rest produces no click at all. The hook pages' own restore (useScrollRestore) and Garden's keep their
+// older rule — wheel, touchstart, keydown — for their ~20-frame loops; those are not this driver.
+import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { SCROLL_MANAGER_ENABLED, OVERLAY_ROUTES_ENABLED } from '../lib/featureFlags.js'
 import { locationEntryKey, pageEntryKey } from '../lib/pageEntry.js'
 import { readAnyMarker } from '../lib/backNav.js'
+import { requestsInFlight } from '../lib/netActivity.js'
 import {
   decidePageScroll, startDriver, driverStep, pageScrollKey, readPageScroll, filePageScroll, flushPageScroll,
 } from '../lib/pageScroll.js'
@@ -86,17 +96,53 @@ function scrollMode() {
 function docHeight() {
   try { return document.documentElement.scrollHeight } catch { return NaN }
 }
+function maxScroll() {
+  try { return document.documentElement.scrollHeight - window.innerHeight } catch { return NaN }
+}
 const clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 
-function stopDriver(s, outcome) {
+// Did this DOCUMENT arrive by a fresh navigation — a launch, a typed URL, a PWA shortcut into a running app —
+// rather than a reload, a Back/Forward or a tab restore? Then the offset its path filed in an earlier document
+// is not its place (rimpact-scrollmanager-built N3), and a door's arrival hint (`?lot=`) is an arrival, not a
+// return (N6). A discarded tab brought back counts as a restore whatever type it reports. Read once: the
+// answer belongs to the document. No navigation timing → not fresh (restore, as before).
+let freshDocument
+export function documentArrivedFresh() {
+  if (freshDocument !== undefined) return freshDocument
+  freshDocument = false
+  try {
+    const nav = performance.getEntriesByType('navigation')[0]
+    freshDocument = !!nav && nav.type === 'navigate' && !document.wasDiscarded
+  } catch { /* no navigation timing */ }
+  return freshDocument
+}
+// Test seam only.
+export function __setDocumentArrivedFresh(value) { freshDocument = value }
+
+// A text field taking focus opens the keyboard and resizes the viewport: the user is typing, not reading.
+function isEditable(el) {
+  if (!el || typeof el !== 'object') return false
+  if (el.isContentEditable) return true
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true
+  return el.tagName === 'INPUT' && !/^(button|checkbox|radio|submit|reset|range|color|file|image|hidden)$/i.test(el.type || '')
+}
+
+function stopDriver(s, outcome, reason) {
   if (s.raf) { try { cancelAnimationFrame(s.raf) } catch { /* ignore */ } }
   s.raf = 0
-  if (s.driver && outcome) s.lastOutcome = outcome
+  const d = s.driver
   s.driver = null
+  if (d && outcome) {
+    s.lastOutcome = outcome
+    if (s.observe && s.observe.current) {
+      s.observe.current({ outcome, reason: reason || null, entry: d.entry, target: d.state.target, y: window.scrollY, max: maxScroll() })
+    }
+  }
 }
 
 // Arm the restore for `entry` at `target`: the first attempt in the commit, then one per frame until the
-// target has held (DONE), the visible-time budget is spent (EXHAUSTED), or something outside stops it.
+// target has held (DONE), it is out of the settled page's reach or the visible-time budget is spent
+// (EXHAUSTED), or something outside stops it.
 function arm(s, entry, storeKey, target) {
   stopDriver(s)
   s.driver = { entry, storeKey, state: startDriver(target, clock()) }
@@ -106,9 +152,12 @@ function arm(s, entry, storeKey, target) {
     const d = s.driver
     if (!d) return
     if (!s.alive) { stopDriver(s); return }
-    const r = driverStep(d.state, { now: clock(), y: window.scrollY, height: docHeight(), ready: s.ready })
+    const r = driverStep(d.state, {
+      now: clock(), y: window.scrollY, height: docHeight(), max: maxScroll(), ready: s.ready,
+      quiet: requestsInFlight() === 0,
+    })
     d.state = r.state
-    if (r.outcome !== 'RETRY') { stopDriver(s, r.outcome); return }
+    if (r.outcome !== 'RETRY') { stopDriver(s, r.outcome, r.reason); return }
     if (r.scroll) scrollToY(target)
     s.raf = requestAnimationFrame(tick)
   }
@@ -142,28 +191,31 @@ function file(s) {
  *                                       so a boot restore arms but counts no time.
  * @param {boolean} [opts.enabled]       SCROLL_MANAGER_ENABLED; a parameter only so tests can pass it.
  * @param {(d:object)=>void} [opts.onDecision]  Observation only (the real-Chrome harness logs rows).
+ * @param {(r:object)=>void} [opts.onRestore]   Observation only: how each restore ended (outcome, reason).
  * @returns {{api:object, isReturn:boolean}} for <PageScrollProvider value>.
  */
-export function usePageScrollManager({ pageLocation, location, navigationType, ready = true, enabled = SCROLL_MANAGER_ENABLED, onDecision }) {
+export function usePageScrollManager({ pageLocation, location, navigationType, ready = true, enabled = SCROLL_MANAGER_ENABLED, onDecision, onRestore }) {
   const entry = locationEntryKey(pageLocation) || 'default'
   const path = (pageLocation && pageLocation.pathname) || ''
   const ref = useRef(null)
   if (ref.current === null) {
     ref.current = {
-      prev: null, first: true, loc: null, claims: new Map(), driver: null, raf: 0, expected: null,
-      ready, alive: true, lastOutcome: null,
+      prev: null, first: true, loc: null, firstLoc: null, claims: new Map(), driver: null, raf: 0, expected: null,
+      ready, alive: true, lastOutcome: null, observe: { current: null },
     }
   }
   const s = ref.current
   const onDecisionRef = useRef(onDecision)
   onDecisionRef.current = onDecision
+  s.observe.current = onRestore || null
 
   useLayoutEffect(() => { s.ready = ready }, [s, ready])
 
   // A claim is PER ENTRY (rimpact-scrollmanager IMPORTANT-4): a page claims the entry it holds a saved
   // offset for, at its first render. A claim that lands after the commit that armed a restore for that
   // entry — a page that mounted late, behind Protected's skeleton at boot — cancels the driver: the page
-  // restores itself.
+  // restores itself. `yieldScroll` is a page about to scroll on purpose (an outline, a highlight): the
+  // restore stops for good rather than pulling the page back (rimpact-scrollmanager-built N4).
   const api = useMemo(() => ({
     claim(key) {
       s.claims.set(key, (s.claims.get(key) || 0) + 1)
@@ -173,6 +225,9 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
         if (n > 0) s.claims.set(key, n)
         else s.claims.delete(key)
       }
+    },
+    yieldScroll() {
+      if (s.driver) stopDriver(s, 'TAKEOVER', 'page')
     },
   }), [s])
 
@@ -187,6 +242,7 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
     const next = { key: entry, path }
     const prev = s.prev
     const first = s.first
+    if (first) s.firstLoc = commit
     s.first = false
     s.prev = next
     const storeKey = pageScrollKey(path, entry)
@@ -197,7 +253,7 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
     const armedHere = !!(s.driver && s.driver.entry === entry)
     const y = window.scrollY
     const d = decidePageScroll({
-      enabled, first, prev, next, navType: navigationType, claimed: s.claims.has(entry),
+      enabled, first, fresh: first && documentArrivedFresh(), prev, next, navType: navigationType, claimed: s.claims.has(entry),
       record: readPageScroll(storeKey), entryMode: scrollMode(), covered: isCovered(historyState()), y,
       snapshot: !armedHere && s.expected && s.expected.key === storeKey ? s.expected.y : undefined,
     })
@@ -229,26 +285,40 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
   useEffect(() => {
     if (!enabled) return undefined
     s.alive = true
-    // Real scrolling only — a wheel, a moving finger, a key. NOT touchstart: a thumb resting on the glass
-    // while the list loads must not lose the place (IMPORTANT-7).
-    const takeover = () => { if (s.driver) stopDriver(s, 'TAKEOVER') }
+    // Who takes over: the file header's "WHO TAKES OVER A RESTORE". Click and press are listened for in the
+    // CAPTURE phase, so the restore has stopped before the page's own handler runs — a "Show more" tap must
+    // never be pulled back to the old place by the content it adds (qa-scrollmanager-built, Event log).
+    const takeover = (reason) => { if (s.driver) stopDriver(s, 'TAKEOVER', reason) }
+    const onWheel = () => takeover('wheel')
+    const onTouchMove = () => takeover('touchmove')
+    const onKey = () => takeover('keydown')
+    const onClick = () => takeover('click')
+    const onPress = (e) => { if (e && e.pointerType !== 'touch') takeover('pointerdown') }
+    const onFocusIn = (e) => { if (isEditable(e && e.target)) takeover('focusin') }
     const onScroll = () => file(s)
     // Hidden is the last event Chrome guarantees before a discard; pagehide and freeze may never come.
     const onVisibility = () => { if (document.visibilityState === 'hidden') flushPageScroll() }
     const onFlush = () => flushPageScroll()
     const passive = { passive: true }
-    window.addEventListener('wheel', takeover, passive)
-    window.addEventListener('touchmove', takeover, passive)
-    window.addEventListener('keydown', takeover, passive)
+    const early = { passive: true, capture: true }
+    window.addEventListener('wheel', onWheel, passive)
+    window.addEventListener('touchmove', onTouchMove, passive)
+    window.addEventListener('keydown', onKey, passive)
+    window.addEventListener('click', onClick, early)
+    window.addEventListener('pointerdown', onPress, early)
+    window.addEventListener('focusin', onFocusIn, passive)
     window.addEventListener('scroll', onScroll, passive)
     document.addEventListener('visibilitychange', onVisibility)
     document.addEventListener('freeze', onFlush)
     window.addEventListener('pagehide', onFlush)
     return () => {
       s.alive = false
-      window.removeEventListener('wheel', takeover, passive)
-      window.removeEventListener('touchmove', takeover, passive)
-      window.removeEventListener('keydown', takeover, passive)
+      window.removeEventListener('wheel', onWheel, passive)
+      window.removeEventListener('touchmove', onTouchMove, passive)
+      window.removeEventListener('keydown', onKey, passive)
+      window.removeEventListener('click', onClick, early)
+      window.removeEventListener('pointerdown', onPress, early)
+      window.removeEventListener('focusin', onFocusIn, passive)
       window.removeEventListener('scroll', onScroll, passive)
       document.removeEventListener('visibilitychange', onVisibility)
       document.removeEventListener('freeze', onFlush)
@@ -256,8 +326,13 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
     }
   }, [s, enabled])
 
-  // "This mount is a return": the page tree arrived by POP (Back, Forward, a reload, a tab restore).
-  const isReturn = !!enabled && navigationType === 'POP'
+  // "This mount is a return": the page tree arrived by POP (Back, Forward, a reload, a tab restore) — except
+  // the document's own first location when the document arrived by a fresh navigation (react-router's
+  // initial action is POP for every load, a typed URL included): a door's arrival hint is honoured there
+  // (rimpact-scrollmanager-built N6). Pages mount behind Protected's skeleton AFTER the first commit, so
+  // this reads the location, not the commit count.
+  const atFirstLocation = !s.firstLoc || s.firstLoc === commit
+  const isReturn = !!enabled && navigationType === 'POP' && !(atFirstLocation && documentArrivedFresh())
   return useMemo(() => ({ api, isReturn }), [api, isReturn])
 }
 
@@ -290,4 +365,12 @@ export function usePageScrollReturnAtMount() {
   const isReturn = useContext(ReturnContext)
   const [atMount] = useState(isReturn)
   return atMount
+}
+
+// For a page about to scroll on purpose (an outline or highlight it was asked to show): call the returned
+// function first, and a restore still pulling toward the old place stops for good instead of fighting it.
+// A stable no-op outside the provider.
+export function usePageScrollYield() {
+  const api = useContext(ClaimContext)
+  return useCallback(() => { if (api && api.yieldScroll) api.yieldScroll() }, [api])
 }

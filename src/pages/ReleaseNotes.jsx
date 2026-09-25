@@ -5,6 +5,7 @@
 import React, { useEffect, useState } from 'react'
 import { P } from '../lib/constants.js'
 import { writeSeen } from '../lib/whatsNew.js'
+import { trackRequest } from '../lib/netActivity.js'
 
 // Pure + testable: newest-first list -> the most recent n entries.
 export function latestReleases(list, n = 10) {
@@ -27,7 +28,10 @@ export default function ReleaseNotes() {
     const timer = controller ? setTimeout(() => controller.abort(), RELEASES_FETCH_TIMEOUT_MS) : null
     setErr(null)
     setReleases(null)
-    fetch('/releases.json', { cache: 'no-cache', signal: controller ? controller.signal : undefined })
+    // BUG-DETAILPAGESCARRYSCROLL-001: this page's content is a plain fetch, not an API call, so it reports
+    // itself to the page-scroll manager's in-flight count (src/lib/netActivity.js) — a Back restore waits
+    // for it rather than taking the loading line as the page's final height.
+    trackRequest(fetch('/releases.json', { cache: 'no-cache', signal: controller ? controller.signal : undefined })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(d => {
         if (!on) return
@@ -38,7 +42,7 @@ export default function ReleaseNotes() {
         writeSeen(newest)
       })
       .catch(e => { if (on) setErr(e && e.name === 'AbortError' ? 'timeout' : e.message) })
-      .then(() => { if (timer) clearTimeout(timer) })
+      .then(() => { if (timer) clearTimeout(timer) }))
     return () => { on = false; if (timer) clearTimeout(timer) }
   }, [attempt])
 

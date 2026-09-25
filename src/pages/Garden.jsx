@@ -58,6 +58,19 @@ import { restoreStep, hasRestoreTarget } from '../lib/scrollRestore.js'
 // survives the tab's unmount/remount).
 let lastGardenScrollY = 0
 
+// BUG-DETAILPAGESCARRYSCROLL-001 — does the history still show Garden? Its own URL, or, under a route
+// overlay, the page beneath it, which OverlayContext keeps as the entry's `background` (InventoryDetail's
+// historyEntryShows, the same shape check as validBackground). Read LIVE from window.history, never from
+// the render's location: react-router writes the next entry in the click, long before the commit that
+// unmounts this page, and the unmount's passive cleanup runs later still. Garden's own same-page writes
+// (?add / ?edit strips, the editor's close) keep the path, so they still show Garden.
+function historyShowsGarden() {
+  try {
+    const bg = window.history.state?.usr?.background
+    return (bg && typeof bg.pathname === 'string' ? bg.pathname : window.location.pathname) === '/garden'
+  } catch { return true }
+}
+
 // BUG-SILENTFAILSWEEP-001 — names the undo's OWN resulting state. A failed undo leaves the planting
 // ARCHIVED (hidden from this list), which is the opposite of what the tap asked for; the strip's
 // success copy ("Archived <name>") describes the same state but as an accomplishment, so reusing it
@@ -116,12 +129,20 @@ export default function Garden() {
   // gone. Same rule useScrollRestore keeps: writes are closed until the restore resolves, and a visit left
   // before it resolved keeps the old spot. Garden claims its entry from the manager only when it has a
   // spot to restore; at 0 the manager owns the entry like any other page's.
+  //
+  // THE DEPARTURE HALF (qa-scrollmanager-built BLOCKING): leaving Garden, the manager zeroes the scroll for
+  // the next page, and that zero's scroll event can reach this listener before React's passive cleanup has
+  // removed it — measured in real Chrome, garden-tab-4x red 2 of 32 at 4x CPU and garden-tab 9 of 12 at 8x,
+  // each time "Garden came back at y0". So the recorder also files nothing once the history no longer shows
+  // Garden (historyShowsGarden above): by then the offset belongs to the next page.
   const [spotY] = useState(() => lastGardenScrollY)
   const [spotEntry] = useState(currentPageEntry)
   useClaimPageScroll(SCROLL_MANAGER_ENABLED && hasRestoreTarget(spotY) ? spotEntry : null)
   const spotWritesOpenRef = useRef(!SCROLL_MANAGER_ENABLED || !hasRestoreTarget(spotY))
   useEffect(() => {
-    const onScroll = () => { if (spotWritesOpenRef.current) lastGardenScrollY = window.scrollY }
+    const onScroll = () => {
+      if (spotWritesOpenRef.current && (!SCROLL_MANAGER_ENABLED || historyShowsGarden())) lastGardenScrollY = window.scrollY
+    }
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])

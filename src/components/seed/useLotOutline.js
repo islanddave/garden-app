@@ -11,6 +11,7 @@
 // view restored a scroll position, so Back to a list the user had scrolled does not yank them to the
 // lot the page was first opened on.
 import { useEffect, useRef, useState } from 'react'
+import { usePageScrollYield } from '../../hooks/usePageScrollManager.js'
 
 export const OUTLINE_MS = 2000
 
@@ -27,6 +28,10 @@ export function useLotOutline(highlight, { ready, skipArrival = false } = {}) {
   const firedRef = useRef(null)
   const id = highlight?.id != null ? String(highlight.id) : null
   const seq = highlight?.seq ?? 0
+  // BUG-DETAILPAGESCARRYSCROLL-001 (rimpact-scrollmanager-built N4): the outline scrolls on purpose — a row
+  // the add form just created, after its navigate(-1) — so a Back restore still pulling toward the old
+  // place stops for good first instead of yanking the page back from the row. A no-op outside the manager.
+  const yieldScroll = usePageScrollYield()
 
   useEffect(() => {
     if (!ready || !id) return
@@ -45,12 +50,13 @@ export function useLotOutline(highlight, { ready, skipArrival = false } = {}) {
     if (typeof document !== 'undefined') {
       const el = document.querySelector(`[data-lot-id="${shown.id}"]`)
       if (el && typeof el.scrollIntoView === 'function') {
+        yieldScroll()
         el.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
       }
     }
     const t = setTimeout(() => setShown(null), OUTLINE_MS)
     return () => clearTimeout(t)
-  }, [shown])
+  }, [shown, yieldScroll])
 
   return shown?.id ?? null
 }

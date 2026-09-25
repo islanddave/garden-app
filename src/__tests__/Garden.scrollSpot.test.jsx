@@ -8,13 +8,27 @@
 // files nothing until the restore has resolved; a visit left before that keeps the old spot. Garden also claims
 // its entry from the manager when it has a spot, so a Back into Garden is Garden's to restore.
 //
-// jsdom cannot race a commit against a frame, so the race is written out: the zero's scroll event is dispatched
-// between the mount and the restore's first frame. The real-Chrome half (1x and 4x CPU) is gate:page-scroll's
-// garden-tab and garden-tab-4x. Mocks as Garden.resumeGate.test.jsx.
+// THE DEPARTURE HALF (qa-scrollmanager-built BLOCKING): leaving Garden, the manager zeroes the scroll for the
+// NEXT page, and that zero's scroll event can reach Garden's recorder before React's passive cleanup removes
+// it — real Chrome, garden-tab-4x red 2/32 at 4x CPU, garden-tab 9/12 at 8x. The recorder now files nothing
+// once the history no longer shows Garden; the repro below (QA's, adopted) fails without that guard.
+//
+// jsdom cannot race a commit against a frame, so each race is written out: the zero's scroll event is
+// dispatched between the mount and the restore's first frame, or between the history write and the unmount.
+// The real-Chrome half (1x, 4x, 8x CPU) is gate:page-scroll's garden-tab and garden-tab-4x.
+//
+// FLAG-AWARE (rimpact-scrollmanager-built N2): the flag is mocked live, and the manager-OFF block pins today's
+// contract — Garden restores its last recorded spot on every mount and claims nothing — so a forward flag-off
+// build passes this file. Mocks as Garden.resumeGate.test.jsx.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, cleanup } from '@testing-library/react'
 
+const { flags } = vi.hoisted(() => ({ flags: { manager: true } }))
+vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  get SCROLL_MANAGER_ENABLED() { return flags.manager },
+}))
 vi.mock('react-router-dom', () => {
   const sp = new URLSearchParams()
   return {
@@ -50,13 +64,16 @@ const PLANTS = [{ id: 'p1', name: 'Sungold', project_id: 'a', status: 'growing',
 let claims
 let scrollCalls
 let frames
-const api = { claim: (entry) => { claims.push(entry); return () => {} } }
+const api = { claim: (entry) => { claims.push(entry); return () => {} }, yieldScroll: () => {} }
 const setY = (y) => Object.defineProperty(window, 'scrollY', { configurable: true, writable: true, value: y })
-// A scroll event at `y` — the user's, or the manager's zero landing a frame after the commit.
+// A scroll event at `y` — the user's, or the manager's zero landing a frame after a commit.
 const scrollEvent = (y) => act(() => { setY(y); window.dispatchEvent(new Event('scroll')) })
 const runFrames = (n) => act(() => { for (let i = 0; i < n; i++) { const due = frames; frames = []; due.forEach((cb) => cb()) } })
+// Garden's entry as BrowserRouter leaves it: its own URL and a router key.
+const onGarden = (key) => window.history.replaceState({ key }, '', '/garden')
 
 beforeEach(() => {
+  flags.manager = true
   claims = []
   scrollCalls = []
   frames = []
@@ -68,11 +85,11 @@ beforeEach(() => {
   window.scrollTo = vi.fn((a, b) => { const y = a && typeof a === 'object' ? a.top : b; scrollCalls.push(y); setY(y) })
   window.requestAnimationFrame = (cb) => { frames.push(cb); return frames.length }
   window.cancelAnimationFrame = () => {}
-  window.history.replaceState({ key: 'k-garden' }, '')
+  onGarden('k-garden')
 })
 afterEach(() => {
   cleanup()
-  window.history.replaceState(null, '')
+  window.history.replaceState(null, '', '/')
 })
 
 const mountGarden = async () => {
@@ -81,19 +98,22 @@ const mountGarden = async () => {
   await screen.findByText(/Log many/)
   return utils
 }
+// Land on Garden, let any restore resolve (the recorder opens), then scroll to `y`: the spot is now `y`.
+const setSpot = async (y) => {
+  const v = await mountGarden()
+  runFrames(25)
+  scrollEvent(y)
+  v.unmount()
+}
 
-describe('Garden\'s spot under the page-scroll manager', () => {
+describe('manager ON: Garden\'s spot', () => {
   it('the zero that opens Garden never becomes its spot, a visit left before the restore resolves keeps the spot, and Garden claims its entry', async () => {
-    // Visit 1: land (a spot of 0 or whatever an earlier test left is restored first), then scroll to 500.
-    let v = await mountGarden()
-    runFrames(25)                                       // any restore resolves; the recorder opens
-    scrollEvent(500)
-    v.unmount()
+    await setSpot(500)
 
     // Visit 2: Garden has a spot, so it claims its entry. The manager's zero lands BEFORE the restore's
     // first frame — the race — and the visit ends before the restore resolves.
     claims = []
-    v = await mountGarden()
+    let v = await mountGarden()
     expect(claims).toEqual(['k-garden'])
     scrollEvent(0)
     v.unmount()
@@ -114,14 +134,94 @@ describe('Garden\'s spot under the page-scroll manager', () => {
     expect(scrollCalls[0]).toBe(720)
   })
 
-  it('at the top, Garden claims nothing: the manager owns that entry like any other page\'s', async () => {
-    // Bring the spot to 0: land, resolve, scroll to the top.
+  // QA's repro, adopted. The Today tab has written its entry; the manager's zero for Today lands while
+  // Garden is still mounted (its passive cleanup has not run). Fails without the history guard: claims []
+  // and a restore to nothing, because the spot became 0.
+  it('LEAVING Garden: the next page\'s zero, landing before the unmount, never becomes the spot', async () => {
+    await setSpot(500)
     let v = await mountGarden()
-    runFrames(25)
-    scrollEvent(0)
+    runFrames(25)                                       // the restore resolves; the recorder is open
+    window.history.pushState({ key: 'k-today' }, '', '/today')
+    scrollEvent(0)                                      // the reset's event, cleanup not yet run
     v.unmount()
+    onGarden('k-garden-2')                              // the Garden tab again: a new entry
+    scrollCalls = []
     claims = []
     v = await mountGarden()
+    runFrames(3)
+    expect(claims).toEqual(['k-garden-2'])
+    expect(scrollCalls[0]).toBe(500)
+  })
+
+  it('control: the same visit with no late event keeps the spot too (the guard only drops the next page\'s event)', async () => {
+    await setSpot(500)
+    const v = await mountGarden()
+    runFrames(25)
+    window.history.pushState({ key: 'k-today' }, '', '/today')
+    v.unmount()
+    onGarden('k-garden-2')
+    scrollCalls = []
+    await mountGarden()
+    runFrames(3)
+    expect(scrollCalls[0]).toBe(500)
+  })
+
+  it('Garden\'s own same-page writes keep recording: a scroll after an ?add strip (a new key, the same path) is the spot', async () => {
+    await setSpot(300)
+    const v = await mountGarden()
+    runFrames(25)
+    window.history.replaceState({ key: 'k-garden-stripped' }, '', '/garden')   // the ?add strip's REPLACE
+    scrollEvent(640)
+    v.unmount()
+    scrollCalls = []
+    await mountGarden()
+    runFrames(3)
+    expect(scrollCalls[0]).toBe(640)
+  })
+
+  it('under a route overlay over Garden (the entry\'s background is /garden) the recorder still records, as today', async () => {
+    await setSpot(300)
+    const v = await mountGarden()
+    runFrames(25)
+    window.history.pushState({ key: 'k-search', usr: { background: { pathname: '/garden', key: 'k-garden' } } }, '', '/search')
+    scrollEvent(410)
+    v.unmount()
+    onGarden('k-garden')
+    scrollCalls = []
+    await mountGarden()
+    runFrames(3)
+    expect(scrollCalls[0]).toBe(410)
+  })
+
+  it('at the top, Garden claims nothing: the manager owns that entry like any other page\'s', async () => {
+    await setSpot(0)
+    claims = []
+    await mountGarden()
     expect(claims).toEqual([])
+  })
+})
+
+describe('manager OFF (the rollback bundle): today\'s contract', () => {
+  beforeEach(() => { flags.manager = false })
+
+  it('Garden restores its last recorded spot on every mount, and claims nothing', async () => {
+    await setSpot(500)
+    claims = []
+    scrollCalls = []
+    await mountGarden()
+    runFrames(3)
+    expect(scrollCalls[0]).toBe(500)
+    expect(claims).toEqual([])
+  })
+
+  it('the recorder files every scroll event, as before the manager (no history guard, no write closure)', async () => {
+    await setSpot(500)
+    const v = await mountGarden()
+    scrollEvent(260)                                    // before the restore resolves: today this IS the spot
+    v.unmount()
+    scrollCalls = []
+    await mountGarden()
+    runFrames(3)
+    expect(scrollCalls[0]).toBe(260)
   })
 })
