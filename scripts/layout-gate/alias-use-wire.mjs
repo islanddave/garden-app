@@ -18,7 +18,8 @@
 //
 // C scenarios: the taught name chose the planting, so the save must be followed by exactly the count.
 // N scenarios: it did not (the planting's own name, its crop, a strict match the taught name shadows, the
-// list failed to load), so nothing may be counted — N8 replays this morning's 13 saves by their own names.
+// list failed to load, the phrase split by Chrome), so nothing may be counted — N8 replays this morning's 13
+// saves by their own names.
 //
 // NON-VACUITY: --baseline <sha> serves src/** from that commit (HARNESS_BASELINE_SHA). Against
 // 7000a45d2f04eaa28bae6875cc4af94eda458115, the commit before the count existed, every C scenario must fail
@@ -76,6 +77,9 @@ const SCENARIOS = [
   { id: 'N5', door: 'taught "marzano" is inside 2 planting names', steps: ['marzano', { tap: 'San Marzano Roma' }, '1 count', '23 grams', 'next'], saves: 1, counted: {} },
   { id: 'N6', door: 'taught "rescue" is inside 6 planting names', steps: ['cherry rescue one', '1 count', '47 grams', 'next'], saves: 1, counted: {} },
   { id: 'N7', door: 'taught-name list failed to load', params: 'aliasFail=1', steps: ['cucumber one', '2 count', 'next'], saves: 0, counted: {}, anySaves: true },
+  // Chrome ends the session between the words: "cucumber" alone names the only cucumber strictly, so the
+  // taught name never reached the matcher whole. Saves the same row as "cucumber one" would, uncounted.
+  { id: 'N9', door: 'Chrome splits "cucumber" | "one" across sessions', steps: ['cucumber', 'one', '2 count', '126 grams', 'next'], saves: 1, counted: {} },
   {
     id: 'N8', door: 'this morning\'s 13 saves, by their own names',
     steps: [
@@ -241,6 +245,7 @@ function judge(s, { reqs, aliases, state }) {
   return {
     id: s.id, door: s.door, ok: problems.length === 0, problems,
     saves: saves.length, patches: patches.map(p => p.body?.used?.map(u => u.heard_key).join('+')),
+    rows: saves.map(v => `${v.body?.harvest?.quantity} ${v.body?.harvest?.unit}${v.body?.harvest?.weight != null ? ` · ${v.body.harvest.weight} ${v.body.harvest.weight_unit}` : ''} assumed ${JSON.stringify(v.body?.metadata?.assumed_units)}`),
     teaches: teaches.map(t => `${t.body?.heard_key}(${t.status})`), counted, banner: state.status, misses: state.misses,
   }
 }
@@ -268,6 +273,7 @@ try {
     out.results.push(r)
     console.log(`[alias-use-wire] ${r.ok ? 'PASS' : 'FAIL'} ${r.id.padEnd(3)} ${r.door}`)
     if (r.saves != null) console.log(`      saves ${r.saves} · PATCH ${JSON.stringify(r.patches)} · teach ${JSON.stringify(r.teaches)} · server hit_count ${JSON.stringify(r.counted)}`)
+    if (r.rows?.length && r.rows.length <= 2) console.log(`      saved: ${r.rows.join(' | ')}`)
     if (r.banner != null) console.log(`      banner: ${r.banner}`)
     for (const p of r.problems) console.log(`      ✗ ${p}`)
   }
