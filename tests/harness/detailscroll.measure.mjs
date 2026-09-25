@@ -472,5 +472,5 @@ try {
   harness?.kill('SIGKILL')
   try { rmSync(udd, { recursive: true, force: true }) } catch { /* best effort */ }
 }
-if (OUT) { writeFileSync(OUT, JSON.stringify({ at: new Date().toISOString(), viewport: [VW, VH], ms: MS, results }, null, 1)); console.log(`[detailscroll] wrote ${OUT}`) }
+if (OUT) { mkdirSync(dirname(OUT), { recursive: true }); writeFileSync(OUT, JSON.stringify({ at: new Date().toISOString(), viewport: [VW, VH], ms: MS, results }, null, 1)); console.log(`[detailscroll] wrote ${OUT}`) }
 if (results.some((r) => !r.ok)) process.exitCode = 1
