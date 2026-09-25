@@ -57,35 +57,42 @@ live keys, JWTs, Postgres URLs, email addresses and any coordinate that is not t
 and carries `--self-test`, which fires every matcher against a known positive built inside the file
 (never sampled from the corpus it guards) and exits 1 unless all of them fire.
 
-## The baseline, recorded 2026-09-24
+## The baseline, re-recorded 2026-09-25 in the pinned Roboto
 
 Real Chrome, CDP-emulated 426x836 `mobile:true` @ DPR 3 (page self-reports it), clock pinned to
-`2026-09-24T14:30Z` (10:30 ET), timezone `America/New_York`, Open-Meteo stubbed at the wire.
+`2026-09-24T14:30Z` (10:30 ET), timezone `America/New_York`, Open-Meteo stubbed at the wire, and
+the text laid out in `@fontsource-variable/roboto@5.3.0` by `../robotoPin.js` — the face Dave's
+Android renders, and the same glyphs on the Mac and on CI's runner. That is what lets the gate run
+in CI (V5-TODAYSHAPECI-001): the 2026-09-24 baseline was San Francisco geometry from this Mac.
 
 | state | scrollHeight | content ends | ink % | care rows | groups | expanded | Moist | Show more | controls | 1st control |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `busyfull` | **6,641px** (7.94 viewports) | y=6,602 | 53.5 | 66 | 9 | 1 | 20 | 1 | 285 | y=668 |
-| `busy` | 6,138px (7.34) | y=6,099 | 53.5 | 66 | 9 | 1 | 20 | 1 | 282 | y=456 |
-| `quiet` | 836px (1.00) | y=510 | 29.8 | 0 | 0 | 0 | 0 | 0 | 1 | y=478 |
-| `noplan` | 836px (1.00) | y=325 | 21.4 | 0 | 0 | 0 | 0 | 0 | 1 | y=294 |
+| `busyfull` | **6,620px** (7.92 viewports) | y=6,580 | 54.5 | 66 | 9 | 1 | 20 | 1 | 285 | y=666 |
+| `busy` | 6,118px (7.32) | y=6,078 | 54.4 | 66 | 9 | 1 | 20 | 1 | 282 | y=454 |
+| `quiet` | 836px (1.00) | y=508 | 29.7 | 0 | 0 | 0 | 0 | 0 | 1 | y=476 |
+| `noplan` | 836px (1.00) | y=324 | 21.3 | 0 | 0 | 0 | 0 | 0 | 1 | y=293 |
+
+The same page in San Francisco (the 2026-09-24 budget) measured 6,641 / 6,138 / 836 / 836, content
+ending at 6,602 / 6,099 / 510 / 325: every count is identical, only glyph geometry moved. The budget
+records the font build it was measured in, and the gate refuses to compare across builds.
 
 Two things these numbers say about the page, read off the record rather than argued: the length cap
 (V5-TODAYCAP-001) holds the lead group (Bag Area, 143 care rows) to 66 rendered rows — the 20
 longest-waiting water rows (20 Moist buttons) plus 46 feed/check/protect rows, which the cap does not
 touch; and on `busyfull` the four ambient weather lines push the care list down by 212px, so it
-starts at y=668 of the 836px first screen instead of y=456.
+starts at y=666 of the 836px first screen instead of y=454.
 
 ### Two numbers the harness cannot see, printed anyway
 
 The harness mounts `Today` alone. Production adds TopChrome (`BAR_H`, 52px) and BottomNav
 (`BOTTOM_NAV_HEIGHT_PX`, 56px), both read from source by the gate, so only 728px of the 836px window
-ever shows page content — `busyfull` is **9.27 usable-window-heights**, not 7.94. Printed on every run.
+ever shows page content — `busyfull` is **9.24 usable-window-heights**, not 7.92. Printed on every run.
 
 ### `scrollHeight` is clamped, and the floor that is not
 
 A document is never shorter than the viewport, so on `quiet` and `noplan` (both exactly 836px) a
 scroll-height floor is **vacuous** — a completely blank page satisfies it. That is why the gate also
-records `contentBottom`, the y of the last row on which anything paints (510 and 325). That is the
+records `contentBottom`, the y of the last row on which anything paints (508 and 324). That is the
 floor that bites on the short states.
 
 ## Re-running
