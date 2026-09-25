@@ -178,6 +178,59 @@ describe('CropCard — SHU chip labels an estimate (V5-SEEDCARDS-001)', () => {
   })
 })
 
+// The determinacy pill (the V4-VARSLUG-001 spec chip) as it actually paints. Until 2026-09-25 this card
+// printed a bean's whole growth_habit as a three-line dark-green pill (146 live non-tomato cards on
+// prod). Prose below is live prod growth_habit; the formatter's own cases live in varietySpec.test.js.
+describe('CropCard — the determinacy pill is a determinacy word or absent', () => {
+  // Spec chips are CropCard's own 999px pills; the facet TagChip row is inert here (no tags API).
+  const pills = container => [...container.querySelectorAll('span')].filter(s => s.style.borderRadius === '999px')
+  const card = variety_ref => render(<CropCard planting={{ id: 'p', variety_ref }} />)
+
+  it('a bean with a long growth_habit gets no pill, and the rest of the card still paints', () => {
+    const { container } = card({
+      name: 'Contender', crop_type_slug: 'bean', days_to_maturity_min: 50, days_to_maturity_max: 50,
+      growth_habit: 'Compact bush plant ~18-24 in tall, self-supporting; heavy sets of round, meaty, medium-green stringless snap pods ~6 in long. Early and heat-tolerant.',
+    })
+    expect(screen.getByText('50 days')).toBeTruthy() // the card rendered, so "no pill" below is not vacuous
+    expect(pills(container)).toEqual([])
+    expect(screen.queryByText(/Compact bush plant/i)).toBeNull()
+  })
+
+  it('a pepper whose prose says semi-vining gets no Semi-determinate pill', () => {
+    const { container } = card({
+      name: 'Sugar Rush Peach', crop_type_slug: 'pepper', days_to_maturity_min: 90, days_to_maturity_max: 90,
+      growth_habit: 'vigorous bushy semi-vining, 4-5 ft tall; pendant elongated 3 in peachy-orange pods; prolific branching habit',
+    })
+    expect(screen.getByText('90 days')).toBeTruthy()
+    expect(pills(container)).toEqual([])
+    expect(screen.queryByText('Semi-determinate')).toBeNull()
+  })
+
+  it('a tomato whose prose says indeterminate keeps its Indeterminate pill', () => {
+    const { container } = card({
+      name: '1884', crop_type_slug: 'tomato', days_to_maturity_min: 78, days_to_maturity_max: 85,
+      growth_habit: 'indeterminate vine; 5-7 ft; stake or cage required',
+    })
+    expect(pills(container).map(s => s.textContent)).toEqual(['Indeterminate'])
+  })
+
+  it('Rosso Sicilian reads its leading term, not the hedge in brackets', () => {
+    const { container } = card({
+      name: 'Rosa Sicilian', crop_type_slug: 'tomato',
+      growth_habit: 'indeterminate vine (semi-determinate per some sources); deeply ribbed costoluto-type; 5-6 ft; stake or cage required',
+    })
+    expect(pills(container).map(s => s.textContent)).toEqual(['Indeterminate'])
+  })
+
+  it('a pepper keeps its SHU pill alone when its prose names no determinacy', () => {
+    const { container } = card({
+      name: 'Habanero', crop_type_slug: 'pepper', scoville_min: 100000, scoville_max: 350000,
+      growth_habit: 'sturdy productive bushy, 2-3 ft tall; massive blocky 4-lobed fruit 4-6 in wide and long, thick-walled; may need staking',
+    })
+    expect(pills(container).map(s => s.textContent)).toEqual(['100K–350K SHU'])
+  })
+})
+
 // V4-MATURITYREPEAT-001 (BD-024) — the maturity band as it actually paints for the row this item
 // was filed against. computeMaturity() is called with no `today` here, so the clock is pinned:
 // only `Date` is faked, leaving testing-library's own timers alone.
