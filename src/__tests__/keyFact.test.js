@@ -34,6 +34,34 @@ describe('selectKeyFact — priority cascade', () => {
     expect(selectKeyFact(pl)).toBe('60 days')
   })
 
+  // Prod rows (plants Lambda variety_ref, 2026-09-25). Rung 2 used to return any habit that did not START
+  // with determ/indeterm whole, capitalised, into a nowrap pill: these two live tomatoes-by-name wore
+  // 43 and 113 characters of prose. No determinacy word now means the next rung, here their days.
+  it('(2) prose with no determinacy word is never the pill: the two tomatillo sentences fall through', () => {
+    const blushProse = 'bushy upright; 3-5 in jalapeño-size fruit, compact productive plants; simultaneous green/purple/red fruit display'
+    const blush = { name: 'Purple Blush Tomatillo', variety_ref: { name: 'Purple blush', crop_type_slug: 'tomatillo',
+      days_to_maturity_min: 70, days_to_maturity_max: 75, sun_requirements: 'full_sun', growth_habit: blushProse } }
+    const pineapple = { name: 'Pineapple Tomatillo', variety_ref: { name: 'Pineapple Tomatillo', crop_type_slug: 'tomatillo',
+      days_to_maturity_min: 75, days_to_maturity_max: 90, sun_requirements: 'full_sun',
+      growth_habit: 'low sprawling/bushy, 12-24 in; husked fruit' } }
+    expect(selectKeyFact(blush)).toBe('70–75 days')
+    expect(selectKeyFact(pineapple)).toBe('75–90 days')
+    // With nothing further down the ladder the pill is absent, not the prose.
+    expect(selectKeyFact({ name: 'Purple Blush Tomatillo', variety_ref: { growth_habit: blushProse } })).toBeNull()
+  })
+
+  // Live prose that does not open with the word (Celebrity, Cherry Falls, Rosa Sicilian cultivars). The
+  // old test printed the first two whole; leftmost-term wins, as on the CropCard pill and the facet chip.
+  it('(2) the determinacy word is read wherever it sits in the prose, leftmost first', () => {
+    const tomato = (growth_habit) => ({ name: 'Test Tomato', variety_ref: { crop_type_slug: 'tomato', growth_habit,
+      days_to_maturity_min: 70, days_to_maturity_max: 75 } })
+    expect(selectKeyFact(tomato('semi-determinate bush, 4-5 ft'))).toBe('Semi-determinate')
+    expect(selectKeyFact(tomato('trailing/cascading determinate; 24-36 in spreading; bred for hanging baskets and containers; no staking required'))).toBe('Determinate')
+    expect(selectKeyFact(tomato('indeterminate vine (semi-determinate per some sources); deeply ribbed costoluto-type; 5-6 ft; stake or cage required'))).toBe('Indeterminate')
+    // "semi-" alone is not a determinacy class.
+    expect(selectKeyFact(tomato('semi-compact bush'))).toBe('70–75 days')
+  })
+
   it('(3) DTM window for a non-pepper/non-tomato crop', () => {
     expect(selectKeyFact({ variety_ref: { name: 'Basil', days_to_maturity_min: 50, days_to_maturity_max: 70 } })).toBe('50–70 days')
   })

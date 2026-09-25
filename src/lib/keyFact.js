@@ -7,11 +7,11 @@
 // is sparse and heterogeneous, so any missing/garbage field must degrade to "skip", never throw.
 //
 // "dependency-free" above is now two imports short of literal: V4-CONSUMABLECLASS-001 (BD-042) added
-// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing, and the sun rung reads
-// lib/varietySpec.js's sunLabel, which imports nothing either. The property that mattered — no React,
-// no network, no clock, unit-testable in isolation — is intact.
+// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing, and the determinacy
+// and sun rungs read lib/varietySpec.js (determinacyLabel, sunLabel), which imports nothing either. The
+// property that mattered — no React, no network, no clock, unit-testable in isolation — is intact.
 import { plantingIsHarvestTracked } from './harvestTracked.js'
-import { sunLabel } from './varietySpec.js'
+import { determinacyLabel, sunLabel } from './varietySpec.js'
 
 // Lower-cased crop-family signal used by both the key-fact cascade and the no-photo fallback
 // glyph picker. Pulls from variety type/group + the planting's own name as a last resort.
@@ -81,7 +81,7 @@ function attr(planting, key) {
 
 // selectKeyFact — priority cascade, FIRST non-null wins. Returns a short display string or null.
 //   (1) pepper -> "{N} SHU"   (when an SHU value is available)
-//   (2) tomato -> "Determinate" / "Indeterminate"   (growth_habit)
+//   (2) tomato -> "Indeterminate" / "Determinate" / "Semi-determinate"   (growth_habit)
 //   (3) DTM    -> "{min}–{max} days"
 //   (4) sun    -> short sun requirement
 //   (5) null
@@ -97,16 +97,14 @@ export function selectKeyFact(planting) {
     }
   }
 
-  // (2) Tomato determinacy.
+  // (2) Tomato determinacy: one of the three words, or on to the next rung — never the prose. Until
+  // 2026-09-25 a habit that did not START with determ/indeterm came back whole, capitalised, so two
+  // live tomatillos wore a sentence in this nowrap pill (the longest 113 characters, "Bushy upright;
+  // 3-5 in jalapeño-size fruit, …") and "semi-determinate, …" printed in full. determinacyLabel is the
+  // CropCard pill's reader, so the hero and the card name the same class.
   if (isTomato(planting)) {
-    const gh = attr(planting, 'growth_habit')
-    if (typeof gh === 'string' && gh.trim()) {
-      const g = gh.trim().toLowerCase()
-      if (g.startsWith('indeterm')) return 'Indeterminate'
-      if (g.startsWith('determ')) return 'Determinate'
-      // Unknown habit string: surface a capitalized form rather than dropping it.
-      return gh.trim().charAt(0).toUpperCase() + gh.trim().slice(1)
-    }
+    const det = determinacyLabel({ growth_habit: attr(planting, 'growth_habit') })
+    if (det) return det
   }
 
   // (3) Days to maturity window.
