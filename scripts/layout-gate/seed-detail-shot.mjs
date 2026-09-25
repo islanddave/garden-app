@@ -66,6 +66,15 @@
 //       all. The saved lot's form carries the seed fields (Seed count, the counted/estimated switch,
 //       Weight (g), All used up) and the bought packet's does not — the instrument check counts both, so
 //       (b)'s census and (g)'s reach below are measuring the new controls, not passing over their absence.
+//   (l) A TYPO NEVER ERASES A COUNT (review BLOCKING-1, 2026-09-25), its own state at every viewport, on the
+//       saved lot (175 counted): the Seed count box is tapped for real, cleared, and "175-" is typed as key
+//       events; then "Save changes" is tapped for real. A `type="number"` box turns "175-" into value ""
+//       (badInput) with no message, and the page then SAVED a cleared count — PUT /seed-measure
+//       {seed_count:null, seed_count_estimated:null} under a "✓ Saved" toast. Required: the box still holds
+//       "175-"; NOTHING was written (no wide PUT, no /seed-measure — the harness records every write); the
+//       refusal "That is not a number." is inside the Seed count field as role="alert"; the packet card
+//       still reads "175 seeds"; no "Saved" toast. Where the refusal sits relative to the visible band
+//       after the Save tap is printed, not asserted.
 //
 // THE INSTRUMENT CHECK comes first, and a mismatch stops that state before any invariant is read: the
 // page must self-report the viewport it was asked for (trap 1), must have raised no error, must still be
@@ -632,6 +641,118 @@ async function removeRefused(vw, vh) {
   console.log(`[seed-detail] ${at}: dialog y${m.dialog.box.t}-${m.dialog.box.b} · reason ${e.box.w}x${e.box.h}px at y${e.box.t}-${e.box.b}, ${e.gapToButtons}px above the buttons · Remove ${m.confirm?.h}px · Keep it ${m.keep?.h}px · DELETEs ${m.deletes}`)
 }
 
+// ── (l) A TYPO NEVER ERASES A COUNT — review BLOCKING-1 ──────────────────────────────────────────────
+// Real key events into the real box, then a real tap on Save, against the saved lot (the f2 fixture,
+// 175 hand-counted). The defect was a `type="number"` box: "175-" is badInput, its value reads "", and a
+// blank count is the page's CLEAR — so a one-key slip erased the stored count and said "✓ Saved".
+const COUNT_BOX = `document.querySelector('${tid('inv-seed-count')}')`
+const SAVE_BUTTON = `[...document.querySelectorAll('button[type="submit"]')].find(b => (b.textContent || '').trim() === 'Save changes') || null`
+const TYPO = '175-'
+const SAVED_COUNT_WORDS = '175 seeds'
+async function pressKey(key, code, vk) {
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: vk }, cdp.sessionId)
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk }, cdp.sessionId)
+}
+async function typeText(text) {
+  for (const ch of text) {
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, text: ch, unmodifiedText: ch }, cdp.sessionId)
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch }, cdp.sessionId)
+  }
+}
+const MEASURE_TYPO = `(() => {
+  const d = document, w = window
+  const R = n => Math.round(n * 10) / 10
+  const n = ${COUNT_BOX}
+  const err = n && n.id ? d.getElementById(n.id + '-error') : null
+  const fact = [...d.querySelectorAll('${tid('packet-fact')}')].find(f => f.getAttribute('data-fact') === 'count') || null
+  const top = d.querySelector('header[data-app-chrome="top"]'), nav = d.querySelector('nav[aria-label="Main navigation"]')
+  const bandTop = top ? top.getBoundingClientRect().bottom : 0, bandBottom = nav ? nav.getBoundingClientRect().top : w.innerHeight
+  const er = err ? err.getBoundingClientRect() : null
+  return {
+    vw: w.innerWidth, vh: w.innerHeight,
+    field: n ? { type: n.getAttribute('type'), value: n.value, badInput: !!(n.validity && n.validity.badInput),
+      invalid: n.getAttribute('aria-invalid') } : null,
+    error: err ? { role: err.getAttribute('role'), text: (err.textContent || '').replace(/\\s+/g, ' ').trim(),
+      besideField: err.parentElement === n.parentElement, t: R(er.top), b: R(er.bottom),
+      inBand: er.top >= bandTop - 0.5 && er.bottom <= bandBottom + 0.5,
+      inViewX: er.left >= -0.5 && er.right <= w.innerWidth + 0.5 } : null,
+    fact: fact && fact.children[1] ? (fact.children[1].textContent || '').trim() : null,
+    writes: w.__h ? w.__h.writes() : null,
+    toasts: [...d.querySelectorAll('[role="status"]')].map(t => (t.textContent || '').trim()).filter(Boolean),
+    leftPage: !!d.querySelector('[data-testid="harness-left-page"]'),
+    errors: w.__h ? w.__h.errors() : ['window.__h missing'],
+    band: { top: R(bandTop), bottom: R(bandBottom) },
+  }
+})()`
+
+async function countTypo(vw, vh) {
+  const at = `count-typo@${vw}x${vh}`
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: vw, height: vh, deviceScaleFactor: 2, mobile: true }, cdp.sessionId)
+  const url = `http://localhost:${PORT}/tests/harness/seeddetail.html?case=f2&topbar=${TOP_CHROME_PX}&vp=${vw}x${vh}-typo&verdict=0`
+  const nav = await cdp.send('Page.navigate', { url }, cdp.sessionId)
+  if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
+  await sleep(200)
+  await evalSettled(`(async()=>{for(let i=0;i<200;i++){if(window.__h&&window.__h.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('harness never reached ready() on the count typo')})()`)
+  await evalSettled('document.fonts ? document.fonts.ready.then(() => 1) : 1')
+  if (!await evalSettled('window.__h.arrived()')) return fail(`${at}: the page never arrived — nothing to measure`)
+  if (MUTATE_CSS) {
+    await evalSettled(`(() => { const st = document.createElement('style'); st.textContent = ${JSON.stringify(MUTATE_CSS)}; document.head.appendChild(st); return 1 })()`)
+  }
+  await waitSettled('true', 2000)
+  // INSTRUMENT CHECK: the saved lot, its stored count on the card and in the box, nothing written yet.
+  const m0 = await evalSettled(MEASURE_TYPO)
+  if (m0.vw !== vw || m0.vh !== vh) return fail(`${at}: page self-reports ${m0.vw}x${m0.vh} — emulation did not take`)
+  if (m0.errors.length) return fail(`${at}: the page raised ${m0.errors.length} error(s): ${m0.errors.join(' | ')}`)
+  if (!m0.field) return fail(`${at}: (l) no Seed count box on the saved lot — nothing to type into`)
+  if (m0.fact !== SAVED_COUNT_WORDS || m0.field.value !== '175') return fail(`${at}: (l) the fixture's count did not load (card "${m0.fact}", box "${m0.field.value}"), expected "${SAVED_COUNT_WORDS}" / "175"`)
+  if (!Array.isArray(m0.writes)) return fail(`${at}: (l) the harness records no writes (window.__h.writes missing) — "nothing was sent" would be vacuous`)
+  if (m0.writes.length) return fail(`${at}: (l) ${m0.writes.length} write(s) before anything was typed: ${m0.writes.map((x) => `${x.method} ${x.path}`).join(', ')}`)
+
+  // Tap the box for real, select what it holds, clear it, and type the slip as key events.
+  const why = await tap(COUNT_BOX, 'the Seed count box')
+  if (why) return fail(`${at}: (l) ${why}`)
+  const focused = await evalSettled(`(() => { const n = ${COUNT_BOX}; if (!n || document.activeElement !== n) return false; n.select(); return true })()`)
+  if (!focused) return fail(`${at}: (l) tapping the Seed count box did not focus it`)
+  await pressKey('Backspace', 'Backspace', 8)
+  await typeText(TYPO)
+  const m1 = await evalSettled(MEASURE_TYPO)
+
+  // Save, a real tap, then settle on whichever happens: the refusal beside the field, or a "Saved" toast.
+  const why2 = await tap(SAVE_BUTTON, '"Save changes"')
+  if (why2) return fail(`${at}: (l) ${why2}`)
+  if (!await waitSettled(`(() => { const n = ${COUNT_BOX}; return (!!n && !!document.getElementById(n.id + '-error')) || [...document.querySelectorAll('[role="status"]')].some(e => /Saved/.test(e.textContent || '')) })()`, 8000)) {
+    return fail(`${at}: (l) after Save neither a refusal beside the Seed count nor a "Saved" toast appeared`)
+  }
+  await sleep(400)   // a late write must not escape the read below
+  const m = await evalSettled(MEASURE_TYPO)
+
+  if (m.leftPage) return fail(`${at}: (l) the page LEFT after Save`)
+  if (!m1.field) return fail(`${at}: (l) the Seed count box went away while typing`)
+  if (m1.field.value !== TYPO) fail(`${at}: (l) the box holds "${m1.field.value}" after typing "${TYPO}" (type="${m1.field.type}", badInput=${m1.field.badInput}) — the stray character was discarded and the field reads as blank, which this page saves as a CLEARED count`)
+  const measureWrites = m.writes.filter((x) => /\/seed-measure$/.test(x.path))
+  if (measureWrites.length) fail(`${at}: (l) Save wrote PUT /seed-measure ${measureWrites.map((x) => x.body).join(' + ')} — a typo reached the count`)
+  const otherWrites = m.writes.filter((x) => !/\/seed-measure$/.test(x.path))
+  if (otherWrites.length) fail(`${at}: (l) Save sent ${otherWrites.map((x) => `${x.method} ${x.path}`).join(', ')} — a refused form must send nothing`)
+  if (m.fact !== SAVED_COUNT_WORDS) fail(`${at}: (l) the packet card reads "${m.fact}" after Save, expected it to still read "${SAVED_COUNT_WORDS}"`)
+  if (m.toasts.some((t) => /Saved/.test(t))) fail(`${at}: (l) a "Saved" toast showed for a refused count: ${m.toasts.join(' | ')}`)
+  const e = m.error
+  if (!e) fail(`${at}: (l) no refusal beside the Seed count — the page said nothing about "${TYPO}"`)
+  else {
+    if (e.role !== 'alert') fail(`${at}: (l) the refusal is not role="alert" (it is ${JSON.stringify(e.role)})`)
+    if (!e.text.includes('That is not a number.')) fail(`${at}: (l) the refusal reads "${e.text}", expected it to say "That is not a number."`)
+    if (!e.besideField) fail(`${at}: (l) the refusal is not inside the Seed count field`)
+    if (!e.inViewX) fail(`${at}: (l) the refusal is painted outside the ${vw}px width`)
+  }
+  if (m.field && m.field.value !== TYPO) fail(`${at}: (l) after Save the box holds "${m.field.value}", expected the typed "${TYPO}" still there to correct`)
+
+  // Evidence: the refused field, scrolled into view.
+  if (await evalSettled(`(() => { const n = ${COUNT_BOX}; if (!n) return false; n.scrollIntoView({ block: 'center' }); return true })()`)) {
+    await waitSettled('true', 3000)
+    shots.push(await shoot(join(OUTDIR, `seed-detail-count-typo-${vw}x${vh}.png`)))
+  }
+  console.log(`[seed-detail] ${at}: typed "${TYPO}" -> box "${m1.field.value}" (type=${m1.field.type}, badInput=${m1.field.badInput}) · after Save: ${m.writes.length} write(s), card "${m.fact}", refusal ${e ? `"${e.text}" at y${e.t}-${e.b} (${e.inBand ? 'in' : 'OUTSIDE'} the visible band y${m.band.top}-${m.band.bottom} after the Save tap)` : 'ABSENT'}, toasts [${m.toasts.join(' | ')}]`)
+}
+
 let harness, chrome
 const udd = mkdtempSync(join(tmpdir(), 'gate-seeddetail-'))
 const shots = []
@@ -874,6 +995,7 @@ try {
     }
   }
   for (const [vw, vh] of VIEWPORTS) await removeRefused(vw, vh)
+  for (const [vw, vh] of VIEWPORTS) await countTypo(vw, vh)
 } catch (err) {
   fail(`gate could not complete: ${err.message}`)
 } finally {

@@ -50,7 +50,8 @@
 //   · the F2 lot is COUNTED (seed_count 175, hand-counted) and holds one jar (quantity_on_hand 1), so the
 //     gate's (k) reads "Seed count: 175 seeds" as the packet card's first fact and measures the saved
 //     lot's form — Seed count, the counted/estimated switch, Weight (g), All used up — where the bought
-//     packet, which measured nothing, shows no count fact and keeps Qty on hand / Unit.
+//     packet, which measured nothing, shows no count fact and keeps Qty on hand / Unit. The gate's (l)
+//     types "175-" into that Seed count box and presses Save; `writes()` is how it sees what was sent.
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
@@ -173,11 +174,15 @@ const json = (body, status = 200) => Promise.resolve(new Response(JSON.stringify
 const hits = {}
 const posts = []
 const unstubbed = []
+// Every write the page sends, in order — method, path and body as sent. The gate's (l) reads it to prove
+// a refused Seed count sends NOTHING: no wide PUT and no /seed-measure.
+const writes = []
 window.fetch = (url, opts = {}, ...rest) => {
   const u = String(url)
   const method = (opts.method || 'GET').toUpperCase()
   const hit = (k, body, status) => { hits[k] = (hits[k] ?? 0) + 1; return json(body, status) }
   if (!u.includes('/api/')) return realFetch(url, opts, ...rest)
+  if (method !== 'GET') writes.push({ method, path: u.replace(location.origin, ''), body: opts.body ?? null })
   if (u.includes('/api/photos/view-url/')) return hit('view-url', { view_url: PACKET.featured_photo_view_url, expires_in: 900, tier: 'full' })
   // The sow: PlantingEditor's create. The row it answers is what the page's "See the planting" links to.
   if (method === 'POST' && /\/api\/plants(\?|$)/.test(u)) {
@@ -275,6 +280,7 @@ async function run() {
     errors: () => [...errors],
     hits: () => ({ ...hits }),
     posts: () => posts.map((p) => ({ ...p })),
+    writes: () => writes.map((w) => ({ ...w })),
     unstubbed: () => [...unstubbed],
     refusal: () => (REMOVE_REFUSES ? REFUSAL : null),
     fixture: () => ({ case: CASE, itemId: ITEM_ID, name: ITEMS[ITEM_ID].name, sownFrom: ITEMS[ITEM_ID].sown_from.length }),

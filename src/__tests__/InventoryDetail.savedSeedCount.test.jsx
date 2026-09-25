@@ -193,8 +193,10 @@ describe('the form — a saved lot edits its seed, not the jar', () => {
   it('Seed count (with the shared switch), Weight (g) and All used up replace Qty on hand / Unit', async () => {
     await renderPage({ ...SAVED, seed_weight_g: '3.200' })
     expect(countField().value).toBe('175')
-    expect(countField().getAttribute('type')).toBe('number')
-    expect(countField().getAttribute('step')).toBe('1')
+    // TEXT with a numeric keypad, never type="number" — see 'a typo never erases a count' below.
+    // (Asserted `number` / step 1 until the review's BLOCKING-1; changed on purpose.)
+    expect(countField().getAttribute('type')).toBe('text')
+    expect(countField().getAttribute('inputmode')).toBe('numeric')
     expect(document.querySelector('label[for="inv-seed-count"]').textContent).toMatch(/^Seed count/)
     expect(basis().getAttribute('aria-checked')).toBe('false')
     expect(weightField().value).toBe('3.2')
@@ -386,6 +388,167 @@ describe('the save — PUT /seed-measure only on a change, keyed by presence', (
     expect(itemGets()).toBe(1)
     expect(screen.getByText('✓ Saved')).toBeTruthy()
     expect(isReloadBlocked()).toBe(false)
+  })
+})
+
+// ── Review BLOCKING-1 (2026-09-25) — a one-key slip ERASED a stored count ─────────────────────────────
+// The box was type="number". "175-", "175e", "1-", "--5", "17-5" are badInput there: the value reads ""
+// (Chrome, and jsdom sanitizes the same way), no message shows, and blank is this field's CLEAR — so Save
+// sent PUT /seed-measure {seed_count: null, seed_count_estimated: null} and said "✓ Saved". Reproduced in
+// real Chrome by the reviewer, and by gate:seed-detail (l) against that build. As text, the typed string
+// reaches parseSeedCount whole and is refused. Each case here ALSO fails against the old number box: the
+// change event hands jsdom "175-", the number box keeps "", and the save goes through as a clear.
+describe('a typo never erases a count (review BLOCKING-1)', () => {
+  it.each(['175-', '175e', '1-', '--5', '17-5'])('"%s" is kept as typed, refused beside the field, and sends NOTHING', async (typed) => {
+    await renderPage(SAVED)
+    type(countField(), typed)
+    expect(countField().value, 'the box discarded what was typed').toBe(typed)
+    await save()
+    expect(updateItemSpy).not.toHaveBeenCalled()
+    expect(measurePuts()).toEqual([])
+    const alert = document.getElementById(`${countField().id}-error`)
+    expect(alert, 'no refusal beside the Seed count').toBeTruthy()
+    expect(alert.getAttribute('role')).toBe('alert')
+    expect(alert.textContent).toContain('That is not a number.')
+    // The stored count is untouched, and what was typed is still there to correct, still unsaved.
+    expect(factRows()[0]).toEqual(['Seed count', '175 seeds'])
+    expect(countField().value).toBe(typed)
+    expect(isReloadBlocked()).toBe(true)
+  })
+
+  it.each([
+    ['1e3', 'That is not a number.'],
+    ['0x1A', 'That is not a number.'],
+    ['+5', 'That is not a number.'],
+    ['1,000', 'That is not a number.'],
+    ['5.0', 'A seed count is a whole number of seeds.'],
+    ['-0', 'A count cannot be negative.'],
+  ])('"%s" is not a count either — digits only (Number() would have read some of these as counts)', async (typed, words) => {
+    await renderPage(SAVED)
+    type(countField(), typed)
+    await save()
+    expect(updateItemSpy).not.toHaveBeenCalled()
+    expect(measurePuts()).toEqual([])
+    expect(document.getElementById(`${countField().id}-error`).textContent).toContain(words)
+  })
+
+  it('digits with spaces round them are a count; spaces alone are blank, which CLEARS it, as designed', async () => {
+    const { unmount } = await renderPage(SAVED)
+    type(countField(), ' 0180 ')
+    await save()
+    expect(measurePuts()).toEqual([{ seed_count: 180, seed_count_estimated: false }])
+    unmount()
+    fetchSpy.mockClear(); updateItemSpy.mockClear()
+    await renderPage(SAVED)
+    type(countField(), '   ')
+    await save()
+    expect(measurePuts()).toEqual([{ seed_count: null, seed_count_estimated: null }])
+    await waitFor(() => expect(factRows()[0]).toEqual(['Seed count', 'Not counted yet']))
+  })
+})
+
+// ── Review MINOR-1 — decisions the first pass claimed were pinned and were not ───────────────────────
+describe('the container control is decided by the lot AS SAVED, never the live field (review MINOR-1)', () => {
+  it('typing 1 then 0 into the 272-each lot keeps its Qty on hand box — no "All used up" until it is saved', async () => {
+    await renderPage(OUTLIER)
+    const qty = () => screen.queryByLabelText('Qty on hand')
+    type(qty(), '1')
+    expect(qty(), 'the Qty box unmounted under the thumb').toBeTruthy()
+    expect(qty().value).toBe('1')
+    expect(usedUp()).toBeNull()
+    type(qty(), '0')
+    expect(qty()).toBeTruthy()
+    expect(qty().value).toBe('0')
+    expect(usedUp()).toBeNull()
+    // Saved at one jar, the lot now holds a yes/no's worth, and the toggle takes over.
+    type(qty(), '1')
+    await save()
+    expect(mainPutBodies()[0].quantity_on_hand).toBe(1)
+    await waitFor(() => expect(usedUp()).toBeTruthy())
+    expect(screen.queryByLabelText('Qty on hand')).toBeNull()
+    expect(usedUp().getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('a DURABLE seeds row grows no seed fields and sends no /seed-measure', async () => {
+    // Saved seed by provenance (a parent, a stage), but durable: chk_inventory_seed_count_seeds_only
+    // refuses a count on it, so the form must not offer one. (No such row on prod today; 352 of 352
+    // seeds rows are consumable.)
+    const DURABLE = {
+      ...SAVED, id: 'inv-dur-1', type: 'durable', quantity: 1, quantity_on_hand: null, unit: null,
+      seed_count: null, seed_count_estimated: null, seed_weight_g: null,
+    }
+    await renderPage(DURABLE)
+    expect(screen.getByLabelText('Quantity').value).toBe('1')
+    expect(countField()).toBeNull()
+    expect(weightField()).toBeNull()
+    expect(usedUp()).toBeNull()
+    expect(screen.queryByRole('switch', { name: SEED_BASIS_LABEL })).toBeNull()
+    type(screen.getByLabelText('Name'), 'Thai Dragon — tin')
+    await save()
+    expect(updateItemSpy).toHaveBeenCalledTimes(1)
+    expect(measurePuts()).toEqual([])
+    expectNoMeasureOnMainPut()
+  })
+})
+
+// ── Review MINOR-2 — a count typed, then hidden by a live change, was baselined as saved ─────────────
+describe('a count typed and then hidden is neither sent nor baselined (review MINOR-2)', () => {
+  // Saved seed ONLY by its origin kind — no parent, no stage — so one select un-saves it and hides the
+  // seed fields. (Every live saved lot carries a stage today; a new "Not yet" save does not.)
+  const FARMSTAND = {
+    ...SAVED, id: 'inv-fs-1', seed_stage: null, seed_process: null, source_plant_id: null, source_kind: 'farm_stand',
+  }
+  const origin = () => screen.getByLabelText('Where this seed came from')
+
+  it('the hidden 180 is not sent, stays unsaved (the guard holds), and is sent once the fields are back', async () => {
+    await renderPage(FARMSTAND)
+    type(countField(), '180')
+    await waitFor(() => expect(isReloadBlocked()).toBe(true))
+    await act(async () => { fireEvent.change(origin(), { target: { value: '' } }) })
+    expect(countField(), 'the seed fields stayed on a lot that is no longer saved seed').toBeNull()
+
+    await save()
+    expect(updateItemSpy).toHaveBeenCalledTimes(1)
+    expect(measurePuts()).toEqual([])
+    expect(isReloadBlocked(), 'the unsent count was baselined as saved').toBe(true)
+
+    await act(async () => { fireEvent.change(origin(), { target: { value: 'farm_stand' } }) })
+    expect(countField().value).toBe('180')
+    await save()
+    expect(measurePuts()).toEqual([{ seed_count: 180, seed_count_estimated: false }])
+    await waitFor(() => expect(isReloadBlocked()).toBe(false))
+  })
+})
+
+// ── Review MINOR-3 — "A used-up lot moves to Sowed previously." was said where it is false ────────────
+describe('the used-up sentence is said only where it is true (review MINOR-3)', () => {
+  const SENTENCE = 'A used-up lot moves to Sowed previously.'
+  const described = () => {
+    const id = usedUp().getAttribute('aria-describedby')
+    return id ? document.getElementById(id)?.textContent ?? null : null
+  }
+
+  it('a stored lot files under Sowed previously when used up: said, and the toggle is described by it', async () => {
+    await renderPage(SAVED)
+    expect(described()).toBe(SENTENCE)
+  })
+
+  it.each(['drying', 'fermenting'])('a %s lot stays under its stage: the toggle is offered, the sentence is not', async (stage) => {
+    await renderPage({ ...SAVED, seed_stage: stage })
+    expect(usedUp()).toBeTruthy()
+    expect(usedUp().getAttribute('aria-describedby')).toBeNull()
+    expect(document.body.textContent).not.toContain(SENTENCE)
+  })
+
+  it('a lot off one of my plants, never started, stays "Not started": nothing said', async () => {
+    await renderPage({ ...SAVED, seed_stage: null, seed_process: null })
+    expect(usedUp()).toBeTruthy()
+    expect(document.body.textContent).not.toContain(SENTENCE)
+  })
+
+  it('a farm-stand lot never staged DOES file under Sowed previously: said', async () => {
+    await renderPage({ ...SAVED, seed_stage: null, seed_process: null, source_plant_id: null, source_kind: 'farm_stand' })
+    expect(described()).toBe(SENTENCE)
   })
 })
 

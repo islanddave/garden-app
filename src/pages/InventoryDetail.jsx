@@ -22,6 +22,7 @@ import { TIER } from '../lib/photoModel.js'
 import { supplierColors } from '../lib/supplierPalette.js'
 import { seedFacts } from '../components/seed/seedFacts.js'
 import { kindAllowsParentPlant, isSavedLot, lotCountFact } from '../components/seed/seedLots.js'
+import { isSowedPreviously } from '../components/seed/mySeedsModel.js'
 // The count's counted/estimated switch and the weight parser, shared with the Save-seed sheet and the
 // Saved seeds advance sheet, the other two writers of the same three columns.
 import { SeedCountBasis, parseSeedWeight } from '../components/planting/SaveSeedSheet.jsx'
@@ -388,7 +389,11 @@ export default function InventoryDetail() {
     const sent = form
     // The saved lot's seed measure, diffed against the lot as last saved (see seedMeasureChanges).
     // Null — no second request at all — for every other row and for a save that did not touch it.
-    const measure = showsSeedMeasure() ? seedMeasureChanges(baseline, sent) : null
+    // Sent only while its fields are ON SCREEN. A live change can hide them after a count was typed (a
+    // provenance change that un-saves the lot, a category change); that count is then neither sent
+    // nor baselined — see the setBaseline below (review MINOR-2).
+    const measureShown = showsSeedMeasure()
+    const measure = measureShown ? seedMeasureChanges(baseline, sent) : null
     setSaving(true)
     const { error } = await updateItem(id, buildChanges())
 
@@ -414,7 +419,9 @@ export default function InventoryDetail() {
       }
     }
     setSaving(false)
-    setBaseline(missed ? { ...sent, ...measureColumns(baseline) } : sent)
+    // The measure keys advance only when the measure was on screen and did not miss: an unsent or
+    // failed count keeps the OLD measure as its baseline, so it stays unsaved input and the guard holds.
+    setBaseline(missed || !measureShown ? { ...sent, ...measureColumns(baseline) } : sent)
     // Operational confirmation via the GLOBAL toast layer (auto-dismisses).
     show(missed ? { message: `Saved — couldn't record the ${missed}`, tone: 'error' } : { message: '✓ Saved' })
   }
@@ -1016,17 +1023,24 @@ export default function InventoryDetail() {
                 Labels and words are the other two writers': the Save-seed sheet's count/weight and the
                 shared counted/estimated switch. The count is WHOLE seeds (an integer column); blank is
                 "not counted", never 0. The weight is text, not a number box, so "250 mg" survives the
-                typing (SaveSeedSheet's reason); a bare number is grams. */}
+                typing (SaveSeedSheet's reason); a bare number is grams. The count is text too — see its
+                box. */}
             {seedMeasureForm && (
               <>
                 {/* One group, so the switch sits against the count it qualifies. It carries its own
                     14px bottom margin (set for a sheet with no flex gap); this card spaces its fields
                     with a 16px gap already, so the group hands those 14px back. */}
                 <div data-testid="inv-seed-count-group" style={{ marginBottom: -14 }}>
+                  {/* type="text" inputMode="numeric", the harvest year's pattern (BUG-SEEDYEARNOOP-001),
+                      and here it is what keeps a typo from ERASING a count. A type="number" box hands back
+                      "" for "175-", "175e" or "17-5" (badInput) with no message, and blank is this field's
+                      CLEAR — so one stray key saved the stored count away under "✓ Saved" (review
+                      BLOCKING-1, 2026-09-25, reproduced in Chrome). As text, parseSeedCount sees exactly
+                      what was typed and refuses anything but blank or digits, beside the field. */}
                   <Field label="Seed count" htmlFor="inv-seed-count" error={errors.seed_count} optional
                     help="Leave it blank until it’s counted.">
                     <Input
-                      type="number" inputMode="numeric" min="0" step="1"
+                      type="text" inputMode="numeric"
                       placeholder="e.g. 20"
                       value={form.seed_count}
                       onChange={e => set('seed_count', e.target.value)}
@@ -1054,6 +1068,11 @@ export default function InventoryDetail() {
                 {usedUpToggle && (
                   <UsedUpToggle
                     usedUp={Number(form.quantity_on_hand) === 0}
+                    // Whether a used-up lot would REALLY file under Sowed previously: My seeds' own
+                    // predicate, asked of this lot at 0. A lot still fermenting or drying stays under its
+                    // stage, and an own-seed lot never started stays "Not started" (review MINOR-3: 9 of
+                    // the 26 live saved lots were in process), so for them the sentence is left out.
+                    filesUnderSowedPreviously={isSowedPreviously({ ...liveLot(), quantity_on_hand: 0 })}
                     onChange={usedUp => set('quantity_on_hand', usedUp ? '0' : '1')}
                   />
                 )}
@@ -1414,17 +1433,19 @@ function measureColumns(row) {
   return out
 }
 
-// The Seed count box. Blank is "not counted" (null), never 0: a measured zero is typed. Whole seeds —
-// seed_count is an integer column and /seed-measure 400s a fraction. The same refusals, in the same
-// words, as Saved seeds' parseCountInput and the Save-seed sheet's guards, so the three doors agree.
+// The Seed count box, read as the TEXT typed (the box is type="text"; see its note). Blank is "not
+// counted" (null), never 0: a measured zero is typed. A count is DIGITS and nothing else — seed_count is
+// an integer column and /seed-measure 400s a fraction — and anything else is REFUSED, never read as
+// blank, because blank here clears the stored count: "175-", "175e", "1-", "--5", "17-5" are all "That
+// is not a number." (Number() would also have let "1e3" or "0x1A" through as counts.) The negative and
+// fraction refusals carry Saved seeds' parseCountInput and the Save-seed sheet's words.
 function parseSeedCount(raw) {
   const typed = String(raw ?? '').trim()
   if (typed === '') return { value: null, error: null }
-  const n = Number(typed)
-  if (!Number.isFinite(n)) return { value: null, error: 'That is not a number.' }
-  if (n < 0) return { value: null, error: 'A count cannot be negative.' }
-  if (!Number.isInteger(n)) return { value: null, error: 'A seed count is a whole number of seeds.' }
-  return { value: n, error: null }
+  if (/^\d+$/.test(typed)) return { value: Number(typed), error: null }
+  if (/^-\d+(\.\d+)?$/.test(typed)) return { value: null, error: 'A count cannot be negative.' }
+  if (/^(\d*\.\d+|\d+\.)$/.test(typed)) return { value: null, error: 'A seed count is a whole number of seeds.' }
+  return { value: null, error: 'That is not a number.' }
 }
 
 // What PUT /seed-measure carries for one save, or null for no request: only what CHANGED from `from`
@@ -1459,22 +1480,25 @@ function measureWords(m) {
 }
 
 // "All used up" — a saved lot's container as the yes/no it is: its one jar (quantity_on_hand 1), or
-// none (0), which files the lot under Sowed previously and takes Sow this away. A button with
-// role="checkbox" rather than <input type="checkbox">, for SeedCountBasis's measured reason: the
-// layout gate holds every visible control to the 44px floor, and a native box is ~13px. Drawn like
-// that switch, which sits two fields above it, so the two toggles in this card read as one family.
-function UsedUpToggle({ usedUp, onChange }) {
+// none (0), which takes Sow this away. A button with role="checkbox" rather than <input
+// type="checkbox">, for SeedCountBasis's measured reason: the layout gate holds every visible control
+// to the 44px floor, and a native box is ~13px. Drawn like that switch, which sits two fields above
+// it, so the two toggles in this card read as one family. The help says where a used-up lot goes ONLY
+// when that is where it goes (`filesUnderSowedPreviously`); otherwise it says nothing.
+function UsedUpToggle({ usedUp, filesUnderSowedPreviously, onChange }) {
   return (
     <div>
       <button
         type="button" role="checkbox" aria-checked={usedUp}
-        aria-describedby="inv-used-up-help" data-testid="inv-used-up"
+        aria-describedby={filesUnderSowedPreviously ? 'inv-used-up-help' : undefined} data-testid="inv-used-up"
         onClick={() => onChange(!usedUp)} style={usedUpRowStyle(usedUp)}
       >
         <span aria-hidden="true" style={usedUpMarkStyle(usedUp)}>{usedUp ? '✓' : ''}</span>
         All used up
       </button>
-      <div id="inv-used-up-help" style={helpChrome}>A used-up lot moves to Sowed previously.</div>
+      {filesUnderSowedPreviously && (
+        <div id="inv-used-up-help" style={helpChrome}>A used-up lot moves to Sowed previously.</div>
+      )}
     </div>
   )
 }
