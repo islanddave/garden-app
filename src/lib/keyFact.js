@@ -11,7 +11,7 @@
 // and sun rungs read lib/varietySpec.js (determinacyLabel, sunLabel), which imports nothing either. The
 // property that mattered — no React, no network, no clock, unit-testable in isolation — is intact.
 import { plantingIsHarvestTracked } from './harvestTracked.js'
-import { determinacyLabel, sunLabel } from './varietySpec.js'
+import { shuLabel, determinacyLabel, sunLabel } from './varietySpec.js'
 
 // Lower-cased crop-family signal used by both the key-fact cascade and the no-photo fallback
 // glyph picker. Pulls from variety type/group + the planting's own name as a last resort.
@@ -82,7 +82,7 @@ function attr(planting, key) {
 }
 
 // selectKeyFact — priority cascade, FIRST non-null wins. Returns a short display string or null.
-//   (1) pepper -> "{N} SHU"   (when an SHU value is available)
+//   (1) pepper -> "2.5K–8K SHU" / "Sweet · 0 SHU"   (crop type; the CropCard's SHU label)
 //   (2) tomato -> "Indeterminate" / "Determinate" / "Semi-determinate"   (crop type; growth_habit)
 //   (3) DTM    -> "{min}–{max} days"
 //   (4) sun    -> short sun requirement
@@ -90,13 +90,17 @@ function attr(planting, key) {
 export function selectKeyFact(planting) {
   if (!planting) return null
 
-  // (1) Pepper heat.
-  if (isPepper(planting)) {
-    const shuRaw = attr(planting, 'shu') ?? attr(planting, 'scoville')
-    const shu = Number(shuRaw)
-    if (Number.isFinite(shu) && shu > 0) {
-      return `${shu.toLocaleString('en-US')} SHU`
-    }
+  // (1) Pepper heat, in the CropCard SHU chip's own words (shuLabel on the same variety_ref), so the hero
+  // and the card name the same range: "2.5K–8K SHU", "855K–1.04M SHU", "est. …" for a guessed figure.
+  // Until 2026-09-25 this rung read `shu` / `scoville` keys that no column, writer or plants read carries
+  // (the wire has scoville_min / scoville_max) and found peppers by name (isPepper, which matched 10 of 42
+  // live peppers, and "Peppermint"), so it fired on none. "Pepper" is the cultivar's crop type, as in rung
+  // (2); a name alone never makes one, and isPepper now serves only the crop-type chip. A sweet pepper's
+  // 0–0 is a reading, not a gap: "Sweet · 0 SHU" answers the question this pill asks of a pepper (how
+  // hot?), as the card does. No range: on to the next rung.
+  if (planting?.variety_ref?.crop_type_slug === 'pepper') {
+    const heat = shuLabel(planting.variety_ref)
+    if (heat) return heat
   }
 
   // (2) Tomato determinacy: one of the three words, or on to the next rung — never the prose. Until

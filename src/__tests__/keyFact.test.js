@@ -1,27 +1,65 @@
 // keyFact + formatBotanical unit tests (V200 Slice 5b). Pure helpers — no DOM, no jest-dom.
 import { describe, it, expect } from 'vitest'
 import { selectKeyFact, selectCropType, formatBotanical, cropFamilyGlyph } from '../lib/keyFact.js'
+import { shuLabel } from '../lib/varietySpec.js'
+
+// A live pepper in the plants Lambda's variety_ref shape (prod, 2026-09-25): crop type + Scoville range.
+const pepper = (name, scoville_min, scoville_max, extra = {}) => ({ name, variety_ref: { name, crop_type_slug: 'pepper',
+  scoville_min, scoville_max, scoville_source: null, days_to_maturity_min: 70, days_to_maturity_max: 80, sun_requirements: 'full_sun', ...extra } })
 
 describe('selectKeyFact — priority cascade', () => {
-  it('(1) pepper with an SHU value -> "{N} SHU" (formatted with separators)', () => {
-    const pl = { variety_ref: { type: 'Pepper', name: 'Megatron' }, metadata: { shu: 30000 } }
-    expect(selectKeyFact(pl)).toBe('30,000 SHU')
+  // A pepper is the cultivar's crop type and its heat is the Scoville range the wire carries. Until
+  // 2026-09-25 rung 1 read shu/scoville keys nothing sends and found peppers by name: 0 of 42 live peppers.
+  it('(1) a pepper shows its Scoville range in the CropCard chip\'s words', () => {
+    expect(selectKeyFact(pepper('Jalapeno', 2500, 8000))).toBe('2.5K–8K SHU')
+    expect(selectKeyFact(pepper('Black Olive', 10000, 30000))).toBe('10K–30K SHU')
+    expect(selectKeyFact(pepper('Cubanelle', 100, 1000))).toBe('100–1K SHU')
+    expect(selectKeyFact(pepper('Habanero', 100000, 350000, { scoville_source: 'vendor_catalog' }))).toBe('100K–350K SHU')
+    expect(selectKeyFact(pepper('Ghost', 855000, 1041427, { scoville_source: 'reference_work' }))).toBe('855K–1.04M SHU')
+    expect(selectKeyFact(pepper('Armageddon', 1100000, 1300000))).toBe('1.1M–1.3M SHU')
   })
 
-  it('(1) pepper SHU via attr_override beats metadata', () => {
-    const pl = { variety_ref: { type: 'pepper' }, metadata: { shu: 1000 }, attr_override: { shu: 50000 } }
-    expect(selectKeyFact(pl)).toBe('50,000 SHU')
+  it('(1) the hero and the card say the same thing (one reader, shuLabel)', () => {
+    for (const pl of [pepper('Carmen', 0, 0), pepper('Cherry Stuffer', 0, 500), pepper('Ancho', 1000, 1500),
+      pepper('Guess', 100000, 350000, { scoville_source: 'inference' }), pepper('Single', 8000, null)]) {
+      expect(selectKeyFact(pl)).toBe(shuLabel(pl.variety_ref))
+    }
   })
 
-  it('(1) pepper detected by name when no type/group field', () => {
-    const pl = { name: 'Habanero Orange', variety_ref: { scoville: 200000 } }
-    // name -> isPepper true; scoville read as SHU fallback.
-    expect(selectKeyFact(pl)).toBe('200,000 SHU')
+  // 7 live peppers are recorded 0–0. That is a reading (sweet), not missing data, and it is the answer
+  // this pill gives for a pepper; a range that starts at 0 is an ordinary range.
+  it('(1) a sweet pepper reads "Sweet · 0 SHU"; a range from 0 reads as a range', () => {
+    expect(selectKeyFact(pepper('Carmen', 0, 0))).toBe('Sweet · 0 SHU')
+    expect(selectKeyFact(pepper('Cherry Stuffer', 0, 500))).toBe('0–500 SHU')
   })
 
-  it('(1) pepper without any SHU falls through to the next applicable rule (DTM)', () => {
-    const pl = { variety_ref: { type: 'Pepper', days_to_maturity_min: 70, days_to_maturity_max: 80 } }
-    expect(selectKeyFact(pl)).toBe('70–80 days')
+  it('(1) a guessed figure is marked est., as on the card', () => {
+    expect(selectKeyFact(pepper('Guess', 100000, 350000, { scoville_source: 'inference' }))).toBe('est. 100K–350K SHU')
+  })
+
+  // 4 live peppers have no range: they keep what they had (days, or no pill).
+  it('(1) a pepper with no Scoville range falls through to the next rung', () => {
+    expect(selectKeyFact(pepper('Unknown Long Red', null, null))).toBe('70–80 days')
+    expect(selectKeyFact({ name: 'Chilly Chill', variety_ref: { name: 'Chilly Chill', crop_type_slug: 'pepper',
+      scoville_min: null, scoville_max: null, days_to_maturity_min: null, days_to_maturity_max: null, sun_requirements: null } })).toBeNull()
+  })
+
+  // No crop type, no heat: a name never makes a pepper ("Peppermint" matched the old name test). And the
+  // hero reads only what the card reads: the old per-planting shu/scoville keys have no column and no writer.
+  it('(1) a name alone never makes a pepper, and the old shu/scoville keys are not read', () => {
+    expect(selectKeyFact({ name: 'Habanero Orange', variety_ref: { name: 'Habanero Orange', scoville_min: 100000,
+      scoville_max: 350000, days_to_maturity_min: 90, days_to_maturity_max: 100 } })).toBe('90–100 days')
+    expect(selectKeyFact({ name: 'Megatron', variety_ref: { type: 'Pepper', scoville_min: 2500, scoville_max: 5000,
+      days_to_maturity_min: 65 } })).toBe('65 days')
+    expect(selectKeyFact({ name: 'Peppermint', variety_ref: { name: 'Peppermint', crop_type_slug: 'mint',
+      sun_requirements: 'part_shade' } })).toBe('Part shade')
+    expect(selectKeyFact({ ...pepper('Jalapeno', null, null), metadata: { shu: 30000 }, attr_override: { scoville: 50000 } })).toBe('70–80 days')
+  })
+
+  // The brief's rule is the crop type; a non-pepper cultivar that carries a range (none live today) keeps its rung.
+  it('(1) only a pepper gets heat on the hero', () => {
+    expect(selectKeyFact({ name: 'Purple Blush Tomatillo', variety_ref: { name: 'Purple blush', crop_type_slug: 'tomatillo',
+      scoville_min: 2500, scoville_max: 5000, days_to_maturity_min: 70, days_to_maturity_max: 75 } })).toBe('70–75 days')
   })
 
   // A tomato is the cultivar's crop type (variety_ref.crop_type_slug), the field the plants Lambda sends.
@@ -135,9 +173,9 @@ describe('selectKeyFact — priority cascade', () => {
     expect(selectKeyFact(null)).toBeNull()
   })
 
-  it('reads JSON fields defensively (garbage SHU is ignored, falls through)', () => {
-    const pl = { variety_ref: { type: 'Pepper', sun_requirements: 'Full sun' }, metadata: { shu: 'not-a-number' } }
-    expect(selectKeyFact(pl)).toBe('Full sun')
+  it('reads JSON fields defensively (absent or undefined heat fields fall through)', () => {
+    expect(selectKeyFact({ variety_ref: { crop_type_slug: 'pepper', sun_requirements: 'Full sun' }, metadata: { shu: 'not-a-number' } })).toBe('Full sun')
+    expect(selectKeyFact({ variety_ref: { crop_type_slug: 'pepper', scoville_min: undefined, scoville_max: undefined } })).toBeNull()
   })
 })
 

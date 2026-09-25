@@ -41,6 +41,21 @@ const CHEROKEE = {
     sun_requirements: 'full_sun', growth_habit: 'indeterminate vine; 6-8 ft; stake or cage required' },
 }
 
+// Peppers named by cultivar: the old name test (\bpepper|chil[ei]|jalape|habanero|serrano|cayenne) misses
+// both, and neither page showed heat on the hero. Prod rows, 2026-09-25.
+const BLACK_OLIVE = {
+  id: 'pl1', name: 'Black Olive', project_id: 'proj1', project_name: 'Drive',
+  status: 'fruiting', quantity: 1, featured_photo_view_url: null,
+  variety_ref: { name: 'Black Olive', crop_type_slug: 'pepper', scoville_min: 10000, scoville_max: 30000, scoville_source: null,
+    days_to_maturity_min: 70, days_to_maturity_max: 80, sun_requirements: 'full_sun' },
+}
+const CARMEN = {
+  id: 'pl1', name: 'Carmen', project_id: 'proj1', project_name: 'Drive',
+  status: 'fruiting', quantity: 1, featured_photo_view_url: null,
+  variety_ref: { name: 'Carmen', crop_type_slug: 'pepper', scoville_min: 0, scoville_max: 0, scoville_source: null,
+    days_to_maturity_min: 60, days_to_maturity_max: 80, sun_requirements: 'full_sun' },
+}
+
 function renderPage(planting) {
   apiFetchSpy.mockImplementation((path) => {
     if (path.startsWith('/api/plants/')) return Promise.resolve(planting)
@@ -88,5 +103,24 @@ describe('PlantingDetail — the hero key-fact pill never carries habit prose', 
     await screen.findByRole('heading', { name: 'Cherokee Green' })
     expect(heroGoldPills('Cherokee Green')).toEqual(['Indeterminate'])
     expect(screen.getAllByText('75–85 days')).toHaveLength(1) // the crop card's row; the hero no longer repeats it
+  })
+})
+
+// "SHU for peppers" (the V200 design). Until 2026-09-25 rung 1 read keys the plants Lambda never sends, so
+// no live pepper showed its heat here; the hero now prints the crop card's own SHU chip text.
+describe('PlantingDetail — a pepper\'s hero pill is its heat', () => {
+  it('Black Olive (a pepper named by cultivar): the pill is its Scoville range, the same words as the card chip', async () => {
+    renderPage(BLACK_OLIVE)
+    await screen.findByRole('heading', { name: 'Black Olive' })
+    expect(heroGoldPills('Black Olive')).toEqual(['10K–30K SHU'])
+    expect(screen.getAllByText('10K–30K SHU')).toHaveLength(2) // the hero pill and the crop card's SHU chip
+    expect(screen.getAllByText('70–80 days')).toHaveLength(1) // the days stay, in the card's row
+  })
+
+  it('Carmen (a sweet pepper, 0–0): the pill says Sweet · 0 SHU, as the card does', async () => {
+    renderPage(CARMEN)
+    await screen.findByRole('heading', { name: 'Carmen' })
+    expect(heroGoldPills('Carmen')).toEqual(['Sweet · 0 SHU'])
+    expect(screen.getAllByText('Sweet · 0 SHU')).toHaveLength(2)
   })
 })
