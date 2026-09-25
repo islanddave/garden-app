@@ -150,7 +150,7 @@ grew the busy page 2.7% past its ceiling.
 `robotoPin.js` fixes the face, not the stack. It registers every family the pinned surfaces name
 ahead of a generic — `-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `Roboto`, and the `Inter`
 that `WeatherWidget.jsx` declares inline — as a FontFace alias of the files in the exact-pinned
-devDependency `@fontsource/roboto` (static per-weight files: the variable font's bold advances differed between macOS and Linux), fetched from this Vite server (no network, no copied
+devDependency `@fontsource/roboto` (static per-weight files: with the variable font, 600-weight advances differed between macOS and Linux; one sub-pixel gap at 700 / 13.6px remains, see the file's header), fetched from this Vite server (no network, no copied
 font files), and loads every face before the entry renders. The app's own `font-family`
 declarations are untouched; they just resolve to Roboto, as on the phone. A `font-family` override
 would have missed `WeatherWidget`'s inline stack. `window.__fontPin` reports what loaded.

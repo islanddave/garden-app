@@ -21,16 +21,18 @@
 // in a host font, which is what the gates' platform-font census (scripts/layout-gate/font-census.mjs)
 // exists to catch.
 //
-// STATIC INSTANCES, NOT THE VARIABLE FONT (changed 2026-09-25, measured). The first version loaded
-// @fontsource-variable/roboto. On its first CI run every height and position on the Today page
+// STATIC INSTANCES, NOT THE VARIABLE FONT (changed 2026-09-25, measured on CI). The first version
+// loaded @fontsource-variable/roboto. On its first CI run every height and position on the Today page
 // matched the Mac, but a fixed string's width at weight 600 and 700 did not (Mac 484.781 / 472.531px,
-// CI 484.797 / 472.234px) while 400 matched to the thousandth: macOS and Linux compute a variable
-// font's advances at a non-default weight differently. No line wrapped differently that day; a bold
-// line near its wrap point would. Static per-weight files carry their advances in the file, so both
-// machines read the same numbers. The files come from the EXACT-pinned devDependency @fontsource/roboto (Google
-// Fonts' Roboto; every weight 100-900, both styles, every subset), fetched from the harness's own
-// Vite server — no network, no copied font files. A bump of that package can move glyphs, so a bump
-// is a deliberate re-record of the Today budget, never a routine update.
+// CI 484.797 / 472.234px) while 400 matched to the thousandth. With these static per-weight files the
+// 600 width matches (484.797 on both) and every Today number matches; a 0.22px gap remains at weight
+// 700 and 13.6px (Mac 472.453, CI 472.234 — the Undo label's size, so five undo-toast WIDTHS differ by
+// 0.1px; no asserted number does). That residual is the platforms' text stacks, not the file:
+// `text-rendering: geometricPrecision` did not close it and moved Linux ink instead (tried and
+// reverted, PR run 36166215583). The files come from the EXACT-pinned devDependency
+// @fontsource/roboto (Google Fonts' Roboto; every weight 100-900, both styles, every subset), fetched
+// from the harness's own Vite server — no network, no copied font files. A bump of that package can
+// move glyphs, so a bump is a deliberate re-record of the Today budget, never a routine update.
 //
 // SCOPED, NOT GLOBAL (2026-09-25). Imported FIRST by todaymeasure.jsx and undotap.jsx only — the two
 // entries whose gates run in CI with this pin. The shared appGlobalStyle.js is untouched, so every
