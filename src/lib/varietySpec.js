@@ -27,12 +27,30 @@ export function shuLabel(v) {
   return v?.scoville_source === 'inference' ? `est. ${label}` : label
 }
 
-// Returns "Indeterminate" / "Determinate" / "Semi-determinate" / title-cased habit, or null.
+// Returns "Indeterminate" / "Determinate" / "Semi-determinate", or null. Nothing else, ever: the pill
+// names a determinacy class and never echoes the prose. Until 2026-09-25 prose with no determinacy
+// word came back whole (146 live non-tomato cards wore a sentence of up to 209 chars as a green pill)
+// and a bare `semi` test read "semi-woody", "semi-upright", "semi-vining"... as Semi-determinate (7 more).
+//
+// A whole term, leftmost wins: the same primary-term rule as the derived determinacy facet
+// (parseDeterminacy, lambda/tags/crop-derive.js), so on every live prose string the pill and the facet
+// chip under it agree (varietySpec.test.js pins that). "indeterminate vine (semi-determinate per some
+// sources)" is Indeterminate: the Rosso Sicilian card said Semi-determinate over an Indeterminate chip.
+// The semi family is one term in each real spelling: hyphen, U+2010/U+2011, en dash, space, underscore
+// (the slug) or none. A term inside a hyphen compound ("non-determinate", "semi-indeterminate") or a
+// longer word ("indeterminates", "determinant", an ordinary noun) is not that term, so it labels nothing
+// rather than something the prose did not say. The facet matches substrings, so it is looser on exactly
+// those words; no live prose contains one.
+//
+// No crop gate, on evidence: across all 515 live cultivars (prod, 2026-09-25) the only non-tomato prose
+// with one of these terms describes plant habit (3 tomatillos, 3 potatoes, 1 bush bean), so the label is
+// true where it appears. Dwarf stays the facet's refinement; the pill keeps its three words.
+const DETERMINACY_TERM = /(?:^|[^\w\-\u2010\u2011])(semi[-\u2010\u2011\u2013_\s]?determinate|indeterminate|determinate)(?!\w)/i
+
 export function determinacyLabel(v) {
-  const g = (v?.growth_habit || '').trim().toLowerCase()
-  if (!g) return null
-  if (g.includes('semi')) return 'Semi-determinate'
-  if (g.includes('indetermin')) return 'Indeterminate'
-  if (g.includes('determin')) return 'Determinate'
-  return g.charAt(0).toUpperCase() + g.slice(1)
+  const m = DETERMINACY_TERM.exec(v?.growth_habit || '')
+  if (!m) return null
+  const term = m[1].toLowerCase()
+  if (term.startsWith('semi')) return 'Semi-determinate'
+  return term === 'indeterminate' ? 'Indeterminate' : 'Determinate'
 }
