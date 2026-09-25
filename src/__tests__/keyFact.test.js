@@ -1,37 +1,137 @@
 // keyFact + formatBotanical unit tests (V200 Slice 5b). Pure helpers — no DOM, no jest-dom.
 import { describe, it, expect } from 'vitest'
 import { selectKeyFact, selectCropType, formatBotanical, cropFamilyGlyph } from '../lib/keyFact.js'
+import { shuLabel } from '../lib/varietySpec.js'
+
+// A live pepper in the plants Lambda's variety_ref shape (prod, 2026-09-25): crop type + Scoville range.
+const pepper = (name, scoville_min, scoville_max, extra = {}) => ({ name, variety_ref: { name, crop_type_slug: 'pepper',
+  scoville_min, scoville_max, scoville_source: null, days_to_maturity_min: 70, days_to_maturity_max: 80, sun_requirements: 'full_sun', ...extra } })
 
 describe('selectKeyFact — priority cascade', () => {
-  it('(1) pepper with an SHU value -> "{N} SHU" (formatted with separators)', () => {
-    const pl = { variety_ref: { type: 'Pepper', name: 'Megatron' }, metadata: { shu: 30000 } }
-    expect(selectKeyFact(pl)).toBe('30,000 SHU')
+  // A pepper is the cultivar's crop type and its heat is the Scoville range the wire carries. Until
+  // 2026-09-25 rung 1 read shu/scoville keys nothing sends and found peppers by name: 0 of 42 live peppers.
+  it('(1) a pepper shows its Scoville range in the CropCard chip\'s words', () => {
+    expect(selectKeyFact(pepper('Jalapeno', 2500, 8000))).toBe('2.5K–8K SHU')
+    expect(selectKeyFact(pepper('Black Olive', 10000, 30000))).toBe('10K–30K SHU')
+    expect(selectKeyFact(pepper('Cubanelle', 100, 1000))).toBe('100–1K SHU')
+    expect(selectKeyFact(pepper('Habanero', 100000, 350000, { scoville_source: 'vendor_catalog' }))).toBe('100K–350K SHU')
+    expect(selectKeyFact(pepper('Ghost', 855000, 1041427, { scoville_source: 'reference_work' }))).toBe('855K–1.04M SHU')
+    expect(selectKeyFact(pepper('Armageddon', 1100000, 1300000))).toBe('1.1M–1.3M SHU')
   })
 
-  it('(1) pepper SHU via attr_override beats metadata', () => {
-    const pl = { variety_ref: { type: 'pepper' }, metadata: { shu: 1000 }, attr_override: { shu: 50000 } }
-    expect(selectKeyFact(pl)).toBe('50,000 SHU')
+  it('(1) the hero and the card say the same thing (one reader, shuLabel)', () => {
+    for (const pl of [pepper('Carmen', 0, 0), pepper('Cherry Stuffer', 0, 500), pepper('Ancho', 1000, 1500),
+      pepper('Guess', 100000, 350000, { scoville_source: 'inference' }), pepper('Single', 8000, null)]) {
+      expect(selectKeyFact(pl)).toBe(shuLabel(pl.variety_ref))
+    }
   })
 
-  it('(1) pepper detected by name when no type/group field', () => {
-    const pl = { name: 'Habanero Orange', variety_ref: { scoville: 200000 } }
-    // name -> isPepper true; scoville read as SHU fallback.
-    expect(selectKeyFact(pl)).toBe('200,000 SHU')
+  // 7 live peppers are recorded 0–0. That is a reading (sweet), not missing data, and it is the answer
+  // this pill gives for a pepper; a range that starts at 0 is an ordinary range.
+  it('(1) a sweet pepper reads "Sweet · 0 SHU"; a range from 0 reads as a range', () => {
+    expect(selectKeyFact(pepper('Carmen', 0, 0))).toBe('Sweet · 0 SHU')
+    expect(selectKeyFact(pepper('Cherry Stuffer', 0, 500))).toBe('0–500 SHU')
   })
 
-  it('(1) pepper without any SHU falls through to the next applicable rule (DTM)', () => {
-    const pl = { variety_ref: { type: 'Pepper', days_to_maturity_min: 70, days_to_maturity_max: 80 } }
-    expect(selectKeyFact(pl)).toBe('70–80 days')
+  it('(1) a guessed figure is marked est., as on the card', () => {
+    expect(selectKeyFact(pepper('Guess', 100000, 350000, { scoville_source: 'inference' }))).toBe('est. 100K–350K SHU')
   })
 
+  // 4 live peppers have no range: they keep what they had (days, or no pill).
+  it('(1) a pepper with no Scoville range falls through to the next rung', () => {
+    expect(selectKeyFact(pepper('Unknown Long Red', null, null))).toBe('70–80 days')
+    expect(selectKeyFact({ name: 'Chilly Chill', variety_ref: { name: 'Chilly Chill', crop_type_slug: 'pepper',
+      scoville_min: null, scoville_max: null, days_to_maturity_min: null, days_to_maturity_max: null, sun_requirements: null } })).toBeNull()
+  })
+
+  // No crop type, no heat: a name never makes a pepper ("Peppermint" matched the old name test). And the
+  // hero reads only what the card reads: the old per-planting shu/scoville keys have no column and no writer.
+  it('(1) a name alone never makes a pepper, and the old shu/scoville keys are not read', () => {
+    expect(selectKeyFact({ name: 'Habanero Orange', variety_ref: { name: 'Habanero Orange', scoville_min: 100000,
+      scoville_max: 350000, days_to_maturity_min: 90, days_to_maturity_max: 100 } })).toBe('90–100 days')
+    expect(selectKeyFact({ name: 'Megatron', variety_ref: { type: 'Pepper', scoville_min: 2500, scoville_max: 5000,
+      days_to_maturity_min: 65 } })).toBe('65 days')
+    expect(selectKeyFact({ name: 'Peppermint', variety_ref: { name: 'Peppermint', crop_type_slug: 'mint',
+      sun_requirements: 'part_shade' } })).toBe('Part shade')
+    expect(selectKeyFact({ ...pepper('Jalapeno', null, null), metadata: { shu: 30000 }, attr_override: { scoville: 50000 } })).toBe('70–80 days')
+  })
+
+  // The brief's rule is the crop type; a non-pepper cultivar that carries a range (none live today) keeps its rung.
+  it('(1) only a pepper gets heat on the hero', () => {
+    expect(selectKeyFact({ name: 'Purple Blush Tomatillo', variety_ref: { name: 'Purple blush', crop_type_slug: 'tomatillo',
+      scoville_min: 2500, scoville_max: 5000, days_to_maturity_min: 70, days_to_maturity_max: 75 } })).toBe('70–75 days')
+  })
+
+  // A tomato is the cultivar's crop type (variety_ref.crop_type_slug), the field the plants Lambda sends.
+  // These fixtures used a variety_ref.type the Lambda never sends, which is how rung 2 passed here while
+  // reaching 2 of 46 live tomatoes.
   it('(2) tomato -> Indeterminate / Determinate from growth_habit', () => {
-    expect(selectKeyFact({ variety_ref: { type: 'Tomato' }, metadata: { growth_habit: 'indeterminate' } })).toBe('Indeterminate')
-    expect(selectKeyFact({ variety_ref: { type: 'tomato' }, attr_override: { growth_habit: 'Determinate' } })).toBe('Determinate')
+    expect(selectKeyFact({ variety_ref: { crop_type_slug: 'tomato' }, metadata: { growth_habit: 'indeterminate' } })).toBe('Indeterminate')
+    expect(selectKeyFact({ variety_ref: { crop_type_slug: 'tomato' }, attr_override: { growth_habit: 'Determinate' } })).toBe('Determinate')
   })
 
   it('(2) tomato without growth_habit falls through to DTM', () => {
-    const pl = { variety_ref: { type: 'Tomato', days_to_maturity_min: 60, days_to_maturity_max: 60 } }
+    const pl = { variety_ref: { crop_type_slug: 'tomato', days_to_maturity_min: 60, days_to_maturity_max: 60 } }
     expect(selectKeyFact(pl)).toBe('60 days')
+  })
+
+  // Prod rows: plantings are named by cultivar, so none of these names says "tomato". Until 2026-09-25
+  // the tomato test read names, and these heroes showed their days (75–85, 65–75, 70–75) instead.
+  it('(2) the crop type makes it a tomato, not the name: live cultivar-named tomatoes get their word', () => {
+    const live = (name, growth_habit, dmin, dmax) => ({ name, variety_ref: { name, crop_type_slug: 'tomato',
+      days_to_maturity_min: dmin, days_to_maturity_max: dmax, sun_requirements: 'full_sun', growth_habit } })
+    expect(selectKeyFact(live('Cherokee Green', 'indeterminate vine; 6-8 ft; stake or cage required', 75, 85))).toBe('Indeterminate')
+    expect(selectKeyFact(live('Cherry Falls', 'trailing/cascading determinate; 24-36 in spreading; bred for hanging baskets and containers; no staking required', 65, 75))).toBe('Determinate')
+    expect(selectKeyFact(live('Celebrity', 'semi-determinate bush, 4-5 ft', 70, 75))).toBe('Semi-determinate')
+  })
+
+  it('(2) a tomato with no habit prose keeps its days, or has no pill', () => {
+    expect(selectKeyFact({ name: 'Large Red Cherry', variety_ref: { name: 'Large Red Cherry', crop_type_slug: 'tomato',
+      days_to_maturity_min: 70, days_to_maturity_max: 80, sun_requirements: 'full_sun', growth_habit: null } })).toBe('70–80 days')
+    expect(selectKeyFact({ name: 'Yellow Brandywine', variety_ref: { name: 'Yellow Brandywine', crop_type_slug: 'tomato',
+      days_to_maturity_min: null, days_to_maturity_max: null, sun_requirements: null, growth_habit: null } })).toBeNull()
+  })
+
+  // The chosen rule when there is no crop type: a name never makes a tomato. On prod no live cultivar lacks
+  // a crop type and the 3 cultivar-less plantings have no habit to read, so this changes nothing live; it
+  // keeps the name test from coming back as a fallback. A tomatillo is its own crop, even with the word.
+  it('(2) a name alone never makes a tomato, and a tomatillo is not one', () => {
+    expect(selectKeyFact({ name: 'Sungold Tomato', variety_ref: { name: 'Sungold', growth_habit: 'indeterminate vine',
+      days_to_maturity_min: 57, days_to_maturity_max: 65 } })).toBe('57–65 days')
+    expect(selectKeyFact({ name: 'Sungold Tomato', variety_ref: { type: 'Tomato', growth_habit: 'indeterminate vine',
+      days_to_maturity_min: 57, days_to_maturity_max: 65 } })).toBe('57–65 days')
+    expect(selectKeyFact({ name: 'Tomato', metadata: { growth_habit: 'determinate' } })).toBeNull()
+    expect(selectKeyFact({ name: 'Cisneros Tomatillo', variety_ref: { name: 'Cisneros', crop_type_slug: 'tomatillo',
+      days_to_maturity_min: 80, days_to_maturity_max: 85, sun_requirements: 'full_sun',
+      growth_habit: 'sprawling indeterminate vine; benefits from tomato cage or trellis; 3-4 ft tall, spreading 3+ ft' } })).toBe('80–85 days')
+  })
+
+  // Prod rows (plants Lambda variety_ref, 2026-09-25). Rung 2 used to return any habit that did not START
+  // with determ/indeterm whole, capitalised, into a nowrap pill: these two live tomatoes-by-name wore
+  // 43 and 113 characters of prose. No determinacy word now means the next rung, here their days.
+  it('(2) prose with no determinacy word is never the pill: the two tomatillo sentences fall through', () => {
+    const blushProse = 'bushy upright; 3-5 in jalapeño-size fruit, compact productive plants; simultaneous green/purple/red fruit display'
+    const blush = { name: 'Purple Blush Tomatillo', variety_ref: { name: 'Purple blush', crop_type_slug: 'tomatillo',
+      days_to_maturity_min: 70, days_to_maturity_max: 75, sun_requirements: 'full_sun', growth_habit: blushProse } }
+    const pineapple = { name: 'Pineapple Tomatillo', variety_ref: { name: 'Pineapple Tomatillo', crop_type_slug: 'tomatillo',
+      days_to_maturity_min: 75, days_to_maturity_max: 90, sun_requirements: 'full_sun',
+      growth_habit: 'low sprawling/bushy, 12-24 in; husked fruit' } }
+    expect(selectKeyFact(blush)).toBe('70–75 days')
+    expect(selectKeyFact(pineapple)).toBe('75–90 days')
+    // With nothing further down the ladder the pill is absent, not the prose.
+    expect(selectKeyFact({ name: 'Purple Blush Tomatillo', variety_ref: { growth_habit: blushProse } })).toBeNull()
+  })
+
+  // Live prose that does not open with the word (Celebrity, Cherry Falls, Rosa Sicilian cultivars). The
+  // old test printed the first two whole; leftmost-term wins, as on the CropCard pill and the facet chip.
+  it('(2) the determinacy word is read wherever it sits in the prose, leftmost first', () => {
+    const tomato = (growth_habit) => ({ name: 'Test Tomato', variety_ref: { crop_type_slug: 'tomato', growth_habit,
+      days_to_maturity_min: 70, days_to_maturity_max: 75 } })
+    expect(selectKeyFact(tomato('semi-determinate bush, 4-5 ft'))).toBe('Semi-determinate')
+    expect(selectKeyFact(tomato('trailing/cascading determinate; 24-36 in spreading; bred for hanging baskets and containers; no staking required'))).toBe('Determinate')
+    expect(selectKeyFact(tomato('indeterminate vine (semi-determinate per some sources); deeply ribbed costoluto-type; 5-6 ft; stake or cage required'))).toBe('Indeterminate')
+    // "semi-" alone is not a determinacy class.
+    expect(selectKeyFact(tomato('semi-compact bush'))).toBe('70–75 days')
   })
 
   it('(3) DTM window for a non-pepper/non-tomato crop', () => {
@@ -73,9 +173,9 @@ describe('selectKeyFact — priority cascade', () => {
     expect(selectKeyFact(null)).toBeNull()
   })
 
-  it('reads JSON fields defensively (garbage SHU is ignored, falls through)', () => {
-    const pl = { variety_ref: { type: 'Pepper', sun_requirements: 'Full sun' }, metadata: { shu: 'not-a-number' } }
-    expect(selectKeyFact(pl)).toBe('Full sun')
+  it('reads JSON fields defensively (absent or undefined heat fields fall through)', () => {
+    expect(selectKeyFact({ variety_ref: { crop_type_slug: 'pepper', sun_requirements: 'Full sun' }, metadata: { shu: 'not-a-number' } })).toBe('Full sun')
+    expect(selectKeyFact({ variety_ref: { crop_type_slug: 'pepper', scoville_min: undefined, scoville_max: undefined } })).toBeNull()
   })
 })
 
@@ -131,9 +231,36 @@ describe('selectCropType — V4-ABOVEFOLD-001 crop-type chip', () => {
     expect(selectCropType({ variety_ref: { type: 'root_vegetable' } })).toBe('Root vegetable')
   })
 
-  it('falls back to pepper/tomato family detection by name', () => {
-    expect(selectCropType({ name: 'Habanero Orange', variety_ref: {} })).toBe('Pepper')
-    expect(selectCropType({ name: 'Sungold Tomato', variety_ref: {} })).toBe('Tomato')
+  // Prod rows (plants Lambda variety_ref, 2026-09-25). The name detectors pick WHICH plantings get a chip;
+  // the words are the cultivar's crop type.
+  const live = (name, crop_type_slug, cultivar = name) => ({ name, variety_ref: { name: cultivar, crop_type_slug } })
+
+  it('a pepper/tomato found by name shows its crop type', () => {
+    expect(selectCropType(live('Habanero', 'pepper'))).toBe('Pepper')
+    expect(selectCropType(live('Megatron Jalapeños', 'pepper', 'Megatron F1 (jumbo jalapeno)'))).toBe('Pepper')
+    expect(selectCropType(live('Tie-Dye Tomato', 'tomato', 'Tie-Dye'))).toBe('Tomato')
+  })
+
+  // Until 2026-09-25 the chip said "Tomato" on both live tomatillos and "Pepper" on Peppermint.
+  it('the words are the crop type, never the name match: a tomatillo is a Tomatillo, Peppermint is Mint', () => {
+    expect(selectCropType(live('Purple Blush Tomatillo', 'tomatillo', 'Purple blush'))).toBe('Tomatillo')
+    expect(selectCropType(live('Pineapple Tomatillo', 'tomatillo'))).toBe('Tomatillo')
+    expect(selectCropType(live('Peppermint', 'mint'))).toBe('Mint')
+    // "Pepper squash" is a real name for acorn squash; a multi-word crop type reads as the plantings list's groups.
+    expect(selectCropType(live('Pepper Squash', 'winter_squash', 'Table Queen'))).toBe('Winter Squash')
+  })
+
+  // Not a rollout: plantings the name test misses (230 of 246 live) still have no chip.
+  it('where the chip shows is unchanged: none where the name test finds nothing', () => {
+    expect(selectCropType(live('Black Olive', 'pepper'))).toBeNull()
+    expect(selectCropType(live('Cherokee Green', 'tomato'))).toBeNull()
+    expect(selectCropType(live('Cisneros', 'tomatillo'))).toBeNull()
+  })
+
+  it('no crop type is no chip, whatever the name says', () => {
+    expect(selectCropType({ name: 'Habanero Orange', variety_ref: {} })).toBeNull()
+    expect(selectCropType({ name: 'Sungold Tomato' })).toBeNull()
+    expect(selectCropType({ name: 'Peppermint', variety_ref: { name: 'Peppermint', crop_type_slug: '  ' } })).toBeNull()
   })
 
   it('returns null when no crop signal exists', () => {
@@ -146,5 +273,8 @@ describe('selectCropType — V4-ABOVEFOLD-001 crop-type chip', () => {
     const out = selectCropType({ variety_ref: { type: 'a'.repeat(40) } })
     expect(out.length).toBeLessThanOrEqual(22)
     expect(out.endsWith('…')).toBe(true)
+    const slugOut = selectCropType(live('Hot Pepper', 'b'.repeat(40)))
+    expect(slugOut.length).toBeLessThanOrEqual(22)
+    expect(slugOut.endsWith('…')).toBe(true)
   })
 })

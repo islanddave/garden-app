@@ -6,12 +6,15 @@
 // Both read JSON fields defensively (optional-chaining + type guards): the cultivar substrate
 // is sparse and heterogeneous, so any missing/garbage field must degrade to "skip", never throw.
 //
-// "dependency-free" above is now two imports short of literal: V4-CONSUMABLECLASS-001 (BD-042) added
-// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing, and the sun rung reads
-// lib/varietySpec.js's sunLabel, which imports nothing either. The property that mattered — no React,
-// no network, no clock, unit-testable in isolation — is intact.
+// "dependency-free" above is now three imports short of literal: V4-CONSUMABLECLASS-001 (BD-042) added
+// lib/harvestTracked.js, which is itself pure, constant-only and imports nothing; the determinacy and sun
+// rungs read lib/varietySpec.js (determinacyLabel, sunLabel), which imports nothing either; and the
+// crop-type chip words its crop type with lib/projectTree.js's cropTypeLabel (projectTree imports only
+// constants.js and does nothing at import). The property that mattered — no React, no network, no
+// clock, unit-testable in isolation — is intact.
+import { cropTypeLabel } from './projectTree.js'
 import { plantingIsHarvestTracked } from './harvestTracked.js'
-import { sunLabel } from './varietySpec.js'
+import { shuLabel, determinacyLabel, sunLabel } from './varietySpec.js'
 
 // Lower-cased crop-family signal used by both the key-fact cascade and the no-photo fallback
 // glyph picker. Pulls from variety type/group + the planting's own name as a last resort.
@@ -24,6 +27,8 @@ function cropSignal(planting) {
   return parts.join(' ').toLowerCase()
 }
 
+// A NAME heuristic ("Peppermint" matches it). For the crop-type chip (selectCropType) it decides only
+// WHETHER the chip shows, never what it says.
 export function isPepper(planting) {
   const v = planting?.variety_ref || {}
   if (typeof v.type === 'string' && v.type.toLowerCase().includes('pepper')) return true
@@ -31,6 +36,9 @@ export function isPepper(planting) {
   return /\bpepper|chil[ei]|jalape|habanero|serrano|cayenne\b/.test(cropSignal(planting))
 }
 
+// A NAME heuristic ("Tomatillo" matches it), kept for the crop-type chip (selectCropType) and nothing
+// else, where it decides only WHETHER the chip shows, never what it says. The key-fact ladder decides
+// "tomato" from the cultivar's crop type instead — see rung (2).
 export function isTomato(planting) {
   const v = planting?.variety_ref || {}
   if (typeof v.type === 'string' && v.type.toLowerCase().includes('tomato')) return true
@@ -56,18 +64,25 @@ export function cropFamilyGlyph(planting) {
 // prefers an explicit structured crop field on the cultivar, then falls back to the pepper/tomato
 // family detectors, then null (the chip is simply omitted). Title-cased for display; long values
 // are clamped so the pill stays compact.
+//
+// The detectors decide only WHETHER the chip shows. Its words are the cultivar's crop type
+// (variety_ref.crop_type_slug, worded as the plantings list words its crop groups). Until 2026-09-25 the
+// detectors chose the words too, so both live tomatillos wore "Tomato" and Peppermint (crop type mint)
+// wore "Pepper". Where it shows is deliberately unchanged (16 of 246 live plantings): a chip on every
+// planting is a design call, not this fix. No crop type (no cultivar) is no chip, whatever the name says.
+const clampChip = (s) => (s.length > 22 ? s.slice(0, 21).trimEnd() + '…' : s)
+
 export function selectCropType(planting) {
   const v = planting?.variety_ref || {}
   const explicit = [v.type, v.group, v.category, v.crop, v.crop_family]
     .find(s => typeof s === 'string' && s.trim())
   if (explicit) {
     const t = explicit.trim().replace(/[_-]+/g, ' ')
-    const titled = t.charAt(0).toUpperCase() + t.slice(1)
-    return titled.length > 22 ? titled.slice(0, 21).trimEnd() + '…' : titled
+    return clampChip(t.charAt(0).toUpperCase() + t.slice(1))
   }
-  if (isPepper(planting)) return 'Pepper'
-  if (isTomato(planting)) return 'Tomato'
-  return null
+  if (!isPepper(planting) && !isTomato(planting)) return null
+  const slug = typeof v.crop_type_slug === 'string' ? v.crop_type_slug.trim() : ''
+  return slug ? clampChip(cropTypeLabel(slug)) : null
 }
 
 // Read a field that may live on the variety, on planting.metadata, or on an attr_override.
@@ -80,33 +95,39 @@ function attr(planting, key) {
 }
 
 // selectKeyFact — priority cascade, FIRST non-null wins. Returns a short display string or null.
-//   (1) pepper -> "{N} SHU"   (when an SHU value is available)
-//   (2) tomato -> "Determinate" / "Indeterminate"   (growth_habit)
+//   (1) pepper -> "2.5K–8K SHU" / "Sweet · 0 SHU"   (crop type; the CropCard's SHU label)
+//   (2) tomato -> "Indeterminate" / "Determinate" / "Semi-determinate"   (crop type; growth_habit)
 //   (3) DTM    -> "{min}–{max} days"
 //   (4) sun    -> short sun requirement
 //   (5) null
 export function selectKeyFact(planting) {
   if (!planting) return null
 
-  // (1) Pepper heat.
-  if (isPepper(planting)) {
-    const shuRaw = attr(planting, 'shu') ?? attr(planting, 'scoville')
-    const shu = Number(shuRaw)
-    if (Number.isFinite(shu) && shu > 0) {
-      return `${shu.toLocaleString('en-US')} SHU`
-    }
+  // (1) Pepper heat, in the CropCard SHU chip's own words (shuLabel on the same variety_ref), so the hero
+  // and the card name the same range: "2.5K–8K SHU", "855K–1.04M SHU", "est. …" for a guessed figure.
+  // Until 2026-09-25 this rung read `shu` / `scoville` keys that no column, writer or plants read carries
+  // (the wire has scoville_min / scoville_max) and found peppers by name (isPepper, which matched 10 of 42
+  // live peppers, and "Peppermint"), so it fired on none. "Pepper" is the cultivar's crop type, as in rung
+  // (2); a name alone never makes one, and isPepper now serves only the crop-type chip. A sweet pepper's
+  // 0–0 is a reading, not a gap: "Sweet · 0 SHU" answers the question this pill asks of a pepper (how
+  // hot?), as the card does. No range: on to the next rung.
+  if (planting?.variety_ref?.crop_type_slug === 'pepper') {
+    const heat = shuLabel(planting.variety_ref)
+    if (heat) return heat
   }
 
-  // (2) Tomato determinacy.
-  if (isTomato(planting)) {
-    const gh = attr(planting, 'growth_habit')
-    if (typeof gh === 'string' && gh.trim()) {
-      const g = gh.trim().toLowerCase()
-      if (g.startsWith('indeterm')) return 'Indeterminate'
-      if (g.startsWith('determ')) return 'Determinate'
-      // Unknown habit string: surface a capitalized form rather than dropping it.
-      return gh.trim().charAt(0).toUpperCase() + gh.trim().slice(1)
-    }
+  // (2) Tomato determinacy: one of the three words, or on to the next rung — never the prose. Until
+  // 2026-09-25 a habit that did not START with determ/indeterm came back whole, capitalised, so two
+  // live tomatillos wore a sentence in this nowrap pill (the longest 113 characters, "Bushy upright;
+  // 3-5 in jalapeño-size fruit, …") and "semi-determinate, …" printed in full. determinacyLabel is the
+  // CropCard pill's reader, so the hero and the card name the same class.
+  // "Tomato" is the crop type the cultivar carries (variety_ref.crop_type_slug, which rung 3's harvest
+  // gate also reads), not a name match. Plantings are named by cultivar, so the name test (isTomato) found
+  // 2 of 46 live tomatoes ("Cherokee Green" never says tomato) and took in two tomatillos. No crop type
+  // (no cultivar) means not a tomato here, whatever the name says.
+  if (planting?.variety_ref?.crop_type_slug === 'tomato') {
+    const det = determinacyLabel({ growth_habit: attr(planting, 'growth_habit') })
+    if (det) return det
   }
 
   // (3) Days to maturity window.
