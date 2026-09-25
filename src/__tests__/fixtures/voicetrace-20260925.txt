@@ -1,0 +1,275 @@
+# BUG-VOICEDUPE-002 raw Web Speech capture — 83 entries
+# started 2026-09-25T15:48:50.800Z
+# +ms  source  kind  resultIndex/len  then one line per result: [index] FINAL|interim "text"
+
++     0  voiceharvest  start
++  1366  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++  1486  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++  1680  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++  2297  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
++  2643  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
++  3092  voiceharvest  result  resultIndex=5 len=6
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber"
++  3268  voiceharvest  result  resultIndex=6 len=7
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber"
+         [6] FINAL   "cucumber one"
++  3783  voiceharvest  decision search "cucumber one" <- "cucumber one"
++  3997  voiceharvest  result  resultIndex=7 len=8
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber"
+         [6] FINAL   "cucumber one"
+         [7] FINAL   "cucumber one 243"
++  4000  voiceharvest  end
++  4010  voiceharvest  decision one-breath-bare Suyo Long 243 <- "cucumber one 243"
++  4011  voiceharvest  decision held-number 243 <- "243"
++  4019  voiceharvest  start
++  5657  voiceharvest  nomatch
++  5659  voiceharvest  end
++  5690  voiceharvest  start
++ 10930  voiceharvest  nomatch
++ 10931  voiceharvest  end
++ 10975  voiceharvest  start
++ 13687  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 13899  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 14037  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++ 14152  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
++ 14304  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
+         [4] FINAL   "1"
++ 14499  voiceharvest  result  resultIndex=5 len=6
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
+         [4] FINAL   "1"
+         [5] FINAL   "1 to"
++ 14838  voiceharvest  result  resultIndex=6 len=7
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   ""
+         [4] FINAL   "1"
+         [5] FINAL   "1 to"
+         [6] FINAL   "1 243"
++ 14841  voiceharvest  decision held-dropped 243 (crop changed)
++ 14842  voiceharvest  decision search "1 to" <- "1 to"
++ 14858  voiceharvest  end
++ 14889  voiceharvest  decision search "1 243" <- "1 243"
++ 14929  voiceharvest  start
++ 16668  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 16788  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 16922  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++ 17465  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
++ 17969  voiceharvest  decision search "cucumber" <- "cucumber"
++ 18252  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
++ 18712  voiceharvest  result  resultIndex=5 len=6
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber"
++ 18949  voiceharvest  result  resultIndex=6 len=7
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber"
+         [6] FINAL   "cucumber one"
++ 18970  voiceharvest  result  resultIndex=7 len=8
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber"
+         [6] FINAL   "cucumber one"
+         [7] FINAL   "cucumber one"
++ 19489  voiceharvest  decision search "cucumber one" <- "cucumber one"
++ 19675  voiceharvest  result  resultIndex=8 len=9
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber"
+         [6] FINAL   "cucumber one"
+         [7] FINAL   "cucumber one"
+         [8] FINAL   "cucumber one 243"
++ 19681  voiceharvest  result  resultIndex=9 len=10
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber"
+         [6] FINAL   "cucumber one"
+         [7] FINAL   "cucumber one"
+         [8] FINAL   "cucumber one 243"
+         [9] FINAL   "cucumber one 243"
++ 19683  voiceharvest  end
++ 19696  voiceharvest  decision one-breath-bare Suyo Long 243 <- "cucumber one 243"
++ 19697  voiceharvest  decision held-number 243 <- "243"
++ 19704  voiceharvest  start
++ 24388  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 24454  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 24521  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++ 25122  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
++ 25626  voiceharvest  decision held-dropped 243 (crop changed)
++ 25628  voiceharvest  decision search "cucumber" <- "cucumber"
++ 25914  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
++ 26232  voiceharvest  result  resultIndex=5 len=6
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber one"
++ 26240  voiceharvest  end
++ 26251  voiceharvest  decision search "cucumber one" <- "cucumber one"
++ 26314  voiceharvest  start
++ 27361  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 27784  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   "three"
++ 27795  voiceharvest  end
++ 27799  voiceharvest  decision held-number 3 <- "three"
++ 27839  voiceharvest  start
++ 31238  voiceharvest  result  resultIndex=0 len=1
+         [0] FINAL   ""
++ 31297  voiceharvest  result  resultIndex=1 len=2
+         [0] FINAL   ""
+         [1] FINAL   ""
++ 31417  voiceharvest  result  resultIndex=2 len=3
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
++ 32057  voiceharvest  result  resultIndex=3 len=4
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
++ 32562  voiceharvest  decision held-dropped 3 (crop changed)
++ 32563  voiceharvest  decision search "cucumber" <- "cucumber"
++ 32854  voiceharvest  result  resultIndex=4 len=5
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
++ 33357  voiceharvest  decision search "cucumber" <- "cucumber"
++ 33472  voiceharvest  result  resultIndex=5 len=6
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber one"
++ 33652  voiceharvest  result  resultIndex=6 len=7
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber one"
+         [6] FINAL   "cucumber one"
++ 33885  voiceharvest  result  resultIndex=7 len=8
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber one"
+         [6] FINAL   "cucumber one"
+         [7] FINAL   "cucumber one"
++ 34407  voiceharvest  decision search "cucumber one" <- "cucumber one"
++ 34614  voiceharvest  result  resultIndex=8 len=9
+         [0] FINAL   ""
+         [1] FINAL   ""
+         [2] FINAL   ""
+         [3] FINAL   "cucumber"
+         [4] FINAL   "cucumber"
+         [5] FINAL   "cucumber one"
+         [6] FINAL   "cucumber one"
+         [7] FINAL   "cucumber one"
+         [8] FINAL   "cucumber one 243"
++ 34616  voiceharvest  end
++ 34628  voiceharvest  decision one-breath-bare Suyo Long 243 <- "cucumber one 243"
++ 34630  voiceharvest  decision held-number 243 <- "243"
++ 34633  voiceharvest  start
++ 37798  voiceharvest  nomatch
++ 37799  voiceharvest  end
