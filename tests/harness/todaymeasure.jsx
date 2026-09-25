@@ -23,6 +23,11 @@
 // window.__h is the measurement surface. It reports geometry, computed CSS and an ink profile; it
 // never asserts. Analysis happens in _todaymeasure/drive.mjs and downstream, so a change of opinion
 // about what "too much whitespace" means does not require re-driving the browser.
+//
+// FONT (V5-TODAYSHAPECI-001): the page's text is laid out in Roboto, the face Dave's Android renders,
+// on the Mac that records the budget and on the CI runner that checks it alike. The import is FIRST
+// and the module loads every face before this entry's body runs. See robotoPin.js.
+import './robotoPin.js'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'

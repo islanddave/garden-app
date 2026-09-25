@@ -15,6 +15,11 @@
 //      Skip, Feed (three toasts, Skip's is low priority), then a Moist check, which makes the Skip
 //      toast give way. The tapped rows carry the longest real names from the live care list
 //      (careskip.jsx's fixture), so their toasts wrap the way the long rows do.
+//
+// FONT (OPS-UNDOTOASTGATECI-001): text is laid out in Roboto, what Dave's Android renders, here and on
+// the CI runner alike, so a wrap measured on the Mac is the wrap CI measures. The import is FIRST and
+// the module loads every face before this entry's body runs. See robotoPin.js.
+import './robotoPin.js'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'

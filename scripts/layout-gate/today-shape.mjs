@@ -16,9 +16,9 @@
 // WHAT IT ASSERTS, in real Chrome at a TRUE 426x836 @ DPR 3 — Dave's handset, read off the phone
 // 2026-09-24 — across four states of the real Today page:
 //   (a) INSTRUMENT — before any invariant. Self-reported viewport, harness ready(), pinned clock in
-//       force, weather stubbed, every fixture non-empty, and the region census matching the counts
-//       the fixture promises. Each of these is a way this file could print PASS while measuring
-//       nothing.
+//       force, weather stubbed, every fixture non-empty, the Roboto pin loaded AND painting the page
+//       (see FONT below), and the region census matching the counts the fixture promises. Each of
+//       these is a way this file could print PASS while measuring nothing.
 //   (b) VISIBILITY, per care row and per expanded panel — `checkVisibility()` AND a non-zero rect
 //       AND some of that rect surviving every clipping ancestor. The per-row half is the assertion
 //       no vitest test can make. CORRECTED 2026-09-24: this line used to say the per-row check was
@@ -46,6 +46,15 @@
 // adds a 52px in-flow sticky TopChrome and a 56px fixed BottomNav (App.jsx), so the real document is
 // ~108px taller and only 728px of Dave's 836px window ever shows page content. Those two constants
 // are printed on every run so the usable-window arithmetic is visible rather than assumed.
+//
+// FONT (V5-TODAYSHAPECI-001, 2026-09-25). The budget is ABSOLUTE geometry, so it is only portable if
+// every machine lays the page out in the same glyphs. The harness entry therefore pins its text to
+// Roboto — what Dave's Android renders the app in — from the exact-pinned devDependency
+// @fontsource-variable/roboto (tests/harness/robotoPin.js). Unpinned, this Mac measured San
+// Francisco and CI's ubuntu runner would measure DejaVu Sans; a DejaVu-proxy run grew the busy page
+// 2.7% past its ceiling. The gate refuses a run whose pin did not load, a run where Chrome reports any
+// glyph painted by a host font other than the allowlisted symbols (scripts/layout-gate/font-census.mjs),
+// and a budget recorded in a different font build (FONT BINDING, below).
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -53,6 +62,7 @@ import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { resolveWebSocket } from './cdp-socket.mjs'
+import { fontCensus, fmtCensus, fontProbe } from './font-census.mjs'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -119,10 +129,11 @@ const PROBE_NOTHING = process.argv.includes('--probe-nothing')
 const SUFFIX = PROBE_NOTHING ? '-PROBE-NOTHING' : ''
 // DIAGNOSTIC ONLY — the same hook gate:seeds-page carries, under the same name. CSS injected into
 // every state once the page is ready and before it settles, so a stress test can be measured against
-// the budget without editing anything: e.g. the CI-font proxy
+// the budget without editing anything: e.g. the wide-font stress test
 //   GATE_MUTATE_CSS='*{font-family:Verdana,"DejaVu Sans",sans-serif!important}' npm run gate:today-shape
-// (Verdana is a PESSIMISTIC stand-in for the Linux runner's DejaVu Sans, not a predictor — CI's own
-// log is the truth). Refused under --record: a mutated page must never become the baseline.
+// which, before the Roboto pin, stood in (pessimistically) for the Linux runner's DejaVu Sans. Under
+// the pin it also trips the font census, since it forces every element onto a host font.
+// Refused under --record: a mutated page must never become the baseline.
 const MUTATE_CSS = process.env.GATE_MUTATE_CSS || ''
 if (RECORD && MUTATE_CSS) { console.error('[today-shape] REFUSING TO RECORD with GATE_MUTATE_CSS set — the baseline would encode the injected CSS.'); process.exit(1) }
 const tid = (name) => `[data-testid="${name}${SUFFIX}"]`
@@ -380,6 +391,8 @@ const MEASURE = `(() => {
       // The OBSERVED counterpart to weatherStubbed's declared intent — see todaymeasure.jsx's
       // passthrough arm. Any third-party URL that reached the real network lands here.
       liveRequests: w.__h.requests().filter(r => r.live).map(r => r.path),
+      // tests/harness/robotoPin.js's own report: which build, how many faces loaded, which failed.
+      fontPin: w.__fontPin || null,
     },
   }
 })()`
@@ -416,6 +429,14 @@ if (!RECORD && budget.viewport && (budget.viewport.w !== VIEWPORT.w || budget.vi
   console.error(`[today-shape] FAIL — budget/viewport mismatch: this budget was recorded at ${budget.viewport.w}x${budget.viewport.h} @ DPR ${budget.viewport.dpr ?? '(unrecorded)'}, the gate is running at ${VIEWPORT.w}x${VIEWPORT.h} @ DPR ${VIEWPORT.dpr}. Every recorded number is viewport-specific, so none of them describe this run. Re-record at the new viewport (npm run gate:today-shape:record) or unset GATE_VIEWPORT_W/H/DPR.`)
   process.exit(1)
 }
+// FONT BINDING, the glyph-axis twin of the width binding above and the clock binding below. A budget
+// with no `font` was recorded in whatever face the recording machine had (San Francisco, before
+// 2026-09-25), so its heights and tops describe a page no other machine lays out. The per-run half —
+// the pin's build matching the budget's — is checked per state, once the page has said what it loaded.
+if (!RECORD && !budget.font) {
+  console.error('[today-shape] FAIL — this budget predates the Roboto pin (no \'font\' key): its numbers are host-font geometry from the machine that recorded it. Re-record on a clean tree (npm run gate:today-shape:record).')
+  process.exit(1)
+}
 
 const STATES = Object.keys(budget.states || {}).length && !RECORD
   ? Object.keys(budget.states)
@@ -423,6 +444,8 @@ const STATES = Object.keys(budget.states || {}).length && !RECORD
 
 const recorded = {}
 let pinnedClockIso = null
+let pinnedFont = null
+let probed = false
 let harness, chrome, cdp
 const udd = mkdtempSync(join(tmpdir(), 'gate-todayshape-'))
 try {
@@ -472,6 +495,11 @@ try {
     // against a page measured at another time. Skipped under --record, which adopts the new instant.
     if (!RECORD && budget.clock && m.harness.clock.pinned && m.harness.clock.iso !== budget.clock) fail(`${at}: the harness clock is pinned to ${m.harness.clock.iso} but this budget was recorded at ${budget.clock} — re-record (npm run gate:today-shape:record) after moving the pin, never compare across instants`)
     if (m.harness.clock.tz !== 'America/New_York') fail(`${at}: page timezone is ${m.harness.clock.tz}, expected America/New_York — the date subtitle and the "as of" stamp render different copy, which is a different wrap and a different height`)
+    // THE FONT PIN, loaded. Whether it also PAINTED the page is the census after the measurement.
+    const pin = m.harness.fontPin
+    if (!pin || !pin.ok) fail(`${at}: the Roboto pin is NOT in force (${pin ? `${pin.faces} face(s) loaded, ${pin.failed.length} failed${pin.failed.length ? ': ' + pin.failed.slice(0, 2).join('; ') : ''}` : 'window.__fontPin is missing — tests/harness/robotoPin.js never ran'}). Every length on this page would be the host font's (San Francisco on a Mac, DejaVu Sans on CI), not the Roboto this budget was recorded in.`)
+    else pinnedFont = pin.source
+    if (!RECORD && pin?.ok && pin.source !== budget.font) fail(`${at}: the harness pins ${pin.source} but this budget was recorded in ${budget.font} — another build of the font can move every glyph; re-record (npm run gate:today-shape:record), never compare across fonts`)
     if (!m.harness.weatherStubbed) fail(`${at}: Open-Meteo was NOT stubbed — the rain line is being read from the live network and this budget will drift with the actual weather`)
     // The check above reads a CONFIG FLAG (WX_LIVE); this one reads what actually happened on the
     // wire. They differ exactly when it matters: a moved weather host stops matching the stub arm,
@@ -674,12 +702,27 @@ try {
     // ── (e) NO HORIZONTAL OVERFLOW — the scrollWidth sibling of the innerWidth refusal.
     if (m.scrollWidth > m.clientWidth + 1) fail(`${at}: document scrollWidth ${m.scrollWidth} > clientWidth ${m.clientWidth} — the page scrolls sideways at ${VIEWPORT.w}px`)
 
+    // ── FONT CENSUS, after measuring (it tags elements to address them). The pin loading proves the
+    //    faces exist; this is Chrome's own account of which font drew each element's glyphs. A stack
+    //    no alias covers, or a glyph Roboto lacks, paints in the host's font — a different width on
+    //    every machine — so outside the measured, allowlisted symbols it is a refusal, not a note.
+    const census = await fontCensus(cdp, '#root')
+    if (!census.glyphs) fail(`${at}: the font census read no glyphs under #root — nothing painted text, or the census could not see it; either way the Roboto pin is unverified`)
+    else if (!census.webGlyphs) fail(`${at}: not one glyph under #root was painted by the pinned web font — the page was measured entirely in host fonts (${Object.keys(census.fonts).join(', ')})`)
+    for (const v of census.violations.slice(0, 6)) fail(`${at}: a HOST font painted text the Roboto pin should own — ${v}. That text measures differently on every machine; alias its family in tests/harness/robotoPin.js (or, for a symbol Roboto lacks, measure that it moves no box and allowlist it in font-census.mjs)`)
+    if (census.violations.length > 6) fail(`${at}: …and ${census.violations.length - 6} further host-font element(s)`)
+    if (!probed) {
+      probed = true
+      console.log(`[today-shape] font: ${pin?.source ?? 'NO PIN'} (${pin?.faces ?? 0} faces) · ${chrome.version.Browser} · probe widths ${JSON.stringify(await fontProbe(cdp.evalIn))}`)
+    }
+
     // ── THE RECORD. Printed on pass as well as fail: these are the numbers a redesign has to move,
     //    and a gate that only speaks when it is angry leaves nothing to compare against.
     const usable = VIEWPORT.h - CHROME_CONST.barH - CHROME_CONST.bottomNav
     console.log(`[today-shape] ${at}: ${m.scrollHeight}px = ${(m.scrollHeight / VIEWPORT.h).toFixed(2)} viewports (${((m.scrollHeight + CHROME_CONST.barH + CHROME_CONST.bottomNav) / usable).toFixed(2)} usable-window-heights incl. ${CHROME_CONST.barH}px TopChrome + ${CHROME_CONST.bottomNav}px BottomNav) · content ends y=${m.contentBottom} · ink ${m.inkPct}% · ${m.rows.length} care rows / ${m.groups.length} groups / ${m.panels.length} expanded · ${m.controls} controls, first at y=${m.firstControlY} · hscroll ${m.scrollWidth > m.clientWidth + 1 ? 'YES' : 'no'}`)
     console.log(`[today-shape] ${at}: regions ${m.regions.filter(r => r.count > 0).map(r => `${r.id}×${r.count}@${r.boxes[0].t}(${r.boxes[0].h}px)`).join(' ')}`)
     console.log(`[today-shape] ${at}: controls ${CONTROLS.map(c => `${c.id} ${m.controlCensus[c.id].visible}/${m.controlCensus[c.id].total}`).join(' · ')}`)
+    console.log(`[today-shape] ${at}: fonts ${fmtCensus(census)}`)
 
     // RECORD-MODE SOUNDNESS: refuse to bake a clipped page into the baseline.
     // The comment at the top of this loop draws the right line — "the instrument must be sound to
@@ -763,10 +806,11 @@ if (RECORD) {
     process.exit(1)
   }
   const out = {
-    _: `GENERATED by scripts/layout-gate/today-shape.mjs --record. Every number here is a real getBoundingClientRect / Range.getClientRects reading from headless Chrome at a CDP-emulated, page-self-reported ${VIEWPORT.w}x${VIEWPORT.h} @ DPR ${VIEWPORT.dpr} mobile viewport (Dave's handset, read 2026-09-24), with the clock pinned to ${pinnedClockIso}, the timezone forced to America/New_York and Open-Meteo stubbed at the wire. Every number is viewport- and instant-specific: the gate refuses to run this budget at a different viewport or a different pinned clock rather than comparing across them. Re-record deliberately, never to make a red run green.`,
+    _: `GENERATED by scripts/layout-gate/today-shape.mjs --record. Every number here is a real getBoundingClientRect / Range.getClientRects reading from headless Chrome at a CDP-emulated, page-self-reported ${VIEWPORT.w}x${VIEWPORT.h} @ DPR ${VIEWPORT.dpr} mobile viewport (Dave's handset, read 2026-09-24), with the clock pinned to ${pinnedClockIso}, the timezone forced to America/New_York, Open-Meteo stubbed at the wire and the text laid out in ${pinnedFont} (tests/harness/robotoPin.js — the face Dave's Android renders, identical on the Mac and on CI). Every number is viewport-, instant- and font-specific: the gate refuses to run this budget at a different viewport, a different pinned clock or a different font build rather than comparing across them. Re-record deliberately, never to make a red run green.`,
     recordedAt: new Date().toISOString(),
     viewport: VIEWPORT,
     clock: pinnedClockIso,
+    font: pinnedFont,
     chrome: CHROME_CONST,
     states: recorded,
   }
