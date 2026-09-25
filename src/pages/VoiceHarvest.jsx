@@ -1468,6 +1468,14 @@ export default function VoiceHarvest({ embedded = false } = {}) {
     const valueSeq = result.kind === 'unparsed' && !oneBreath ? parseValueSequence(result.transcript) : null
     const axesOf = (values) => new Set(values.map((v) => v.kind))
     const readback = (values) => values.map((v) => `${v.value} ${v.unit}`).join(' · ')
+    // BUG-VOICESAMECROPDROP-001 — does this search name ONLY the planting already chosen? Asked with the
+    // search branch's own matcher and aliases (matchPlantingsWithRescue over the same refs), so the hold
+    // and the search that follows it cannot disagree about which planting the words name.
+    const namesChosenOnly = (r) => {
+      if (r.kind !== 'search' || !selectedRef.current) return false
+      const { hits } = matchPlantingsWithRescue(plantingsRef.current, r.text, aliasRef.current)
+      return hits.length === 1 && hits[0].id === selectedRef.current.id
+    }
 
     const partial = classifyPartial(result.transcript)
     if (partial?.kind === 'unit' && heldNumRef.current != null) {
@@ -1582,6 +1590,24 @@ export default function VoiceHarvest({ embedded = false } = {}) {
       // empty quantity refuses at "next".
       heldNumRef.current = null; setHeldNum(null)
       recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-restated ${result.value} ${result.unit} (held number resolved)`)
+    } else if (heldNumRef.current != null && namesChosenOnly(result)) {
+      // BUG-VOICESAMECROPDROP-001 — THE SAME CROP NAMED AGAIN KEEPS THE HELD NUMBER: placed nowhere,
+      // dropped nowhere, still waiting for whatever comes next.
+      //
+      // Device-proven on the real page, Dave's Android, 2026-09-25 11:48 ET, prod v4.150.0 (+25626 and
+      // +32562; gardening-docs project-state/voice-realpage-trace-20260925.md, M3). He says his harvest
+      // as "cucumber one 243", the 500 ms tick commits "cucumber" before "one" arrives, and a search was a
+      // crop change by definition — so the held 243, and later a held 3, were dropped "(crop changed)"
+      // although "cucumber" IS Suyo Long, the planting already chosen. The number was lost to the tick,
+      // not to anything he said.
+      //
+      // A search whose hits are exactly the chosen planting (namesChosenOnly) changes no crop. The number
+      // stays held, and the search branch below re-selects the planting without clearing anything —
+      // clearForSwitch keeps what was said for it. That is the rule Dave already set for the "next"
+      // queued behind a save (Lane V3 F8) and for every amount on the record
+      // (BUG-VOICECROPSWITCHKEEPSAMOUNTS-001): the same crop named again keeps it. EVERY OTHER SEARCH
+      // IS UNCHANGED — another planting, a list, a miss — and still drops the number and says so below.
+      recordVoiceMark(VOICE_DEBUG_SRC, 'decision', `held-kept ${heldNumRef.current} (same crop named again)`)
     } else if (heldNumRef.current != null) {
       // V5-VOICEVOCAB-001 — RESOLUTION SITE. Any other utterance ends the pairing, and the held
       // number is now APPLIED with an assumed unit rather than thrown away.
