@@ -66,6 +66,19 @@ for (const subset of metadata.subsets) {
   }
 }
 
+// TEXT RENDERING — the other half of "the same glyphs everywhere" (2026-09-25, measured). With these
+// same static files, CI run 36161500926 laid a fixed weight-700 string at 13.6px out 0.219px narrower
+// than this Mac (472.234 against 472.453px) while 400 at 16px and 600 at 14px matched to the
+// thousandth; that is the Undo label's size and weight, and it moved five undo-toast widths by 0.1px.
+// By default Linux Chrome may hint and round glyph advances; `text-rendering: geometricPrecision` asks
+// Blink for unhinted, unrounded advances on every platform. On this Mac it changed no number either
+// gate prints (measured). Set on <html> so it reaches every element, the census probe included; the
+// app sets text-rendering nowhere, so nothing it declares is overridden.
+const rendering = document.createElement('style')
+rendering.id = 'harness-text-rendering'
+rendering.textContent = 'html { text-rendering: geometricPrecision; }'
+document.head.appendChild(rendering)
+
 const failed = []
 const loadedFaces = await Promise.all(files.map(async (f) => {
   let buf
