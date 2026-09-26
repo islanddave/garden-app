@@ -39,6 +39,9 @@
 //                 the page to the old place.
 //   zones         Zones, a row mid-list (not the page's end, so an overshoot shows too) → the zone → Back.
 //   zones-slow    as zones, every page GET 5 s slow (a cold Lambda): the 4 s prototype landed 56 of 1645.
+//   zones-slowtoken  as zones, every request waiting 1.5 s for its Clerk token first (?token=, a cold token cache):
+//                 that wait is loading too, so the out-of-reach stop must not read it as a settled page
+//                 (qa2-scrollmanager-confirm NEW-1: counted from apiFetch only, it gave up on the shell at 56).
 //   leave-during-load  as zones with every GET 3 s slow, but away by a tab WHILE the Back is still loading, then
 //                 Back again: the restore's clamped attempts were never filed (rimpact IMPORTANT-3).
 //   takeover      as zones, and the wheel turned INSIDE the restore's 1 s hold: the page stays where the user
@@ -322,6 +325,7 @@ const FLOWS = [
   { key: 'eventlog-more-tap', manager: true, label: 'a planting\'s Event log past "Show more" → event 55 → Back → a finger taps "Show more" while the restore is still pulling' },
   { key: 'zones', manager: true, label: 'Zones, a row mid-list → the zone → Back' },
   { key: 'zones-slow', manager: true, once: true, label: 'Zones, a row mid-list → the zone → Back, every GET 5 s slow', ms: 5000 },
+  { key: 'zones-slowtoken', manager: true, label: 'Zones, a row mid-list → the zone → Back, every request waiting 1.5 s for its sign-in token', token: 1500 },
   { key: 'leave-during-load', manager: true, once: true, label: 'Zones, a row mid-list → the zone → Back, and away again while Zones is still loading → Back', ms: 3000 },
   { key: 'takeover', manager: true, label: 'Zones, a row mid-list → the zone → Back → the wheel turned inside the restore\'s hold' },
   { key: 'takeover-touch', manager: true, label: 'Zones, a row mid-list → the zone → Back with a thumb resting through the load → the thumb moves, every GET 1.5 s slow', ms: 1500 },
@@ -605,9 +609,10 @@ async function runFlow(cdp, flow, vw, vh) {
     const t = tab(cdp, sessionId)
     const ms = flow.ms ?? 300
     const auth = flow.auth ?? 0
+    const token = flow.token ?? 0
     // A settle long enough to outlast the flow's own latency: the restore re-applies until the content lands.
-    const slowMax = Math.max(10000, ms * 3 + 6000) + auth
-    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}`
+    const slowMax = Math.max(10000, (ms + token) * 3 + 6000) + auth
+    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}`
     const nav = await cdp.send('Page.navigate', { url }, sessionId)
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000 + auth)) return fail(`${at}: the harness never came up in the frame — nothing to measure`)
@@ -632,6 +637,7 @@ async function runFlow(cdp, flow, vw, vh) {
     if (g.nav !== BOTTOM_NAV_HEIGHT_PX) geo.push(`the bottom-nav stand-in is ${g.nav}px, expected BOTTOM_NAV_HEIGHT_PX ${BOTTOM_NAV_HEIGHT_PX}px`)
     if (g.fixture.ms !== ms) geo.push(`the harness answers every GET after ${g.fixture.ms}ms, the flow asked for ${ms}ms`)
     if (g.fixture.auth !== auth) geo.push(`the harness holds the user unresolved for ${g.fixture.auth}ms at each load, the flow asked for ${auth}ms`)
+    if (g.fixture.token !== token) geo.push(`the Clerk stub gives a token after ${g.fixture.token}ms, the flow asked for ${token}ms`)
     for (const [key, v] of Object.entries(FIXTURE)) if (g.fixture[key] !== v) geo.push(`the fixture's ${key} is ${g.fixture[key]}, the gate expects ${v}`)
     // The browser's restore mode is the one main.jsx sets for the flag this document was served: 'manual' with
     // the manager on. A harness in any other mode measures a browser prod does not run.
@@ -877,7 +883,7 @@ async function runFlow(cdp, flow, vw, vh) {
       else if (k === 'takeover-touch' && !(after.y < before.y - 200)) msgs.push(`the page is at y${R1(after.y)}; the finger drew it up from y${R1(before.y)} by about 400px`)
       return done(msgs.length ? `${msgs.join('; ')}${await diag()}` : null)
     }
-    if (k === 'zones' || k === 'zones-slow' || k === 'reload' || k === 'reload-skeleton' || k === 'leave-during-load') {
+    if (k === 'zones' || k === 'zones-slow' || k === 'zones-slowtoken' || k === 'reload' || k === 'reload-skeleton' || k === 'leave-during-load') {
       let why = await enter(SEL.toLocations, 'locations', 'the /today link to Zones')
       if (why) return done(why)
       why = await t.wheelTo(SEL.zoneRow, 'the Bed 3 row')
@@ -925,6 +931,12 @@ async function runFlow(cdp, flow, vw, vh) {
         if (away.why) return done(away.why)
       }
       const b = await back(before, 'locations', SEL.zoneRow, 'Zones')
+      if (token) {
+        // zones-slowtoken: every request waited `token` ms for its Clerk token (a cold cache) before it went out —
+        // time the out-of-reach stop must count as "still loading", not as a settled page (qa2-confirm NEW-1).
+        await t.waitIn(`w.__h.restores().length > 0`, 4000)
+        note.push(`${await t.read(`return w.__h.tokenCalls()`)} token waits of ${token}ms · restore: ${restoresLine(await restores())}`)
+      }
       return done(b.why)
     }
     if (k === 'top-back') {

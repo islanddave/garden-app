@@ -11,7 +11,19 @@ const USER = { id: 'harness_user', firstName: 'Harness', fullName: 'Harness User
 // effects — the first version of this stub returned a literal and produced an infinite
 // fetch/setState loop (10 duplicate /api/plants before the page even settled). Real Clerk returns
 // stable references, so a stub that does not is measuring a bug the app does not have.
-const getToken = async () => 'harness-token'
+//
+// ?token=<ms> on the harness page's URL: every getToken() takes that long, the way a cold Clerk token cache does
+// (a tab idle for a minute, a weak link) — BUG-DETAILPAGESCARRYSCROLL-001's zones-slowtoken flow
+// (qa2-scrollmanager-confirm NEW-1). Default 0: an immediate token, as before. `window.__harnessClerk` reports the
+// setting and counts the calls, so a gate can check the knob took before it measures anything.
+const TOKEN_MS = (() => {
+  try { return Math.max(0, Number(new URLSearchParams(window.location.search).get('token')) || 0) } catch { return 0 }
+})()
+const CLERK_INSTRUMENT = { tokenMs: TOKEN_MS, calls: 0 }
+try { window.__harnessClerk = CLERK_INSTRUMENT } catch { /* not a browser */ }
+const getToken = TOKEN_MS > 0
+  ? async () => { CLERK_INSTRUMENT.calls += 1; await new Promise((resolve) => setTimeout(resolve, TOKEN_MS)); return 'harness-token' }
+  : async () => { CLERK_INSTRUMENT.calls += 1; return 'harness-token' }
 const signOut = async () => {}
 const AUTH = { isLoaded: true, isSignedIn: true, userId: USER.id, sessionId: 'harness_session', getToken, signOut }
 const USER_STATE = { isLoaded: true, isSignedIn: true, user: USER }

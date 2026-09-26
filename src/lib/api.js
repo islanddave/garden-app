@@ -315,32 +315,38 @@ async function acquireToken(getToken) {
   return tokenForRequest(() => getToken({ skipCache: true }))
 }
 
+async function fetchWithToken(getToken, path, options = {}) {
+  const token = await acquireToken(getToken)
+  if (!token) throw noCredentialError()
+
+  try {
+    return await apiFetch(path, options, token)
+  } catch (e) {
+    // A 401 with a token attached means the token was stale in a way the client could not see —
+    // a mint that raced an expiry, or a session rotated on another device. Re-mint and replay ONCE.
+    //
+    // Safe for POST/PUT/DELETE, not just reads: every Lambda calls verifyToken BEFORE it touches
+    // the database (checked against lambda/harvests/index.js and lambda/photos/index.js — the two
+    // this bug was reported on), so a 401 is always a server-side no-op and the replay cannot
+    // double-write. Bodies are JSON strings at every call site, so `options` is replayable.
+    //
+    // Bounded at one attempt by construction — the retry calls apiFetch directly, never itself.
+    // The identity check is what stops a pointless second round trip when the mint returns the
+    // same cached string, which is also the shape an infinite loop would take.
+    if (e?.status !== 401) throw e
+    const fresh = await tokenForRequest(() => getToken({ skipCache: true }))
+    if (!fresh || fresh === token) throw e
+    return apiFetch(path, options, fresh)
+  }
+}
+
 export function useApiFetch() {
   const { getToken } = useAuth()
-  const fetch = useCallback(async (path, options = {}) => {
-    const token = await acquireToken(getToken)
-    if (!token) throw noCredentialError()
-
-    try {
-      return await apiFetch(path, options, token)
-    } catch (e) {
-      // A 401 with a token attached means the token was stale in a way the client could not see —
-      // a mint that raced an expiry, or a session rotated on another device. Re-mint and replay ONCE.
-      //
-      // Safe for POST/PUT/DELETE, not just reads: every Lambda calls verifyToken BEFORE it touches
-      // the database (checked against lambda/harvests/index.js and lambda/photos/index.js — the two
-      // this bug was reported on), so a 401 is always a server-side no-op and the replay cannot
-      // double-write. Bodies are JSON strings at every call site, so `options` is replayable.
-      //
-      // Bounded at one attempt by construction — the retry calls apiFetch directly, never itself.
-      // The identity check is what stops a pointless second round trip when the mint returns the
-      // same cached string, which is also the shape an infinite loop would take.
-      if (e?.status !== 401) throw e
-      const fresh = await tokenForRequest(() => getToken({ skipCache: true }))
-      if (!fresh || fresh === token) throw e
-      return apiFetch(path, options, fresh)
-    }
-  }, [getToken])
+  // BUG-DETAILPAGESCARRYSCROLL-001 (qa2-scrollmanager-confirm NEW-1): counted as in flight from the CALL, the
+  // wait for the Clerk token included — apiFetch's own count starts only once a token is in hand, and a cold
+  // token (a tab idle for a minute, a weak link) can take over a second, during which the page is still
+  // waiting on this request. The inner apiFetch counts again; the one reader only asks whether the count is 0.
+  const fetch = useCallback((path, options) => trackRequest(fetchWithToken(getToken, path, options)), [getToken])
   // getToken is also returned so fire-and-forget telemetry (uxEvents) can route token
   // acquisition through this same seam — component tests mock useApiFetch, which keeps
   // the Clerk dependency out of every consumer's test. Wrapped rather than raw: those callers all

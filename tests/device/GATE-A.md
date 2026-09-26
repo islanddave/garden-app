@@ -159,7 +159,7 @@ Before this fix, a page you opened from a long, scrolled list often opened part-
 - **7d — Back to a page you left at the top.** Go to **Today** and make sure the big **Today** heading and the date are showing. Tap anything on Today that opens a new page. Scroll that page all the way to the bottom, then press **Back**.
   **PASS if:** Today shows its big heading and the date straight away.
   **FAIL if:** Today comes back part-way down. ☐ PASS ☐ FAIL
-- **7e (optional — only on weak signal).** Do 7a up to tapping the row. On the place's page press **Back** and at once press the power button to turn the screen off. Wait 30 seconds, then turn the screen on and unlock.
+- **7e (optional — only on weak signal).** Do 7a up to tapping the row. Leave the app for 2 minutes on the place's page first (go to your home screen, then come back to the app after 2 minutes). Then, on the place's page, press **Back** and at once press the power button to turn the screen off. Wait 30 seconds, then turn the screen on and unlock.
   **PASS if:** the two rows you remembered are on screen. **FAIL if:** the list is at or near its top.
   ☐ PASS ☐ FAIL ☐ no weak signal
 

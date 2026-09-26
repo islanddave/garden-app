@@ -42,6 +42,8 @@
 //     auth=0         ms the user stays UNRESOLVED at every document load: the page tree is Protected's
 //                    one-screen skeleton and the manager's `ready` is false, as App.jsx's `!loading` during the
 //                    Clerk window (~2.5 s measured) — what a boot restore has to wait through (qa-built M9)
+//     token=0        ms every Clerk getToken() takes (read by tests/harness/stubs/clerk.jsx): a cold token
+//                    cache, which useApiFetch waits on before each request goes out (qa2-confirm NEW-1)
 //
 // A FLOW'S FIRST LOAD IS A FIRST VISIT: sessionStorage and localStorage are cleared before anything
 // mounts (both scroll stores, every page's persisted filters), and Garden's crop groups are opened. The one
@@ -664,5 +666,7 @@ window.__h = {
     return true
   },
   reloadedDoc: () => !!RELOAD_TO,
-  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS }),
+  // `token` is what the Clerk stub itself reports (tests/harness/stubs/clerk.jsx, ?token=), not this page's URL.
+  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, token: window.__harnessClerk ? window.__harnessClerk.tokenMs : null, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS }),
+  tokenCalls: () => (window.__harnessClerk ? window.__harnessClerk.calls : null),
 }
