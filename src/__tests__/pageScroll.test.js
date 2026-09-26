@@ -8,7 +8,7 @@ import {
   decidePageScroll, startDriver, driverStep, pageScrollKey, readPageScroll, filePageScroll, flushPageScroll,
   __resetPageScrollStore, __pageScrollEntries,
   PAGE_SCROLL_STORE_KEY, PAGE_SCROLL_MAX_ENTRIES, RESTORE_HOLD_MS, RESTORE_BUDGET_MS, RESTORE_DT_CAP_MS,
-  RESTORE_WAIT_MAX_MS,
+  RESTORE_WAIT_MAX_MS, RESTORE_EXACT_PX,
 } from '../lib/pageScroll.js'
 
 // A navigation, spelled the way the manager sees it. K = the page entry, P = its path.
@@ -209,11 +209,27 @@ describe('driverStep — when a restore is DONE', () => {
     expect(doneAt * 16).toBeGreaterThanOrEqual(40 * 16 + RESTORE_HOLD_MS - 16)
   })
 
-  it('never asks for a scroll while at the target (within RESTORE_TOLERANCE_PX), and always while short of it', () => {
-    const r1 = driverStep(startDriver(900, 0), { now: 16, y: 897, height: 3000 })
+  it('never asks for a scroll while ON the target (within RESTORE_EXACT_PX: a sub-pixel position), and always while off it', () => {
+    const r1 = driverStep(startDriver(900, 0), { now: 16, y: 899.33, height: 3000 })
     const r2 = driverStep(startDriver(900, 0), { now: 16, y: 56, height: 892 })
+    expect(RESTORE_EXACT_PX).toBe(1)
     expect(r1.scroll).toBe(false)
     expect(r2.scroll).toBe(true)
+  })
+
+  it('a few px off is off: the page drifting 4 px after its first on-target frame is pulled back before DONE (qa2-confirm MINOR-2)', () => {
+    // On the target for 20 frames, then the content settles and the page sits 4 px past it, height unchanged.
+    const f = frames(300, (i) => ({ y: i < 20 ? 968 : 972, h: 3000 }))
+    const { out } = run(968, f)
+    expect(out.slice(20, 25).every((r) => r.outcome === 'RETRY' && r.scroll)).toBe(true)
+    expect(out.some((r) => r.outcome === 'DONE')).toBe(false)   // never DONE 4 px away: the budget, not the hold, ends it
+  })
+
+  it('a page that comes back onto the target after drifting is held from there, and DONE on the pixel', () => {
+    const f = frames(300, (i) => ({ y: i >= 20 && i < 40 ? 972 : 968, h: 3000 }))
+    const { out, last } = run(968, f)
+    expect(last.outcome).toBe('DONE')
+    expect(out.length).toBeGreaterThanOrEqual(40 + Math.floor(RESTORE_HOLD_MS / 16))
   })
 })
 
@@ -319,6 +335,13 @@ describe('driverStep — a target out of the settled page\'s reach', () => {
   it('a reachable target never stops as unreachable: at the target it is the hold that ends it (DONE)', () => {
     const { last } = run(4658, frames(200, { y: 4658, h: 5758, m: 4922, q: true }))
     expect(last.outcome).toBe('DONE')
+  })
+
+  it('a target only 2 px past the settled end is out of reach too (on the pixel, not within 4): it stops there, not after the budget', () => {
+    const { last, out } = run(4924, frames(400, SETTLED))
+    expect(last.outcome).toBe('EXHAUSTED')
+    expect(last.reason).toBe('unreachable')
+    expect(out.length * 16).toBeLessThan(RESTORE_HOLD_MS + 50)
   })
 })
 

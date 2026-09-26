@@ -90,6 +90,10 @@
 //                 sees until its pop).
 //   lot-edit      a seed lot, deep → "Edit sow details →" → the variety editor → its Cancel (navigate(-1)) →
 //                 the lot where it was (Dave's "opens at the top unless you arrived from an edit").
+//   lot-refuse    a seed lot → "175-" typed into Seed count → Save at the foot of the form, refused: the field is
+//                 brought into the band and focused, and nothing moves it for 1.5 s → header List → Back → the
+//                 place ON THE PIXEL (the saved-seed lane's refused Save with the manager; the driver's exactness,
+//                 qa2-scrollmanager-confirm MINOR-2/MINOR-7 — within the old 4 px it came back at 972 for 968).
 //   reload        Zones, a row mid-list → the app reloads on that entry (SW post-update reload, a tab restore)
 //                 → the place. location.reload() fires BOTH visibilitychange→hidden and pagehide, so this proves
 //                 one of the two flushes works, not which: the Android discard path (hidden, then no pagehide)
@@ -307,6 +311,8 @@ const SEL = {
   savedRadio: `[...d.querySelectorAll('[role="radiogroup"][aria-label="Which seeds"] [role="radio"]')].find((b) => b.textContent.trim() === 'Saved seeds') || null`,
   savedView: `d.querySelector('${tid('saved-seeds-view')}')`,
   editSow: `d.querySelector('${tid('edit-sow-details')}')`,
+  seedCount: `d.querySelector('${tid('inv-seed-count')}')`,
+  saveChanges: `[...d.querySelectorAll('button[type="submit"]')].find((b) => b.textContent.trim() === 'Save changes') || null`,
   cancel: `[...d.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Cancel') || null`,
   chainRow: `(() => { ${BAND_FN} const mid = (bandTop + bandBottom) / 2; let best = null, bd = Infinity
     for (const r of d.querySelectorAll('${tid('chain-row')}')) { const b = r.getBoundingClientRect(); const dd = Math.abs((b.top + b.bottom) / 2 - mid); if (dd < bd) { bd = dd; best = r } }
@@ -349,6 +355,7 @@ const FLOWS = [
   { key: 'shrink-back', manager: true, label: 'a long list, deep → header Search → the list renders short → the system Back → the list long again' },
   { key: 'shrink-marker', manager: true, label: 'a long list, deep → More → the list renders short → the system Back → the list long again' },
   { key: 'lot-edit', manager: true, label: 'a seed lot, deep → "Edit sow details →" → the variety editor → its Cancel' },
+  { key: 'lot-refuse', label: 'a seed lot → a typo in Seed count → Save refused (the field brought into view, focused) → header List → Back' },
   { key: 'reload', manager: true, label: 'Zones, a row mid-list → the app reloads on that entry' },
   { key: 'reload-skeleton', manager: true, once: true, label: 'Zones, a row mid-list → the app reloads on that entry, the user unresolved for 3 s', auth: 3000 },
   { key: 'deep25', manager: true, once: true, label: `${CHAIN_DEPTH} pages deep, each at its own offset → Back ${CHAIN_DEPTH} times` },
@@ -484,6 +491,8 @@ function tab(cdp, sessionId) {
   // A finger: real touch input through the browser's gesture pipeline (touchstart/touchmove/touchend, the touch
   // pointer events, a tap's click, a drag's scroll). `points` is [] for touchEnd.
   const touch = async (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([x, y]) => ({ x, y })) }, sessionId)
+  // Real typing into the focused field (an input event React sees, as a keyboard's would be).
+  const insertText = async (text) => cdp.send('Input.insertText', { text }, sessionId)
   // A REAL tap, IN PLACE: the target must already be in the visible band and its centre must hit-test to it.
   // `chrome: true` admits a control in the bars or a sheet over them. Returns null, or why no tap was made.
   const tap = async (sel, what, { chrome = false } = {}) => {
@@ -565,7 +574,7 @@ function tab(cdp, sessionId) {
   }
   // The middle of the visible band, in host coordinates: where a thumb or the wheel goes.
   const bandMid = () => read(`${BAND_FN} const fr = f.getBoundingClientRect(); return { x: fr.left + w.innerWidth / 2, y: fr.top + (bandTop + bandBottom) / 2 }`)
-  return { ev, read, waitIn, settle, tap, wheelTo, wheelToY, wheelBy, shoot, mouse, touch, aim, bandMid }
+  return { ev, read, waitIn, settle, tap, wheelTo, wheelToY, wheelBy, shoot, mouse, touch, insertText, aim, bandMid }
 }
 
 // The frame's page as it stands. `sel` is the element whose viewport top the flow compares.
@@ -1346,6 +1355,53 @@ async function runFlow(cdp, flow, vw, vh) {
       note.push(`Cancel → the lot at y${R1(after.y)} (left at y${R1(before.y)})`)
       if (!st.settled || Math.round(after.y) !== Math.round(before.y) || Math.abs(after.top - before.top) > TOP_TOL_PX) return done(`after the editor's Cancel the lot is at y${R1(after.y)} (link top y${R1(after.top)}), it was left at y${R1(before.y)} (link top y${R1(before.top)})${await diag()}`)
       return
+    }
+    if (k === 'lot-refuse') {
+      // The saved-seed lane's refused Save (InventoryDetail, BUG-SAVEDLOTCOUNTHIDDEN-001): a typo in Seed count and
+      // Save at the foot of the form bring the refused field to the middle of the screen and focus it. Nothing may
+      // fight that scroll, and Back must come back to where the refusal left the page, ON THE PIXEL — the pin for
+      // the driver's exactness (qa2-scrollmanager-confirm MINOR-2 and MINOR-7, QA2's qa2-lot-refuse: within the
+      // old 4 px it came back at 972 for 968).
+      const l0 = await land(SEL.toLot, 'the /today link to the lot', 'lot', { today: true })
+      if (l0.why) return done(l0.why)
+      let why = await t.wheelTo(SEL.seedCount, 'Seed count')
+      if (why) return done(why)
+      await t.settle(300, 3000)
+      why = await t.tap(SEL.seedCount, 'Seed count')
+      if (why) return done(why)
+      await t.read(`const el = ${SEL.seedCount}; el.select(); return 1`)
+      await t.insertText('175-')
+      const typed = await t.read(`return ${SEL.seedCount}.value`)
+      if (typed !== '175-') return done(`Seed count reads "${typed}", not "175-" — the typo never reached the field`)
+      why = await t.wheelTo(SEL.saveChanges, '"Save changes"')
+      if (why) return done(why)
+      await t.settle(300, 3000)
+      const atSave = await t.read(`return w.scrollY`)
+      await t.read(`w.__h.mark(); return 1`)
+      why = await t.tap(SEL.saveChanges, '"Save changes"')
+      if (why) return done(why)
+      if (!await t.waitIn(`d.getElementById('inv-seed-count-error')`, 5000)) return done(`the Save was not refused: no Seed count refusal showed${await diag()}`)
+      await t.settle(400, 5000)
+      const refused = await t.read(`return w.scrollY`)
+      await sleep(1500)
+      await t.settle(300, 3000)
+      const held = await t.read(`${BAND_FN} const a = d.getElementById('inv-seed-count-error'), r = a ? a.getBoundingClientRect() : null
+        return { y: w.scrollY, focused: d.activeElement === ${SEL.seedCount}, alert: r ? [Math.round(r.top), Math.round(r.bottom)] : null,
+          inBand: !!r && r.top >= bandTop - 0.5 && r.bottom <= bandBottom + 0.5, band: [Math.round(bandTop), Math.round(bandBottom)], restores: w.__h.restores() }`)
+      await t.shoot(join(OUTDIR, `page-scroll-${k}-refused-${vw}x${vh}.png`))
+      note.push(`Save at y${R1(atSave)} → refused: Seed count brought to y${R1(refused)}, the refusal at y${held.alert} in the band y${held.band[0]}-${held.band[1]}${held.focused ? ', focused' : ''}; y${R1(held.y)} 1.5 s later`)
+      const msgs = []
+      if (Math.abs(atSave - refused) < 100) msgs.push(`the refused Save did not bring Seed count into view (the page went y${R1(atSave)} → y${R1(refused)})`)
+      if (!held.inBand) msgs.push(`the refusal is at y${held.alert}, not inside the visible band y${held.band[0]}-${held.band[1]}`)
+      if (!held.focused) msgs.push('Seed count is not focused after the refused Save')
+      if (Math.round(held.y) !== Math.round(refused)) msgs.push(`the page moved y${R1(refused)} → y${R1(held.y)} in the 1.5 s after the refusal — something fought it`)
+      if (held.restores.length) msgs.push(`a restore ran after the refused Save (${restoresLine(held.restores)})`)
+      if (msgs.length) return done(`${msgs.join('; ')}${await diag()}`)
+      const before = await t.read(READ_HERE(SEL.seedCount))
+      const l = await land(SEL.headerDeep, 'the header\'s list link', 'deep', { chrome: true })
+      if (l.why) return done(l.why)
+      const b = await back(before, 'lot', SEL.seedCount, 'the lot after a refused Save')
+      return done(b.why)
     }
     if (k === 'deep25') {
       let why = await enter(SEL.toChain, 'chain', 'the /today link to the chain')

@@ -27,6 +27,12 @@ export const PAGE_SCROLL_MAX_ENTRIES = 100
 // loads in stages (PlantingDetail: header, then the Event log) changes height between stages, which resets
 // the clock, so the driver keeps re-applying until the LAST stage has landed.
 export const RESTORE_HOLD_MS = 1000
+// How close counts as ON the target: the pixel (sub-pixel scroll positions on a DPR-3 phone included). Not
+// useScrollRestore's RESTORE_TOLERANCE_PX (4), which is that hook's "close enough to stop nudging" for a
+// ~20-frame loop: this driver holds until the page has settled, so it can afford the pixel, and a page that
+// ends up a few px off after the first on-target frame is pulled back onto it rather than accepted
+// (qa2-scrollmanager-confirm MINOR-2: a seed lot came back at 972 for 968 after a refused Save).
+export const RESTORE_EXACT_PX = 1
 // VISIBLE time, not wall clock. At or above the app's own content bounds: the service worker gives an API
 // read 12 s (public/sw.js SW_TIMEOUT_MS) and src/lib/api.js allows 15 s for a cold Neon + Lambda start.
 // A change to either of those should bring someone here. Measured: a 4 s wall-clock budget lost Zones
@@ -174,13 +180,13 @@ export function driverStep(s, { now, y, height, max, ready = true, quiet = true 
   // Only the unresolved time counts toward the wait cap: after a long skeleton the restore still gets its
   // whole budget (rimpact-scrollmanager-built N5).
   const waitedMs = (s.waitedMs || 0) + (ready ? 0 : dt)
-  const at = Math.abs(y - s.target) <= RESTORE_TOLERANCE_PX
+  const at = Math.abs(y - s.target) <= RESTORE_EXACT_PX
   const sameHeight = s.lastHeight == null || height === s.lastHeight
   const heldMs = at && sameHeight ? s.heldMs + counted : 0
   const settledMs = sameHeight && quiet ? (s.settledMs || 0) + counted : 0
   const state = { ...s, visibleMs, waitedMs, heldMs, settledMs, lastNow: now, lastHeight: height }
   if (at && heldMs >= RESTORE_HOLD_MS) return { state, outcome: 'DONE', scroll: false }
-  if (!at && Number.isFinite(max) && s.target > max + RESTORE_TOLERANCE_PX && settledMs >= RESTORE_HOLD_MS) {
+  if (!at && Number.isFinite(max) && s.target > max + RESTORE_EXACT_PX && settledMs >= RESTORE_HOLD_MS) {
     return { state, outcome: 'EXHAUSTED', scroll: false, reason: 'unreachable' }
   }
   if (visibleMs >= RESTORE_BUDGET_MS) return { state, outcome: 'EXHAUSTED', scroll: false, reason: 'budget' }
