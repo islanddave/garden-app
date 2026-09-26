@@ -588,31 +588,53 @@ jobs:
         # zone, Garden, Put-Up, Seeds, a seed lot and the variety editor, Harvests, Achievements) under
         # BrowserRouter in App.jsx's shell, with the REAL manager and main.jsx's real boot mode (the drift
         # guard fails if either stops matching App.jsx), BottomNav's armed + and More sheets, header Search as
-        # a real OverlayLink, and a network that answers after a loading phase, framed by viewport.html at
-        # 426x836 and 360x640. Real taps (hit-tested in place), real wheel scrolling, history.back(). Every
-        # page a flow pushes onto must land at scrollY 0 with its title in the visible band, and every Back
-        # must land on the exact offset the page was left at, the tapped element at the same viewport top:
-        #   the Event log (two-stage load, 4658), Zones (1645) plain / 5 s slow / left mid-restore, More and
-        #   Search doors, Garden (Back from a planting, tab away and back at 1x and 4x CPU, "Add a planting"
-        #   on the same page), Put-Up's batch (a same-page push), the Seeds view switch and a list's sort (no
-        #   jump), Back into Saved seeds with the manager's store emptied and into Harvests at the top, a list
-        #   blanked behind Search / a Back marker and still short at the close (X, system Back, marker pop),
-        #   the seed lot's variety-editor round trip, an app reload, and 25 pages deep.
-        # It refuses a frame whose viewport, chrome, latency or restore mode is not the one asked for, a
-        # source less than 300px down, a tap that pushed no entry, and a Back onto any entry but the one the
-        # offset was taken on; the script's header lists each flow.
-        # Verified non-vacuous 2026-09-25 (Projects/Gardening/_seedstab12_20260925/scrollmgr-nonvacuity-*.txt
-        # in the gardening-docs repo; mutants served through GATE_HARNESS_CONFIG), each red at both viewports:
-        # the flag OFF reds 15 flows by name (pages land at 56, 188, 3000 or 52 instead of 0, most with the
-        # title off screen or under the top bar; the reload lands at 0 of 1645; the blanked list stays at 52
-        # of 3000) and leaves green the 6 that guard today's working
-        # behaviour (Garden Back and "Add a planting", Put-Up, the Seeds switch, both hook-page Backs); the
-        # pathname rule removed reds garden-add, seeds-switch and same-replace (a same-page write jumps to 0);
-        # the snapshot removed, or filing while covered, reds the three blanked-list closes (y52 of 3000);
-        # writes left open while armed reds leave-during-load; row 5's zero removed reds hook-top; a 4 s budget
-        # reds zones-slow. The "entry still current" write rule has no flow (its window is timing-dependent
-        # under 'manual') and is pinned by usePageScrollManager.test.jsx. `npm run gate:page-scroll:probe-nothing`
-        # exits 1 on every flow. ~5 min locally (21 flows, two viewports; 25-deep ~30 s, 5 s-slow ~18 s).
+        # a real OverlayLink with Search.jsx's peek, a network that answers after a loading phase and a user
+        # that can be held unresolved (Protected's skeleton), framed by viewport.html at 426x836 and 360x640.
+        # Real taps (hit-tested in place), real wheel scrolling, real touch input (a resting thumb, a drag, a
+        # finger's tap), history.back(). Every page a flow pushes onto must land at scrollY 0 (±1px) with its
+        # title in the visible band, and every Back must land on the exact offset the page was left at, the
+        # tapped element at the same viewport top:
+        #   the Event log (two-stage load; 3 s per stage; past "Show more", where the place is out of reach
+        #   and the restore must stop at the page's end once the page has settled, and give way to a tap on
+        #   "Show more"), Zones from a mid-list row plain / 5 s slow / left mid-restore / reloaded / reloaded
+        #   behind a 3 s skeleton, a wheel and a moving finger inside the restore's hold (the user wins; a
+        #   thumb resting through the load does not take over), Back onto a list and onto Put-Up left at their
+        #   top, the More and Search doors and Search's peek, Garden (Back from a planting, tab away and back
+        #   at 1x and 4x CPU, "Add a planting" on the same page), Put-Up's batch, the Seeds view switch and a
+        #   list's sort (no jump), Harvests' tab re-tapped then Back, Saved seeds opened at a lot then Back (no
+        #   second jump to the lot), Back into Saved seeds and into Harvests at the top, a list blanked behind
+        #   Search / a Back marker and still short at the close, the variety-editor round trip, 25 pages deep.
+        #   The five slow flows run at 426x836 only (they measure time, not layout).
+        # FLAG-AWARE, for the rollback: it reads SCROLL_MANAGER_ENABLED as the harness serves it. With the flag
+        # off it prints "manager OFF" and asserts today's contract only (mode 'auto', same-page writes and
+        # overlays never moving the page, Garden's and the hook pages' own restores, the pages that reset
+        # themselves, Back to a page left at its top), printing the manager's own checks instead of asserting
+        # them, so a forward flag-off build passes this step. Roll back that way, never with a revert.
+        # It refuses a frame whose viewport, chrome, latency, skeleton or restore mode is not the one asked
+        # for, a source less than 300px down, a tap that pushed no entry, a Back onto any entry but the one the
+        # offset was taken on, and a takeover flow whose restore had already finished before the user acted;
+        # the script's header lists each flow.
+        # Verified non-vacuous 2026-09-25 (Projects/Gardening/_seedstab12_20260925/scrollmgr-nonvacuity-review-
+        # *.txt in the gardening-docs repo; mutants served through GATE_HARNESS_CONFIG), each red at every
+        # viewport it runs at: the manager deciding nothing with the flag on reds 51 of 59 flow-runs (pages land
+        # at 56, 188, 3000, 52 or deeper; Backs lose the place) and leaves green only the must-not-change guards
+        # (Search's peek, "Add a planting", Put-Up, the Seeds switch); row 4's zero removed reds top-back
+        # (3000 of 0); row 6's reds putup-top (56 of 0); no scroll takeover reds takeover and takeover-touch (the
+        # restore pulls the page back); a touch pointerdown taking over reds takeover-touch (the resting thumb
+        # loses the place); no click takeover reds eventlog-more-tap (the page jumps to the old place); no
+        # out-of-reach stop reds eventlog-more (still pulling 8 s after Back); claims per page instead of per
+        # entry reds retap-back (0 of 1138); the ?lot= hint on a return reds lot-back (the page jumps back to
+        # the lot); time counted under the skeleton reds reload-skeleton; a 4 s budget reds eventlog-slow (2070
+        # of 4658) and zones-slow; stopping on the height alone (no in-flight check) reds eventlog-slow,
+        # zones-slow and leave-during-load; the pathname rule removed reds garden-add, seeds-switch,
+        # same-replace and retap-back (a same-page write jumps to 0); the snapshot removed, or filing while
+        # covered, reds the three blanked-list closes; writes left open while armed reds leave-during-load; row
+        # 5's zero removed reds hook-top. Served with the flag OFF (the rollback) it PASSES, printing "manager
+        # OFF". The "entry still current" write rule has no flow (its window is timing-dependent under
+        # 'manual') and is pinned by usePageScrollManager.test.jsx; the reload flow proves one of the hidden and
+        # pagehide flushes (location.reload() fires both), and the discard path (hidden only) is unit-pinned.
+        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~7 min locally (32 flows; the five
+        # slow ones at 426x836 only).
         # NO continue-on-error, per the policy note above.
         env:
           GATE_CHROME_FLAGS: --no-sandbox

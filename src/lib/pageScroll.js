@@ -149,9 +149,9 @@ export function startDriver(target, now) {
  * RESTORE_HOLD_MS of visible time — with the target still below its max, the driver stops (EXHAUSTED,
  * reason 'unreachable') at the closest reachable point instead of pulling for the whole budget. "No request
  * in flight" is load-bearing, not a nicety: a loading shell and the first stage of a two-stage page also
- * hold their height with the target beyond reach, for as long as the network takes (measured: stopping on
- * the height alone loses Zones at 5 s latency and the Event log at 3 s per stage, exactly as the 4 s
- * prototype did).
+ * hold their height with the target beyond reach, for as long as the network takes (measured in real Chrome:
+ * stopping on the height alone gives up on the loading shell and lands the Event log at 56 of 4658 at 3 s per
+ * stage, and Zones at 56 of 960 at 5 s).
  *
  * @param {{target:number, visibleMs:number, heldMs:number, settledMs:number, lastNow:number|null, lastHeight:number|null}} s
  * @param {{now:number, y:number, height:number, max?:number, ready?:boolean, quiet?:boolean}} f
