@@ -633,8 +633,8 @@ jobs:
         # OFF". The "entry still current" write rule has no flow (its window is timing-dependent under
         # 'manual') and is pinned by usePageScrollManager.test.jsx; the reload flow proves one of the hidden and
         # pagehide flushes (location.reload() fires both), and the discard path (hidden only) is unit-pinned.
-        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~7 min locally (32 flows; the five
-        # slow ones at 426x836 only).
+        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~6 min locally (32 flows, 59 flow-runs:
+        # the five slow ones at 426x836 only).
         # NO continue-on-error, per the policy note above.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
