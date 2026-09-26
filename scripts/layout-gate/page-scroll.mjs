@@ -4,6 +4,9 @@
 //
 //   node scripts/layout-gate/page-scroll.mjs [--outdir dir]     # npm run gate:page-scroll
 //   node scripts/layout-gate/page-scroll.mjs --probe-nothing    # prove the instrument fires; MUST exit 1
+//   node scripts/layout-gate/page-scroll.mjs --flag-off         # npm run gate:page-scroll:flag-off — the ROLLBACK
+//        build rehearsed: the harness serves SCROLL_MANAGER_ENABLED = false in memory
+//        (tests/harness/vite.harness.flagoff.mjs); must PASS with "manager OFF", and fails if the flag was served on
 //
 // WHY IT EXISTS. BrowserRouter never resets scroll on a push: the arriving page paints a one-screen loading
 // shell, Chrome clamps the old offset to it, and scroll ANCHORING re-applies the old offset once the content
@@ -25,8 +28,8 @@
 // THE FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides), except the five
 // slow ones (eventlog-slow, zones-slow, leave-during-load, reload-skeleton, deep25), which run at the first only:
 // they measure time, not layout, and each has a fast sibling at both. Every page a flow PUSHES onto must land at
-// scrollY 0 (±1px, LAND_TOL_PX) with its title inside the visible band; every Back must land at the exact scrollY the page was left
-// at, with the element tapped at the same viewport top (±1px):
+// scrollY 0 (a zone page within 1px, LAND_TOL_PX, counted) with its title inside the visible band; every Back
+// must land at the exact scrollY the page was left at, with the element tapped at the same viewport top (±1px):
 //   eventlog      a planting's Event log, deep → an event → Back. The page loads in TWO stages (header, then
 //                 the log): the restore has to outlast both. Shipped app: Back lost the place (4658 → 0).
 //   eventlog-slow as eventlog, every GET 3 s slow — each stage 3 s: the 4 s prototype landed 2070 of 4658.
@@ -138,6 +141,8 @@
 // SEAMS (never set in CI; a run with any of them set says so in its first lines, so it cannot pass for clean):
 //   HARNESS_BASELINE_SHA — serve src/** from a git object (tests/harness/baselinePlugin.mjs).
 //   GATE_HARNESS_CONFIG  — a different Vite config for the harness (a mutant, for the non-vacuity runs).
+//   --flag-off           — the rollback rehearsal (tests/harness/vite.harness.flagoff.mjs); says so in its first
+//                          lines, and fails unless every flow's harness served the flag off.
 //   GATE_ONLY            — a comma-separated list of flow keys to run.
 //   GATE_CPU_THROTTLE    — CDP CPU throttling for every tab (a slow runner, rehearsed on this tab alone).
 //
@@ -212,8 +217,13 @@ const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9441)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 // Same seam the sibling gates use — CI passes --no-sandbox. Rendering-affecting flags do NOT belong here.
 const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).filter(Boolean)
-const HARNESS_CONFIG = process.env.GATE_HARNESS_CONFIG || 'tests/harness/vite.harness.config.mjs'
-const CUSTOM_CONFIG = HARNESS_CONFIG !== 'tests/harness/vite.harness.config.mjs'
+// --flag-off: the rollback build's rehearsal (qa2-scrollmanager-confirm MINOR-3) — its own config, never combined
+// with another.
+const FLAG_OFF_REHEARSAL = process.argv.includes('--flag-off')
+const FLAG_OFF_CONFIG = 'tests/harness/vite.harness.flagoff.mjs'
+if (FLAG_OFF_REHEARSAL && process.env.GATE_HARNESS_CONFIG) throw new Error('--flag-off serves its own harness config; unset GATE_HARNESS_CONFIG')
+const HARNESS_CONFIG = FLAG_OFF_REHEARSAL ? FLAG_OFF_CONFIG : (process.env.GATE_HARNESS_CONFIG || 'tests/harness/vite.harness.config.mjs')
+const CUSTOM_CONFIG = !FLAG_OFF_REHEARSAL && HARNESS_CONFIG !== 'tests/harness/vite.harness.config.mjs'
 const BASELINE_SHA = process.env.HARNESS_BASELINE_SHA || ''
 const CPU_THROTTLE = Number(process.env.GATE_CPU_THROTTLE || 1)
 const ONLY = (process.env.GATE_ONLY || '').split(',').map((s) => s.trim()).filter(Boolean)
@@ -242,11 +252,16 @@ const DEEP_MIN_PX = 300
 const SHALLOW_MIN_PX = 40
 // An element's viewport top after Back, against before: sub-pixel layout noise only.
 const TOP_TOL_PX = 1
-// A landing within 1px of the top IS the top. Measured, cause not found: from a mid-list Zones row the zone page
-// sometimes ends at y1 — a browser-side 1px scroll ~660 ms after the manager's reset, which depends on the row and
-// the viewport, with every JS scroll API wrapped (none called), scroll anchoring off (overflow-anchor: none, still
-// y1), the mouse moved off the page and the list positioned without the wheel. Invisible; the bug lands 52px+.
+// A ZONE PAGE's landing within 1px of the top is the top; every other landing must be exactly 0. Measured, cause
+// not found: from a mid-list Zones row the zone page (LocationDetail) sometimes ends at y1 — a browser-side 1px
+// scroll ~660 ms after the manager's reset, depending on the row and the viewport, with every JS scroll API wrapped
+// (none called), scroll anchoring off (overflow-anchor: none, still y1), the mouse moved off the page and the list
+// positioned without the wheel. Invisible; the bug's smallest landing is 56px (qa2-scrollmanager-confirm). Scoped
+// to the one page it was measured on, and COUNTED: every tolerated nudge is printed at the end of the run
+// ("1px landing nudges"), so a change in how often it happens shows in the CI log (qa2-confirm MINOR-1).
 const LAND_TOL_PX = 1
+const LAND_TOL_PAGE = 'location'
+const nudges = []
 const CHAIN_DEPTH = 25
 
 // ── One tab ─────────────────────────────────────────────────────────────────────────────────────────
@@ -702,7 +717,9 @@ async function runFlow(cdp, flow, vw, vh) {
       const msgs = []
       if (!st.settled) msgs.push(`${name} never held still for 600ms within ${slowMax}ms (last y${R1(st.y)})`)
       const off = []
-      if (Math.abs(here.y) > LAND_TOL_PX) off.push(`${name} landed at scrollY ${R1(here.y)}, not 0 — it opened part-way down (the bug)`)
+      const tol = key === LAND_TOL_PAGE ? LAND_TOL_PX : 0
+      if (Math.abs(here.y) > tol) off.push(`${name} landed at scrollY ${R1(here.y)}, not 0 — it opened part-way down (the bug)`)
+      else if (here.y !== 0) nudges.push(`${flow.key}@${vw}x${vh} ${name} y${R1(here.y)}`)
       if (!title.ok) off.push(`${name}'s title is at y${R1(title.t)}, not inside the visible band y${R1(here.band[0])}-${R1(here.band[1])}`)
       const v = verdict(off, { today })
       if (v) msgs.push(v)
@@ -1419,7 +1436,7 @@ async function runFlow(cdp, flow, vw, vh) {
         if (why) return done(`page ${n}: ${why}`)
         if (!await t.waitIn(`w.location.pathname === '/chain/${n + 1}' && w.__h.pageReady('chain')`, 8000)) return done(`page ${n}'s row never opened page ${n + 1}`)
         const top = await t.settle(150, 3000)
-        if (Math.abs(top.y) > LAND_TOL_PX) return done(`page ${n + 1} landed at y${R1(top.y)}, not 0`)
+        if (top.y !== 0) return done(`page ${n + 1} landed at y${R1(top.y)}, not 0`)
       }
       const lost = []
       for (let n = CHAIN_DEPTH; n >= 1; n--) {
@@ -1448,6 +1465,7 @@ const udd = mkdtempSync(join(tmpdir(), 'gate-pagescroll-'))
 try {
   if (BASELINE_SHA) console.log(`[page-scroll] BASELINE RUN — HARNESS_BASELINE_SHA=${BASELINE_SHA}: src/** is served from that commit. This is not a clean run.`)
   if (CUSTOM_CONFIG) console.log(`[page-scroll] CUSTOM HARNESS CONFIG — GATE_HARNESS_CONFIG=${HARNESS_CONFIG}. This is not a clean run.`)
+  if (FLAG_OFF_REHEARSAL) console.log(`[page-scroll] FLAG-OFF REHEARSAL (--flag-off) — ${FLAG_OFF_CONFIG} serves SCROLL_MANAGER_ENABLED = false: the rollback build's contract, not the shipped build.`)
   if (ONLY.length) console.log(`[page-scroll] GATE_ONLY=${ONLY.join(',')} — only those flows ran. This is not a clean run.`)
   if (ONLY.some((key) => !FLOWS.some((fl) => fl.key === key))) throw new Error(`GATE_ONLY names a flow that does not exist (${ONLY.join(',')}) — the run would pass over nothing`)
   if (CPU_THROTTLE > 1) console.log(`[page-scroll] CPU THROTTLED — GATE_CPU_THROTTLE=${CPU_THROTTLE}: every tab runs ${CPU_THROTTLE}x slower. This is not a clean run.`)
@@ -1476,12 +1494,14 @@ try {
 }
 
 // A non-clean run echoes what its harness said it served, so the record names the source it measured.
-if (BASELINE_SHA || CUSTOM_CONFIG) {
+if (BASELINE_SHA || CUSTOM_CONFIG || FLAG_OFF_REHEARSAL) {
   for (const line of harnessLog.split('\n').filter((l) => /^\[[a-z][a-z-]*\] /.test(l))) console.log(`[page-scroll] harness said: ${line}`)
 }
 if (shots.length) console.log(`[page-scroll] screenshots: ${shots.length} in ${OUTDIR.replace(`${ROOT}/`, '')}`)
 if (served.size > 1) fail(`the harness served the flag both ways in one run (${[...served].join(', ')}) — one build, one flag`)
+if (FLAG_OFF_REHEARSAL && !served.has('off')) fail(`--flag-off, but the harness served the flag ${served.size ? [...served].join(', ') : 'to no flow'} — the rehearsal proved nothing about the rollback build`)
 if (served.has('off')) console.log('[page-scroll] manager OFF — SCROLL_MANAGER_ENABLED=false as served: TODAY\'S contract was asserted (the rollback build); the manager\'s own checks were printed, not asserted, and its own flows were not run.')
+console.log(`[page-scroll] 1px landing nudges tolerated: ${nudges.length} (zone pages only, cause unknown — LAND_TOL_PX)${nudges.length ? `: ${nudges.join(', ')}` : ''}`)
 // Exit codes are NOT inverted under --probe-nothing: both outcomes there are red, and the banner says which.
 if (failures.length) {
   console.error(PROBE_NOTHING

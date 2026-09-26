@@ -279,7 +279,9 @@ export const BACKNAV_ENABLED = true
 // it, so a bundle from before this release (a revert-gate to an older snap, a redeploy, a git revert) leaves
 // open sessions with no browser restore and no manager — Back loses the place on every page without its own
 // restore until the app is closed. The CI gates and suites are flag-aware, so a flag-off build promotes:
-// gate:page-scroll prints "manager OFF" and asserts the pre-manager contract instead of the fix. And after
+// gate:page-scroll prints "manager OFF" and asserts the pre-manager contract instead of the fix. Rehearse it from
+// any checkout without editing this file: npm run test:flag-off, gate:page-scroll:flag-off and
+// gate:seeds-scroll:flag-off serve this flag as false in memory (tests/harness/flagOffTransform.mjs). And after
 // ANY revert-gate past this release, for any reason: swipe the app away once (a fresh launch starts 'auto').
 export const SCROLL_MANAGER_ENABLED = true
 

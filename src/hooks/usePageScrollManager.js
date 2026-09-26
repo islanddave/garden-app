@@ -32,8 +32,8 @@
 //
 // WHO TAKES OVER A RESTORE, per owner (qa-scrollmanager-built M12). This manager's driver stops for good on
 // real scrolling — a wheel, a moving finger (touchmove), a key — and on a deliberate act: a click, a
-// mouse/pen press, focus arriving in a text field, or the page itself scrolling on purpose
-// (usePageScrollYield, e.g. useLotOutline's outline). NOT on touchstart, and not on a TOUCH pointerdown,
+// mouse/pen press, focus arriving in a text field by a user act (not a page's own mount focus), or the page
+// itself scrolling on purpose (usePageScrollYield, e.g. useLotOutline's outline). NOT on touchstart, and not on a TOUCH pointerdown,
 // which is the same moment: a thumb resting on the glass while the page loads must not lose the place
 // (rimpact-scrollmanager IMPORTANT-7); lifting it after a short tap is a click, which does count, and a long
 // rest produces no click at all. The hook pages' own restore (useScrollRestore) and Garden's keep their
@@ -118,6 +118,16 @@ export function documentArrivedFresh() {
 }
 // Test seam only.
 export function __setDocumentArrivedFresh(value) { freshDocument = value }
+
+// Focus arriving in a text field is the user taking over only when a user act brought it there: a page that
+// focuses its own field on mount (full-page Search does, on every params change) is not the user
+// (qa2-scrollmanager-confirm MINOR-5). Where the browser reports no activation state, it counts, as before.
+function focusByUser() {
+  try {
+    const ua = typeof navigator !== 'undefined' ? navigator.userActivation : null
+    return !(ua && ua.isActive === false)
+  } catch { return true }
+}
 
 // A text field taking focus opens the keyboard and resizes the viewport: the user is typing, not reading.
 function isEditable(el) {
@@ -294,7 +304,7 @@ export function usePageScrollManager({ pageLocation, location, navigationType, r
     const onKey = () => takeover('keydown')
     const onClick = () => takeover('click')
     const onPress = (e) => { if (e && e.pointerType !== 'touch') takeover('pointerdown') }
-    const onFocusIn = (e) => { if (isEditable(e && e.target)) takeover('focusin') }
+    const onFocusIn = (e) => { if (isEditable(e && e.target) && focusByUser()) takeover('focusin') }
     const onScroll = () => file(s)
     // Hidden is the last event Chrome guarantees before a discard; pagehide and freeze may never come.
     const onVisibility = () => { if (document.visibilityState === 'hidden') flushPageScroll() }

@@ -16,7 +16,7 @@ import { BrowserRouter, Routes, Route, Link, useNavigate, useNavigationType } fr
 import { OverlayProvider, useOverlay, OverlayLink, useOverlayDismiss } from '../context/OverlayContext.jsx'
 import {
   usePageScrollManager, PageScrollProvider, useClaimPageScroll, usePageScrollReturn, usePageScrollReturnAtMount,
-  currentPageEntry, applyBrowserScrollRestoration, usePageScrollYield, __setDocumentArrivedFresh,
+  currentPageEntry, applyBrowserScrollRestoration, usePageScrollYield, __setDocumentArrivedFresh, documentArrivedFresh,
 } from '../hooks/usePageScrollManager.js'
 import { readPageScroll, PAGE_SCROLL_STORE_KEY, RESTORE_HOLD_MS, RESTORE_BUDGET_MS } from '../lib/pageScroll.js'
 import { trackRequest, __resetNetActivity } from '../lib/netActivity.js'
@@ -500,6 +500,30 @@ describe('the driver\'s exits', () => {
     expect(restores.at(-1)).toMatchObject({ outcome: 'TAKEOVER', reason: 'focusin' })
   })
 
+  // qa2-scrollmanager-confirm MINOR-5: full-page Search focuses its own field on mount. Focus that arrives
+  // without a user activation is the page's, not the user's — it must not end a restore.
+  describe('focus without a user activation (a page focusing its own field)', () => {
+    const setActivation = (isActive) => Object.defineProperty(window.navigator, 'userActivation', { configurable: true, value: { isActive, hasBeenActive: true } })
+    afterEach(() => { delete window.navigator.userActivation })
+
+    it.each([
+      [false, 1, 'does not stop it'],
+      [true, 0, 'stops it'],
+    ])('navigator.userActivation.isActive %s → pending %i (%s)', async (isActive, left) => {
+      mount()
+      go('/form')
+      scrollPage(1645)
+      go('/detail/1')
+      maxScroll = 56
+      await back()
+      expect(pending()).toBe(1)
+      setActivation(isActive)
+      act(() => { screen.getByTestId('field').focus() })
+      frames(2)
+      expect(pending()).toBe(left)
+    })
+  })
+
   it('a page scrolling on purpose (usePageScrollYield, useLotOutline\'s outline) stops it for good (rimpact-built N4)', async () => {
     mount()
     go('/form')
@@ -702,6 +726,46 @@ describe('a document that arrived by a fresh navigation', () => {
     sessionStorage.setItem(PAGE_SCROLL_STORE_KEY, JSON.stringify({ '/list|kBoot': 900 }))
     mount()
     expect(decisions[0]).toMatchObject({ row: '1', action: 'RESTORE', y: 900 })
+  })
+
+  // qa2-scrollmanager-confirm MINOR-4: every other test here sets the seam; this pins the real mapping from the
+  // document's navigation entry. A discarded tab brought back is a restore whatever type it reports.
+  describe('documentArrivedFresh reads the navigation entry', () => {
+    const stubEntry = (entries, wasDiscarded) => {
+      vi.spyOn(performance, 'getEntriesByType').mockImplementation((type) => (type === 'navigation' ? entries : []))
+      Object.defineProperty(document, 'wasDiscarded', { configurable: true, get: () => wasDiscarded })
+    }
+    afterEach(() => { delete document.wasDiscarded })
+
+    it.each([
+      ['navigate', false, true],
+      ['reload', false, false],
+      ['back_forward', false, false],
+      ['prerender', false, false],
+      ['navigate', true, false],
+    ])('type %s, wasDiscarded %s → fresh %s', (type, wasDiscarded, fresh) => {
+      stubEntry([{ type }], wasDiscarded)
+      __setDocumentArrivedFresh(undefined)
+      expect(documentArrivedFresh()).toBe(fresh)
+    })
+
+    it('no navigation entry, or none readable → not fresh (restore, as before the rule)', () => {
+      stubEntry([], false)
+      __setDocumentArrivedFresh(undefined)
+      expect(documentArrivedFresh()).toBe(false)
+      vi.restoreAllMocks()
+      vi.spyOn(performance, 'getEntriesByType').mockImplementation(() => { throw new Error('no timing') })
+      __setDocumentArrivedFresh(undefined)
+      expect(documentArrivedFresh()).toBe(false)
+    })
+
+    it('is read once per document: a later change of the entry does not change the answer', () => {
+      stubEntry([{ type: 'navigate' }], false)
+      __setDocumentArrivedFresh(undefined)
+      expect(documentArrivedFresh()).toBe(true)
+      stubEntry([{ type: 'reload' }], false)
+      expect(documentArrivedFresh()).toBe(true)
+    })
   })
 
   it('is not a return at its first location — even for a page that mounts later, behind the skeleton — and Back after that is', async () => {
