@@ -28,7 +28,7 @@
 // THE FLOWS, at each viewport (426x836 — Dave's handset — and 360x640; GATE_VIEWPORTS overrides), except the five
 // slow ones (eventlog-slow, zones-slow, leave-during-load, reload-skeleton, deep25), which run at the first only:
 // they measure time, not layout, and each has a fast sibling at both. Every page a flow PUSHES onto must land at
-// scrollY 0 (a zone page within 1px, LAND_TOL_PX, counted) with its title inside the visible band; every Back
+// scrollY 0 (within 1px, LAND_TOL_PX, counted) with its title inside the visible band; every Back
 // must land at the exact scrollY the page was left at, with the element tapped at the same viewport top (±1px):
 //   eventlog      a planting's Event log, deep → an event → Back. The page loads in TWO stages (header, then
 //                 the log): the restore has to outlast both. Shipped app: Back lost the place (4658 → 0).
@@ -252,15 +252,16 @@ const DEEP_MIN_PX = 300
 const SHALLOW_MIN_PX = 40
 // An element's viewport top after Back, against before: sub-pixel layout noise only.
 const TOP_TOL_PX = 1
-// A ZONE PAGE's landing within 1px of the top is the top; every other landing must be exactly 0. Measured, cause
-// not found: from a mid-list Zones row the zone page (LocationDetail) sometimes ends at y1 — a browser-side 1px
-// scroll ~660 ms after the manager's reset, depending on the row and the viewport, with every JS scroll API wrapped
-// (none called), scroll anchoring off (overflow-anchor: none, still y1), the mouse moved off the page and the list
-// positioned without the wheel. Invisible; the bug's smallest landing is 56px (qa2-scrollmanager-confirm). Scoped
-// to the one page it was measured on, and COUNTED: every tolerated nudge is printed at the end of the run
-// ("1px landing nudges"), so a change in how often it happens shows in the CI log (qa2-confirm MINOR-1).
+// A landing within 1px of the top is the top. Measured, cause not found: from a mid-list Zones row the zone page
+// (LocationDetail) sometimes ends at y1 — a browser-side 1px scroll ~660 ms after the manager's reset, depending on
+// the row and the viewport, with every JS scroll API wrapped (none called), scroll anchoring off (overflow-anchor:
+// none, still y1), the mouse moved off the page and the list positioned without the wheel. It was first scoped to
+// zone pages, then CI's Linux runner showed the same 1px on a planting page at 360x640 (dev 3a16b9a2, run
+// 36212440154: y0 at 2699 ms, y1 at 3049 ms) and on Garden's own spot restore (3744 for 3743), so it is a
+// sub-pixel property of the browser, not of one page. Invisible, and it cannot hide the bug: the bug's smallest
+// landing is 52-56px (qa2-scrollmanager-confirm). COUNTED: every tolerated nudge is printed at the end of the run
+// ("1px landing nudges"), so a change in how often or where it happens shows in the CI log (qa2-confirm MINOR-1).
 const LAND_TOL_PX = 1
-const LAND_TOL_PAGE = 'location'
 const nudges = []
 const CHAIN_DEPTH = 25
 
@@ -717,8 +718,7 @@ async function runFlow(cdp, flow, vw, vh) {
       const msgs = []
       if (!st.settled) msgs.push(`${name} never held still for 600ms within ${slowMax}ms (last y${R1(st.y)})`)
       const off = []
-      const tol = key === LAND_TOL_PAGE ? LAND_TOL_PX : 0
-      if (Math.abs(here.y) > tol) off.push(`${name} landed at scrollY ${R1(here.y)}, not 0 — it opened part-way down (the bug)`)
+      if (Math.abs(here.y) > LAND_TOL_PX) off.push(`${name} landed at scrollY ${R1(here.y)}, not 0 — it opened part-way down (the bug)`)
       else if (here.y !== 0) nudges.push(`${flow.key}@${vw}x${vh} ${name} y${R1(here.y)}`)
       if (!title.ok) off.push(`${name}'s title is at y${R1(title.t)}, not inside the visible band y${R1(here.band[0])}-${R1(here.band[1])}`)
       const v = verdict(off, { today })
@@ -1179,7 +1179,10 @@ async function runFlow(cdp, flow, vw, vh) {
       await t.shoot(join(OUTDIR, `page-scroll-${k}-back-garden-${vw}x${vh}.png`))
       note.push(`Garden again (a push, key ${after.key === k0 ? 'UNCHANGED' : 'new'}): y${R1(after.y)} (its spot y${R1(before.y)})`)
       if (after.key === k0 || after.key === before.key) return done('the Garden tab did not push a new entry — this is not the push under test')
-      if (!st.settled || Math.round(after.y) !== Math.round(before.y) || Math.abs(after.top - before.top) > TOP_TOL_PX) return done(`Garden came back at y${R1(after.y)} (tile top y${R1(after.top)}), its spot is y${R1(before.y)} (tile top y${R1(before.top)}) — "back to your spot" was lost${await diag()}`)
+      // Garden's OWN restore (not the manager's) can end 1px off its spot on Linux (see LAND_TOL_PX): tolerated and
+      // counted, never more — "back to your spot" lost is hundreds of px.
+      if (!st.settled || Math.abs(Math.round(after.y) - Math.round(before.y)) > LAND_TOL_PX || Math.abs(after.top - before.top) > TOP_TOL_PX + LAND_TOL_PX) return done(`Garden came back at y${R1(after.y)} (tile top y${R1(after.top)}), its spot is y${R1(before.y)} (tile top y${R1(before.top)}) — "back to your spot" was lost${await diag()}`)
+      if (Math.round(after.y) !== Math.round(before.y)) nudges.push(`${k}@${vw}x${vh} garden-spot y${R1(after.y)} for y${R1(before.y)}`)
       return
     }
     if (k === 'putup') {
@@ -1501,7 +1504,7 @@ if (shots.length) console.log(`[page-scroll] screenshots: ${shots.length} in ${O
 if (served.size > 1) fail(`the harness served the flag both ways in one run (${[...served].join(', ')}) — one build, one flag`)
 if (FLAG_OFF_REHEARSAL && !served.has('off')) fail(`--flag-off, but the harness served the flag ${served.size ? [...served].join(', ') : 'to no flow'} — the rehearsal proved nothing about the rollback build`)
 if (served.has('off')) console.log('[page-scroll] manager OFF — SCROLL_MANAGER_ENABLED=false as served: TODAY\'S contract was asserted (the rollback build); the manager\'s own checks were printed, not asserted, and its own flows were not run.')
-console.log(`[page-scroll] 1px landing nudges tolerated: ${nudges.length} (zone pages only, cause unknown — LAND_TOL_PX)${nudges.length ? `: ${nudges.join(', ')}` : ''}`)
+console.log(`[page-scroll] 1px landing nudges tolerated: ${nudges.length} (any page, cause unknown — LAND_TOL_PX)${nudges.length ? `: ${nudges.join(', ')}` : ''}`)
 // Exit codes are NOT inverted under --probe-nothing: both outcomes there are red, and the banner says which.
 if (failures.length) {
   console.error(PROBE_NOTHING

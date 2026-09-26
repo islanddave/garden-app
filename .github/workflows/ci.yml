@@ -592,8 +592,9 @@ jobs:
         # token that can be slow to come (a cold cache) and a user that can be held unresolved (Protected's
         # skeleton), framed by viewport.html at 426x836 and 360x640. Real taps (hit-tested in place), real
         # wheel scrolling, real touch input (a resting thumb, a drag, a finger's tap), real typing,
-        # history.back(). Every page a flow pushes onto must land at scrollY 0 (a zone page within 1px,
-        # counted in the log) with its title in the visible band, and every Back must land on the exact offset
+        # history.back(). Every page a flow pushes onto must land at scrollY 0 (within 1px — a browser-side
+        # sub-pixel nudge seen on zone pages and on this runner, counted in the log) with its title in the
+        # visible band, and every Back must land on the exact offset
         # the page was left at, the tapped element at the same viewport top:
         #   the Event log (two-stage load; 3 s per stage; past "Show more", where the place is out of reach
         #   and the restore must stop at the page's end once the page has settled, and give way to a tap on
