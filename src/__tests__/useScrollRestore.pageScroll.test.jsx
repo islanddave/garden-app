@@ -81,7 +81,7 @@ describe('the claim: per entry, only with a saved value', () => {
 describe(SCROLL_MANAGER_ENABLED ? 'the flush: hidden and freeze, not only pagehide (manager on)' : 'manager OFF: the flush is pagehide only, as before', () => {
   const stored = () => JSON.parse(window.sessionStorage.getItem(STORE_KEY) || '{}')['surf|entry-A']
 
-  it('visibilitychange → hidden files the current offset and persists the store', () => {
+  it(SCROLL_MANAGER_ENABLED ? 'visibilitychange → hidden files the current offset and persists the store' : 'visibilitychange → hidden persists nothing (no hidden flush)', () => {
     render(<Probe />)
     setY(1200)
     act(() => { window.dispatchEvent(new Event('scroll')) })
@@ -104,7 +104,7 @@ describe(SCROLL_MANAGER_ENABLED ? 'the flush: hidden and freeze, not only pagehi
     expect(stored()).toBeUndefined()
   })
 
-  it('freeze persists the store', () => {
+  it(SCROLL_MANAGER_ENABLED ? 'freeze persists the store' : 'freeze persists nothing (no freeze flush)', () => {
     render(<Probe />)
     setY(640)
     act(() => { window.dispatchEvent(new Event('scroll')) })
