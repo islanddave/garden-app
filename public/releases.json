@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.156.0",
+    "date": "2026-09-25",
+    "highlights": [
+      "Pages open at the top: a page you open from a scrolled list now opens at its top instead of part-way down, and Back takes you to exactly where you were, including on pages that load slowly, a planting's Event log, and after the app refreshes."
+    ]
+  },
+  {
     "version": "4.155.0",
     "date": "2026-09-25",
     "highlights": [

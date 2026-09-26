@@ -588,16 +588,19 @@ jobs:
         # zone, Garden, Put-Up, Seeds, a seed lot and the variety editor, Harvests, Achievements) under
         # BrowserRouter in App.jsx's shell, with the REAL manager and main.jsx's real boot mode (the drift
         # guard fails if either stops matching App.jsx), BottomNav's armed + and More sheets, header Search as
-        # a real OverlayLink with Search.jsx's peek, a network that answers after a loading phase and a user
-        # that can be held unresolved (Protected's skeleton), framed by viewport.html at 426x836 and 360x640.
-        # Real taps (hit-tested in place), real wheel scrolling, real touch input (a resting thumb, a drag, a
-        # finger's tap), history.back(). Every page a flow pushes onto must land at scrollY 0 (±1px) with its
-        # title in the visible band, and every Back must land on the exact offset the page was left at, the
-        # tapped element at the same viewport top:
+        # a real OverlayLink with Search.jsx's peek, a network that answers after a loading phase, a Clerk
+        # token that can be slow to come (a cold cache) and a user that can be held unresolved (Protected's
+        # skeleton), framed by viewport.html at 426x836 and 360x640. Real taps (hit-tested in place), real
+        # wheel scrolling, real touch input (a resting thumb, a drag, a finger's tap), real typing,
+        # history.back(). Every page a flow pushes onto must land at scrollY 0 (a zone page within 1px,
+        # counted in the log) with its title in the visible band, and every Back must land on the exact offset
+        # the page was left at, the tapped element at the same viewport top:
         #   the Event log (two-stage load; 3 s per stage; past "Show more", where the place is out of reach
         #   and the restore must stop at the page's end once the page has settled, and give way to a tap on
-        #   "Show more"), Zones from a mid-list row plain / 5 s slow / left mid-restore / reloaded / reloaded
-        #   behind a 3 s skeleton, a wheel and a moving finger inside the restore's hold (the user wins; a
+        #   "Show more"), Zones from a mid-list row plain / 5 s slow / every request waiting 1.5 s for its
+        #   token / left mid-restore / reloaded / reloaded behind a 3 s skeleton, a seed lot after a refused
+        #   Save (the refused field in view and focused, then Back to it on the pixel), a wheel and a moving
+        #   finger inside the restore's hold (the user wins; a
         #   thumb resting through the load does not take over), Back onto a list and onto Put-Up left at their
         #   top, the More and Search doors and Search's peek, Garden (Back from a planting, tab away and back
         #   at 1x and 4x CPU, "Add a planting" on the same page), Put-Up's batch, the Seeds view switch and a
@@ -609,7 +612,9 @@ jobs:
         # off it prints "manager OFF" and asserts today's contract only (mode 'auto', same-page writes and
         # overlays never moving the page, Garden's and the hook pages' own restores, the pages that reset
         # themselves, Back to a page left at its top), printing the manager's own checks instead of asserting
-        # them, so a forward flag-off build passes this step. Roll back that way, never with a revert.
+        # them, so a forward flag-off build passes this step. Roll back that way, never with a revert. Rehearse
+        # it from any checkout: npm run test:flag-off, gate:page-scroll:flag-off, gate:seeds-scroll:flag-off
+        # (the flag served false in memory, tests/harness/flagOffTransform.mjs).
         # It refuses a frame whose viewport, chrome, latency, skeleton or restore mode is not the one asked
         # for, a source less than 300px down, a tap that pushed no entry, a Back onto any entry but the one the
         # offset was taken on, and a takeover flow whose restore had already finished before the user acted;
@@ -629,12 +634,16 @@ jobs:
         # zones-slow and leave-during-load; the pathname rule removed reds garden-add, seeds-switch,
         # same-replace and retap-back (a same-page write jumps to 0); the snapshot removed, or filing while
         # covered, reds the three blanked-list closes; writes left open while armed reds leave-during-load; row
-        # 5's zero removed reds hook-top. Served with the flag OFF (the rollback) it PASSES, printing "manager
+        # 5's zero removed reds hook-top. Confirmation round (…/scrollmgr-nonvacuity-confirm-*.txt): with src
+        # served from 2622a8e (a request counted only once its token was in hand) zones-slowtoken is red at both
+        # viewports (56 of 960 / 1104); with the driver back on 4 px lot-refuse comes back at 972 for 968 in 6
+        # of 9 runs at 426x836 (a timing-dependent drift; the driver's unit tests are the deterministic pin).
+        # Served with the flag OFF (the rollback) it PASSES, printing "manager
         # OFF". The "entry still current" write rule has no flow (its window is timing-dependent under
         # 'manual') and is pinned by usePageScrollManager.test.jsx; the reload flow proves one of the hidden and
         # pagehide flushes (location.reload() fires both), and the discard path (hidden only) is unit-pinned.
-        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~6 min locally (32 flows, 59 flow-runs:
-        # the five slow ones at 426x836 only).
+        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~6.5 min locally (34 flows, 63
+        # flow-runs: the five slow ones at 426x836 only).
         # NO continue-on-error, per the policy note above.
         env:
           GATE_CHROME_FLAGS: --no-sandbox
