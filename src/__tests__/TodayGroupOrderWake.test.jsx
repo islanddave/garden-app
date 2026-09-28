@@ -48,11 +48,12 @@ function todayISO() {
   const d = new Date()
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
-function nextDayISO() {
+function dayISO(offset) {
   const d = new Date(todayISO() + 'T12:00:00')
-  d.setDate(d.getDate() + 1)
+  d.setDate(d.getDate() + offset)
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
+const nextDayISO = () => dayISO(1)
 function planBody({ done = [], over = {}, extra = [] } = {}) {
   const water = [
     w('d1', 'Drive One', 'Drive Rows', 'prD', 1), w('d2', 'Drive Two', 'Drive Rows', 'prD', 1),
@@ -338,6 +339,59 @@ describe('BUG-TODAYGROUPREORDER-001 — a new plan day, reset in place', () => {
     expect(countOf('Drive Rows')).toBe('5')
     expect(headerLabels()).toEqual(ARRIVAL)
     expect(errs.mock.calls.length).toBe(0)
+  })
+
+  it('a Log made after midnight on the list still showing yesterday\'s plan stays logged when today\'s plan lands', async () => {
+    // The list on screen is YESTERDAY's plan; the device clock is already on today.
+    await openToday(envelope({ date: dayISO(-1) }))
+    await waitFor(() => expect(headerLabels()).toEqual(ARRIVAL))
+    const yesterday = dateLine()
+    // The morning wake: its refetch reads the plan and is still on its way back.
+    holdPlan = true
+    await wake()
+    // Dave logs Drive One; the write lands first (dated today) and fades the row.
+    fireEvent.click(chip('Drive One'))
+    await waitFor(() => expect(chip('Drive One')).toBeNull())
+    // Today's plan arrives, read before that write committed, so it still calls Drive One due.
+    holdPlan = false
+    await act(async () => { planWaiters.shift()(envelope({ date: todayISO(), gen: '2026-09-29T11:00:00Z' })) })
+    await waitFor(() => expect(dateLine()).not.toBe(yesterday))
+    await settle()
+    // What he would do if the row came back: tap it.
+    if (chip('Drive One') && !chip('Drive One').disabled) fireEvent.click(chip('Drive One'))
+    await settle()
+    expect(postsFor('d1')).toBe(1)
+    expect(chip('Drive One')).toBeNull()
+    // Yesterday's other rows DID come back — only today's fade was kept.
+    expect(countOf('Drive Rows')).toBe('4')
+  })
+
+  it('yesterday\'s Undo, tapped after the same row was logged again today, leaves today\'s log hidden', async () => {
+    // Needs the device clock to cross midnight between the two logs, as it does on the phone: a fade is
+    // dated by the write that made it.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const evening = new Date(); evening.setHours(21, 0, 0, 0)
+      vi.setSystemTime(evening)
+      await openToday(envelope({ date: todayISO() }))
+      await waitFor(() => expect(headerLabels()).toEqual(ARRIVAL))
+      fireEvent.click(chip('Drive One'))                              // day 1: ev-1
+      await waitFor(() => expect(toastMock.showUndo).toHaveBeenCalled())
+      const undoYesterday = toastMock.showUndo.mock.calls[0][0].onUndo
+      const morning = new Date(evening); morning.setDate(morning.getDate() + 1); morning.setHours(7, 0, 0, 0)
+      vi.setSystemTime(morning)
+      plans.push(envelope({ date: todayISO(), gen: '2026-09-29T11:00:00Z' }))
+      await wake()
+      await waitFor(() => expect(countOf('Drive Rows')).toBe('5'))   // due again today
+      fireEvent.click(chip('Drive One'))                              // day 2: ev-2
+      await waitFor(() => expect(chip('Drive One')).toBeNull())
+      // Yesterday's toast is still up (a backgrounded PWA can hold its timer) and gets tapped.
+      await act(async () => { await undoYesterday() })
+      await settle()
+      expect(fetchMock.mock.calls.some(c => c[0] === '/api/events/ev-1' && c[1]?.method === 'DELETE')).toBe(true)
+      expect(fetchMock.mock.calls.some(c => c[0] === '/api/events/ev-2')).toBe(false)
+      expect(chip('Drive One')).toBeNull()
+    } finally { vi.useRealTimers() }
   })
 
   it('the new-day reset under <StrictMode>: ranked fresh, with no render-loop error', async () => {

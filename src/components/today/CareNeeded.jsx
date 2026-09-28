@@ -396,7 +396,8 @@ export default function CareNeeded({ plan, planDate }) {
   const { fetch, getToken } = useApiFetch()
   const toast = useOptionalToast()
   const [mode, setMode] = useState('location')
-  const [logged, setLogged] = useState(() => new Set())   // optimistic local drop (V3-TODAYDONE parity)
+  // Optimistic local drop (V3-TODAYDONE parity): row key -> event_date of the write that faded it.
+  const [logged, setLogged] = useState(() => new Map())
   const [pendingKeys, setPendingKeys] = useState(() => new Set())
   // The page's one skip set (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001), shared with the household list.
   const skipped = useSyncExternalStore(subscribeSkipped, skippedSnapshot)
@@ -630,10 +631,16 @@ export default function CareNeeded({ plan, planDate }) {
   // "Log all watering" still in flight when the morning plan landed came back live on the rebuilt
   // list, and a second tap logged it twice. So those are left alone here, along with an open bulk
   // sheet: a write in flight keeps its guard and fades its row, in the new day's list, when it lands.
-  // What resets is what a fresh open would give: the fades, the layout (taken fresh), manual
-  // expand/collapse, "Show N more", and the grouping mode. The fade filter keeps any key still
-  // pending; today that is none, because a write adds its fade in the same batch that clears its
-  // pending mark — the filter is there for the day a fade is made optimistic, before the await.
+  // What resets is what a fresh open would give: yesterday's fades, the layout (taken fresh), manual
+  // expand/collapse, "Show N more", and the grouping mode.
+  //
+  // A fade is kept when its write is dated the NEW plan day. That is a log made after midnight on the
+  // list still showing yesterday's plan — the morning wake's refetch in flight, the write landing
+  // first, the refetched plan read before the write committed and so still calling the row due.
+  // Dropping that fade put the row back, live, and a second tap logged it twice (measured: 2 POSTs,
+  // both dated the new day). Same rule the read path stamps `done` by: event_date is the plan day.
+  // A key still pending is kept too; today that is none, because a write fades its row in the same
+  // batch that clears its pending mark — it is there for the day a fade is made before the await.
   //
   // Same derived-state-during-render shape as the layout: the render that sees the new date queues
   // the resets and skips the reconcile, and the re-render React runs straight after takes it fresh.
@@ -641,7 +648,7 @@ export default function CareNeeded({ plan, planDate }) {
   const newDay = day !== planDate
   if (newDay) {
     setDay(planDate)
-    setLogged(prev => new Set([...prev].filter(k => pendingKeys.has(k))))
+    setLogged(prev => new Map([...prev].filter(([k, on]) => on === planDate || pendingKeys.has(k))))
     setLayout(null)
     setOverrides({})
     setShowCapped(false)
@@ -699,15 +706,32 @@ export default function CareNeeded({ plan, planDate }) {
   // race each other, which is the case this row newly makes reachable.
   const writeInFlightRef = useRef(new Set())
 
+  // BUG-TODAYGROUPREORDER-001 — a fade carries the event_date of the write that made it, as [key, on]
+  // pairs. The new-day reset reads it (above). So does Undo: it un-fades only the fade its OWN event
+  // made, so yesterday's toast, tapped after the same row was logged again today, deletes yesterday's
+  // event and leaves today's fade alone — un-fading it put a logged row back, live, to be logged twice.
+  const fade = useCallback((pairs) => setLogged(prev => {
+    const n = new Map(prev)
+    for (const [k, on] of pairs) n.set(k, on)
+    return n
+  }), [])
+  const unfade = useCallback((pairs) => setLogged(prev => {
+    let n = null
+    for (const [k, on] of pairs) if (prev.get(k) === on) { n = n || new Map(prev); n.delete(k) }
+    return n || prev
+  }), [])
+
   // One-tap: await-then-fade. On failure restore the row + error toast (never fade-and-forget — L-104).
   const logRow = useCallback(async (row) => {
     if (writeInFlightRef.current.has(row.key) || pendingKeys.has(row.key)) return
     writeInFlightRef.current.add(row.key)
     setPending(row.key, true)
     try {
-      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
+      const body = eventBody(row)
+      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body) })
       const id = res && res.id
-      setLogged(prev => new Set(prev).add(row.key))
+      const mine = [[row.key, body.event_date]]
+      fade(mine)
       const remaining = rows.length - 1
       announce('Logged ' + NEED_LABEL[row.need] + ' for ' + row.name + ' — ' + remaining + ' remaining')
       toast.showUndo({
@@ -723,13 +747,13 @@ export default function CareNeeded({ plan, planDate }) {
           // WS-A5: only un-fade the row once the DELETE is confirmed. A failed undo must KEEP the
           // row hidden — re-surfacing it lets it be re-logged as a duplicate (L-104). A 404 means
           // the event is already gone, so re-surfacing is safe there.
-          if (!id) { setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n }); return }
+          if (!id) { unfade(mine); return }
           try {
             await fetch('/api/events/' + id, { method: 'DELETE' })
-            setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+            unfade(mine)
           } catch (e) {
             if (e?.status === 404) {
-              setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+              unfade(mine)
             } else {
               toast.show({ message: 'Couldn’t undo — the log is still saved', tone: 'error' })
             }
@@ -742,7 +766,7 @@ export default function CareNeeded({ plan, planDate }) {
       writeInFlightRef.current.delete(row.key)
       setPending(row.key, false)
     }
-  }, [fetch, toast, pendingKeys, rows.length, setPending, announce])
+  }, [fetch, toast, pendingKeys, rows.length, setPending, announce, fade, unfade])
 
   // BUG-MOISTURECHECKNOBUTTON-001 — the same await-then-fade + undo contract logRow has, pointed at
   // moisture_check instead of the row's primary type. Identical shape on purpose: a failed write
@@ -763,9 +787,11 @@ export default function CareNeeded({ plan, planDate }) {
     writeInFlightRef.current.add(row.key)
     setPending(row.key, true)
     try {
-      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row, MOISTURE_CHECK_EVENT)) })
+      const body = eventBody(row, MOISTURE_CHECK_EVENT)
+      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body) })
       const id = res && res.id
-      setLogged(prev => new Set(prev).add(row.key))
+      const mine = [[row.key, body.event_date]]
+      fade(mine)
       const remaining = rows.length - 1
       announce('Checked ' + row.name + ' — still moist. ' + remaining + ' remaining')
       toast.showUndo({
@@ -773,13 +799,13 @@ export default function CareNeeded({ plan, planDate }) {
         group: 'care-log-' + MOISTURE_CHECK_EVENT,
         groupMessage: (n) => 'Checked ' + n + ' plants — still moist',
         onUndo: async () => {
-          if (!id) { setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n }); return }
+          if (!id) { unfade(mine); return }
           try {
             await fetch('/api/events/' + id, { method: 'DELETE' })
-            setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+            unfade(mine)
           } catch (e) {
             if (e?.status === 404) {
-              setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+              unfade(mine)
             } else {
               toast.show({ message: 'Couldn’t undo — the check is still saved', tone: 'error' })
             }
@@ -792,7 +818,7 @@ export default function CareNeeded({ plan, planDate }) {
       writeInFlightRef.current.delete(row.key)
       setPending(row.key, false)
     }
-  }, [fetch, toast, pendingKeys, rows.length, setPending, announce])
+  }, [fetch, toast, pendingKeys, rows.length, setPending, announce, fade, unfade])
 
   // BUG-TODAYSKIPNOUNDO-001 — Skip's Undo. Same order as skipRow: the local write first and
   // synchronously, then the fire-and-forget sync, which still sends the WHOLE set (the column is a
@@ -919,18 +945,19 @@ export default function CareNeeded({ plan, planDate }) {
     bulkInFlightRef.current = true
     try {
       setBulkProgress({ done: 0, total: targets.length })
-      const created = []   // { id, key } per successfully-created row (id known = undoable)
+      const created = []   // { id, key, on } per successfully-created row (id known = undoable)
       let failures = 0
       for (let i = 0; i < targets.length; i++) {
         const row = targets[i]
         try {
-          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
-          created.push({ id: (res && res.id) || null, key: row.key })
+          const body = eventBody(row)
+          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body) })
+          created.push({ id: (res && res.id) || null, key: row.key, on: body.event_date })
         } catch { failures++ }
         setBulkProgress({ done: i + 1, total: targets.length })
       }
       const doneKeys = created.map(c => c.key)
-      if (doneKeys.length) setLogged(prev => { const n = new Set(prev); doneKeys.forEach(k => n.add(k)); return n })
+      if (doneKeys.length) fade(created.map(c => [c.key, c.on]))
       setBulkType(null); setBulkProgress(null)
       const okMsg = 'Logged ' + doneKeys.length + (failures ? ' — ' + failures + ' failed' : '')
       announce(okMsg)
@@ -944,22 +971,22 @@ export default function CareNeeded({ plan, planDate }) {
         // WS-A5: await each DELETE; only un-fade rows whose delete is confirmed (or 404 = already
         // gone). Rows we can't confirm stay hidden, so a failed undo can't re-surface → re-log a dup.
         onUndo: async () => {
-          const undoneKeys = []
+          const undone = []
           await Promise.all(created.map(async c => {
             if (!c.id) return
-            try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undoneKeys.push(c.key) }
-            catch (e) { if (e?.status === 404) undoneKeys.push(c.key) }
+            try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undone.push(c) }
+            catch (e) { if (e?.status === 404) undone.push(c) }
           }))
-          if (undoneKeys.length) setLogged(prev => { const n = new Set(prev); undoneKeys.forEach(k => n.delete(k)); return n })
-          if (undoneKeys.length < created.length) {
-            toast.show({ message: 'Couldn’t undo ' + (created.length - undoneKeys.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
+          if (undone.length) unfade(undone.map(c => [c.key, c.on]))
+          if (undone.length < created.length) {
+            toast.show({ message: 'Couldn’t undo ' + (created.length - undone.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
           }
         },
       })
     } finally {
       bulkInFlightRef.current = false
     }
-  }, [fetch, toast, candidatesFor, announce])
+  }, [fetch, toast, candidatesFor, announce, fade, unfade])
 
   const isExpanded = (g) => (g.key in overrides) ? overrides[g.key] : autoKeys.has(g.key)
 
