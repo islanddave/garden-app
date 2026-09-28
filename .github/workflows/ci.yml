@@ -766,6 +766,46 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:today-shape
 
+      - name: Today V2 contract, instrument and self-test (V5-TODAYREDESIGN-001)
+        # The Today redesign's gate (plan-v2 §9.1), dual-run beside the v1 step above until S8c (§9.2):
+        # v1 keeps gating the default route, unmodified; this runs the V2 route (the ?v2=1 seam of
+        # tests/harness/todaymeasure.jsx, on tests/harness/vite.harness.v2.mjs) over the 20 contract
+        # states in tests/harness/_todaymeasure/today-v2-contract.mjs. Checks whose slice has not landed
+        # are printed PENDING and counted, never passed; the instrument (viewport, clock, font pin,
+        # stubbed weather, no live request, fixture ledger, the V2 flag and seeds, the prefs GET) is armed
+        # on every state from S0. Then two proofs the contract can fail, both of which must hold:
+        # --probe-nothing blinds every v2 anchor and MUST exit 1, and --self-test arms every check against
+        # an EMPTY V2 stub and passes only if the census reds every state while the instrument holds.
+        # The probe is inverted with an explicit `if`, NOT a bare `! cmd`: steps run `bash -e`, and errexit
+        # ignores a `!`-inverted command, so a probe that wrongly exited 0 mid-block would be swallowed.
+        # The v2 mutation matrix stays out of CI (npm run mutate:today-shape:v2).
+        # NO continue-on-error, per the policy note above.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: |
+          npm run gate:today-shape:v2
+          if npm run gate:today-shape:v2:probe-nothing; then
+            echo "::error::gate:today-shape:v2:probe-nothing exited 0 - every v2 anchor pointed at nothing and the gate did not notice"
+            exit 1
+          fi
+          npm run gate:today-shape:v2:self-test
+
+      - name: Today V2 in the app shell (V5-TODAYREDESIGN-001)
+        # tests/harness/todayshell.{html,jsx}: real TopChrome, the nav band, the REAL page-scroll manager
+        # called as AppShell calls it. Armed from S0: the shell itself (measured page band = 836 - 52 - 56,
+        # TopChrome sticky at y=0, scrollRestoration manual, a production-shaped /api/members roster, the
+        # prefs GET) plus a drift guard against App.jsx and main.jsx. Sticky, jump landing and the Back
+        # round trip are PENDING until S3/S4. --probe-nothing MUST exit 1 (explicit `if`, as above).
+        # NO continue-on-error.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: |
+          npm run gate:today-shell:v2
+          if npm run gate:today-shell:v2:probe-nothing; then
+            echo "::error::gate:today-shell:v2:probe-nothing exited 0 - the shell anchors pointed at nothing and the gate did not notice"
+            exit 1
+          fi
+
       - name: Undo toast tap targets, glyph and stack (BUG-UNDOTOASTTAPTARGET-001)
         # The shared UndoToast (src/context/ToastContext.jsx), behind every "Logged … · Undo" message,
         # in real Chrome at 426x836 @ DPR 3 (tests/harness/undotap.{html,jsx}: the real ToastProvider
