@@ -271,7 +271,15 @@ function liveTimeLabel(refreshedAt) {
 // the both-hold branch: the other three sentences are lane advice, not a claim about the whole page.
 // Copy is length-budgeted for a 390px Android viewport (the visible line is nowrap + ellipsis; the
 // full sentence ships as sr-only text, so the a11y contract is never the truncated one).
-function headlineFor(containersDo, bedsDo, waterDueCount = 0) {
+//
+// BUG-WATERAUTUMNDEMAND-001 — the mirror-image guard. The lanes read the WEATHER only (wateringScale.js:
+// any day that is not soaked says "water"), while the list is the engine's per-plant verdict. Once the
+// weather-aware Water Ledger decides the list, a cool autumn morning can leave it EMPTY under lanes that
+// still say "water", and "Water both — containers and beds today." above an empty list is as false as
+// "All set" above a full one. So a KNOWN empty list (a number, 0) never gets an imperative. A caller that
+// passes no count (null) keeps the lane sentences, exactly as before.
+function headlineFor(containersDo, bedsDo, waterDueCount = null) {
+  if (waterDueCount === 0 && (containersDo || bedsDo)) return 'Nothing due for watering today.'
   if (containersDo && bedsDo) return 'Water both — containers and beds today.'
   if (containersDo && !bedsDo) return 'Water containers, skip the beds today.'
   if (!containersDo && bedsDo) return 'Water the beds, hold containers.'
@@ -288,7 +296,7 @@ export default function WeatherWidget({
   planDate = null,
   liveHydrology = null,
   refreshedAt = null,
-  waterDueCount = 0,
+  waterDueCount = null,
   lowShown = null,
 }) {
   // V5-FROSTTWOMODELS-001 — `lowShown` is DISPLAY ONLY: the night-low figure below prints it when set

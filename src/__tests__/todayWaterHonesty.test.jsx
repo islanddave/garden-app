@@ -194,3 +194,33 @@ describe('BUG-RAINBEDWAITCONFLICT-001 — the top line and the rain line agree a
     expect(headlineText(container)).toMatch(/Water both — containers and beds today\./)
   })
 })
+
+// BUG-WATERAUTUMNDEMAND-001 — the mirror image of layer 1. The lanes read weather only, so on a dry,
+// cool autumn morning they still say "water" while the weather-aware list can be empty. A KNOWN empty
+// list never gets an imperative; a count above zero, or no count at all, keeps the lane sentence.
+describe('BUG-WATERAUTUMNDEMAND-001 — no watering imperative over an empty list', () => {
+  const DRY = { recent_precip_in: 0, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, upcoming_precip_in: 0 }
+  it('lanes say water, list is empty: the headline says nothing is due', () => {
+    const { container } = render(<WeatherWidget weather={weather} hydrology={DRY} waterDueCount={0} />)
+    expect(headlineText(container)).toMatch(/Nothing due for watering today\./)
+    expect(headlineText(container)).not.toMatch(/Water both/)
+  })
+  it('anti-vacuity: the same weather over a non-empty list, or with no count passed, still says water', () => {
+    const a = render(<WeatherWidget weather={weather} hydrology={DRY} waterDueCount={3} />)
+    expect(headlineText(a.container)).toMatch(/Water both — containers and beds today\./)
+    a.unmount()
+    const b = render(<WeatherWidget weather={weather} hydrology={DRY} />)
+    expect(headlineText(b.container)).toMatch(/Water both — containers and beds today\./)
+  })
+  it('through the real Today page: an empty list under dry weather reads "Nothing due"', () => {
+    planState.current = {
+      data: { has_plan: true, plan_date: '2026-09-26', generated_at: '2026-09-26T10:00:00.000Z',
+        plan: { weather, hydrology: DRY, substrate: { msg: '', on_hold: false },
+          water_due: [], no_history: [], fertilize: [], pest: [], cold: [], dormant: [] } },
+      loading: false, error: null,
+    }
+    const { container } = render(<Today />)
+    expect(container.textContent).toMatch(/Nothing due for watering today\./)
+    expect(container.textContent).not.toMatch(/Water both — containers and beds today\./)
+  })
+})
