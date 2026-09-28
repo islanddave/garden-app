@@ -510,7 +510,7 @@ export default function CareNeeded({ plan, planDate, list = 'own' }) {
   // none of its sections on the list any more is a clean slate. Its open set comes back as it was,
   // manual expands and collapses included; a header tapped in the transient frame keeps its tap, as
   // taps always have across the names landing.
-  const restore = (!newDay && visit && !sortTaps && visit.mode === mode
+  const restore = (!newDay && visit && visit.mode === mode
     && visit.enriched === (enrichById !== NO_ENRICHMENT)) ? visit : null
   const layout = restore ? { basis, order: restore.order, expand: new Set(restore.open) } : heldLayout
   if (restore) setVisit(null)

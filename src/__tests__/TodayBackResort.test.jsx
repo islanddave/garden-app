@@ -265,6 +265,36 @@ describe('BUG-TODAYBACKRESORT-001 — Back from a planting keeps the section ord
     expect(screen.getByRole('button', { name: 'By type' }).getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('a new plan day landing while a held layout still waits for the names: the new day starts fresh', async () => {
+    // The wake path (as TodayGroupOrderWake): useDailyPlan revalidates on `focus` past its 60 s floor.
+    let skew = 0
+    const realNow = Date.now.bind(Date)
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + skew)
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    const first = await openToday(envelope())
+    toggle('Drive Bed')
+    toggle('Pasture Bed')
+    first.unmount()
+    // Back, just before midnight's refetch: the names are still on their way ...
+    holdPaths = true
+    plans.push(envelope({ done: ['d1', 'd2', 'd3'] }))
+    render(<Today />)
+    await waitFor(() => expect(pathWaiters.length).toBe(1))
+    await settle()
+    const yesterday = screen.getByTestId('today-date').textContent
+    // ... and the next day's plan lands first. Yesterday's held layout must not be adopted into it.
+    plans.push(envelope({ date: dayISO(1), done: ['d1', 'd2', 'd3'] }))
+    const before = planCalls()
+    skew += 61_000
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    await waitFor(() => expect(planCalls()).toBe(before + 1))
+    await waitFor(() => expect(screen.getByTestId('today-date').textContent).not.toBe(yesterday))
+    await act(async () => { pathWaiters.shift()() })
+    await settle()
+    expect(headerLabels()).toEqual(RERANKED)
+    expect(expandedLabels()).toEqual(['Bag Bed'])
+  })
+
   it('under <StrictMode>: restored, with no render-loop error', async () => {
     const errs = vi.spyOn(console, 'error').mockImplementation(() => {})
     const first = await openToday(envelope(), StrictWrap)
