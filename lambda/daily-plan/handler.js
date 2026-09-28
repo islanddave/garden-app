@@ -79,9 +79,10 @@ async function coordsForSpace(space, { geocodeZip }) {
 // MAX-1. The middle of the day is what gets dropped, which is the part that carries least: a
 // suppression is diagnosed from what the baseline predicted versus what the last few hours measured.
 //
-// 12 covers the baseline plus ~11 hours of the daylight watering window. Sized freely because this
-// key is server-side only — daily-plan-read selects named keys and never ships prior_runs, so it
-// costs Dave no mobile payload (verified 2026-09-13: zero references in lambda/daily-plan-read/).
+// 12 covers the baseline plus ~11 hours of the daylight watering window. CORRECTED 2026-09-28
+// (v4.158.0 pre-promote review): this key is NOT server-side only. daily-plan-read serves the row's
+// items whole, so prior_runs reaches the phone (~28 KB at 8 entries, measured 2026-09-28). An earlier
+// line here said the read Lambda "never ships prior_runs"; it was wrong. Size it with that in mind.
 const PRIOR_RUNS_MAX = 12;
 
 // Read the row this run is about to replace and fold it into a compact history entry. Returns [] on a

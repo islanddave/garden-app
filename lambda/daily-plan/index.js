@@ -356,8 +356,9 @@ async function fetchPrecip(lat, lng) {
       // raw figure separate is what lets the writer label precip_source honestly instead of guessing.
       //
       // These keys ride on the hydrology bag but never reach the stored plan: engine.generatePlan copies
-      // hydrology by NAMED key, so flag-OFF byte-parity holds exactly as it did for forecast_lows and
-      // yesterday_precip_actual_in before them.
+      // hydrology by NAMED key, so flag-OFF byte-parity holds, as it does for yesterday_precip_actual_in.
+      // (The D1..D3 lows are no longer an example of this: since V5-TODAYFROSTWARMEDADVISORY-001,
+      // generatePlan copies them into the stored plan while the frost alert is on.)
       settled_days: [0, 1].map((i) => ({
         date: times[i] || null,
         et0_in: Number.isFinite(et0[i]) ? round3(et0[i]) : null,
