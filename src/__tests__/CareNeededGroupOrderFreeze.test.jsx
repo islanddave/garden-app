@@ -244,6 +244,30 @@ describe('BUG-TODAYGROUPREORDER-001 — a plan refetch moves no group', () => {
     expect(headerLabels()).toEqual([...ARRIVAL, 'Greenhouse'])
   })
 
+  it('(c) two new sections keep the order they arrived in, even when their weights later flip', async () => {
+    const view = await arrive()
+    const shed = [w('s1', 'Shed One', 'Shed', 'prS', 4)]                 // 5
+    const glass = [w('g1', 'Glass One', 'Greenhouse', 'prG', 1)]         // 2
+    view.rerender(<CareNeeded plan={plan({ extra: [...shed, ...glass] })} />)
+    expect(headerLabels()).toEqual([...ARRIVAL, 'Shed', 'Greenhouse'])
+    // Greenhouse now outweighs Shed. Appended sections are part of this visit's order, not a
+    // re-ranked tail — otherwise the bottom of the page still swaps under a finger.
+    view.rerender(<CareNeeded plan={plan({ extra: [w('s1', 'Shed One', 'Shed', 'prS', 0), w('g1', 'Glass One', 'Greenhouse', 'prG', 9)] })} />)
+    expect(headerLabels()).toEqual([...ARRIVAL, 'Shed', 'Greenhouse'])
+  })
+
+  it('(c) when everything on the list is done and new work arrives, it opens like a fresh list', async () => {
+    const view = await arrive()
+    const all = ['d1', 'd2', 'd3', 'd4', 'b1', 'b2', 'b3', 'b4', 'b5', 'c1', 'c2', 'c3']
+    const bare = (p) => ({ ...p, pest: [] })
+    view.rerender(<CareNeeded plan={bare(plan({ done: all }))} />)
+    expect(headerLabels()).toEqual([])
+    // Nothing held is on screen, so nothing can move: the new section leads and opens.
+    view.rerender(<CareNeeded plan={bare(plan({ done: all, extra: [w('g1', 'Glass One', 'Greenhouse', 'prG', 2), w('g2', 'Glass Two', 'Greenhouse', 'prG', 2)] }))} />)
+    expect(headerLabels()).toEqual(['Greenhouse'])
+    expect(expandedLabels()).toEqual(['Greenhouse'])
+  })
+
   it('(c) a section emptied by logging returns to its own place on Undo', async () => {
     await arrive()
     fireEvent.click(screen.getByRole('button', { name: 'Water all 4 in Drive Rows' }))
@@ -279,6 +303,17 @@ describe('BUG-TODAYGROUPREORDER-001 — the By location / By type control DOES r
     expect(expandedLabels()).toEqual(['Bag Area'])
   })
 
+  it('(d) a re-sort after logging ranks the work that is LEFT, not the work already logged', async () => {
+    await arrive()
+    for (const name of ['Drive One', 'Drive Two', 'Drive Three']) {
+      fireEvent.click(screen.getByRole('button', { name: 'Log Water for ' + name }))
+      await waitFor(() => expect(screen.queryByText(name)).toBeNull())
+    }
+    expect(headerLabels()).toEqual(ARRIVAL)
+    fireEvent.click(screen.getByRole('button', { name: 'By location' }))
+    await waitFor(() => expect(headerLabels()).toEqual(RERANKED))
+  })
+
   it('(d) a re-sort is itself held: the next refetch does not undo it', async () => {
     const view = await arrive()
     view.rerender(<CareNeeded plan={plan({ done: ['d1', 'd2', 'd3'] })} />)
@@ -293,6 +328,32 @@ describe('BUG-TODAYGROUPREORDER-001 — the By location / By type control DOES r
     first.unmount()
     render(<CareNeeded plan={plan({ done: ['d1', 'd2', 'd3'] })} />)
     await waitFor(() => expect(headerLabels()).toEqual(RERANKED))
+  })
+})
+
+describe('BUG-TODAYGROUPREORDER-001 — the location names landing is part of opening Today', () => {
+  it('re-keys the sections once, ranked fresh, even when some plantings keep their project section', async () => {
+    let landPlants, landPaths
+    fetchMock.mockImplementation((path) => {
+      if (path === '/api/plants') return new Promise(r => { landPlants = r })
+      if (path === '/api/locations/with-path') return new Promise(r => { landPaths = r })
+      return Promise.resolve({ id: 'ev' })
+    })
+    render(<CareNeeded plan={plan()} />)
+    // First paint groups by the project proxy, until /api/plants and the location paths land.
+    await waitFor(() => expect(headerLabels()).toEqual(ARRIVAL))
+    expect(expandedLabels()).toEqual(['Drive Rows'])
+    // Drive and Bag plantings have a location; Pasture's do not, so Pasture keeps its PROJECT section
+    // — the one key the first layout already holds. Without the re-take, that leftover would keep its
+    // slot and lead the page with nothing open.
+    const at = (ids, loc) => ids.map(id => ({ id, location_id: loc }))
+    await act(async () => {
+      landPlants([...at(['d1', 'd2', 'd3', 'd4', 'dp1'], 'locD'), ...at(['b1', 'b2', 'b3', 'b4', 'b5'], 'locB'), ...at(['c1', 'c2', 'c3', 'cp1', 'cp2'], null)])
+      landPaths([{ id: 'locD', full_path: 'Drive Bed' }, { id: 'locB', full_path: 'Bag Row' }])
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(headerLabels()).toEqual(['Drive Bed', 'Bag Row', 'Pasture']))
+    expect(expandedLabels()).toEqual(['Drive Bed'])
   })
 })
 
