@@ -13,6 +13,10 @@ taken FIRST, so a bad revert can be rolled back.
 
 ------------------------------------------------------------------------------
 SPEC B2 STEP MAP (repo-version-env-spec-V100-20260602.md §3 B2):
+  0. REVERT FLOOR (OPS-REVERTRESTORE-001 A1, 2026-09-28): refuse a target older than
+     the floor in force for the version prod runs (scripts/revert-floors.json, read
+     from THIS tree), before anything is read or touched. One-way releases are undone
+     with a forward build instead (scripts/forward-undo.py).
   1. load manifest (Object-Lock bucket) + cross-check live tag SHA ==
      manifest.main_sha; FAIL CLOSED on mismatch (forged/moved tag guard).
   2. PRE-REVERT snap of CURRENT prod (revert is revertible) + surface RPO to
@@ -133,6 +137,8 @@ from botocore.exceptions import ClientError
 
 # Co-located in scripts/: THE Lambda release set (stdlib only).
 import lambda_fleet
+# Co-located in scripts/: the revert floor (stdlib only).
+import revert_floors
 
 # snap.py is co-located in scripts/ — reused for the pre-revert snapshot.
 try:
@@ -144,6 +150,10 @@ VERSION_RE = re.compile(r"^v\d+(\.\d+){0,2}$")
 NEON_API = "https://console.neon.tech/api/v2"
 GITHUB_API = "https://api.github.com"
 HTTP_TIMEOUT = 60
+
+# A1: the floor file of THIS tree — the checkout running the revert (revert-gate.yml checks out
+# dev) — never the target's, which predates its own floor.
+REVERT_FLOORS = revert_floors.FLOORS
 
 # Real prod identifiers the rehearsal guard must REFUSE to mutate.
 PROD_NEON_BRANCH = "br-delicate-sea-amum92c2"
@@ -327,6 +337,59 @@ def rehearsal_guard(cfg):
         bad.append(f"NEON_PROD_BRANCH_ID is the real prod branch {PROD_NEON_BRANCH}")
     if bad:
         raise RevertError("REHEARSAL_MODE safety guard tripped: " + "; ".join(bad))
+
+
+# --- step 0: the revert floor (A1) --------------------------------------------
+
+def current_prod_version(cfg):
+    """The version prod runs, 'vX.Y.Z': package.json at main's head, read with the same token and API
+    as verify_tag. Anything unreadable raises, because the floor cannot be judged without it."""
+    main_sha = _get_ref_sha(cfg, f"heads/{cfg.main_branch}")
+    body = _gh_read(cfg, f"/contents/package.json?ref={main_sha}")
+    try:
+        if not isinstance(body, dict) or body.get("encoding") != "base64":
+            raise ValueError("unreadable, or not base64")
+        version = f"v{json.loads(base64.b64decode(body['content']).decode('utf-8'))['version']}"
+        if not revert_floors.RELEASE_RE.match(version):
+            raise ValueError(f"{version!r} is not vX.Y.Z")
+    except (ValueError, KeyError, TypeError) as e:
+        raise RevertError(f"cannot read the version prod runs (package.json at main {str(main_sha)[:12]}: {e}); "
+                          "refusing: the revert floor cannot be judged without it")
+    return version
+
+
+def require_target_above_floor(cfg, floors_path=None):
+    """A1 (OPS-REVERTRESTORE-001, Dave 2026-09-28: "undo code, keep data"). run()'s FIRST refusal —
+    before the manifest, the RPO probe and every snapshot: refuse a target below the revert floor in
+    force for the version prod runs (scripts/revert_floors.py). Such a release is undone with a
+    forward build instead (scripts/forward-undo.py); the entry's undo_instead names the switch.
+
+    The floor file is THIS tree's (REVERT_FLOORS), never the target's: the target predates its own
+    floor. An unreadable or malformed file refuses, and so does a prod version that cannot be read.
+    A target AT the floor is allowed. Rehearsals skip it like every prod-only refusal: they never
+    touch prod, and their v0.0.* staging targets sit below every floor."""
+    if cfg.rehearsal:
+        return
+    path = REVERT_FLOORS if floors_path is None else floors_path
+    try:
+        entries = revert_floors.load(path)
+    except revert_floors.FloorError as e:
+        raise RevertError(f"revert floor unreadable ({e}); refusing: no target can be shown to be at or above it")
+    prod = current_prod_version(cfg)
+    gov = revert_floors.governing_entry(entries, prod)
+    if gov is None:
+        sys.stdout.write(f"[revert] floor: none in force while prod runs {prod}\n")
+        return
+    if revert_floors.version_key(cfg.target_version) < revert_floors.version_key(gov["floor"]):
+        undo = gov["undo_instead"]
+        how = (f"switch {undo['flag']} off in {undo['file']}" if undo
+               else "no switch exists, so write the fix forward")
+        raise RevertError(
+            f"target {cfg.target_version} is below the revert floor {gov['floor']} (in force since "
+            f"{gov['since']}; prod runs {prod}; {gov['ledger']}): {gov['reason']}. Nothing was read or "
+            f"touched. Undo with a forward release instead: scripts/forward-undo.py ({how})")
+    sys.stdout.write(f"[revert] floor: target {cfg.target_version} is at or above {gov['floor']} "
+                     f"(prod runs {prod})\n")
 
 
 # --- step 1: manifest load + tag cross-check ---------------------------------
@@ -1558,6 +1621,10 @@ def run(cfg, s3=None, lambda_client=None):
             + (", FORCE_ABORT" if cfg.force_abort else "")
             + "\n"
         )
+
+    # Step 0 — A1: the revert floor, before anything about the target is read (the manifest, its tag,
+    # its workflows) and before the pre-revert snap. Some releases are one-way; see revert_floors.py.
+    require_target_above_floor(cfg)
 
     # Step 1 — manifest + tag cross-check (fail closed) BEFORE any mutation.
     manifest = load_manifest(s3, cfg)
