@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore } from 'react'
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { P } from '../../lib/constants.js'
 import { SEVERITY_STYLES } from '../../lib/waterDue.js'
@@ -14,9 +14,9 @@ import {
   buildCareNeeded, groupRows, bedWaitActive, autoExpandKeys, capStaleRows,
   dormantRows, feedSuppressedRows, FEED_SUPPRESSED_LISTED, droughtRows,
   NEED_EVENT_TYPE, NEED_LABEL, NEED_ORDER, EXPAND_ROW_BUDGET, WATER_STALE_CAP, splitContainersBeds,
-  canMoistureCheck, MOISTURE_CHECK_EVENT,
+  canMoistureCheck, candidateKeys,
 } from '../../lib/careNeeded.js'
-import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../../lib/notificationPrefsClient.js'
+import { useCareActions } from './useCareActions.js'
 
 // CareNeeded — Slice 7 (V4-THEME-001) Care-Needed-Today. REPLACES the care-type PlanBuckets:
 // location-grouped (default) need rows with ONE-TAP inline logging, per-need bulk, undo, and a
@@ -25,8 +25,10 @@ import { fetchNotificationPrefs, saveTodaySkipped, readTodaySkipped } from '../.
 //
 // Read-path parity: ALL "which plantings / which need / what order" logic lives in careNeeded.js
 // (buildCareNeeded). This component only renders what that canonicalizer emits + owns interaction
-// state. One-tap log goes through the IDENTICAL Log-form write path (POST /api/events) so the
-// events Lambda side effects (critter award + entity_memory.next_water_at) fire; undo soft-deletes.
+// state. The care state and write paths it drives live in useCareActions.js, and the page's one skip
+// set in careStore.js (V5-TODAYREDESIGN-001 S1). One-tap log goes through the IDENTICAL Log-form
+// write path (POST /api/events) so the events Lambda side effects (critter award +
+// entity_memory.next_water_at) fire; undo soft-deletes.
 
 const GROUP_OPTS = [
   { value: 'location', label: 'By location' },
@@ -44,135 +46,6 @@ function takeLayout(rankedGroups, basis) {
   return { basis, order: rankedGroups.map(g => g.key), expand: autoExpandKeys(rankedGroups, EXPAND_ROW_BUDGET) }
 }
 const NO_LAYOUT = Object.freeze({ basis: null, order: Object.freeze([]), expand: new Set() })
-
-function todayLocalISO() {
-  const d = new Date()
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-  return local.toISOString().slice(0, 10)
-}
-
-// Per-day suppress set (suppress-for-today). V4-TODAYLOC-002 / V4-USERPREFS-001 closed the two
-// halves this comment used to defer.
-//
-// localStorage, NOT sessionStorage. The row was filed as a CROSS-DEVICE gap, but sessionStorage
-// made it a same-device one too: the set died with the tab, so skipping a watering row in the
-// garden and coming back minutes later showed it again. That is the failure Dave actually
-// reported. localStorage is the offline-durable local layer; the server sync below is the
-// cross-device one. Still keyed by date, so it self-empties on a new day exactly as before.
-//
-// LOCAL IS AUTHORITATIVE ON WRITE, ALWAYS. Every skip lands here first and synchronously — the
-// server call is fire-and-forget after the fact. A skip made standing in a dead spot in the garden
-// must behave identically to one made on wifi.
-//
-// ONE SET PER PAGE, NOT ONE PER LIST (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001). Today mounts a CareNeeded
-// for Dave's own care and another for the rest of the household, and both write this one key and the
-// one per-user server column. Each list used to keep the set in its own React state, read once at
-// mount, and write THAT whole — so a skip in one list erased the other list's skips from storage and
-// from the server, and the erased plant came back on the next visit. A list mounted later (the
-// household toggle) also held a stale copy that re-published a skip Dave had since undone.
-//
-// So the set lives here, at module scope, and every list reads it through useSyncExternalStore
-// (subscribeSkipped/skippedSnapshot). Every write starts from the shared set (readSkipped), and
-// writeSkipped notifies every mounted list, so the two lists agree on screen without a reload — and an
-// Undo raised by a list that has since unmounted still repaints the list now on screen. Chosen over
-// "re-read storage before each write" because that fixes the stored set but leaves each list's screen
-// state private, so a plant in both lists, or an Undo after a remount, still disagrees until reload.
-//
-// localStorage stays the durable copy and the snapshot re-reads it on every render, so anything that
-// changes the key outside this module (sign-out's clearClientPrefs, a test) is picked up on each list's
-// NEXT render — not at once: nothing notifies the lists of a change they did not make. The only thing
-// held in memory alone is a write localStorage refused (quota, blocked storage): it stays visible, as
-// the old per-list state did, until storage changes under it or the LAST list unmounts (not any list:
-// the household toggle unmounts one while the other stays up) — the reset in subscribeSkipped, which
-// also keeps it from outliving the session into the next sign-in.
-function skipKeyName() { return 'today-skipped:' + todayLocalISO() }
-function storedSkipRaw(name) {
-  try { return localStorage.getItem(name) } catch { return null }
-}
-const NO_SKIP_MEM = Object.freeze({ name: null, raw: null, set: new Set() })
-let skipMem = NO_SKIP_MEM
-const skipListeners = new Set()
-// The useSyncExternalStore snapshot. Must return the SAME Set while nothing changed (React re-renders
-// forever otherwise) and a NEW one on any change (React drops the update otherwise), so it is keyed on
-// the raw stored string. Treat the result as frozen: callers that edit take readSkipped()'s copy.
-function skippedSnapshot() {
-  const name = skipKeyName()
-  const raw = storedSkipRaw(name)
-  if (skipMem.name === name && skipMem.raw === raw) return skipMem.set
-  let set
-  try { set = new Set(JSON.parse(raw || '[]')) } catch { set = new Set() }
-  skipMem = { name, raw, set }
-  return set
-}
-function subscribeSkipped(fn) {
-  skipListeners.add(fn)
-  return () => {
-    skipListeners.delete(fn)
-    if (skipListeners.size === 0) skipMem = NO_SKIP_MEM
-  }
-}
-// A private copy of the shared set — the only thing a write may start from.
-function readSkipped() { return new Set(skippedSnapshot()) }
-function writeSkipped(set) {
-  const name = skipKeyName()
-  let raw = JSON.stringify([...set])
-  // Refused: remember what storage still holds, so the snapshot keeps this set only until that changes.
-  try { localStorage.setItem(name, raw) } catch { raw = storedSkipRaw(name) }
-  skipMem = { name, raw, set }
-  for (const fn of [...skipListeners]) fn()
-}
-
-// BUG-TODAYSKIPNOUNDO-001 — keys UN-skipped on this device today, i.e. Skip's Undo.
-//
-// The mount-time merge below UNIONS the server's set into the local one. While the set could only
-// grow within a day, a union could never be wrong. With Undo it can: undo a skip while the server
-// still holds the older snapshot — the Undo's own sync failed in a dead spot, lost the race with the
-// skip's sync, or has not landed when Today remounts a second later — and the union puts the key
-// straight back, silently hiding the plant again after Dave undid it. A key in this set is never
-// re-added from the server today. Same date-keyed, self-expiring shape as the skip set above.
-function unskipKeyName() { return 'today-unskipped:' + todayLocalISO() }
-function readUnskipped() {
-  try { return new Set(JSON.parse(localStorage.getItem(unskipKeyName()) || '[]')) }
-  catch { return new Set() }
-}
-function writeUnskipped(set) {
-  try { localStorage.setItem(unskipKeyName(), JSON.stringify([...set])) } catch { return }
-}
-
-// ONE server sync per Undo tap (BUG-TODAYSKIPNOUNDO-001 review). A coalesced skip toast's Undo runs
-// every accumulated handler in one synchronous loop (ToastContext's onUndo), and each handler used to
-// fire its own whole-set PATCH. Concurrent, fire-and-forget and keepalive: arrival order decided the
-// server snapshot, and at the live set size (~10 KB a body) a handful of them overrun the 64 KiB
-// keepalive quota, so the one carrying the correct final set was the likeliest to be refused. Every
-// handler now only asks for a sync; the first ask queues a microtask, which runs after the last
-// handler in that loop and sends the shared set (above) as it then stands.
-//
-// Module scope, never component state: the toast outlives Today, so this has to fire with Today
-// unmounted. Both CareNeeded instances on the household lens share the one localStorage key and the
-// one signed-in user, so one flush serves both.
-let unskipSyncQueued = false
-let unskipSyncGetToken = null
-function queueUnskipSync(getToken) {
-  unskipSyncGetToken = getToken
-  if (unskipSyncQueued) return
-  unskipSyncQueued = true
-  queueMicrotask(() => {
-    unskipSyncQueued = false
-    const gt = unskipSyncGetToken
-    unskipSyncGetToken = null
-    saveTodaySkipped({ getToken: gt, date: todayLocalISO(), keys: [...readSkipped()] })
-  })
-}
-
-// `eventType` overrides the row's primary type — the moisture check posts through this same body so
-// the two writes cannot drift in shape. Omitted => the row's own mapped type, as before.
-function eventBody(row, eventType) {
-  return {
-    project_id: row.projectId, event_type: eventType || row.eventType, event_date: todayLocalISO(),
-    plant_id: row.plantingId, is_public: true, has_photo: false,
-    notes: null, private_notes: null, quantity: null, metadata: null,
-  }
-}
 
 // BD-036b — the care chip IS the log button.
 //
@@ -396,54 +269,22 @@ export default function CareNeeded({ plan, planDate }) {
   const { fetch, getToken } = useApiFetch()
   const toast = useOptionalToast()
   const [mode, setMode] = useState('location')
-  // Optimistic local drop (V3-TODAYDONE parity): row key -> event_date of the write that faded it.
-  const [logged, setLogged] = useState(() => new Map())
-  const [pendingKeys, setPendingKeys] = useState(() => new Set())
-  // The page's one skip set (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001), shared with the household list.
-  const skipped = useSyncExternalStore(subscribeSkipped, skippedSnapshot)
-
-  // V4-TODAYLOC-002 — pull the other device's skips in once on mount, UNIONED into the local set.
-  //
-  // UNION, NOT REPLACE, and the direction matters. Replacing local with server would erase a skip
-  // made moments ago offline on this phone the instant a stale server value arrived. Union is also
-  // the correct merge for what this set actually is: within a single day it only ever grows, and
-  // the two devices are both appending to it. The cost of union is that an un-skip cannot
-  // propagate.
-  //
-  // BUG-TODAYSKIPNOUNDO-001 added the un-skip (Skip's Undo) and revisited this merge, as the note
-  // that stood here asked. On THIS device an undone key is vetoed (readUnskipped), so a stale server
-  // snapshot cannot re-hide a plant Dave just brought back. ACROSS devices it still cannot propagate:
-  // a second device that already pulled the key keeps it, and its next skip re-publishes it. Fixing
-  // that needs tombstones on the server — a wire change — and the set is per user, so it only bites
-  // someone who skips on one device and undoes on another.
-  //
-  // Writes the merged set back to localStorage so the union survives the next cold start even if
-  // the network is gone by then. Best-effort throughout: fetchNotificationPrefs never throws and
-  // returns null on env-unset/unauth/failure, in which case the local set simply stands.
-  //
-  // Merges into the SHARED set as it stands when the response lands (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001),
-  // never into a copy taken at mount: both lists run this, the responses land in either order, and a
-  // merge of a stale copy wrote over a skip the other list made while this response was in flight.
-  useEffect(() => {
-    let alive = true
-    ;(async () => {
-      const prefs = await fetchNotificationPrefs({ getToken })
-      if (!alive || !prefs) return
-      const remote = readTodaySkipped(prefs, todayLocalISO())
-      if (remote.length === 0) return
-      const unskipped = readUnskipped()
-      const merged = readSkipped()
-      let added = false
-      for (const k of remote) if (!merged.has(k) && !unskipped.has(k)) { merged.add(k); added = true }
-      if (added) writeSkipped(merged)     // nothing new: no write, no re-render
-    })()
-    return () => { alive = false }
-  }, [getToken])
-  const [overrides, setOverrides] = useState(() => ({}))  // explicit per-group expand/collapse
   const [bulkType, setBulkType] = useState(null)          // event_type whose bulk fly-up is open
-  const [bulkChecked, setBulkChecked] = useState(() => new Set())
-  const [bulkProgress, setBulkProgress] = useState(null)  // { done, total } during fan-out
   const liveRef = useRef(null)
+  const announce = useCallback((msg) => { if (liveRef.current) liveRef.current.textContent = msg }, [])
+  const closeBulk = useCallback(() => setBulkType(null), [])
+  const allRows = useMemo(() => buildCareNeeded(plan), [plan])
+  const bedWait = useMemo(() => bedWaitActive(plan), [plan])
+  // The care state and every write path — the fades (`logged`) and their new-day reset, the in-flight
+  // guards, the page's one skip set and its mount-time server merge, Log / Moist / Skip / bulk and
+  // their undo — live in useCareActions.js (V5-TODAYREDESIGN-001 S1), shared with the V2 Today.
+  // Called here, ahead of the two fetches below, so its merge effect keeps its place in effect order.
+  // `rows` is `allRows` minus what is logged and skipped: the list as it stands.
+  const {
+    skipped, rows, pendingKeys, bulkProgress, setBulkProgress, candidatesFor, logRow, moistRow, skipRow, runBulk,
+  } = useCareActions({ allRows, bedWait, planDate, fetch, getToken, toast, announce, onBulkEnd: closeBulk })
+  const [overrides, setOverrides] = useState(() => ({}))  // explicit per-group expand/collapse
+  const [bulkChecked, setBulkChecked] = useState(() => new Set())
 
   // V4-TODAYLOC-001 — best-effort enrichment for true location grouping + thumbnails. Joins
   // /api/plants (location_id, container_type, featured thumb) with /api/locations/with-path
@@ -504,11 +345,6 @@ export default function CareNeeded({ plan, planDate }) {
     return map
   }, [plants, locPaths])
 
-  const allRows = useMemo(() => buildCareNeeded(plan), [plan])
-  const rows = useMemo(
-    () => allRows.filter(r => !logged.has(r.key) && !skipped.has(r.key)),
-    [allRows, logged, skipped],
-  )
   const enrich = useCallback(
     (r) => { const e = enrichById[r.plantingId]; return e ? { ...r, ...e } : r },
     [enrichById],
@@ -634,13 +470,9 @@ export default function CareNeeded({ plan, planDate }) {
   // What resets is what a fresh open would give: yesterday's fades, the layout (taken fresh), manual
   // expand/collapse, "Show N more", and the grouping mode.
   //
-  // A fade is kept when its write is dated the NEW plan day. That is a log made after midnight on the
-  // list still showing yesterday's plan — the morning wake's refetch in flight, the write landing
-  // first, the refetched plan read before the write committed and so still calling the row due.
-  // Dropping that fade put the row back, live, and a second tap logged it twice (measured: 2 POSTs,
-  // both dated the new day). Same rule the read path stamps `done` by: event_date is the plan day.
-  // A key still pending is kept too; today that is none, because a write fades its row in the same
-  // batch that clears its pending mark — it is there for the day a fade is made before the await.
+  // The fades are useCareActions' half of this reset, on the same render and by the same planDate: it
+  // keeps a fade whose write is dated the NEW plan day (a log made after midnight on the list still
+  // showing yesterday's plan) and a key still pending — see the note there.
   //
   // Same derived-state-during-render shape as the layout: the render that sees the new date queues
   // the resets and skips the reconcile, and the re-render React runs straight after takes it fresh.
@@ -648,7 +480,6 @@ export default function CareNeeded({ plan, planDate }) {
   const newDay = day !== planDate
   if (newDay) {
     setDay(planDate)
-    setLogged(prev => new Map([...prev].filter(([k, on]) => on === planDate || pendingKeys.has(k))))
     setLayout(null)
     setOverrides({})
     setShowCapped(false)
@@ -687,213 +518,6 @@ export default function CareNeeded({ plan, planDate }) {
   const total = rows.length
   const autoKeys = (held || NO_LAYOUT).expand
 
-  const announce = useCallback((msg) => { if (liveRef.current) liveRef.current.textContent = msg }, [])
-
-  const setPending = useCallback((key, on) => {
-    setPendingKeys(prev => { const n = new Set(prev); if (on) n.add(key); else n.delete(key); return n })
-  }, [])
-
-  // In-flight write keys, as a REF rather than from `pendingKeys`.
-  //
-  // BUG-MOISTURECHECKNOBUTTON-001 forced this: the row now carries TWO controls that write an event
-  // (Water and Moist), and both of their handlers close over the same un-flushed `pendingKeys`. Two
-  // taps landing in one React batch — a thumb on a phone, or a finger that catches both — therefore
-  // both pass a state-only guard and both POST, producing a watering AND a "still moist" for one
-  // gesture, of which the undo toast can reverse only the first. The `disabled` attribute closes
-  // nothing here either: it is applied by the very render that has not flushed.
-  //
-  // Shared across BOTH handlers deliberately. A per-handler ref would still let Water and Moist
-  // race each other, which is the case this row newly makes reachable.
-  const writeInFlightRef = useRef(new Set())
-
-  // BUG-TODAYGROUPREORDER-001 — a fade carries the event_date of the write that made it, as [key, on]
-  // pairs. The new-day reset reads it (above). So does Undo: it un-fades only the fade its OWN event
-  // made, so yesterday's toast, tapped after the same row was logged again today, deletes yesterday's
-  // event and leaves today's fade alone — un-fading it put a logged row back, live, to be logged twice.
-  const fade = useCallback((pairs) => setLogged(prev => {
-    const n = new Map(prev)
-    for (const [k, on] of pairs) n.set(k, on)
-    return n
-  }), [])
-  const unfade = useCallback((pairs) => setLogged(prev => {
-    let n = null
-    for (const [k, on] of pairs) if (prev.get(k) === on) { n = n || new Map(prev); n.delete(k) }
-    return n || prev
-  }), [])
-
-  // One-tap: await-then-fade. On failure restore the row + error toast (never fade-and-forget — L-104).
-  const logRow = useCallback(async (row) => {
-    if (writeInFlightRef.current.has(row.key) || pendingKeys.has(row.key)) return
-    writeInFlightRef.current.add(row.key)
-    setPending(row.key, true)
-    try {
-      const body = eventBody(row)
-      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body) })
-      const id = res && res.id
-      const mine = [[row.key, body.event_date]]
-      fade(mine)
-      const remaining = rows.length - 1
-      announce('Logged ' + NEED_LABEL[row.need] + ' for ' + row.name + ' — ' + remaining + ' remaining')
-      toast.showUndo({
-        message: 'Logged ' + NEED_LABEL[row.need] + ' for ' + row.name,
-        // Rapid one-tap logging DOWN a list is the dominant interaction on this surface, so these
-        // coalesce rather than stack: repeat taps of the same care action merge into a single toast
-        // ("Logged Water for 12 plants") whose one Undo reverses every tap in the run — the same
-        // shape runBulk below has always produced. Keyed by eventType so a Water run and a Feed run
-        // stay separate statements instead of collapsing into one wrong count.
-        group: 'care-log-' + row.eventType,
-        groupMessage: (n) => 'Logged ' + NEED_LABEL[row.need] + ' for ' + n + ' plants',
-        onUndo: async () => {
-          // WS-A5: only un-fade the row once the DELETE is confirmed. A failed undo must KEEP the
-          // row hidden — re-surfacing it lets it be re-logged as a duplicate (L-104). A 404 means
-          // the event is already gone, so re-surfacing is safe there.
-          if (!id) { unfade(mine); return }
-          try {
-            await fetch('/api/events/' + id, { method: 'DELETE' })
-            unfade(mine)
-          } catch (e) {
-            if (e?.status === 404) {
-              unfade(mine)
-            } else {
-              toast.show({ message: 'Couldn’t undo — the log is still saved', tone: 'error' })
-            }
-          }
-        },
-      })
-    } catch {
-      toast.show({ message: 'Couldn’t log — tap to retry', tone: 'error' })
-    } finally {
-      writeInFlightRef.current.delete(row.key)
-      setPending(row.key, false)
-    }
-  }, [fetch, toast, pendingKeys, rows.length, setPending, announce, fade, unfade])
-
-  // BUG-MOISTURECHECKNOBUTTON-001 — the same await-then-fade + undo contract logRow has, pointed at
-  // moisture_check instead of the row's primary type. Identical shape on purpose: a failed write
-  // restores the row and toasts (never fade-and-forget — L-104), and undo soft-deletes the event.
-  // The toast GROUP key is the event type, so a run of moisture checks coalesces into its own
-  // statement instead of being counted into "Logged Water for N plants".
-  //
-  // Zero reward is deliberately NOT asserted here. It is a property of the TYPE, applied server-side
-  // in lambda/events/index.js — the flat grant, both recomputes and the critter award all sit behind
-  // isRewardedEventType (see NON_REWARD_EVENT_TYPES in lib/eventTypes.js). The client's entire
-  // obligation is to post the right event_type through the ordinary single-event path and fire
-  // nothing else; re-implementing the exclusion here would just be a second place to drift.
-  //
-  // Guarded by the SHARED writeInFlightRef above, not by `pendingKeys` — see the note there for why
-  // a state-only guard (and `disabled`) cannot close a same-batch double-tap.
-  const moistRow = useCallback(async (row) => {
-    if (writeInFlightRef.current.has(row.key) || pendingKeys.has(row.key)) return
-    writeInFlightRef.current.add(row.key)
-    setPending(row.key, true)
-    try {
-      const body = eventBody(row, MOISTURE_CHECK_EVENT)
-      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body) })
-      const id = res && res.id
-      const mine = [[row.key, body.event_date]]
-      fade(mine)
-      const remaining = rows.length - 1
-      announce('Checked ' + row.name + ' — still moist. ' + remaining + ' remaining')
-      toast.showUndo({
-        message: 'Checked ' + row.name + ' — still moist',
-        group: 'care-log-' + MOISTURE_CHECK_EVENT,
-        groupMessage: (n) => 'Checked ' + n + ' plants — still moist',
-        onUndo: async () => {
-          if (!id) { unfade(mine); return }
-          try {
-            await fetch('/api/events/' + id, { method: 'DELETE' })
-            unfade(mine)
-          } catch (e) {
-            if (e?.status === 404) {
-              unfade(mine)
-            } else {
-              toast.show({ message: 'Couldn’t undo — the check is still saved', tone: 'error' })
-            }
-          }
-        },
-      })
-    } catch {
-      toast.show({ message: 'Couldn’t save that — tap to retry', tone: 'error' })
-    } finally {
-      writeInFlightRef.current.delete(row.key)
-      setPending(row.key, false)
-    }
-  }, [fetch, toast, pendingKeys, rows.length, setPending, announce, fade, unfade])
-
-  // BUG-TODAYSKIPNOUNDO-001 — Skip's Undo. Same order as skipRow: the local write first and
-  // synchronously, then the fire-and-forget sync, which still sends the WHOLE set (the column is a
-  // snapshot) — but queued, so a coalesced Undo of N skips sends ONE sync, not N (queueUnskipSync).
-  //
-  // Writes the SHARED set directly rather than through a state updater, on purpose. The toast layer
-  // lives at the app root and outlives Today: skip, tap into the planting, tap Undo, and this
-  // component has unmounted — a state updater would never run, and the plant would stay skipped while
-  // the toast claimed otherwise. localStorage is what the next mount reads, so writing it directly is
-  // what makes the Undo true whether or not the list is still mounted. writeSkipped then repaints
-  // whichever lists ARE mounted — including one that remounted after this toast was raised, which a
-  // repaint of this instance's own state never reached (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001).
-  const unskipRow = useCallback((row) => {
-    const n = readSkipped()
-    n.delete(row.key)
-    writeSkipped(n)
-    const u = readUnskipped()
-    u.add(row.key)
-    writeUnskipped(u)
-    queueUnskipSync(getToken)
-    announce(row.name + ' is back on today’s list')
-  }, [announce, getToken])
-
-  const skipRow = useCallback((row) => {
-    // From the shared set as it stands now, never from a copy this list holds: the household list
-    // writes the same key and the same server column (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001).
-    const n = readSkipped()
-    n.add(row.key)
-    writeSkipped(n)
-    // V4-TODAYLOC-002 — fire-and-forget cross-device sync, AFTER the local write. Deliberately
-    // not awaited and deliberately not error-handled here: saveTodaySkipped never throws and the
-    // skip is already applied locally, so a dead network costs nothing but the sync. Sends the
-    // WHOLE set rather than a delta — the column is a snapshot, the set is small, and a
-    // last-write-wins snapshot cannot half-apply the way an append protocol can drop one entry.
-    saveTodaySkipped({ getToken, date: todayLocalISO(), keys: [...n] })
-    // Skipping again after an Undo is a fresh decision, so this device stops vetoing the key on merge.
-    const u = readUnskipped()
-    if (u.delete(row.key)) writeUnskipped(u)
-    announce('Skipped ' + row.name + ' for today')
-    // BUG-TODAYSKIPNOUNDO-001 — the visible undo logging always had. Skip was the one action on this
-    // row with no way back, and it is the one that silently drops a plant from today's list; the
-    // announce() above is screen-reader-only. Coalesces like the log toast, under its own group, so a
-    // run of skips reads "Skipped 3 plants for today" and never merges into a watering count.
-    //
-    // LOW priority: when the three-toast cap is hit, this one goes before any log Undo. A log toast
-    // can hold a whole coalesced run of events; a skip records none. The trade, stated so it stays a
-    // decision: an evicted skip toast leaves no way to un-skip that row until tomorrow, because this
-    // toast is the only un-skip there is.
-    toast.showUndo({
-      message: 'Skipped ' + row.name + ' for today',
-      group: 'care-skip',
-      groupMessage: (n) => 'Skipped ' + n + ' plants for today',
-      priority: 'low',
-      onUndo: () => unskipRow(row),
-    })
-  }, [announce, getToken, toast, unskipRow])
-
-  // Bulk: the candidate set for an event_type = visible rows of that type, MINUS in-ground beds when
-  // bed-wait is active (watering only). Client-side fan-out of single POSTs. Best-effort; aggregate undo.
-  //
-  // WHY NOT POST /api/events/batch (re-checked 2026-09-24, BUG-RUNBULKPARTIALUNDO-001). This comment
-  // used to say the batch endpoint "cannot name this id-subset"; that is stale — scope.type 'ids' names
-  // one exactly. The fan-out stays for three reasons that ARE current; revisit them together:
-  //   · moisture_check (the overwintering rows' bulk) is in BATCH_EXCLUDED_TYPES by design — a 400.
-  //   · under 'ids' ONE planting closed since the plan ran (this list is a cron snapshot) 409s the
-  //     WHOLE tap and writes nothing, where this path logs the rest.
-  //   · a batch is ONE reward action (lambda/events/batchSideEffects.js, Decision 1); this is N. Moving
-  //     it changes what a Today bulk earns — Dave's call, not a transport swap.
-  const bedWait = useMemo(() => bedWaitActive(plan), [plan])
-  const candidatesFor = useCallback((etype) => rows.filter(r => {
-    if (r.eventType !== etype) return false
-    if (etype === 'watering' && bedWait && r.inGround) return false
-    return true
-  }), [rows, bedWait])
-
   const presentTypes = useMemo(() => {
     const seen = []
     for (const need of NEED_ORDER) {
@@ -903,9 +527,10 @@ export default function CareNeeded({ plan, planDate }) {
     return seen
   }, [candidatesFor])
 
-  // V4-TODAYSECTIONBULK-001 (BD-037) — per-section bulk sets. Same predicate as candidatesFor,
-  // applied to one group's uncapped rows, so a section button and the global pill can never claim
-  // different work. Keyed by NEED_ORDER for a stable button order.
+  // V4-TODAYSECTIONBULK-001 (BD-037) — per-section bulk sets. The SAME predicate as candidatesFor
+  // (careNeeded.js candidateKeys, one function since V5-TODAYREDESIGN-001 S1), applied to one group's
+  // uncapped rows, so a section button and the global pill can never claim different work. Keyed by
+  // NEED_ORDER for a stable button order.
   //
   // Capped at ONE button per section. A group that mixes water and pest work would otherwise grow a
   // row of controls in a header whose whole requirement is to stay tight, and the second type is
@@ -915,12 +540,7 @@ export default function CareNeeded({ plan, planDate }) {
     const src = Array.isArray(group.bulkRows) ? group.bulkRows : []
     for (const need of NEED_ORDER) {
       const et = NEED_EVENT_TYPE[need]
-      const keys = new Set()
-      for (const r of src) {
-        if (r.eventType !== et) continue
-        if (et === 'watering' && bedWait && r.inGround) continue
-        keys.add(r.key)
-      }
+      const keys = candidateKeys(src, et, { bedWait })
       if (keys.size > 1) return [{ eventType: et, verb: bulkVerb(et), keys }]
     }
     return []
@@ -931,62 +551,6 @@ export default function CareNeeded({ plan, planDate }) {
     setBulkChecked(new Set(candidatesFor(etype).map(r => r.key)))
     setBulkProgress(null)
   }, [candidatesFor])
-
-  // BUG-RUNBULKPARTIALUNDO-001 — the whole fan-out's in-flight guard, as a REF for the reason
-  // writeInFlightRef above spells out: `disabled={!!bulkProgress}` is applied by the render that has
-  // not flushed, so two bulk taps landing in one React batch (the pill and a section header, or one
-  // button twice) both start a fan-out and every row in it is logged twice.
-  const bulkInFlightRef = useRef(false)
-
-  const runBulk = useCallback(async (etype, keys) => {
-    if (bulkInFlightRef.current) return
-    const targets = candidatesFor(etype).filter(r => keys.has(r.key))
-    if (!targets.length) { setBulkType(null); return }
-    bulkInFlightRef.current = true
-    try {
-      setBulkProgress({ done: 0, total: targets.length })
-      const created = []   // { id, key, on } per successfully-created row (id known = undoable)
-      let failures = 0
-      for (let i = 0; i < targets.length; i++) {
-        const row = targets[i]
-        try {
-          const body = eventBody(row)
-          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body) })
-          created.push({ id: (res && res.id) || null, key: row.key, on: body.event_date })
-        } catch { failures++ }
-        setBulkProgress({ done: i + 1, total: targets.length })
-      }
-      const doneKeys = created.map(c => c.key)
-      if (doneKeys.length) fade(created.map(c => [c.key, c.on]))
-      setBulkType(null); setBulkProgress(null)
-      const okMsg = 'Logged ' + doneKeys.length + (failures ? ' — ' + failures + ' failed' : '')
-      announce(okMsg)
-      // BUG-RUNBULKPARTIALUNDO-001 — undo whatever LANDED, failures or not. The undo used to be offered
-      // only when nothing failed, so one blip in a 60-row run left the 59 that did log with no way back.
-      // The failed rows never joined `logged`, so they are still on the list to retry, and the message
-      // carries the failure count. Only a run where nothing landed keeps the bare error toast.
-      if (!created.length) toast.show({ message: okMsg, tone: 'error' })
-      else toast.showUndo({
-        message: okMsg,
-        // WS-A5: await each DELETE; only un-fade rows whose delete is confirmed (or 404 = already
-        // gone). Rows we can't confirm stay hidden, so a failed undo can't re-surface → re-log a dup.
-        onUndo: async () => {
-          const undone = []
-          await Promise.all(created.map(async c => {
-            if (!c.id) return
-            try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undone.push(c) }
-            catch (e) { if (e?.status === 404) undone.push(c) }
-          }))
-          if (undone.length) unfade(undone.map(c => [c.key, c.on]))
-          if (undone.length < created.length) {
-            toast.show({ message: 'Couldn’t undo ' + (created.length - undone.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
-          }
-        },
-      })
-    } finally {
-      bulkInFlightRef.current = false
-    }
-  }, [fetch, toast, candidatesFor, announce, fade, unfade])
 
   const isExpanded = (g) => (g.key in overrides) ? overrides[g.key] : autoKeys.has(g.key)
 
@@ -1145,7 +709,7 @@ function bulkVerb(etype) {
 // Target is 'vegetative': the canonical growing-but-not-yet-flowering state, which is where garlic,
 // asparagus, strawberry and a Christmas cactus all actually restart. Anything more specific the
 // gardener can still set on the planting itself.
-function DormantList({ plan }) {
+export function DormantList({ plan }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
   const [resumed, setResumed] = useState(() => new Set())
@@ -1217,7 +781,7 @@ function DormantList({ plan }) {
 // Renders the reason the SELECTOR built (careNeeded.js droughtRows) rather than the engine's `reason`
 // string: that field is the suppression clause with the note concatenated onto it, and splitting a
 // joined sentence back apart is how the wording drifts. Numbers come off the structured `drought` key.
-function DroughtList({ plan }) {
+export function DroughtList({ plan }) {
   const rows = useMemo(() => droughtRows(plan), [plan])
   if (rows.length === 0) return null
 
@@ -1263,7 +827,7 @@ function DroughtList({ plan }) {
 // test asserting it is hidden false-passes. The summary line IS the toggle: one control, one tap,
 // 44px, inline — never a modal, so this needs no DismissRegistry layer (that registry arbitrates
 // Escape/Back across modal surfaces; there is no surface here to arbitrate).
-function FeedSuppressedList({ plan }) {
+export function FeedSuppressedList({ plan }) {
   const { state, rows } = useMemo(() => feedSuppressedRows(plan), [plan])
   const [open, setOpen] = useState(false)
   if (state !== FEED_SUPPRESSED_LISTED) return null
@@ -1308,7 +872,7 @@ function FeedSuppressedList({ plan }) {
 }
 
 // Ambient rain-credit note (DRG-WATERCREDIT-001) — quiet, never a card/interrupt.
-function RainNote({ plan, center }) {
+export function RainNote({ plan, center }) {
   const n = Array.isArray(plan && plan.rain_skipped) ? plan.rain_skipped.length : 0
   if (!n) return null
   return (

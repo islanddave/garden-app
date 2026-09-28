@@ -132,10 +132,13 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
   })
 
   // The census that would have caught the miss above: every dated 'today-…:' storage family the Today
-  // care list writes must be scrubbed at sign-out. Read off CareNeeded's SOURCE so a new family added
-  // there without an entry here fails the suite. Non-vacuous: CareNeeded writes two families today.
+  // care list writes must be scrubbed at sign-out. Read off the SOURCE so a new family added without
+  // an entry here fails the suite — of every file that holds the care list's state: CareNeeded, and
+  // the careStore / useCareActions its skip store and write paths were lifted into
+  // (V5-TODAYREDESIGN-001 S1). Non-vacuous: careStore writes two families today.
   it('every today-…: storage family CareNeeded writes is in the prefix list', () => {
-    const src = readFileSync(resolve(process.cwd(), 'src/components/today/CareNeeded.jsx'), 'utf8')
+    const src = ['CareNeeded.jsx', 'careStore.js', 'useCareActions.js']
+      .map(f => readFileSync(resolve(process.cwd(), 'src/components/today', f), 'utf8')).join('\n')
     const families = [...new Set([...src.matchAll(/'(today-[a-z-]+:)'/g)].map(m => m[1]))]
     expect(families.sort()).toEqual(['today-skipped:', 'today-unskipped:'])
     for (const f of families) expect(CLIENT_PREF_KEY_PREFIXES).toContain(f)

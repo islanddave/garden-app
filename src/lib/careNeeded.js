@@ -137,6 +137,28 @@ export function bedWaitActive(plan) {
   return bedsWaitForRain(h)
 }
 
+// The BULK candidate set for one event_type: the rows of that type, MINUS in-ground beds while bed-wait
+// is active (watering only). ONE predicate for every bulk control — the global "Log all" pill, a
+// section's "Water all", and the V2 buttons after them — so no two can claim different work. Lifted
+// verbatim from CareNeeded's candidatesFor (V5-TODAYREDESIGN-001 S1); `bedWait` is bedWaitActive(plan).
+//
+// Keyed on the row's PRIMARY eventType, so the "Moist" check a water_due row offers is never a bulk
+// candidate (MOISTURE_CHECK_EVENT above: "none of these 500 need water" is a fabricated observation).
+// An overwintering row, whose primary type IS moisture_check, is one — as it always was.
+//
+// candidateRows keeps the rows, in list order (the chooser sheet renders them, the fan-out posts them);
+// candidateKeys is the same set as keys, which is what runBulk takes and what a button counts.
+export function candidateRows(rows, etype, { bedWait } = {}) {
+  return rows.filter(r => {
+    if (r.eventType !== etype) return false
+    if (etype === 'watering' && bedWait && r.inGround) return false
+    return true
+  })
+}
+export function candidateKeys(rows, etype, opts) {
+  return new Set(candidateRows(rows, etype, opts).map(r => r.key))
+}
+
 // The canonical flat row list. Excludes engine-marked `done` items (V3-TODAYDONE-001) — same set
 // the current PlanBuckets surfaces. Order = NEED_ORDER, preserving each bucket's engine array order
 // (water is pre-sorted most-overdue-first by the engine). This is the regression-locked output.

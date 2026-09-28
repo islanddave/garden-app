@@ -95,7 +95,9 @@ describe('BUG-EVENTPUBFALSE-001 — no create path may hardcode is_public', () =
     // the fix is to DELETE the key, never to flip it to `true` (which works today and drifts again
     // the moment the default changes).
     expect(producersThatHardcodeIsPublic()).toEqual([
-      'components/today/CareNeeded.jsx',   // :68  CREATE BODY — eventBody(), is_public: true
+      // Moved, not added: CareNeeded's eventBody() was lifted here with its write paths
+      // (V5-TODAYREDESIGN-001 S1), and CareNeeded.jsx no longer posts to /api/events at all.
+      'components/today/useCareActions.js', // :34 CREATE BODY — eventBody(), is_public: true
       'pages/CaptureFlow.jsx',             // :438 CREATE BODY — the 'event' branch, is_public: true
       'pages/ProjectDetail.jsx',           // :127 FORM DEFAULT — the POST at :486 sends the variable
     ])
