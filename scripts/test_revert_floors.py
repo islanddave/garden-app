@@ -152,11 +152,14 @@ def test_governing_entry_is_the_highest_floor_in_force():
     assert rf.governing_entry(es, "v9.0.0") is es[0]     # a tie keeps the first in file order
 
 
-def test_entries_since():
-    es = [entry("v2.0.0", "v2.0.0"), entry("v1.0.0", "v2.0.0", ledger="OPS-OTHER-001"), entry("v3.0.0", "v3.0.0")]
-    assert rf.entries_since(es, "v2.0.0") == es[:2]
-    assert rf.entries_since(es, "2.0.0") == es[:2]
-    assert rf.entries_since(es, "v2.0.1") == []
+def test_entries_shipped_is_the_half_open_range_after_upto():
+    es = [entry("v2.0.0", "v2.0.0"), entry("v1.0.0", "v2.0.0", ledger="OPS-OTHER-001"),
+          entry("v2.1.0", "v2.1.0"), entry("v3.0.0", "v3.0.0")]
+    assert rf.entries_shipped(es, "v1.9.0", "v2.0.0") == es[:2]
+    assert rf.entries_shipped(es, "v2.0.0", "v2.0.0") == []          # prev itself is excluded
+    assert rf.entries_shipped(es, "v1.9.0", "v2.2.0") == es[:3]      # an untagged version in between counts
+    assert rf.entries_shipped(es, "v2.0.0", "3.0.0") == es[2:]
+    assert rf.entries_shipped(es, "v3.0.0", "v3.0.1") == []
 
 
 # --- revert-to.py: require_target_above_floor() -------------------------------------------------

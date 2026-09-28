@@ -25,8 +25,8 @@ It is read from the CURRENT tree, never the target's: a target predates its own 
 
 Consumers — keep them on this module, never on a local copy:
   revert-to.py     require_target_above_floor(): its first refusal, before any read of the target
-  forward-undo.py  the entry for the release it undoes names the flag to switch off; a code revert
-                   that would land below the floor refuses
+  forward-undo.py  the entries the undone promote shipped name the switch to turn off; a code revert
+                   that would land below the floor refuses; the file itself is never reverted
 
 Stdlib only. Anything unreadable or malformed raises FloorError: a floor that cannot be read must
 refuse, never read as "no floor".
@@ -126,7 +126,9 @@ def governing_entry(entries, prod_version):
     return best
 
 
-def entries_since(entries, version):
-    """The entries that `version` itself put in force (since == version)."""
-    key = version_key(version)
-    return [e for e in entries if version_key(e["since"]) == key]
+def entries_shipped(entries, after, upto):
+    """The entries a promote from `after` to `upto` put in force: after < since <= upto. One promote can
+    ship several versions (v4.156.0's carried v4.154.0 and v4.155.0), so an exact since == upto misses
+    an entry that one of the untagged versions in between put in force."""
+    lo, hi = version_key(after), version_key(upto)
+    return [e for e in entries if lo < version_key(e["since"]) <= hi]
