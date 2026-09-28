@@ -39,12 +39,17 @@ vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMoc
 
 import Today from '../pages/Today.jsx'
 import FrostAlertLine from '../components/today/FrostAlertLine.jsx'
-import { buildFrostAlertLine, buildFrostAlertLines, pickAdvisory, resolveNight, FREEZE_BELOW_F } from '../lib/frostAlertLine.js'
+import {
+  buildFrostAlertLine, buildFrostAlertLines, pickAdvisory, pickFrostLines, resolveNight, tonightLineLow, currentLows,
+  FREEZE_BELOW_F, ADVISORY_TRIP_F,
+} from '../lib/frostAlertLine.js'
 import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import {
-  PLAN_DATE, GEN, planFor, tonight, tomorrowNight, imminent, coldText, freezeText,
+  PLAN_DATE, GEN, DRY, planFor, tonight, tomorrowNight, imminent, coldText, freezeText,
 } from './helpers/twoLowsFixtures.js'
+import frostEval from '../../lambda/daily-plan/frostEval.js'
+import frostClass from '../../lambda/daily-plan/frostClass.js'
 
 // Handler-shaped (handler.js publish block + frostWeatherFacts): a radiative imminent entry carries
 // { lowF: the plan low it was sent at, dayOffset: 0, trip: 'radiative' }; a radiative-only advisory adds `trip`.
@@ -448,6 +453,222 @@ describe('(3) "Forecast warmed" — a threshold frost email whose night has left
     expect(buildFrostAlertLines([thr(36)])).toEqual([])
     const rows = buildCareNeeded(planFor(44, [thr(36)])).filter((r) => r.need === 'cold').map((r) => r.reason)
     expect(rows.some((r) => r.endsWith('(low 44°F)'))).toBe(true)                       // the plan's own figure, kept
+  })
+})
+
+// ══ V5-TODAYFROSTWARMEDADVISORY-001 — Dave's two decisions (AskUserQuestion, 2026-09-28) ══════════════════════════════
+//   WORDING: once BOTH forecasts for tonight have warmed out of frost range after a frost email, Today says "Forecast
+//            warmed to 44°F since the 3 PM frost email." — the (3) line above, word for word.
+//   SCOPE:   the same line on an advisory-only night (a "Frost possible" email with no "Frost protect" after it), citing
+//            that email. A radiative "Frost watch" advisory keeps today's behaviour; no refresh of the number while cold.
+// THE GAP (preship-qa I2): "Frost possible tonight" at 2 PM (best_match's D1 37.6), "Frost protect tonight" at 3 PM, then a
+// plan low of 44 left "Freeze tonight (38°F)" + "Frost possible tonight — low 38°F" all evening and the warmed line could
+// never speak — the pin in (3) above ("never two lines about tonight"), which stays true for a row WITHOUT current lows.
+// The plan now stores the second model's CURRENT D1..D3 lows (hydrology.forecast_lows/forecast_dates); currentLows reads
+// them. Plan date Fri 10-09: the advisory names tonight through D1 = 2026-10-10 (twoLowsFixtures `tonight`).
+const D1_3 = ['2026-10-10', '2026-10-11', '2026-10-12']
+const hyLows = (d1, over = {}) => ({ ...DRY, forecast_lows: [d1, 45.3, 47.1], forecast_dates: D1_3, ...over })
+const ADV = (lowF = 37.6, over = {}) => tonight(lowF, { at: at('18:05'), ...over })                  // 2:05 PM EDT
+const PROTECT = (over = {}) => ({ ...imminent(38), run: 'intraday-pm', at: at('19:00'), ...over })    // 3 PM EDT
+const LADDER = [ADV(), PROTECT()]
+// Everything Today prints about tonight from one stored plan, through the helpers Today itself calls (the mount block
+// below proves Today wires them this way): the card's figure, the cue's words, the frost lines.
+function screenOf(plan) {
+  const agreed = agreedTonightLow(plan)
+  const cue = agreeCallout(plan.weather.callout, agreed)
+  return {
+    card: agreed ? agreed.lowF : plan.weather.tonightLow,
+    cue: cue ? cue.text : null,
+    lines: texts(plan.alerts_sent, { lowShown: agreed?.lowF, planLow: plan.weather.tonightLow, current: currentLows(plan) }),
+  }
+}
+const STALE = { card: 38, cue: freezeText(38), lines: [POSSIBLE('tonight', 38)] }   // the I2 screen at plan low 44
+
+describe('(4) "Forecast warmed" after a same-night ADVISORY — retired once both models have left its range', () => {
+  it('T1 THE GAP: the ladder, then both models warm (plan 44, second model 41.2) -> the plan low everywhere, the warmed line', () => {
+    expect(screenOf(planFor(44, LADDER, hyLows(41.2)))).toEqual({ card: 44, cue: coldText(44), lines: [WARMED(44, '3 PM')] })
+    expect(screenOf(planFor(44, LADDER))).toEqual(STALE)                  // a row without current lows: exactly as before
+  })
+
+  it('T2 colder wins: the second model still in range (39.6) keeps the email\'s line, card and cue', () => {
+    expect(screenOf(planFor(44, LADDER, hyLows(39.6)))).toEqual(STALE)
+  })
+
+  it('T3 the second model\'s split is the email\'s own trigger (<= 40 fires): 40.0 keeps the line, 40.1 retires it', () => {
+    expect(screenOf(planFor(44, LADDER, hyLows(40))).lines).toEqual([POSSIBLE('tonight', 38)])
+    expect(screenOf(planFor(44, LADDER, hyLows(40.1))).lines).toEqual([WARMED(44, '3 PM')])
+  })
+
+  it('T4 the plan low still in the freeze cue (39, 39.9) keeps the email\'s line, whatever the second model says', () => {
+    for (const low of [39, 39.9]) expect(screenOf(planFor(low, LADDER, hyLows(45))), String(low)).toEqual(STALE)
+    // ...including when a watch would take tonight over from a retired advisory (T12): not retired, so still the advisory
+    const list = [ADV(), watch(41, { at: at('20:00') })]
+    expect(screenOf(planFor(39, list, hyLows(45)))).toEqual(STALE)
+  })
+
+  it('T5 the plan boundary is the freeze cue\'s own (low < 40): at 40 the cue is cool and the line says warmed', () => {
+    expect(screenOf(planFor(40, LADDER, hyLows(41)))).toEqual({ card: 40, cue: coldText(40), lines: [WARMED(40, '3 PM')] })
+  })
+
+  it('T6 anything the row cannot vouch for keeps today\'s screen — the warning is never dropped on missing data', () => {
+    const shifted = ['2026-10-11', '2026-10-12', '2026-10-13']
+    const unknown = {
+      'dates but no lows': { ...DRY, forecast_dates: D1_3 },
+      'lows but no dates': hyLows(41.2, { forecast_dates: null }),
+      'the advisory\'s date is not among them': hyLows(41.2, { forecast_dates: shifted }),
+      'a hole on that date': hyLows(null),
+      'a non-numeric low': hyLows('n/a'),
+    }
+    for (const [name, hy] of Object.entries(unknown)) expect(screenOf(planFor(44, LADDER, hy)), name).toEqual(STALE)
+    const noDate = [ADV(37.6, { date: undefined }), PROTECT()]
+    expect(screenOf(planFor(44, noDate, hyLows(41.2)))).toEqual(screenOf(planFor(44, noDate)))
+    expect(screenOf(planFor(null, LADDER, hyLows(41.2)))).toEqual(screenOf(planFor(null, LADDER)))   // no plan low
+  })
+
+  it('T6b looked up by DATE, never by position: the day the advisory named decides, in both directions', () => {
+    const from09 = ['2026-10-09', '2026-10-10', '2026-10-11']
+    expect(screenOf(planFor(44, LADDER, hyLows(45, { forecast_lows: [45, 39, 47.1], forecast_dates: from09 })))).toEqual(STALE)
+    expect(screenOf(planFor(44, LADDER, hyLows(39, { forecast_lows: [39, 45, 47.1], forecast_dates: from09 }))).lines)
+      .toEqual([WARMED(44, '3 PM')])
+  })
+
+  it('T7 nothing is stored: each run\'s row decides, so a forecast that turns cold again brings the email\'s line back', () => {
+    const runs = [[44, 41.2], [39, 38.9], [44, 38.9], [44, 41.2]]
+    expect(runs.map(([low, d1]) => screenOf(planFor(low, LADDER, hyLows(d1))).lines)).toEqual([
+      [WARMED(44, '3 PM')], [POSSIBLE('tonight', 38)], [POSSIBLE('tonight', 38)], [WARMED(44, '3 PM')],
+    ])
+  })
+
+  it('T8 a radiative-only advisory keeps its figure (the plan holds no clear-and-calm verdict); so does an unknown trip', () => {
+    const rad = [ADV(42, { trip: 'radiative' })]
+    expect(screenOf(planFor(47, rad, hyLows(45)))).toEqual({ card: 42, cue: null, lines: [WATCH('tonight', 42)] })
+    expect(screenOf(planFor(47, rad, hyLows(45)))).toEqual(screenOf(planFor(47, rad)))
+    const odd = [ADV(37.6, { trip: 'threshold' }), PROTECT()]
+    expect(screenOf(planFor(44, odd, hyLows(45)))).toEqual(screenOf(planFor(44, odd)))
+  })
+
+  it('T9 an advisory for a LATER night is not this rule\'s: it keeps its own line and figure', () => {
+    const later = [tomorrowNight(34, { at: at('18:05') })]
+    expect(screenOf(planFor(50, later, hyLows(41.2, { forecast_lows: [41.2, 45, 47.1] }))))
+      .toEqual({ card: 50, cue: null, lines: [POSSIBLE('tomorrow night', 34)] })
+  })
+
+  it('T10 DAVE\'S SCOPE — an advisory-only night that warms: the same line, citing the advisory\'s own send time', () => {
+    expect(screenOf(planFor(50, [ADV()], hyLows(45)))).toEqual({ card: 50, cue: null, lines: [WARMED(50, '2:05 PM')] })
+    expect(screenOf(planFor(50, [ADV()]))).toEqual({ card: 38, cue: null, lines: [POSSIBLE('tonight', 38)] })   // before
+    // the same element's data as the advisory line it replaces: tier and day of that entry, tonight
+    expect(buildFrostAlertLines([ADV()], { planLow: 50, current: currentLows(planFor(50, [ADV()], hyLows(45))) }))
+      .toEqual([{ text: WARMED(50, '2:05 PM'), tier: 'advisory', dayOffset: 1, nightOffset: 0, lowF: 50 }])
+  })
+
+  it('T11 old callers and unknown rows: identical to the call without `current`, over a grid of lists and plan lows', () => {
+    const lists = [[], [ADV()], LADDER, [PROTECT()], [watch(41)], [ADV(42, { trip: 'radiative' })], [tomorrowNight(34)],
+      [ADV(), tomorrowNight(34, { at: at('20:00') }), watch(41, { at: at('21:00') })]]
+    const unknownHy = [DRY, { ...DRY, forecast_lows: [null, null, null], forecast_dates: D1_3 }, { ...DRY, forecast_dates: D1_3 }]
+    let n = 0
+    for (const list of lists) {
+      for (const low of [null, 30, 36, 39, 39.9, 40, 41, 44, 50, 55]) {
+        const tag = `${JSON.stringify(list.map((a) => [a.tier, a.lowF, a.trip ?? null]))} @ ${low}`
+        const plain = planFor(low, list)
+        const opts = { lowShown: agreedTonightLow(plain)?.lowF, planLow: low }
+        for (const hy of unknownHy) {
+          const cur = currentLows(planFor(low, list, hy))
+          expect(buildFrostAlertLines(list, { ...opts, current: cur }), tag).toEqual(buildFrostAlertLines(list, opts))
+          expect(tonightLineLow(list, cur), tag).toEqual(tonightLineLow(list))
+          expect(agreedTonightLow(planFor(low, list, hy)), tag).toEqual(agreedTonightLow(plain))
+          n++
+        }
+      }
+    }
+    expect(n).toBe(240)
+  })
+
+  it('T12 a watch sent after the advisory: once the advisory retires, tonight is the watch at its own low (watch rules unchanged)', () => {
+    const list = [ADV(), watch(41, { at: at('20:00') })]
+    expect(screenOf(planFor(44, list, hyLows(45)))).toEqual({ card: 41, cue: coldText(41), lines: [WATCH('tonight', 41)] })
+    expect(screenOf(planFor(44, list))).toEqual(STALE)                   // before: the colder advisory held tonight
+  })
+
+  it('the warmed line cites the NEWEST real frost email about tonight', () => {
+    expect(pickFrostLines(LADDER, currentLows(planFor(44, LADDER, hyLows(45)))).warmed).toBe(LADDER[1])
+    const escalated = [...LADDER, PROTECT({ level: 'hard_freeze', lowF: 32, at: at('20:00') })]
+    expect(screenOf(planFor(44, escalated, hyLows(45))).lines).toEqual([WARMED(44, '4 PM')])
+    const adviceLast = [ADV(37.6, { at: at('20:00') }), PROTECT()]            // not produced today (dedup), pinned anyway
+    expect(screenOf(planFor(44, adviceLast, hyLows(45))).lines).toEqual([WARMED(44, '4 PM')])
+    const forcedLast = [...LADDER, PROTECT({ run: 'forced', at: at('21:00') })]   // a rehearsal is never cited
+    expect(screenOf(planFor(44, forcedLast, hyLows(45))).lines).toEqual([WARMED(44, '3 PM')])
+  })
+
+  it('retired only when something speaks for tonight: no warmed line possible -> the advisory keeps the line', () => {
+    // the plan low is not warmer than the email's own figure (40 = 40): "warmed to 40°F" would be false
+    expect(screenOf(planFor(40, [ADV(40)], hyLows(41)))).toEqual({ card: 40, cue: coldText(40), lines: [POSSIBLE('tonight', 40)] })
+    // an unreadable send time
+    expect(screenOf(planFor(50, [ADV(37.6, { at: 'z' })], hyLows(45)))).toEqual({ card: 38, cue: null, lines: [POSSIBLE('tonight', 38)] })
+    // CONTROL: warmer by a tenth, readable time -> retired
+    expect(screenOf(planFor(40.1, [ADV(40)], hyLows(41))).lines).toEqual([WARMED(40.1, '2:05 PM')])
+  })
+
+  it('a retirement never leaves tonight without a line: the warmed line prints current\'s plan low, whatever `planLow` says', () => {
+    const cur = currentLows(planFor(44, LADDER, hyLows(45)))
+    for (const planLow of [undefined, null, 'n/a', 39]) {
+      expect(texts(LADDER, { planLow, current: cur }), String(planLow)).toEqual([WARMED(44, '3 PM')])
+    }
+  })
+
+  it('Protect rows follow the card: retired -> the plan\'s own "(low 44°F)" is back beside the plan low', () => {
+    const rows = (plan) => buildCareNeeded(plan).filter((r) => r.need === 'cold').map((r) => r.reason)
+    const after = rows(planFor(44, LADDER, hyLows(41.2)))
+    expect(after.length).toBeGreaterThan(0)
+    expect(after.some((r) => r.endsWith('(low 44°F)'))).toBe(true)
+    expect(rows(planFor(44, LADDER)).some((r) => / \(low [^()]*\)$/.test(r))).toBe(false)   // before: one low, 38, no clause
+  })
+})
+
+describe('ADVISORY_TRIP_F is the Lambda\'s advisory trip, not a guess (PARITY)', () => {
+  it('equals frostEval\'s advisory trip with the env unset, and no crop band trips higher', () => {
+    expect(process.env.FROST_ADVISORY_LOW_F, 'the shipped default is what this compares').toBeUndefined()
+    expect(ADVISORY_TRIP_F).toBe(40)
+    expect(frostEval.resolveThresholds().ADVISORY_LOW_F).toBe(ADVISORY_TRIP_F)
+    const bands = Object.values(frostClass.resolveBandThresholds()).filter(Boolean)
+    expect(bands.length).toBeGreaterThan(1)
+    expect(Math.max(...bands.map((b) => b.ADVISORY_LOW_F))).toBe(ADVISORY_TRIP_F)
+  })
+
+  it('the split is the advisory tier\'s own decision: a D1 of 40.0 fires the email, 40.1 does not', () => {
+    const T = frostEval.resolveThresholds()
+    expect(frostEval.evalAdvisory([40, 50, 50], D1_3, T).fires).toBe(true)
+    expect(frostEval.evalAdvisory([40.1, 50, 50], D1_3, T).fires).toBe(false)
+  })
+})
+
+describe('Today — (4) mounted: the retirement reaches the card, the cue and the frost line together', () => {
+  const readAll = (container) => {
+    const q = within(container)
+    return {
+      card: q.getByTestId('weather-night-low').textContent,
+      cue: q.queryByTestId('weather-cue-line')?.textContent ?? null,
+      lines: q.queryAllByTestId('frost-alert-line').map((el) => el.textContent),
+    }
+  }
+
+  it('THE GAP mounted: the ladder with the stored lows -> 44 on the card, the cool cue, and the warmed line alone', () => {
+    planState.current = mountData(planFor(44, LADDER, hyLows(41.2)))
+    const { container } = render(<Today />)
+    expect(readAll(container)).toEqual({ card: '44°', cue: coldText(44), lines: [WARMED(44, '3 PM')] })
+  })
+
+  it('the same plan WITHOUT the stored lows (a row the Lambda half has not written): exactly today\'s screen', () => {
+    planState.current = mountData(planFor(44, LADDER))
+    const { container } = render(<Today />)
+    expect(readAll(container)).toEqual({ card: '38°', cue: freezeText(38), lines: [POSSIBLE('tonight', 38)] })
+  })
+
+  it('an advisory-only night mounted (Dave\'s scope): 50 on the card, no cue, the warmed line citing 2:05 PM', () => {
+    planState.current = mountData(planFor(50, [ADV()], hyLows(45)))
+    const { container } = render(<Today />)
+    expect(readAll(container)).toEqual({ card: '50°', cue: null, lines: [WARMED(50, '2:05 PM')] })
+    const el = screen.getByTestId('frost-alert-line')
+    expect([el.dataset.frostTier, el.dataset.frostNightOffset]).toEqual(['advisory', '0'])
   })
 })
 

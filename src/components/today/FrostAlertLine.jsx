@@ -22,6 +22,9 @@
 // since the 3 PM frost email." when a threshold frost email went out and the plan low has since left
 // the freeze cue; `planLow` (plan.weather.tonightLow) is read for that line only. Each line is the same
 // element as before — same test id, same style — so one line renders exactly the DOM it always did.
+// V5-TODAYFROSTWARMEDADVISORY-001 (Dave 2026-09-28) — `current` (frostAlertLine.js currentLows(plan)): once
+// both forecasts have warmed past a same-night advisory, that line gives way to the same warmed line, citing
+// the protect email after it or, on an advisory-only night, the advisory itself. Absent `current`, as before.
 //
 // VISUAL TREATMENT MIRRORS WeatherCueLine, AND FOR ITS STATED REASON, NOT BY COPYING. That header
 // argues the gold/warn family is a crowded slot — hydrology uncertainty plus StorageDeadlineAlert
@@ -51,8 +54,8 @@ import React, { useMemo } from 'react'
 import { P } from '../../lib/constants.js'
 import { buildFrostAlertLines } from '../../lib/frostAlertLine.js'
 
-export default function FrostAlertLine({ alertsSent = null, lowShown = null, planLow = null }) {
-  const lines = useMemo(() => buildFrostAlertLines(alertsSent, { lowShown, planLow }), [alertsSent, lowShown, planLow])
+export default function FrostAlertLine({ alertsSent = null, lowShown = null, planLow = null, current = null }) {
+  const lines = useMemo(() => buildFrostAlertLines(alertsSent, { lowShown, planLow, current }), [alertsSent, lowShown, planLow, current])
 
   // Renders NOTHING when no advisory or watch is live — which is most days, and on every day whose
   // stored entries predate the handler persisting lowF/dayOffset. Never a blank strip, never a heading

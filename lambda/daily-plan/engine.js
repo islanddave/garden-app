@@ -1481,6 +1481,13 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
       // BUG-RAINFCSTONEMODEL-001 — which method made the day-ahead figures, and the best_match pair it displaced
       // (the shadow series for re-scoring after a full year). Present only when the five-model forecast ran.
       ...(hy.forecast_source!=null ? {forecast_source:hy.forecast_source, bm_tomorrow_precip_in:hy.bm_tomorrow_precip_in??null, bm_tomorrow_pop:hy.bm_tomorrow_pop??null} : {}),
+      // V5-TODAYFROSTWARMEDADVISORY-001 — the second model's (Open-Meteo best_match) D1..D3 lows and their ET dates,
+      // verbatim as fetchPrecip fetched them THIS run and the advisory tier read them (handler.frostForSpace). An
+      // advisory entry in alerts_sent is a send-time snapshot that no later run refreshes, so without this Today cannot
+      // tell "the second model still says 38" from "it now says 45" (src/lib/frostAlertLine.js retires the stale one).
+      // Only while the frost alert is on, since alerts_sent (the only consumer) exists only then, and only when the
+      // fetch supplied them: a flag-off row and every parity fixture stay byte-identical.
+      ...(frostAlertEnabled && Array.isArray(hy.forecast_lows) ? {forecast_lows:hy.forecast_lows, forecast_dates:Array.isArray(hy.forecast_dates)?hy.forecast_dates:null} : {}),
       rain_coming:rainComing, rain_horizon:rainHorizon, status:hs} : {status:hs},
     // V5-LEAFWETNESS-001 — SPREAD CONDITIONALLY, not emitted as an always-present null. The first cut
     // wrote `leaf_wetness: <result-or-null>` unconditionally and the G-PARITY gate caught it: a new
