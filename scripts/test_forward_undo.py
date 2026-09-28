@@ -285,7 +285,7 @@ def test_revert_path_backs_out_a_release_with_a_merge(tmp_path, scratch, capsys)
     assert json.loads(w.show(branch, "package.json"))["version"] == "1.2.1"
     rel_list = json.loads(w.show(branch, "public/releases.json"))
     assert [r["version"] for r in rel_list] == ["1.2.1", "1.2.0", "1.1.0", "1.0.0"]
-    assert rel_list[0]["highlights"] == ["Undoes v1.2.0: the app works the way it did in v1.1.0 again."]
+    assert rel_list[0]["highlights"] == ["Undoes v1.2.0: backs out 1.2.0, so the app works the way it did in v1.1.0 again."]
     msg = g(w.work, "log", "-1", "--format=%B", branch)
     assert f"  {merge} (merge, against parent 1) merge lane" in msg
     assert_only_new_branch(w, before, branch)
@@ -344,6 +344,114 @@ def test_the_floor_file_is_never_reverted(tmp_path, capsys):
     assert w.show(branch, "src/app.js") == "export const app = 1\n"
     assert w.show(branch, "scripts/revert-floors.json") == w.show(v110, "scripts/revert-floors.json")
     assert w.changed(v100, branch) == RELEASE_FILES | {"scripts/revert-floors.json"}
+
+
+FLOORLESS = "# stand-in for revert-to.py before the floor\ndef run(cfg):\n    return 'rewind'\n"
+WITH_FLOOR = ("# stand-in for revert-to.py WITH the A1 floor check\nimport revert_floors\n"
+              "def run(cfg):\n    require_target_above_floor(cfg)\n    return 'rewind'\n")
+TOOLS = ("scripts/forward-undo.py", "scripts/revert_floors.py", "scripts/test_forward_undo.py",
+         "scripts/test_revert_floors.py", "scripts/revert-to.py", "scripts/test_revert_to.py",
+         ".github/workflows/revert-gate.yml")
+
+
+def test_undoing_the_promote_that_shipped_the_undo_tools_keeps_them(tmp_path, capsys):
+    """QA v4.158.0's probe (test_zzqa_forward_undo_probe.py), adopted with its assertions flipped. The
+    v4.158.0 shape: one promote SHIPS the undo tool, the floor parser, the floor check in revert-to.py,
+    their tests and revert-gate's text, alongside an app change. If that promote is the bad one, its
+    undo takes the revert path: no floor entry was put in force by it. The app change must go, every
+    tool must stay as dev has it, and the dry run must say so."""
+    w = World(tmp_path)
+    w.write("scripts/revert-to.py", FLOORLESS)
+    w.write("scripts/test_revert_to.py", "# tests for the floorless rewind\n")
+    w.commit("chore: revert-to.py as it was")
+    w.release("1.0.1", "Before the floor")
+    w.ship("v1.0.1")
+    v101 = w.sha()
+    for rel in TOOLS[:4]:
+        shutil.copy(os.path.join(HERE, os.path.basename(rel)), os.path.join(w.work, rel))
+    w.write("scripts/revert-to.py", WITH_FLOOR)
+    w.write("scripts/test_revert_to.py", "# tests for the floor check\n")
+    w.write(".github/workflows/revert-gate.yml", "name: revert-gate\n")
+    w.write("src/app.js", "export const app = 2\n")
+    w.commit("feat: tooling and an app change")
+    w.release("1.1.0", "Tooling")
+    w.ship("v1.1.0")
+    v110 = w.sha()
+    code, dry, err = undo(capsys, w)
+    assert code == 0, err
+    assert "undo = REVERT" in dry and "kept as dev has them" in dry
+    for rel in TOOLS:
+        assert f"    {rel}\n" in dry, rel          # named, not silent
+    code, out, err = undo(capsys, w, "--write")
+    assert code == 0, err
+    branch = "undo-v1.1.0-as-v1.1.1"
+    for rel in (*TOOLS, "scripts/revert-floors.json"):
+        assert w.exists(branch, rel) and w.show(branch, rel) == w.show(v110, rel), rel
+    assert "require_target_above_floor" in w.show(branch, "scripts/revert-to.py")
+    assert w.show(branch, "src/app.js") == "export const app = 1\n"   # the app change IS backed out
+    assert w.changed(v101, branch) == RELEASE_FILES | set(TOOLS)
+
+
+def test_migrations_stay_applied_and_the_write_needs_them_checked(tmp_path, scratch, capsys):
+    """Nothing rewinds the database, so a migration the undone promote shipped stays applied: its file
+    stays in the repo as dev has it (added, edited or deleted), the plan lists it, and --write refuses
+    until --migrations-checked says the code going back runs on that schema."""
+    w = World(tmp_path)
+    w.write("migrations/000_base.sql", "create table t (id int);\n")
+    w.write("migrations/obsolete.sql", "-- superseded\n")
+    w.commit("feat: base schema")
+    w.release("1.0.1", "Schema")
+    w.ship("v1.0.1")
+    w.write("migrations/001_add_col.sql", "alter table t add column c int;\n")
+    w.write("migrations/000_base.sql", "create table t (id int primary key);\n")
+    w.rm("migrations/obsolete.sql")
+    w.write("src/app.js", "export const app = 2\n")
+    w.commit("feat: column c, and the app reads it")
+    w.release("1.1.0", "Column c")
+    w.ship("v1.1.0")
+    v110 = w.sha()
+    code, dry, err = undo(capsys, w)
+    assert code == 0, err
+    assert "MIGRATIONS: v1.1.0's promote shipped these" in dry and "--migrations-checked" in dry
+    for p in ("migrations/000_base.sql", "migrations/001_add_col.sql", "migrations/obsolete.sql"):
+        assert f"    {p}\n" in dry, p
+    before = state(w, scratch)
+    code, out, err = undo(capsys, w, "--write")
+    assert code == 1 and "--migrations-checked" in err and "migrations/001_add_col.sql" in err
+    assert state(w, scratch) == before
+    code, out, err = undo(capsys, w, "--write", "--migrations-checked")
+    assert code == 0, err
+    branch = "undo-v1.1.0-as-v1.1.1"
+    assert w.show(branch, "src/app.js") == "export const app = 1\n"        # the code goes back ...
+    for p in ("migrations/000_base.sql", "migrations/001_add_col.sql"):    # ... the schema history stays
+        assert w.show(branch, p) == w.show(v110, p), p
+    assert not w.exists(branch, "migrations/obsolete.sql")                  # as dev has it: gone
+    assert "Migrations v1.1.0 shipped stay applied" in g(w.work, "log", "-1", "--format=%B", branch)
+
+
+def test_the_undo_names_every_release_it_backs_out(tmp_path, capsys):
+    """One promote can carry several releases (v4.158.0's carries 4.157.0). The plan and the release
+    note name every one of them, from public/releases.json: Dave loses all of them on "ship it"."""
+    w = World(tmp_path)
+    w.write("src/water.js", "export const beds = 'wait'\n")
+    w.commit("feat: beds wait")
+    w.release("1.1.0", "Watering: beds wait after rain")    # untagged: carried by v1.2.0's promote
+    w.write("src/garden.js", "export const fixed = true\n")
+    w.commit("fix: garden")
+    w.release("1.2.0", "Garden fix")
+    w.ship("v1.2.0")
+    code, out, err = undo(capsys, w)
+    assert code == 0, err
+    assert "this undo backs out 2 release(s), everything shipped after v1.0.0:" in out
+    assert "    1.1.0  Watering: beds wait after rain\n" in out and "    1.2.0  Garden fix\n" in out
+    assert ('new release 1.2.1: "Undoes v1.2.0: backs out 1.1.0 and 1.2.0, so the app works the way it did '
+            'in v1.0.0 again."') in out
+    code, out, err = undo(capsys, w, "--write", "--note", "beds water on schedule again")
+    assert code == 0, err
+    branch = "undo-v1.2.0-as-v1.2.1"
+    rel = json.loads(w.show(branch, "public/releases.json"))
+    assert rel[0]["highlights"] == ["Undoes v1.2.0: beds water on schedule again. Backs out 1.1.0 and 1.2.0."]
+    assert "Backs out: 1.1.0 and 1.2.0." in g(w.work, "log", "-1", "--format=%B", branch)
 
 
 # --- refusals ------------------------------------------------------------------------------------
@@ -574,7 +682,8 @@ def test_the_version_skips_burned_tags_and_checks_a_requested_one(tmp_path, caps
 # --- nothing but reads and local commits, ever ----------------------------------------------------
 
 ALLOWED_GIT = {"fetch", "ls-remote", "rev-parse", "show", "cat-file", "merge-base", "rev-list", "log",
-               "check-ref-format", "show-ref", "worktree", "revert", "checkout", "diff", "add", "commit"}
+               "check-ref-format", "show-ref", "worktree", "revert", "checkout", "diff", "add", "commit",
+               "ls-tree", "ls-files", "restore"}
 
 
 def test_only_reads_and_local_commits_ever_run(tmp_path, capsys, monkeypatch):
@@ -618,8 +727,10 @@ def test_only_reads_and_local_commits_ever_run(tmp_path, capsys, monkeypatch):
             assert argv[4] in ("add", "remove"), argv
         if sub == "checkout":
             assert "--" in argv, argv
+        if sub == "restore":
+            assert any(x.startswith("--source=") for x in argv), argv
     # the spy saw the script's real work, so the allowlist above was not checked against nothing
-    assert {"fetch", "ls-remote", "worktree", "revert", "commit"} <= subs
+    assert {"fetch", "ls-remote", "worktree", "revert", "commit", "restore"} <= subs
     assert any(argv[0] == "node" for argv in seen)
 
 
@@ -658,13 +769,33 @@ def test_flag_off():
 
 
 def test_compose_note():
-    assert fu.compose_note("v1.2.0", "v1.1.0", "flag") == "Undoes v1.2.0: turns the change it made back off."
-    assert fu.compose_note("v1.2.0", "v1.1.0", "revert") == "Undoes v1.2.0: the app works the way it did in v1.1.0 again."
-    assert fu.compose_note("v1.2.0", "v1.1.0", "flag", " pages scroll as before. ") == "Undoes v1.2.0: pages scroll as before."
-    assert fu.compose_note("v1.2.0", "v1.1.0", "flag", "Undoes v1.2.0: x") == "Undoes v1.2.0: x"
+    cn = fu.compose_note
+    assert cn("v1.2.0", "v1.1.0", "flag") == "Undoes v1.2.0: turns the change it made back off."
+    assert cn("v1.2.0", "v1.1.0", "flag", " pages scroll as before. ") == "Undoes v1.2.0: pages scroll as before."
+    assert cn("v1.2.0", "v1.1.0", "flag", "Undoes v1.2.0: x") == "Undoes v1.2.0: x"
+    # the revert path always names what it backs out
+    assert cn("v1.2.0", "v1.1.0", "revert") == \
+        "Undoes v1.2.0: backs out 1.2.0, so the app works the way it did in v1.1.0 again."
+    assert cn("v1.2.0", "v1.0.0", "revert", backed_out=["1.1.0", "1.2.0"]) == \
+        "Undoes v1.2.0: backs out 1.1.0 and 1.2.0, so the app works the way it did in v1.0.0 again."
+    assert cn("v1.2.0", "v1.0.0", "revert", "beds water daily again", ["1.1.0", "1.2.0"]) == \
+        "Undoes v1.2.0: beds water daily again. Backs out 1.1.0 and 1.2.0."
+    assert cn("v1.2.0", "v1.0.0", "revert", "backs out 1.1.0 and 1.2.0.", ["1.1.0", "1.2.0"]) == \
+        "Undoes v1.2.0: backs out 1.1.0 and 1.2.0."
     for bad in ("Undoes v1.1.0: x", "two\nlines", "   "):
         with pytest.raises(fu.Refused):
-            fu.compose_note("v1.2.0", "v1.1.0", "flag", bad)
+            cn("v1.2.0", "v1.1.0", "flag", bad)
+
+
+def test_spoken_and_is_kept():
+    assert fu.spoken(["4.158.0"]) == "4.158.0"
+    assert fu.spoken(["4.157.0", "4.158.0"]) == "4.157.0 and 4.158.0"
+    assert fu.spoken(["1", "2", "3"]) == "1, 2 and 3"
+    for p in ("scripts/forward-undo.py", "scripts/revert-to.py", "scripts/test_revert_to.py",
+              "migrations/2026/001.sql", "public/releases.json", "scripts/add-release.mjs"):
+        assert fu.is_kept(p), p
+    for p in ("src/app.js", "scripts/snap.py", "migrationsx.sql", "scripts/revert-to.py.bak", "package.json"):
+        assert not fu.is_kept(p), p
 
 
 def test_choose_version():
