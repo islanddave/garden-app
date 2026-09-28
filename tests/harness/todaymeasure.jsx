@@ -37,12 +37,32 @@ import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import Today from '../../src/pages/Today.jsx'
 import { AuthProvider } from '../../src/context/AuthContext.jsx'
+import { PrefsProvider } from '../../src/context/PrefsContext.jsx'
 import { P } from '../../src/lib/constants.js'
 import { T } from '../../src/components/forms/formStyles.js'
+import { stateByName } from './_todaymeasure/today-v2-contract.mjs'
+import { buildV2State, localSeeds, selectorFor } from './_todaymeasure/v2wire.js'
 
 const realFetch = window.fetch.bind(window)
 const params = new URLSearchParams(location.search)
 const STATE = params.get('state') || 'busy'
+
+// ── V2 SEAMS (V5-TODAYREDESIGN-001 S0, plan-v2 §8 S0 a–c). INERT unless the URL says ?v2=1, so every v1
+// run — gate:today-shape, its mutants, the recorder — takes exactly the path it took before. With ?v2=1:
+//   (a) the state is a row of today-v2-contract.mjs (v2-frost, v2-busy, …); the device is cleared, then
+//       `garden.todayV2`='1' and the state's local seeds are written before mount, and the page mounts the
+//       same TodayRoute chooser App mounts (src/components/today/v2/TodayRoute.jsx — S2 writes it; until
+//       then there is no chooser, so V1 Today mounts, exactly as App would, and __h.v2().route says
+//       'absent'). ?v2stub=1 mounts tests/harness/stubs/TodayV2Stub.jsx instead: the gate's self-test.
+//   (b) PrefsProvider is mounted and GET /api/notifications/prefs is answered from the state's prefs
+//       fixture. It only goes out when VITE_API_CRITTERS is set, which tests/harness/vite.harness.v2.mjs
+//       does; __h.requests() shows the GET and __h.v2().prefs counts it.
+//   (c) __h.act(step) drives a tap or a scroll; a tap that does not flip aria-expanded is VOID.
+// FIX is the v1 payload a state starts from: STATE itself for v1, the contract row's fixture for v2.
+const V2 = params.get('v2') === '1'
+const V2STATE = V2 ? stateByName(STATE) : null
+const V2PROBLEM = V2 && !V2STATE ? `?v2=1 with state '${STATE}', which is not a row of today-v2-contract.mjs` : null
+const FIX = V2STATE ? V2STATE.fixture : STATE
 
 // A 4x4 sage PNG. Photo URLs in the dumped rows are S3 presigns that expire and cannot be replayed;
 // what matters for layout is that the <img> box paints at all, so every thumb gets this. Documented
@@ -86,11 +106,18 @@ const BATCHWIN = (await j('/tests/harness/_todaymeasure/harvests.batchwindow.jso
 const JENPLAN = (await j('/tests/harness/_todaymeasure/dailyplan.jen.json'))
 const GRAFTS = (await j('/tests/harness/_todaymeasure/busyfull-grafts.json'))
 const STORAGE_GRAFTS = (await j('/tests/harness/_todaymeasure/storage-grafts.json'))
+// V2 only (seam a/b): the engine-built grafts, GET /api/locations in full, and this state's prefs body.
+const V2GRAFTS = V2 ? await j('/tests/harness/_todaymeasure/v2-grafts.json') : null
+const LOCATIONS_FULL = V2 ? await j('/tests/harness/_todaymeasure/locations.full.json') : null
+const V2PREFS = V2STATE ? await j(`/tests/harness/_todaymeasure/${V2STATE.prefs}`) : null
+// A v2 state is a first visit on a clean device: nothing an earlier state in the same browser wrote may
+// leak into it (the gate runs every state in one Chrome profile). Its own seeds are written below.
+if (V2) { try { localStorage.clear(); sessionStorage.clear() } catch { /* ignore */ } }
 
 // The household lens is ONE TAP from the default and Dave has a second caretaker, so what it costs
 // in scroll is a real number, not a hypothetical. localStorage is seeded before mount because the
 // component reads it in a useState initialiser.
-if (STATE === 'busyhh') { try { localStorage.setItem('garden.today.showOthers', '1') } catch { /* ignore */ } }
+if (FIX === 'busyhh') { try { localStorage.setItem('garden.today.showOthers', '1') } catch { /* ignore */ } }
 else { try { localStorage.removeItem('garden.today.showOthers') } catch { /* ignore */ } }
 
 // ComposeHarvestBand is gated on TWO clocks — the read model's 24h `created_since` and the
@@ -166,7 +193,7 @@ const STORAGE_DAYS = 7
 const addDays = (iso, n) => (iso ? new Date(new Date(iso).getTime() + n * 86400000).toISOString() : iso)
 const STORAGE_PLANTS = PLANTS.map(p => (p.id === STORAGE_GRAFTS?.sweet_potato_planting?.id ? { ...p, status: STORAGE_GRAFTS.sweet_potato_planting.status } : p))
 
-const PAYLOAD = {
+const PAYLOAD_BY_FIX = {
   busy:     { ...D, has_plan: true },
   busyfull: { ...D, has_plan: true, plan: graftBusyfull(D?.plan, GRAFTS) },
   busyhh:   { ...D, has_plan: true, household_plans: JENPLAN ? [{ user_id: 'member_jen', generated_at: D?.generated_at ?? null, plan: JENPLAN }] : [] },
@@ -178,11 +205,20 @@ const PAYLOAD = {
     generated_at: addDays(D?.generated_at ?? null, STORAGE_DAYS),
     has_plan: true,
   },
-}[STATE]
-const STORAGE = STATE === 'storage'
+}
+const STORAGE = FIX === 'storage'
 
-const EMPTY = !STATE.startsWith('busy')
+const EMPTY = !FIX.startsWith('busy')
 const requests = []
+
+// V2 (seam a): the contract row's payload = its fixture's v1 payload, re-dated and grafted (v2wire.js).
+const V2WIRE = V2STATE && V2GRAFTS
+  ? buildV2State(V2STATE, { payload: PAYLOAD_BY_FIX[FIX], plants: STORAGE ? STORAGE_PLANTS : (EMPTY ? [] : PLANTS) }, V2GRAFTS, V2PREFS)
+  : null
+const PAYLOAD = V2WIRE ? V2WIRE.payload : PAYLOAD_BY_FIX[FIX]
+const V2SEEDS = V2WIRE ? localSeeds(V2STATE, PAYLOAD, 'harness_user') : []
+for (const [k, v] of V2SEEDS) { try { localStorage.setItem(k, v) } catch { /* ignore */ } }
+let prefsServed = 0
 
 // OPEN-METEO, STUBBED AT THE WIRE (V5-TODAYSHAPE-001 item 6). The original characterisation run let
 // this through to the real public API, because Dave's phone does — correct for a one-off portrait of
@@ -247,17 +283,21 @@ window.fetch = async (input, init = {}) => {
   requests.push({ path, method: init.method || 'GET' })
   const p = u.pathname.replace(/^.*(\/api\/)/, '/api/')
   let body = []
+  let ms = 20
   if (p === '/api/daily-plan') body = PAYLOAD
   // First names only (privacy sweep 2026-09-24). Today prints only the first token of a member's
   // display_name (Today.jsx nameFor), so a surname here buys no geometry and exposes a person.
   else if (p === '/api/members') body = { members: EMPTY ? [] : [{ id: 'harness_user', display_name: 'Dave' }, { id: 'member_jen', display_name: 'Jen' }] }
-  else if (p === '/api/plants') body = STORAGE ? STORAGE_PLANTS : (EMPTY ? [] : PLANTS)
+  else if (p === '/api/plants') body = V2WIRE ? V2WIRE.plants : (STORAGE ? STORAGE_PLANTS : (EMPTY ? [] : PLANTS))
   else if (p === '/api/locations/with-path') body = LOCATIONS
+  // V2 only (seam b): GET /api/locations in full (covered/heated/parent_id) and the prefs read.
+  else if (V2 && p === '/api/locations') body = LOCATIONS_FULL
+  else if (V2 && p === '/api/notifications/prefs' && (init.method || 'GET').toUpperCase() === 'GET') { prefsServed++; body = V2PREFS; ms = Math.max(ms, V2WIRE?.prefsDelayMs || 0) }
   else if (p === '/api/preservation/use-soon') body = STORAGE ? (STORAGE_GRAFTS?.use_soon?.value ?? { items: [] }) : (EMPTY ? [] : (USESOON ?? []))
   else if (p === '/api/harvests/watch') body = EMPTY ? [] : (WATCH ?? [])
-  else if (p === '/api/harvests') body = EMPTY ? [] : (STATE === 'busyfull' ? rebase(BATCHWIN) : (HARVESTS ?? []))
+  else if (p === '/api/harvests') body = EMPTY ? [] : (FIX === 'busyfull' ? rebase(BATCHWIN) : (HARVESTS ?? []))
   else if (p === '/api/inventory-items/sow-candidates') body = EMPTY ? [] : (SOWCAND ?? [])
-  await new Promise(r => setTimeout(r, 20))
+  await new Promise(r => setTimeout(r, ms))
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
 
@@ -265,13 +305,35 @@ let firstError = null
 window.addEventListener('error', e => { firstError ??= e.message })
 window.addEventListener('unhandledrejection', e => { firstError ??= String(e.reason?.message ?? e.reason) })
 
-createRoot(document.getElementById('root')).render(
+// V2 (seam a): the chooser App mounts, found by glob so its ABSENCE (before S2) is a fact this page
+// reports rather than a build error. A literal path: the glob matches that one file or nothing.
+const V2_ROUTE = import.meta.glob('../../src/components/today/v2/TodayRoute.jsx')
+let V2Root = null
+let v2Route = null
+if (V2) {
+  if (params.get('v2stub') === '1') { V2Root = (await import('./stubs/TodayV2Stub.jsx')).default; v2Route = 'stub' }
+  else {
+    const loaders = Object.values(V2_ROUTE)
+    if (loaders.length === 1) { const m = await loaders[0](); V2Root = m.default || m.TodayRoute; v2Route = 'present' }
+    else { V2Root = Today; v2Route = 'absent' }
+  }
+}
+
+createRoot(document.getElementById('root')).render(V2 ? (
+  <AuthProvider>
+    <PrefsProvider>
+      <MemoryRouter initialEntries={['/today']}>
+        <V2Root />
+      </MemoryRouter>
+    </PrefsProvider>
+  </AuthProvider>
+) : (
   <AuthProvider>
     <MemoryRouter initialEntries={['/today']}>
       <Today />
     </MemoryRouter>
   </AuthProvider>
-)
+))
 
 // ── measurement ────────────────────────────────────────────────────────────────────────────────
 const BADGE = document.getElementById('hbadge')
@@ -503,6 +565,53 @@ window.__h = {
   buttonStyles,
   hideBadge() { BADGE.style.display = 'none'; return true },
   showBadge() { BADGE.style.display = ''; return true },
+  // ── V2 seams (see the note at the top). Reported, never asserted — the gate asserts.
+  v2: () => ({
+    requested: V2, problem: V2PROBLEM, state: V2STATE?.name ?? null, fixture: FIX, route: v2Route,
+    flag: (() => { try { return localStorage.getItem('garden.todayV2') } catch { return null } })(),
+    seeds: V2SEEDS.map(([k]) => k), grafts: V2STATE?.grafts || [], redate: V2STATE?.redate || null,
+    planDate: PAYLOAD?.plan_date ?? null,
+    prefs: { fixture: V2STATE?.prefs ?? null, delayMs: V2WIRE?.prefsDelayMs ?? 0, served: prefsServed, bytes: V2PREFS ? JSON.stringify(V2PREFS).length : 0 },
+    critterOrigin: import.meta.env.VITE_API_CRITTERS || null,
+  }),
+  // Ready: the chooser's V2 when it mounted one (its version anchor present), else V1's own readiness.
+  v2ready() {
+    if (v2Route === 'stub' || v2Route === 'present') return !!document.querySelector('[data-today-version="2"]')
+    return this.ready()
+  },
+  expanded: (target) => { try { return document.querySelector(selectorFor(target))?.getAttribute('aria-expanded') ?? null } catch { return null } },
+  // (c) The interaction driver. A tap is hit-tested at its target's centre first (covered = VOID: a sticky
+  // bar over a chip is a defect, not something to click through), then clicked; its `flip` target (the tap
+  // target itself by default) must change aria-expanded, or the step did nothing measurable and the run is
+  // VOID. A scroll must land where it was sent (clamped to the document). Steps come from the contract.
+  async act(step) {
+    const frames = (n) => new Promise(r => { const f = k => (k <= 0 ? r() : requestAnimationFrame(() => f(k - 1))); f(n) })
+    const out = { step, ok: false, void: null, before: null, after: null, scrollY: null }
+    if (step && step.scroll != null) {
+      const y = Number(step.scroll)
+      if (!Number.isFinite(y)) { out.void = `scroll step '${step.scroll}' is not a number (the gate resolves FIRST_SCREEN expressions)`; return out }
+      window.scrollTo(0, y); await frames(3)
+      out.scrollY = Math.round(window.scrollY)
+      const want = Math.max(0, Math.min(y, document.documentElement.scrollHeight - innerHeight))
+      if (Math.abs(out.scrollY - want) > 1) out.void = `scroll to ${y} landed at ${out.scrollY} (expected ${want})`
+      else out.ok = true
+      return out
+    }
+    let sel, flipSel
+    try { sel = selectorFor(step.tap); flipSel = selectorFor(step.flip || step.tap) } catch (e) { out.void = e.message; return out }
+    const el = document.querySelector(sel)
+    if (!el) { out.void = `tap target '${step.tap}' (${sel}) matched nothing`; return out }
+    const r = el.getBoundingClientRect()
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    if (!hit || !(hit === el || el.contains(hit))) { out.void = `tap target '${step.tap}' is not what a finger at its centre would hit (${hit ? hit.tagName.toLowerCase() + (hit.getAttribute('data-testid') ? '[' + hit.getAttribute('data-testid') + ']' : '') : 'nothing — off screen'})`; return out }
+    out.before = document.querySelector(flipSel)?.getAttribute('aria-expanded') ?? null
+    el.click()
+    await frames(3); await new Promise(res => setTimeout(res, 50))
+    out.after = document.querySelector(flipSel)?.getAttribute('aria-expanded') ?? null
+    if (out.before == null || out.after == null || out.before === out.after) out.void = `aria-expanded on '${step.flip || step.tap}' did not flip (${out.before} → ${out.after}) — the step did nothing measurable, so the run is VOID`
+    else out.ok = true
+    return out
+  },
   all(maxDepth = 3) {
     return {
       state: STATE, error: firstError, viewport: this.viewport(), requests,
