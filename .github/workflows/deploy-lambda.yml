@@ -711,10 +711,8 @@ jobs:
         # DRG-NIGHTLYTIMEOUT-001: the nightly first attempt stacks a Neon scale-to-zero cold-resume
         # stall (~21-26s on the first pool.query at 2am ET) on 6-9s of real work, blowing the 30s
         # create-function default on 24/30 nights (the async retry succeeds only because the dead
-        # first attempt already woke the DB). timeout=120s absorbs the stall; memory is NOT managed here
-        # (diagnosis proved I/O wait, not CPU). It is 512MB since 2026-09-28 for the Water Ledger's
-        # headroom (BUG-WATERAUTUMNDEMAND-001), set once live and declared in
-        # scripts/lambda-config-expected.json, which check-lambda-config.py enforces. Idempotent compare-then-update,
+        # first attempt already woke the DB). timeout=120s absorbs the stall; memory INTENTIONALLY
+        # untouched at 256MB (diagnosis proved I/O wait, not CPU). Idempotent compare-then-update,
         # cloned from "Ensure inventory-items config". NEVER pass --environment here (set-not-merge
         # wipe hazard — see verify-daily-plan invariant 1).
         if: matrix.function == 'daily-plan'

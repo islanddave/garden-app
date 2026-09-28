@@ -1018,8 +1018,6 @@ function ledgerVerdictFor(p, c, wiBase, today, hydrology, lo){
     // RAIN_DEPTH key, not the IA/hold one. sizeGal gates the bed-equivalent fabric_ground row.
     exposure, vessel: vp, rainTier: rainDepthTierFor(p.container_type, vp.sizeGal),
     transplantAt: p.transplant_at || null,
-    // BUG-WATERAUTUMNDEMAND-001: finishing warm-season crops slow down as nights cool (ledgerParams LATE_SEASON).
-    lateSeason: ledger.lateSeasonEligible({ status: p.status, vessel: vp, exposure }),
   });
   const via = c._via || 'default';
   const confidence = ledger.computeConfidence({

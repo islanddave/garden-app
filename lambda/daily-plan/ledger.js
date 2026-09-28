@@ -141,40 +141,6 @@ function exposureClass(p) {
   return 'covered';
 }
 
-// ── Late-season crop factor (BUG-WATERAUTUMNDEMAND-001; the reasoning is on LATE_SEASON in ledgerParams) ─
-// Which plantings the factor may slow. Everything it excludes keeps FULL demand — the direction that errs
-// toward watering — because each exclusion is a small or unproven buffer. Per-day transplant timing is
-// checked in the fold (a planting can age into eligibility inside the 30-day window).
-function lateSeasonEligible({ status, vessel, exposure }) {
-  const L = P.LATE_SEASON;
-  if (exposure === 'indoor' || !vessel || vessel.tray) return false;
-  if (L.exemptTypes.includes(vessel.ct)) return false;
-  if (!L.statuses.includes(String(status || '').toLowerCase())) return false;
-  return vessel.inGroundClass || (vessel.sizeGal != null && vessel.sizeGal > L.minGal);
-}
-// Day of year (1-366) for a 'YYYY-MM-DD' label, UTC date math like calDays.
-function dayOfYear(dateStr) {
-  return calDays(dateStr.slice(0, 4) + '-01-01', dateStr) + 1;
-}
-// The factor for one ET civil day. Trailing 7-day mean LOW from settled weather_daily rows (a settled day
-// includes itself; today, which has no row yet, uses the 7 days before it). Fewer than minRows known lows,
-// or lengthening days (before the June solstice), -> 1.0.
-function lateSeasonFactor(weatherByDate, dayStr, isToday, tmaxF) {
-  const L = P.LATE_SEASON;
-  const doy = dayOfYear(dayStr);
-  if (doy < 172 || doy > 355) return 1.0;                        // days lengthening: spring, not season's end
-  const last = isToday ? addDays(dayStr, -1) : dayStr;
-  let sum = 0, n = 0;
-  for (let i = 0; i < 7; i++) {
-    const r = weatherByDate[addDays(last, -i)];
-    if (r && r.tmin_f != null) { sum += r.tmin_f; n++; }
-  }
-  if (n < L.minRows) return 1.0;
-  const cool = clamp((L.tminHiF - sum / n) / (L.tminHiF - L.tminLoF), 0, 1);
-  const base = 1 - (1 - L.factorMin) * cool;
-  return base + (1 - base) * ramp(tmaxF, L.liftLoF, L.liftHiF);
-}
-
 // ── Confidence (canon Part 2 tier table; server-computed so every surface agrees) ────────────────
 function computeConfidence({ via, vesselKnown, weatherOk, snoozeCount, trayUnprofiled }) {
   let tier;
@@ -233,11 +199,11 @@ function demoteDepth(depth) {
 function foldLedger(ctx) {
   const { wiEff, thr, events = [], weatherByDate = {}, weatherRowCount = 0,
     todayStr, effNowMs, todayEt0 = null, todayTmax = null, todayPrecip = null,
-    exposure, vessel, rainTier, transplantAt = null, lateSeason = false } = ctx;
+    exposure, vessel, rainTier, transplantAt = null } = ctx;
 
   const spaceDegenerate = weatherRowCount < P.CONFIDENCE.minWeatherRows;
   let weatherMissDays = 0;
-  const drv = { ratioToday: null, vesselToday: null, stageToday: null, lateToday: null };
+  const drv = { ratioToday: null, vesselToday: null, stageToday: null };
 
   // demand for one ET civil day, in cadence-days per calendar day. Degenerate branches fail to
   // TODAY'S MODEL (1.0), never NaN (canon Decision 3).
@@ -258,11 +224,8 @@ function foldLedger(ctx) {
       : vessel.classFactor) * vessel.sizeFactor;
     const est = transplantAt != null && (() => { const d = calDays(transplantAt, dayStr); return d >= 0 && d < P.STAGE.establishmentDays; })();
     const sf = est ? P.STAGE.establishmentFactor : 1.0;
-    // BUG-WATERAUTUMNDEMAND-001 — after the clamp, and never inside a recent transplant's window.
-    const fresh = transplantAt != null && (() => { const d = calDays(transplantAt, dayStr); return d >= 0 && d < P.LATE_SEASON.transplantDays; })();
-    const lf = (lateSeason && !fresh) ? lateSeasonFactor(weatherByDate, dayStr, isToday, tmax) : 1.0;
-    if (isToday) { drv.ratioToday = ratio; drv.vesselToday = vf; drv.stageToday = sf; drv.lateToday = lf; }
-    return P.GLOBAL_NORMALIZATION * ratio * vf * sf * lf;
+    if (isToday) { drv.ratioToday = ratio; drv.vesselToday = vf; drv.stageToday = sf; }
+    return P.GLOBAL_NORMALIZATION * ratio * vf * sf;
   }
 
   const windowStartStr = addDays(todayStr, -P.WINDOW_DAYS);
@@ -425,7 +388,6 @@ function foldLedger(ctx) {
     ...(drv.ratioToday != null ? [{ factor: 'et0_ratio', value: r2(drv.ratioToday) }] : []),
     ...(drv.vesselToday != null ? [{ factor: 'vessel', value: r2(drv.vesselToday) }] : []),
     ...(drv.stageToday != null && drv.stageToday !== 1 ? [{ factor: 'stage', value: drv.stageToday }] : []),
-    ...(drv.lateToday != null && drv.lateToday < 1 ? [{ factor: 'late_season', value: r2(drv.lateToday) }] : []),
     { factor: 'exposure', value: exposure },
     ...(vessel.unsized ? [{ factor: 'unsized', value: true }] : []),
     ...(spaceDegenerate ? [{ factor: 'weather_degraded', value: true }] : []),
@@ -459,7 +421,6 @@ function buildLedgerOpts({ weatherDaily = null, eventsByPlant = null, today, now
 
 module.exports = {
   foldLedger, buildLedgerOpts, computeConfidence, exposureClass, vesselProfile,
-  lateSeasonEligible, lateSeasonFactor, dayOfYear,
   parseContainerGal, sizeBucket, inchDiameterGal,
   rainDepthClass, demoteDepth,
   etParts, etMidnightMs, addDays, calDays,

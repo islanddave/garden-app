@@ -98,46 +98,6 @@ const SIZE_BUCKETS = {
   bedGal: 100,          // ft-dimension strings ("6x2 ft") parse to bed/large — any value >= largeMinGal
 };
 
-// ── Late-season crop family (BUG-WATERAUTUMNDEMAND-001, Dave-approved 2026-09-28) ───────────────────
-// ET0 carries the WEATHER's autumn decline and nothing else. A finishing warm-season crop's own use falls
-// further: its crop coefficient drops (FAO-56 end-of-season Kc, tomato ~1.15 -> 0.7-0.9), nights below
-// ~50F cut transpiration in chilling-sensitive crops, and the canopy thins. Measured on this garden,
-// 2026-07-15..09-27 (gardening-docs project-state/_waterdemand-20260928/): a 5-gal bag's modelled demand
-// falls 1.7x July -> late September, its physical use about 3.2x, and Dave's own record about 4x — he
-// watered no outdoor planting for 16 days (Sep 12-27) with rain every 6-7 days and no stress logged, while
-// the as-built ledger would still have re-listed 1-day bags every ~3 days.
-//
-// factor = base + (1 - base) x ramp(that day's Tmax, liftLoF -> liftHiF), where
-//   base  = 1 - (1 - factorMin) x ramp-down of the TRAILING 7-DAY MEAN LOW from tminHiF (-> 1.0) to
-//           tminLoF (-> factorMin),
-// multiplied into demand AFTER the ET0 clamp. It keys on crop physiology, never on the calendar, so a warm
-// spell restores full demand on its own (the Tmax lift) and a warm autumn simply never engages it. The one
-// seasonal qualifier is astronomical — shortening days (after the June solstice) — so cool nights in a
-// June spring, when plants are growing rather than finishing, do not trigger it.
-// Calibration (offline replay with this code and the real 2026 record, _waterdemand-20260928/
-// impl_variants.jsonl): had Dave followed the list, Sep 16-27 falls from 95/day (legacy) and 47/day
-// (ledger as built) to 38/day, with outdoor 3-9 gal bags due every ~4.9 days and 10+ gal every ~4.6 (that
-// month's rain included). Physics puts a late-September 5-gal bag at 4-6 dry days, so this sits on the
-// watering side of it. The Jul 22-Aug 10 control is UNCHANGED (72.3/day, bags every 2.41 days): its 7-day
-// mean lows never went below 56.4F, so tminHiF 56 keeps summer at exactly 1.0. (tminHiF 58 / tminLoF 52
-// reached 31/day but moved summer -3%; factorMin 0.3 changed nothing, because this September's lows never
-// sat at 50F long enough for the floor to bind.) Re-score after a full season (OPS-RAINFCSTRESCORE-001).
-//
-// ELIGIBILITY (lateSeasonEligible in ledger.js): flowering / fruiting / harvested plantings, outdoor or
-// covered-outdoor (indoor demand is flat 1.0 already), in the in-ground class or a vessel over minGal.
-// Kept at full demand, because a small buffer is the plant-death pathway: tray cells, hanging baskets,
-// vessels of 1 gal or less or of unknown size, and anything transplanted in the last transplantDays.
-const LATE_SEASON = {
-  factorMin: 0.4,
-  tminHiF: 56, tminLoF: 50,       // trailing 7-day mean low: >= 56F -> no slowdown, <= 50F -> factorMin
-  liftLoF: 75, liftHiF: 85,       // that day's high lifts the factor back to 1.0 across 75-85F
-  minRows: 4,                     // of the 7 trailing days; fewer -> factor 1.0 (fail toward watering)
-  statuses: ['flowering', 'fruiting', 'harvested'],
-  minGal: 1,
-  exemptTypes: ['hanging_basket'],
-  transplantDays: 21,
-};
-
 // ── Stage family ─────────────────────────────────────────────────────────────────────────────────
 // Establishment x1.3 for the first 14 days after a REAL transplant event (p.transplant_at — the
 // signal the rain-credit carve-out already uses). Fruiting-load x1.2 is deferred to V1.1 (canon).
@@ -304,7 +264,7 @@ const WINDOW_DAYS = 30;      // fold lookback; MUST equal handler.WEATHER_DAILY_
 module.exports = {
   ET0_REF_PEAK, DEMAND_CLAMP, GLOBAL_NORMALIZATION,
   VESSEL_CLASS_FACTOR, VESSEL_UNKNOWN_FACTOR, FABRIC_BAG, TRAY_TYPES, TRAY_WI_CAP_DAYS, SIZE_BUCKETS,
-  LATE_SEASON, STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, RAIN_DEPTH, RAIN_DEPTH_TIERS, RAIN_DEPTH_CLASSES,
+  STAGE, DUE, BANK, HEDGE, LIGHT_CREDIT_WI, RAIN_DAY, RAIN_DEPTH, RAIN_DEPTH_TIERS, RAIN_DEPTH_CLASSES,
   TRANSPLANT_CARVEOUT_DAYS,
   SNOOZE, CONFIDENCE, WINDOW_DAYS,
 };

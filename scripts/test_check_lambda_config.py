@@ -107,19 +107,12 @@ def test_plants_memory_bump_is_declared():
     """OPS-PLANTSLAMBDACPU-001 — the live 1024MB must stay codified, not drift back to a comment."""
     assert clc.load_manifest()["garden-plants"]["memory"] == 1024
 
-def test_daily_plan_water_ledger_flags_are_declared_explicitly():
-    """Every water-model flag is declared present-or-absent, so a flip is a reviewable repo change.
-
-    CARE_WATER_LEDGER_ENABLED went null -> "true" on 2026-09-28 on Dave's explicit go
-    (BUG-WATERAUTUMNDEMAND-001; the flip gate's bounds A and D waived, replay evidence in gardening-docs
-    project-state/_waterdemand-20260928/). MAXDAYS stays deliberately absent: the ledger retires it."""
-    m = clc.load_manifest()["garden-daily-plan"]
-    env = m["env"]
-    assert env["CARE_WATER_LEDGER_ENABLED"] == "true"
+def test_daily_plan_water_ledger_flags_are_declared_absent():
+    """Their absence is INTENTIONAL. Declaring it is what makes an accidental flip visible."""
+    env = clc.load_manifest()["garden-daily-plan"]["env"]
+    assert env["CARE_WATER_LEDGER_ENABLED"] is None
     assert env["CARE_RAIN_MAXDAYS_ENABLED"] is None
     assert env["CARE_RAIN_CREDIT_ENABLED"] == "true"
-    # The ledger's flag-ON run peaked at 245 of 256 MB; the flip ships with the headroom or not at all.
-    assert m["memory"] >= 512
 
 def test_rain_autolog_flag_is_declared_present_and_explicit():
     """BUG-RAINAUTOLOGCLIFF-001 — the inverse of the test above, and the harder case.
