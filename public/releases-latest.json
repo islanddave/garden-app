@@ -1,7 +1,8 @@
 {
-  "version": "4.158.2",
+  "version": "4.158.3",
   "date": "2026-09-28",
   "highlights": [
-    "Groundwork for the new Today page: new layout checks and shared care-list logic. Nothing changes on screen yet."
+    "Today keeps its section order and open sections when you tap a plant and come back.",
+    "The rest of the household's care no longer shows up empty when you open Today."
   ]
 }
