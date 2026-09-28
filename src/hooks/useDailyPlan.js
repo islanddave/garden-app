@@ -42,7 +42,20 @@
 // The listeners live HERE, not in Today.jsx, because `refresh`'s identity is deliberately stabilised
 // in this file (see hasDataRef above) so registration survives a successful fetch. A consumer wiring
 // its own listener would re-derive that guarantee and eventually get it wrong.
-import { useState, useEffect, useCallback, useRef } from 'react'
+//
+// BUG-TODAYHOUSEHOLDRELOADDROP-001 (2026-09-28) — the in-flight guard coalesced EVERY call, including
+// one asking a different question. Today asks with includeHousehold = showOthers && canShowOthers, and
+// on a cold roster (launch or sign-in, toggle saved ON) the members land while the first plan request
+// is still open: the reload that flip asked for hit the guard and was dropped, and since `run` closes
+// over includeHousehold nothing asked again. Today showed the toggle ON over "No one else has care
+// needs today." until the next wake. Now a settling request compares the question it asked (fetch +
+// includeHousehold) with the one the latest commit asks, and if they differ ONE trailing run asks the
+// current one. The same question still coalesces: the Android double wake, and StrictMode's double
+// mount effect in dev, stay one request each, and a question changed and changed back mid-flight is
+// already answered by the open request. The trailing run never blanks a plan on screen: it is a
+// refresh once a plan has been shown (so STALE ROWS BEAT BLANK ROWS covers its failure), and an
+// initial load when none has.
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
 
 // Floor between wake-triggered revalidations. `focus` is noisier than it looks on Android — a
@@ -67,9 +80,13 @@ export function useDailyPlan({ includeHousehold = false } = {}) {
   // would put `data` in the useCallback deps and change `refresh`'s identity on every successful
   // fetch — re-registering the focus/visibility listeners each time.
   const hasDataRef = useRef(false)
+  // BUG-TODAYHOUSEHOLDRELOADDROP-001 — the question the latest commit asks (its fetch + includeHousehold)
+  // and the `run` that asks it; null once unmounted, so a request settling after that starts nothing.
+  const latestRef = useRef(null)
 
   const run = useCallback(async (isRefresh) => {
-    // Coalesce: a second wake while one request is open is a no-op, not a competing chain.
+    // Coalesce: a second wake while one request is open is a no-op, not a competing chain. A call
+    // asking a DIFFERENT question is not lost here: the finally below asks it once this one settles.
     if (inflightRef.current) return
     inflightRef.current = true
     const my = ++loadCounterRef.current
@@ -90,8 +107,19 @@ export function useDailyPlan({ includeHousehold = false } = {}) {
       if (loadCounterRef.current === my) { setLoading(false); setRefreshing(false) }
       lastSettledAtRef.current = Date.now()
       inflightRef.current = false
+      // BUG-TODAYHOUSEHOLDRELOADDROP-001 — the question changed while this request was open. ONE trailing
+      // run, with the latest commit's args: a refresh if a plan has been shown, else an initial load.
+      const latest = latestRef.current
+      if (latest && (latest.fetch !== fetch || latest.includeHousehold !== includeHousehold)) latest.run(hasDataRef.current)
     }
   }, [fetch, includeHousehold])
+
+  // Layout, not passive: set at commit, so a request settling before the passive effects flush still
+  // sees the new question (and the reload effect below then finds it in flight and coalesces).
+  useLayoutEffect(() => {
+    latestRef.current = { fetch, includeHousehold, run }
+    return () => { latestRef.current = null }
+  }, [fetch, includeHousehold, run])
 
   const reload  = useCallback(() => run(false), [run])
   const refresh = useCallback(() => run(true),  [run])
