@@ -141,6 +141,29 @@ function sql(strings, ...vals) {
 const write = (name, doc) => { writeFileSync(join(OUT, name), JSON.stringify(doc)); console.log(`[dump] ${name}  ${Buffer.byteLength(JSON.stringify(doc))} bytes`) }
 mkdirSync(OUT, { recursive: true })
 
+// ── 3b. GET /api/locations — the FULL shape, verbatim (lambda/locations/index.js GET) ─────────────
+// V5-TODAYREDESIGN-001 S0 (plan-v2 §13 SF5). Today V2 groups spots by the nearest COVERED location
+// (Outside / Stable / House), and neither locations.json (/with-path) nor plants.json carries
+// `covered`, `heated` or `parent_id`. Both halves of the handler's GET, same predicates, same order.
+// `--only locations.full` refreshes this one file and touches nothing else, so the 2026-09-24
+// fixtures the v1 budget was recorded over are never re-dumped by accident.
+const dumpLocationsFull = () => {
+  const locRows = query(`
+    SELECT id, name, slug, level, type_label, parent_id, sort_order,
+           description, is_active, covered, heated, created_at
+    FROM locations
+    WHERE deleted_at IS NULL AND created_by = ANY(${lit(HOUSEHOLD)})
+    ORDER BY level, sort_order, name`)
+  const pathRows = query(`
+    SELECT id, full_path, level, is_active FROM locations_with_path
+    WHERE deleted_at IS NULL
+      AND id IN (SELECT id FROM locations WHERE deleted_at IS NULL AND created_by = ANY(${lit(HOUSEHOLD)}))
+    ORDER BY full_path`)
+  write('locations.full.json', JSON.parse(JSON.stringify({ locations: locRows, locations_with_path: pathRows })))
+}
+if (argOf('--only', null) === 'locations.full') { dumpLocationsFull(); console.log('[dump] done (--only locations.full). Scrub next: node scripts/layout-gate/todayshape-fixture-scrub.mjs --from ' + OUT); process.exit(0) }
+else if (argOf('--only', null)) { console.error(`[dump] --only knows one target: locations.full`); process.exit(2) }
+
 // ── 1. the daily plans (daily-plan-read's SELECT, verbatim predicate) ──────────────────────────
 // annotateDone is deliberately NOT applied: the fixture is the plan as the engine wrote it, i.e. the
 // list before anything was logged today. The harness has no event log to check items off against.
@@ -205,6 +228,7 @@ const locs = query(`
     AND id IN (SELECT id FROM locations WHERE deleted_at IS NULL AND created_by = ANY(${lit(HOUSEHOLD)}))
   ORDER BY full_path`)
 write('locations.json', locs)
+dumpLocationsFull()
 
 // ── 4. /api/harvests/watch?limit=200 — the REAL handler, injected read-only sql ────────────────
 const { handleWatchGet } = await import(join(ROOT, 'lambda/harvests/watch-route.js'))
