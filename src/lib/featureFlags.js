@@ -283,6 +283,8 @@ export const BACKNAV_ENABLED = true
 // any checkout without editing this file: npm run test:flag-off, gate:page-scroll:flag-off and
 // gate:seeds-scroll:flag-off serve this flag as false in memory (tests/harness/flagOffTransform.mjs). And after
 // ANY revert-gate past this release, for any reason: swipe the app away once (a fresh launch starts 'auto').
+// NOT covered by this flag: Garden's cached household (BUG-GARDENSPOTCREEP-001). Undoing it means reverting
+// src/hooks/useMembers.js — IMAGE_LIST_CACHE_ENABLED would also do it, but uncaches every list that uses the store.
 export const SCROLL_MANAGER_ENABLED = true
 
 // V4-SNAPDEST-001 (BD0806-08, Dave 2026-08-06): "hide Save to Device app-wide".

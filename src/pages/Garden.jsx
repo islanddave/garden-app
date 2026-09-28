@@ -908,6 +908,9 @@ export default function Garden() {
         </div>
       </div>
 
+      {/* BUG-GARDENSPOTCREEP-001: this row sits above the list, so it must paint on a return's FIRST frame. Arriving
+          a round trip after the restore, it was anchored into the spot and every Today → Garden trip came back one
+          row (64px) further down the list — which is why useMembers serves the household from the cache. */}
       {careLensOptions.length > 2 && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, marginBottom: 16 }}>
           <SegmentedControl options={careLensOptions} value={effectiveLens} onChange={onCareLensChange} ariaLabel="Show plantings by caretaker" />
