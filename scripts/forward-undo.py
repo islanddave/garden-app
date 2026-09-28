@@ -33,10 +33,21 @@ WHAT IT DOES
            (5 of 68 consecutive release pairs since v4.45.0; a first-parent walk would also have
            reverted the previous release there). Refused when the revert floor in force is above
            vPREV: putting vPREV's code back is exactly what the floor forbids.
-4. Keeps the history files as dev has them — public/releases.json, and scripts/revert-floors.json,
-   because a floor is never removed and reverting the release that added one must not drop it — and
-   bumps the version with the repo's own tool, scripts/add-release.mjs, with one plain highlight:
-   "Undoes vN: ...". Default version: dev's version with the patch number raised past any tag.
+4. Never reverts KEPT paths: after the reverts they are put back exactly as dev has them. They are
+   history, and the tools that undo a release:
+   - public/releases*.json and scripts/add-release.mjs, the release notes and their writer;
+   - scripts/revert-floors.json, because a floor is never removed;
+   - migrations/, because nothing rewinds the database: a migration N shipped stays applied, so its
+     file stays too. The plan lists them, and --write refuses until --migrations-checked says the
+     code going back runs on that newer schema;
+   - forward-undo.py, revert_floors.py, revert-to.py, revert-gate.yml and their three test files.
+     Undoing the promote that SHIPPED this tool (v4.158.0's) must not delete it or the revert-to.py
+     floor check (QA v4.158.0, IMPORTANT). A kept tool with a reverted test file would red the undo's
+     own CI: v4.156.0's test_revert_to.py fails 56 of 153 against the floor-checked revert-to.py.
+   A bad change to a kept file is fixed forward by hand. The plan names every kept path N changed.
+   Then it bumps the version with scripts/add-release.mjs, with one plain highlight: "Undoes vN: ...",
+   naming the releases the undo backs out (every version in public/releases.json after vPREV, up to N).
+   Default version: dev's version with the patch number raised past any tag.
 5. Commits once, on the new branch.
 
 DRY RUN is the default: steps 1-3 run read-only (git fetch's remote-tracking refs are its only write)
@@ -70,7 +81,13 @@ RELEASE_TOOL = "scripts/add-release.mjs"
 RELEASES = "public/releases.json"
 RELEASES_LATEST = "public/releases-latest.json"
 PACKAGE = "package.json"
-KEPT_FROM_DEV = (RELEASES, RELEASES_LATEST, FLOORS_PATH)  # history, never reverted
+MIGRATIONS = "migrations/"
+# Never reverted (step 4): kept exactly as dev has them.
+KEPT_FILES = (RELEASES, RELEASES_LATEST, RELEASE_TOOL, FLOORS_PATH,
+              "scripts/forward-undo.py", "scripts/revert_floors.py", "scripts/revert-to.py",
+              ".github/workflows/revert-gate.yml",
+              "scripts/test_forward_undo.py", "scripts/test_revert_floors.py", "scripts/test_revert_to.py")
+KEPT_DIRS = (MIGRATIONS,)
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 TAG_REF_RE = re.compile(r"^refs/tags/(v\d+\.\d+\.\d+)(\^\{\})?$")
 PROTECTED_BRANCHES = ("dev", "main")
@@ -130,6 +147,36 @@ def package_version(repo, commit):
 
 def key(v):
     return revert_floors.version_key(v)
+
+
+def is_kept(path):
+    return path in KEPT_FILES or path.startswith(KEPT_DIRS)
+
+
+def names_changed(repo, a, b):
+    return [p for p in out(repo, "diff", "--name-only", "--no-renames", a, b).split("\n") if p]
+
+
+def releases_between(repo, commit, prev, n):
+    """[(version, first highlight)], oldest first: the public/releases.json entries at `commit` after
+    vPREV, up to vN. That is every release this undo backs out, including versions a promote carried
+    untagged. An unreadable file reads as [] (the plan then names vN alone)."""
+    try:
+        entries = json.loads(show(repo, commit, RELEASES) or "[]")
+    except ValueError:
+        entries = []
+    found = {}
+    for r in entries if isinstance(entries, list) else []:
+        v = r.get("version") if isinstance(r, dict) else None
+        if isinstance(v, str) and SEMVER_RE.match(v) and key(prev) < key(v) <= key(n) and v not in found:
+            h = r.get("highlights")
+            found[v] = str(h[0]) if isinstance(h, list) and h else ""
+    return sorted(found.items(), key=lambda item: key(item[0]))
+
+
+def spoken(versions):
+    """['4.157.0', '4.158.0'] -> '4.157.0 and 4.158.0'."""
+    return versions[0] if len(versions) == 1 else ", ".join(versions[:-1]) + " and " + versions[-1]
 
 
 # --- step 1: what prod runs --------------------------------------------------------------------
@@ -220,8 +267,11 @@ def choose_version(base_version, n, tags, requested=None):
     return f"{major}.{minor}.{patch}"
 
 
-def compose_note(n, prev, mode, note=None):
+def compose_note(n, prev, mode, note=None, backed_out=()):
+    """The release highlight. On the revert path it always names the releases it backs out: one promote
+    can carry several, and Dave loses every one of them (QA v4.158.0)."""
     prefix = f"Undoes {n}:"
+    versions = list(backed_out) or [n[1:]]
     if note is not None:
         note = note.strip()
         if not note or "\n" in note:
@@ -229,11 +279,15 @@ def compose_note(n, prev, mode, note=None):
         if note.startswith("Undoes "):
             if not note.startswith(prefix + " "):
                 raise Refused(f"--note starts 'Undoes' but not {prefix!r}")
-            return note
-        return f"{prefix} {note}"
+            text = note
+        else:
+            text = f"{prefix} {note}"
+        if mode == "revert" and not all(v in text for v in versions):
+            text = (text if text[-1] in ".!?" else text + ".") + f" Backs out {spoken(versions)}."
+        return text
     if mode == "flag":
         return f"{prefix} turns the change it made back off."
-    return f"{prefix} the app works the way it did in {prev} again."
+    return f"{prefix} backs out {spoken(versions)}, so the app works the way it did in {prev} again."
 
 
 def build_plan(repo, remote="origin", release=None, allow_dev_ahead=False, version=None, note=None):
@@ -287,7 +341,7 @@ def build_plan(repo, remote="origin", release=None, allow_dev_ahead=False, versi
             flag_off(text, u["flag"], f"{u['file']} at dev {base_c}")
             if (u["file"], u["flag"]) not in [(f["file"], f["flag"]) for f in flags]:
                 flags.append({"file": u["file"], "flag": u["flag"], "floor": e["floor"], "ledger": e["ledger"]})
-        plan.update(mode="flag", flags=flags)
+        plan.update(mode="flag", flags=flags, kept=[], migrations=[])
     else:
         gov = revert_floors.governing_entry(entries, n)
         if gov is not None and key(prev) < key(gov["floor"]):
@@ -297,12 +351,16 @@ def build_plan(repo, remote="origin", release=None, allow_dev_ahead=False, versi
             raise Refused(f"reverting {n}'s commits would put {prev}'s code back, below the revert floor "
                           f"{gov['floor']} ({gov['ledger']}; {why}): {gov['reason']}. Undo it with a "
                           "hand-written forward fix instead")
-        plan.update(mode="revert", path=parent_path(repo, prev_c, main_c))
+        changed = names_changed(repo, prev_c, main_c)
+        plan.update(mode="revert", path=parent_path(repo, prev_c, main_c),
+                    kept=[p for p in changed if is_kept(p) and not p.startswith(MIGRATIONS)],
+                    migrations=[p for p in changed if p.startswith(MIGRATIONS)])
     for needed in (RELEASE_TOOL, RELEASES):
         if show(repo, base_c, needed) is None:
             raise Refused(f"{needed} is missing at dev {base_c}")
     plan["version"] = choose_version(package_version(repo, base_c), n, tags, version)
-    plan["note"] = compose_note(n, prev, plan["mode"], note)
+    plan["released"] = releases_between(repo, main_c, prev, n)
+    plan["note"] = compose_note(n, prev, plan["mode"], note, [v for v, _ in plan["released"]])
     return plan
 
 
@@ -327,6 +385,21 @@ def print_plan(repo, plan):
         for c, m in plan["path"]:
             subj = out(repo, "log", "-1", "--format=%s", c)
             print(f"    {c}" + (f" (merge, against parent {m})" if m else "") + f" {subj}")
+        backed = plan["released"] or [(plan["n"][1:], "")]
+        say(f"this undo backs out {len(backed)} release(s), everything shipped after {plan['prev']}:")
+        for v, h in backed:
+            print(f"    {v}" + (f"  {h[:110]}" if h else ""))
+        if plan["kept"]:
+            say(f"kept as dev has them (history and the undo tools), so {plan['n']}'s changes to these stay:")
+            for p in plan["kept"]:
+                print(f"    {p}")
+        if plan["migrations"]:
+            say(f"MIGRATIONS: {plan['n']}'s promote shipped these. Their schema changes stay applied (nothing "
+                "rewinds the database) and their files stay:")
+            for p in plan["migrations"]:
+                print(f"    {p}")
+            say(f"the code going back to {plan['prev']} must run on that newer schema. Check it, then add "
+                "--migrations-checked to --write")
     say(f"new release {plan['version']}: \"{plan['note']}\"")
 
 
@@ -364,10 +437,17 @@ def _commit_message(repo, plan):
             subj = out(repo, "log", "-1", "--format=%s", c)
             lines.append(f"  {c}" + (f" (merge, against parent {m})" if m else "") + f" {subj}")
         if plan["base"] == plan["main"]:
-            lines.append(f"The tree is {prev}'s apart from {PACKAGE}'s version and the files kept from dev.")
+            lines.append(f"The tree is {prev}'s apart from {PACKAGE}'s version and the kept paths.")
+        lines.append(f"Backs out: {spoken([v for v, _ in plan['released']] or [n[1:]])}.")
+        if plan["kept"]:
+            lines.append(f"Kept as dev has them, so {n}'s changes stay: {', '.join(plan['kept'])}.")
+        if plan["migrations"]:
+            lines.append(f"Migrations {n} shipped stay applied and stay in the repo: {', '.join(plan['migrations'])}. "
+                         "Checked by the operator (--migrations-checked).")
     lines += ["", f"Release: {plan['version']} via {RELEASE_TOOL}: \"{plan['note']}\"",
-              f"Kept as dev has them: {RELEASES} (plus the new entry) and {FLOORS_PATH} (a floor is",
-              "never removed).", "",
+              "Never reverted, kept as dev has them: the release notes and add-release.mjs, the revert floors,",
+              "migrations/, and the undo tools (forward-undo.py, revert_floors.py, revert-to.py,",
+              "revert-gate.yml) with their tests.", "",
               f"Built by scripts/forward-undo.py on dev {plan['base']}"
               + (" (= main)." if plan["base"] == plan["main"] else f" ({len(plan['ahead'])} ahead of main)."),
               "Not pushed."]
@@ -391,12 +471,6 @@ def _verify_release_files(wt, repo, plan):
         problems.append(f"{RELEASES} lost or changed history ({len(rel) - 1} kept of {len(base_rel)})")
     if latest != (rel[0] if rel else None):
         problems.append(f"{RELEASES_LATEST} != {RELEASES}[0]")
-    floors = None
-    if os.path.exists(os.path.join(wt, FLOORS_PATH)):
-        with open(os.path.join(wt, FLOORS_PATH), encoding="utf-8") as fh:
-            floors = fh.read()
-    if floors != show(repo, plan["base"], FLOORS_PATH):
-        problems.append(f"{FLOORS_PATH} is not dev's")
     if plan["mode"] == "revert" and plan["base"] == plan["main"]:
         prev_pkg = json.loads(show(repo, plan["prev_commit"], PACKAGE))
         if {k: v for k, v in pkg.items() if k != "version"} != {k: v for k, v in prev_pkg.items() if k != "version"}:
@@ -405,19 +479,32 @@ def _verify_release_files(wt, repo, plan):
         raise UndoError("the release files are not what the undo needs: " + "; ".join(problems))
 
 
+def _restore_kept(wt, base, paths=None):
+    """Put kept paths back exactly as dev has them: dev's content written, and a path dev lacks removed
+    (git restore's default no-overlay mode; checkout would leave it). Default: every kept path in dev or
+    in the worktree's index; `paths` limits it (conflict resolution). Resolves a conflicted path too."""
+    if paths is None:
+        specs = [*KEPT_FILES, *(d.rstrip("/") for d in KEPT_DIRS)]
+        paths = set(out(wt, "ls-tree", "-r", "--name-only", base, "--", *specs).split("\n"))
+        paths |= set(out(wt, "ls-files", "--", *specs).split("\n"))
+    paths = sorted(p for p in paths if p)
+    if paths:
+        git(wt, "restore", f"--source={base}", "--staged", "--worktree", "--pathspec-from-file=-",
+            "--pathspec-file-nul", input="\0".join(f":(literal){p}" for p in paths))
+
+
 def _resolve_release_conflicts(wt, plan, c, r):
     """Only with dev ahead of main can a revert conflict (on main itself the path's reverts apply
     cleanly by construction), and the usual collision is dev's own bump: package.json's version and the
-    head of the release files. Those are re-derived anyway — kept from dev, then add-release — so such
-    a conflict resolves to dev's side. package.json resolves only when the reverted commit changed
-    nothing in it but the version. Any other conflict refuses."""
+    head of the release files. Kept paths are put back from dev anyway and the version is re-derived by
+    add-release, so such a conflict resolves to dev's side. package.json resolves only when the reverted
+    commit changed nothing in it but the version. Any other conflict refuses."""
     conflicted = set(filter(None, out(wt, "diff", "--name-only", "--diff-filter=U").split("\n")))
-    code = conflicted - set(KEPT_FROM_DEV) - {PACKAGE}
+    code = {f for f in conflicted if not is_kept(f) and f != PACKAGE}
     if not conflicted or code:
         raise Refused(f"reverting {c} conflicts on dev {plan['base']} in {sorted(code) or 'no file git names'}: "
                       f"{(r.stdout + r.stderr).strip()[:400]}. Build this undo by hand")
-    for f in sorted(conflicted & set(KEPT_FROM_DEV)):
-        git(wt, "checkout", plan["base"], "--", f)
+    _restore_kept(wt, plan["base"], {f for f in conflicted if is_kept(f)})
     if PACKAGE in conflicted:
         reverted, target = (json.loads(git(wt, "show", f":{n}:{PACKAGE}").stdout) for n in (1, 3))
         if {k: v for k, v in reverted.items() if k != "version"} != {k: v for k, v in target.items() if k != "version"}:
@@ -427,7 +514,11 @@ def _resolve_release_conflicts(wt, plan, c, r):
         git(wt, "add", "--", PACKAGE)
 
 
-def write_branch(repo, plan, branch=None, keep_worktree=False):
+def write_branch(repo, plan, branch=None, keep_worktree=False, migrations_checked=False):
+    if plan.get("migrations") and not migrations_checked:
+        raise Refused(f"{plan['n']}'s promote shipped migrations ({', '.join(plan['migrations'])}). They stay "
+                      f"applied, so the code going back to {plan['prev']} must run on the newer schema. Check "
+                      "that, then re-run with --migrations-checked")
     branch = branch or f"undo-{plan['n']}-as-v{plan['version']}"
     if branch in PROTECTED_BRANCHES or git(repo, "check-ref-format", "--branch", branch, ok=(0, 1, 128)).returncode:
         raise Refused(f"{branch!r} cannot be the undo branch")
@@ -458,10 +549,8 @@ def write_branch(repo, plan, branch=None, keep_worktree=False):
             if plan["base"] == plan["main"] and git(wt, "diff", "--cached", "--quiet", plan["prev_commit"],
                                                     ok=(0, 1)).returncode:
                 raise UndoError(f"after the reverts the tree is not {plan['prev']}'s; refusing to commit it")
-            for f in KEPT_FROM_DEV:
-                if show(repo, plan["base"], f) is not None:
-                    git(wt, "checkout", plan["base"], "--", f)
-            touched = set(out(repo, "diff", "--name-only", "--no-renames", plan["prev_commit"], plan["main"]).split("\n"))
+            _restore_kept(wt, plan["base"])
+            touched = set(names_changed(repo, plan["prev_commit"], plan["main"]))
             touched |= {PACKAGE, RELEASES, RELEASES_LATEST}
         r = subprocess.run(["node", RELEASE_TOOL, plan["version"], plan["note"]], cwd=wt,
                            capture_output=True, text=True)
@@ -472,6 +561,9 @@ def write_branch(repo, plan, branch=None, keep_worktree=False):
         staged = set(filter(None, out(wt, "diff", "--cached", "--name-only", "--no-renames", plan["base"]).split("\n")))
         if PACKAGE not in staged or not staged <= touched:
             raise UndoError(f"unexpected staged files: {sorted(staged - touched) or 'no ' + PACKAGE}")
+        drifted = sorted(p for p in staged if is_kept(p) and p not in (RELEASES, RELEASES_LATEST))
+        if drifted:
+            raise UndoError(f"kept paths differ from dev: {drifted}; refusing to commit them")
         git(wt, "commit", "--quiet", "-F", "-", input=_commit_message(repo, plan))
         head = out(wt, "rev-parse", "HEAD")
         if out(wt, "rev-parse", "HEAD^") != plan["base"]:
@@ -496,6 +588,8 @@ def main(argv=None):
     p.add_argument("--version", help="the undo's version X.Y.Z (default: dev's version, patch + 1, past any tag)")
     p.add_argument("--allow-dev-ahead", action="store_true",
                    help="build on dev even though it carries unshipped commits (they are listed)")
+    p.add_argument("--migrations-checked", action="store_true",
+                   help="the code going back runs on the schema the undone promote's migrations left behind")
     p.add_argument("--write", action="store_true", help="create the branch and commit (local only)")
     p.add_argument("--branch", help="name for the new branch (default undo-vN-as-vNEW)")
     p.add_argument("--keep-worktree", action="store_true", help="keep the throwaway worktree after --write")
@@ -513,7 +607,7 @@ def main(argv=None):
             say(f"DRY RUN: nothing written. --write builds branch {branch} in a throwaway worktree.")
             print(next_steps(repo, plan, branch, None))
             return 0
-        branch, head, kept = write_branch(repo, plan, a.branch, a.keep_worktree)
+        branch, head, kept = write_branch(repo, plan, a.branch, a.keep_worktree, a.migrations_checked)
         say(f"WROTE branch {branch} at {head} (parent {plan['base']}); local only, not pushed")
         if kept:
             say(f"worktree kept at {kept}; remove it with: git -C {repo} worktree remove {kept}")
