@@ -249,9 +249,10 @@ async function fetchPrecip(lat, lng) {
     // rather than reading it as 0°F. Same rule as yesterday_precip_actual_in below.
     const lowOrNull = (v) => (Number.isFinite(v) ? v : null);
     return {
-      // V4-FROST-001 §3-3 Tier 1 — the D1..D3 forecast-low window + its date labels. Consumed ONLY by
-      // handler's frost evaluation; engine.generatePlan copies named hydrology keys, so neither field
-      // enters the stored plan payload (flag-OFF byte-parity holds).
+      // V4-FROST-001 §3-3 Tier 1 — the D1..D3 forecast-low window + its date labels, read by handler's frost
+      // evaluation. V5-TODAYFROSTWARMEDADVISORY-001: engine.generatePlan also stores both, verbatim, in the plan's
+      // hydrology while FROST_ALERT_ENABLED is on, so Today can see this run's second-model low for an advisory's
+      // night; with the flag off neither field enters the stored plan payload (flag-OFF byte-parity holds).
       forecast_lows: [lowOrNull(tmin[3]), lowOrNull(tmin[4]), lowOrNull(tmin[5])],
       forecast_dates: [times[3] || null, times[4] || null, times[5] || null],
       recent_precip_in: round2OrNull(sumOrNull(numOrNull(ps[0]), numOrNull(ps[1]))),   // D-2 + D-1
