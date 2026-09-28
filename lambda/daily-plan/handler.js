@@ -1674,6 +1674,15 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
   // It is only defensible at all because of OPS-PLANHOURLY-001; do NOT enable it on a 3-runs-a-day schedule.
   const deferDryEnabled = _flag('CARE_RAIN_DEFER_DRY_ENABLED', process.env.CARE_RAIN_DEFER_DRY_ENABLED === 'true');
   const soonAwareEnabled = _flag('CARE_RAIN_SOON_ENABLED', process.env.CARE_RAIN_SOON_ENABLED === 'true');
+  // BUG-RAINBEDWAITCONFLICT-001 — Dave, 2026-09-28, asked which rule wins for a DRY in-ground bed when
+  // at least 0.50" is forecast for tomorrow at 60%+: "let beds wait". So the 'incoming_dry' branch runs
+  // for established in-ground plantings (not a bed planted in the last 21 days; containers still need
+  // CARE_RAIN_DEFER_DRY_ENABLED above, OFF), and
+  // the rain callout moves to the same bars. Before this, Today's rain line said "let in-ground beds
+  // wait" at a private 0.30"/50% while the list under it watered every dry bed. No env flag: the
+  // decision is made, and the Today widget and CareNeeded mirror the rule client-side (wateringScale
+  // bedsWaitForRain), where a Lambda flag could not reach them. Undo = revert the commit.
+  const deferDryBedsEnabled = true;
   // BUG-RAINFORECASTCREDIT-001 — rain credit spends MEASURED precipitation only (engine.creditPrecip).
   // Default OFF: absent env => byte-identical plan, so the deploy is inert and the behaviour change is a
   // deliberate flip, not a side effect of shipping. Flipping it makes the engine stop crediting rain that
@@ -1802,7 +1811,7 @@ async function run({ pg, today, dryRun = true, geocodeZip, fetchNWS, fetchPrecip
     // window + the run instant feed the ledger fold, all behind waterLedgerEnabled. enabled is
     // ANDed with `ledgerEvents != null` so a failed event-window read degrades the run to flag-OFF
     // (a fold against a falsely-empty window would over-due every planting — see readLedgerEvents).
-    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled, deferDryEnabled, soonAwareEnabled,
+    const plan = generatePlan({ plantings: rows, cadence, fertModel, today, weather: wxBySpace[spaceId], hydrology: hyBySpace[spaceId], weatherDaily: wxDailyBySpace[spaceId], ownerFallback: owner, rainCreditEnabled, rainMaxDaysEnabled, todayAwareEnabled, measuredCreditEnabled, deferDryEnabled, deferDryBedsEnabled, soonAwareEnabled,
       waterLedgerEnabled: waterLedgerEnabled && ledgerEvents != null, eventsByPlant: ledgerEvents, nowMs: Date.now(),
       droughtState: droughtBySpace[spaceId] || null,
       // BUG-INGROUNDOFFSEASONSILENT-001 — engine.coldFor drops an in-ground bring-in card only while the

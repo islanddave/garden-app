@@ -12,6 +12,7 @@
 // plan's `interval`, CareStatus reads entity_memory's `watering_interval_days` — and cannot drift.
 import { isDailyCadence } from './waterDue.js'
 import { agreedTonightLow, withoutLowClause } from './tonightLow.js'
+import { bedsWaitForRain } from './wateringScale.js'
 
 // Bucket -> the event_type a one-tap log writes (identical to the Log form's write path so the
 // events Lambda side effects — critter award + entity_memory.next_water_at — fire). dormant: none.
@@ -122,16 +123,18 @@ export function needTier(need, it) {
   return 'gold'
 }
 
-// Bed-wait exclusion signal — matches the engine's rain callout gate (tomorrow_precip_in>=0.3
-// && pop>=50): "water containers today, let in-ground beds wait". When active, in-ground beds are
-// excluded from the BULK watering pre-check (still individually loggable). rain_skipped plantings
-// are already withheld by the engine, so this only guards bulk over-watering of beds.
+// Bed-wait exclusion signal: "water containers today, let in-ground beds wait". When active, in-ground
+// beds are excluded from the BULK watering pre-check (still individually loggable).
+// BUG-RAINBEDWAITCONFLICT-001 (Dave, 2026-09-28) — this used a private 0.30"/50% bar from 2026-06-30 while
+// the engine watered dry beds at any forecast, so Today said "let beds wait" over a list of beds to water.
+// It now reads the one client-side copy of the engine's dry-bed deferral (wateringScale.bedsWaitForRain,
+// 0.50"/60%, null PoP fails closed), so it fires exactly when the engine has moved dry beds to
+// rain_skipped. The in-ground rows still listed then are the engine's fast-dry carve-outs (fresh
+// transplants): shown, individually loggable, kept out of the bulk tap as before.
 export function bedWaitActive(plan) {
   const h = plan && plan.hydrology
   if (!h) return false
-  const amt = typeof h.tomorrow_precip_in === 'number' ? h.tomorrow_precip_in : 0
-  const pop = typeof h.tomorrow_pop === 'number' ? h.tomorrow_pop : 0
-  return amt >= 0.3 && pop >= 50
+  return bedsWaitForRain(h)
 }
 
 // The canonical flat row list. Excludes engine-marked `done` items (V3-TODAYDONE-001) — same set

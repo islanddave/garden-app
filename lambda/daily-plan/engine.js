@@ -1175,7 +1175,15 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
     const rcls=rainClass(p);
     // DRG-WXSATCAP-001: flag-independent heavy-soak cap (outer gate).
     // BUG-TODAYWATER-001: pass the vessel size so the TODAY branch can hold small vessels to a higher bar.
-    const _sat=saturationSuppressed(rcls, hydrology, { todayAware: todayAwareEnabled, smallVessel: isSmallVessel(p), deferDry: !!satOpts.deferDry, soonAware: !!satOpts.soonAware });
+    // BUG-RAINBEDWAITCONFLICT-001 (Dave, 2026-09-28: "let beds wait") — satOpts.deferDryBeds arms the
+    // 'incoming_dry' branch for IN-GROUND plantings only. A bed presents its whole area to the sky, so a
+    // forecast half-inch reaches it; a bag's top catches too little of it (the widget's container
+    // exemption), so containers keep watering. A bed planted within TRANSPLANT_CARVEOUT_DAYS keeps its
+    // water too: its root ball is still the size of the pot it came from. That has to be said here — the
+    // freshTransplant carve-out below is small-vessel only, so it would not have exempted a bed.
+    const _bedDefer = !!satOpts.deferDryBeds && inGround
+      && !((daysBetween(today,p.transplant_at)??999)<=TRANSPLANT_CARVEOUT_DAYS);
+    const _sat=saturationSuppressed(rcls, hydrology, { todayAware: todayAwareEnabled, smallVessel: isSmallVessel(p), deferDry: !!satOpts.deferDry || _bedDefer, soonAware: !!satOpts.soonAware });
     // DRG-WXWATER-001 coarse-v1 (flag-ON only): exposure eligibility. Flag-OFF uses the location-derived class
     // (rcls==='outdoor'); flag-ON derives exposure from the location, honoring a stored rain_exposed
     // boolean as an explicit override. _creditClass/_iaShown collapse to the flag-OFF values when OFF.
@@ -1375,13 +1383,28 @@ function generatePlanForUser(plantings, cad, fm, today, weather, hydrology, rain
       ...(_fsOn?{feed_suppressed:feedSuppressed}:{})}};
 }
 
+// BUG-RAINBEDWAITCONFLICT-001 — the rain callout's own gate. It tells Dave "let in-ground beds wait", so it
+// must fire exactly when the engine lets DRY beds wait: the 'incoming_dry' bars (0.50"/60%, a null PoP
+// fails closed, and no deferral at all when windowPrecip is unknown — saturationSuppressed bails there).
+// The pre-2026-09-28 bar was a private 0.30"/50% (null PoP allowed) dated 2026-06-30, before the gauge,
+// with no derivation; it produced the season's only forecast-driven false hold (09-17: 1.12" @ 53% -> 0.17"
+// fell) and told Dave to let beds wait while the list below it watered them. `bedsWait` false keeps the old
+// gate byte-for-byte, so every caller that has not armed a dry deferral (and every parity golden) is unchanged.
+function rainCalloutFires(hy, bedsWait){
+  if(!hy) return false;
+  if(!bedsWait) return hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null || hy.tomorrow_pop>=50);
+  return windowPrecip(hy)!=null
+    && hy.tomorrow_precip_in!=null && hy.tomorrow_precip_in>=SOAK_FCST_QPF_IN
+    && hy.tomorrow_pop!=null && hy.tomorrow_pop>=SOAK_FCST_POP_PCT;
+}
+
 // Compute the single weather callout (action only) from temp + hydrology. Priority order; null = no callout (no filler).
-function computeCallout(weather, hy){
+function computeCallout(weather, hy, bedsWait=false){
   const low=weather&&weather.tonightLow, high=weather&&weather.highToday;
   if(low!=null && low<40) return {icon:'freeze', text:`Freeze tonight (${low}°F) — cover or bring peppers & tomatoes in`};
   if(low!=null && low<45) return {icon:'cold', text:`Cool night (${low}°F) — protect flowering peppers/tomatoes`};
   if(high!=null && high>=88) return {icon:'heat', text:`Hot day (${high}°F) — deep-water thirsty crops, shade if wilting`};
-  if(hy && hy.tomorrow_precip_in>=0.3 && (hy.tomorrow_pop==null || hy.tomorrow_pop>=50)){
+  if(rainCalloutFires(hy, bedsWait)){
     // BUG-RAINFCSTONEMODEL-001 (b) — mirror the Today widget, which since 2026-09-25 prints the amount and the
     // chance side by side instead of their product (DRG-WXPROB-001 printed amount × PoP / 100 here too). The
     // GATE is unchanged — whether this fires is a watering decision. A null PoP prints the amount alone, as
@@ -1446,13 +1469,13 @@ function hydrologyStatus(hy){
 // BUG-INGROUND39FSLIVER-001: frostCoverage is frostEval.frostCoverage over the handler's frost decision for
 // this Space (a Map keyed by planting id, shared by every user in the Space); see coldFor. Default null keeps
 // every in-ground card, so a caller that supplies the flag but no coverage gets cards, not silence.
-function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null, deferDryEnabled=false, soonAwareEnabled=false, frostAlertEnabled=false, frostCoverage=null}){
+function generatePlan({plantings, cadence, fertModel, today, weather, hydrology, ownerFallback, rainCreditEnabled=false, rainMaxDaysEnabled=false, todayAwareEnabled=false, waterLedgerEnabled=false, weatherDaily=null, eventsByPlant=null, nowMs=null, measuredCreditEnabled=false, droughtState=null, deferDryEnabled=false, soonAwareEnabled=false, frostAlertEnabled=false, frostCoverage=null, deferDryBedsEnabled=false}){
   const ledgerOpts = (waterLedgerEnabled && eventsByPlant)
     ? ledger.buildLedgerOpts({ weatherDaily, eventsByPlant, today, nowMs })
     : null;
   const byUser=new Map();
   for(const p of plantings){ const c=resolveCadence(p,cadence); const u=ownerFor(p,c,ownerFallback)||'__UNASSIGNED__'; if(!byUser.has(u))byUser.set(u,[]); byUser.get(u).push(p); }
-  const hy=hydrology||null; const callout=computeCallout(weather,hy); const hs=hydrologyStatus(hy);
+  const hy=hydrology||null; const callout=computeCallout(weather,hy,deferDryEnabled||deferDryBedsEnabled); const hs=hydrologyStatus(hy);
   // BUG-TODAYWATER-001: `rain_coming` could not see rain arriving TODAY -- it read tomorrow only, so on
   // 2026-08-03 it reported false while 3.8" fell. Note this flag reaches NO engine gate (it is emitted at
   // the bottom of this function and consumed client-side), so this is an honesty fix, not the fix that
@@ -1464,7 +1487,7 @@ function generatePlan({plantings, cadence, fertModel, today, weather, hydrology,
   const rainComing = _todayComing || _tomorrowComing;
   const rainHorizon = _todayComing ? 'today' : (_tomorrowComing ? 'tomorrow' : null);
   const users={};
-  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState,{deferDry:deferDryEnabled,soonAware:soonAwareEnabled},frostAlertEnabled,frostCoverage);
+  for(const [u,rows] of byUser){ const up=generatePlanForUser(rows,cadence,fertModel,today,weather,hy,rainCreditEnabled,rainMaxDaysEnabled,todayAwareEnabled,ledgerOpts,measuredCreditEnabled,droughtState,{deferDry:deferDryEnabled,deferDryBeds:deferDryBedsEnabled,soonAware:soonAwareEnabled},frostAlertEnabled,frostCoverage);
     users[u]=up; }
   const lwOut=(hy && Array.isArray(hy.wetness_window)) ? lw.assessLeafWetness(hy.wetness_window, today) : null;
   return {date:today,

@@ -70,6 +70,21 @@ export function todayForecastIn(hydrology = {}) {
   return hydrology.today_remaining_in ?? hydrology.today_precip_in ?? 0;
 }
 
+// BUG-RAINBEDWAITCONFLICT-001 (Dave, 2026-09-28: "let beds wait") — tomorrow's rain defers a DRY bed.
+// Mirrors the engine's 'incoming_dry' branch, which since this change prod runs for every in-ground
+// planting not transplanted in the last three weeks (generatePlan deferDryBedsEnabled; handler.js). Same bars as the wet-media branch, but a null
+// PoP fails CLOSED toward watering: a dry bed is not deferred on an amount with no confidence attached.
+// A missing recent_precip_in bails, as the engine's windowPrecip does. Containers never read this — a
+// bag's top catches too little of a forecast inch (Decision 3 above). The one client-side copy of the
+// rule: the beds lane below, CareNeeded's bulk-water exclusion (careNeeded.bedWaitActive) and the parity
+// sweep all go through it.
+export function bedsWaitForRain(hydrology = {}) {
+  if (hydrology.recent_precip_in == null) return false;
+  const tmrwIn = hydrology.tomorrow_precip_in;
+  const tmrwPop = hydrology.tomorrow_pop;
+  return tmrwIn != null && tmrwIn >= SOAK_FCST_QPF_IN && tmrwPop != null && tmrwPop >= SOAK_FCST_POP_PCT;
+}
+
 // hydrology: { recent_precip_in, today_precip_in, today_pop, today_observed_in?, today_remaining_in?,
 //              tomorrow_precip_in, tomorrow_pop, rain_coming }
 // weather:   { hot:boolean, highToday:number }
@@ -116,11 +131,12 @@ export function computeWateringScale(hydrology = {}, weather = {}) {
   else if (measured >= SOAK_WET_FLOOR_IN) containers -= 1;
 
   // In-ground beds: base 1.5 (hold moisture longer than containers), +1 when hot. Beds DO benefit
-  // from forecast rain — they present the whole bed area to the sky — so all three branches apply.
+  // from forecast rain — they present the whole bed area to the sky — so all three branches apply,
+  // plus the dry-bed deferral (bedsWaitForRain) the engine runs for in-ground plantings.
   let beds = 1.5;
   if (hot) beds += 1;
   if (measured >= SOAK_WET_FLOOR_IN) beds = Math.min(beds, 0.5);
-  if (soaked || incoming || todaySkip) beds = 0;
+  if (soaked || incoming || todaySkip || bedsWaitForRain(hydrology)) beds = 0;
 
   return {
     containers: clampHalf(containers),
