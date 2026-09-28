@@ -1,5 +1,14 @@
 [
   {
+    "version": "4.158.0",
+    "date": "2026-09-28",
+    "highlights": [
+      "Today keeps its order: while you log, skip or come back to the app, the Needs-care sections stay where they were when you opened Today. Tap By location or By type (even the one already highlighted) to re-sort. A new day starts fresh, and yesterday's logs no longer hide plants that are due again today.",
+      "Frost: once both forecasts for tonight warm out of frost range after a frost email, Today says \"Forecast warmed to 44°F since the 3 PM frost email.\" instead of still warning of a freeze, after an advisory-only email too.",
+      "Behind the scenes: a bad release can now be undone by a normal follow-up release that keeps all your garden data, and the emergency rewind refuses to go back past 4.156."
+    ]
+  },
+  {
     "version": "4.157.0",
     "date": "2026-09-28",
     "highlights": [
