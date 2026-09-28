@@ -48,7 +48,12 @@ function todayISO() {
   const d = new Date()
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
-function envelope({ done = [], gen = '2026-09-28T13:00:00Z' } = {}) {
+function nextDayISO() {
+  const d = new Date(todayISO() + 'T12:00:00')
+  d.setDate(d.getDate() + 1)
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}
+function envelope({ done = [], gen = '2026-09-28T13:00:00Z', date = todayISO(), over = {} } = {}) {
   const water = [
     w('d1', 'Drive One', 'Drive Rows', 'prD', 1), w('d2', 'Drive Two', 'Drive Rows', 'prD', 1),
     w('d3', 'Drive Three', 'Drive Rows', 'prD', 1), w('d4', 'Drive Four', 'Drive Rows', 'prD', 1),
@@ -57,9 +62,13 @@ function envelope({ done = [], gen = '2026-09-28T13:00:00Z' } = {}) {
     w('b5', 'Bag Five', 'Bag Area', 'prB', 0),
     w('c1', 'Pasture One', 'Pasture', 'prC', 0), w('c2', 'Pasture Two', 'Pasture', 'prC', 0),
     w('c3', 'Pasture Three', 'Pasture', 'prC', 0),
-  ].map(it => (done.includes(it.id) ? { ...it, done: true } : it))
+  ].map(it => ({
+    ...it,
+    ...(it.id in over ? { overdue_by: over[it.id] } : null),
+    ...(done.includes(it.id) ? { done: true } : null),
+  }))
   return {
-    schema_version: 1, plan_date: todayISO(), generated_at: gen, has_plan: true,
+    schema_version: 1, plan_date: date, generated_at: gen, has_plan: true,
     plan: {
       hydrology: { tomorrow_precip_in: 0.05, tomorrow_pop: 10 }, rain_skipped: [],
       water_due: water, no_history: [], fertilize: [],
@@ -133,6 +142,29 @@ describe('BUG-TODAYGROUPREORDER-001 — a wake refetch on Today moves no section
     // ... and no section moved, or opened, or closed.
     expect(headerLabels()).toEqual(ARRIVAL)
     expect(expandedLabels()).toEqual(['Drive Rows', 'Pasture'])
+  })
+
+  // The plan object carries no date — plan_date lives on the envelope — so the list cannot see a new
+  // day for itself. Left open on Today overnight (the PWA survives in the background), the morning
+  // wake swaps in the NEXT day's plan under the same mounted list.
+  it('a wake that brings the next day\'s plan is a new visit: ranked fresh, and yesterday\'s logs hide nothing', async () => {
+    await openToday(envelope())
+    await waitFor(() => expect(headerLabels()).toEqual(ARRIVAL))
+    for (const name of ['Drive One', 'Drive Two', 'Drive Three']) {
+      fireEvent.click(screen.getByRole('button', { name: 'Log Water for ' + name }))
+      await waitFor(() => expect(screen.queryByText(name)).toBeNull())
+    }
+    expect(countOf('Drive Rows')).toBe('2')
+    // Next morning: the same Drive rows are due again, and Pasture's are now 3 days overdue (13, the
+    // heaviest section).
+    plans.push(envelope({ date: nextDayISO(), gen: '2026-09-29T11:00:00Z', over: { c1: 3, c2: 3, c3: 3 } }))
+    skew += 61_000
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    await waitFor(() => expect(planCalls()).toBe(2))
+    await waitFor(() => expect(headerLabels()).toEqual(['Pasture', 'Drive Rows', 'Bag Area']))
+    // Yesterday's three logs are not today's: all five Drive rows are back on the list.
+    expect(countOf('Drive Rows')).toBe('5')
+    expect(expandedLabels()).toEqual(['Pasture'])
   })
 
   it('leaving Today and opening it again ranks from the plan it opens on', async () => {

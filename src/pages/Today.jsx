@@ -197,7 +197,13 @@ export default function Today() {
             </div>
           )}
 
-          <CareNeeded plan={plan} />
+          {/* BUG-TODAYGROUPREORDER-001 — keyed by the plan's DATE: a new day is a new visit. CareNeeded
+              holds its section order for the visit, and `plan` carries no date of its own (plan_date
+              is on the envelope), so without the key a PWA left open on Today overnight would take the
+              morning's plan under yesterday's order — and yesterday's optimistic `logged` set, which
+              hides a row by planting+need, would hide today's due rows for the same plantings. Same
+              day: same key, so a wake refetch never remounts (that would drop expand state). */}
+          <CareNeeded key={data?.plan_date} plan={plan} />
         </div>
       )}
 
@@ -274,7 +280,7 @@ export default function Today() {
                 {nameFor(hp.user_id)}’s care today
               </summary>
               <div style={{ marginTop: 10 }}>
-                <CareNeeded plan={hp.plan} />
+                <CareNeeded key={data?.plan_date} plan={hp.plan} />
               </div>
             </details>
           ))}
