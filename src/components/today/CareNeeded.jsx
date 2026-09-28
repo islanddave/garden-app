@@ -36,6 +36,15 @@ const GROUP_OPTS = [
 // Stable identity for "no enrichment yet" so enrichedRows doesn't re-memo on every render.
 const NO_ENRICHMENT = Object.freeze({})
 
+// BUG-TODAYGROUPREORDER-001 — one TAKEN layout: the section order and the sections that open on it,
+// from groups already ranked by groupRows. null when there is nothing to lay out, so the first plan
+// that does carry work takes a real one instead of inheriting an empty order. See CareNeeded.
+function takeLayout(rankedGroups, basis) {
+  if (!rankedGroups.length) return null
+  return { basis, order: rankedGroups.map(g => g.key), expand: autoExpandKeys(rankedGroups, EXPAND_ROW_BUDGET) }
+}
+const NO_LAYOUT = Object.freeze({ basis: null, order: Object.freeze([]), expand: new Set() })
+
 function todayLocalISO() {
   const d = new Date()
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
@@ -505,12 +514,16 @@ export default function CareNeeded({ plan }) {
   )
   const enrichedRows = useMemo(() => rows.map(enrich), [rows, enrich])
   // BUG-TODAYCAREREORDER-001 (BD-036) — the ordering set. Deliberately NOT `rows`: it withholds
-  // `skipped` but keeps `logged`, so the layout is computed against the list as it stood when Dave
-  // arrived and does not move as he drains it. Logging is the side effect he named — tapping Log
-  // down a location group dropped that group's summed severity and slid the section out from under
-  // his finger onto the next plant. Skips stay withheld because a skip is an explicit user action
-  // (his rule permits re-sorting on those) AND because they persist all day across devices, so
-  // counting them would rank a group by work already declined.
+  // `skipped` but keeps `logged`, so a ranking taken from it is a property of the plan rather than
+  // of how far through it Dave is. Logging is the side effect he named — tapping Log down a location
+  // group dropped that group's summed severity and slid the section out from under his finger onto
+  // the next plant. Skips are withheld because they persist all day across devices, so counting them
+  // would rank a group by work already declined.
+  //
+  // BUG-TODAYGROUPREORDER-001 — this set used to be ranked LIVE, and a skip was allowed to move the
+  // page: BD-036 read "an explicit user action" as including a skip. Dave narrowed that on
+  // 2026-09-17 to the By location / By type control, never a side effect of log, skip or mark moist.
+  // It is now read only when the layout below is TAKEN, not on every change.
   const orderingRows = useMemo(
     () => allRows.filter(r => !skipped.has(r.key)).map(enrich),
     [allRows, skipped, enrich],
@@ -555,20 +568,61 @@ export default function CareNeeded({ plan }) {
   // for each row; record staleness no longer decides page length here. Zero watering-LOGIC changes,
   // per the crucible boss ruling: the work is legibility.
   const capping = !showCapped
-  // BD-036 — the pinned layout, computed once per (plan, mode, capping) from `orderingRows`. It
-  // supplies BOTH the group order and the auto-expand set, because both were functions of the
-  // draining list: autoExpandKeys walks groups filling a row budget, so logging rows out of a group
-  // freed budget and silently opened a collapsed section further down the page — the same finger-
-  // level movement as the re-sort, from a second source. Capping is included because it changes the
-  // row counts the budget is spent against.
+  // BD-036 — the layout supplies BOTH the group order and the auto-expand set, because both were
+  // functions of the draining list: autoExpandKeys walks groups filling a row budget, so logging
+  // rows out of a group freed budget and silently opened a collapsed section further down the page —
+  // the same finger-level movement as the re-sort, from a second source.
+  //
+  // BUG-TODAYGROUPREORDER-001 — the layout is TAKEN when Today opens and HELD for the visit. BD-036
+  // pinned it to `orderingRows` but re-derived it on every change, which froze it against LOGGING
+  // only: a skip moved it on purpose, and every plan refetch moved it by accident. useDailyPlan
+  // revalidates on each wake (BUG-PLANNOREVALIDATE-001), the read path stamps what Dave has logged
+  // as `done`, and the ranking then ran against a list with his work taken out — he logged, put the
+  // phone in his pocket, and came back to the sections in a different order. That is the "every
+  // action" report of 2026-09-17: the swing arrived with the refetch, not with the tap.
+  //
+  // Re-taken ONLY on:
+  //   · a tap on By location / By type — either one, including the one already selected, which is
+  //     how he re-sorts on purpose. Ranked over the rows ON THE LIST NOW (`enrichedRows`), because a
+  //     sort he asked for should reflect the work that is left.
+  //   · the location names landing (`enrichById` settling). That re-keys every group from project to
+  //     location — a different set of sections, so there is no old order to keep. Ranked from
+  //     `orderingRows`, so a log made in that first second still cannot move anything.
+  //   · a clean slate: nothing the layout holds is on the list any more (all done, new work in).
+  //     There is nothing on screen to move.
+  // Opening Today again remounts this component, which is a fresh take by construction.
+  //
+  // Between takes, a section that empties is not drawn but keeps its slot (so Undo puts it back
+  // where it was), and a section seen for the first time is APPENDED at the end and remembered there
+  // — the place groupRows already gives an unranked key, made sticky so a later drain cannot swap it
+  // with its neighbour. It does not auto-expand: the row budget was spent when the layout was taken.
+  // Capping is not part of the basis: "Show N more" changes row counts, it is not a re-sort.
+  //
+  // Held in state and reconciled DURING render (NavPrefsContext's derived-state-on-key-change), so no
+  // frame paints an unheld order. The reconcile returns the held object itself when nothing changed,
+  // which is what stops the render-phase set from looping.
+  const [sortTaps, setSortTaps] = useState(0)
+  const onGroupBy = useCallback((value) => { setMode(value); setSortTaps(n => n + 1) }, [])
+  const layoutRows = sortTaps ? enrichedRows : orderingRows
   const pinnedGroups = useMemo(() => {
-    const gs = groupRows(orderingRows, mode)
+    const gs = groupRows(layoutRows, mode)
     return gs.map(g => {
       const c = capping ? capStaleRows(g.rows, WATER_STALE_CAP) : { rows: g.rows, hidden: 0 }
       return { ...g, rows: c.rows, hidden: c.hidden, count: g.rows.length }
     })
-  }, [orderingRows, mode, capping])
-  const pinnedOrder = useMemo(() => pinnedGroups.map(g => g.key), [pinnedGroups])
+  }, [layoutRows, mode, capping])
+  const basis = mode + ':' + sortTaps + ':' + (enrichById !== NO_ENRICHMENT)
+  const [layout, setLayout] = useState(null)
+  let held = layout
+  if (!layout || layout.basis !== basis) held = takeLayout(pinnedGroups, basis)
+  else {
+    const seen = new Set(layout.order)
+    const added = pinnedGroups.filter(g => !seen.has(g.key)).map(g => g.key)
+    if (added.length && added.length === pinnedGroups.length) held = takeLayout(pinnedGroups, basis)
+    else if (added.length) held = { ...layout, order: [...layout.order, ...added] }
+  }
+  if (held !== layout) setLayout(held)
+  const pinnedOrder = (held || NO_LAYOUT).order
   const groups = useMemo(() => {
     const gs = groupRows(enrichedRows, mode, pinnedOrder)
     return gs.map(g => {
@@ -589,7 +643,7 @@ export default function CareNeeded({ plan }) {
   // days is how the real disclosure stops being read.
   const hiddenTotal = useMemo(() => groups.reduce((n, g) => n + (g.hidden || 0), 0), [groups])
   const total = rows.length
-  const autoKeys = useMemo(() => autoExpandKeys(pinnedGroups, EXPAND_ROW_BUDGET), [pinnedGroups])
+  const autoKeys = (held || NO_LAYOUT).expand
 
   const announce = useCallback((msg) => { if (liveRef.current) liveRef.current.textContent = msg }, [])
 
@@ -890,7 +944,7 @@ export default function CareNeeded({ plan }) {
             <h2 data-testid="care-heading" style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               Needs care today
             </h2>
-            <GroupByControl options={GROUP_OPTS} value={mode} onChange={setMode} />
+            <GroupByControl options={GROUP_OPTS} value={mode} onChange={onGroupBy} />
           </div>
 
           {/* V4-TODAYVERBIAGE-001 — halved, not deleted, and the half that stayed is the one that
