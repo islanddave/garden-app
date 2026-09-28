@@ -271,6 +271,9 @@ const CHECKERS = {
     if (m.contentBottom < b.contentBottomFloor) F(`the last painted pixel is at y=${m.contentBottom}, above the ${b.contentBottomFloor}px floor`)
     if (m.controls < b.controlsFloor) F(`${m.controls} visible controls, under the ${b.controlsFloor} floor`)
     if (m.scrollHeight > b.scrollHeightCeiling) F(`document is ${m.scrollHeight}px, over the ${b.scrollHeightCeiling}px scroll-height ceiling on the default render — "everything opened" is the shape that trips this`)
+    // S2: the same ceiling on the LAST INK. A page shorter than a screen has scrollHeight = the viewport however
+    // much opens, so on the skeleton's short states "everything opened" could only show here.
+    if (b.contentBottomCeiling != null && m.contentBottom > b.contentBottomCeiling) F(`the last painted pixel is at y=${m.contentBottom}, past the ${b.contentBottomCeiling}px ceiling on the default render — on a page shorter than a screen the scroll height cannot grow, so "everything opened" shows here`)
   },
   'first-screen': (m, c, F) => {
     for (const id of c.mustContain || []) {
@@ -495,6 +498,7 @@ try {
     if (isArmed({ armedAt: 'S2' }, LANDED, false) && !SELF_TEST && !PROBE_NOTHING) recorded[state.name] = {
       clock: state.clock,
       contentBottomFloor: Math.round(m.contentBottom * 0.99),
+      contentBottomCeiling: Math.round(m.contentBottom * 1.02),
       controlsFloor: m.controls > 0 ? Math.max(1, m.controls - 2) : 0,
       scrollHeightCeiling: Math.round(m.scrollHeight * 1.02),
       measured: { scrollHeight: m.scrollHeight, contentBottom: m.contentBottom, controls: m.controls },
