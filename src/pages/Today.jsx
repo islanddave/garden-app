@@ -287,7 +287,10 @@ export default function Today() {
               </div>
             </details>
           ))}
-          {showOthers && householdPlans.length === 0 && (
+          {/* Only once the plan read has ANSWERED for the household: the read Lambda omits the key unless
+              asked, so an envelope without it says nothing about anyone else — the toggle was just
+              turned on, or a cold roster's reload was dropped (BUG-TODAYHOUSEHOLDRELOADDROP-001). */}
+          {showOthers && Array.isArray(data?.household_plans) && householdPlans.length === 0 && (
             <p style={{ fontSize: '0.82rem', color: P.light, marginTop: 10 }}>No one else has care needs today.</p>
           )}
         </div>
