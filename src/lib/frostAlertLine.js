@@ -395,13 +395,15 @@ function lineFor(a, lowShown) {
 // agreedTonightLow decides that — so the card, the cue and that line print one number; a later night's line always
 // keeps its own figure. `planLow` (plan.weather.tonightLow) is read only for the warmed line.
 // V5-TODAYFROSTWARMEDADVISORY-001 — `current` (currentLows(plan)) lets a same-night advisory retire (see the header).
-// Today passes it built from the SAME plan tonightLow.js reads, so the card, the cue and this line decide on one row.
+// Today passes it built from the SAME plan tonightLow.js reads, so the card, the cue and this line decide on one row. A
+// retired advisory's warmed line prints current's plan low, the figure pickFrostLines checked it could speak with, so a
+// retirement can never leave tonight with no line at all.
 export function buildFrostAlertLines(alertsSent, { lowShown, planLow, current } = {}) {
   const { tonight, ahead, imminent, warmed } = pickFrostLines(alertsSent, current)
   const lines = []
   if (tonight) lines.push(lineFor(tonight, lowShown))
   else {
-    const line = warmedLine(warmed || imminent, planLow)
+    const line = warmed ? warmedLine(warmed, current.planLow) : warmedLine(imminent, planLow)
     if (line) lines.push(line)
   }
   if (ahead) lines.push(lineFor(ahead, null))

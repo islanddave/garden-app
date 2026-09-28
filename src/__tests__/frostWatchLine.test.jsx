@@ -608,6 +608,13 @@ describe('(4) "Forecast warmed" after a same-night ADVISORY — retired once bot
     expect(screenOf(planFor(40.1, [ADV(40)], hyLows(41))).lines).toEqual([WARMED(40.1, '2:05 PM')])
   })
 
+  it('a retirement never leaves tonight without a line: the warmed line prints current\'s plan low, whatever `planLow` says', () => {
+    const cur = currentLows(planFor(44, LADDER, hyLows(45)))
+    for (const planLow of [undefined, null, 'n/a', 39]) {
+      expect(texts(LADDER, { planLow, current: cur }), String(planLow)).toEqual([WARMED(44, '3 PM')])
+    }
+  })
+
   it('Protect rows follow the card: retired -> the plan\'s own "(low 44°F)" is back beside the plan low', () => {
     const rows = (plan) => buildCareNeeded(plan).filter((r) => r.need === 'cold').map((r) => r.reason)
     const after = rows(planFor(44, LADDER, hyLows(41.2)))
