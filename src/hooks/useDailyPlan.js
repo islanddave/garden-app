@@ -55,8 +55,17 @@
 // already answered by the open request. The trailing run never blanks a plan on screen: it is a
 // refresh once a plan has been shown (so STALE ROWS BEAT BLANK ROWS covers its failure), and an
 // initial load when none has.
+//
+// V5-TODAYREDESIGN-001 S2 — an OPT-IN `seed` (plan-v2 §6.3), absent for every existing caller (Today.jsx,
+// TodayReasoning.jsx), which therefore behave exactly as before. A caller passing `seed` (the signed-in
+// user's id) gets the module-level last good plan for the same user + question on a remount, when that
+// plan is TODAY's: it paints at once with `loading` false, and the mount fetch runs as a REFRESH (loading
+// never flips on, a failure keeps the seeded plan). So Back to the redesigned Today paints the page it
+// left, under the page-scroll manager's restore, instead of a "Loading…" frame. Another user never reads
+// it (keyed by id), yesterday's plan is never painted as today's, and a successful fetch replaces it.
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
+import { todayLocalISO } from '../lib/dateLocal.js'
 
 // Floor between wake-triggered revalidations. `focus` is noisier than it looks on Android — a
 // dismissed keyboard or a permission sheet fires it — and the in-flight ref only coalesces
@@ -65,10 +74,22 @@ import { useApiFetch } from '../lib/api.js'
 // Deliberately NOT applied to `refresh` itself: an explicit caller asked, and gets a fetch.
 const REVALIDATE_MIN_MS = 60_000
 
-export function useDailyPlan({ includeHousehold = false } = {}) {
+// The seed store: last good envelope per user + question. Module scope so it outlives the page's unmount.
+const lastGood = new Map()
+const seedKeyOf = (seed, includeHousehold) => (typeof seed === 'string' && seed ? `${seed}|${includeHousehold ? 'household' : 'own'}` : null)
+function readSeed(seed, includeHousehold) {
+  const k = seedKeyOf(seed, includeHousehold)
+  const d = k ? lastGood.get(k) : null
+  return d && d.plan_date === todayLocalISO() ? d : null
+}
+// Test seam, as __resetPrefsFlight: module state outlives a test case.
+export function __resetDailyPlanSeed() { lastGood.clear() }
+
+export function useDailyPlan({ includeHousehold = false, seed } = {}) {
   const { fetch } = useApiFetch()
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [seeded] = useState(() => readSeed(seed, includeHousehold))
+  const [data, setData] = useState(seeded)
+  const [loading, setLoading] = useState(!seeded)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState(null)
   const loadCounterRef = useRef(0)
@@ -79,10 +100,15 @@ export function useDailyPlan({ includeHousehold = false } = {}) {
   // Tracks "we have shown a real plan at least once" WITHOUT reading `data` in the callback, which
   // would put `data` in the useCallback deps and change `refresh`'s identity on every successful
   // fetch — re-registering the focus/visibility listeners each time.
-  const hasDataRef = useRef(false)
+  const hasDataRef = useRef(!!seeded)
   // BUG-TODAYHOUSEHOLDRELOADDROP-001 — the question the latest commit asks (its fetch + includeHousehold)
   // and the `run` that asks it; null once unmounted, so a request settling after that starts nothing.
   const latestRef = useRef(null)
+  // S2 seed: whether this mount painted a seed (its first fetch is then a refresh), and whose store a good
+  // answer refreshes. A ref, so a user id landing after mount never changes `run` and never re-fetches.
+  const seededRef = useRef(!!seeded)
+  const seedRef = useRef(seed)
+  seedRef.current = seed
 
   const run = useCallback(async (isRefresh) => {
     // Coalesce: a second wake while one request is open is a no-op, not a competing chain. A call
@@ -98,6 +124,8 @@ export function useDailyPlan({ includeHousehold = false } = {}) {
       setData(d)
       hasDataRef.current = true
       setError(null)
+      const sk = seedKeyOf(seedRef.current, includeHousehold)
+      if (sk && d) lastGood.set(sk, d)
     } catch (err) {
       if (loadCounterRef.current !== my) return
       // Only an initial load — or a refresh that has never had data to fall back on — may surface an
@@ -124,7 +152,11 @@ export function useDailyPlan({ includeHousehold = false } = {}) {
   const reload  = useCallback(() => run(false), [run])
   const refresh = useCallback(() => run(true),  [run])
 
-  useEffect(() => { reload() }, [reload])
+  useEffect(() => {
+    // A seeded mount revalidates instead of loading: the seed is already on screen and must not blank.
+    if (seededRef.current) { seededRef.current = false; run(true); return }
+    reload()
+  }, [reload, run])
 
   // BUG-PLANNOREVALIDATE-001 — the missing half of DRG-INTRADAY-002. Both events, because Android
   // fires them inconsistently: `visibilitychange` on app switch, `focus` on window re-focus within

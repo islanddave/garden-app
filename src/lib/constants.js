@@ -216,5 +216,12 @@ export const PHOTO_BUCKET = 'garden-photos'
 // behind it. BottomNav.jsx owns the CSS VARIABLE; this owns the NUMBER.
 export const BOTTOM_NAV_HEIGHT_PX = 56
 
+// TopChrome's bar height, the number the redesigned Today's sticky jump bar hangs under (plan-v2 §6.1).
+// TopChrome.jsx keeps its own literal `const BAR_H = 52` ON PURPOSE: seven layout gates parse that exact
+// source line (today-shape, page-scroll, seeds-page, seeds-scroll, seed-detail, today-shape-v2,
+// today-shell-v2), so pointing BAR_H at this constant would crash every one of them at startup.
+// topChromeHeight.test.js reds if the two numbers ever disagree.
+export const TOP_CHROME_HEIGHT_PX = 52
+
 // Public URL base — used for canonical links, og:url, GCal descriptions (Phase 3+)
 export const APP_URL = 'https://garden.futureishere.net'
