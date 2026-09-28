@@ -84,16 +84,22 @@ function envelope({ done = [], gen = '2026-09-28T13:00:00Z', date = todayISO(), 
 }
 
 // Scoped to Dave's OWN list: the first `today-care` on the page (the household lens mounts more).
-const ownList = () => screen.getAllByTestId('today-care')[0]
-const headers = () => within(ownList()).queryAllByTestId('care-group').map(g => g.querySelector('button[aria-expanded]'))
+const lists = () => screen.getAllByTestId('today-care')
+const ownList = () => lists()[0]
+const headersIn = (list) => within(list).queryAllByTestId('care-group').map(g => g.querySelector('button[aria-expanded]'))
+const headers = () => headersIn(ownList())
 const headerLabels = () => headers().map(b => b.querySelector('span').textContent)
 const expandedLabels = () => headers().filter(b => b.getAttribute('aria-expanded') === 'true').map(b => b.querySelector('span').textContent)
-const countOf = (label) => {
-  const b = headers().find(x => x.querySelector('span').textContent === label)
+const countIn = (list, label) => {
+  const b = headersIn(list).find(x => x.querySelector('span').textContent === label)
   return b ? b.querySelectorAll('span')[1].textContent : null
 }
+const countOf = (label) => countIn(ownList(), label)
 const expand = (label) => fireEvent.click(headers().find(b => b.querySelector('span').textContent === label))
-const planCalls = () => fetchMock.mock.calls.filter(c => typeof c[0] === 'string' && c[0].startsWith('/api/daily-plan')).length
+// The plan read only — NOT /api/daily-plan/cue-impressions, which a plan carrying a weather cue beacons
+// on render and would otherwise swallow a queued plan (found by the v4.158.0 QA review in its own probe).
+const isPlan = (p) => typeof p === 'string' && /^\/api\/daily-plan(\?|$)/.test(p)
+const planCalls = () => fetchMock.mock.calls.filter(c => isPlan(c[0])).length
 const postsFor = (pid) => fetchMock.mock.calls.filter(c => c[0] === '/api/events' && c[1]?.method === 'POST' && JSON.parse(c[1].body).plant_id === pid).length
 const chip = (name) => within(ownList()).queryByRole('button', { name: 'Log Water for ' + name })
 const logAllWatering = () => screen.queryAllByRole('button').find(b => /^Log all watering \(\d+\)$/.test(b.getAttribute('aria-label') || ''))
@@ -116,7 +122,7 @@ beforeEach(() => {
   fetchMock.mockReset(); toastMock.show.mockReset(); toastMock.showUndo.mockReset()
   let n = 0
   fetchMock.mockImplementation((path, opts) => {
-    if (typeof path === 'string' && path.startsWith('/api/daily-plan')) {
+    if (isPlan(path)) {
       if (holdPlan) return new Promise(res => planWaiters.push(res))
       return Promise.resolve(plans.shift())
     }
@@ -366,6 +372,52 @@ describe('BUG-TODAYGROUPREORDER-001 — a new plan day, reset in place', () => {
     expect(countOf('Drive Rows')).toBe('4')
   })
 
+  // The same date rule on the other two write paths — the v4.158.0 QA review found it pinned for the
+  // single Log only, and a one-line refactor of either path left every other test green [QA Q1, Q2].
+  it('a "Log all watering" made after midnight on yesterday\'s list stays logged when today\'s plan lands [QA Q1]', async () => {
+    // Dave's dominant action: most of his watering goes through this one tap.
+    await openToday(envelope({ date: dayISO(-1) }))
+    await waitFor(() => expect(headerLabels()).toEqual(ARRIVAL))
+    const yesterday = dateLine()
+    holdPlan = true
+    await wake()
+    expect(logAllWatering()).toBeTruthy()
+    fireEvent.click(logAllWatering())
+    // The fan-out lands (dated today) and fades every watering row at its end.
+    await waitFor(() => expect(within(ownList()).queryByText('Bag Five')).toBeNull())
+    // Today's plan arrives, read before those writes committed, so it still calls all twelve due.
+    holdPlan = false
+    await act(async () => { planWaiters.shift()(envelope({ date: todayISO(), gen: '2026-09-29T11:00:00Z' })) })
+    await waitFor(() => expect(dateLine()).not.toBe(yesterday))
+    await settle()
+    // What he would do if the pill came back with twelve rows under it: tap it.
+    if (logAllWatering() && !logAllWatering().disabled) fireEvent.click(logAllWatering())
+    await settle()
+    const ids = ['d1', 'd2', 'd3', 'd4', 'b1', 'b2', 'b3', 'b4', 'b5', 'c1', 'c2', 'c3']
+    expect(Object.fromEntries(ids.map(id => [id, postsFor(id)]))).toEqual(Object.fromEntries(ids.map(id => [id, 1])))
+    expect(within(ownList()).queryByText('Bag Five')).toBeNull()
+  })
+
+  it('a "still moist" made after midnight on yesterday\'s list stays faded when today\'s plan lands [QA Q2]', async () => {
+    await openToday(envelope({ date: dayISO(-1) }))
+    await waitFor(() => expect(headerLabels()).toEqual(ARRIVAL))
+    const yesterday = dateLine()
+    holdPlan = true
+    await wake()
+    const moist = () => within(ownList()).queryByRole('button', { name: 'Checked Drive One — still moist' })
+    expect(moist()).toBeTruthy()
+    fireEvent.click(moist())
+    await waitFor(() => expect(within(ownList()).queryByText('Drive One')).toBeNull())
+    holdPlan = false
+    await act(async () => { planWaiters.shift()(envelope({ date: todayISO(), gen: '2026-09-29T11:00:00Z' })) })
+    await waitFor(() => expect(dateLine()).not.toBe(yesterday))
+    await settle()
+    if (moist() && !moist().disabled) fireEvent.click(moist())
+    await settle()
+    expect(postsFor('d1')).toBe(1)
+    expect(within(ownList()).queryByText('Drive One')).toBeNull()
+  })
+
   it('yesterday\'s Undo, tapped after the same row was logged again today, leaves today\'s log hidden', async () => {
     // Needs the device clock to cross midnight between the two logs, as it does on the phone: a fade is
     // dated by the write that made it.
@@ -407,6 +459,29 @@ describe('BUG-TODAYGROUPREORDER-001 — a new plan day, reset in place', () => {
     expect(expandedLabels()).toEqual(['Pasture'])
     const loopish = errs.mock.calls.map(c => String(c[0])).filter(m => /Too many re-renders|Cannot update a component|Maximum update depth/.test(m))
     expect(loopish).toEqual([])
+  })
+
+  it('the HOUSEHOLD list resets on a new plan day too: a household row logged yesterday is back when due today [QA Q3]', async () => {
+    members = { members: [{ id: 'jen', display_name: 'Jen Example' }] }
+    await openToday(envelope())
+    await waitFor(() => expect(headerLabels()).toEqual(ARRIVAL))
+    plans.push(envelope({ household: [{ user_id: 'jen', plan: planBody() }] }))
+    await waitFor(() => expect(screen.queryByTestId('today-household-toggle')).toBeTruthy())
+    fireEvent.click(screen.getByTestId('today-household-toggle'))
+    await waitFor(() => expect(lists().length).toBe(2))
+    const hh = () => lists()[1]
+    await waitFor(() => expect(countIn(hh(), 'Drive Rows')).toBe('5'))
+    const yesterday = dateLine()
+    // Dave logs Jen's Drive One from the household list (the same one-tap path).
+    fireEvent.click(within(hh()).getByRole('button', { name: 'Log Water for Drive One' }))
+    await waitFor(() => expect(countIn(hh(), 'Drive Rows')).toBe('4'))
+    // Next morning's plan: Jen's Drive One is due again.
+    plans.push(envelope({ date: nextDayISO(), gen: '2026-09-29T11:00:00Z', household: [{ user_id: 'jen', plan: planBody() }] }))
+    await wake()
+    await waitFor(() => expect(dateLine()).not.toBe(yesterday))
+    await settle()
+    expect(countOf('Drive Rows')).toBe('5')
+    expect(countIn(hh(), 'Drive Rows')).toBe('5')
   })
 })
 
