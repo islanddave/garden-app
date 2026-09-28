@@ -109,7 +109,10 @@ export function useCacheLifecycle(sub) {
   // place.
   //
   // No visibilityState guard either: a reconnect while hidden should still refetch, and the cost is
-  // bounded at ≤3 requests (the cache holds only photo-list keys).
+  // one request per WATCHED key. That was ≤3 when the cache held only photo lists; it now also holds
+  // Garden's three lists and (BUG-GARDENSPOTCREEP-001, 4.158.1) the household roster, /api/members — so
+  // while Today, Garden, Findings or a planting/project page is mounted, each reconnect and each wake
+  // past the age gate adds one garden-members call (one Clerk user list). Still bounded by the watched set.
   //
   // Uses onReconnect() rather than a raw addEventListener('online') — it is the repo's reconnect
   // contract (already shipped in FieldCapture) and carries the SSR + throw guards.
@@ -133,7 +136,8 @@ export function useCacheLifecycle(sub) {
 //     overscroll-behavior) and does a full network-first shell reload. A custom PTR must SUPPRESS
 //     it, i.e. consume the one gesture that performs a full recovery and replace it with a 3-key
 //     partial refresh. The user cannot then get the full reload back.
-//   · This cache covers exactly 3 photo-list keys. Today / Garden / Dashboard / Harvests /
+//   · This cache covered exactly 3 photo-list keys when this was decided (Garden's lists and the
+//     household roster joined later; neither changes the reasoning). Today / Garden / Dashboard / Harvests /
 //     Inventory / Findings / Collection / Feed each run their own per-mount fetch and are
 //     untouched — a global-looking gesture would change nothing visible on the screens users pull.
 //   · A "Refresh" row would collide with UpdateBanner's existing global control of the same name
