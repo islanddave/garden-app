@@ -74,6 +74,19 @@ describe('useTodayVisit', () => {
     expect(sessionStorage.getItem(key(D1))).toBeNull()
   })
 
+  it('a new plan day waiting on its ready point keeps showing the last visit, and stores nothing under the new day', () => {
+    const { result, rerender } = renderHook(({ planDate, ready }) => useTodayVisit({ userId: 'u', planDate, ready, start: snap(['care'], { care: true }) }),
+      { initialProps: { planDate: D1, ready: true } })
+    const first = result.current.record.id
+    rerender({ planDate: D2, ready: false })
+    expect(result.current.record.id).toBe(first)
+    expect(result.current.isOpen('care')).toBe(true)
+    expect(sessionStorage.getItem(key(D2))).toBeNull()
+    rerender({ planDate: D2, ready: true })
+    expect(result.current.record.id).not.toBe(first)
+    expect(readVisitRecord(key(D2)).id).toBe(result.current.record.id)
+  })
+
   it('an explicit tap sets the section for the visit and spends any overlay on it', () => {
     const { result } = renderHook(() => useTodayVisit({ userId: 'u', planDate: D1, ready: true, start: snap() }))
     act(() => result.current.overlayAll(['care', 'resting'], 'open'))

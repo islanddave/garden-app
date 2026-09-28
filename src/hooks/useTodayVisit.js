@@ -46,6 +46,10 @@ export function useTodayVisit({ userId, planDate, ready, start }) {
   }
 
   useEffect(() => { if (record && key) writeVisitRecord(key, record) }, [key, record])
+  // A new plan day whose visit has not started yet (the page is re-reading prefs for it): keep showing the
+  // last visit rather than blanking the sections for that moment. Shown only — never stored under the new
+  // day's key, where a Back would restore it as that day's layout.
+  const shown = record || (!ready && state ? state.record : null)
 
   const update = useCallback((fn) => {
     setState((s) => (s && s.record ? { ...s, record: fn(s.record) } : s))
@@ -65,7 +69,7 @@ export function useTodayVisit({ userId, planDate, ready, start }) {
     return { ...r, overlay }
   }), [update])
 
-  const isOpen = useCallback((section) => effectiveOpen(record, section), [record])
+  const isOpen = useCallback((section) => effectiveOpen(shown, section), [shown])
 
-  return { record, returned, isOpen, tap, overlayAll }
+  return { record: shown, returned, isOpen, tap, overlayAll }
 }
