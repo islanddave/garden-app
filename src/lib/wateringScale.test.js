@@ -11,19 +11,31 @@ import {
 } from './wateringScale.js'
 
 describe('computeWateringScale', () => {
-  it("a DRY bed with rain coming tomorrow is watered today (the engine's wet-floor prerequisite)", () => {
-    // WAS: containers 2, beds 0 — the widget zeroed beds on its private "0.3\" at 50%" bar with no
-    // regard for whether the media was already wet. The engine requires BOTH: already moist
-    // (windowPrecip >= SOAK_WET_FLOOR_IN) AND >= SOAK_FCST_QPF_IN more coming. The reasoning is a
-    // drying window — wet soil plus more rain has none; dry soil plus rain tomorrow is just dry soil
-    // today. windowPrecip here is 0.05, so nothing is suppressed and the bed gets watered.
+  it('a DRY bed waits for a real forecast tomorrow; the containers are still watered (Dave, 2026-09-28)', () => {
+    // BUG-RAINBEDWAITCONFLICT-001. This test used to pin the opposite ("dry soil plus rain tomorrow is
+    // just dry soil today", so the bed was watered at 1.5) while the rain line under the card said "let
+    // in-ground beds wait". Dave chose the rain: a bed takes a forecast half-inch over its whole area, so
+    // a DRY bed now waits for 0.50" at 60%+ tomorrow, as the engine's in-ground 'incoming_dry' does.
+    // Containers never wait on a forecast (Decision 3), and rainComing still reports only the wet-media
+    // branch.
     const s = computeWateringScale(
       { recent_precip_in: 0.05, tomorrow_precip_in: 0.74, tomorrow_pop: 63, rain_coming: true },
       { hot: false, highToday: 78 },
     )
     expect(s.containers).toBe(2)
-    expect(s.beds).toBe(1.5)
+    expect(s.beds).toBe(0)
     expect(s.rainComing).toBe(false)
+  })
+
+  it('the dry bed is still watered below either bar, or when the chance is unknown', () => {
+    const bed = (tmrw, pop) => computeWateringScale(
+      { recent_precip_in: 0.05, tomorrow_precip_in: tmrw, tomorrow_pop: pop }, { hot: false }).beds
+    expect(bed(0.74, 59)).toBe(1.5)
+    expect(bed(0.49, 95)).toBe(1.5)
+    expect(bed(3.0, null)).toBe(1.5)
+    expect(bed(0.5, 60)).toBe(0)
+    // No rain history at all: the engine bails, so the widget does too — uncertainty waters.
+    expect(computeWateringScale({ recent_precip_in: null, tomorrow_precip_in: 0.74, tomorrow_pop: 90 }, { hot: false }).beds).toBe(1.5)
   })
 
   it("honours the engine's incoming branch once the media IS already wet", () => {

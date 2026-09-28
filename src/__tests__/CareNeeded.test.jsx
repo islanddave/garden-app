@@ -467,7 +467,9 @@ describe('CareNeeded — Slice 7', () => {
 
     it('excludes in-ground beds while bed-wait is active, exactly as the global pill does', async () => {
       const p = twoGroups()
-      p.hydrology = { tomorrow_precip_in: 0.5, tomorrow_pop: 80 }   // bedWaitActive
+      // bedWaitActive: the engine's dry-bed deferral gate, which needs a rain history (recent_precip_in)
+      // like the engine does (BUG-RAINBEDWAITCONFLICT-001).
+      p.hydrology = { recent_precip_in: 0.05, tomorrow_precip_in: 0.5, tomorrow_pop: 80 }
       p.water_due[1].in_ground = true                                // a2 becomes a bed
       render(<CareNeeded plan={p} />)
       // Only a1 remains a candidate, so the section bulk drops below two and disappears.

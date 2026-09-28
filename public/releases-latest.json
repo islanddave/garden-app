@@ -1,7 +1,7 @@
 {
-  "version": "4.156.0",
-  "date": "2026-09-25",
+  "version": "4.157.0",
+  "date": "2026-09-28",
   "highlights": [
-    "Pages open at the top: a page you open from a scrolled list now opens at its top instead of part-way down, and Back takes you to exactly where you were, including on pages that load slowly, a planting's Event log, and after the app refreshes."
+    "Beds wait for real rain: when at least half an inch is forecast for tomorrow at a 60% or better chance, Today no longer lists dry in-ground beds, so the top line and the rain note agree. Containers and beds planted in the last three weeks are still watered, and the rain note no longer fires on a weaker forecast."
   ]
 }

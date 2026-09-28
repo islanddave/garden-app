@@ -85,9 +85,20 @@ describe('grouping + bed-wait + expansion', () => {
     expect(g[0].key).toBe('prP')           // Peppers: two water rows (4d + 2d) plus a feed
     expect(groupSeverity(g[0].rows)).toBe(8.5)   // (1+4) + (1+2) + 0.5
   })
-  it('bedWaitActive fires on the engine rain-callout gate', () => {
-    expect(bedWaitActive(GOLDEN)).toBe(true)
-    expect(bedWaitActive({ hydrology: { tomorrow_precip_in: 0.1, tomorrow_pop: 90 } })).toBe(false)
+  it("bedWaitActive fires exactly when the engine lets DRY beds wait (0.50\" at 60%+, BUG-RAINBEDWAITCONFLICT-001)", () => {
+    const withRecent = (h) => bedWaitActive({ hydrology: { recent_precip_in: 0.05, ...h } })
+    expect(withRecent({ tomorrow_precip_in: 0.74, tomorrow_pop: 63 })).toBe(true)
+    expect(withRecent({ tomorrow_precip_in: 0.5, tomorrow_pop: 60 })).toBe(true)
+    // The retired private 0.30"/50% bar no longer fires it. 09-17 (1.12" @ 53%, 0.17" fell) was the
+    // season's only forecast-driven false hold under that bar.
+    expect(withRecent({ tomorrow_precip_in: 0.3, tomorrow_pop: 50 })).toBe(false)
+    expect(withRecent({ tomorrow_precip_in: 1.12, tomorrow_pop: 53 })).toBe(false)
+    expect(withRecent({ tomorrow_precip_in: 0.49, tomorrow_pop: 90 })).toBe(false)
+    expect(withRecent({ tomorrow_precip_in: 0.1, tomorrow_pop: 90 })).toBe(false)
+    // Unknown chance fails closed, and with no rain history the engine defers nothing, so neither does this.
+    expect(withRecent({ tomorrow_precip_in: 3.0, tomorrow_pop: null })).toBe(false)
+    expect(bedWaitActive({ hydrology: { tomorrow_precip_in: 0.74, tomorrow_pop: 63 } })).toBe(false)
+    expect(bedWaitActive({})).toBe(false)
   })
   it('EXPAND_ROW_BUDGET is a small ADHD-friendly chunk', () => {
     expect(EXPAND_ROW_BUDGET).toBe(8)

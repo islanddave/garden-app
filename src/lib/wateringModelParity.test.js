@@ -68,7 +68,10 @@ const POPS = [null, 0, 28, 59, 60, 84, 92]
 // today-aware path — the configuration live in prod (CARE_TODAY_AWARE_ENABLED=true since the Lambda
 // config update at 2026-08-11T14:07:58Z). The widget's bed lane is the surface that must agree with
 // it: both answer "should an outdoor bed be watered today, given this sky?".
-const engineHolds = (h) => saturationSuppressed('outdoor', h, { todayAware: true, smallVessel: false }) !== null
+// BUG-RAINBEDWAITCONFLICT-001 (2026-09-28): prod also arms the dry-bed deferral for every in-ground
+// planting (generatePlanForUser passes deferDry for inGround when deferDryBeds is on, and handler.js
+// turns that on), so an in-ground planting's prod config now includes deferDry:true.
+const engineHolds = (h) => saturationSuppressed('outdoor', h, { todayAware: true, smallVessel: false, deferDry: true }) !== null
 const widgetHoldsBeds = (h) => computeWateringScale(h, { hot: false }).beds === 0
 
 describe('the bed lane and the engine reach the same verdict on every bag in the sweep', () => {
@@ -150,5 +153,27 @@ describe('containers are exempt from forecast-based suppression — the delibera
     expect(computeWateringScale(hy(0, 1.0, 0, 92, 0, 0), { hot: false }).containers).toBe(0)
     expect(computeWateringScale(hy(1.0, 0, 0, 0, 0, 0), { hot: false }).containers).toBe(0)
     expect(computeWateringScale(hy(0.5, 0, 0, 0, 0, 0), { hot: false }).containers).toBe(1)
+  })
+})
+
+// BUG-RAINBEDWAITCONFLICT-001 — the third voice on the screen. The engine's rain line ("let in-ground beds
+// wait") is computeCallout's, and it must fire exactly when the bed lane waits on tomorrow's forecast for
+// a DRY bed. Swept over the retired 0.30"/50% bar, the 09-17 false hold (1.12" @ 53%) and the new edges.
+describe('the rain line and the bed lane agree on every dry-bed forecast', () => {
+  const { computeCallout } = engine
+  const MILD = { tonightLow: 55, highToday: 70 }   // no freeze/cold/heat callout outranks the rain one
+  it('rain line fires  <=>  the widget lets a dry bed wait', () => {
+    const off = []
+    for (const recent of [null, 0, 0.05]) {
+      for (const tmrw of [0, 0.3, 0.49, 0.5, 0.74, 1.12, 3.0]) {
+        for (const tmrwPop of [null, 0, 50, 53, 59, 60, 84]) {
+          const h = { recent_precip_in: recent, today_precip_in: 0, today_pop: 0, tomorrow_precip_in: tmrw, tomorrow_pop: tmrwPop }
+          const line = computeCallout(MILD, h, true)?.icon === 'rain'
+          const lane = recent != null && computeWateringScale(h, { hot: false }).beds === 0
+          if (line !== lane) off.push({ recent, tmrw, tmrwPop, line, lane })
+        }
+      }
+    }
+    expect(off.slice(0, 5)).toEqual([])
   })
 })

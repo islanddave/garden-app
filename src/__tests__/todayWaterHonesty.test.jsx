@@ -180,3 +180,17 @@ describe('BUG-TODAYWATER-001 — Today wires the list it renders into the headli
     expect(container.textContent).toMatch(/All set — no watering needed today\./)
   })
 })
+
+describe('BUG-RAINBEDWAITCONFLICT-001 — the top line and the rain line agree about dry beds', () => {
+  // Dave, 2026-09-28: "let beds wait". Before this, a dry garden with 0.74" at 63% tomorrow printed
+  // "Water both — containers and beds today." over a rain line saying "let in-ground beds wait".
+  const DRY_RAIN_TOMORROW = { recent_precip_in: 0.05, today_precip_in: 0, today_pop: 5, tomorrow_precip_in: 0.74, tomorrow_pop: 63 }
+  it('real rain tomorrow: water the containers, skip the beds', () => {
+    const { container } = render(<WeatherWidget weather={{ ...weather, hot: false }} hydrology={DRY_RAIN_TOMORROW} waterDueCount={40} />)
+    expect(headlineText(container)).toMatch(/Water containers, skip the beds today\./)
+  })
+  it('anti-vacuity: under the 60% bar the beds are still watered', () => {
+    const { container } = render(<WeatherWidget weather={{ ...weather, hot: false }} hydrology={{ ...DRY_RAIN_TOMORROW, tomorrow_pop: 55 }} waterDueCount={40} />)
+    expect(headlineText(container)).toMatch(/Water both — containers and beds today\./)
+  })
+})
