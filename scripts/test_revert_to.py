@@ -396,6 +396,7 @@ def test_run_data_loss_guard(monkeypatch):
     cfg = rt.Config(env=base_env(CONFIRM_DATA_LOSS="no"))
     s3 = FakeS3({("garden-snapshots-prod", "snapshots/v2.5.0.json"): json.dumps(good_manifest()).encode()})
     fr = FakeRequests()
+    serve_prod_version(fr)
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))
     monkeypatch.setattr(rt, "requests", fr)
@@ -581,6 +582,15 @@ def serve_target_workflows(fr, files, sha="a" * 40):
         "encoding": "base64", "content": base64.b64encode(files[url.rsplit("/blob-", 1)[1]].encode()).decode()}))
 
 
+def serve_prod_version(fr, version="2.5.1", main_sha="p" * 40):
+    """main's head and its package.json: the version prod runs, which run()'s A1 floor check reads
+    first. 2.5.1 is below every entry of the real scripts/revert-floors.json, so no floor is in force
+    and these fixtures' v2.5.0 target passes it (test_revert_floors.py covers the floor itself)."""
+    fr.add("GET", "/git/ref/heads/main", FakeResp(200, {"object": {"sha": main_sha}}))
+    fr.add("GET", f"/contents/package.json?ref={main_sha}", FakeResp(200, {
+        "encoding": "base64", "content": base64.b64encode(json.dumps({"version": version}).encode()).decode()}))
+
+
 def job_env():
     """What revert-gate.yml passes: a budget that covers the worst case, and the job's start."""
     need = rt.post_checkpoint_worst_case_s() + rt.JOB_START_ALLOWANCE_S
@@ -602,6 +612,7 @@ def prod_world(monkeypatch, prerevert=None, target_files=None, env_over=None, **
     fr = FakeRequests()
     events = []
     gh = FakeActions(fr, events, **actions_kw)
+    serve_prod_version(fr)
     serve_target_workflows(fr, current_workflows() if target_files is None else target_files)
     fr.add("GET", "/git/ref/tags/v2.5.0", FakeResp(200, {"object": {"sha": "tagobj"}}))
     fr.add("GET", "/git/tags/tagobj", FakeResp(200, {"object": {"sha": "a" * 40}}))

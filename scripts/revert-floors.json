@@ -1,0 +1,21 @@
+{
+  "floors": [
+    {
+      "floor": "v4.156.0",
+      "since": "v4.156.0",
+      "reason": "page-scroll manager: history.scrollRestoration is 'manual' per history entry and only a bundle that knows SCROLL_MANAGER_ENABLED writes 'auto' back, so an older bundle leaves open sessions losing their place on Back until the app is closed",
+      "ledger": "BUG-DETAILPAGESCARRYSCROLL-001",
+      "undo_instead": {
+        "flag": "SCROLL_MANAGER_ENABLED",
+        "file": "src/lib/featureFlags.js"
+      }
+    },
+    {
+      "floor": "v4.135.0",
+      "since": "v4.135.0",
+      "reason": "daily-plan schedule: garden-daily-plan-hourly is live and the nightly, intraday-am and intraday-pm rules are retired; deploy-lambda.yml before v4.135.0 re-creates the nightly rule (v4.134.0) or all three (v4.129.0 and earlier) and never deletes the hourly one, so the plan would run on two schedules",
+      "ledger": "OPS-PLANHOURLY-001",
+      "undo_instead": null
+    }
+  ]
+}
