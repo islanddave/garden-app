@@ -94,10 +94,10 @@ const planting = (id, slug, extra = {}) => withCoverFlags({
   last_fert: '2026-09-20', substrate_start: '2026-05-01', transplant_at: null, ...extra,
 });
 
-function pgStub(sent) {
+function pgStub(sent, plantings = [planting('p1', 'pepper'), planting('p2', 'tomato')]) {
   return {
     query: vi.fn(async (sql) => {
-      if (/from plants/.test(sql)) return { rows: [planting('p1', 'pepper'), planting('p2', 'tomato')] };
+      if (/from plants/.test(sql)) return { rows: plantings };
       if (/from spaces/.test(sql)) return { rows: [{ id: SPACE, postal_code: null, weather_lat: 42.5, weather_lng: -72.6 }] };
       if (/select items->'alerts_sent' as alerts_sent from daily_plan/.test(sql)) return { rows: sent ? [{ alerts_sent: sent }] : [] };
       if (/^\s*select items from daily_plan/.test(sql)) return { rows: sent ? [{ items: { alerts_sent: sent } }] : [] };
@@ -173,5 +173,34 @@ describe('END TO END — the written row, read by the Today client\'s own rule',
     expect(row.hydrology.forecast_lows).toEqual([39.6, 45.3, 47.1]);
     expect(lines(row)).toEqual(['Frost possible tonight — low 38°F. Plan cover for tender plants.']);
     expect(agreedTonightLow(row)).toEqual({ lowF: 38, lowRaw: 37.6 });
+  });
+});
+
+// Adopted from the v4.158.0 pre-promote QA review (review-v4158-qa.md, the two-users probe). One Space holds plantings for
+// Dave AND Jen, so one run() writes two daily_plan rows. Both must carry this run's lows and the same carried-forward
+// alerts_sent (handler.readSpaceAlertsSent), so both phones retire the same email from the same facts.
+describe('both users\' rows — one run(), two written rows, one decision (QA probe)', () => {
+  it('two users, one Space, a post-window run: both written rows carry the arrays and both say "warmed"', async () => {
+    vi.stubEnv('FROST_ALERT_ENABLED', 'true');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const pg = pgStub(SENT, [planting('p1', 'pepper'), planting('p2', 'tomato', { assignee_user_id: 'user_jen' })]);
+    await h.run({
+      pg, today: TODAY, dryRun: false,
+      geocodeZip: async () => ({ lat: 42.5, lng: -72.6 }),
+      fetchNWS: async () => ({ tonightLow: 44, highToday: 60, code: 3, unit: 'F', short: 'Cloudy' }),
+      fetchPrecip: async () => ({ forecast_lows: LOWS, forecast_dates: DATES, recent_precip_in: 0, today_precip_in: 0, today_pop: 0,
+        upcoming_precip_in: 0, tomorrow_precip_in: 0, tomorrow_pop: 0, yesterday_precip_actual_in: 0 }),
+      fetchStation: async () => null, publishAlert: vi.fn(async () => ({ messageId: 'm1' })),
+      etHour: 20, event: {},
+    });
+    const rows = pg.query.mock.calls.filter(([sql]) => /insert into daily_plan/.test(sql)).map(([, p]) => ({ user: p[0], items: JSON.parse(p[2]) }));
+    expect(rows.map((r) => r.user).sort()).toEqual(['user_dave', 'user_jen']);
+    for (const r of rows) {
+      expect(r.items.hydrology.forecast_lows, r.user).toEqual(LOWS);
+      expect(r.items.hydrology.forecast_dates, r.user).toEqual(DATES);
+      expect(r.items.alerts_sent, r.user).toEqual(SENT);
+      const lines = buildFrostAlertLines(r.items.alerts_sent, { planLow: r.items.weather.tonightLow, current: currentLows(r.items) }).map((l) => l.text);
+      expect(lines, r.user).toEqual(['Forecast warmed to 44°F since the 3:02 PM frost email.']);
+    }
   });
 });

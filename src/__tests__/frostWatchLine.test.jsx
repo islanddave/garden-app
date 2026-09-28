@@ -532,6 +532,22 @@ describe('(4) "Forecast warmed" after a same-night ADVISORY — retired once bot
       .toEqual([WARMED(44, '3 PM')])
   })
 
+  // Adopted from the v4.158.0 pre-promote QA review (review-v4158-qa.md, probe Q5). T6's no-plan-low case holds with or
+  // without warmedPast's own `plan != null`, because the warmed line cannot speak without a plan low. With a WATCH sent
+  // after the advisory nothing has to speak, so only that check keeps the email's line: QA mutant N4 (a missing plan low
+  // read as warm) survived all 771 lane tests and put the watch's warmer 41 on the card and the line.
+  it('T6c no plan low + a watch sent after the advisory: not retired, tonight stays the email\'s 38 (QA probe Q5)', () => {
+    const watch41 = { key: 'sp1|2026-10-09|imminent|watch', tier: 'imminent', level: 'protect', trip: 'radiative', run: 'intraday-pm',
+      at: at('20:00'), lowF: 41, dayOffset: 0 }
+    const list = [ADV(), watch41]
+    const cur = currentLows(planFor(null, list, hyLows(45)))
+    expect(buildFrostAlertLines(list, { planLow: null, current: cur }).map((l) => l.text)).toEqual([POSSIBLE('tonight', 38)])
+    expect(screenOf(planFor(null, list, hyLows(45)))).toEqual({ card: 38, cue: null, lines: [POSSIBLE('tonight', 38)] })
+    // CONTROL: with a plan low the advisory does retire and the watch takes tonight (T12's rule)
+    const cur44 = currentLows(planFor(44, list, hyLows(45)))
+    expect(buildFrostAlertLines(list, { planLow: 44, current: cur44 }).map((l) => l.text)[0]).toMatch(/^Frost watch tonight/)
+  })
+
   it('T7 nothing is stored: each run\'s row decides, so a forecast that turns cold again brings the email\'s line back', () => {
     const runs = [[44, 41.2], [39, 38.9], [44, 38.9], [44, 41.2]]
     expect(runs.map(([low, d1]) => screenOf(planFor(low, LADDER, hyLows(d1))).lines)).toEqual([
