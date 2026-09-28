@@ -94,6 +94,9 @@ name: revert-gate
 # version list. Measured with that function over all 260 snapped targets (2026-09-11): 48 revertible, v4.45.0
 # through v4.128.0, one contiguous run; the 212 from v2.5.4 through v4.43.0 are refused ((a) 193, (b) all 212).
 # A read or parse failure refuses too.
+# REVERT FLOOR (OPS-REVERTRESTORE-001 A1, 2026-09-28): before all of that, revert-to.py refuses any target below
+# the floor in force in scripts/revert-floors.json (dev's copy; v4.156.0 while prod runs v4.156.0 or later: the
+# page-scroll manager). Undo such a release with a forward release instead: scripts/forward-undo.py.
 # NOTE: "Checkout dev" means revert-to.py, snap.py and preflight-revert-iam.py changes govern a revert as soon
 # as they land on dev; changes to THIS file govern a dispatch only once a promote carries them to main.
 #
@@ -104,7 +107,7 @@ on:
   workflow_dispatch:
     inputs:
       target_version:
-        description: 'Snapped version to revert prod TO (must exist in SNAP_BUCKET; ^v\d+(\.\d+){0,2}$, e.g. v2.5.6)'
+        description: 'Snapped version to revert prod TO (must exist in SNAP_BUCKET and be at or above the revert floor in scripts/revert-floors.json, else revert-to.py refuses before reading anything; ^v\d+(\.\d+){0,2}$, e.g. v4.156.0)'
         required: true
         type: string
       prerevert_version:
