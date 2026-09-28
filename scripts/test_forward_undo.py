@@ -448,6 +448,7 @@ def test_allow_dev_ahead_lists_exactly_the_unshipped_commits_and_builds_on_dev(t
     assert code == 0, err
     assert _listed_ahead(out) == [b, a]
     assert "DRY RUN" in out and "new release 1.2.1" in out
+    assert "a revert conflict can only show up under --write" in out
     before = state(w, scratch)
     code, out, err = undo(capsys, w, "--allow-dev-ahead", "--write")
     assert code == 0, err

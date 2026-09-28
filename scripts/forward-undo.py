@@ -508,7 +508,7 @@ def main(argv=None):
         print_plan(repo, plan)
         if not a.write:
             branch = a.branch or f"undo-{plan['n']}-as-v{plan['version']}"
-            if plan["ahead"]:
+            if plan["ahead"] and plan["mode"] == "revert":
                 say("with dev ahead of main, a revert conflict can only show up under --write")
             say(f"DRY RUN: nothing written. --write builds branch {branch} in a throwaway worktree.")
             print(next_steps(repo, plan, branch, None))
