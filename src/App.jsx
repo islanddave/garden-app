@@ -55,7 +55,8 @@ import SettingsControls from './pages/SettingsControls.jsx'
 import Findings from './pages/Findings.jsx'
 import About from './pages/About.jsx'
 import ReleaseNotes from './pages/ReleaseNotes.jsx'
-import Today from './pages/Today.jsx'
+// V5-TODAYREDESIGN-001 S2 — /today's element chooses the current Today or the redesign, per device (off by default).
+import TodayRoute from './components/today/v2/TodayRoute.jsx'
 import CaptureFlow from './pages/CaptureFlow.jsx'
 import AddSeeds from './pages/AddSeeds.jsx'
 import Seeds from './pages/Seeds.jsx'
@@ -367,7 +368,7 @@ export function renderRoutes({ overlay, user, loading }) {
     { path: '/projects/:id/plantings/:plantingId', element: <ScopedPlantingRedirect /> },
     { path: '/achievements',  element: <Protected><Achievements /></Protected> },
     { path: '/findings',      element: <Protected><Findings /></Protected> },
-    { path: '/today',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><Today /></ErrorBoundary></Protected> },
+    { path: '/today',         element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><TodayRoute /></ErrorBoundary></Protected> },
     { path: '/capture',       element: <Protected><CaptureFlow /></Protected> },
     // V4-COLLECTIONSPLIT-001 — the loading boundary belongs HERE, at the route, not at the shell:
     // a shell-level boundary would blank TopChrome/BottomNav while the chunk lands.

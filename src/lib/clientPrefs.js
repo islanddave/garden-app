@@ -54,6 +54,10 @@ export const CLIENT_PREF_KEYS = [
   'nav.barLayout.v1',
   'nav.morePins.v1',
   'nav.morePins.pending.v1',
+  // V5-TODAYREDESIGN-001 S2 — the Debug & smoke "New Today (preview) on this phone" switch (todayV2Flag.js).
+  // A device choice, but a PERSON's choice on a shared phone: left behind, the next person to sign in
+  // lands on the previous person's preview page. Plan-v2 §6.10.
+  'garden.todayV2',
 ]
 
 export const CLIENT_PREF_KEY_PREFIXES = [
@@ -70,6 +74,14 @@ export const CLIENT_PREF_KEY_PREFIXES = [
   // applied to the other, which is the whole class this file exists to close. Same prefix shape, same
   // dated accumulation.
   'today-unskipped:',
+  // V5-TODAYREDESIGN-001 (plan-v2 §2.1, §3) — the redesigned Today's localStorage families, all keyed by
+  // user already, cleared anyway because sign-out ends one person's use of the device:
+  //   'today-sections:<user>' — the remembered open/closed mirror (useTodaySections.js, S2);
+  //   'today-seen:<user>'     — the chill first-seen memory (S5). Listed at S2 so the parallel slices that
+  //                             write the V2 families never contend over this list; the census in
+  //                             clientPrefs.test.jsx reds a V2 family written but not listed.
+  'today-sections:',
+  'today-seen:',
 ]
 
 // sessionStorage families, walked separately (the list above is localStorage's).
@@ -80,6 +92,13 @@ export const CLIENT_PREF_KEY_PREFIXES = [
 // against visitLayout's own prefix.
 export const CLIENT_SESSION_KEY_PREFIXES = [
   'today-visit:',
+  // V5-TODAYREDESIGN-001 (plan-v2 §2.1 Layer 2, "this tab session") — the redesigned Today's day-scoped
+  // tab families: 'today-filters:<user>' (the task / spot chip selection, S4) and
+  // 'today-logged:<user>:<plan_date>' (rows logged today, the double-log guard under a seeded remount, S4).
+  // Listed at S2 for the same reason as the localStorage pair above; the slice that writes one in
+  // localStorage instead moves its entry across in the same commit.
+  'today-filters:',
+  'today-logged:',
 ]
 
 function removePrefixed(storage, prefixes) {

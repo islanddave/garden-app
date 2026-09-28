@@ -62,6 +62,40 @@ export function writeVisitLayout(key, layout) {
   } catch { /* storage full or blocked: the list simply holds nothing across a remount */ }
 }
 
+// ── V2 (V5-TODAYREDESIGN-001 S2, plan-v2 §2.1 Layer 2, §2.2) ──────────────────────────────────────────────
+// The redesigned Today's visit, in THIS store: the same key shape (user + plan_date + list, V2's list being
+// 'v2'), the same per-day prune, the same sign-out scrub. A different RECORD, tagged kind 'v2', because a
+// V2 visit holds what V1's never needed — the open state it started with (`layer1`, Layer 1 as read at the
+// visit's ready point), the visit overlays (Expand/Collapse all, a chip jump, a trigger), the triggers that
+// fired, and the sections present at the ready point (their slots are held for the visit). Later slices add
+// their own fields (spots, done lines, failed rows); the whole record round-trips, so they need no new store.
+// V1's readVisitLayout rejects a V2 record (no mode), and V1 never reads a 'v2' key anyway.
+export const V2_LIST = 'v2'
+
+function validV2(v) {
+  return !!v && v.v === 1 && v.kind === 'v2' && typeof v.id === 'string' && !!v.order && Array.isArray(v.order.sections)
+    && !!v.layer1 && typeof v.layer1 === 'object' && !!v.overlay && typeof v.overlay === 'object'
+}
+
+// -> the stored V2 record | null. Unreadable, invalid or another record kind = null (a fresh visit).
+export function readVisitRecord(key) {
+  if (!key) return null
+  try {
+    const v = JSON.parse(sessionStorage.getItem(key) || 'null')
+    return validV2(v) ? v : null
+  } catch { return null }
+}
+
+// `record` null removes the entry.
+export function writeVisitRecord(key, record) {
+  if (!key) return
+  try {
+    if (!record) sessionStorage.removeItem(key)
+    else sessionStorage.setItem(key, JSON.stringify({ ...record, v: 1, kind: 'v2' }))
+    pruneOtherDays(key)
+  } catch { /* storage full or blocked: Back simply takes a fresh visit */ }
+}
+
 // Every visit key whose plan_date is not this key's. Snapshot first: Storage.key(i) re-indexes on removal.
 function pruneOtherDays(key) {
   const day = key.slice(VISIT_PREFIX.length).split(':')[1]

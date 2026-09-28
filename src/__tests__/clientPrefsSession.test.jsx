@@ -89,8 +89,11 @@ describe('clearClientPrefs — the sessionStorage visit layout', () => {
     for (const k of VISITS) expect(sessionStorage.getItem(k)).toBeNull()
   })
 
+  // Widened by V5-TODAYREDESIGN-001 S2 (2026-09-28): the redesigned Today's two tab-scoped families
+  // (plan-v2 §2.1 Layer 2), listed ahead of the slices that write them — clientPrefs.test.jsx's V2 census
+  // reds a family written anywhere under today/v2 or the V2 hooks without an entry.
   it('the session list is exactly the visit family — visitLayout\'s own prefix, and in no localStorage list', () => {
-    expect(CLIENT_SESSION_KEY_PREFIXES).toEqual(['today-visit:'])
+    expect(CLIENT_SESSION_KEY_PREFIXES).toEqual(['today-visit:', 'today-filters:', 'today-logged:'])
     expect(CLIENT_SESSION_KEY_PREFIXES).toContain(VISIT_PREFIX)
     expect(CLIENT_PREF_KEY_PREFIXES.includes(VISIT_PREFIX)).toBe(false)
     expect(CLIENT_PREF_KEYS.includes(VISIT_PREFIX)).toBe(false)

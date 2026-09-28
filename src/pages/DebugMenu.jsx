@@ -35,6 +35,7 @@ import { Link } from 'react-router-dom'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 import { useApiFetch } from '../lib/api.js'
+import { useTodayV2Flag, writeTodayV2Flag } from '../lib/todayV2Flag.js'
 
 const APP_VERSION = (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null) || '0.0.0'
 
@@ -114,6 +115,10 @@ export default function DebugMenu() {
   const [vp, setVp] = useState(() => (typeof window === 'undefined' ? null : {
     w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio,
   }))
+  // V5-TODAYREDESIGN-001 S2 — the redesigned Today, per device and off by default. Visible to BOTH users on
+  // purpose (Dave 2026-09-28): it is how either of them tries the new page on their own phone, and turning
+  // it off is the way back. The page it switches lives at /today either way; nothing else moves.
+  const todayV2 = useTodayV2Flag()
 
   useEffect(() => {
     const on = () => setOnline(true)
@@ -219,6 +224,35 @@ export default function DebugMenu() {
           }}
         >
           {ping === 'running' ? 'Pinging…' : 'Ping the API'}
+        </button>
+      </div>
+
+      {/* A toggle, so aria-pressed carries the state and the name stays the plain label; the visible
+          On / Off is decoration for sighted readers and is hidden from the accessible name. */}
+      <div style={card}>
+        <button
+          type="button"
+          aria-pressed={todayV2}
+          onClick={() => writeTodayV2Flag(!todayV2)}
+          data-testid="debug-today-v2"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, width: '100%',
+            minHeight: 48, padding: 0, background: 'none', border: 'none', textAlign: 'left',
+            fontFamily: 'inherit', cursor: 'pointer',
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: '0.95rem', fontWeight: 600, color: P.dark }}>New Today (preview) on this phone</span>
+            <span style={{ display: 'block', fontSize: '0.78rem', color: P.mid, lineHeight: 1.4, marginTop: 2 }}>
+              Try the redesigned Today page. Only this phone changes; turn it off to go back.
+            </span>
+          </span>
+          <span aria-hidden="true" style={{
+            flexShrink: 0, minWidth: 48, padding: '6px 10px', borderRadius: 20, textAlign: 'center',
+            fontSize: '0.82rem', fontWeight: 700,
+            background: todayV2 ? P.green : P.cream, color: todayV2 ? P.white : P.mid,
+            border: `1px solid ${todayV2 ? P.green : P.border}`,
+          }}>{todayV2 ? 'On' : 'Off'}</span>
         </button>
       </div>
 

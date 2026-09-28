@@ -109,12 +109,16 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     // shipped without an entry here and the release review caught it.
     // Widened again by V5-NAVCUSTOM-001 (2026-09-24), deliberately and in the same shape: the three
     // nav.* keys are launch caches of the per-person bar and pins (D4), read before prefs land.
+    // Widened by V5-TODAYREDESIGN-001 S2 (2026-09-28): 'garden.todayV2' (the per-device preview switch — a
+    // person's choice on a shared phone) and the redesigned Today's two localStorage families,
+    // 'today-sections:' (the remembered open/closed mirror) and 'today-seen:' (chill first-seen, S5).
     expect(CLIENT_PREF_KEYS).toEqual([
       'croprank.v1', 'logone.lastPlant', 'lastHarvestUnit',
       'quicklog.defaultAllSelected', 'garden.releasesSeenVersion', 'ui.handedness',
       'nav.barLayout.v1', 'nav.morePins.v1', 'nav.morePins.pending.v1',
+      'garden.todayV2',
     ])
-    expect(CLIENT_PREF_KEY_PREFIXES).toEqual(['lastHarvestUnit:', 'today-skipped:', 'today-unskipped:'])
+    expect(CLIENT_PREF_KEY_PREFIXES).toEqual(['lastHarvestUnit:', 'today-skipped:', 'today-unskipped:', 'today-sections:', 'today-seen:'])
   })
 
   // BUG-TODAYSKIPNOUNDO-001 — the Undo veto set, cleared like the skip set it vetoes. Left behind,
@@ -142,6 +146,27 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     const families = [...new Set([...src.matchAll(/'(today-[a-z-]+:)'/g)].map(m => m[1]))]
     expect(families.sort()).toEqual(['today-skipped:', 'today-unskipped:'])
     for (const f of families) expect(CLIENT_PREF_KEY_PREFIXES).toContain(f)
+  })
+
+  // V5-TODAYREDESIGN-001 S2 — the same census over the REDESIGNED Today: every file under today/v2, the V2
+  // hooks and the flag module, read as a directory walk so a file a later slice adds is covered without
+  // editing this test. A family may sit in either store's list (the session families are walked from
+  // sessionStorage), but it must sit in one. Non-vacuous: useTodaySections.js writes 'today-sections:'.
+  it('every today-…: storage family the redesigned Today writes is cleared at sign-out', async () => {
+    const { CLIENT_SESSION_KEY_PREFIXES } = await import('../lib/clientPrefs.js')
+    const { readdirSync } = await import('node:fs')
+    const v2dir = resolve(process.cwd(), 'src/components/today/v2')
+    const files = [
+      ...readdirSync(v2dir).map(f => resolve(v2dir, f)),
+      ...['src/hooks/useTodaySections.js', 'src/hooks/useTodayVisit.js', 'src/lib/todayV2Flag.js', 'src/pages/TodayV2.jsx']
+        .map(f => resolve(process.cwd(), f)),
+    ]
+    const src = files.map(f => readFileSync(f, 'utf8')).join('\n')
+    const families = [...new Set([...src.matchAll(/'(today-[a-z-]+:)'/g)].map(m => m[1]))]
+    expect(families).toContain('today-sections:')
+    for (const f of families) expect([...CLIENT_PREF_KEY_PREFIXES, ...CLIENT_SESSION_KEY_PREFIXES]).toContain(f)
+    expect(src).toContain("'garden.todayV2'")
+    expect(CLIENT_PREF_KEYS).toContain('garden.todayV2')
   })
 
   // The list above holds literals (an import would close an AuthContext cycle), so this is what
