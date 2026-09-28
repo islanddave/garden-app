@@ -29,11 +29,46 @@ export const MUTANTS_V2 = {
     defect: 'the prefs read never leaves the client, so every remembered open/closed and every date-scoped ack is silently ignored. At S0 only prefs-instrument is armed; section-open-set joins at S2 (the remembered states).',
   },
 
-  // ── S2: section component, visit layer, route toggle
-  hideSectionBody: P('S2', ['visibility', 'region-headcount'], 'POSITIVE CONTROL: an open section body display:none'),
-  clipSectionBody: P('S2', ['visibility', 'region-headcount'], 'an open body height:0; overflow:hidden (ancestor clip)'),
-  openAll: P('S2', ['section-open-set', 'first-screen'], 'real-Chrome canary (Simplify 3): the trigger predicate forced true — every section opens, the scroll ceiling trips'),
-  skipPrefsFetch: P('S2', ['prefs-instrument', 'section-open-set'], 'PrefsProvider never reads (data-prefs-loaded lies; Layer 1 dropped)'),
+  // ── S2: section component, visit layer, route toggle. The panel is FacetGroupHeader's native-mode panel (the
+  // section body); at S2 its only armed killer is `floors` (the open Resting body in v2-remembered carries the
+  // last ink above the Sow row), so these two are UNDER-GUARDED BY SCHEDULE until visibility / region-headcount
+  // arm with S3–S6.
+  hideSectionBody: {
+    armedAt: 'S2', kind: 'chrome',
+    file: 'src/components/forms/FacetGroupHeader.jsx',
+    find: '{hasPanel && <div id={panelId} style={panelStyle}>{children}</div>}',
+    replace: "{hasPanel && <div id={panelId} style={{ ...panelStyle, display: 'none' }}>{children}</div>}",
+    killers: ['visibility', 'region-headcount', 'floors'],
+    defect: 'POSITIVE CONTROL: an open section body display:none',
+  },
+  clipSectionBody: {
+    armedAt: 'S2', kind: 'chrome',
+    file: 'src/components/forms/FacetGroupHeader.jsx',
+    find: '{hasPanel && <div id={panelId} style={panelStyle}>{children}</div>}',
+    replace: "{hasPanel && <div id={panelId} style={{ ...panelStyle, height: 0, overflow: 'hidden' }}>{children}</div>}",
+    killers: ['visibility', 'region-headcount', 'floors'],
+    defect: 'an open body height:0; overflow:hidden (ancestor clip)',
+  },
+  // At S2 there is no trigger predicate yet (S5), so the canary forces the one place every open state resolves:
+  // the visit's effective-open. S5 re-points it at triggers.js when the predicate exists.
+  openAll: {
+    armedAt: 'S2', kind: 'chrome',
+    file: 'src/hooks/useTodayVisit.js',
+    find: "  if (!record) return false\n  const o = record.overlay?.[key]",
+    replace: "  if (!record || record) return true\n  const o = record.overlay?.[key]",
+    killers: ['section-open-set', 'first-screen', 'floors'],
+    defect: 'real-Chrome canary (Simplify 3): every section forced open — v2-remembered-conflict\'s closed care opens, the scroll ceiling trips',
+  },
+  // "Never reads": the provider's boot read never settles, so data-prefs-loaded stays false (it never lies at
+  // S2 — nothing else sets it), the GET is never observed, and the server's remembered open never applies.
+  skipPrefsFetch: {
+    armedAt: 'S2', kind: 'chrome',
+    file: 'src/context/PrefsContext.jsx',
+    find: '    fetchNotificationPrefs({ getToken: tokenRef.current })\n      .then(p => { if (on) { setPrefs(p); setPrefsLoaded(true) } })',
+    replace: '    new Promise(() => {})\n      .then(p => { if (on) { setPrefs(p); setPrefsLoaded(true) } })',
+    killers: ['prefs-instrument', 'prefs-loaded-attr', 'section-open-set'],
+    defect: 'PrefsProvider never reads — no GET, data-prefs-loaded false, Layer 1\'s server half dropped',
+  },
 
   // ── S3: glance card + jump bar (the in-view scroll-spy is cut, §13 Simplify 5, so highlightStuck is retired)
   unstickBar: P('S3', ['sticky', 'jump-landing'], 'the jump bar loses position:sticky'),

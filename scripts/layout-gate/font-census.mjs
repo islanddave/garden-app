@@ -30,6 +30,11 @@ const MARK = 'data-font-census'
 export const HOST_FONT_OK = {
   '▾': '▾ — the care-group disclosure chevron (CareNeeded.jsx), inside a 52px header row',
   '⋯': '⋯ — the bulk "Choose which … to log" button (CareNeeded.jsx), 34x36 fixed',
+  // V5-TODAYREDESIGN-001 S2 — the redesigned Today's CLOSED band chevron (FacetGroupHeader native mode; ▾ is
+  // its open glyph). Inside a 48px-min band button whose content is shorter than 48. Measured 2026-09-28 at
+  // 426x836 through gate:today-shape:v2: with ▸/▾ swapped for Roboto '>'/'v', v2-busy / v2-remembered /
+  // v2-remembered-conflict kept page 836px, content bottom y=243 / 263 / 243 and 4 controls, identically.
+  '▸': '▸ — the redesigned Today\'s closed section-band chevron (FacetGroupHeader native mode), 48px-min band',
 }
 
 export async function fontCensus({ send, sessionId, evalIn }, rootSelector) {

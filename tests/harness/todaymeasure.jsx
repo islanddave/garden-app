@@ -112,7 +112,20 @@ const LOCATIONS_FULL = V2 ? await j('/tests/harness/_todaymeasure/locations.full
 const V2PREFS = V2STATE ? await j(`/tests/harness/_todaymeasure/${V2STATE.prefs}`) : null
 // A v2 state is a first visit on a clean device: nothing an earlier state in the same browser wrote may
 // leak into it (the gate runs every state in one Chrome profile). Its own seeds are written below.
-if (V2) { try { localStorage.clear(); sessionStorage.clear() } catch { /* ignore */ } }
+// HARNESS HYGIENE (V5-TODAYREDESIGN-001 S2, the S1b finding): V1's care list holds its section order and open
+// set per tab + user + plan day (src/components/today/visitLayout.js, 'today-visit:' in sessionStorage), and
+// the v1 gate drives ONE signed-in tab through its states — so without this, busy measured the layout busyfull
+// left behind (a Back restore) instead of a fresh visit. Every state now boots a fresh visit, v1 and v2 alike.
+// ?keepVisit=1 keeps the visit keys: that is how a back-restore check measures a return.
+const KEEP_VISIT = params.get('keepVisit') === '1'
+const dropSession = (keep) => {
+  const drop = []
+  for (let i = 0; i < sessionStorage.length; i++) { const k = sessionStorage.key(i); if (k && !keep(k)) drop.push(k) }
+  for (const k of drop) sessionStorage.removeItem(k)
+}
+const isVisitKey = (k) => k.startsWith('today-visit:')
+if (V2) { try { localStorage.clear(); dropSession((k) => KEEP_VISIT && isVisitKey(k)) } catch { /* ignore */ } }
+else if (!KEEP_VISIT) { try { dropSession((k) => !isVisitKey(k)) } catch { /* ignore */ } }
 
 // The household lens is ONE TAP from the default and Dave has a second caretaker, so what it costs
 // in scroll is a real number, not a hypothetical. localStorage is seeded before mount because the
@@ -574,9 +587,12 @@ window.__h = {
     prefs: { fixture: V2STATE?.prefs ?? null, delayMs: V2WIRE?.prefsDelayMs ?? 0, served: prefsServed, bytes: V2PREFS ? JSON.stringify(V2PREFS).length : 0 },
     critterOrigin: import.meta.env.VITE_API_CRITTERS || null,
   }),
-  // Ready: the chooser's V2 when it mounted one (its version anchor present), else V1's own readiness.
+  // Ready: the chooser's V2 at its READY point (plan-v2 §6.4, data-today-ready — the sections paint there; the
+  // version anchor alone paints at mount, before the plan lands, and a measurement taken then would read an
+  // empty page), the stub on its version anchor, else V1's own readiness.
   v2ready() {
-    if (v2Route === 'stub' || v2Route === 'present') return !!document.querySelector('[data-today-version="2"]')
+    if (v2Route === 'present') return !!document.querySelector('[data-today-version="2"][data-today-ready="true"]')
+    if (v2Route === 'stub') return !!document.querySelector('[data-today-version="2"]')
     return this.ready()
   },
   expanded: (target) => { try { return document.querySelector(selectorFor(target))?.getAttribute('aria-expanded') ?? null } catch { return null } },

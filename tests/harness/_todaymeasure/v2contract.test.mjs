@@ -33,7 +33,20 @@ describe('today-v2 contract table', () => {
     const all = [...STATES.flatMap((s) => s.checks), ...SHELL, ...REGIONS_V2]
     for (const c of all) for (const sl of [].concat(c.armedAt)) expect(SLICES).toContain(sl)
     for (const s of STATES) expect(s.checks.some((c) => c.family === 'prefs-instrument' && isArmed(c))).toBe(true)
-    expect(LANDED).toEqual(['S0'])
+    expect(LANDED).toEqual(['S0', 'S2'])
+  })
+  // S2 arms the skeleton on EVERY state (version, prefs-loaded, no side-scroll, floors, title + date on the
+  // first screen) plus the states S2's surface can answer: the quiet and no-plan first screens and both
+  // remembered states. Pinned so a later edit cannot quietly un-arm them.
+  it('S2 arms the skeleton everywhere and the quiet / no-plan / remembered states', () => {
+    for (const s of STATES) for (const fam of ['version', 'prefs-loaded-attr', 'no-hscroll', 'floors', 'first-screen']) {
+      expect(s.checks.some((c) => c.family === fam && isArmed(c))).toBe(true)
+    }
+    const armedIn = (name, fam) => STATES.find((s) => s.name === name).checks.filter((c) => c.family === fam && isArmed(c))
+    expect(armedIn('v2-quiet', 'first-screen').some((c) => c.mustContain?.includes('care-empty') && c.wholePage)).toBe(true)
+    expect(armedIn('v2-noplan', 'first-screen').some((c) => c.mustContain?.includes('today-noplan-card'))).toBe(true)
+    expect(armedIn('v2-remembered', 'section-open-set').map((c) => c.open)).toEqual([['resting']])
+    expect(armedIn('v2-remembered-conflict', 'section-open-set').map((c) => c.closed)).toEqual([['care']])
   })
   it('keeps every trigger-predicate mutant as a unit-table cell (Simplify 3), never silently dropped', () => {
     const cellMutants = new Set(TRIGGER_CELLS.map((c) => c.killedMutant))

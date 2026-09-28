@@ -263,6 +263,9 @@ const CHECKERS = {
     if (m.bar && m.bar.sw > m.bar.cw + 1 && m.bar.ox !== 'auto') F(`the chip strip overflows with overflow-x ${m.bar.ox}, not auto`)
   },
   floors: (m, c, F, ctx) => {
+    // --record MEASURES the floors it writes; judging that run against the budget it replaces (or, the first
+    // time, against no budget at all) would refuse every recording — S2 found the first one could never land.
+    if (RECORD) return
     const b = ctx.budget?.states?.[ctx.state.name]
     if (!b) { F(`no v2 budget entry for this state in ${BUDGET_PATH} — record it on a clean tree (npm run gate:today-shape:v2:record); an armed floor with no number is unguarded`); return }
     if (m.contentBottom < b.contentBottomFloor) F(`the last painted pixel is at y=${m.contentBottom}, above the ${b.contentBottomFloor}px floor`)

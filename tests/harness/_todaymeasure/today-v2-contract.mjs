@@ -19,7 +19,9 @@
 // A PENDING check is not a hole the gate hides: the banner says "N PENDING — not measured, not passed", the
 // S8c DoD is "zero PENDING", and `--arm-all` (the self-test) runs every check today, against a stub V2, and
 // must go red on the census — the proof that each armed-later check CAN fail once armed.
-export const LANDED = ['S0']
+// S2 (2026-09-28): the section component, the visit layer + local mirror and the route toggle — see the S2
+// notes on ANCHORS.ready and v2-remembered below.
+export const LANDED = ['S0', 'S2']
 export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8']
 
 export function isArmed(check, landed = LANDED, armAll = false) {
@@ -41,6 +43,9 @@ export const SECTION_ORDER = ['protect', 'headsup', 'care', 'harvest', 'putup', 
 // the same commit as this table, deliberately and visibly — the v1 contract's rule, carried over.
 export const ANCHORS = {
   version: 'data-today-version',
+  // S2: the §6.4 ready point, where the sections paint. The version anchor paints at mount, before the plan
+  // lands, so readiness keyed on it alone read an empty page on a fast machine and a full one on a slow one.
+  ready: 'data-today-ready',
   prefsLoaded: 'data-prefs-loaded',
   section: 'today-sec-',
   glance: 'today-glance',
@@ -200,7 +205,12 @@ export const STATES = [
   {
     name: 'v2-remembered', fixture: 'busy', clock: S924, prefs: 'prefs.remembered.json',
     proves: 'Layer 1 open applied (harvest, resting) across days',
-    checks: [...common(), { family: 'section-open-set', armedAt: ['S2', 'S6'], open: ['harvest', 'resting'] }],
+    // S2 builds the Resting band (count, names, explainer), so its half of this state arms at S2: the one S2
+    // state where a SERVER value decides the open set — without it a dropped prefs read (prefsClientDark,
+    // skipPrefsFetch) would red nothing but the instrument. Harvest waits for its band (S6).
+    checks: [...common(),
+      { family: 'section-open-set', armedAt: 'S2', open: ['resting'], why: 'the server\'s remembered open, read at the visit start' },
+      { family: 'section-open-set', armedAt: ['S2', 'S6'], open: ['harvest', 'resting'] }],
   },
   {
     // MF1: the ack carries no ids any more ({t} only, dated today) — escalation chill → frost still re-opens.

@@ -258,6 +258,8 @@ window.__h = {
   ready: () => {
     if (location.pathname !== '/today') return !!document.querySelector('[data-testid="harness-planting"]')
     if (route === 'absent') { const t = document.querySelector('[data-testid="today-title"]'); return !!t && !document.body.textContent.includes('Loading…') }
+    // The real V2 at its ready point (plan-v2 §6.4; the sections paint there), as todaymeasure's v2ready.
+    if (route === 'present') return !!document.querySelector('[data-today-version="2"][data-today-ready="true"]')
     return !!document.querySelector('[data-today-version="2"]')
   },
   errors: () => [...errors],
