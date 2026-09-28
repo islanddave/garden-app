@@ -507,15 +507,13 @@ export default function CareNeeded({ plan, planDate, list = 'own' }) {
   // through the same transient first take every open of Today has always shown — and is adopted in the
   // render that brings them, in place of the take the names used to trigger. From there it is the held
   // layout like any other: a section the refetched plan added is appended, collapsed, and a layout with
-  // none of its sections on the list any more is a clean slate. Its open set comes back exactly as it
-  // was, manual expands included, so a header tapped in the transient frame is dropped.
+  // none of its sections on the list any more is a clean slate. Its open set comes back as it was,
+  // manual expands and collapses included; a header tapped in the transient frame keeps its tap, as
+  // taps always have across the names landing.
   const restore = (!newDay && visit && !sortTaps && visit.mode === mode
     && visit.enriched === (enrichById !== NO_ENRICHMENT)) ? visit : null
   const layout = restore ? { basis, order: restore.order, expand: new Set(restore.open) } : heldLayout
-  if (restore) {
-    setVisit(null)
-    if (Object.keys(overrides).length) setOverrides({})
-  }
+  if (restore) setVisit(null)
   let held = layout
   if (newDay) held = null
   else if (!layout || layout.basis !== basis) held = takeLayout(pinnedGroups, basis)
