@@ -205,7 +205,10 @@ describe('BUG-TODAYGROUPREORDER-001 — a wake refetch on Today moves no section
     expect(loopish).toEqual([])
   })
 
-  it('leaving Today and opening it again ranks from the plan it opens on', async () => {
+  // SIGNED OUT only: this file mounts Today with no AuthProvider, so there is no visit key. For a
+  // signed-in user on the same plan day, leaving and coming back now KEEPS the held order
+  // (BUG-TODAYBACKRESORT-001, Dave 2026-09-28) — TodayBackResort.test.jsx pins that.
+  it('signed out: leaving Today and opening it again ranks from the plan it opens on', async () => {
     const first = await openToday(envelope())
     await waitFor(() => expect(headerLabels()).toEqual(ARRIVAL))
     first.unmount()
@@ -489,8 +492,10 @@ describe('BUG-TODAYGROUPREORDER-001 — a new plan day, reset in place', () => {
 // the rest of the household's care" changes useDailyPlan's query, which runs `reload`, which blanks
 // Today to "Loading…" and remounts Dave's OWN list — a fresh visit with no sort tap. It re-ranks and
 // drops a manual expand. Pre-existing (the same on the pre-fix code), out of this item's scope.
+// SIGNED OUT only since BUG-TODAYBACKRESORT-001: with a signed-in user the remount restores the held
+// order and open set (TodayBackResort.test.jsx); this file mounts Today with no AuthProvider.
 describe('BUG-TODAYGROUPREORDER-001 — the household toggle reloads the page (characterisation)', () => {
-  it('re-ranks Dave\'s own list and drops his manual expand [QA P8]', async () => {
+  it('signed out: re-ranks Dave\'s own list and drops his manual expand [QA P8]', async () => {
     members = { members: [{ id: 'jen', display_name: 'Jen Example' }] }
     await openToday(envelope())
     await waitFor(() => expect(headerLabels()).toEqual(ARRIVAL))
