@@ -94,4 +94,17 @@ export const ICON_COLORS = {
   // classic red-headed push pin; both clear the 3:1 floor on the sheet's white and on cream.
   pinHead:       P.terra,     // #b7532a cap, barrel and collar — 4.51:1 on cream
   pinNeedle:     P.mid,       // #4a4a4a the metal point — 8.3:1 on cream
+  // V5-TODAYREDESIGN-001 — `filled` variants for the three glyphs the Today jump bar draws that were
+  // still mono (care.feed, event.observation, event.brought_inside), raised to colour per Dave's
+  // 2026-08-28 rule rather than flattening the colour ones. The bar draws them on WHITE chips over a
+  // cream bar, so each value is measured on both (cream / white); a white eye-sclera and a pale door
+  // were rejected for failing that floor — the eye is drawn solid and the door is a notch instead.
+  feedLeaf:      '#349160',   // leaf blade — fresh-growth green (shares lcSproutLeaf's value) — 3.60 / 3.91
+  feedVein:      P.green,     // #2d6a4f midrib, 24 master only — 5.88 / 6.39
+  feedPlus:      P.gold,      // #8a6e2a the feed plus — 4.44 / 4.83
+  eyeLid:        P.brown,     // #7a5c3c the eye shape (lids) — 5.64 / 6.13
+  eyeIris:       P.blue,      // #4a7fb5 iris — 3.87 / 4.20
+  eyePupil:      '#4a3520',   // pupil — deep brown (shares bflyBody's value) — 10.60 / 11.53
+  houseWall:     P.terra,     // #b7532a brick walls; the doorway is a notch, not a colour — 4.51 / 4.90
+  houseRoof:     P.greenDeep, // #1f5138 roof chevron — 8.42 / 9.16
 }

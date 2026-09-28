@@ -494,6 +494,23 @@ const A = {
     class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Feed',
     svg24: '<path d="M5.4 18.6C5.4 11.2 11.2 5.4 18.6 5.4 18.6 12.8 12.8 18.6 5.4 18.6z"/><path d="M8.4 15.6C10.8 13.2 13.6 10.4 16 8"/><path d="M17.4 16.2v3.6"/><path d="M15.6 18h3.6"/>',
     svg18: '<path d="M5.8 17.2C5.8 11 11 5.8 17.2 5.8 17.2 12 12 17.2 5.8 17.2z"/><path d="M17.4 15.8v3.8"/><path d="M15.5 17.7h3.8"/>',
+    // V5-TODAYREDESIGN-001 — colour for the Today jump bar's Feed chip (Dave 2026-08-28: raise mono
+    // glyphs to colour). BASE STAYS MONO: event.fertilizing borrows this entry's masters, so only a
+    // consumer that asks for `filled` gets colour — the nav.garden / potting_up pattern.
+    regionIntent: { leaf: 'leaf blade — fresh green', vein: 'midrib — app green, 24 master only', plus: 'the feed plus — gold' },
+    colorFills: { leaf: 'feedLeaf', vein: 'feedVein', plus: 'feedPlus' },
+    variants: {
+      filled: {
+        class: 'color-candidate',
+        // The leaf is drawn a step larger than the mono path because it loses the outline's width.
+        // The plus is a FILLED rounded cross, not the mono's stroke: beside a solid leaf a stroked plus
+        // reads as an afterthought, and the plus is half the meaning. The midrib stays a stroke in a
+        // green one step darker than the blade — the darkest green read as a strike-through at 24.
+        svg24: '<path data-region="leaf" d="M4.9 19.1C4.9 11.1 11.1 4.9 19.1 4.9 19.1 12.9 12.9 19.1 4.9 19.1z" fill="currentColor" stroke="none"/><path data-region="vein" d="M8.4 15.6C10.8 13.2 13.6 10.4 16 8" fill="none" stroke="currentColor"/><path data-region="plus" d="M16.6 15.6a1.3 1.3 0 0 1 2.6 0v1h1a1.3 1.3 0 0 1 0 2.6h-1v1a1.3 1.3 0 0 1-2.6 0v-1h-1a1.3 1.3 0 0 1 0-2.6h1z" fill="currentColor" stroke="none"/>',
+        // 18 drops the midrib, same as the mono 18, and widens the plus arms so it survives at chip size.
+        svg18: '<path data-region="leaf" d="M5.2 17.8C5.2 10.8 10.8 5.2 17.8 5.2 17.8 12.2 12.2 17.8 5.2 17.8z" fill="currentColor" stroke="none"/><path data-region="plus" d="M16.3 15.5a1.6 1.6 0 0 1 3.2 0v.8h.8a1.6 1.6 0 0 1 0 3.2h-.8v.8a1.6 1.6 0 0 1-3.2 0v-.8h-.8a1.6 1.6 0 0 1 0-3.2h.8z" fill="currentColor" stroke="none"/>',
+      },
+    },
   },
   'care.cloud': {
     class: 'mono', register: 'functional', variant: 'line', accessibleName: 'Cloudy',

@@ -5,6 +5,8 @@
 // by reference (no redraw, no drift). EVENT_GLYPHS covers EVERY EVENT_TYPES value as event.<type>; consumers
 // route the event-type emoji render through <Icon name={`event.${type}`}>. Mono: stroke
 // inherits currentColor so a surface can tint per context. Drawn glyphs self-verified via resvg.
+// Two drawn forms (brought_inside, observation) also carry an opt-in `filled` colour variant
+// (V5-TODAYREDESIGN-001); their bases stay mono, so only a consumer that asks for colour gets it.
 import { EVENT_TYPES, EVENT_TYPE_META } from './eventTypes.js'
 import ANCHORS from './iconAnchors.js'
 import { STATUS_GLYPHS } from './iconStatus.js'
@@ -51,7 +53,21 @@ const NEW = {
   hardening_off: { svg24: '<circle cx="8.5" cy="8" r="3.6"/><path d="M8.5 2.5v1.5"/><path d="M3 8h1.5"/><path d="M4.6 4.1l1.1 1.1"/><path d="M12.4 4.1l-1.1 1.1"/><path d="M4.6 11.9l1.1-1.1"/><path d="M10.5 15.5a3.7 3.7 0 0 1 .2-7.3 4.7 4.7 0 0 1 9 1.2 3.4 3.4 0 0 1-.6 6.1z"/>', svg18: '<circle cx="8" cy="7.5" r="3.4"/><path d="M8 2.3v1.6"/><path d="M2.6 7.5h1.6"/><path d="M4.1 3.6l1.2 1.2"/><path d="M10.5 15.5a3.6 3.6 0 0 1 .2-7 4.6 4.6 0 0 1 8.8 1.2 3.3 3.3 0 0 1-.6 5.8z"/>' },
   cover: { svg24: '<path d="M4.5 14.5a7.5 7.5 0 0 1 15 0"/><path d="M3.5 14.5h17"/><path d="M12 20v-3.5"/><path d="M12 17.5c-1.6 0-2.8-1.2-2.8-2.8 1.6 0 2.8 1.2 2.8 2.8z"/>', svg18: '<path d="M4 14a8 8 0 0 1 16 0"/><path d="M3 14h18"/><path d="M12 20v-4"/>' },
   uncover: { svg24: '<path d="M4.5 9.5a7.5 7.5 0 0 1 15 0"/><path d="M3.5 9.5h17"/><path d="M12 21v-7.5"/><path d="M12 15.5c-1.7 0-3-1.3-3-3 1.7 0 3 1.3 3 3z"/><path d="M12 13.5c0-1.5 1.2-2.7 2.7-2.7 0 1.5-1.2 2.7-2.7 2.7z"/>', svg18: '<path d="M4 9a8 8 0 0 1 16 0"/><path d="M3 9h18"/><path d="M12 21v-7.5"/><path d="M12 16c-1.7 0-3-1.3-3-3 1.7 0 3 1.3 3 3z"/>' },
-  brought_inside: { svg24: '<path d="M4.5 11.5l7.5-6.5 7.5 6.5"/><path d="M6.2 10.5v8.5a1 1 0 0 0 1 1h9.6a1 1 0 0 0 1-1v-8.5"/><path d="M10 20v-4.5h4v4.5"/>', svg18: '<path d="M4 11l8-7 8 7"/><path d="M6 9.5v10h12v-10"/><path d="M10 19.5v-5h4v5"/>' },
+  // V5-TODAYREDESIGN-001 — the Today jump bar's Protect chip draws this in colour. Base stays mono;
+  // colour rides `filled` (see EVENT_GLYPHS below). The doorway is a NOTCH open at the bottom edge,
+  // not a coloured panel: a pale door fails 3:1, and an outlined house with an empty interior is an
+  // enclosed hole that region-seam.mjs rejects. The notch also reads better at 18 than the mono's
+  // stroked door, whose opening narrows to ~1.3 units at that master's 2.67-unit stroke.
+  brought_inside: {
+    svg24: '<path d="M4.5 11.5l7.5-6.5 7.5 6.5"/><path d="M6.2 10.5v8.5a1 1 0 0 0 1 1h9.6a1 1 0 0 0 1-1v-8.5"/><path d="M10 20v-4.5h4v4.5"/>', svg18: '<path d="M4 11l8-7 8 7"/><path d="M6 9.5v10h12v-10"/><path d="M10 19.5v-5h4v5"/>',
+    regionIntent: { wall: 'house body with the doorway cut as a notch — terracotta brick', roof: 'roof chevron — deep green, drawn over the gable' },
+    colorFills: { wall: 'houseWall', roof: 'houseRoof' },
+    variants: { filled: {
+      class: 'color-candidate',
+      svg24: '<path data-region="wall" d="M6.2 10.1 12 5.1l5.8 5V19a1 1 0 0 1-1 1H14v-3.9a.6.6 0 0 0-.6-.6h-2.8a.6.6 0 0 0-.6.6V20H7.2a1 1 0 0 1-1-1z" fill="currentColor" stroke="none"/><path data-region="roof" d="M4.5 11.5l7.5-6.5 7.5 6.5" fill="none" stroke="currentColor"/>',
+      svg18: '<path data-region="wall" d="M6 9.4 12 4.2l6 5.2v10.1a.9.9 0 0 1-.9.9H14v-4.4a.6.6 0 0 0-.6-.6h-2.8a.6.6 0 0 0-.6.6v4.4H6.9a.9.9 0 0 1-.9-.9z" fill="currentColor" stroke="none"/><path data-region="roof" d="M4 11l8-7 8 7" fill="none" stroke="currentColor"/>',
+    } },
+  },
   brought_outside: { svg24: '<circle cx="12" cy="12" r="4.6"/><path d="M12 2.6v2.6"/><path d="M12 18.8v2.6"/><path d="M2.6 12h2.6"/><path d="M18.8 12h2.6"/><path d="M5.3 5.3l1.9 1.9"/><path d="M16.8 16.8l1.9 1.9"/><path d="M18.7 5.3l-1.9 1.9"/><path d="M7.2 16.8l-1.9 1.9"/>', svg18: '<circle cx="12" cy="12" r="4.6"/><path d="M12 2.6v2.8"/><path d="M12 18.6v2.8"/><path d="M2.6 12h2.8"/><path d="M18.6 12h2.8"/><path d="M5.2 5.2l2 2"/><path d="M16.8 16.8l2 2"/><path d="M18.8 5.2l-2 2"/><path d="M7.2 16.8l-2 2"/>' },
   mulched: { svg24: '<path d="M4 19h16"/><path d="M5 15.5h14"/><path d="M6 12h12"/><path d="M11 9.2c-1.5 0-2.6-1.1-2.6-2.6 1.5 0 2.6 1.1 2.6 2.6z"/><path d="M12.5 9.2c0-1.4 1.1-2.5 2.5-2.5 0 1.4-1.1 2.5-2.5 2.5z"/>', svg18: '<path d="M3.5 19h17"/><path d="M4.5 15h15"/><path d="M5.5 11h13"/><path d="M12 8c-1.6 0-2.8-1.2-2.8-2.8 1.6 0 2.8 1.2 2.8 2.8z"/>' },
   caged: { svg24: '<path d="M7 20.5L9 4.5"/><path d="M17 20.5L15 4.5"/><path d="M8.2 4.5h7.6"/><path d="M6.4 12.5h11.2"/><path d="M5.5 20.5h13"/>', svg18: '<path d="M6.5 20.5L8.5 4.5"/><path d="M17.5 20.5L15.5 4.5"/><path d="M8 4.5h8"/><path d="M6 12.5h12"/><path d="M5 20.5h14"/>' },
@@ -70,7 +86,23 @@ const NEW = {
   seed_saved: { svg24: '<path d="M4.8 7.6h14.4a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.8a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z"/><path d="M4.8 8 12 12.6 19.2 8"/><path d="M11 15.6c-1.2 0-2-0.7-2-1.7s0.8-1.7 2-1.7c0 1 0 2.4 0 3.4z" fill="currentColor" stroke="none"/>', svg18: '<path d="M4.8 7.8h14.4a1 1 0 0 1 1 1v7.6a1 1 0 0 1-1 1H4.8a1 1 0 0 1-1-1V8.8a1 1 0 0 1 1-1z"/><path d="M5 8.2 12 12.4 19 8.2"/><path d="M11.4 15.6c-1.2 0-2-0.7-2-1.7s0.8-1.7 2-1.7c0 1 0 2.4 0 3.4z" fill="currentColor" stroke="none"/>' },
   cloves_saved: { svg24: '<path d="M12 6.4c3.2 0 5.6 3 5.6 6.6 0 4-2.6 7-5.6 7s-5.6-3-5.6-7c0-3.6 2.4-6.6 5.6-6.6z"/><path d="M12 6.4V4"/><path d="M10.6 4.6c0.4-0.8 1.8-0.8 2.8 0"/><path d="M9.4 8.4c-0.8 2.6-0.8 6.4 0 9.6"/><path d="M14.6 8.4c0.8 2.6 0.8 6.4 0 9.6"/>', svg18: '<path d="M12 6.6c3.1 0 5.4 2.9 5.4 6.4 0 3.9-2.5 6.8-5.4 6.8s-5.4-2.9-5.4-6.8c0-3.5 2.3-6.4 5.4-6.4z"/><path d="M12 6.6V4.2"/><path d="M9.6 8.8c-0.7 2.6-0.7 6.2 0 9.2"/><path d="M14.4 8.8c0.7 2.6 0.7 6.2 0 9.2"/>' },
   overwinter_survived: { svg24: '<path d="M12 21v-4.6"/><path d="M12 16.8C10.1 16.8 8.6 15.3 8.6 13.4c1.9 0 3.4 1.5 3.4 3.4z"/><path d="M12 16c0-1.7 1.4-3 3-3 0 1.7-1.4 3-3 3z"/><path d="M12 3v8"/><path d="M8.5 5 15.5 9M15.5 5 8.5 9"/>', svg18: '<path d="M12 21v-4.2"/><path d="M12 17C10.2 17 8.8 15.6 8.8 13.8c1.8 0 3.2 1.4 3.2 3.2z"/><path d="M12 16.2c0-1.6 1.3-2.9 2.9-2.9 0 1.6-1.3 2.9-2.9 2.9z"/><path d="M12 3.2v7.6"/><path d="M8.8 5 15.2 8.6M15.2 5 8.8 8.6"/>' },
-  observation: { svg24: '<path d="M3.6 12C5.6 8.4 8.6 6.6 12 6.6s6.4 1.8 8.4 5.4c-2 3.6-5 5.4-8.4 5.4S5.6 15.6 3.6 12z"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>', svg18: '<path d="M3.6 12C5.6 8.4 8.6 6.6 12 6.6s6.4 1.8 8.4 5.4c-2 3.6-5 5.4-8.4 5.4S5.6 15.6 3.6 12z"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>' },
+  // V5-TODAYREDESIGN-001 — the Today jump bar's Check chip draws this in colour. The eye is SOLID
+  // (lids, iris, pupil stacked), because the obvious reading — a white of the eye inside an outline —
+  // is both a sub-3:1 region and an enclosed hole for region-seam.mjs. Brown lids rather than a blue
+  // lens: the Check chip sits beside Water's blue drop, and a mostly-blue eye put two blue marks side
+  // by side in that bar.
+  observation: {
+    svg24: '<path d="M3.6 12C5.6 8.4 8.6 6.6 12 6.6s6.4 1.8 8.4 5.4c-2 3.6-5 5.4-8.4 5.4S5.6 15.6 3.6 12z"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>', svg18: '<path d="M3.6 12C5.6 8.4 8.6 6.6 12 6.6s6.4 1.8 8.4 5.4c-2 3.6-5 5.4-8.4 5.4S5.6 15.6 3.6 12z"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>',
+    regionIntent: { lid: 'the eye shape (lids) — warm brown', iris: 'iris — blue', pupil: 'pupil — deep brown' },
+    colorFills: { lid: 'eyeLid', iris: 'eyeIris', pupil: 'eyePupil' },
+    variants: { filled: {
+      class: 'color-candidate',
+      // The almond is the mono path grown to the outline's OUTER edge, since the fill loses the stroke.
+      // 18 keeps the almond and grows iris + pupil, so the iris ring stays ~5 device px at DPR 3.
+      svg24: '<path data-region="lid" d="M2.8 12C5 7.9 8.3 5.8 12 5.8s7 2.1 9.2 6.2c-2.2 4.1-5.5 6.2-9.2 6.2S5 16.1 2.8 12z" fill="currentColor" stroke="none"/><circle data-region="iris" cx="12" cy="12" r="4.3" fill="currentColor" stroke="none"/><circle data-region="pupil" cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>',
+      svg18: '<path data-region="lid" d="M2.8 12C5 7.9 8.3 5.8 12 5.8s7 2.1 9.2 6.2c-2.2 4.1-5.5 6.2-9.2 6.2S5 16.1 2.8 12z" fill="currentColor" stroke="none"/><circle data-region="iris" cx="12" cy="12" r="4.4" fill="currentColor" stroke="none"/><circle data-region="pupil" cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>',
+    } },
+  },
   other: { svg24: '<path d="M15.6 4.8 19.2 8.4 9 18.6 4.6 19.8 5.8 15.4z"/><path d="M14 6.4 17.6 10"/><path d="M5.8 15.4 8.6 18.2"/>', svg18: '<path d="M15.4 5 19 8.6 8.8 18.8 4.4 20 5.6 15.6z"/><path d="M13.8 6.6 17.4 10.2"/>' },
   photo: { svg24: '<path d="M4 8.6h3.1l1.3-2.1a1 1 0 0 1 .85-.5h5.5a1 1 0 0 1 .85.5l1.3 2.1H21a1 1 0 0 1 1 1v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.6a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.6" r="3.4"/>', svg18: '<path d="M3.5 8.6h3.6l1.2-2h7.4l1.2 2h3.6a1 1 0 0 1 1 1v8.4a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V9.6a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.6" r="3.2"/>' },
   rain: { svg24: '<path d="M7.6 13.2a3.5 3.5 0 0 1 .3-7 4.5 4.5 0 0 1 8.6 1.2 3.2 3.2 0 0 1-.5 5.8z"/><path d="M8.4 16l-1 2.6"/><path d="M11.7 16l-1 2.6"/><path d="M15 16l-1 2.6"/>', svg18: '<path d="M7.4 13a3.6 3.6 0 0 1 .3-7 4.6 4.6 0 0 1 8.8 1.2 3.3 3.3 0 0 1-.5 5.8z"/><path d="M9 15.6l-1 2.8"/><path d="M14 15.6l-1 2.8"/>' },
@@ -127,11 +159,21 @@ const REUSE = {
 
 const FORM = (t) => NEW[t] || REUSE[t]
 
+// V5-TODAYREDESIGN-001 — a form drawn HERE that declares a colour variant carries it onto its event.*
+// key; before this, every entry was built from the two masters alone, so no event key could reach a
+// `filled` variant at all. Scoped to NEW on purpose: a REUSE form's variants stay on the key that owns
+// them (care.drop, nav.garden, care.feed), and the event keys that borrow those forms keep their
+// current shape until a consumer asks for them in colour. Entries without a variant are unchanged.
+const colourOf = (t) => (NEW[t]?.variants
+  ? { variants: NEW[t].variants, regionIntent: NEW[t].regionIntent ?? null, colorFills: NEW[t].colorFills ?? null }
+  : {})
+
 export const EVENT_GLYPHS = Object.fromEntries(EVENT_TYPES.map((t) => {
   const f = FORM(t)
   return [`event.${t}`, {
     key: `event.${t}`, glyph: null, svg24: f.svg24, svg18: f.svg18,
     class: 'mono', register: 'functional', variant: 'line',
     accessibleName: EVENT_TYPE_META[t]?.label || t, schemaVersion: 101,
+    ...colourOf(t),
   }]
 }))
