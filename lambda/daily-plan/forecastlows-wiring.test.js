@@ -16,6 +16,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import engine from './engine.js';
 import h from './handler.js';
 import _cf from './_coverFlags.js';
+import { buildFrostAlertLines, currentLows } from '../../src/lib/frostAlertLine.js';
+import { agreedTonightLow } from '../../src/lib/tonightLow.js';
 
 const { generatePlan } = engine;
 const { withCoverFlags } = _cf;
@@ -149,5 +151,27 @@ describe('the lows reach the row that is actually written', () => {
     expect(row.alerts_sent).toEqual(SENT);                  // no fresh entry: the advisory still says 37.6
     expect(row.hydrology.forecast_lows).toEqual(LOWS);
     expect(row.weather.tonightLow).toBe(44);
+  });
+});
+
+describe('END TO END — the written row, read by the Today client\'s own rule', () => {
+  const lines = (plan) => buildFrostAlertLines(plan.alerts_sent, { planLow: plan.weather.tonightLow, current: currentLows(plan) })
+    .map((l) => l.text);
+
+  it('both models warmed (NWS 44, best_match D1 41.2): the warmed line citing the 3:02 PM email, and the plan\'s own low', async () => {
+    const row = await driveRun({ flag: true, sent: SENT });
+    expect(lines(row)).toEqual(['Forecast warmed to 44°F since the 3:02 PM frost email.']);
+    expect(agreedTonightLow(row)).toBeNull();               // the card and the cue keep the plan's 44
+    // CONTROL: the same row without the stored lows is what Today showed before — the email's 38, frozen all evening.
+    const before = { ...row, hydrology: withoutLows(row.hydrology) };
+    expect(lines(before)).toEqual(['Frost possible tonight — low 38°F. Plan cover for tender plants.']);
+    expect(agreedTonightLow(before)).toEqual({ lowF: 38, lowRaw: 37.6 });
+  });
+
+  it('the second model still in range (D1 39.6): the email\'s line and figure stand — colder wins', async () => {
+    const row = await driveRun({ flag: true, sent: SENT, lows: [39.6, 45.3, 47.1] });
+    expect(row.hydrology.forecast_lows).toEqual([39.6, 45.3, 47.1]);
+    expect(lines(row)).toEqual(['Frost possible tonight — low 38°F. Plan cover for tender plants.']);
+    expect(agreedTonightLow(row)).toEqual({ lowF: 38, lowRaw: 37.6 });
   });
 });

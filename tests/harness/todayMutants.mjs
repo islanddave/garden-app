@@ -120,7 +120,7 @@ export const MUTANTS = {
   ],
   dropFrostLine: [
     'src/pages/Today.jsx',
-    '<FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} planLow={plan.weather?.tonightLow} />',
+    '<FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} planLow={plan.weather?.tonightLow} current={current} />',
     '<></>',
     'the frost advisory / frost-watch line Dave was emailed about has no surface on Today again — BUG-FROSTALERTNOAPP-001 reintroduced.',
   ],

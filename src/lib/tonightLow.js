@@ -27,6 +27,10 @@
 // number: the email named 35 for tonight, the line names it, and a card left at 39 would put two lows for one
 // night back on the screen. The colder figure wins, as it does between the plan low and an advisory's. The
 // "Forecast warmed to …" line names tonight too but never triggers: it prints the plan low itself.
+// V5-TODAYFROSTWARMEDADVISORY-001 — the trigger reads the plan's CURRENT lows too (frostAlertLine.js currentLows):
+// once both models have warmed past a same-night advisory it is retired, nothing names tonight but a watch or the
+// warmed line, and the card, the cue and the Protect rows fall back to the plan low. Today's FrostAlertLine gets the
+// same currentLows(plan), so the line and these surfaces cannot disagree about whether it retired.
 //
 // Shared low: Traw = min(plan low, the line's raw lowF), the colder one winning in both directions
 // (a missing plan low leaves the advisory's). Every surface prints T = round(Traw), one whole number.
@@ -52,7 +56,7 @@
 // branches. src/__tests__/tonightLow.test.js sweeps every whole-degree low 20..44 against the REAL
 // computeCallout and deep-compares the result, so an engine copy change or a retuned threshold reds
 // that test instead of leaving two wordings of one cue on the page.
-import { tonightLineLow, FREEZE_BELOW_F } from './frostAlertLine.js'
+import { tonightLineLow, currentLows, FREEZE_BELOW_F } from './frostAlertLine.js'
 
 /** The impression partition for a cue this module RE-WORDED (weatherCueImpressions.js bills it). A
  *  cue whose words and number came through unchanged keeps weatherCue.js WX_CUE_MODEL_VERSION: the
@@ -80,12 +84,12 @@ function finiteOrNull(v) {
 
 /**
  * PURE. The one low Today prints for tonight, or null when no frost line names tonight.
- * -> { lowF: T (whole °F), lowRaw: Traw } | null. Reads plan.alerts_sent and plan.weather.tonightLow;
- * writes nothing.
+ * -> { lowF: T (whole °F), lowRaw: Traw } | null. Reads plan.alerts_sent, plan.weather.tonightLow and
+ * plan.hydrology.forecast_lows/forecast_dates (the retirement rule); writes nothing.
  */
 export function agreedTonightLow(plan) {
   const alertsSent = plan ? plan.alerts_sent : null
-  const lineRaw = tonightLineLow(alertsSent)
+  const lineRaw = tonightLineLow(alertsSent, currentLows(plan))
   if (lineRaw == null) return null
   const planRaw = finiteOrNull(plan.weather ? plan.weather.tonightLow : null)
   const lowRaw = planRaw == null ? lineRaw : Math.min(planRaw, lineRaw)

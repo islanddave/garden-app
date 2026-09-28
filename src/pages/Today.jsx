@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
+import { currentLows } from '../lib/frostAlertLine.js'
 import WeatherWidget, { asOfLabel } from '../components/today/WeatherWidget.jsx'
 import WeatherCueLine from '../components/today/WeatherCueLine.jsx'
 import FrostAlertLine from '../components/today/FrostAlertLine.jsx'
@@ -56,6 +57,9 @@ export default function Today() {
   // line's low (src/lib/tonightLow.js). null on every other night, and then nothing below changes.
   // Computed once here so the three surfaces cannot each work it out differently.
   const agreed = useMemo(() => agreedTonightLow(plan), [plan])
+  // V5-TODAYFROSTWARMEDADVISORY-001 — the plan's current lows, which agreedTonightLow reads too: the frost line
+  // needs the same ones, or a retired advisory would still print its 38 under a card that says 44.
+  const current = useMemo(() => currentLows(plan), [plan])
   const cueCallout = useMemo(() => agreeCallout(plan?.weather?.callout, agreed), [plan, agreed])
 
   // V5-TODAYSHAPE-001 — the `data-testid` attributes threaded through this render are the region
@@ -149,7 +153,7 @@ export default function Today() {
               longer hides a later night's advisory — and "Forecast warmed to N°F since the 3 PM frost
               email." once a threshold frost email's night has warmed out of the freeze cue; that line
               reads the plan low, hence `planLow`. lowShown still reaches tonight's line only. */}
-          <FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} planLow={plan.weather?.tonightLow} />
+          <FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} planLow={plan.weather?.tonightLow} current={current} />
 
           {/* V5-LEGACYEXCEPTIONCARE-001 — the garden-wide drought line. MOUNTED HERE DELIBERATELY:
               without this one line the whole signal is inert — droughtSignal.js computes it, the

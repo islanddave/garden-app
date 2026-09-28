@@ -47,7 +47,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import h from './handler.js';
 import fe from './frostEval.js';
-import { buildFrostAlertLine, buildFrostAlertLines } from '../../src/lib/frostAlertLine.js';
+import { buildFrostAlertLine, buildFrostAlertLines, currentLows } from '../../src/lib/frostAlertLine.js';
 import { agreedTonightLow } from '../../src/lib/tonightLow.js';
 
 const { run, mergeAlertsSent, readSpaceAlertsSent, readAlertsSent, readPriorRuns, readWeatherDaily } = h;
@@ -326,9 +326,12 @@ describe('BUG-FROSTESCALATENIGHTMOVE-001 — the night moves between hourly runs
 // P1 lost the later night it had emailed, P2 lost tonight and its one-low agreement. Dave (2026-09-21): both, tonight
 // first, whichever was sent last.
 describe('F1 — an advisory for tonight and one for a later night, sent in either order (real run())', () => {
+  // As Today builds them. V5-TODAYFROSTWARMEDADVISORY-001: Today also passes the row's current lows (`current`), which
+  // the written row now carries; P1 and F1b read the same either way.
   const lines = (t) => {
     const items = t.store.get(`${DAVE}|${TODAY}`);
-    return buildFrostAlertLines(t.sent(), { lowShown: agreedTonightLow(items)?.lowF, planLow: items.weather.tonightLow }).map((l) => l.text);
+    return buildFrostAlertLines(t.sent(), { lowShown: agreedTonightLow(items)?.lowF, planLow: items.weather.tonightLow, current: currentLows(items) })
+      .map((l) => l.text);
   };
   const P = (when, n) => `Frost possible ${when} — low ${n}°F. Plan cover for tender plants.`;
 
@@ -353,15 +356,30 @@ describe('F1 — an advisory for tonight and one for a later night, sent in eith
     expect(lines(t)).toEqual([P('tonight', 38)]);
   });
 
+  // CHANGED by V5-TODAYFROSTWARMEDADVISORY-001 (Dave 2026-09-28): the 4 PM run's D1 was 45, i.e. by 4 PM tonight had
+  // warmed out of the advisory's range on both models (NWS 45 too). What this case protects is F1 — a NEWER later-night
+  // advisory must not displace tonight's line or its agreed low — and that needs tonight still in range, so the 4 PM D1
+  // is now 39 (the same two emails go out: D2 35 is still the coldest day). The 45 case is pinned just below, where
+  // Dave's new rule retires tonight's advisory and says it warmed.
   it('P2: tonight (D1) at 2 PM, then tomorrow night (D2) at 4 PM by a newly tripped crop -> both lines, tonight agreed', async () => {
     const t = planTable({ rows: [row('Tomato Dave', DAVE, 'tomato'), row('Marigold Dave', DAVE, 'marigold')] });
     const pub = publisher();
     await once(t, pub, { etHour: 14, lows: [38, 45, 50], minHours: [5, 6, 6] });   // 38: tomato (40) trips, marigold (36) not
-    await once(t, pub, { etHour: 16, lows: [45, 35, 50], minHours: [5, 5, 6] });   // 35: marigold newly at risk
+    await once(t, pub, { etHour: 16, lows: [39, 35, 50], minHours: [5, 5, 6] });   // 35: marigold newly at risk; D1 still <= 40
     expect(pub.frost().map((c) => [c.hour, snsNight(c.message)])).toEqual([[14, 'tonight'], [16, 'tomorrow night']]);
     expect(t.sent().map((a) => [a.nightOffset, Object.keys(a.crops).sort().join('+')])).toEqual([[0, 'tomato'], [1, 'marigold+tomato']]);
     expect(lines(t)).toEqual([P('tonight', 38), P('tomorrow night', 35)]);
     expect(agreedTonightLow(t.store.get(`${DAVE}|${TODAY}`))).toEqual({ lowF: 38, lowRaw: 38 });
+  });
+
+  it('P2 once tonight has warmed (4 PM: D1 45, NWS 45): tonight\'s advisory retires into the warmed line; the later night stays', async () => {
+    const t = planTable({ rows: [row('Tomato Dave', DAVE, 'tomato'), row('Marigold Dave', DAVE, 'marigold')] });
+    const pub = publisher();
+    await once(t, pub, { etHour: 14, lows: [38, 45, 50], minHours: [5, 6, 6] });
+    await once(t, pub, { etHour: 16, lows: [45, 35, 50], minHours: [5, 5, 6] });
+    expect(pub.frost().map((c) => [c.hour, snsNight(c.message)])).toEqual([[14, 'tonight'], [16, 'tomorrow night']]);
+    expect(lines(t)).toEqual(['Forecast warmed to 45°F since the 2 PM frost email.', P('tomorrow night', 35)]);
+    expect(agreedTonightLow(t.store.get(`${DAVE}|${TODAY}`))).toBeNull();
   });
 });
 
