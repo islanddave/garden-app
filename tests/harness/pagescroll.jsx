@@ -44,6 +44,15 @@
 //                    Clerk window (~2.5 s measured) — what a boot restore has to wait through (qa-built M9)
 //     token=0        ms every Clerk getToken() takes (read by tests/harness/stubs/clerk.jsx): a cold token
 //                    cache, which useApiFetch waits on before each request goes out (qa2-confirm NEW-1)
+//     roster=full    the household /api/members answers, after ?ms= like the rest of a page's own data. 'full':
+//                    the signed-in user and Jen on every answer, as prod's two-person household, so Garden
+//                    renders its caretaker row (Mine / Jen / Everyone) ABOVE the list. 'grow': the FIRST answer
+//                    carries the signed-in user alone (a household of one: no row), every later answer both —
+//                    the row arriving late on a return: a late change above Garden's spot
+//                    (BUG-GARDENSPOTCREEP-001). Until that lane this answered [], so no flow ever saw the row, and
+//                    the row arriving late on every return is what moved the spot one row per Today → Garden trip.
+//   __h.growPlants()  from then on the plants grid answers one planting more, sorted ABOVE the gate's tracked
+//                    tile: a list change above the spot, revealed by the revalidate a return does (GROWN_PLANTING).
 //
 // A FLOW'S FIRST LOAD IS A FIRST VISIT: sessionStorage and localStorage are cleared before anything
 // mounts (both scroll stores, every page's persisted filters), and Garden's crop groups are opened. The one
@@ -91,6 +100,8 @@ const q = new URLSearchParams(location.search)
 const TOP_CHROME_PX = Number(q.get('topbar') || 52)
 const MS = Number(q.get('ms') ?? 300)
 const AUTH_MS = Number(q.get('auth') || 0)
+const ROSTER = q.get('roster') || 'full'
+if (ROSTER !== 'full' && ROSTER !== 'grow') throw new Error(`?roster=${ROSTER} is not 'full' or 'grow'`)
 
 // This page's own URL, before the router moves it: where a reload has to land.
 const HARNESS_URL = location.pathname + location.search
@@ -205,11 +216,31 @@ const GARDEN_PLANTS = GARDEN_CROPS.flatMap(([slug, label], ci) => Array.from({ l
   variety_ref: { name: `${label} variety ${ci * 14 + i + 1}`, crop_type_slug: slug },
 })))
 const GARDEN_BY_ID = Object.fromEntries(GARDEN_PLANTS.map((p) => [p.id, p]))
+// __h.growPlants() (BUG-GARDENSPOTCREEP-001; QA's content-stability probe, made a real knob): from then on the grid
+// answers one planting more, "Bean 15". Garden's crop grouping sorts it into the Bean group, ABOVE the gate's
+// tracked tile (Squash 6), and it adds one grid row there — a planting the cache did not have yet (sown from Seeds,
+// added on Jen's phone, archived on its own page), revealed by the revalidate every Garden mount does.
+const GROWN_PLANTING = {
+  id: 'gp-bean-15', name: 'Bean 15', quantity: 1, status: 'growing', project_id: null, location_id: null, assignee_user_id: null,
+  featured_photo_id: null, featured_photo_view_url: null, featured_photo_thumb_url: null,
+  variety_ref: { name: 'Bean variety 99', crop_type_slug: 'bean' },
+}
+let plantsGrown = false
+let plantsAnswered = 0
+const gardenPlants = () => (plantsGrown ? [...GARDEN_PLANTS, GROWN_PLANTING] : GARDEN_PLANTS)
 const gardenPlanting = (p) => ({
   ...PLANTING, id: p.id, name: p.name, variety: p.variety_ref.name, variety_id: null,
   variety_ref: { id: null, name: p.variety_ref.name, species: null, crop_type_slug: p.variety_ref.crop_type_slug },
   crop_type_slug: p.variety_ref.crop_type_slug, notes: null,
 })
+// The household (GET /api/members, useMembers' `d.members`). The first member is the signed-in user — the
+// Clerk stub's USER.id (tests/harness/stubs/clerk.jsx), which AuthContext's profile.id carries — so Garden's
+// lens reads Mine / Jen / Everyone. No planting is assigned, so no tile grows a caretaker badge: the row is the
+// only thing the roster changes on the page.
+const MEMBERS = [{ id: 'harness_user', display_name: 'Dave N' }, { id: 'user_jen', display_name: 'Jen' }]
+let membersAnswered = 0
+// The caretaker row's control, as Garden renders it (SegmentedControl's radiogroup).
+const LENS_SEL = '[role="radiogroup"][aria-label="Show plantings by caretaker"]'
 
 // PutUp: twelve open kitchen batches (putupclose.jsx's row shape, the repo's own shipped fixtures), so the
 // Going-now list runs well past the fold; one detail shape answers every ?batch= GET under its own id.
@@ -294,7 +325,13 @@ const VARIETY = {
 
 // ── network: the far side of the wire only ───────────────────────────────────────────────────────────
 const realFetch = window.fetch
-const json = (body, ms = 20, status = 200) => new Promise((r) => setTimeout(() => r(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })), ms))
+// `inflight` counts answers not yet delivered: a gate can wait for the network to go quiet before it reads a
+// page, where a settle alone ends 800 ms after the last move and a slower answer can land after it.
+let inflight = 0
+const json = (body, ms = 20, status = 200) => {
+  inflight += 1
+  return new Promise((r) => setTimeout(() => { inflight -= 1; r(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })) }, ms))
+}
 const unstubbed = []
 window.fetch = (url, opts = {}, ...rest) => {
   const u = String(url)
@@ -314,7 +351,7 @@ window.fetch = (url, opts = {}, ...rest) => {
   if (/^\/api\/plants\/[^/?]+\/seed-lots/.test(path)) return json([])
   if (path === `/api/plants/${PLANTING_ID}`) return json(PLANTING, MS)
   if ((m = path.match(/^\/api\/plants\/([^/?]+)$/))) return GARDEN_BY_ID[m[1]] ? json(gardenPlanting(GARDEN_BY_ID[m[1]]), MS) : json({ error: 'Not found' }, 20, 404)
-  if (path.startsWith('/api/plants?view=grid')) return json(GARDEN_PLANTS, MS)
+  if (path.startsWith('/api/plants?view=grid')) { plantsAnswered += 1; return json(gardenPlants(), MS) }
   if (path.startsWith('/api/plants?view=picker')) return json(PICKER)
   if (path.startsWith('/api/plants')) return json([])
   if (path.startsWith('/api/harvests')) return json(path.includes('plant=') ? { entries: [], aggregates: { first_pick: [] }, cursor: null } : HARVESTS, MS)
@@ -337,7 +374,11 @@ window.fetch = (url, opts = {}, ...rest) => {
   if (path.startsWith('/api/varieties/sources') || path.startsWith('/api/varieties/source-kinds')) return json([])
   if (path === '/api/varieties/var-ristra') return json(VARIETY, MS)
   if (path.startsWith('/api/varieties')) return json([])
-  if (path.startsWith('/api/projects') || path.startsWith('/api/favorites') || path.startsWith('/api/members')) return json([])
+  if (path.startsWith('/api/members')) {
+    membersAnswered += 1
+    return json({ members: ROSTER === 'grow' && membersAnswered === 1 ? MEMBERS.slice(0, 1) : MEMBERS }, MS)
+  }
+  if (path.startsWith('/api/projects') || path.startsWith('/api/favorites')) return json([])
   unstubbed.push(`${method} ${path}`)
   return json([])
 }
@@ -363,6 +404,23 @@ function sampleFrame() {
   const p = samples[samples.length - 1]
   if (!p || p.y !== s.y || p.docH !== s.docH || p.path !== s.path || p.page !== s.page) samples.push(s)
   if (samples.length < 1500) requestAnimationFrame(sampleFrame)
+}
+// Per-frame sampler of ONE element's viewport top — the `index`th match of `sel`, re-queried every frame, since
+// the page remounts under it — for the no-jump checks (BUG-GARDENSPOTCREEP-001). Same keep-on-change rule; `lens`
+// is whether Garden's caretaker row is on the page, so a jump can be told from the row that caused it.
+let topSamples = null
+let topSampling = false
+let topT0 = 0
+let topSel = null
+let topIdx = 0
+function topFrame() {
+  if (!topSampling) return
+  const el = document.querySelectorAll(topSel)[topIdx]
+  const r = el ? el.getBoundingClientRect() : null
+  const s = { t: Math.round(performance.now() - topT0), y: Math.round(window.scrollY * 10) / 10, top: r ? Math.round(r.top * 10) / 10 : null, docH: document.documentElement.scrollHeight, page: pageKeyOf(pagePath()), lens: !!document.querySelector(LENS_SEL) }
+  const p = topSamples[topSamples.length - 1]
+  if (!p || p.y !== s.y || p.top !== s.top || p.docH !== s.docH || p.page !== s.page || p.lens !== s.lens) topSamples.push(s)
+  if (topSamples.length < 3000) requestAnimationFrame(topFrame)
 }
 // The manager's decisions, as it reports them (observation only; App.jsx passes no onDecision).
 const decisions = []
@@ -623,7 +681,7 @@ const READY = {
   harvests: () => /Pepper/.test(text()) && /Potato/.test(text()),
   achievements: () => /Locked badge 30/.test(text()),
   about: () => !!document.querySelector('h1'),
-  garden: () => count('[data-testid="planting-tile"]') === GARDEN_PLANTS.length,
+  garden: () => count('[data-testid="planting-tile"]') === gardenPlants().length,
   putup: () => count('[data-testid="going-batch"]') === GOING.length || !!document.querySelector('[data-testid="batch-detail-view"][data-batch-id]'),
   seeds: () => !!document.querySelector('[data-testid="saved-seeds-view"] [data-testid="seed-lot-card"]') || !!document.querySelector('[data-testid="my-seeds-view"] [data-testid="facet-group-header"]'),
   lot: () => !!document.querySelector('form') && !!document.querySelector('h1') && !!document.querySelector('[data-testid="edit-sow-details"]'),
@@ -650,6 +708,16 @@ window.__h = {
   authed: () => !document.querySelector('[data-testid="harness-skeleton"]'),
   startSampling: () => { samples = []; sampleT0 = performance.now(); sampling = true; requestAnimationFrame(sampleFrame); return true },
   stopSampling: () => { sampling = false; return samples ? samples.slice() : [] },
+  sampleTop: (sel, index = 0) => { topSel = sel; topIdx = index; topSamples = []; topT0 = performance.now(); topSampling = true; requestAnimationFrame(topFrame); return true },
+  topSamples: () => { topSampling = false; return topSamples ? topSamples.slice() : [] },
+  // Stubbed answers not yet delivered, and how many times /api/members has been asked (the roster knob's count).
+  inflight: () => inflight,
+  membersAnswered: () => membersAnswered,
+  // The plants knob (see GROWN_PLANTING) and how many times the grid has been asked for.
+  growPlants: () => { plantsGrown = true; return true },
+  plantsAnswered: () => plantsAnswered,
+  // Garden's caretaker row: its option labels, or null when the row is not on the page.
+  lensOptions: () => { const g = document.querySelector(LENS_SEL); return g ? [...g.querySelectorAll('[role="radio"]')].map((b) => b.textContent.trim()) : null },
   // The manager's mirror, for failure messages only.
   store: () => { try { return JSON.parse(window.sessionStorage.getItem(PAGE_SCROLL_STORE_KEY)) } catch { return null } },
   // The page rendering shorter (and back) while a sheet covers it.
@@ -667,6 +735,6 @@ window.__h = {
   },
   reloadedDoc: () => !!RELOAD_TO,
   // `token` is what the Clerk stub itself reports (tests/harness/stubs/clerk.jsx, ?token=), not this page's URL.
-  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, token: window.__harnessClerk ? window.__harnessClerk.tokenMs : null, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS }),
+  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, token: window.__harnessClerk ? window.__harnessClerk.tokenMs : null, roster: ROSTER, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS, members: MEMBERS.length }),
   tokenCalls: () => (window.__harnessClerk ? window.__harnessClerk.calls : null),
 }

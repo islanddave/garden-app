@@ -67,6 +67,24 @@
 //                 the reset's scroll event on a slow commit (rimpact MINOR-2, both halves).
 //   garden-add    Garden, deep → + → "Add a planting" (/garden?add=1, a REPLACE onto the SAME page) → the
 //                 editor opens (its ?add strip is another same-page REPLACE) → its X → Garden where it was.
+//   garden-cycles Garden, deep → [Today tab → Garden tab] × 3, no scrolling between (Dave's step 27). IN CONTENT
+//                 TERMS (qa-gardencreep): the planting left on screen, followed by name, comes back within
+//                 TOP_TOL_PX + LAND_TOL_PX of where it was left, and does not move more than NO_JUMP_PX from the first
+//                 frame it is on screen (sampled every frame); the raw offset is printed, not asserted.
+//                 BUG-GARDENSPOTCREEP-001: the caretaker row above the list arrived a round trip after Garden's
+//                 restore, scroll anchoring held the (wrong) content still, the recorder filed that offset as the spot,
+//                 and each round trip landed one row (64px) further down the list. Every Garden flow first checks the
+//                 row is on the page (the harness answered /api/members with [] before, so no flow ever saw the row).
+//   garden-cycles-grow  as garden-cycles, the household growing from one to two on the first return (?roster=grow,
+//                 every GET 1.5 s slow): the row arrives late ABOVE the spot once. Anchoring keeps the planting still;
+//                 the raw offset moves by the row's height and is printed, not asserted.
+//   garden-plantsgrow  as garden-cycles, with the first return's list revalidate revealing a planting ABOVE the one
+//                 left on screen (__h.growPlants(): a planting sown from Seeds, added on Jen's phone, archived on its
+//                 own page — only Garden reads the list cache, so every such change arrives this way). The planting
+//                 must not move: a restore that holds the raw offset through the change drags it a full tile row
+//                 down (qa-gardencreep BLOCKING, 252.8px at 426x836 — the reason Garden keeps its ~20-frame loop).
+//   garden-plantsfixed  garden-plantsgrow's control: the same trips and checks, the list unchanged (the same shape as
+//                 garden-cycles, kept as the named pair of plantsgrow).
 //   putup         Put-Up's Going-now list, deep → a batch (?batch=, a same-page PUSH) → Back → the list's place.
 //                 A MUST-NOT-CHANGE guard: Chromium's own clamp carry restores it with or without the manager.
 //   putup-top     Put-Up's list at its TOP → the first batch (same page) → down → Back → the list at its top
@@ -243,7 +261,7 @@ if (!VIEWPORTS.length || VIEWPORTS.some((v) => v.length !== 2 || !v.every((x) =>
 }
 
 // What tests/harness/pagescroll.jsx promises. EXACT: the numbers fall out of its fixture.
-const FIXTURE = { gardenPlants: 56, going: 12, locations: 33, plantingEvents: 60, chainRows: 50 }
+const FIXTURE = { gardenPlants: 56, going: 12, locations: 33, plantingEvents: 60, chainRows: 50, members: 2 }
 // "Deep": past anything a one-screen loading shell can hold under the app's chrome (a clamp leaves at most
 // the chrome, BAR_H + BOTTOM_NAV_HEIGHT_PX = 108 today), so a clobbered offset can never equal the real one.
 const DEEP_MIN_PX = 300
@@ -264,6 +282,10 @@ const TOP_TOL_PX = 1
 const LAND_TOL_PX = 1
 const nudges = []
 const CHAIN_DEPTH = 25
+// The Garden round-trip flows: Today → Garden round trips per flow (Dave's step 27: three), and how far the planting
+// followed may move once it is on screen — sub-pixel anchoring only; the defects this catches are 64px and 252.8px.
+const GARDEN_CYCLES = 3
+const NO_JUMP_PX = 4
 
 // ── One tab ─────────────────────────────────────────────────────────────────────────────────────────
 // Everything below runs in the HOST page and reaches into the frame, same origin: `f` the iframe element,
@@ -359,6 +381,10 @@ const FLOWS = [
   { key: 'garden-tab', label: 'Garden, deep → Today tab → Garden tab' },
   { key: 'garden-tab-4x', label: 'Garden, deep → Today tab → Garden tab, CPU 4x slower', cpu: 4 },
   { key: 'garden-add', label: 'Garden, deep → + → "Add a planting" (same page) → the editor\'s X' },
+  { key: 'garden-cycles', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}: the planting comes back where it was left and does not move once on screen` },
+  { key: 'garden-cycles-grow', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, the household growing on the first return (the caretaker row arriving late), every GET 1.5 s slow`, roster: 'grow', ms: 1500 },
+  { key: 'garden-plantsgrow', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, the first return's revalidate revealing a planting ABOVE the one left on screen` },
+  { key: 'garden-plantsfixed', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, garden-plantsgrow's control: the list unchanged` },
   { key: 'putup', label: 'Put-Up\'s Going-now list, deep → a batch (same page) → Back (a must-not-change guard)' },
   { key: 'putup-top', label: 'Put-Up\'s Going-now list at its TOP → the first batch (same page) → down → Back' },
   { key: 'seeds-switch', label: 'My seeds, a little down → the switch to Saved seeds (same page)' },
@@ -635,9 +661,10 @@ async function runFlow(cdp, flow, vw, vh) {
     const ms = flow.ms ?? 300
     const auth = flow.auth ?? 0
     const token = flow.token ?? 0
+    const roster = flow.roster ?? 'full'
     // A settle long enough to outlast the flow's own latency: the restore re-applies until the content lands.
     const slowMax = Math.max(10000, (ms + token) * 3 + 6000) + auth
-    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}`
+    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}&roster=${roster}`
     const nav = await cdp.send('Page.navigate', { url }, sessionId)
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000 + auth)) return fail(`${at}: the harness never came up in the frame — nothing to measure`)
@@ -663,6 +690,7 @@ async function runFlow(cdp, flow, vw, vh) {
     if (g.fixture.ms !== ms) geo.push(`the harness answers every GET after ${g.fixture.ms}ms, the flow asked for ${ms}ms`)
     if (g.fixture.auth !== auth) geo.push(`the harness holds the user unresolved for ${g.fixture.auth}ms at each load, the flow asked for ${auth}ms`)
     if (g.fixture.token !== token) geo.push(`the Clerk stub gives a token after ${g.fixture.token}ms, the flow asked for ${token}ms`)
+    if (g.fixture.roster !== roster) geo.push(`the harness answers /api/members as roster '${g.fixture.roster}', the flow asked for '${roster}'`)
     for (const [key, v] of Object.entries(FIXTURE)) if (g.fixture[key] !== v) geo.push(`the fixture's ${key} is ${g.fixture[key]}, the gate expects ${v}`)
     // The browser's restore mode is the one main.jsx sets for the flag this document was served: 'manual' with
     // the manager on. A harness in any other mode measures a browser prod does not run.
@@ -1132,6 +1160,16 @@ async function runFlow(cdp, flow, vw, vh) {
     if (k.startsWith('garden')) {
       let why = await enter(SEL.tabGarden, 'garden', 'the Garden tab', { chrome: true })
       if (why) return done(why)
+      // THE ROSTER, an instrument check (BUG-GARDENSPOTCREEP-001): prod's household is two, so Garden renders its
+      // caretaker row above the list. The harness answered /api/members with [] before, no flow ever saw that row,
+      // and the row arriving late is what moved the spot. roster=grow is a household of one on this first visit:
+      // no row yet.
+      if (!await t.waitIn(`w.__h.membersAnswered() >= 1 && w.__h.inflight() === 0`, slowMax)) return done(`/api/members was never answered on the first visit to Garden${await diag()}`)
+      await t.settle(300, 3000)
+      const lens0 = await t.read(`return w.__h.lensOptions()`)
+      if (roster === 'full' && (lens0 || []).join('|') !== 'Mine|Jen|Everyone') return done(`Garden's caretaker row shows ${lens0 ? `[${lens0.join(', ')}]` : 'nothing'} on the first visit, not [Mine, Jen, Everyone] — the household never reached the page, so this flow would measure a Garden with no row above its list${await diag()}`)
+      if (roster === 'grow' && lens0) return done(`Garden's caretaker row is on the page on the first visit ([${lens0.join(', ')}]) — roster=grow is a household of one until the first return, so the late row this flow is about never happens${await diag()}`)
+      note.push(`caretaker row ${lens0 ? lens0.join('/') : 'absent (a household of one)'}`)
       const tile = SEL.tile(33)
       why = await t.wheelTo(tile, 'the 34th planting tile')
       if (why) return done(why)
@@ -1165,6 +1203,81 @@ async function runFlow(cdp, flow, vw, vh) {
         note.push(`after the X y${R1(after.y)}`)
         if (after.path !== '/garden') return done(`the X left Garden for ${after.path}`)
         if (!st.settled || Math.round(after.y) !== Math.round(before.y) || Math.abs(after.top - before.top) > TOP_TOL_PX) return done(`after the editor's X Garden is at y${R1(after.y)} (tile top y${R1(after.top)}), it was at y${R1(before.y)} (tile top y${R1(before.top)}) — a same-page write moved it${await diag()}`)
+        return
+      }
+      if (k === 'garden-cycles' || k === 'garden-cycles-grow' || k === 'garden-plantsgrow' || k === 'garden-plantsfixed') {
+        // Dave's step 27: "Scroll well down Garden, tap Today, then Garden. Do this three times." Each return is a PUSH
+        // that Garden restores itself, the list painting from the cache while the household and the list re-fetch.
+        // THE CRITERION IS CONTENT (qa-gardencreep IMPORTANT 1): the planting the user left on screen — followed by
+        // NAME, so a planting added above it cannot move the check onto another tile — comes back where they left it
+        // (TOP_TOL_PX + LAND_TOL_PX), and does not move more than NO_JUMP_PX from the first frame it is on screen. The
+        // raw offset is printed, never asserted: after a change above the spot (the row, a planting) the right offset
+        // is a different number, and a check on it once certified a restore that dragged the planting a row down.
+        // Every round trip runs even after one goes red, so a red prints each trip.
+        const rosterGrows = k === 'garden-cycles-grow'
+        const plantsGrow = k === 'garden-plantsgrow'
+        const name = await t.read(`const el = ${tile}; const a = el && el.querySelector('${tid('planting-tile-link')}'); return a ? a.getAttribute('aria-label') : null`)
+        if (!name) return done(`the 34th tile carries no name (its link's aria-label) — the flow cannot follow the planting${await diag()}`)
+        const byName = `${tid('planting-tile')}:has([aria-label=${JSON.stringify(name)}])`
+        const named = `d.querySelector(${JSON.stringify(byName)})`
+        const start = await t.read(READ_HERE(named))
+        if (start.top == null || Math.abs(start.top - before.top) > 0.5) return done(`the tile found by name (${name}) is not the tracked tile (top y${R1(start.top)} vs y${R1(before.top)})`)
+        const [bandTop, bandBottom] = before.band
+        if (plantsGrow) await t.read(`w.__h.growPlants(); return 1`)
+        const plants0 = await t.read(`return w.__h.plantsAnswered()`)
+        const wantTiles = FIXTURE.gardenPlants + (plantsGrow ? 1 : 0)
+        const cycles = []
+        const reds = []
+        const trips = () => cycles.map((x) => `#${x.c} ${name} at y${R1(x.top)} (${x.dTop >= 0 ? '+' : ''}${R1(x.dTop)}px) · ${x.landed ? `on screen @${x.landed.t}ms at y${R1(x.landed.top)}, moved ${R1(x.excursion)}px after` : 'never on screen'} · raw y${R1(x.y)} · row ${x.row} · ${x.tiles} tiles`).join(' | ')
+        for (let c = 1; c <= GARDEN_CYCLES; c++) {
+          const l = await land(SEL.tabToday, `the Today tab (round trip ${c})`, 'today', { chrome: true, name: `today-${c}` })
+          if (l.why) return done(`round trip ${c}: ${l.why}`)
+          const k0 = await t.read(`return w.__h.key()`)
+          await t.read(`w.__h.mark(); w.__h.sampleTop(${JSON.stringify(byName)}, 0); return 1`)
+          why = await t.tap(SEL.tabGarden, `the Garden tab (round trip ${c})`, { chrome: true })
+          if (why) return done(`round trip ${c}: ${why}`)
+          if (!await page('garden')) return done(`round trip ${c}: the Garden tab never brought Garden back${await diag()}`)
+          // Every answer delivered before the settle: a settle alone ends 800 ms after the last move, and a slower
+          // answer (the household, the list's revalidate) can land after that.
+          if (!await t.waitIn(`w.__h.inflight() === 0`, slowMax)) return done(`round trip ${c}: the harness never answered every request${await diag()}`)
+          const st = await t.settle(800, slowMax)
+          const samples = await t.read(`return w.__h.topSamples()`)
+          const after = await t.read(READ_HERE(named))
+          const lens = await t.read(`return w.__h.lensOptions()`)
+          const tiles = await t.read(`return d.querySelectorAll('${tid('planting-tile')}').length`)
+          await t.shoot(join(OUTDIR, `page-scroll-${k}-back-garden-${c}-${vw}x${vh}.png`))
+          if (after.key === k0 || after.key === before.key) return done(`round trip ${c}: the Garden tab did not push a new entry — this is not the push under test`)
+          if (!st.settled) return done(`round trip ${c}: Garden never held still for 800ms within ${slowMax}ms (last y${R1(st.y)})${await diag()}`)
+          if ((lens || []).join('|') !== 'Mine|Jen|Everyone') return done(`round trip ${c}: Garden's caretaker row shows ${lens ? `[${lens.join(', ')}]` : 'nothing'} once settled, not [Mine, Jen, Everyone]${await diag()}`)
+          if (tiles !== wantTiles) return done(`round trip ${c}: Garden shows ${tiles} plantings once settled, not ${wantTiles}${plantsGrow ? ' — the grown answer never reached the page, so the flow measured no change above the spot' : ''}${await diag()}`)
+          if (plantsGrow) {
+            // The new planting has to be ABOVE the one followed, or the flow measures a change below the spot.
+            const grown = await t.read(`const el = d.querySelector(${JSON.stringify(`${tid('planting-tile')}:has([aria-label="Open Bean 15"])`)}); return el ? el.getBoundingClientRect().top : null`)
+            if (grown == null || !(grown < after.top)) return done(`round trip ${c}: the grown planting (Bean 15) is ${grown == null ? 'not on the page' : `at y${R1(grown)}, not above ${name} (y${R1(after.top)})`} — the flow would measure no change above the spot${await diag()}`)
+          }
+          // From the first frame that shows the list: the landing is the first frame with the planting ON SCREEN.
+          const shown = samples.findIndex((s) => s.page === 'garden' && s.top != null)
+          if (shown < 0) return done(`round trip ${c}: no sampled frame showed Garden with ${name} — the sampler measured nothing${await diag()}`)
+          const onGarden = samples.slice(shown)
+          if (onGarden.some((s) => s.page !== 'garden' || s.top == null)) return done(`round trip ${c}: ${name} left a sampled Garden frame after the list showed — the sampler lost the planting it follows${await diag()}`)
+          const landAt = onGarden.findIndex((s) => s.top >= bandTop - 0.5 && s.top < bandBottom)
+          const landed = landAt < 0 ? null : onGarden[landAt]
+          const excursion = landed ? Math.max(0, ...onGarden.slice(landAt).map((s) => Math.abs(s.top - landed.top))) : null
+          const row = `${onGarden[0].lens ? 'on' : 'off'}→${onGarden[onGarden.length - 1].lens ? 'on' : 'off'}`
+          const dTop = after.top - before.top
+          cycles.push({ c, y: after.y, top: after.top, dTop, landed, excursion, row, tiles, rowLate: !onGarden[0].lens && onGarden[onGarden.length - 1].lens })
+          // Garden's OWN restore, content-stable, is today's contract flag on or off (fix (a) is in both builds).
+          if (Math.abs(dTop) > TOP_TOL_PX + LAND_TOL_PX) reds.push(`round trip ${c}: ${name} came back at y${R1(after.top)}, the user left it at y${R1(before.top)} — ${dTop < 0 ? `${R1(-dTop)}px up the screen, i.e. Garden came back further down the list` : `${R1(dTop)}px down the screen`}`)
+          else if (Math.abs(dTop) > TOP_TOL_PX) nudges.push(`${k}@${vw}x${vh} trip-${c} ${name} y${R1(after.top)} for y${R1(before.top)}`)
+          if (!landed) reds.push(`round trip ${c}: ${name} was never on screen on the way back (its first frames: ${onGarden.slice(0, 6).map((s) => `y${s.y} top${s.top}`).join(' ')})`)
+          else if (excursion > NO_JUMP_PX) reds.push(`round trip ${c}: ${name} JUMPED ${R1(excursion)}px after it came on screen (frames from there: ${onGarden.slice(landAt, landAt + 10).map((s) => `@${s.t} y${s.y} top${s.top} h${s.docH}${s.lens ? '' : ' no-row'}`).join(' ')})`)
+        }
+        const plants1 = await t.read(`return w.__h.plantsAnswered()`)
+        note.push(`spot y${R1(before.y)}, ${name} at y${R1(before.top)}${plantsGrow ? `, plants grown (${plants1 - plants0} answers after)` : ''}: ${trips()}`)
+        // The instruments: the late change each variant is about must really have happened inside the measured frames.
+        if (rosterGrows && !cycles[0].rowLate) return done(`round trip 1: the caretaker row was ${cycles[0].row} across Garden's frames — roster=grow must bring it in late on the first return, or the flow measures no late change`)
+        if (plantsGrow && !(plants1 > plants0)) return done(`the grown plants answer was never asked for (${plants0} → ${plants1} answers) — the flow measured no change above the spot`)
+        if (reds.length) return done(`${reds.join('; ')} · spot y${R1(before.y)}, ${name} at y${R1(before.top)}: ${trips()}${await diag()}`)
         return
       }
       // garden-tab(-4x): away by a tab, back by a tab — two PUSHes; Garden restores its own spot.
