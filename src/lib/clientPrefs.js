@@ -72,20 +72,39 @@ export const CLIENT_PREF_KEY_PREFIXES = [
   'today-unskipped:',
 ]
 
+// sessionStorage families, walked separately (the list above is localStorage's).
+// BUG-TODAYBACKRESORT-001 — the Today care list's visit layout ('today-visit:<user>:<plan_date>:<list>',
+// components/today/visitLayout.js): the section order and open sections a list held, for Back. Keyed by
+// user already, so another person never READS it; cleared anyway, because sign-out ends the visit and a
+// tab outlives a sign-out. A literal, like the rest of this file; clientPrefsSession.test.jsx pins it
+// against visitLayout's own prefix.
+export const CLIENT_SESSION_KEY_PREFIXES = [
+  'today-visit:',
+]
+
+function removePrefixed(storage, prefixes) {
+  // Snapshot the key list BEFORE removing: Storage.key(i) re-indexes on every removal, so
+  // deleting while walking forward skips entries.
+  const matched = []
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i)
+    if (key && prefixes.some(p => key.startsWith(p))) matched.push(key)
+  }
+  for (const key of matched) storage.removeItem(key)
+}
+
 // try/catch per the house convention (cropLogLedger.readStore, EventNew.readLastHarvestUnit): an
 // unavailable or throwing localStorage degrades to "prefs not cleared", never to an error on the
 // sign-out path. Losing the sign-out over a storage quirk would be strictly worse than the leak.
+// Each store in its own try: a throwing one must not keep the other from being cleared.
 export function clearClientPrefs() {
   try {
-    if (typeof localStorage === 'undefined' || !localStorage) return
-    for (const key of CLIENT_PREF_KEYS) localStorage.removeItem(key)
-    // Snapshot the key list BEFORE removing: Storage.key(i) re-indexes on every removal, so
-    // deleting while walking forward skips entries.
-    const matched = []
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)
-      if (key && CLIENT_PREF_KEY_PREFIXES.some(p => key.startsWith(p))) matched.push(key)
+    if (typeof localStorage !== 'undefined' && localStorage) {
+      for (const key of CLIENT_PREF_KEYS) localStorage.removeItem(key)
+      removePrefixed(localStorage, CLIENT_PREF_KEY_PREFIXES)
     }
-    for (const key of matched) localStorage.removeItem(key)
   } catch { /* unavailable/denied — ranking and unit prefills simply persist */ }
+  try {
+    if (typeof sessionStorage !== 'undefined' && sessionStorage) removePrefixed(sessionStorage, CLIENT_SESSION_KEY_PREFIXES)
+  } catch { /* unavailable/denied — the visit layout simply persists until the tab closes */ }
 }

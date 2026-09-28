@@ -281,7 +281,9 @@ export default function Today() {
                 {nameFor(hp.user_id)}’s care today
               </summary>
               <div style={{ marginTop: 10 }}>
-                <CareNeeded plan={hp.plan} planDate={data?.plan_date} />
+                {/* BUG-TODAYBACKRESORT-001 — `list`: this member's list holds its own section order
+                    across a remount, apart from Dave's own ('own', the default above). */}
+                <CareNeeded plan={hp.plan} planDate={data?.plan_date} list={hp.user_id} />
               </div>
             </details>
           ))}

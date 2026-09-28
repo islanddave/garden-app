@@ -5,6 +5,7 @@ import { SEVERITY_STYLES } from '../../lib/waterDue.js'
 import { useApiFetch } from '../../lib/api.js'
 import { useCachedFetch } from '../../hooks/useCachedFetch.js'
 import { useOptionalToast } from '../../context/ToastContext.jsx'
+import { useAuthOptional } from '../../context/AuthContext.jsx'
 import GroupByControl from '../forms/GroupByControl.jsx'
 import Sheet from '../forms/Sheet.jsx'
 import Icon from '../Icon.jsx'
@@ -17,6 +18,7 @@ import {
   canMoistureCheck, candidateKeys,
 } from '../../lib/careNeeded.js'
 import { useCareActions } from './useCareActions.js'
+import { visitLayoutKey, readVisitLayout, writeVisitLayout } from './visitLayout.js'
 
 // CareNeeded — Slice 7 (V4-THEME-001) Care-Needed-Today. REPLACES the care-type PlanBuckets:
 // location-grouped (default) need rows with ONE-TAP inline logging, per-need bulk, undo, and a
@@ -261,14 +263,22 @@ function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, onMoist,
   )
 }
 
-export default function CareNeeded({ plan, planDate }) {
+export default function CareNeeded({ plan, planDate, list = 'own' }) {
   // getToken comes off useApiFetch rather than useAuth directly — that is the documented seam
   // (api.js:160): every component test already mocks useApiFetch, so routing token acquisition
   // through it keeps the Clerk/AuthProvider dependency out of this component's tests. Importing
   // useAuth here instead reds all 14 CareNeeded cases with "must be used inside <AuthProvider>".
   const { fetch, getToken } = useApiFetch()
   const toast = useOptionalToast()
-  const [mode, setMode] = useState('location')
+  // BUG-TODAYBACKRESORT-001 — the layout this list held earlier on this plan day, in this tab
+  // (visitLayout.js), read ONCE, at mount: Back from a planting remounts Today. Pending until the
+  // reconcile below adopts it. useAuthOptional, not useAuth, for the reason above: no provider means
+  // no user, no key and nothing held (useCachedFetch already reads it the same way). `list` names
+  // whose list this is — 'own', or the household member's id — so each list holds its own order.
+  const { user } = useAuthOptional()
+  const visitKey = visitLayoutKey(user?.id, planDate, list)
+  const [visit, setVisit] = useState(() => readVisitLayout(visitKey))
+  const [mode, setMode] = useState(() => (visit ? visit.mode : 'location'))
   const [bulkType, setBulkType] = useState(null)          // event_type whose bulk fly-up is open
   const liveRef = useRef(null)
   const announce = useCallback((msg) => { if (liveRef.current) liveRef.current.textContent = msg }, [])
@@ -429,7 +439,10 @@ export default function CareNeeded({ plan, planDate }) {
   //   · a clean slate: nothing the layout holds is on the list any more (all done, new work in).
   //     There is nothing on screen to move.
   //   · a new plan day — the reset below.
-  // Opening Today again remounts this component, which is a fresh take by construction.
+  // Opening Today again remounts this component. BUG-TODAYBACKRESORT-001 — that is not a re-take either
+  // for the rest of the plan day in this tab: the held layout and the open set go to visitLayout.js
+  // whenever they change, and the remount adopts them (see the reconcile below). A new tab, no signed-in
+  // user or no plan date is still a fresh take.
   //
   // Between takes, a section that empties is not drawn but keeps its slot, so it comes back where it
   // was — on Undo, or when a later refetch refills it. By location, a section seen for the first
@@ -445,7 +458,8 @@ export default function CareNeeded({ plan, planDate }) {
   // frame paints an unheld order. The reconcile returns the held object itself when nothing changed,
   // which is what stops the render-phase set from looping.
   const [sortTaps, setSortTaps] = useState(0)
-  const onGroupBy = useCallback((value) => { setMode(value); setSortTaps(n => n + 1) }, [])
+  // A tap re-takes, so a layout still waiting to be adopted is dropped: the new order is what is held.
+  const onGroupBy = useCallback((value) => { setMode(value); setSortTaps(n => n + 1); setVisit(null) }, [])
   const layoutRows = sortTaps ? enrichedRows : orderingRows
   const pinnedGroups = useMemo(() => {
     const gs = groupRows(layoutRows, mode)
@@ -455,7 +469,7 @@ export default function CareNeeded({ plan, planDate }) {
     })
   }, [layoutRows, mode, capping])
   const basis = mode + ':' + sortTaps + ':' + (enrichById !== NO_ENRICHMENT)
-  const [layout, setLayout] = useState(null)
+  const [heldLayout, setLayout] = useState(null)
   // A NEW PLAN DAY IS A NEW VISIT. `plan` carries no date of its own (plan_date rides on the envelope
   // and arrives as `planDate`), so a PWA left open on Today overnight takes the morning's plan through
   // a wake refetch into this same mounted list. Without this it kept yesterday's section order, and
@@ -484,6 +498,23 @@ export default function CareNeeded({ plan, planDate }) {
     setOverrides({})
     setShowCapped(false)
     setMode('location')
+    setVisit(null)
+  }
+  // BUG-TODAYBACKRESORT-001 — adopting the layout held earlier this plan day (`visit`, read at mount).
+  // Adopted in the first render whose sections are keyed the way it was saved: the same grouping, and
+  // the location names landed or not as they were then. Before the names land the same rows are keyed
+  // by project, a different set of sections, so a layout saved after they landed waits one round trip —
+  // through the same transient first take every open of Today has always shown — and is adopted in the
+  // render that brings them, in place of the take the names used to trigger. From there it is the held
+  // layout like any other: a section the refetched plan added is appended, collapsed, and a layout with
+  // none of its sections on the list any more is a clean slate. Its open set comes back exactly as it
+  // was, manual expands included, so a header tapped in the transient frame is dropped.
+  const restore = (!newDay && visit && !sortTaps && visit.mode === mode
+    && visit.enriched === (enrichById !== NO_ENRICHMENT)) ? visit : null
+  const layout = restore ? { basis, order: restore.order, expand: new Set(restore.open) } : heldLayout
+  if (restore) {
+    setVisit(null)
+    if (Object.keys(overrides).length) setOverrides({})
   }
   let held = layout
   if (newDay) held = null
@@ -494,7 +525,18 @@ export default function CareNeeded({ plan, planDate }) {
     if (added.length && added.length === pinnedGroups.length) held = takeLayout(pinnedGroups, basis)
     else if (added.length) held = { ...layout, order: [...layout.order, ...added] }
   }
-  if (!newDay && held !== layout) setLayout(held)
+  if (!newDay && held !== heldLayout) setLayout(held)
+  // What a remount adopts: the held order and the sections open on it, written whenever either changes
+  // (a take, an appended section, a header tap, By location / By type). Never while a layout is still
+  // waiting to be adopted — the transient take must not overwrite it — and never the fades, pendingKeys
+  // or an in-flight guard (visitLayout.js). A null layout removes the entry: nothing is held.
+  useEffect(() => {
+    if (!visitKey || visit) return
+    writeVisitLayout(visitKey, heldLayout && {
+      mode, enriched: heldLayout.basis.endsWith(':true'), order: heldLayout.order,
+      open: heldLayout.order.filter(k => ((k in overrides) ? overrides[k] : heldLayout.expand.has(k))),
+    })
+  }, [visitKey, visit, heldLayout, overrides, mode])
   const pinnedOrder = (held || NO_LAYOUT).order
   const groups = useMemo(() => {
     const gs = groupRows(enrichedRows, mode, pinnedOrder)
