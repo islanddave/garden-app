@@ -604,8 +604,14 @@ jobs:
         #   finger inside the restore's hold (the user wins; a
         #   thumb resting through the load does not take over), Back onto a list and onto Put-Up left at their
         #   top, the More and Search doors and Search's peek, Garden (Back from a planting, tab away and back
-        #   at 1x and 4x CPU, "Add a planting" on the same page), Put-Up's batch, the Seeds view switch and a
-        #   list's sort (no jump), Harvests' tab re-tapped then Back, Saved seeds opened at a lot then Back (no
+        #   at 1x and 4x CPU, "Add a planting" on the same page; and three Today round trips with no scrolling
+        #   between — plain, with the household growing on the first return, with a planting added above the
+        #   spot by the return's revalidate, and that one's unchanged control — checked in CONTENT terms: the
+        #   planting left on screen, followed by name, comes back where it was left and does not move once on
+        #   screen; the harness answers /api/members as prod's household of two, so Garden's caretaker row is
+        #   above the list, and every Garden flow checks it is: BUG-GARDENSPOTCREEP-001), Put-Up's batch, the
+        #   Seeds view switch and a list's sort (no jump), Harvests' tab re-tapped then Back, Saved seeds opened
+        #   at a lot then Back (no
         #   second jump to the lot), Back into Saved seeds and into Harvests at the top, a list blanked behind
         #   Search / a Back marker and still short at the close, the variety-editor round trip, 25 pages deep.
         #   The five slow flows run at 426x836 only (they measure time, not layout).
@@ -639,11 +645,17 @@ jobs:
         # served from 2622a8e (a request counted only once its token was in hand) zones-slowtoken is red at both
         # viewports (56 of 960 / 1104); with the driver back on 4 px lot-refuse comes back at 972 for 968 in 6
         # of 9 runs at 426x836 (a timing-dependent drift; the driver's unit tests are the deterministic pin).
+        # BUG-GARDENSPOTCREEP-001 (…/gardencreep-v2-mut-*.txt, mutants served in memory, both viewports): the
+        # household uncached (useMembers as 4.156.0) reds garden-cycles — the planting comes back 64/128/192px up
+        # the screen; a restore that holds the raw offset until the network is quiet (the fix first built,
+        # withdrawn after QA) reds garden-plantsgrow — the planting dropped a full tile row, 252.8px; /api/members
+        # answering [] is refused by the roster check, and without that check garden-cycles PASSES on 4.156.0 —
+        # the vacuity that let the creep ship.
         # Served with the flag OFF (the rollback) it PASSES, printing "manager
         # OFF". The "entry still current" write rule has no flow (its window is timing-dependent under
         # 'manual') and is pinned by usePageScrollManager.test.jsx; the reload flow proves one of the hidden and
         # pagehide flushes (location.reload() fires both), and the discard path (hidden only) is unit-pinned.
-        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~6.5 min locally (34 flows, 63
+        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~7.5 min locally (38 flows, 71
         # flow-runs: the five slow ones at 426x836 only).
         # NO continue-on-error, per the policy note above.
         env:

@@ -153,9 +153,13 @@ Before this fix, a page you opened from a long, scrolled list often opened part-
 - **7b — Event log.** Open a planting with at least 20 events. Scroll down its Event log **without tapping "Show more"** until an event near the end of the list is in the middle of the screen. Remember its date. Tap it.
   **PASS if:** the event page's first line is the "Home › Event" trail. Then press **Back**. PASS if the event with that date is back in the middle of the screen.
   **FAIL if:** the trail is hidden, or Back lands at the top of the planting or on different events. ☐ PASS ☐ FAIL
-- **7c — Garden, three times.** Scroll well down **Garden** and remember the planting in the middle of the screen. Tap the **Today** tab, then the **Garden** tab. Do this three times, at a different spot each time.
-  **PASS if:** all three times, the planting you remembered is back in the middle of the screen.
-  **FAIL if:** even once Garden comes back at the top or somewhere else. ☐ PASS ☐ FAIL
+- **7c — Garden, three times from the same spot.** In **Garden**, open the **Pepper** group (your biggest) and scroll down past its last pepper, so you are below the whole group. Remember the planting whose top edge sits just under the top bar. Tap the **Today** tab, then the **Garden** tab. Do this three times, **without scrolling in between**.
+  **PASS if:** every time, that planting's top edge is back just under the top bar, and nothing on the screen moves after Garden appears.
+  **FAIL if:** anything visibly shifts after Garden appears, or after the third trip the planting has slid up (partly or wholly under the top bar). ☐ PASS ☐ FAIL
+  Until the fix, each trip brought Garden back a little further down the list, so the planting slid up and off the top of the screen. That drift pre-dated 4.156.0 and is fixed in 4.158.1.
+- **7c2 — Garden → a planting → Back, three times.** In **Garden**, open the **Pepper** group and scroll down past its last pepper. Remember the planting in the middle of the screen. Tap it to open its page, then press **Back**. Do this three times with the same planting, without scrolling in between.
+  **PASS if:** all three times, the planting you remembered is back in the middle of the screen, and nothing moves after Garden appears.
+  **FAIL if:** even once it comes back higher up the screen, partly or wholly off the top, or Garden comes back somewhere else. ☐ PASS ☐ FAIL
 - **7d — Back to a page you left at the top.** Go to **Today** and make sure the big **Today** heading and the date are showing. Tap anything on Today that opens a new page. Scroll that page all the way to the bottom, then press **Back**.
   **PASS if:** Today shows its big heading and the date straight away.
   **FAIL if:** Today comes back part-way down. ☐ PASS ☐ FAIL
