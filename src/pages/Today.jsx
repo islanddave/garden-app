@@ -197,7 +197,10 @@ export default function Today() {
             </div>
           )}
 
-          <CareNeeded plan={plan} />
+          {/* BUG-TODAYGROUPREORDER-001 — planDate, so the list can tell a new plan day from a same-day
+              refetch and reset in place (see CareNeeded). Deliberately NOT a `key`: remounting on the
+              date threw away writes still in flight across the morning refetch, and they logged twice. */}
+          <CareNeeded plan={plan} planDate={data?.plan_date} />
         </div>
       )}
 
@@ -274,7 +277,7 @@ export default function Today() {
                 {nameFor(hp.user_id)}’s care today
               </summary>
               <div style={{ marginTop: 10 }}>
-                <CareNeeded plan={hp.plan} />
+                <CareNeeded plan={hp.plan} planDate={data?.plan_date} />
               </div>
             </details>
           ))}

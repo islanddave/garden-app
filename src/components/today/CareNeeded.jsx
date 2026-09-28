@@ -388,7 +388,7 @@ function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, onMoist,
   )
 }
 
-export default function CareNeeded({ plan }) {
+export default function CareNeeded({ plan, planDate }) {
   // getToken comes off useApiFetch rather than useAuth directly — that is the documented seam
   // (api.js:160): every component test already mocks useApiFetch, so routing token acquisition
   // through it keeps the Clerk/AuthProvider dependency out of this component's tests. Importing
@@ -591,6 +591,7 @@ export default function CareNeeded({ plan }) {
   //     the names land cannot move anything (a skip made in that window does count).
   //   · a clean slate: nothing the layout holds is on the list any more (all done, new work in).
   //     There is nothing on screen to move.
+  //   · a new plan day — the reset below.
   // Opening Today again remounts this component, which is a fresh take by construction.
   //
   // Between takes, a section that empties is not drawn but keeps its slot, so it comes back where it
@@ -618,15 +619,44 @@ export default function CareNeeded({ plan }) {
   }, [layoutRows, mode, capping])
   const basis = mode + ':' + sortTaps + ':' + (enrichById !== NO_ENRICHMENT)
   const [layout, setLayout] = useState(null)
+  // A NEW PLAN DAY IS A NEW VISIT. `plan` carries no date of its own (plan_date rides on the envelope
+  // and arrives as `planDate`), so a PWA left open on Today overnight takes the morning's plan through
+  // a wake refetch into this same mounted list. Without this it kept yesterday's section order, and
+  // yesterday's `logged` set, which hides a row by planting+need, hid today's due rows for every
+  // planting logged yesterday.
+  //
+  // Reset IN PLACE, never by remounting. A `key={plan_date}` remount was tried and threw away the
+  // in-flight write guards (pendingKeys, writeInFlightRef, bulkInFlightRef, bulkProgress): a Log or a
+  // "Log all watering" still in flight when the morning plan landed came back live on the rebuilt
+  // list, and a second tap logged it twice. So those are left alone here, along with an open bulk
+  // sheet: a write in flight keeps its guard and fades its row, in the new day's list, when it lands.
+  // What resets is what a fresh open would give: the fades, the layout (taken fresh), manual
+  // expand/collapse, "Show N more", and the grouping mode. The fade filter keeps any key still
+  // pending; today that is none, because a write adds its fade in the same batch that clears its
+  // pending mark — the filter is there for the day a fade is made optimistic, before the await.
+  //
+  // Same derived-state-during-render shape as the layout: the render that sees the new date queues
+  // the resets and skips the reconcile, and the re-render React runs straight after takes it fresh.
+  const [day, setDay] = useState(planDate)
+  const newDay = day !== planDate
+  if (newDay) {
+    setDay(planDate)
+    setLogged(prev => new Set([...prev].filter(k => pendingKeys.has(k))))
+    setLayout(null)
+    setOverrides({})
+    setShowCapped(false)
+    setMode('location')
+  }
   let held = layout
-  if (!layout || layout.basis !== basis) held = takeLayout(pinnedGroups, basis)
+  if (newDay) held = null
+  else if (!layout || layout.basis !== basis) held = takeLayout(pinnedGroups, basis)
   else {
     const seen = new Set(layout.order)
     const added = pinnedGroups.filter(g => !seen.has(g.key)).map(g => g.key)
     if (added.length && added.length === pinnedGroups.length) held = takeLayout(pinnedGroups, basis)
     else if (added.length) held = { ...layout, order: [...layout.order, ...added] }
   }
-  if (held !== layout) setLayout(held)
+  if (!newDay && held !== layout) setLayout(held)
   const pinnedOrder = (held || NO_LAYOUT).order
   const groups = useMemo(() => {
     const gs = groupRows(enrichedRows, mode, pinnedOrder)
