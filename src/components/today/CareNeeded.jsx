@@ -36,6 +36,15 @@ const GROUP_OPTS = [
 // Stable identity for "no enrichment yet" so enrichedRows doesn't re-memo on every render.
 const NO_ENRICHMENT = Object.freeze({})
 
+// BUG-TODAYGROUPREORDER-001 — one TAKEN layout: the section order and the sections that open on it,
+// from groups already ranked by groupRows. null when there is nothing to lay out, so the first plan
+// that does carry work takes a real one instead of inheriting an empty order. See CareNeeded.
+function takeLayout(rankedGroups, basis) {
+  if (!rankedGroups.length) return null
+  return { basis, order: rankedGroups.map(g => g.key), expand: autoExpandKeys(rankedGroups, EXPAND_ROW_BUDGET) }
+}
+const NO_LAYOUT = Object.freeze({ basis: null, order: Object.freeze([]), expand: new Set() })
+
 function todayLocalISO() {
   const d = new Date()
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
@@ -379,7 +388,7 @@ function Group({ group, expanded, onToggle, pendingKeys, onLog, onSkip, onMoist,
   )
 }
 
-export default function CareNeeded({ plan }) {
+export default function CareNeeded({ plan, planDate }) {
   // getToken comes off useApiFetch rather than useAuth directly — that is the documented seam
   // (api.js:160): every component test already mocks useApiFetch, so routing token acquisition
   // through it keeps the Clerk/AuthProvider dependency out of this component's tests. Importing
@@ -387,7 +396,8 @@ export default function CareNeeded({ plan }) {
   const { fetch, getToken } = useApiFetch()
   const toast = useOptionalToast()
   const [mode, setMode] = useState('location')
-  const [logged, setLogged] = useState(() => new Set())   // optimistic local drop (V3-TODAYDONE parity)
+  // Optimistic local drop (V3-TODAYDONE parity): row key -> event_date of the write that faded it.
+  const [logged, setLogged] = useState(() => new Map())
   const [pendingKeys, setPendingKeys] = useState(() => new Set())
   // The page's one skip set (BUG-TODAYHOUSEHOLDSKIPCLOBBER-001), shared with the household list.
   const skipped = useSyncExternalStore(subscribeSkipped, skippedSnapshot)
@@ -505,12 +515,16 @@ export default function CareNeeded({ plan }) {
   )
   const enrichedRows = useMemo(() => rows.map(enrich), [rows, enrich])
   // BUG-TODAYCAREREORDER-001 (BD-036) — the ordering set. Deliberately NOT `rows`: it withholds
-  // `skipped` but keeps `logged`, so the layout is computed against the list as it stood when Dave
-  // arrived and does not move as he drains it. Logging is the side effect he named — tapping Log
-  // down a location group dropped that group's summed severity and slid the section out from under
-  // his finger onto the next plant. Skips stay withheld because a skip is an explicit user action
-  // (his rule permits re-sorting on those) AND because they persist all day across devices, so
-  // counting them would rank a group by work already declined.
+  // `skipped` but keeps `logged`, so a ranking taken from it is a property of the plan rather than
+  // of how far through it Dave is. Logging is the side effect he named — tapping Log down a location
+  // group dropped that group's summed severity and slid the section out from under his finger onto
+  // the next plant. Skips are withheld because they persist all day across devices, so counting them
+  // would rank a group by work already declined.
+  //
+  // BUG-TODAYGROUPREORDER-001 — this set used to be ranked LIVE, and a skip was allowed to move the
+  // page: BD-036 read "an explicit user action" as including a skip. Dave narrowed that on
+  // 2026-09-17 to the By location / By type control, never a side effect of log, skip or mark moist.
+  // It is now read only when the layout below is TAKEN, not on every change.
   const orderingRows = useMemo(
     () => allRows.filter(r => !skipped.has(r.key)).map(enrich),
     [allRows, skipped, enrich],
@@ -555,20 +569,102 @@ export default function CareNeeded({ plan }) {
   // for each row; record staleness no longer decides page length here. Zero watering-LOGIC changes,
   // per the crucible boss ruling: the work is legibility.
   const capping = !showCapped
-  // BD-036 — the pinned layout, computed once per (plan, mode, capping) from `orderingRows`. It
-  // supplies BOTH the group order and the auto-expand set, because both were functions of the
-  // draining list: autoExpandKeys walks groups filling a row budget, so logging rows out of a group
-  // freed budget and silently opened a collapsed section further down the page — the same finger-
-  // level movement as the re-sort, from a second source. Capping is included because it changes the
-  // row counts the budget is spent against.
+  // BD-036 — the layout supplies BOTH the section order and the auto-expand set, because both were
+  // functions of the draining list: autoExpandKeys walks groups filling a row budget, so logging
+  // rows out of a group freed budget and silently opened a collapsed section further down the page —
+  // the same finger-level movement as the re-sort, from a second source.
+  //
+  // BUG-TODAYGROUPREORDER-001 — the layout is TAKEN when Today opens and HELD for the visit. BD-036
+  // pinned it to `orderingRows` but re-derived it on every change, which froze it against LOGGING
+  // only: a skip moved it on purpose, and every plan refetch moved it by accident. useDailyPlan
+  // revalidates on each wake (BUG-PLANNOREVALIDATE-001), the read path stamps what Dave has logged
+  // as `done`, and the ranking then ran against a list with his work taken out — he logged, put the
+  // phone in his pocket, and came back to the sections in a different order. That is the "every
+  // action" report of 2026-09-17: the swing arrived with the refetch, not with the tap.
+  //
+  // Re-taken ONLY on:
+  //   · a tap on By location / By type — either one, including the one already selected, which is
+  //     how he re-sorts on purpose, as often as he likes. Ranked over the rows ON THE LIST NOW
+  //     (`enrichedRows`), because a sort he asked for should reflect the work that is left.
+  //   · when the location names land, one round trip after the plan (`enrichById` settling; also when
+  //     that fetch fails). That re-keys every group from project to location, a different set of
+  //     sections, so there is no old order to keep. Ranked from `orderingRows`, so a log made before
+  //     the names land cannot move anything (a skip made in that window does count).
+  //   · a clean slate: nothing the layout holds is on the list any more (all done, new work in).
+  //     There is nothing on screen to move.
+  //   · a new plan day — the reset below.
+  // Opening Today again remounts this component, which is a fresh take by construction.
+  //
+  // Between takes, a section that empties is not drawn but keeps its slot, so it comes back where it
+  // was — on Undo, or when a later refetch refills it. By location, a section seen for the first
+  // time is APPENDED at the end and remembered there, so a later drain cannot swap it with its
+  // neighbour. By type: a new section takes its fixed need slot (groupRows orders type mode by
+  // NEED_ORDER). Either way it arrives collapsed: the row budget was spent when the layout was taken.
+  // Capping is not part of the basis: "Show N more" changes row counts, it is not a re-sort.
+  //
+  // What is held is the SECTION order. Row order inside a section is not held: it is the plan's own
+  // order (the engine's, most-overdue first) and follows each plan refresh, as it did before.
+  //
+  // Held in state and reconciled DURING render (NavPrefsContext's derived-state-on-key-change), so no
+  // frame paints an unheld order. The reconcile returns the held object itself when nothing changed,
+  // which is what stops the render-phase set from looping.
+  const [sortTaps, setSortTaps] = useState(0)
+  const onGroupBy = useCallback((value) => { setMode(value); setSortTaps(n => n + 1) }, [])
+  const layoutRows = sortTaps ? enrichedRows : orderingRows
   const pinnedGroups = useMemo(() => {
-    const gs = groupRows(orderingRows, mode)
+    const gs = groupRows(layoutRows, mode)
     return gs.map(g => {
       const c = capping ? capStaleRows(g.rows, WATER_STALE_CAP) : { rows: g.rows, hidden: 0 }
       return { ...g, rows: c.rows, hidden: c.hidden, count: g.rows.length }
     })
-  }, [orderingRows, mode, capping])
-  const pinnedOrder = useMemo(() => pinnedGroups.map(g => g.key), [pinnedGroups])
+  }, [layoutRows, mode, capping])
+  const basis = mode + ':' + sortTaps + ':' + (enrichById !== NO_ENRICHMENT)
+  const [layout, setLayout] = useState(null)
+  // A NEW PLAN DAY IS A NEW VISIT. `plan` carries no date of its own (plan_date rides on the envelope
+  // and arrives as `planDate`), so a PWA left open on Today overnight takes the morning's plan through
+  // a wake refetch into this same mounted list. Without this it kept yesterday's section order, and
+  // yesterday's `logged` set, which hides a row by planting+need, hid today's due rows for every
+  // planting logged yesterday.
+  //
+  // Reset IN PLACE, never by remounting. A `key={plan_date}` remount was tried and threw away the
+  // in-flight write guards (pendingKeys, writeInFlightRef, bulkInFlightRef, bulkProgress): a Log or a
+  // "Log all watering" still in flight when the morning plan landed came back live on the rebuilt
+  // list, and a second tap logged it twice. So those are left alone here, along with an open bulk
+  // sheet: a write in flight keeps its guard and fades its row, in the new day's list, when it lands.
+  // What resets is what a fresh open would give: yesterday's fades, the layout (taken fresh), manual
+  // expand/collapse, "Show N more", and the grouping mode.
+  //
+  // A fade is kept when its write is dated the NEW plan day. That is a log made after midnight on the
+  // list still showing yesterday's plan — the morning wake's refetch in flight, the write landing
+  // first, the refetched plan read before the write committed and so still calling the row due.
+  // Dropping that fade put the row back, live, and a second tap logged it twice (measured: 2 POSTs,
+  // both dated the new day). Same rule the read path stamps `done` by: event_date is the plan day.
+  // A key still pending is kept too; today that is none, because a write fades its row in the same
+  // batch that clears its pending mark — it is there for the day a fade is made before the await.
+  //
+  // Same derived-state-during-render shape as the layout: the render that sees the new date queues
+  // the resets and skips the reconcile, and the re-render React runs straight after takes it fresh.
+  const [day, setDay] = useState(planDate)
+  const newDay = day !== planDate
+  if (newDay) {
+    setDay(planDate)
+    setLogged(prev => new Map([...prev].filter(([k, on]) => on === planDate || pendingKeys.has(k))))
+    setLayout(null)
+    setOverrides({})
+    setShowCapped(false)
+    setMode('location')
+  }
+  let held = layout
+  if (newDay) held = null
+  else if (!layout || layout.basis !== basis) held = takeLayout(pinnedGroups, basis)
+  else {
+    const seen = new Set(layout.order)
+    const added = pinnedGroups.filter(g => !seen.has(g.key)).map(g => g.key)
+    if (added.length && added.length === pinnedGroups.length) held = takeLayout(pinnedGroups, basis)
+    else if (added.length) held = { ...layout, order: [...layout.order, ...added] }
+  }
+  if (!newDay && held !== layout) setLayout(held)
+  const pinnedOrder = (held || NO_LAYOUT).order
   const groups = useMemo(() => {
     const gs = groupRows(enrichedRows, mode, pinnedOrder)
     return gs.map(g => {
@@ -589,7 +685,7 @@ export default function CareNeeded({ plan }) {
   // days is how the real disclosure stops being read.
   const hiddenTotal = useMemo(() => groups.reduce((n, g) => n + (g.hidden || 0), 0), [groups])
   const total = rows.length
-  const autoKeys = useMemo(() => autoExpandKeys(pinnedGroups, EXPAND_ROW_BUDGET), [pinnedGroups])
+  const autoKeys = (held || NO_LAYOUT).expand
 
   const announce = useCallback((msg) => { if (liveRef.current) liveRef.current.textContent = msg }, [])
 
@@ -610,15 +706,32 @@ export default function CareNeeded({ plan }) {
   // race each other, which is the case this row newly makes reachable.
   const writeInFlightRef = useRef(new Set())
 
+  // BUG-TODAYGROUPREORDER-001 — a fade carries the event_date of the write that made it, as [key, on]
+  // pairs. The new-day reset reads it (above). So does Undo: it un-fades only the fade its OWN event
+  // made, so yesterday's toast, tapped after the same row was logged again today, deletes yesterday's
+  // event and leaves today's fade alone — un-fading it put a logged row back, live, to be logged twice.
+  const fade = useCallback((pairs) => setLogged(prev => {
+    const n = new Map(prev)
+    for (const [k, on] of pairs) n.set(k, on)
+    return n
+  }), [])
+  const unfade = useCallback((pairs) => setLogged(prev => {
+    let n = null
+    for (const [k, on] of pairs) if (prev.get(k) === on) { n = n || new Map(prev); n.delete(k) }
+    return n || prev
+  }), [])
+
   // One-tap: await-then-fade. On failure restore the row + error toast (never fade-and-forget — L-104).
   const logRow = useCallback(async (row) => {
     if (writeInFlightRef.current.has(row.key) || pendingKeys.has(row.key)) return
     writeInFlightRef.current.add(row.key)
     setPending(row.key, true)
     try {
-      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
+      const body = eventBody(row)
+      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body) })
       const id = res && res.id
-      setLogged(prev => new Set(prev).add(row.key))
+      const mine = [[row.key, body.event_date]]
+      fade(mine)
       const remaining = rows.length - 1
       announce('Logged ' + NEED_LABEL[row.need] + ' for ' + row.name + ' — ' + remaining + ' remaining')
       toast.showUndo({
@@ -634,13 +747,13 @@ export default function CareNeeded({ plan }) {
           // WS-A5: only un-fade the row once the DELETE is confirmed. A failed undo must KEEP the
           // row hidden — re-surfacing it lets it be re-logged as a duplicate (L-104). A 404 means
           // the event is already gone, so re-surfacing is safe there.
-          if (!id) { setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n }); return }
+          if (!id) { unfade(mine); return }
           try {
             await fetch('/api/events/' + id, { method: 'DELETE' })
-            setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+            unfade(mine)
           } catch (e) {
             if (e?.status === 404) {
-              setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+              unfade(mine)
             } else {
               toast.show({ message: 'Couldn’t undo — the log is still saved', tone: 'error' })
             }
@@ -653,7 +766,7 @@ export default function CareNeeded({ plan }) {
       writeInFlightRef.current.delete(row.key)
       setPending(row.key, false)
     }
-  }, [fetch, toast, pendingKeys, rows.length, setPending, announce])
+  }, [fetch, toast, pendingKeys, rows.length, setPending, announce, fade, unfade])
 
   // BUG-MOISTURECHECKNOBUTTON-001 — the same await-then-fade + undo contract logRow has, pointed at
   // moisture_check instead of the row's primary type. Identical shape on purpose: a failed write
@@ -674,9 +787,11 @@ export default function CareNeeded({ plan }) {
     writeInFlightRef.current.add(row.key)
     setPending(row.key, true)
     try {
-      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row, MOISTURE_CHECK_EVENT)) })
+      const body = eventBody(row, MOISTURE_CHECK_EVENT)
+      const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body) })
       const id = res && res.id
-      setLogged(prev => new Set(prev).add(row.key))
+      const mine = [[row.key, body.event_date]]
+      fade(mine)
       const remaining = rows.length - 1
       announce('Checked ' + row.name + ' — still moist. ' + remaining + ' remaining')
       toast.showUndo({
@@ -684,13 +799,13 @@ export default function CareNeeded({ plan }) {
         group: 'care-log-' + MOISTURE_CHECK_EVENT,
         groupMessage: (n) => 'Checked ' + n + ' plants — still moist',
         onUndo: async () => {
-          if (!id) { setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n }); return }
+          if (!id) { unfade(mine); return }
           try {
             await fetch('/api/events/' + id, { method: 'DELETE' })
-            setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+            unfade(mine)
           } catch (e) {
             if (e?.status === 404) {
-              setLogged(prev => { const n = new Set(prev); n.delete(row.key); return n })
+              unfade(mine)
             } else {
               toast.show({ message: 'Couldn’t undo — the check is still saved', tone: 'error' })
             }
@@ -703,7 +818,7 @@ export default function CareNeeded({ plan }) {
       writeInFlightRef.current.delete(row.key)
       setPending(row.key, false)
     }
-  }, [fetch, toast, pendingKeys, rows.length, setPending, announce])
+  }, [fetch, toast, pendingKeys, rows.length, setPending, announce, fade, unfade])
 
   // BUG-TODAYSKIPNOUNDO-001 — Skip's Undo. Same order as skipRow: the local write first and
   // synchronously, then the fire-and-forget sync, which still sends the WHOLE set (the column is a
@@ -830,18 +945,19 @@ export default function CareNeeded({ plan }) {
     bulkInFlightRef.current = true
     try {
       setBulkProgress({ done: 0, total: targets.length })
-      const created = []   // { id, key } per successfully-created row (id known = undoable)
+      const created = []   // { id, key, on } per successfully-created row (id known = undoable)
       let failures = 0
       for (let i = 0; i < targets.length; i++) {
         const row = targets[i]
         try {
-          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(eventBody(row)) })
-          created.push({ id: (res && res.id) || null, key: row.key })
+          const body = eventBody(row)
+          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body) })
+          created.push({ id: (res && res.id) || null, key: row.key, on: body.event_date })
         } catch { failures++ }
         setBulkProgress({ done: i + 1, total: targets.length })
       }
       const doneKeys = created.map(c => c.key)
-      if (doneKeys.length) setLogged(prev => { const n = new Set(prev); doneKeys.forEach(k => n.add(k)); return n })
+      if (doneKeys.length) fade(created.map(c => [c.key, c.on]))
       setBulkType(null); setBulkProgress(null)
       const okMsg = 'Logged ' + doneKeys.length + (failures ? ' — ' + failures + ' failed' : '')
       announce(okMsg)
@@ -855,22 +971,22 @@ export default function CareNeeded({ plan }) {
         // WS-A5: await each DELETE; only un-fade rows whose delete is confirmed (or 404 = already
         // gone). Rows we can't confirm stay hidden, so a failed undo can't re-surface → re-log a dup.
         onUndo: async () => {
-          const undoneKeys = []
+          const undone = []
           await Promise.all(created.map(async c => {
             if (!c.id) return
-            try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undoneKeys.push(c.key) }
-            catch (e) { if (e?.status === 404) undoneKeys.push(c.key) }
+            try { await fetch('/api/events/' + c.id, { method: 'DELETE' }); undone.push(c) }
+            catch (e) { if (e?.status === 404) undone.push(c) }
           }))
-          if (undoneKeys.length) setLogged(prev => { const n = new Set(prev); undoneKeys.forEach(k => n.delete(k)); return n })
-          if (undoneKeys.length < created.length) {
-            toast.show({ message: 'Couldn’t undo ' + (created.length - undoneKeys.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
+          if (undone.length) unfade(undone.map(c => [c.key, c.on]))
+          if (undone.length < created.length) {
+            toast.show({ message: 'Couldn’t undo ' + (created.length - undone.length) + ' of ' + created.length + ' — those logs are still saved', tone: 'error' })
           }
         },
       })
     } finally {
       bulkInFlightRef.current = false
     }
-  }, [fetch, toast, candidatesFor, announce])
+  }, [fetch, toast, candidatesFor, announce, fade, unfade])
 
   const isExpanded = (g) => (g.key in overrides) ? overrides[g.key] : autoKeys.has(g.key)
 
@@ -890,7 +1006,7 @@ export default function CareNeeded({ plan }) {
             <h2 data-testid="care-heading" style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               Needs care today
             </h2>
-            <GroupByControl options={GROUP_OPTS} value={mode} onChange={setMode} />
+            <GroupByControl options={GROUP_OPTS} value={mode} onChange={onGroupBy} />
           </div>
 
           {/* V4-TODAYVERBIAGE-001 — halved, not deleted, and the half that stayed is the one that
