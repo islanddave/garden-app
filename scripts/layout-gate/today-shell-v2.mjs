@@ -195,7 +195,10 @@ try {
       if (m.navVar !== `${BOTTOM_NAV_HEIGHT_PX}px`) F(`--bottom-nav-height is "${m.navVar}", expected "${BOTTOM_NAV_HEIGHT_PX}px"`)
       if (m.top && m.nav && Math.abs((m.nav.top - m.top.bottom) - FIRST_SCREEN) > 0.5) F(`the measured page band is ${m.nav.top - m.top.bottom}px, the gate's FIRST_SCREEN is ${FIRST_SCREEN} — the first-screen arithmetic no longer describes the shell`)
       if (MANAGER_ON && m.restoration !== 'manual') F(`history.scrollRestoration is '${m.restoration}' with the manager ON — main.jsx's boot line did not run, so Chrome's native restore would be measured`)
-      if (m.h.membersGets < 1 || m.h.v2.members.served < 1 || m.h.v2.members.count !== 2) F(`/api/members was answered ${m.h.v2.members.served}x with ${m.h.v2.members.count} member(s) — production-shaped means the two-person roster`)
+      // S2: whenever the roster is ASKED for it is answered production-shaped (the drift guard above pins the
+      // answer). The mounted page need not ask: V1 Today reads it on mount, the V2 skeleton does not until its
+      // household sections (S6) — a check that demanded a request would fail the page for a read it has no use for.
+      if (m.h.v2.members.count !== 2 || m.h.v2.members.served !== m.h.membersGets) F(`/api/members was asked ${m.h.membersGets}x and answered ${m.h.v2.members.served}x with ${m.h.v2.members.count} member(s) — production-shaped means the two-person roster, every time it is asked`)
       if (!m.h.v2.critterOrigin) F('VITE_API_CRITTERS is not defined — the shell is not on vite.harness.v2.mjs')
       if (m.h.prefsGets < 1 || m.h.v2.prefs.served !== m.h.prefsGets) F(`prefs GET observed ${m.h.prefsGets}x, answered from ${m.h.v2.prefs.fixture} ${m.h.v2.prefs.served}x`)
       if (m.h.v2.flag !== '1') F(`garden.todayV2 is ${JSON.stringify(m.h.v2.flag)}, expected "1"`)
