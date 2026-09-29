@@ -177,6 +177,20 @@ describe('who is listed, and how', () => {
     expect(within(rows[24]).getByTestId('catchup-thumb-box').childElementCount).toBe(0)
   }, 20000)
 
+  // GET /api/plants answers a bare array. KILLING MUTATION: read any other shape as an empty list (the
+  // old `Array.isArray(plants) ? plants : []`). RESULT: RED — "Every planting has a start date." shows.
+  it('a response of the wrong shape is a load failure with Try again, never the empty state', async () => {
+    plantsBody = { plants: PLANTS, truncated: false }
+    render(<PlantsCatchUp />)
+    expect(await screen.findByText('Unexpected response from the server.')).toBeDefined()
+    expect(screen.getByRole('alert').textContent).toContain('Couldn’t load your plantings')
+    expect(screen.queryByText('Every planting has a start date.')).toBeNull()
+    plantsBody = PLANTS
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByTestId('catchup-header')).toBeDefined()
+    expect(rowNames()).toHaveLength(4)
+  })
+
   it('headerLine says "1 planting has"', () => {
     expect(headerLine(1)).toBe('1 planting has no start dates.')
     expect(headerLine(8)).toBe('8 plantings have no start dates.')

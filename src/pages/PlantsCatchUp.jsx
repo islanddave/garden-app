@@ -187,9 +187,12 @@ export default function PlantsCatchUp() {
         apiFetch(CATCH_UP_PLANTS_PATH),
         apiFetch(CATCH_UP_LOCATIONS_PATH),
       ])
+      // Fail closed on a shape this page did not ask for, as End of season does: read as an empty list,
+      // it would say "Every planting has a start date." about a list it never saw.
+      if (!Array.isArray(plants)) throw new Error('Unexpected response from the server.')
       const locList = Array.isArray(locs) ? locs : (locs?.locations ?? [])
       setLocations(locList)
-      setGroups(groupCatchUpRows((Array.isArray(plants) ? plants : []).filter(needsStartDates), locList))
+      setGroups(groupCatchUpRows(plants.filter(needsStartDates), locList))
       setRowStates({})
       setToday(todayKey())
     } catch (err) {
