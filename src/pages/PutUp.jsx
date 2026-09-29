@@ -61,6 +61,10 @@ import {
 // was refused; client_stale is answered with a user-tapped "Refresh now", never a reload by itself.
 import { describeRefusal, existingPlaceId, REFRESH_NOW_LABEL } from '../lib/putUpErrors.js'
 import { useAppUpdate } from '../hooks/useAppUpdate.js'
+// Put-Up release 1b — a jar's name, its no-size form, its date at its precision and its discard words
+// come from one module shared with Put it up and batch detail; a move is its own write (V4 §3.4).
+import { putUpDateWords, discardWords, sizeWords, ESTIMATED_PRECISIONS } from '../components/putup/jarWords.js'
+import MoveJarSheet from '../components/putup/MoveJarSheet.jsx'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -2570,6 +2574,7 @@ function RecordRow({ rec, onChanged, fetch }) {
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [moving, setMoving] = useState(false)
   // A string (this row's own copy) or a refusal from describeRefusal — see WriteError.
   const [err, setErr] = useState(null)
 
@@ -2582,6 +2587,28 @@ function RecordRow({ rec, onChanged, fetch }) {
     setBusy(true); setErr(null)
     try {
       await fetch(`/api/preservation/${rec.id}`, { method: 'PUT', body: JSON.stringify(buildFullPayload(rec, overrides)) })
+      onChanged()
+      return true
+    } catch (e) {
+      setErr(describeRefusal(e) ?? "Couldn't update — try again."); setBusy(false)
+      return false
+    }
+  }
+
+  // Put-Up release 1b (V4 §5.4 "From 1b"; contract-F §2.6): the name, method, notes and discard-by
+  // change through PATCH /api/preservation/:id — the legacy PUT answers a DIFFERING method, date or
+  // notes with 409 client_stale, so the editor never sends them there. The size and count still go
+  // through the PUT, whose untouched echo of the stored method/notes/date is an equal no-op. The PUT
+  // goes FIRST: after a PATCH lands, the PUT's echo of the old method would differ and be refused.
+  async function saveEdit({ put: putOverrides, patch }) {
+    setBusy(true); setErr(null)
+    try {
+      if (putOverrides) {
+        await fetch(`/api/preservation/${rec.id}`, { method: 'PUT', body: JSON.stringify(buildFullPayload(rec, putOverrides)) })
+      }
+      if (patch) {
+        await fetch(`/api/preservation/${rec.id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+      }
       onChanged()
       return true
     } catch (e) {
@@ -2606,7 +2633,7 @@ function RecordRow({ rec, onChanged, fetch }) {
 
   if (editing) {
     return <RowEditor rec={rec} onCancel={() => setEditing(false)}
-      onSave={async (overrides) => { if (await put(overrides)) setEditing(false) }} busy={busy} err={err} />
+      onSave={async (change) => { if (await saveEdit(change)) setEditing(false) }} busy={busy} err={err} />
   }
 
   const status = rec.use_by_status
@@ -2627,9 +2654,11 @@ function RecordRow({ rec, onChanged, fetch }) {
         alt={rec.quantity_unit ? `Photo of ${rec.quantity_unit} put up` : undefined} />
       <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: T.space.sm, alignItems: 'baseline' }}>
-        <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.92rem' }}>
-          {rec.quantity_value} {rec.quantity_unit}
-          <span style={{ color: P.mid, fontWeight: 400 }}> · {METHOD_LABELS[rec.method] || rec.method}{rec.method === 'other' && rec.method_other_text ? ` (${rec.method_other_text})` : ''}</span>
+        <div data-testid="putup-row-headline" style={{ fontWeight: 600, color: P.dark, fontSize: '0.92rem' }}>
+          {/* Put-Up release 1b: the jar's NAME leads when it has one, then its size — and a jar with
+              no size at all (1b's NULL quantity pair) says its container or nothing, never "null". */}
+          {[rec.label, sizeWords(rec)].filter(Boolean).join(' · ')}
+          <span style={{ color: P.mid, fontWeight: 400 }}>{rec.label || sizeWords(rec) ? ' · ' : ''}{METHOD_LABELS[rec.method] || rec.method}{rec.method === 'other' && rec.method_other_text ? ` (${rec.method_other_text})` : ''}</span>
         </div>
         {statusChip && (
           <span style={{ fontSize: '0.68rem', fontWeight: 700, color: statusChip.color,
@@ -2645,8 +2674,18 @@ function RecordRow({ rec, onChanged, fetch }) {
             a local "around " prefix, so the walk's band and the saved record are guaranteed to say
             the same words about the same date. `=== true` and not truthiness: the column is
             three-valued and NULL (nobody was asked) must render exactly as it does today, plain. */}
-        {' · put up '}{describeApprox(prettyDate(rec.preserved_at), rec.preserved_at_approx === true)}
-        {rec.use_by_target ? ` · use by ${prettyDate(rec.use_by_target)}` : ''}
+        {' · put up '}{rec.preserved_at_precision
+          ? putUpDateWords(rec.preserved_at, rec.preserved_at_precision)
+          : describeApprox(prettyDate(rec.preserved_at), rec.preserved_at_approx === true)}
+        {/* A row with a stored basis (1b) says its discard-by in the §3.2 words; a pre-1b row keeps
+            today's "use by". */}
+        {rec.use_by_basis
+          ? ((w) => (w ? ` · ${w}` : ''))(discardWords({
+            date: rec.use_by_target ? ymd(rec.use_by_target) : null, basis: rec.use_by_basis, method: rec.method,
+            kind: rec.storage_kind ?? null, status: rec.use_by_status,
+            estimated: ESTIMATED_PRECISIONS.has(rec.preserved_at_precision),
+          }))
+          : (rec.use_by_target ? ` · use by ${prettyDate(rec.use_by_target)}` : '')}
       </div>
       {/* V5-PUTUPCANDY-001 / FOODSAFETY-RULING-V101 §8.2 — THE LINE THE RULING IS ABOUT. The date one
           line up and the chip above it are computed server-side and shipped to every viewer, and for
@@ -2684,6 +2723,7 @@ function RecordRow({ rec, onChanged, fetch }) {
         <RowAction onClick={markUsed} disabled={busy || remaining <= 0}>Mark used</RowAction>
         <RowAction onClick={usedUp} disabled={busy || remaining <= 0}>Used up</RowAction>
         <RowAction onClick={() => setEditing(true)} disabled={busy}>Edit</RowAction>
+        <RowAction onClick={() => setMoving(true)} disabled={busy}>Move</RowAction>
         {!confirmDelete ? (
           <RowAction onClick={() => setConfirmDelete(true)} disabled={busy} tone="terra">Remove</RowAction>
         ) : (
@@ -2693,6 +2733,8 @@ function RecordRow({ rec, onChanged, fetch }) {
           </>
         )}
       </div>
+      <MoveJarSheet open={moving} jar={rec} onClose={() => setMoving(false)}
+        onMoved={() => { setMoving(false); onChanged() }} />
       </div>
     </div>
   )
@@ -2744,8 +2786,11 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
   // against it, one expression per field, so the seed and the comparison cannot drift apart.
   const [seed] = useState(() => ({
+    // Put-Up release 1b: a jar may have NO size (the quantity pair is NULL). It opens blank — not as
+    // "lbs", which the 1a editor showed for a row that never had a unit.
     qtyValue: String(rec.quantity_value ?? ''),
-    qtyUnit: rec.quantity_unit || 'lbs',
+    qtyUnit: rec.quantity_unit || '',
+    name: rec.label || '',
     packageCount: String(rec.package_count ?? 1),
     method: rec.method || 'whole_freeze',
     methodOther: rec.method_other_text || '',
@@ -2753,6 +2798,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     notes: rec.notes || '',
   }))
   const [qtyValue, setQtyValue] = useState(seed.qtyValue)
+  const [name, setName] = useState(seed.name)
   const [qtyUnit, setQtyUnit] = useState(seed.qtyUnit)
   const [packageCount, setPackageCount] = useState(seed.packageCount)
   const [method, setMethod] = useState(seed.method)
@@ -2783,7 +2829,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // Save flips busy on an already-dirty editor, and the cleanup's release in between would fire the
   // deferred reload at the exact moment of the save. The key is per instance (useId) so two open
   // editors can never release each other's hold.
-  const dirty = qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit || packageCount !== seed.packageCount ||
+  const dirty = qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit || packageCount !== seed.packageCount || name !== seed.name ||
     method !== seed.method || methodOther !== seed.methodOther || useByTarget !== seed.useByTarget || notes !== seed.notes
   const holdReload = dirty || !!busy
   const reloadGateKey = `put-up-row:${useId()}`
@@ -2792,25 +2838,37 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, holdReload])
 
+  // Put-Up release 1b: ONLY what changed is sent, each to its one writer (RecordRow.saveEdit) — the
+  // size and count through the legacy PUT, the name, method, notes and discard-by through the PATCH.
+  // An untouched field is an absent key, which both routes read as "unchanged" (V4 §5.4 "From 1b").
   function save() {
-    onSave({
-      quantity_value: Number(qtyValue) || rec.quantity_value,
-      quantity_unit: qtyUnit,
-      package_count: packageCount === '' ? 1 : Number(packageCount),
-      method,
-      method_other_text: method === 'other' ? (methodOther.trim() || null) : null,
-      // Sent on EVERY save, not only when the control is rendered: the value is seeded from the same
-      // expression buildFullPayload uses, so for a row whose control never appeared this key is
-      // byte-identical to the one the payload already carried. Making it conditional would buy
-      // nothing and add a second code path to the column the ruling turns on.
-      use_by_target: useByTarget || null,
-      notes: notes.trim() || null,
-    })
+    const put = {}
+    if (qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit) {
+      put.quantity_value = Number(qtyValue) || rec.quantity_value
+      put.quantity_unit = qtyUnit || rec.quantity_unit
+    }
+    if (packageCount !== seed.packageCount) put.package_count = packageCount === '' ? 1 : Number(packageCount)
+    const patch = {}
+    if (name !== seed.name) patch.label = name.trim() || null
+    if (method !== seed.method) patch.method = method
+    // The 'other' partner rides with a method change or its own edit; the 1b CHECK also takes a name.
+    if (method === 'other' && (method !== seed.method || methodOther !== seed.methodOther)) {
+      patch.method_other_text = methodOther.trim() || null
+    }
+    if (notes !== seed.notes) patch.notes = notes.trim() || null
+    if (useByTarget !== seed.useByTarget) patch.discard_by = useByTarget || 'clear'
+    onSave({ put: Object.keys(put).length ? put : null, patch: Object.keys(patch).length ? patch : null })
   }
 
   return (
     <div style={{ padding: '14px 16px', borderTop: `1px solid ${P.cream}`, backgroundColor: P.cream }}>
       <WriteError err={err} style={{ marginBottom: 8 }} />
+      <div style={{ marginBottom: T.space.sm }}>
+        <Field label="Name" htmlFor={`ed-name-${rec.id}`} optional>
+          <Input id={`ed-name-${rec.id}`} type="text" value={name} maxLength={120}
+            onChange={e => setName(e.target.value)} aria-label="Name" />
+        </Field>
+      </div>
       <div style={{ display: 'flex', gap: T.space.sm }}>
         <div style={{ flex: 2 }}>
           <Field label="How much" htmlFor={`ed-qty-${rec.id}`}>
@@ -2821,6 +2879,12 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
         <div style={{ flex: 1 }}>
           <Field label="Unit" htmlFor={`ed-unit-${rec.id}`}>
             <Select id={`ed-unit-${rec.id}`} value={qtyUnit} onChange={e => setQtyUnit(e.target.value)} aria-label="Unit">
+              {/* A no-size jar opens on the blank; a stored unit outside the list (1b's "fl oz", "cup")
+                  is offered as itself rather than displayed as the first option. */}
+              {!seed.qtyUnit && <option value="">—</option>}
+              {seed.qtyUnit && !UNIT_GROUPS.some(g => g.options.includes(seed.qtyUnit)) && (
+                <option value={seed.qtyUnit}>{seed.qtyUnit}</option>
+              )}
               {UNIT_GROUPS.map(g => (
                 <optgroup key={g.group} label={g.group}>
                   {g.options.map(u => <option key={u} value={u}>{u}</option>)}

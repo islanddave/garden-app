@@ -217,6 +217,8 @@ const SHEET_SITES = [
   // DIALOG_SURFACES entry is owed; `busy={saving}` refuses Back and the backdrop while the keyed POST
   // (and the Reopen door's POST) is in flight.
   'components/putup/PutItUpSheet.jsx',
+  // Put-Up release 1b (V4 §2.5) — Move it: the shared <Sheet armsBack>; busy refuses Back mid-write.
+  'components/putup/MoveJarSheet.jsx',
   // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
   // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
   // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's

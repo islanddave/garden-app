@@ -1,0 +1,144 @@
+// Put-Up release 1b on the put-up list (V4 §7 1b: "jars show their name, no-size form and date words
+// everywhere"; §5.4 "From 1b": the editor stops echoing place/date/method/notes through the legacy
+// PUT; §2.5 Move it). Each assertion names the mutation that reds it. CI LANE: `npm test` + TZ re-run.
+import React from 'react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { installStoragePolyfill } from './helpers/storagePolyfill.js'
+
+installStoragePolyfill()
+
+const fetchMock = vi.fn()
+vi.mock('../lib/api.js', () => ({
+  useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }),
+  apiFetch: (...args) => fetchMock(...args),
+}))
+vi.mock('../hooks/useUploadPhoto.js', () => ({
+  useUploadPhoto: () => ({ upload: vi.fn(), isUploading: false, error: null, photo: null, preview: null, reset: vi.fn() }),
+}))
+vi.mock('../hooks/useCropTypes.js', () => ({ useCropTypes: () => ({ cropTypes: [], loading: false }) }))
+
+import PutUp from '../pages/PutUp.jsx'
+
+// A 1b-shaped jar: a name, a container and no size, an estimated put-up date, a stored basis.
+const JAR_1B = {
+  id: 'rec-1b', crop_type_slug: null, variety_id: null, plant_id: null, harvest_log_id: null,
+  preserved_at: '2026-08-01', preserved_at_precision: 'month', preserved_at_approx: true, method: 'hot_sauce',
+  method_other_text: null, quantity_value: null, quantity_unit: null, container_label: '8 oz woozy', package_count: 2,
+  storage_location_id: 'loc-fridge', use_by_target: '2027-02-01', use_by_basis: 'table', storage_kind: 'fridge',
+  remaining_count: 2, consumed_at: null, notes: null, photo_id: null, use_by_status: 'ok', label: 'Megatron reaper',
+  source_kind: null, source_label: null,
+}
+const PLACES = [{ id: 'loc-fridge', label: 'Fridge', kind: 'fridge' }, { id: 'loc-cf1', label: 'Chest Freezer 1', kind: 'deep_freezer' }]
+
+function wire(rec = JAR_1B) {
+  fetchMock.mockImplementation((path, options = {}) => {
+    const method = options.method || 'GET'
+    if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve(PLACES)
+    if (path.startsWith('/api/plants')) return Promise.resolve([])
+    if (path.startsWith('/api/kitchen-batches')) return Promise.resolve({ batches: [] })
+    if (path.startsWith('/api/preservation/whats-put-up')) {
+      return Promise.resolve({ group_by: 'storage', groups: [{ group_key: 'loc-fridge', label: 'Fridge', total_packages: 2,
+        units: [], use_soon_count: 0, records: [rec] }] })
+    }
+    if (path.startsWith('/api/preservation/')) return Promise.resolve({ id: rec.id })
+    return Promise.resolve(null)
+  })
+}
+const writes = () => fetchMock.mock.calls.filter(([p, o]) => p.startsWith('/api/preservation/') && o?.method && o.method !== 'GET')
+  .map(([p, o]) => [o.method, p, JSON.parse(o.body)])
+async function renderList() {
+  render(<MemoryRouter initialEntries={['/put-up?view=pantry']}><PutUp /></MemoryRouter>)
+  await screen.findByTestId('putup-row-headline')
+}
+
+beforeEach(() => {
+  fetchMock.mockReset()
+  wire()
+  sessionStorage.clear(); localStorage.clear()
+})
+
+describe('the jar row says its name, its no-size form and its date words', () => {
+  it('leads with the name, then the container, never "null"', async () => {
+    await renderList()
+    expect(screen.getByTestId('putup-row-headline').textContent).toBe('Megatron reaper · 8 oz woozy · Hot sauce')
+    expect(document.body.textContent).not.toMatch(/\bnull\b|undefined|NaN/)
+  })
+
+  // MUTATION: render preserved_at through the shipped prettyDate for a 1b row -> "Aug 1, 2026" appears.
+  it('says the put-up date at its precision and the discard-by in the §3.2 words', async () => {
+    await renderList()
+    const text = document.body.textContent
+    expect(text).toContain('put up sometime in August')
+    expect(text).toContain('discard by around Feb 1, 2027 · general figure: hot sauce, fridge')
+    expect(text).not.toContain('use by')
+  })
+
+  it('a pre-1b row keeps its shipped words', async () => {
+    wire({ ...JAR_1B, label: undefined, container_label: undefined, preserved_at_precision: undefined, use_by_basis: undefined,
+      quantity_value: '2.5', quantity_unit: 'qt', preserved_at_approx: null })
+    await renderList()
+    expect(screen.getByTestId('putup-row-headline').textContent).toBe('2.5 qt · Hot sauce')
+    expect(document.body.textContent).toContain('use by Feb 1, 2027')
+  })
+})
+
+describe('the row editor writes each field to its one writer (V4 §5.4 "From 1b")', () => {
+  const openEditor = async () => {
+    await renderList()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    await screen.findByRole('button', { name: 'Save' })
+  }
+
+  it('a no-size jar opens on a blank unit, not "lbs"', async () => {
+    await openEditor()
+    expect(screen.getByRole('combobox', { name: 'Unit' }).value).toBe('')
+  })
+
+  // MUTATION: send the method through the PUT -> the PUT arm appears and this literal reds.
+  it('a method, name or notes change is a PATCH carrying only what changed', async () => {
+    await openEditor()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Reaper, hot' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Method' }), { target: { value: 'ferment' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'the good one' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()).toEqual([['PATCH', '/api/preservation/rec-1b', { label: 'Reaper, hot', method: 'ferment', notes: 'the good one' }]])
+  })
+
+  // MUTATION: PATCH before PUT -> the order literal reds (and live, the PUT's echo of the old method 409s).
+  it('a count change and a method change: the PUT goes first, then the PATCH', async () => {
+    await openEditor()
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '3' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Method' }), { target: { value: 'ferment' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
+    await waitFor(() => expect(writes()).toHaveLength(2))
+    expect(writes().map(w => w[0])).toEqual(['PUT', 'PATCH'])
+    expect(writes()[0][2].package_count).toBe(3)
+    expect(writes()[0][2].method).toBe('hot_sauce')          // the stored value, an equal echo
+    expect(writes()[1][2]).toEqual({ method: 'ferment' })
+  })
+})
+
+describe('Move it (V4 §2.5, §3.4)', () => {
+  // MUTATION: send the move through the legacy PUT's storage_location_id -> the literal reds.
+  it('requires a place, defaults When to Today, and posts the move route', async () => {
+    await renderList()
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }))
+    await screen.findByTestId('move-place-id:loc-cf1')
+    expect(screen.queryByTestId('move-place-id:loc-fridge')).toBeNull()        // where it already is
+    const req = [...screen.getByTestId('move-sheet').querySelectorAll('[aria-required="true"]')]
+    expect(req.map(e => e.getAttribute('aria-label'))).toEqual(['Where is Megatron reaper going?'])
+    await act(async () => { fireEvent.click(screen.getByTestId('move-save')) })
+    expect(screen.getByTestId('move-error').textContent).toBe('Where is it going? Pick a place.')
+    fireEvent.click(screen.getByTestId('move-place-id:loc-cf1'))
+    await act(async () => { fireEvent.click(screen.getByTestId('move-save')) })
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    const [method, path, body] = writes()[0]
+    expect([method, path]).toEqual(['POST', '/api/preservation/rec-1b/move'])
+    expect(body.place).toEqual({ id: 'loc-cf1' })
+    expect(body.when.precision).toBe('day')
+    await waitFor(() => expect(screen.queryByTestId('move-sheet')).toBeNull())
+  })
+})

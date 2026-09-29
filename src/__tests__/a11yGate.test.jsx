@@ -62,6 +62,7 @@ import KindChips from '../components/kitchen/KindChips.jsx'
 import StartBatchSheet from '../components/kitchen/StartBatchSheet.jsx'
 import CheckOnItSheet from '../components/putup/CheckOnItSheet.jsx'
 import PutItUpSheet from '../components/putup/PutItUpSheet.jsx'
+import MoveJarSheet from '../components/putup/MoveJarSheet.jsx'
 
 afterEach(() => cleanup())
 
@@ -190,6 +191,19 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
       await screen.findByTestId('putup-row-0-ph-input')
       expect(screen.getByRole('dialog', { name: 'Put it up' })).toBeTruthy()
       await expectNoA11yViolations(container, { label: 'PutItUpSheet', rules: NEW_RULES })
+    })
+
+    it('MoveJarSheet, Earlier… → Pick a date open, is clean (with nested-interactive)', async () => {
+      fetchSpy.mockImplementation((path) => Promise.resolve(path === '/api/storage-locations' ? PLACES : null))
+      const { container } = render(<MoveJarSheet open jar={{ id: 'pl-1', label: 'Megatron reaper', storage_location_id: 'loc-1' }}
+        onClose={() => {}} onMoved={() => {}} />)
+      await screen.findByTestId('move-place-id:loc-2')
+      screen.getByTestId('move-when-earlier').click()
+      await screen.findByTestId('move-when-pickdate')
+      screen.getByTestId('move-when-pickdate').click()
+      await screen.findByTestId('move-when-date')
+      expect(screen.getByRole('dialog', { name: 'Move it' })).toBeTruthy()
+      await expectNoA11yViolations(container, { label: 'MoveJarSheet', rules: NEW_RULES })
     })
   })
 
