@@ -331,10 +331,12 @@ describe('copy', () => {
   })
 
   it('"Last logged" is the LOCAL day, and drops the year only for this year', () => {
-    const now = new Date('2026-09-29T12:00:00')
-    // 01:30 UTC on the 27th is the evening of the 26th in Massachusetts (the suite runs in America/New_York).
-    expect(lastLoggedLabel('2026-09-27T01:30:00.000Z', now)).toBe('Last logged Sep 26')
-    expect(lastLoggedLabel('2025-10-02T16:00:00.000Z', now)).toBe('Last logged Oct 2, 2025')
+    const now = new Date(2026, 8, 29, 12, 0)
+    // 9:30 pm LOCAL on the 26th. CI runs the suite under UTC and again under America/New_York; in the
+    // second run this instant is 01:30 UTC on the 27th, so a UTC-day label would read Sep 27.
+    const lateEvening = new Date(2026, 8, 26, 21, 30).toISOString()
+    expect(lastLoggedLabel(lateEvening, now)).toBe('Last logged Sep 26')
+    expect(lastLoggedLabel(new Date(2025, 9, 2, 12, 0).toISOString(), now)).toBe('Last logged Oct 2, 2025')
     expect(lastLoggedLabel(null, now)).toBe('Nothing logged yet')
     expect(lastLoggedLabel('not a date', now)).toBe('Nothing logged yet')
   })
