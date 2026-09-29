@@ -78,7 +78,9 @@ export default function WeeklyHeatFruitChart({ section }) {
         </g>
       ))}
       <Line x1={LEFT} y1={MID} x2={RIGHT} y2={MID} stroke={v('ink-3')} />
-      <Txt x={LEFT + 2} y={MID + 16} tone="muted">tomato fruit and pepper pods picked</Txt>
+      <Txt x={LEFT + 2} y={MID + 16} tone="muted">
+        picked: <tspan style={{ fill: v('tomato'), fontWeight: 600 }}>tomatoes</tspan> · <tspan style={{ fill: v('pepper'), fontWeight: 600 }}>peppers</tspan>
+      </Txt>
       {L.bracket && (
         <g>
           <Line x1={L.bracket.hx} y1={L.bracket.y} x2={L.bracket.tx} y2={L.bracket.y} stroke={v('ink-3')} width={1.2} />

@@ -102,9 +102,9 @@ describe('verdicts', () => {
   it('verdicts read the fixture numbers', () => {
     expect(verdictFor('ribbon', fixture.sections.ribbon)).toContain('Jul 2 at 96°F')
     expect(verdictFor('sources', fixture.sections.sources)).toMatch(/^Starview Gardens gave the most: 154\.3 lb from 46 plantings \(34% of 449\.6 lb\)/)
-    expect(verdictFor('heat_clock', fixture.sections.heat_clock)).toContain('the typical tomato 1,151 and the typical pepper 1,184')
+    expect(verdictFor('heat_clock', fixture.sections.heat_clock)).toContain('the typical tomato took 1,151 heat units and the typical pepper 1,184.')
     expect(verdictFor('tomato_keep', fixture.sections.tomato_keep)).toContain('The typical single tomato plant gave 2.05 lb')
-    expect(verdictFor('sep_size', fixture.sections.sep_size)).toContain('about 24% lighter overall')
+    expect(verdictFor('sep_size', fixture.sections.sep_size)).toContain('about 24% lighter overall (Ukrainian Purple 114 g → 75 g)')
   })
 
   it('an unknown id or an empty section gets no verdict and does not throw', () => {

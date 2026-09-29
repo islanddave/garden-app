@@ -17,7 +17,8 @@ export default function SeedLotCard({ lot }) {
   if (!lot) return null
   const src = lot.source ?? null
   const chips = sourceLinkChips(src)
-  const sub = [capitalize(cropWord(lot.crop_slug)), lot.saved_on ? `saved ${monthDay(lot.saved_on)}` : null, lot.stage ?? null]
+  // With no count the stage already heads the card, so it is not repeated here.
+  const sub = [capitalize(cropWord(lot.crop_slug)), lot.saved_on ? `saved ${monthDay(lot.saved_on)}` : null, isNum(lot.count) ? lot.stage : null]
     .filter(Boolean).join(' · ')
   const parent = lot.parent ?? null
   const origin = src?.name

@@ -84,10 +84,11 @@ function heatClock(s) {
   const out = []
   const firstCrop = [...(s?.series?.by_crop ?? [])].filter((r) => r?.first_pick).sort((a, b) => (a.first_pick < b.first_pick ? -1 : 1))[0]
   if (firstCrop) out.push(`${firstCrop.crop_name} came in first, on ${monthDay(firstCrop.first_pick)}.`)
-  const crops = [['tomato', 'tomato'], ['pepper', 'pepper']]
-    .filter(([k]) => isNum(med[k]))
-    .map(([k, word]) => `the typical ${word} ${fmtInt(med[k])}`)
-  if (crops.length) out.push(`From planting out to first pick, ${listWords(crops)} heat units.`)
+  const crops = ['tomato', 'pepper'].filter((k) => isNum(med[k]))
+  if (crops.length) {
+    const [a, b] = crops
+    out.push(`From planting out to first pick, the typical ${a} took ${fmtInt(med[a])} heat units${b ? ` and the typical ${b} ${fmtInt(med[b])}` : ''}.`)
+  }
   const tom = rows.filter((r) => r?.crop_slug === 'tomato' && isNum(r.heat_units)).sort((a, b) => a.heat_units - b.heat_units)
   if (tom.length >= 2) out.push(`Tomatoes ran from ${tom[0].cultivar} at ${fmtInt(tom[0].heat_units)} to ${tom[tom.length - 1].cultivar} at ${fmtInt(tom[tom.length - 1].heat_units)}.`)
   return out.join(' ')
@@ -150,7 +151,8 @@ function sepSize(s) {
   const out = []
   let lead = `${fmtInt(smaller.length)} of ${fmtInt(rows.length)} tomatoes picked smaller fruit in September than in August`
   if (isNum(ratio) && ratio < 1) lead += `, about ${fmtPct(1 - ratio)} lighter overall`
-  const ex = [...smaller].sort((a, b) => num(b.aug_n) + num(b.sep_n) - num(a.aug_n) - num(a.sep_n))[0]
+  // The example is the biggest drop, not the busiest row: a cherry's "5 g → 5 g" says nothing.
+  const ex = [...smaller].sort((a, b) => a.ratio - b.ratio)[0]
   if (ex) lead += ` (${ex.cultivar} ${fmtInt(ex.aug_g)} g → ${fmtInt(ex.sep_g)} g)`
   out.push(`${lead}.`)
   if (held.length) out.push(`${listWords(held.slice(0, 3).map((r) => r.cultivar))} held ${plural(held.length, 'its', 'their')} size.`)
