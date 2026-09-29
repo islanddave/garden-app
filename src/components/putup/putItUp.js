@@ -83,14 +83,12 @@ export function preselectWhen(batch, now = new Date()) {
 // as a local YYYY-MM-DD, or null when the batch has no dated event at all (then a coarse chip is
 // required — the sheet says so rather than inventing a day).
 export function notSureDate(batch) {
+  // The start is one of the candidates, so the latest can never fall before it.
   if (!batch) return null
-  const start = batch.started_at ? new Date(batch.started_at) : null
   const cands = [batch.started_at, batch.current_stage_entered_at]
     .map(v => (v ? new Date(v) : null)).filter(d => d && !Number.isNaN(d.getTime()))
   if (!cands.length) return null
-  let latest = cands.reduce((a, b) => (b.getTime() > a.getTime() ? b : a))
-  if (start && !Number.isNaN(start.getTime()) && latest.getTime() < start.getTime()) latest = start
-  return toYmd(latest)
+  return toYmd(cands.reduce((a, b) => (b.getTime() > a.getTime() ? b : a)))
 }
 
 // { when: {date, precision}, words } or { error }. `date` is the jar's put-up day (a DATE column);
