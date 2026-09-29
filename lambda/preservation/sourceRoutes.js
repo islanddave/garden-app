@@ -96,7 +96,7 @@ async function listSources(sql, putUpId, householdIds) {
 // the children right and the parent cache stale, so step 3 is written to be idempotent and the
 // client is told to re-read. The alternative ordering (parent first) would leave a parent claiming a
 // provenance no child supports, which is the direction that DOES lie.
-async function replaceSources(sql, putUp, body, householdIds) {
+async function replaceSources(sql, putUp, body, userId, householdIds) {
   const submitted = body?.sources;
 
   // An explicit empty list is a legitimate request: "I do not know what went into this after all."
@@ -110,7 +110,12 @@ async function replaceSources(sql, putUp, body, householdIds) {
         AND deleted_at IS NULL
     `;
     const cache = parentCache([]);
-    await sql`
+    // Put-Up release 1b: preservation_log carries trg_audit_preservation_log_upd, so its writes ride the
+    // actor GUC in one transaction (lambda/audit-actor-guc.test.js) — whether or not this statement
+    // touches a watched column today.
+    await sql.transaction([
+      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+      sql`
       UPDATE preservation_log
       SET source_kind = ${cache.source_kind}::text,
           source_label = ${cache.source_label}::text,
@@ -119,7 +124,8 @@ async function replaceSources(sql, putUp, body, householdIds) {
           updated_at = NOW()
       WHERE id = ${putUp.id}::uuid
         AND user_id = ANY(${householdIds})
-    `;
+    `,
+    ]);
     return { status: 200, body: { sources: [], cleared: true } };
   }
 
@@ -159,7 +165,9 @@ async function replaceSources(sql, putUp, body, householdIds) {
   // from a previous edit whose source row is now soft-deleted, which is the "false-provenance
   // generator" shape v4-putupprov-001's own header rejects a DEFAULT for.
   const cache = parentCache(rows);
-  await sql`
+  await sql.transaction([
+    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    sql`
     UPDATE preservation_log
     SET source_kind = ${cache.source_kind}::text,
         source_label = ${cache.source_label}::text,
@@ -170,7 +178,8 @@ async function replaceSources(sql, putUp, body, householdIds) {
         updated_at = NOW()
     WHERE id = ${putUp.id}::uuid
       AND user_id = ANY(${householdIds})
-  `;
+  `,
+  ]);
   // crop_type_slug / variety_id are the ONE pair written with COALESCE, and the asymmetry is
   // deliberate: chk_preservation_log_attribution requires at least one of them to be non-null, so
   // an all-bought source list (which carries neither) would otherwise null the jar's own crop and
@@ -183,10 +192,10 @@ async function replaceSources(sql, putUp, body, householdIds) {
 export async function handleSourceRoute({ sql, rawPath, method, rawBody, userId, householdIds }) {
   const route = parseSourceRoute(rawPath);
   if (!route) return null;
-  // userId is unused by the SQL below (household scoping covers it) and is accepted so the delegation
-  // block in index.js passes the identical argument object it passes handleKitchenRoute. Two
-  // near-identical call sites with different shapes is how one of them drifts.
-  void userId;
+  // userId is not a scope (household scoping covers that): since Put-Up release 1b it is the actor the
+  // preservation_log writes set for the audit trigger. It arrives in the same argument object
+  // index.js passes handleKitchenRoute — two near-identical call sites with different shapes is how
+  // one of them drifts.
 
   const putUp = await loadOwnedPutUp(sql, route.id, householdIds);
   if (!putUp) return notFound;
@@ -199,7 +208,7 @@ export async function handleSourceRoute({ sql, rawPath, method, rawBody, userId,
     } catch {
       return { status: 400, body: { error: 'Body must be valid JSON' } };
     }
-    return replaceSources(sql, putUp, body, householdIds);
+    return replaceSources(sql, putUp, body, userId, householdIds);
   }
   return notAllowed;
 }

@@ -109,12 +109,16 @@ export const handler = async (event) => {
         const body = JSON.parse(event.body ?? '{}');
         const verr = validateUpdate(body);
         if (verr) return resp(400, { error: verr });
+        // Put-Up release 1b (05 §6a "place labels"): trimmed on every writer, as the POST already
+        // trims, so " Fridge" and "Fridge" cannot become two places under the (user, kind,
+        // lower(label)) key — and a rename cannot slip past the clash check below by a space.
+        const label = body.label == null ? null : String(body.label).trim();
         let rows;
         try {
           rows = await sql`
             UPDATE storage_location
             SET
-              label = COALESCE(${body.label ?? null}, label),
+              label = COALESCE(${label}, label),
               kind  = COALESCE(${body.kind ?? null}, kind)
             WHERE id = ${locId}
               AND deleted_at IS NULL
@@ -134,7 +138,7 @@ export const handler = async (event) => {
              AND o.id <> t.id
              AND o.deleted_at IS NULL
              AND o.kind = COALESCE(${body.kind ?? null}, t.kind)
-             AND lower(o.label) = lower(COALESCE(${body.label ?? null}, t.label))
+             AND lower(o.label) = lower(COALESCE(${label}, t.label))
             WHERE t.id = ${locId}
               AND t.user_id = ANY(${householdIds})
               AND t.deleted_at IS NULL
