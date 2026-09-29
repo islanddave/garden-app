@@ -22,9 +22,9 @@
 // binds the two and asserts every member is labelled. Adding a method here without adding it there
 // is the failure that ruling exists to prevent.
 //
-// EXPORTED with no importer today, deliberately: it is a contract about the table below rather than
-// this file's private state, and nothing in this Lambda branches on it — the label is a client
-// concern. What this list CANNOT prove is its own completeness. Provenance is not in the data, so a
+// EXPORTED as a contract about the table below rather than this file's private state. Since Put-Up
+// release 1a it has one reader here — resolveShelfLife names a candy cell's basis 'house' — and still
+// nothing in this Lambda branches on it to WRITE anything; the label is a client concern. What this list CANNOT prove is its own completeness. Provenance is not in the data, so a
 // figure invented at a keyboard and left off this list is indistinguishable here from a cited one.
 // The only defence against that is the citation discipline in the table's header.
 export const HOUSE_SOURCED_SHELF_LIFE = ['candy'];
@@ -51,6 +51,21 @@ export const HOUSE_SOURCED_SHELF_LIFE = ['candy'];
 // the surface, as a provenance line the user can see, or it takes `default: null`. The list above,
 // HOUSE_SOURCED_SHELF_LIFE, is how that condition is carried into the UI, and the parity test is
 // what stops a future entry from arriving without one.
+//
+// PUT-UP RELEASE 1a (the V4 design's engine section, rules (a) and (b)). Two changes, one of them
+// behaviour-identical:
+//   FREEZER LEGS ARE EXPLICIT. Every method with a figure names deep_freezer and fridge_freezer, at
+//     exactly the number that cell already fell through to — nothing in a freezer changes date. They
+//     exist so that the rule below can stop the fall-through without ever touching a freezer.
+//   NO FIGURE => NO DATE, on the fridge. A recorded storage kind with no figure for its method gets
+//     no date instead of borrowing `default`, a figure meant for somewhere else (fridge pesto read 10
+//     months, fridge passata 12). `default` now answers only an UNRECORDED kind. Release 1a applies
+//     this to the fridge alone (NO_FIGURE_NO_DATE_KINDS); release 1b extends it to the shelf, the
+//     cellar and the counter with Dave's answers (Q1, Q2) and adds the Raw / In oil and texture rules,
+//     which need columns 1a does not have. A rule change never rewrites a stored date: these apply
+//     at create only, so every jar already logged keeps the date it has.
+// shelfLife.test.js pins every cell, before and after, and the difference is exactly the disclosed
+// list; shelf-life-default-floor.test.js pins the explicit legs themselves.
 const SHELF_LIFE_MONTHS = {
   roast_freeze:   { deep_freezer: 12, fridge_freezer: 4, default: 10 },
   whole_freeze:   { deep_freezer: 12, fridge_freezer: 4, default: 10 },
@@ -81,7 +96,7 @@ const SHELF_LIFE_MONTHS = {
   //     does not bind — but its rule does, restated: an unrecorded storage kind must not be read as
   //     "somebody put this somewhere cool". It is also the leg that will actually fire; prod has three
   //     deep_freezer locations and zero pantry/cold_storage rows (verified 2026-09-06).
-  dehydrate:      { pantry: 4, cold_storage: 6, default: 4 },   // fruit 12 @60F / 6 @80F, veg half that (fruit/veg-varying; vegetable leg)
+  dehydrate:      { pantry: 4, cold_storage: 6, deep_freezer: 4, fridge_freezer: 4, default: 4 },   // fruit 12 @60F / 6 @80F, veg half that (fruit/veg-varying; vegetable leg)
   // powder INHERITS dehydrate EXACTLY — no new source, one existing row reused (the ferment_mash
   // pattern). It previously read { 18, 18, 18 } with the comment "powdered: 18-24 mo (NCHFP dehydrate)".
   // THAT CITATION IS FALSE AND IS BEING REMOVED, NOT SOFTENED: NCHFP's dried-food ceiling in the text
@@ -94,12 +109,12 @@ const SHELF_LIFE_MONTHS = {
   // if moisture is reabsorbed during storage"). Equal-to-dehydrate is already the generous reading;
   // longer is unsupportable in citation AND in mechanism. Not house-sourced — every figure is derived
   // from the printed NCHFP text above — so HOUSE_SOURCED_SHELF_LIFE stays ['candy'].
-  powder:         { pantry: 4, cold_storage: 6, default: 4 },   // ground dried food = dehydrate, same source, same figures
-  passata:        { pantry: 12, cold_storage: 18, default: 12 },   // canned tomato sauce, high-acid
-  can_water_bath: { pantry: 12, cold_storage: 18, default: 12 },   // high-acid: 12–18 mo best quality
-  can_pressure:   { pantry: 12, cold_storage: 12, default: 12 },   // low-acid pressure-canned: ~12 mo
-  jam_preserve:   { pantry: 12, cold_storage: 18, default: 12 },
-  ferment:        { fridge: 6, fridge_freezer: 6, cold_storage: 8, default: 6 }, // fridge ferment 4–8 mo
+  powder:         { pantry: 4, cold_storage: 6, deep_freezer: 4, fridge_freezer: 4, default: 4 },   // ground dried food = dehydrate, same source, same figures
+  passata:        { pantry: 12, cold_storage: 18, deep_freezer: 12, fridge_freezer: 12, default: 12 },   // canned tomato sauce, high-acid
+  can_water_bath: { pantry: 12, cold_storage: 18, deep_freezer: 12, fridge_freezer: 12, default: 12 },   // high-acid: 12–18 mo best quality
+  can_pressure:   { pantry: 12, cold_storage: 12, deep_freezer: 12, fridge_freezer: 12, default: 12 },   // low-acid pressure-canned: ~12 mo
+  jam_preserve:   { pantry: 12, cold_storage: 18, deep_freezer: 12, fridge_freezer: 12, default: 12 },
+  ferment:        { fridge: 6, fridge_freezer: 6, cold_storage: 8, deep_freezer: 6, default: 6 }, // fridge ferment 4–8 mo
   // DEFAULT CORRECTED 4 -> 3, 2026-09-08 (BUG-SHELFDEFAULTGUARDGAP-001). It was the COLD_STORAGE
   // figure — the LONGER of the two legs this row declares — so a cure-and-store logged with no
   // storage kind was read as "somebody put this somewhere cool", which is the pantry/cold_storage
@@ -107,8 +122,8 @@ const SHELF_LIFE_MONTHS = {
   // number: 3 is this row's own already-cited pantry figure, and the legs are untouched. It shipped
   // this way because shelf-life-default-floor.test.js only checked rows that declare a FRIDGE leg,
   // and this row declares none; that gate is now a floor over the shortest declared route.
-  cure_store:     { cold_storage: 4, pantry: 3, default: 3 },      // squash 3–6, garlic 6–8, potatoes 4–9 (crop-varying; default = the shorter declared leg)
-  cold_store:     { cold_storage: 6, fridge: 4, default: 4 },
+  cure_store:     { cold_storage: 4, pantry: 3, deep_freezer: 3, fridge_freezer: 3, default: 3 },      // squash 3–6, garlic 6–8, potatoes 4–9 (crop-varying; default = the shorter declared leg)
+  cold_store:     { cold_storage: 6, fridge: 4, deep_freezer: 4, fridge_freezer: 4, default: 4 },
   // ── V4-PUTUPTAXONOMY-001 (BD-034). ───────────────────────────────────────────────────────────
   // A CITED ENTRY HERE IS A HARD PRECONDITION FOR A NEW METHOD, not a nicety. shelfLifeMonths()
   // returns null for a method absent from this table, which yields no use_by_target, and use-soon
@@ -154,12 +169,12 @@ const SHELF_LIFE_MONTHS = {
   // defensible for the vinegar-and-processed case and not for the fermented one, and `method` cannot
   // tell them apart. Splitting that is a vocabulary change, not a constant change — see
   // project-state/_build-inflight-20260904/FOODSAFETY-RULING-V100.md and its adversarial review.
-  hot_sauce:      { pantry: 12, cold_storage: 18, fridge: 6, default: 6 },
+  hot_sauce:      { pantry: 12, cold_storage: 18, fridge: 6, deep_freezer: 6, fridge_freezer: 6, default: 6 },
   // ferment_mash inherits `ferment` EXACTLY. A mash under brine is preserved by the same acidity as
   // a finished ferment and lives in the same places, so shortening it would be an invented number
   // dressed as caution. What makes it a distinct value is that it is UNFINISHED, which the label
   // carries; that is a fact about the food, not about how long it keeps.
-  ferment_mash:   { fridge: 6, fridge_freezer: 6, cold_storage: 8, default: 6 },
+  ferment_mash:   { fridge: 6, fridge_freezer: 6, cold_storage: 8, deep_freezer: 6, default: 6 },
   // ── V5-PUTUPCANDY-001. THE ONE HOUSE-SOURCED ROW IN THIS TABLE. ───────────────────────────────
   // Read the amended header above first. Nothing below is published guidance and none of it may be
   // presented as such; every figure is from Dave's own crucible-hardened house guide,
@@ -181,9 +196,13 @@ const SHELF_LIFE_MONTHS = {
   //                      value exists to prevent; anything above 1 would be invention, since there is
   //                      no published figure to round toward. Nobody may later read this as a sourced
   //                      30-day claim.
-  // fridge, pantry and cold_storage are deliberately UNLISTED — they fall through to the same floor
-  // without implying a per-kind judgement that nothing supports.
-  candy:          { deep_freezer: 6, fridge_freezer: 4, default: 1 },
+  //   fridge, pantry, cold_storage, other 1 — each RESTATES THE FLOOR above. They are not a per-kind
+  //                      judgement, and nothing supports one: 1 is the same floor at every kind that
+  //                      is not a freezer. Until Put-Up release 1a they were unlisted and fell through
+  //                      to `default` for the same 1. They are listed because 1a stops a recorded
+  //                      storage kind from borrowing `default` (see NO_FIGURE_NO_DATE_KINDS below),
+  //                      and candy must keep its floor there rather than lose its date. Still house.
+  candy:          { deep_freezer: 6, fridge_freezer: 4, fridge: 1, pantry: 1, cold_storage: 1, other: 1, default: 1 },
   // D6: acquisition age is unknown, so there is no honest shelf-life anchor. NULL => no default
   // expiry => excluded from "use soon" until the user sets one. Same reasoning as the non-garden
   // suppression in index.js's create path.
@@ -191,11 +210,29 @@ const SHELF_LIFE_MONTHS = {
   other:          { default: null },
 };
 
+// V4 engine rule (a), staged by release: the RECORDED storage kinds that never borrow `default` when
+// the method names no figure for them. Release 1a: the fridge only (the 1a disclosure — pesto 10
+// months, the freeze family 10, jam / passata / canned 12, dried 4, cure & store 3 all become no date
+// in a fridge). Release 1b adds pantry, cold_storage and other together with the legs its Q1/Q2
+// answers keep; the freezer kinds never need to be here, every freezer cell being an explicit leg.
+const NO_FIGURE_NO_DATE_KINDS = new Set(['fridge']);
+
 export function shelfLifeMonths(method, kind) {
   const m = SHELF_LIFE_MONTHS[method];
   if (!m) return null;
-  const v = kind != null && kind in m ? m[kind] : m.default;
-  return v ?? null;
+  if (kind != null && kind in m) return m[kind] ?? null;
+  if (kind != null && NO_FIGURE_NO_DATE_KINDS.has(kind)) return null;
+  return m.default ?? null;
+}
+
+// One cell of the engine with the word for where its date comes from: 'table' (a general figure from
+// the cited table above), 'house' (a house-sourced figure, HOUSE_SOURCED_SHELF_LIFE) or 'none' (no
+// date). Nothing stores the word in release 1a — there is no column for it until 1b's use_by_basis —
+// but deciding it here, beside the months, is what keeps a second jar writer from deciding it twice.
+export function resolveShelfLife(method, kind) {
+  const months = shelfLifeMonths(method, kind);
+  if (months == null) return { months: null, basis: 'none' };
+  return { months, basis: HOUSE_SOURCED_SHELF_LIFE.includes(method) ? 'house' : 'table' };
 }
 
 // date (YYYY-MM-DD string, ISO string, or Date) + n months → YYYY-MM-DD (clamps day to the
