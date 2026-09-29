@@ -8,7 +8,6 @@ import { useAuth } from '../context/AuthContext.jsx'
 import WhatsNewDot from './WhatsNewDot.jsx'
 import { P, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import { T } from '../lib/tokens.js'
-import CatchUpBadge from './CatchUpBadge.jsx'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { useApiFetch } from '../lib/api.js'
 import BottomNavDot from './BottomNavDot.jsx'
@@ -222,16 +221,6 @@ function RowContent({ row }) {
 // the armed Back entry, BUG-BACKNAVMORE-001) and, when the row is pinnable, its pin button. `note` is
 // the inline line under the row ("Unpin one first") — inline because a toast is an interrupt.
 function MoreRow({ row, pinned, note, onToggle, onNavigate }) {
-  // The catch-up badge (flag-gated off) is a component row: CatchUpBadge renders its own link, so it
-  // is not pinnable. BUG-BACKNAVMORE-001 NOTE: if it ever ships, that inner link must adopt the
-  // SheetRowLink consume-on-navigate contract or its tap will orphan the armed Back entry.
-  if (row.component === 'catchUpBadge') {
-    return (
-      <div data-testid="catch-up-nav-item" onClick={onNavigate} style={{ padding: '12px 24px 4px' }}>
-        <CatchUpBadge />
-      </div>
-    )
-  }
   const linkStyle = {
     ...menuRowStyle, borderTop: 'none', flex: 1, width: 'auto', minWidth: 0,
     ...(row.sub ? { alignItems: 'flex-start' } : null),

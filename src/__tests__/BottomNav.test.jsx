@@ -41,12 +41,6 @@ vi.mock('../context/AuthContext.jsx', () => ({
   }),
 }))
 
-// V1.2a-4 S1: CatchUpBadge child uses useApiFetch (Clerk-dependent). Stub it here;
-// CatchUpBadge has its own test suite.
-vi.mock('../components/CatchUpBadge.jsx', () => ({
-  default: () => null,
-}))
-
 // MVP-Critter Session 2: BottomNavDot child fetches /api/critters/active — stubbed here
 // to keep BottomNav tests focused. BottomNavDot has its own test suite.
 vi.mock('../components/BottomNavDot.jsx', () => ({
@@ -349,10 +343,29 @@ describe('BottomNav — More menu', () => {
     expect(screen.getByText('Desk')).toBeDefined()
   })
 
-  it('does NOT render the Catch-up badge container (hidden 2.0.1 until S1.1 editor ships)', () => {
+  // V5-PLANTSTARTDATES-001 — CATCH_UP_EDITOR_SHIPPED is on, so the door is back, as a plain row.
+  // KILLING MUTATION: flip the flag false. RESULT: RED (no link).
+  it('More menu shows the Catch up row as a plain link to /plants/catch-up', () => {
     render(<BottomNav />)
     fireEvent.click(screen.getByLabelText('More navigation options'))
+    const link = screen.getByText('Catch up').closest('a')
+    expect(link).not.toBeNull()
+    expect(link.getAttribute('href')).toBe('/plants/catch-up')
+  })
+
+  // Reward UX V102: a count badge nudging you to fill data is out of scope in navigation. The deleted
+  // CatchUpBadge drew one (a pill with the number of plantings missing dates) beside this row.
+  // KILLING MUTATION: put a count in the row's subtitle, or restore the badge. RESULT: RED.
+  it('the Catch up row carries no count badge', () => {
+    render(<BottomNav />)
+    fireEvent.click(screen.getByLabelText('More navigation options'))
+    const row = screen.getByText('Catch up').closest('a')
+    expect(row.textContent).toBe('Catch upAdd missing start dates')
+    expect(row.textContent).not.toMatch(/\d/)
+    expect(screen.queryByTestId('catch-up-badge')).toBeNull()
     expect(screen.queryByTestId('catch-up-nav-item')).toBeNull()
+    // Nor anywhere on the bar itself.
+    expect(screen.getByLabelText('Main navigation').textContent).not.toMatch(/\d/)
   })
 })
 

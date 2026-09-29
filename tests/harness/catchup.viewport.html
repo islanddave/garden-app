@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Catch up viewport host</title>
+<!--
+  IFRAME HOST for catchup.html, following logmany.viewport.html. `--window-size=426,x` does NOT reflow
+  macOS Chrome to 426px — it floors the window near 500px and crops the capture — so the page is laid
+  out inside an iframe of the true size. Default 426x836 CSS px (Dave's handset, 2026-09-24).
+  `?step=saved` drives three rows before measuring. The JSON lands in #out; a badge prints the
+  measured width into the screenshot itself.
+-->
+<style>
+  html, body { margin: 0; padding: 0; background: #333; }
+  #frame { border: 0; display: block; background: #fff; }
+  #badge { position: absolute; left: 0; top: 0; z-index: 9; background: #000; color: #0f0; font: 11px monospace; padding: 2px 4px; }
+  #out { position: absolute; left: -99999px; top: 0; white-space: pre; }
+</style>
+</head>
+<body>
+<iframe id="frame" title="device viewport"></iframe>
+<div id="badge"></div>
+<pre id="out" data-done="0"></pre>
+<script>
+  const q = new URLSearchParams(location.search)
+  const vw = Number(q.get('vw') || 426)
+  const vh = Number(q.get('vh') || 836)
+  const step = q.get('step') || 'mount'
+  const el = document.getElementById('frame')
+  el.width = vw
+  el.height = vh
+  el.src = '/tests/harness/catchup.html'
+  const out = document.getElementById('out')
+  ;(function poll(tries) {
+    const w = el.contentWindow
+    if (w && w.__h && w.__h.ready()) {
+      Promise.resolve(step === 'saved' ? w.__h.drive() : null).then(() => {
+        const m = w.__h.measure()
+        document.getElementById('badge').textContent = `vw ${m.innerWidth} · scrollW ${m.scrollWidth} · hscroll ${m.hscroll ? 'YES' : 'no'} · min control ${Math.round(m.minControlHeight)}px`
+        out.textContent = JSON.stringify({ step, ...m }, null, 1)
+        out.dataset.done = '1'
+      })
+      return
+    }
+    if (tries < 300) setTimeout(() => poll(tries + 1), 100)
+  })(0)
+</script>
+</body>
+</html>

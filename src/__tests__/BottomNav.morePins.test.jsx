@@ -38,7 +38,6 @@ vi.mock('react-router-dom', () => ({
 vi.mock('../context/AuthContext.jsx', () => ({
   useAuth: () => ({ user: { id: 'u1' }, profile: { display_name: 'Dave' }, signOut: vi.fn() }),
 }))
-vi.mock('../components/CatchUpBadge.jsx', () => ({ default: () => null }))
 vi.mock('../components/BottomNavDot.jsx', () => ({ default: () => null }))
 // I12: the What's-New dot, stubbed to a testid so "it is still on Release Notes" is observable.
 vi.mock('../components/WhatsNewDot.jsx', () => ({ default: () => <span data-testid="whats-new-dot" /> }))
@@ -101,10 +100,11 @@ describe('I1 — exactly one door per destination, bar ∪ sheet, for every move
     ...rowLinks().map(a => a.getAttribute('href')),
   ]
 
-  it('SELF-TEST: the census is the 4 tab doors and the 15 More doors, with no repeats', () => {
+  // 16 More doors since V5-PLANTSTARTDATES-001 put Catch up back in the sheet.
+  it('SELF-TEST: the census is the 4 tab doors and the 16 More doors, with no repeats', () => {
     expect(SHIPPED_TAB_HREFS).toHaveLength(4)
-    expect(SHIPPED_MORE_HREFS).toHaveLength(15)
-    expect(new Set(CENSUS).size).toBe(19)
+    expect(SHIPPED_MORE_HREFS).toHaveLength(16)
+    expect(new Set(CENSUS).size).toBe(20)
   })
 
   // KILLING MUTATIONS: draw a moved tab nowhere (a door lost); keep it on the bar AND add its row (a

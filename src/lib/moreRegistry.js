@@ -31,8 +31,7 @@ export const MORE_SECTIONS = [
 ]
 
 // Fields: id, to, label, sub?, iconName, section, enabled? (a BUILD flag — a flag-off row is not
-// drawn and its pin sleeps), pinnable? (default true), adornment? ('whatsNew'), testId?, component?
-// (a row that renders its own component rather than a link — only catch-up).
+// drawn and its pin sleeps), pinnable? (default true), adornment? ('whatsNew'), testId?.
 export const MORE_ROWS = [
   { id: 'dashboard',  to: '/dashboard',  label: 'Dashboard', iconName: 'nav.dashboard',  section: 'garden' },
   // V4-NAVHARVEST-001 — DrG demoted here from the tab bar. /findings keeps its route and its icon.
@@ -49,11 +48,10 @@ export const MORE_ROWS = [
   { id: 'seeds',      to: SEEDS_PATH,    label: 'Seeds',     iconName: 'lifecycle.sprout', section: 'garden',
     sub: 'My seeds · Saved seeds · Sow now', testId: 'more-seeds' },
   { id: 'achievements', to: '/achievements', label: 'Achievements', iconName: 'nav.achievements', section: 'garden' },
-  // Gated off (CATCH_UP_EDITOR_SHIPPED=false). A COMPONENT row — CatchUpBadge renders its own link —
-  // so it is not pinnable: a pin button beside it would pin a row that is not a SheetRowLink, which is
-  // the one shape that orphans the armed Back entry.
-  { id: 'catch-up',   to: '/plants/catch-up', label: 'Catch up', section: 'garden',
-    enabled: CATCH_UP_EDITOR_SHIPPED, pinnable: false, component: 'catchUpBadge' },
+  // V5-PLANTSTARTDATES-001 — a plain link row now (it was a CatchUpBadge component row, so it was
+  // unpinnable). NO count: a count nudging you to fill data is a badge Reward UX V102 forbids here.
+  { id: 'catch-up',   to: '/plants/catch-up', label: 'Catch up', iconName: 'care.plantedOut', section: 'garden',
+    sub: 'Add missing start dates', enabled: CATCH_UP_EDITOR_SHIPPED },
   { id: 'collection', to: '/collection', label: 'Critters',  iconName: 'nav.critters',   section: 'rewards',
     sub: "Who's been visiting" },
   { id: 'helper',     to: '/helper',     label: 'Garden Helper', iconName: 'nav.helper',  section: 'help' },

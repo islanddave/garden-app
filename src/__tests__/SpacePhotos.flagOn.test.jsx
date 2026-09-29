@@ -31,7 +31,6 @@ vi.mock('react-router-dom', async (orig) => ({
 vi.mock('../context/AuthContext.jsx', () => ({
   useAuth: () => ({ user: { id: 'u1' }, profile: { display_name: 'Dave' }, signOut: vi.fn() }),
 }))
-vi.mock('../components/CatchUpBadge.jsx', () => ({ default: () => null }))
 vi.mock('../components/BottomNavDot.jsx', () => ({ default: () => null }))
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: () => Promise.resolve(null), getToken: () => Promise.resolve(null) }),
@@ -147,7 +146,7 @@ describe('flag ON — the More sheet gains a Space row and disambiguates the zon
       const pinned = [...(screen.queryByTestId('more-pinned')?.querySelectorAll('[data-more-row]') ?? [])].map(r => r.getAttribute('data-more-row'))
       const home = [...document.querySelectorAll('[data-more-row]')].map(r => r.getAttribute('data-more-row')).filter(id => !pinned.includes(id))
       const expectedHome = ['dashboard', 'findings', 'photos', 'space', 'locations', 'inventory', 'seeds', 'achievements',
-        'collection', 'helper', 'settings', 'settings-controls', 'about', 'releases', 'admin'].filter(id => !pinned.includes(id))
+        'catch-up', 'collection', 'helper', 'settings', 'settings-controls', 'about', 'releases', 'admin'].filter(id => !pinned.includes(id))
       expect(home, label).toEqual(expectedHome)
       expect(document.querySelectorAll('a[href="/space"]'), label).toHaveLength(1)
       // Sign out is the last control in the sheet.

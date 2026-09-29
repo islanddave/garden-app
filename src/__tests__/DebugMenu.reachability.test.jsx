@@ -28,7 +28,6 @@ vi.mock('../lib/api.js', () => ({
 vi.mock('../context/AuthContext.jsx', () => ({
   useAuth: () => ({ user: { id: 'u1' }, profile: { display_name: 'Dave' }, signOut: vi.fn() }),
 }))
-vi.mock('../components/CatchUpBadge.jsx', () => ({ default: () => null }))
 vi.mock('../components/BottomNavDot.jsx', () => ({ default: () => null }))
 vi.mock('../lib/mode.js', () => ({
   useMode: () => ({ mode: 'desk', isField: false, isDesk: true, setMode: vi.fn(), toggleMode: vi.fn() }),

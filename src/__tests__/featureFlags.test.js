@@ -15,8 +15,9 @@ describe('featureFlags', () => {
     expect(VARIETY_REF_UI_SHIPPED).toBe(false)
   })
 
-  it('CATCH_UP_EDITOR_SHIPPED is exported as false (badge hidden until S1.1 editor ships)', () => {
-    expect(CATCH_UP_EDITOR_SHIPPED).toBe(false)
+  it('CATCH_UP_EDITOR_SHIPPED is a literal true — the start-date editor shipped (V5-PLANTSTARTDATES-001)', () => {
+    // Pins the SHIPPED value so a future flip is deliberate. Off hides the More row only.
+    expect(CATCH_UP_EDITOR_SHIPPED).toBe(true)
   })
 
   it('SYSTEM_NOTIFICATIONS_ENABLED is exported as false in MVP-Critter Session 4 Phase A', () => {
