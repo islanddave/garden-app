@@ -247,6 +247,21 @@ describe('the writes', () => {
     expect(toastApi.showUndo.mock.calls.at(-1)[0].message).toBe('Ended 2 plantings')
   })
 
+  // Both taps land before React re-renders, so the disabled button cannot stop the second one; the ref
+  // guard in endItems does (BUG-RUNBULKPARTIALUNDO-001). KILLING MUTATION: drop the inFlightRef check.
+  // RESULT: RED — 4 PUTs for 2 rows.
+  it('two taps on the confirm inside one act send one PUT per row', async () => {
+    await renderPage()
+    openGroup('Bag Area')
+    fireEvent.click(within(group('Bag Area')).getByTestId('season-end-group-select'))
+    openConfirm()
+    const confirm = screen.getByTestId('season-end-confirm')
+    await act(async () => { fireEvent.click(confirm); fireEvent.click(confirm) })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(puts().map((c) => c.path).sort()).toEqual(['/api/plants/p1', '/api/plants/t1'])
+    expect(screen.getByTestId('season-end-result').textContent).toContain('Ended 2 plantings.')
+  })
+
   // Lie-fi: every write hangs until api.js aborts it at API_TIMEOUT_MS. KILLING MUTATIONS: keep sending
   // after 3 failures in a row; or stop, but send the next row as soon as one write fails. RESULT: RED —
   // either way more writes go out and the sheet is still held once the first three have timed out.
@@ -381,6 +396,20 @@ describe('undo', () => {
       '/api/plants/p1': { status: 'harvested' },
       '/api/plants/b1': { status: 'vegetative' },
     })
+  })
+
+  // KILLING MUTATION: drop the page's unmount effect. RESULT: RED — the toast would go on offering an
+  // Undo for a page that is gone.
+  it('leaving the page withdraws the toast\'s Undo', async () => {
+    const view = await renderPage()
+    openGroup('Bag Area')
+    fireEvent.click(rowNamed('Sungold'))
+    openConfirm()
+    await confirmEnd()
+    await waitFor(() => expect(toastApi.showUndo).toHaveBeenCalledTimes(1))
+    toastApi.dismiss.mockClear()
+    view.unmount()
+    expect(toastApi.dismiss).toHaveBeenCalledWith(77)
   })
 
   // KILLING MUTATION: keep the offer when a new row is ticked. RESULT: RED.
