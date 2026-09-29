@@ -14,20 +14,28 @@
 import React from 'react'
 import { P } from '../lib/constants.js'
 
-export default function AmbientBandNotice({ eyebrow, onRetry }) {
+// V5-TODAYREDESIGN-001 S6 — the words, once: the redesigned Today prints them in a band's section header when
+// that band's fetch failed (plan-v2 §8 S6, "AmbientBandNotice voice"), and this notice prints them in its line.
+export const COULD_NOT_CHECK = 'Couldn’t check just now'
+
+// `bare` (S6): the line and its retry only — no card, no eyebrow, no aria-label — for a band rendered inside a
+// section that is already its heading (Today V2). Without it, the notice as it always was.
+export default function AmbientBandNotice({ eyebrow, onRetry, bare = false }) {
   return (
     <section
-      aria-label={`${eyebrow} — unavailable`}
-      style={{
+      aria-label={bare ? undefined : `${eyebrow} — unavailable`}
+      style={bare ? undefined : {
         backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 12,
         padding: '14px 16px', marginTop: 16,
       }}
     >
+      {!bare && (
       <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: P.light }}>
         {eyebrow}
       </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, minHeight: 44 }}>
-        <span style={{ fontSize: '0.9rem', color: P.light }}>Couldn&rsquo;t check just now.</span>
+        <span style={{ fontSize: '0.9rem', color: P.light }}>{`${COULD_NOT_CHECK}.`}</span>
         <button
           type="button"
           onClick={onRetry}
