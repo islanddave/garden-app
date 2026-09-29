@@ -321,12 +321,16 @@ export const SHELL = [
   // one screen; at S3 alone every v2 state ends above the fold (measured, S3 build report), and S4's Needs care
   // body — opened by the Water chip, the first step of both checks — is what makes v2-frost long enough.
   { family: 'sticky', armedAt: ['S3', 'S4'], state: 'v2-frost', why: '(f) after the Water jump, scrolled to 2 × FIRST_SCREEN (clamped to the page): bar top = TopChrome bottom ± 0.5, shown(), height 57 ± 1, elementFromPoint(bar centre) inside the bar; back at 0 exactly one bar, in flow (in-view chip checks dropped with the scroll-spy, §13 Simplify 5)' },
-  { family: 'jump-landing', armedAt: ['S3', 'S4'], state: 'v2-frost', why: '(g) per chip: target open, header top ∈ [bar bottom, bar bottom + 8] once the scroll settles, activeElement = header, no horizontal scroll' },
+  { family: 'jump-landing', armedAt: ['S3', 'S4'], state: 'v2-frost', why: '(g) per chip: target open, header top ∈ [bar bottom, bar bottom + 8] once the scroll settles, activeElement = header, no horizontal scroll. Integration S3 × S4: a landing the page is too short for (the Feed / Check pre-select shrinks Needs care) stops at the page end with the header wholly on screen below the bar; at least one jump per run must land strictly' },
+  // Integration S3 × S4: the focus a jump leaves, judged apart from the landing — the second, independent killer for
+  // jumpNoOffset (2.4.11: the focused header wholly hidden, hit-tested) and noFocusAfterJump (2.4.3: a real Tab does
+  // not continue inside the section). Measured over the same pass of chip jumps as jump-landing.
+  { family: 'jump-focus', armedAt: ['S3', 'S4'], state: 'v2-frost', why: 'per chip: the focused header is not wholly hidden by TopChrome or the bar (WCAG 2.4.11, hit-tested over the header), and one real Tab continues inside the jumped-to section (WCAG 2.4.3; R5 — TalkBack and the keyboard carry on from the header)' },
   { family: 'back-restore', armedAt: 'S4', state: 'v2-frost', why: '(m) open Bag Area → tap "Red Acre Cabbage" → Back → Bag Area open, same row top within 1 px' },
 ]
 
 // ── MUTANT KILLER FAMILIES (§9.1) and the trigger TABLE that replaced the trigger-predicate mutants ──────
-export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore']
+export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore', 'jump-focus']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome

@@ -160,37 +160,67 @@ const CHROME_MEASURE = `(() => {
 // their centre, then clicked); a jump is judged once the scroll has SETTLED (smooth unless reduced motion), so a
 // landing is never read mid-animation. Reports facts; the checks below judge them.
 const SETTLE = `async () => { let last = -1, same = 0; for (let i = 0; i < 240; i++) { await new Promise(r => requestAnimationFrame(r)); const y = window.scrollY; if (Math.abs(y - last) < 0.5) { if (++same >= 10) return y } else same = 0; last = y } return window.scrollY }`
-const JUMPS = `(async () => {
+// One chip's jump, measured once its scroll has settled. Integration S3 × S4 adds what the page can show about the
+// FOCUS the jump leaves (family jump-focus): whether the focused header is hidden by TopChrome or the bar (WCAG
+// 2.4.11 — hit-tested over a grid of points on the header, not computed from its top), and the landing's scroll
+// room (a page shorter than the jump needs clamps the landing: the Feed / Check pre-select shrinks Needs care).
+const CHIP_KEYS = `(() => { const bar = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"]'); return bar ? [...bar.querySelectorAll('[data-chip]')].map(c => c.getAttribute('data-chip')) : null })()`
+const JUMP = (key) => `(async () => {
   const settle = ${SETTLE}
   const bar = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"]')
-  if (!bar) return { bar: false }
+  const key = ${JSON.stringify(key)}
+  window.scrollTo(0, 0); await settle()
+  const chip = bar.querySelector('[data-chip="' + key + '"]')
+  const cr = chip.getBoundingClientRect()
+  const hit = document.elementFromPoint(cr.left + cr.width / 2, cr.top + cr.height / 2)
+  if (!hit || !(hit === chip || chip.contains(hit))) return { key, covered: true }
+  // Focus on the chip first, as a keyboard, switch or tapped button has it, so each jump starts from the same
+  // place: where focus ends (and where the next Tab goes) is then the jump's doing, not the last jump's.
+  chip.focus({ preventScroll: true })
+  chip.click()
+  const y = await settle()
+  const section = ${JSON.stringify(CHIP_SECTION)}[key]
+  const sec = document.querySelector('[data-testid="today-sec-' + section + '${SUFFIX}"]')
+  const header = sec ? sec.querySelector('[aria-expanded]') : null
+  const br = bar.getBoundingClientRect()
+  const hr = header ? header.getBoundingClientRect() : null
+  let shownPoints = null
+  if (hr) { shownPoints = 0; for (const fx of [0.1, 0.3, 0.5, 0.7, 0.9]) for (const fy of [0.2, 0.5, 0.8]) { const px = hr.left + hr.width * fx, py = hr.top + hr.height * fy; if (py < 0 || py >= innerHeight) continue; const h = document.elementFromPoint(px, py); if (h && (h === header || header.contains(h))) shownPoints++ } }
+  return { key, section, y, found: !!header, expanded: header ? header.getAttribute('aria-expanded') : null,
+    headerTop: hr ? hr.top : null, headerBottom: hr ? hr.bottom : null, barBottom: br.bottom,
+    focused: !!header && document.activeElement === header, shownPoints,
+    hscroll: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+    maxScroll: document.documentElement.scrollHeight - innerHeight }
+})()`
+// After a jump, where one Tab puts focus: inside the jumped-to section (its body follows its header in the DOM),
+// or elsewhere. Read after a REAL key press (CDP Input), which moves focus the way a keyboard or a switch does.
+const AFTER_TAB = (section) => `(() => { const sec = document.querySelector('[data-testid="today-sec-${section}${SUFFIX}"]'); const a = document.activeElement
+  const hdr = sec ? sec.querySelector('[aria-expanded]') : null
+  return { inside: !!sec && !!a && sec.contains(a) && a !== hdr, what: a ? a.tagName.toLowerCase() + (a.getAttribute('data-testid') ? '[' + a.getAttribute('data-testid') + ']' : '') + (a.getAttribute('data-chip') ? '[chip ' + a.getAttribute('data-chip') + ']' : '') + ' "' + (a.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) + '"' : 'nothing' } })()`
+async function runJumps() {
+  const keys = await evalSettled(CHIP_KEYS)
+  if (!keys) return { bar: false }
   const out = []
-  for (const key of [...bar.querySelectorAll('[data-chip]')].map(c => c.getAttribute('data-chip'))) {
-    window.scrollTo(0, 0); await settle()
-    const chip = bar.querySelector('[data-chip="' + key + '"]')
-    const cr = chip.getBoundingClientRect()
-    const hit = document.elementFromPoint(cr.left + cr.width / 2, cr.top + cr.height / 2)
-    if (!hit || !(hit === chip || chip.contains(hit))) { out.push({ key, covered: true }); continue }
-    chip.click()
-    const y = await settle()
-    const section = ${JSON.stringify(CHIP_SECTION)}[key]
-    const sec = document.querySelector('[data-testid="today-sec-' + section + '${SUFFIX}"]')
-    const header = sec ? sec.querySelector('[aria-expanded]') : null
-    const br = bar.getBoundingClientRect()
-    out.push({ key, section, y, found: !!header, expanded: header ? header.getAttribute('aria-expanded') : null,
-      headerTop: header ? header.getBoundingClientRect().top : null, barBottom: br.bottom,
-      focused: !!header && document.activeElement === header,
-      hscroll: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
-      maxScroll: document.documentElement.scrollHeight - innerHeight })
+  for (const key of keys) {
+    const j = await evalSettled(JUMP(key))
+    if (!j.covered && j.found) {
+      for (const type of ['keyDown', 'keyUp']) await cdp.send('Input.dispatchKeyEvent', { type, key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 }, cdp.sessionId)
+      j.afterTab = await evalSettled(AFTER_TAB(j.section))
+    }
+    out.push(j)
   }
   return { bar: true, out }
-})()`
+}
 const STICKY = `(async () => {
   const settle = ${SETTLE}
   const bars = () => [...document.querySelectorAll('[data-testid="today-jumpbar${SUFFIX}"]')]
   const bar = bars()[0]
   const top = document.querySelector('header[data-app-chrome="top"]')
   if (!bar || !top) return { bar: !!bar, top: !!top }
+  // The contract's starting page is the one the WATER jump leaves (SHELL sticky: "after the Water jump"). The jumps
+  // above end on the LAST chip, whose pre-select (Check) can leave a page too short to pin (integration S3 × S4).
+  const water = bar.querySelector('[data-chip="water"]')
+  if (water) { water.click(); await settle() }
   window.scrollTo(0, 0); await settle()
   const inFlowTop = bar.getBoundingClientRect().top + window.scrollY
   const want = ${2 * FIRST_SCREEN}
@@ -254,21 +284,52 @@ try {
     await evalSettled('new Promise(r=>setTimeout(r,1500))')
     const m = await evalSettled(CHROME_MEASURE)
     // S3: the jumps run first (in the contract's order, jump-landing before sticky): the Water jump opens Needs
-    // care, and the page it leaves behind is the one the sticky check scrolls.
-    const order = ['shell-instrument', 'jump-landing', 'sticky', 'back-restore']
+    // care, and the page it leaves behind is the one the sticky check scrolls. Integration S3 × S4: jump-landing and
+    // jump-focus judge ONE pass over the chips (runJumps, run on first use), each its own property of it.
+    const order = ['shell-instrument', 'jump-landing', 'jump-focus', 'sticky', 'back-restore']
+    let jumps = null
+    const jumpRun = async () => (jumps ||= await runJumps())
     for (const c of [...armed].sort((a, b) => order.indexOf(a.family) - order.indexOf(b.family))) {
       const F = (msg) => fail(at, c.family, msg)
       if (c.family === 'jump-landing') {
-        const r = await evalSettled(JUMPS)
+        const r = await jumpRun()
         if (!r.bar) { F('no jump bar (today-jumpbar) to jump from'); continue }
         if (!r.out.length) F('the jump bar has no chips to jump with')
+        let strict = 0
         for (const j of r.out) {
           if (j.covered) { F(`chip '${j.key}' is covered at its centre — a finger would not reach it`); continue }
           if (!j.found) { F(`chip '${j.key}' jumped to '${j.section}', which has no header on the page`); continue }
           if (j.expanded !== 'true') F(`after the '${j.key}' jump its section '${j.section}' is not open (aria-expanded ${j.expanded})`)
-          if (j.headerTop < j.barBottom - 0.5 || j.headerTop > j.barBottom + LANDING_GAP_PX + 0.5) F(`the '${j.key}' jump landed the '${j.section}' header at y=${Math.round(j.headerTop)}; the bar ends at y=${Math.round(j.barBottom)}, so it must land in [${Math.round(j.barBottom)}, ${Math.round(j.barBottom + LANDING_GAP_PX)}] (scrollY ${Math.round(j.y)} of ${Math.round(j.maxScroll)})`)
+          // Integration S3 × S4: a page too short for the landing (the Feed / Check pre-select shrinks Needs care)
+          // stops at its bottom. That CLAMPED landing is judged by what it can still promise — scrolled as far as
+          // the page goes, the header below the bar and wholly on screen above the nav band — and at least one
+          // jump per run must land strictly, or the offset itself went unmeasured.
+          const clamped = j.y >= j.maxScroll - 1 && j.headerTop > j.barBottom + LANDING_GAP_PX + 0.5
+          if (clamped) {
+            if (j.headerBottom > VIEWPORT.h - BOTTOM_NAV_HEIGHT_PX + 0.5) F(`the '${j.key}' jump stopped at the page's end (scrollY ${Math.round(j.y)}) with the '${j.section}' header at y=${Math.round(j.headerTop)}..${Math.round(j.headerBottom)}, not wholly above the nav band (y=${VIEWPORT.h - BOTTOM_NAV_HEIGHT_PX})`)
+          } else {
+            strict++
+            if (j.headerTop < j.barBottom - 0.5 || j.headerTop > j.barBottom + LANDING_GAP_PX + 0.5) F(`the '${j.key}' jump landed the '${j.section}' header at y=${Math.round(j.headerTop)}; the bar ends at y=${Math.round(j.barBottom)}, so it must land in [${Math.round(j.barBottom)}, ${Math.round(j.barBottom + LANDING_GAP_PX)}] (scrollY ${Math.round(j.y)} of ${Math.round(j.maxScroll)})`)
+          }
           if (!j.focused) F(`after the '${j.key}' jump focus is not on the '${j.section}' header (R5: the header takes focus)`)
           if (j.hscroll) F(`after the '${j.key}' jump the page scrolls sideways`)
+        }
+        if (r.out.length && !strict) F(`every jump stopped at the end of a page too short for it (${r.out.map(j => j.key).join(', ')}) — no landing could be held to [bar, bar + ${LANDING_GAP_PX}], so the offset is unmeasured`)
+        console.log(`[today-shell-v2] ${at}: jumps · ${r.out.map(j => j.covered ? `${j.key} covered` : `${j.key}→${j.section} header y=${Math.round(j.headerTop)} bar ${Math.round(j.barBottom)} scroll ${Math.round(j.y)}/${Math.round(j.maxScroll)}${j.y >= j.maxScroll - 1 && j.headerTop > j.barBottom + LANDING_GAP_PX + 0.5 ? ' (clamped)' : ''} focus ${j.focused ? 'header' : 'NOT header'} shown ${j.shownPoints}/15 tab→${j.afterTab?.inside ? 'inside' : 'OUTSIDE'} ${j.afterTab?.what ?? ''}`).join(' · ')}`)
+        continue
+      }
+      // Integration S3 × S4 — the FOCUS a jump leaves, judged apart from where the header landed: WCAG 2.4.11 (the
+      // focused header is not wholly hidden by TopChrome or the bar — hit-tested, not computed from its top) and
+      // 2.4.3 (one real Tab continues INSIDE the jumped-to section, as R5 promises TalkBack and the keyboard). A
+      // section whose open body has no control would fail the Tab half; Needs care's opens with its filter row.
+      if (c.family === 'jump-focus') {
+        const r = await jumpRun()
+        if (!r.bar) { F('no jump bar (today-jumpbar) to jump from'); continue }
+        if (!r.out.length) F('the jump bar has no chips to jump with')
+        for (const j of r.out) {
+          if (j.covered || !j.found) { F(`chip '${j.key}' could not be jumped with (${j.covered ? 'covered' : 'no header'}) — nothing to judge focus on`); continue }
+          if (j.focused && j.shownPoints === 0) F(`after the '${j.key}' jump the focused '${j.section}' header (y=${Math.round(j.headerTop)}..${Math.round(j.headerBottom)}) is wholly hidden — no point of it is hit-testable past TopChrome and the bar (WCAG 2.4.11)`)
+          if (!j.afterTab?.inside) F(`after the '${j.key}' jump one Tab moves focus to ${j.afterTab?.what ?? 'nothing'}, not into '${j.section}' (WCAG 2.4.3 — the next step must continue inside the section it jumped to)`)
         }
         continue
       }
@@ -299,6 +360,11 @@ try {
         const ROW = `[...document.querySelectorAll('[data-testid="care-exceptions-row${SUFFIX}"] a')].find(a => a.textContent.includes('Red Acre Cabbage'))`
         const SPOT = `document.querySelector('[data-testid="care-spot${SUFFIX}"][data-spot="Bag Area"] [aria-expanded]')`
         const r1 = await evalSettled(`(async () => {
+          // Integration S3 × S4: the chip jumps before this leave a task pre-selected (the last one wins), and a
+          // Check or Feed filter hides the water row this trip taps — release every pressed task first (§9.1 (m)
+          // names no filter), one at a time: the row's toggles read the selection they were rendered with.
+          const pressedTask = () => document.querySelector('[data-testid="care-filter-tasks${SUFFIX}"] button[aria-pressed="true"]')
+          for (let b, i = 0; (b = pressedTask()) && i < 5; i++) { b.click(); await new Promise(r => setTimeout(r, 120)) }
           const btn = ${SPOT}
           if (!btn) return { void: 'no Bag Area spot on the page' }
           if (btn.getAttribute('aria-expanded') !== 'true') { btn.click(); await new Promise(r => setTimeout(r, 300)) }

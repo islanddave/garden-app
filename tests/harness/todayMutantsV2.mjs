@@ -122,7 +122,9 @@ export const MUTANTS_V2 = {
     file: 'src/pages/TodayV2.jsx',
     find: "if (typeof sec.scrollIntoView === 'function') sec.scrollIntoView({ block: 'start', behavior: reducedRef.current ? 'instant' : 'smooth' })",
     replace: "window.scrollTo({ top: sec.getBoundingClientRect().top + window.scrollY, behavior: 'instant' })",
-    killers: ['jump-landing', 'sticky'],
+    // Integration S3 × S4: S0 predicted the sticky hit test; a mis-landed jump leaves the bar as it was, so the
+    // second killer is jump-focus (2.4.11 — the focused header wholly hidden under TopChrome and the bar).
+    killers: ['jump-landing', 'jump-focus'],
     defect: 'a jump lands the header under the bar',
   },
   noScrollPadding: {
@@ -138,7 +140,9 @@ export const MUTANTS_V2 = {
     file: 'src/pages/TodayV2.jsx',
     find: "if (header && typeof header.focus === 'function') header.focus({ preventScroll: true })",
     replace: 'void header',
-    killers: ['jump-landing', 'first-screen'],
+    // Integration S3 × S4: S0 predicted first-screen, which an unmoved focus cannot change; the second killer is
+    // jump-focus (2.4.3 — one real Tab after the jump does not continue inside the section).
+    killers: ['jump-landing', 'jump-focus'],
     defect: 'focus does not move to the section header after a jump',
   },
   dropCueInCard: {

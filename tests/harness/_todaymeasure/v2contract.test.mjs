@@ -55,7 +55,7 @@ describe('today-v2 contract table', () => {
     expect(armedIn('v2-stale', 'stale-marker')).toHaveLength(1)
     expect(armedIn('v2-busy', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-glance', 'today-jumpbar']))
     // The page must be taller than a screen for the bar to pin or a jump to land under it: S4's body gives that.
-    for (const fam of ['sticky', 'jump-landing']) expect(SHELL.find((c) => c.family === fam).armedAt).toEqual(['S3', 'S4'])
+    for (const fam of ['sticky', 'jump-landing', 'jump-focus']) expect(SHELL.find((c) => c.family === fam).armedAt).toEqual(['S3', 'S4'])
     // The glance's REGIONS rows arm with S3 (the gate counts a row only once its own slice has landed); merged with
     // S4, Needs care's v2-frost rows are armed beside them, and nothing of S5/S6's is.
     const glanceRows = ['today-weather', 'weather-cue-line', 'frost-alert-line', 'drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list']
