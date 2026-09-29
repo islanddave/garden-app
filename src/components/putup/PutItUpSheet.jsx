@@ -164,7 +164,7 @@ function AddedLines({ lines, onChange, disabled, idPrefix, label }) {
           {LINE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
         </select>
         <button type="button" disabled={disabled || !name.trim()} data-testid={`${idPrefix}-line-add`} onClick={add}
-          style={{ ...quietLink, minHeight: 48 }}>Add</button>
+          style={{ ...quietLink, minHeight: 48, minWidth: 48, justifyContent: 'center', padding: '2px 8px' }}>Add</button>
       </div>
     </div>
   )
