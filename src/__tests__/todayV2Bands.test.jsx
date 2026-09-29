@@ -8,6 +8,7 @@
 // The no-props render being byte-identical to the base commit was proved once, against f47337da's files (build
 // report, S6); each band's own suite stays green UNEDITED.
 import React from 'react'
+import { readFileSync } from 'node:fs'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, cleanup } from '@testing-library/react'
 import { RETRY_DELAY_MS } from '../lib/useAmbientBandFetch.js'
@@ -28,6 +29,7 @@ import HarvestWatchBand, { useHarvestWatchFeed, watchSelection } from '../compon
 import AmbientBandNotice, { COULD_NOT_CHECK } from '../components/AmbientBandNotice.jsx'
 import ComposeHarvestBand, { useComposeHarvestFeed, composeBatchState } from '../components/ComposeHarvestBand.jsx'
 import PutUpUseSoonBand, { usePutUpUseSoonFeed, putUpSoonSlice, putUpSoonTitle } from '../components/PutUpUseSoonBand.jsx'
+import CultivationLead, { useCultivationFeed } from '../components/today/CultivationLead.jsx'
 
 const WATCH = '/api/harvests/watch?limit=200'
 const cand = (i, over = {}) => ({
@@ -213,6 +215,64 @@ describe('PutUpUseSoonBand — data hook + data / bare', () => {
     expect(shown.map(putUpSoonTitle)).toEqual(rows)
     expect(more).toBe(2)
     expect(putUpSoonSlice(null)).toEqual({ shown: [], more: 0 })
+  })
+})
+
+const SOW = '/api/inventory-items/sow-candidates'
+// Two candidates the real sow engine buckets as window_closing on 2026-09-24 (a fall direct-sow near its latest
+// safe date), so the lines come from bucketize itself rather than a stub.
+const sowItems = JSON.parse(readFileSync('tests/harness/_todaymeasure/sowcandidates.json', 'utf8')).items
+const sowWire = () => fetchMock.mockImplementation((u) => Promise.resolve(u === SOW ? { items: sowItems } : null))
+
+describe('CultivationLead — data hook + data / bare (the V2 Sow link row)', () => {
+  it('the data path renders the self-fetch path\'s HTML, and the lead adds no fetch of its own', async () => {
+    sowWire()
+    const self = render(<CultivationLead todayISO="2026-09-24" />)
+    await settle()
+    const selfHtml = self.container.innerHTML
+    expect(selfHtml).toMatch(/by Sep 24/)
+    cleanup()
+    fetchMock.mockClear()
+    function Fed() { return <CultivationLead todayISO="2026-09-24" data={useCultivationFeed()} /> }
+    const fed = render(<Fed />)
+    await settle()
+    expect(fed.container.innerHTML).toBe(selfHtml)
+    expect(fetchMock.mock.calls.filter(([u]) => u === SOW)).toHaveLength(1)
+  })
+
+  it('bare with no lines: exactly the Sow link row — sprout, "All sow windows ›", a 44px link with no card', async () => {
+    function Fed() { return <CultivationLead todayISO="2026-10-01" data={useCultivationFeed({ enabled: false })} bare /> }
+    render(<Fed />)
+    await settle()
+    const row = screen.getByTestId('cultivation-lead')
+    expect(row.tagName).toBe('A')
+    expect(row.getAttribute('href')).toBe('/seeds?view=sow')
+    expect(row.textContent).toBe('All sow windows ›')
+    expect(row.children).toHaveLength(2) // the icon and the one label span — no line block
+    expect(row.style.minHeight).toBe('44px')
+    expect(row.style.backgroundColor).toBe('')
+    expect(row.style.border).toBe('')
+    expect(fetchMock).not.toHaveBeenCalled() // enabled:false asks nothing
+  })
+
+  it('bare with the engine\'s dated lines: the lines, then the door', async () => {
+    sowWire()
+    function Fed() { return <CultivationLead todayISO="2026-09-24" data={useCultivationFeed()} bare /> }
+    render(<Fed />)
+    await settle()
+    expect(screen.getByTestId('cultivation-lead').textContent).toMatch(/^Sow .+ by Sep 24\.Start .+ indoors by Sep 24\.All sow windows ›$/)
+  })
+
+  it('settled: at once when nothing is asked; after the answer (or the failure) otherwise', async () => {
+    const seen = {}
+    function Probe({ id, enabled }) { seen[id] = useCultivationFeed({ enabled }); return null }
+    fetchMock.mockImplementation(() => Promise.reject(new Error('offline')))
+    render(<><Probe id="off" enabled={false} /><Probe id="on" enabled /></>)
+    expect(seen.off.settled).toBe(true)
+    expect(seen.on.settled).toBe(false)
+    await settle()
+    expect(seen.on.settled).toBe(true)
+    expect(seen.on.items).toBeNull()
   })
 })
 
