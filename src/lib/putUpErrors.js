@@ -149,8 +149,11 @@ export function describeRefusal(err) {
       return { code, text: ALREADY_IN_TEXT, refresh: false }
     case REFUSAL_CODES.HAS_JARS:
       return { code, text: HAS_JARS_TEXT, refresh: false }
+    // put_up_in_use keeps the SERVER's words (the unknown-code arm): they count the jars ("1 jar from
+    // this put-up was already used — …"), which a fixed sentence here would lose. PUT_UP_IN_USE_TEXT is
+    // the fallback when the server sent none.
     case REFUSAL_CODES.PUT_UP_IN_USE:
-      return { code, text: PUT_UP_IN_USE_TEXT, refresh: false }
+      return { code, text: serverText(body) ?? PUT_UP_IN_USE_TEXT, refresh: false }
     case REFUSAL_CODES.KEY_CONFLICT:
       return { code, text: KEY_CONFLICT_TEXT, refresh: false }
     case REFUSAL_CODES.SHU_CANNOT_COMPUTE:

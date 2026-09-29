@@ -99,10 +99,12 @@ describe('the jar PATCH (A3) and the use route', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200)
     expect(r.body).toMatchObject({ package_count: 4, remaining_count: 3, quantity_unit: 'lb' })
     expect(Number(r.body.quantity_value)).toBe(8)
-    const low = await call(DAVE, 'PATCH', `/api/preservation/${jar}`, { package_count: 1 })
+    // 3 containers with 2 used: a count of 1 would leave −1 → refused, and nothing is written.
+    const used = await seedJar(DAVE, { count: 3, remaining: 1 })
+    const low = await call(DAVE, 'PATCH', `/api/preservation/${used}`, { package_count: 1 })
     expect(low.status).toBe(409)
     expect(low.body.code).toBe('count_below_used')
-    expect((await readJar(jar)).package_count).toBe(4)
+    expect((await readJar(used)).package_count).toBe(3)
   })
 
   it('method_other_text on its own, on an Other jar (made through the create route, label-named)', async () => {

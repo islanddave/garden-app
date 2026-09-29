@@ -181,11 +181,11 @@ describe('POST /:id/put-up — what it sends', () => {
   const READ = [[{ id: 'st' }], [{ id: 'j1', storage_label: 'Fridge', storage_kind: 'fridge' }], [], VIEW];
 
   it('ONE statement in the actor transaction: gate → keyed put_up row → places → jars → lines → draws → noted → finished', async () => {
-    const sql = mockSql([OPEN, META, [], OK, ...READ]);
+    const sql = mockSql([OPEN, META, [], [], OK, ...READ]);
     const res = await handleKitchenRoute({ sql, ...post(sitting()) });
     expect(res.status).toBe(201);
     expect(Object.keys(res.body)).toEqual(['stage', 'jars', 'inputs', 'batch']);
-    const w = sql.calls[3].norm;
+    const w = sql.calls[4].norm;
     const order = ['WITH gate AS ( UPDATE kitchen_batch SET', '), stage AS ( INSERT INTO kitchen_stage_log', '), made AS ( INSERT INTO storage_location',
       '), jars AS (', 'INSERT INTO preservation_log', '), lines AS ( INSERT INTO kitchen_batch_input', '), draws AS (',
       '), moved AS (', '), uses AS ( INSERT INTO pantry_use', '), noted AS (', '), finished AS ('];
@@ -196,41 +196,49 @@ describe('POST /:id/put-up — what it sends', () => {
     expect(w).toContain('AND deleted_at IS NULL AND closed_at IS NULL RETURNING id');
     expect(w).toContain('FROM gate g RETURNING id, batch_id');
     // The key is on the put_up row, with NO ON CONFLICT on it.
-    expect(sql.calls[3].values).toContain(KEY);
+    expect(sql.calls[4].values).toContain(KEY);
     expect(w.slice(0, w.indexOf('), places_in AS'))).not.toContain('ON CONFLICT');
   });
 
   it('the place is found household-first on the trimmed name, else created under the caller', async () => {
-    const sql = mockSql([OPEN, META, [], OK, ...READ]);
+    const sql = mockSql([OPEN, META, [], [], OK, ...READ]);
     await handleKitchenRoute({ sql, ...post(sitting()) });
-    const w = sql.calls[3].norm;
+    const w = sql.calls[4].norm;
     expect(w).toContain('lower(btrim(sl.label)) = lower(pi.label) AND sl.user_id = ANY( ? ) AND sl.deleted_at IS NULL');
     expect(w).toContain('ON CONFLICT (user_id, kind, lower(label)) WHERE deleted_at IS NULL DO UPDATE SET label = storage_location.label');
-    const kinds = sql.calls[3].values.find((v) => Array.isArray(v) && v.includes('fridge') && v.length === 1);
+    const kinds = sql.calls[4].values.find((v) => Array.isArray(v) && v.includes('fridge') && v.length === 1);
     expect(kinds).toEqual(['fridge']);
   });
 
   it('finishing closes the batch as put_up and writes the finished row; a later sitting does neither', async () => {
-    let sql = mockSql([OPEN, META, [], OK, ...READ]);
+    let sql = mockSql([OPEN, META, [], [], OK, ...READ]);
     await handleKitchenRoute({ sql, ...post(sitting({ finish: true })) });
-    expect(sql.calls[3].values.filter((v) => v === true).length).toBeGreaterThanOrEqual(4);
-    sql = mockSql([OPEN, META, [], OK, ...READ]);
+    expect(sql.calls[4].values.filter((v) => v === true).length).toBeGreaterThanOrEqual(4);
+    sql = mockSql([OPEN, META, [], [], OK, ...READ]);
     await handleKitchenRoute({ sql, ...post(sitting({ finish: false })) });
-    const w = sql.calls[3];
+    const w = sql.calls[4];
     expect(w.norm).toContain("closed_at = CASE WHEN ? ::boolean THEN now() ELSE closed_at END");
     expect(w.values[0]).toBe(false); // finish, the gate's first binding
   });
 
   it('a closed batch → 409 batch_closed with the door, before any write', async () => {
-    const sql = mockSql([CLOSED]);
+    const sql = mockSql([CLOSED, []]);
     const res = await handleKitchenRoute({ sql, ...post(sitting()) });
     expect(res).toEqual({ status: 409, body: BATCH_CLOSED });
     expect(res.body.reopen).toBe(true);
-    expect(sql.calls).toHaveLength(1);
+    expect(sql.calls).toHaveLength(2);   // the gate, and the replay lookup — never a write
+    expect(sql.calls[1].norm).toContain('WHERE s.idempotency_key = ? ::uuid AND b.user_id = ANY( ? )');
+  });
+
+  it('a retry of the sitting that FINISHED the batch replays — its own answer, not the door', async () => {
+    const sql = mockSql([CLOSED, [{ id: STAGE, batch_id: BATCH }], ...READ]);
+    const res = await handleKitchenRoute({ sql, ...post(sitting()) });
+    expect(res.status).toBe(200);
+    expect(res.body.replayed).toBe(true);
   });
 
   it('a batch that closed between the gate read and the statement → 409 batch_closed (stage_count 0)', async () => {
-    const sql = mockSql([OPEN, META, [], [{ stage_count: 0, jar_count: 0, line_count: 0 }]]);
+    const sql = mockSql([OPEN, META, [], [], [{ stage_count: 0, jar_count: 0, line_count: 0 }]]);
     expect((await handleKitchenRoute({ sql, ...post(sitting()) })).body.code).toBe('batch_closed');
   });
 
@@ -250,22 +258,22 @@ describe('POST /:id/put-up — what it sends', () => {
   });
 
   it('a replay: 23505 on uq_ksl_idempotency_key re-reads the sitting by key, household-scoped → 200 replayed', async () => {
-    const sql = mockSql([OPEN, META, [], dup('uq_ksl_idempotency_key'), [{ id: STAGE, batch_id: BATCH }], ...READ]);
+    const sql = mockSql([OPEN, META, [], [], dup('uq_ksl_idempotency_key'), [{ id: STAGE, batch_id: BATCH }], ...READ]);
     const res = await handleKitchenRoute({ sql, ...post(sitting()) });
     expect(res.status).toBe(200);
     expect(res.body.replayed).toBe(true);
-    expect(sql.calls[4].norm).toContain('JOIN v_kitchen_batch_current b ON b.id = s.batch_id WHERE s.idempotency_key = ? ::uuid AND b.user_id = ANY( ? )');
+    expect(sql.calls[5].norm).toContain('JOIN v_kitchen_batch_current b ON b.id = s.batch_id WHERE s.idempotency_key = ? ::uuid AND b.user_id = ANY( ? )');
   });
 
   it('a key used on ANOTHER batch, or outside the household → 409 key_conflict', async () => {
-    let sql = mockSql([OPEN, META, [], dup('uq_ksl_idempotency_key'), [{ id: STAGE, batch_id: 'other-batch' }]]);
+    let sql = mockSql([OPEN, META, [], [], dup('uq_ksl_idempotency_key'), [{ id: STAGE, batch_id: 'other-batch' }]]);
     expect((await handleKitchenRoute({ sql, ...post(sitting()) })).body.code).toBe('key_conflict');
-    sql = mockSql([OPEN, META, [], dup('uq_ksl_idempotency_key'), []]);
+    sql = mockSql([OPEN, META, [], [], dup('uq_ksl_idempotency_key'), []]);
     expect((await handleKitchenRoute({ sql, ...post(sitting()) })).body.code).toBe('key_conflict');
   });
 
   it('any other 23505 is not a replay', async () => {
-    const sql = mockSql([OPEN, META, [], dup('uq_kbi_idempotency_key')]);
+    const sql = mockSql([OPEN, META, [], [], dup('uq_kbi_idempotency_key')]);
     await expect(handleKitchenRoute({ sql, ...post(sitting()) })).rejects.toThrow('dup');
   });
 });

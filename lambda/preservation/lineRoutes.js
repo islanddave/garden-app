@@ -273,6 +273,10 @@ export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
   if (form === 'mixed') return bad('send every line with an idempotency_key, or none of them');
   const verr = linesError(inputs, { keyed: true });
   if (verr) return bad(verr);
+  // A REPLAY is decided before anything is checked against the jars: a retried draw that took the
+  // last jar would otherwise meet jar_used_up instead of its own success.
+  const replay = await lineReplay(sql, batchId, inputs.map((l) => l.idempotency_key), householdIds, { onlyIfFound: true });
+  if (replay) return replay;
   const prep = await prepareLines(sql, batchId, inputs, householdIds);
   if (prep.refusal) return prep.refusal;
   const c = lineColumns(prep.rows);
@@ -359,17 +363,7 @@ export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
     ]);
   } catch (err) {
     if (err?.code === '23505' && err.constraint === 'uq_kbi_idempotency_key') {
-      const keys = prep.rows.map((r) => r.idempotency_key);
-      const prior = await sql`
-        SELECT i.id, i.batch_id FROM kitchen_batch_input i
-        JOIN v_kitchen_batch_current b ON b.id = i.batch_id
-        WHERE i.idempotency_key = ANY(${keys}::uuid[])
-          AND b.user_id = ANY(${householdIds})
-          AND b.deleted_at IS NULL
-      `;
-      if (prior.length !== keys.length || prior.some((r) => r.batch_id !== batchId)) return keyConflict;
-      const lines = await readLines(sql, batchId, { ids: prior.map((r) => r.id), includeDeleted: true });
-      return { status: 200, body: { replayed: true, inputs: lines.map(publicLine) } };
+      return lineReplay(sql, batchId, prep.rows.map((r) => r.idempotency_key), householdIds);
     }
     if (err?.code === '23505' && err.constraint === 'uq_kbi_batch_harvest') {
       return refuse(409, 'already_in', 'That pick is already in this batch.');
@@ -383,6 +377,23 @@ export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
     status: 201,
     body: { inserted: rows[0]?.inserted ?? 0, requested: prep.rows.length, inputs: lines.map(publicLine) },
   };
+}
+
+// V4 "Idempotency": every key found on a line of THIS batch (household-scoped) → 200 replayed with
+// those lines; any other state of those keys → 409 key_conflict. { onlyIfFound }: nothing found → null
+// (the caller goes on to write).
+async function lineReplay(sql, batchId, keys, householdIds, { onlyIfFound = false } = {}) {
+  const prior = await sql`
+    SELECT i.id, i.batch_id FROM kitchen_batch_input i
+    JOIN v_kitchen_batch_current b ON b.id = i.batch_id
+    WHERE i.idempotency_key = ANY(${keys}::uuid[])
+      AND b.user_id = ANY(${householdIds})
+      AND b.deleted_at IS NULL
+  `;
+  if (onlyIfFound && !prior.length) return null;
+  if (prior.length !== keys.length || prior.some((r) => r.batch_id !== batchId)) return keyConflict;
+  const lines = await readLines(sql, batchId, { ids: prior.map((r) => r.id), includeDeleted: true });
+  return { status: 200, body: { replayed: true, inputs: lines.map(publicLine) } };
 }
 
 // The line as the PATCH / take-out / restore routes read it: this batch, any state, with how its draw

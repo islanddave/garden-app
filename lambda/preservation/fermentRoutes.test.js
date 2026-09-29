@@ -170,7 +170,7 @@ describe('POST /:id/inputs — the keyed form', () => {
     remaining_amount: null, quantity_value: 600, quantity_unit: 'g', label: 'Carrots', method: 'blanch_freeze', crop_type_slug: 'carrot', ...over });
 
   it('ONE statement in the actor transaction: lines → draws → ONE movement per jar (F1) → pantry_use → no_salt', async () => {
-    const sql = mockSql([OPEN, [jarRow()], [], [{ inserted: 1 }], [{ id: 'l1' }]]);
+    const sql = mockSql([OPEN, [], [jarRow()], [], [{ inserted: 1 }], [{ id: 'l1' }]]);
     const res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'put_up', idempotency_key: K1, preservation_log_id: JAR, qty: 150, qty_unit: 'g' }]) });
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ inserted: 1, requested: 1 });
@@ -188,7 +188,7 @@ describe('POST /:id/inputs — the keyed form', () => {
   });
 
   it('a counted draw moves remaining_count and stamps delta_at; a weighed draw moves grams and stamps only at 0 g (F2)', async () => {
-    const sql = mockSql([OPEN, [jarRow({ package_count: 1, quantity_value: 100 })], [], [{ inserted: 1 }], []]);
+    const sql = mockSql([OPEN, [], [jarRow({ package_count: 1, quantity_value: 100 })], [], [{ inserted: 1 }], []]);
     await handleKitchenRoute({ sql, ...post([{ input_kind: 'put_up', idempotency_key: K1, preservation_log_id: JAR, qty: 8, qty_unit: 'g', form: 'frozen' }]) });
     const s = sql.batches[0][1];
     expect(s.values).toContainEqual([null]);   // draw_count
@@ -198,10 +198,10 @@ describe('POST /:id/inputs — the keyed form', () => {
   });
 
   it('F2: a used-up or removed jar is refused before the statement', async () => {
-    let sql = mockSql([OPEN, [jarRow({ remaining_count: 0 })]]);
+    let sql = mockSql([OPEN, [], [jarRow({ remaining_count: 0 })]]);
     let res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'put_up', idempotency_key: K1, preservation_log_id: JAR }]) });
     expect(res).toMatchObject({ status: 409, body: { code: 'jar_used_up' } });
-    sql = mockSql([OPEN, [jarRow({ deleted_at: '2026-10-01' })]]);
+    sql = mockSql([OPEN, [], [jarRow({ deleted_at: '2026-10-01' })]]);
     res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'put_up', idempotency_key: K1, preservation_log_id: JAR }]) });
     expect(res).toMatchObject({ status: 409, body: { code: 'jar_removed' } });
     expect(sql.batches).toHaveLength(0);
@@ -212,18 +212,18 @@ describe('POST /:id/inputs — the keyed form', () => {
     let res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'put_up', idempotency_key: K1, preservation_log_id: JAR }], STRANGER) });
     expect(res.status).toBe(404);   // the batch gate itself refuses the stranger
     expect(sql.calls[0].values).toContainEqual(STRANGER);
-    sql = mockSql([OPEN, [], []]);
+    sql = mockSql([OPEN, [], [], []]);
     res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'garden', idempotency_key: K1, plant_id: PLANT }]) });
     expect(res.status).toBe(400);
-    expect(sql.calls[1].values).toContainEqual(HOUSEHOLD);
-    sql = mockSql([OPEN, []]);
+    expect(sql.calls[2].values).toContainEqual(HOUSEHOLD);
+    sql = mockSql([OPEN, [], []]);
     res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'harvest', idempotency_key: K1, harvest_log_id: PICK }]) });
     expect(res.status).toBe(400);
     expect(sql.batches).toHaveLength(0);
   });
 
   it('a pick line copies its planting server-side and takes the planting name as its label', async () => {
-    const sql = mockSql([OPEN, [{ id: PICK, plant_id: PLANT, display_name: 'Megatron' }], [], [{ inserted: 1 }], []]);
+    const sql = mockSql([OPEN, [], [{ id: PICK, plant_id: PLANT, display_name: 'Megatron' }], [], [{ inserted: 1 }], []]);
     await handleKitchenRoute({ sql, ...post([{ input_kind: 'harvest', idempotency_key: K1, harvest_log_id: PICK, qty: 412, qty_unit: 'g' }]) });
     const s = sql.batches[0][1];
     expect(s.values).toContainEqual([PLANT]);
@@ -231,25 +231,33 @@ describe('POST /:id/inputs — the keyed form', () => {
   });
 
   it('the draw CHECKs map by name: remaining_count → 409 only_n_left {n}; remaining_amount → 409 only_g_left {g}', async () => {
-    let sql = mockSql([OPEN, [jarRow()], [], err('23514', 'chk_preservation_log_remaining_count'), [{ id: JAR, left_n: 1, left_g: 150 }]]);
+    let sql = mockSql([OPEN, [], [jarRow()], [], err('23514', 'chk_preservation_log_remaining_count'), [{ id: JAR, left_n: 1, left_g: 150 }]]);
     let res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'put_up', idempotency_key: K1, preservation_log_id: JAR, count_drawn: 2 }]) });
     expect(res).toEqual({ status: 409, body: { code: 'only_n_left', n: 1, error: 'Only 1 left in that one.' } });
-    sql = mockSql([OPEN, [jarRow({ package_count: 1 })], [], err('23514', 'chk_preservation_log_remaining_amount'), [{ id: JAR, left_n: 1, left_g: '91.6' }]]);
+    sql = mockSql([OPEN, [], [jarRow({ package_count: 1 })], [], err('23514', 'chk_preservation_log_remaining_amount'), [{ id: JAR, left_n: 1, left_g: '91.6' }]]);
     res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'put_up', idempotency_key: K1, preservation_log_id: JAR, qty: 200, qty_unit: 'g' }]) });
     expect(res).toEqual({ status: 409, body: { code: 'only_g_left', g: 92, error: 'Only about 92 g left in that one.' } });
   });
 
   it('23505 on uq_kbi_idempotency_key: every key in this batch → 200 replayed; otherwise 409 key_conflict', async () => {
-    let sql = mockSql([OPEN, [], err('23505', 'uq_kbi_idempotency_key'), [{ id: 'l1', batch_id: BATCH }], [{ id: 'l1' }]]);
+    let sql = mockSql([OPEN, [], [], err('23505', 'uq_kbi_idempotency_key'), [{ id: 'l1', batch_id: BATCH }], [{ id: 'l1' }]]);
     let res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'other', idempotency_key: K1, label: 'onion' }]) });
     expect(res).toEqual({ status: 200, body: { replayed: true, inputs: [{ id: 'l1' }] } });
-    sql = mockSql([OPEN, [], err('23505', 'uq_kbi_idempotency_key'), [{ id: 'l1', batch_id: 'another' }]]);
+    sql = mockSql([OPEN, [], [], err('23505', 'uq_kbi_idempotency_key'), [{ id: 'l1', batch_id: 'another' }]]);
     res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'other', idempotency_key: K1, label: 'onion' }]) });
     expect(res.body.code).toBe('key_conflict');
   });
 
+  it('a retry whose keys are already written replays BEFORE any jar check (the jar it used up cannot refuse it)', async () => {
+    const sql = mockSql([OPEN, [{ id: 'l1', batch_id: BATCH }], [{ id: 'l1' }]]);
+    const res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'put_up', idempotency_key: K1, preservation_log_id: JAR }]) });
+    expect(res).toEqual({ status: 200, body: { replayed: true, inputs: [{ id: 'l1' }] } });
+    expect(sql.calls[1].norm).toContain('WHERE i.idempotency_key = ANY( ? ::uuid[]) AND b.user_id = ANY( ? )');
+    expect(sql.batches).toHaveLength(0);
+  });
+
   it('23505 on uq_kbi_batch_harvest → 409 already_in', async () => {
-    const sql = mockSql([OPEN, [{ id: PICK, plant_id: PLANT, display_name: 'Megatron' }], [], err('23505', 'uq_kbi_batch_harvest')]);
+    const sql = mockSql([OPEN, [], [{ id: PICK, plant_id: PLANT, display_name: 'Megatron' }], [], err('23505', 'uq_kbi_batch_harvest')]);
     const res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'harvest', idempotency_key: K1, harvest_log_id: PICK }]) });
     expect(res).toMatchObject({ status: 409, body: { code: 'already_in', error: 'That pick is already in this batch.' } });
   });
@@ -265,7 +273,7 @@ describe('POST /:id/inputs — the keyed form', () => {
   });
 
   it('accepted on a CLOSED batch (06 §3.13)', async () => {
-    const sql = mockSql([CLOSED, [], [{ inserted: 1 }], []]);
+    const sql = mockSql([CLOSED, [], [], [{ inserted: 1 }], []]);
     const res = await handleKitchenRoute({ sql, ...post([{ input_kind: 'other', idempotency_key: K1, label: 'vinegar' }]) });
     expect(res.status).toBe(201);
   });
@@ -524,6 +532,15 @@ describe('POST /api/pantry/uses', () => {
     expect((await call(sql, { idempotency_key: K1, preservation_log_id: JAR, all_remaining: true })).body.n).toBe(0);
     sql = mockSql([[], [{ left_n: null, use: null, jar: null }]]);
     expect((await call(sql, { idempotency_key: K1, preservation_log_id: JAR, count_used: 1 }, STRANGER)).status).toBe(404);
+  });
+
+  it('a retry of a tap already recorded replays BEFORE the count is judged (a retried Used up meets 0 left)', async () => {
+    const sql = mockSql([[], [{ prior_n: 1, left_n: 0, use: null, jar: null }], [{ use: { id: 'u1' }, jar: { id: JAR } }]]);
+    const res = await call(sql, { idempotency_key: K1, preservation_log_id: JAR, all_remaining: true });
+    expect(res).toEqual({ status: 200, body: { replayed: true, use: { id: 'u1' }, jar: { id: JAR } } });
+    const s = sql.batches[0][1].norm;
+    expect(s).toContain('SELECT u.id FROM pantry_use u WHERE u.idempotency_key = ? ::uuid ), pre AS (');
+    expect(s).toContain('FROM pre WHERE NOT EXISTS (SELECT 1 FROM prior)');
   });
 
   it('a replay (23505 on uq_pantry_use_idempotency_key) re-reads by key, household-scoped; a foreign key → 409', async () => {

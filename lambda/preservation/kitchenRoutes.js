@@ -204,8 +204,14 @@ export async function handleKitchenRoute({ sql, rawPath, method, rawBody, query,
   }
   if (route.kind === 'put_up') {
     if (method !== 'POST') return notAllowed;
-    if (isClosed) return { status: 409, body: BATCH_CLOSED };
-    return putUp(sql, batch.id, parseBody(), userId, householdIds);
+    const body = parseBody();
+    if (isClosed) {
+      // A retry of a sitting that FINISHED the batch meets a closed batch — it is that sitting's
+      // replay, not a new sitting, and gets its own answer back rather than the door.
+      const replay = await putUpReplay(sql, batch.id, body?.idempotency_key, householdIds);
+      return replay ?? { status: 409, body: BATCH_CLOSED };
+    }
+    return putUp(sql, batch.id, body, userId, householdIds);
   }
   if (route.kind === 'put_up_undo') {
     if (method !== 'POST') return notAllowed;
@@ -1280,6 +1286,21 @@ async function readSitting(sql, batchId, stageId, householdIds) {
   };
 }
 
+// The sitting already written under this key, household-scoped: 200 replayed with its read-back when
+// it is THIS batch's; 409 key_conflict when the key belongs elsewhere; null when nothing holds it.
+async function putUpReplay(sql, batchId, key, householdIds) {
+  if (!KITCHEN_UUID_RE.test(String(key ?? ''))) return null;
+  const prior = await sql`
+    SELECT s.id, s.batch_id FROM kitchen_stage_log s
+    JOIN v_kitchen_batch_current b ON b.id = s.batch_id
+    WHERE s.idempotency_key = ${key}::uuid
+      AND b.user_id = ANY(${householdIds})
+  `;
+  if (!prior.length) return null;
+  if (prior[0].batch_id !== batchId) return keyConflict;
+  return { status: 200, body: { replayed: true, ...(await readSitting(sql, batchId, prior[0].id, householdIds)) } };
+}
+
 // POST /api/kitchen-batches/:id/put-up — V4 "Put it up", contract-F §2.4 (1b half).
 //
 // ONE STATEMENT, keyed. Every row it writes hangs off the `gate` UPDATE of the batch (open, in the
@@ -1324,6 +1345,10 @@ async function putUp(sql, batchId, body, userId, householdIds) {
   if (body.when.precision === 'unknown' && meta[0].not_sure_day == null) {
     return bad("this batch has no date to count from yet — pick a rough time instead of 'Not sure'");
   }
+  // A replay is decided before anything is checked against the jars (a retried draw that took the
+  // last jar would otherwise meet jar_used_up instead of its own success).
+  const replay = await putUpReplay(sql, batchId, body.idempotency_key, householdIds);
+  if (replay) return replay;
   // Release F: every "added at the end" line resolved the way What went in resolves it (household
   // loaders, stamped labels, the pick's planting, the draw's stock mode), in body order.
   const prep = await prepareLines(sql, batchId, putUpLineBodies(body), householdIds, { sittingFixed: true });
@@ -1502,14 +1527,7 @@ async function putUp(sql, batchId, body, userId, householdIds) {
     ]);
   } catch (err) {
     if (err?.code === '23505' && err.constraint === 'uq_ksl_idempotency_key') {
-      const prior = await sql`
-        SELECT s.id, s.batch_id FROM kitchen_stage_log s
-        JOIN v_kitchen_batch_current b ON b.id = s.batch_id
-        WHERE s.idempotency_key = ${body.idempotency_key}::uuid
-          AND b.user_id = ANY(${householdIds})
-      `;
-      if (!prior.length || prior[0].batch_id !== batchId) return keyConflict;
-      return { status: 200, body: { replayed: true, ...(await readSitting(sql, batchId, prior[0].id, householdIds)) } };
+      return (await putUpReplay(sql, batchId, body.idempotency_key, householdIds)) ?? keyConflict;
     }
     if (err?.code === '23505' && err.constraint === 'uq_kbi_batch_harvest') {
       return { status: 409, body: { error: 'That pick is already in this batch.', code: 'already_in' } };

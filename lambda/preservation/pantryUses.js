@@ -57,7 +57,11 @@ export async function handlePantryUses({ sql, rawPath, method, rawBody, userId, 
     [, rows] = await sql.transaction([
       sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
       sql`
-      WITH pre AS (
+      WITH prior AS (
+        -- A tap already recorded under this key is a REPLAY, decided before anything moves: without
+        -- this, a retried "Used up" meets 0 left and answers only_n_left instead of its own success.
+        SELECT u.id FROM pantry_use u WHERE u.idempotency_key = ${body.idempotency_key}::uuid
+      ), pre AS (
         SELECT p.id, COALESCE(p.remaining_count, p.package_count) AS left_n
         FROM preservation_log p
         WHERE p.id = ${body.preservation_log_id}::uuid
@@ -66,6 +70,7 @@ export async function handlePantryUses({ sql, rawPath, method, rawBody, userId, 
         FOR UPDATE
       ), want AS (
         SELECT pre.id, CASE WHEN ${all}::boolean THEN pre.left_n ELSE ${n}::int END AS n FROM pre
+        WHERE NOT EXISTS (SELECT 1 FROM prior)
       ), jar AS (
         UPDATE preservation_log p SET
           remaining_count  = COALESCE(p.remaining_count, p.package_count) - w.n,
@@ -86,7 +91,8 @@ export async function handlePantryUses({ sql, rawPath, method, rawBody, userId, 
         RETURNING id, created_by, preservation_log_id, count_used, fate, kitchen_batch_input_id,
                   reverses_use_id, idempotency_key, used_at, note, created_at
       )
-      SELECT (SELECT left_n FROM pre) AS left_n,
+      SELECT (SELECT count(*)::int FROM prior) AS prior_n,
+             (SELECT left_n FROM pre) AS left_n,
              (SELECT row_to_json(use) FROM use) AS use,
              (SELECT json_build_object('id', jar.id, 'remaining_count', jar.remaining_count,
                                        'consumed_at', jar.consumed_at, 'remaining_amount', jar.remaining_amount)
@@ -94,22 +100,11 @@ export async function handlePantryUses({ sql, rawPath, method, rawBody, userId, 
     `,
     ]);
   } catch (err) {
-    if (err?.code === '23505' && err.constraint === 'uq_pantry_use_idempotency_key') {
-      const prior = await sql`
-        SELECT row_to_json(u) AS use,
-               json_build_object('id', p.id, 'remaining_count', p.remaining_count,
-                                 'consumed_at', p.consumed_at, 'remaining_amount', p.remaining_amount) AS jar
-        FROM pantry_use u
-        JOIN preservation_log p ON p.id = u.preservation_log_id
-        WHERE u.idempotency_key = ${body.idempotency_key}::uuid
-          AND p.user_id = ANY(${householdIds})
-      `;
-      if (!prior.length) return { status: 409, body: { error: 'That key is already in use.', code: 'key_conflict' } };
-      return { status: 200, body: { replayed: true, use: prior[0].use, jar: prior[0].jar } };
-    }
+    if (err?.code === '23505' && err.constraint === 'uq_pantry_use_idempotency_key') return replayUse(sql, body, householdIds);
     throw err;
   }
   const r = rows[0] ?? {};
+  if (r.prior_n) return replayUse(sql, body, householdIds);
   if (r.left_n == null) return { status: 404, body: { error: 'Not found', code: 'not_found' } };
   if (!r.use) {
     const left = Number(r.left_n);
@@ -123,4 +118,20 @@ export async function handlePantryUses({ sql, rawPath, method, rawBody, userId, 
     };
   }
   return { status: 201, body: { use: r.use, jar: r.jar } };
+}
+
+// The replay: the use under this key, read owner-scoped through its jar (V4 "Idempotency": a key
+// someone outside the household holds is a 409 with no payload).
+async function replayUse(sql, body, householdIds) {
+  const prior = await sql`
+    SELECT row_to_json(u) AS use,
+           json_build_object('id', p.id, 'remaining_count', p.remaining_count,
+                             'consumed_at', p.consumed_at, 'remaining_amount', p.remaining_amount) AS jar
+    FROM pantry_use u
+    JOIN preservation_log p ON p.id = u.preservation_log_id
+    WHERE u.idempotency_key = ${body.idempotency_key}::uuid
+      AND p.user_id = ANY(${householdIds})
+  `;
+  if (!prior.length) return { status: 409, body: { error: 'That key is already in use.', code: 'key_conflict' } };
+  return { status: 200, body: { replayed: true, use: prior[0].use, jar: prior[0].jar } };
 }
