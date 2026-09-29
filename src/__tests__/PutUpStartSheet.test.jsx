@@ -406,6 +406,37 @@ describe('the Start sheet — Android Back and the landing (popstate)', () => {
   })
 })
 
+// Put-Up 1a item 7 — confirmOnDirty OFF, and the BACKDROP refused mid-write exactly as Back is.
+describe('the Start sheet — the Sheet contract (item 7)', () => {
+  const settle = () => act(async () => { await new Promise(r => setTimeout(r, 60)) })
+
+  // MUTATION: pass confirmOnDirty to the Sheet -> Back raises the ConfirmSheet and this reds.
+  it('Back on a typed-in sheet asks nothing — it closes, and the draft keeps the label', async () => {
+    await act(async () => { render(<Host withRegistry />) })
+    await settle()
+    type('start-label', 'Mash')
+    act(() => { window.history.back() }); await settle()
+    expect(screen.queryByTestId('confirm-sheet')).toBeNull()
+    expect(sheet()).toBeNull()
+    expect(JSON.parse(localStorage.getItem(DRAFT_KEY)).data.label).toBe('Mash')
+  })
+
+  it('a backdrop tap is refused while the write is in flight, and closes an idle sheet', async () => {
+    let settleWrite
+    fetchSpy.mockImplementation((p, o = {}) => (o.method === 'POST' ? new Promise(r => { settleWrite = r }) : Promise.resolve(null)))
+    const first = render(<Host />)
+    type('start-label', 'Mash')
+    await startIt()
+    fireEvent.click(screen.getByRole('dialog').previousElementSibling)
+    expect(sheet()).toBeTruthy()                          // refused mid-write
+    await act(async () => { settleWrite(CREATED) })
+    first.unmount()
+    render(<Host />)
+    fireEvent.click(screen.getByRole('dialog').previousElementSibling)
+    expect(sheet()).toBeNull()
+  })
+})
+
 describe('the Start sheet uses none of the banned words (V4 §3.2)', () => {
   const BANNED = /\b(safe|shelf life|shelf-stable|keeps|good|ready|done|expired|table|default|basis)\b/i
   it('with every section open', () => {

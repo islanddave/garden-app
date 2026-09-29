@@ -401,6 +401,54 @@ describe('Check on it — Android Back (popstate)', () => {
   })
 })
 
+// Put-Up 1a item 7 — the rest of the sheet contract: confirmOnDirty OFF (the draft is what protects
+// the input, so Back asks nothing), and the BACKDROP is refused mid-write exactly as Back is.
+describe('Check on it — the Sheet contract (item 7)', () => {
+  const settle = () => act(async () => { await new Promise(r => setTimeout(r, 60)) })
+  const backdrop = () => screen.getByRole('dialog').previousElementSibling
+
+  function Host() {
+    const [open, setOpen] = useState(true)
+    return (
+      <DismissRegistryProvider>
+        <CheckOnItSheet open={open} batch={FERMENT} now={NOW} onClose={() => setOpen(false)} onSaved={() => setOpen(false)} />
+      </DismissRegistryProvider>
+    )
+  }
+
+  // MUTATION: pass confirmOnDirty to the Sheet -> Back raises the ConfirmSheet and this reds.
+  it('Back on a typed-in sheet asks nothing — it closes, and the draft keeps the words', async () => {
+    await act(async () => { render(<Host />) })
+    await settle()
+    fireEvent.change(screen.getByTestId('checkin-note'), { target: { value: 'looked fine' } })
+    act(() => { window.history.back() }); await settle()
+    expect(screen.queryByTestId('confirm-sheet')).toBeNull()
+    expect(sheet()).toBeNull()
+    expect(JSON.parse(localStorage.getItem(DRAFT_KEY)).data.note).toBe('looked fine')
+  })
+
+  it('a backdrop tap closes an idle sheet, and is refused while the write is in flight', async () => {
+    let settleWrite
+    wire({ stage: () => new Promise(r => { settleWrite = r }) })
+    await act(async () => { render(<Host />) })
+    fireEvent.change(screen.getByTestId('checkin-note'), { target: { value: 'x' } })
+    await act(async () => { fireEvent.click(screen.getByTestId('checkin-save')) })
+    fireEvent.click(backdrop())
+    expect(sheet()).toBeTruthy()                          // refused mid-write
+    await act(async () => { settleWrite({}) })
+    await waitFor(() => expect(sheet()).toBeNull())
+    // …and when nothing is in flight, the same tap closes it.
+    cleanupAndRender()
+  })
+
+  function cleanupAndRender() {
+    // A fresh, idle sheet: the backdrop is a way out, not a trap.
+    const utils = render(<Host />)
+    fireEvent.click(within(utils.container).getByRole('dialog').previousElementSibling)
+    expect(within(utils.container).queryByTestId('checkin-sheet')).toBeNull()
+  }
+})
+
 describe('Check on it — no banned word on the sheet (V4 §3.2)', () => {
   const BANNED = /\b(safe|shelf life|shelf-stable|keeps|good|ready|done|expired|table|default|basis)\b/i
   it.each([['ferment', FERMENT], ['dry', DRY], ['candy', CANDY]])('%s', async (_n, batch) => {
