@@ -35,6 +35,11 @@ import { describeOutcome } from './batchClose.js'
 import BatchCloseField from './BatchCloseField.jsx'
 import BatchInputsField from './BatchInputsField.jsx'
 import { preservedOn } from './JarPicker.jsx'
+import PutItUpSheet from './PutItUpSheet.jsx'
+import { PUT_IT_UP_CTA } from './putItUp.js'
+import { useUndoPutUp, UNDO_PUT_UP_CTA, UNDONE_TEXT } from './PutUpStub.jsx'
+import { putUpDateWords, countedSize, ESTIMATED_PRECISIONS } from './jarWords.js'
+import { describeRefusal } from '../../lib/putUpErrors.js'
 
 // Local copies of two private vocabularies. STAGE_KIND_LABELS is not exported from goingNow.js and
 // KITCHEN_INPUT_KINDS lives in the Lambda; both are bound to their sources by parity assertions in
@@ -42,6 +47,22 @@ import { preservedOn } from './JarPicker.jsx'
 // hand-maintained copies of one vocabulary disagreed.
 const STAGE_KIND_LABELS = {
   started: 'Started', tended: 'Tended', moved: 'Moved', finished: 'Finished', failed: 'Failed',
+}
+// Put-Up release 1b (V4 Appendix A): the stage history gains these. Words, never a status: a pause is
+// a different answer, not a worse one, and "Picked back up" is the card's own word for resuming. Kept
+// apart from STAGE_KIND_LABELS because that table is bound by parity to the Lambda's
+// KITCHEN_STAGE_KINDS, which the 1b Lambda lane widens; fold these in when it lands.
+const HISTORY_KIND_LABELS = {
+  put_up: 'Put up', noted: 'Next time', paused: 'Paused', resumed: 'Picked back up', reopened: 'Reopened',
+}
+
+// Put-Up release 1b — the Log is the history AS IT STANDS: a void row and the row it voids are both
+// left out (an undone check-in or put-up is gone, not "undone"), exactly as every stage LATERAL in the
+// view skips them. contract-F §2.1 returns void rows in `stages`, so this filter is the client's.
+export function liveStages(rows) {
+  const list = Array.isArray(rows) ? rows : []
+  const voided = new Set(list.filter(r => r?.stage_kind === 'void' && r.voids_id).map(r => r.voids_id))
+  return list.filter(r => r && r.stage_kind !== 'void' && !voided.has(r.id))
 }
 const INPUT_KIND_LABELS = {
   harvest: 'Pick', purchased: 'Bought', pantry: 'Pantry', other: 'Other',
@@ -71,7 +92,7 @@ export function inputRowText(row) {
   return parts.join(' · ')
 }
 
-export function stageRowText(row) {
+export function stageRowText(row, nowMs = Date.now()) {
   if (!row) return ''
   // (a) A reading is the row's subject when there is one. ph_read_at is when it was MEASURED, which
   // is the half that carries the information; entered_at is when it was typed.
@@ -79,9 +100,20 @@ export function stageRowText(row) {
     const at = shortDate(row.ph_read_at)
     return at ? `pH ${row.ph_reading} · read ${at}` : `pH ${row.ph_reading}`
   }
-  const label = row.label || STAGE_KIND_LABELS[row.stage_kind] || 'Logged'
-  const at = shortDate(row.entered_at)
+  const label = row.label || STAGE_KIND_LABELS[row.stage_kind] || HISTORY_KIND_LABELS[row.stage_kind] || 'Logged'
+  // An estimated entry (1b's entered_precision) says its window, never an invented day; an undated one
+  // (precision `unknown`, entered_at NULL) is just its label.
+  const at = ESTIMATED_PRECISIONS.has(row.entered_precision) && row.entered_at
+    ? putUpDateWords(localYmd(row.entered_at), row.entered_precision, { now: new Date(nowMs) })
+    : shortDate(row.entered_at)
   return at ? `${label} · ${at}` : label
+}
+
+function localYmd(iso) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 // The line under a row: what was observed (the cue), what was noted — and, when the READING is the
@@ -95,8 +127,24 @@ export function stageRowDetail(row) {
   return [label, row.cue_observed, row.note].filter(Boolean).join(' · ')
 }
 
-export function outputRowText(row) {
+export function outputRowText(row, nowMs = Date.now()) {
   if (!row) return ''
+  // Put-Up release 1b: a jar from a sitting carries its name, its container and its date at the
+  // precision it was stored (jarWords.js), and may have no size at all. A pre-1b linked jar keeps
+  // exactly the words it had.
+  if (row.put_up_stage_id || row.label || row.container_label || row.preserved_at_precision) {
+    const parts = []
+    if (row.label) parts.push(row.label)
+    const n = Number(row.package_count)
+    const size = countedSize(Number.isFinite(n) && n >= 1 ? n : 1, row)
+    if (size) parts.push(size)
+    const on = putUpDateWords(row.preserved_at, row.preserved_at_precision, { approx: row.preserved_at_approx === true, now: new Date(nowMs) })
+    if (on) parts.push(`put up ${on}`)
+    if (row.is_raw === true) parts.push('raw')
+    if (row.in_oil === true) parts.push('in oil')
+    if (row.ph_reading != null) parts.push(`pH ${row.ph_reading}`)
+    return parts.join(' · ') || 'A put-up'
+  }
   const parts = []
   if (row.quantity_value != null && row.quantity_unit) parts.push(`${row.quantity_value} ${row.quantity_unit}`)
   if (row.package_count != null) parts.push(Number(row.package_count) === 1 ? '1 package' : `${row.package_count} packages`)
@@ -105,6 +153,19 @@ export function outputRowText(row) {
   // use_by_target / use_by_status are deliberately absent here for the same reason they are absent
   // from JarPicker: beside an outcome, a shelf-life date reads as an endorsement.
   return parts.join(' · ') || 'A put-up'
+}
+
+// What came out, by sitting: each put_up stage row that still stands, with its jars; then any jar
+// linked by the shipped JarPicker (no sitting, no Undo). A jar whose sitting is not in the live log
+// (it was voided) is not shown under a sitting that is gone.
+export function outputSittings(outputs, stages) {
+  const jars = Array.isArray(outputs) ? outputs : []
+  const sittings = liveStages(stages).filter(r => r.stage_kind === 'put_up')
+  const ids = new Set(sittings.map(r => r.id))
+  return {
+    sittings: sittings.map(st => ({ stage: st, jars: jars.filter(j => j?.put_up_stage_id === st.id) })),
+    linked: jars.filter(j => !j?.put_up_stage_id || !ids.has(j.put_up_stage_id)),
+  }
 }
 
 function todayYMD() {
@@ -209,6 +270,14 @@ function PauseToggle({ batch, nowMs, fetch, onChanged }) {
     setBusy(true); setErr(null)
     try {
       await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(patch) })
+      // Put-Up release 1b (V4 Appendix A): the pause history. The batch column stays authoritative; the
+      // stage row is the record that it happened, written after the PUT lands and best-effort — a lost
+      // history line must never undo or block the pause itself.
+      try {
+        await fetch(`/api/kitchen-batches/${batch.id}/stages`, { method: 'POST', body: JSON.stringify({
+          stage_kind: paused ? 'resumed' : 'paused', entered_at: new Date(nowMs).toISOString(), entered_precision: 'exact',
+        }) })
+      } catch { /* history only */ }
       onChanged?.()
     } catch {
       // The row stays exactly as it was and says so. There is no offline queue in this app.
@@ -233,6 +302,79 @@ function PauseToggle({ batch, nowMs, fetch, onChanged }) {
   )
 }
 
+// ── one sitting in What came out, with its Undo (V4 §2.3 "Undo that put-up", no timer) ──────────────
+function Sitting({ batchId, stage, jars, onChanged, nowMs }) {
+  const { undo, busy, err, done } = useUndoPutUp({ batchId, stageId: stage.id, onUndone: onChanged })
+  const when = stageRowText({ ...stage, label: null }, nowMs)
+  return (
+    <li data-testid="batch-detail-sitting" data-stage-id={stage.id} style={{ padding: '6px 0', borderTop: `1px solid ${P.cream}` }}>
+      <div style={{ color: P.dark, fontSize: T.type.sm, fontWeight: 600 }}>{when}</div>
+      {stage.amount != null && stage.amount_unit === 'g' && (
+        <div style={{ color: P.light, fontSize: T.type.xs }}>made {stage.amount} g in all</div>
+      )}
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {jars.map(j => (
+          <li key={j.id} data-testid="batch-detail-output" style={{ padding: '2px 0', color: P.mid, fontSize: T.type.sm }}>
+            {outputRowText(j, nowMs)}
+          </li>
+        ))}
+      </ul>
+      {done ? (
+        <div role="status" style={{ color: P.mid, fontSize: '0.78rem' }}>{UNDONE_TEXT}</div>
+      ) : (
+        <button type="button" data-testid="batch-detail-undo-putup" disabled={busy} onClick={undo}
+          style={{ ...actionLink, cursor: busy ? 'default' : 'pointer' }}>
+          {UNDO_PUT_UP_CTA}
+        </button>
+      )}
+      {err && (
+        <div role="alert" data-alarm-ink-exempt="error" data-testid="batch-detail-undo-error"
+          style={{ color: P.terra, fontSize: '0.78rem' }}>{err}</div>
+      )}
+    </li>
+  )
+}
+
+// ── Remove this batch (V4 §2.3: started by mistake) — two-step, refused while it has jars ───────────
+function RemoveBatch({ batch, fetch, onRemoved }) {
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const remove = useCallback(async () => {
+    if (busy) return
+    setBusy(true); setErr(null)
+    try {
+      await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'DELETE' })
+      onRemoved?.()
+    } catch (e) {
+      const code = e?.body?.code
+      setErr(code === 'has_jars'
+        ? 'It has jars — undo its put-ups first.'
+        : (describeRefusal(e)?.text ?? "Couldn't remove it — try again."))
+      setBusy(false)
+    }
+  }, [batch.id, busy, fetch, onRemoved])
+  if (!confirming) {
+    return (
+      <button type="button" data-testid="batch-remove" onClick={() => setConfirming(true)}
+        style={{ ...actionLink, color: P.light }}>Remove this batch</button>
+    )
+  }
+  return (
+    <div data-testid="batch-remove-confirm" style={{ marginTop: 4 }}>
+      <div style={{ color: P.mid, fontSize: '0.78rem' }}>Remove “{batch.label}”? Only for a batch started by mistake.</div>
+      <div style={{ display: 'flex', gap: T.space.md }}>
+        <button type="button" data-testid="batch-remove-yes" disabled={busy} onClick={remove}
+          style={{ ...actionLink, color: P.terra, fontWeight: 700 }}>Remove it</button>
+        <button type="button" data-testid="batch-remove-no" disabled={busy} onClick={() => { setConfirming(false); setErr(null) }}
+          style={{ ...actionLink, color: P.light }}>Keep it</button>
+      </div>
+      {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="batch-remove-error"
+        style={{ color: P.terra, fontSize: '0.78rem' }}>{err}</div>}
+    </div>
+  )
+}
+
 function Section({ title, testId, children }) {
   return (
     <section data-testid={testId} style={{ marginTop: T.space.md }}>
@@ -243,10 +385,14 @@ function Section({ title, testId, children }) {
   )
 }
 
-export default function BatchDetailView({ batch, inputs, stages, outputs, loading, error, nowMs, onChanged }) {
-  // For the two WRITES this surface makes itself (start date, pause). It still issues no GET for its
+export default function BatchDetailView({ batch, inputs, stages, outputs, loading, error, nowMs, onChanged, onRemoved }) {
+  // For the WRITES this surface makes itself (start date, pause, remove). It still issues no GET for its
   // own data — that contract is about reads, and BatchCloseField already writes the same way.
   const { fetch } = useApiFetch()
+  // Put it up from the batch's own surface. Completion here is the new sitting in What came out (V4
+  // §2.4); the stub's words (with the label hint) sit above the list until the next visit.
+  const [putUpOpen, setPutUpOpen] = useState(false)
+  const [stubText, setStubText] = useState(null)
   if (loading) {
     return (
       <div data-testid="batch-detail-view">
@@ -288,8 +434,8 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
   const closed = !!batch.closed_at
   const closedOn = shortDate(batch.closed_at)
   const inputRows = Array.isArray(inputs) ? inputs : []
-  const stageRows = Array.isArray(stages) ? stages : []
-  const outputRows = Array.isArray(outputs) ? outputs : []
+  const stageRows = liveStages(stages)
+  const { sittings, linked } = outputSittings(outputs, stages)
 
   return (
     <div data-testid="batch-detail-view" data-batch-id={batch.id}>
@@ -344,7 +490,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
           <ul data-testid="batch-detail-stages-list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {stageRows.map(row => (
               <li key={row.id} data-testid="batch-detail-stage" style={{ padding: '4px 0' }}>
-                <div style={{ color: P.dark, fontSize: T.type.sm }}>{stageRowText(row)}</div>
+                <div style={{ color: P.dark, fontSize: T.type.sm }}>{stageRowText(row, nowMs)}</div>
                 {stageRowDetail(row) && (
                   <div data-testid="batch-detail-stage-detail" style={{ color: P.light, fontSize: T.type.xs }}>
                     {stageRowDetail(row)}
@@ -357,24 +503,44 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
       </Section>
 
       <Section title="What came out" testId="batch-detail-outputs">
-        {outputRows.length === 0 ? (
+        {stubText && (
+          <div role="status" data-testid="batch-detail-putup-stub" style={{ color: P.mid, fontSize: '0.82rem', marginBottom: 4 }}>
+            {stubText}
+          </div>
+        )}
+        {sittings.length === 0 && linked.length === 0 ? (
           <div data-testid="batch-detail-outputs-empty" style={{ color: P.light, fontSize: T.type.sm }}>
             No put-ups linked to this batch.
           </div>
         ) : (
           <ul data-testid="batch-detail-outputs-list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {outputRows.map(row => (
+            {sittings.map(({ stage, jars }) => (
+              <Sitting key={stage.id} batchId={batch.id} stage={stage} jars={jars} onChanged={onChanged} nowMs={nowMs} />
+            ))}
+            {linked.map(row => (
               <li key={row.id} data-testid="batch-detail-output"
-                style={{ padding: '4px 0', color: P.mid, fontSize: T.type.sm }}>{outputRowText(row)}</li>
+                style={{ padding: '4px 0', color: P.mid, fontSize: T.type.sm }}>{outputRowText(row, nowMs)}</li>
             ))}
           </ul>
         )}
+        {/* A batch gets NEW jars only through a sitting (V4 §2.4). Not on a closed batch: a new sitting
+            there is refused, and Reopen lives with the ending. */}
+        {!closed && (
+          <button type="button" data-testid="batch-detail-put-up" onClick={() => setPutUpOpen(true)} style={actionLink}>
+            {PUT_IT_UP_CTA} →
+          </button>
+        )}
+        <PutItUpSheet open={putUpOpen} batch={{ ...batch, outputs }} now={nowMs}
+          onClose={() => setPutUpOpen(false)} onChanged={onChanged}
+          onDone={({ stub }) => { setPutUpOpen(false); setStubText(stub); onChanged?.() }} />
       </Section>
 
       <div style={{ marginTop: T.space.md }}>
         {/* Pause sits with the other decision about the batch as a whole, above the terminal one. */}
         {!closed && <PauseToggle batch={batch} nowMs={nowMs} fetch={fetch} onChanged={onChanged} />}
         <BatchCloseField batch={batch} onChanged={onChanged} />
+        {/* Last and quietest: removing is for a batch started by mistake, never an ending. */}
+        <RemoveBatch batch={batch} fetch={fetch} onRemoved={onRemoved ?? onChanged} />
       </div>
     </div>
   )

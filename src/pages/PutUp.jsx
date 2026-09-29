@@ -605,7 +605,8 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
             <BatchDetailView
               batch={detail} inputs={detail?.inputs ?? []} stages={detail?.stages ?? []}
               outputs={detail?.outputs ?? []} loading={detailLoading} error={detailError}
-              nowMs={detailNowMs} onChanged={onBatchChanged} />
+              nowMs={detailNowMs} onChanged={onBatchChanged}
+              onRemoved={() => { loadGoing(); leaveMode() }} />
           </div>
         )}
 
