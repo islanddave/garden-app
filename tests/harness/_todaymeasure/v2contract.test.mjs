@@ -56,8 +56,11 @@ describe('today-v2 contract table', () => {
     expect(armedIn('v2-busy', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-glance', 'today-jumpbar']))
     // The page must be taller than a screen for the bar to pin or a jump to land under it: S4's body gives that.
     for (const fam of ['sticky', 'jump-landing']) expect(SHELL.find((c) => c.family === fam).armedAt).toEqual(['S3', 'S4'])
-    // The glance's REGIONS rows arm with S3 (the gate counts a row only once its own slice has landed).
-    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && isArmed(r)).map((r) => r.id)).toEqual(['today-weather', 'weather-cue-line', 'frost-alert-line', 'drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list'])
+    // The glance's REGIONS rows arm with S3 (the gate counts a row only once its own slice has landed); merged with
+    // S4, Needs care's v2-frost rows are armed beside them, and nothing of S5/S6's is.
+    const glanceRows = ['today-weather', 'weather-cue-line', 'frost-alert-line', 'drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list']
+    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && r.armedAt === 'S3').map((r) => r.id)).toEqual(glanceRows)
+    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && isArmed(r)).map((r) => r.id)).toEqual([...glanceRows, 'today-substrate-note', 'care-cap-note', 'care-show-more', 'care-moist', 'care-bulk-chips', 'care-feed-suppressed'])
   })
   it('every chip the contract names is a chip the bar knows, and lands where the contract thinks', async () => {
     const { CHIP_ORDER, CHIPS } = await import('../../../src/lib/todayV2/chips.js')

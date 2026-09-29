@@ -134,9 +134,9 @@ export const STATES = [
       ], counts: { afterSpot: { 'care-exceptions-row': 8, 'care-cohort': 1 }, afterCohort: { 'care-cohort-row': 20, 'care-show-more': 1 } }, why: '(d) S4-scoped: Bag Area 8 exception rows + 1 cohort line; disclosed 20 rows + "Show 69 more"' },
       { family: 'header-text', armedAt: 'S4', counts: { care: 233 }, why: 'S4-scoped: water 168 + feed 58 + check 7' },
       { family: 'count-invariant', armedAt: 'S4', why: 'S4-scoped §2.4: the Needs care header count = Σ spot counts, no filter' },
-      { family: 'region-headcount', armedAt: 'S4', why: 'S4-scoped: the REGIONS_V2 rows armed at S4 alone, counted after their owner opens' },
       // S3: each REGIONS_V2 row arms with its OWN slice (the gate skips a row whose armedAt has not landed), so
-      // the glance's rows count from S3 and S4–S6's rows join as they land.
+      // the glance's rows count from S3 and S4–S6's rows join as they land. S4's lane carried its own S4-scoped
+      // copy of this check (armed at S4 alone); merged, the two counted the same rows, so this one is kept.
       { family: 'region-headcount', armedAt: 'S3', why: 'every ARMED REGIONS_V2 row owned by v2-frost, counted after its owner is opened' },
     ],
   },

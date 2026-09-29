@@ -17,6 +17,9 @@ vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.curre
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
 vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => ({ fetch: fetchMock }) }))
 vi.mock('../lib/keyboardChrome.js', async (orig) => ({ ...(await orig()), useKeyboardChromeSuppressed: () => kb.up }))
+// S4 (merged with S3): the ready point waits for Needs care's /api/plants + /api/locations (useCachedFetch) —
+// answered here as S2's TodayV2.test.jsx answers them, so the bar paints on the first mount of the file too.
+vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? [] : { locations: [] }, loading: false, error: null }) }))
 
 import TodayV2 from '../pages/TodayV2.jsx'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
