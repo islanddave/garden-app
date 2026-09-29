@@ -259,6 +259,7 @@ const MEASURE = `(() => {
   const reqs = w.__h.requests()
   return {
     vw: w.innerWidth, vh: w.innerHeight, dpr: w.devicePixelRatio,
+    screenW: w.screen.width, vvScale: w.visualViewport ? w.visualViewport.scale : null, vvW: w.visualViewport ? w.visualViewport.width : null,
     scrollHeight: H, scrollWidth: de.scrollWidth, clientWidth: de.clientWidth, contentBottom: lastInk,
     controls: controls.length,
     version: all('[data-today-version="2' + SUF + '"]').length,
@@ -878,12 +879,14 @@ try {
 
     // ── (a) INSTRUMENT — armed from S0 on every state. Each is a way this file could print PASS over nothing.
     if (m.vw !== VIEWPORT.w || m.vh !== VIEWPORT.h) {
-      // S5: a page WIDER than the phone is not emulation failing — mobile Chrome zooms the whole layout out to fit the
-      // widest box, and the self-report grows with it (measured: the chip strip at overflow-x visible with Protect's
-      // chip → 477x935). That is the horizontal overflow no-hscroll exists for, so it is named as that defect; the
-      // state is still VOID, since every other number here is from the zoomed layout.
-      if (m.vw > VIEWPORT.w && m.scrollWidth > VIEWPORT.w) fail(at, 'no-hscroll', `the page is ${m.scrollWidth}px wide on the ${VIEWPORT.w}px phone — mobile Chrome zoomed the whole page out to fit it (self-report ${m.vw}x${m.vh}): a box overflows sideways`)
-      fail(at, 'void', `VOID — page self-reports ${m.vw}x${m.vh}; emulation did not take, so every number here is from the wrong layout (never --window-size)`); continue
+      // S5 + S6 (one implementation since integration 2): a page WIDER than the phone is not emulation failing. With the
+      // emulated screen at the phone's width, the page's own horizontal overflow makes mobile Chrome grow the layout
+      // viewport to fit it — S5 measured a zoomed-out self-report of 477x935 (the chip strip at overflow-x visible with
+      // Protect's chip), S6 an innerWidth of 465 with the visual viewport still 426 (with Harvest's chip). That is the
+      // defect no-hscroll exists for, so it is filed there, and the state's other checks are skipped, as for a VOID,
+      // since every later number would be read off the wider layout. A screen that is not the phone's is still a VOID.
+      if (m.screenW === VIEWPORT.w && m.vw > VIEWPORT.w && m.scrollWidth > VIEWPORT.w) { fail(at, 'no-hscroll', `the page is ${m.scrollWidth}px wide on the ${VIEWPORT.w}px phone: its content pushed the layout viewport to ${m.vw}x${m.vh} (emulation in force: screen.width ${m.screenW}, visual viewport ${m.vvW}px at scale ${m.vvScale}) — something overflows sideways`); continue }
+      fail(at, 'void', `VOID — page self-reports ${m.vw}x${m.vh} (screen.width ${m.screenW}, visual viewport ${m.vvW}px); emulation did not take, so every number here is from the wrong layout (never --window-size)`); continue
     }
     if (m.harness.error) fail(at, 'instrument', `the page raised "${m.harness.error}" while mounting`)
     if (!v2?.requested || v2.problem) fail(at, 'instrument', `the V2 seam did not engage: ${v2?.problem || 'v2 not requested'}`)

@@ -647,6 +647,11 @@ window.__h = {
     out.before = flipState(flip)
     el.click()
     await frames(3); await new Promise(res => setTimeout(res, 50))
+    // S6: a tap that scrolls the page (a jump chip — smooth, the gate emulates no reduced motion) is judged once the
+    // scroll has SETTLED, so the next step hit-tests where the page came to rest, never mid-animation. Measured: on a
+    // v2-frost page ~40px longer than S6's, the Water jump was still gliding when the next step hit-tested Bag Area,
+    // and found the jump bar over it. The shell gate's settle rule (10 still frames, bounded).
+    for (let i = 0, last = -1, same = 0; i < 240 && same < 10; i++) { await frames(1); const y = window.scrollY; if (Math.abs(y - last) < 0.5) same++; else same = 0; last = y }
     out.after = flipState(flip)
     if (out.before == null || out.after == null || out.before === out.after) out.void = `${flipAttr(flip)} on '${flip}' did not flip (${out.before} → ${out.after}) — the step did nothing measurable, so the run is VOID`
     else out.ok = true
