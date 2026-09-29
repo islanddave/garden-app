@@ -51,7 +51,7 @@ import {
   precisionRank, UNRANKED_PRECISION, startPromptState, isSuspended, sortGoing, partitionGoing,
   submersionPrompt, SUBMERSION_PROMPT,
   START_CHIPS, startChipPatch, pickedDatePatch, ymdToInstant, startPatchViolatesPairing,
-  pausePatch, PAUSE_CTA, RESUME_CTA, OPEN_BATCH_CTA, CLOSED_DOOR_CTA,
+  pausePatch, OPEN_BATCH_CTA, CLOSED_DOOR_CTA, cardQuestion, fermentPrompts,
 } from '../components/putup/goingNow.js'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -154,6 +154,17 @@ const FERMENT_EXACT = {
   expected_days_min: 21, expected_days_max: 42, suspended_at: null, closed_at: null,
   current_stage_kind: 'tended', current_stage_label: 'Skimmed',
   current_stage_entered_at: local('2026-08-31T09:00:00'), input_count: 12, output_count: 0,
+}
+// ⚠ ADDED BY PUT-UP 1a ITEM 2 (the card's ONE inline question, goingNow.js cardQuestion). FERMENT_EXACT
+// is fourteen days old with no reading, so it is past the one-week stall deadline and its card now
+// asks the STALL question in the one slot — the stall outranks the brine question. A card render that
+// is ABOUT the brine question therefore needs a ferment whose stall question is answered: this one was
+// measured after the deadline (Sep 1) and has not been looked at since, so the brine question is due
+// and is the one on screen. The pure-function assertions keep using FERMENT_EXACT unchanged.
+const FERMENT_MEASURED = {
+  ...FERMENT_EXACT, id: 'kb-measured', label: 'Measured ferment',
+  current_stage_label: null, current_stage_entered_at: local('2026-09-01T09:00:00'),
+  last_ph_reading: '4.1', last_ph_read_at: local('2026-09-01T09:00:00'),
 }
 // The household peer. Jen owns nothing on prod today, which is exactly why a fixture has to.
 const JEN_BATCH = {
@@ -339,7 +350,9 @@ describe('goingNow — the submersion prompt, the one thing the evidence base su
   })
 
   it('renders in the card\'s ordinary ink, never as a badge or a warning colour', () => {
-    renderView([FERMENT_EXACT])
+    // FERMENT_MEASURED, not FERMENT_EXACT: see the fixture — past the stall deadline the one slot
+    // holds the stall question, and this assertion is about the brine one.
+    renderView([FERMENT_MEASURED])
     const line = screen.getByTestId('going-batch-submersion')
     expect(line.textContent).toBe('Everything still under the brine?')
     expect(line.style.color).toBe(toRgb(P.mid))
@@ -493,11 +506,16 @@ describe('goingNow — a picked calendar date survives the timezone', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 describe('GoingNowView — the three named cards, as full literals', () => {
-  it('renders the unknown-start card leading with what is KNOWN and the CTA in the action slot', () => {
+  // ⚠ AMENDED by Put-Up 1a item 2 (V4 §2.3, §8.3). "Set a start date →" LEFT the card for the batch's
+  // own surface (PutUpBatchDetail.test.jsx now carries it). The never-asked mash still leads with what
+  // is known; its one inline question is now the kind question, because it is unclassified.
+  it('renders the unknown-start card leading with what is KNOWN, and asks its kind rather than its start', () => {
     renderView([MASH])
     expect(screen.getByTestId('going-batch-title').textContent).toBe('Pepper mash')
     expect(screen.getByTestId('going-batch-meta').textContent).toBe('first recorded Sep 3')
-    expect(screen.getByTestId('going-set-start').textContent).toBe('Set a start date →')
+    expect(screen.getByTestId('going-kind-question').textContent).toBe('What kind of batch? →')
+    expect(screen.queryByTestId('going-set-start')).toBeNull()
+    expect(screen.queryByTestId('batch-set-start')).toBeNull()
     expect(screen.getByTestId('going-batch-inputs').textContent).toBe('139 picks in')
   })
 
@@ -521,9 +539,12 @@ describe('GoingNowView — the three named cards, as full literals', () => {
 })
 
 describe('GoingNowView — an unknown start is a terminal state, not a defect', () => {
-  it('shows NO prompt, no badge and no warning ink once the answer is "unknown"', () => {
+  // The prompt half of this ruling now lives on the batch's own surface with the start-date door
+  // (PutUpBatchDetail.test.jsx, "an unknown start never prompts again"). No card carries a start door.
+  it('shows NO start prompt, no badge and no warning ink once the answer is "unknown"', () => {
     renderView([UNKNOWN_START])
     expect(screen.queryByTestId('going-set-start')).toBeNull()
+    expect(screen.queryByTestId('batch-set-start')).toBeNull()
     // Ruling 6: never a warning colour. P.terra / P.warnBorder / P.severityUrgent are the app's
     // alarm inks; none of them may appear anywhere on this card.
     expect(hasNoAlarmInk(screen.getByTestId('going-batch'))).toBe(true)
@@ -645,38 +666,71 @@ describe('GoingNowView — a two-user household', () => {
   })
 })
 
-describe('GoingNowView — setting a start date after the fact', () => {
-  it('PUTs exactly the three start keys and nothing else on the allowlist', async () => {
-    fetchMock.mockResolvedValue({ ...MASH, started_at: local('2026-08-17T09:00:00'), start_precision: 'week' })
-    const onReload = vi.fn()
-    renderView([MASH], { onReload })
-    fireEvent.click(screen.getByTestId('going-set-start'))
-    fireEvent.click(screen.getByTestId('going-start-chip-few_weeks'))
-    await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1))
-    const [path, opts] = fetchMock.mock.calls[0]
-    expect(path).toBe('/api/kitchen-batches/kb-mash')
-    expect(opts.method).toBe('PUT')
-    expect(Object.keys(JSON.parse(opts.body)).sort())
-      .toEqual(['start_anchor_kind', 'start_precision', 'started_at'])
+// ⚠ "Setting a start date after the fact" MOVED with the control, in the same commit (Put-Up 1a item
+// 2): its three tests now run against the batch's own surface in PutUpBatchDetail.test.jsx, unchanged
+// in substance — the same three start keys, the same terminal "not sure", the same kept row on failure.
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Put-Up 1a item 2 — THE CARD'S FINAL LAYOUT (V4 §2.3 "Card"): at most three quiet actions, plus at
+// most ONE inline question. Every fixture below is chosen so that more than one question is DUE at
+// once — which is the only state in which "at most one" can fail.
+describe('GoingNowView — the card asks at most ONE inline question', () => {
+  const QUESTION_IDS = ['going-kind-question', 'going-batch-stall', 'going-batch-submersion', 'going-batch-ph-prompt']
+  const questionsOn = (card) => QUESTION_IDS.filter(id => within(card).queryByTestId(id))
+  // Looked at yesterday (a skim), last measured four days ago: the brine clock is quiet, the pH clock
+  // is not, and the stall question is answered — so the cadence question is the one due.
+  const LOOKED_NOT_MEASURED = {
+    ...FERMENT_MEASURED, id: 'kb-looked', label: 'Looked, not measured',
+    current_stage_label: 'Skimmed', current_stage_entered_at: local('2026-09-03T09:00:00'),
+    last_ph_read_at: local('2026-08-31T09:00:00'),
+  }
+
+  it('picks kind > stall > brine > pH, one per card, across every state that stacks', () => {
+    // Instrument: each fixture really has MORE THAN ONE question due, or "one on screen" is vacuous.
+    expect(submersionPrompt(FERMENT_EXACT, NOW)).toBe(SUBMERSION_PROMPT)         // brine due, AND
+    expect(cardQuestion(FERMENT_EXACT, NOW)).toEqual({ kind: 'stall', text: "It's been a week — has the pH come down yet?" })
+    expect(submersionPrompt(FERMENT_MEASURED, NOW)).toBe(SUBMERSION_PROMPT)      // brine AND pH due
+    expect(fermentPrompts(FERMENT_MEASURED, NOW).cadence).toBe('Measured the pH in the last day or two?')
+    renderView([MASH, FERMENT_EXACT, FERMENT_MEASURED, LOOKED_NOT_MEASURED, DEHYDRATOR])
+    const byId = Object.fromEntries(screen.getAllByTestId('going-batch').map(c => [c.getAttribute('data-batch-id'), c]))
+    expect(Object.fromEntries(Object.entries(byId).map(([id, card]) => [id, questionsOn(card)]))).toEqual({
+      'kb-mash': ['going-kind-question'],
+      'kb-ferment': ['going-batch-stall'],
+      'kb-measured': ['going-batch-submersion'],
+      'kb-looked': ['going-batch-ph-prompt'],
+      'kb-dry': [],
+    })
   })
 
-  it('"Longer / not sure" writes the terminal grade with a null instant', async () => {
-    fetchMock.mockResolvedValue({ ...MASH, start_precision: 'unknown' })
-    renderView([MASH])
-    fireEvent.click(screen.getByTestId('going-set-start'))
-    fireEvent.click(screen.getByTestId('going-start-chip-unsure'))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body))
-      .toEqual({ started_at: null, start_precision: 'unknown', start_anchor_kind: 'memory' })
+  // MUTATION: swap the brine and pH arms in cardQuestion -> kb-measured shows the pH question and the
+  // brine question can then NEVER appear (the pH clock anchors no later than the stage clock). Red.
+  it('keeps the brine question reachable: when brine and pH are both due, brine is the one asked', () => {
+    expect(cardQuestion(FERMENT_MEASURED, NOW)).toEqual({ kind: 'submersion', text: SUBMERSION_PROMPT })
+    expect(cardQuestion(LOOKED_NOT_MEASURED, NOW)).toEqual({ kind: 'cadence', text: 'Measured the pH in the last day or two?' })
+    expect(cardQuestion(DEHYDRATOR, NOW)).toBeNull()
+    expect(cardQuestion({ ...FERMENT_EXACT, suspended_at: '2026-08-25T12:00:00.000Z' }, NOW)).toBeNull()
+  })
+})
+
+describe('GoingNowView — the card\'s quiet actions', () => {
+  // MUTATION: put PauseToggle or SetStartDate back on BatchCard -> the first assertion reds.
+  it('carries no pause and no start-date door any more — both live on the batch\'s own surface', () => {
+    renderView([MASH, CANDY, PAUSED, UNKNOWN_START, FERMENT_EXACT])
+    for (const id of ['going-pause', 'going-set-start', 'batch-pause', 'batch-set-start']) {
+      expect({ id, n: screen.queryAllByTestId(id).length }).toEqual({ id, n: 0 })
+    }
+    // GREEN CONTROL: the same five cards each carry their one door, so the absences are about the
+    // controls and not about cards that failed to render.
+    expect(screen.getAllByTestId('going-open-batch')).toHaveLength(5)
   })
 
-  it('keeps the row and says so when the write fails', async () => {
-    fetchMock.mockRejectedValue(new Error('boom'))
-    renderView([MASH])
-    fireEvent.click(screen.getByTestId('going-set-start'))
-    fireEvent.click(screen.getByTestId('going-start-chip-today'))
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe("Couldn't save that — try again."))
-    expect(screen.getByTestId('going-start-chips')).toBeTruthy()
+  it('never offers more than three targets on a closed-up card', () => {
+    renderView([MASH, CANDY, PAUSED, UNKNOWN_START, FERMENT_EXACT, FERMENT_MEASURED])
+    for (const card of screen.getAllByTestId('going-batch')) {
+      const targets = card.querySelectorAll('button, a[href], input, select, textarea').length
+      expect({ id: card.getAttribute('data-batch-id'), max3: targets <= 3 })
+        .toEqual({ id: card.getAttribute('data-batch-id'), max3: true })
+    }
   })
 })
 
@@ -749,63 +803,10 @@ describe('GoingNowView — the one explicit door, and a card that stays inert', 
   })
 })
 
+// ⚠ Pause MOVED to the batch's own surface in Put-Up 1a item 2, with its four component tests
+// (PutUpBatchDetail.test.jsx, "pause lives on the batch's own surface"). The pure patch stays here,
+// with the module it tests.
 describe('GoingNowView — pause, the reversible give-up that had no writer', () => {
-  it('PUTs exactly suspended_at, at the INJECTED instant, and merges nothing else', async () => {
-    fetchMock.mockResolvedValue({ ...CANDY, suspended_at: new Date(NOW).toISOString() })
-    const onReload = vi.fn()
-    renderView([CANDY], { onReload })
-    expect(screen.getByTestId('going-pause').textContent).toBe(PAUSE_CTA)
-    expect(PAUSE_CTA).toBe('Pause this batch')
-    fireEvent.click(screen.getByTestId('going-pause'))
-    await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1))
-    // The whole call as one literal. ph-style: the instant is the view's injected `now`, so this
-    // assertion is stable under the blocking TZ re-run instead of racing the wall clock.
-    expect(fetchMock).toHaveBeenCalledWith('/api/kitchen-batches/kb-candy', {
-      method: 'PUT', body: JSON.stringify({ suspended_at: new Date(NOW).toISOString() }),
-    })
-    expect(Object.keys(JSON.parse(fetchMock.mock.calls[0][1].body))).toEqual(['suspended_at'])
-  })
-
-  it('offers the way back on a paused card and NULLs the column', async () => {
-    fetchMock.mockResolvedValue({ ...PAUSED, suspended_at: null })
-    const onReload = vi.fn()
-    renderView([PAUSED], { onReload })
-    expect(screen.getByTestId('going-pause').textContent).toBe(RESUME_CTA)
-    expect(RESUME_CTA).toBe('Pick it back up')
-    fireEvent.click(screen.getByTestId('going-pause'))
-    await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1))
-    expect(fetchMock).toHaveBeenCalledWith('/api/kitchen-batches/kb-paused', {
-      method: 'PUT', body: JSON.stringify({ suspended_at: null }),
-    })
-  })
-
-  it('pauses the row you tapped, not the first one on screen', async () => {
-    fetchMock.mockResolvedValue({})
-    renderView([CANDY, JEN_BATCH])
-    const cards = screen.getAllByTestId('going-batch')
-    expect(cards[0].getAttribute('data-batch-id')).toBe('kb-jen')
-    fireEvent.click(within(cards[1]).getByTestId('going-pause'))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/kitchen-batches/kb-candy')
-  })
-
-  it('keeps the row and says so when the write fails — and the alert is not a card-body alarm', async () => {
-    fetchMock.mockRejectedValue(new Error('boom'))
-    renderView([CANDY])
-    fireEvent.click(screen.getByTestId('going-pause'))
-    await waitFor(() => expect(screen.getByTestId('going-pause-error').textContent)
-      .toBe("Couldn't save that — try again."))
-    // Nothing was discarded: the row is exactly as it was. There is no offline queue in this app and
-    // none is possible, so a clear failure is the honest answer — but it must not also lose state.
-    expect(screen.getByTestId('going-batch-title').textContent).toBe('Candied ginger')
-    expect(screen.getByTestId('going-pause').textContent).toBe(PAUSE_CTA)
-    // POSITIVE ASSERTION over the same query on the same render: the ink really IS P.terra, so the
-    // sweep below is exempting something that exists rather than passing over an empty carve-out.
-    expect(screen.getByTestId('going-pause-error').style.color).toBe(toRgb(P.terra))
-    expect(screen.getByTestId('going-pause-error').getAttribute('role')).toBe('alert')
-    expect(hasNoAlarmInk(screen.getByTestId('going-batch'))).toBe(true)
-  })
-
   it('pausePatch is a pure function of the injected clock and refuses a bad one', () => {
     expect(pausePatch(false, NOW)).toEqual({ suspended_at: new Date(NOW).toISOString() })
     expect(pausePatch(true, NOW)).toEqual({ suspended_at: null })
@@ -818,7 +819,9 @@ describe('goingNow — a paused batch is not questioned', () => {
   // The card asked a PAUSED ferment whether it was still under the brine: the app questioning a batch
   // the user had explicitly set down. Both arms carry their own green control on the same fixture, so
   // neither absence can pass because the selector was wrong.
-  const stale = { ...FERMENT_EXACT, current_stage_entered_at: local('2026-08-21T09:00:00') }
+  // Amended by Put-Up 1a item 2: FERMENT_MEASURED rather than FERMENT_EXACT, so the stall question is
+  // answered and the brine question is the one the card's single slot holds.
+  const stale = { ...FERMENT_MEASURED, id: 'kb-ferment', current_stage_entered_at: local('2026-08-29T09:00:00') }
 
   it('submersionPrompt goes silent under suspension, and speaks without it', () => {
     expect(submersionPrompt(stale, NOW)).toBe(SUBMERSION_PROMPT)
@@ -1112,13 +1115,15 @@ describe('PutUp — the batch detail is a mode flag on this page', () => {
   // The invalidation contract, asserted where it can be: a write from a card re-reads the LIST. The
   // detail half of onChanged is bound below as source text, because BatchDetailView belongs to
   // another lane and this branch carries a placeholder for it — see the report.
+  // Amended by Put-Up 1a item 2: pause left the card, so the card write under test is the kind answer.
   it('a write from the card re-reads the list rather than mutating it locally', async () => {
-    wirePage({ batches: [CANDY] })
+    wirePage({ batches: [MASH] })
     renderPage()
-    await waitFor(() => expect(screen.getByTestId('going-pause')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTestId('going-kind-question')).toBeTruthy())
     const before = getPaths().filter(p => p === '/api/kitchen-batches?state=going').length
     expect(before).toBe(1)
-    fireEvent.click(screen.getByTestId('going-pause'))
+    fireEvent.click(screen.getByTestId('going-kind-question'))
+    fireEvent.click(screen.getByTestId('going-kind-ferment'))
     await waitFor(() => expect(getPaths().filter(p => p === '/api/kitchen-batches?state=going').length)
       .toBe(before + 1))
   })

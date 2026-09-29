@@ -430,6 +430,33 @@ export function fermentPrompts(batch, nowMs) {
   return { stall, cadence: stall ? null : phPrompt(batch, nowMs) }
 }
 
+// ── the card's ONE inline question ───────────────────────────────────────────────────────────────
+// Put-Up 1a (V4 §2.3 "Card"): at most three quiet actions plus AT MOST ONE inline question. The card
+// used to be able to stack the submersion question over a pH question, and a NULL-kind card would now
+// add "What kind of batch?" to that — three questions about one crock is the noise the four retired
+// signalling surfaces died of, and the adhd seat's split-attention finding. So the questions share
+// ONE slot and this function picks, in this order:
+//   1. kind      — a NULL kind. Exclusive with the rest by construction: every ferment question is
+//                  gated on kind = 'ferment', so an unclassified batch cannot be asked any of them.
+//   2. stall     — FOODSAFETY-RULING-V101 §4, the one question that carries information the cook does
+//                  not already have; it already beat the cadence question (fermentPrompts above).
+//   3. submersion— the shipped brine question. It outranks the cadence question because the pH clock
+//                  anchors no later than the stage clock, so whenever this one is due the cadence
+//                  question is too: ranking it second would mean it could NEVER appear. This way all
+//                  three shipped prompts still speak at their shipped timing, one at a time.
+//   4. cadence   — the shipped pH question.
+// Each prompt keeps its own predicate unchanged; this only chooses which one is on screen. Returning
+// a SHAPE, not a string, keeps the testids of the three shipped prompts independent.
+export function cardQuestion(batch, nowMs) {
+  if (kindQuestionVisible(batch)) return { kind: 'kind' }
+  const { stall, cadence } = fermentPrompts(batch, nowMs)
+  if (stall) return { kind: 'stall', text: stall }
+  const submersion = submersionPrompt(batch, nowMs)
+  if (submersion) return { kind: 'submersion', text: submersion }
+  if (cadence) return { kind: 'cadence', text: cadence }
+  return null
+}
+
 // ── the missing-datum CTA ────────────────────────────────────────────────────────────────────────
 // THE THREE STATES ARE NOT TWO. The 0a DDL is explicit that the two started_at-NULL states are
 // different claims: "an un-asked batch may prompt, an `unknown` one must never prompt again."

@@ -122,10 +122,15 @@ const FERMENT_READ = {
 // the cadence rule is satisfied (>= 2 days since the anchor) and the deadline rule is not.
 // It is a separate fixture rather than an edit to FERMENT because FERMENT's fourteen days are load-
 // bearing for the elapsed-line assertions in the sibling suite.
+// ⚠ AMENDED BY PUT-UP 1a ITEM 2 (the card's ONE inline question, goingNow.js cardQuestion): last
+// looked at YESTERDAY (a skim, no reading). Left untouched since Aug 30 it would also be due the brine
+// question, which now outranks the pH question in the card's single slot — and every assertion that
+// uses this fixture is about the pH question. The looked-but-not-measured state is the one where the
+// pH question is the question, which is also the state it exists for.
 const FERMENT_YOUNG = {
   ...FERMENT, id: 'kb-young', label: 'Dilly beans',
   started_at: local('2026-08-30T09:00:00'), first_recorded_at: local('2026-08-30T09:00:00'),
-  current_stage_entered_at: local('2026-08-30T09:00:00'),
+  current_stage_entered_at: local('2026-09-03T09:00:00'),
 }
 
 function renderView(batches, extra = {}) {

@@ -26,7 +26,7 @@
 // has real assertions to bite on here (every rendered date).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -475,6 +475,106 @@ describe('BatchDetailView — the close door', () => {
     // …and the spy CAN see a call on this very render (the hosted field reads the crop vocabulary its
     // add flow offers), so "none of THAT route" is a measurement and not a dead mock.
     expect(fetchMock).toHaveBeenCalledWith('/api/varieties/crop-types')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Put-Up 1a item 2 (V4 §2.3): "Pause and start-date setting live on batch detail." Both controls
+// MOVED here from the Going-now card, and their component tests moved with them from
+// PutUpGoingNow.test.jsx in the same commit — same assertions, this surface's testids.
+const UNKNOWN_START = { ...MASH, id: 'kb-unk', start_precision: 'unknown' }
+
+describe('BatchDetailView — the start-date door lives on the batch\'s own surface', () => {
+  it('offers it on a going batch nobody was ever asked about', () => {
+    renderDetail()
+    expect(screen.getByTestId('batch-set-start').textContent).toBe('Set a start date →')
+    expect(screen.getByTestId('batch-set-start').style.minHeight).toBe('44px')
+  })
+
+  // The terminal-state ruling, now on this surface: "an unknown one must never prompt again".
+  it('never prompts again once the answer is "unknown", nor on a batch with a start, nor on a closed one', () => {
+    renderDetail({ batch: UNKNOWN_START })
+    renderDetail({ batch: CANDY })
+    renderDetail({ batch: { ...CLOSED_SPOILED, start_precision: null, started_at: null } })
+    expect(screen.getAllByTestId('batch-detail-view')).toHaveLength(3)   // instrument: three renders
+    expect(screen.queryByTestId('batch-set-start')).toBeNull()
+    expect(hasNoAlarmInk(screen.getAllByTestId('batch-detail-view')[0])).toBe(true)
+  })
+
+  it('PUTs exactly the three start keys and nothing else on the allowlist', async () => {
+    fetchMock.mockResolvedValue({ ...MASH, started_at: local('2026-08-17T09:00:00'), start_precision: 'week' })
+    const onChanged = vi.fn()
+    renderDetail({ onChanged })
+    fireEvent.click(screen.getByTestId('batch-set-start'))
+    fireEvent.click(screen.getByTestId('batch-start-chip-few_weeks'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    const [path, opts] = fetchMock.mock.calls.find(([, o]) => o?.method === 'PUT')
+    expect(path).toBe('/api/kitchen-batches/kb-mash')
+    expect(Object.keys(JSON.parse(opts.body)).sort())
+      .toEqual(['start_anchor_kind', 'start_precision', 'started_at'])
+  })
+
+  it('"Longer / not sure" writes the terminal grade with a null instant', async () => {
+    renderDetail()
+    fireEvent.click(screen.getByTestId('batch-set-start'))
+    fireEvent.click(screen.getByTestId('batch-start-chip-unsure'))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, o]) => o?.method === 'PUT')).toBe(true))
+    const put = fetchMock.mock.calls.find(([, o]) => o?.method === 'PUT')
+    expect(JSON.parse(put[1].body)).toEqual({ started_at: null, start_precision: 'unknown', start_anchor_kind: 'memory' })
+  })
+
+  it('keeps the row and says so when the write fails', async () => {
+    fetchMock.mockImplementation((path, o) => (o?.method === 'PUT'
+      ? Promise.reject(new Error('boom')) : Promise.resolve({ group_by: 'crop', groups: [] })))
+    renderDetail()
+    fireEvent.click(screen.getByTestId('batch-set-start'))
+    fireEvent.click(screen.getByTestId('batch-start-chip-today'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe("Couldn't save that — try again."))
+    expect(screen.getByTestId('batch-start-chips')).toBeTruthy()
+  })
+})
+
+describe('BatchDetailView — pause lives on the batch\'s own surface', () => {
+  const putCalls = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PUT')
+
+  it('PUTs exactly suspended_at, at the INJECTED instant, and merges nothing else', async () => {
+    const onChanged = vi.fn()
+    renderDetail({ batch: CANDY, onChanged })
+    expect(screen.getByTestId('batch-pause').textContent).toBe('Pause this batch')
+    fireEvent.click(screen.getByTestId('batch-pause'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    expect(putCalls()).toEqual([['/api/kitchen-batches/kb-candy', {
+      method: 'PUT', body: JSON.stringify({ suspended_at: new Date(NOW).toISOString() }),
+    }]])
+  })
+
+  it('offers the way back on a paused batch and NULLs the column', async () => {
+    const onChanged = vi.fn()
+    renderDetail({ batch: PAUSED, onChanged })
+    expect(screen.getByTestId('batch-pause').textContent).toBe('Pick it back up')
+    fireEvent.click(screen.getByTestId('batch-pause'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    expect(putCalls()).toEqual([['/api/kitchen-batches/kb-paused', {
+      method: 'PUT', body: JSON.stringify({ suspended_at: null }),
+    }]])
+  })
+
+  it('keeps the batch as it was and says so when the write fails — as an error, not a body alarm', async () => {
+    fetchMock.mockImplementation((path, o) => (o?.method === 'PUT'
+      ? Promise.reject(new Error('boom')) : Promise.resolve({ group_by: 'crop', groups: [] })))
+    renderDetail({ batch: CANDY })
+    fireEvent.click(screen.getByTestId('batch-pause'))
+    await waitFor(() => expect(screen.getByTestId('batch-pause-error').textContent).toBe("Couldn't save that — try again."))
+    expect(screen.getByTestId('batch-pause').textContent).toBe('Pause this batch')
+    expect(screen.getByTestId('batch-pause-error').getAttribute('role')).toBe('alert')
+    expect(screen.getByTestId('batch-pause-error').getAttribute('data-alarm-ink-exempt')).toBe('error')
+  })
+
+  it('is not offered on a closed batch — reopening is a different act on a different surface', () => {
+    renderDetail({ batch: CLOSED_SPOILED })
+    expect(screen.queryByTestId('batch-pause')).toBeNull()
+    renderDetail({ batch: REOPENED })   // GREEN CONTROL: the reopened twin DOES offer it
+    expect(screen.getByTestId('batch-pause')).toBeTruthy()
   })
 })
 
