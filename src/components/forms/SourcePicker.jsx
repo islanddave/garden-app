@@ -51,7 +51,7 @@ import {
 // second copy of the flip arithmetic would be free to disagree with the reference model's after the
 // next viewport fix. Same for the chrome insets it subtracts.
 import { computePlacement, readChromeInsets } from './PlantingSelect.jsx'
-import { normalizeWebsiteUrl, normalizeSocialUrl } from '../../lib/sourceLinks.js'
+import { normalizeWebsiteUrl, normalizeSocialUrl, isBadLinkError, BAD_LINK_MESSAGE } from '../../lib/sourceLinks.js'
 
 // VarietyPicker precedent: cap VISIBLY (footer row), never truncate silently. 54 live sources today,
 // so this is headroom rather than a limit anyone meets.
@@ -379,7 +379,7 @@ export default function SourcePicker({
       facebook_url: normalizeSocialUrl('facebook', mintFacebook),
     })
     setMintBusy(false)
-    if (res?.error) { setMintErr({ message: res.error, existing: res.existing ?? null }); return }
+    if (res?.error) { setMintErr({ message: isBadLinkError(res) ? BAD_LINK_MESSAGE : res.error, existing: res.existing ?? null }); return }
     // CONTINUE the flow. Stopping at "created" would leave the user to find the new row themselves
     // in a list they came here precisely because it did not contain it.
     select(res.source)

@@ -149,6 +149,17 @@ describe('SourceEdit — save', () => {
     expect(screen.queryByTestId('went-back')).toBeNull()
   })
 
+  it('a 400 on a link field is shown in plain words, never the field name', async () => {
+    patchImpl = () => Promise.reject(Object.assign(new Error('instagram_url must start with http:// or https://'), { status: 400, body: { error: 'instagram_url must start with http:// or https://' } }))
+    renderPage()
+    await screen.findByTestId('source-edit-name')
+    typeInto('source-edit-notes', 'x')
+    fireEvent.click(screen.getByTestId('source-edit-save'))
+    const err = await screen.findByTestId('source-edit-error')
+    expect(err.textContent).toBe("That link doesn't look right. Paste the full address or just the @name.")
+    expect(err.textContent).not.toMatch(/_url/)
+  })
+
   it('a 403 says whose sources can be edited', async () => {
     patchImpl = () => Promise.reject(Object.assign(new Error('You can only edit sources you added'), { status: 403, body: {} }))
     renderPage()

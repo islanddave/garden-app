@@ -276,6 +276,17 @@ describe('SourcePicker — the mint form', () => {
         .toEqual(['', 'seed_company', 'garden_center', 'person']))
   })
 
+  it('a 400 on a link field in the mint is shown in plain words, never the field name', async () => {
+    postSource = vi.fn(() => Promise.reject(Object.assign(
+      new Error('website_url must start with http:// or https://'),
+      { status: 400, body: { error: 'website_url must start with http:// or https://' } },
+    )))
+    await openMint('X Farm')
+    fireEvent.click(screen.getByTestId('sp-mint-submit'))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe("That link doesn't look right. Paste the full address or just the @name.")
+  })
+
   it('a steer renders a real Use "<name>" button that ADOPTS the existing row', async () => {
     postSource = vi.fn(() => Promise.reject(Object.assign(
       new Error('“Baker Creek” is already in your sources.'),

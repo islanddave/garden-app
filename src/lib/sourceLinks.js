@@ -6,13 +6,17 @@ const SOCIAL_BASE = {
   facebook: 'https://www.facebook.com/',
 };
 
+// The server and the DB CHECK read the scheme case-sensitively ('^https?://'), so a phone's
+// capitalised "Https://…" would 400. Only the scheme is lower-cased; the rest of the link is kept.
+const lowerScheme = (u) => u.replace(/^https?:\/\//i, (m) => m.toLowerCase());
+
 // Accepts a full URL, a bare domain path, "@handle" or "handle". Returns an
 // https URL string, or null for blank input. Never throws.
 export function normalizeSocialUrl(kind, input) {
   if (input == null) return null;
   const raw = String(input).trim();
   if (!raw) return null;
-  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^https?:\/\//i.test(raw)) return lowerScheme(raw);
   const base = SOCIAL_BASE[kind];
   if (!base) return /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(raw) ? `https://${raw}` : raw;
   const host = kind === 'instagram' ? /^(www\.)?instagram\.com\//i : /^(www\.|m\.)?facebook\.com\//i;
@@ -25,7 +29,14 @@ export function normalizeWebsiteUrl(input) {
   if (input == null) return null;
   const raw = String(input).trim();
   if (!raw) return null;
-  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  return /^https?:\/\//i.test(raw) ? lowerScheme(raw) : `https://${raw}`;
+}
+
+// A save the server refused (400) because of one of the three link fields. Its own message names the
+// column ("instagram_url must start with http:// or https://"), which is not something to show anyone.
+export const BAD_LINK_MESSAGE = "That link doesn't look right. Paste the full address or just the @name.";
+export function isBadLinkError(res) {
+  return res?.status === 400 && /\b(website|instagram|facebook)_url\b/.test(String(res?.error ?? ''));
 }
 
 const isHttp = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);

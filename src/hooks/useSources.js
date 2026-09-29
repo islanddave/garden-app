@@ -121,7 +121,7 @@ export function useSources({ enabled = true } = {}) {
       setSources(prev => [...prev.filter(s => String(s.id) !== String(created.id)), created].sort(byName))
       return { source: created }
     } catch (err) {
-      return failure(err, 'Failed to create source')
+      return { ...failure(err, 'Failed to create source'), status: err?.status ?? null }
     }
   }, [fetch])
 

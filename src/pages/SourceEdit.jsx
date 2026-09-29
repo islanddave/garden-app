@@ -17,7 +17,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useSources, useSourceKinds } from '../hooks/useSources.js'
 import { useOptionalToast } from '../context/ToastContext.jsx'
-import { normalizeWebsiteUrl, normalizeSocialUrl } from '../lib/sourceLinks.js'
+import { normalizeWebsiteUrl, normalizeSocialUrl, isBadLinkError, BAD_LINK_MESSAGE } from '../lib/sourceLinks.js'
 import { P, T } from '../lib/tokens.js'
 import PageShell from '../components/forms/PageShell.jsx'
 import Field from '../components/forms/Field.jsx'
@@ -63,6 +63,7 @@ export function saveErrorMessage(res) {
   }
   if (res?.status === 403) return 'You can only edit sources you added.'
   if (res?.status === 404) return 'This source was not found. It may have been removed.'
+  if (isBadLinkError(res)) return BAD_LINK_MESSAGE
   return res?.error || 'Could not save. Check your connection and try again.'
 }
 
