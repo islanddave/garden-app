@@ -56,6 +56,10 @@ export const MORE_ROWS = [
   // its section; the icon is the Ended status glyph, the status this page sets.
   { id: 'season-end', to: '/season-end', label: 'End of season', iconName: 'status.ended', section: 'garden',
     sub: 'Close out finished plantings' },
+  // Season stats (lane stats-l2-statspage-20260929) — right after End of season. The id is permanent:
+  // a pin on it lives in the nav customizer.
+  { id: 'season-stats', to: '/season-stats', label: 'Season stats', iconName: 'nav.harvests', section: 'garden',
+    sub: 'How this season went' },
   { id: 'collection', to: '/collection', label: 'Critters',  iconName: 'nav.critters',   section: 'rewards',
     sub: "Who's been visiting" },
   { id: 'helper',     to: '/helper',     label: 'Garden Helper', iconName: 'nav.helper',  section: 'help' },

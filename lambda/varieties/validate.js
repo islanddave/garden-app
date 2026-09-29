@@ -510,31 +510,71 @@ export function validateSourceKindBody(body) {
   return null;
 }
 
-export function validateSourceBody(body) {
-  if (!body || typeof body !== 'object') return 'body required';
-  if (typeof body.name !== 'string' || !body.name.trim()) return 'name is required';
-  const n = body.name.trim();
+// The three link columns on public.source, each backed by the same `IS NULL OR ~ '^https?://'`
+// CHECK (chk_source_website_url from v5-sourceentity-001; chk_source_instagram_url and
+// chk_source_facebook_url from v5-sourcecontact-001). One list so POST and PATCH cannot disagree
+// about which fields are links.
+export const URL_FIELDS = ['website_url', 'instagram_url', 'facebook_url'];
+const SOURCE_TEXT_FIELDS = ['locality', 'address', 'notes'];
+
+// Every column a PATCH may write. Anything else is refused rather than ignored: a caller that sends
+// a key this route drops would believe it saved.
+export const SOURCE_PATCH_FIELDS = ['name', 'kind', ...SOURCE_TEXT_FIELDS, ...URL_FIELDS];
+// Named separately so the refusal says WHY. id is the key; match_key is GENERATED from name;
+// created_by is the audit anchor (see authz.js); deleted_at is soft-delete, which this route does
+// not offer; the two timestamps are the database's.
+export const SOURCE_PATCH_FORBIDDEN = ['id', 'match_key', 'created_by', 'deleted_at', 'created_at', 'updated_at'];
+
+function sourceNameError(name) {
+  if (typeof name !== 'string' || !name.trim()) return 'name is required';
+  const n = name.trim();
   // Mirrors chk_source_name_shape (trimmed, 2..200 chars, contains an alphanumeric).
   if (n.length < 2 || n.length > 200) return 'name must be 2-200 characters';
   if (!/[A-Za-z0-9]/.test(n)) return 'name must contain at least one letter or number';
-  // chk_source_website_url is `website_url IS NULL OR ~ '^https?://'`. A BLANK string is treated as
-  // absent rather than as a violation — the same call validateBody already makes for source_url
-  // above. A create that 400s because an untouched optional field submitted '' is indistinguishable
-  // to the user from one that 400s because what they typed was wrong.
-  if (body.website_url != null && typeof body.website_url !== 'string') {
-    return 'website_url must be a string or null';
-  }
-  const url = blankToNull(body.website_url);
-  if (url != null && !/^https?:\/\//.test(url)) {
-    return 'website_url must start with http:// or https://';
+  return null;
+}
+
+// Type + scheme checks for the optional columns present in `body`. Absent keys are not checked.
+function sourceOptionalFieldsError(body) {
+  // A BLANK link is treated as absent rather than as a violation — the same call validateBody
+  // already makes for source_url above. A save that 400s because an untouched optional field
+  // submitted '' is indistinguishable to the user from one that 400s because what they typed was
+  // wrong.
+  for (const k of URL_FIELDS) {
+    if (body[k] != null && typeof body[k] !== 'string') return `${k} must be a string or null`;
+    const url = blankToNull(body[k]);
+    if (url != null && !/^https?:\/\//.test(url)) return `${k} must start with http:// or https://`;
   }
   // kind's membership in the live vocabulary is a DB question, checked by the route; this is the
   // type check only.
   if (body.kind != null && typeof body.kind !== 'string') {
     return 'kind must be a source kind slug or null';
   }
-  for (const k of ['locality', 'address', 'notes']) {
+  for (const k of SOURCE_TEXT_FIELDS) {
     if (body[k] != null && typeof body[k] !== 'string') return `${k} must be a string or null`;
   }
   return null;
+}
+
+export function validateSourceBody(body) {
+  if (!body || typeof body !== 'object') return 'body required';
+  return sourceNameError(body.name) ?? sourceOptionalFieldsError(body);
+}
+
+// PATCH /api/varieties/sources/:id — partial. Only keys PRESENT in the body are written; a present
+// blank optional field is a clear (the route stores it as NULL). name cannot be cleared: it is the
+// table's one NOT NULL column.
+export function validateSourcePatch(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
+  const keys = Object.keys(body);
+  const forbidden = keys.find((k) => SOURCE_PATCH_FORBIDDEN.includes(k));
+  if (forbidden) return `${forbidden} cannot be changed`;
+  const unknown = keys.find((k) => !SOURCE_PATCH_FIELDS.includes(k));
+  if (unknown) return `unknown field: ${unknown}`;
+  if (!keys.length) return 'nothing to update';
+  if ('name' in body) {
+    const err = sourceNameError(body.name);
+    if (err) return err;
+  }
+  return sourceOptionalFieldsError(body);
 }

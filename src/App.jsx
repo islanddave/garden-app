@@ -76,6 +76,7 @@ import { DismissRegistryProvider } from './context/DismissRegistry.jsx'
 import { usePageScrollManager, PageScrollProvider } from './hooks/usePageScrollManager.js'
 import { OVERLAY_ROUTES_ENABLED, PROJECTS_HIDDEN, SPACE_PHOTOS_ENABLED, CRITTERS_QUIET } from './lib/featureFlags.js'
 import { loadCollectionChunk, peekCollectionChunk } from './lib/collectionChunk.js'
+import { seasonStatsChunk, sourceEditChunk } from './lib/routeChunks.js'
 
 // V4-COLLECTIONSPLIT-001 — the ONE split route. Every other page above is a static import on
 // purpose: they share components, so splitting them fragments the critical path into extra requests
@@ -169,6 +170,32 @@ export function CollectionRoute() {
     })
     return () => { alive = false }
   }, [Page, attempt])
+
+  if (Page) return <Page />
+  if (failed) return <RouteFallback retry={() => setAttempt((n) => n + 1)} />
+  return <ChunkFallback />
+}
+
+// V5-SEASONSTATS-001 — /season-stats and /sources/:id are split too: both are reached only from More,
+// and Season stats brings the whole stats-kit (the entry chunk grew ~20KB gzip when they were
+// static). Same three states and the same no-React.lazy rule as CollectionRoute above; the loaders
+// live in ./lib/routeChunks.js. Exported for App.statsSplit.test.jsx.
+export function PageChunkRoute({ chunk }) {
+  const [Page, setPage] = React.useState(chunk.peek)
+  const [attempt, setAttempt] = React.useState(0)
+  const [failed, setFailed] = React.useState(false)
+
+  React.useEffect(() => {
+    if (Page) return undefined
+    let alive = true
+    setFailed(false)
+    chunk.load().then((mod) => {
+      if (!alive) return
+      if (mod) setPage(() => mod)
+      else setFailed(true)
+    })
+    return () => { alive = false }
+  }, [Page, attempt, chunk])
 
   if (Page) return <Page />
   if (failed) return <RouteFallback retry={() => setAttempt((n) => n + 1)} />
@@ -367,6 +394,12 @@ export function renderRoutes({ overlay, user, loading }) {
     // same name (moreRegistry.js): an installed PWA has no address bar, so the two ship together. A
     // page, not `overlayable`: a list Dave works through, with its own sticky bar and confirm sheet.
     { path: '/season-end',    element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SeasonEnd /></ErrorBoundary></Protected> },
+    // Season stats — the eight-section season read-out (V5-SEASONSTATS-001). Its only door is the More
+    // row of the same name, right after End of season (moreRegistry.js), so the two ship together.
+    { path: '/season-stats',  element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PageChunkRoute chunk={seasonStatsChunk} /></ErrorBoundary></Protected> },
+    // Source edit (V5-SOURCECONTACT-001) — name, website, Instagram, Facebook, address for one seed
+    // source. Reached from a saved-seed lot's "Edit source" chip on Season stats (SeedLotCard.jsx).
+    { path: '/sources/:id',   element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PageChunkRoute chunk={sourceEditChunk} /></ErrorBoundary></Protected> },
     { path: '/plantings/:plantingId', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected> },
     { path: '/varieties/:varietyId/edit', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><VarietyEdit /></ErrorBoundary></Protected> },
     { path: '/projects/:id/events/:eventId', element: <ScopedEventRedirect /> },

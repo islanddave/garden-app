@@ -149,6 +149,60 @@ describe('useSources', () => {
   })
 })
 
+// V5-SOURCECONTACT-001 — PATCH /api/varieties/sources/:id.
+describe('useSources.updateSource', () => {
+  async function loaded() {
+    fetchSpy.mockResolvedValueOnce(SOURCES)
+    const hook = renderHook(() => useSources())
+    await waitFor(() => expect(hook.result.current.sources.length).toBe(2))
+    return hook
+  }
+
+  it('PATCHes only the patch it is given, to the row\'s own path', async () => {
+    const { result } = await loaded()
+    const updated = { ...SOURCES[0], instagram_url: 'https://www.instagram.com/bakercreek' }
+    fetchSpy.mockResolvedValueOnce(updated)
+    let res
+    await act(async () => {
+      res = await result.current.updateSource('src-baker', { instagram_url: 'https://www.instagram.com/bakercreek' })
+    })
+    expect(res).toEqual({ source: updated })
+    expect(fetchSpy).toHaveBeenLastCalledWith('/api/varieties/sources/src-baker', {
+      method: 'PATCH', body: JSON.stringify({ instagram_url: 'https://www.instagram.com/bakercreek' }),
+    })
+    expect(result.current.sources.find(s => s.id === 'src-baker').instagram_url)
+      .toBe('https://www.instagram.com/bakercreek')
+  })
+
+  it('replaces the row in place and RE-SORTS, because a rename moves it', async () => {
+    const { result } = await loaded()
+    fetchSpy.mockResolvedValueOnce({ ...SOURCES[0], name: 'Zephyr Seeds' })
+    await act(async () => { await result.current.updateSource('src-baker', { name: 'Zephyr Seeds' }) })
+    expect(result.current.sources.map(s => s.id)).toEqual(['src-fedco', 'src-baker'])
+    expect(result.current.sources).toHaveLength(2)
+  })
+
+  it('surfaces a 409 steer and the HTTP status without touching the list', async () => {
+    const { result } = await loaded()
+    fetchSpy.mockRejectedValueOnce(Object.assign(new Error('Source "Fedco Seeds" already exists'), {
+      status: 409, body: { reason: 'exists', existing: SOURCES[1] },
+    }))
+    let res
+    await act(async () => { res = await result.current.updateSource('src-baker', { name: 'Fedco Seeds' }) })
+    expect(res).toMatchObject({ reason: 'exists', status: 409 })
+    expect(res.existing.id).toBe('src-fedco')
+    expect(result.current.sources.map(s => s.name)).toEqual(['Baker Creek', 'Fedco Seeds'])
+  })
+
+  it('a transport failure is { error, status: null }, never a throw', async () => {
+    const { result } = await loaded()
+    fetchSpy.mockRejectedValueOnce(new Error('offline'))
+    let res
+    await act(async () => { res = await result.current.updateSource('src-baker', { notes: 'x' }) })
+    expect(res).toEqual({ error: 'offline', existing: null, reason: null, status: null })
+  })
+})
+
 describe('useSourceKinds', () => {
   it('loads from /api/varieties/source-kinds', async () => {
     fetchSpy.mockResolvedValueOnce(KINDS)

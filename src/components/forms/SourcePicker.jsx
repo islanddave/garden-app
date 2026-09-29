@@ -51,6 +51,7 @@ import {
 // second copy of the flip arithmetic would be free to disagree with the reference model's after the
 // next viewport fix. Same for the chrome insets it subtracts.
 import { computePlacement, readChromeInsets } from './PlantingSelect.jsx'
+import { normalizeWebsiteUrl, normalizeSocialUrl, isBadLinkError, BAD_LINK_MESSAGE } from '../../lib/sourceLinks.js'
 
 // VarietyPicker precedent: cap VISIBLY (footer row), never truncate silently. 54 live sources today,
 // so this is headroom rather than a limit anyone meets.
@@ -73,6 +74,10 @@ const ICON_SM_PX = 16
 // failed and why only a real browser at real geometry could see it. jsdom returns zero from
 // getBoundingClientRect, so the 19 unit tests behind this component cannot reach the question.
 const MINT_PANEL_EXTRA = 120
+// V5-SOURCECONTACT-001's "More details" (website, Instagram, Facebook, address) is COLLAPSED by
+// default and adds nothing to this number: closed, the panel is exactly the height measured above;
+// open, the extra rows scroll inside mintBody (a scroll container, so it shrinks to the measured
+// room) rather than growing the panel past it.
 
 // Same guard PlantingSelect's measurePlacement carries: jsdom has no layout engine and no
 // visualViewport, so this returns null there and the panel renders the unmeasured default (down,
@@ -297,6 +302,11 @@ export default function SourcePicker({
   const [mintName, setMintName] = useState('')
   const [mintKind, setMintKind] = useState('')
   const [mintLocality, setMintLocality] = useState('')
+  const [mintMore, setMintMore] = useState(false)
+  const [mintAddress, setMintAddress] = useState('')
+  const [mintWebsite, setMintWebsite] = useState('')
+  const [mintInstagram, setMintInstagram] = useState('')
+  const [mintFacebook, setMintFacebook] = useState('')
   const [mintBusy, setMintBusy] = useState(false)
   // null | { message, existing } — `existing` present means the server steered us to a row that
   // already covers this name. Adopting it is the CORRECT outcome, so it gets a real button rather
@@ -309,6 +319,7 @@ export default function SourcePicker({
 
   const resetMint = useCallback(() => {
     setMintName(''); setMintKind(''); setMintLocality(''); setMintErr(null); setMintBusy(false)
+    setMintMore(false); setMintAddress(''); setMintWebsite(''); setMintInstagram(''); setMintFacebook('')
     setAddingKind(false); setKindName(''); setKindErr(null); setKindBusy(false)
   }, [])
 
@@ -355,13 +366,20 @@ export default function SourcePicker({
     if (!name || mintBusy) return
     setMintBusy(true)
     setMintErr(null)
+    // Every optional key is SENT, blank as null, whether or not "More details" was opened — the
+    // payload shape does not depend on a disclosure's state. Links go through sourceLinks.js so
+    // "rareseeds.com" and "@bakercreek" arrive as the full https URLs the server's CHECK requires.
     const res = await createSource({
       name,
       kind: mintKind || null,
       locality: mintLocality.trim() || null,
+      address: mintAddress.trim() || null,
+      website_url: normalizeWebsiteUrl(mintWebsite),
+      instagram_url: normalizeSocialUrl('instagram', mintInstagram),
+      facebook_url: normalizeSocialUrl('facebook', mintFacebook),
     })
     setMintBusy(false)
-    if (res?.error) { setMintErr({ message: res.error, existing: res.existing ?? null }); return }
+    if (res?.error) { setMintErr({ message: isBadLinkError(res) ? BAD_LINK_MESSAGE : res.error, existing: res.existing ?? null }); return }
     // CONTINUE the flow. Stopping at "created" would leave the user to find the new row themselves
     // in a list they came here precisely because it did not contain it.
     select(res.source)
@@ -776,6 +794,72 @@ export default function SourcePicker({
                 autoComplete="off"
               />
             </Field>
+
+            {/* V5-SOURCECONTACT-001 — Dave: "a source add/edit should include optional fields for
+                website, IG, FB, physical address for me to enter". Behind a disclosure so the common
+                mint (a name, maybe a town) keeps its height; see MINT_PANEL_EXTRA. */}
+            <button
+              type="button"
+              onClick={() => setMintMore(m => !m)}
+              aria-expanded={mintMore}
+              aria-controls={`${listboxId}-mint-more`}
+              style={mintLinkStyle}
+              data-testid="sp-mint-more"
+            >
+              {mintMore ? 'Fewer details' : 'More details'}
+            </button>
+            {mintMore && (
+              <div id={`${listboxId}-mint-more`} data-testid="sp-mint-more-fields">
+                <Field label="Website" htmlFor={`${listboxId}-mint-website`} optional style={{ marginTop: T.space.sm, marginBottom: T.space.sm }}>
+                  <Input
+                    id={`${listboxId}-mint-website`}
+                    type="text"
+                    inputMode="url"
+                    autoFocus
+                    value={mintWebsite}
+                    onChange={e => setMintWebsite(e.target.value)}
+                    placeholder="e.g. rareseeds.com"
+                    data-testid="sp-mint-website"
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field label="Instagram" htmlFor={`${listboxId}-mint-instagram`} optional style={{ marginBottom: T.space.sm }}>
+                  <Input
+                    id={`${listboxId}-mint-instagram`}
+                    type="text"
+                    inputMode="url"
+                    value={mintInstagram}
+                    onChange={e => setMintInstagram(e.target.value)}
+                    placeholder="@name or link"
+                    data-testid="sp-mint-instagram"
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field label="Facebook" htmlFor={`${listboxId}-mint-facebook`} optional style={{ marginBottom: T.space.sm }}>
+                  <Input
+                    id={`${listboxId}-mint-facebook`}
+                    type="text"
+                    inputMode="url"
+                    value={mintFacebook}
+                    onChange={e => setMintFacebook(e.target.value)}
+                    placeholder="Page name or link"
+                    data-testid="sp-mint-facebook"
+                    autoComplete="off"
+                  />
+                </Field>
+                <Field label="Address" htmlFor={`${listboxId}-mint-address`} optional style={{ marginBottom: 0 }}>
+                  <Input
+                    id={`${listboxId}-mint-address`}
+                    type="text"
+                    value={mintAddress}
+                    onChange={e => setMintAddress(e.target.value)}
+                    placeholder="e.g. 397 Greenfield Rd, Deerfield"
+                    data-testid="sp-mint-address"
+                    autoComplete="off"
+                  />
+                </Field>
+              </div>
+            )}
 
             {mintErr && (
               <div role="alert" style={errText}>

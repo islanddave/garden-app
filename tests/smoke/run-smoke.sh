@@ -39,6 +39,11 @@
 #        P3 draw → Mark used → RowEditor, P4 weighed draw to 0 g, P5 take out/restore, P6 check-in edit,
 #        P7 SHU save, P8 Undo put-up restores grams, P9 batch removal restores the count; WARN until F is on
 #        staging (SMOKE_REQUIRE_FERMENT=1 makes it FAIL); its own FK-ordered hard-delete (ferm_sweep)
+#     Q) (after Put-Up's N, independent of the project) one fixed-name source (V5-SOURCECONTACT-001):
+#        Instagram + Facebook links PATCHed and read back by id and in the list, a scheme-less link
+#        refused 400 with nothing changed, then both cleared to null and read back
+#     R) (right after D) GET /api/harvests/season-stats (V5-SEASONSTATS-001): envelope v1, the 8 sections
+#        in page order, block D's planting counted, 400 on an unknown section
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
 #   Per L-108 (ratified 2026-05-25): every write-path surface gets a write→read-back assert.
@@ -73,6 +78,8 @@ CREATED_FAVORITE_DONE=false
 NAVP_DIRTY=false
 NAVP_GB_DIRTY=false
 NAVP_GB_RESTORE=""
+SRC_ID=""
+SRC_DIRTY=false
 DATA_CREATED=false
 CLERK_JWT=""
 CLERK_SESSION_ID=""
@@ -191,6 +198,17 @@ cleanup() {
       -H "Authorization: Bearer $navp_gb_jwt" -H "Content-Type: application/json" -o /dev/null \
       "$NAVP_URL" -d "{\"garden_group_by\": \"$NAVP_GB_RESTORE\"}" \
       && echo "✅ Cleanup: smoke account Garden grouping restored" || true
+  fi
+  # Block Q (V5-SOURCECONTACT-001): died between its first link PATCH and its restore. Clear the smoke
+  # source's two links, best-effort, before the session is revoked (the next run's O4 clears them anyway).
+  if [[ "$SRC_DIRTY" == "true" && -n "${CLERK_SESSION_ID:-}" && -n "$SRC_ID" && -n "${STAGING_API_VARIETIES:-}" ]]; then
+    local src_jwt
+    src_jwt=$(mint_session_token)
+    curl -sf --max-time 15 --connect-timeout 10 -X PATCH \
+      -H "Authorization: Bearer $src_jwt" -H "Content-Type: application/json" -o /dev/null \
+      "${STAGING_API_VARIETIES%/}/api/varieties/sources/${SRC_ID}" \
+      -d '{"instagram_url": null, "facebook_url": null}' \
+      && echo "✅ Cleanup: smoke source links cleared" || true
   fi
   # Revoke the Clerk test session we created (best-effort hygiene).
   if [[ -n "${CLERK_SESSION_ID:-}" && -n "${CLERK_SECRET_KEY_STAGING:-}" ]]; then
@@ -322,6 +340,15 @@ echo "   (photos Lambda skipped in reachability phase — multipart-only endpoin
 # unauthenticated call proves the route is routed and its module loads.
 check_reachable "lambda:events:harvest-ready"   "${STAGING_API_EVENTS%/}/api/events/harvest-ready"
 check_reachable "lambda:events:harvest-summary" "${STAGING_API_EVENTS%/}/api/events/harvest-summary"
+
+# Season stats (V5-SEASONSTATS-001) rides lambda/harvests. That handler verifies the token BEFORE it
+# routes, so an unauthenticated 401 proves the Lambda is up and its module graph (season-stats.js is a
+# top-level import) loads; it does not reach the route or the stat_* views. Block R does, authed.
+if [[ -n "${STAGING_API_HARVESTS:-}" && "$STAGING_API_HARVESTS" != *placeholder* ]]; then
+  check_reachable "lambda:harvests:season-stats" "${STAGING_API_HARVESTS%/}/api/harvests/season-stats"
+else
+  echo "   (season-stats reachability skipped — STAGING_API_HARVESTS unset/placeholder)"
+fi
 
 # Put-Up (V4-HARVESTCENTER-001). Both staging Lambdas existed but were never referenced by
 # deploy-staging.yml, so staging builds baked VITE_API_PRESERVATION="" and the surface was dead on
@@ -647,6 +674,57 @@ else
       else
         echo "⚠️  WARN [write:plant-variety] STAGING_API_VARIETIES unset — variety set/clear assert NOT run"
         echo "     (legit skip only if the varieties endpoint is unconfigured; the staging workflow DOES set it)"
+      fi
+
+      # ── R) Season stats read (V5-SEASONSTATS-001): envelope v1, the 8 sections in page order, 400 on an
+      #       unknown section, and block D's planting counted through the stat_* views ──────────────────────
+      # Placed HERE, straight after D and before D3: stat_planting dates a planting by
+      # coalesce(sown_at, transplanted_at, planted_at, created_at) in ET, and D POSTs no dates, so its planting
+      # falls in the current grow-year (created today). D3 later sets sown_at to the 15th of LAST month, which
+      # on a run between Nov 1 and Nov 14 lands in the previous grow-year, so this read must come first.
+      # sources.by_type sums EVERY planting of the caller's household for the season (source_type NULL counts
+      # under 'none'); the L-058 sweep hard-deletes earlier runs' plantings, so >= 1 here is this run's. With no
+      # planting from D the block asserts the envelope only. The server caches 60 s per household|year|sections;
+      # nothing else in the run calls this route before here.
+      if [[ -n "${STAGING_API_HARVESTS:-}" && "$STAGING_API_HARVESTS" != *placeholder* ]]; then
+        CLERK_JWT=$(mint_session_token)
+        STATS_URL="${STAGING_API_HARVESTS%/}/api/harvests/season-stats"
+        STATS_M=$((10#$(TZ=America/New_York date +%m)))
+        STATS_YEAR=$(( $(TZ=America/New_York date +%Y) + (STATS_M >= 11 ? 1 : 0) ))
+        STATS_MIN=0
+        [[ -n "$CREATED_PLANT_ID" ]] && STATS_MIN=1
+        STATS_B=$(mktemp)
+        STATS_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" \
+          -o "$STATS_B" -w "%{http_code}" "$STATS_URL?season=$STATS_YEAR") || STATS_HTTP="000"
+        STATS_SHAPE=$(jq -r '[.version, .season.year, (.sections | keys_unsorted | join(",")),
+                              ([.sections | to_entries[] | (.value.section == .key and .value.version == 1
+                                and (.value.meta.limits | type) == "array" and (.value.series | type) == "object")] | all),
+                              ([.sections.sources.series.by_type[]?.plantings] | add // 0)] | map(tostring) | join("|")' "$STATS_B" 2>/dev/null || echo "unparseable")
+        STATS_BODY=$(head -c 200 "$STATS_B" 2>/dev/null || echo ""); rm -f "$STATS_B"
+        STATS_WANT_PREFIX="1|$STATS_YEAR|ribbon,sources,heat_clock,heat_ladder,tomato_keep,longest,sep_size,seed_lots|true|"
+        STATS_PLANTINGS="${STATS_SHAPE##*|}"
+        if [[ "$STATS_HTTP" == "200" && "$STATS_SHAPE" == "$STATS_WANT_PREFIX"* && "$STATS_PLANTINGS" =~ ^[0-9]+$ && "$STATS_PLANTINGS" -ge "$STATS_MIN" ]]; then
+          echo "✅ PASS [read:season-stats] HTTP 200, v1, 8 sections in order, season $STATS_YEAR, $STATS_PLANTINGS planting(s) counted (>= $STATS_MIN: block D's)"
+          PASS=$((PASS+1))
+        else
+          echo "❌ FAIL [read:season-stats] HTTP $STATS_HTTP shape '$STATS_SHAPE' (expected '${STATS_WANT_PREFIX}<n>', n >= $STATS_MIN)"
+          echo "   Body: $STATS_BODY"
+          FAIL=$((FAIL+1))
+        fi
+        STATS_BAD=$(curl -s --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" \
+          -o /dev/null -w "%{http_code}" "$STATS_URL?season=$STATS_YEAR&sections=nope") || STATS_BAD="000"
+        if [[ "$STATS_BAD" == "400" ]]; then
+          echo "✅ PASS [read:season-stats-unknown-section] HTTP 400"
+          PASS=$((PASS+1))
+        else
+          echo "❌ FAIL [read:season-stats-unknown-section] HTTP $STATS_BAD (expected 400)"
+          FAIL=$((FAIL+1))
+        fi
+      elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+        echo "❌ FAIL [read:season-stats] STAGING_API_HARVESTS unset/placeholder — the ship gate may not skip this assert"
+        FAIL=$((FAIL+1))
+      else
+        echo "⚠️  WARN [read:season-stats] STAGING_API_HARVESTS unset/placeholder — season stats read NOT run"
       fi
 
       # ── D2) Seen-contract write→read-back (V3-SEEN-001; L-108 write-path coverage) ─────────
@@ -2069,6 +2147,111 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
   [[ -n "$FE_OUT" ]] && rm -f "$FE_OUT"
 else
   echo "⚠️  WARN [ferment] STAGING_API_PRESERVATION or STAGING_API_STORAGE_LOCATIONS unset, or no JWT — block P NOT run"
+fi
+
+
+# ── Q) A source's contact links: PATCH → GET read-back → refused bad link → PATCH to null → read-back
+#       (V5-SOURCECONTACT-001; L-108) — Phase 2, continued ─────────────────────────────────────────────
+# public.source has no DELETE (the route answers 405), so the block reuses ONE fixed-name row: POST it, and a
+# 409 {reason:'exists', existing} hands back existing.id (a soft-deleted one comes back 200, restored). The
+# smoke account created that row, so canEditSource (lambda/varieties/authz.js) lets it PATCH even when it is
+# not a household member. Links are run-unique, so a leftover from a run that died mid-block cannot pass a
+# read-back vacuously. The read-back also asserts the name is untouched (the PATCH is partial). RESTORE: both
+# links back to null, read back; cleanup() repeats it if the run dies in between (SRC_DIRTY). No L-058 sweep
+# line: the row is meant to persist. The list GET is a bare array (resp(200, rows)).
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETIES:-}" ]]; then
+  SRC_BASE="${STAGING_API_VARIETIES%/}/api/varieties/sources"
+  SRC_NAME="Smoke Contact Source"
+  src_patch() {                       # src_patch <json-body> -> prints the HTTP status
+    local code
+    code=$(curl -s --max-time 30 --connect-timeout 10 -X PATCH \
+      -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+      -o /dev/null -w "%{http_code}" "$SRC_BASE/$SRC_ID" -d "$1") || code="000"
+    echo "$code"
+  }
+  src_get() {                         # src_get <jq-filter> -> "<http> <filtered body, compact>"
+    local TMP code
+    TMP=$(mktemp)
+    code=$(curl -s --compressed --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" \
+      -o "$TMP" -w "%{http_code}" "$SRC_BASE/$SRC_ID") || code="000"
+    echo "$code $(jq -c "$1" "$TMP" 2>/dev/null || echo unreadable)"
+    rm -f "$TMP"
+  }
+  CLERK_JWT=$(mint_session_token)
+
+  # Q0) find-or-create the fixed-name row. The stored name is taken from the answer: a 409 names the row
+  # that already holds this match_key, whose casing may differ.
+  SRC_B=$(mktemp)
+  SRC_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X POST \
+    -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+    -o "$SRC_B" -w "%{http_code}" "$SRC_BASE" -d "{\"name\": \"$SRC_NAME\"}") || SRC_HTTP="000"
+  SRC_ID=$(jq -r 'if .reason == "exists" then (.existing.id // empty) else (.id // empty) end' "$SRC_B" 2>/dev/null || echo "")
+  SRC_STORED_NAME=$(jq -r 'if .reason == "exists" then (.existing.name // empty) else (.name // empty) end' "$SRC_B" 2>/dev/null || echo "")
+  SRC_POST_BODY=$(head -c 200 "$SRC_B" 2>/dev/null || echo ""); rm -f "$SRC_B"
+  if [[ "$SRC_HTTP" =~ ^(200|201|409)$ && "$SRC_ID" =~ ^[0-9a-fA-F-]{36}$ && -n "$SRC_STORED_NAME" ]]; then
+    echo "✅ PASS [crud:POST /varieties/sources (find-or-create)] HTTP $SRC_HTTP, id $SRC_ID"
+    PASS=$((PASS+1))
+    SRC_TAG=$(echo "$TEST_RUN_ID" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-12)
+    SRC_IG="https://www.instagram.com/smoke${SRC_TAG}"
+    SRC_FB="https://www.facebook.com/smoke${SRC_TAG}"
+    SRC_DIRTY=true
+
+    # Q1) both links → GET by id → equal, name untouched.
+    SRC_CODE=$(src_patch "{\"instagram_url\": \"$SRC_IG\", \"facebook_url\": \"$SRC_FB\"}")
+    SRC_GOT=$(src_get '[.instagram_url, .facebook_url, .name]')
+    SRC_WANT="200 $(jq -c -n --arg ig "$SRC_IG" --arg fb "$SRC_FB" --arg n "$SRC_STORED_NAME" '[$ig, $fb, $n]')"
+    if [[ "$SRC_CODE" == "200" && "$SRC_GOT" == "$SRC_WANT" ]]; then
+      echo "✅ PASS [write:source-links-readback] read-back == $SRC_IG, $SRC_FB; name untouched"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:source-links-readback] PATCH HTTP $SRC_CODE, read-back '$SRC_GOT' (expected '$SRC_WANT')"
+      FAIL=$((FAIL+1))
+    fi
+
+    # Q2) the list GET (what SourcePicker loads) carries the same links for this row.
+    SRC_LIST=$(curl -s --compressed --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" "$SRC_BASE" \
+      | jq -c --arg id "$SRC_ID" 'if type == "array" then ([.[] | select(.id == $id) | [.instagram_url, .facebook_url]][0]) else "not-an-array" end' 2>/dev/null || echo "unreadable")
+    if [[ "$SRC_LIST" == "[\"$SRC_IG\",\"$SRC_FB\"]" ]]; then
+      echo "✅ PASS [read:sources-list-links] list row carries both links"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [read:sources-list-links] list row '$SRC_LIST' (expected [\"$SRC_IG\",\"$SRC_FB\"])"
+      FAIL=$((FAIL+1))
+    fi
+
+    # Q3) a scheme-less link is refused (400, validateSourcePatch, before any read or write) and changes nothing.
+    CLERK_JWT=$(mint_session_token)
+    SRC_CODE=$(src_patch '{"instagram_url": "instagram.com/not-a-full-link"}')
+    SRC_GOT=$(src_get '.instagram_url')
+    if [[ "$SRC_CODE" == "400" && "$SRC_GOT" == "200 \"$SRC_IG\"" ]]; then
+      echo "✅ PASS [write:source-link-refused] HTTP 400, stored link unchanged"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:source-link-refused] PATCH HTTP $SRC_CODE (expected 400), read-back '$SRC_GOT' (expected 200 \"$SRC_IG\")"
+      FAIL=$((FAIL+1))
+    fi
+
+    # Q4) restore: null clears both (a present key with null IS a clear on this route), read back.
+    SRC_CODE=$(src_patch '{"instagram_url": null, "facebook_url": null}')
+    [[ "$SRC_CODE" == "200" ]] && SRC_DIRTY=false
+    SRC_GOT=$(src_get '[.instagram_url, .facebook_url]')
+    if [[ "$SRC_CODE" == "200" && "$SRC_GOT" == "200 [null,null]" ]]; then
+      echo "✅ PASS [write:source-links-restore-readback] both links cleared"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:source-links-restore-readback] PATCH HTTP $SRC_CODE, read-back '$SRC_GOT' (expected 200 [null,null])"
+      FAIL=$((FAIL+1))
+    fi
+  else
+    echo "❌ FAIL [crud:POST /varieties/sources (find-or-create)] HTTP $SRC_HTTP, id '$SRC_ID', name '$SRC_STORED_NAME'"
+    echo "   Body: $SRC_POST_BODY"
+    FAIL=$((FAIL+1))
+  fi
+elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
+  echo "❌ FAIL [write:source-links-readback] STAGING_API_VARIETIES unset or no Clerk session — the ship gate may not skip this assert"
+  FAIL=$((FAIL+1))
+else
+  echo "⚠️  WARN [write:source-links-readback] STAGING_API_VARIETIES unset or no Clerk session — source link assert NOT run"
 fi
 
 

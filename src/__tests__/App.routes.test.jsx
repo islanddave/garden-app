@@ -108,8 +108,10 @@ describe('App route table (single source of truth)', () => {
     // redirect behaviour is pinned in LegacySeedsRedirect.test.jsx.
     // 60 -> 61: /season-end, the End of season page. Its only door is the More row of the same name
     // (an installed PWA has no address bar), so the row and the route ship together.
-    expect(paths).toHaveLength(61)
-    expect(new Set(paths).size).toBe(61)
+    // 61 -> 63: V5-SEASONSTATS-001 adds /season-stats (door: the Season stats More row) and
+    // V5-SOURCECONTACT-001 adds /sources/:id (door: a saved-seed lot's "Edit source" chip on it).
+    expect(paths).toHaveLength(63)
+    expect(new Set(paths).size).toBe(63)
   })
 
   it('/log/voice is a PAGE, never an overlay — a live mic must not mount over another surface', () => {

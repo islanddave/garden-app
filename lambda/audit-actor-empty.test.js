@@ -129,8 +129,10 @@ describe('BUG-VARIETYACTOREMPTY-001 — the actor that lands can never be the em
     // audited writes: it goes up whenever either writer gains a bind, and the census below is what
     // decides whether that bind is acceptable. 5 -> 6 on 2026-09-04 (V4-SOURCEREG-001) for the
     // restore arm of POST /api/varieties/sources — public.source carries trg_audit_source_upd, so
-    // that write binds the actor too even though the table it audits is not cultivar.
-    expect(binds).toHaveLength(6);
+    // that write binds the actor too even though the table it audits is not cultivar. 6 -> 7 on
+    // 2026-09-29 (V5-SOURCECONTACT-001) for PATCH /api/varieties/sources/:id, the same table and the
+    // same reason.
+    expect(binds).toHaveLength(7);
   });
 
   // ── the normalizer, driven directly (varieties copy) ──────────────────────────────────────────

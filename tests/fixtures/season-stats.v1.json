@@ -1,0 +1,4811 @@
+{
+ "version": 1,
+ "generatedAt": "2026-09-29T20:19:37.788Z",
+ "season": {
+  "year": 2026,
+  "start": "2025-11-01",
+  "end": "2026-10-31"
+ },
+ "sections": {
+  "ribbon": {
+   "section": "ribbon",
+   "version": 1,
+   "generatedAt": "2026-09-29T20:19:37.788Z",
+   "meta": {
+    "pins": {
+     "first_sow": "2026-04-18",
+     "first_setout": "2026-05-19",
+     "hottest": {
+      "date": "2026-07-02",
+      "tmax_f": 96.2
+     },
+     "wettest": {
+      "date": "2026-07-29",
+      "precip_in": 2.84
+     }
+    },
+    "care_day_totals": {
+     "water": 97,
+     "feed": 22,
+     "pests": 11,
+     "starts": 39,
+     "upkeep": 26,
+     "checkins": 53
+    },
+    "limits": [
+     {
+      "code": "weather_from",
+      "date": "2026-05-10"
+     },
+     {
+      "code": "care_counted_in_days"
+     }
+    ]
+   },
+   "series": {
+    "days": [
+     {
+      "date": "2026-05-10",
+      "tmax_f": 68.4,
+      "tmin_f": 48,
+      "precip_in": 0.02,
+      "care": []
+     },
+     {
+      "date": "2026-05-11",
+      "tmax_f": 59.1,
+      "tmin_f": 45.7,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-05-12",
+      "tmax_f": 62.5,
+      "tmin_f": 39,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "upkeep"
+      ]
+     },
+     {
+      "date": "2026-05-13",
+      "tmax_f": 58.6,
+      "tmin_f": 40.9,
+      "precip_in": 0.15,
+      "care": []
+     },
+     {
+      "date": "2026-05-14",
+      "tmax_f": 56.3,
+      "tmin_f": 46.8,
+      "precip_in": 0.39,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-05-15",
+      "tmax_f": 60.1,
+      "tmin_f": 46,
+      "precip_in": 0.08,
+      "care": []
+     },
+     {
+      "date": "2026-05-16",
+      "tmax_f": 75.2,
+      "tmin_f": 44.4,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-05-17",
+      "tmax_f": 84.1,
+      "tmin_f": 58.6,
+      "precip_in": 0.06,
+      "care": []
+     },
+     {
+      "date": "2026-05-18",
+      "tmax_f": 88.1,
+      "tmin_f": 57.2,
+      "precip_in": 0,
+      "care": [
+       "upkeep"
+      ]
+     },
+     {
+      "date": "2026-05-19",
+      "tmax_f": 91.9,
+      "tmin_f": 65.3,
+      "precip_in": 0.05,
+      "care": [
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-05-20",
+      "tmax_f": 84.5,
+      "tmin_f": 63.7,
+      "precip_in": 0.04,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-05-21",
+      "tmax_f": 66,
+      "tmin_f": 52.3,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-05-22",
+      "tmax_f": 66.8,
+      "tmin_f": 44,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-05-23",
+      "tmax_f": 61.8,
+      "tmin_f": 46.4,
+      "precip_in": 0.16,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-05-24",
+      "tmax_f": 52.1,
+      "tmin_f": 47.8,
+      "precip_in": 0.66,
+      "care": [
+       "feed",
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-05-25",
+      "tmax_f": 73.7,
+      "tmin_f": 51.3,
+      "precip_in": 0.32,
+      "care": [
+       "starts"
+      ]
+     },
+     {
+      "date": "2026-05-26",
+      "tmax_f": 83,
+      "tmin_f": 49.2,
+      "precip_in": 0.01,
+      "care": []
+     },
+     {
+      "date": "2026-05-27",
+      "tmax_f": 84,
+      "tmin_f": 59.4,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-05-28",
+      "tmax_f": 72.1,
+      "tmin_f": 56.3,
+      "precip_in": 0.01,
+      "care": [
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-05-29",
+      "tmax_f": 71.1,
+      "tmin_f": 52.4,
+      "precip_in": 0.04,
+      "care": []
+     },
+     {
+      "date": "2026-05-30",
+      "tmax_f": 55.4,
+      "tmin_f": 40.5,
+      "precip_in": 0.33,
+      "care": [
+       "checkins",
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-05-31",
+      "tmax_f": 68.1,
+      "tmin_f": 37.1,
+      "precip_in": 0.01,
+      "care": [
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-01",
+      "tmax_f": 63.3,
+      "tmin_f": 42.4,
+      "precip_in": 0.02,
+      "care": [
+       "checkins",
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-02",
+      "tmax_f": 75.7,
+      "tmin_f": 42.8,
+      "precip_in": 0,
+      "care": [
+       "starts",
+       "upkeep"
+      ]
+     },
+     {
+      "date": "2026-06-03",
+      "tmax_f": 83.9,
+      "tmin_f": 48.3,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-04",
+      "tmax_f": 89.4,
+      "tmin_f": 53.7,
+      "precip_in": 0,
+      "care": [
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-05",
+      "tmax_f": 88,
+      "tmin_f": 62.1,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-06",
+      "tmax_f": 85.6,
+      "tmin_f": 62.6,
+      "precip_in": 0.12,
+      "care": []
+     },
+     {
+      "date": "2026-06-07",
+      "tmax_f": 78,
+      "tmin_f": 61.3,
+      "precip_in": 0.08,
+      "care": [
+       "checkins",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-08",
+      "tmax_f": 79,
+      "tmin_f": 51.3,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-09",
+      "tmax_f": 87.5,
+      "tmin_f": 53.2,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "feed",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-10",
+      "tmax_f": 88.5,
+      "tmin_f": 59.3,
+      "precip_in": 0.21,
+      "care": [
+       "checkins",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-11",
+      "tmax_f": 92.1,
+      "tmin_f": 66.7,
+      "precip_in": 0.11,
+      "care": [
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-12",
+      "tmax_f": 92.2,
+      "tmin_f": 69.4,
+      "precip_in": 0.03,
+      "care": [
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-13",
+      "tmax_f": 85.9,
+      "tmin_f": 65,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-14",
+      "tmax_f": 88.9,
+      "tmin_f": 60.3,
+      "precip_in": 0,
+      "care": [
+       "feed",
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-15",
+      "tmax_f": 72.4,
+      "tmin_f": 58.2,
+      "precip_in": 0.24,
+      "care": [
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-16",
+      "tmax_f": 73.9,
+      "tmin_f": 52.9,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-17",
+      "tmax_f": 80.1,
+      "tmin_f": 51.5,
+      "precip_in": 0,
+      "care": [
+       "feed",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-18",
+      "tmax_f": 78.3,
+      "tmin_f": 60,
+      "precip_in": 0.41,
+      "care": [
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-19",
+      "tmax_f": 76,
+      "tmin_f": 63.1,
+      "precip_in": 0,
+      "care": [
+       "starts",
+       "upkeep"
+      ]
+     },
+     {
+      "date": "2026-06-20",
+      "tmax_f": 74.8,
+      "tmin_f": 60.5,
+      "precip_in": 0.07,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-21",
+      "tmax_f": 79.7,
+      "tmin_f": 55.4,
+      "precip_in": 0,
+      "care": [
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-22",
+      "tmax_f": 69.5,
+      "tmin_f": 51.1,
+      "precip_in": 1.19,
+      "care": [
+       "starts",
+       "upkeep"
+      ]
+     },
+     {
+      "date": "2026-06-23",
+      "tmax_f": 69.5,
+      "tmin_f": 60.1,
+      "precip_in": 0.6,
+      "care": [
+       "feed",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-24",
+      "tmax_f": 76.8,
+      "tmin_f": 58.9,
+      "precip_in": 0,
+      "care": [
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-25",
+      "tmax_f": 78.4,
+      "tmin_f": 55.6,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-26",
+      "tmax_f": 78.1,
+      "tmin_f": 61.8,
+      "precip_in": 1.04,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-27",
+      "tmax_f": 80.5,
+      "tmin_f": 59.4,
+      "precip_in": 0.02,
+      "care": []
+     },
+     {
+      "date": "2026-06-28",
+      "tmax_f": 83.8,
+      "tmin_f": 59.6,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-06-29",
+      "tmax_f": 88,
+      "tmin_f": 57.7,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-06-30",
+      "tmax_f": 87.8,
+      "tmin_f": 60.3,
+      "precip_in": 0.17,
+      "care": [
+       "feed",
+       "pests",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-01",
+      "tmax_f": 94.9,
+      "tmin_f": 67.9,
+      "precip_in": 0.02,
+      "care": [
+       "checkins",
+       "pests",
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-02",
+      "tmax_f": 96.2,
+      "tmin_f": 71.2,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "pests",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-03",
+      "tmax_f": 95.5,
+      "tmin_f": 76.7,
+      "precip_in": 0.01,
+      "care": [
+       "checkins",
+       "pests",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-04",
+      "tmax_f": 88.3,
+      "tmin_f": 72.7,
+      "precip_in": 0.02,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-05",
+      "tmax_f": 81.7,
+      "tmin_f": 65,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-06",
+      "tmax_f": 71.2,
+      "tmin_f": 63.3,
+      "precip_in": 0.01,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-07",
+      "tmax_f": 66.4,
+      "tmin_f": 60.1,
+      "precip_in": 1.02,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-08",
+      "tmax_f": 83.5,
+      "tmin_f": 59.7,
+      "precip_in": 0.01,
+      "care": [
+       "checkins",
+       "feed",
+       "pests",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-09",
+      "tmax_f": 88.8,
+      "tmin_f": 62.1,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-10",
+      "tmax_f": 87,
+      "tmin_f": 70,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-11",
+      "tmax_f": 87.4,
+      "tmin_f": 63.6,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "feed",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-12",
+      "tmax_f": 83.6,
+      "tmin_f": 59.8,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-13",
+      "tmax_f": 88.3,
+      "tmin_f": 59.8,
+      "precip_in": 0.04,
+      "care": [
+       "checkins",
+       "pests",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-14",
+      "tmax_f": 92.4,
+      "tmin_f": 66.8,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "feed",
+       "pests",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-15",
+      "tmax_f": 88.4,
+      "tmin_f": 70.5,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "feed",
+       "pests",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-16",
+      "tmax_f": 84.1,
+      "tmin_f": 65.4,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "pests",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-17",
+      "tmax_f": 81.1,
+      "tmin_f": 57.3,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-18",
+      "tmax_f": 80.2,
+      "tmin_f": 59.8,
+      "precip_in": 0.41,
+      "care": []
+     },
+     {
+      "date": "2026-07-19",
+      "tmax_f": 76.7,
+      "tmin_f": 62.2,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-20",
+      "tmax_f": 83.2,
+      "tmin_f": 56,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-21",
+      "tmax_f": 73.9,
+      "tmin_f": 60,
+      "precip_in": 0.65,
+      "care": [
+       "checkins",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-22",
+      "tmax_f": 82,
+      "tmin_f": 62.5,
+      "precip_in": 0.1,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-23",
+      "tmax_f": 79.1,
+      "tmin_f": 56.7,
+      "precip_in": 0,
+      "care": [
+       "feed",
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-24",
+      "tmax_f": 82.3,
+      "tmin_f": 51.2,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "feed",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-25",
+      "tmax_f": 82.7,
+      "tmin_f": 54.1,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-26",
+      "tmax_f": 82.7,
+      "tmin_f": 54.6,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "starts",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-27",
+      "tmax_f": 83.2,
+      "tmin_f": 56.2,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-28",
+      "tmax_f": 81.4,
+      "tmin_f": 63,
+      "precip_in": 0.8,
+      "care": [
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-29",
+      "tmax_f": 68.9,
+      "tmin_f": 64.4,
+      "precip_in": 2.84,
+      "care": []
+     },
+     {
+      "date": "2026-07-30",
+      "tmax_f": 75.3,
+      "tmin_f": 63.1,
+      "precip_in": 0.54,
+      "care": [
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-07-31",
+      "tmax_f": 79.5,
+      "tmin_f": 59.5,
+      "precip_in": 0.64,
+      "care": [
+       "checkins",
+       "upkeep",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-01",
+      "tmax_f": 84.6,
+      "tmin_f": 62,
+      "precip_in": 0.12,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-02",
+      "tmax_f": 81.5,
+      "tmin_f": 68.5,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "pests"
+      ]
+     },
+     {
+      "date": "2026-08-03",
+      "tmax_f": 77.5,
+      "tmin_f": 65.7,
+      "precip_in": 2.22,
+      "care": [
+       "checkins",
+       "feed"
+      ]
+     },
+     {
+      "date": "2026-08-04",
+      "tmax_f": 82.9,
+      "tmin_f": 59.9,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-05",
+      "tmax_f": 83.8,
+      "tmin_f": 59.5,
+      "precip_in": 0,
+      "care": [
+       "starts"
+      ]
+     },
+     {
+      "date": "2026-08-06",
+      "tmax_f": 85.8,
+      "tmin_f": 67.1,
+      "precip_in": 0.02,
+      "care": [
+       "checkins",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-07",
+      "tmax_f": 89.4,
+      "tmin_f": 69.5,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-08",
+      "tmax_f": 87.2,
+      "tmin_f": 68.5,
+      "precip_in": 0.09,
+      "care": [
+       "pests",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-09",
+      "tmax_f": 84.7,
+      "tmin_f": 65.2,
+      "precip_in": 0,
+      "care": [
+       "feed",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-10",
+      "tmax_f": 82.9,
+      "tmin_f": 57.8,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "feed",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-11",
+      "tmax_f": 81.1,
+      "tmin_f": 64.7,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-12",
+      "tmax_f": 82.6,
+      "tmin_f": 59.3,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-13",
+      "tmax_f": 81.5,
+      "tmin_f": 63.9,
+      "precip_in": 0.01,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-14",
+      "tmax_f": 79.1,
+      "tmin_f": 58.4,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-08-15",
+      "tmax_f": 76.8,
+      "tmin_f": 53.4,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-16",
+      "tmax_f": 78.1,
+      "tmin_f": 51.3,
+      "precip_in": 0,
+      "care": [
+       "feed",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-17",
+      "tmax_f": 74.6,
+      "tmin_f": 64.5,
+      "precip_in": 0.21,
+      "care": [
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-18",
+      "tmax_f": 81.4,
+      "tmin_f": 66.5,
+      "precip_in": 0.01,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-19",
+      "tmax_f": 81.1,
+      "tmin_f": 62.2,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-20",
+      "tmax_f": 78.8,
+      "tmin_f": 59.4,
+      "precip_in": 0.09,
+      "care": []
+     },
+     {
+      "date": "2026-08-21",
+      "tmax_f": 76.2,
+      "tmin_f": 58.8,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-22",
+      "tmax_f": 71,
+      "tmin_f": 58.7,
+      "precip_in": 0.04,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-23",
+      "tmax_f": 74.7,
+      "tmin_f": 63.9,
+      "precip_in": 0.34,
+      "care": []
+     },
+     {
+      "date": "2026-08-24",
+      "tmax_f": 76.5,
+      "tmin_f": 58.1,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "feed",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-25",
+      "tmax_f": 74.6,
+      "tmin_f": 54.1,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-26",
+      "tmax_f": 78.5,
+      "tmin_f": 55.1,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-27",
+      "tmax_f": 79.1,
+      "tmin_f": 58.5,
+      "precip_in": 0,
+      "care": [
+       "starts",
+       "upkeep"
+      ]
+     },
+     {
+      "date": "2026-08-28",
+      "tmax_f": 80.2,
+      "tmin_f": 65.7,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-29",
+      "tmax_f": 75.1,
+      "tmin_f": 52.7,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-30",
+      "tmax_f": 78.3,
+      "tmin_f": 54.3,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "feed",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-08-31",
+      "tmax_f": 76,
+      "tmin_f": 57.8,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-01",
+      "tmax_f": 66.2,
+      "tmin_f": 62,
+      "precip_in": 1.12,
+      "care": []
+     },
+     {
+      "date": "2026-09-02",
+      "tmax_f": 71.2,
+      "tmin_f": 60.8,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-09-03",
+      "tmax_f": 77,
+      "tmin_f": 60.3,
+      "precip_in": 0.04,
+      "care": [
+       "feed",
+       "starts",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-04",
+      "tmax_f": 79.6,
+      "tmin_f": 61.3,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-09-05",
+      "tmax_f": 75.3,
+      "tmin_f": 55.7,
+      "precip_in": 0.01,
+      "care": []
+     },
+     {
+      "date": "2026-09-06",
+      "tmax_f": 71.3,
+      "tmin_f": 53.4,
+      "precip_in": 0.29,
+      "care": []
+     },
+     {
+      "date": "2026-09-07",
+      "tmax_f": 76.4,
+      "tmin_f": 45.6,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-08",
+      "tmax_f": 77.3,
+      "tmin_f": 49.7,
+      "precip_in": 0,
+      "care": [
+       "feed",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-09",
+      "tmax_f": 75,
+      "tmin_f": 58.7,
+      "precip_in": 0.05,
+      "care": []
+     },
+     {
+      "date": "2026-09-10",
+      "tmax_f": 81.3,
+      "tmin_f": 66,
+      "precip_in": 0.05,
+      "care": [
+       "checkins",
+       "feed",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-11",
+      "tmax_f": 73.6,
+      "tmin_f": 54.8,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-12",
+      "tmax_f": 73.5,
+      "tmin_f": 46.4,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-09-13",
+      "tmax_f": 68.3,
+      "tmin_f": 61.1,
+      "precip_in": 1.48,
+      "care": []
+     },
+     {
+      "date": "2026-09-14",
+      "tmax_f": 69.4,
+      "tmin_f": 51.4,
+      "precip_in": 0.01,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-15",
+      "tmax_f": 68.5,
+      "tmin_f": 43.2,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-09-16",
+      "tmax_f": 75,
+      "tmin_f": 50.1,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-09-17",
+      "tmax_f": 75.4,
+      "tmin_f": 63.6,
+      "precip_in": 0.17,
+      "care": []
+     },
+     {
+      "date": "2026-09-18",
+      "tmax_f": 76.1,
+      "tmin_f": 59.3,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-09-19",
+      "tmax_f": 63.8,
+      "tmin_f": 47.7,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-20",
+      "tmax_f": 55.7,
+      "tmin_f": 49,
+      "precip_in": 0.97,
+      "care": []
+     },
+     {
+      "date": "2026-09-21",
+      "tmax_f": 64.3,
+      "tmin_f": 51.9,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-09-22",
+      "tmax_f": 63.6,
+      "tmin_f": 46.9,
+      "precip_in": 0,
+      "care": [
+       "checkins",
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-23",
+      "tmax_f": 64.3,
+      "tmin_f": 40.3,
+      "precip_in": 0,
+      "care": [
+       "feed"
+      ]
+     },
+     {
+      "date": "2026-09-24",
+      "tmax_f": 66.5,
+      "tmin_f": 39.5,
+      "precip_in": 0,
+      "care": []
+     },
+     {
+      "date": "2026-09-25",
+      "tmax_f": 69.2,
+      "tmin_f": 41.3,
+      "precip_in": 0,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-26",
+      "tmax_f": 63.4,
+      "tmin_f": 55.7,
+      "precip_in": 0.17,
+      "care": []
+     },
+     {
+      "date": "2026-09-27",
+      "tmax_f": 57.9,
+      "tmin_f": 54.8,
+      "precip_in": 1.01,
+      "care": [
+       "water"
+      ]
+     },
+     {
+      "date": "2026-09-28",
+      "tmax_f": 57.1,
+      "tmin_f": 54,
+      "precip_in": 1.29,
+      "care": []
+     }
+    ],
+    "weeks": [
+     {
+      "week_start": "2026-05-04",
+      "heat_units": 9,
+      "cool_nights": 1,
+      "rain_in": 0.02,
+      "tomato_fruit": 0,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-05-11",
+      "heat_units": 57,
+      "cool_nights": 6,
+      "rain_in": 0.68,
+      "tomato_fruit": 0,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-05-18",
+      "heat_units": 96,
+      "cool_nights": 4,
+      "rain_in": 0.91,
+      "tomato_fruit": 0,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-05-25",
+      "heat_units": 88,
+      "cool_nights": 5,
+      "rain_in": 0.72,
+      "tomato_fruit": 0,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-06-01",
+      "heat_units": 124,
+      "cool_nights": 4,
+      "rain_in": 0.22,
+      "tomato_fruit": 0,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-06-08",
+      "heat_units": 160,
+      "cool_nights": 2,
+      "rain_in": 0.35,
+      "tomato_fruit": 0,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-06-15",
+      "heat_units": 118,
+      "cool_nights": 2,
+      "rain_in": 0.72,
+      "tomato_fruit": 0,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-06-22",
+      "heat_units": 122,
+      "cool_nights": 1,
+      "rain_in": 2.85,
+      "tomato_fruit": 0,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-06-29",
+      "heat_units": 185,
+      "cool_nights": 0,
+      "rain_in": 0.22,
+      "tomato_fruit": 7,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-07-06",
+      "heat_units": 151,
+      "cool_nights": 0,
+      "rain_in": 1.04,
+      "tomato_fruit": 30,
+      "pepper_pods": 0
+     },
+     {
+      "week_start": "2026-07-13",
+      "heat_units": 161,
+      "cool_nights": 0,
+      "rain_in": 0.45,
+      "tomato_fruit": 27,
+      "pepper_pods": 3
+     },
+     {
+      "week_start": "2026-07-20",
+      "heat_units": 131,
+      "cool_nights": 3,
+      "rain_in": 0.75,
+      "tomato_fruit": 69,
+      "pepper_pods": 7
+     },
+     {
+      "week_start": "2026-07-27",
+      "heat_units": 146,
+      "cool_nights": 0,
+      "rain_in": 4.94,
+      "tomato_fruit": 96,
+      "pepper_pods": 63
+     },
+     {
+      "week_start": "2026-08-03",
+      "heat_units": 171,
+      "cool_nights": 0,
+      "rain_in": 2.33,
+      "tomato_fruit": 146,
+      "pepper_pods": 59
+     },
+     {
+      "week_start": "2026-08-10",
+      "heat_units": 135,
+      "cool_nights": 2,
+      "rain_in": 0.01,
+      "tomato_fruit": 123,
+      "pepper_pods": 70
+     },
+     {
+      "week_start": "2026-08-17",
+      "heat_units": 136,
+      "cool_nights": 0,
+      "rain_in": 0.69,
+      "tomato_fruit": 200,
+      "pepper_pods": 71
+     },
+     {
+      "week_start": "2026-08-24",
+      "heat_units": 120,
+      "cool_nights": 3,
+      "rain_in": 0,
+      "tomato_fruit": 268,
+      "pepper_pods": 62
+     },
+     {
+      "week_start": "2026-08-31",
+      "heat_units": 114,
+      "cool_nights": 1,
+      "rain_in": 1.46,
+      "tomato_fruit": 227,
+      "pepper_pods": 81
+     },
+     {
+      "week_start": "2026-09-07",
+      "heat_units": 108,
+      "cool_nights": 4,
+      "rain_in": 1.58,
+      "tomato_fruit": 244,
+      "pepper_pods": 100
+     },
+     {
+      "week_start": "2026-09-14",
+      "heat_units": 79,
+      "cool_nights": 5,
+      "rain_in": 1.15,
+      "tomato_fruit": 133,
+      "pepper_pods": 65
+     },
+     {
+      "week_start": "2026-09-21",
+      "heat_units": 56,
+      "cool_nights": 6,
+      "rain_in": 1.18,
+      "tomato_fruit": 127,
+      "pepper_pods": 34
+     },
+     {
+      "week_start": "2026-09-28",
+      "heat_units": 6,
+      "cool_nights": 1,
+      "rain_in": 1.29,
+      "tomato_fruit": 3,
+      "pepper_pods": 7
+     }
+    ]
+   }
+  },
+  "sources": {
+   "section": "sources",
+   "version": 1,
+   "generatedAt": "2026-09-29T20:19:37.788Z",
+   "meta": {
+    "total_lb": 449.619,
+    "limits": [
+     {
+      "code": "archived_included"
+     },
+     {
+      "code": "no_source_lb",
+      "lb": 187.062
+     }
+    ]
+   },
+   "series": {
+    "by_type": [
+     {
+      "group": "nursery",
+      "plantings": 105,
+      "plants": 231
+     },
+     {
+      "group": "seed",
+      "plantings": 42,
+      "plants": 684
+     },
+     {
+      "group": "rescued",
+      "plantings": 34,
+      "plants": 224
+     },
+     {
+      "group": "gift",
+      "plantings": 13,
+      "plants": 25
+     },
+     {
+      "group": "other",
+      "plantings": 10,
+      "plants": 36
+     },
+     {
+      "group": "none",
+      "plantings": 70,
+      "plants": 213
+     }
+    ],
+    "cards": [
+     {
+      "source_id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+      "name": "Starview Gardens",
+      "kind": "nursery",
+      "plantings": 46,
+      "plants": 77,
+      "picked": 37,
+      "lost": 5,
+      "lb": 154.275,
+      "saved_lots": 11
+     },
+     {
+      "source_id": "87a78f93-4a7e-4767-94a0-dfc0a2c4bbaf",
+      "name": "High Mowing Organic Seeds",
+      "kind": "seed_company",
+      "plantings": 4,
+      "plants": 15,
+      "picked": 2,
+      "lost": 2,
+      "lb": 65.177,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "0d50a7d7-9c30-4e27-bef8-80c59770b716",
+      "name": "Greenfield Farmers Co-op",
+      "kind": "market",
+      "plantings": 4,
+      "plants": 110,
+      "picked": 4,
+      "lost": 0,
+      "lb": 5.665,
+      "saved_lots": 1
+     },
+     {
+      "source_id": "13503c22-8b71-4424-b9a2-d3115cd73d1e",
+      "name": "Bonnie Plants",
+      "kind": "brand",
+      "plantings": 4,
+      "plants": 6,
+      "picked": 3,
+      "lost": 1,
+      "lb": 5.092,
+      "saved_lots": 1
+     },
+     {
+      "source_id": "db3b919a-4151-4254-9074-532e3531c963",
+      "name": "Long River Produce Market",
+      "kind": "market",
+      "plantings": 27,
+      "plants": 92,
+      "picked": 7,
+      "lost": 2,
+      "lb": 4.318,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "510c3fe0-14fb-44b0-887d-7b0f6fd17b28",
+      "name": "Botanical Interests",
+      "kind": "seed_company",
+      "plantings": 32,
+      "plants": 633,
+      "picked": 6,
+      "lost": 5,
+      "lb": 4.004,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "a593e061-890d-4f2c-b57c-74addab84e0c",
+      "name": "Jen",
+      "kind": "person",
+      "plantings": 10,
+      "plants": 10,
+      "picked": 8,
+      "lost": 2,
+      "lb": 3.444,
+      "saved_lots": 1
+     },
+     {
+      "source_id": "7d74da59-d1b3-4a6e-8861-cb663f3bc09b",
+      "name": "Emma Daley",
+      "kind": "person",
+      "plantings": 1,
+      "plants": 3,
+      "picked": 1,
+      "lost": 0,
+      "lb": 3.408,
+      "saved_lots": 1
+     },
+     {
+      "source_id": "33d65987-fed1-40e9-967a-c3ec604b64c1",
+      "name": "Burpee",
+      "kind": "seed_company",
+      "plantings": 4,
+      "plants": 4,
+      "picked": 3,
+      "lost": 1,
+      "lb": 3.08,
+      "saved_lots": 1
+     },
+     {
+      "source_id": "4353e5be-9ba3-41c3-8050-9acb715f51f5",
+      "name": "Gurney's Seed & Nursery Co.",
+      "kind": "seed_company",
+      "plantings": 1,
+      "plants": 15,
+      "picked": 1,
+      "lost": 0,
+      "lb": 2.748,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "209a9ef5-b46f-4a99-b8f6-cbe99bcb10fb",
+      "name": "Trust stand, Upper Road",
+      "kind": "farm_stand",
+      "plantings": 1,
+      "plants": 2,
+      "picked": 1,
+      "lost": 0,
+      "lb": 2.472,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "3db8510c-1b71-4296-ab78-03e9ac69a576",
+      "name": "Hart Farm",
+      "kind": "farm_stand",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 1,
+      "lost": 0,
+      "lb": 2.45,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "aae935fb-66ea-4ecf-a507-5c4a41aba3c6",
+      "name": "Whately Plant Swap",
+      "kind": "plant_swap",
+      "plantings": 4,
+      "plants": 19,
+      "picked": 1,
+      "lost": 0,
+      "lb": 2.18,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "34064c67-f25b-4585-8f91-8fd350fad643",
+      "name": "Skawski Farms",
+      "kind": "nursery",
+      "plantings": 4,
+      "plants": 49,
+      "picked": 3,
+      "lost": 0,
+      "lb": 1.81,
+      "saved_lots": 1
+     },
+     {
+      "source_id": "e7121205-9004-420d-a411-a4e0fe59e47d",
+      "name": "Class Grass Garden Center",
+      "kind": "nursery",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 1,
+      "lost": 0,
+      "lb": 1.281,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "2a768b09-0a3f-46c1-bc83-6c4c0ba8d6a4",
+      "name": "Chapley Gardens",
+      "kind": "nursery",
+      "plantings": 2,
+      "plants": 7,
+      "picked": 1,
+      "lost": 0,
+      "lb": 0.514,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "1c71bcbe-6774-4379-b8ee-e06030e5df25",
+      "name": "Bostrom Farms",
+      "kind": "farm_stand",
+      "plantings": 2,
+      "plants": 4,
+      "picked": 1,
+      "lost": 0,
+      "lb": 0.369,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "66cc22a1-bd48-4e6f-bc40-9f07ad06396b",
+      "name": "Hadley Plant Swap",
+      "kind": "plant_swap",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 1,
+      "lost": 0,
+      "lb": 0.183,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "74ca34f9-ee64-4f75-ba26-7714528a27ff",
+      "name": "Greenfield Farmers Market",
+      "kind": "market",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 1,
+      "lost": 0,
+      "lb": 0.064,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "7b4c2bcc-026c-44c2-890a-70afb4bbc489",
+      "name": "The Warren Place Flower Farm",
+      "kind": "nursery",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 1,
+      "lost": 0,
+      "lb": 0.023,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "26b754ac-2604-4972-8405-63b6ee363c4b",
+      "name": "Imogen",
+      "kind": "person",
+      "plantings": 4,
+      "plants": 4,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "32e02e30-69ca-44ea-adf8-418b5567ddfc",
+      "name": "Ojos de Luna",
+      "kind": "person",
+      "plantings": 4,
+      "plants": 4,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "36e1c86d-9a06-4dad-a3f0-ede7cf44c830",
+      "name": "Amazon",
+      "kind": "retail",
+      "plantings": 3,
+      "plants": 10,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "31e0eea4-48ad-4dd5-8079-0287bf037f30",
+      "name": "Belchertown Plant Swap",
+      "kind": "plant_swap",
+      "plantings": 3,
+      "plants": 3,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "b3cc8942-b664-4df0-8098-0591ee3984fc",
+      "name": "Seed Savers Exchange",
+      "kind": "seed_company",
+      "plantings": 3,
+      "plants": 10,
+      "picked": 0,
+      "lost": 3,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "caf1f9d0-a214-4438-b009-96ddab966e01",
+      "name": "Home Depot",
+      "kind": "retail",
+      "plantings": 2,
+      "plants": 2,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "019c4ea5-4b36-483b-b772-344459c6f01b",
+      "name": "Big Y",
+      "kind": "retail",
+      "plantings": 1,
+      "plants": 6,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "8e47a10c-ef44-429f-bd1b-1c1be70c21b6",
+      "name": "Hatfield Plant Swap",
+      "kind": "plant_swap",
+      "plantings": 1,
+      "plants": 6,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "62ced1db-184d-47db-8b26-26cfa387000c",
+      "name": "Hillfolk Seed Collective",
+      "kind": "seed_company",
+      "plantings": 1,
+      "plants": 4,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "f21f9ce7-c0bb-42bb-a583-ed9f3be28a37",
+      "name": "Liz Young",
+      "kind": "person",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "c455ed7e-cbb2-4bed-b3ca-9b879c2fc020",
+      "name": "Nettlepoint Farm",
+      "kind": "farm_stand",
+      "plantings": 1,
+      "plants": 6,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "69456fa1-a1fc-48dd-8cf3-406a01b5b726",
+      "name": "Renee's Garden",
+      "kind": "seed_company",
+      "plantings": 1,
+      "plants": 7,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "4075b942-d92e-424a-ace4-5a2ca9447a1d",
+      "name": "Sunderland trust stand",
+      "kind": "farm_stand",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "90699f70-6e8d-4e7d-a1e3-ff51ec1fe14b",
+      "name": "Trust stand, Hadley",
+      "kind": "farm_stand",
+      "plantings": 1,
+      "plants": 12,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": null,
+      "name": null,
+      "kind": null,
+      "plantings": 96,
+      "plants": null,
+      "picked": null,
+      "lost": null,
+      "lb": 187.062,
+      "saved_lots": 3
+     }
+    ]
+   }
+  },
+  "heat_clock": {
+   "section": "heat_clock",
+   "version": 1,
+   "generatedAt": "2026-09-29T20:19:37.788Z",
+   "meta": {
+    "origin_date": "2026-05-10",
+    "median_heat": {
+     "tomato": 1151,
+     "pepper": 1184
+    },
+    "limits": [
+     {
+      "code": "weather_from",
+      "date": "2026-05-10"
+     },
+     {
+      "code": "excluded_approx_tp"
+     },
+     {
+      "code": "excluded_rescued_gift_swap"
+     },
+     {
+      "code": "excluded_under_21d"
+     }
+    ]
+   },
+   "series": {
+    "by_crop": [
+     {
+      "crop_slug": "lettuce",
+      "crop_name": "Lettuce",
+      "first_pick": "2026-06-04",
+      "heat_units": 287
+     },
+     {
+      "crop_slug": "cilantro",
+      "crop_name": "Cilantro",
+      "first_pick": "2026-06-07",
+      "heat_units": 355
+     },
+     {
+      "crop_slug": "strawberry",
+      "crop_name": "Strawberry",
+      "first_pick": "2026-06-21",
+      "heat_units": 636
+     },
+     {
+      "crop_slug": "blueberry",
+      "crop_name": "Blueberry",
+      "first_pick": "2026-07-02",
+      "heat_units": 847
+     },
+     {
+      "crop_slug": "tomato",
+      "crop_name": "Tomato",
+      "first_pick": "2026-07-02",
+      "heat_units": 847
+     },
+     {
+      "crop_slug": "wineberry",
+      "crop_name": "Wineberry",
+      "first_pick": "2026-07-02",
+      "heat_units": 847
+     },
+     {
+      "crop_slug": "squash",
+      "crop_name": "Summer Squash",
+      "first_pick": "2026-07-04",
+      "heat_units": 907
+     },
+     {
+      "crop_slug": "dill",
+      "crop_name": "Dill",
+      "first_pick": "2026-07-09",
+      "heat_units": 1012
+     },
+     {
+      "crop_slug": "red_raspberry",
+      "crop_name": "Red Raspberry",
+      "first_pick": "2026-07-09",
+      "heat_units": 1012
+     },
+     {
+      "crop_slug": "bee_balm",
+      "crop_name": "Bee Balm",
+      "first_pick": "2026-07-10",
+      "heat_units": 1036
+     },
+     {
+      "crop_slug": "broccoli",
+      "crop_name": "Broccoli",
+      "first_pick": "2026-07-10",
+      "heat_units": 1036
+     },
+     {
+      "crop_slug": "parsley",
+      "crop_name": "Parsley",
+      "first_pick": "2026-07-11",
+      "heat_units": 1064
+     },
+     {
+      "crop_slug": "thyme",
+      "crop_name": "Thyme",
+      "first_pick": "2026-07-11",
+      "heat_units": 1064
+     },
+     {
+      "crop_slug": "cucumber",
+      "crop_name": "Cucumber",
+      "first_pick": "2026-07-14",
+      "heat_units": 1133
+     },
+     {
+      "crop_slug": "tomatillo",
+      "crop_name": "Tomatillo",
+      "first_pick": "2026-07-14",
+      "heat_units": 1133
+     },
+     {
+      "crop_slug": "beet",
+      "crop_name": "Beet",
+      "first_pick": "2026-07-16",
+      "heat_units": 1188
+     },
+     {
+      "crop_slug": "pepper",
+      "crop_name": "Pepper",
+      "first_pick": "2026-07-16",
+      "heat_units": 1188
+     },
+     {
+      "crop_slug": "basil",
+      "crop_name": "Basil",
+      "first_pick": "2026-07-22",
+      "heat_units": 1308
+     },
+     {
+      "crop_slug": "lemon_verbena",
+      "crop_name": "Lemon Verbena",
+      "first_pick": "2026-07-22",
+      "heat_units": 1308
+     },
+     {
+      "crop_slug": "tarragon",
+      "crop_name": "Tarragon",
+      "first_pick": "2026-07-22",
+      "heat_units": 1308
+     },
+     {
+      "crop_slug": "leek",
+      "crop_name": "Leek",
+      "first_pick": "2026-07-23",
+      "heat_units": 1330
+     },
+     {
+      "crop_slug": "shallot",
+      "crop_name": "Shallot",
+      "first_pick": "2026-07-23",
+      "heat_units": 1330
+     },
+     {
+      "crop_slug": "blackberry",
+      "crop_name": "Blackberry",
+      "first_pick": "2026-07-25",
+      "heat_units": 1364
+     },
+     {
+      "crop_slug": "onion",
+      "crop_name": "Onion",
+      "first_pick": "2026-07-27",
+      "heat_units": 1402
+     },
+     {
+      "crop_slug": "cucamelon",
+      "crop_name": "Cucamelon",
+      "first_pick": "2026-07-30",
+      "heat_units": 1460
+     },
+     {
+      "crop_slug": "chives",
+      "crop_name": "Chives",
+      "first_pick": "2026-08-05",
+      "heat_units": 1590
+     },
+     {
+      "crop_slug": "melon",
+      "crop_name": "Melon",
+      "first_pick": "2026-08-08",
+      "heat_units": 1666
+     },
+     {
+      "crop_slug": "bitter_melon",
+      "crop_name": "Bitter Melon",
+      "first_pick": "2026-08-09",
+      "heat_units": 1693
+     },
+     {
+      "crop_slug": "watermelon",
+      "crop_name": "Watermelon",
+      "first_pick": "2026-08-10",
+      "heat_units": 1718
+     },
+     {
+      "crop_slug": "potato",
+      "crop_name": "Potato",
+      "first_pick": "2026-08-15",
+      "heat_units": 1824
+     },
+     {
+      "crop_slug": "oregano",
+      "crop_name": "Oregano",
+      "first_pick": "2026-08-27",
+      "heat_units": 2038
+     },
+     {
+      "crop_slug": "dogwood",
+      "crop_name": "Dogwood",
+      "first_pick": "2026-09-02",
+      "heat_units": 2141
+     },
+     {
+      "crop_slug": "bean",
+      "crop_name": "Bean",
+      "first_pick": "2026-09-11",
+      "heat_units": 2291
+     },
+     {
+      "crop_slug": "sweet_potato",
+      "crop_name": "Sweet Potato",
+      "first_pick": "2026-09-11",
+      "heat_units": 2291
+     },
+     {
+      "crop_slug": "eggplant",
+      "crop_name": "Eggplant",
+      "first_pick": "2026-09-15",
+      "heat_units": 2342
+     },
+     {
+      "crop_slug": "lemongrass",
+      "crop_name": "Lemongrass",
+      "first_pick": "2026-09-15",
+      "heat_units": 2342
+     },
+     {
+      "crop_slug": "okra",
+      "crop_name": "Okra",
+      "first_pick": "2026-09-20",
+      "heat_units": 2408
+     },
+     {
+      "crop_slug": "peach",
+      "crop_name": "Peach",
+      "first_pick": "2026-09-21",
+      "heat_units": 2411
+     }
+    ],
+    "by_cultivar": [
+     {
+      "planting_id": "ad489638-a21c-49d8-aaba-ad865900345f",
+      "crop_slug": "pepper",
+      "cultivar": "Habanero",
+      "transplanted_at": "2026-07-16",
+      "first_pick": "2026-08-09",
+      "days": 24,
+      "heat_units": 506,
+      "heat_band": "superhot"
+     },
+     {
+      "planting_id": "e22681d8-0b93-45e8-9b81-6092cc987f4a",
+      "crop_slug": "pepper",
+      "cultivar": "Cubanelle",
+      "transplanted_at": "2026-07-01",
+      "first_pick": "2026-08-06",
+      "days": 36,
+      "heat_units": 792,
+      "heat_band": "medium"
+     },
+     {
+      "planting_id": "6b43cdfc-ea0a-4d1d-86c3-58d4acf9d7ba",
+      "crop_slug": "pepper",
+      "cultivar": "Capeliente",
+      "transplanted_at": "2026-07-01",
+      "first_pick": "2026-08-07",
+      "days": 37,
+      "heat_units": 818,
+      "heat_band": "medium"
+     },
+     {
+      "planting_id": "1c59f943-cc60-4f30-9a27-5a84468c0aeb",
+      "crop_slug": "pepper",
+      "cultivar": "Cayenne Blend",
+      "transplanted_at": "2026-06-23",
+      "first_pick": "2026-08-02",
+      "days": 40,
+      "heat_units": 859,
+      "heat_band": "very_hot"
+     },
+     {
+      "planting_id": "504144f1-83b0-4b36-8e88-d8e84c617e62",
+      "crop_slug": "pepper",
+      "cultivar": "Kori Sitakame",
+      "transplanted_at": "2026-06-16",
+      "first_pick": "2026-07-30",
+      "days": 44,
+      "heat_units": 910,
+      "heat_band": "hot"
+     },
+     {
+      "planting_id": "b0480c3d-08bd-4e95-b3f6-f533eddaefe9",
+      "crop_slug": "pepper",
+      "cultivar": "Cherry Hot",
+      "transplanted_at": "2026-06-12",
+      "first_pick": "2026-07-26",
+      "days": 44,
+      "heat_units": 924,
+      "heat_band": "medium"
+     },
+     {
+      "planting_id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
+      "crop_slug": "pepper",
+      "cultivar": "Piri Piri",
+      "transplanted_at": "2026-06-19",
+      "first_pick": "2026-08-05",
+      "days": 47,
+      "heat_units": 992,
+      "heat_band": "very_hot"
+     },
+     {
+      "planting_id": "e730d592-a9ca-4233-89d3-92f5e534fdeb",
+      "crop_slug": "pepper",
+      "cultivar": "Pumpkin Jalapeno",
+      "transplanted_at": "2026-06-19",
+      "first_pick": "2026-08-09",
+      "days": 51,
+      "heat_units": 1095,
+      "heat_band": "hot"
+     },
+     {
+      "planting_id": "f11b7a72-3d91-4842-9850-b2fccc8746e2",
+      "crop_slug": "pepper",
+      "cultivar": "Anaheim",
+      "transplanted_at": "2026-06-19",
+      "first_pick": "2026-08-12",
+      "days": 54,
+      "heat_units": 1163,
+      "heat_band": "medium"
+     },
+     {
+      "planting_id": "e969fb61-a7fb-46f9-8d2e-2081037f9773",
+      "crop_slug": "pepper",
+      "cultivar": "Gatherer's Gold",
+      "transplanted_at": "2026-06-16",
+      "first_pick": "2026-08-10",
+      "days": 55,
+      "heat_units": 1168,
+      "heat_band": "sweet"
+     },
+     {
+      "planting_id": "718e9fea-a366-4103-9fad-f364b81f1772",
+      "crop_slug": "pepper",
+      "cultivar": "Serrano",
+      "transplanted_at": "2026-06-19",
+      "first_pick": "2026-08-13",
+      "days": 55,
+      "heat_units": 1184,
+      "heat_band": "hot"
+     },
+     {
+      "planting_id": "d0729dda-2879-48ff-9238-a068dbe220b2",
+      "crop_slug": "pepper",
+      "cultivar": "Red Mini Bell",
+      "transplanted_at": "2026-06-16",
+      "first_pick": "2026-08-11",
+      "days": 56,
+      "heat_units": 1188,
+      "heat_band": "sweet"
+     },
+     {
+      "planting_id": "b077b1ed-08b5-4626-b603-ef5b68d4bef3",
+      "crop_slug": "pepper",
+      "cultivar": "Sugar Rush Peach",
+      "transplanted_at": "2026-06-01",
+      "first_pick": "2026-08-01",
+      "days": 61,
+      "heat_units": 1248,
+      "heat_band": "very_hot"
+     },
+     {
+      "planting_id": "9726383b-2d3d-4015-be5f-5b269ac0cb7c",
+      "crop_slug": "pepper",
+      "cultivar": "Sweet Sivri",
+      "transplanted_at": "2026-06-16",
+      "first_pick": "2026-08-14",
+      "days": 59,
+      "heat_units": 1255,
+      "heat_band": "sweet"
+     },
+     {
+      "planting_id": "b83e0a22-71e5-4119-9ef4-c3a481aace06",
+      "crop_slug": "pepper",
+      "cultivar": "Cherry Stuffer (Burpee)",
+      "transplanted_at": "2026-05-24",
+      "first_pick": "2026-07-29",
+      "days": 66,
+      "heat_units": 1282,
+      "heat_band": "mild"
+     },
+     {
+      "planting_id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
+      "crop_slug": "pepper",
+      "cultivar": "Ristra Cayenne II",
+      "transplanted_at": "2026-05-23",
+      "first_pick": "2026-07-30",
+      "days": 68,
+      "heat_units": 1305,
+      "heat_band": "hot"
+     },
+     {
+      "planting_id": "90fbbdac-99c2-4cff-9b97-3143a9821b3a",
+      "crop_slug": "pepper",
+      "cultivar": "Armageddon F1",
+      "transplanted_at": "2026-05-23",
+      "first_pick": "2026-08-05",
+      "days": 74,
+      "heat_units": 1435,
+      "heat_band": "superhot"
+     },
+     {
+      "planting_id": "2b1f722f-8f3a-4803-b8c5-cabe16b479e6",
+      "crop_slug": "pepper",
+      "cultivar": "Gong Bao (Kung Pao)",
+      "transplanted_at": "2026-06-19",
+      "first_pick": "2026-09-02",
+      "days": 75,
+      "heat_units": 1542,
+      "heat_band": "hot"
+     },
+     {
+      "planting_id": "78b8be30-32e4-428a-b52d-98f1a3bc75c5",
+      "crop_slug": "pepper",
+      "cultivar": "Jamaican Yellow Mushroom",
+      "transplanted_at": "2026-05-28",
+      "first_pick": "2026-08-14",
+      "days": 78,
+      "heat_units": 1592,
+      "heat_band": "very_hot"
+     },
+     {
+      "planting_id": "71eb286b-bee9-4593-9955-c2b1f6e9cc79",
+      "crop_slug": "pepper",
+      "cultivar": "Sweet Orange Pepper (Unknown)",
+      "transplanted_at": "2026-06-12",
+      "first_pick": "2026-09-04",
+      "days": 84,
+      "heat_units": 1717,
+      "heat_band": "sweet"
+     },
+     {
+      "planting_id": "1b9e2ab1-e947-47b5-b993-9f437b5bd2d1",
+      "crop_slug": "pepper",
+      "cultivar": "King of the North",
+      "transplanted_at": "2026-06-23",
+      "first_pick": "2026-09-20",
+      "days": 89,
+      "heat_units": 1745,
+      "heat_band": "sweet"
+     },
+     {
+      "planting_id": "5df40797-5b49-48ab-b1bc-9deb35c2e782",
+      "crop_slug": "tomato",
+      "cultivar": "Super Sweet 100",
+      "transplanted_at": "2026-05-28",
+      "first_pick": "2026-07-12",
+      "days": 45,
+      "heat_units": 875,
+      "heat_band": null
+     },
+     {
+      "planting_id": "15bbfb67-de07-4120-ac7c-45777b357a0f",
+      "crop_slug": "tomato",
+      "cultivar": "Celebrity",
+      "transplanted_at": "2026-06-14",
+      "first_pick": "2026-07-28",
+      "days": 44,
+      "heat_units": 910,
+      "heat_band": null
+     },
+     {
+      "planting_id": "582d7ea9-7fde-48ef-a3d4-5c230ad0ba05",
+      "crop_slug": "tomato",
+      "cultivar": "Oregon Spring",
+      "transplanted_at": "2026-06-07",
+      "first_pick": "2026-07-20",
+      "days": 43,
+      "heat_units": 916,
+      "heat_band": null
+     },
+     {
+      "planting_id": "fc9b6ee9-0dd4-41f7-a1db-157c30c93a4c",
+      "crop_slug": "tomato",
+      "cultivar": "Big Boy",
+      "transplanted_at": "2026-06-23",
+      "first_pick": "2026-08-05",
+      "days": 43,
+      "heat_units": 927,
+      "heat_band": null
+     },
+     {
+      "planting_id": "c9c42264-1293-46a7-9bbc-bb391626d42c",
+      "crop_slug": "tomato",
+      "cultivar": "Sub Arctic Plenty",
+      "transplanted_at": "2026-06-07",
+      "first_pick": "2026-07-23",
+      "days": 46,
+      "heat_units": 975,
+      "heat_band": null
+     },
+     {
+      "planting_id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
+      "crop_slug": "tomato",
+      "cultivar": "Sunray",
+      "transplanted_at": "2026-06-07",
+      "first_pick": "2026-07-27",
+      "days": 50,
+      "heat_units": 1046,
+      "heat_band": null
+     },
+     {
+      "planting_id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
+      "crop_slug": "tomato",
+      "cultivar": "Ukrainian Purple",
+      "transplanted_at": "2026-06-07",
+      "first_pick": "2026-07-27",
+      "days": 50,
+      "heat_units": 1046,
+      "heat_band": null
+     },
+     {
+      "planting_id": "51facc08-0635-4f86-907f-b935ba6d782b",
+      "crop_slug": "tomato",
+      "cultivar": "Manitoba",
+      "transplanted_at": "2026-06-09",
+      "first_pick": "2026-08-01",
+      "days": 53,
+      "heat_units": 1109,
+      "heat_band": null
+     },
+     {
+      "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
+      "crop_slug": "tomato",
+      "cultivar": "Black Cherry",
+      "transplanted_at": "2026-05-28",
+      "first_pick": "2026-07-25",
+      "days": 58,
+      "heat_units": 1151,
+      "heat_band": null
+     },
+     {
+      "planting_id": "33c8c880-7e86-43fa-b083-0b9a36377c6a",
+      "crop_slug": "tomato",
+      "cultivar": "Delicious",
+      "transplanted_at": "2026-06-14",
+      "first_pick": "2026-08-09",
+      "days": 56,
+      "heat_units": 1181,
+      "heat_band": null
+     },
+     {
+      "planting_id": "37368072-8ce8-44a3-b40a-767993dd39b1",
+      "crop_slug": "tomato",
+      "cultivar": "1884",
+      "transplanted_at": "2026-06-07",
+      "first_pick": "2026-08-06",
+      "days": 60,
+      "heat_units": 1257,
+      "heat_band": null
+     },
+     {
+      "planting_id": "7146d741-4038-43b0-a4d8-13b5991d8614",
+      "crop_slug": "tomato",
+      "cultivar": "Granadero",
+      "transplanted_at": "2026-05-28",
+      "first_pick": "2026-07-31",
+      "days": 64,
+      "heat_units": 1266,
+      "heat_band": null
+     },
+     {
+      "planting_id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
+      "crop_slug": "tomato",
+      "cultivar": "Rosa Sicilian",
+      "transplanted_at": "2026-06-07",
+      "first_pick": "2026-08-07",
+      "days": 61,
+      "heat_units": 1283,
+      "heat_band": null
+     },
+     {
+      "planting_id": "eb366a47-b2bb-4a69-8ca3-b97bbe00ab8c",
+      "crop_slug": "tomato",
+      "cultivar": "Jet Star",
+      "transplanted_at": "2026-06-14",
+      "first_pick": "2026-08-16",
+      "days": 63,
+      "heat_units": 1327,
+      "heat_band": null
+     },
+     {
+      "planting_id": "5e073d53-a999-4bbd-9e64-42342678770c",
+      "crop_slug": "tomato",
+      "cultivar": "Speckled Roman",
+      "transplanted_at": "2026-05-28",
+      "first_pick": "2026-08-07",
+      "days": 71,
+      "heat_units": 1425,
+      "heat_band": null
+     },
+     {
+      "planting_id": "bae05057-409d-453b-addc-a218bef4f99d",
+      "crop_slug": "tomato",
+      "cultivar": "Cherokee Green",
+      "transplanted_at": "2026-06-07",
+      "first_pick": "2026-08-13",
+      "days": 67,
+      "heat_units": 1427,
+      "heat_band": null
+     },
+     {
+      "planting_id": "a0a62ea6-dbbe-4775-85bc-c61c41db4fdf",
+      "crop_slug": "tomato",
+      "cultivar": "Del Tonet",
+      "transplanted_at": "2026-06-07",
+      "first_pick": "2026-08-14",
+      "days": 68,
+      "heat_units": 1450,
+      "heat_band": null
+     }
+    ]
+   }
+  },
+  "heat_ladder": {
+   "section": "heat_ladder",
+   "version": 1,
+   "generatedAt": "2026-09-29T20:19:37.788Z",
+   "meta": {
+    "limits": [
+     {
+      "code": "heat_is_catalogue_ceiling"
+     },
+     {
+      "code": "single_plant_only"
+     }
+    ]
+   },
+   "series": {
+    "bands": [
+     {
+      "band": "sweet",
+      "label": "Sweet",
+      "plantings": 12,
+      "plants": 17,
+      "pods": 41,
+      "lb": 2.332
+     },
+     {
+      "band": "mild",
+      "label": "Mild",
+      "plantings": 6,
+      "plants": 7,
+      "pods": 84,
+      "lb": 3.289
+     },
+     {
+      "band": "medium",
+      "label": "Medium",
+      "plantings": 12,
+      "plants": 66,
+      "pods": 62,
+      "lb": 3.785
+     },
+     {
+      "band": "hot",
+      "label": "Hot",
+      "plantings": 10,
+      "plants": 36,
+      "pods": 56,
+      "lb": 3.135
+     },
+     {
+      "band": "very_hot",
+      "label": "Very hot",
+      "plantings": 12,
+      "plants": 29,
+      "pods": 186,
+      "lb": 2.55
+     },
+     {
+      "band": "superhot",
+      "label": "Superhot",
+      "plantings": 6,
+      "plants": 64,
+      "pods": 57,
+      "lb": 0.514
+     }
+    ],
+    "best": [
+     {
+      "band": "sweet",
+      "planting_id": "d0729dda-2879-48ff-9238-a068dbe220b2",
+      "cultivar": "Red Mini Bell",
+      "pods": 18,
+      "lb": 0.445,
+      "rank_in_band": 1,
+      "scoville_max": 0
+     },
+     {
+      "band": "sweet",
+      "planting_id": "9726383b-2d3d-4015-be5f-5b269ac0cb7c",
+      "cultivar": "Sweet Sivri",
+      "pods": 9,
+      "lb": 0.273,
+      "rank_in_band": 2,
+      "scoville_max": 0
+     },
+     {
+      "band": "sweet",
+      "planting_id": "e969fb61-a7fb-46f9-8d2e-2081037f9773",
+      "cultivar": "Gatherer's Gold",
+      "pods": 8,
+      "lb": 1.045,
+      "rank_in_band": 3,
+      "scoville_max": 0
+     },
+     {
+      "band": "sweet",
+      "planting_id": "71eb286b-bee9-4593-9955-c2b1f6e9cc79",
+      "cultivar": "Sweet Orange Pepper (Unknown)",
+      "pods": 2,
+      "lb": 0.137,
+      "rank_in_band": 4,
+      "scoville_max": 0
+     },
+     {
+      "band": "sweet",
+      "planting_id": "1b9e2ab1-e947-47b5-b993-9f437b5bd2d1",
+      "cultivar": "King of the North",
+      "pods": 1,
+      "lb": 0.251,
+      "rank_in_band": 5,
+      "scoville_max": 0
+     },
+     {
+      "band": "sweet",
+      "planting_id": "6cb08d0d-a664-437f-a4db-e581984f758f",
+      "cultivar": "Emerald Green",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 6,
+      "scoville_max": 0
+     },
+     {
+      "band": "sweet",
+      "planting_id": "26afb9e8-56e8-4e67-80b9-61138dccf357",
+      "cultivar": "Orange Sun",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 7,
+      "scoville_max": 0
+     },
+     {
+      "band": "sweet",
+      "planting_id": "ffac4728-f687-4327-b431-492d88f04858",
+      "cultivar": "Quadrato d'Asti Rosso",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 8,
+      "scoville_max": 0
+     },
+     {
+      "band": "sweet",
+      "planting_id": "e3888c50-e765-4a96-a3e5-23732767c48f",
+      "cultivar": "Sweet Chocolate",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 9,
+      "scoville_max": 0
+     },
+     {
+      "band": "mild",
+      "planting_id": "d3c66eaf-caf8-4236-86d3-7da6cbfd3bf4",
+      "cultivar": "Dragon Roll",
+      "pods": 58,
+      "lb": 1.506,
+      "rank_in_band": 1,
+      "scoville_max": 200
+     },
+     {
+      "band": "mild",
+      "planting_id": "e7bccf4b-9c28-45e1-9b4c-e4f31c0feae5",
+      "cultivar": "Pick-N-Pop Yellow",
+      "pods": 18,
+      "lb": 1.259,
+      "rank_in_band": 2,
+      "scoville_max": 100
+     },
+     {
+      "band": "mild",
+      "planting_id": "b83e0a22-71e5-4119-9ef4-c3a481aace06",
+      "cultivar": "Cherry Stuffer (Burpee)",
+      "pods": 8,
+      "lb": 0.525,
+      "rank_in_band": 3,
+      "scoville_max": 500
+     },
+     {
+      "band": "mild",
+      "planting_id": "d79ba37f-0db8-4ea4-944e-a29dc57b4834",
+      "cultivar": "Katana F1 (Shishito)",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 4,
+      "scoville_max": 200
+     },
+     {
+      "band": "mild",
+      "planting_id": "a0448c1f-9f7d-4fd1-ae27-8ed3f2d2755a",
+      "cultivar": "Shishito",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 5,
+      "scoville_max": 200
+     },
+     {
+      "band": "medium",
+      "planting_id": "f11b7a72-3d91-4842-9850-b2fccc8746e2",
+      "cultivar": "Anaheim",
+      "pods": 4,
+      "lb": 0.392,
+      "rank_in_band": 1,
+      "scoville_max": 2500
+     },
+     {
+      "band": "medium",
+      "planting_id": "d6992544-bfc5-4bc1-ab07-9a6e850e3469",
+      "cultivar": "New Mexico (Hatch-type)",
+      "pods": 2,
+      "lb": 0.159,
+      "rank_in_band": 2,
+      "scoville_max": 8000
+     },
+     {
+      "band": "medium",
+      "planting_id": "6ada8f32-fe3d-42a8-b4f8-1ea1cf9ea19d",
+      "cultivar": "Biquinho Yellow F1",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 3,
+      "scoville_max": 1000
+     },
+     {
+      "band": "medium",
+      "planting_id": "0cfd64dc-7aed-4780-bee1-086f87d5632f",
+      "cultivar": "Santa Fe Grande",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 4,
+      "scoville_max": 8000
+     },
+     {
+      "band": "hot",
+      "planting_id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
+      "cultivar": "Ristra Cayenne II",
+      "pods": 16,
+      "lb": 2.396,
+      "rank_in_band": 1,
+      "scoville_max": 35000
+     },
+     {
+      "band": "hot",
+      "planting_id": "f04b9632-d92d-444f-9aa3-0dbd2ee9e64e",
+      "cultivar": "Hot Portugal",
+      "pods": 6,
+      "lb": 0.185,
+      "rank_in_band": 2,
+      "scoville_max": 30000
+     },
+     {
+      "band": "hot",
+      "planting_id": "2b1f722f-8f3a-4803-b8c5-cabe16b479e6",
+      "cultivar": "Gong Bao (Kung Pao)",
+      "pods": 6,
+      "lb": 0.06,
+      "rank_in_band": 3,
+      "scoville_max": 12000
+     },
+     {
+      "band": "hot",
+      "planting_id": "e730d592-a9ca-4233-89d3-92f5e534fdeb",
+      "cultivar": "Pumpkin Jalapeno",
+      "pods": 5,
+      "lb": 0.02,
+      "rank_in_band": 4,
+      "scoville_max": 25000
+     },
+     {
+      "band": "hot",
+      "planting_id": "23a06ab3-8467-4415-a001-bab2220a6556",
+      "cultivar": "Purple Tiger",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 5,
+      "scoville_max": 10000
+     },
+     {
+      "band": "very_hot",
+      "planting_id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
+      "cultivar": "Piri Piri",
+      "pods": 56,
+      "lb": 0.517,
+      "rank_in_band": 1,
+      "scoville_max": 175000
+     },
+     {
+      "band": "very_hot",
+      "planting_id": "78b8be30-32e4-428a-b52d-98f1a3bc75c5",
+      "cultivar": "Jamaican Yellow Mushroom",
+      "pods": 16,
+      "lb": 0.25,
+      "rank_in_band": 2,
+      "scoville_max": 200000
+     },
+     {
+      "band": "very_hot",
+      "planting_id": "f1a7690e-394d-4828-a6c7-aa36721caa66",
+      "cultivar": "Thai Dragon",
+      "pods": 9,
+      "lb": 0.057,
+      "rank_in_band": 3,
+      "scoville_max": 100000
+     },
+     {
+      "band": "very_hot",
+      "planting_id": "8246960b-3512-4e22-a53e-d32b24e7705d",
+      "cultivar": "Piquin",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 4,
+      "scoville_max": 60000
+     },
+     {
+      "band": "superhot",
+      "planting_id": "90fbbdac-99c2-4cff-9b97-3143a9821b3a",
+      "cultivar": "Armageddon F1",
+      "pods": 9,
+      "lb": 0.159,
+      "rank_in_band": 1,
+      "scoville_max": 1300000
+     },
+     {
+      "band": "superhot",
+      "planting_id": "ca259a01-6135-4661-8b8f-e313c73e7cf6",
+      "cultivar": "Devil's Tongue",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 2,
+      "scoville_max": 325000
+     },
+     {
+      "band": "superhot",
+      "planting_id": "917af9d7-4f1a-474c-8283-e41787fdfeb0",
+      "cultivar": "Palmetto Punch",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 3,
+      "scoville_max": 350000
+     },
+     {
+      "band": "superhot",
+      "planting_id": "5d031b08-fa16-4815-bf25-23804d051452",
+      "cultivar": "Scotch Bonnet",
+      "pods": 0,
+      "lb": 0,
+      "rank_in_band": 4,
+      "scoville_max": 350000
+     }
+    ]
+   }
+  },
+  "tomato_keep": {
+   "section": "tomato_keep",
+   "version": 1,
+   "generatedAt": "2026-09-29T20:19:37.788Z",
+   "meta": {
+    "median_lb": 2.05,
+    "limits": [
+     {
+      "code": "single_plant_only"
+     },
+     {
+      "code": "measured_share_min",
+      "share": 0.7
+     }
+    ]
+   },
+   "series": {
+    "rows": [
+     {
+      "planting_id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
+      "cultivar": "Ukrainian Purple",
+      "lb": 9.364,
+      "fruit": 46,
+      "g_per_fruit": 92,
+      "container_size": "10 gal",
+      "measured_share": 0.86,
+      "x_median": 4.57,
+      "verdict": "grow_again",
+      "flags": []
+     },
+     {
+      "planting_id": "bae05057-409d-453b-addc-a218bef4f99d",
+      "cultivar": "Cherokee Green",
+      "lb": 6.129,
+      "fruit": 14,
+      "g_per_fruit": 199,
+      "container_size": "10 gal",
+      "measured_share": 1,
+      "x_median": 2.99,
+      "verdict": "grow_again",
+      "flags": []
+     },
+     {
+      "planting_id": "37368072-8ce8-44a3-b40a-767993dd39b1",
+      "cultivar": "1884",
+      "lb": 5.87,
+      "fruit": 13,
+      "g_per_fruit": 205,
+      "container_size": "10 gal",
+      "measured_share": 0.85,
+      "x_median": 2.86,
+      "verdict": "grow_again",
+      "flags": []
+     },
+     {
+      "planting_id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
+      "cultivar": "Rosa Sicilian",
+      "lb": 5.551,
+      "fruit": 32,
+      "g_per_fruit": 79,
+      "container_size": "10 gal",
+      "measured_share": 1,
+      "x_median": 2.71,
+      "verdict": "grow_again",
+      "flags": []
+     },
+     {
+      "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
+      "cultivar": "Black Cherry",
+      "lb": 4.245,
+      "fruit": 153,
+      "g_per_fruit": 13,
+      "container_size": "5 gal",
+      "measured_share": 0.95,
+      "x_median": 2.07,
+      "verdict": "grow_again",
+      "flags": []
+     },
+     {
+      "planting_id": "a0a62ea6-dbbe-4775-85bc-c61c41db4fdf",
+      "cultivar": "Del Tonet",
+      "lb": 3.338,
+      "fruit": 32,
+      "g_per_fruit": 47,
+      "container_size": "10 gal",
+      "measured_share": 1,
+      "x_median": 1.63,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "5e073d53-a999-4bbd-9e64-42342678770c",
+      "cultivar": "Speckled Roman",
+      "lb": 3.236,
+      "fruit": 12,
+      "g_per_fruit": 122,
+      "container_size": "10 gal",
+      "measured_share": 1,
+      "x_median": 1.58,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
+      "cultivar": "Sunray",
+      "lb": 2.765,
+      "fruit": 11,
+      "g_per_fruit": 114,
+      "container_size": "10 gal",
+      "measured_share": 0.79,
+      "x_median": 1.35,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "5df40797-5b49-48ab-b1bc-9deb35c2e782",
+      "cultivar": "Super Sweet 100",
+      "lb": 2.45,
+      "fruit": 173,
+      "g_per_fruit": 6,
+      "container_size": "10 gal",
+      "measured_share": 0.79,
+      "x_median": 1.2,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "ee3fd4c5-5fa3-4202-8044-2c2d19e4835e",
+      "cultivar": "Czech's Bush",
+      "lb": 2.395,
+      "fruit": 26,
+      "g_per_fruit": 42,
+      "container_size": "10 gal",
+      "measured_share": 0.71,
+      "x_median": 1.17,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "582d7ea9-7fde-48ef-a3d4-5c230ad0ba05",
+      "cultivar": "Oregon Spring",
+      "lb": 2.329,
+      "fruit": 18,
+      "g_per_fruit": 59,
+      "container_size": "10 gal",
+      "measured_share": 0.79,
+      "x_median": 1.14,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "9274e985-1cfe-4470-ab5a-424f3e6bdcd2",
+      "cultivar": "Floradade",
+      "lb": 2.11,
+      "fruit": 11,
+      "g_per_fruit": 87,
+      "container_size": "5 gal",
+      "measured_share": 1,
+      "x_median": 1.03,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "0f842b23-f70e-4f47-9c74-57eb1bd1cf6c",
+      "cultivar": "Tie-Dye",
+      "lb": 1.991,
+      "fruit": 3,
+      "g_per_fruit": 301,
+      "container_size": "10 gal",
+      "measured_share": 1,
+      "x_median": 0.97,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "7146d741-4038-43b0-a4d8-13b5991d8614",
+      "cultivar": "Granadero",
+      "lb": 1.94,
+      "fruit": 13,
+      "g_per_fruit": 68,
+      "container_size": "10 gal",
+      "measured_share": 0.73,
+      "x_median": 0.95,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "cdf51d91-720b-46b8-8554-617cd9bc9b27",
+      "cultivar": "Margaret Curtain",
+      "lb": 1.858,
+      "fruit": 6,
+      "g_per_fruit": 141,
+      "container_size": "10 gal",
+      "measured_share": 1,
+      "x_median": 0.91,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "e4f85172-c10c-42cc-849c-ae48821822b0",
+      "cultivar": "Yellow Pear",
+      "lb": 1.784,
+      "fruit": 60,
+      "g_per_fruit": 13,
+      "container_size": "5 gal",
+      "measured_share": 1,
+      "x_median": 0.87,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "8ef2c1fb-87f5-4611-ac20-c20fc5b6d601",
+      "cultivar": "Sun Sugar",
+      "lb": 1.761,
+      "fruit": 119,
+      "g_per_fruit": 7,
+      "container_size": "5 gal",
+      "measured_share": 1,
+      "x_median": 0.86,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "8d3127e1-771e-49d5-9322-be5147091689",
+      "cultivar": "New Yorker",
+      "lb": 1.523,
+      "fruit": 10,
+      "g_per_fruit": 69,
+      "container_size": "5 gal",
+      "measured_share": 1,
+      "x_median": 0.74,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "feaab5a4-e57e-4343-9c9d-f0a7ff2d808a",
+      "cultivar": "Banana Creme",
+      "lb": 1.453,
+      "fruit": 17,
+      "g_per_fruit": 39,
+      "container_size": "5 gal",
+      "measured_share": 1,
+      "x_median": 0.71,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "c57c3889-c5b7-406d-b3c4-fa46b9a791a8",
+      "cultivar": "Dester",
+      "lb": 1.177,
+      "fruit": 3,
+      "g_per_fruit": 178,
+      "container_size": "5 gal",
+      "measured_share": 1,
+      "x_median": 0.57,
+      "verdict": "fine",
+      "flags": []
+     },
+     {
+      "planting_id": "d9836376-7f0f-4f15-87ef-0e253f4ab512",
+      "cultivar": "San Marzano",
+      "lb": 0.82,
+      "fruit": 13,
+      "g_per_fruit": 29,
+      "container_size": "5 gal",
+      "measured_share": 1,
+      "x_median": 0.4,
+      "verdict": "rethink",
+      "flags": [
+       "late_aug"
+      ]
+     },
+     {
+      "planting_id": "e210c3a7-314d-4e12-b9aa-23eb930649e2",
+      "cultivar": "Stupice",
+      "lb": 0.765,
+      "fruit": 17,
+      "g_per_fruit": 20,
+      "container_size": "5 gal",
+      "measured_share": 0.8,
+      "x_median": 0.37,
+      "verdict": "rethink",
+      "flags": []
+     },
+     {
+      "planting_id": "cc7d0fbf-aa0e-4770-94de-ea4e6075165c",
+      "cultivar": "Thessaloniki",
+      "lb": 0.481,
+      "fruit": 3,
+      "g_per_fruit": 73,
+      "container_size": "5 gal",
+      "measured_share": 1,
+      "x_median": 0.23,
+      "verdict": "rethink",
+      "flags": []
+     },
+     {
+      "planting_id": "bd2c04f2-fc20-49b4-a0b6-0087a844251b",
+      "cultivar": "Super Sweet 100",
+      "lb": 0.205,
+      "fruit": 19,
+      "g_per_fruit": 5,
+      "container_size": "5 gal",
+      "measured_share": 1,
+      "x_median": 0.1,
+      "verdict": "rethink",
+      "flags": [
+       "late_aug"
+      ]
+     }
+    ]
+   }
+  },
+  "longest": {
+   "section": "longest",
+   "version": 1,
+   "generatedAt": "2026-09-29T20:19:37.788Z",
+   "meta": {
+    "last_pick": "2026-09-28",
+    "limits": [
+     {
+      "code": "so_far"
+     }
+    ]
+   },
+   "series": {
+    "rows": [
+     {
+      "planting_id": "5df40797-5b49-48ab-b1bc-9deb35c2e782",
+      "cultivar": "Super Sweet 100",
+      "crop_name": "Tomato",
+      "plants": 1,
+      "first_pick": "2026-07-12",
+      "last_pick": "2026-09-27",
+      "window_days": 78,
+      "pick_days": [
+       "2026-07-12",
+       "2026-07-14",
+       "2026-07-19",
+       "2026-07-20",
+       "2026-07-22",
+       "2026-07-24",
+       "2026-07-25",
+       "2026-07-26",
+       "2026-07-28",
+       "2026-07-30",
+       "2026-07-31",
+       "2026-08-02",
+       "2026-08-03",
+       "2026-08-05",
+       "2026-08-07",
+       "2026-08-08",
+       "2026-08-11",
+       "2026-08-12",
+       "2026-08-14",
+       "2026-08-17",
+       "2026-08-18",
+       "2026-08-19",
+       "2026-08-20",
+       "2026-08-22",
+       "2026-08-23",
+       "2026-08-24",
+       "2026-08-25",
+       "2026-08-26",
+       "2026-08-27",
+       "2026-08-28",
+       "2026-08-29",
+       "2026-08-30",
+       "2026-08-31",
+       "2026-09-01",
+       "2026-09-02",
+       "2026-09-03",
+       "2026-09-04",
+       "2026-09-05",
+       "2026-09-07",
+       "2026-09-08",
+       "2026-09-09",
+       "2026-09-11",
+       "2026-09-12",
+       "2026-09-13",
+       "2026-09-15",
+       "2026-09-16",
+       "2026-09-19",
+       "2026-09-22",
+       "2026-09-27"
+      ],
+      "still_picking": true,
+      "lb": 2.45,
+      "lb_per_plant_week": 0.22
+     },
+     {
+      "planting_id": "4e589c00-e9b7-4f05-9ad4-ceb157c69be3",
+      "cultivar": "Cherry",
+      "crop_name": "Tomato",
+      "plants": 2,
+      "first_pick": "2026-07-11",
+      "last_pick": "2026-09-26",
+      "window_days": 78,
+      "pick_days": [
+       "2026-07-11",
+       "2026-07-12",
+       "2026-07-14",
+       "2026-07-24",
+       "2026-07-27",
+       "2026-08-03",
+       "2026-08-05",
+       "2026-08-13",
+       "2026-08-16",
+       "2026-08-19",
+       "2026-08-20",
+       "2026-08-25",
+       "2026-08-27",
+       "2026-08-28",
+       "2026-08-29",
+       "2026-09-01",
+       "2026-09-05",
+       "2026-09-15",
+       "2026-09-16",
+       "2026-09-17",
+       "2026-09-22",
+       "2026-09-24",
+       "2026-09-25",
+       "2026-09-26"
+      ],
+      "still_picking": true,
+      "lb": 2.18,
+      "lb_per_plant_week": 0.098
+     },
+     {
+      "planting_id": "faa55a9f-8062-4d5d-a547-b12a37b4b1e3",
+      "cultivar": "Suyo Long",
+      "crop_name": "Cucumber",
+      "plants": 5,
+      "first_pick": "2026-07-14",
+      "last_pick": "2026-09-28",
+      "window_days": 77,
+      "pick_days": [
+       "2026-07-14",
+       "2026-07-16",
+       "2026-07-19",
+       "2026-07-21",
+       "2026-07-22",
+       "2026-07-24",
+       "2026-07-25",
+       "2026-07-26",
+       "2026-07-27",
+       "2026-07-28",
+       "2026-07-29",
+       "2026-07-31",
+       "2026-08-01",
+       "2026-08-02",
+       "2026-08-04",
+       "2026-08-05",
+       "2026-08-08",
+       "2026-08-09",
+       "2026-08-10",
+       "2026-08-11",
+       "2026-08-12",
+       "2026-08-13",
+       "2026-08-14",
+       "2026-08-17",
+       "2026-08-18",
+       "2026-08-19",
+       "2026-08-20",
+       "2026-08-22",
+       "2026-08-24",
+       "2026-08-26",
+       "2026-08-27",
+       "2026-08-28",
+       "2026-08-29",
+       "2026-08-30",
+       "2026-09-01",
+       "2026-09-03",
+       "2026-09-04",
+       "2026-09-05",
+       "2026-09-07",
+       "2026-09-08",
+       "2026-09-09",
+       "2026-09-10",
+       "2026-09-11",
+       "2026-09-14",
+       "2026-09-15",
+       "2026-09-16",
+       "2026-09-17",
+       "2026-09-19",
+       "2026-09-21",
+       "2026-09-22",
+       "2026-09-23",
+       "2026-09-25",
+       "2026-09-26",
+       "2026-09-28"
+      ],
+      "still_picking": true,
+      "lb": 48.442,
+      "lb_per_plant_week": 0.881
+     },
+     {
+      "planting_id": "15fbbc7f-222f-4232-a186-9948526da67a",
+      "cultivar": "Pineapple Tomatillo",
+      "crop_name": "Tomatillo",
+      "plants": 2,
+      "first_pick": "2026-07-14",
+      "last_pick": "2026-09-28",
+      "window_days": 77,
+      "pick_days": [
+       "2026-07-14",
+       "2026-07-15",
+       "2026-07-20",
+       "2026-07-21",
+       "2026-07-22",
+       "2026-07-25",
+       "2026-07-26",
+       "2026-07-27",
+       "2026-07-28",
+       "2026-07-29",
+       "2026-07-30",
+       "2026-07-31",
+       "2026-08-02",
+       "2026-08-03",
+       "2026-08-04",
+       "2026-08-05",
+       "2026-08-06",
+       "2026-08-07",
+       "2026-08-08",
+       "2026-08-09",
+       "2026-08-10",
+       "2026-08-11",
+       "2026-08-12",
+       "2026-08-13",
+       "2026-08-14",
+       "2026-08-15",
+       "2026-08-16",
+       "2026-08-17",
+       "2026-08-18",
+       "2026-08-19",
+       "2026-08-20",
+       "2026-08-21",
+       "2026-08-22",
+       "2026-08-23",
+       "2026-08-24",
+       "2026-08-25",
+       "2026-08-26",
+       "2026-08-27",
+       "2026-08-28",
+       "2026-08-29",
+       "2026-08-30",
+       "2026-08-31",
+       "2026-09-01",
+       "2026-09-02",
+       "2026-09-03",
+       "2026-09-04",
+       "2026-09-05",
+       "2026-09-06",
+       "2026-09-08",
+       "2026-09-09",
+       "2026-09-10",
+       "2026-09-11",
+       "2026-09-13",
+       "2026-09-14",
+       "2026-09-15",
+       "2026-09-16",
+       "2026-09-17",
+       "2026-09-19",
+       "2026-09-20",
+       "2026-09-21",
+       "2026-09-22",
+       "2026-09-23",
+       "2026-09-24",
+       "2026-09-25",
+       "2026-09-26",
+       "2026-09-27",
+       "2026-09-28"
+      ],
+      "still_picking": true,
+      "lb": 1.731,
+      "lb_per_plant_week": 0.079
+     },
+     {
+      "planting_id": "937c760e-3093-4a30-a6bb-48baebbb3ab2",
+      "cultivar": "Chili Red",
+      "crop_name": "Pepper",
+      "plants": 3,
+      "first_pick": "2026-07-16",
+      "last_pick": "2026-09-28",
+      "window_days": 75,
+      "pick_days": [
+       "2026-07-16",
+       "2026-07-25",
+       "2026-07-26",
+       "2026-07-27",
+       "2026-07-29",
+       "2026-07-30",
+       "2026-08-02",
+       "2026-08-06",
+       "2026-08-11",
+       "2026-08-15",
+       "2026-08-17",
+       "2026-08-18",
+       "2026-08-23",
+       "2026-08-25",
+       "2026-08-29",
+       "2026-09-08",
+       "2026-09-11",
+       "2026-09-13",
+       "2026-09-15",
+       "2026-09-17",
+       "2026-09-19",
+       "2026-09-20",
+       "2026-09-23",
+       "2026-09-26",
+       "2026-09-27",
+       "2026-09-28"
+      ],
+      "still_picking": true,
+      "lb": 0.688,
+      "lb_per_plant_week": 0.021
+     },
+     {
+      "planting_id": "fa0502b2-e5b4-4c24-9dd3-02cc89d45b30",
+      "cultivar": "Zephyr",
+      "crop_name": "Summer Squash",
+      "plants": 1,
+      "first_pick": "2026-07-11",
+      "last_pick": "2026-09-21",
+      "window_days": 73,
+      "pick_days": [
+       "2026-07-11",
+       "2026-07-16",
+       "2026-07-19",
+       "2026-07-23",
+       "2026-07-25",
+       "2026-07-26",
+       "2026-07-31",
+       "2026-08-02",
+       "2026-08-04",
+       "2026-08-05",
+       "2026-08-08",
+       "2026-08-09",
+       "2026-08-10",
+       "2026-08-11",
+       "2026-08-12",
+       "2026-08-13",
+       "2026-08-14",
+       "2026-08-17",
+       "2026-08-18",
+       "2026-08-19",
+       "2026-08-20",
+       "2026-08-21",
+       "2026-08-22",
+       "2026-08-23",
+       "2026-08-25",
+       "2026-08-26",
+       "2026-08-27",
+       "2026-08-28",
+       "2026-08-31",
+       "2026-09-01",
+       "2026-09-03",
+       "2026-09-05",
+       "2026-09-07",
+       "2026-09-08",
+       "2026-09-10",
+       "2026-09-15",
+       "2026-09-19",
+       "2026-09-21"
+      ],
+      "still_picking": false,
+      "lb": 19.974,
+      "lb_per_plant_week": 1.915
+     },
+     {
+      "planting_id": "ee3fd4c5-5fa3-4202-8044-2c2d19e4835e",
+      "cultivar": "Czech's Bush",
+      "crop_name": "Tomato",
+      "plants": 1,
+      "first_pick": "2026-07-19",
+      "last_pick": "2026-09-25",
+      "window_days": 69,
+      "pick_days": [
+       "2026-07-19",
+       "2026-07-20",
+       "2026-08-05",
+       "2026-08-10",
+       "2026-08-12",
+       "2026-08-13",
+       "2026-08-17",
+       "2026-08-24",
+       "2026-08-29",
+       "2026-09-02",
+       "2026-09-08",
+       "2026-09-09",
+       "2026-09-11",
+       "2026-09-13",
+       "2026-09-15",
+       "2026-09-17",
+       "2026-09-25"
+      ],
+      "still_picking": true,
+      "lb": 2.395,
+      "lb_per_plant_week": 0.243
+     },
+     {
+      "planting_id": "5ea70334-6dc7-41cb-98de-94e3a55953b0",
+      "cultivar": "San Marzano Roma",
+      "crop_name": "Tomato",
+      "plants": 3,
+      "first_pick": "2026-07-20",
+      "last_pick": "2026-09-25",
+      "window_days": 68,
+      "pick_days": [
+       "2026-07-20",
+       "2026-07-23",
+       "2026-07-27",
+       "2026-07-30",
+       "2026-07-31",
+       "2026-08-01",
+       "2026-08-02",
+       "2026-08-03",
+       "2026-08-04",
+       "2026-08-05",
+       "2026-08-06",
+       "2026-08-07",
+       "2026-08-08",
+       "2026-08-09",
+       "2026-08-10",
+       "2026-08-11",
+       "2026-08-13",
+       "2026-08-14",
+       "2026-08-15",
+       "2026-08-18",
+       "2026-08-19",
+       "2026-08-22",
+       "2026-08-24",
+       "2026-08-25",
+       "2026-08-26",
+       "2026-08-28",
+       "2026-08-29",
+       "2026-08-30",
+       "2026-09-01",
+       "2026-09-02",
+       "2026-09-05",
+       "2026-09-07",
+       "2026-09-08",
+       "2026-09-11",
+       "2026-09-12",
+       "2026-09-13",
+       "2026-09-14",
+       "2026-09-15",
+       "2026-09-19",
+       "2026-09-23",
+       "2026-09-25"
+      ],
+      "still_picking": true,
+      "lb": 12.088,
+      "lb_per_plant_week": 0.415
+     },
+     {
+      "planting_id": "d71e4421-9c71-4898-b8b0-2a19b42310e3",
+      "cultivar": "Purple blush",
+      "crop_name": "Tomatillo",
+      "plants": 2,
+      "first_pick": "2026-07-22",
+      "last_pick": "2026-09-26",
+      "window_days": 67,
+      "pick_days": [
+       "2026-07-22",
+       "2026-07-24",
+       "2026-07-27",
+       "2026-07-30",
+       "2026-08-06",
+       "2026-08-13",
+       "2026-08-17",
+       "2026-08-19",
+       "2026-08-23",
+       "2026-08-25",
+       "2026-08-27",
+       "2026-08-28",
+       "2026-08-29",
+       "2026-08-30",
+       "2026-09-02",
+       "2026-09-05",
+       "2026-09-08",
+       "2026-09-10",
+       "2026-09-11",
+       "2026-09-14",
+       "2026-09-19",
+       "2026-09-21",
+       "2026-09-23",
+       "2026-09-26"
+      ],
+      "still_picking": true,
+      "lb": 2.472,
+      "lb_per_plant_week": 0.129
+     },
+     {
+      "planting_id": "10b345fc-fbc3-4421-9835-1c4d3a5ab384",
+      "cultivar": "Moskvich Heirloom",
+      "crop_name": "Tomato",
+      "plants": 3,
+      "first_pick": "2026-07-23",
+      "last_pick": "2026-09-26",
+      "window_days": 66,
+      "pick_days": [
+       "2026-07-23",
+       "2026-07-24",
+       "2026-07-25",
+       "2026-07-26",
+       "2026-07-27",
+       "2026-07-29",
+       "2026-07-30",
+       "2026-08-02",
+       "2026-08-03",
+       "2026-08-04",
+       "2026-08-05",
+       "2026-08-06",
+       "2026-08-07",
+       "2026-08-08",
+       "2026-08-09",
+       "2026-08-10",
+       "2026-08-11",
+       "2026-08-12",
+       "2026-08-17",
+       "2026-08-19",
+       "2026-08-26",
+       "2026-08-31",
+       "2026-09-13",
+       "2026-09-15",
+       "2026-09-16",
+       "2026-09-26"
+      ],
+      "still_picking": true,
+      "lb": 20.91,
+      "lb_per_plant_week": 0.739
+     },
+     {
+      "planting_id": "56332090-5bc8-40e9-b3bc-c9a65a3bd9c8",
+      "cultivar": "Cisneros",
+      "crop_name": "Tomatillo",
+      "plants": 2,
+      "first_pick": "2026-07-25",
+      "last_pick": "2026-09-27",
+      "window_days": 65,
+      "pick_days": [
+       "2026-07-25",
+       "2026-07-28",
+       "2026-07-29",
+       "2026-07-30",
+       "2026-08-01",
+       "2026-08-05",
+       "2026-08-07",
+       "2026-08-08",
+       "2026-08-13",
+       "2026-08-14",
+       "2026-08-15",
+       "2026-08-17",
+       "2026-08-19",
+       "2026-08-21",
+       "2026-08-22",
+       "2026-08-24",
+       "2026-08-28",
+       "2026-09-02",
+       "2026-09-03",
+       "2026-09-04",
+       "2026-09-09",
+       "2026-09-10",
+       "2026-09-11",
+       "2026-09-13",
+       "2026-09-15",
+       "2026-09-19",
+       "2026-09-23",
+       "2026-09-27"
+      ],
+      "still_picking": true,
+      "lb": 2.752,
+      "lb_per_plant_week": 0.148
+     },
+     {
+      "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
+      "cultivar": "Black Cherry",
+      "crop_name": "Tomato",
+      "plants": 1,
+      "first_pick": "2026-07-25",
+      "last_pick": "2026-09-25",
+      "window_days": 63,
+      "pick_days": [
+       "2026-07-25",
+       "2026-07-27",
+       "2026-07-30",
+       "2026-07-31",
+       "2026-08-02",
+       "2026-08-03",
+       "2026-08-05",
+       "2026-08-09",
+       "2026-08-10",
+       "2026-08-11",
+       "2026-08-12",
+       "2026-08-13",
+       "2026-08-14",
+       "2026-08-18",
+       "2026-08-19",
+       "2026-08-21",
+       "2026-08-22",
+       "2026-08-23",
+       "2026-08-24",
+       "2026-08-25",
+       "2026-08-26",
+       "2026-08-27",
+       "2026-08-28",
+       "2026-08-29",
+       "2026-08-31",
+       "2026-09-01",
+       "2026-09-02",
+       "2026-09-06",
+       "2026-09-07",
+       "2026-09-08",
+       "2026-09-09",
+       "2026-09-11",
+       "2026-09-12",
+       "2026-09-13",
+       "2026-09-14",
+       "2026-09-15",
+       "2026-09-16",
+       "2026-09-17",
+       "2026-09-19",
+       "2026-09-20",
+       "2026-09-22",
+       "2026-09-23",
+       "2026-09-25"
+      ],
+      "still_picking": true,
+      "lb": 4.245,
+      "lb_per_plant_week": 0.472
+     },
+     {
+      "planting_id": "e7bccf4b-9c28-45e1-9b4c-e4f31c0feae5",
+      "cultivar": "Pick-N-Pop Yellow",
+      "crop_name": "Pepper",
+      "plants": 1,
+      "first_pick": "2026-07-16",
+      "last_pick": "2026-09-15",
+      "window_days": 62,
+      "pick_days": [
+       "2026-07-16",
+       "2026-07-26",
+       "2026-08-01",
+       "2026-08-02",
+       "2026-08-05",
+       "2026-08-12",
+       "2026-08-14",
+       "2026-09-04",
+       "2026-09-08",
+       "2026-09-11",
+       "2026-09-15"
+      ],
+      "still_picking": false,
+      "lb": 1.259,
+      "lb_per_plant_week": 0.142
+     },
+     {
+      "planting_id": "15bbfb67-de07-4120-ac7c-45777b357a0f",
+      "cultivar": "Celebrity",
+      "crop_name": "Tomato",
+      "plants": 5,
+      "first_pick": "2026-07-28",
+      "last_pick": "2026-09-26",
+      "window_days": 61,
+      "pick_days": [
+       "2026-07-28",
+       "2026-07-29",
+       "2026-07-31",
+       "2026-08-02",
+       "2026-08-03",
+       "2026-08-04",
+       "2026-08-05",
+       "2026-08-10",
+       "2026-08-11",
+       "2026-08-17",
+       "2026-08-20",
+       "2026-08-26",
+       "2026-08-27",
+       "2026-08-28",
+       "2026-08-29",
+       "2026-08-31",
+       "2026-09-01",
+       "2026-09-02",
+       "2026-09-03",
+       "2026-09-04",
+       "2026-09-08",
+       "2026-09-15",
+       "2026-09-16",
+       "2026-09-26"
+      ],
+      "still_picking": true,
+      "lb": 7.633,
+      "lb_per_plant_week": 0.175
+     },
+     {
+      "planting_id": "504144f1-83b0-4b36-8e88-d8e84c617e62",
+      "cultivar": "Kori Sitakame",
+      "crop_name": "Pepper",
+      "plants": 1,
+      "first_pick": "2026-07-30",
+      "last_pick": "2026-09-28",
+      "window_days": 61,
+      "pick_days": [
+       "2026-07-30",
+       "2026-08-25",
+       "2026-09-02",
+       "2026-09-07",
+       "2026-09-10",
+       "2026-09-13",
+       "2026-09-21",
+       "2026-09-22",
+       "2026-09-27",
+       "2026-09-28"
+      ],
+      "still_picking": true,
+      "lb": 0.328,
+      "lb_per_plant_week": 0.038
+     }
+    ]
+   }
+  },
+  "sep_size": {
+   "section": "sep_size",
+   "version": 1,
+   "generatedAt": "2026-09-29T20:19:37.788Z",
+   "meta": {
+    "fruit_weighted_ratio": 0.76,
+    "limits": [
+     {
+      "code": "measured_counts_only"
+     },
+     {
+      "code": "min_fruit_per_month",
+      "n": 5
+     }
+    ]
+   },
+   "series": {
+    "rows": [
+     {
+      "cultivar": "Ukrainian Purple",
+      "aug_g": 114,
+      "sep_g": 75,
+      "aug_n": 15,
+      "sep_n": 26,
+      "ratio": 0.66
+     },
+     {
+      "cultivar": "Stupice",
+      "aug_g": 21,
+      "sep_g": 14,
+      "aug_n": 7,
+      "sep_n": 9,
+      "ratio": 0.67
+     },
+     {
+      "cultivar": "Oregon Spring",
+      "aug_g": 64,
+      "sep_g": 44,
+      "aug_n": 9,
+      "sep_n": 6,
+      "ratio": 0.68
+     },
+     {
+      "cultivar": "Celebrity",
+      "aug_g": 108,
+      "sep_g": 75,
+      "aug_n": 18,
+      "sep_n": 10,
+      "ratio": 0.7
+     },
+     {
+      "cultivar": "Rosa Sicilian",
+      "aug_g": 96,
+      "sep_g": 67,
+      "aug_n": 13,
+      "sep_n": 19,
+      "ratio": 0.7
+     },
+     {
+      "cultivar": "Super Sweet 100",
+      "aug_g": 7,
+      "sep_g": 5,
+      "aug_n": 77,
+      "sep_n": 79,
+      "ratio": 0.7
+     },
+     {
+      "cultivar": "Delicious",
+      "aug_g": 292,
+      "sep_g": 212,
+      "aug_n": 16,
+      "sep_n": 19,
+      "ratio": 0.72
+     },
+     {
+      "cultivar": "Moskvich Heirloom",
+      "aug_g": 121,
+      "sep_g": 87,
+      "aug_n": 29,
+      "sep_n": 9,
+      "ratio": 0.72
+     },
+     {
+      "cultivar": "San Marzano Roma",
+      "aug_g": 50,
+      "sep_g": 36,
+      "aug_n": 52,
+      "sep_n": 29,
+      "ratio": 0.72
+     },
+     {
+      "cultivar": "Manitoba",
+      "aug_g": 83,
+      "sep_g": 66,
+      "aug_n": 7,
+      "sep_n": 23,
+      "ratio": 0.79
+     },
+     {
+      "cultivar": "Sun Sugar",
+      "aug_g": 8,
+      "sep_g": 6,
+      "aug_n": 46,
+      "sep_n": 73,
+      "ratio": 0.81
+     },
+     {
+      "cultivar": "Czech's Bush",
+      "aug_g": 45,
+      "sep_g": 37,
+      "aug_n": 8,
+      "sep_n": 11,
+      "ratio": 0.83
+     },
+     {
+      "cultivar": "Big Boy",
+      "aug_g": 174,
+      "sep_g": 149,
+      "aug_n": 26,
+      "sep_n": 29,
+      "ratio": 0.85
+     },
+     {
+      "cultivar": "Del Tonet",
+      "aug_g": 52,
+      "sep_g": 44,
+      "aug_n": 13,
+      "sep_n": 19,
+      "ratio": 0.86
+     },
+     {
+      "cultivar": "Red Grape",
+      "aug_g": 5,
+      "sep_g": 5,
+      "aug_n": 83,
+      "sep_n": 91,
+      "ratio": 0.89
+     },
+     {
+      "cultivar": "Cherry",
+      "aug_g": 33,
+      "sep_g": 30,
+      "aug_n": 14,
+      "sep_n": 10,
+      "ratio": 0.91
+     },
+     {
+      "cultivar": "Cherokee Green",
+      "aug_g": 202,
+      "sep_g": 195,
+      "aug_n": 7,
+      "sep_n": 7,
+      "ratio": 0.96
+     },
+     {
+      "cultivar": "Yellow Pear",
+      "aug_g": 14,
+      "sep_g": 13,
+      "aug_n": 20,
+      "sep_n": 40,
+      "ratio": 0.97
+     },
+     {
+      "cultivar": "1884",
+      "aug_g": 202,
+      "sep_g": 210,
+      "aug_n": 6,
+      "sep_n": 5,
+      "ratio": 1.04
+     },
+     {
+      "cultivar": "Black Cherry",
+      "aug_g": 12,
+      "sep_g": 14,
+      "aug_n": 79,
+      "sep_n": 65,
+      "ratio": 1.21
+     }
+    ]
+   }
+  },
+  "seed_lots": {
+   "section": "seed_lots",
+   "version": 1,
+   "generatedAt": "2026-09-29T20:19:37.788Z",
+   "meta": {
+    "limits": [
+     {
+      "code": "chain_stops_at_nursery"
+     }
+    ]
+   },
+   "series": {
+    "rows": [
+     {
+      "lot_id": "181627da-1405-4556-88f4-1c92de519d6d",
+      "cultivar": "Sugar Baby",
+      "crop_slug": "watermelon",
+      "count": 175,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-02",
+      "parent": {
+       "planting_id": "4b53ac2a-dfdd-41b0-abbb-ebf0cdbac2eb",
+       "name": "Sugar Baby",
+       "lb": 13.184
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "69832d29-a7eb-4883-a0b6-c718106cf8e5",
+      "cultivar": "1884",
+      "crop_slug": "tomato",
+      "count": 185,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-03",
+      "parent": {
+       "planting_id": "37368072-8ce8-44a3-b40a-767993dd39b1",
+       "name": "1884",
+       "lb": 5.87
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "099cfba0-78a7-4cc2-af22-6b7f42c9023d",
+      "cultivar": "Ukrainian Purple",
+      "crop_slug": "tomato",
+      "count": 121,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-03",
+      "parent": {
+       "planting_id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
+       "name": "Ukrainian Purple",
+       "lb": 9.364
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "3457b65e-7e54-42ea-8901-fcf73cc10770",
+      "cultivar": "Black Cherry",
+      "crop_slug": "tomato",
+      "count": 110,
+      "count_estimated": true,
+      "stage": "stored",
+      "saved_on": "2026-09-07",
+      "parent": {
+       "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
+       "name": "Black Cherry",
+       "lb": 4.245
+      },
+      "source": {
+       "id": "13503c22-8b71-4424-b9a2-d3115cd73d1e",
+       "name": "Bonnie Plants",
+       "kind": "brand",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": "Home Depot"
+      }
+     },
+     {
+      "lot_id": "ef4ae33d-9c7b-4505-9b89-9c8995505d00",
+      "cultivar": "Rosso Sicilian",
+      "crop_slug": "tomato",
+      "count": 131,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-07",
+      "parent": {
+       "planting_id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
+       "name": "Rosa Sicilian",
+       "lb": 5.551
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "ad59d62e-bef6-433b-9743-25719810d6c6",
+      "cultivar": "Carolina Reaper",
+      "crop_slug": "pepper",
+      "count": 16,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-07",
+      "parent": null,
+      "source": {
+       "id": "a834567e-95ff-4cb9-aaa4-df2b2605f58e",
+       "name": "Dave's Natural Garden",
+       "kind": "farm_stand",
+       "locality": "Greenfield, MA",
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "a1ea0ee4-f5a3-4980-990a-6cfe9a1f035f",
+      "cultivar": "Wiri Wiri",
+      "crop_slug": "pepper",
+      "count": 42,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-07",
+      "parent": null,
+      "source": {
+       "id": "a834567e-95ff-4cb9-aaa4-df2b2605f58e",
+       "name": "Dave's Natural Garden",
+       "kind": "farm_stand",
+       "locality": "Greenfield, MA",
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "ea6a760d-960e-4977-b372-dcef03b6a846",
+      "cultivar": "Purple Peach Ghost",
+      "crop_slug": "pepper",
+      "count": 14,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-07",
+      "parent": null,
+      "source": null
+     },
+     {
+      "lot_id": "7ae3e712-c052-4fc2-804b-31a317b0bb31",
+      "cultivar": "Dill",
+      "crop_slug": "dill",
+      "count": 500,
+      "count_estimated": true,
+      "stage": "stored",
+      "saved_on": "2026-09-07",
+      "parent": null,
+      "source": {
+       "id": "aae935fb-66ea-4ecf-a507-5c4a41aba3c6",
+       "name": "Whately Plant Swap",
+       "kind": "plant_swap",
+       "locality": "Whately, MA",
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "bf6331d0-a704-430f-a8de-d808854ae66f",
+      "cultivar": "Green Flesh",
+      "crop_slug": "melon",
+      "count": 247,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-07",
+      "parent": {
+       "planting_id": "75aebd10-2962-4c53-8455-862723c46d72",
+       "name": "Green Flesh",
+       "lb": 9.052
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "92a85c88-894a-4538-a002-90948499021c",
+      "cultivar": "Delicious",
+      "crop_slug": "tomato",
+      "count": 50,
+      "count_estimated": true,
+      "stage": "stored",
+      "saved_on": "2026-09-07",
+      "parent": {
+       "planting_id": "33c8c880-7e86-43fa-b083-0b9a36377c6a",
+       "name": "Delicious",
+       "lb": 19.187
+      },
+      "source": null
+     },
+     {
+      "lot_id": "09a44ed0-3d1c-4b71-9997-85db2640d565",
+      "cultivar": "Ristra Cayenne II",
+      "crop_slug": "pepper",
+      "count": 175,
+      "count_estimated": true,
+      "stage": "stored",
+      "saved_on": "2026-09-08",
+      "parent": {
+       "planting_id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
+       "name": "Ristra Cayenne II",
+       "lb": 2.396
+      },
+      "source": {
+       "id": "33d65987-fed1-40e9-967a-c3ec604b64c1",
+       "name": "Burpee",
+       "kind": "seed_company",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "a4e0a25b-0c75-4c55-bb45-38299b3081dd",
+      "cultivar": "Cucamelon",
+      "crop_slug": "cucamelon",
+      "count": 35,
+      "count_estimated": true,
+      "stage": "stored",
+      "saved_on": "2026-09-09",
+      "parent": {
+       "planting_id": "54786dfd-554f-4b2c-a013-f09048c84c94",
+       "name": "Cucamelon",
+       "lb": 2.985
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "bbdfad14-9157-4202-a544-21e2bd3d27d6",
+      "cultivar": "Green Flesh",
+      "crop_slug": "melon",
+      "count": 536,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-15",
+      "parent": {
+       "planting_id": "75aebd10-2962-4c53-8455-862723c46d72",
+       "name": "Green Flesh",
+       "lb": 9.052
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "cebacbe3-0301-4a21-a0ac-d478e741ad08",
+      "cultivar": "Big Boy",
+      "crop_slug": "tomato",
+      "count": null,
+      "count_estimated": false,
+      "stage": "drying",
+      "saved_on": "2026-09-15",
+      "parent": {
+       "planting_id": "fc9b6ee9-0dd4-41f7-a1db-157c30c93a4c",
+       "name": "Big Boy",
+       "lb": 19.781
+      },
+      "source": null
+     },
+     {
+      "lot_id": "9e5036b1-7120-47f4-8b31-099df4431eff",
+      "cultivar": "Cherokee Green",
+      "crop_slug": "tomato",
+      "count": null,
+      "count_estimated": false,
+      "stage": "drying",
+      "saved_on": "2026-09-15",
+      "parent": {
+       "planting_id": "bae05057-409d-453b-addc-a218bef4f99d",
+       "name": "Cherokee Green",
+       "lb": 6.129
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "9a7c2da7-f2e8-421e-ab15-713ebea01381",
+      "cultivar": "Pineapple Tomatillo",
+      "crop_slug": "tomatillo",
+      "count": 140,
+      "count_estimated": true,
+      "stage": "stored",
+      "saved_on": "2026-09-15",
+      "parent": {
+       "planting_id": "15fbbc7f-222f-4232-a186-9948526da67a",
+       "name": "Pineapple Tomatillo",
+       "lb": 1.731
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "18d771df-3384-402c-88c3-8edca6ed35d6",
+      "cultivar": "Ghost",
+      "crop_slug": "pepper",
+      "count": 30,
+      "count_estimated": true,
+      "stage": "stored",
+      "saved_on": "2026-09-16",
+      "parent": {
+       "planting_id": "1bbfe326-5a99-4124-8bbe-b25de49e4dde",
+       "name": "Ghost",
+       "lb": 0.271
+      },
+      "source": {
+       "id": "0d50a7d7-9c30-4e27-bef8-80c59770b716",
+       "name": "Greenfield Farmers Co-op",
+       "kind": "market",
+       "locality": "Greenfield, MA",
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "46948653-77f7-4113-8c79-25fd62cf5273",
+      "cultivar": "Piri Piri",
+      "crop_slug": "pepper",
+      "count": 100,
+      "count_estimated": true,
+      "stage": "stored",
+      "saved_on": "2026-09-16",
+      "parent": {
+       "planting_id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
+       "name": "Piri Piri",
+       "lb": 0.517
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "a102db33-abe7-4158-ba65-244190e8758d",
+      "cultivar": "Gong Bao (Kung Pao)",
+      "crop_slug": "pepper",
+      "count": 85,
+      "count_estimated": true,
+      "stage": "stored",
+      "saved_on": "2026-09-16",
+      "parent": {
+       "planting_id": "2b1f722f-8f3a-4803-b8c5-cabe16b479e6",
+       "name": "Gong Bao (Kung Pao)",
+       "lb": 0.06
+      },
+      "source": {
+       "id": "a593e061-890d-4f2c-b57c-74addab84e0c",
+       "name": "Jen",
+       "kind": "person",
+       "locality": "Greenfield, MA",
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": "Four Phantoms Brewing Company"
+      }
+     },
+     {
+      "lot_id": "9791aab7-88b7-4a70-96b9-4a8c6da9d1cb",
+      "cultivar": "Thai Dragon",
+      "crop_slug": "pepper",
+      "count": 59,
+      "count_estimated": false,
+      "stage": "stored",
+      "saved_on": "2026-09-17",
+      "parent": {
+       "planting_id": "f1a7690e-394d-4828-a6c7-aa36721caa66",
+       "name": "Thai Dragon",
+       "lb": 0.057
+      },
+      "source": null
+     },
+     {
+      "lot_id": "aa6ec823-106e-4aa2-83ef-6f259379a8a8",
+      "cultivar": "Sunray",
+      "crop_slug": "tomato",
+      "count": null,
+      "count_estimated": false,
+      "stage": "drying",
+      "saved_on": "2026-09-17",
+      "parent": {
+       "planting_id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
+       "name": "Sunray",
+       "lb": 2.765
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "c83d58b8-11d5-45fa-863d-c9146b5f54b3",
+      "cultivar": "Manitoba",
+      "crop_slug": "tomato",
+      "count": null,
+      "count_estimated": false,
+      "stage": "drying",
+      "saved_on": "2026-09-21",
+      "parent": {
+       "planting_id": "51facc08-0635-4f86-907f-b935ba6d782b",
+       "name": "Manitoba",
+       "lb": 4.993
+      },
+      "source": {
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
+       "name": "Starview Gardens",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "f22ca372-dbed-4b29-84d1-7373cdf78f1b",
+      "cultivar": "Sugar Rush Peach",
+      "crop_slug": "pepper",
+      "count": null,
+      "count_estimated": false,
+      "stage": "drying",
+      "saved_on": "2026-09-21",
+      "parent": {
+       "planting_id": "b077b1ed-08b5-4626-b603-ef5b68d4bef3",
+       "name": "Sugar Rush Peach",
+       "lb": 0.869
+      },
+      "source": {
+       "id": "34064c67-f25b-4585-8f91-8fd350fad643",
+       "name": "Skawski Farms",
+       "kind": "nursery",
+       "locality": null,
+       "address": null,
+       "website_url": "https://www.skawskifarms.com",
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "bce3d488-7f34-441f-9801-c6419730ec35",
+      "cultivar": "Buena Mulata",
+      "crop_slug": "pepper",
+      "count": 50,
+      "count_estimated": true,
+      "stage": "drying",
+      "saved_on": "2026-09-22",
+      "parent": null,
+      "source": {
+       "id": "a834567e-95ff-4cb9-aaa4-df2b2605f58e",
+       "name": "Dave's Natural Garden",
+       "kind": "farm_stand",
+       "locality": "Greenfield, MA",
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     },
+     {
+      "lot_id": "77da60a7-b46b-4338-a60e-b293006af667",
+      "cultivar": "Pineapple Tomato",
+      "crop_slug": "tomato",
+      "count": null,
+      "count_estimated": false,
+      "stage": "fermenting",
+      "saved_on": "2026-09-25",
+      "parent": {
+       "planting_id": "19f2aa28-481d-4f36-9aad-c0e8f38be056",
+       "name": "Pineapple Tomato",
+       "lb": 3.408
+      },
+      "source": {
+       "id": "7d74da59-d1b3-4a6e-8861-cb663f3bc09b",
+       "name": "Emma Daley",
+       "kind": "person",
+       "locality": null,
+       "address": null,
+       "website_url": null,
+       "instagram_url": null,
+       "facebook_url": null,
+       "via": null
+      }
+     }
+    ]
+   }
+  }
+ }
+}

@@ -126,8 +126,9 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
     // flag-OFF count by one exactly as it moves the flag-ON count. /sow and /seeds/saved stay in
     // the table as redirects into it, so this is +1, not a swap.
     // 58 -> 59: /season-end (End of season), not flag-gated.
-    expect(paths).toHaveLength(59)
-    expect(new Set(paths).size).toBe(59)
+    // 59 -> 61: /season-stats (Season stats) and /sources/:id (source edit), not flag-gated.
+    expect(paths).toHaveLength(61)
+    expect(new Set(paths).size).toBe(61)
   })
 
   it('adds NO route to the overlay tree either', async () => {

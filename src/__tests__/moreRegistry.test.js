@@ -30,6 +30,8 @@ const MINTED = [
   'today', 'garden', 'create', 'harvests', 'put-up',
   // End of season (lane seasonend-20260929) — a NEW row, minted here on purpose.
   'season-end',
+  // Season stats (lane stats-l2-statspage-20260929) — a NEW row, minted here on purpose.
+  'season-stats',
 ]
 
 describe('the ids — minted once, frozen', () => {
@@ -124,6 +126,16 @@ describe('the rows — every door leads somewhere real', () => {
     expect(MORE_ROWS.filter(r => r.pinnable === false).map(r => r.id)).toEqual([])
     expect(byId['catch-up']).toMatchObject({ to: '/plants/catch-up', label: 'Catch up', sub: 'Add missing start dates' })
     expect(byId['catch-up']).not.toHaveProperty('component')
+  })
+
+  // KILLING MUTATION: move the row, rename it, or change its door. RESULT: RED.
+  it('Season stats sits right after End of season in Your garden, exactly as the plan gives it', () => {
+    const ids = MORE_ROWS.map(r => r.id)
+    expect(ids.indexOf('season-stats')).toBe(ids.indexOf('season-end') + 1)
+    expect(MORE_ROWS.find(r => r.id === 'season-stats')).toEqual({
+      id: 'season-stats', to: '/season-stats', label: 'Season stats', iconName: 'nav.harvests', section: 'garden',
+      sub: 'How this season went',
+    })
   })
 })
 
