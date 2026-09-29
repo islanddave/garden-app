@@ -128,6 +128,13 @@ const UNALIASED_ARMS = [
     pin: /SELECT\s+id,\s*name\s+FROM\s+inventory_items\s+WHERE\s+id\s*=\s*\$\{itemId\}\s+AND\s+created_by\s*=\s*ANY\(\$\{householdIds\}\)\s+AND\s+deleted_at\s+IS\s+NULL/,
     columns: ['id', 'name', 'created_by', 'deleted_at'],
   },
+  {
+    file: 'merge.js',
+    // Put-Up train §6a: the planting merge snapshots every seed row saved from a loser before it
+    // repoints source_plant_id onto the winner (restore puts each back).
+    pin: /SELECT\s+id,\s*source_plant_id\s+AS\s+old_value\s+FROM\s+inventory_items\s+WHERE\s+source_plant_id\s*=\s*ANY\(\$\{loserIds\}\)/,
+    columns: ['id', 'source_plant_id'],
+  },
 ];
 
 describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants inventory_items column contract', () => {
@@ -135,9 +142,10 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants inventory_items column contr
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(2);
+    // + merge.js's snapshot read (Put-Up train §6a, inventory_items.source_plant_id repointed).
+    expect(STATEMENTS).toHaveLength(3);
     expect([...new Set(STATEMENTS.map((s) => s.file))].sort())
-      .toEqual(['household.js', 'index.js']);
+      .toEqual(['household.js', 'index.js', 'merge.js']);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['i']);
   });

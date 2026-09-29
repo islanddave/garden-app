@@ -408,6 +408,7 @@ const NOT_IN_SITES = [
   // per-column loader, and it is pinned by its own assertion below rather than absolved here.
   'plants::winner_plant_id',    // merge_event.winner_plant_id = the path id (asserted below)
   'plants::garden_node_id',     // UPDATE evidence/findings SET garden_node_id = <winner>
+  'plants::source_plant_id',    // UPDATE inventory_items SET source_plant_id = <winner> (Put-Up train §6a)
   'plants::entity_id',          // UPDATE favorites SET entity_id = <winner>  (cf. favorites::entity_id)
   'plants::target_id',          // UPDATE critter_state/treatment_association (cf. events::target_id)
   'plants::op_id',              // text idempotency key, no FK at all (cf. projects::op_id)
