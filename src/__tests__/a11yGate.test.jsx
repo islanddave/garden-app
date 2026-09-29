@@ -61,6 +61,7 @@ import TileGrid from '../components/forms/TileGrid.jsx'
 import KindChips from '../components/kitchen/KindChips.jsx'
 import StartBatchSheet from '../components/kitchen/StartBatchSheet.jsx'
 import CheckOnItSheet from '../components/putup/CheckOnItSheet.jsx'
+import PutItUpSheet from '../components/putup/PutItUpSheet.jsx'
 
 afterEach(() => cleanup())
 
@@ -170,6 +171,25 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
       await screen.findByTestId('start-kind-other')
       expect(screen.getByRole('dialog', { name: 'Start a batch' })).toBeTruthy()
       await expectNoA11yViolations(container, { label: 'StartBatchSheet', rules: NEW_RULES })
+    })
+
+    // Put-Up release 1b (V4 §6.6). Two rows, the first one's disclosure open, the sitting's More open,
+    // Earlier… open — every control the sheet can show at once.
+    it('PutItUpSheet, two rows, every disclosure open, is clean (with nested-interactive)', async () => {
+      fetchSpy.mockImplementation((path) => Promise.resolve(path === '/api/storage-locations' ? PLACES : null))
+      const { container } = render(<PutItUpSheet open batch={batch('ferment')} onClose={() => {}} onDone={() => {}} />)
+      await screen.findByTestId('putup-row-0-place-id:loc-1')
+      screen.getByTestId('putup-when-earlier').click()
+      await screen.findByTestId('putup-when-pickdate')
+      screen.getByTestId('putup-method-hot_sauce').click()
+      screen.getByTestId('putup-row-0-place-id:loc-1').click()
+      screen.getByTestId('putup-row-add').click()
+      await screen.findByTestId('putup-row-1-same')
+      screen.getByTestId('putup-row-0-more').click()
+      screen.getByTestId('putup-sitting-more').click()
+      await screen.findByTestId('putup-row-0-ph-input')
+      expect(screen.getByRole('dialog', { name: 'Put it up' })).toBeTruthy()
+      await expectNoA11yViolations(container, { label: 'PutItUpSheet', rules: NEW_RULES })
     })
   })
 

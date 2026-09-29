@@ -174,13 +174,14 @@ describe('the one body (§5.1)', () => {
   it('writes Appendix C\'s two rows, the second inheriting container and place', () => {
     const r1 = { ...newRow(), count: '2', container: woozy, place: { key: 'new:fridge:fridge', id: null, label: 'Fridge', kind: 'fridge' }, name: 'Megatron plain', ph: '3.7' }
     const r2 = { ...newRow(r1), count: '2', name: 'Megatron reaper', ph: '3.7',
-      lines: [{ label: 'reaper', qty: '5', unit: 'g' }, { label: 'vinegar', qty: '72', unit: 'g' }],
+      lines: [{ key: 'k-reaper', label: 'reaper', qty: '5', unit: 'g' }, { key: 'k-vinegar', label: 'vinegar', qty: '72', unit: 'g' }],
       discard: { mode: 'date', date: '2026-12-08' } }
     const { body } = putUpBody({ key, when, method: 'hot_sauce', rows: [r1, r2], madeG: '910', nextTime: 'more carrot', finish: true, batch })
     expect(body.rows).toEqual([
       { count: 2, place: { kind: 'fridge', label: 'Fridge' }, container_label: '8 oz woozy', size_value: 8, size_unit: 'fl oz', name: 'Megatron plain', ph: '3.7' },
       { count: 2, place: { kind: 'fridge', label: 'Fridge' }, container_label: '8 oz woozy', size_value: 8, size_unit: 'fl oz', name: 'Megatron reaper', ph: '3.7',
-        discard_by: '2026-12-08', added_lines: [{ input_kind: 'other', label: 'reaper', qty: '5', qty_unit: 'g' }, { input_kind: 'other', label: 'vinegar', qty: '72', qty_unit: 'g' }] },
+        discard_by: '2026-12-08', added_lines: [{ input_kind: 'other', idempotency_key: 'k-reaper', label: 'reaper', qty: '5', qty_unit: 'g' },
+          { input_kind: 'other', idempotency_key: 'k-vinegar', label: 'vinegar', qty: '72', qty_unit: 'g' }] },
     ])
     expect(body.made_g).toBe('910')
     expect(body.next_time).toBe('more carrot')
@@ -193,6 +194,11 @@ describe('the one body (§5.1)', () => {
     const hs = putUpBody({ key, when, method: 'hot_sauce', rows: [row], batch }).body.rows[0]
     expect(hs).toEqual({ count: 1, place: { id: 'p1' }, is_raw: true, in_oil: true, ph: '3.5' })
     expect(putUpBody({ key, when, method: 'dehydrate', rows: [row], batch }).body.rows[0].texture).toBe('bends')
+  })
+
+  it('a line with no key of its own is refused rather than sent unkeyed (contract-F §2.2)', () => {
+    expect(putUpBody({ key, when, method: 'hot_sauce', rows: [{ ...newRow(), place: fridge, lines: [{ label: 'salt', qty: '', unit: 'g' }] }], batch }).field).toBe('lines')
+    expect(putUpBody({ key, when, method: 'hot_sauce', rows: [{ ...newRow(), place: fridge }], sittingLines: [{ label: 'vinegar' }], batch }).field).toBe('lines')
   })
 
   it('pH is sent as the typed string, never through a Number', () => {

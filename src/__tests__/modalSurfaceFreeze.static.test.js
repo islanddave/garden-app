@@ -213,6 +213,10 @@ const SHEET_SITES = [
   // DIALOG_SURFACES entry is owed; `busy={saving}` blocks Back and the backdrop while the stage POST is
   // in flight — load-bearing because a check-in is not keyed in 1a (V4 §5.2).
   'components/putup/CheckOnItSheet.jsx',
+  // Put-Up release 1b (V4 §2.4) — a DELIBERATE addition: Put it up. The shared <Sheet armsBack>, so no
+  // DIALOG_SURFACES entry is owed; `busy={saving}` refuses Back and the backdrop while the keyed POST
+  // (and the Reopen door's POST) is in flight.
+  'components/putup/PutItUpSheet.jsx',
   // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
   // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
   // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's

@@ -547,6 +547,12 @@ const LANE_SOURCES = [
   ['src/components/kitchen/StartBatchSheet.jsx', 'StartBatchOpen'],
   ['src/components/kitchen/StartChips.jsx', 'resolveSheetStart'],
   ['src/components/kitchen/sheetScroll.js', 'scrollClearOfFooter'],
+  // Put-Up release 1b (V4 §8.4). Put it up records a pH per row and writes every jar's put-up date and
+  // discard-by; the stub and the jar words render them.
+  ['src/components/putup/putItUp.js', 'export function previewDiscard'],
+  ['src/components/putup/PutItUpSheet.jsx', 'PutItUpOpen'],
+  ['src/components/putup/jarWords.js', 'export function discardWords'],
+  ['src/components/putup/PutUpStub.jsx', 'useUndoPutUp'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the

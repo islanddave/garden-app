@@ -146,7 +146,7 @@ export function methodChipsForKind(kind) {
   return list ? { chips: list, more: true } : { chips: ALL_PUT_UP_METHODS, more: false }
 }
 
-// Which row questions a method allows (§3.3 (d)(e), §3.8).
+// Which row questions a method allows (the V4 engine's rules d and e; V4's pH section).
 export const RAW_METHODS = new Set(['hot_sauce', 'pesto', 'other'])
 export const TEXTURE_METHODS = new Set(['dehydrate', 'powder'])
 export const PH_METHODS = new Set(['ferment', 'ferment_mash', 'hot_sauce', 'quick_pickle', 'jam_preserve',
@@ -234,9 +234,9 @@ export function rowCount(row) {
   return Number.isInteger(n) && n >= 1 ? n : 1
 }
 
-// ── The discard-by preview (§3.1, §3.3) ──────────────────────────────────────────────────────────
+// ── The discard-by preview (§3.1 and the V4 engine) ──────────────────────────────────────────────────────────
 // typed > (recipe: none in 1b) > the engine > none. The engine cell comes from shelfLife.js; the two
-// 1b rules that need a jar's own answers are applied here in the order §3.3 states them:
+// 1b rules that need a jar's own answers are applied here in the order the V4 engine states them:
 //   (d) Raw or In oil anywhere but a freezer → no date (at a freezer the freezer leg applies);
 //   (e) dried and marked Bends or Still soft → no date.
 // A put-up date known only as `unknown` gets no engine date (§3.1).
@@ -273,11 +273,13 @@ export function groupPreviews(previews) {
 }
 
 // ── The one body (§5.1) ──────────────────────────────────────────────────────────────────────────
+// contract-F §2.2: every line carries its own idempotency_key, minted when the line was added and kept
+// in the draft, so a replayed put-up names the same lines.
 function lineBody(l) {
   const label = String(l?.label ?? '').trim()
   if (!label) return null
   const qty = String(l?.qty ?? '').trim()
-  const out = { input_kind: 'other', label }
+  const out = { input_kind: 'other', idempotency_key: l.key, label }
   if (qty !== '' && Number.isFinite(Number(qty)) && Number(qty) > 0 && l.unit) { out.qty = qty; out.qty_unit = l.unit }
   return out
 }
@@ -321,6 +323,7 @@ export function putUpBody({ key, when, method, rows, sittingLines = [], madeG = 
       row.discard_by = toYmd(d)
     }
     const lines = (r.lines ?? []).map(lineBody).filter(Boolean)
+    if (lines.some(l => !l.idempotency_key)) return { error: 'Take that line out and add it again.', field: 'lines', row: i }
     if (lines.length) row.added_lines = lines
     out.push(row)
   }
@@ -330,6 +333,7 @@ export function putUpBody({ key, when, method, rows, sittingLines = [], madeG = 
     finish: finish === true,
   }
   const sl = (sittingLines ?? []).map(lineBody).filter(Boolean)
+  if (sl.some(l => !l.idempotency_key)) return { error: 'Take that line out and add it again.', field: 'lines' }
   if (sl.length) body.sitting_lines = sl
   const made = String(madeG ?? '').trim()
   if (made !== '' && Number.isFinite(Number(made)) && Number(made) > 0) body.made_g = made
