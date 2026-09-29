@@ -33,8 +33,37 @@ describe('today-v2 contract table', () => {
     const all = [...STATES.flatMap((s) => s.checks), ...SHELL, ...REGIONS_V2]
     for (const c of all) for (const sl of [].concat(c.armedAt)) expect(SLICES).toContain(sl)
     for (const s of STATES) expect(s.checks.some((c) => c.family === 'prefs-instrument' && isArmed(c))).toBe(true)
-    // S4 landed in parallel with S3 (wave 3): the integrator's merge makes this ['S0', 'S2', 'S3', 'S4'].
-    expect(LANDED).toEqual(['S0', 'S2', 'S4'])
+    // S3 and S4 landed in parallel (wave 3), merged by the integrator.
+    expect(LANDED).toEqual(['S0', 'S2', 'S3', 'S4'])
+  })
+  // S3 arms the glance + bar everywhere a plan exists, and split the checks that also measure a later slice: the S3
+  // half is armed, the rest keeps its later slice. Pinned so the split cannot quietly arm (or drop) either half.
+  it('S3 arms the glance, the verdict, the bar and its chips, and leaves the later halves waiting', () => {
+    const armedIn = (name, fam) => STATES.find((s) => s.name === name).checks.filter((c) => c.family === fam && isArmed(c))
+    const pendingIn = (name, fam) => STATES.find((s) => s.name === name).checks.filter((c) => c.family === fam && !isArmed(c))
+    for (const s of STATES) {
+      expect(armedIn(s.name, 'glance')).toHaveLength(1)
+      if (s.fixture !== 'noplan') expect(armedIn(s.name, 'verdict-truncation')).toHaveLength(1)
+    }
+    expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar']))
+    expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustShowText || [])).toEqual(['today-verdict'])
+    expect(pendingIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(['today-sec-protect', 'protect-pick'])
+    expect(armedIn('v2-frost', 'jumpbar').map((c) => c.chipsOfPresent)).toEqual([['protect', 'water', 'feed', 'check', 'harvest']])
+    expect(pendingIn('v2-frost', 'jumpbar').map((c) => c.chips)).toEqual([['protect', 'water', 'feed', 'check', 'harvest']])
+    for (const fam of ['chip-census', 'weather-once', 'region-headcount']) expect(armedIn('v2-frost', fam), fam).toHaveLength(1)
+    expect(armedIn('v2-quiet', 'jumpbar').map((c) => c.present)).toEqual([false])
+    expect(armedIn('v2-stale', 'stale-marker')).toHaveLength(1)
+    expect(armedIn('v2-busy', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-glance', 'today-jumpbar']))
+    // The page must be taller than a screen for the bar to pin or a jump to land under it: S4's body gives that.
+    for (const fam of ['sticky', 'jump-landing']) expect(SHELL.find((c) => c.family === fam).armedAt).toEqual(['S3', 'S4'])
+    // The glance's REGIONS rows arm with S3 (the gate counts a row only once its own slice has landed).
+    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && isArmed(r)).map((r) => r.id)).toEqual(['today-weather', 'weather-cue-line', 'frost-alert-line', 'drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list'])
+  })
+  it('every chip the contract names is a chip the bar knows, and lands where the contract thinks', async () => {
+    const { CHIP_ORDER, CHIPS } = await import('../../../src/lib/todayV2/chips.js')
+    const named = STATES.flatMap((s) => s.checks).flatMap((c) => [...(c.chips || []), ...(c.chipsOfPresent || [])])
+    for (const chip of named) expect(CHIP_ORDER).toContain(chip)
+    expect(CHIPS.water.section).toBe('care')
   })
   // S2 arms the skeleton on EVERY state (version, prefs-loaded, no side-scroll, floors, title + date on the
   // first screen) plus the states S2's surface can answer: the quiet and no-plan first screens and both

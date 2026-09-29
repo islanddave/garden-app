@@ -71,16 +71,92 @@ export const MUTANTS_V2 = {
   },
 
   // ── S3: glance card + jump bar (the in-view scroll-spy is cut, §13 Simplify 5, so highlightStuck is retired)
-  unstickBar: P('S3', ['sticky', 'jump-landing'], 'the jump bar loses position:sticky'),
-  stickyAtZero: P('S3', ['sticky', 'jump-landing'], 'the bar sticks at top:0, under TopChrome'),
-  ancestorOverflow: P('S3', ['sticky', 'visibility'], 'an ancestor gains overflow:hidden and silently disables sticky'),
-  chipRowNoScroll: P('S3', ['chip-census', 'first-screen'], 'the chip strip overflow:visible — chips past the edge are unreachable'),
-  truncateVerdict: P('S3', ['verdict-truncation', 'first-screen'], 'the verdict ellipsis is restored'),
-  jumpNoOffset: P('S3', ['jump-landing', 'sticky'], 'a jump lands the header under the bar'),
-  noScrollPadding: P('S3', ['jump-landing', 'sticky'], 'html scroll-padding-top not set while V2 is mounted'),
-  noFocusAfterJump: P('S3', ['jump-landing', 'first-screen'], 'focus does not move to the section header after a jump'),
-  dropCueInCard: P('S3', ['region-headcount', 'first-screen'], 'the weather cue line leaves the closed glance card'),
-  dropFrostInCard: P('S3', ['region-headcount', 'first-screen'], 'the frost line leaves the closed glance card'),
+  // S3 build (2026-09-29): every pattern filled from the S3 source. The four page mutants are scored at S3. The six
+  // PLATFORM mutants edit S3 source but are scored with S4 (armedAt S3 + S4), the slice their killers arm with: a bar
+  // can only pin, and a jump can only land under it, on a page taller than one screen, and at S3 alone no v2 state
+  // is (the contract's SHELL note; S3 build report). `killers` records the families each actually reached in the S3
+  // proof runs where that differs from the S0 prediction (chipRowNoScroll: no-hscroll, not first-screen, whose
+  // chip-less first screen a sideways strip cannot move).
+  unstickBar: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/components/today/v2/JumpBar.jsx',
+    find: "position: keyboardUp ? 'static' : 'sticky'",
+    replace: "position: keyboardUp ? 'static' : 'relative'",
+    killers: ['sticky', 'jump-landing'],
+    defect: 'the jump bar loses position:sticky',
+  },
+  stickyAtZero: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/components/today/v2/JumpBar.jsx',
+    find: "top: `calc(${TOP_CHROME_HEIGHT_PX}px + env(safe-area-inset-top))`, zIndex: 70,",
+    replace: 'top: 0, zIndex: 70,',
+    killers: ['sticky', 'jump-landing'],
+    defect: 'the bar sticks at top:0, under TopChrome',
+  },
+  ancestorOverflow: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/pages/TodayV2.jsx',
+    find: "const frameStyle = { maxWidth: 720, margin: '0 auto', padding: '12px 16px 90px', display: 'flex', flexDirection: 'column', gap: T.space.sm }",
+    replace: "const frameStyle = { maxWidth: 720, margin: '0 auto', padding: '12px 16px 90px', display: 'flex', flexDirection: 'column', gap: T.space.sm, overflow: 'hidden' }",
+    killers: ['sticky', 'jump-landing'],
+    defect: 'an ancestor gains overflow:hidden and silently disables sticky',
+  },
+  chipRowNoScroll: {
+    armedAt: 'S3', kind: 'chrome',
+    file: 'src/components/today/v2/JumpBar.jsx',
+    find: "overflowX: 'auto', minHeight: JUMP_BAR_HEIGHT_PX,",
+    replace: "overflowX: 'visible', minHeight: JUMP_BAR_HEIGHT_PX,",
+    killers: ['chip-census', 'no-hscroll'],
+    defect: 'the chip strip overflow:visible — chips past the edge are unreachable',
+  },
+  truncateVerdict: {
+    armedAt: 'S3', kind: 'chrome',
+    file: 'src/components/today/v2/GlanceCard.jsx',
+    find: "minHeight: '2.7em', overflowWrap: 'anywhere',",
+    replace: "minHeight: '2.7em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',",
+    killers: ['verdict-truncation', 'first-screen'],
+    defect: 'the verdict ellipsis is restored',
+  },
+  jumpNoOffset: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/pages/TodayV2.jsx',
+    find: "if (typeof sec.scrollIntoView === 'function') sec.scrollIntoView({ block: 'start', behavior: reducedRef.current ? 'instant' : 'smooth' })",
+    replace: "window.scrollTo({ top: sec.getBoundingClientRect().top + window.scrollY, behavior: 'instant' })",
+    killers: ['jump-landing', 'sticky'],
+    defect: 'a jump lands the header under the bar',
+  },
+  noScrollPadding: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/pages/TodayV2.jsx',
+    find: '    s.scrollPaddingTop = `calc(',
+    replace: '    void `calc(',
+    killers: ['jump-landing', 'sticky'],
+    defect: 'html scroll-padding-top not set while V2 is mounted',
+  },
+  noFocusAfterJump: {
+    armedAt: ['S3', 'S4'], kind: 'chrome',
+    file: 'src/pages/TodayV2.jsx',
+    find: "if (header && typeof header.focus === 'function') header.focus({ preventScroll: true })",
+    replace: 'void header',
+    killers: ['jump-landing', 'first-screen'],
+    defect: 'focus does not move to the section header after a jump',
+  },
+  dropCueInCard: {
+    armedAt: 'S3', kind: 'chrome',
+    file: 'src/components/today/v2/GlanceCard.jsx',
+    find: '<WeatherCueLine callout={cueCallout} generatedAt={generatedAt} planDate={planDate} />',
+    replace: '{open && <WeatherCueLine callout={cueCallout} generatedAt={generatedAt} planDate={planDate} />}',
+    killers: ['region-headcount', 'first-screen'],
+    defect: 'the weather cue line leaves the closed glance card (shown only once it is opened)',
+  },
+  dropFrostInCard: {
+    armedAt: 'S3', kind: 'chrome',
+    file: 'src/components/today/v2/GlanceCard.jsx',
+    find: '<FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} planLow={weather.tonightLow} current={current} />',
+    replace: '{open && <FrostAlertLine alertsSent={plan.alerts_sent} lowShown={agreed?.lowF} planLow={weather.tonightLow} current={current} />}',
+    killers: ['region-headcount', 'first-screen'],
+    defect: 'the frost line leaves the closed glance card (shown only once it is opened)',
+  },
 
   // ── S4: needs care (patterns filled by S4, 2026-09-29; exact source text — the plugin throws on a miss)
   clipSpotPanel: { armedAt: "S4", kind: 'chrome', file: "src/components/today/v2/SpotRow.jsx", find: "{open && <div id={panelId}>{children}</div>}", replace: "{open && <div id={panelId} style={{ height: 0, overflow: 'hidden' }}>{children}</div>}", killers: ["interaction", "visibility"], defect: "the Bag Area panel clipped (height 0, overflow hidden) \u2014 mounted, counted, unseen" },

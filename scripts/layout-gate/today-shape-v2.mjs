@@ -37,6 +37,8 @@ import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 import { STATES, LANDED, isArmed, REGIONS_V2, ROW_TESTIDS, SECTION_ORDER } from '../../tests/harness/_todaymeasure/today-v2-contract.mjs'
 import { groupsOfRows, EXPECTED_GROUPS } from '../../tests/harness/_todaymeasure/v2groups.mjs'
 import { selectorFor } from '../../tests/harness/_todaymeasure/v2wire.js'
+// S3: which section each jump chip lands on, and which chips carry a number — the bar's own table, not a copy.
+import { CHIPS } from '../../src/lib/todayV2/chips.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 // 5351 / 9451: clear of every sibling (5311-5331 / 9422-9441 are spoken for; the orchestrator's lane rule).
@@ -202,6 +204,21 @@ const MEASURE = `(() => {
   const verdictEl = d.querySelector(tid('today-verdict'))
   const verdict = verdictEl ? (() => { const range = d.createRange(); range.selectNodeContents(verdictEl); const rs = [...range.getClientRects()]; const last = rs[rs.length - 1]; const card = glanceEl ? glanceEl.getBoundingClientRect() : null
     return { sw: verdictEl.scrollWidth, cw: verdictEl.clientWidth, lastRight: last ? Math.round(last.right) : null, cardRight: card ? Math.round(card.right) : null, ellipsis: w.getComputedStyle(verdictEl).textOverflow } })() : null
+  // S3: is every glyph of the element painted — inside its own clip and every clipping ancestor's? (first-screen
+  // mustShowText). Text rects in page coordinates; the clip in viewport x and page y.
+  const textFit = Object.fromEntries(['today-verdict'].map(id => {
+    const el = d.querySelector(tid(id)); if (!el) return [id, null]
+    let L = -Infinity, R = Infinity, T = -Infinity, B = Infinity
+    for (let a = el; a && a !== de && a !== d.body; a = a.parentElement) {
+      const cs = w.getComputedStyle(a); if (cs.display === 'contents') continue
+      const ar = a.getBoundingClientRect()
+      if (cs.overflowX !== 'visible') { L = Math.max(L, ar.left); R = Math.min(R, ar.right) }
+      if (cs.overflowY !== 'visible') { T = Math.max(T, ar.top); B = Math.min(B, ar.bottom) }
+    }
+    const range = d.createRange(); range.selectNodeContents(el)
+    const rects = [...range.getClientRects()].filter(r => r.width > 0.5 && r.height > 0.5).map(r => ({ l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top + sy), b: Math.round(r.bottom + sy) }))
+    return [id, { rects, clip: { l: L === -Infinity ? null : Math.round(L), r: R === Infinity ? null : Math.round(R), t: T === -Infinity ? null : Math.round(T + sy), b: B === Infinity ? null : Math.round(B + sy) } }]
+  }))
   const bar = d.querySelector(tid('today-jumpbar'))
   const chips = bar ? [...bar.querySelectorAll('[data-chip]')].map(c => c.getAttribute('data-chip')) : []
   const testidCounts = {}
@@ -242,7 +259,7 @@ const MEASURE = `(() => {
     prefsLoaded: (d.querySelector('[data-prefs-loaded]') || { getAttribute: () => null }).getAttribute('data-prefs-loaded'),
     sections, regions, testidCounts, firstBoxes, closedSpots, counts, spotCtl, groupBulk, careSummary,
     glance: glanceEl ? { ...box(glanceEl), shown: shown(glanceEl), expanded: glanceToggle ? glanceToggle.getAttribute('aria-expanded') : null, stale: !!glanceEl.querySelector('[data-stale="true"]') } : null,
-    verdict, bar: bar ? { ...box(bar), sw: bar.scrollWidth, cw: bar.clientWidth, ox: w.getComputedStyle(bar).overflowX, chips } : null,
+    verdict, textFit, bar: bar ? { ...box(bar), sw: bar.scrollWidth, cw: bar.clientWidth, ox: w.getComputedStyle(bar).overflowX, chips } : null,
     weather: all(tid('today-weather')).length,
     fingerprints: [...fps], fontSizes: [...fonts],
     harness: {
@@ -299,6 +316,18 @@ const CHECKERS = {
     if (c.allRows) { const bs = m.firstBoxes[c.allRows + SUFFIX] || []; if (!bs.length) F(`no '${c.allRows}' at all — expected every one inside the first screen`); for (const b of bs) if (!inFirst(b)) { F(`a '${c.allRows}' paints at y=${b.t}..${b.b}, outside the first screen`); break } }
     for (const [key, lim] of Object.entries(c.headerTopMax || {})) { const s = secOf(m, key); const L = resolveY(lim); if (!s?.header) F(`section '${key}' has no header to place`); else if (s.header.box.t > L) F(`the '${key}' header top is y=${s.header.box.t}, past its ${L}px ceiling`) }
     if (c.wholePage && m.contentBottom > FIRST_SCREEN) F(`content ends at y=${m.contentBottom}, past the first screen (${FIRST_SCREEN}) — this state must fit one screen`)
+    // S3: the element's TEXT, every glyph of it, painted on the first screen — nothing clipped by its own box or
+    // an ancestor's (the verdict: an ellipsis, a nowrap line, a max-height all cut it here, whatever its box says).
+    for (const id of c.mustShowText || []) {
+      const fit = m.textFit?.[id]
+      if (!fit) { F(`'${id}' is not on the page — its text must show whole on the first screen`); continue }
+      if (!fit.rects.length) { F(`'${id}' paints no text`); continue }
+      const k = fit.clip
+      for (const r of fit.rects) {
+        if ((k.r != null && r.r > k.r + 1) || (k.l != null && r.l < k.l - 1) || (k.b != null && r.b > k.b + 1) || (k.t != null && r.t < k.t - 1)) { F(`'${id}' is cut off: its text paints x=${r.l}..${r.r}, y=${r.t}..${r.b} against a clip of x=${k.l}..${k.r}, y=${k.t}..${k.b}`); break }
+        if (r.t < 0 || r.b > FIRST_SCREEN) { F(`'${id}' text paints at y=${r.t}..${r.b}, not inside the first screen [0, ${FIRST_SCREEN})`); break }
+      }
+    }
   },
   glance: (m, c, F) => {
     if (c.present === false) { if (m.glance) F('a glance card rendered in a state with no plan'); return }
@@ -357,6 +386,14 @@ const CHECKERS = {
     if (c.present === false) { if (m.bar) F('a jump bar rendered with fewer than 2 chips'); return }
     if (!m.bar) { F('no jump bar (today-jumpbar)'); return }
     if (c.chips && JSON.stringify(m.bar.chips) !== JSON.stringify(c.chips)) F(`jump-bar chips are [${m.bar.chips.join(', ')}], expected [${c.chips.join(', ')}]`)
+    // S3: the chips of the sections actually on the page, in the contract's order — never a chip that lands on
+    // nothing, never a present section's chip missing.
+    if (c.chipsOfPresent) {
+      const on = new Set(m.sections.map(s => s.key))
+      const want = c.chipsOfPresent.filter(ch => CHIPS[ch] && on.has(CHIPS[ch].section))
+      if (JSON.stringify(m.bar.chips) !== JSON.stringify(want)) F(`jump-bar chips are [${m.bar.chips.join(', ')}], expected the chips of the sections on the page [${want.join(', ')}]`)
+      for (const ch of m.bar.chips) if (!CHIPS[ch] || !on.has(CHIPS[ch].section)) F(`chip '${ch}' lands on a section that is not on the page`)
+    }
   },
   'visual-census': (m, c, F) => {
     if (m.fingerprints.length > c.maxFingerprints) F(`${m.fingerprints.length} distinct section-level container fingerprints, over the ${c.maxFingerprints} the design allows`)
@@ -381,8 +418,28 @@ const CHECKERS = {
     for (const [k, t] of Object.entries(a)) if (b[k] == null || Math.abs(b[k] - t) > 1) F(`'${k}' moved from y=${t} at ready to y=${b[k]} at +2.5 s — a late prefs answer rearranged the page mid-visit`)
   },
   // Interaction-driven families run in the interaction phase below; here they only have to exist.
-  interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {},
+  interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {}, 'chip-census': () => {},
 }
+const INTERACTION_FAMILIES = ['interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all']
+
+// S3 chip census, measured in the page at normal text and at 200% (WCAG 1.4.4 resize text; Android's font scaling
+// reaches the rem-sized labels the same way). Restores the root font size before it returns.
+const CHIP_CENSUS = `(async () => {
+  const bar = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"]')
+  if (!bar) return null
+  const frames = (n) => new Promise(r => { const f = k => (k <= 0 ? r() : requestAnimationFrame(() => f(k - 1))); f(n) })
+  const read = () => {
+    const b = bar.getBoundingClientRect(), cs = getComputedStyle(bar)
+    return { ox: cs.overflowX, sw: bar.scrollWidth, cw: bar.clientWidth, l: b.left, r: b.right,
+      chips: [...bar.querySelectorAll('[data-chip]')].map(ch => { const q = ch.getBoundingClientRect(); return { key: ch.getAttribute('data-chip'), l: q.left, r: q.right, h: q.height, text: (ch.textContent || '').replace(/\\s+/g, ' ').trim() } }) }
+  }
+  const normal = read()
+  const html = document.documentElement, before = html.style.fontSize
+  html.style.fontSize = '200%'; await frames(3)
+  const large = read()
+  html.style.fontSize = before; await frames(3)
+  return { normal, large }
+})()`
 
 // S4: how many of a testid are mounted, and how many are SHOWN (the MEASURE shown() rule, inlined).
 const VISIBLE_COUNT = (id) => `(() => { const d = document, w = window, de = d.documentElement
@@ -425,17 +482,55 @@ async function runInteractions(state, checks, at) {
       if (r.void) { F(`VOID — could not open the glance card: ${r.void}`); continue }
       const k = await evalSettled(`document.querySelectorAll('[data-testid="today-weather${SUFFIX}"]').length`)
       if (k !== 1) F(`with the glance OPEN, today-weather renders ${k}x, expected exactly 1 (MF2)`)
-      const rep = await evalSettled(`(() => { const t = (document.querySelector('[data-testid="today-glance${SUFFIX}"]')?.textContent || ''); const temps = t.match(/\\d+°/g) || []; const seen = {}; for (const x of temps) seen[x] = (seen[x] || 0) + 1; return Object.entries(seen).filter(([, n]) => n > 1).map(([x]) => x) })()`)
-      if (rep.length) F(`hi/lo text repeats inside the open glance card: ${rep.join(', ')} (MF2)`)
+      // S3: "hi/lo text" is a DISPLAYED temperature — an element whose whole text is a bare "65°". A sentence that
+      // names the low ("Cool night (42°F)", "low 42°F") is not a repeat: V5-FROSTTWOMODELS-001 makes the card, the
+      // cue and the frost line print the one low on purpose, and MF2 keeps those lines under the open card. Counting
+      // every "\\d+°" (the S0 draft) failed that design by construction; this counts what MF2 forbids — rows A–C's
+      // numerals printed beside the weather card's own.
+      const temps = await evalSettled(`(() => { const g = document.querySelector('[data-testid="today-glance${SUFFIX}"]'); if (!g) return null; return [...g.querySelectorAll('*')].filter(el => !el.children.length && /^-?\\d+°$/.test((el.textContent || '').trim())).map(el => el.textContent.trim()) })()`)
+      if (!temps || !temps.length) F('the open glance card shows no high/low at all — nothing to check for repeats (MF2)')
+      else {
+        const seen = {}; for (const x of temps) seen[x] = (seen[x] || 0) + 1
+        const rep = Object.entries(seen).filter(([, n]) => n > 1).map(([x]) => x)
+        if (rep.length) F(`hi/lo text repeats inside the open glance card: ${rep.join(', ')} (MF2)`)
+      }
       await evalSettled(`window.__h.act({ tap: 'glance' })`)
+    } else if (c.family === 'chip-census') {
+      const r = await evalSettled(CHIP_CENSUS)
+      if (!r) { F('no jump bar to take a chip census of'); continue }
+      for (const ch of r.normal.chips) {
+        if (ch.h < 47.5) F(`chip '${ch.key}' is ${ch.h}px tall, under the 48px chip floor`)
+        const counted = CHIPS[ch.key]?.counted
+        const label = CHIPS[ch.key]?.label
+        if (!label) { F(`chip '${ch.key}' is not a chip the bar knows`); continue }
+        if (counted && !new RegExp(`^${label} (\\d+|· done)$`).test(ch.text)) F(`work chip '${ch.key}' reads "${ch.text}", expected "${label} <count>" or "${label} · done"`)
+        if (!counted && ch.text !== label) F(`chip '${ch.key}' reads "${ch.text}" — only Protect, Water, Feed and Check carry a number`)
+      }
+      // At 200% text the chips outgrow the strip: it must scroll (overflow-x auto), and every chip must sit inside
+      // the strip's scrollable range — not painted past its edge where no scroll reaches it.
+      const L = r.large
+      if (L.sw > L.cw + 1 && L.ox !== 'auto' && L.ox !== 'scroll') fail(at, 'no-hscroll', `at 200% text the chip strip overflows with overflow-x ${L.ox} — its chips spill past the column instead of scrolling inside it`)
+      const scrolls = (L.ox === 'auto' || L.ox === 'scroll')
+      for (const ch of L.chips) {
+        const inside = ch.l >= L.l - 1 && ch.r <= L.r + 1
+        const reachable = inside || (scrolls && ch.l >= L.l - 1 && ch.r <= L.l + L.sw + 1)
+        if (!reachable) { F(`at 200% text chip '${ch.key}' paints at x=${Math.round(ch.l)}..${Math.round(ch.r)}, past the strip (x=${Math.round(L.l)}..${Math.round(L.r)}), which cannot scroll to it`); break }
+      }
+      if (L.sw <= L.cw + 1) F(`at 200% text the chips still fit the strip (${L.sw} ≤ ${L.cw}px) — the census cannot tell a scrolling strip from a clipped one`)
     } else if (c.family === 'region-headcount') {
-      // S4: a REGIONS row is counted only when ITS slice has landed (its owner exists); the rest are PENDING rows.
+      // S3 + S4: a region row counts once its OWN slice has landed (its armedAt — its owner exists), so the family
+      // arms slice by slice; the rest are PENDING rows.
       for (const r of REGIONS_V2.filter(x => (x.state === state.name || x.state === '*') && isArmed(x, LANDED, ARM_ALL))) {
         if (r.removed) { for (const rep of r.replacedBy) { const k = await evalSettled(`document.querySelectorAll('[data-testid="${rep}${SUFFIX}"]').length`); if (k < 1) F(`'${r.id}' was REMOVED by D3/D7; its declared replacement '${rep}' is not on the page`) } continue }
         if (r.open) {
           const target = ['glance'].includes(r.open) ? 'glance' : (r.open.includes(':') ? r.open : `section:${r.open}`)
           const cur = await evalSettled(`window.__h.expanded(${JSON.stringify(target)})`)
           if (cur !== 'true') { const a = await evalSettled(`window.__h.act({ tap: ${JSON.stringify(target)} })`); if (a.void) { F(`could not open '${r.open}' to count '${r.id}': ${a.void}`); continue } }
+        }
+        // S3: a region the contract places on the CLOSED owner is counted with the owner closed.
+        if (r.closed) {
+          const cur = await evalSettled(`window.__h.expanded(${JSON.stringify(r.closed)})`)
+          if (cur === 'true') { const a = await evalSettled(`window.__h.act({ tap: ${JSON.stringify(r.closed)} })`); if (a.void) { F(`could not close '${r.closed}' to count '${r.id}': ${a.void}`); continue } }
         }
         // S4: a region that lives under a task filter (the substrate note under Feed) — press that chip first.
         if (r.filter) {
@@ -581,9 +676,8 @@ try {
       const F = (msg) => fail(at, c.family, msg)
       try { CHECKERS[c.family](m, c, F, ctx) } catch (e) { fail(at, 'crash', `checker '${c.family}' threw: ${e.message}`) }
     }
-    // group-water-all WRITES (then undoes), so it runs last.
-    const ORDER = ['interaction', 'region-headcount', 'weather-once', 'group-water-all']
-    await runInteractions(state, armed.filter(c => ORDER.includes(c.family)).sort((a, b) => ORDER.indexOf(a.family) - ORDER.indexOf(b.family)), at)
+    // In INTERACTION_FAMILIES order: group-water-all WRITES (then undoes), so it runs last.
+    await runInteractions(state, armed.filter(c => INTERACTION_FAMILIES.includes(c.family)).sort((a, b) => INTERACTION_FAMILIES.indexOf(a.family) - INTERACTION_FAMILIES.indexOf(b.family)), at)
 
     // font census (the pin painting the page), as v1 does
     const census = await fontCensus(cdp, '#root')

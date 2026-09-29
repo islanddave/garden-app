@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MUTANTS_V2, RETIRED_V2 } from '../tests/harness/todayMutantsV2.mjs'
-import { LANDED, isArmed, STATES } from '../tests/harness/_todaymeasure/today-v2-contract.mjs'
+import { LANDED, isArmed, STATES, SHELL } from '../tests/harness/_todaymeasure/today-v2-contract.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const only = process.argv.slice(2).filter(a => !a.startsWith('-'))
@@ -32,12 +32,22 @@ const unitCells = all.filter(([, m]) => m.kind === 'unit-table')
 for (const [n, m] of all) if (m.kind === 'chrome' && isArmed(m) && !(m.file && m.find)) { console.error(`[mutate-v2] ${n} is armed (${m.armedAt} landed) but carries no source pattern — its slice must fill it in`); process.exit(1) }
 
 // Which of a mutant's expected families are armed today: a family is armed when ANY state carries an armed
-// check of it (the instrument family 'prefs-instrument' is armed from S0 on every state).
-const armedFamilies = new Set(STATES.flatMap(s => s.checks.filter(c => isArmed(c)).map(c => c.family)))
-const INSTRUMENT = new Set(['instrument', 'void', 'crash', 'fixture'])
-const run = (env) => spawnSync(process.execPath, [resolve(ROOT, 'scripts/layout-gate/today-shape-v2.mjs')], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, ...env } })
+// check of it (the instrument family 'prefs-instrument' is armed from S0 on every state) — or, since S3, when the
+// SHELL gate carries one (sticky, jump-landing, back-restore: the platform half only today-shell-v2.mjs measures).
+const armedFamilies = new Set([...STATES.flatMap(s => s.checks.filter(c => isArmed(c)).map(c => c.family)), ...SHELL.filter(c => isArmed(c)).map(c => c.family)])
+// S3: the shell gate runs beside the page gate, for the control and every mutant, once any of its platform checks
+// is armed; their `[family]` lines are pooled. Its own instrument ('shell-instrument') can never count as a killer.
+const SHELL_ARMED = SHELL.some(c => c.family !== 'shell-instrument' && isArmed(c))
+const INSTRUMENT = new Set(['instrument', 'void', 'crash', 'fixture', 'shell-instrument'])
+const gate = (script, env) => spawnSync(process.execPath, [resolve(ROOT, script)], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, ...env } })
+const run = (env) => {
+  const page = gate('scripts/layout-gate/today-shape-v2.mjs', env)
+  if (!SHELL_ARMED) return page
+  const shell = gate('scripts/layout-gate/today-shell-v2.mjs', env)
+  return { status: page.status || shell.status, stdout: (page.stdout || '') + (shell.stdout || ''), stderr: (page.stderr || '') + (shell.stderr || '') }
+}
 
-console.log(`[mutate-v2] LANDED ${LANDED.join(', ')} · ${runnable.length} armed mutant(s) to run · ${pendingM.length} PENDING · ${unitCells.length} moved to the triggers.js unit table · ${Object.keys(RETIRED_V2).length} retired`)
+console.log(`[mutate-v2] LANDED ${LANDED.join(', ')} · ${runnable.length} armed mutant(s) to run · ${pendingM.length} PENDING · ${unitCells.length} moved to the triggers.js unit table · ${Object.keys(RETIRED_V2).length} retired · shell gate ${SHELL_ARMED ? 'runs beside the page gate' : 'not run (no platform check armed)'}`)
 console.log('[mutate-v2] control run on the UNMUTATED tree — the gate must be GREEN before any RED below means anything…')
 const control = run({})
 if (control.status !== 0) {

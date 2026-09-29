@@ -25,6 +25,13 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { resolveWebSocket } from './cdp-socket.mjs'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 import { SHELL, LANDED, isArmed, stateByName } from '../../tests/harness/_todaymeasure/today-v2-contract.mjs'
+// S3: where each jump chip lands — the bar's own table (src/lib/todayV2/chips.js), not a copy.
+import { CHIPS } from '../../src/lib/todayV2/chips.js'
+
+// plan-v2 §4 / §9.1 (f)(g): the bar is 57px in both states and a jump lands a header within 8px under it.
+const BAR_HEIGHT_PX = 57
+const LANDING_GAP_PX = 8
+const CHIP_SECTION = Object.fromEntries(Object.entries(CHIPS).map(([k, c]) => [k, c.section]))
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5351)
@@ -149,6 +156,74 @@ const CHROME_MEASURE = `(() => {
     fontPin: window.__fontPin || null }
 })()`
 
+// ── S3: (g) jump landing and (f) sticky, measured in the page. Chips are tapped as a finger would (hit-tested at
+// their centre, then clicked); a jump is judged once the scroll has SETTLED (smooth unless reduced motion), so a
+// landing is never read mid-animation. Reports facts; the checks below judge them.
+const SETTLE = `async () => { let last = -1, same = 0; for (let i = 0; i < 240; i++) { await new Promise(r => requestAnimationFrame(r)); const y = window.scrollY; if (Math.abs(y - last) < 0.5) { if (++same >= 10) return y } else same = 0; last = y } return window.scrollY }`
+const JUMPS = `(async () => {
+  const settle = ${SETTLE}
+  const bar = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"]')
+  if (!bar) return { bar: false }
+  const out = []
+  for (const key of [...bar.querySelectorAll('[data-chip]')].map(c => c.getAttribute('data-chip'))) {
+    window.scrollTo(0, 0); await settle()
+    const chip = bar.querySelector('[data-chip="' + key + '"]')
+    const cr = chip.getBoundingClientRect()
+    const hit = document.elementFromPoint(cr.left + cr.width / 2, cr.top + cr.height / 2)
+    if (!hit || !(hit === chip || chip.contains(hit))) { out.push({ key, covered: true }); continue }
+    chip.click()
+    const y = await settle()
+    const section = ${JSON.stringify(CHIP_SECTION)}[key]
+    const sec = document.querySelector('[data-testid="today-sec-' + section + '${SUFFIX}"]')
+    const header = sec ? sec.querySelector('[aria-expanded]') : null
+    const br = bar.getBoundingClientRect()
+    out.push({ key, section, y, found: !!header, expanded: header ? header.getAttribute('aria-expanded') : null,
+      headerTop: header ? header.getBoundingClientRect().top : null, barBottom: br.bottom,
+      focused: !!header && document.activeElement === header,
+      hscroll: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      maxScroll: document.documentElement.scrollHeight - innerHeight })
+  }
+  return { bar: true, out }
+})()`
+const STICKY = `(async () => {
+  const settle = ${SETTLE}
+  const bars = () => [...document.querySelectorAll('[data-testid="today-jumpbar${SUFFIX}"]')]
+  const bar = bars()[0]
+  const top = document.querySelector('header[data-app-chrome="top"]')
+  if (!bar || !top) return { bar: !!bar, top: !!top }
+  window.scrollTo(0, 0); await settle()
+  const inFlowTop = bar.getBoundingClientRect().top + window.scrollY
+  const want = ${2 * FIRST_SCREEN}
+  const maxScroll = document.documentElement.scrollHeight - innerHeight
+  window.scrollTo(0, Math.min(want, maxScroll)); const y = await settle()
+  const br = bar.getBoundingClientRect(), tr = top.getBoundingClientRect()
+  const cx = br.left + br.width / 2, cy = br.top + br.height / 2
+  const hit = document.elementFromPoint(cx, cy)
+  let clipped = false
+  for (let a = bar.parentElement; a && a !== document.documentElement; a = a.parentElement) { const cs = getComputedStyle(a); if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') { clipped = true; break } }
+  const shown = (!bar.checkVisibility || bar.checkVisibility({ opacityProperty: true, visibilityProperty: true })) && br.height > 0
+  const pinned = { y, barTop: br.top, barHeight: br.height, chromeBottom: tr.bottom, hitInside: !!hit && (hit === bar || bar.contains(hit)), shown, clipped, inFlowTop, maxScroll }
+  // WCAG 2.4.11 (focus not obscured): park a section header UNDER the pinned bar, then move focus to it the way
+  // TalkBack or a keyboard does (focus() with its own scroll). With the sticky layers subtracted (html scroll-padding)
+  // the browser brings it out below the bar; without, it stays hidden beneath it.
+  const sec = document.querySelector('[data-testid="today-sec-care${SUFFIX}"]') || document.querySelector('[data-testid^="today-sec-"]')
+  const header = sec ? sec.querySelector('[aria-expanded]') : null
+  let focusMove = null
+  if (header) {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur()
+    const hTop = header.getBoundingClientRect().top + window.scrollY
+    window.scrollTo(0, Math.max(0, hTop - (tr.bottom + 8))); await settle()
+    const parked = header.getBoundingClientRect().top
+    header.focus(); await settle()
+    focusMove = { parked, top: header.getBoundingClientRect().top, barBottom: bar.getBoundingClientRect().bottom, focused: document.activeElement === header }
+  }
+  pinned.focusMove = focusMove
+  window.scrollTo(0, 0); const y0 = await settle()
+  const b0 = bars()
+  const atTop = { y: y0, count: b0.length, top: b0[0] ? b0[0].getBoundingClientRect().top : null, inFlowTop }
+  return { bar: true, top: true, pinned, atTop }
+})()`
+
 const pending = []
 let harness, chrome
 const udd = mkdtempSync(join(tmpdir(), 'gate-todayshell-v2-'))
@@ -178,8 +253,45 @@ try {
     catch (e) { fail(at, 'void', `VOID — ${e.message}`); continue }
     await evalSettled('new Promise(r=>setTimeout(r,1500))')
     const m = await evalSettled(CHROME_MEASURE)
-    for (const c of armed) {
+    // S3: the jumps run first (in the contract's order, jump-landing before sticky): the Water jump opens Needs
+    // care, and the page it leaves behind is the one the sticky check scrolls.
+    const order = ['shell-instrument', 'jump-landing', 'sticky', 'back-restore']
+    for (const c of [...armed].sort((a, b) => order.indexOf(a.family) - order.indexOf(b.family))) {
       const F = (msg) => fail(at, c.family, msg)
+      if (c.family === 'jump-landing') {
+        const r = await evalSettled(JUMPS)
+        if (!r.bar) { F('no jump bar (today-jumpbar) to jump from'); continue }
+        if (!r.out.length) F('the jump bar has no chips to jump with')
+        for (const j of r.out) {
+          if (j.covered) { F(`chip '${j.key}' is covered at its centre — a finger would not reach it`); continue }
+          if (!j.found) { F(`chip '${j.key}' jumped to '${j.section}', which has no header on the page`); continue }
+          if (j.expanded !== 'true') F(`after the '${j.key}' jump its section '${j.section}' is not open (aria-expanded ${j.expanded})`)
+          if (j.headerTop < j.barBottom - 0.5 || j.headerTop > j.barBottom + LANDING_GAP_PX + 0.5) F(`the '${j.key}' jump landed the '${j.section}' header at y=${Math.round(j.headerTop)}; the bar ends at y=${Math.round(j.barBottom)}, so it must land in [${Math.round(j.barBottom)}, ${Math.round(j.barBottom + LANDING_GAP_PX)}] (scrollY ${Math.round(j.y)} of ${Math.round(j.maxScroll)})`)
+          if (!j.focused) F(`after the '${j.key}' jump focus is not on the '${j.section}' header (R5: the header takes focus)`)
+          if (j.hscroll) F(`after the '${j.key}' jump the page scrolls sideways`)
+        }
+        continue
+      }
+      if (c.family === 'sticky') {
+        const r = await evalSettled(STICKY)
+        if (!r.bar || !r.top) { F(`nothing to pin: ${r.bar ? '' : 'no jump bar'}${!r.bar && !r.top ? ', ' : ''}${r.top ? '' : 'no TopChrome'}`); continue }
+        const p = r.pinned
+        // Never pass over a page that cannot pin: the bar must have scrolled past its own in-flow place.
+        if (p.maxScroll < p.inFlowTop - p.chromeBottom + 1) { F(`the page scrolls ${Math.round(p.maxScroll)}px, too short to pin a bar that sits at y=${Math.round(p.inFlowTop)} — the check cannot run here`); continue }
+        if (Math.abs(p.barTop - p.chromeBottom) > 0.5) F(`scrolled to y=${Math.round(p.y)} the bar's top is y=${p.barTop}, TopChrome ends at y=${p.chromeBottom}: it must pin flush under it`)
+        if (Math.abs(p.barHeight - BAR_HEIGHT_PX) > 1) F(`the pinned bar is ${p.barHeight}px tall, expected ${BAR_HEIGHT_PX} ± 1`)
+        if (!p.shown) F('the pinned bar is not visible')
+        if (p.clipped) F('an ancestor of the bar has overflow other than visible — sticky is scoped to it (plan §6.1)')
+        if (!p.hitInside) F('a tap at the pinned bar\'s centre lands on something else — the bar is under another layer')
+        const fm = p.focusMove
+        if (!fm) F('no section header to move focus to under the pinned bar')
+        else if (fm.parked >= fm.barBottom - 0.5) F(`could not park a header under the pinned bar (it sat at y=${Math.round(fm.parked)}, the bar ends at y=${Math.round(fm.barBottom)}) — the focus check did not run`)
+        else if (!fm.focused || fm.top < fm.barBottom - 0.5) F(`a section header focused while under the pinned bar stays at y=${Math.round(fm.top)}, beneath the bar (it ends at y=${Math.round(fm.barBottom)}) — WCAG 2.4.11; the page does not scroll with the sticky layers subtracted`)
+        const t = r.atTop
+        if (t.count !== 1) F(`back at the top ${t.count} jump bars are on the page, expected exactly one`)
+        else if (t.y > 0.5 || Math.abs(t.top - (t.inFlowTop - t.y)) > 0.5) F(`back at the top the bar is at y=${t.top}, not its in-flow place y=${Math.round(t.inFlowTop)}`)
+        continue
+      }
       // S4 — (m) Back round trip through the REAL page-scroll manager: open Bag Area, tap "Red Acre Cabbage"
       // (a planting route, not an overlay: Today unmounts), Back → the visit restores Bag Area open and the
       // manager's POP restore puts the same row at the same screen y (±1 px).
