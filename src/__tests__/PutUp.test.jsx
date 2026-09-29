@@ -324,15 +324,35 @@ describe('PutUp — "what\'s put up" read surface', () => {
     expect(screen.getAllByText(/bags/).length).toBeGreaterThan(0)
   })
 
-  it('"Mark used" decrements remaining_count via a full-replace PUT', async () => {
+  // Amended for release F in the same commit as the change (06 §1.3; V4 §8.3): "Mark used" is ONE use
+  // on POST /api/pantry/uses and no PUT at all — so the one-tap path can no longer rewrite anything on
+  // the row. The provenance carriage this test was written for moves to the count edit below, the one
+  // remaining full-replace PUT.
+  it('"Mark used" is one use on the use route, and sends no PUT', async () => {
     renderPutUp()
     await screen.findByText('Garage freezer')
     fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
+    const uses = () => fetchMock.mock.calls.filter(([p, o]) => p === '/api/pantry/uses' && o?.method === 'POST')
+    await waitFor(() => expect(uses().length).toBe(1))
+    const use = JSON.parse(uses()[0][1].body)
+    expect(use.idempotency_key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect({ ...use, idempotency_key: 'K' }).toEqual({ idempotency_key: 'K', preservation_log_id: 'rec-1', count_used: 1 })
+    expect(putCalls().length).toBe(0)
+  })
+
+  it('a count edit\'s full-replace PUT carries the row forward — and never remaining_count', async () => {
+    renderPutUp()
+    await screen.findByText('Garage freezer')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '4' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(putCalls().length).toBe(1))
     const [path, opts] = putCalls()[0]
     expect(path).toBe('/api/preservation/rec-1')
     const body = JSON.parse(opts.body)
-    expect(body.remaining_count).toBe(2) // 3 → 2
+    expect(body.package_count).toBe(4)
+    expect('remaining_count' in body).toBe(false)
+    expect('consumed_at' in body).toBe(false)
     // Full replace carries the row's identity fields forward.
     expect(body.crop_type_slug).toBe('tomato')
     expect(body.quantity_value).toBe(14)
@@ -416,24 +436,30 @@ describe('PutUp — an estimated date does not read as a date you picked', () =>
     expect(lastPost().preserved_at_approx).toBe(false)
   })
 
-  it('a Mark-used tap carries an existing TRUE through the full-replace PUT', async () => {
-    // The class of bug that made source_kind COALESCE-preserved: a one-tap decrement from a stale
+  // Release F: the one-tap decrement no longer PUTs (see "Mark used" above), so these two ride the one
+  // full-replace PUT that is left — a count edit — which is where the class of bug now lives.
+  const countEdit = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '4' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(putCalls().length).toBe(1))
+  }
+  it('a count edit carries an existing TRUE through the full-replace PUT', async () => {
+    // The class of bug that made source_kind COALESCE-preserved: a full-replace write from a stale
     // bundle rewriting a field it never heard of. Here the payload DOES carry it, so the flag has to
     // survive the round trip rather than being re-defaulted to false by the client.
     wire({ stores: withApprox(true) })
     renderPutUp()
     await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
-    await waitFor(() => expect(putCalls().length).toBe(1))
+    await countEdit()
     expect(JSON.parse(putCalls()[0][1].body).preserved_at_approx).toBe(true)
   })
 
-  it('a Mark-used tap on a pre-migration row sends NULL, which the Lambda reads as "unchanged"', async () => {
+  it('a count edit on a pre-migration row sends NULL, which the Lambda reads as "unchanged"', async () => {
     wire({ stores: withApprox(undefined) })
     renderPutUp()
     await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
-    await waitFor(() => expect(putCalls().length).toBe(1))
+    await countEdit()
     expect(JSON.parse(putCalls()[0][1].body).preserved_at_approx).toBeNull()
   })
 })

@@ -65,6 +65,7 @@ import { useAppUpdate } from '../hooks/useAppUpdate.js'
 // come from one module shared with Put it up and batch detail; a move is its own write (V4 §3.4).
 import { putUpDateWords, discardWords, sizeWords, ESTIMATED_PRECISIONS } from '../components/putup/jarWords.js'
 import MoveJarSheet from '../components/putup/MoveJarSheet.jsx'
+import { mintKey } from '../components/kitchen/idempotencyKey.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -2555,8 +2556,10 @@ function buildFullPayload(rec, overrides = {}) {
     package_count: rec.package_count ?? 1,
     storage_location_id: rec.storage_location_id ?? null,
     use_by_target: rec.use_by_target ? ymd(rec.use_by_target) : null,
-    remaining_count: rec.remaining_count ?? null,
-    consumed_at: rec.consumed_at ?? null,
+    // remaining_count and consumed_at are DELIBERATELY ABSENT (release F, 06 §1.3 item 3): uses go
+    // through POST /api/pantry/uses, and an absent key is "unchanged" to the 1b PUT. From F the PUT
+    // refuses a remaining_count on a jar a batch has drawn from (client_stale), so sending the key —
+    // even as an untouched echo — would make every Edit of a drawn jar fail.
     notes: rec.notes ?? null,
     photo_id: rec.photo_id ?? null,
     // V4-PUTUPPROV-001 — THE HIGHEST-RISK LINE IN THIS CHANGE. This function is the single choke
@@ -2582,22 +2585,17 @@ function RecordRow({ rec, onChanged, fetch }) {
   const [err, setErr] = useState(null)
 
   const remaining = rec.remaining_count ?? rec.package_count ?? 0
+  // A synchronous guard: two taps inside one frame both read `busy` false, and each use carries its
+  // own key, so both would land.
+  const usingRef = useRef(false)
+  // Weighed stock (06 §1.4, boss F2): "about N g left" only while the jar is weighed, has grams on
+  // record, and is not used up.
+  const gramsLeft = rec.stock_mode === 'weighed' && rec.remaining_amount != null && remaining > 0
+    ? Math.round(Number(rec.remaining_amount)) : null
 
-  // Resolves true only when the write landed. The editor closes on THAT, never on the attempt: a
-  // refused save used to close it anyway (put swallowed the throw), so the typed values vanished and
-  // the only record of them was a message about why they had not been saved (V4 §6.5 "keep the edit").
-  async function put(overrides) {
-    setBusy(true); setErr(null)
-    try {
-      await fetch(`/api/preservation/${rec.id}`, { method: 'PUT', body: JSON.stringify(buildFullPayload(rec, overrides)) })
-      onChanged()
-      return true
-    } catch (e) {
-      setErr(describeRefusal(e) ?? "Couldn't update — try again."); setBusy(false)
-      return false
-    }
-  }
-
+  // Every write below resolves true only when it landed. The editor closes on THAT, never on the
+  // attempt: a refused save used to close it anyway, so the typed values vanished and the only record
+  // of them was a message about why they had not been saved (V4 §6.5 "keep the edit").
   // Put-Up release 1b (V4 §5.4 "From 1b"; contract-F §2.6): the name, method, notes and discard-by
   // change through PATCH /api/preservation/:id — the legacy PUT answers a DIFFERING method, date or
   // notes with 409 client_stale, so the editor never sends them there. The size and count still go
@@ -2620,11 +2618,30 @@ function RecordRow({ rec, onChanged, fetch }) {
     }
   }
 
-  async function markUsed() {
-    const next = Math.max(0, Number(remaining) - 1)
-    await put({ remaining_count: next })
+  // Release F (06 §1.3; contract-F §2.6): Mark used and Used up are USES, posted to their own route —
+  // never a remaining_count in the legacy PUT. A draw into a batch stamps the jar's delta_at, and from
+  // F the PUT refuses a remaining_count on such a jar (client_stale), so the PUT path would strand
+  // every drawn jar. Each tap mints its own key: a retried tap after a lost answer is a replay, and a
+  // second deliberate tap is a second use.
+  async function use(body) {
+    if (usingRef.current) return false
+    usingRef.current = true
+    setBusy(true); setErr(null)
+    try {
+      await fetch('/api/pantry/uses', { method: 'POST', body: JSON.stringify({
+        idempotency_key: mintKey(), preservation_log_id: rec.id, ...body,
+      }) })
+      onChanged()
+      return true
+    } catch (e) {
+      setErr(describeRefusal(e) ?? "Couldn't update — try again."); setBusy(false)
+      return false
+    } finally {
+      usingRef.current = false
+    }
   }
-  async function usedUp() { await put({ remaining_count: 0 }) }
+  async function markUsed() { await use({ count_used: 1 }) }
+  async function usedUp() { await use({ all_remaining: true }) }
 
   async function doDelete() {
     setBusy(true); setErr(null)
@@ -2673,6 +2690,7 @@ function RecordRow({ rec, onChanged, fetch }) {
       <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 3 }}>
         {rec.package_count} {rec.package_count === 1 ? 'container' : 'containers'}
         {remaining !== rec.package_count ? ` · ${remaining} left` : ''}
+        {gramsLeft != null && Number.isFinite(gramsLeft) ? ` · about ${gramsLeft} g left` : ''}
         {/* V4-PUTUPSESSION-001 slice 1 — THE LINE THE SLICE EXISTS FOR. Through describeApprox, not
             a local "around " prefix, so the walk's band and the saved record are guaranteed to say
             the same words about the same date. `=== true` and not truthiness: the column is

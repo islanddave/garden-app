@@ -3,7 +3,7 @@
 // PUT; §2.5 Move it). Each assertion names the mutation that reds it. CI LANE: `npm test` + TZ re-run.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 
@@ -185,5 +185,74 @@ describe('Move it (V4 §2.5, §3.4)', () => {
     expect(body.place).toEqual({ id: 'loc-cf1' })
     expect(body.when.precision).toBe('day')
     await waitFor(() => expect(screen.queryByTestId('move-sheet')).toBeNull())
+  })
+})
+
+// Release F (06 §1.3, §1.4; contract-F §2.6) — the jar row's uses and its grams.
+describe('Mark used / Used up are uses on their own route', () => {
+  const uses = () => fetchMock.mock.calls.filter(([p, o]) => p === '/api/pantry/uses' && o?.method === 'POST')
+    .map(([, o]) => JSON.parse(o.body))
+
+  // MUTATION: drop the synchronous ref -> two uses post.
+  it('a double tap on Used up posts one use of everything that is left', async () => {
+    let settle
+    fetchMock.mockImplementation((path, options = {}) => {
+      if (path === '/api/pantry/uses') return new Promise(r => { settle = r })
+      if (path.startsWith('/api/preservation/whats-put-up')) {
+        return Promise.resolve({ group_by: 'storage', groups: [{ group_key: 'loc-fridge', label: 'Fridge', total_packages: 2,
+          units: [], use_soon_count: 0, records: [JAR_1B] }] })
+      }
+      if (path.startsWith('/api/kitchen-batches')) return Promise.resolve({ batches: [] })
+      return Promise.resolve([])
+    })
+    await renderList()
+    const btn = screen.getByRole('button', { name: 'Used up' })
+    act(() => { fireEvent.click(btn); fireEvent.click(btn) })
+    expect(uses()).toHaveLength(1)
+    expect({ ...uses()[0], idempotency_key: 'K' }).toEqual({ idempotency_key: 'K', preservation_log_id: 'rec-1b', all_remaining: true })
+    await act(async () => { settle({ use: {}, jar: {} }) })
+  })
+
+  it('each tap mints its own key', async () => {
+    await renderList()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Mark used' })) })
+    await waitFor(() => expect(uses()).toHaveLength(1))
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Mark used' })) })
+    await waitFor(() => expect(uses()).toHaveLength(2))
+    expect(uses()[0].idempotency_key).not.toBe(uses()[1].idempotency_key)
+  })
+
+  it('a refused use says how many are left, in the server\'s words, and writes nothing else', async () => {
+    fetchMock.mockImplementation((path, options = {}) => {
+      if (path === '/api/pantry/uses') return Promise.reject(Object.assign(new Error('409'), { status: 409, body: { code: 'only_n_left', n: 0, error: 'None are left in that one.' } }))
+      if (path.startsWith('/api/preservation/whats-put-up')) {
+        return Promise.resolve({ group_by: 'storage', groups: [{ group_key: 'loc-fridge', label: 'Fridge', total_packages: 2,
+          units: [], use_soon_count: 0, records: [JAR_1B] }] })
+      }
+      if (path.startsWith('/api/kitchen-batches')) return Promise.resolve({ batches: [] })
+      return Promise.resolve([])
+    })
+    await renderList()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Mark used' })) })
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('None are left — nothing was changed.'))
+  })
+})
+
+describe('weighed stock says its grams (06 §1.4, boss F2)', () => {
+  const BAG = { ...JAR_1B, id: 'rec-reaper', label: 'Reaper, frozen', container_label: 'bag', quantity_value: '100', quantity_unit: 'g',
+    package_count: 1, remaining_count: 1, stock_mode: 'weighed', remaining_amount: '92.000', method: 'whole_freeze' }
+  // MUTATION: drop the weighed gate -> a counted jar with remaining_amount shows grams and reds.
+  it('shows "about 92 g left" on a weighed bag, and not on a counted jar or a used-up bag', async () => {
+    wire(BAG)
+    await renderList()
+    expect(document.body.textContent).toContain('about 92 g left')
+    cleanup()
+    wire({ ...BAG, stock_mode: 'counted' })
+    await renderList()
+    expect(document.body.textContent).not.toContain('g left')
+    cleanup()
+    wire({ ...BAG, remaining_count: 0, remaining_amount: '0' })
+    await renderList()
+    expect(document.body.textContent).not.toContain('g left')
   })
 })

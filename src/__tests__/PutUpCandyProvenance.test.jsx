@@ -217,14 +217,25 @@ describe('and the cook can set the real date', () => {
     expect(lastPatch()).toBeNull()
   })
 
-  it('a Mark-used tap on a candy row still carries its use-by through the full-replace PUT', async () => {
-    // The one-tap decrement goes through buildFullPayload, not the editor. A total-replace PUT that
-    // dropped the column would silently clear the date and take the jar out of use-soon.
+  // Amended for release F (06 §1.3): the one-tap decrement is a use on its own route and sends no PUT,
+  // so it cannot clear the date at all; the full-replace PUT that is left (a count edit) still has to
+  // carry the use-by, or it would silently clear it and take the jar out of use-soon.
+  it('a count edit on a candy row still carries its use-by through the full-replace PUT', async () => {
+    renderPutUp()
+    await screen.findByText('Pantry shelf')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(lastPut()).not.toBeNull())
+    expect(lastPut().use_by_target).toBe('2026-10-01')
+    expect(lastPut().package_count).toBe(3)
+  })
+
+  it('a Mark-used tap on a candy row sends no PUT at all', async () => {
     renderPutUp()
     await screen.findByText('Pantry shelf')
     fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
-    await waitFor(() => expect(lastPut()).not.toBeNull())
-    expect(lastPut().use_by_target).toBe('2026-10-01')
-    expect(lastPut().remaining_count).toBe(1)
+    await waitFor(() => expect(fetchMock.mock.calls.some(([p]) => p === '/api/pantry/uses')).toBe(true))
+    expect(lastPut()).toBeNull()
   })
 })
