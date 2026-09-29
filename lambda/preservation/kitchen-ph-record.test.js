@@ -191,7 +191,8 @@ describe('GET /:id — the reading history is a list of dated rows, never a summ
     const stages = sql.calls.find((c) => c.norm.includes('FROM kitchen_stage_log'));
     expect(stages.norm).toContain(
       'SELECT id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at, entered_precision, '
-      + 'ph_reading, ph_read_at, voids_id, storage_location_id, photo_id, note, created_by, created_at');
+      + 'ph_reading, ph_read_at, voids_id, acts, mash_in_g, edited_at, storage_location_id, photo_id, note, '
+      + 'created_by, created_at');
   });
 
   // ⚠ NO AGGREGATE OVER READINGS, EVER — the ruling, expressed against what the route SENDS. A batch

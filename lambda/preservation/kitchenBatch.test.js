@@ -183,8 +183,23 @@ describe('parseKitchenRoute — the route table, executed', () => {
     // Mutation: make the fallthrough `return { kind: 'batch', id }`. `/B1/delete` would then be served
     // as the batch itself and a DELETE on it would soft-delete the batch.
     expect(parseKitchenRoute('/api/kitchen-batches/B1/delete')).toBeNull();
-    expect(parseKitchenRoute('/api/kitchen-batches/B1/stages/S1')).toBeNull();
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/stages/S1/x')).toBeNull();
     expect(parseKitchenRoute('/api/kitchen-batches/B1/close/now')).toBeNull();
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/shu-estimate/other')).toBeNull();
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/inputs/I9/redo')).toBeNull();
+  });
+
+  // Release F's shapes (contract-F §2.2-§2.5). line-search is a LITERAL matched before any :id — the
+  // one that matters: without it 'line-search' is read as a batch id and 404s through the ownership
+  // gate. Mutation: move the literal below the :id match.
+  it('F: line-search is a literal; stage PATCH, line restore and the two shu-estimate shapes parse', () => {
+    expect(parseKitchenRoute('/api/kitchen-batches/line-search')).toEqual({ kind: 'line_search' });
+    expect(parseKitchenRoute('/api/kitchen-batches/line-search/')).toEqual({ kind: 'line_search' });
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/stages/S1')).toEqual({ kind: 'stage', id: 'B1', stageId: 'S1' });
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/inputs/I9/restore'))
+      .toEqual({ kind: 'input_restore', id: 'B1', inputId: 'I9' });
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/shu-estimate')).toEqual({ kind: 'shu_estimate', id: 'B1' });
+    expect(parseKitchenRoute('/api/kitchen-batches/B1/shu-estimate/save')).toEqual({ kind: 'shu_estimate_save', id: 'B1' });
   });
 
   it('tolerates one trailing slash on every shape', () => {
@@ -407,12 +422,31 @@ describe("kind owns the pair, matching source_kind's contract over source_label"
 });
 
 describe('validateBatchUpdate — an explicit allowlist, not a full replace', () => {
-  it('accepts exactly the thirteen editable columns', () => {
+  // Release F adds eight (contract-F §2.1): the jar & heat facts and "Following a recipe?".
+  it('accepts exactly the twenty-one editable columns', () => {
     expect(KITCHEN_BATCH_EDITABLE_COLUMNS).toEqual([
       'label', 'kind', 'kind_other', 'started_at', 'start_precision', 'start_anchor_kind',
       'start_anchor_id', 'expected_days_min', 'expected_days_max', 'brine_note', 'cover_photo_id',
       'notes', 'suspended_at',
+      'vessel_label', 'vessel_size', 'vessel_unit', 'vessel_count', 'no_salt', 'shu_est_low',
+      'shu_est_high', 'recipe_ref',
     ]);
+  });
+
+  it('F: a typed heat estimate is typed; computed is refused; pairs travel together', () => {
+    expect(validateBatchUpdate({ shu_est_low: 900, shu_est_high: 3000 })).toBeNull();
+    expect(validateBatchUpdate({ shu_est_low: 900, shu_est_high: 3000, shu_est_basis: 'typed' })).toBeNull();
+    expect(validateBatchUpdate({ shu_est_low: 900, shu_est_high: 3000, shu_est_basis: 'computed' }))
+      .toMatch(/only be 'typed'/);
+    expect(validateBatchUpdate({ shu_est_low: 900 })).toMatch(/sent together/);
+    expect(validateBatchUpdate({ shu_est_low: 900, shu_est_high: 800 })).toMatch(/at least/);
+    expect(validateBatchUpdate({ vessel_size: 1 })).toMatch(/sent together/);
+    expect(validateBatchUpdate({ vessel_size: 1, vessel_unit: 'qt' })).toBeNull();
+    expect(validateBatchUpdate({ vessel_size: 1, vessel_unit: 'quarts' })).toMatch(/vessel_unit must be one of/);
+    expect(validateBatchUpdate({ vessel_count: 51 })).toMatch(/1 to 50/);
+    expect(validateBatchUpdate({ no_salt: 'yes' })).toMatch(/true or false/);
+    expect(validateBatchUpdate({ recipe_ref: ' ' })).toMatch(/cannot be blank/);
+    expect(validateBatchUpdate({ vessel_label: 'x'.repeat(121) })).toMatch(/120/);
   });
 
   it('refuses every server-owned column BY NAME, not merely as an unknown field', () => {

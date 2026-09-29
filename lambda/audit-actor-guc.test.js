@@ -67,7 +67,10 @@ const isSqlTransaction = (n) =>
 // Direct DML against the statement-level-audited tables … preservation_log joined in Put-Up release
 // 1b (v5-putupmake-001 attaches trg_audit_preservation_log_upd; V4 "Audit": "preservation_log joins
 // AUDITED_DML").
-const AUDITED_DML = /\b(update|delete\s+from)\s+(only\s+)?(public\.)?(event_log|harvest_log|preservation_log)\b/is
+// Release F (v5-fermentpath-001) attaches statement-level audit triggers to kitchen_batch_input
+// (audit_stmt_update) and kitchen_stage_log (audit_stmt_update_no_soft_delete); a pick line's hard
+// DELETE is batched too (06 §3.7: "so audit-actor-guc.test.js stays green").
+const AUDITED_DML = /\b(update|delete\s+from)\s+(only\s+)?(public\.)?(event_log|harvest_log|preservation_log|kitchen_batch_input|kitchen_stage_log)\b/is
 // … plus the four prod functions whose bodies mutate them. archive_events_subset soft-deletes the
 // merge drop set, which writes event_log.deleted_at — a watched column — so a call to it is an
 // audited write even though no `UPDATE event_log` string appears at the call site.
@@ -186,6 +189,8 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
     expect(isAuditedWrite(mk('SELECT id FROM event_log WHERE id =  ? '))).toBe(false)
     expect(isAuditedWrite(mk('UPDATE preservation_log p SET batch_id = NULL'))).toBe(true)
     expect(isAuditedWrite(mk('SELECT id FROM preservation_log WHERE id =  ? '))).toBe(false)
+    expect(isAuditedWrite(mk('UPDATE kitchen_stage_log SET note =  ? '))).toBe(true)
+    expect(isAuditedWrite(mk('DELETE FROM kitchen_batch_input WHERE id =  ? '))).toBe(true)
   })
 
   // ── the core property ───────────────────────────────────────────────────────────────────────

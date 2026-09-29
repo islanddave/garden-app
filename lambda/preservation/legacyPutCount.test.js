@@ -93,7 +93,7 @@ describe('the count rule is decided inside the one UPDATE, not by a read-then-wr
     updateCall = theUpdate()
     const sql = updateCall.text.replace(/\s+/g, ' ')
     expect(sql.indexOf('WITH stored AS (')).toBeLessThan(sql.indexOf('UPDATE preservation_log SET'))
-    expect(sql).toMatch(/SELECT updated\.\*, stored\.stored_package_count, stored\.stored_remaining_count, stored\.stored_stale FROM stored LEFT JOIN updated ON TRUE/)
+    expect(sql).toMatch(/SELECT updated\.\*, stored\.stored_package_count, stored\.stored_remaining_count, stored\.stored_stale, stored\.stored_delta_at FROM stored LEFT JOIN updated ON TRUE/)
   })
 
   // Put-Up release 1b amends the 1a shape (V4 "From 1b": an absent key is unchanged). The count
@@ -321,5 +321,52 @@ describe('countRefusal — the words for each refusal', () => {
       countRefusal({ storedCount: 3, storedRemaining: 3, packageCount: 3, remaining: 2 }).message,
     ]
     for (const m of messages) expect(m).not.toMatch(banned)
+  })
+})
+
+// ── Release F: the stale-bundle refusal (06 §1.3 item 4; V4 "From release 2"; contract-F §2.6) ────
+// A drawn or used jar carries delta_at. From F only a pre-F bundle sends remaining_count in the legacy
+// PUT (the F client posts to /api/pantry/uses), so a body carrying the key on such a jar is refused as
+// client_stale — decided in the UPDATE's WHERE (race-free), and answered by an EXPLICIT branch on the
+// snapshot's delta_at, never by countRefusal's fall-through (boss-technical's used-up variant, which
+// would otherwise read count_below_used).
+describe('Release F — remaining_count on a jar with delta_at set is client_stale', () => {
+  const whereOf = () => {
+    const s = theUpdate().text.replace(/\s+/g, ' ')
+    return s.slice(s.indexOf('WHERE id = ?', s.indexOf('UPDATE preservation_log SET')))
+  }
+
+  it('the WHERE carries `AND (NOT <has remaining_count> OR delta_at IS NULL)`, bound to the key\'s presence', async () => {
+    answerWith([written()])
+    await handler(put(echo({ remaining_count: 2 })))
+    expect(whereOf()).toContain('AND (NOT ?::boolean OR delta_at IS NULL)')
+    expect(boundAfter(theUpdate(), /AND \(NOT (?=\?::boolean OR delta_at IS NULL)/)).toBe(true)
+  })
+
+  it('a body WITHOUT the key binds "not present" — the F bundle\'s RowEditor edit is never refused by it', async () => {
+    answerWith([written()])
+    const { remaining_count: _r, consumed_at: _c, ...noKey } = echo()
+    await handler(put(noKey))
+    expect(boundAfter(theUpdate(), /AND \(NOT (?=\?::boolean OR delta_at IS NULL)/)).toBe(false)
+  })
+
+  it('refused with delta_at set → 409 client_stale, even where the counts alone read count_below_used', async () => {
+    // The used-up variant: stored 3, 1 left (2 used by draws); a pre-F Used up sends 0 on an unchanged
+    // count. countRefusal alone would say client_stale by luck here and count_below_used for a count
+    // edit — the explicit branch answers client_stale for both.
+    answerWith([{ ...refused(3, 1), stored_delta_at: '2026-10-01T12:00:00Z' }])
+    let res = parse(await handler(put(echo({ package_count: 3, remaining_count: 0 }))))
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('client_stale')
+    stubState.sqlCalls = []
+    answerWith([{ ...refused(3, 1), stored_delta_at: '2026-10-01T12:00:00Z' }])
+    res = parse(await handler(put(echo({ package_count: 1, remaining_count: 1 }))))
+    expect(res.body.code).toBe('client_stale')
+  })
+
+  it('without delta_at the 1a answers are unchanged', async () => {
+    answerWith([{ ...refused(3, 1), stored_delta_at: null }])
+    const res = parse(await handler(put(echo({ package_count: 1, remaining_count: 1 }))))
+    expect(res.body.code).toBe('count_below_used')
   })
 })

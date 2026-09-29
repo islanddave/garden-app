@@ -547,6 +547,18 @@ const LANE_SOURCES = [
   ['src/components/kitchen/StartBatchSheet.jsx', 'StartBatchOpen'],
   ['src/components/kitchen/StartChips.jsx', 'resolveSheetStart'],
   ['src/components/kitchen/sheetScroll.js', 'scrollClearOfFooter'],
+  // Put-Up 1b + release F, the Lambda (V4 §8.4 / 06 §5.5 — every lane adds its files). Every one
+  // writes or reads a pH, a stage date, a jar date or the ferment facts beside them: the jar PATCH /
+  // Move and Put it up write pH and dates; the line and stage routes take the check-in pH with its
+  // bounds; the heat estimate and salt arithmetic sit on the same batch surface.
+  ['lambda/preservation/jarRoutes.js', 'handleJarRoute'],
+  ['lambda/preservation/putUp.js', 'planPutUp'],
+  ['lambda/preservation/kitchenLines.js', 'phReadAtError'],
+  ['lambda/preservation/lineRoutes.js', 'readLines'],
+  ['lambda/preservation/lineSearch.js', 'suggestedForm'],
+  ['lambda/preservation/pantryUses.js', 'handlePantryUses'],
+  ['lambda/preservation/shuEstimate.js', 'estimateShu'],
+  ['lambda/preservation/saltMath.js', 'saltBase'],
   // Put-Up release 1b (V4 §8.4). Put it up records a pH per row and writes every jar's put-up date and
   // discard-by; the stub and the jar words render them.
   ['src/components/putup/putItUp.js', 'export function previewDiscard'],

@@ -37,6 +37,9 @@ import { handleSourceRoute, sourceErrorMessage } from './sourceRoutes.js';
 // Put-Up release 1b — PATCH /api/preservation/:id and POST /api/preservation/:id/move, importable for
 // the same reason (see jarRoutes.js's header).
 import { handleJarRoute } from './jarRoutes.js';
+// Release F — POST /api/pantry/uses (Mark used / Used up), importable for the same reason.
+import { handlePantryUses } from './pantryUses.js';
+import { MASS_UNITS, MASS_FACTORS } from './lineRoutes.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -214,6 +217,11 @@ export const handler = async (event) => {
     // Returns null for every path that is not one of its own, so the preservation routes below are
     // reached unchanged. Household scope is passed in rather than recomputed — one call to
     // householdScope() per request, the same array every predicate in this handler binds.
+    // ── POST /api/pantry/uses (Release F), a LITERAL matched first. '/api/pantry' resolves to this
+    //    Lambda by prefix (src/lib/api.js), so no infra change is needed; nothing else here claims it.
+    const use = await handlePantryUses({ sql, rawPath, method, rawBody: event.body, userId, householdIds });
+    if (use) return resp(use.status, use.body);
+
     const kitchen = await handleKitchenRoute({
       sql,
       rawPath,
@@ -471,6 +479,7 @@ export const handler = async (event) => {
           sql`
           WITH stored AS (
             SELECT package_count AS stored_package_count, remaining_count AS stored_remaining_count,
+                   delta_at AS stored_delta_at,
                    -- The five-column echo rule and the count race, restated over the SNAPSHOT so a
                    -- refusal can say which it was. The UPDATE below decides on the locked row; this
                    -- only explains. Keep the two blocks term-for-term identical.
@@ -586,6 +595,12 @@ export const handler = async (event) => {
             AND (NOT ${hasNotes}::boolean OR NULLIF(btrim(${body.notes ?? null}::text), '') IS NOT DISTINCT FROM NULLIF(btrim(notes), ''))
             AND NOT (${packageCount}::int IS NOT NULL AND package_count <> ${packageCount}::int
                      AND ${hasRemaining}::boolean AND ${remaining}::int IS DISTINCT FROM remaining_count)
+            -- Release F (06 §1.3 item 4; V4 "From release 2"): a body carrying remaining_count on a jar
+            -- that a use or a draw has moved (delta_at set) is a pre-F bundle echoing a count this
+            -- jar no longer has. Only pre-F bundles send the key — the F client moves counts through
+            -- POST /api/pantry/uses — so refusing here strands nobody: the 409 is client_stale, whose
+            -- Refresh now loads the bundle that does not send it. Race-free: decided on the locked row.
+            AND (NOT ${hasRemaining}::boolean OR delta_at IS NULL)
             -- The count refusal. The same expression as remaining_count's SET, on the same row: the
             -- write happens only if what it would store is a count of jars that can exist,
             -- 0..package_count. NULL stays legal exactly as before.
@@ -598,15 +613,19 @@ export const handler = async (event) => {
                   TRUE)
           RETURNING *
           )
-          SELECT updated.*, stored.stored_package_count, stored.stored_remaining_count, stored.stored_stale
+          SELECT updated.*, stored.stored_package_count, stored.stored_remaining_count, stored.stored_stale,
+                 stored.stored_delta_at
           FROM stored LEFT JOIN updated ON TRUE
         `,
         ]);
         if (!rows.length) return resp(404, { error: 'Not found' });
         const { stored_package_count: storedCount, stored_remaining_count: storedRemaining,
-                stored_stale: storedStale, ...row } = rows[0];
+                stored_stale: storedStale, stored_delta_at: storedDeltaAt, ...row } = rows[0];
         if (row.id == null) {
           if (storedStale) return resp(409, clientStale());
+          // Branched EXPLICITLY (boss-technical, the used-up variant), never left to countRefusal's
+          // fall-through, which would answer a stale Used up with count_below_used.
+          if (hasRemaining && storedDeltaAt != null) return resp(409, clientStale());
           return resp(409, countRefusal({
             storedCount, storedRemaining,
             packageCount: packageCount ?? storedCount,
@@ -712,6 +731,9 @@ export const handler = async (event) => {
             method: body.method, kind: storageKind, isRaw: body.is_raw ?? null, inOil: body.in_oil ?? null,
             texture: body.texture ?? null, precision,
           }, body.preserved_at);
+      // Release F: a typed heat estimate on a jar is 'typed' (only shu-estimate/save writes 'computed').
+      const shuLow = body.shu_est_low == null ? null : Number(body.shu_est_low);
+      const shuHigh = shuLow == null ? null : Number(body.shu_est_high ?? body.shu_est_low);
       // pH at bottling: ph_read_at defaults to the jar's own date, never earlier (V4 pH section).
       const phReading = body.ph_reading == null ? null : String(body.ph_reading).trim();
       const phReadAt = phReading == null ? null : (body.ph_read_at ?? String(body.preserved_at).slice(0, 10));
@@ -725,7 +747,8 @@ export const handler = async (event) => {
             package_count, storage_location_id, use_by_target, remaining_count, notes, photo_id,
             source_kind, source_label,
             label, container_label, use_by_basis, preserved_at_precision, is_raw, in_oil, texture,
-            ph_reading, ph_read_at, idempotency_key
+            ph_reading, ph_read_at, idempotency_key,
+            shu_est_low, shu_est_high, shu_est_basis, cooked, remaining_amount
           ) VALUES (
             ${userId}, ${attr.crop_type_slug ?? null}, ${attr.variety_id ?? null}, ${body.plant_id ?? null}, ${body.harvest_log_id ?? null},
             ${body.preserved_at}, ${body.preserved_at_approx ?? null}, ${body.method}, ${body.method === 'other' ? normalizeText(body.method_other_text) : null}, ${body.quantity_value ?? null}, ${normalizeJarUnit(body.quantity_unit)},
@@ -733,7 +756,14 @@ export const handler = async (event) => {
             ${body.source_kind ?? null}, ${body.source_kind === 'own_garden' ? null : normalizeSourceLabel(body.source_label)},
             ${normalizeText(body.label)}, ${normalizeText(body.container_label)}, ${resolved.use_by_basis}, ${precision},
             ${body.is_raw ?? null}, ${body.in_oil ?? null}, ${body.texture ?? null},
-            ${phReading}::numeric, ${phReadAt}::timestamptz, ${body.idempotency_key ?? null}::uuid
+            ${phReading}::numeric, ${phReadAt}::timestamptz, ${body.idempotency_key ?? null}::uuid,
+            ${shuLow}::int, ${shuHigh}::int, ${shuLow == null ? null : 'typed'}::text, ${body.cooked ?? null}::boolean,
+            -- Release F (06 §1.4 "Seeding"): a WEIGHED jar (one container, a mass unit) starts with its
+            -- grams, so the first draw moves remaining_amount from a real number.
+            CASE WHEN ${packageCount}::int = 1
+                 THEN ${body.quantity_value ?? null}::numeric
+                      * (SELECT m.factor FROM unnest(${MASS_UNITS}::text[], ${MASS_FACTORS}::numeric[]) AS m(unit, factor)
+                          WHERE m.unit = ${normalizeJarUnit(body.quantity_unit)}::text) END
           ) RETURNING *
         `;
       } catch (err) {

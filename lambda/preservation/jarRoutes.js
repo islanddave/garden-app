@@ -27,7 +27,7 @@
 // lambda/audit-actor-guc.test.js asserts.
 import { resolveJarUseBy } from './shelfLife.js';
 import {
-  VALID_METHODS, projectRow, clientStale, normalizeJarText, normalizeJarUnit, isJarDate,
+  VALID_METHODS, projectRow, clientStale, countRefusal, normalizeJarText, normalizeJarUnit, isJarDate,
   jarLabelError, jarQuantityError, jarPhError, JAR_TEXTURES, JAR_TEXTURE_METHODS,
 } from './jarRules.js';
 
@@ -43,7 +43,9 @@ export const PLACE_KINDS = ['deep_freezer', 'fridge_freezer', 'fridge', 'pantry'
 // Returns { id } or { id: null } for paths that are ours, null otherwise.
 export function parseJarRoute(rawPath) {
   if (typeof rawPath !== 'string') return null;
-  const m = rawPath.match(/^\/api\/preservation\/([0-9a-f-]{36})(?:\/(move))?\/?$/i);
+  // A3: a `[^/]+` capture with the uuid check below — behaviour identical, and the static client↔Lambda
+  // route contract (src/__tests__/clientRouteLambdaContract.test.js) can see the pattern.
+  const m = rawPath.match(/^\/api\/preservation\/([^/]+)(?:\/(move))?\/?$/);
   if (!m || !UUID_RE.test(m[1])) return null;
   return { id: m[1], sub: m[2] ?? null };
 }
@@ -65,7 +67,8 @@ async function loadJar(sql, jarId, householdIds) {
   const rows = await sql`
     SELECT p.id, p.method, p.method_other_text, p.label, p.is_raw, p.in_oil, p.texture,
            p.storage_location_id, s.kind AS storage_kind, p.preserved_at, p.preserved_at_precision,
-           p.use_by_target, p.use_by_basis, p.storage_moved_at, p.xmin::text AS row_version
+           p.use_by_target, p.use_by_basis, p.storage_moved_at, p.package_count, p.remaining_count,
+           p.xmin::text AS row_version
     FROM preservation_log p
     LEFT JOIN storage_location s ON s.id = p.storage_location_id
     WHERE p.id = ${jarId}::uuid
@@ -130,6 +133,11 @@ export function moveUseBy(stored, destKind, moveDate) {
 export const JAR_PATCH_KEYS = [
   'label', 'container_label', 'is_raw', 'in_oil', 'texture', 'ph_reading', 'ph_read_at',
   'method', 'method_other_text', 'discard_by', 'notes', 'notes_append', 'quantity_value', 'quantity_unit',
+  // Release F (contract-F §2.6): the jar's typed heat estimate and "Cooked after blending?".
+  'shu_est_low', 'shu_est_high', 'cooked',
+  // Integrator request (A3 follow-up): the jar editor's size AND count in the same write, so one
+  // failed request can never leave half an edit.
+  'package_count',
 ];
 
 export function validateJarPatch(body) {
@@ -152,8 +160,16 @@ export function validateJarPatch(body) {
   if (has(body, 'method') && (!body.method || !VALID_METHODS.includes(body.method))) {
     return `method must be one of: ${VALID_METHODS.join(', ')}`;
   }
-  if (has(body, 'method_other_text') && !has(body, 'method')) {
-    return 'method_other_text travels with method';
+  // A3: method_other_text may be sent on its own (the editor sends it when the method is Other);
+  // nonblank, at most 120. Whether it means anything is judged against the EFFECTIVE method in
+  // patchJar, which can see the stored one.
+  if (has(body, 'method_other_text') && body.method_other_text != null) {
+    const e = jarLabelError(body.method_other_text, 'method_other_text');
+    if (e) return e;
+  }
+  // The count, with the legacy PUT's delta rule (patchJar). A whole number of containers, 1 or more.
+  if (has(body, 'package_count') && (!Number.isInteger(Number(body.package_count)) || Number(body.package_count) < 1)) {
+    return 'package_count must be >= 1';
   }
   if (has(body, 'discard_by')) {
     const d = body.discard_by;
@@ -171,6 +187,14 @@ export function validateJarPatch(body) {
     if (e) return e;
   }
   if (has(body, 'notes') && has(body, 'notes_append')) return 'send notes or notes_append, not both';
+  if (has(body, 'shu_est_high') && !has(body, 'shu_est_low')) return 'shu_est_high travels with shu_est_low';
+  if (has(body, 'shu_est_low') && body.shu_est_low != null) {
+    if (!Number.isInteger(Number(body.shu_est_low)) || Number(body.shu_est_low) < 0) return 'shu_est_low must be a whole number, 0 or more';
+    if (body.shu_est_high != null && (!Number.isInteger(Number(body.shu_est_high)) || Number(body.shu_est_high) < Number(body.shu_est_low))) {
+      return 'shu_est_high must be a whole number at least shu_est_low';
+    }
+  }
+  if (has(body, 'cooked') && body.cooked != null && typeof body.cooked !== 'boolean') return 'cooked must be true or false';
   if (has(body, 'notes_append') && normalizeJarText(body.notes_append) == null) return 'notes_append cannot be blank';
   return null;
 }
@@ -214,12 +238,27 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
   const guarded = useBy != null || corrected || textureChanged;
 
   const method = next.method;
-  const methodOther = !has(body, 'method') ? null
+  if (has(body, 'method_other_text') && body.method_other_text != null && method !== 'other') {
+    return bad("method_other_text only goes with the method 'other'");
+  }
+  // Written when either key is sent: a method corrected AWAY from 'other' clears the text; the text
+  // alone on an Other jar replaces it.
+  const writeMethodOther = has(body, 'method') || has(body, 'method_other_text');
+  const methodOther = !writeMethodOther ? null
     : method === 'other' ? normalizeJarText(has(body, 'method_other_text') ? body.method_other_text : jar.method_other_text)
       : null;
+  // THE COUNT, with the legacy PUT's delta rule (V4 "From 1a"): a changed package_count moves
+  // remaining_count by the same delta from COALESCE(remaining_count, package_count) — what has been
+  // used stays used — refused (409, countRefusal's words) below 0 or above the new count, decided in
+  // the UPDATE's WHERE on the row it locks. The PUT's stale-tab race needs a STALE remaining_count
+  // echoed beside the count; this route never takes remaining_count, so that race cannot arise here.
+  // A count change moves remaining_count, so it stamps delta_at (06 §1.3 item 5).
+  const packageCount = has(body, 'package_count') ? Number(body.package_count) : null;
   const phReading = has(body, 'ph_reading') && body.ph_reading != null ? String(body.ph_reading).trim() : null;
   // A reading edited later defaults its time to now (V4 pH section: "today (a later Edit)").
   const phReadAt = phReading == null ? null : (body.ph_read_at ?? new Date().toISOString());
+  const shuLow = body.shu_est_low == null ? null : Number(body.shu_est_low);
+  const shuHigh = shuLow == null ? null : Number(body.shu_est_high ?? body.shu_est_low);
   const qv = has(body, 'quantity_value') && body.quantity_value != null && String(body.quantity_value).trim() !== ''
     ? body.quantity_value : null;
 
@@ -233,13 +272,27 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
       in_oil            = CASE WHEN ${has(body, 'in_oil')}::boolean THEN ${body.in_oil ?? null}::boolean ELSE in_oil END,
       texture           = CASE WHEN ${writeTexture}::boolean THEN ${next.texture ?? null}::text ELSE texture END,
       method            = CASE WHEN ${has(body, 'method')}::boolean THEN ${method}::text ELSE method END,
-      method_other_text = CASE WHEN ${has(body, 'method')}::boolean THEN ${methodOther}::text ELSE method_other_text END,
+      method_other_text = CASE WHEN ${writeMethodOther}::boolean THEN ${methodOther}::text ELSE method_other_text END,
+      remaining_count   = CASE WHEN ${packageCount}::int IS NOT NULL AND package_count <> ${packageCount}::int
+                               THEN COALESCE(remaining_count, package_count) + (${packageCount}::int - package_count)
+                               ELSE remaining_count END,
+      consumed_at       = CASE WHEN ${packageCount}::int IS NOT NULL AND package_count <> ${packageCount}::int
+                               THEN CASE WHEN COALESCE(remaining_count, package_count) + (${packageCount}::int - package_count) = 0
+                                         THEN COALESCE(consumed_at, now()) END
+                               ELSE consumed_at END,
+      delta_at          = CASE WHEN ${packageCount}::int IS NOT NULL AND package_count <> ${packageCount}::int
+                               THEN now() ELSE delta_at END,
+      package_count     = COALESCE(${packageCount}::int, package_count),
       ph_reading        = CASE WHEN ${has(body, 'ph_reading')}::boolean THEN ${phReading}::numeric ELSE ph_reading END,
       ph_read_at        = CASE WHEN ${has(body, 'ph_reading')}::boolean THEN ${phReadAt}::timestamptz ELSE ph_read_at END,
       quantity_value    = CASE WHEN ${has(body, 'quantity_value')}::boolean THEN ${qv}::numeric ELSE quantity_value END,
       quantity_unit     = CASE WHEN ${has(body, 'quantity_value')}::boolean THEN ${qv == null ? null : normalizeJarUnit(body.quantity_unit)}::text ELSE quantity_unit END,
       use_by_target     = CASE WHEN ${useBy != null}::boolean THEN ${useBy?.use_by_target ?? null}::date ELSE use_by_target END,
       use_by_basis      = CASE WHEN ${useBy != null}::boolean THEN ${useBy?.use_by_basis ?? null}::text ELSE use_by_basis END,
+      shu_est_low       = CASE WHEN ${has(body, 'shu_est_low')}::boolean THEN ${shuLow}::int ELSE shu_est_low END,
+      shu_est_high      = CASE WHEN ${has(body, 'shu_est_low')}::boolean THEN ${shuHigh}::int ELSE shu_est_high END,
+      shu_est_basis     = CASE WHEN ${has(body, 'shu_est_low')}::boolean THEN ${shuLow == null ? null : 'typed'}::text ELSE shu_est_basis END,
+      cooked            = CASE WHEN ${has(body, 'cooked')}::boolean THEN ${body.cooked ?? null}::boolean ELSE cooked END,
       notes             = CASE WHEN ${has(body, 'notes')}::boolean THEN ${normalizeJarText(body.notes)}::text
                                WHEN ${has(body, 'notes_append')}::boolean
                                  THEN concat_ws(E'\\n', NULLIF(btrim(notes), ''), ${normalizeJarText(body.notes_append)}::text)
@@ -248,10 +301,24 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
       AND user_id = ANY(${householdIds})
       AND deleted_at IS NULL
       AND (NOT ${guarded}::boolean OR xmin = ${jar.row_version}::text::xid)
+      AND (${packageCount}::int IS NULL
+           OR COALESCE(remaining_count, package_count) + (${packageCount}::int - package_count)
+              BETWEEN 0 AND ${packageCount}::int)
     RETURNING *
   `,
   ]);
-  if (!rows.length) return guarded ? stale() : notFound;
+  if (!rows.length) {
+    // Tell the count refusal from a stale read, on the row as it was read: if the delta rule fails
+    // there, the answer is the rule's words (the same codes the legacy PUT gives).
+    if (packageCount != null) {
+      const left = jar.remaining_count ?? jar.package_count;
+      const next = Number(left) + (packageCount - Number(jar.package_count));
+      if (next < 0 || next > packageCount) {
+        return { status: 409, body: countRefusal({ storedCount: jar.package_count, storedRemaining: jar.remaining_count, packageCount, remaining: null }) };
+      }
+    }
+    return guarded || packageCount != null ? stale() : notFound;
+  }
   return { status: 200, body: projectRow(rows[0]) };
 }
 

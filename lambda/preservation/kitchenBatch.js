@@ -82,6 +82,48 @@ export const KITCHEN_QTY_UNITS = [
   'g', 'kg', 'oz', 'lb', 'count', 'cup', 'tbsp', 'tsp', 'fl oz', 'qt', 'gal', 'ml', 'l', 'other',
 ];
 
+// ── Release F (contract-F.md conventions) ─────────────────────────────────────────────────────────
+// KITCHEN_UNITS — the one list (V4 "Units"), = chk_kbi_qty_unit / chk_ksl_amount_unit as 1b widened
+// them and chk_kitchen_batch_vessel_unit (F). Every F writer (keyed lines, line PATCH, stage PATCH,
+// vessel) takes these 25. KITCHEN_QTY_UNITS above stays the 14 the SHIPPED forms were built on, because
+// the shipped client mirror (src/components/putup/batchInputs.js) is bound to it; the un-keyed bulk form
+// keeps it.
+export const KITCHEN_UNITS = [
+  'g', 'kg', 'oz', 'lb', 'ml', 'l', 'tsp', 'tbsp', 'fl oz', 'cup', 'pint', 'qt', 'gal',
+  'count', 'clove', 'head', 'bunch', 'pinch', 'peck', 'bushel', 'half-bushel', 'flat', 'jar', 'bag', 'other',
+];
+// Grams per unit — THE one mass table (06 §1.4). A unit not here is not a mass.
+export const MASS_G = Object.freeze({ g: 1, kg: 1000, oz: 28.3495, lb: 453.592 });
+// Grams per unit for a role='water' line ONLY (1 g/ml; 06's water-conversion rule). Every other volume is "no weight".
+export const WATER_G = Object.freeze({
+  ml: 1, l: 1000, tsp: 4.92892, tbsp: 14.7868, 'fl oz': 29.5735, cup: 236.588, pint: 473.176,
+  qt: 946.353, gal: 3785.41,
+});
+export const isMassUnit = (u) => Object.prototype.hasOwnProperty.call(MASS_G, u);
+// qty in grams, or null ("no weight"). Water volumes convert only when the line IS water.
+export function gramsOf(qty, unit, { water = false } = {}) {
+  if (qty == null || unit == null) return null;
+  const n = Number(qty);
+  if (!Number.isFinite(n)) return null;
+  if (isMassUnit(unit)) return n * MASS_G[unit];
+  if (water && Object.prototype.hasOwnProperty.call(WATER_G, unit)) return n * WATER_G[unit];
+  return null;
+}
+
+// chk_kbi_form, chk_kbi_salt_method, chk_kbi_base_from, chk_ksl_acts, chk_kbi_role.
+export const KITCHEN_FORMS = ['fresh', 'frozen', 'dried', 'cooked'];
+export const KITCHEN_SALT_METHODS = ['dry', 'brine', 'rinsed'];
+export const KITCHEN_BASE_FROM = ['lines', 'scale'];
+export const KITCHEN_ACTS = ['topped_up', 'pushed_under', 'skimmed'];
+export const KITCHEN_ROLES = ['salt', 'water'];
+// chk_kbi_salt_base admits 'peppers' for a 1b-era row; no F writer writes it (06 §3.1).
+export const KITCHEN_SALT_BASES = ['produce', 'water', 'all'];
+// The kinds an F line POST writes (contract-F §2.2). 'pantry' is reserved for B′.
+export const KITCHEN_LINE_KINDS = ['garden', 'harvest', 'put_up', 'purchased', 'other'];
+export const KITCHEN_SHU_BASES = ['computed', 'typed'];
+// chk_kitchen_batch_vessel_count.
+export const KITCHEN_VESSEL_COUNT_MAX = 50;
+
 // V5-PHRECORD-001. chk_ksl_ph_scale, mirrored — the pH scale's definitional range and nothing else.
 //
 // ⚠ NOT A SAFETY BAND, and the distinction is the whole ruling. This range is symmetric, prefers no
@@ -105,6 +147,11 @@ export const KITCHEN_PH_SCALE_MAX = 14;
 export const KITCHEN_BATCH_EDITABLE_COLUMNS = [
   'label', 'kind', 'kind_other', 'started_at', 'start_precision', 'start_anchor_kind', 'start_anchor_id',
   'expected_days_min', 'expected_days_max', 'brine_note', 'cover_photo_id', 'notes', 'suspended_at',
+  // Release F (contract-F §2.1): the jar & heat facts and "Following a recipe?". shu_est_basis is NOT
+  // here — the merge PUT writes 'typed' whenever it writes a heat estimate, and only
+  // POST /:id/shu-estimate/save writes 'computed' (a body basis other than 'typed' is refused).
+  'vessel_label', 'vessel_size', 'vessel_unit', 'vessel_count', 'no_salt', 'shu_est_low', 'shu_est_high',
+  'recipe_ref',
 ];
 
 // The complement, stated rather than implied. A column here reaching the PUT is a defect regardless of
@@ -143,9 +190,12 @@ export const KITCHEN_PREDICATE_MAX_SPAN_DAYS = 366;
 // btrim() CHECKs exist on label / kind_other, and a whitespace-only brine_note is noise either way.
 const KITCHEN_TEXT_COLUMNS = new Set([
   'label', 'kind', 'kind_other', 'start_precision', 'start_anchor_kind', 'brine_note', 'notes',
+  'vessel_label', 'vessel_unit', 'recipe_ref',
 ]);
 
-const KITCHEN_INTEGER_COLUMNS = new Set(['expected_days_min', 'expected_days_max']);
+const KITCHEN_INTEGER_COLUMNS = new Set([
+  'expected_days_min', 'expected_days_max', 'vessel_count', 'shu_est_low', 'shu_est_high',
+]);
 
 // ORDER KEYS, stated once. `id DESC` on the stage log is NOT decoration: two rows written in one
 // statement tie on entered_at AND created_at, which is the nondeterminism seed_lot_stage_log's readers
@@ -182,13 +232,20 @@ export function parseKitchenRoute(rawPath) {
   if (typeof rawPath !== 'string') return null;
   const path = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
   if (path === '/api/kitchen-batches') return { kind: 'collection' };
+  // Release F: the line search is a LITERAL, matched BEFORE any :id capture, so 'line-search' can never
+  // be read as a batch id (API-I1).
+  if (path === '/api/kitchen-batches/line-search') return { kind: 'line_search' };
   const m = path.match(/^\/api\/kitchen-batches\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?(?:\/([^/]+))?$/);
   if (!m) return null;
   const [, id, sub, tail, fourth] = m;
-  // Put-Up release 1b: the one four-segment shape. Every other arm below requires no fourth segment.
+  // The four-segment shapes: Put-Up 1b's undo, F's line restore. Every other arm has no fourth segment.
   if (sub === 'put-up' && tail && fourth === 'undo') return { kind: 'put_up_undo', id, stageId: tail };
+  if (sub === 'inputs' && tail && fourth === 'restore') return { kind: 'input_restore', id, inputId: tail };
   if (fourth) return null;
   if (!sub) return { kind: 'batch', id };
+  if (sub === 'stages' && tail) return { kind: 'stage', id, stageId: tail };
+  if (sub === 'shu-estimate' && !tail) return { kind: 'shu_estimate', id };
+  if (sub === 'shu-estimate' && tail === 'save') return { kind: 'shu_estimate_save', id };
   if (sub === 'put-up' && !tail) return { kind: 'put_up', id };
   if (sub === 'stages' && !tail) return { kind: 'stages', id };
   if (sub === 'inputs' && !tail) return { kind: 'inputs', id };
@@ -323,17 +380,60 @@ export function validateBatchUpdate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   const rejected = KITCHEN_BATCH_SERVER_OWNED_COLUMNS.filter((c) => has(body, c));
   if (rejected.length) return `these fields cannot be edited here: ${rejected.join(', ')}`;
-  const unknown = Object.keys(body).filter((k) => !KITCHEN_BATCH_EDITABLE_COLUMNS.includes(k));
+  // A heat estimate typed on the merge PUT is 'typed', by definition. 'computed' is written only by
+  // POST /:id/shu-estimate/save, which recomputes it server-side (06 §2.1; contract-F §2.1).
+  if (has(body, 'shu_est_basis')) {
+    if (body.shu_est_basis !== 'typed') return "shu_est_basis can only be 'typed' here — use Work it out to save a computed estimate";
+  }
+  const unknown = Object.keys(body).filter((k) => k !== 'shu_est_basis' && !KITCHEN_BATCH_EDITABLE_COLUMNS.includes(k));
   if (unknown.length) return `unknown field(s): ${unknown.join(', ')}`;
   if (!Object.keys(body).length) return 'nothing to update';
   // A label may be changed but never emptied — chk_kitchen_batch_label_nonblank, and a batch with no
   // label is unfindable in the one list it appears in.
   if (has(body, 'label') && normalizeText(body.label) == null) return 'label cannot be empty';
-  return kindError(body, { requirePair: true })
+  return fBatchFieldsError(body)
+    ?? kindError(body, { requirePair: true })
     ?? startPairingError(body, { requirePair: true })
     ?? anchorError(body)
     ?? expectedDaysError(body, { requirePair: true })
     ?? uuidFieldError(body, 'cover_photo_id');
+}
+
+// Release F's batch fields (chk_kitchen_batch_vessel_*, _shu_est_*, _recipe_ref_nonblank), mirrored.
+// The merge cannot see the stored half of a pair, so each pair travels together.
+function fBatchFieldsError(body) {
+  if (has(body, 'vessel_label') && body.vessel_label != null) {
+    const t = normalizeText(body.vessel_label);
+    if (t == null) return 'the jar size name cannot be blank';
+    if (t.length > 120) return 'the jar size name can be at most 120 characters';
+  }
+  if (has(body, 'vessel_size') !== has(body, 'vessel_unit')) return 'vessel_size and vessel_unit are sent together';
+  if (has(body, 'vessel_size')) {
+    const size = body.vessel_size;
+    const unit = normalizeText(body.vessel_unit);
+    if ((size == null) !== (unit == null)) return 'a jar size needs its unit, and a unit needs its size';
+    if (size != null && !(Number.isFinite(Number(size)) && Number(size) > 0)) return 'vessel_size must be greater than 0';
+    if (unit != null && !KITCHEN_UNITS.includes(unit)) return `vessel_unit must be one of: ${KITCHEN_UNITS.join(', ')}`;
+  }
+  if (has(body, 'vessel_count') && body.vessel_count != null) {
+    const c = Number(body.vessel_count);
+    if (!Number.isInteger(c) || c < 1 || c > KITCHEN_VESSEL_COUNT_MAX) return `vessel_count must be 1 to ${KITCHEN_VESSEL_COUNT_MAX}`;
+  }
+  if (has(body, 'no_salt') && body.no_salt != null && typeof body.no_salt !== 'boolean') return 'no_salt must be true or false';
+  if (has(body, 'shu_est_low') !== has(body, 'shu_est_high')) return 'shu_est_low and shu_est_high are sent together';
+  if (has(body, 'shu_est_low')) {
+    const lo = body.shu_est_low;
+    const hi = body.shu_est_high;
+    if (lo == null && hi != null) return 'a heat estimate needs its low end';
+    if (lo != null && (!Number.isInteger(Number(lo)) || Number(lo) < 0)) return 'shu_est_low must be a whole number, 0 or more';
+    if (hi != null && (!Number.isInteger(Number(hi)) || Number(hi) < Number(lo))) return 'shu_est_high must be a whole number at least shu_est_low';
+  }
+  if (has(body, 'recipe_ref') && body.recipe_ref != null) {
+    const t = normalizeText(body.recipe_ref);
+    if (t == null) return 'the recipe reference cannot be blank';
+    if (t.length > 500) return 'the recipe reference can be at most 500 characters';
+  }
+  return null;
 }
 
 // Split a validated PUT body into "which columns did the request mention" and "what value for each".
@@ -351,12 +451,17 @@ export function batchUpdatePatch(body) {
   }
   // kind owns the pair. Set explicitly to anything but 'other' and the free-text label goes with it.
   if (present.kind && value.kind !== 'other') { present.kind_other = true; value.kind_other = null; }
+  // Release F: numeric vessel size stays the STRING sent (a Number round-trip drops a trailing zero);
+  // no_salt is true-or-NULL (chk_kitchen_batch_no_salt_true) — false clears.
+  if (present.vessel_size) value.vessel_size = body.vessel_size == null ? null : String(body.vessel_size);
+  if (present.no_salt) value.no_salt = body.no_salt === true ? true : null;
   return { present, value };
 }
 
 // ── POST /api/kitchen-batches/:id/stages ─────────────────────────────────────────────────────────
-// Append-only. There is no PUT and no DELETE on a stage row and that absence IS the design: the
-// off-log repair path is what produced the seed-lot divergence this schema refuses to copy.
+// No DELETE on a stage row, and that absence IS the design: the off-log repair path is what produced
+// the seed-lot divergence this schema refuses to copy. (Release F's in-place edit is kitchenLines.js
+// stagePatchError + kitchenRoutes.js patchStage.)
 //
 // Put-Up release 1b widens what it takes (V4 API table, row "POST /:id/stages"): reopened, paused,
 // resumed, noted and void, and entered_precision. There is still no PUT or DELETE — an Undo is a VOID
@@ -383,6 +488,14 @@ export function validateStage(body) {
     }
   }
   if (kind === 'noted' && normalizeText(body.note) == null) return "a 'noted' row needs the note";
+  // Release F: what he did at a check-in (Dave 16:30) — tended only, from the three words
+  // (chk_ksl_acts, chk_ksl_acts_on_tended); the route de-duplicates.
+  if (has(body, 'acts') && body.acts != null) {
+    if (kind !== 'tended') return 'what you did goes on a check-in';
+    if (!Array.isArray(body.acts) || !body.acts.length) return 'acts must be a non-empty list, or absent';
+    const unknownActs = body.acts.filter((a) => !KITCHEN_ACTS.includes(a));
+    if (unknownActs.length) return `acts must be among: ${KITCHEN_ACTS.join(', ')}`;
+  }
   const precErr = enteredPrecisionError(body);
   if (precErr) return precErr;
   // chk_ksl_moved_needs_location. Placement is a RATE input, not a milestone — a 'moved' row with no

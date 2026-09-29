@@ -48,7 +48,7 @@ const HANDLERS = readdirSync(__dirname)
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  cultivar: ['crop_type_slug', 'deleted_at', 'display_name', 'id'],
+  cultivar: ['crop_type_slug', 'deleted_at', 'display_name', 'id', 'scoville_max', 'scoville_min'],
 };
 
 const CULTIVAR_COLUMNS = AUDIT_COLUMNS.cultivar;
@@ -105,7 +105,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation cultivar column contra
     // 5 -> 6 with V5-INFLIGHTBATCH-001: the kitchen-batch predicate bulk-add LEFT JOINs cultivar to
     // resolve `crop_type_slug` for a harvest window. It reaches for cv.id / cv.deleted_at /
     // cv.crop_type_slug only, all three already in the contract below, so the column list is unchanged.
-    expect(STATEMENTS).toHaveLength(6);
+    // Release F: +4 — readLines (a line's variety rating, through its planting or its drawn jar), the planting loader, the line search and the household pepper names. scoville_min/max join the contract: the heat estimate's variety rating.
+    expect(STATEMENTS).toHaveLength(10);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['cv']);
   });

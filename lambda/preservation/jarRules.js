@@ -11,6 +11,7 @@
 // validateCommon and projectRow, which were module-private.
 import { validateProvenance } from './provenance.js';
 import { classifyUseBy } from './useBy.js';
+import { isMassUnit } from './kitchenBatch.js';
 
 // Mirrors chk_preservation_log_method — belt-and-suspenders over the DB CHECK (L5 vocab).
 export const VALID_METHODS = [
@@ -165,6 +166,17 @@ export function jarFactsError(body, method) {
     if (!JAR_TEXTURES.includes(body.texture)) return `texture must be one of: ${JAR_TEXTURES.join(', ')}`;
     if (!JAR_TEXTURE_METHODS.includes(method)) return 'texture only applies to a dried food (dehydrate or powder)';
   }
+  // Release F: a jar's typed heat estimate (chk_preservation_log_shu_est_range) and "Cooked after
+  // blending?" (a record only; shelfLife.js never reads it).
+  if (body.shu_est_low != null || body.shu_est_high != null) {
+    if (body.shu_est_low == null) return 'a heat estimate needs its low end';
+    if (!Number.isInteger(Number(body.shu_est_low)) || Number(body.shu_est_low) < 0) return 'shu_est_low must be a whole number, 0 or more';
+    if (body.shu_est_high != null && (!Number.isInteger(Number(body.shu_est_high)) || Number(body.shu_est_high) < Number(body.shu_est_low))) {
+      return 'shu_est_high must be a whole number at least shu_est_low';
+    }
+  }
+  if (body.shu_est_basis != null && body.shu_est_basis !== 'typed') return "a heat estimate typed here is 'typed'";
+  if (body.cooked != null && typeof body.cooked !== 'boolean') return 'cooked must be true or false';
   if (body.preserved_at_precision != null && !JAR_PRECISIONS.includes(body.preserved_at_precision)) {
     return `preserved_at_precision must be one of: ${JAR_PRECISIONS.join(', ')}`;
   }
@@ -331,6 +343,19 @@ export function projectRow(r) {
     ph_reading: r.ph_reading ?? null,
     ph_read_at: r.ph_read_at ?? null,
     put_up_stage_id: r.put_up_stage_id ?? null,
+    // Release F. Read-only here too (never in PRESERVATION_EDITABLE_COLUMNS or buildFullPayload):
+    // the heat estimate and "cooked" are written by Put it up, the create, the PATCH and
+    // shu-estimate/save; remaining_amount only by draws and uses. stock_mode is derived — weighed when
+    // one container was logged in a mass unit (the route rule; readers show "about N g left" only then).
+    shu_est_low: r.shu_est_low ?? null,
+    shu_est_high: r.shu_est_high ?? null,
+    shu_est_basis: r.shu_est_basis ?? null,
+    cooked: r.cooked ?? null,
+    remaining_amount: r.remaining_amount ?? null,
+    stock_mode: Number(r.package_count) === 1 && isMassUnit(r.quantity_unit) ? 'weighed' : 'counted',
+    // A3: the place's kind, read-only, where the read joined it (the discard-by basis words say
+    // "general figure: hot sauce, fridge"). NULL on a write's RETURNING, which joins nothing.
+    storage_kind: r.storage_kind ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
     // From the driver's values, not the projected text: classifyUseBy reads either, and leaving its

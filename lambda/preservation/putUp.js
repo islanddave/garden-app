@@ -26,7 +26,7 @@ import {
   JAR_TEXTURES, JAR_TEXTURE_METHODS, normalizeJarText, normalizeJarUnit, isJarDate,
   jarLabelError, jarQuantityError, jarPhError,
 } from './jarRules.js';
-import { KITCHEN_QTY_UNITS } from './kitchenBatch.js';
+import { lineError as fLineError, lineColumns } from './kitchenLines.js';
 import { resolveJarUseBy } from './shelfLife.js';
 import { etDay } from './useBy.js';
 
@@ -40,28 +40,31 @@ export const PUT_UP_PLACE_KINDS = ['deep_freezer', 'fridge_freezer', 'fridge', '
 export const PUT_UP_WHEN_PRECISIONS = ['exact', 'hour', 'day', 'week', 'month', 'season', 'year', 'unknown'];
 // Dated precisions that are NOT an estimate: the jar's preserved_at_approx is false for these.
 const PRECISE = new Set(['exact', 'hour', 'day']);
-// The line kinds a 1b put-up writes for a typed "added at the end" line.
-export const PUT_UP_LINE_KINDS = ['other', 'purchased'];
 export const PUT_UP_MAX_ROWS = 20;
 export const PUT_UP_MAX_LINES = 40;
 
 // ── validation ──────────────────────────────────────────────────────────────────────────────────
+// Release F: an "added at the end" line is a full F line (06 §3.6, HS-I3) — a pick, a planting, a draw
+// ("8 g from the frozen reaper bag") or typed — validated by the same rules as What went in
+// (kitchenLines.js), except that its sitting and row are the SERVER's (it names the jars this very
+// statement creates), and its key is optional (the sitting's key is the event's).
 function lineError(line, where) {
-  if (!isObj(line)) return `${where}: each line must be an object`;
-  const kind = line.input_kind == null ? 'other' : line.input_kind;
-  if (!PUT_UP_LINE_KINDS.includes(kind)) {
-    return `${where}: input_kind must be one of: ${PUT_UP_LINE_KINDS.join(', ')}`;
+  if (isObj(line) && (line.put_up_stage_id != null || line.output_id != null)) {
+    return `${where}: a line added here belongs to this bottling — send no put_up_stage_id or output_id`;
   }
-  if (normalizeJarText(line.label) == null) return `${where}: name what went in`;
-  const qty = line.qty ?? null;
-  const unit = normalizeJarText(line.qty_unit);
-  if ((qty == null) !== (unit == null)) return `${where}: qty and qty_unit must both be set, or both be empty`;
-  if (qty != null) {
-    if (!Number.isFinite(Number(qty)) || Number(qty) <= 0) return `${where}: qty must be greater than 0`;
-    if (!KITCHEN_QTY_UNITS.includes(unit)) return `${where}: qty_unit must be one of: ${KITCHEN_QTY_UNITS.join(', ')}`;
+  // Salt steps belong to What went in (the helper); a bottling adds ingredients only.
+  if (isObj(line) && ['salt_pct', 'salt_base', 'base_g', 'salt_method', 'base_from'].some((k) => line[k] != null)) {
+    return `${where}: salt facts go on a line in What went in, not on a bottling`;
   }
-  return null;
+  return fLineError(withKind(line), { keyed: false, where });
 }
+
+// A 1b-era body may omit input_kind on a typed line; it means 'other'.
+export const withKind = (line) => (isObj(line) && line.input_kind == null ? { ...line, input_kind: 'other' } : line);
+
+// Every line body of a sitting, in the order planPutUp consumes them: sitting lines, then each row's.
+export const putUpLineBodies = (body) =>
+  [...(body.sitting_lines ?? []), ...body.rows.flatMap((r) => r.added_lines ?? [])].map(withKind);
 
 function placeError(place, where) {
   if (place == null) return null;
@@ -119,6 +122,15 @@ export function validatePutUp(body) {
       if (!JAR_TEXTURES.includes(row.texture)) return `${where}: texture must be one of: ${JAR_TEXTURES.join(', ')}`;
       if (!JAR_TEXTURE_METHODS.includes(body.method)) return `${where}: texture only applies to a dried food`;
     }
+    // Release F: the row's own heat estimate (typed, 06 §2.4) and "Cooked after blending?".
+    if (row.shu_est_low != null || row.shu_est_high != null) {
+      const lo = row.shu_est_low;
+      const hi = row.shu_est_high;
+      if (lo == null) return `${where}: a heat estimate needs its low end`;
+      if (!Number.isInteger(Number(lo)) || Number(lo) < 0) return `${where}: shu_est_low must be a whole number, 0 or more`;
+      if (hi != null && (!Number.isInteger(Number(hi)) || Number(hi) < Number(lo))) return `${where}: shu_est_high must be at least shu_est_low`;
+    }
+    if (row.cooked != null && typeof row.cooked !== 'boolean') return `${where}: cooked must be true or false`;
     if (row.ph != null) {
       const ph = isObj(row.ph) ? row.ph : { reading: row.ph };
       const pErr = jarPhError(ph.reading ?? null, ph.read_at ?? null, { readAtRequired: false });
@@ -149,6 +161,13 @@ export function validatePutUp(body) {
     return 'made_g must be greater than 0';
   }
   if (body.next_time != null && typeof body.next_time !== 'string') return 'next_time must be text';
+  if (body.mash_in_g != null && (!Number.isFinite(Number(body.mash_in_g)) || Number(body.mash_in_g) <= 0)) {
+    return 'mash_in_g must be greater than 0';
+  }
+  // One draw per jar per sitting (API-I3), the same rule as What went in.
+  const drawn = [...(body.sitting_lines ?? []), ...body.rows.flatMap((r) => r.added_lines ?? [])]
+    .map((l) => l?.preservation_log_id).filter((v) => v != null);
+  if (new Set(drawn).size !== drawn.length) return 'one draw per jar in one bottling — that jar is named twice';
   return null;
 }
 
@@ -177,14 +196,24 @@ export function planPutUp(body, ctx) {
     id: ctx.newId(),
     entered_at: whenIso,
     entered_precision: body.when.precision,
-    made_g: body.made_g == null ? null : Number(body.made_g),
+    made_g: body.made_g == null ? null : String(body.made_g),
+    mash_in_g: body.mash_in_g == null ? null : String(body.mash_in_g),
     next_time: normalizeJarText(body.next_time),
   };
 
   const jars = [];
   const lines = [];
   let ordinal = 0;
-  for (const line of body.sitting_lines ?? []) lines.push(lineRow(line, null, ordinal++));
+  // ctx.prepared: the F line rows lineRoutes.prepareLines resolved (ids, labels, plant_id, draws), in
+  // body order — sitting lines first, then each row's. Without it (the pure tests) a typed line is
+  // planned from its body alone.
+  const prepared = ctx.prepared ?? null;
+  let k = 0;
+  const lineRow = (line, outputId) => ({
+    ...(prepared ? prepared[k++] : typedLine(line, ctx.newId)),
+    put_up_stage_id: stage.id, output_id: outputId, ordinal: ordinal++,
+  });
+  for (const line of body.sitting_lines ?? []) lines.push(lineRow(line, null));
   for (const row of body.rows) {
     const id = ctx.newId();
     const place = row.place ?? null;
@@ -215,10 +244,14 @@ export function planPutUp(body, ctx) {
       in_oil: row.in_oil ?? null,
       texture: row.texture ?? null,
       ph_reading: ph == null ? null : String(ph.reading).trim(),
+      shu_est_low: row.shu_est_low == null ? null : Number(row.shu_est_low),
+      shu_est_high: row.shu_est_low == null ? null : Number(row.shu_est_high ?? row.shu_est_low),
+      shu_est_basis: row.shu_est_low == null ? null : 'typed',
+      cooked: row.cooked ?? null,
       // pH at bottling: its time defaults to the jar's own date, never earlier (V4 pH section).
       ph_read_at: ph == null ? null : (ph.read_at ?? (whenIso ?? `${jarDay}T16:00:00.000Z`)),
     });
-    for (const line of row.added_lines ?? []) lines.push(lineRow(line, id, ordinal++));
+    for (const line of row.added_lines ?? []) lines.push(lineRow(line, id));
   }
   return {
     stage, jars, lines,
@@ -228,15 +261,17 @@ export function planPutUp(body, ctx) {
   };
 }
 
-function lineRow(line, outputId, ordinal) {
+// A typed line planned from its body alone (the pure tests' path; the route always passes ctx.prepared).
+function typedLine(line, newId) {
   return {
-    input_kind: line.input_kind ?? 'other',
-    label: normalizeJarText(line.label),
-    qty: line.qty == null ? null : Number(line.qty),
-    qty_unit: normalizeJarText(line.qty_unit),
-    note: normalizeJarText(line.note),
-    output_id: outputId,
-    ordinal,
+    id: newId(), input_kind: line.input_kind ?? 'other', harvest_log_id: null, plant_id: null,
+    preservation_log_id: null, crop_type_slug: null, label: normalizeJarText(line.label),
+    source_label: normalizeJarText(line.source_label),
+    qty: line.qty == null ? null : String(line.qty), qty_unit: normalizeJarText(line.qty_unit),
+    form: line.form ?? null, brand: normalizeJarText(line.brand), note: normalizeJarText(line.note),
+    shu_rating_low: line.shu_rating_low ?? null, shu_rating_high: line.shu_rating_high ?? line.shu_rating_low ?? null,
+    role: line.role ?? null, salt_pct: null, salt_base: null, base_g: null, salt_method: null, base_from: null,
+    idempotency_key: line.idempotency_key ?? null, draw_count: null, draw_weighed: false,
   };
 }
 
@@ -256,9 +291,9 @@ export function putUpColumns(plan) {
   return {
     jar: Object.fromEntries(['id', 'label', 'container_label', 'quantity_value', 'quantity_unit', 'package_count',
       'place_id', 'place_kind', 'place_label', 'use_by_target', 'use_by_basis', 'is_raw', 'in_oil', 'texture',
-      'ph_reading', 'ph_read_at'].map((k) => [k, col(plan.jars, k)])),
-    line: Object.fromEntries(['input_kind', 'label', 'qty', 'qty_unit', 'note', 'output_id', 'ordinal']
-      .map((k) => [k, col(plan.lines, k)])),
+      'ph_reading', 'ph_read_at', 'shu_est_low', 'shu_est_high', 'shu_est_basis', 'cooked'].map((k) => [k, col(plan.jars, k)])),
+    // The F line columns (kitchenLines.js LINE_COLUMNS) — the same arrays the keyed line POST binds.
+    line: lineColumns(plan.lines),
     place: { kind: col(plan.new_places, 'kind'), label: col(plan.new_places, 'label') },
   };
 }

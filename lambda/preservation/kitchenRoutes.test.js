@@ -192,7 +192,7 @@ describe('GET /api/kitchen-batches/:id', () => {
     const sql = mockSql([OWNED, VIEW_ROW, inputs, stages, outputs]);
     const res = await handleKitchenRoute({ sql, ...call({ rawPath: `/api/kitchen-batches/${BATCH}` }) });
     expect(res.status).toBe(200);
-    expect(res.body.inputs).toBe(inputs);
+    expect(res.body.inputs).toEqual(inputs);
     expect(res.body.stages).toBe(stages);
     expect(res.body.outputs).toBe(outputs);
     expect(res.body.label).toBe('Pepper mash');
@@ -213,8 +213,10 @@ describe('GET /api/kitchen-batches/:id', () => {
     // Every row, void rows included, with voids_id — the client hides a voided row and its void.
     expect(stageCall.norm).not.toMatch(/stage_kind <> 'void'|voids_id IS NULL/);
     expect(stageCall.norm).toMatch(/\bvoids_id\b/);
-    const inputCall = sql.calls.find((c) => c.norm.includes('FROM kitchen_batch_input'));
-    expect(inputCall.norm).toContain('AND deleted_at IS NULL ORDER BY ordinal NULLS FIRST, added_at, id');
+    const inputCall = sql.calls.find((c) => c.norm.includes('FROM kitchen_batch_input i'));
+    expect(inputCall.norm).toContain('AND ( ? ::boolean OR i.deleted_at IS NULL)');
+    expect(inputCall.norm).toContain('ORDER BY i.ordinal NULLS FIRST, i.added_at, i.id');
+    expect(inputCall.values).toContain(false); // includeDeleted — LIVE lines only on getBatch
   });
 
   // "Which jars came from that mash" was unanswerable before this: the view carries output_count, an
@@ -373,7 +375,9 @@ describe('PUT /api/kitchen-batches/:id — the merge', () => {
     const sql = mockSql([OWNED, [{ id: BATCH }], VIEW_ROW]);
     await handleKitchenRoute({ sql, ...put({ notes: 'skimmed', brine_note: null }) });
     const upd = sql.calls.find((c) => c.norm.startsWith('UPDATE kitchen_batch SET'));
-    expect(upd.values).toHaveLength(KITCHEN_BATCH_EDITABLE_COLUMNS.length * 2 + 2);
+    // + the shu_est_basis arm (2: its flag and value), the WHERE's batch + household (2), and release F's
+    // no_salt guard (2: its flag and the batch id).
+    expect(upd.values).toHaveLength(KITCHEN_BATCH_EDITABLE_COLUMNS.length * 2 + 6);
     KITCHEN_BATCH_EDITABLE_COLUMNS.forEach((col, i) => {
       const expected = col === 'notes' || col === 'brine_note';
       expect(upd.values[i * 2], `${col} presence flag`).toBe(expected);
@@ -402,7 +406,8 @@ describe('PUT /api/kitchen-batches/:id — the merge', () => {
     const arms = upd.norm.slice(0, upd.norm.indexOf('WHERE id ='));
     const uncast = [...arms.matchAll(/\? (?!::)/g)];
     expect(uncast).toEqual([]);
-    expect((arms.match(/::boolean THEN/g) ?? []).length).toBe(KITCHEN_BATCH_EDITABLE_COLUMNS.length);
+    // + 1: the shu_est_basis arm keys on shu_est_low's presence flag.
+    expect((arms.match(/::boolean THEN/g) ?? []).length).toBe(KITCHEN_BATCH_EDITABLE_COLUMNS.length + 1);
   });
 
   it('never sets updated_at by hand — the table carries the trigger', async () => {
@@ -514,7 +519,7 @@ describe('POST /api/kitchen-batches/:id/stages', () => {
     expect(res.status).toBe(201);
     expect(res.body).toEqual({ stage: stage[0], batch: VIEW_ROW[0] });
     expect(sql.calls[1].norm).toContain('INSERT INTO kitchen_stage_log (');
-    expect(sql.calls[1].values.at(-1)).toBe(DAVE);
+    expect(sql.calls[1].values.at(-2)).toBe(DAVE);   // created_by; release F's acts is last
   });
 
   it('appends a tended row to a batch whose last stage was finished', async () => {
@@ -795,18 +800,23 @@ describe('POST /api/kitchen-batches/:id/inputs — the dry run', () => {
 });
 
 describe('DELETE /api/kitchen-batches/:id/inputs/:inputId', () => {
-  it('deletes scoped by batch_id as well as id, after the batch gate', async () => {
+  // Release F: a PICK line keeps its hard delete (uq_kbi_batch_harvest is not partial and
+  // harvest_log_id is RESTRICT), now inside the actor transaction (06 §3.7 — AUDITED_DML stays green);
+  // every other line is taken out (soft) — lineRoutes.test.js.
+  it('hard-deletes a pick line, scoped by batch_id as well as id, after the batch gate', async () => {
     // Mutation: drop `AND batch_id = ${batchId}`. An input id belonging to ANOTHER household's batch
     // could then be deleted through a batch the caller does own.
-    const sql = mockSql([OWNED, [{ id: INPUT }]]);
+    const sql = mockSql([OWNED, [{ id: INPUT, harvest_log_id: HARVEST_A, deleted_at: null }], [], [{ id: INPUT }]]);
     const res = await handleKitchenRoute({ sql, ...call({
       rawPath: `/api/kitchen-batches/${BATCH}/inputs/${INPUT}`, method: 'DELETE',
     }) });
-    expect(res).toEqual({ status: 200, body: { ok: true } });
+    expect(res).toEqual({ status: 200, body: { ok: true, input: null } });
     expect(sql.calls[0].norm).toContain('FROM v_kitchen_batch_current');
     expect(boundHousehold(sql.calls[0])).toBe(true);
-    expect(sql.calls[1].norm)
+    expect(sql.calls[1].norm).toContain('WHERE i.id = ? ::uuid AND i.batch_id = ? ::uuid');
+    expect(sql.calls[3].norm)
       .toBe('DELETE FROM kitchen_batch_input WHERE id = ? ::uuid AND batch_id = ? ::uuid RETURNING id');
+    expect(sql.batches[0][0].norm).toBe("SELECT set_config('app.actor_clerk_sub', ? , true)");
   });
 
   it('404s a malformed input id without sending it to Postgres', async () => {
@@ -851,24 +861,28 @@ describe('POST /api/kitchen-batches/:id/close', () => {
   // Mutation: add a preservation_log UPDATE to any other handler in this file — the count reds.
   // Put-Up release 1b adds exactly two: Put it up CREATES jars (the one INSERT), and Undo that put-up
   // soft-deletes a sitting's jars (the one `SET deleted_at`). Still no DELETE FROM, ever: a jar is
-  // never destroyed here.
-  it('writes preservation_log from exactly five statements, each one named', () => {
+  // never destroyed here. Release F adds three, each the stock movement of a route that already wrote
+  // (boss F1: ONE aggregated UPDATE per statement): Remove this batch gives back its lines' draws, Put
+  // it up takes its lines' draws, and shu-estimate/save writes a jar's computed estimate. Undo's jar
+  // removal and its draw reversal are ONE UPDATE (a CASE on each row's own movement).
+  it('writes preservation_log from exactly eight statements, each one named', () => {
     const writes = SRC.match(/(?:UPDATE|INSERT INTO|DELETE FROM)\s+preservation_log\b/g) ?? [];
     expect(writes).toEqual([
-      'UPDATE preservation_log', 'UPDATE preservation_log', 'UPDATE preservation_log',
-      'INSERT INTO preservation_log', 'UPDATE preservation_log',
+      'UPDATE preservation_log',                       // shu-estimate/save (jar)
+      'UPDATE preservation_log',                       // Remove this batch — draws given back
+      'UPDATE preservation_log', 'UPDATE preservation_log', 'UPDATE preservation_log', // close / link / unlink
+      'INSERT INTO preservation_log', 'UPDATE preservation_log', // Put it up — the jars, then its draws
+      'UPDATE preservation_log',                       // Undo that put-up
     ]);
-    // close links, outputs links, outputs unlinks, put-up creates, undo soft-deletes.
     expect(SRC).toContain('SET batch_id = c.id');
     expect(SRC).toContain('SET batch_id = ${batchId}::uuid');
     expect(SRC).toContain('SET batch_id = NULL');
     expect(SRC).toMatch(/INSERT INTO preservation_log \(\s+id, user_id, batch_id, put_up_stage_id,/);
-    expect(SRC).toMatch(/UPDATE preservation_log p\s+SET deleted_at = now\(\)\s+WHERE p\.id IN \(SELECT id FROM sitting_jars\)/);
+    expect(SRC).toMatch(/deleted_at\s+= CASE WHEN a\.remove THEN now\(\) ELSE p\.deleted_at END/);
     expect(SRC).not.toMatch(/DELETE FROM\s+preservation_log/);
-    // The reads, each named: getBatch's outputs, delete's live-jar gate and its count, unlink's
-    // snapshot, readSitting's jars, undo's sitting_jars. A new one means a new surface appeared
-    // without a decision about what it projects.
-    expect((SRC.match(/FROM preservation_log\b/g) ?? [])).toHaveLength(6);
+    // The reads, each named: getBatch's outputs, shu-estimate's jar, delete's live-jar gate and its
+    // count, unlink's snapshot, readSitting's jars, undo's sitting_jars.
+    expect((SRC.match(/FROM preservation_log\b/g) ?? [])).toHaveLength(7);
   });
 
   it('every preservation_log write rides the actor GUC (trg_audit_preservation_log_upd, 1b)', async () => {
@@ -1206,32 +1220,46 @@ describe('what a CLOSED batch accepts', () => {
     expect(res.status).toBe(201);
   });
 
-  it('REFUSES an input add — 409, naming the door', async () => {
-    const sql = mockSql([OWNED_CLOSED]);
+  // RELEASE F FLIPS THESE THREE (06 §3.13; Dave 15:55 "as we go", incl. at and after bottling). They
+  // encoded the old decision "a closed batch refuses a change to what went in"; Dave changed it, so
+  // they are characterization tests of a decision, not a gap. "Put it up and finish" is the default,
+  // and refusing here would lock the record at the exact moment he adds and weighs.
+  // Mutation: restore `if (isClosed) return closedForEdits;` on any of the three routes.
+  it('ALLOWS an input add (F) — the shipped un-keyed form reaches its INSERT', async () => {
+    const sql = mockSql([OWNED_CLOSED, [{ id: 'i1' }]]);
     const res = await handleKitchenRoute({ sql, ...on({
       rawPath: `/api/kitchen-batches/${BATCH}/inputs`, method: 'POST',
       rawBody: JSON.stringify({ inputs: [{ input_kind: 'pantry', label: 'Kosher salt' }] }),
     }) });
-    expect(res.status).toBe(409);
-    expect(res.body.error).toContain('reopen');
-    expect(sql.calls).toHaveLength(1);
+    expect(res.status).toBe(201);
+    expect(sql.calls[1].norm).toContain('INSERT INTO kitchen_batch_input');
   });
 
-  it('REFUSES an input delete', async () => {
-    const sql = mockSql([OWNED_CLOSED]);
+  it('ALLOWS an input take-out (F)', async () => {
+    const sql = mockSql([OWNED_CLOSED, [{ id: INPUT, harvest_log_id: HARVEST_A, deleted_at: null }], [], [{ id: INPUT }]]);
     const res = await handleKitchenRoute({ sql, ...on({
       rawPath: `/api/kitchen-batches/${BATCH}/inputs/${INPUT}`, method: 'DELETE',
     }) });
-    expect(res.status).toBe(409);
-    expect(sql.calls).toHaveLength(1);
+    expect(res.status).toBe(200);
   });
 
-  it('REFUSES the merge PUT', async () => {
+  it('ALLOWS the merge PUT (F)', async () => {
+    const sql = mockSql([OWNED_CLOSED, [{ id: BATCH }], CLOSED_VIEW_ROW]);
+    const res = await handleKitchenRoute({ sql, ...on({
+      method: 'PUT', rawBody: JSON.stringify({ notes: 'added the carrots after all' }),
+    }) });
+    expect(res.status).toBe(200);
+  });
+
+  // The one content write F still refuses on a closed batch: a NEW put-up sitting, with the door.
+  it('REFUSES a new put-up sitting — 409 batch_closed with the Reopen door, before any write', async () => {
     const sql = mockSql([OWNED_CLOSED]);
     const res = await handleKitchenRoute({ sql, ...on({
-      method: 'PUT', rawBody: JSON.stringify({ notes: 'rewriting history' }),
+      rawPath: `/api/kitchen-batches/${BATCH}/put-up`, method: 'POST', rawBody: JSON.stringify({}),
     }) });
     expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: 'batch_closed', reopen: true });
+    expect(res.body.error).toContain('Reopen');
     expect(sql.calls).toHaveLength(1);
   });
 
@@ -1255,7 +1283,7 @@ describe('what a CLOSED batch accepts', () => {
       rawBody: JSON.stringify({ inputs: [{ input_kind: 'pantry', label: 'Kosher salt' }] }),
     }) })).status).toBe(201);
 
-    const delSql = mockSql([OWNED, [{ id: INPUT }]]);
+    const delSql = mockSql([OWNED, [{ id: INPUT, harvest_log_id: HARVEST_A, deleted_at: null }], [], [{ id: INPUT }]]);
     expect((await handleKitchenRoute({ sql: delSql, ...on({
       rawPath: `/api/kitchen-batches/${BATCH}/inputs/${INPUT}`, method: 'DELETE',
     }) })).status).toBe(200);

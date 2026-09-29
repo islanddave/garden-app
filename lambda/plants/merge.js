@@ -62,6 +62,25 @@ export const SURFACES = Object.freeze([
   { table: 'favorites',               column: 'entity_id',      action: 'repoint', conflict: 'skip' },
   { table: 'watch_impression',        column: 'plant_id',       action: 'repoint', conflict: 'skip' },
   { table: 'harvest_watch_dismissal', column: 'plant_id',       action: 'repoint', conflict: 'skip' },
+  // Put-Up train §6a: scripts/merge-surface-inventory.py exited 1 on prod on six unclassified surfaces;
+  // they are classified here (with 1b's kitchen_batch_input.plant_id) before the script is wired into
+  // gate-invariants. Each repoint keeps what the loser's row RECORDS attached to the planting that now
+  // stands for it — the same reasoning as event_log / preservation_log above.
+  //   kitchen_batch_input.plant_id — a batch line from the garden (06 §5.5). NO deleted_at filter: a
+  //     taken-out line comes back through restore, and it must come back on the winner. The FK is SET
+  //     NULL, so leaving it would strand the line on a soft-deleted planting.
+  { table: 'kitchen_batch_input',     column: 'plant_id',       action: 'repoint' },
+  //   preservation_source.plant_id — one ingredient of a multi-source put-up; the sibling of
+  //     preservation_log.plant_id, repointed for the same reason.
+  { table: 'preservation_source',     column: 'plant_id',       action: 'repoint' },
+  //   inventory_items.source_plant_id — seeds saved from a planting (FK RESTRICT). The saved seed's
+  //     parent is the merged planting.
+  { table: 'inventory_items',         column: 'source_plant_id', action: 'repoint' },
+  //   ready_impression / watch_exclusion — per-day telemetry rows keyed UNIQUE (user, plant, day,
+  //     region|reason), the watch_impression precedent: a loser row that would collide on the winner's
+  //     key (or on another loser's) is dropped, the rest repoint.
+  { table: 'ready_impression',        column: 'plant_id',       action: 'repoint', conflict: 'skip' },
+  { table: 'watch_exclusion',         column: 'plant_id',       action: 'repoint', conflict: 'skip' },
 
   // ── supersede ─────────────────────────────────────────────────────────────────────────────
   // uq_plant_anchor_derivation_live UNIQUE(plant_id) WHERE superseded_at IS NULL. Two of the
@@ -97,6 +116,14 @@ export const SURFACES = Object.freeze([
   { table: 'event_log_archive',   column: 'archived_plant_id',     action: 'leave' },
   { table: 'harvest_log_archive', column: 'archived_plant_id',     action: 'leave' },
   { table: 'photo_detach_archive',column: 'archived_plant_id',     action: 'leave' },
+  // Put-Up train §6a. merge_event IS this operation's own record: its winner column records which
+  // planting a past merge kept; rewriting it would falsify that merge's history.
+  { table: 'merge_event',         column: 'winner_plant_id',       action: 'leave' },
+  // The composite FK event_log (project_id, plant_id) → plants — the inventory reports it under its
+  // column pair. Its plant_id half is moved by the event_log.plant_id repoint above (siblings share a
+  // container, so project_id already agrees); nothing writes project_id here, and this entry exists so
+  // the constraint is classified rather than reported UNCLASSIFIED.
+  { table: 'event_log',           column: 'project_id,plant_id',   action: 'leave' },
   // DIFFERENT ID SPACE — these look plant-shaped to the inventory's name matcher but hold
   // plant_varieties.id, not plants.id (verified: entity_tag 1016/1016 rows join plant_varieties,
   // entity_type='cultivar'; slug_redirects 5/5 join plant_varieties, target_entity_type='variety';
@@ -460,6 +487,16 @@ export async function mergeCore(sql, {
     await sql`SELECT id, plant_id AS old_value FROM watch_impression WHERE plant_id = ANY(${loserIds})`)
   push('harvest_watch_dismissal', 'plant_id',
     await sql`SELECT id, plant_id AS old_value FROM harvest_watch_dismissal WHERE plant_id = ANY(${loserIds})`)
+  push('kitchen_batch_input', 'plant_id',
+    await sql`SELECT id, plant_id AS old_value FROM kitchen_batch_input WHERE plant_id = ANY(${loserIds})`)
+  push('preservation_source', 'plant_id',
+    await sql`SELECT id, plant_id AS old_value FROM preservation_source WHERE plant_id = ANY(${loserIds})`)
+  push('inventory_items', 'source_plant_id',
+    await sql`SELECT id, source_plant_id AS old_value FROM inventory_items WHERE source_plant_id = ANY(${loserIds})`)
+  push('ready_impression', 'plant_id',
+    await sql`SELECT id, plant_id AS old_value FROM ready_impression WHERE plant_id = ANY(${loserIds})`)
+  push('watch_exclusion', 'plant_id',
+    await sql`SELECT id, plant_id AS old_value FROM watch_exclusion WHERE plant_id = ANY(${loserIds})`)
 
   const memoryRows  = await sql`SELECT * FROM entity_memory WHERE plant_id = ANY(${loserIds})`
   // V4-ANCHORSUPERSEDE-001: the winner is a supersede target too, not just the losers. The
@@ -527,6 +564,24 @@ export async function mergeCore(sql, {
            AND EXISTS (SELECT 1 FROM harvest_watch_dismissal w
                        WHERE w.plant_id = ${winnerId} AND w.undone_at IS NULL
                          AND w.user_id = l.user_id AND w.observed_on = l.observed_on)`,
+    // Put-Up train §6a — the two telemetry surfaces' UNIQUE keys. A loser row collides with the
+    // winner's, or with another loser's of a lower id (two losers can hold the same day's row).
+    sql`DELETE FROM ready_impression l
+         WHERE l.plant_id = ANY(${loserIds})
+           AND (EXISTS (SELECT 1 FROM ready_impression w
+                        WHERE w.plant_id = ${winnerId}
+                          AND w.user_id = l.user_id AND w.shown_on = l.shown_on AND w.region = l.region)
+                OR EXISTS (SELECT 1 FROM ready_impression o
+                           WHERE o.plant_id = ANY(${loserIds}) AND o.id < l.id
+                             AND o.user_id = l.user_id AND o.shown_on = l.shown_on AND o.region = l.region))`,
+    sql`DELETE FROM watch_exclusion l
+         WHERE l.plant_id = ANY(${loserIds})
+           AND (EXISTS (SELECT 1 FROM watch_exclusion w
+                        WHERE w.plant_id = ${winnerId}
+                          AND w.user_id = l.user_id AND w.evaluated_on = l.evaluated_on AND w.reason = l.reason)
+                OR EXISTS (SELECT 1 FROM watch_exclusion o
+                           WHERE o.plant_id = ANY(${loserIds}) AND o.id < l.id
+                             AND o.user_id = l.user_id AND o.evaluated_on = l.evaluated_on AND o.reason = l.reason))`,
     sql`DELETE FROM findings l
          WHERE l.garden_node_id = ANY(${loserIds}) AND l.deleted_at IS NULL
            AND EXISTS (SELECT 1 FROM findings w
@@ -548,6 +603,12 @@ export async function mergeCore(sql, {
     sql`UPDATE favorites        SET entity_id = ${winnerId} WHERE entity_id = ANY(${loserIds})`,
     sql`UPDATE watch_impression SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE harvest_watch_dismissal SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
+    // Put-Up train §6a. kitchen_batch_input is audited from release F; the GUC is element 0 above.
+    sql`UPDATE kitchen_batch_input SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
+    sql`UPDATE preservation_source SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
+    sql`UPDATE inventory_items SET source_plant_id = ${winnerId} WHERE source_plant_id = ANY(${loserIds})`,
+    sql`UPDATE ready_impression SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
+    sql`UPDATE watch_exclusion SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
 
     // Supersede rather than repoint (uq_plant_anchor_derivation_live). OPS-MERGERETIREPROV-001 —
     // attributed, not a bare timestamp: a retirement carrying superseded_at alone is indistinguishable

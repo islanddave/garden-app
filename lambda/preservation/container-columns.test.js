@@ -98,7 +98,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation container column contr
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(1);
+    // Release F: +3 — the planting loader (lineRoutes.js), the line search's planting arm and the household pepper-name read, all the strict `pp.created_by` dialect.
+    expect(STATEMENTS).toHaveLength(4);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['pp']);
   });

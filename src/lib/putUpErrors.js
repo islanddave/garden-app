@@ -32,6 +32,17 @@ export const REFUSAL_CODES = Object.freeze({
   // as-is — so it has no sentence here and describeRefusal renders it through the unknown-code arm.
   // On a create it is not a failure at all: see existingPlaceId.
   PLACE_EXISTS: 'place_exists',
+  // Release F (contract-F §2.7). Each carries the server's own sentence too; the ones below get this
+  // module's words so a bundle that outlives a server wording change still reads right.
+  ONLY_G_LEFT: 'only_g_left',
+  JAR_USED_UP: 'jar_used_up',
+  JAR_REMOVED: 'jar_removed',
+  HAS_SALT_LINE: 'has_salt_line',
+  ALREADY_IN: 'already_in',
+  HAS_JARS: 'has_jars',
+  PUT_UP_IN_USE: 'put_up_in_use',
+  KEY_CONFLICT: 'key_conflict',
+  SHU_CANNOT_COMPUTE: 'shu_cannot_compute',
 })
 
 export const REFRESH_NOW_LABEL = 'Refresh now'
@@ -41,6 +52,22 @@ export const BATCH_CLOSED_TEXT = 'This batch has been closed — nothing was cha
 export const COUNT_BELOW_USED_TEXT =
   'Some of these have already been used, so the count can’t go that low — nothing was changed.'
 export const ONLY_SOME_LEFT_TEXT = 'Not that many are left — nothing was changed.'
+
+// Release F's words (06 §1.4, §3.11, §3.12; contract-F §2.7). Plain, one line, no alarm.
+export const JAR_USED_UP_TEXT = 'That one is marked used up — nothing was changed.'
+export const JAR_REMOVED_TEXT = 'That jar was removed — nothing was changed.'
+export const HAS_SALT_LINE_TEXT = 'Take the salt line out first.'
+export const ALREADY_IN_TEXT = 'That pick is already in this batch.'
+export const HAS_JARS_TEXT = 'This batch still has jars. Undo its put-ups first — nothing was changed.'
+export const PUT_UP_IN_USE_TEXT = 'Some jars from this put-up were already used, so it can’t be undone — nothing was changed.'
+export const KEY_CONFLICT_TEXT = 'That didn’t go through — nothing was changed. Try again.'
+export const SHU_CANNOT_COMPUTE_TEXT = 'Can’t work out the heat yet — nothing was saved.'
+export const ONLY_SOME_G_LEFT_TEXT = 'Not that much is left in that one — nothing was changed.'
+
+// "Only about {g} g left in that one." — the number from the server, never from the row on screen.
+export function onlyGLeftText(g) {
+  return `Only about ${g} g left in that one — nothing was changed.`
+}
 
 export function onlyNLeftText(n) {
   return n === 0 ? 'None are left — nothing was changed.' : `Only ${n} left — nothing was changed.`
@@ -107,6 +134,30 @@ export function describeRefusal(err) {
       return { code, text: BATCH_CLOSED_TEXT, refresh: false }
     case REFUSAL_CODES.COUNT_BELOW_USED:
       return { code, text: COUNT_BELOW_USED_TEXT, refresh: false }
+    case REFUSAL_CODES.ONLY_G_LEFT: {
+      const raw = body.g
+      const g = raw == null || raw === '' || typeof raw === 'boolean' ? NaN : Number(raw)
+      return { code, text: Number.isFinite(g) && g >= 0 ? onlyGLeftText(Math.round(g)) : (serverText(body) ?? ONLY_SOME_G_LEFT_TEXT), refresh: false }
+    }
+    case REFUSAL_CODES.JAR_USED_UP:
+      return { code, text: JAR_USED_UP_TEXT, refresh: false }
+    case REFUSAL_CODES.JAR_REMOVED:
+      return { code, text: JAR_REMOVED_TEXT, refresh: false }
+    case REFUSAL_CODES.HAS_SALT_LINE:
+      return { code, text: HAS_SALT_LINE_TEXT, refresh: false }
+    case REFUSAL_CODES.ALREADY_IN:
+      return { code, text: ALREADY_IN_TEXT, refresh: false }
+    case REFUSAL_CODES.HAS_JARS:
+      return { code, text: HAS_JARS_TEXT, refresh: false }
+    // put_up_in_use keeps the SERVER's words (the unknown-code arm): they count the jars ("1 jar from
+    // this put-up was already used — …"), which a fixed sentence here would lose. PUT_UP_IN_USE_TEXT is
+    // the fallback when the server sent none.
+    case REFUSAL_CODES.PUT_UP_IN_USE:
+      return { code, text: serverText(body) ?? PUT_UP_IN_USE_TEXT, refresh: false }
+    case REFUSAL_CODES.KEY_CONFLICT:
+      return { code, text: KEY_CONFLICT_TEXT, refresh: false }
+    case REFUSAL_CODES.SHU_CANNOT_COMPUTE:
+      return { code, text: SHU_CANNOT_COMPUTE_TEXT, refresh: false }
     default: {
       const said = serverText(body)
       return said ? { code, text: said, refresh: false } : null

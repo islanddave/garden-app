@@ -84,7 +84,13 @@ describe('validatePutUp', () => {
     [{ rows: [{ count: 1, ph: '15' }] }, /pH scale/],
     [{ rows: [{ count: 1, discard_by: 'soon' }] }, /discard_by must be/],
     [{ rows: [{ count: 1, added_lines: [{ qty: 5, qty_unit: 'g' }] }] }, /name what went in/],
-    [{ rows: [{ count: 1, added_lines: [{ label: 'x', input_kind: 'put_up' }] }] }, /input_kind must be one of/],
+    [{ rows: [{ count: 1, added_lines: [{ label: 'x', input_kind: 'pantry' }] }] }, /input_kind must be one of/],
+    [{ rows: [{ count: 1, added_lines: [{ label: 'x', input_kind: 'put_up' }] }] }, /a draw names its jar/],
+    [{ rows: [{ count: 1, added_lines: [{ label: 'x', output_id: KEY, put_up_stage_id: KEY }] }] }, /belongs to this bottling/],
+    [{ rows: [{ count: 1, added_lines: [{ label: 'salt', role: 'salt', qty: 5, qty_unit: 'g', salt_pct: 2, salt_base: 'produce', base_g: 250 }] }] }, /salt facts go on a line in What went in/],
+    [{ rows: [{ count: 1, shu_est_low: 900, shu_est_high: 800 }] }, /at least shu_est_low/],
+    [{ rows: [{ count: 1, cooked: 'yes' }] }, /cooked must be true or false/],
+    [{ mash_in_g: 0 }, /mash_in_g must be greater than 0/],
     [{ made_g: 0 }, /made_g must be greater than 0/],
   ])('%o → 400', (over, want) => expect(validatePutUp(sitting(over))).toMatch(want));
 });
@@ -162,7 +168,8 @@ describe('planPutUp — what one sitting writes', () => {
     const lens = [...Object.values(c.jar), ...Object.values(c.line)].map((a) => a.length);
     expect(new Set(Object.values(c.jar).map((a) => a.length))).toEqual(new Set([2]));
     expect(new Set(Object.values(c.line).map((a) => a.length))).toEqual(new Set([2]));
-    expect(lens.length).toBe(23);
+    // 20 jar columns (16 from 1b + F's shu_est_low/high/basis and cooked) + the 27 F line columns.
+    expect(lens.length).toBe(47);
   });
 });
 
@@ -173,14 +180,15 @@ describe('POST /:id/put-up — what it sends', () => {
   // readSitting: stage, jars, inputs, then readBatch.
   const READ = [[{ id: 'st' }], [{ id: 'j1', storage_label: 'Fridge', storage_kind: 'fridge' }], [], VIEW];
 
-  it('ONE statement: gate → keyed put_up row → places → jars → lines → noted → finished', async () => {
-    const sql = mockSql([OPEN, META, OK, ...READ]);
+  it('ONE statement in the actor transaction: gate → keyed put_up row → places → jars → lines → draws → noted → finished', async () => {
+    const sql = mockSql([OPEN, META, [], [], OK, ...READ]);
     const res = await handleKitchenRoute({ sql, ...post(sitting()) });
     expect(res.status).toBe(201);
     expect(Object.keys(res.body)).toEqual(['stage', 'jars', 'inputs', 'batch']);
-    const w = sql.calls[2].norm;
+    const w = sql.calls[4].norm;
     const order = ['WITH gate AS ( UPDATE kitchen_batch SET', '), stage AS ( INSERT INTO kitchen_stage_log', '), made AS ( INSERT INTO storage_location',
-      '), jars AS ( INSERT INTO preservation_log', '), lines AS ( INSERT INTO kitchen_batch_input', '), noted AS (', '), finished AS ('];
+      '), jars AS (', 'INSERT INTO preservation_log', '), lines AS ( INSERT INTO kitchen_batch_input', '), draws AS (',
+      '), moved AS (', '), uses AS ( INSERT INTO pantry_use', '), noted AS (', '), finished AS ('];
     const at = order.map((o) => w.indexOf(o));
     expect(at.every((i) => i > -1), JSON.stringify(at)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
@@ -188,41 +196,49 @@ describe('POST /:id/put-up — what it sends', () => {
     expect(w).toContain('AND deleted_at IS NULL AND closed_at IS NULL RETURNING id');
     expect(w).toContain('FROM gate g RETURNING id, batch_id');
     // The key is on the put_up row, with NO ON CONFLICT on it.
-    expect(sql.calls[2].values).toContain(KEY);
+    expect(sql.calls[4].values).toContain(KEY);
     expect(w.slice(0, w.indexOf('), places_in AS'))).not.toContain('ON CONFLICT');
   });
 
   it('the place is found household-first on the trimmed name, else created under the caller', async () => {
-    const sql = mockSql([OPEN, META, OK, ...READ]);
+    const sql = mockSql([OPEN, META, [], [], OK, ...READ]);
     await handleKitchenRoute({ sql, ...post(sitting()) });
-    const w = sql.calls[2].norm;
+    const w = sql.calls[4].norm;
     expect(w).toContain('lower(btrim(sl.label)) = lower(pi.label) AND sl.user_id = ANY( ? ) AND sl.deleted_at IS NULL');
     expect(w).toContain('ON CONFLICT (user_id, kind, lower(label)) WHERE deleted_at IS NULL DO UPDATE SET label = storage_location.label');
-    const kinds = sql.calls[2].values.find((v) => Array.isArray(v) && v.includes('fridge') && v.length === 1);
+    const kinds = sql.calls[4].values.find((v) => Array.isArray(v) && v.includes('fridge') && v.length === 1);
     expect(kinds).toEqual(['fridge']);
   });
 
   it('finishing closes the batch as put_up and writes the finished row; a later sitting does neither', async () => {
-    let sql = mockSql([OPEN, META, OK, ...READ]);
+    let sql = mockSql([OPEN, META, [], [], OK, ...READ]);
     await handleKitchenRoute({ sql, ...post(sitting({ finish: true })) });
-    expect(sql.calls[2].values.filter((v) => v === true).length).toBeGreaterThanOrEqual(4);
-    sql = mockSql([OPEN, META, OK, ...READ]);
+    expect(sql.calls[4].values.filter((v) => v === true).length).toBeGreaterThanOrEqual(4);
+    sql = mockSql([OPEN, META, [], [], OK, ...READ]);
     await handleKitchenRoute({ sql, ...post(sitting({ finish: false })) });
-    const w = sql.calls[2];
+    const w = sql.calls[4];
     expect(w.norm).toContain("closed_at = CASE WHEN ? ::boolean THEN now() ELSE closed_at END");
     expect(w.values[0]).toBe(false); // finish, the gate's first binding
   });
 
   it('a closed batch → 409 batch_closed with the door, before any write', async () => {
-    const sql = mockSql([CLOSED]);
+    const sql = mockSql([CLOSED, []]);
     const res = await handleKitchenRoute({ sql, ...post(sitting()) });
     expect(res).toEqual({ status: 409, body: BATCH_CLOSED });
     expect(res.body.reopen).toBe(true);
-    expect(sql.calls).toHaveLength(1);
+    expect(sql.calls).toHaveLength(2);   // the gate, and the replay lookup — never a write
+    expect(sql.calls[1].norm).toContain('WHERE s.idempotency_key = ? ::uuid AND b.user_id = ANY( ? )');
+  });
+
+  it('a retry of the sitting that FINISHED the batch replays — its own answer, not the door', async () => {
+    const sql = mockSql([CLOSED, [{ id: STAGE, batch_id: BATCH }], ...READ]);
+    const res = await handleKitchenRoute({ sql, ...post(sitting()) });
+    expect(res.status).toBe(200);
+    expect(res.body.replayed).toBe(true);
   });
 
   it('a batch that closed between the gate read and the statement → 409 batch_closed (stage_count 0)', async () => {
-    const sql = mockSql([OPEN, META, [{ stage_count: 0, jar_count: 0, line_count: 0 }]]);
+    const sql = mockSql([OPEN, META, [], [], [{ stage_count: 0, jar_count: 0, line_count: 0 }]]);
     expect((await handleKitchenRoute({ sql, ...post(sitting()) })).body.code).toBe('batch_closed');
   });
 
@@ -242,22 +258,22 @@ describe('POST /:id/put-up — what it sends', () => {
   });
 
   it('a replay: 23505 on uq_ksl_idempotency_key re-reads the sitting by key, household-scoped → 200 replayed', async () => {
-    const sql = mockSql([OPEN, META, dup('uq_ksl_idempotency_key'), [{ id: STAGE, batch_id: BATCH }], ...READ]);
+    const sql = mockSql([OPEN, META, [], [], dup('uq_ksl_idempotency_key'), [{ id: STAGE, batch_id: BATCH }], ...READ]);
     const res = await handleKitchenRoute({ sql, ...post(sitting()) });
     expect(res.status).toBe(200);
     expect(res.body.replayed).toBe(true);
-    expect(sql.calls[3].norm).toContain('JOIN v_kitchen_batch_current b ON b.id = s.batch_id WHERE s.idempotency_key = ? ::uuid AND b.user_id = ANY( ? )');
+    expect(sql.calls[5].norm).toContain('JOIN v_kitchen_batch_current b ON b.id = s.batch_id WHERE s.idempotency_key = ? ::uuid AND b.user_id = ANY( ? )');
   });
 
   it('a key used on ANOTHER batch, or outside the household → 409 key_conflict', async () => {
-    let sql = mockSql([OPEN, META, dup('uq_ksl_idempotency_key'), [{ id: STAGE, batch_id: 'other-batch' }]]);
+    let sql = mockSql([OPEN, META, [], [], dup('uq_ksl_idempotency_key'), [{ id: STAGE, batch_id: 'other-batch' }]]);
     expect((await handleKitchenRoute({ sql, ...post(sitting()) })).body.code).toBe('key_conflict');
-    sql = mockSql([OPEN, META, dup('uq_ksl_idempotency_key'), []]);
+    sql = mockSql([OPEN, META, [], [], dup('uq_ksl_idempotency_key'), []]);
     expect((await handleKitchenRoute({ sql, ...post(sitting()) })).body.code).toBe('key_conflict');
   });
 
   it('any other 23505 is not a replay', async () => {
-    const sql = mockSql([OPEN, META, dup('uq_kbi_idempotency_key')]);
+    const sql = mockSql([OPEN, META, [], [], dup('uq_kbi_idempotency_key')]);
     await expect(handleKitchenRoute({ sql, ...post(sitting()) })).rejects.toThrow('dup');
   });
 });
@@ -454,11 +470,22 @@ function f1Violations(src) {
 }
 
 describe('boss condition F1 — one UPDATE per jar per statement', () => {
-  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'kitchenRoutes.js'), 'utf8');
+  // Release F: every module that moves stock — the kitchen routes, the line routes and the use route.
+  const FILES = ['kitchenRoutes.js', 'lineRoutes.js', 'pantryUses.js'];
+  const read = (f) => readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), f), 'utf8');
 
-  it('the kitchen routes hold it today', () => {
+  it.each(FILES)('%s holds it', (f) => {
+    const src = read(f);
     expect(src).toMatch(/UPDATE preservation_log/); // not vacuous: there are preservation_log writes to judge
     expect(f1Violations(src)).toEqual([]);
+  });
+
+  // Every reversal / re-draw moves its jars through an aggregate keyed on the jar — the one shape F1
+  // allows. Counted per module so a new movement cannot arrive un-aggregated.
+  it.each([['kitchenRoutes.js', 3], ['lineRoutes.js', 4]])('%s aggregates every stock movement per jar (%i)', (f, n) => {
+    const src = read(f);
+    expect((src.match(/GROUP BY x\.preservation_log_id\) a/g) ?? []).length).toBe(n);
+    expect((src.match(/UPDATE preservation_log p SET\s+(?:deleted_at|remaining_)/g) ?? []).length).toBe(n);
   });
 
   it('the checker reds on the two shapes F1 forbids, and passes the aggregated one', () => {

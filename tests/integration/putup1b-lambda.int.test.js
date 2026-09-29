@@ -78,13 +78,15 @@ describe('Put it up → read back → Undo', () => {
     expect(r.status, JSON.stringify(r.body)).toBe(201)
     first = { body, res: r.body }
     expect(r.body.jars).toHaveLength(2)
-    expect(r.body.jars[0]).toMatchObject({
+    // One statement writes both jars, so they share created_at; find the row by its name, not position.
+    const plain = r.body.jars.find((j) => j.label === 'Megatron plain')
+    expect(plain).toMatchObject({
       label: 'Megatron plain', container_label: '8 oz woozy', quantity_unit: 'fl oz', package_count: 2,
       remaining_count: 2, preserved_at: '2026-10-08', use_by_basis: 'table', preserved_at_precision: 'exact',
       storage_label: PLACE_LABEL, put_up_stage_id: r.body.stage.id,
     })
-    expect(Number(r.body.jars[0].quantity_value)).toBe(16)
-    expect(String(r.body.jars[0].ph_reading)).toBe('3.70')
+    expect(Number(plain.quantity_value)).toBe(16)
+    expect(String(plain.ph_reading)).toBe('3.70')
     expect(r.body.batch.closed_at).not.toBeNull()
     expect(r.body.batch.outcome).toBe('put_up')
     expect(r.body.inputs.map((i) => i.label).sort()).toEqual(['reserved brine', 'vinegar'])
@@ -93,14 +95,15 @@ describe('Put it up → read back → Undo', () => {
     const kinds = await directSql`SELECT stage_kind, note FROM kitchen_stage_log WHERE batch_id = ${batchId} ORDER BY created_at, stage_kind`
     expect(kinds.map((k) => k.stage_kind).sort()).toEqual(['finished', 'noted', 'put_up', 'started'])
     // use_by: hot_sauce in a fridge = 6 months from the ET day.
-    const jar = await directSql`SELECT use_by_target::text AS d FROM preservation_log WHERE id = ${r.body.jars[0].id}`
+    const jar = await directSql`SELECT use_by_target::text AS d FROM preservation_log WHERE id = ${plain.id}`
     expect(jar[0].d).toBe('2027-04-08')
   })
 
   it('a retry with the same key is a replay: 200, nothing new written', async () => {
     const r = await call('POST', `/api/kitchen-batches/${batchId}/put-up`, first.body)
-    // The batch is closed now, so the route refuses before the statement — the door, not a duplicate.
-    expect([200, 409]).toContain(r.status)
+    // The sitting finished the batch; its retry is still ITS replay, never the closed-batch door.
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(r.body.replayed).toBe(true)
     const jars = await directSql`SELECT count(*)::int AS n FROM preservation_log WHERE batch_id = ${batchId}`
     expect(jars[0].n).toBe(2)
   })
