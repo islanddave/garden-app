@@ -1,0 +1,385 @@
+# gates.yml
+# V5-SEASONSTATS-001 — seventeen stat_* views behind GET /api/harvests/season-stats.
+#
+# HARD DEPENDENCY: v5-sourcecontact-001 (public.source.instagram_url / facebook_url). stat_saved_lot
+# projects both, and a view cannot name a column its base table does not have — so the apply fails
+# outright if this migration goes first. Apply order: sourcecontact, then this.
+#
+# NO `env:` KEY ANYWHERE. Every gate reads pg_catalog / information_schema or the receipt, so each
+# means the same thing on staging and prod and none can pass vacuously for want of a data row.
+#
+# NO COUNT GATE ON A WHOLE VIEW, DELIBERATELY (same reasoning as v5-sourcenodeview-001): every post
+# gate names the columns it asserts, so a later migration that appends a column to one of these
+# views does not red it, while losing a named column does.
+
+pre:
+  - name: pre_source_contact_columns_exist
+    note: >
+      The hard dependency. v5-sourcecontact-001 adds source.instagram_url and source.facebook_url;
+      stat_saved_lot projects both. Counted, so losing either reds it.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'source'
+         AND column_name IN ('instagram_url', 'facebook_url')
+      HAVING count(*) = 2
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_named_base_columns_exist
+    note: >
+      The three base columns the plan names as load-bearing: harvest_log.weight_basis (measured
+      share, every tomato figure), plants.source_inventory_item_id (the packet fallback that makes
+      eff_source_id), weather_daily.tmin_f (degree days and cool nights).
+    sql: |
+      SELECT 1
+        FROM (VALUES ('harvest_log', 'weight_basis'),
+                     ('plants', 'source_inventory_item_id'),
+                     ('weather_daily', 'tmin_f')) req(t, c)
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns ic
+                          WHERE ic.table_schema = 'public' AND ic.table_name = req.t
+                            AND ic.column_name = req.c)
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_other_base_columns_exist
+    note: >
+      Every other base-table column 0a names outside the long-standing core (ids, names, deleted_at,
+      created_by). Each row returned is a column the views need and the database lacks.
+    sql: |
+      SELECT req.t, req.c
+        FROM (VALUES ('plants', 'source_id'), ('plants', 'acquired_from_source_id'),
+                     ('plants', 'qty_initial'), ('plants', 'transplanted_at_approx'),
+                     ('plants', 'container_size'), ('plants', 'archived_at'),
+                     ('plants', 'source_type'), ('plants', 'sown_at'),
+                     ('plant_varieties', 'scoville_max'), ('plant_varieties', 'crop_type_slug'),
+                     ('crop_types', 'category'), ('event_log', 'source'),
+                     ('harvest_log', 'weight_grams'),
+                     ('inventory_items', 'source_id'), ('inventory_items', 'acquired_from_source_id'),
+                     ('inventory_items', 'source_plant_id'), ('inventory_items', 'seed_stage'),
+                     ('inventory_items', 'seed_count'), ('inventory_items', 'seed_count_estimated'),
+                     ('inventory_items', 'source_kind'), ('source', 'kind'), ('source', 'locality'),
+                     ('source', 'address'), ('source', 'website_url'),
+                     ('weather_daily', 'tmax_f'), ('weather_daily', 'precip_in'),
+                     ('spaces', 'created_by')) req(t, c)
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns ic
+                          WHERE ic.table_schema = 'public' AND ic.table_name = req.t
+                            AND ic.column_name = req.c)
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_non_view_relation_uses_a_stat_name
+    note: >
+      CREATE OR REPLACE VIEW fails if a TABLE (or matview) already holds the name. Continuous: a
+      stat_* view is fine, anything else under these names is a collision.
+    sql: |
+      SELECT c.relname
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relkind <> 'v'
+         AND c.relname IN ('stat_weather_day', 'stat_planting', 'stat_pick', 'stat_planting_harvest',
+                           'stat_care_day', 'stat_season_pins', 'stat_weekly_heat_fruit',
+                           'stat_source_mix', 'stat_source_card', 'stat_heat_clock_crop',
+                           'stat_heat_clock_cultivar', 'stat_heat_ladder', 'stat_pepper_best',
+                           'stat_tomato_keep', 'stat_longest_giving', 'stat_tomato_month_size',
+                           'stat_saved_lot')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_views_absent
+    note: >
+      Greenfield. A row here means 0a (or a draft of it) already ran — diff before re-running,
+      because CREATE OR REPLACE VIEW refuses to rename or reorder an existing view's columns.
+      continuous false by design: false forever once 0a lands.
+    sql: |
+      SELECT table_name FROM information_schema.views
+       WHERE table_schema = 'public' AND table_name LIKE 'stat\_%'
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+post:
+  - name: post_every_view_exists
+    note: >
+      All seventeen, by name. Armed on the receipt so it is vacuously green before the apply and red
+      only if a view is dropped afterwards.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.views
+               WHERE table_schema = 'public'
+                 AND table_name IN ('stat_weather_day', 'stat_planting', 'stat_pick',
+                                    'stat_planting_harvest', 'stat_care_day', 'stat_season_pins',
+                                    'stat_weekly_heat_fruit', 'stat_source_mix', 'stat_source_card',
+                                    'stat_heat_clock_crop', 'stat_heat_clock_cultivar',
+                                    'stat_heat_ladder', 'stat_pepper_best', 'stat_tomato_keep',
+                                    'stat_longest_giving', 'stat_tomato_month_size',
+                                    'stat_saved_lot')) <> 17
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_weather_day_columns
+    note: >
+      stat_weather_day projects every column the handler or a sibling view reads (9 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_weather_day'
+                 AND column_name IN ('owner', 'grow_year', 'day', 'space_id', 'tmax_f', 'tmin_f',
+                                     'precip_in', 'gdd50', 'night_of')) <> 9
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_planting_columns
+    note: >
+      stat_planting projects every column the handler or a sibling view reads (26 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_planting'
+                 AND column_name IN ('planting_id', 'owner', 'grow_year', 'start_day',
+                                     'planting_name', 'variety_id', 'cultivar', 'display_name',
+                                     'crop_slug', 'crop_name', 'crop_category', 'scoville_max',
+                                     'quantity', 'qty_initial', 'is_single', 'heat_band',
+                                     'source_type', 'source_group', 'eff_source_id', 'sown_at',
+                                     'transplanted_at', 'tp_approx', 'created_et', 'status',
+                                     'container_size', 'archived_at')) <> 26
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_pick_columns
+    note: >
+      stat_pick projects every column the handler or a sibling view reads (11 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_pick'
+                 AND column_name IN ('harvest_id', 'event_id', 'owner', 'grow_year', 'day',
+                                     'planting_id', 'grams', 'weight_basis', 'is_measured', 'unit',
+                                     'qty')) <> 11
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_planting_harvest_columns
+    note: >
+      stat_planting_harvest projects every column the handler or a sibling view reads (11 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_planting_harvest'
+                 AND column_name IN ('planting_id', 'owner', 'grow_year', 'lb', 'measured_share',
+                                     'fruit_count', 'pick_days', 'first_pick', 'last_pick',
+                                     'pick_day_count', 'picks')) <> 11
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_care_day_columns
+    note: >
+      stat_care_day projects every column the handler or a sibling view reads (4 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_care_day'
+                 AND column_name IN ('owner', 'grow_year', 'day', 'care_kind')) <> 4
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_season_pins_columns
+    note: >
+      stat_season_pins projects every column the handler or a sibling view reads (11 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_season_pins'
+                 AND column_name IN ('owner', 'grow_year', 'first_sow', 'first_setout',
+                                     'hottest_day', 'hottest_tmax_f', 'wettest_day',
+                                     'wettest_precip_in', 'weather_from', 'weather_to',
+                                     'weather_days')) <> 11
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_weekly_heat_fruit_columns
+    note: >
+      stat_weekly_heat_fruit projects every column the handler or a sibling view reads (8 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_weekly_heat_fruit'
+                 AND column_name IN ('owner', 'grow_year', 'week_start', 'heat_units',
+                                     'cool_nights', 'rain_in', 'tomato_fruit', 'pepper_pods')) <> 8
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_source_mix_columns
+    note: >
+      stat_source_mix projects every column the handler or a sibling view reads (5 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_source_mix'
+                 AND column_name IN ('owner', 'grow_year', 'source_group', 'plantings',
+                                     'plants')) <> 5
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_source_card_columns
+    note: >
+      stat_source_card projects every column the handler or a sibling view reads (12 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_source_card'
+                 AND column_name IN ('owner', 'grow_year', 'source_id', 'name', 'kind',
+                                     'plantings', 'plants', 'picked', 'lost', 'lb', 'saved_lots',
+                                     'crops')) <> 12
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_heat_clock_crop_columns
+    note: >
+      stat_heat_clock_crop projects every column the handler or a sibling view reads (7 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_heat_clock_crop'
+                 AND column_name IN ('owner', 'grow_year', 'crop_slug', 'crop_name', 'first_pick',
+                                     'origin_date', 'heat_units')) <> 7
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_heat_clock_cultivar_columns
+    note: >
+      stat_heat_clock_cultivar projects every column the handler or a sibling view reads (12 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_heat_clock_cultivar'
+                 AND column_name IN ('planting_id', 'owner', 'grow_year', 'crop_slug', 'cultivar',
+                                     'transplanted_at', 'first_pick', 'days', 'heat_units',
+                                     'heat_band', 'source_type', 'crop_median_heat')) <> 12
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_heat_ladder_columns
+    note: >
+      stat_heat_ladder projects every column the handler or a sibling view reads (7 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_heat_ladder'
+                 AND column_name IN ('owner', 'grow_year', 'band', 'plantings', 'plants', 'pods',
+                                     'lb')) <> 7
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_pepper_best_columns
+    note: >
+      stat_pepper_best projects every column the handler or a sibling view reads (9 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_pepper_best'
+                 AND column_name IN ('planting_id', 'owner', 'grow_year', 'band', 'cultivar',
+                                     'pods', 'lb', 'status', 'rank_in_band')) <> 9
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_tomato_keep_columns
+    note: >
+      stat_tomato_keep projects every column the handler or a sibling view reads (13 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_tomato_keep'
+                 AND column_name IN ('planting_id', 'owner', 'grow_year', 'cultivar', 'lb',
+                                     'fruit', 'g_per_fruit', 'container_size', 'measured_share',
+                                     'late_aug', 'median_lb', 'x_median', 'verdict')) <> 13
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_longest_giving_columns
+    note: >
+      stat_longest_giving projects every column the handler or a sibling view reads (17 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_longest_giving'
+                 AND column_name IN ('planting_id', 'owner', 'grow_year', 'cultivar', 'crop_name',
+                                     'crop_category', 'plants', 'first_pick', 'last_pick',
+                                     'window_days', 'pick_days', 'pick_day_count', 'still_picking',
+                                     'lb', 'lb_per_plant_week', 'season_last_pick',
+                                     'rank_by_window')) <> 17
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_tomato_month_size_columns
+    note: >
+      stat_tomato_month_size projects every column the handler or a sibling view reads (11 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_tomato_month_size'
+                 AND column_name IN ('owner', 'grow_year', 'cultivar', 'aug_grams', 'aug_fruit',
+                                     'sep_grams', 'sep_fruit', 'aug_g', 'sep_g', 'ratio',
+                                     'fruit_weighted_ratio')) <> 11
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_stat_saved_lot_columns
+    note: >
+      stat_saved_lot projects every column the handler or a sibling view reads (22 named, not a count
+      of the whole view). Armed on the receipt, so vacuously green before the apply.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'stat_saved_lot'
+                 AND column_name IN ('lot_id', 'owner', 'grow_year', 'cultivar', 'crop_slug',
+                                     'seed_count', 'count_estimated', 'stage', 'saved_on',
+                                     'saved_at', 'parent_planting_id', 'parent_name', 'parent_lb',
+                                     'source_id', 'source_name', 'source_kind', 'source_locality',
+                                     'source_address', 'source_website_url',
+                                     'source_instagram_url', 'source_facebook_url',
+                                     'via_name')) <> 22
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_receipt_written
+    note: >
+      The apply left its receipt. continuous false: an apply-window check, and the gates above arm
+      off this same row, so a missing receipt shows as vacuity rather than as eighteen failures.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
