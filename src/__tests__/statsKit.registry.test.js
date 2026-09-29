@@ -123,6 +123,39 @@ describe('verdicts', () => {
     expect(verdictFor('ribbon', ribbon)).not.toMatch(/0 days/)
   })
 
+  // QA 2026-09-29 mutation run: with only length/NaN checks, four breaks survived (late_aug count forced
+  // to 0, busiest care picked by MIN, sep_size "smaller" as ratio<=1, the Lost column fed from picked).
+  // Each sentence and the first row of every numbers table is now pinned to the fixture, whole.
+  // Re-pin these when the fixture is regenerated; a diff here is the review of what the page says.
+  const VERDICTS = {
+    ribbon: 'The hottest day was Jul 2 at 96°F, and the wettest Jul 29 with 2.84 in of rain. Water was the most common care, on 97 days. The hottest week started Jun 29; tomato picks peaked 8 weeks later, the week of Aug 24 (268 fruit).',
+    sources: 'Starview Gardens gave the most: 154.3 lb from 46 plantings (34% of 449.6 lb). Next was High Mowing Organic Seeds at 65.2 lb. 187.1 lb came from plantings with no seller recorded.',
+    heat_clock: 'Lettuce came in first, on Jun 4. From planting out to first pick, the typical tomato took 1,151 heat units and the typical pepper 1,184. Tomatoes ran from Super Sweet 100 at 875 to Del Tonet at 1,450.',
+    heat_ladder: 'Very hot peppers gave the most pods: 186 from 12 plantings. Best in each band: sweet, Red Mini Bell (18); mild, Dragon Roll (58); medium, Anaheim (4); hot, Ristra Cayenne II (16); very hot, Piri Piri (56); superhot, Armageddon F1 (9).',
+    tomato_keep: 'The typical single tomato plant gave 2.05 lb. 5 plants earned a grow-again: Ukrainian Purple 9.4, Cherokee Green 6.1, 1884 5.9, Rosa Sicilian 5.6 and Black Cherry 4.2. 4 plants are worth a rethink, 2 of them came in late or rescued.',
+    longest: 'Super Sweet 100 has been giving for 78 days, with picks on 49 of them. Zephyr gave the most for its size: 1.92 lb a plant each week. 13 of 15 are still picking.',
+    sep_size: '17 of 20 tomatoes picked smaller fruit in September than in August, about 24% lighter overall (Ukrainian Purple 114 g → 75 g). Red Grape, 1884 and Black Cherry held their size.',
+    seed_lots: 'You saved 26 lots; 22 trace back to a named source and 21 came off your own plants. 12 go back to Starview Gardens.',
+  }
+  it.each(Object.keys(VERDICTS))('the %s verdict, word for word', (id) => {
+    expect(verdictFor(id, fixture.sections[id])).toEqual(VERDICTS[id])
+  })
+
+  const FIRST_ROWS = {
+    ribbon: [['Water', '97'], ['May 4', '9', '1', '0.02', '0', '0']],
+    sources: [['Starview Gardens', 'nursery', '154.3', '46', '37', '5', '11']],
+    heat_clock: [['Lettuce', 'Jun 4', '287'], ['Habanero', 'Pepper', 'Jul 16', 'Aug 9', '24', '506']],
+    heat_ladder: [['Sweet', '12', '17', '41', '2.33'], ['Red Mini Bell', 'Sweet', '18', '0.45']],
+    tomato_keep: [['Ukrainian Purple', '9.4', '46', '92', '10 gal', '86%', '4.6×', 'Grow again']],
+    longest: [['Super Sweet 100', 'Tomato', '1', 'Jul 12', 'Sep 27 (still picking)', '78', '49', '2.5', '0.22']],
+    sep_size: [['Ukrainian Purple', '114', '75', '15', '26', '0.66×']],
+    seed_lots: [['Sugar Baby', '175 seeds', 'Sep 2', 'Sugar Baby', 'Starview Gardens']],
+  }
+  it.each(Object.keys(FIRST_ROWS))('the %s numbers table, first row of each table', (id) => {
+    const t = getRenderer(id).table(fixture.sections[id])
+    expect((Array.isArray(t) ? t : [t]).map(x => x.rows[0])).toEqual(FIRST_ROWS[id])
+  })
+
   it('an unknown id or an empty section gets no verdict and does not throw', () => {
     expect(verdictFor('frost_race', {})).toBe('')
     for (const id of ids) expect(() => verdictFor(id, { meta: {}, series: {} }), id).not.toThrow()

@@ -338,6 +338,8 @@ describe('September size: "smaller" means the shown grams differ', () => {
       { cultivar: 'Grew', aug_g: 50, sep_g: 60, aug_n: 10, sep_n: 10, ratio: 1.2 },
     ]
     expect(rows.map(isSmaller)).toEqual([false, true, false])
+    // Ratio exactly 1 (2 dp) with September a gram heavier is not smaller: kills a ratio<=1 mutation.
+    expect(isSmaller({ cultivar: 'Even', aug_g: 100, sep_g: 101, ratio: 1 })).toBe(false)
     const L = layoutSepSize({ series: { rows } })
     expect(L.rows.find(r => r.key.startsWith('Red Grape')).color).toBe(L.rows.find(r => r.key.startsWith('Grew')).color)
     expect(verdictFor('sep_size', { meta: {}, series: { rows } })).toBe('1 of 3 tomatoes picked smaller fruit in September than in August (Big One 114 g → 75 g). Red Grape and Grew held their size.')
