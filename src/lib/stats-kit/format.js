@@ -13,6 +13,22 @@ export const CARE_LABEL = { water: 'Water', feed: 'Feed', pests: 'Pests', starts
 // Mirrors HEAT_BANDS in lambda/varieties/crop-derive.js (order = mildest first).
 export const HEAT_BANDS = ['sweet', 'mild', 'medium', 'hot', 'very_hot', 'superhot']
 export const HEAT_BAND_LABEL = { sweet: 'Sweet', mild: 'Mild', medium: 'Medium', hot: 'Hot', very_hot: 'Very hot', superhot: 'Superhot' }
+// Top of each band in SHU (crop-derive.js max + 1, so a band runs [previous top, top)). Sweet is 0 only.
+export const HEAT_BAND_TOP = { sweet: 0, mild: 1000, medium: 10000, hot: 50000, very_hot: 250000, superhot: Infinity }
+export function heatBandOf(shu) {
+  if (!isNum(shu) || shu < 0) return null
+  if (shu === 0) return 'sweet'
+  return HEAT_BANDS.find((b) => b !== 'sweet' && shu < HEAT_BAND_TOP[b]) ?? null
+}
+
+// 1300000 -> '1.3M', 350000 -> '350k', 2500 -> '2.5k', 200 -> '200'.
+export function fmtShu(n) {
+  if (!isNum(n)) return ''
+  const short = (x) => String(Math.round(x * 10) / 10)
+  if (n >= 1e6) return `${short(n / 1e6)}M`
+  if (n >= 1e3) return `${short(n / 1e3)}k`
+  return String(Math.round(n))
+}
 
 // compute.py SOURCE_GROUP buckets, in the order the bar draws them.
 export const SOURCE_GROUPS = ['nursery', 'seed', 'rescued', 'gift', 'other', 'none']

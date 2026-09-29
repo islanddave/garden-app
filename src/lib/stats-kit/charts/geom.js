@@ -19,6 +19,20 @@ export function linear(d0, d1, r0, r1) {
   return f
 }
 
+// Log scale for Scoville heat: log10(1 + shu) over 0..max -> r0..r1, so 0 SHU (a sweet pepper) sits
+// exactly on r0 and each decade is the same width. Negative or non-number input maps to r0, and a
+// max below 1 collapses to r0, so no attribute can ever carry NaN.
+export function logShu(max, r0, r1) {
+  const top = isNum(max) && max > 0 ? Math.log10(1 + max) : 0
+  const f = (x) => {
+    if (!isNum(x) || x <= 0 || top === 0) return r0
+    return r0 + (Math.log10(1 + x) / top) * (r1 - r0)
+  }
+  f.domain = [0, max]
+  f.range = [r0, r1]
+  return f
+}
+
 // A round top for an axis: the smallest step multiple at or above max (and at least one step).
 export function niceMax(max, step) {
   if (!isNum(max) || max <= 0) return step

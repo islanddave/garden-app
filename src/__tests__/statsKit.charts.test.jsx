@@ -10,20 +10,20 @@ import { render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { linear, niceMax, ticks, W } from '../lib/stats-kit/charts/geom.js'
+import { linear, logShu, niceMax, ticks, W } from '../lib/stats-kit/charts/geom.js'
 import { layoutRibbon } from '../lib/stats-kit/charts/RibbonChart.jsx'
 import { layoutWeekly } from '../lib/stats-kit/charts/WeeklyHeatFruitChart.jsx'
 import { layoutSourceMix } from '../lib/stats-kit/charts/SourceMixChart.jsx'
 import { splitSources, sourceMetaLine } from '../lib/stats-kit/charts/SourceReportCard.jsx'
 import { layoutHeatClockCrop } from '../lib/stats-kit/charts/HeatClockCropChart.jsx'
 import { layoutCultivarClock } from '../lib/stats-kit/charts/CultivarClockChart.jsx'
-import { layoutHeatLadder } from '../lib/stats-kit/charts/HeatLadderChart.jsx'
+import { layoutHeatLadder, layoutHeatTube } from '../lib/stats-kit/charts/HeatLadderChart.jsx'
 import { layoutPepperBest } from '../lib/stats-kit/charts/PepperBestChart.jsx'
 import { layoutTomatoKeep } from '../lib/stats-kit/charts/TomatoKeepChart.jsx'
 import { layoutLongest } from '../lib/stats-kit/charts/LongestChart.jsx'
 import { layoutSepSize } from '../lib/stats-kit/charts/SepSizeChart.jsx'
 import { STATS_REGISTRY } from '../lib/stats-kit/registry.js'
-import { dayNum, monthDay, monthStarts } from '../lib/stats-kit/format.js'
+import { dayNum, monthDay, monthStarts, fmtShu, heatBandOf } from '../lib/stats-kit/format.js'
 
 const fixture = JSON.parse(readFileSync(resolve(process.cwd(), 'tests/fixtures/season-stats.v1.json'), 'utf8'))
 const S = fixture.sections
@@ -53,6 +53,26 @@ describe('geom', () => {
     expect(linear(3, 3, 10, 20)(3)).toBe(10)
     expect(linear(0, 1, 10, 20)(NaN)).toBe(10)
     expect(linear(0, 1, 10, 20)(undefined)).toBe(10)
+  })
+  it('logShu: 0 SHU on the range start, the max on the range end, 100 -> 1M strictly increasing', () => {
+    const x = logShu(1300000, 26, 384)
+    expect(x(0)).toBe(26)
+    expect(x(1300000)).toBeCloseTo(384)
+    const xs = [100, 1000, 10000, 100000, 1000000].map(x)
+    for (let i = 1; i < xs.length; i++) expect(xs[i]).toBeGreaterThan(xs[i - 1])
+    // log: every decade is (nearly — it is log10(1 + shu)) the same width
+    expect(xs[4] - xs[3]).toBeCloseTo(xs[3] - xs[2], 1)
+  })
+  it('logShu never returns NaN: junk, negatives and a zero max fall to the range start', () => {
+    const x = logShu(1300000, 26, 384)
+    for (const junk of [NaN, undefined, null, '5000', -10, Infinity]) expect(x(junk)).toBe(26)
+    expect(logShu(0, 26, 384)(5000)).toBe(26)
+    expect(logShu(NaN, 26, 384)(5000)).toBe(26)
+  })
+  it('fmtShu and heatBandOf', () => {
+    expect([1300000, 350000, 2500, 200, 0].map(fmtShu)).toEqual(['1.3M', '350k', '2.5k', '200', '0'])
+    expect([0, 100, 999, 1000, 49999, 50000, 250000, -1, null].map(heatBandOf))
+      .toEqual(['sweet', 'mild', 'mild', 'medium', 'hot', 'very_hot', 'superhot', null, null])
   })
   it('niceMax and ticks', () => {
     expect(niceMax(9.36, 2)).toBe(10)
@@ -134,6 +154,52 @@ describe('chart layouts on the fixture', () => {
     const L = layoutHeatLadder(S.heat_ladder)
     expect(L.rows.map(r => r.band)).toEqual(['superhot', 'very_hot', 'hot', 'medium', 'mild', 'sweet'])
     expect(L.rows.find(r => r.band === 'very_hot').barW).toBe(120)
+  })
+
+  it('heat tube: one dot per variety with a Scoville number, the hottest named, ticks 0..1M left to right', () => {
+    const T = layoutHeatTube(S.heat_ladder)
+    const best = S.heat_ladder.series.best
+    expect(T.dots).toHaveLength(best.filter(r => typeof r.scoville_max === 'number').length)
+    expect(T.hottest.text).toBe('Armageddon F1 1.3M')
+    expect(T.hottest.x).toBeLessThanOrEqual(W)
+    expect(T.ticks.map(t => t.label)).toEqual(['0 SHU', '100', '1k', '10k', '100k', '1M'])
+    for (let i = 1; i < T.ticks.length; i++) expect(T.ticks[i].x).toBeGreaterThan(T.ticks[i - 1].x)
+    // hotter never sits left of milder
+    const byShu = [...T.dots].sort((a, b) => a.shu - b.shu)
+    for (let i = 1; i < byShu.length; i++) if (byShu[i].shu > byShu[i - 1].shu) expect(byShu[i].cx).toBeGreaterThan(byShu[i - 1].cx)
+    // sweet dots sit on the bulb; colours follow the band
+    for (const d of T.dots.filter(d => d.shu === 0)) { expect(Math.abs(d.cx - 26)).toBeLessThan(5.5); expect(d.color).toBe('var(--gs-h0)') }
+    // ...in two even columns (9 sweet -> levels 0-4 left, 0-3 right), not a zig-zag
+    const sweet = T.dots.filter(d => d.shu === 0)
+    expect(sweet.filter(d => d.cx < 26).map(d => d.level)).toEqual([0, 1, 2, 3, 4])
+    expect(sweet.filter(d => d.cx > 26).map(d => d.level)).toEqual([0, 1, 2, 3])
+    expect(T.dots.find(d => d.cultivar === 'Armageddon F1').color).toBe('var(--gs-h5)')
+    // no two dots overlap
+    for (const a of T.dots) for (const b of T.dots) if (a !== b) expect(Math.hypot(a.cx - b.cx, a.cy - b.cy)).toBeGreaterThan(7.9)
+    for (const d of T.dots) { expect(Number.isFinite(d.cx)).toBe(true); expect(Number.isFinite(d.cy)).toBe(true); expect(d.cy).toBeGreaterThan(0) }
+    // the ladder rows sit below the tube
+    const L = layoutHeatLadder(S.heat_ladder)
+    expect(Math.min(...L.rows.map(r => r.y)) - 11).toBeGreaterThan(T.height)
+  })
+
+  it('heat tube: null scoville skipped, all-null -> no tube, bars still drawn; nothing NaN', () => {
+    const sec = { series: { bands: S.heat_ladder.series.bands, best: [
+      { band: 'hot', cultivar: 'A', scoville_max: null, pods: 3 },
+      { band: 'hot', cultivar: 'B', scoville_max: 30000, pods: 1 },
+      { band: 'hot', cultivar: 'C', pods: 1 },
+      { band: 'hot', cultivar: 'D', scoville_max: 'x', pods: 1 },
+    ] } }
+    const T = layoutHeatTube(sec)
+    expect(T.dots.map(d => d.cultivar)).toEqual(['B'])
+    expect(T.hottest.text).toBe('B 30k')
+    expect(layoutHeatTube({ series: { bands: [], best: [{ cultivar: 'A', scoville_max: null }] } })).toBeNull()
+    expect(layoutHeatLadder({ series: { bands: [], best: [] } })).toBeNull()
+    const noTube = layoutHeatLadder({ series: { bands: S.heat_ladder.series.bands, best: [] } })
+    expect(noTube.tube).toBeNull()
+    expect(noTube.rows[0].y).toBe(18)
+    const { container } = renderBody('heat_ladder', sec)
+    expect(container.querySelector('[data-testid="heat-tube"]')).not.toBeNull()
+    expect(badAttributes(container)).toEqual([])
   })
 
   it('pepper best: 0 pods at 96, the axis top at 386; the leader of each band is named', () => {
