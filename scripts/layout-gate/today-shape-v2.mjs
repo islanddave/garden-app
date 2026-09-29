@@ -478,7 +478,10 @@ async function runInteractions(state, checks, at) {
         }
       }
     } else if (c.family === 'weather-once') {
-      const r = await evalSettled(`window.__h.act({ tap: 'glance' })`)
+      // Opened only if closed, and left as found: region-headcount runs first and leaves the glance OPEN (its last
+      // glance rows are counted open), so a blind tap here would CLOSE it (merged S3 × S4 ordering).
+      const wasOpen = (await evalSettled(`window.__h.expanded('glance')`)) === 'true'
+      const r = wasOpen ? { void: null } : await evalSettled(`window.__h.act({ tap: 'glance' })`)
       if (r.void) { F(`VOID — could not open the glance card: ${r.void}`); continue }
       const k = await evalSettled(`document.querySelectorAll('[data-testid="today-weather${SUFFIX}"]').length`)
       if (k !== 1) F(`with the glance OPEN, today-weather renders ${k}x, expected exactly 1 (MF2)`)
@@ -494,7 +497,7 @@ async function runInteractions(state, checks, at) {
         const rep = Object.entries(seen).filter(([, n]) => n > 1).map(([x]) => x)
         if (rep.length) F(`hi/lo text repeats inside the open glance card: ${rep.join(', ')} (MF2)`)
       }
-      await evalSettled(`window.__h.act({ tap: 'glance' })`)
+      if (!wasOpen) await evalSettled(`window.__h.act({ tap: 'glance' })`)
     } else if (c.family === 'chip-census') {
       const r = await evalSettled(CHIP_CENSUS)
       if (!r) { F('no jump bar to take a chip census of'); continue }
