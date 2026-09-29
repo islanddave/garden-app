@@ -21,7 +21,16 @@
 // must go red on the census — the proof that each armed-later check CAN fail once armed.
 // S2 (2026-09-28): the section component, the visit layer + local mirror and the route toggle — see the S2
 // notes on ANCHORS.ready and v2-remembered below.
-export const LANDED = ['S0', 'S2']
+// S3 (2026-09-29): the glance card + the jump bar. Checks that measure S3's surface TOGETHER with a later slice's
+// were split, so the S3 half arms now and the rest keeps waiting (each split is marked "S3 split" below); the
+// shell's sticky / jump-landing checks need a page taller than one screen, which only S4's Needs care body gives
+// on these fixtures (the S3 build report has the measured heights), so they arm at S3 + S4.
+// S4 (2026-09-29): Needs care — groups, spots, exceptions + cohort, filters, Not today, done lines, the care
+// trigger (§3's Needs care half: v2-hot / v2-never / v2-routine prove it). Its own checks below are marked
+// "S4-scoped": they measure the Needs care surface alone, so they hold before and after S3/S5/S6 land (the
+// full-page versions of the same families stay armed at their slice combinations).
+// S3 and S4 were built in parallel on the same base and merged by the integrator (build-int-s3s4.md).
+export const LANDED = ['S0', 'S2', 'S3', 'S4']
 export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8']
 
 export function isArmed(check, landed = LANDED, armAll = false) {
@@ -92,18 +101,47 @@ export const STATES = [
       { family: 'collapsed-mounted', armedAt: ['S4', 'S5', 'S6'] },
       { family: 'visibility', armedAt: ['S4', 'S5'] },
       { family: 'header-text', armedAt: ['S4', 'S5', 'S6'], counts: { protect: 5, care: 233, resting: 9 }, why: 'fixture facts: cold 5; water 168 + feed 58 + check 7; dormant 9' },
-      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar', 'today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+60' }, why: '(e) v2-frost; the +60 is §11.0 E4, est., to be recorded' },
-      { family: 'jumpbar', armedAt: 'S3', present: true, chips: ['protect', 'water', 'feed', 'check', 'harvest'] },
-      { family: 'visual-census', armedAt: ['S3', 'S4'], maxFingerprints: 4, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem'], why: '(l) ≤ 4 section-level container fingerprints on busyfull' },
+      // S3 split: the glance, its cue + frost lines, the bar and the WHOLE verdict (every glyph painted, inside its
+      // clip) are S3's and arm now; Protect's header, pick link, rows and the Needs care ceiling wait for S5.
+      { family: 'first-screen', armedAt: 'S3', mustContain: ['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar'], mustShowText: ['today-verdict'], why: '(e) v2-frost, the S3 half: the closed glance card with both alert lines, the bar, and a verdict nothing cuts off' },
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+60' }, why: '(e) v2-frost; the +60 is §11.0 E4, est., to be recorded' },
+      // S3 split: the bar carries a chip for every section on the page, in the fixed order (at S3: Water / Feed /
+      // Check — Needs care is the only chip-bearing section built); the full set waits for Protect (S5) and Harvest (S6).
+      { family: 'jumpbar', armedAt: 'S3', present: true, chipsOfPresent: ['protect', 'water', 'feed', 'check', 'harvest'] },
+      { family: 'jumpbar', armedAt: ['S3', 'S5', 'S6'], present: true, chips: ['protect', 'water', 'feed', 'check', 'harvest'] },
+      // S3 (new family, named in KILLER_FAMILIES by S0): every chip 48 tall, numbers only on the work chips, and at
+      // 200% text (WCAG 1.4.4; Android font scaling) every chip still reachable inside the strip.
+      { family: 'chip-census', armedAt: 'S3', why: 'chips ≥ 48px; numbers only on Protect/Water/Feed/Check; at 200% text the strip scrolls (overflow-x auto) and no chip is stranded past its edge' },
+      // Integration S3 × S4 (first run of this family — neither lane alone could arm it): + 0.78rem, an INHERITED
+      // line like the cue/frost lines' 0.84rem (plan §4 "the unchanged … lines keep their own"): V1's
+      // FeedSuppressedList (CareNeeded.jsx), reused unchanged at the foot of Needs care (REGIONS
+      // care-feed-suppressed), prints 0.78rem. Measured: with only that component's 0.78rem → 0.82rem the census
+      // passed on v2-frost, so it is the one source. Restyling the line for V2 is a design call, not the gate's.
+      // The cap is plan §9.1(l)'s 4 design surfaces; at S3 + S4 v2-frost carries 3 of them (measured 2026-09-29),
+      // so one extra treatment still passes here: todayMutantsV2 extraCardFingerprint is scheduled for S5+S6.
+      { family: 'visual-census', armedAt: ['S3', 'S4'], maxFingerprints: 4, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem', '0.78rem'], why: '(l) ≤ 4 section-level container fingerprints on busyfull' },
       { family: 'weather-once', armedAt: 'S3', why: 'MF2: with the glance OPEN, exactly one today-weather and no repeated hi/lo text' },
-      { family: 'interaction', armedAt: 'S4', steps: [
-        { tap: 'jump:water', flip: 'today-sec-care' },
+      // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. Needs care is
+      // OPEN at the ready point on this state (the small-pot trigger), so the chip cannot flip today-sec-care's
+      // aria-expanded (the step VOIDed as first written); what it always moves is the Water task filter's
+      // pre-select (aria-pressed false → true, S3 → S4 through the visit record), so that is the step's flip.
+      // Counts are of VISIBLE rows (§9.1 (d) "every row under an open body passes shown()"), exact — with the
+      // Water filter on, as §9.1's phases run (tap the Water chip, open Bag Area, show the cohort).
+      // S4's lane also carried these phases without the chip (armed at S4 alone); merged, a second run on the
+      // same page would re-tap Bag Area CLOSED, so this one run carries them.
+      { family: 'interaction', armedAt: ['S3', 'S4'], steps: [
+        { tap: 'jump:water', flip: 'task-filter:Water' },
         { tap: 'spot:Bag Area', flip: 'care-spot:Bag Area' },
         { tap: 'cohort:Bag Area', flip: 'care-cohort:Bag Area' },
         { scroll: '2*FIRST_SCREEN' },
         { scroll: 0 },
       ], counts: { afterSpot: { 'care-exceptions-row': 8, 'care-cohort': 1 }, afterCohort: { 'care-cohort-row': 20, 'care-show-more': 1 } }, why: '(d) Bag Area: 8 exception rows + 1 cohort line; disclosed: 20 rows + "Show 69 more"' },
-      { family: 'region-headcount', armedAt: ['S3', 'S4', 'S5', 'S6'], why: 'every REGIONS_V2 row owned by v2-frost, counted after its owner is opened' },
+      { family: 'header-text', armedAt: 'S4', counts: { care: 233 }, why: 'S4-scoped: water 168 + feed 58 + check 7' },
+      { family: 'count-invariant', armedAt: 'S4', why: 'S4-scoped §2.4: the Needs care header count = Σ spot counts, no filter' },
+      // S3: each REGIONS_V2 row arms with its OWN slice (the gate skips a row whose armedAt has not landed), so
+      // the glance's rows count from S3 and S4–S6's rows join as they land. S4's lane carried its own S4-scoped
+      // copy of this check (armed at S4 alone); merged, the two counted the same rows, so this one is kept.
+      { family: 'region-headcount', armedAt: 'S3', why: 'every ARMED REGIONS_V2 row owned by v2-frost, counted after its owner is opened' },
     ],
   },
   {
@@ -113,8 +151,16 @@ export const STATES = [
       ...common(),
       { family: 'section-open-set', armedAt: ['S4', 'S5', 'S6'], order: ['protect', 'care', 'harvest', 'resting'], open: ['protect', 'care'], closed: ['harvest', 'resting'] },
       { family: 'collapsed-mounted', armedAt: ['S4', 'S5', 'S6'] },
-      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-jumpbar', 'today-sec-protect'], allRows: 'protect-row', headerTopMax: { care: 668 }, why: '(e) v2-busy: bar, Protect header + all rows, Needs care header top ≤ 668 (R16)' },
-      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', why: 'MF3: group Water all — spots shrink to done lines, "Outside · watered N · Undo", accessible name "Water all N outside"' },
+      // S3 split: the glance and the bar arm now; Protect and the R16 ceiling wait for S5.
+      { family: 'first-screen', armedAt: 'S3', mustContain: ['today-glance', 'today-jumpbar'], mustShowText: ['today-verdict'], why: '(e) v2-busy, the S3 half: the glance and the bar on the first screen' },
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect'], allRows: 'protect-row', headerTopMax: { care: 668 }, why: '(e) v2-busy: bar, Protect header + all rows, Needs care header top ≤ 668 (R16)' },
+      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 154, run: true, why: 'MF3: group Water all — spots shrink to done lines, "Outside · watered N · Undo", accessible name "Water all N outside"; its ONE Undo deletes exactly the created ids' },
+      { family: 'section-open-set', armedAt: 'S4', orderOf: ['care', 'resting'], open: ['care'], closed: ['resting'], why: 'S4-scoped: Needs care opens on the small-pot trigger, before Resting' },
+      { family: 'collapsed-mounted', armedAt: 'S4', why: 'S4-scoped: closed sections AND closed spots mount no rows' },
+      { family: 'visibility', armedAt: 'S4', why: 'S4-scoped: the open Needs care shows its groups and spots, each ≥ 48px' },
+      { family: 'header-text', armedAt: 'S4', counts: { care: 233 }, careSummary: '8 tray cells due · 9 spots', spotNotToday: true, why: 'S4-scoped: header count, the SF8 summary, a Not today on every spot (D6)' },
+      { family: 'count-invariant', armedAt: 'S4', why: 'S4-scoped §2.4: the Needs care header count = Σ spot counts, no filter' },
+      { family: 'region-headcount', armedAt: 'S4', why: 'S4-scoped: today-care, care-heading, care-group-bulk + care-spot-bulk on the default render' },
     ],
   },
   {
@@ -168,7 +214,7 @@ export const STATES = [
     checks: [
       ...common(),
       { family: 'header-text', armedAt: 'S4', buttons: { 'care-group-bulk:Outside': 'Water all 135' }, spotNoButton: ['In-Ground'] },
-      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 135 },
+      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 135, run: true },
     ],
   },
   {
@@ -220,7 +266,9 @@ export const STATES = [
   },
   {
     name: 'v2-remembered-conflict', fixture: 'busy', clock: S924, prefs: 'prefs.remembered-conflict.json', prefsDelayMs: 300,
-    local: { mirror: { care: { open: false, at: '2026-09-24' } } },
+    // S4: the care trigger exists now (small), and a close with no ack holds nothing (MF1) — the mirror's close
+    // names the reason it was made against, as a real close made while the trigger held the section open would.
+    local: { mirror: { care: { open: false, at: '2026-09-24', ack: { r: 'small' } } } },
     proves: 'the mirror wins this visit; nothing above the fold moves between ready and +2.5 s',
     checks: [...common(), { family: 'section-open-set', armedAt: 'S2', closed: ['care'] }, { family: 'remembered-conflict', armedAt: 'S2' }],
   },
@@ -236,12 +284,18 @@ export const REGIONS_V2 = [
   { id: 'today-title', owner: 'title row', state: '*', armedAt: 'S2' },
   { id: 'today-date', owner: 'date', state: '*', armedAt: 'S2' },
   { id: 'today-weather', owner: 'glance', open: 'glance', state: 'v2-frost', armedAt: 'S3' },
-  { id: 'weather-cue-line', owner: 'glance (visible closed)', state: 'v2-frost', armedAt: 'S3' },
-  { id: 'frost-alert-line', owner: 'glance (visible closed)', state: 'v2-frost', armedAt: 'S3' },
+  // S3: `closed` — counted with the glance CLOSED (the gate closes it first), since "visible closed" is the claim.
+  { id: 'weather-cue-line', owner: 'glance (visible closed)', closed: 'glance', state: 'v2-frost', armedAt: 'S3' },
+  { id: 'frost-alert-line', owner: 'glance (visible closed)', closed: 'glance', state: 'v2-frost', armedAt: 'S3' },
   ...['drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list'].map((id) => ({ id, owner: 'glance details', open: 'glance', state: 'v2-frost', armedAt: 'S3' })),
   { id: 'today-substrate-note', owner: 'Needs care, Feed filter', open: 'care', filter: 'feed', state: 'v2-frost', armedAt: 'S4' },
   { id: 'today-care', owner: 'Needs care section', state: 'v2-busy', armedAt: 'S4' },
+  { id: 'care-group-bulk', owner: 'Outside group label (MF3)', state: 'v2-busy', armedAt: 'S4' },
+  { id: 'care-spot-bulk', owner: 'a spot row\'s Water all', state: 'v2-busy', armedAt: 'S4' },
   { id: 'care-heading', owner: 'Needs care band', state: 'v2-busy', armedAt: 'S4' },
+  // S4: a band's one-line summary is a region of its own (D2 "a header with a count and a one-line summary"):
+  // a 2-line band is still the 48px min-height band, so no geometry family can see the line vanish.
+  { id: 'section-summary', owner: 'a section band\'s one-line summary', state: 'v2-busy', armedAt: 'S4' },
   { id: 'care-cap-note', owner: 'disclosed cohort in Bag Area', open: 'cohort:Bag Area', state: 'v2-frost', armedAt: 'S4' },
   { id: 'care-show-more', owner: 'disclosed cohort in Bag Area (control)', open: 'cohort:Bag Area', state: 'v2-frost', armedAt: 'S4' },
   { id: 'care-moist', owner: 'plant rows in an opened spot (control)', open: 'spot:Bag Area', state: 'v2-frost', armedAt: 'S4' },
@@ -265,13 +319,20 @@ export const NEW_ANCHORS = ['today-glance', 'today-jumpbar', 'today-sec-<key>', 
 // can show. `shell-instrument` is armed now: it is the shell itself (S0's own deliverable).
 export const SHELL = [
   { family: 'shell-instrument', armedAt: 'S0', state: 'v2-busy', why: 'TopChrome paints at BAR_H, the nav band writes --bottom-nav-height, the page band is FIRST_SCREEN, scrollRestoration is manual (the manager is on), the members roster is production-shaped, the prefs GET is observed, and the harness calls usePageScrollManager exactly as AppShell does' },
-  { family: 'sticky', armedAt: 'S3', state: 'v2-frost', why: '(f) scrolled to 2 × FIRST_SCREEN: bar top = TopChrome bottom ± 0.5, shown(), height 57 ± 1, elementFromPoint(bar centre) inside the bar, back at 0 exactly one chip row visible (in-view chip checks dropped with the scroll-spy, §13 Simplify 5)' },
-  { family: 'jump-landing', armedAt: 'S3', state: 'v2-frost', why: '(g) per chip: target open, header top ∈ [bar bottom, bar bottom + 8], activeElement = header, no horizontal scroll' },
+  // S3: armed at S3 + S4. The bar can only pin, and a jump can only land a header under it, on a page taller than
+  // one screen; at S3 alone every v2 state ends above the fold (measured, S3 build report), and S4's Needs care
+  // body — opened by the Water chip, the first step of both checks — is what makes v2-frost long enough.
+  { family: 'sticky', armedAt: ['S3', 'S4'], state: 'v2-frost', why: '(f) after the Water jump, scrolled to 2 × FIRST_SCREEN (clamped to the page): bar top = TopChrome bottom ± 0.5, shown(), height 57 ± 1, elementFromPoint(bar centre) inside the bar; back at 0 exactly one bar, in flow (in-view chip checks dropped with the scroll-spy, §13 Simplify 5)' },
+  { family: 'jump-landing', armedAt: ['S3', 'S4'], state: 'v2-frost', why: '(g) per chip: target open, header top ∈ [bar bottom, bar bottom + 8] once the scroll settles, activeElement = header, no horizontal scroll. Integration S3 × S4: a landing the page is too short for (the Feed / Check pre-select shrinks Needs care) stops at the page end with the header wholly on screen below the bar; at least one jump per run must land strictly' },
+  // Integration S3 × S4: the focus a jump leaves, judged apart from the landing — the second, independent killer for
+  // jumpNoOffset (2.4.11: the focused header wholly hidden, hit-tested) and noFocusAfterJump (2.4.3: a real Tab does
+  // not continue inside the section). Measured over the same pass of chip jumps as jump-landing.
+  { family: 'jump-focus', armedAt: ['S3', 'S4'], state: 'v2-frost', why: 'per chip: the focused header is not wholly hidden by TopChrome or the bar (WCAG 2.4.11, hit-tested over the header), and one real Tab continues inside the jumped-to section (WCAG 2.4.3; R5 — TalkBack and the keyboard carry on from the header)' },
   { family: 'back-restore', armedAt: 'S4', state: 'v2-frost', why: '(m) open Bag Area → tap "Red Acre Cabbage" → Back → Bag Area open, same row top within 1 px' },
 ]
 
 // ── MUTANT KILLER FAMILIES (§9.1) and the trigger TABLE that replaced the trigger-predicate mutants ──────
-export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore']
+export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore', 'jump-focus']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome

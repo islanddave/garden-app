@@ -13,6 +13,10 @@ const { planState, prefsState, auth } = vi.hoisted(() => ({
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: (opts) => { planState.lastOpts = opts; return planState.current } }))
 vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.current }))
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
+// S4: Needs care reads /api/plants + /api/locations (useCachedFetch) and writes through useApiFetch — the
+// documented test seam (api.js), so no Clerk provider is needed here.
+vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => ({ fetch: async () => ({ id: 'ev' }), getToken: async () => 't' }) }))
+vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? [] : { locations: [] }, loading: false, error: null }) }))
 
 import TodayV2, { namesSummary, activeCareRows } from '../pages/TodayV2.jsx'
 
@@ -62,7 +66,10 @@ describe('TodayV2 skeleton', () => {
     expect(screen.queryByTestId('care-empty')).toBeNull()
   })
 
-  it('sections are closed by default at S2 (no triggers yet), and closed means unmounted', () => {
+  // S4 added Needs care's trigger (§3): PLAN's never-watered row opens it by itself — so this pins the closed
+  // default on a plan with no reason (the never row removed), and the trigger in its own test below.
+  it('sections are closed by default without a trigger, and closed means unmounted', () => {
+    planState.current = { ...busy(), data: { ...busy().data, plan: { ...PLAN, no_history: [] } } }
     mount()
     expect(band('care').getAttribute('aria-expanded')).toBe('false')
     expect(band('care').hasAttribute('aria-controls')).toBe(false)

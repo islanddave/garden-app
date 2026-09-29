@@ -479,3 +479,17 @@ export const PHOTO_MULTI_ATTACH_ENABLED = true
 // this flag off the page is only a pass-through to it. Turning this flag ON must add a door from
 // Seeds › My seeds in the same change, or bulk intake ships unreachable in the installed PWA.
 export const SEED_BULK_EXTRACT_ENABLED = false
+
+// V5-TODAYREDESIGN-001 — the Debug & smoke row "New Today (preview) on this phone" is VISIBLE to both users, by
+// Dave's D14 (2026-09-29, project-state/design-todayux-V100-20260928.md round 4). Its subtitle opens "Early
+// preview — not finished." so Jen knows to leave it alone; Dave switches his own phone to judge each slice as
+// releases land. Until the last slice the preview is missing sections the current Today has (through S4: no
+// Protect tonight, no Heads-up, no Harvest / Put-Up, no household care), and turning the row off is the way back.
+// FALSE stays a working branch, the way to hide the row again: DebugMenu renders no row, and TodayRoute ignores a
+// stored `garden.todayV2`, so a phone that turned the preview on is not left on the unfinished page with no way
+// back (the row IS the way back). The stored flag is ignored, not deleted; sign-out still scrubs it (clientPrefs
+// CLIENT_PREF_KEYS). TodayRoute.previewShipped.test.jsx pins this value and the row; TodayRoute.previewHidden.test.jsx
+// pins the false branch with the constant mocked false.
+// The V2 gates measure the page through the real chooser: tests/harness/vite.harness.v2.mjs serves this module
+// with the constant true whichever way it ships (and throws if it cannot find it), so ?v2=1 reaches TodayV2 there.
+export const TODAY_V2_PREVIEW_ROW = true

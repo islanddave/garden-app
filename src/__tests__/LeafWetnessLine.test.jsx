@@ -32,6 +32,7 @@ vi.mock('../context/ToastContext.jsx', () => ({ useOptionalToast: () => toastMoc
 import LeafWetnessLine from '../components/today/LeafWetnessLine.jsx'
 import { buildLeafWetnessLine } from '../lib/leafWetnessLine.js'
 import Today from '../pages/Today.jsx'
+import GlanceCard from '../components/today/v2/GlanceCard.jsx'
 
 const DAY = '2026-09-08'
 const GEN = '2026-09-08T22:05:00.000Z'
@@ -144,6 +145,30 @@ describe('the wiring — Today actually mounts it', () => {
   it('renders nothing on Today when the key is absent entirely', () => {
     planState.current = planWith(null)
     render(<Today />)
+    expect(screen.queryByTestId('leaf-wetness-line')).toBeNull()
+  })
+})
+
+// V5-TODAYREDESIGN-001 S3 — the redesigned Today mounts the line too: inside the glance card, behind its tap
+// (plan-v2 §4 "Glance details", §13 MF2). The same render-level guard, pointed at the V2 mount (R3).
+describe('the wiring — the V2 glance card mounts it, behind its tap', () => {
+  const plan = (leafWetness) => ({
+    weather: { tonightLow: 55, highToday: 74, code: 3, hot: false },
+    hydrology: { recent_precip_in: 0.05, tomorrow_precip_in: 0.0, tomorrow_pop: 0 },
+    water_due: [], no_history: [], fertilize: [], pest: [], cold: [], dormant: [],
+    ...(leafWetness ? { leaf_wetness: leafWetness } : {}),
+  })
+  const glance = (p, open) => render(<GlanceCard plan={p} generatedAt={GEN} planDate={DAY} open={open} onToggle={() => {}} />)
+
+  it('renders the line from plan.leaf_wetness once the card is open', () => {
+    glance(plan(WET()), true)
+    expect(screen.getByTestId('leaf-wetness-line').textContent).toMatch(/scout/i)
+  })
+  it('not on the closed card (details on demand), and nothing when the key is absent', () => {
+    const { unmount } = glance(plan(WET()), false)
+    expect(screen.queryByTestId('leaf-wetness-line')).toBeNull()
+    unmount()
+    glance(plan(null), true)
     expect(screen.queryByTestId('leaf-wetness-line')).toBeNull()
   })
 })

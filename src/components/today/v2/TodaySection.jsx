@@ -1,6 +1,7 @@
 import React from 'react'
 import FacetGroupHeader from '../../forms/FacetGroupHeader.jsx'
 import { T } from '../../forms/formStyles.js'
+import { JUMP_LANDING_GAP_PX } from './JumpBar.jsx'
 
 // TodaySection — one section of the redesigned Today (plan-v2 §1.0, §4 "Section band", §5.2). V5-TODAYREDESIGN-001 S2.
 //
@@ -14,18 +15,21 @@ import { T } from '../../forms/formStyles.js'
 // its first [aria-expanded] is the header toggle. The gate treats EVERY testid starting "today-sec-" as a
 // section, so nothing inside a section may carry one. The section sets no outer margin (the page's flex
 // gap spaces sections); the band → body gap is T.space.xs.
-export default function TodaySection({ sectionKey, title, count, summary, open = false, onToggle, headingLevel = 2, children, style }) {
+// S3: scroll-margin-top is the jump's landing gap — the page's html scroll-padding subtracts TopChrome and the
+// jump bar, and this puts the band JUMP_LANDING_GAP_PX under the bar (plan-v2 §6.2).
+export default function TodaySection({ sectionKey, title, count, summary, open = false, onToggle, headingLevel = 2, children, style, headerTestId }) {
   return (
-    <section data-testid={`today-sec-${sectionKey}`} data-section={sectionKey} style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs, ...style }}>
+    <section data-testid={`today-sec-${sectionKey}`} data-section={sectionKey} data-count={count ?? undefined} style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs, scrollMarginTop: JUMP_LANDING_GAP_PX, ...style }}>
       <FacetGroupHeader
         headingLevel={headingLevel}
         size="section"
         facet="type"
         label={title}
         count={count}
-        summary={summary}
+        summary={summary == null ? summary : <span data-testid="section-summary">{summary}</span>}
         collapsed={!open}
         onToggle={onToggle}
+        testId={headerTestId}
       >
         {children}
       </FacetGroupHeader>

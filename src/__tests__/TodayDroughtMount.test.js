@@ -36,3 +36,22 @@ describe('Today mounts the drought line', () => {
     expect(drought).toBeGreaterThan(frost)
   })
 })
+
+// V5-TODAYREDESIGN-001 S3 — the redesigned Today mounts it too, in the glance card's details (plan-v2 §4, §7 row
+// 15; §13 MF2). The same guard, pointed at the V2 mount (R3); V1 keeps its own above until it is removed (S8c).
+const GLANCE = fs.readFileSync(path.resolve(__dirname, '../components/today/v2/GlanceCard.jsx'), 'utf8')
+
+describe('the V2 glance card mounts the drought line', () => {
+  it('imports DroughtLine', () => {
+    expect(GLANCE).toMatch(/import\s+DroughtLine\s+from\s+['"][^'"]*DroughtLine\.jsx['"]/)
+  })
+  it('renders <DroughtLine> and passes it the plan', () => {
+    expect(GLANCE).toMatch(/<DroughtLine\b[^>]*\bplan=\{plan\}/)
+  })
+  it('renders it below FrostAlertLine, in the same reading order as V1', () => {
+    const frost = GLANCE.indexOf('<FrostAlertLine')
+    const drought = GLANCE.indexOf('<DroughtLine')
+    expect(frost).toBeGreaterThan(-1)
+    expect(drought).toBeGreaterThan(frost)
+  })
+})

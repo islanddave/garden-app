@@ -248,6 +248,8 @@ function isStaleSnapshot(generatedAt, planDate) {
   const genEtDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
   return genEtDate < planDate
 }
+// The V2 glance card derives the rain line's `uncertain` flag exactly as this card does (V5-TODAYREDESIGN-001).
+export { isStaleSnapshot }
 // basisTimeLabel (src/lib/rainSentences.js, the ET time half of asOfLabel's grammar) plus the 'just now'
 // fallback — one formatter for the stamp and the rain line, not two.
 function liveTimeLabel(refreshedAt) {

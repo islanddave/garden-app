@@ -36,7 +36,7 @@ import ErrorBoundary from '../../src/components/ErrorBoundary.jsx'
 import Today from '../../src/pages/Today.jsx'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 import { stateByName } from './_todaymeasure/today-v2-contract.mjs'
-import { buildV2State, localSeeds, selectorFor } from './_todaymeasure/v2wire.js'
+import { buildV2State, localSeeds, selectorFor, flipState, flipAttr } from './_todaymeasure/v2wire.js'
 
 // main.jsx's boot line, the real function (pagescroll.jsx's reason: without it Chrome's native restore runs).
 applyBrowserScrollRestoration(SCROLL_MANAGER_ENABLED)
@@ -282,20 +282,22 @@ window.__h = {
   },
   scrollY: () => Math.round(window.scrollY),
   harnessUrl: () => HARNESS_URL,
-  // The same interaction driver as todaymeasure ?v2=1 (hit-tested tap, aria-expanded must flip).
+  // The same interaction driver as todaymeasure ?v2=1 (hit-tested tap; aria-expanded — aria-pressed for a
+  // `task-filter:` chip — must flip).
   async act(step) {
     const out = { step, ok: false, void: null, before: null, after: null }
-    let sel, flipSel
-    try { sel = selectorFor(step.tap); flipSel = selectorFor(step.flip || step.tap) } catch (e) { out.void = e.message; return out }
+    const flip = step.flip || step.tap
+    let sel
+    try { sel = selectorFor(step.tap); flipState(flip) } catch (e) { out.void = e.message; return out }
     const el = document.querySelector(sel)
     if (!el) { out.void = `tap target '${step.tap}' matched nothing`; return out }
     const r = el.getBoundingClientRect()
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
     if (!hit || !(hit === el || el.contains(hit))) { out.void = `tap target '${step.tap}' is covered at its centre`; return out }
-    out.before = document.querySelector(flipSel)?.getAttribute('aria-expanded') ?? null
+    out.before = flipState(flip)
     el.click(); await frames(3)
-    out.after = document.querySelector(flipSel)?.getAttribute('aria-expanded') ?? null
-    if (out.before == null || out.after == null || out.before === out.after) out.void = `aria-expanded on '${step.flip || step.tap}' did not flip (${out.before} → ${out.after})`
+    out.after = flipState(flip)
+    if (out.before == null || out.after == null || out.before === out.after) out.void = `${flipAttr(flip)} on '${flip}' did not flip (${out.before} → ${out.after})`
     else out.ok = true
     return out
   },
