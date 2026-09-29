@@ -295,6 +295,30 @@ describe('the writes', () => {
     expect(puts()).toHaveLength(11)
   })
 
+  // KILLING MUTATION: invalidate /api/plants only (the old code). RESULT: RED — a cached event list or
+  // dashboard would go on showing the plantings as they were.
+  it('End, Try again and Undo each drop every cached read they falsify: plants, events, dashboard', async () => {
+    let failAji = true
+    putImpl = (p) => (p === '/api/plants/p1' && failAji ? Promise.reject(new Error('offline')) : Promise.resolve({}))
+    const invalidated = () => invalidateSpy.mock.calls.map(([p]) => p).sort()
+    await renderPage()
+    openGroup('Bag Area')
+    fireEvent.click(within(group('Bag Area')).getByTestId('season-end-group-select'))
+    openConfirm()
+    await confirmEnd()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(invalidated()).toEqual(['/api/dashboard', '/api/events', '/api/plants'])
+    invalidateSpy.mockClear()
+    failAji = false
+    await act(async () => { fireEvent.click(screen.getByTestId('season-end-retry')) })
+    await waitFor(() => expect(screen.getByTestId('season-end-result').textContent).toContain('Ended 2 plantings.'))
+    expect(invalidated()).toEqual(['/api/dashboard', '/api/events', '/api/plants'])
+    invalidateSpy.mockClear()
+    await act(async () => { fireEvent.click(screen.getByTestId('season-end-undo')) })
+    await waitFor(() => expect(screen.getByTestId('season-end-result').textContent).toContain('Put back 2 plantings.'))
+    expect(invalidated()).toEqual(['/api/dashboard', '/api/events', '/api/plants'])
+  })
+
   it('nothing saved: the ticks are kept and the bar says so', async () => {
     putImpl = () => Promise.reject(new Error('offline'))
     await renderPage()

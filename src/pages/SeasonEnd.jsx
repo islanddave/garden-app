@@ -54,6 +54,12 @@ const THUMB_PX = T.space.lg * 2
 const ROW_MIN = T.buttonMinHeight + T.space.sm
 const BAR_BOTTOM = 'calc(var(--bottom-nav-height, 0px) + env(safe-area-inset-bottom))'
 const rowIdOf = (el) => el.getAttribute('data-row-id')
+// Every cached read an End, a Try again or an Undo falsifies (the FeedPage pattern): the planting rows,
+// the status_change event each PUT records, and the dashboard's counts by status. Prefix invalidation
+// only, as FeedPage does. Today's plan is a stored snapshot the cron rewrites, so a refetch there
+// would return the same rows (TODAY_LAG_LINE).
+const WRITE_INVALIDATE_PREFIXES = ['/api/plants', '/api/events', '/api/dashboard']
+const invalidateAfterWrite = () => { for (const p of WRITE_INVALIDATE_PREFIXES) invalidatePrefix(p) }
 
 const page = { minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }
 // The bottom pad clears the sticky bar at its tallest (result line + selection line).
@@ -268,7 +274,7 @@ export default function SeasonEnd() {
       retry: failed.length > 0,
     })
     if (landed.length) {
-      invalidatePrefix('/api/plants')
+      invalidateAfterWrite()
       if (toastIdRef.current != null) toast.dismiss?.(toastIdRef.current)
       toastIdRef.current = toast.showUndo?.({
         message: `Ended ${plantingsPhrase(merged.length)}`, detail: TODAY_LAG_LINE, onUndo: () => undoRef.current?.(),
@@ -302,7 +308,7 @@ export default function SeasonEnd() {
     setBatch(nextBatch)
     const stillEndedNames = current.items.filter((it) => !back.has(it.id)).map((it) => it.name)
     setResult({ line: undoResultLine(back.size, current.items.length, stillEndedNames), sub: null, retry: false })
-    if (back.size) invalidatePrefix('/api/plants')
+    if (back.size) invalidateAfterWrite()
     setProgress(null)
     inFlightRef.current = false
   }, [apiFetch, toast])
