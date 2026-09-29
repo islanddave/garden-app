@@ -110,7 +110,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation garden_node column con
     // 5 -> 6 with V5-INFLIGHTBATCH-001: the kitchen-batch predicate bulk-add LEFT JOINs garden_node to
     // reach a harvest's planting and, through it, its cultivar. It reaches for gn.id / gn.deleted_at /
     // gn.cultivar_id only, all three already in the contract below, so the column list is unchanged.
-    expect(STATEMENTS).toHaveLength(6);
+    // Release F: +5 — readLines, the planting and pick loaders, the line search and the household pepper names.
+    expect(STATEMENTS).toHaveLength(11);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['gn']);
   });

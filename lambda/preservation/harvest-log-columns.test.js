@@ -52,7 +52,7 @@ const HANDLERS = readdirSync(__dirname)
 // window's crop/variety/plant selectors all resolve through garden_node and cultivar, which have their
 // own contracts beside this one.
 const AUDIT_COLUMNS = {
-  harvest_log: ['created_by', 'deleted_at', 'event_id', 'id'],
+  harvest_log: ['created_by', 'deleted_at', 'event_id', 'id', 'quantity', 'unit'],
 };
 
 const HARVEST_LOG_COLUMNS = AUDIT_COLUMNS.harvest_log;
@@ -119,7 +119,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation harvest_log column con
     // 1 -> 3 with V5-INFLIGHTBATCH-001: index.js's unaliased ownership gate, plus kitchenRoutes.js's
     // loadOwnedHarvestLogs (the batched form of that same gate) and the predicate bulk-add's
     // INSERT..SELECT. Both new ones bind the table as `h`.
-    expect(STATEMENTS).toHaveLength(3);
+    // Release F: +2 — the pick loader and the line search's recent picks, which read quantity and unit.
+    expect(STATEMENTS).toHaveLength(5);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['h']);
   });

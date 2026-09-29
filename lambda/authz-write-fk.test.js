@@ -482,8 +482,24 @@ const NOT_IN_SITES = [
   //     IN (tended, moved, noted)`, so a foreign or cross-batch id writes nothing; the composite FK
   //     (batch_id, voids_id) is the backstop. Asserted by executing it in putUp.test.js.
   //   recipe_id — REFUSED, never written: validateBatchCreate 400s a non-null recipe_id until release 4.
+  // Release F amends two of those: the keyed line POST (lineRoutes.js) DOES take put_up_stage_id and
+  // output_id from the body — a final-step addition to an existing bottling — and gates both in
+  // prepareLines through loadSittings, whose predicate is `batch_id = <the route's owned batch> AND
+  // stage_kind = 'put_up' AND not voided`, with output_id required to be one of THAT sitting's live
+  // jars (400 otherwise). The composite FKs (batch_id, put_up_stage_id) → kitchen_stage_log are the
+  // backstop. A put-up's own lines still take neither (putUp.js refuses them).
+  // And two F pairs, both SERVER-DERIVED, never read from a body:
+  //   kitchen_batch_input_id — every pantry_use row names the line its own statement just inserted (a
+  //     draw), or the line whose soft-delete / restore that statement performed (a reversal /
+  //     re-draw); pantry_use_line_same_jar_fkey pins it to that line's own jar.
+  //   reverses_use_id — the id of the line's live forward use, read inside the same statement;
+  //     uq_pantry_use_reverses_use_id and pantry_use_reverses_same_jar_fkey are the backstop.
   'preservation::put_up_stage_id', 'preservation::output_id', 'preservation::voids_id',
-  'preservation::recipe_id',
+  'preservation::recipe_id', 'preservation::kitchen_batch_input_id', 'preservation::reverses_use_id',
+  // preservation_log_id — Release F amends this: a DRAW line (lineRoutes.js prepareLines, and a
+  // put-up's added lines) takes it from the body and gates it through loadJars, `id = ANY(<body ids>)
+  // AND user_id = ANY(householdIds)` — a foreign id is a 400, never written; pantry_use's comes from
+  // the line or the use route's household-scoped `pre` CTE. The sourceRoutes.js rule below stands:
   // preservation_log_id — NOT BODY-SETTABLE, V5-PUTUPMULTISOURCE-001. Every write of it is
   // `${putUp.id}` where `putUp` is the row returned by sourceRoutes.js's loadOwnedPutUp, whose
   // predicate is `id = <route param> AND user_id = ANY(householdIds) AND deleted_at IS NULL` and

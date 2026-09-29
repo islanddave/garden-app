@@ -18,7 +18,7 @@
 // maps 42P01 so that window is diagnosable rather than an opaque "Internal server error".
 import { randomUUID } from 'node:crypto';
 import { loadOwnedPhoto } from './household.js';
-import { ET_TZ } from './useBy.js';
+import { ET_TZ, etDay } from './useBy.js';
 import {
   KITCHEN_UUID_RE, parseKitchenRoute, parseBatchState, normalizeText,
   validateBatchCreate, validateBatchUpdate, batchUpdatePatch,
@@ -27,25 +27,30 @@ import {
   KITCHEN_VOIDABLE_KINDS, KITCHEN_LIFECYCLE_KINDS, KITCHEN_STATE_STAGE_KINDS,
 } from './kitchenBatch.js';
 import {
-  validatePutUp, planPutUp, putUpColumns, putUpPlaceIds, putUpInUse, BATCH_CLOSED,
+  validatePutUp, planPutUp, putUpColumns, putUpPlaceIds, putUpInUse, putUpLineBodies, BATCH_CLOSED,
 } from './putUp.js';
 import { projectRow } from './jarRules.js';
+import { inputsForm, lineError, actsOf, phReadAtError, stagePatchError } from './kitchenLines.js';
+import {
+  addKeyedLines, patchLine, takeOutLine, restoreLine, readLines, publicLine, shuLine, prepareLines,
+  lineColumns, drawRefusal, MASS_UNITS, MASS_FACTORS,
+} from './lineRoutes.js';
+import { lineSearch } from './lineSearch.js';
+import { estimateShu, isStale } from './shuEstimate.js';
 
 const notFound = { status: 404, body: { error: 'Not found' } };
 const notAllowed = { status: 405, body: { error: 'Method not allowed' } };
 const bad = (error) => ({ status: 400, body: { error } });
 // contract-F §2 common: a key held outside the household is a 409 with no payload.
 const keyConflict = { status: 409, body: { error: 'That key is already in use.', code: 'key_conflict' } };
-// THE POST-CLOSE WRITE POLICY, in one place, stated per route in the table below. A closed batch
-// still accepts STAGE rows — the DDL's own reason, "it went mouldy in the jar three weeks later is a
-// fact about the process", and refusing it would push that fact into a note nothing can read. What a
-// closed batch refuses is a change to WHAT WENT IN: the inputs list and the merge PUT are the
-// record of a process that is over, and editing them silently rewrites history that an outcome was
-// already recorded against. Reopen is the door — it is unconditional and one tap.
-const closedForEdits = {
-  status: 409,
-  body: { error: 'This batch is closed — reopen it if you need to change what went in' },
-};
+// THE POST-CLOSE WRITE POLICY, in one place (Release F, 06 §3.13; Dave 15:55, "as we go", including
+// at and after bottling). "Put it up and finish" is the DEFAULT, so a policy that locked what went in at
+// close would lock the record at the exact moment he adds and weighs. F therefore RETIRES the old
+// closedForEdits refusal for content: on a closed batch the line POST / PATCH / take-out / restore, the
+// stage POST and PATCH, the merge PUT, shu-estimate/save and the jar PATCH are all ACCEPTED, and every
+// edit after close is audited and shows "edited". The ONE content write still refused is a NEW put-up
+// sitting — 409 batch_closed with the Reopen door (putUp.js BATCH_CLOSED), never a bare 409. Outcome
+// changes go through close / reopen as they always did.
 
 // ── ownership loaders ────────────────────────────────────────────────────────────────────────────
 // Uniform contract, lifted from index.js: return the row on success, null on ANY failure — absent id,
@@ -54,16 +59,13 @@ const closedForEdits = {
 
 // Reads the VIEW, not kitchen_batch, so even the ownership gate has one derivation.
 //
-// closed_at rides along because the route table below BRANCHES ON IT — three routes (inputs add,
-// input delete, the merge PUT) refuse a closed batch and answer `closedForEdits`. Until 2026-09-04
-// this comment claimed two routes branched on these columns and NONE did: `batch.closed_at` appeared
-// nowhere in this file, so a closed batch silently accepted every content write. A comment that
-// describes a branch that does not exist is how the next session concludes a gate is present.
-// suspended_at is loaded and not branched on — no route refuses a paused batch, by design.
+// closed_at rides along because the route table below BRANCHES ON IT — since release F for exactly one
+// route, a new put-up sitting (see the policy above). started_at rides along for the pH read-time's
+// lower bound. suspended_at is loaded and not branched on — no route refuses a paused batch, by design.
 async function loadOwnedBatch(sql, batchId, householdIds) {
   if (!KITCHEN_UUID_RE.test(String(batchId))) return null;
   const rows = await sql`
-    SELECT id, closed_at, suspended_at FROM v_kitchen_batch_current
+    SELECT id, closed_at, suspended_at, started_at FROM v_kitchen_batch_current
     WHERE id = ${batchId}::uuid
       AND user_id = ANY(${householdIds})
       AND deleted_at IS NULL
@@ -144,46 +146,62 @@ export async function handleKitchenRoute({ sql, rawPath, method, rawBody, query,
     if (method === 'POST') return createBatch(sql, parseBody(), userId, householdIds);
     return notAllowed;
   }
+  // Release F: a literal, matched before any :id (parseKitchenRoute), household-scoped inside.
+  if (route.kind === 'line_search') {
+    if (method === 'GET') return lineSearch(sql, q, householdIds);
+    return notAllowed;
+  }
 
   const batch = await loadOwnedBatch(sql, route.id, householdIds);
   if (!batch) return notFound;
-  // The one closed-batch predicate, read once from the gate row rather than re-derived per route.
+  // The one closed-batch predicate, read once from the gate row. Since release F it gates exactly one
+  // route — a new put-up sitting (see the policy at the top of this file).
   const isClosed = batch.closed_at != null;
 
   if (route.kind === 'batch') {
     if (method === 'GET') return getBatch(sql, batch.id, householdIds);
-    // REFUSED on a closed batch: the merge PUT edits label / kind / start / brine_note / notes —
-    // the batch's own account of itself — and an outcome has already been recorded against that
-    // account. The 409 names the door rather than just the wall.
-    if (method === 'PUT') {
-      if (isClosed) return closedForEdits;
-      return updateBatch(sql, batch.id, parseBody(), householdIds);
-    }
+    // ACCEPTED on a closed batch from release F (06 §3.13).
+    if (method === 'PUT') return updateBatch(sql, batch.id, parseBody(), householdIds);
     if (method === 'DELETE') return deleteBatch(sql, batch.id, userId, householdIds);
     return notAllowed;
   }
   if (route.kind === 'stages') {
-    // ALLOWED on a closed batch, on purpose. See closedForEdits.
-    if (method === 'POST') return addStage(sql, batch.id, parseBody(), userId, householdIds);
+    if (method === 'POST') return addStage(sql, batch, parseBody(), userId, householdIds);
+    return notAllowed;
+  }
+  if (route.kind === 'stage') {
+    if (method === 'PATCH') return patchStage(sql, batch, route.stageId, parseBody(), userId, householdIds);
     return notAllowed;
   }
   if (route.kind === 'inputs') {
     if (method === 'POST') {
-      if (isClosed) return closedForEdits;
-      return addInputs(sql, batch.id, parseBody(), userId, householdIds);
+      const body = parseBody();
+      // Three forms (contract-F §2.2): the predicate and the un-keyed list are the shipped ones; a list
+      // whose every row carries an idempotency_key is F's keyed form (lineRoutes.js).
+      if (body && Array.isArray(body.inputs) && inputsForm(body.inputs) !== 'shipped') {
+        return addKeyedLines(sql, batch.id, body, userId, householdIds);
+      }
+      return addInputs(sql, batch.id, body, userId, householdIds);
     }
     return notAllowed;
   }
   if (route.kind === 'input') {
-    if (method === 'DELETE') {
-      if (isClosed) return closedForEdits;
-      return deleteInput(sql, batch.id, route.inputId);
-    }
+    if (method === 'DELETE') return takeOutLine(sql, batch.id, route.inputId, userId);
+    if (method === 'PATCH') return patchLine(sql, batch.id, route.inputId, parseBody(), userId, householdIds);
     return notAllowed;
   }
-  // Put-Up release 1b. A put-up sitting is REFUSED on a closed batch (the one content write F keeps
-  // refused: "Reopen it to bottle more"); its Undo is accepted on a closed batch — it is how a finish
-  // written by mistake comes back.
+  if (route.kind === 'input_restore') {
+    if (method === 'POST') return restoreLine(sql, batch.id, route.inputId, userId, householdIds);
+    return notAllowed;
+  }
+  if (route.kind === 'shu_estimate') {
+    if (method === 'GET') return shuEstimateRoute(sql, batch.id, q, householdIds);
+    return notAllowed;
+  }
+  if (route.kind === 'shu_estimate_save') {
+    if (method === 'POST') return shuEstimateSave(sql, batch.id, parseBody(), userId, householdIds);
+    return notAllowed;
+  }
   if (route.kind === 'put_up') {
     if (method !== 'POST') return notAllowed;
     if (isClosed) return { status: 409, body: BATCH_CLOSED };
@@ -258,23 +276,17 @@ async function listBatches(sql, q, householdIds) {
 async function getBatch(sql, batchId, householdIds) {
   const row = await readBatch(sql, batchId, householdIds);
   if (!row) return notFound;
-  const inputs = await sql`
-    SELECT id, batch_id, input_kind, harvest_log_id, label, qty, qty_unit, is_byproduct,
-           added_at, note, created_by, created_at,
-           plant_id, preservation_log_id, crop_type_slug, source_label, role, salt_pct, salt_base, base_g,
-           put_up_stage_id, output_id, ordinal
-    FROM kitchen_batch_input
-    WHERE batch_id = ${batchId}::uuid
-      AND deleted_at IS NULL
-    ORDER BY ordinal NULLS FIRST, added_at, id
-  `;
+  // Release F (contract-F §2.1, boss F3): LIVE lines only, every §1.2 column but the key, plus
+  // from_garden and count_drawn (lineRoutes.js readLines). A taken-out line is not returned — the
+  // struck-through "Taken out · Undo" row is client-held from the take-out response until navigation.
+  const lineRows = await readLines(sql, batchId);
   // ph_reading / ph_read_at ride the same projection (V5-PHRECORD-001). This list IS the reading
   // history: one dated line per row, in the order they were logged, with no count, streak, run or
   // any other aggregate over them — a batch that never acidified produces an unbroken sequence of
   // rows, so a summary of them would turn absent failure signs into apparent success.
   const stages = await sql`
     SELECT id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at, entered_precision,
-           ph_reading, ph_read_at, voids_id,
+           ph_reading, ph_read_at, voids_id, acts, mash_in_g, edited_at,
            storage_location_id, photo_id, note, created_by, created_at
     FROM kitchen_stage_log
     WHERE batch_id = ${batchId}::uuid
@@ -296,15 +308,131 @@ async function getBatch(sql, batchId, householdIds) {
            quantity_value, quantity_unit, package_count, storage_location_id,
            remaining_count, consumed_at, notes, photo_id, created_at, updated_at,
            label, container_label, put_up_stage_id, is_raw, in_oil, texture, ph_reading, ph_read_at,
-           preserved_at_precision, use_by_basis,
-           CASE WHEN package_count = 1 AND quantity_unit IN ('g', 'kg', 'oz', 'lb')
+           preserved_at_precision, use_by_basis, shu_est_low, shu_est_high, shu_est_basis, cooked,
+           remaining_amount,
+           CASE WHEN package_count = 1 AND quantity_unit = ANY(${MASS_UNITS}::text[])
                 THEN 'weighed' ELSE 'counted' END AS stock_mode
     FROM preservation_log
     WHERE batch_id = ${batchId}::uuid
       AND deleted_at IS NULL
     ORDER BY preserved_at DESC, id DESC
   `;
-  return { status: 200, body: { ...row, inputs, stages, outputs } };
+  const inputs = lineRows.map(publicLine);
+  // "From the garden" (06 §2.7): distinct names of the live lines that came from the garden, sitting
+  // lines included, in the lines' own order. A reward surface — ambient, never a count or a sum.
+  const garden_names = [...new Set(inputs.filter((l) => l.from_garden && l.label).map((l) => l.label))];
+  const out = { ...row, garden_names, inputs, stages, outputs };
+  // A stored COMPUTED estimate is never silently recomputed (06 §2.6.4): it is flagged when today's
+  // recompute differs. 'typed' is never flagged. The key is present only when true.
+  if (row.shu_est_basis === 'computed') {
+    const fresh = estimateShu({
+      scope: 'batch', lines: lineRows.map(shuLine), about: aboutOf(stages),
+      pepperNames: await householdPepperNames(sql, householdIds),
+    });
+    if (isStale(row, fresh)) out.shu_est_stale = true;
+  }
+  return { status: 200, body: out };
+}
+
+// The stage facts the heat estimate reads: "About ___ in it" is the live started row's amount; a
+// sitting is a live (un-voided) put_up row, its Made g the amount when the unit is g, and its mash_in_g.
+const voidedIds = (stages) => new Set(stages.filter((x) => x.stage_kind === 'void').map((x) => x.voids_id));
+export function aboutOf(stages) {
+  const v = voidedIds(stages);
+  const started = stages.find((x) => x.stage_kind === 'started' && !v.has(x.id));
+  return started && started.amount != null ? { amount: started.amount, amount_unit: started.amount_unit } : null;
+}
+export function sittingsOf(stages) {
+  const v = voidedIds(stages);
+  return stages.filter((x) => x.stage_kind === 'put_up' && !v.has(x.id)).map((x) => ({
+    id: x.id,
+    made_g: x.amount != null && x.amount_unit === 'g' ? x.amount : null,
+    mash_in_g: x.mash_in_g ?? null,
+  }));
+}
+
+// Pepper variety names among the household's plantings: a typed line naming one is a heat line
+// (06 §2.6.2). Same strict planting dialect as every loader here.
+async function householdPepperNames(sql, householdIds) {
+  const rows = await sql`
+    SELECT DISTINCT lower(cv.display_name) AS name
+    FROM garden_node gn
+    JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
+    LEFT JOIN container pp ON pp.id = gn.container_id
+    WHERE cv.crop_type_slug = 'pepper'
+      AND gn.deleted_at IS NULL
+      AND ( pp.created_by = ANY(${householdIds})
+            OR (gn.container_id IS NULL AND gn.created_by = ANY(${householdIds})) )
+  `;
+  return rows.map((r) => r.name).filter(Boolean);
+}
+
+// ── GET /:id/shu-estimate?scope=batch|sitting|jar&id= and POST /:id/shu-estimate/save (contract-F §2.5)
+// GET writes nothing. save RECOMPUTES server-side and writes basis 'computed' (half-up integers) on the
+// batch or the jar — the only writer of 'computed'. A refusal is 409 shu_cannot_compute carrying the
+// same refusal body, so the sheet can say exactly what is missing. Never 0 from absence.
+async function shuFor(sql, batchId, scope, id, householdIds) {
+  if (!['batch', 'sitting', 'jar'].includes(scope)) return { error: bad('scope must be batch, sitting or jar') };
+  if (scope !== 'batch' && !KITCHEN_UUID_RE.test(String(id ?? ''))) return { error: bad('id must be the sitting or jar') };
+  const lineRows = await readLines(sql, batchId);
+  const stages = await sql`
+    SELECT id, stage_kind, amount, amount_unit, mash_in_g, voids_id
+    FROM kitchen_stage_log
+    WHERE batch_id = ${batchId}::uuid
+  `;
+  let jar = null;
+  if (scope === 'jar') {
+    const j = await sql`
+      SELECT id, put_up_stage_id, quantity_value, quantity_unit
+      FROM preservation_log
+      WHERE id = ${id}::uuid AND batch_id = ${batchId}::uuid AND deleted_at IS NULL
+    `;
+    if (!j.length) return { error: notFound };
+    jar = j[0];
+  }
+  const est = estimateShu({
+    scope, lines: lineRows.map(shuLine), about: aboutOf(stages), sittings: sittingsOf(stages),
+    sitting_id: scope === 'sitting' ? id : null, jar, pepperNames: await householdPepperNames(sql, householdIds),
+  });
+  if (est.refusal === 'not_found') return { error: notFound };
+  return { est, jar };
+}
+
+async function shuEstimateRoute(sql, batchId, q, householdIds) {
+  const r = await shuFor(sql, batchId, q.scope ?? 'batch', q.id ?? null, householdIds);
+  if (r.error) return r.error;
+  return { status: 200, body: r.est };
+}
+
+async function shuEstimateSave(sql, batchId, body, userId, householdIds) {
+  const scope = body?.scope ?? 'batch';
+  if (scope === 'sitting') return bad('a sitting has no stored estimate — save it on the batch or on a jar');
+  const r = await shuFor(sql, batchId, scope, body?.id ?? null, householdIds);
+  if (r.error) return r.error;
+  if (r.est.refusal) {
+    return { status: 409, body: { error: "Can't work it out yet.", code: 'shu_cannot_compute', ...r.est } };
+  }
+  const { low, high } = r.est;
+  if (scope === 'batch') {
+    const rows = await sql`
+      UPDATE kitchen_batch SET shu_est_low = ${low}::int, shu_est_high = ${high}::int, shu_est_basis = 'computed'
+      WHERE id = ${batchId}::uuid AND user_id = ANY(${householdIds}) AND deleted_at IS NULL
+      RETURNING shu_est_low, shu_est_high, shu_est_basis
+    `;
+    if (!rows.length) return notFound;
+    return { status: 200, body: rows[0] };
+  }
+  const [, rows] = await sql.transaction([
+    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    sql`
+    UPDATE preservation_log SET shu_est_low = ${low}::int, shu_est_high = ${high}::int, shu_est_basis = 'computed'
+    WHERE id = ${r.jar.id}::uuid AND batch_id = ${batchId}::uuid
+      AND user_id = ANY(${householdIds}) AND deleted_at IS NULL
+    RETURNING shu_est_low, shu_est_high, shu_est_basis
+  `,
+  ]);
+  if (!rows.length) return notFound;
+  return { status: 200, body: rows[0] };
 }
 
 // POST /api/kitchen-batches
@@ -424,13 +552,36 @@ async function updateBatch(sql, batchId, body, householdIds) {
       brine_note        = CASE WHEN ${present.brine_note}::boolean        THEN ${value.brine_note}::text         ELSE brine_note END,
       cover_photo_id    = CASE WHEN ${present.cover_photo_id}::boolean    THEN ${value.cover_photo_id}::uuid     ELSE cover_photo_id END,
       notes             = CASE WHEN ${present.notes}::boolean             THEN ${value.notes}::text              ELSE notes END,
-      suspended_at      = CASE WHEN ${present.suspended_at}::boolean      THEN ${value.suspended_at}::timestamptz ELSE suspended_at END
+      suspended_at      = CASE WHEN ${present.suspended_at}::boolean      THEN ${value.suspended_at}::timestamptz ELSE suspended_at END,
+      vessel_label      = CASE WHEN ${present.vessel_label}::boolean      THEN ${value.vessel_label}::text       ELSE vessel_label END,
+      vessel_size       = CASE WHEN ${present.vessel_size}::boolean       THEN ${value.vessel_size}::numeric     ELSE vessel_size END,
+      vessel_unit       = CASE WHEN ${present.vessel_unit}::boolean       THEN ${value.vessel_unit}::text        ELSE vessel_unit END,
+      vessel_count      = CASE WHEN ${present.vessel_count}::boolean      THEN ${value.vessel_count}::smallint   ELSE vessel_count END,
+      no_salt           = CASE WHEN ${present.no_salt}::boolean           THEN ${value.no_salt}::boolean         ELSE no_salt END,
+      shu_est_low       = CASE WHEN ${present.shu_est_low}::boolean       THEN ${value.shu_est_low}::integer     ELSE shu_est_low END,
+      shu_est_high      = CASE WHEN ${present.shu_est_high}::boolean      THEN ${value.shu_est_high}::integer    ELSE shu_est_high END,
+      recipe_ref        = CASE WHEN ${present.recipe_ref}::boolean        THEN ${value.recipe_ref}::text         ELSE recipe_ref END,
+      -- A heat estimate written here is 'typed' (only shu-estimate/save writes 'computed'); clearing it
+      -- clears its basis (chk_kitchen_batch_shu_est_pairing).
+      shu_est_basis     = CASE WHEN ${present.shu_est_low}::boolean
+                               THEN CASE WHEN ${value.shu_est_low}::integer IS NULL THEN NULL ELSE 'typed' END
+                               ELSE shu_est_basis END
     WHERE id = ${batchId}::uuid
       AND user_id = ANY(${householdIds})
       AND deleted_at IS NULL
+      -- "No salt" is set only when no live salt line exists, decided HERE on the locked row, so a salt
+      -- line added a moment earlier cannot be contradicted (06 §2.1). 0 rows → 409 has_salt_line.
+      AND (${value.no_salt === true}::boolean IS NOT TRUE
+           OR NOT EXISTS (SELECT 1 FROM kitchen_batch_input i
+                           WHERE i.batch_id = ${batchId}::uuid AND i.role = 'salt' AND i.deleted_at IS NULL))
     RETURNING id
   `;
-  if (!rows.length) return notFound;
+  if (!rows.length) {
+    if (value.no_salt === true) {
+      return { status: 409, body: { error: 'Take the salt line out first.', code: 'has_salt_line' } };
+    }
+    return notFound;
+  }
   return { status: 200, body: await readBatch(sql, batchId, householdIds) };
 }
 
@@ -448,8 +599,10 @@ async function updateBatch(sql, batchId, body, householdIds) {
 // re-pins 0a's routine fingerprints and re-opens the rehearsed DDL. A pick line is a LINK, not evidence:
 // the pick itself stays in harvest_log, and a removed batch offers no restore, so nothing a restore could
 // need is lost. The routines stay as rehearsed.
-// Release F adds, in this same statement, the reversal of the lines' unreversed draws, aggregated per jar
-// (boss condition F1); in 1b no line can draw a jar.
+// Release F: the same statement reverses the unreversed draws of the lines it takes out (a reversing
+// pantry_use per counted draw; the grams back for a weighed one, F2's un-consume rule), aggregated per
+// jar FIRST and applied as ONE UPDATE per jar (boss condition F1). Any 23514 aborts it all and the batch
+// stays live.
 // The whole statement rides a set_config: release F attaches an audit trigger to kitchen_batch_input.
 async function deleteBatch(sql, batchId, userId, householdIds) {
   const [, rows] = await sql.transaction([
@@ -471,19 +624,70 @@ async function deleteBatch(sql, batchId, userId, householdIds) {
       WHERE i.batch_id = g.id
         AND i.deleted_at IS NULL
         AND i.harvest_log_id IS NULL
-      RETURNING i.id
+      RETURNING i.id, i.preservation_log_id, i.qty, i.qty_unit
     ), picks_gone AS (
       DELETE FROM kitchen_batch_input i
       USING gone g
       WHERE i.batch_id = g.id
         AND i.harvest_log_id IS NOT NULL
       RETURNING i.id
+    ), mass AS (
+      SELECT m.unit, m.factor FROM unnest(${MASS_UNITS}::text[], ${MASS_FACTORS}::numeric[]) AS m(unit, factor)
+    ), fwd AS (
+      -- Release F (06 §3.12): the draws of the lines taken out HERE — lines already taken out were
+      -- reversed then, and lines_out skips them.
+      SELECT u.id, u.preservation_log_id, u.count_used, u.kitchen_batch_input_id
+      FROM pantry_use u JOIN lines_out l ON l.id = u.kitchen_batch_input_id
+      WHERE u.count_used > 0
+        AND NOT EXISTS (SELECT 1 FROM pantry_use r WHERE r.reverses_use_id = u.id)
+    ), weighed AS (
+      SELECT l.preservation_log_id, l.qty * (SELECT factor FROM mass WHERE unit = l.qty_unit) AS g
+      FROM lines_out l
+      WHERE l.preservation_log_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM pantry_use u WHERE u.kitchen_batch_input_id = l.id)
+    ), rev AS (
+      INSERT INTO pantry_use (created_by, preservation_log_id, count_used, fate, kitchen_batch_input_id, reverses_use_id)
+      SELECT ${userId}::text, f.preservation_log_id, -f.count_used, 'batch', f.kitchen_batch_input_id, f.id
+      FROM fwd f
+      RETURNING id
+    ), moved AS (
+      -- Boss F1: every jar moves ONCE — two lines of this batch drawing one jar give back their SUM.
+      UPDATE preservation_log p SET
+        remaining_count  = CASE WHEN a.n IS NOT NULL THEN COALESCE(p.remaining_count, p.package_count) + a.n
+                                WHEN a.g IS NOT NULL
+                                 AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) = 0
+                                 AND NOT EXISTS (SELECT 1 FROM pantry_use t WHERE t.preservation_log_id = p.id AND t.kitchen_batch_input_id IS NULL)
+                                  THEN p.package_count
+                                ELSE p.remaining_count END,
+        remaining_amount = CASE WHEN a.g IS NOT NULL
+                                  THEN COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) + a.g
+                                ELSE p.remaining_amount END,
+        consumed_at      = CASE WHEN a.g IS NOT NULL
+                                 AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) = 0
+                                 AND NOT EXISTS (SELECT 1 FROM pantry_use t WHERE t.preservation_log_id = p.id AND t.kitchen_batch_input_id IS NULL)
+                                  THEN NULL
+                                ELSE p.consumed_at END,
+        delta_at         = CASE WHEN a.n IS NOT NULL
+                                  OR (a.g IS NOT NULL
+                                      AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) = 0
+                                      AND NOT EXISTS (SELECT 1 FROM pantry_use t WHERE t.preservation_log_id = p.id AND t.kitchen_batch_input_id IS NULL))
+                                  THEN now()
+                                ELSE p.delta_at END
+      FROM (SELECT x.preservation_log_id, sum(x.n) AS n, sum(x.g) AS g FROM (
+              SELECT f.preservation_log_id, f.count_used AS n, NULL::numeric AS g FROM fwd f
+              UNION ALL
+              SELECT w.preservation_log_id, NULL::int, w.g FROM weighed w
+            ) x GROUP BY x.preservation_log_id) a
+      WHERE p.id = a.preservation_log_id
+      RETURNING p.id
     )
     SELECT (SELECT count(*)::int FROM gone) AS deleted_count,
            (SELECT count(*)::int FROM preservation_log p
              WHERE p.batch_id = ${batchId}::uuid AND p.deleted_at IS NULL) AS live_jar_count,
            (SELECT count(*)::int FROM lines_out) AS lines_removed,
-           (SELECT count(*)::int FROM picks_gone) AS picks_unlinked
+           (SELECT count(*)::int FROM picks_gone) AS picks_unlinked,
+           (SELECT count(*)::int FROM rev) AS uses_reversed,
+           (SELECT count(*)::int FROM moved) AS jars_moved
   `,
   ]);
   const r = rows[0] ?? {};
@@ -500,11 +704,23 @@ async function deleteBatch(sql, batchId, userId, householdIds) {
   return notFound;
 }
 
+// ph_read_at bounds (06 §3.7, FS-I3), on the check-in POST and the stage PATCH alike: refused if later
+// than now + 5 min or earlier than the batch's start day (ET), so a typo cannot silence
+// fermentStallPrompt. A batch with no start date has no lower bound.
+function phBoundsError(readAt, batch) {
+  return phReadAtError(readAt, {
+    nowMs: Date.now(),
+    startDay: batch.started_at ? etDay(new Date(batch.started_at)) : null,
+    etDayOf: etDay,
+  });
+}
+
 // POST /api/kitchen-batches/:id/stages — append-only.
 //
-// There is no PUT and no DELETE on a stage row, and that absence is the design: the off-log repair
-// path is exactly what produced the seed-lot divergence this schema refuses to copy. A mistake is
-// corrected by appending the correction, which is also what makes the log readable afterwards.
+// There is no DELETE on a stage row, and that absence is the design: the off-log repair path is exactly
+// what produced the seed-lot divergence this schema refuses to copy. A mistake is undone by appending a
+// void. Release F adds an in-place EDIT (PATCH /:id/stages/:stageId, below) at Dave's direction — the
+// row keeps its identity (trigger-enforced), the edit is audited and shows "edited".
 //
 // A stage may be appended to a CLOSED batch on purpose. "It went mouldy in the jar three weeks later"
 // is a fact about the process, and refusing it would push it into a note nothing can read.
@@ -518,8 +734,9 @@ async function deleteBatch(sql, batchId, userId, householdIds) {
 //   * noted — a note, stamped now.
 //   * entered_precision — with it, the row carries exactly the date and word it was given ('unknown' =
 //     no date); without it (the pre-1b shape) the row keeps its old stamp, COALESCE(entered_at, now()).
-async function addStage(sql, batchId, body, userId, householdIds) {
-  const verr = validateStage(body);
+async function addStage(sql, batch, body, userId, householdIds) {
+  const batchId = batch.id;
+  const verr = validateStage(body) ?? phBoundsError(body.ph_read_at, batch);
   if (verr) return bad(verr);
   const kind = normalizeText(body.stage_kind);
   if (kind === 'void') return voidStage(sql, batchId, body.voids_id, userId, householdIds);
@@ -544,10 +761,13 @@ async function addStage(sql, batchId, body, userId, householdIds) {
   // "now, because that is when you logged it", while a defaulted read-time would stamp an instant
   // onto a measurement nobody took then. validateStage has already forced the pair to travel
   // together, and chk_ksl_ph_pairing is the backstop behind it.
+  // Release F: what he did at a check-in, de-duplicated (validateStage allowed it on tended only).
+  const acts = actsOf(body.acts ?? null).acts;
   const rows = await sql`
     INSERT INTO kitchen_stage_log (
       batch_id, stage_kind, label, amount, amount_unit, cue_observed,
-      entered_at, entered_precision, ph_reading, ph_read_at, storage_location_id, photo_id, note, created_by
+      entered_at, entered_precision, ph_reading, ph_read_at, storage_location_id, photo_id, note, created_by,
+      acts
     ) VALUES (
       ${batchId}::uuid, ${kind}::text, ${normalizeText(body.label)}::text,
       ${body.amount ?? null}::numeric, ${normalizeText(body.amount_unit)}::text,
@@ -558,13 +778,82 @@ async function addStage(sql, batchId, body, userId, householdIds) {
       ${precision}::text,
       ${body.ph_reading ?? null}::numeric, ${body.ph_read_at ?? null}::timestamptz,
       ${body.storage_location_id ?? null}::uuid, ${body.photo_id ?? null}::uuid,
-      ${normalizeText(body.note)}::text, ${userId}::text
+      ${normalizeText(body.note)}::text, ${userId}::text,
+      ${acts}::text[]
     ) RETURNING id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at, entered_precision,
-               ph_reading, ph_read_at, voids_id, storage_location_id, photo_id, note, created_by, created_at
+               ph_reading, ph_read_at, voids_id, storage_location_id, photo_id, note, created_by, created_at,
+               acts, mash_in_g, edited_at
   `;
   // The batch rides along because appending a stage is the one write that changes the view's derived
   // columns, and the card that issued it renders from exactly those.
   return { status: 201, body: { stage: rows[0], batch: await readBatch(sql, batchId, householdIds) } };
+}
+
+// PATCH /api/kitchen-batches/:id/stages/:stageId (Release F; 06 §3.7; contract-F §2.3).
+//
+// Stages became editable in F ("each stage should allow me to make notes and add/edit the information",
+// Dave 15:55). What an entry IS never changes — its kind, batch, what it voids, who wrote it (the
+// identity trigger backs this) — and a started / put_up / finished row keeps its date. Per kind:
+// every kind takes note, photo_id and label; tended its cue, acts, pH pair, top-up amount and date;
+// moved its place and date; noted its date; put_up its Made g and mash_in_g; started "About ___ in it".
+// A void row, and a row that has been voided, are note-only. Scoped `WHERE id AND batch_id` (the
+// take-out idiom), presence-sentinel, stamps edited_at; the loaders refuse a foreign place or photo;
+// the pH read-time takes the same bounds as the POST. Accepted on a closed batch (06 §3.13).
+// kitchen_stage_log is audited from F, so the write rides the actor GUC in one transaction.
+async function patchStage(sql, batch, stageId, body, userId, householdIds) {
+  if (!KITCHEN_UUID_RE.test(String(stageId))) return notFound;
+  const found = await sql`
+    SELECT s.id, s.stage_kind, s.amount_unit,
+           EXISTS (SELECT 1 FROM kitchen_stage_log v WHERE v.voids_id = s.id) AS voided
+    FROM kitchen_stage_log s
+    WHERE s.id = ${stageId}::uuid
+      AND s.batch_id = ${batch.id}::uuid
+  `;
+  if (!found.length) return notFound;
+  const stored = found[0];
+  const verr = stagePatchError(body, stored) ?? phBoundsError(body.ph_read_at ?? null, batch);
+  if (verr) return bad(verr);
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  if (body.storage_location_id != null) {
+    const loc = await loadOwnedStorageLocation(sql, body.storage_location_id, householdIds);
+    if (!loc) return bad('storage_location_id does not match a storage location you can use');
+  }
+  if (body.photo_id != null) {
+    const ph = await loadOwnedPhoto(sql, body.photo_id, householdIds);
+    if (!ph) return bad('photo_id does not match a photo you can use');
+  }
+  const isPutUp = stored.stage_kind === 'put_up';
+  const amountUnit = isPutUp ? (body.amount == null ? null : 'g') : normalizeText(body.amount_unit);
+  const phReading = body.ph_reading == null ? null : String(body.ph_reading).trim();
+  const acts = has('acts') ? actsOf(body.acts).acts : null;
+  const precision = normalizeText(body.entered_precision);
+  const [, rows] = await sql.transaction([
+    sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+    sql`
+    UPDATE kitchen_stage_log SET
+      note                = CASE WHEN ${has('note')}::boolean THEN ${normalizeText(body.note)}::text ELSE note END,
+      photo_id            = CASE WHEN ${has('photo_id')}::boolean THEN ${body.photo_id ?? null}::uuid ELSE photo_id END,
+      label               = CASE WHEN ${has('label')}::boolean THEN ${normalizeText(body.label)}::text ELSE label END,
+      cue_observed        = CASE WHEN ${has('cue_observed')}::boolean THEN ${normalizeText(body.cue_observed)}::text ELSE cue_observed END,
+      acts                = CASE WHEN ${has('acts')}::boolean THEN ${acts}::text[] ELSE acts END,
+      ph_reading          = CASE WHEN ${has('ph_reading')}::boolean THEN ${phReading}::numeric ELSE ph_reading END,
+      ph_read_at          = CASE WHEN ${has('ph_reading')}::boolean THEN ${body.ph_read_at ?? null}::timestamptz ELSE ph_read_at END,
+      amount              = CASE WHEN ${has('amount')}::boolean THEN ${body.amount == null ? null : String(body.amount)}::numeric ELSE amount END,
+      amount_unit         = CASE WHEN ${has('amount')}::boolean THEN ${amountUnit}::text ELSE amount_unit END,
+      mash_in_g           = CASE WHEN ${has('mash_in_g')}::boolean THEN ${body.mash_in_g == null ? null : String(body.mash_in_g)}::numeric ELSE mash_in_g END,
+      storage_location_id = CASE WHEN ${has('storage_location_id')}::boolean THEN ${body.storage_location_id ?? null}::uuid ELSE storage_location_id END,
+      entered_at          = CASE WHEN ${has('entered_precision')}::boolean THEN ${body.entered_at ?? null}::timestamptz ELSE entered_at END,
+      entered_precision   = CASE WHEN ${has('entered_precision')}::boolean THEN ${precision}::text ELSE entered_precision END,
+      edited_at           = now()
+    WHERE id = ${stored.id}::uuid
+      AND batch_id = ${batch.id}::uuid
+    RETURNING id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at, entered_precision,
+              ph_reading, ph_read_at, voids_id, storage_location_id, photo_id, note, created_by, created_at,
+              acts, mash_in_g, edited_at
+  `,
+  ]);
+  if (!rows.length) return notFound;
+  return { status: 200, body: { stage: rows[0] } };
 }
 
 // The void. The INSERT…SELECT reads the target row in the same statement, scoped to THIS batch and to
@@ -741,21 +1030,8 @@ async function addInputsByPredicate(sql, batchId, predicate, userId, householdId
   };
 }
 
-// DELETE /api/kitchen-batches/:id/inputs/:inputId — a hard delete, because kitchen_batch_input has no
-// deleted_at: the link is not a record of an event, it is an assertion about what is in the pot, and a
-// retracted assertion has nothing to preserve. Scoped by batch_id as well as id so an input id from
-// another batch cannot be deleted through a batch the caller does own.
-async function deleteInput(sql, batchId, inputId) {
-  if (!KITCHEN_UUID_RE.test(String(inputId))) return notFound;
-  const rows = await sql`
-    DELETE FROM kitchen_batch_input
-    WHERE id = ${inputId}::uuid
-      AND batch_id = ${batchId}::uuid
-    RETURNING id
-  `;
-  if (!rows.length) return notFound;
-  return { status: 200, body: { ok: true } };
-}
+// DELETE /api/kitchen-batches/:id/inputs/:inputId lives in lineRoutes.js (takeOutLine) from release F:
+// a pick line is still a hard delete; every other line is taken out (soft) and its draw reversed.
 
 // POST /api/kitchen-batches/:id/close
 //
@@ -994,17 +1270,8 @@ async function readSitting(sql, batchId, stageId, householdIds) {
       AND p.deleted_at IS NULL
     ORDER BY p.created_at, p.id
   `;
-  const inputs = await sql`
-    SELECT id, batch_id, input_kind, harvest_log_id, label, qty, qty_unit, is_byproduct,
-           added_at, note, created_by, created_at,
-           plant_id, preservation_log_id, crop_type_slug, source_label, role, salt_pct, salt_base, base_g,
-           put_up_stage_id, output_id, ordinal
-    FROM kitchen_batch_input
-    WHERE put_up_stage_id = ${stageId}::uuid
-      AND batch_id = ${batchId}::uuid
-      AND deleted_at IS NULL
-    ORDER BY ordinal NULLS FIRST, added_at, id
-  `;
+  // The sitting's live lines, in the one projection (lineRoutes.js readLines).
+  const inputs = (await readLines(sql, batchId)).filter((l) => l.put_up_stage_id === stageId).map(publicLine);
   return {
     stage: stage[0] ?? null,
     jars: jars.map((r) => ({ ...projectRow(r), storage_label: r.storage_label ?? null, storage_kind: r.storage_kind ?? null })),
@@ -1057,13 +1324,21 @@ async function putUp(sql, batchId, body, userId, householdIds) {
   if (body.when.precision === 'unknown' && meta[0].not_sure_day == null) {
     return bad("this batch has no date to count from yet — pick a rough time instead of 'Not sure'");
   }
+  // Release F: every "added at the end" line resolved the way What went in resolves it (household
+  // loaders, stamped labels, the pick's planting, the draw's stock mode), in body order.
+  const prep = await prepareLines(sql, batchId, putUpLineBodies(body), householdIds, { sittingFixed: true });
+  if (prep.refusal) return prep.refusal;
   const plan = planPutUp(body, {
     batchLabel: meta[0].label, notSureDay: meta[0].not_sure_day, placeKinds, newId: randomUUID,
+    prepared: prep.rows,
   });
   const c = putUpColumns(plan);
+  const drawnJars = [...new Set(plan.lines.map((l) => l.preservation_log_id).filter((v) => v != null))];
   let rows;
   try {
-    rows = await sql`
+    [, rows] = await sql.transaction([
+      sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+      sql`
       WITH gate AS (
         UPDATE kitchen_batch SET
           closed_at    = CASE WHEN ${body.finish}::boolean THEN now() ELSE closed_at END,
@@ -1076,14 +1351,18 @@ async function putUp(sql, batchId, body, userId, householdIds) {
         RETURNING id
       ), stage AS (
         INSERT INTO kitchen_stage_log (
-          id, batch_id, stage_kind, entered_at, entered_precision, amount, amount_unit, idempotency_key, created_by
+          id, batch_id, stage_kind, entered_at, entered_precision, amount, amount_unit, mash_in_g,
+          idempotency_key, created_by
         )
         SELECT ${plan.stage.id}::uuid, g.id, 'put_up'::text, ${plan.stage.entered_at}::timestamptz,
                ${plan.stage.entered_precision}::text, ${plan.stage.made_g}::numeric,
                CASE WHEN ${plan.stage.made_g}::numeric IS NULL THEN NULL ELSE 'g' END,
+               ${plan.stage.mash_in_g}::numeric,
                ${body.idempotency_key}::uuid, ${userId}::text
         FROM gate g
         RETURNING id, batch_id
+      ), mass AS (
+        SELECT m.unit, m.factor FROM unnest(${MASS_UNITS}::text[], ${MASS_FACTORS}::numeric[]) AS m(unit, factor)
       ), places_in AS (
         SELECT DISTINCT t.kind, t.label
         FROM unnest(${c.place.kind}::text[], ${c.place.label}::text[]) AS t(kind, label)
@@ -1106,18 +1385,24 @@ async function putUp(sql, batchId, body, userId, householdIds) {
       ), places AS (
         SELECT kind, lkey, id FROM found UNION ALL SELECT kind, lkey, id FROM made
       ), jars AS (
+        -- A WEIGHED row (one container, a mass unit) is seeded with its grams, so a later draw moves
+        -- remaining_amount from a real start (06 §1.4 "Seeding").
         INSERT INTO preservation_log (
           id, user_id, batch_id, put_up_stage_id, label, container_label, method,
           preserved_at, preserved_at_approx, preserved_at_precision,
-          quantity_value, quantity_unit, package_count, remaining_count, storage_location_id,
-          use_by_target, use_by_basis, is_raw, in_oil, texture, ph_reading, ph_read_at
+          quantity_value, quantity_unit, package_count, remaining_count, remaining_amount, storage_location_id,
+          use_by_target, use_by_basis, is_raw, in_oil, texture, ph_reading, ph_read_at,
+          shu_est_low, shu_est_high, shu_est_basis, cooked
         )
         SELECT r.id, ${userId}::text, st.batch_id, st.id, r.label, r.container_label, ${body.method}::text,
                ${plan.jar_day}::date, ${plan.approx}::boolean, ${plan.jar_precision}::text,
                r.quantity_value, r.quantity_unit, r.package_count, r.package_count,
+               CASE WHEN r.package_count = 1
+                    THEN r.quantity_value * (SELECT factor FROM mass WHERE unit = r.quantity_unit) END,
                COALESCE(r.place_id, (SELECT pl.id FROM places pl
                                       WHERE pl.kind = r.place_kind AND pl.lkey = lower(r.place_label) LIMIT 1)),
-               r.use_by_target, r.use_by_basis, r.is_raw, r.in_oil, r.texture, r.ph_reading, r.ph_read_at
+               r.use_by_target, r.use_by_basis, r.is_raw, r.in_oil, r.texture, r.ph_reading, r.ph_read_at,
+               r.shu_est_low, r.shu_est_high, r.shu_est_basis, r.cooked
         FROM stage st
         CROSS JOIN unnest(
           ${c.jar.id}::uuid[], ${c.jar.label}::text[], ${c.jar.container_label}::text[],
@@ -1125,25 +1410,73 @@ async function putUp(sql, batchId, body, userId, householdIds) {
           ${c.jar.place_id}::uuid[], ${c.jar.place_kind}::text[], ${c.jar.place_label}::text[],
           ${c.jar.use_by_target}::date[], ${c.jar.use_by_basis}::text[],
           ${c.jar.is_raw}::boolean[], ${c.jar.in_oil}::boolean[], ${c.jar.texture}::text[],
-          ${c.jar.ph_reading}::numeric[], ${c.jar.ph_read_at}::timestamptz[]
+          ${c.jar.ph_reading}::numeric[], ${c.jar.ph_read_at}::timestamptz[],
+          ${c.jar.shu_est_low}::int[], ${c.jar.shu_est_high}::int[], ${c.jar.shu_est_basis}::text[],
+          ${c.jar.cooked}::boolean[]
         ) AS r(id, label, container_label, quantity_value, quantity_unit, package_count,
                place_id, place_kind, place_label, use_by_target, use_by_basis,
-               is_raw, in_oil, texture, ph_reading, ph_read_at)
+               is_raw, in_oil, texture, ph_reading, ph_read_at, shu_est_low, shu_est_high, shu_est_basis, cooked)
         RETURNING id
       ), lines AS (
         INSERT INTO kitchen_batch_input (
-          batch_id, input_kind, label, qty, qty_unit, note, put_up_stage_id, output_id, ordinal, created_by
+          id, batch_id, input_kind, harvest_log_id, plant_id, preservation_log_id, crop_type_slug, label,
+          source_label, qty, qty_unit, form, brand, note, shu_rating_low, shu_rating_high, role,
+          put_up_stage_id, output_id, ordinal, idempotency_key, created_by
         )
-        SELECT st.batch_id, l.input_kind, l.label, l.qty, l.qty_unit, l.note, st.id, l.output_id, l.ordinal,
-               ${userId}::text
+        SELECT l.id, st.batch_id, l.input_kind, l.harvest_log_id, l.plant_id, l.preservation_log_id,
+               l.crop_type_slug, l.label, l.source_label, l.qty, l.qty_unit, l.form, l.brand, l.note,
+               l.shu_rating_low, l.shu_rating_high, l.role, st.id, l.output_id, l.ordinal,
+               l.idempotency_key, ${userId}::text
         FROM stage st
         CROSS JOIN unnest(
-          ${c.line.input_kind}::text[], ${c.line.label}::text[], ${c.line.qty}::numeric[],
-          ${c.line.qty_unit}::text[], ${c.line.note}::text[], ${c.line.output_id}::uuid[],
-          ${c.line.ordinal}::int[]
-        ) AS l(input_kind, label, qty, qty_unit, note, output_id, ordinal)
+          ${c.line.id}::uuid[], ${c.line.input_kind}::text[], ${c.line.harvest_log_id}::uuid[],
+          ${c.line.plant_id}::uuid[], ${c.line.preservation_log_id}::uuid[], ${c.line.crop_type_slug}::text[],
+          ${c.line.label}::text[], ${c.line.source_label}::text[], ${c.line.qty}::numeric[],
+          ${c.line.qty_unit}::text[], ${c.line.form}::text[], ${c.line.brand}::text[], ${c.line.note}::text[],
+          ${c.line.shu_rating_low}::int[], ${c.line.shu_rating_high}::int[], ${c.line.role}::text[],
+          ${c.line.output_id}::uuid[], ${c.line.ordinal}::int[], ${c.line.idempotency_key}::uuid[]
+        ) AS l(id, input_kind, harvest_log_id, plant_id, preservation_log_id, crop_type_slug, label,
+               source_label, qty, qty_unit, form, brand, note, shu_rating_low, shu_rating_high, role,
+               output_id, ordinal, idempotency_key)
         -- A row's line names its jar: reading jars orders this INSERT after that one.
         WHERE l.output_id IS NULL OR l.output_id IN (SELECT id FROM jars)
+        RETURNING id, preservation_log_id, qty, qty_unit
+      ), draws AS (
+        SELECT i.id AS line_id, i.preservation_log_id, d.n,
+               CASE WHEN d.weighed THEN i.qty * (SELECT factor FROM mass WHERE unit = i.qty_unit) END AS g
+        FROM lines i
+        JOIN unnest(${c.line.id}::uuid[], ${c.line.draw_count}::int[], ${c.line.draw_weighed}::boolean[])
+          AS d(line_id, n, weighed) ON d.line_id = i.id
+        WHERE i.preservation_log_id IS NOT NULL
+      ), moved AS (
+        -- Boss F1: ONE movement per drawn jar (the sitting refuses a jar named twice, and aggregates anyway).
+        UPDATE preservation_log p SET
+          remaining_count  = CASE WHEN a.n IS NOT NULL THEN COALESCE(p.remaining_count, p.package_count) - a.n
+                                  WHEN a.g IS NOT NULL
+                                   AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) - a.g = 0
+                                    THEN 0
+                                  ELSE p.remaining_count END,
+          remaining_amount = CASE WHEN a.g IS NOT NULL
+                                    THEN COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) - a.g
+                                  ELSE p.remaining_amount END,
+          consumed_at      = CASE WHEN a.g IS NOT NULL
+                                   AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) - a.g = 0
+                                    THEN COALESCE(p.consumed_at, now())
+                                  ELSE p.consumed_at END,
+          delta_at         = CASE WHEN a.n IS NOT NULL
+                                    OR (a.g IS NOT NULL
+                                        AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) - a.g = 0)
+                                    THEN now()
+                                  ELSE p.delta_at END
+        FROM (SELECT x.preservation_log_id, sum(x.n) AS n, sum(x.g) AS g
+                FROM draws x GROUP BY x.preservation_log_id) a
+        WHERE p.id = a.preservation_log_id
+          AND p.user_id = ANY(${householdIds})
+        RETURNING p.id
+      ), uses AS (
+        INSERT INTO pantry_use (created_by, preservation_log_id, count_used, fate, kitchen_batch_input_id)
+        SELECT ${userId}::text, d.preservation_log_id, d.n, 'batch', d.line_id
+        FROM draws d WHERE d.n IS NOT NULL
         RETURNING id
       ), noted AS (
         INSERT INTO kitchen_stage_log (batch_id, stage_kind, note, entered_at, entered_precision, created_by)
@@ -1163,8 +1496,10 @@ async function putUp(sql, batchId, body, userId, householdIds) {
       )
       SELECT (SELECT count(*)::int FROM stage) AS stage_count,
              (SELECT count(*)::int FROM jars) AS jar_count,
-             (SELECT count(*)::int FROM lines) AS line_count
-    `;
+             (SELECT count(*)::int FROM lines) AS line_count,
+             (SELECT count(*)::int FROM moved) AS jars_drawn
+    `,
+    ]);
   } catch (err) {
     if (err?.code === '23505' && err.constraint === 'uq_ksl_idempotency_key') {
       const prior = await sql`
@@ -1176,6 +1511,11 @@ async function putUp(sql, batchId, body, userId, householdIds) {
       if (!prior.length || prior[0].batch_id !== batchId) return keyConflict;
       return { status: 200, body: { replayed: true, ...(await readSitting(sql, batchId, prior[0].id, householdIds)) } };
     }
+    if (err?.code === '23505' && err.constraint === 'uq_kbi_batch_harvest') {
+      return { status: 409, body: { error: 'That pick is already in this batch.', code: 'already_in' } };
+    }
+    const r = await drawRefusal(err, sql, drawnJars, householdIds);
+    if (r) return r;
     throw err;
   }
   if (!rows[0]?.stage_count) return { status: 409, body: BATCH_CLOSED };
@@ -1190,9 +1530,9 @@ async function putUp(sql, batchId, body, userId, householdIds) {
 // finished, failed, reopened, paused, resumed) was written after it — noted, tended, moved and void rows
 // do not count, and a voided lifecycle row is not a row.
 // REFUSED (409 put_up_in_use, with the jar ids) if any of the sitting's jars was drawn — in 1b: fewer
-// left than were made, or marked used up. Release F widens the refusal (an unreversed use not from the
-// sitting's own lines, or any live line drawing one of the jars) and reverses the sitting's own draws in
-// this statement, aggregated per jar (boss condition F1).
+// left than were made, or marked used up; release F adds an unreversed use not from the sitting's own
+// lines, and any live line anywhere drawing one of the jars (DS-I4). Release F also reverses the
+// sitting's own lines' draws in this statement, aggregated per jar (boss condition F1).
 // "The finished row this sitting wrote" is the finished row with the put_up row's created_at: both were
 // inserted by one statement, so they share now() — and no other statement can produce that instant.
 // A second Undo is a 23505 on uq_ksl_voids_id → 200 replayed (any household member).
@@ -1217,9 +1557,24 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
           AND p.batch_id = ${batchId}::uuid
           AND p.deleted_at IS NULL
       ), used AS (
+        -- REFUSED if any of the sitting's jars was used. 1b: fewer left than made, or marked used up.
+        -- F (06 §5.2, DS-I4): an unreversed pantry_use on them that is not from the sitting's own
+        -- lines, or ANY live line anywhere drawing one of them (a weighed draw writes no use).
         SELECT j.id FROM sitting_jars j
         WHERE COALESCE(j.remaining_count, j.package_count) < j.package_count
            OR j.consumed_at IS NOT NULL
+        UNION
+        SELECT u.preservation_log_id FROM pantry_use u
+        WHERE u.preservation_log_id IN (SELECT id FROM sitting_jars)
+          AND u.count_used > 0
+          AND NOT EXISTS (SELECT 1 FROM pantry_use r WHERE r.reverses_use_id = u.id)
+          AND (u.kitchen_batch_input_id IS NULL
+               OR u.kitchen_batch_input_id NOT IN (SELECT k.id FROM kitchen_batch_input k
+                                                    WHERE k.put_up_stage_id = ${stageId}::uuid))
+        UNION
+        SELECT k.preservation_log_id FROM kitchen_batch_input k
+        WHERE k.deleted_at IS NULL
+          AND k.preservation_log_id IN (SELECT id FROM sitting_jars)
       ), go AS (
         SELECT t.id FROM target t WHERE NOT EXISTS (SELECT 1 FROM used)
       ), fin AS (
@@ -1243,12 +1598,6 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
               UNION ALL
               SELECT id FROM fin WHERE EXISTS (SELECT 1 FROM go)) x
         RETURNING voids_id
-      ), gone_jars AS (
-        UPDATE preservation_log p
-        SET deleted_at = now()
-        WHERE p.id IN (SELECT id FROM sitting_jars)
-          AND EXISTS (SELECT 1 FROM voids v WHERE v.voids_id = ${stageId}::uuid)
-        RETURNING p.id
       ), gone_lines AS (
         UPDATE kitchen_batch_input i
         SET deleted_at = now()
@@ -1256,7 +1605,62 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
           AND i.put_up_stage_id = ${stageId}::uuid
           AND i.deleted_at IS NULL
           AND EXISTS (SELECT 1 FROM voids v WHERE v.voids_id = ${stageId}::uuid)
-        RETURNING i.id
+        RETURNING i.id, i.preservation_log_id, i.qty, i.qty_unit
+      ), mass AS (
+        SELECT m.unit, m.factor FROM unnest(${MASS_UNITS}::text[], ${MASS_FACTORS}::numeric[]) AS m(unit, factor)
+      ), fwd AS (
+        -- Release F (06 §5.2, QA-I9 / HS-I3): the sitting's own lines' draws are given back here.
+        SELECT u.id, u.preservation_log_id, u.count_used, u.kitchen_batch_input_id
+        FROM pantry_use u JOIN gone_lines l ON l.id = u.kitchen_batch_input_id
+        WHERE u.count_used > 0
+          AND NOT EXISTS (SELECT 1 FROM pantry_use r WHERE r.reverses_use_id = u.id)
+      ), weighed AS (
+        SELECT l.preservation_log_id, l.qty * (SELECT factor FROM mass WHERE unit = l.qty_unit) AS g
+        FROM gone_lines l
+        WHERE l.preservation_log_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM pantry_use u WHERE u.kitchen_batch_input_id = l.id)
+      ), rev AS (
+        INSERT INTO pantry_use (created_by, preservation_log_id, count_used, fate, kitchen_batch_input_id, reverses_use_id)
+        SELECT ${userId}::text, f.preservation_log_id, -f.count_used, 'batch', f.kitchen_batch_input_id, f.id
+        FROM fwd f
+        RETURNING id
+      ), gone_jars AS (
+        -- ONE UPDATE of preservation_log for the whole undo (boss F1): the sitting's jars are removed
+        -- and the jars its lines drew are given back, each jar once, its movements summed first — the
+        -- reaper bag drawn 8 g into the mash and 5 g at the bottling gets 13 g back, not 8 or 5.
+        UPDATE preservation_log p SET
+          deleted_at       = CASE WHEN a.remove THEN now() ELSE p.deleted_at END,
+          remaining_count  = CASE WHEN a.n IS NOT NULL THEN COALESCE(p.remaining_count, p.package_count) + a.n
+                                  WHEN a.g IS NOT NULL
+                                   AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) = 0
+                                   AND NOT EXISTS (SELECT 1 FROM pantry_use t WHERE t.preservation_log_id = p.id AND t.kitchen_batch_input_id IS NULL)
+                                    THEN p.package_count
+                                  ELSE p.remaining_count END,
+          remaining_amount = CASE WHEN a.g IS NOT NULL
+                                    THEN COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) + a.g
+                                  ELSE p.remaining_amount END,
+          consumed_at      = CASE WHEN a.g IS NOT NULL
+                                   AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) = 0
+                                   AND NOT EXISTS (SELECT 1 FROM pantry_use t WHERE t.preservation_log_id = p.id AND t.kitchen_batch_input_id IS NULL)
+                                    THEN NULL
+                                  ELSE p.consumed_at END,
+          delta_at         = CASE WHEN a.n IS NOT NULL
+                                    OR (a.g IS NOT NULL
+                                        AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) = 0
+                                        AND NOT EXISTS (SELECT 1 FROM pantry_use t WHERE t.preservation_log_id = p.id AND t.kitchen_batch_input_id IS NULL))
+                                    THEN now()
+                                  ELSE p.delta_at END
+        FROM (SELECT x.preservation_log_id, bool_or(x.remove) AS remove, sum(x.n) AS n, sum(x.g) AS g FROM (
+                SELECT j.id AS preservation_log_id, true AS remove, NULL::int AS n, NULL::numeric AS g
+                FROM sitting_jars j
+                WHERE EXISTS (SELECT 1 FROM voids v WHERE v.voids_id = ${stageId}::uuid)
+                UNION ALL
+                SELECT f.preservation_log_id, false, f.count_used, NULL::numeric FROM fwd f
+                UNION ALL
+                SELECT w.preservation_log_id, false, NULL::int, w.g FROM weighed w
+              ) x GROUP BY x.preservation_log_id) a
+        WHERE p.id = a.preservation_log_id
+        RETURNING p.id, a.remove
       ), reopened AS (
         UPDATE kitchen_batch b
         SET closed_at = NULL, outcome = NULL, outcome_note = NULL
@@ -1270,7 +1674,8 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
       SELECT (SELECT count(*)::int FROM target) AS found_count,
              (SELECT array_agg(id) FROM used) AS used_jar_ids,
              (SELECT count(*)::int FROM voids) AS voided_count,
-             (SELECT count(*)::int FROM gone_jars) AS jars_removed,
+             (SELECT count(*)::int FROM gone_jars WHERE remove) AS jars_removed,
+             (SELECT count(*)::int FROM rev) AS uses_reversed,
              (SELECT count(*)::int FROM gone_lines) AS lines_removed,
              (SELECT count(*)::int FROM reopened) AS reopened_count
     `,

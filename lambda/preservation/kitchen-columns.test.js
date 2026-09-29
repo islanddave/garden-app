@@ -75,16 +75,20 @@ const INFLIGHT = DDL_CHAIN[0].text;
 const AUDIT_COLUMNS = {
   kitchen_batch: [
     'brine_note', 'closed_at', 'cover_photo_id', 'deleted_at', 'expected_days_max',
-    'expected_days_min', 'id', 'kind', 'kind_other', 'label', 'notes', 'outcome', 'outcome_note',
-    'start_anchor_id', 'start_anchor_kind', 'start_precision', 'started_at', 'suspended_at', 'user_id',
+    'expected_days_min', 'id', 'kind', 'kind_other', 'label', 'no_salt', 'notes', 'outcome',
+    'outcome_note', 'recipe_ref', 'shu_est_basis', 'shu_est_high', 'shu_est_low', 'start_anchor_id',
+    'start_anchor_kind', 'start_precision', 'started_at', 'suspended_at', 'user_id', 'vessel_count',
+    'vessel_label', 'vessel_size', 'vessel_unit',
   ],
   kitchen_batch_input: [
-    'added_at', 'batch_id', 'created_at', 'created_by', 'harvest_log_id', 'id', 'input_kind',
-    'is_byproduct', 'label', 'note', 'qty', 'qty_unit',
+    'added_at', 'base_from', 'batch_id', 'brand', 'created_at', 'created_by', 'edited_at', 'form',
+    'harvest_log_id', 'id', 'input_kind', 'is_byproduct', 'label', 'note', 'qty', 'qty_unit',
+    'salt_method', 'shu_rating_high', 'shu_rating_low',
   ],
   kitchen_stage_log: [
-    'amount', 'amount_unit', 'batch_id', 'created_at', 'created_by', 'cue_observed', 'entered_at',
-    'id', 'label', 'note', 'photo_id', 'stage_kind', 'storage_location_id',
+    'acts', 'amount', 'amount_unit', 'batch_id', 'created_at', 'created_by', 'cue_observed',
+    'edited_at', 'entered_at', 'id', 'label', 'mash_in_g', 'note', 'photo_id', 'stage_kind',
+    'storage_location_id',
   ],
   v_kitchen_batch_current: [
     'brine_note', 'closed_at', 'cover_photo_id', 'created_at', 'current_stage_entered_at',
@@ -109,10 +113,17 @@ const AUDIT_COLUMNS = {
   // the outputs query's comment. A contract that named it would push a later editor towards adding
   // it back.
   preservation_log: [
-    'batch_id', 'consumed_at', 'created_at', 'crop_type_slug', 'deleted_at', 'harvest_log_id', 'id',
-    'method', 'method_other_text', 'notes', 'package_count', 'photo_id', 'plant_id', 'preserved_at',
-    'preserved_at_approx', 'quantity_unit', 'quantity_value', 'remaining_count',
+    'batch_id', 'consumed_at', 'cooked', 'created_at', 'crop_type_slug', 'deleted_at', 'delta_at',
+    'harvest_log_id', 'id', 'method', 'method_other_text', 'notes', 'package_count', 'photo_id',
+    'plant_id', 'preserved_at', 'preserved_at_approx', 'quantity_unit', 'quantity_value',
+    'remaining_amount', 'remaining_count', 'shu_est_basis', 'shu_est_high', 'shu_est_low',
     'storage_location_id', 'updated_at', 'user_id', 'variety_id',
+  ],
+  // Release F. pantry_use is F's new ledger: the line routes (draws, reversals, re-draws), the use
+  // route (pantryUses.js) and the reads (count_drawn, the un-consume rule, Undo's refusal).
+  pantry_use: [
+    'count_used', 'created_at', 'created_by', 'fate', 'id', 'idempotency_key', 'kitchen_batch_input_id',
+    'note', 'preservation_log_id', 'reverses_use_id', 'used_at',
   ],
 };
 
@@ -340,9 +351,9 @@ describe('the contract matches the SQL that is actually issued', () => {
     expect(decl[1]).not.toMatch(/\bconst\b/);
     const pairs = [...decl[1].matchAll(/['"]?([a-zA-Z_]\w*)['"]?\s*:\s*\[([^\]]*)\]/g)];
     expect(pairs.map((m) => m[1])).toEqual(Object.keys(AUDIT_COLUMNS));
-    expect(pairs.map((m) => m[1]).slice(0, 6)).toEqual([
+    expect(pairs.map((m) => m[1]).slice(0, 7)).toEqual([
       'kitchen_batch', 'kitchen_batch_input', 'kitchen_stage_log', 'v_kitchen_batch_current',
-      'event_log', 'preservation_log',
+      'event_log', 'preservation_log', 'pantry_use',
     ]);
     for (const [, key, body] of pairs) {
       const cols = [...body.matchAll(/['"]([a-zA-Z_][a-zA-Z0-9_]*)['"]/g)].map((m) => m[1]);

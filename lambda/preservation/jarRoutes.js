@@ -130,6 +130,8 @@ export function moveUseBy(stored, destKind, moveDate) {
 export const JAR_PATCH_KEYS = [
   'label', 'container_label', 'is_raw', 'in_oil', 'texture', 'ph_reading', 'ph_read_at',
   'method', 'method_other_text', 'discard_by', 'notes', 'notes_append', 'quantity_value', 'quantity_unit',
+  // Release F (contract-F §2.6): the jar's typed heat estimate and "Cooked after blending?".
+  'shu_est_low', 'shu_est_high', 'cooked',
 ];
 
 export function validateJarPatch(body) {
@@ -171,6 +173,14 @@ export function validateJarPatch(body) {
     if (e) return e;
   }
   if (has(body, 'notes') && has(body, 'notes_append')) return 'send notes or notes_append, not both';
+  if (has(body, 'shu_est_high') && !has(body, 'shu_est_low')) return 'shu_est_high travels with shu_est_low';
+  if (has(body, 'shu_est_low') && body.shu_est_low != null) {
+    if (!Number.isInteger(Number(body.shu_est_low)) || Number(body.shu_est_low) < 0) return 'shu_est_low must be a whole number, 0 or more';
+    if (body.shu_est_high != null && (!Number.isInteger(Number(body.shu_est_high)) || Number(body.shu_est_high) < Number(body.shu_est_low))) {
+      return 'shu_est_high must be a whole number at least shu_est_low';
+    }
+  }
+  if (has(body, 'cooked') && body.cooked != null && typeof body.cooked !== 'boolean') return 'cooked must be true or false';
   if (has(body, 'notes_append') && normalizeJarText(body.notes_append) == null) return 'notes_append cannot be blank';
   return null;
 }
@@ -220,6 +230,8 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
   const phReading = has(body, 'ph_reading') && body.ph_reading != null ? String(body.ph_reading).trim() : null;
   // A reading edited later defaults its time to now (V4 pH section: "today (a later Edit)").
   const phReadAt = phReading == null ? null : (body.ph_read_at ?? new Date().toISOString());
+  const shuLow = body.shu_est_low == null ? null : Number(body.shu_est_low);
+  const shuHigh = shuLow == null ? null : Number(body.shu_est_high ?? body.shu_est_low);
   const qv = has(body, 'quantity_value') && body.quantity_value != null && String(body.quantity_value).trim() !== ''
     ? body.quantity_value : null;
 
@@ -240,6 +252,10 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
       quantity_unit     = CASE WHEN ${has(body, 'quantity_value')}::boolean THEN ${qv == null ? null : normalizeJarUnit(body.quantity_unit)}::text ELSE quantity_unit END,
       use_by_target     = CASE WHEN ${useBy != null}::boolean THEN ${useBy?.use_by_target ?? null}::date ELSE use_by_target END,
       use_by_basis      = CASE WHEN ${useBy != null}::boolean THEN ${useBy?.use_by_basis ?? null}::text ELSE use_by_basis END,
+      shu_est_low       = CASE WHEN ${has(body, 'shu_est_low')}::boolean THEN ${shuLow}::int ELSE shu_est_low END,
+      shu_est_high      = CASE WHEN ${has(body, 'shu_est_low')}::boolean THEN ${shuHigh}::int ELSE shu_est_high END,
+      shu_est_basis     = CASE WHEN ${has(body, 'shu_est_low')}::boolean THEN ${shuLow == null ? null : 'typed'}::text ELSE shu_est_basis END,
+      cooked            = CASE WHEN ${has(body, 'cooked')}::boolean THEN ${body.cooked ?? null}::boolean ELSE cooked END,
       notes             = CASE WHEN ${has(body, 'notes')}::boolean THEN ${normalizeJarText(body.notes)}::text
                                WHEN ${has(body, 'notes_append')}::boolean
                                  THEN concat_ws(E'\\n', NULLIF(btrim(notes), ''), ${normalizeJarText(body.notes_append)}::text)

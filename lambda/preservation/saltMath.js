@@ -1,4 +1,4 @@
-// Release F — the salt arithmetic (06-ferment-path §3.1-§3.3). PURE. The helper's numbers, stated once so
+// Release F — the salt arithmetic (06-ferment-path, the salt sections). PURE. The helper's numbers, stated once so
 // the server, the client mirror and the golden table agree.
 //
 // THE BASES (the % is "of" one of these; 'peppers' is a 1b-era word no F writer writes):

@@ -547,6 +547,18 @@ const LANE_SOURCES = [
   ['src/components/kitchen/StartBatchSheet.jsx', 'StartBatchOpen'],
   ['src/components/kitchen/StartChips.jsx', 'resolveSheetStart'],
   ['src/components/kitchen/sheetScroll.js', 'scrollClearOfFooter'],
+  // Put-Up 1b + release F, the Lambda (V4 §8.4 / 06 §5.5 — every lane adds its files). Every one
+  // writes or reads a pH, a stage date, a jar date or the ferment facts beside them: the jar PATCH /
+  // Move and Put it up write pH and dates; the line and stage routes take the check-in pH with its
+  // bounds; the heat estimate and salt arithmetic sit on the same batch surface.
+  ['lambda/preservation/jarRoutes.js', 'handleJarRoute'],
+  ['lambda/preservation/putUp.js', 'planPutUp'],
+  ['lambda/preservation/kitchenLines.js', 'phReadAtError'],
+  ['lambda/preservation/lineRoutes.js', 'readLines'],
+  ['lambda/preservation/lineSearch.js', 'suggestedForm'],
+  ['lambda/preservation/pantryUses.js', 'handlePantryUses'],
+  ['lambda/preservation/shuEstimate.js', 'estimateShu'],
+  ['lambda/preservation/saltMath.js', 'saltBase'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the
