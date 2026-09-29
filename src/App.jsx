@@ -30,6 +30,8 @@ import RecentlyDeleted from './pages/RecentlyDeleted.jsx'
 import Favorites from './pages/Favorites.jsx'
 import ArchivedPlantings from './pages/ArchivedPlantings.jsx'
 import SeasonEnd from './pages/SeasonEnd.jsx'
+import SeasonStats from './pages/SeasonStats.jsx'
+import SourceEdit from './pages/SourceEdit.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import Garden from './pages/Garden.jsx'
 import FeedPage from './pages/FeedPage.jsx'
@@ -367,6 +369,12 @@ export function renderRoutes({ overlay, user, loading }) {
     // same name (moreRegistry.js): an installed PWA has no address bar, so the two ship together. A
     // page, not `overlayable`: a list Dave works through, with its own sticky bar and confirm sheet.
     { path: '/season-end',    element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SeasonEnd /></ErrorBoundary></Protected> },
+    // Season stats — the eight-section season read-out (V5-SEASONSTATS-001). Its only door is the More
+    // row of the same name, right after End of season (moreRegistry.js), so the two ship together.
+    { path: '/season-stats',  element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SeasonStats /></ErrorBoundary></Protected> },
+    // Source edit (V5-SOURCECONTACT-001) — name, website, Instagram, Facebook, address for one seed
+    // source. Reached from a saved-seed lot's "Edit source" chip on Season stats (SeedLotCard.jsx).
+    { path: '/sources/:id',   element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SourceEdit /></ErrorBoundary></Protected> },
     { path: '/plantings/:plantingId', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected> },
     { path: '/varieties/:varietyId/edit', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><VarietyEdit /></ErrorBoundary></Protected> },
     { path: '/projects/:id/events/:eventId', element: <ScopedEventRedirect /> },
