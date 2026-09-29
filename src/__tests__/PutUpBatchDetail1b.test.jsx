@@ -70,9 +70,11 @@ describe('the Log and What came out read the history as it stands', () => {
   it('renders each sitting with its date, yield, jars in words and one Undo', () => {
     renderDetail()
     const sitting = screen.getByTestId('batch-detail-sitting')
-    expect(sitting.firstElementChild.textContent).toBe('Put up · Oct 12')
+    // Release F: the sitting's head is a button (it opens the put-up's own Log entry, 06 §3.7).
+    expect(screen.getByTestId('batch-detail-sitting-head').firstElementChild.textContent).toBe('Put up · Oct 12')
+    expect(screen.getByTestId('batch-detail-sitting-facts').textContent).toBe('made 910 g in all')
     expect(sitting.textContent).toContain('made 910 g in all')
-    const jars = screen.getAllByTestId('batch-detail-output').map(e => e.textContent)
+    const jars = screen.getAllByTestId('batch-detail-output-text').map(e => e.textContent)
     expect(jars).toEqual([
       'Megatron plain · 2 × 8 oz woozy · put up Oct 12',
       'Megatron reaper · 2 × 8 oz woozy · put up Oct 12 · in oil',

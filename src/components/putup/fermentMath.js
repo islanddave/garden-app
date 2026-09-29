@@ -97,10 +97,13 @@ export function parseGrams(v) {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
-// "3.5% of veg + water (448 g) → 15.7 g salt". The live line under the % field.
+// "3.5% of veg + water (448 g) → 15.7 g salt". The live line under the % field; its grams are an
+// editable field on screen, so the words before it are their own piece.
+export function saltLivePrefix({ pct, base, baseG }) {
+  return `${pct}% of ${SALT_BASE_WORDS[base] ?? base} (${wholeGrams(baseG)} g) →`
+}
 export function saltLiveWords({ pct, base, baseG }) {
-  const g = saltGrams(pct, baseG)
-  return `${pct}% of ${SALT_BASE_WORDS[base] ?? base} (${wholeGrams(baseG)} g) → ${oneDecimal(g)} g salt`
+  return `${saltLivePrefix({ pct, base, baseG })} ${oneDecimal(saltGrams(pct, baseG))} g salt`
 }
 
 // "left out: water 250 ml · no weight: onion, garlic" — what the base did not count, named.

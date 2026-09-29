@@ -115,7 +115,11 @@ const OTHER_UNITS = [...WEIGHT_UNITS, 'cup', 'qt', 'gal', 'count']
 // the WHOLE of every pick in a window (qty NULL = "assume the whole thing"), which the planting-level
 // lines of release 3 supersede, and a door Dave taps in 1a writes rows release 3 must then live with.
 // "Add something else" is unaffected.
-export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, showGardenPicks = false }) {
+// `legacyOnly` — release F (06 §4 item 3: "the count-and-reveal stays only for legacy bulk pick rows").
+// What went in (WhatWentIn.jsx) mounts this field for the shipped predicate path's "whole pick" rows
+// alone: no add doors (lines are added through the release-F line search), and nothing at all when
+// there are none. Default false, so every shipped host and test is unchanged.
+export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, showGardenPicks = false, legacyOnly = false }) {
   const { fetch } = useApiFetch()
   // NO OPTIONS, DELIBERATELY. useCropTypes defaults to scope 'garden', which is the scope this
   // surface wants — a harvest_log row cannot be a loaf of bread, so the 'non_plant_food' classes
@@ -362,6 +366,7 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, sh
   }, [batchId, fetch, loadDetail, onChanged])
 
   const windowLine = describeWindow(win)
+  if (legacyOnly && rows.length === 0) return null
   const netLine = netCountLine({ matched: preview?.matched ?? 0, skipped })
 
   // NO HEADING OF ITS OWN. This field is mounted as the body of BatchDetailView's "What went in"
@@ -372,9 +377,11 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, sh
   return (
     <div data-testid="batch-inputs-field" style={{ marginTop: 12 }}>
       <p data-testid="batch-inputs-count" style={{ margin: 0, color: P.mid, fontSize: '0.84rem' }}>
-        {rows.length === 0
-          ? 'Nothing written down yet.'
-          : `${rows.length} ${rows.length === 1 ? 'thing' : 'things'} written down.`}
+        {legacyOnly
+          ? `${rows.length} ${rows.length === 1 ? 'pick' : 'picks'} added before — each counts the whole pick.`
+          : rows.length === 0
+            ? 'Nothing written down yet.'
+            : `${rows.length} ${rows.length === 1 ? 'thing' : 'things'} written down.`}
       </p>
       {detailError && (
         <p role="alert" data-testid="batch-inputs-detail-error" style={{ ...noteText, color: P.terra }}>{detailError}</p>
@@ -403,7 +410,7 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, sh
         </ul>
       )}
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
+      {!legacyOnly && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
         {showGardenPicks && (
           <button type="button" data-testid="batch-inputs-open-picks" style={linkBtn}
             onClick={() => { setMode(mode === 'picks' ? null : 'picks'); resetPreview() }}>
@@ -414,7 +421,7 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, sh
           onClick={() => { setMode(mode === 'other' ? null : 'other'); setOtherError(null) }}>
           Add something else
         </button>
-      </div>
+      </div>}
 
       {showGardenPicks && mode === 'picks' && (
         <div data-testid="batch-inputs-picks" style={{ marginTop: 8 }}>
