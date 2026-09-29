@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.160.2",
+    "date": "2026-09-29",
+    "highlights": [
+      "New Today preview (More → Debug & smoke, marked early preview): weather card, section jump bar and the new Needs care list. Current Today unchanged, apart from easier-to-read red urgency text (also on the Dashboard and plant care status)."
+    ]
+  },
+  {
     "version": "4.160.1",
     "date": "2026-09-29",
     "highlights": [
