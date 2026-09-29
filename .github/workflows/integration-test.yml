@@ -76,6 +76,76 @@ jobs:
           echo "::add-mask::$DB_URL"
           echo "Branch created: $BRANCH_ID"
 
+      # PUT-UP TRAIN (05-release-train §2.4; lane putup1b-ddl). The train's releases stay OFF staging
+      # until B's sitting, so the train proves its code against its own DDL here: on THIS run's
+      # ephemeral branch only, apply — in train order — each train directory's 0a file(s) whose
+      # schema_version stamp the branch does not carry, and nothing else (no 0p backfill, no 0r, no
+      # other migration). Staging is never written: the only URL used is the one the create step
+      # returned for the new branch, and the step refuses without it.
+      #
+      # A NO-OP ONCE STAGING CARRIES THE STAMPS: the branch is a fork of staging, so after B's sitting
+      # every stamp is present, nothing applies, and this step changes nothing for dev. A directory that
+      # does not exist yet is skipped, so releases 2-4 need no edit here — only their 0a files' second
+      # line must read `-- schema_version: <stamp>` (the stamp the file inserts; checked after apply).
+      # Any SQL error stops the step (ON_ERROR_STOP), and so does a present stamp AFTER an absent one
+      # (the fork would be out of train order).
+      - name: Apply the Put-Up train's migrations to the ephemeral branch
+        env:
+          INT_DATABASE_URL: ${{ env.INT_DATABASE_URL }}
+          NEON_BRANCH_ID: ${{ env.NEON_BRANCH_ID }}
+          NEON_PARENT_BRANCH: br-polished-art-am12o4ue
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          if [[ -z "${INT_DATABASE_URL:-}" || -z "${NEON_BRANCH_ID:-}" ]]; then
+            echo "::error::No ephemeral branch id/URL from the create step; refusing to apply anything."
+            exit 1
+          fi
+          if [[ "$NEON_BRANCH_ID" == "$NEON_PARENT_BRANCH" ]]; then
+            echo "::error::The branch to migrate is the staging parent itself; refusing."
+            exit 1
+          fi
+          fork() { psql "$INT_DATABASE_URL" -X -v ON_ERROR_STOP=1 "$@"; }
+          # A new endpoint can take a few seconds to accept its first connection.
+          for try in $(seq 1 12); do
+            if fork -qAt -c 'SELECT 1' >/dev/null 2>&1; then break; fi
+            if [[ "$try" -eq 12 ]]; then
+              echo "::error::The ephemeral branch never accepted a connection."
+              exit 1
+            fi
+            sleep 5
+          done
+          applied=0
+          first_absent=""
+          for dir in v5-putupmake-001 v5-pantry-001 v5-batchbuilder-001 v5-recipes-001; do
+            for f in migrations/"$dir"/0a-*.sql; do
+              stamp=$(sed -n '2s/^-- schema_version: \([0-9A-Za-z._-]*\)$/\1/p' "$f")
+              if [[ -z "$stamp" ]]; then
+                echo "::error::$f: line 2 must be '-- schema_version: <stamp>'."
+                exit 1
+              fi
+              have=$(fork -qAt -c "SELECT count(*) FROM public.schema_version WHERE version = '$stamp'")
+              if [[ "$have" == "1" ]]; then
+                if [[ -n "$first_absent" ]]; then
+                  echo "::error::$stamp is on the branch but $first_absent was not: out of train order."
+                  exit 1
+                fi
+                echo "present, skipped: $f ($stamp)"
+                continue
+              fi
+              echo "applying: $f ($stamp)"
+              fork -q -f "$f"
+              have=$(fork -qAt -c "SELECT count(*) FROM public.schema_version WHERE version = '$stamp'")
+              if [[ "$have" != "1" ]]; then
+                echo "::error::$f ran but did not write its stamp $stamp."
+                exit 1
+              fi
+              first_absent="${first_absent:-$stamp}"
+              applied=$((applied + 1))
+            done
+          done
+          echo "Put-Up train files applied to the ephemeral branch: $applied"
+
       - name: Run integration tests
         env:
           INT_DATABASE_URL: ${{ env.INT_DATABASE_URL }}
