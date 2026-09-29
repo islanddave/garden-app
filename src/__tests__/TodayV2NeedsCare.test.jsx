@@ -52,6 +52,7 @@ import TodayV2 from '../pages/TodayV2.jsx'
 import { readSkipped } from '../components/today/careStore.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import { enrichRows } from '../lib/todayV2/spots.js'
+import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 
 const PAYLOAD = F('dailyplan.dave.json')
 const PLANTS = (() => { const p = F('plants.json'); return Array.isArray(p) ? p : p.plants })()
@@ -440,5 +441,60 @@ describe('S4g: an emptied Needs care reads "Needs care · all caught up" (§2.5)
     await settle()
     expect(band().textContent).toContain('Needs care · all caught up')
     expect(band().textContent).toContain('11 logged today, 70 covered by rain')
+  })
+})
+
+// Review 4160.2 IMPORTANT-1 (integration 2): §6.3's double-log guard — the today-logged store (useNeedsCare's
+// loggedAtMount) keeps a row this tab logged out of the list when a Back remount paints a plan read BEFORE the write
+// (useDailyPlan's seed). Remounted here on the SAME 09-24 payload, as that seed would paint it, and as a Back (a
+// page-scroll return, so the visit record is restored): the watered spot stays its done line, and neither it nor a
+// one-tap row comes back into a Water all.
+describe('§6.3: a row logged before a Back never comes back live on the remount (review 4160.2 IMPORTANT-1)', () => {
+  const groupBulk = (g) => document.querySelector(`[data-testid="care-group-bulk"][data-group="${g}"]`)
+  const back = async () => {
+    render(<MemoryRouter><PageScrollProvider value={{ api: null, isReturn: true }}><TodayV2 /></PageScrollProvider></MemoryRouter>)
+    await settle()
+  }
+
+  it('a spot Water all: after unmount + Back on the same plan the spot is still its done line, and the group Water all re-POSTs none of it', async () => {
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    const five = waterIn('Drive-Shade').map((r) => r.plantingId)
+    fireEvent.click(within(spot('Drive-Shade')).getByRole('button', { name: 'Water all 5 in Drive-Shade' }))
+    await settle()
+    expect(wire.posts.map((b) => b.plant_id).sort()).toEqual([...five].sort())
+    first.unmount()
+    await back()
+    expect(spot('Drive-Shade')).toBeNull()
+    expect(doneLine('Drive-Shade').textContent).toContain('watered 5')
+    expect(groupBulk('Outside').getAttribute('aria-label')).toBe('Water all 149 outside')
+    fireEvent.click(groupBulk('Outside'))
+    await settle()
+    expect(wire.posts.length).toBe(5 + 149)
+    expect(wire.posts.slice(5).filter((b) => five.includes(b.plant_id))).toEqual([])
+  })
+
+  // (A one-tap row's own done line does not survive the Back: the guard drops the logged key from the plan day's
+  // rows altogether, so the row is simply gone — never live. Recorded in build-int2.md, not changed here.)
+  it('a one-tap row (plantRun): after unmount + Back the row is never live again, and the group Water all re-POSTs nothing for it', async () => {
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    fireEvent.click(within(spot('Drive-Shade')).getAllByRole('button', { expanded: false })[0])
+    await settle()
+    const show = within(spot('Drive-Shade')).queryByRole('button', { name: 'Show them' })
+    if (show) { fireEvent.click(show); await settle() }
+    const row = waterIn('Drive-Shade')[0]
+    fireEvent.click(within(spot('Drive-Shade')).getByRole('button', { name: `Log Water for ${row.name}` }))
+    await settle()
+    expect(wire.posts.map((b) => b.plant_id)).toEqual([row.plantingId])
+    first.unmount()
+    await back()
+    // The Back restored the visit: Drive-Shade is open again, with its other four rows live.
+    expect(spot('Drive-Shade').querySelector('[aria-expanded]').getAttribute('aria-expanded')).toBe('true')
+    expect(document.querySelector(`[data-testid="care-row"][data-key="${row.key}"]`)).toBeNull()
+    expect(within(spot('Drive-Shade')).queryByRole('button', { name: `Log Water for ${row.name}` })).toBeNull()
+    expect(within(spot('Drive-Shade')).getAllByRole('button', { name: /^Water (all|the other) 4 in Drive-Shade$/ }).length).toBeGreaterThan(0)
+    expect(groupBulk('Outside').getAttribute('aria-label')).toBe('Water all 153 outside')
+    fireEvent.click(groupBulk('Outside'))
+    await settle()
+    expect(wire.posts.slice(1).filter((b) => b.plant_id === row.plantingId)).toEqual([])
   })
 })
