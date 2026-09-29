@@ -96,6 +96,10 @@ const common = ({ plan = true, glanceClosed = true } = {}) => [
   { family: 'no-hscroll', armedAt: 'S2', why: '(h) no horizontal overflow; only the chip strip may scroll sideways, with overflow-x:auto' },
   { family: 'floors', armedAt: 'S2', why: '(j) floors before ceilings — contentBottom, controls ≥ 1, from the v2 budget' },
   { family: 'first-screen', armedAt: 'S2', mustContain: ['today-title', 'today-date'], why: '(e) title + date fully inside [0, FIRST_SCREEN)' },
+  // Integration 2: plan-v2 "Visual" — card-in-card → none (D8: flat bands, each item its own white card). Measured on
+  // the merged S4g + S5 + S6 page: no card inside a card on any of the 20 default renders. Armed with every slice whose
+  // surface draws a card (the glance S3, spot rows S4, Protect / Heads-up rows S5, the bands and household S6).
+  { family: 'card-nesting', armedAt: ['S3', 'S4', 'S5', 'S6'], why: 'plan-v2 Visual "card-in-card → none" (D8): no card (a radius with a fill or a four-sided border) inside another card on the default render' },
   ...(plan ? [
     { family: 'glance', armedAt: 'S3', present: true, closed: glanceClosed, why: '(e) the closed glance card on the first screen' },
     { family: 'verdict-truncation', armedAt: 'S3', why: '(e) verdict untruncated: scrollWidth ≤ clientWidth, last glyph inside the card' },
@@ -133,9 +137,19 @@ export const STATES = [
       // FeedSuppressedList (CareNeeded.jsx), reused unchanged at the foot of Needs care (REGIONS
       // care-feed-suppressed), prints 0.78rem. Measured: with only that component's 0.78rem → 0.82rem the census
       // passed on v2-frost, so it is the one source. Restyling the line for V2 is a design call, not the gate's.
-      // The cap is plan §9.1(l)'s 4 design surfaces; at S3 + S4 v2-frost carries 3 of them (measured 2026-09-29),
-      // so one extra treatment still passes here: todayMutantsV2 extraCardFingerprint is scheduled for S5+S6.
-      { family: 'visual-census', armedAt: ['S3', 'S4'], maxFingerprints: 4, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem', '0.78rem'], why: '(l) ≤ 4 section-level container fingerprints on busyfull' },
+      // Integration 2 (orchestrator, 2026-09-29) — plan §9.1(l)'s cap of 4 fingerprints is replaced by an IDENTITY
+      // check, in this commit, with this reason: the glance card and the row card are ONE material (white, 1px
+      // P.border, radius 10 — measured on the merged S4g + S5 + S6 page, 2026-09-29), so the design's four surfaces
+      // (glance card, bar, band, row card) give THREE distinct fingerprints, and a count of 4 let one extra treatment
+      // through (extraCardFingerprint survived the S3 + S4 matrix twice). Every section-level container fingerprint
+      // on v2-frost must now be one of these, verbatim as the gate measures them; a new surface is added here, in the
+      // commit that adds it, with its reason. (Harvest's bare watch rows add a hairline fingerprint when Harvest is
+      // open — v2-remembered — outside this census, which runs on v2-frost's default render only.)
+      { family: 'visual-census', armedAt: ['S3', 'S4'], surfaces: {
+        'glance card + row card (one material)': 'rgb(255, 255, 255) | 1px solid rgb(212, 201, 190) | 10px | none',
+        'jump bar': 'rgb(248, 245, 240) | 0px none rgb(0, 0, 0) | 0px | none',
+        'section band': 'rgb(230, 240, 232) | 0px none rgb(31, 81, 56) | 7px | none',
+      }, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem', '0.78rem'], why: '(l) every section-level container fingerprint on busyfull is one of the design surfaces (identity, not a count)' },
       { family: 'weather-once', armedAt: 'S3', why: 'MF2: with the glance OPEN, exactly one today-weather and no repeated hi/lo text' },
       // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. Needs care is
       // OPEN at the ready point on this state (the small-pot trigger), so the chip cannot flip today-sec-care's
@@ -411,7 +425,9 @@ export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibi
   // §2.5's emptied header and §5.5's focus when a section empties.
   'spot-retry', 'retry-focus', 'announce', 'announce-once', 'caught-up', 'empty-focus',
   // S6: a section (or the glance) opened from the default render is at least its recorded height.
-  'owner-floors']
+  'owner-floors',
+  // Integration 2: no card inside a card (plan-v2 Visual, D8).
+  'card-nesting']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome

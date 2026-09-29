@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { STATES, SLICES, LANDED, SHELL, REGIONS_V2, TRIGGER_CELLS, isArmed } from './today-v2-contract.mjs'
+import { STATES, SLICES, LANDED, SHELL, REGIONS_V2, TRIGGER_CELLS, KILLER_FAMILIES, isArmed } from './today-v2-contract.mjs'
 import { redatePayload, applyGrafts, localSeeds, selectorFor, flipState, flipAttr } from './v2wire.js'
 import { groupsOfRows, EXPECTED_GROUPS } from './v2groups.mjs'
 import { MUTANTS_V2 } from '../todayMutantsV2.mjs'
@@ -173,6 +173,20 @@ describe('today-v2 contract table', () => {
   // NeedsCare's FeedSuppressedList mount). The served plugin (vite.harness.v2mutant.mjs) throws on a missing pattern
   // and replaces EVERY occurrence, so each armed real-Chrome mutant's text must occur exactly once in its file —
   // checked here, so a merge that moves the text reds the unit suite, not the matrix forty minutes later.
+  // Integration 2 (orchestrator, 2026-09-29): the container census is an IDENTITY check against the design's surfaces
+  // as measured on the merged page — three fingerprints, since the glance card and the row card are one material —
+  // and no card sits inside a card (plan-v2 Visual), on every state. extraCardFingerprint arms against exactly those.
+  it('the visual census holds the three measured design surfaces, card-nesting runs everywhere, and extraCardFingerprint is armed against both', () => {
+    const [vc] = STATES.find((s) => s.name === 'v2-frost').checks.filter((c) => c.family === 'visual-census' && isArmed(c))
+    expect(vc.maxFingerprints).toBeUndefined()
+    expect(Object.keys(vc.surfaces)).toEqual(['glance card + row card (one material)', 'jump bar', 'section band'])
+    expect(new Set(Object.values(vc.surfaces)).size).toBe(3)
+    for (const s of STATES) expect(s.checks.filter((c) => c.family === 'card-nesting' && isArmed(c)), s.name).toHaveLength(1)
+    const m = MUTANTS_V2.extraCardFingerprint
+    expect(isArmed(m)).toBe(true)
+    expect(m.killers).toEqual(['visual-census', 'card-nesting'])
+    for (const k of m.killers) expect(KILLER_FAMILIES).toContain(k)
+  })
   it('every armed real-Chrome mutant\'s pattern occurs exactly once in its file', () => {
     const root = join(HERE, '..', '..', '..')
     const armed = Object.entries(MUTANTS_V2).filter(([, m]) => m.kind === 'chrome' && isArmed(m))

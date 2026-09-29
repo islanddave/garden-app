@@ -238,13 +238,21 @@ const MEASURE = `(() => {
   while ((n = tw.nextNode())) { if (!n.nodeValue || !n.nodeValue.trim()) continue; if (badge && badge.contains(n)) continue; const range = d.createRange(); range.selectNodeContents(n); for (const rc of range.getClientRects()) if (rc.width > 0.5 && rc.height > 0.5) lastInk = Math.max(lastInk, Math.ceil(rc.bottom + sy)) }
   const controls = all('button, a[href], [role="button"], summary, input, select, textarea').filter(el => !(badge && badge.contains(el))).filter(shown)
   // section-level containers (v1 containers(), width ≥ 120 and height ≥ 20) → fingerprints; font sizes
-  const fps = new Set(); const fonts = new Set()
+  // Integration 2: and the CARDS among them — a radius with a fill or a four-sided border — for card-nesting.
+  const fps = new Set(); const fonts = new Set(); const cards = []
   for (const el of all('#root *')) {
     const cs = w.getComputedStyle(el); const r = el.getBoundingClientRect()
     if ((el.childNodes.length && [...el.childNodes].some(c => c.nodeType === 3 && c.nodeValue.trim()))) fonts.add(cs.fontSize)
     const bg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)', bord = parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none', rad = parseFloat(cs.borderTopLeftRadius) > 0
-    if ((bg || bord || rad) && r.width >= 120 && r.height >= 20) fps.add([cs.backgroundColor, cs.borderTopWidth + ' ' + cs.borderTopStyle + ' ' + cs.borderTopColor, cs.borderTopLeftRadius, cs.boxShadow].join(' | '))
+    if ((bg || bord || rad) && r.width >= 120 && r.height >= 20) {
+      fps.add([cs.backgroundColor, cs.borderTopWidth + ' ' + cs.borderTopStyle + ' ' + cs.borderTopColor, cs.borderTopLeftRadius, cs.boxShadow].join(' | '))
+      if (rad && (bg || ['Top', 'Right', 'Bottom', 'Left'].every(s => parseFloat(cs['border' + s + 'Width']) > 0 && cs['border' + s + 'Style'] !== 'none'))) cards.push(el)
+    }
   }
+  const cardSet = new Set(cards)
+  const cardLabel = el => { for (let e = el; e && e.id !== 'root'; e = e.parentElement) { const t = e.getAttribute('data-testid'); if (t) return (e === el ? '' : 'in ') + t } return el.tagName.toLowerCase() }
+  const cardNest = []
+  for (const c of cards) for (let p = c.parentElement; p && p.id !== 'root'; p = p.parentElement) if (cardSet.has(p)) { cardNest.push(cardLabel(p) + ' > ' + cardLabel(c)); break }
   // S4: closed SPOTS mount no rows either (§9.1 (c) "no row testid under a closed section or spot"); the
   // header count against the spot counts (§2.4 invariant), read off data-count.
   const spotEls = all(tid('care-spot'))
@@ -268,7 +276,7 @@ const MEASURE = `(() => {
     glance: glanceEl ? { ...box(glanceEl), shown: shown(glanceEl), expanded: glanceToggle ? glanceToggle.getAttribute('aria-expanded') : null, stale: !!glanceEl.querySelector('[data-stale="true"]') } : null,
     verdict, textFit, bar: bar ? { ...box(bar), sw: bar.scrollWidth, cw: bar.clientWidth, ox: w.getComputedStyle(bar).overflowX, chips } : null,
     weather: all(tid('today-weather')).length,
-    fingerprints: [...fps], fontSizes: [...fonts],
+    fingerprints: [...fps], fontSizes: [...fonts], cards: cards.length, cardNest,
     harness: {
       error: w.__h.error(), clock: w.__h.clock(), weatherStubbed: w.__h.weatherStubbed(), fixtures: w.__h.fixtures(),
       liveRequests: reqs.filter(r => r.live).map(r => r.path),
@@ -411,14 +419,25 @@ const CHECKERS = {
       for (const ch of m.bar.chips) if (!CHIPS[ch] || !on.has(CHIPS[ch].section)) F(`chip '${ch}' lands on a section that is not on the page`)
     }
   },
+  // Integration 2 (orchestrator, 2026-09-29): an IDENTITY check, not a count — every section-level container
+  // fingerprint on the page is one of the design's surfaces, as measured on the merged page and pinned in the
+  // contract (`surfaces`). A count could not see an extra treatment while the page carried fewer than its cap.
   'visual-census': (m, c, F) => {
-    if (m.fingerprints.length > c.maxFingerprints) F(`${m.fingerprints.length} distinct section-level container fingerprints, over the ${c.maxFingerprints} the design allows`)
+    const known = new Set(Object.values(c.surfaces || {}))
+    const extra = m.fingerprints.filter(f => !known.has(f))
+    if (!known.size) F('the contract names no design surfaces to hold the container census against')
+    else if (extra.length) F(`${extra.length} section-level container fingerprint(s) that are none of the design's surfaces [${Object.keys(c.surfaces).join(', ')}]: ${extra.join(' ; ')}`)
     const ramp = new Set([...Object.values(m.harness.tokens || {}).map(String), ...(c.fontSizesExtra || [])])
     const px = s => (String(s).endsWith('rem') ? `${parseFloat(s) * 16}px` : String(s))
     const allowed = new Set([...ramp].map(px))
     const off = m.fontSizes.filter(s => !allowed.has(s))
     if (!m.sections.length) F('no sections to take a visual census of')
     if (off.length) F(`font sizes outside the T ramp ∪ {${(c.fontSizesExtra || []).join(', ')}}: ${off.join(', ')}`)
+  },
+  // Integration 2 — plan-v2 "Visual": card-in-card → none (D8: flat bands, each item its own white card). A card is
+  // a section-level container with a radius and a fill or a four-sided border (MEASURE); none sits inside another.
+  'card-nesting': (m, c, F) => {
+    if (m.cardNest.length) F(`${m.cardNest.length} card(s) inside another card (plan-v2: card-in-card → none; D8): ${m.cardNest.slice(0, 4).join('; ')}${m.cardNest.length > 4 ? ' …' : ''}`)
   },
   // S4 (§2.4): the Needs care header count is the sum of its spots' counts, with no filter on.
   'count-invariant': (m, c, F) => {
