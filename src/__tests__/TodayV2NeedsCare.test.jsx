@@ -12,32 +12,35 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const F = (f) => JSON.parse(readFileSync(resolve(process.cwd(), 'tests/harness/_todaymeasure', f), 'utf8'))
-const { planState, prefsState, auth, wire } = vi.hoisted(() => ({
-  planState: { current: null },
-  prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
-  auth: { user: { id: 'u' } },
-  wire: { posts: [], deletes: [], failPlant: null, failPlants: new Set(), seq: 0, plants: null, locations: null },
-}))
+const { planState, prefsState, auth, wire, api } = vi.hoisted(() => {
+  const wire = { posts: [], deletes: [], failPlant: null, failPlants: new Set(), seq: 0, plants: null, locations: null }
+  return {
+    planState: { current: null },
+    prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
+    auth: { user: { id: 'u' } },
+    wire,
+    // ONE api object for the file, as the real useApiFetch memoises its own: hooks keep `fetch` in their effects'
+    // deps, so a new function per render re-runs them on every render (integration 2, seam 5).
+    api: {
+      getToken: async () => 't',
+      fetch: async (path, init = {}) => {
+        if (init.method === 'DELETE') { wire.deletes.push(path); return {} }
+        if (init.method === 'POST') {
+          const body = JSON.parse(init.body)
+          if (body.plant_id === wire.failPlant || wire.failPlants.has(body.plant_id)) throw new Error('offline')
+          wire.posts.push(body)
+          return { id: 'ev' + (++wire.seq) }
+        }
+        return null
+      },
+    },
+  }
+})
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
 vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.current }))
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
 vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({ ...(await orig()), fetchNotificationPrefs: vi.fn(async () => null), saveTodaySkipped: vi.fn(async () => null) }))
-vi.mock('../lib/api.js', async (orig) => ({
-  ...(await orig()),
-  useApiFetch: () => ({
-    getToken: async () => 't',
-    fetch: async (path, init = {}) => {
-      if (init.method === 'DELETE') { wire.deletes.push(path); return {} }
-      if (init.method === 'POST') {
-        const body = JSON.parse(init.body)
-        if (body.plant_id === wire.failPlant || wire.failPlants.has(body.plant_id)) throw new Error('offline')
-        wire.posts.push(body)
-        return { id: 'ev' + (++wire.seq) }
-      }
-      return null
-    },
-  }),
-}))
+vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => api }))
 vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? wire.plants : wire.locations, loading: false, error: null }) }))
 // S6: the plan-independent bands (Harvest, Put-Up, the Sow row's lines) are fetched at the page and the ready point
 // waits for them (useTodayBands); this file is not about them, so they answer at once, settled and empty.
