@@ -62,6 +62,7 @@ vi.mock('../components/LoveMehPopover.jsx', () => ({ default: () => null }))
 
 import Garden from '../pages/Garden.jsx'
 import { __resetPrefsFlight } from '../lib/notificationPrefsClient.js'
+import { RESUME_MIN_AGE_MS } from '../hooks/useCacheLifecycle.js'
 
 const PLANTS = [
   { id: 'p1', name: 'Sungold', project_id: null, status: 'fruiting', quantity: 1, variety_ref: { crop_type_slug: 'tomato' } },
@@ -114,7 +115,17 @@ beforeEach(() => {
     throw new Error(`unexpected ${method} ${u}`)
   }))
 })
-afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+const realNow = Date.now
+afterEach(() => { Date.now = realNow; cleanup(); vi.unstubAllGlobals() })
+
+// Back to the app after a while away: Garden re-reads prefs on a resume past its age gate (useResumeGate). The
+// gate reads wall-clock Date.now, so the clock is moved rather than waited on (Garden.resumeGate.test.jsx's way).
+async function resumeAfter(ms) {
+  const t0 = realNow()
+  Date.now = () => t0 + ms
+  await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+  await flush()
+}
 
 const flush = () => act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve() })
 const groupBySelect = () => screen.getByRole('combobox', { name: /Group by/i })
@@ -253,6 +264,30 @@ describe('BUG-GARDENGROUPBYRESET-001 — Garden keeps the grouping you left it i
     await visitGarden()
     expect(groupPatches()).toEqual([])
     expect(groupBySelect().value).toBe('status')           // this person's own server choice
+  })
+
+  it('the first fresh read ends the hydrate for the visit: a later change waits for the next visit, never mid-list', async () => {
+    const first = await visitGarden()
+    await pick('location')
+    first.unmount()
+    await visitGarden()                                    // fresh read, equal: decided, and done for this visit
+    const reads = gets
+    server.garden_group_by = 'status'                      // the other phone changes it while this one is open
+    await resumeAfter(RESUME_MIN_AGE_MS + 1000)
+    expect(gets).toBe(reads + 1)                           // the resume did read…
+    expect(groupBySelect().value).toBe('location')         // …and did not regroup the list under the user
+  })
+
+  it('a service-worker copy does not end it: a fresh read on a later resume still gets its say', async () => {
+    const first = await visitGarden()
+    await pick('location')
+    first.unmount()
+    server.garden_group_by = 'status'                      // the other phone's choice, not yet seen here
+    servedFromSW = { ...server, garden_group_by: 'location' }  // offline: this visit's read is the cached copy
+    await visitGarden()
+    expect(groupBySelect().value).toBe('location')
+    await resumeAfter(RESUME_MIN_AGE_MS + 1000)            // signal back: a fresh read
+    expect(groupBySelect().value).toBe('status')
   })
 
   it('a Type choice made before this build (never sendable) is kept and sent, not overwritten', async () => {

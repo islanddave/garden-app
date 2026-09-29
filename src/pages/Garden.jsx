@@ -386,9 +386,12 @@ export default function Garden() {
         if (on) setPrefs(p)
         // Group-by hydrate (once per mount, BUG-GARDENGROUPBYRESET-001): decideGroupByHydrate says whether a
         // waiting choice goes out again, another device's choice is adopted, or nothing changes. 'keep' writes
-        // no state at all, so an equal server value cannot regroup the list.
+        // no state at all, so an equal server value cannot regroup the list. The first FRESH body ends it for
+        // the mount — another device's later change arrives at the next visit, never mid-list. A body the service
+        // worker served from its cache is decided on (it can only keep, or re-send a waiting choice) but does
+        // not end it, so a fresh read on a later resume still gets its say.
         if (on && !groupByHydratedRef.current && p) {
-          groupByHydratedRef.current = true
+          if (!servedFromCache(p)) groupByHydratedRef.current = true
           const live = groupByLiveRef.current
           markLegacyGroupByPending(live.user)
           const d = decideGroupByHydrate({
