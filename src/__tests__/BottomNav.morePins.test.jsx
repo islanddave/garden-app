@@ -102,10 +102,11 @@ describe('I1 — exactly one door per destination, bar ∪ sheet, for every move
 
   // 16 More doors since V5-PLANTSTARTDATES-001 put Catch up back in the sheet.
   // 16 -> 17 More doors: /season-end (End of season), added after the census — see shippedDoors.js.
-  it('SELF-TEST: the census is the 4 tab doors and the 17 More doors, with no repeats', () => {
+  // 17 -> 18 More doors: /season-stats (Season stats), right after End of season.
+  it('SELF-TEST: the census is the 4 tab doors and the 18 More doors, with no repeats', () => {
     expect(SHIPPED_TAB_HREFS).toHaveLength(4)
-    expect(SHIPPED_MORE_HREFS).toHaveLength(17)
-    expect(new Set(CENSUS).size).toBe(21)
+    expect(SHIPPED_MORE_HREFS).toHaveLength(18)
+    expect(new Set(CENSUS).size).toBe(22)
   })
 
   // KILLING MUTATIONS: draw a moved tab nowhere (a door lost); keep it on the bar AND add its row (a

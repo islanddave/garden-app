@@ -12,12 +12,13 @@
 // its place in the sheet with the change that added it:
 //   /plants/catch-up — Catch up (V5-PLANTSTARTDATES-001), after Achievements (see below).
 //   /season-end — End of season (lane seasonend-20260929), last row of Your garden, after Catch up.
+//   /season-stats — Season stats (lane stats-l2-statspage-20260929), right after End of season.
 export const SHIPPED_TAB_HREFS = ['/today', '/garden', '/harvests', '/put-up']
 
 // In the sheet's shipped order (SPACE_PHOTOS_ENABLED on). '/plants/catch-up' was ADDED with
 // V5-PLANTSTARTDATES-001, when CATCH_UP_EDITOR_SHIPPED went true and that row became a door.
 export const SHIPPED_MORE_HREFS = [
   '/dashboard', '/findings', '/photos', '/space', '/locations', '/inventory', '/seeds', '/achievements',
-  '/plants/catch-up', '/season-end',
+  '/plants/catch-up', '/season-end', '/season-stats',
   '/collection', '/helper', '/settings', '/settings/controls', '/about', '/releases', '/admin',
 ]

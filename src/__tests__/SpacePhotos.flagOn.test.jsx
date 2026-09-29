@@ -146,9 +146,9 @@ describe('flag ON — the More sheet gains a Space row and disambiguates the zon
       const label = JSON.stringify(more_pins)
       const pinned = [...(screen.queryByTestId('more-pinned')?.querySelectorAll('[data-more-row]') ?? [])].map(r => r.getAttribute('data-more-row'))
       const home = [...document.querySelectorAll('[data-more-row]')].map(r => r.getAttribute('data-more-row')).filter(id => !pinned.includes(id))
-      // 'season-end' (End of season) is the last Your garden row, after catch-up.
+      // 'season-end' (End of season) follows catch-up; 'season-stats' (Season stats) is right after it.
       const expectedHome = ['dashboard', 'findings', 'photos', 'space', 'locations', 'inventory', 'seeds', 'achievements',
-        'catch-up', 'season-end', 'collection', 'helper', 'settings', 'settings-controls', 'about', 'releases', 'admin'].filter(id => !pinned.includes(id))
+        'catch-up', 'season-end', 'season-stats', 'collection', 'helper', 'settings', 'settings-controls', 'about', 'releases', 'admin'].filter(id => !pinned.includes(id))
       expect(home, label).toEqual(expectedHome)
       expect(document.querySelectorAll('a[href="/space"]'), label).toHaveLength(1)
       // Sign out is the last control in the sheet.
