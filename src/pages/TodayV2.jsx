@@ -14,7 +14,10 @@ import NeedsCare from '../components/today/v2/NeedsCare.jsx'
 import { useNeedsCare } from '../components/today/v2/useNeedsCare.js'
 import GlanceCard from '../components/today/v2/GlanceCard.jsx'
 import JumpBar, { JUMP_BAR_HEIGHT_PX } from '../components/today/v2/JumpBar.jsx'
-import { careOpens } from '../lib/todayV2/triggers.js'
+import ProtectTonight from '../components/today/v2/ProtectTonight.jsx'
+import { useProtect } from '../components/today/v2/useProtect.js'
+import { handledSummary } from '../lib/todayV2/protect.js'
+import { openAtStart } from '../lib/todayV2/triggers.js'
 import { CHIPS, taskCounts, liveChips, shownChips } from '../lib/todayV2/chips.js'
 import { staleMarker } from '../lib/todayV2/verdict.js'
 import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
@@ -109,10 +112,14 @@ export default function TodayV2() {
   // care rows minus logged minus skipped.
   const needs = useNeedsCare({ plan, planDate, userId, stale })
   const care = needs.rows
+  // S5: Protect tonight's state lives here too (header, chip count, trigger and held order are taken at the ready
+  // point). Its rows are every cold row — the household's too when this person has the household view on (SF6);
+  // Needs care never lists one. Needs care's rows weight its spot order, so both sections list spots alike.
+  const protect = useProtect({ plan, planDate, userId, stale, householdPlans: data?.household_plans, careRows: needs.allEnriched })
   const statusRef = useRef(null)
   const announce = useCallback((msg) => { if (statusRef.current) statusRef.current.textContent = msg }, [])
   const resting = useMemo(() => (Array.isArray(plan?.dormant) ? plan.dormant.filter(Boolean) : []), [plan])
-  const present = useMemo(() => SECTION_ORDER.filter((k) => (k === 'care' && care.length > 0) || (k === 'resting' && resting.length > 0)), [care.length, resting.length])
+  const present = useMemo(() => SECTION_ORDER.filter((k) => (k === 'protect' && protect.count > 0) || (k === 'care' && care.length > 0) || (k === 'resting' && resting.length > 0)), [protect.count, care.length, resting.length])
 
   // ── the glance card's weather: computed exactly as V1's Today.jsx computes it, so the two pages cannot
   // disagree — the live rain overlay (display only), the one low per night (V5-FROSTTWOMODELS-001), the frost
@@ -126,7 +133,7 @@ export default function TodayV2() {
   const staleMark = plan ? staleMarker({ planDate, generatedAt: data?.generated_at ?? null, fromCache: isFromCache(data), today: todayLocalISO() }) : null
 
   // ── the jump chips (§2.4, §2.7): Water / Feed / Check from the same active rows as the Needs care count.
-  const counts = useMemo(() => taskCounts(care), [care])
+  const counts = useMemo(() => ({ ...taskCounts(care), protect: protect.count }), [care, protect.count])
   const live = useMemo(() => liveChips(present, counts), [present, counts])
 
   // ── the ready point ───────────────────────────────────────────────────────────────────────────────────────
@@ -155,23 +162,27 @@ export default function TodayV2() {
   }, [day.awaiting, refreshPrefs])
   // S4 adds /api/plants + /api/locations settled (ok or failed) to the ready point (§6.4): the spots, groups
   // and the small-pot trigger read them, and a snapshot taken before they land would be keyed differently.
-  const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver) && (!plan || needs.settled)
+  // S5: Protect reads the same two requests (+ the roster when a household row needs a name) — with no plan too,
+  // since the household's cold rows can make Protect exist on their own.
+  const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver) && (!plan || needs.settled) && protect.settled
 
   const { record, isOpen, tap, overlayAll, update, setFilter } = useTodayVisit({
     userId, planDate, ready,
     start: () => {
-      // §3 + MF1: Needs care opens by itself on a reason (never / hot / small) unless a close acked today
-      // already named every reason; the descriptor is kept so a close now records the ack.
-      const careOpen = present.includes('care') && careOpens(needs.trigger, layer1.resolve('care'), planDate)
+      // §3 + MF1 — ONE evaluation (triggers.js openAtStart): Protect tonight (frost / hard freeze / a chill
+      // planting's first night), Needs care (never / hot / small) each open by themselves unless a close made
+      // today already covers their trigger; the descriptors are kept so a close now records the ack.
+      const opened = openAtStart({ present, planDate, resolve: layer1.resolve, triggers: { protect: protect.trigger, care: needs.trigger } })
       return {
         order: { sections: present, chips: live },
         layer1: {
           ...Object.fromEntries(present.map((k) => [k, layer1.resolve(k)?.open === true])),
           glance: layer1.resolve('glance')?.open === true,
         },
-        overlay: careOpen ? { care: 'open' } : {},
-        triggers: careOpen ? { care: needs.trigger } : {},
+        overlay: opened.overlay,
+        triggers: opened.triggers,
         care: needs.snapshot(),
+        protect: protect.snapshot(),
       }
     },
   })
@@ -249,7 +260,18 @@ export default function TodayV2() {
   // opened the section this visit. Emptied mid-visit (§2.5, S4g): "Needs care · all caught up" over what was
   // logged today and what rain took (useNeedsCare caughtUp).
   const careUrgent = !!record?.triggers?.care && record?.overlay?.care === 'open'
+  // S5: the urgency cue (severity.med) only when a trigger opened Protect this visit; the words are the night's
+  // ("Before dark · low 42°F · Lemon Verbena, Sweet Basil +3"). Emptied mid-visit: what this visit did.
+  const protectUrgent = !!record?.triggers?.protect && record?.overlay?.protect === 'open'
   const SECTIONS = {
+    protect: {
+      title: 'Protect tonight',
+      count: protect.count || null,
+      summary: protect.count
+        ? (protectUrgent ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{protect.summary}</> : protect.summary)
+        : handledSummary(record?.protect),
+      body: <ProtectTonight protect={protect} record={record} update={update} announce={announce} />,
+    },
     care: {
       title: care.length ? 'Needs care' : needs.caughtUp.title,
       count: care.length || null,
