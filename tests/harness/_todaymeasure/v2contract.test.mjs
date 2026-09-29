@@ -33,8 +33,9 @@ describe('today-v2 contract table', () => {
     const all = [...STATES.flatMap((s) => s.checks), ...SHELL, ...REGIONS_V2]
     for (const c of all) for (const sl of [].concat(c.armedAt)) expect(SLICES).toContain(sl)
     for (const s of STATES) expect(s.checks.some((c) => c.family === 'prefs-instrument' && isArmed(c))).toBe(true)
-    // S3 and S4 landed in parallel (wave 3), merged by the integrator; S4g and S5 (wave 4, beside S6) on that merge.
-    expect(LANDED).toEqual(['S0', 'S2', 'S3', 'S4', 'S4g', 'S5'])
+    // S3 and S4 landed in parallel (wave 3), merged by the integrator; S4g, S5 and S6 (wave 4, in parallel) on that
+    // merge, merged by the second integrator (build-int2.md).
+    expect(LANDED).toEqual(['S0', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6'])
   })
   // S3 arms the glance + bar everywhere a plan exists, and split the checks that also measure a later slice: the S3
   // half is armed, the rest keeps its later slice. Pinned so the split cannot quietly arm (or drop) either half.
@@ -50,8 +51,10 @@ describe('today-v2 contract table', () => {
     // S5 landed the Protect half of the split.
     expect(pendingIn('v2-frost', 'first-screen')).toEqual([])
     expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-sec-protect', 'protect-pick']))
-    expect(armedIn('v2-frost', 'jumpbar').map((c) => c.chipsOfPresent)).toEqual([['protect', 'water', 'feed', 'check', 'harvest']])
-    expect(pendingIn('v2-frost', 'jumpbar').map((c) => c.chips)).toEqual([['protect', 'water', 'feed', 'check', 'harvest']])
+    // S5 and S6 landed together (integration 2): the whole-bar half (exactly these chips) arms beside S3's own half.
+    expect(armedIn('v2-frost', 'jumpbar').map((c) => c.chipsOfPresent || c.chips)).toEqual([['protect', 'water', 'feed', 'check', 'harvest'], ['protect', 'water', 'feed', 'check', 'harvest']])
+    expect(armedIn('v2-frost', 'jumpbar').filter((c) => c.chips).map((c) => c.armedAt)).toEqual([['S3', 'S5', 'S6']])
+    expect(pendingIn('v2-frost', 'jumpbar')).toEqual([])
     for (const fam of ['chip-census', 'weather-once', 'region-headcount']) expect(armedIn('v2-frost', fam), fam).toHaveLength(1)
     expect(armedIn('v2-quiet', 'jumpbar').map((c) => c.present)).toEqual([false])
     expect(armedIn('v2-stale', 'stale-marker')).toHaveLength(1)
@@ -59,10 +62,10 @@ describe('today-v2 contract table', () => {
     // The page must be taller than a screen for the bar to pin or a jump to land under it: S4's body gives that.
     for (const fam of ['sticky', 'jump-landing', 'jump-focus']) expect(SHELL.find((c) => c.family === fam).armedAt).toEqual(['S3', 'S4'])
     // The glance's REGIONS rows arm with S3 (the gate counts a row only once its own slice has landed); merged with
-    // S4, Needs care's v2-frost rows are armed beside them; S5 adds the pick link; nothing of S6's is.
+    // S4, Needs care's v2-frost rows are armed beside them; S5 adds the pick link; S6 arms Resting's and Harvest's.
     const glanceRows = ['today-weather', 'weather-cue-line', 'frost-alert-line', 'drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list']
     expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && r.armedAt === 'S3').map((r) => r.id)).toEqual(glanceRows)
-    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && isArmed(r)).map((r) => r.id)).toEqual([...glanceRows, 'today-substrate-note', 'care-cap-note', 'care-show-more', 'care-moist', 'care-bulk-chips', 'care-feed-suppressed', 'protect-pick'])
+    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && isArmed(r)).map((r) => r.id)).toEqual([...glanceRows, 'today-substrate-note', 'care-cap-note', 'care-show-more', 'care-moist', 'care-bulk-chips', 'care-dormant', 'care-feed-suppressed', 'today-watch-band', 'compose-harvest-band', 'protect-pick'])
   })
   // S5 arms what Protect tonight and Heads-up can answer. Pinned so a later edit cannot quietly un-arm (or drop) any
   // of it — and so the three contract rows S5 had to restate stay restated.
@@ -109,7 +112,8 @@ describe('today-v2 contract table', () => {
     const armedIn = (name, fam) => STATES.find((s) => s.name === name).checks.filter((c) => c.family === fam && isArmed(c))
     expect(armedIn('v2-quiet', 'first-screen').some((c) => c.mustContain?.includes('care-empty') && c.wholePage)).toBe(true)
     expect(armedIn('v2-noplan', 'first-screen').some((c) => c.mustContain?.includes('today-noplan-card'))).toBe(true)
-    expect(armedIn('v2-remembered', 'section-open-set').map((c) => c.open)).toEqual([['resting']])
+    // S6 arms v2-remembered's Harvest half beside S2's Resting half.
+    expect(armedIn('v2-remembered', 'section-open-set').map((c) => c.open)).toEqual([['resting'], ['harvest', 'resting']])
     expect(armedIn('v2-remembered-conflict', 'section-open-set').map((c) => c.closed)).toEqual([['care']])
   })
   // S4g arms its own checks on the S4 surface only, and every S4g mutant names ≥ 2 killer families.
@@ -132,6 +136,33 @@ describe('today-v2 contract table', () => {
     const s4g = Object.entries(MUTANTS_V2).filter(([, m]) => [].concat(m.armedAt).includes('S4g'))
     expect(s4g.map(([n]) => n)).toEqual(expect.arrayContaining(['dropSpotRetry', 'retryNewBatch', 'spotShareIsGroupTotal', 'noFilterAnnouncement', 'announceEveryRender', 'emptiedTitleStays', 'dropCaughtUpSummary']))
     for (const [n, m] of s4g) { expect(m.file && m.find, n).toBeTruthy(); expect(new Set(m.killers).size, n).toBeGreaterThanOrEqual(2) }
+  })
+  // S6 arms Harvest / Put-Up / Resting / household / the Sow row where S6 alone can answer; the checks that also
+  // need Protect or Heads-up (S5) waited in S6's lane and arm here, with S5 landed beside it (integration 2).
+  // Pinned so neither half can quietly arm or drop.
+  it('S6 arms its own states and splits, and the S5 + S6 halves arm together', () => {
+    const find = (name) => STATES.find((s) => s.name === name).checks
+    const armedIn = (name, fam) => find(name).filter((c) => c.family === fam && isArmed(c))
+    const pendingIn = (name, fam) => find(name).filter((c) => c.family === fam && !isArmed(c))
+    expect(armedIn('v2-household', 'section-open-set').map((c) => c.closed)).toEqual([['hh-member_j']])
+    expect(armedIn('v2-household', 'header-text').map((c) => [c.counts, c.summaries])).toEqual([[{ 'hh-member_j': 15 }, { 'hh-member_j': 'Water 8 · Feed 7' }]])
+    expect(armedIn('v2-household', 'region-headcount')).toHaveLength(1)
+    expect(armedIn('v2-storage-mid', 'section-open-set').map((c) => c.closed)).toEqual([['headsup', 'putup'], ['putup']])
+    expect(pendingIn('v2-storage-mid', 'section-open-set')).toEqual([])
+    for (const fam of ['region-headcount', 'owner-floors', 'header-text']) expect(armedIn('v2-storage-mid', fam), fam).toHaveLength(1)
+    for (const name of ['v2-frost', 'v2-busy']) {
+      expect(armedIn(name, 'section-open-set').filter((c) => c.orderOf).map((c) => c.orderOf)).toContainEqual(['care', 'harvest', 'resting'])
+      expect(armedIn(name, 'header-text').filter((c) => c.sowRow).map((c) => c.sowRow)).toEqual(['All sow windows ›'])
+      expect(armedIn(name, 'section-open-set').filter((c) => c.order).map((c) => c.order)).toEqual([['protect', 'care', 'harvest', 'resting']])
+      expect(pendingIn(name, 'section-open-set')).toEqual([])
+    }
+    expect(armedIn('v2-frost', 'owner-floors').map((c) => c.owners)).toEqual([['glance', 'care', 'harvest', 'resting']])
+    const s6Rows = REGIONS_V2.filter((r) => r.armedAt === 'S6').map((r) => [r.id, r.state, isArmed(r)])
+    expect(s6Rows).toEqual([['care-dormant', 'v2-frost', true], ['today-watch-band', 'v2-frost', true], ['compose-harvest-band', 'v2-frost', true], ['cultivation-lead', '*', true], ['today-household', 'v2-household', true], ['putup-use-soon', 'v2-storage-mid', true]])
+    // Every state owning an S6 REGIONS row runs a region-headcount check — v2-household and v2-storage-mid had none,
+    // so their rows could never be counted. (S2's care-empty / today-noplan-card rows are counted instead by their
+    // states' first-screen mustContain, which fails on absence.)
+    for (const r of REGIONS_V2.filter((x) => x.armedAt === 'S6' && x.state !== '*')) expect(armedIn(r.state, 'region-headcount').length, r.id).toBeGreaterThan(0)
   })
   it('keeps every trigger-predicate mutant as a unit-table cell (Simplify 3), never silently dropped', () => {
     const cellMutants = new Set(TRIGGER_CELLS.map((c) => c.killedMutant))

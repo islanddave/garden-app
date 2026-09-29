@@ -194,9 +194,15 @@ const MEASURE = `(() => {
     const hb = hdr ? box(hdr) : null
     const rows = {}; let visibleRows = 0, shortRows = 0, rowTotal = 0
     for (const r of ROWS) { const els = [...el.querySelectorAll(tid(r))]; rows[r] = els.length; rowTotal += els.length; for (const x of els) { if (shown(x)) visibleRows++; if (box(x).h < 48) shortRows++ } }
+    // S6: the section's own count attribute (a names-not-counts section carries none) and its summary line.
+    const sumEl = el.querySelector(tid('section-summary'))
     return { key, box: box(el), shown: shown(el), header: hdr ? { expanded: hdr.getAttribute('aria-expanded'), controls: hdr.getAttribute('aria-controls'), box: hb, shown: shown(hdr), text: textOf(hdr).slice(0, 140) } : null,
-      rows, rowTotal, visibleRows, shortRows, overflowsX: el.scrollWidth > el.clientWidth + 1 }
+      rows, rowTotal, visibleRows, shortRows, overflowsX: el.scrollWidth > el.clientWidth + 1,
+      dataCount: el.getAttribute('data-count'), summary: sumEl ? (sumEl.textContent || '').replace(/\\s+/g, ' ').trim() : null }
   })
+  // S6: the Sow link row's words (the whole row is one link).
+  const sowEl = d.querySelector(tid('cultivation-lead'))
+  const sowRowText = sowEl ? (sowEl.textContent || '').replace(/\\s+/g, ' ').trim() : null
   const regions = Object.fromEntries(${JSON.stringify(REGION_IDS)}.map(id => { const els = all(tid(id)); return [id, { count: els.length, boxes: els.slice(0, 3).map(el => ({ ...box(el), shown: shown(el) })) }] }))
   const one = id => { const el = d.querySelector(tid(id)); return el ? { ...box(el), shown: shown(el), sw: el.scrollWidth, cw: el.clientWidth, ox: w.getComputedStyle(el).overflowX, text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 200) } : null }
   const glanceEl = d.querySelector(tid('today-glance'))
@@ -257,7 +263,7 @@ const MEASURE = `(() => {
     controls: controls.length,
     version: all('[data-today-version="2' + SUF + '"]').length,
     prefsLoaded: (d.querySelector('[data-prefs-loaded]') || { getAttribute: () => null }).getAttribute('data-prefs-loaded'),
-    sections, regions, testidCounts, firstBoxes, closedSpots, counts, spotCtl, groupBulk, careSummary,
+    sections, regions, testidCounts, firstBoxes, closedSpots, counts, spotCtl, groupBulk, careSummary, sowRowText,
     glance: glanceEl ? { ...box(glanceEl), shown: shown(glanceEl), expanded: glanceToggle ? glanceToggle.getAttribute('aria-expanded') : null, stale: !!glanceEl.querySelector('[data-stale="true"]') } : null,
     verdict, textFit, bar: bar ? { ...box(bar), sw: bar.scrollWidth, cw: bar.clientWidth, ox: w.getComputedStyle(bar).overflowX, chips } : null,
     weather: all(tid('today-weather')).length,
@@ -385,6 +391,11 @@ const CHECKERS = {
     // S4 (D6): every spot row carries its own Not today; SF8: the Needs care summary is reasons + spots.
     if (c.spotNotToday) for (const [spot, ctl] of Object.entries(m.spotCtl || {})) if (ctl.notToday !== 1) F(`spot '${spot}' carries ${ctl.notToday} Not today control(s), expected 1 (D6)`)
     if (c.careSummary && !(m.careSummary || '').includes(c.careSummary)) F(`the Needs care header reads "${m.careSummary}", expected its summary "${c.careSummary}" (SF8)`)
+    // S6: a section's summary line, exactly; a section that names what it lists carries no count (Reward UX, plan §10
+    // item 4); the Sow link row reads exactly its door while the 2027 sowing freeze holds.
+    for (const [key, text] of Object.entries(c.summaries || {})) { const s = secOf(m, key); if (!s) F(`section '${key}' is not on the page to read its summary`); else if (s.summary !== text) F(`the '${key}' summary reads ${JSON.stringify(s.summary)}, expected ${JSON.stringify(text)}`) }
+    for (const key of c.noCount || []) { const s = secOf(m, key); if (!s) F(`section '${key}' is not on the page`); else if (s.dataCount != null) F(`section '${key}' carries a count (${s.dataCount}) — its header names what it lists, never a number`) }
+    if (c.sowRow != null && m.sowRowText !== c.sowRow) F(`the Sow link row reads ${JSON.stringify(m.sowRowText)}, expected exactly ${JSON.stringify(c.sowRow)} — dated sow lines during the 2027 freeze (SOW_DATED_LINES_FROZEN)?`)
   },
   jumpbar: (m, c, F) => {
     if (c.present === false) { if (m.bar) F('a jump bar rendered with fewer than 2 chips'); return }
@@ -424,11 +435,16 @@ const CHECKERS = {
   // Interaction-driven families run in the interaction phase below; here they only have to exist.
   interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {}, 'chip-census': () => {},
   'spot-retry': () => {}, announce: () => {}, 'caught-up': () => {},
+  'owner-floors': () => {},
 }
+// S6: owner-floors runs FIRST, on the page as it first rendered (it opens each owner it measures and closes it again),
+// so what it records does not depend on what the other families leave open, pressed or scrolled.
 // The writes run last (group-water-all, then S4g's spot-retry), each undoing itself before the next; S4g's filter
 // announcements after them (they leave filters pressed); S4g's caught-up LAST of all — it empties Needs care and
 // leaves it empty.
-const INTERACTION_FAMILIES = ['interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up']
+const INTERACTION_FAMILIES = ['owner-floors', 'interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up']
+// S6: owner heights measured this run, per state — written into the v2 budget by --record, judged against it otherwise.
+const ownerRecord = {}
 
 // S3 chip census, measured in the page at normal text and at 200% (WCAG 1.4.4 resize text; Android's font scaling
 // reaches the rem-sized labels the same way). Restores the root font size before it returns.
@@ -484,6 +500,28 @@ async function runInteractions(state, checks, at) {
           const rowsShown = (await evalSettled(VISIBLE_COUNT('care-exceptions-row'))).shown
           if (lab != null && lab !== rowsShown) fail(at, 'count-invariant', `the exceptions label counts ${lab}, ${rowsShown} exception row(s) show under it`)
         }
+      }
+    } else if (c.family === 'owner-floors') {
+      // S6: the geometric witness for a region moved into an owner (the glance's details, Needs care's foot, Harvest's two
+      // bands, Put-Up's band, Resting's rows): opened from the default render, the owner is at least as tall as the
+      // budget recorded (0.99×) — a region deleted inside it shortens it, whatever element census says. Put back as found.
+      for (const owner of c.owners) {
+        const target = owner === 'glance' ? 'glance' : `section:${owner}`
+        const anchor = owner === 'glance' ? 'today-glance' : `today-sec-${owner}`
+        const wasOpen = (await evalSettled(`window.__h.expanded(${JSON.stringify(target)})`)) === 'true'
+        if (!wasOpen) { const a = await evalSettled(`window.__h.act({ tap: ${JSON.stringify(target)} })`); if (a.void) { F(`could not open '${owner}' to measure it: ${a.void}`); continue } }
+        await evalSettled('new Promise(r => setTimeout(r, 150))')
+        const h = await evalSettled(`(() => { const el = document.querySelector('[data-testid="${anchor}${SUFFIX}"]'); return el ? Math.round(el.getBoundingClientRect().height) : null })()`)
+        if (h == null) F(`owner '${owner}' (${anchor}) is not on the page to measure`)
+        else {
+          ;(ownerRecord[state.name] ||= {})[owner] = h
+          const floor = budget?.states?.[state.name]?.owners?.[owner]?.floor
+          if (!RECORD) {
+            if (floor == null) F(`no owner floor for '${owner}' in the v2 budget — record it on a clean tree (an armed floor with no number is unguarded)`)
+            else if (h < floor) F(`'${owner}' opened is ${h}px tall, under its ${floor}px floor — something inside it is gone`)
+          }
+        }
+        if (!wasOpen) await evalSettled(`window.__h.act({ tap: ${JSON.stringify(target)} })`)
       }
     } else if (c.family === 'weather-once') {
       // Opened only if closed, and left as found: region-headcount runs first and leaves the glance OPEN (its last
@@ -905,6 +943,8 @@ try {
       controlsFloor: m.controls > 0 ? Math.max(1, m.controls - 2) : 0,
       scrollHeightCeiling: Math.round(m.scrollHeight * 1.02),
       measured: { scrollHeight: m.scrollHeight, contentBottom: m.contentBottom, controls: m.controls },
+      // S6: each owner-floors owner, as opened this run.
+      ...(ownerRecord[state.name] ? { owners: Object.fromEntries(Object.entries(ownerRecord[state.name]).map(([k, h]) => [k, { floor: Math.round(h * 0.99), measured: h }])) } : {}),
     }
   }
   if (!failures.length || PROBE_NOTHING || SELF_TEST) console.log(`[today-shape-v2] font: ${pinned ?? 'NO PIN'} · ${chrome.version.Browser} · probe widths ${JSON.stringify(await fontProbe(cdp.evalIn))}`)

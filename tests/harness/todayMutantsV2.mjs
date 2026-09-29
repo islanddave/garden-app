@@ -223,10 +223,28 @@ export const MUTANTS_V2 = {
     defect: 'the "Pick what\'s ripe first" link is gone from a frost / freeze night',
   },
 
-  // ── S6: harvest, put-up, resting, household, sow link; a moved region deleted inside its owner, ×10
-  ...Object.fromEntries(['watchBand', 'compose', 'putUp', 'dormant', 'dryList', 'feedSuppressed', 'rainNote', 'basisStamp', 'droughtLine', 'leafLine']
-    .map((r) => [`dropRegionInOwner_${r}`, P('S6', ['region-headcount', 'first-screen'], `the moved region '${r}' is deleted inside its V2 owner`)])),
-  sowLinesDuringFreeze: P('S6', ['header-text', 'region-headcount'], 'dated sow lines render during the 2027 freeze'),
+  // ── S6: harvest, put-up, resting, household, sow link (patterns filled by S6, 2026-09-29; exact source text — the
+  // plugin throws on a miss). dropRegionInOwner ×10: a region the redesign MOVED into an owner (§9.1 REGIONS) deleted
+  // inside that owner. Killers: region-headcount (the owner opened, the region counted) and owner-floors (S6's
+  // family: the owner opened is shorter than its recorded floor). S0 predicted first-screen, which cannot see them —
+  // every one of these owners is closed on the first screen, and the glance's regions sit behind its tap (D1).
+  // Four of the ten live in S3's / S4's files (GlanceCard.jsx; NeedsCare.jsx, S4g's this wave): a line they rewrite
+  // re-points its pattern here.
+  dropRegionInOwner_watchBand: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<HarvestWatchBand data={bands.watch} bare />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'watchBand' (today-watch-band) is deleted inside Harvest" },
+  dropRegionInOwner_compose: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<ComposeHarvestBand data={bands.compose} bare />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'compose' (compose-harvest-band) is deleted inside Harvest" },
+  dropRegionInOwner_putUp: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<PutUpUseSoonBand data={bands.soon} bare />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'putUp' (putup-use-soon) is deleted inside From your Put-Up" },
+  dropRegionInOwner_dormant: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<DormantList plan={plan} bare resumed={resumedSet} onResumed={markResumed} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'dormant' (care-dormant) is deleted inside Resting" },
+  dropRegionInOwner_dryList: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<DroughtList plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'dryList' (care-drought-list) is deleted inside the glance details" },
+  dropRegionInOwner_feedSuppressed: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '<FeedSuppressedList plan={care.plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'feedSuppressed' (care-feed-suppressed) is deleted at the foot of Needs care" },
+  dropRegionInOwner_rainNote: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<RainNote plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'rainNote' (care-rain-note) is deleted inside the glance details" },
+  dropRegionInOwner_basisStamp: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '{basis && <p data-testid="today-basis-stamp"', replace: '{false && basis && <p data-testid="today-basis-stamp"', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'basisStamp' (today-basis-stamp) is deleted inside the glance details" },
+  dropRegionInOwner_droughtLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<DroughtLine plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'droughtLine' (drought-line) is deleted inside the glance details" },
+  dropRegionInOwner_leafLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<LeafWetnessLine plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'leafLine' (leaf-wetness-line) is deleted inside the glance details" },
+  // The freeze switched off at its one consumer: the page asks for sow lines and the Sow link row prints the engine's
+  // "Sow X by …" lines above its door. Killers: header-text (the row's exact words, v2-busy / v2-frost, whose 09-24
+  // engine run has two such lines) and floors (the row is the page's last block, so the lines push the last ink and
+  // the document past their 2% ceilings). S0 predicted region-headcount, which counts presence and cannot see ADDED lines.
+  sowLinesDuringFreeze: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: 'sowLines: !SOW_DATED_LINES_FROZEN', replace: 'sowLines: true', killers: ['header-text', 'floors'], defect: 'dated sow lines render during the 2027 freeze' },
 
   // ── §13 Simplify 3: trigger-predicate mutants → cells of the triggers.js unit table (S5 writes the test)
   ignoreRemembered: U('S5', 'Layer 1 dropped — a same-day ack no longer holds'),

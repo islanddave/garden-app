@@ -37,8 +37,13 @@
 // evaluation at the ready point for protect / headsup / care). Arms every check whose slices are now all landed —
 // the Protect half of the v2-frost / v2-busy first screens, visibility on v2-frost, the busy-seen / closed-today /
 // routine / freeze / storage / remembered-urgent / stale open sets. Rows S5 changed are marked "S5:" below.
+// S6 (2026-09-29, wave 4, parallel with S5 and S4g): Harvest, From your Put-Up, Resting's rows, the household
+// sections, the Sow link row. Its own checks are marked "S6-scoped" where the full-page version also needs S5
+// (Protect, Heads-up). New family `owner-floors`: a section (or the glance) opened from the default render must be
+// at least as tall as the budget recorded — the geometric witness that a region moved into an owner was not
+// deleted inside it (dropRegionInOwner), independent of region-headcount's element census.
 // S4g, S5 and S6 were built in parallel on the same base and merged by the integrator (build-int2.md).
-export const LANDED = ['S0', 'S2', 'S3', 'S4', 'S4g', 'S5']
+export const LANDED = ['S0', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6']
 export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6', 'S7', 'S8']
 
 export function isArmed(check, landed = LANDED, armAll = false) {
@@ -170,6 +175,11 @@ export const STATES = [
       // reads the emptied wording (logged today = done items + store = 5 here; rain = busyfull's 70 rain_skipped), no
       // count, focus on it. Runs LAST on this state (it leaves Needs care empty).
       { family: 'caught-up', armedAt: 'S4g', water: 'Drive-Shade', title: 'Needs care · all caught up', summary: '5 logged today, 70 covered by rain', why: '§2.5: an emptied Needs care reads "Needs care · all caught up" with "N logged today, M covered by rain"; §5.5 focus to its header' },
+      // S6-scoped: busyfull carries a composable harvest batch AND the watch list, so Harvest exists between Needs care
+      // and Resting; nothing opens it (never a trigger). Its header names, never counts; the Sow row is the door alone.
+      { family: 'section-open-set', armedAt: ['S4', 'S6'], orderOf: ['care', 'harvest', 'resting'], closed: ['harvest', 'resting'], why: 'S6-scoped: Harvest between Needs care and Resting, closed by default' },
+      { family: 'header-text', armedAt: 'S6', noCount: ['harvest'], summaries: { harvest: '20 picks · logged an hour ago · check Palla Rossa Mavrik Radicchio, Gourmet Blend Beets, Red Acre Cabbage…' }, sowRow: 'All sow windows ›', why: 'S6: the Harvest header names the compose band\'s picks line and the watch band\'s own first three (no count, no denominator); the Sow link row is exactly its door while the 2027 freeze holds (09-24 has two dated engine lines to hide)' },
+      { family: 'owner-floors', armedAt: 'S6', owners: ['glance', 'care', 'harvest', 'resting'], why: 'S6: each owner of a moved region, opened from the default render, is at least its recorded height — a region deleted inside it (dropRegionInOwner) shortens it' },
     ],
   },
   {
@@ -202,6 +212,9 @@ export const STATES = [
       // (the round trip), header-text (the words on the rows, the header count after Undo), group-water-all (a spot's
       // own share on its done line), retry-focus (§5.5), announce (the result in the status region).
       { family: 'spot-retry', armedAt: 'S4g', group: 'Outside', fail: 2, why: 'MF3: a failed write stays on its spot — "N not logged" + Retry on the closed row, out of Water all; Retry completes the run; one Undo' },
+      // S6-scoped: busy has the watch list but no fresh harvest batch — Harvest is the watch band alone.
+      { family: 'section-open-set', armedAt: ['S4', 'S6'], orderOf: ['care', 'harvest', 'resting'], closed: ['harvest', 'resting'], why: 'S6-scoped: Harvest between Needs care and Resting, closed by default' },
+      { family: 'header-text', armedAt: 'S6', noCount: ['harvest'], summaries: { harvest: 'check Palla Rossa Mavrik Radicchio, Gourmet Blend Beets, Red Acre Cabbage…' }, sowRow: 'All sow windows ›', why: 'S6: names, no count; the Sow link row is exactly its door while the 2027 freeze holds' },
     ],
   },
   {
@@ -283,7 +296,13 @@ export const STATES = [
   { name: 'v2-storage-open', fixture: 'storage', redate: '2026-09-28', clock: AT('2026-09-28'), prefs: 'prefs.default.json', proves: 'Heads-up opens on the first day of the window',
     checks: [...common(), { family: 'section-open-set', armedAt: 'S5', open: ['headsup'] }, { family: 'first-screen', armedAt: 'S5', mustContain: ['today-sec-headsup'] }, { family: 'region-headcount', armedAt: 'S5' }] },
   { name: 'v2-storage-mid', fixture: 'storage', clock: AT('2026-10-01'), prefs: 'prefs.default.json', proves: 'Heads-up closed mid-window (negative)',
-    checks: [...common(), { family: 'section-open-set', armedAt: ['S5', 'S6'], closed: ['headsup', 'putup'] }, { family: 'first-screen', armedAt: 'S5', mustContain: ['today-sec-headsup'] }] },
+    checks: [...common(), { family: 'section-open-set', armedAt: ['S5', 'S6'], closed: ['headsup', 'putup'] }, { family: 'first-screen', armedAt: 'S5', mustContain: ['today-sec-headsup'] },
+      // S6-scoped: the storage state's four jars (storage-grafts.json use_soon) are the one fixture with a Put-Up shelf.
+      // This state had no region-headcount check, so REGIONS' putup-use-soon row (v2-storage-mid, S6) was never counted.
+      { family: 'section-open-set', armedAt: 'S6', closed: ['putup'], why: 'S6-scoped: From your Put-Up exists and never opens by itself' },
+      { family: 'header-text', armedAt: 'S6', noCount: ['putup'], summaries: { putup: 'Summer Squash (past date) · Plum · Basil · Basil' }, why: 'S6: the use-soon slice by name, past date marked, no count (plan §1.5)' },
+      { family: 'region-headcount', armedAt: 'S6', why: 'S6: putup-use-soon counted inside Put-Up once opened' },
+      { family: 'owner-floors', armedAt: 'S6', owners: ['putup'], why: 'S6: Put-Up opened is at least its recorded height' }] },
   { name: 'v2-storage-deadline', fixture: 'storage', redate: '2026-10-08', clock: AT('2026-10-08'), prefs: 'prefs.default.json', proves: 'deadline ≤ 2 days: open, warn plate',
     checks: [...common(), { family: 'section-open-set', armedAt: 'S5', open: ['headsup'] }, { family: 'first-screen', armedAt: 'S5', mustContain: ['today-sec-headsup'] }] },
   { name: 'v2-storage-past', fixture: 'storage', redate: '2026-10-12', clock: AT('2026-10-12'), prefs: 'prefs.default.json', proves: 'grace phase: past copy, closed',
@@ -292,7 +311,11 @@ export const STATES = [
     // SF6: household stays opt-in per person, so the lens is switched on for this device before mount.
     name: 'v2-household', fixture: 'busyhh', clock: S924, prefs: 'prefs.default.json', local: { showOthers: true },
     proves: '"Jen\'s care · 15" closed, never auto-opens; the shared skip set',
-    checks: [...common(), { family: 'section-open-set', armedAt: 'S6', closed: ['hh-member_j'] }, { family: 'header-text', armedAt: 'S6', counts: { 'hh-member_j': 15 } }],
+    // S6: + her summary (task counts, plan §1.6), and a region-headcount — this state had none, so REGIONS'
+    // today-household row (v2-household, S6) was never counted. The shared skip set is a unit test
+    // (TodayV2.household.test.jsx), not a geometry.
+    checks: [...common(), { family: 'section-open-set', armedAt: 'S6', closed: ['hh-member_j'] }, { family: 'header-text', armedAt: 'S6', counts: { 'hh-member_j': 15 }, summaries: { 'hh-member_j': 'Water 8 · Feed 7' } },
+      { family: 'region-headcount', armedAt: 'S6', why: 'S6: today-household on the default render (her section closed)' }],
   },
   {
     name: 'v2-remembered', fixture: 'busy', clock: S924, prefs: 'prefs.remembered.json',
@@ -386,7 +409,9 @@ export const SHELL = [
 export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore', 'jump-focus',
   // S4g: MF3's failure round trip, §5.5's focus after it, §5.6's status region (its words, and once per change),
   // §2.5's emptied header and §5.5's focus when a section empties.
-  'spot-retry', 'retry-focus', 'announce', 'announce-once', 'caught-up', 'empty-focus']
+  'spot-retry', 'retry-focus', 'announce', 'announce-once', 'caught-up', 'empty-focus',
+  // S6: a section (or the glance) opened from the default render is at least its recorded height.
+  'owner-floors']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome
