@@ -10,11 +10,16 @@
 //     mode widens to the second member and still never to the foreigner.
 //   * The heat clock's arithmetic end to end: transplant Jun 1, first pick Jun 25, a constant
 //     80/60 F June = 20 degree-days a day, so 24 days and 480 heat units.
+//   * The 86 F cap and 50 F floor in stat_weather_day.gdd50: one 95/45 F day (Jul 1) banks
+//     (86+50)/2-50 = 18, not the uncapped/unfloored 20. 80/60 alone sits inside both clamps, so
+//     without this day removing either clamp survived every test in the repo (QA 2026-09-29).
 //   * Grow-year boundary on the ET calendar: a pick on Oct 31 ET is season 2026, Nov 1 ET is 2027.
 //   * A saved-seed lot inherits its parent planting's source, contact links included.
 //
-// Skips cleanly on a branch that lacks the views (the migration is applied to staging before the
-// dev push per the rollout, and this suite forks staging).
+// Skips on a branch that lacks the views (the migration is applied to staging before the dev push
+// per the rollout, and this suite forks staging) — but FAILS, not skips, on a branch whose
+// schema_version carries the 5.0.0-seasonstats-001 receipt without the views: a silent skip there is
+// CI going green having tested none of the 17 views.
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js';
 import { settle, assertFixtureId } from './_cleanup.js';
@@ -27,6 +32,16 @@ const HAS_STATS = (await directSql`
     AND EXISTS (SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'source' AND column_name = 'instagram_url')
     AND EXISTS (SELECT 1 FROM public.crop_types WHERE slug = 'tomato')) AS ok`)[0].ok;
+
+const HAS_RECEIPT = (await directSql`
+  SELECT (to_regclass('public.schema_version') IS NOT NULL
+    AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-seasonstats-001')) AS ok`)[0].ok;
+
+describe('season-stats schema presence', () => {
+  it.runIf(HAS_RECEIPT)('the 5.0.0-seasonstats-001 receipt means the stat_* views are there', () => {
+    expect(HAS_STATS).toBe(true);
+  });
+});
 
 const RUN = testRunId();
 const USER_A = `user_int_stats_a_${RUN}`;       // household member 1 (owns the weather space)
@@ -90,13 +105,17 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
     ids.srcB = await mkSource(USER_B, `int-stats-src-b-${RUN}`);
     ids.srcC = await mkSource(USER_C, `int-stats-src-c-${RUN}`);
 
-    // Weather for A only: June 2026, a constant 80/60 F => 20 degree-days a day.
+    // Weather for A only: June 2026, a constant 80/60 F => 20 degree-days a day; then Jul 1 at 95/45 F,
+    // which the 86 F cap and the 50 F floor turn into 18 degree-days.
     ids.space = (await directSql`
       INSERT INTO spaces (name, created_by) VALUES (${`int-stats-space-${RUN}`}, ${USER_A}) RETURNING id`)[0].id;
     await directSql`
       INSERT INTO weather_daily (space_id, date, tmax_f, tmin_f, precip_in)
       SELECT ${ids.space}::uuid, d::date, 80, 60, 0.1
         FROM generate_series('2026-06-01'::date, '2026-06-30'::date, interval '1 day') d`;
+    await directSql`
+      INSERT INTO weather_daily (space_id, date, tmax_f, tmin_f, precip_in)
+      VALUES (${ids.space}::uuid, '2026-07-01'::date, 95, 45, 0)`;
 
     ids.plantA = await mkPlanting(USER_A, ids.projA, { name: `int-stats-pa-${RUN}`, sourceId: ids.srcA, transplantedAt: '2026-06-01', varietyId: ids.cv });
     ids.plantB = await mkPlanting(USER_B, ids.projB, { name: `int-stats-pb-${RUN}`, sourceId: ids.srcB, varietyId: ids.cv });
@@ -190,14 +209,24 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
     expect(hc.series.by_crop.find((r) => r.crop_slug === 'tomato')).toMatchObject({ first_pick: '2026-06-25', heat_units: 480 });
   });
 
-  it('ribbon: 30 weather days, the watering day carries water, care counted in days', async () => {
+  it('ribbon: 31 weather days, the watering day carries water, care counted in days', async () => {
     const { body } = await stats(USER_A);
     const r = body.sections.ribbon;
-    expect(r.series.days).toHaveLength(30);
+    expect(r.series.days).toHaveLength(31);
     expect(r.series.days.find((d) => d.date === '2026-06-02').care).toEqual(['water']);
     expect(r.meta.care_day_totals.water).toBe(1);
     expect(r.meta.pins.first_setout).toBe('2026-06-01');
     expect(r.series.weeks.reduce((s, w) => s + w.tomato_fruit, 0)).toBe(3);
+  });
+
+  it('heat units cap at 86 F and floor at 50 F: a 95/45 day banks 18, not 20', async () => {
+    const day = await directSql`
+      SELECT gdd50 FROM public.stat_weather_day WHERE owner = ${USER_A} AND day = '2026-07-01'::date`;
+    expect(day).toEqual([{ gdd50: 18 }]);
+    // Week of Mon Jun 29: Jun 29 + Jun 30 at 20 each, Jul 1 at 18. No cap -> 63, no floor -> 56, neither -> 60.
+    const { body } = await stats(USER_A);
+    const wk = body.sections.ribbon.series.weeks.find((w) => w.week_start === '2026-06-29');
+    expect(wk.heat_units).toBe(58);
   });
 
   it('grow-year boundary: Oct 31 ET is season 2026, Nov 1 ET is 2027', async () => {
