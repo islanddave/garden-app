@@ -35,6 +35,7 @@ import {
 import CheckOnItSheet from './CheckOnItSheet.jsx'
 import PutItUpSheet from './PutItUpSheet.jsx'
 import PutUpStub from './PutUpStub.jsx'
+import CheckInSaved from './CheckInSaved.jsx'
 import { PUT_IT_UP_CTA } from './putItUp.js'
 import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
 
@@ -150,7 +151,7 @@ function KindQuestion({ batch, fetch, onChanged }) {
 // Leads with WHAT IS KNOWN, never with the gap. The meta line is one joined string on purpose: it is
 // the thing a test can assert as a full literal with both bounds and every separator, which is the
 // standard this repo adopted after shipping an assertion that passes on a value ten days wrong.
-function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, stub, paused }) {
+function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, stub, savedStageId, paused }) {
   const age = describeAge(batch, nowMs)
   const stage = describeStage(batch, nowMs)
   const window = describeExpectedWindow(batch)
@@ -248,6 +249,7 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
           {Number(batch.input_count) === 1 ? '1 pick in' : `${Number(batch.input_count)} picks in`}
         </div>
       )}
+      {savedStageId && <CheckInSaved key={savedStageId} batchId={batch.id} stageId={savedStageId} onUndone={onChanged} />}
       {stub && <PutUpStub stub={stub} onOpen={onOpen} onUndone={onChanged} />}
       {/* THE ACTION SLOT (V4 §2.3): at most three quiet actions — Check on it · Open (release 1b adds
           Put it up between them and moves nothing). Pause and "Set a start date" moved to the batch's
@@ -333,7 +335,14 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
   const closeCheck = useCallback(() => setCheckingId(null), [])
   // The write landed: close, then re-read the list — the honest recovery, never a local mutation
   // (the card's clocks and "last touched" come back from the view the server computes).
-  const checkSaved = useCallback(() => { setCheckingId(null); onReload?.() }, [onReload])
+  // "Saved · Undo" in place (V4 §2.3, from 1b): the saved row's id, per batch, until the next visit.
+  const [saved, setSaved] = useState({})
+  const checkSaved = useCallback((body, answer) => {
+    const batchId = checkingId
+    const stageId = answer?.stage?.id ?? null
+    if (batchId && stageId) setSaved(m => ({ ...m, [batchId]: stageId }))
+    setCheckingId(null); onReload?.()
+  }, [checkingId, onReload])
 
   // PUT IT UP (release 1b) — one sheet for the view, like Check on it. A landed sitting leaves a STUB in
   // the card's slot (V4 §2.4 "Completion"): inside the card when the batch is still going, in the card's
@@ -420,7 +429,7 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
       {activeItems.map(item => (item.kind === 'stub'
         ? <PutUpStub key={`stub-${item.stub.batchId}`} stub={item.stub} onOpen={openBatch} onUndone={onReload} />
         : <BatchCard key={item.batch.id} batch={item.batch} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch}
-            onCheck={setCheckingId} onPutUp={setPuttingId} stub={stubFor(item.batch.id)} />
+            onCheck={setCheckingId} onPutUp={setPuttingId} stub={stubFor(item.batch.id)} savedStageId={saved[item.batch.id] ?? null} />
       ))}
 
       {paused.length > 0 && (
@@ -432,7 +441,7 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
           </h2>
           {paused.map(b => (
             <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch}
-              onCheck={setCheckingId} onPutUp={setPuttingId} stub={stubFor(b.id)} paused />
+              onCheck={setCheckingId} onPutUp={setPuttingId} stub={stubFor(b.id)} savedStageId={saved[b.id] ?? null} paused />
           ))}
         </>
       )}

@@ -335,3 +335,21 @@ describe('Put it up — words', () => {
     expect(text).not.toMatch(/\bsafe\b|shelf.life|shelf.stable|\bkeeps\b|\bgood\b|\bready\b|\bdone\b|\bexpired\b|\btable\b|\bdefault\b|\bbasis\b/i)
   })
 })
+
+describe('Check on it — Saved · Undo in place (V4 §2.3, from 1b)', () => {
+  // MUTATION: drop voids_id from the void body (or the ref) -> the literal / the count reds.
+  it('after a check-in the card says Saved with an Undo that voids exactly that row, once', async () => {
+    const stagePosts = () => fetchMock.mock.calls.filter(([p, o]) => /\/stages$/.test(p) && o?.method === 'POST')
+    wire({ other: (p) => (/\/stages$/.test(p) ? Promise.resolve({ stage: { id: 'ksl-new' }, batch: {} }) : Promise.resolve({})) })
+    renderView([MASH])
+    await act(async () => { fireEvent.click(screen.getByTestId('going-check')) })
+    fireEvent.change(screen.getByTestId('checkin-note'), { target: { value: 'skimmed' } })
+    await act(async () => { fireEvent.click(screen.getByTestId('checkin-save')) })
+    await waitFor(() => expect(screen.getByTestId('going-checkin-saved').textContent).toBe('SavedUndo'))
+    const btn = screen.getByTestId('going-checkin-undo')
+    await act(async () => { fireEvent.click(btn); fireEvent.click(btn) })
+    const voids = stagePosts().map(c => JSON.parse(c[1].body)).filter(b => b.stage_kind === 'void')
+    expect(voids).toEqual([{ stage_kind: 'void', voids_id: 'ksl-new' }])
+    await waitFor(() => expect(screen.getByTestId('going-checkin-saved').textContent).toBe('Taken back — that check-in is off the log.'))
+  })
+})
