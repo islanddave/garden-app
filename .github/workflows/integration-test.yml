@@ -117,7 +117,10 @@ jobs:
           done
           applied=0
           first_absent=""
-          for dir in v5-putupmake-001 v5-pantry-001 v5-batchbuilder-001 v5-recipes-001; do
+          # TRAIN ORDER (06-ferment-path §5 L1): 1b, then F, then B' (2, 3, 4). Pinned, in this order, by
+          # src/__tests__/integrationPutUpTrain.static.test.js — a directory missing here is silently never
+          # applied, and the fork then runs the train's code against a schema without it.
+          for dir in v5-putupmake-001 v5-fermentpath-001 v5-pantry-001 v5-batchbuilder-001 v5-recipes-001; do
             for f in migrations/"$dir"/0a-*.sql; do
               stamp=$(sed -n '2s/^-- schema_version: \([0-9A-Za-z._-]*\)$/\1/p' "$f")
               if [[ -z "$stamp" ]]; then
