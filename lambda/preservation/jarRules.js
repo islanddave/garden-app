@@ -88,6 +88,23 @@ export function validateUpdate(body) {
   return validateCommon(body) ?? (body.source_kind === undefined ? null : validateProvenance(body));
 }
 
+// Put-Up release 1a — A DATE COLUMN LEAVES AS THE CALENDAR DAY IT IS ('YYYY-MM-DD'), never as a Date.
+// The driver parses a DATE into a Date at local midnight of that day in the LAMBDA's zone (UTC), and
+// JSON turns that into "...T00:00:00.000Z": an instant, which a phone west of Greenwich reads as the
+// evening BEFORE. So every put-up and use-by date showed a day early in ET, and RecordRow's full-replace
+// PUT echoed the earlier day back — each Mark used moved preserved_at and use_by_target back one day.
+// Proved, and pinned, in src/__tests__/putUpDateEcho.tz.test.js. A plain day has no zone to misread.
+// The LOCAL getters read the driver's Date back exactly in any process zone (toISOString would agree
+// only in UTC); a value that is already text keeps its first ten characters, the day.
+function calendarDay(v) {
+  if (v == null) return null;
+  if (v instanceof Date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
+  }
+  return String(v).slice(0, 10);
+}
+
 // Shared row projection for the read surfaces (single source of columns).
 export function projectRow(r) {
   return {
@@ -99,7 +116,7 @@ export function projectRow(r) {
     // Planting provenance for display (present only on reads that JOIN garden_node). Lets the
     // record row say WHICH wave a put-up came from without a second round-trip.
     planting_name: r.planting_name ?? null,
-    planting_sown_at: r.planting_sown_at ?? null,
+    planting_sown_at: calendarDay(r.planting_sown_at),   // garden_node.sown_at is a DATE too
     planting_succession_order: r.planting_succession_order ?? null,
     harvest_log_id: r.harvest_log_id,
     // V5-INFLIGHTBATCH-001 / BUG-JARSTEAL-001. READ-ONLY here and nowhere else: batch_id stays out of
@@ -108,14 +125,14 @@ export function projectRow(r) {
     // linked jar from an unlinked one, and a close that re-points another batch's jar is undetectable
     // by any client. Written only by the kitchen-batch close / outputs routes, server-side.
     batch_id: r.batch_id ?? null,
-    preserved_at: r.preserved_at,
+    preserved_at: calendarDay(r.preserved_at),
     method: r.method,
     method_other_text: r.method_other_text,
     quantity_value: r.quantity_value,
     quantity_unit: r.quantity_unit,
     package_count: r.package_count,
     storage_location_id: r.storage_location_id,
-    use_by_target: r.use_by_target,
+    use_by_target: calendarDay(r.use_by_target),
     remaining_count: r.remaining_count,
     consumed_at: r.consumed_at,
     notes: r.notes,
@@ -134,6 +151,8 @@ export function projectRow(r) {
     source_label: r.source_label ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
+    // From the driver's values, not the projected text: classifyUseBy reads either, and leaving its
+    // input as it was keeps the status byte-identical to what it computed before the dates were fixed.
     use_by_status: classifyUseBy(r.preserved_at, r.use_by_target),
   };
 }
