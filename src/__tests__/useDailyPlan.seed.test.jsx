@@ -76,3 +76,48 @@ describe('useDailyPlan seed', () => {
     expect(renderHook(() => useDailyPlan({ seed: 'u' })).result.current.loading).toBe(false)
   })
 })
+
+// Review 4160.2 IMPORTANT-2 (V5-TODAYREDESIGN-001 integration 2): `seedPending` marks the window in which a seeded
+// remount shows a plan read BEFORE the page was left — true from the first render until the revalidation SETTLES
+// (either way), never true on an unseeded mount. TodayV2 holds its write controls over exactly that window.
+describe('useDailyPlan seedPending', () => {
+  it('is never true without a seed', async () => {
+    fetchMock.mockResolvedValue(env(today(), 'a'))
+    const { result } = renderHook(() => useDailyPlan({ includeHousehold: true }))
+    expect(result.current.seedPending).toBe(false)
+    await waitFor(() => expect(result.current.data?.plan.tag).toBe('a'))
+    expect(result.current.seedPending).toBe(false)
+  })
+
+  it('is true from a seeded remount\'s first render until its revalidation lands, then false', async () => {
+    fetchMock.mockResolvedValue(env(today(), 'first'))
+    const first = renderHook(() => useDailyPlan({ seed: 'u' }))
+    await waitFor(() => expect(first.result.current.data?.plan.tag).toBe('first'))
+    expect(first.result.current.seedPending).toBe(false) // the first mount had no seed to paint
+    first.unmount()
+    let resolve
+    fetchMock.mockReturnValue(new Promise((r) => { resolve = r }))
+    const second = renderHook(() => useDailyPlan({ seed: 'u' }))
+    expect(second.result.current.data.plan.tag).toBe('first')
+    expect(second.result.current.seedPending).toBe(true)
+    await waitFor(() => expect(second.result.current.refreshing).toBe(true))
+    expect(second.result.current.seedPending).toBe(true)
+    await act(async () => { resolve(env(today(), 'second')) })
+    expect(second.result.current.data.plan.tag).toBe('second')
+    expect(second.result.current.seedPending).toBe(false)
+  })
+
+  it('also ends when the revalidation fails (the seed stays on screen; the window is over)', async () => {
+    fetchMock.mockResolvedValue(env(today(), 'good'))
+    const a = renderHook(() => useDailyPlan({ seed: 'u' }))
+    await waitFor(() => expect(a.result.current.data).not.toBeNull())
+    a.unmount()
+    let reject
+    fetchMock.mockReturnValue(new Promise((_, r) => { reject = r }))
+    const b = renderHook(() => useDailyPlan({ seed: 'u' }))
+    expect(b.result.current.seedPending).toBe(true)
+    await act(async () => { reject(new Error('offline')) })
+    expect(b.result.current.seedPending).toBe(false)
+    expect(b.result.current.data.plan.tag).toBe('good')
+  })
+})

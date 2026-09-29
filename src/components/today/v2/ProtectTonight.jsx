@@ -34,7 +34,7 @@ const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2
 // A household member's row carries their name wherever the row is named (orchestrator, 2026-09-29): "(Jen)".
 export const rowLabel = (row) => (row.owner ? `${row.name} (${row.owner})` : row.name)
 
-export default function ProtectTonight({ protect, record, update, announce }) {
+export default function ProtectTonight({ protect, record, update, announce, writesHeld = false }) {
   const slice = record?.protect || null
   const setSlice = useCallback((fn) => update((r) => ({ ...r, protect: fn(r.protect || {}) })), [update])
   const { actions } = protect
@@ -71,7 +71,10 @@ export default function ProtectTonight({ protect, record, update, announce }) {
   }
 
   // ── writes ───────────────────────────────────────────────────────────────────────────────────────────────
+  // Review 4160.2 IMPORTANT-2: while the page holds its writes (a seeded Back remount still revalidating, TodayV2
+  // writesHeld), Covered, Brought in, Cover all, Retry and Skip post and skip nothing, and their controls are inert.
   const plantRun = async (row, kind) => {
+    if (writesHeld) return
     const res = await actions.runBulk('brought_inside', new Set([row.key]), kind === 'covered' ? { ...ONE, bodyEventType: COVER } : ONE)
     if (res.created.length) {
       addLogged(protect.logKey, [row.key])
@@ -87,6 +90,7 @@ export default function ProtectTonight({ protect, record, update, announce }) {
     }
   }
   const skip = (row) => {
+    if (writesHeld) return
     skipMany([row.key], protect.getToken)
     setSlice((s) => ({ ...s, rowsDone: { ...(s.rowsDone || {}), [row.key]: { kind: 'skipped' } } }))
     announce(`Skipped ${rowLabel(row)} for tonight.`)
@@ -108,6 +112,7 @@ export default function ProtectTonight({ protect, record, update, announce }) {
     setFocusId('protect:' + row.key)
   }
   const coverSpot = async (spot, keysNow) => {
+    if (writesHeld) return
     const want = new Set(keysNow)
     if (!want.size) return
     setBusy({ spot: spot.key, done: 0, total: want.size })
@@ -160,7 +165,7 @@ export default function ProtectTonight({ protect, record, update, announce }) {
     if (rowsDone[k]) return <ProtectDoneLine key={k} row={r} done={rowsDone[k]} inCard={inCard} onUndo={() => undoRow(r)} undoBusy={undoing === k} />
     if (!active.has(k)) return null
     return (
-      <ProtectRow key={k} row={r} inCard={inCard} failed={failed[k]} pending={actions.pendingKeys.has(k)}
+      <ProtectRow key={k} row={r} inCard={inCard} failed={failed[k]} pending={actions.pendingKeys.has(k)} held={writesHeld}
         onSkip={skip} onCover={(x) => plantRun(x, 'covered')} onBring={(x) => plantRun(x, 'brought')} />
     )
   }
@@ -187,7 +192,7 @@ export default function ProtectTonight({ protect, record, update, announce }) {
     const retry = remaining.some((k) => failed[k])
     const partial = covered ? [`covered ${covered}`, retry ? `${remaining.filter((k) => failed[k]).length} not logged` : null].filter(Boolean).join(' · ') : null
     return (
-      <CoverSpotRow key={s.key} spot={s} n={remaining.length} open={open} busy={b} retry={retry} partial={partial}
+      <CoverSpotRow key={s.key} spot={s} n={remaining.length} open={open} busy={b} retry={retry} partial={partial} held={writesHeld}
         onToggle={() => toggleSpot(s.key)} onCover={() => coverSpot(s, remaining)}
         undo={last ? { onClick: () => undoBatch(last[0]), busy: undoing === last[0], label: `Undo: ${s.name} covered ${covered}` } : null}>
         {s.keys.map((k) => plantRow(k, true))}
@@ -212,7 +217,7 @@ export default function ProtectTonight({ protect, record, update, announce }) {
   )
 }
 
-function ProtectRow({ row, inCard, failed, pending, onSkip, onCover, onBring }) {
+function ProtectRow({ row, inCard, failed, pending, onSkip, onCover, onBring, held }) {
   const who = rowLabel(row)
   const href = (row.projectId && row.plantingId) ? '/projects/' + row.projectId + '/plantings/' + row.plantingId : '/garden'
   const meta = [row.spotName, row.threshold != null ? `below ${row.threshold}°F` : null].filter(Boolean).join(' · ')
@@ -226,15 +231,15 @@ function ProtectRow({ row, inCard, failed, pending, onSkip, onCover, onBring }) 
       </Link>
       {failed ? (
         <div style={controls}>
-          <button type="button" onClick={() => (failed === 'covered' ? onCover(row) : onBring(row))} disabled={pending} aria-label={`Retry: ${who}`} style={outlineBtn}>Retry</button>
+          <button type="button" onClick={held ? undefined : () => (failed === 'covered' ? onCover(row) : onBring(row))} disabled={pending} aria-disabled={held ? 'true' : undefined} aria-label={`Retry: ${who}`} style={outlineBtn}>Retry</button>
         </div>
       ) : (
         <>
-          <button type="button" onClick={() => onSkip(row)} aria-label={`Skip ${who} tonight`} style={skipCell}>Skip</button>
+          <button type="button" onClick={held ? undefined : () => onSkip(row)} aria-disabled={held ? 'true' : undefined} aria-label={`Skip ${who} tonight`} style={skipCell}>Skip</button>
           {/* SF1: the 8 px between Covered and Brought in is dead space (the flex gap), never a control. */}
           <div data-testid="protect-controls" style={controls}>
-            <button type="button" onClick={() => onCover(row)} disabled={pending} aria-label={`Covered: ${who}`} style={outlineBtn}>Covered</button>
-            <button type="button" onClick={() => onBring(row)} disabled={pending} aria-label={`Brought in: ${who}`} style={tinted}>Brought in</button>
+            <button type="button" onClick={held ? undefined : () => onCover(row)} disabled={pending} aria-disabled={held ? 'true' : undefined} aria-label={`Covered: ${who}`} style={outlineBtn}>Covered</button>
+            <button type="button" onClick={held ? undefined : () => onBring(row)} disabled={pending} aria-disabled={held ? 'true' : undefined} aria-label={`Brought in: ${who}`} style={tinted}>Brought in</button>
           </div>
         </>
       )}
@@ -259,7 +264,7 @@ function ProtectDoneLine({ row, done, inCard, onUndo, undoBusy }) {
 
 // A spot's cover row (§4 "Protect spot cover row"): the same row anatomy as Needs care's spot rows — the
 // disclosure is a heading's button, the action its sibling behind 8 px of dead space — one level under the band.
-function CoverSpotRow({ spot, n, open, onToggle, onCover, busy, retry, partial, undo, children }) {
+function CoverSpotRow({ spot, n, open, onToggle, onCover, busy, retry, partial, undo, held, children }) {
   const panelId = useId()
   const text = busy ? `Covering ${busy.done} of ${busy.total}…` : retry ? `Retry ${n}` : (n === 1 ? 'Cover 1' : `Cover all ${n}`)
   const name = busy ? text : retry ? `Retry: cover ${n} in ${spot.name}` : `${n === 1 ? 'Cover 1' : 'Cover all ' + n} in ${spot.name}`
@@ -283,7 +288,7 @@ function CoverSpotRow({ spot, n, open, onToggle, onCover, busy, retry, partial, 
         {n > 0 && (
           <div style={{ ...controls, paddingRight: 6 }}>
             <button type="button" data-testid="protect-cover-all" data-focus-id={'protect-retry:' + spot.key}
-              onClick={busy ? undefined : onCover} aria-disabled={busy ? 'true' : undefined} aria-label={name} style={tinted}>{text}</button>
+              onClick={busy || held ? undefined : onCover} aria-disabled={busy || held ? 'true' : undefined} aria-label={name} style={tinted}>{text}</button>
           </div>
         )}
       </div>

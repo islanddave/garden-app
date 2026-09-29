@@ -34,7 +34,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
 const nameList = (names) => (names.length <= 2 ? names.join(' and ') : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`)
 const css = (s) => String(s).replace(/"/g, '\\"')
 
-export default function NeedsCare({ care, record, update, announce, planDate, userId, filterIntent }) {
+export default function NeedsCare({ care, record, update, announce, planDate, userId, filterIntent, writesHeld = false }) {
   const c = record?.care || null
   const { actions } = care
   const setCare = useCallback((fn) => update((r) => ({ ...r, care: fn(r.care || {}) })), [update])
@@ -131,7 +131,10 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   const rowNames = (keys) => keys.map((k) => care.allEnriched.find((r) => r.key === k)?.name).filter(Boolean)
   const notLoggedText = (keys, name) => `${keys.length} not logged in ${name}: ${nameList(rowNames(keys))}. Retry is on each.`
 
+  // Review 4160.2 IMPORTANT-2: while the page holds its writes (a seeded Back remount still revalidating, TodayV2
+  // writesHeld), every write path below returns before it posts or skips anything — the controls are aria-disabled too.
   const run = async ({ scope, key, name, etype, keys, bodyEventType }) => {
+    if (writesHeld) return null
     const total = keys.size
     if (!total) return null
     const bid = newId()
@@ -166,6 +169,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // Focus lands once, after: on the Retry while anything still fails, else the done line the spot shrank to,
   // else the spot row itself (other tasks' rows remain).
   const retrySpot = async (spot) => {
+    if (writesHeld) return
     const runs = new Map()
     const singles = []
     for (const r of spot.rows) {
@@ -199,6 +203,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   }
 
   const notToday = (spot) => {
+    if (writesHeld) return
     const keys = spot.rows.map((r) => r.key)
     if (!keys.length) return
     skipMany(keys, care.getToken)
@@ -236,6 +241,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // ── per-plant actions (D11): the one-tap chip, Moist, Skip — each leaves a done line in place ──────────────
   // A failure stays on the row as "Not logged" + Retry, recording the type it posted; returns whether it landed.
   const plantRun = async (row, bodyEventType, { focus = true } = {}) => {
+    if (writesHeld) return false
     const res = await actions.runBulk(row.eventType, new Set([row.key]), { concurrency: 1, excludeInFlight: true, bodyEventType })
     if (res.created.length) {
       addLogged(care.logKey, [row.key])
@@ -261,6 +267,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     // The row's Retry re-posts what failed — a failed Moist retries as Moist, never as the row's watering.
     onRetry: (row) => plantRun(row, failed[row.key]?.body || undefined),
     onSkip: (row) => {
+      if (writesHeld) return
       skipMany([row.key], care.getToken)
       setCare((cc) => ({ ...cc, rowsDone: { ...(cc.rowsDone || {}), [row.key]: { kind: 'skipped', spot: row.spotKey } } }))
       announce(`Skipped ${row.name} for today.`)
@@ -281,6 +288,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
       announce(`Undone: ${row.name}.`)
     },
     undoBusy: false,
+    writesHeld,
   }
 
   const toggleIn = (field, key) => setCare((cc) => {
@@ -331,7 +339,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
       <SpotRow key={spot.key} spot={spot} open={open} onToggle={() => toggleIn('open', spot.key)}
         busy={busy && busy.scope === 'spot' && busy.key === spot.key ? busy : null} groupBusy={groupBusy === spot.group ? groupBusy : null}
         handled={handled} partial={partial ? partial.replace(/^./, (x) => x.toUpperCase()) : null}
-        failedN={failedN} onRetry={() => retrySpot(spot)}
+        failedN={failedN} onRetry={() => retrySpot(spot)} writesHeld={writesHeld}
         onNotToday={() => notToday(spot)} onWater={() => waterSpot(spot)}>
         <SpotBody spot={spot} spotAll={spotAllByKey.get(spot.key) || []} exceptions={c?.exceptions?.[spot.key] ?? null}
           done={rowsDone} failed={failed} pendingKeys={actions.pendingKeys}
@@ -340,7 +348,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
           onShowAll={() => setCare((cc) => ({ ...cc, shown: { ...(cc.shown || {}), [spot.key]: 'all' } }))}
           rowProps={{ ...rowProps, undoBusy: !!undoing }}
           waterOther={spot.candidates.size > 0 && (
-            <button type="button" onClick={() => waterSpot(spot)} style={filledCommit} aria-label={`Water the other ${spot.candidates.size} in ${spot.name}`}>
+            <button type="button" onClick={writesHeld ? undefined : () => waterSpot(spot)} aria-disabled={writesHeld ? 'true' : undefined} style={filledCommit} aria-label={`Water the other ${spot.candidates.size} in ${spot.name}`}>
               {`Water the other ${spot.candidates.size}`}
             </button>
           )} />
@@ -433,7 +441,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
                     <span style={{ display: 'block', fontSize: T.type.xs, color: P.mid }}>{[pg.method ? pg.method[0].toUpperCase() + pg.method.slice(1) : null, plural(n, 'plant', 'plants')].filter(Boolean).join(' · ')}</span>
                   </button>
                   <div style={{ display: 'flex', alignItems: 'center', paddingRight: 6 }}>
-                    <button type="button" onClick={b ? undefined : () => feedProduct(pg)} aria-disabled={b ? 'true' : undefined} aria-label={b ? `Feeding ${b.done} of ${b.total}…` : `${n === 1 ? 'Feed 1' : 'Feed all ' + n} with ${pg.product}`} style={tinted}>
+                    <button type="button" onClick={b || writesHeld ? undefined : () => feedProduct(pg)} aria-disabled={b || writesHeld ? 'true' : undefined} aria-label={b ? `Feeding ${b.done} of ${b.total}…` : `${n === 1 ? 'Feed 1' : 'Feed all ' + n} with ${pg.product}`} style={tinted}>
                       {b ? `Feeding ${b.done} of ${b.total}…` : (n === 1 ? 'Feed 1' : `Feed all ${n}`)}
                     </button>
                   </div>
@@ -460,7 +468,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
                 <h3 style={groupLabel}>{gk}</h3>
                 {g.spotsWithWater >= 2 && g.candidates.size > 0 && (
                   <button type="button" data-testid="care-group-bulk" data-group={gk}
-                    onClick={gBusy ? undefined : () => waterGroup(g)} aria-disabled={gBusy ? 'true' : undefined}
+                    onClick={gBusy || writesHeld ? undefined : () => waterGroup(g)} aria-disabled={gBusy || writesHeld ? 'true' : undefined}
                     aria-label={gBusy ? `Watering ${gBusy.done} of ${gBusy.total}…` : `Water all ${g.candidates.size} ${gk === OUTSIDE ? 'outside' : 'in ' + gk}`}
                     style={{ ...tinted, marginLeft: 'auto' }}>
                     {gBusy ? `Watering ${gBusy.done} of ${gBusy.total}…` : `Water all ${g.candidates.size}`}

@@ -15,14 +15,15 @@ import { outlineBtn } from './PlantCareRow.jsx'
 // MF3 (S4g): a write that failed stays on the SPOT, open or closed — one line under the header, "3 not logged"
 // with its Retry (the plant rows inside say it too, each with its own). The failed rows are out of Water all
 // (the spot's candidates exclude them), so only Retry re-posts them; while it runs it reads "Retrying 1 of 3…".
-export default function SpotRow({ spot, open, onToggle, children, busy, groupBusy, handled, onNotToday, onWater, partial, failedN = 0, onRetry }) {
+export default function SpotRow({ spot, open, onToggle, children, busy, groupBusy, handled, onNotToday, onWater, partial, failedN = 0, onRetry, writesHeld = false }) {
   const panelId = useId()
   const total = spot.counts.water + spot.counts.feed + spot.counts.check
   const n = spot.candidates.size
   const line2 = TASKS.filter((t) => spot.counts[t] > 0).map((t) => `${TASK_LABEL[t]} ${spot.counts[t]}`)
   if (spot.dryFastest > 0) line2.push(`${spot.dryFastest} dry fastest`)
   if (spot.bedsWaiting > 0) line2.push(`${spot.bedsWaiting} bed${spot.bedsWaiting === 1 ? '' : 's'} wait for rain`)
-  const disabled = !!groupBusy
+  // Inert while the group runs, and while the page holds its writes (review 4160.2 IMPORTANT-2, TodayV2 writesHeld).
+  const disabled = !!groupBusy || writesHeld
   const verb = handled || failedN > 0 ? 'Water the other' : 'Water all'
   const running = busy && !busy.retry ? busy : null
   const label = running ? `Watering ${running.done} of ${running.total}…` : (n === 1 && verb === 'Water all' ? 'Water 1' : `${verb} ${n}`)

@@ -498,3 +498,43 @@ describe('§6.3: a row logged before a Back never comes back live on the remount
     expect(wire.posts.slice(1).filter((b) => b.plant_id === row.plantingId)).toEqual([])
   })
 })
+
+// Review 4160.2 IMPORTANT-2 (integration 2): a Back remount paints the SEED — the plan read before the page was left —
+// while it revalidates (useDailyPlan `seedPending`). A watering logged elsewhere in between (the planting's own
+// Water, then Back) is still due in that seed, so until the revalidation lands every write control is inert: aria-
+// disabled, and nothing is posted or skipped. Then the fresh plan speaks and the controls work.
+describe('a seeded Back remount holds every write until its revalidation lands (review 4160.2 IMPORTANT-2)', () => {
+  it('Water all, the group Water all, Not today, a one-tap row and Protect\'s Covered are inert on the seed; the fresh plan drops the plant logged elsewhere and Water all works', async () => {
+    const drive = waterIn('Drive-Shade')
+    const elsewhere = drive[0] // watered on its own planting page while V2 was unmounted: no today-logged key
+    planState.current = { data: PAYLOAD, loading: false, error: null, reload: vi.fn(), seedPending: true }
+    const view = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    const inert = (b) => expect(b.getAttribute('aria-disabled'), b.getAttribute('aria-label') || b.textContent).toBe('true')
+    const bulk = spot('Drive-Shade').querySelector('[data-testid="care-spot-bulk"]')
+    expect(bulk.getAttribute('aria-label')).toBe('Water all 5 in Drive-Shade')
+    inert(bulk); fireEvent.click(bulk); await settle()
+    const group = document.querySelector('[data-testid="care-group-bulk"][data-group="Outside"]')
+    inert(group); fireEvent.click(group); await settle()
+    const nt = within(spot('Drive-Shade')).getByRole('button', { name: 'Not today: Drive-Shade' })
+    inert(nt); fireEvent.click(nt); await settle()
+    fireEvent.click(within(spot('Drive-Shade')).getAllByRole('button', { expanded: false })[0]); await settle()
+    const show = within(spot('Drive-Shade')).queryByRole('button', { name: 'Show them' })
+    if (show) { fireEvent.click(show); await settle() }
+    for (const b of within(spot('Drive-Shade')).getAllByRole('button', { name: /^(Water |Skip |Log |Checked )/ })) { inert(b); fireEvent.click(b); await settle() }
+    const protect = screen.getByTestId('today-sec-protect')
+    const covered = within(protect).getAllByRole('button', { name: /^Covered: / })[0]
+    inert(covered); fireEvent.click(covered); await settle()
+    expect(wire.posts).toEqual([])
+    expect(readSkipped().size).toBe(0)
+
+    // The revalidation lands: the fresh plan marks the plant logged elsewhere done (the read path's annotation).
+    const fresh = { ...PAYLOAD, plan: { ...PAYLOAD.plan, water_due: PAYLOAD.plan.water_due.map((it) => (it && it.id === elsewhere.plantingId ? { ...it, done: true } : it)) } }
+    planState.current = { data: fresh, loading: false, error: null, reload: vi.fn(), seedPending: false }
+    view.rerender(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    const bulk4 = spot('Drive-Shade').querySelector('[data-testid="care-spot-bulk"]')
+    expect(bulk4.getAttribute('aria-label')).toMatch(/^Water (all|the other) 4 in Drive-Shade$/)
+    expect(bulk4.getAttribute('aria-disabled')).toBe(null)
+    fireEvent.click(bulk4); await settle()
+    expect(wire.posts.map((b) => b.plant_id).sort()).toEqual(drive.slice(1).map((r) => r.plantingId).sort())
+  })
+})

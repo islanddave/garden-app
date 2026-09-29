@@ -114,7 +114,12 @@ export default function TodayV2() {
   const userId = user?.id ?? null
   const { prefs, prefsLoaded, refreshPrefs } = usePrefs()
   // Always the household question (§2.9): the server answers [] with no one else, so no toggle reloads.
-  const { data, loading, error, reload } = useDailyPlan({ includeHousehold: true, seed: userId || undefined })
+  const { data, loading, error, reload, seedPending } = useDailyPlan({ includeHousehold: true, seed: userId || undefined })
+  // Review 4160.2 IMPORTANT-2 (integration 2): a Back paints the last good plan (the seed) at once, read BEFORE the
+  // page was left — a watering logged meanwhile on a planting's own page is still due in it. Until that remount's
+  // revalidation settles, every write control on the page (Needs care, Protect tonight, the household sections) is
+  // inert: aria-disabled, and its handler posts nothing. Undo stays live (it only deletes this visit's own writes).
+  const writesHeld = !!seedPending
   const planDate = data?.plan_date ?? null
   const plan = data?.has_plan ? (data.plan ?? null) : null
   const layer1 = useTodaySections({ userId, prefs })
@@ -324,7 +329,7 @@ export default function TodayV2() {
       summary: protect.count
         ? (protectUrgent ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{protect.summary}</> : protect.summary)
         : handledSummary(record?.protect),
-      body: <ProtectTonight protect={protect} record={record} update={update} announce={announce} />,
+      body: <ProtectTonight protect={protect} record={record} update={update} announce={announce} writesHeld={writesHeld} />,
     },
     headsup: {
       title: 'Heads-up',
@@ -340,7 +345,7 @@ export default function TodayV2() {
       summary: care.length
         ? (careUrgent && needs.summary ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{needs.summary}</> : needs.summary)
         : needs.caughtUp.summary,
-      body: <NeedsCare care={needs} record={record} update={update} announce={announce} planDate={planDate} userId={userId} filterIntent={record?.filter?.care} />,
+      body: <NeedsCare care={needs} record={record} update={update} announce={announce} planDate={planDate} userId={userId} filterIntent={record?.filter?.care} writesHeld={writesHeld} />,
     },
     // S6: the explainer (S2), then DormantList's rows, bare. Resume is never optimistic (DormantList); the plants it
     // resumed are held on the visit record, so a close and re-open (closed = unmounted) keeps them off the list,
@@ -450,7 +455,7 @@ export default function TodayV2() {
                 return h ? (
                   <HouseholdSection
                     key={key} sectionKey={key} name={h.name} plan={h.plan} planDate={planDate} viewerId={userId} stale={stale}
-                    record={record} update={update} announce={announce} open={isOpen(key)} onToggle={() => toggle(key)}
+                    record={record} update={update} announce={announce} open={isOpen(key)} onToggle={() => toggle(key)} writesHeld={writesHeld}
                   />
                 ) : null
               })}

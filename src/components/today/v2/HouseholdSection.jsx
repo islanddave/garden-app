@@ -35,7 +35,7 @@ export function householdSummary(rows) {
   return TASK_WORDS.filter(([t]) => n[t] > 0).map(([t, w]) => `${w} ${n[t]}`).join(' · ') || 'All caught up.'
 }
 
-export default function HouseholdSection({ sectionKey, name, plan, planDate, viewerId, stale, record, update, announce, open, onToggle }) {
+export default function HouseholdSection({ sectionKey, name, plan, planDate, viewerId, stale, record, update, announce, open, onToggle, writesHeld }) {
   const listId = `${viewerId || 'anon'}~${sectionKey}`
   const needs = useNeedsCare({ plan, planDate, userId: listId, stale })
 
@@ -60,7 +60,7 @@ export default function HouseholdSection({ sectionKey, name, plan, planDate, vie
       open={open}
       onToggle={onToggle}
     >
-      <NeedsCare care={needs} record={view} update={updateView} announce={announce} planDate={planDate} userId={listId} />
+      <NeedsCare care={needs} record={view} update={updateView} announce={announce} planDate={planDate} userId={listId} writesHeld={writesHeld} />
     </TodaySection>
   )
 }
