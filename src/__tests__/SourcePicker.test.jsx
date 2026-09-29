@@ -195,11 +195,70 @@ describe('SourcePicker — the mint form', () => {
     fireEvent.click(screen.getByTestId('sp-mint-submit'))
 
     await waitFor(() => expect(onChange).toHaveBeenCalled())
-    expect(postSource).toHaveBeenCalledWith({ name: 'Agway', kind: 'garden_center', locality: 'Greenfield, MA' })
+    // V5-SOURCECONTACT-001: the optional contact keys ride along as null when untouched.
+    expect(postSource).toHaveBeenCalledWith({
+      name: 'Agway', kind: 'garden_center', locality: 'Greenfield, MA',
+      address: null, website_url: null, instagram_url: null, facebook_url: null,
+    })
     expect(onChange.mock.calls[0][0]).toBe('src-agway')
     expect(onChange.mock.calls[0][1]).toMatchObject({ id: 'src-agway', name: 'Agway' })
     // Continued, not stopped at "created": the panel is closed and the mint form is gone.
     expect(screen.queryByTestId('sp-mint')).toBeNull()
+  })
+
+  it('"More details" is collapsed by default and toggles the four contact fields', async () => {
+    await openMint('Agway')
+    const toggle = screen.getByTestId('sp-mint-more')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.textContent).toBe('More details')
+    expect(screen.queryByTestId('sp-mint-more-fields')).toBeNull()
+    for (const id of ['sp-mint-website', 'sp-mint-instagram', 'sp-mint-facebook', 'sp-mint-address']) {
+      expect(screen.queryByTestId(id), id).toBeNull()
+    }
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.getAttribute('aria-controls')).toBe(screen.getByTestId('sp-mint-more-fields').id)
+    for (const id of ['sp-mint-website', 'sp-mint-instagram', 'sp-mint-facebook', 'sp-mint-address']) {
+      expect(screen.getByTestId(id), id).toBeTruthy()
+    }
+    // A type="button": it sits inside the host <form> and must not submit it.
+    expect(toggle.getAttribute('type')).toBe('button')
+
+    fireEvent.click(toggle)
+    expect(screen.queryByTestId('sp-mint-more-fields')).toBeNull()
+  })
+
+  it('posts the contact fields NORMALISED to full links, blanks as null', async () => {
+    const created = { id: 'src-bardwell', name: 'Bardwell Stand', kind: null, locality: null, address: '12 River Rd', website_url: 'https://bardwell.farm', instagram_url: 'https://www.instagram.com/bardwellstand', facebook_url: null, notes: null }
+    postSource = vi.fn(() => Promise.resolve(created))
+    const { onChange } = await openMint('Bardwell Stand')
+    fireEvent.click(screen.getByTestId('sp-mint-more'))
+    fireEvent.change(screen.getByTestId('sp-mint-website'), { target: { value: ' bardwell.farm ' } })
+    fireEvent.change(screen.getByTestId('sp-mint-instagram'), { target: { value: '@bardwellstand' } })
+    fireEvent.change(screen.getByTestId('sp-mint-facebook'), { target: { value: '   ' } })
+    fireEvent.change(screen.getByTestId('sp-mint-address'), { target: { value: ' 12 River Rd ' } })
+    fireEvent.click(screen.getByTestId('sp-mint-submit'))
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(postSource).toHaveBeenCalledWith({
+      name: 'Bardwell Stand', kind: null, locality: null,
+      address: '12 River Rd',
+      website_url: 'https://bardwell.farm',
+      instagram_url: 'https://www.instagram.com/bardwellstand',
+      facebook_url: null,
+    })
+  })
+
+  it('values typed under "More details" survive collapsing it, and are still sent', async () => {
+    postSource = vi.fn(() => Promise.resolve({ id: 'src-x', name: 'X Farm' }))
+    await openMint('X Farm')
+    fireEvent.click(screen.getByTestId('sp-mint-more'))
+    fireEvent.change(screen.getByTestId('sp-mint-facebook'), { target: { value: 'facebook.com/xfarm' } })
+    fireEvent.click(screen.getByTestId('sp-mint-more'))
+    fireEvent.click(screen.getByTestId('sp-mint-submit'))
+    await waitFor(() => expect(postSource).toHaveBeenCalled())
+    expect(postSource.mock.calls[0][0].facebook_url).toBe('https://www.facebook.com/xfarm')
   })
 
   it('the kind vocabulary is fetched only once the mint opens, and its options render', async () => {
