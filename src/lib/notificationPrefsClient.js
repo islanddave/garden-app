@@ -21,7 +21,11 @@ import { resolveBarLayout } from './navConfig.js'
 const CRITTER_BASE = (import.meta.env.VITE_API_CRITTERS ?? '').replace(/\/$/, '')
 
 export const CRITTER_VISIT_VALUES = ['off', 'in_app_only', 'system']
-export const GARDEN_GROUP_BY_VALUES = ['none', 'type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform', 'status']
+// Every value Garden's group-by control can offer (src/lib/gardenGroupBy.js); the Lambda's copy is
+// lambda/critter/validators.js, and lambda/critter/groupby.parity.test.js pins both to the control.
+// BUG-GARDENGROUPBYRESET-001: 'crop_type' — the Type option, Garden's default — was missing, so a Type
+// choice was never sent and every Garden mount re-adopted the server's older one.
+export const GARDEN_GROUP_BY_VALUES = ['none', 'type', 'crop_type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform', 'status']
 export const GARDEN_SORT_ORDER_VALUES = ['alpha', 'recency']
 // Re-exported (not redeclared) from the layout module so the wire contract and the render contract
 // cannot drift: handedness.js is what every surface reads, and this is what gets PATCHed. Imported
@@ -30,30 +34,10 @@ export const GARDEN_SORT_ORDER_VALUES = ['alpha', 'recency']
 export const HANDEDNESS_VALUES = HANDS
 export const GARDEN_EXPANDED_MAX = 2000
 
-// saveGardenGroupBy — fire-and-forget PATCH of the cross-device Garden group-by preference
-// (user_notification_prefs.garden_group_by). Mirrors patchNotificationPrefs: NEVER throws,
-// silent no-op when env unset / unauth / value invalid. keepalive survives route-change unmount.
-export async function saveGardenGroupBy({ getToken, value } = {}) {
-  if (!CRITTER_BASE) return null
-  if (value != null && !GARDEN_GROUP_BY_VALUES.includes(value)) return null
-  try {
-    const token = await (typeof getToken === 'function' ? getToken() : null)
-    if (!token) return null
-    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ garden_group_by: value }),
-      keepalive: true,
-    })
-    if (!res.ok) return null
-    return await res.json().catch(() => null)
-  } catch {
-    return null
-  }
-}
+// saveGardenGroupBy moved to the REPORTED savers below (BUG-GARDENGROUPBYRESET-001).
 
 // saveGardenSortOrder — fire-and-forget PATCH of the cross-device Garden sort-order preference
-// (user_notification_prefs.garden_sort_order). Mirrors saveGardenGroupBy: NEVER throws, silent
+// (user_notification_prefs.garden_sort_order). Mirrors patchNotificationPrefs: NEVER throws, silent
 // no-op when env unset / unauth / value invalid. keepalive survives route-change unmount.
 export async function saveGardenSortOrder({ getToken, value } = {}) {
   if (!CRITTER_BASE) return null
@@ -160,6 +144,20 @@ export async function saveGardenHelperRung1({ getToken } = {}) {
 // would serialise the callers on getToken() before they could join.
 let inFlight = null
 
+// BUG-GARDENGROUPBYRESET-001 (QA MINOR 4) — A READ THAT WAS ON THE WIRE WHEN A GARDEN GROUPING SAVE WAS CONFIRMED
+// IS MARKED, the way a cached body is. Its row can be the one from BEFORE that save: a later caller JOINS it
+// through the latch above (Garden, left and re-entered while its read was out), or it simply answers after the
+// save's own answer (a read sent while the save was still on the wire, handled first by another Lambda
+// instance). Either way Garden would read the older grouping as another device's choice and regroup the list.
+// Dropping the join on a confirmed save would reach only the first of those, and would change what the other
+// callers of the join get, so the join stays exactly as it is: instead each read notes the count of confirmed
+// grouping saves when it STARTS, and a body landing after the count moved carries
+// PREDATES_GROUP_BY_SAVE — a non-enumerable global-registry Symbol like FROM_CACHE, invisible to Object.keys,
+// spread and JSON. Garden (src/lib/gardenGroupBy.js) never adopts a marked body; no other caller reads the mark.
+// Scoped to garden_group_by on purpose: no other save can make that field of a body stale.
+let groupBySavesConfirmed = 0
+export const PREDATES_GROUP_BY_SAVE = Symbol.for('garden-app.prefsPredatesGroupBySave')
+
 // fetchNotificationPrefs — GETs current prefs, joining any request already in flight.
 // Returns the prefs object on success, null on no-op or failure (NEVER throws).
 //
@@ -175,6 +173,7 @@ export async function fetchNotificationPrefs({ getToken } = {}) {
   if (!CRITTER_BASE) return null
   if (inFlight) return inFlight
   inFlight = (async () => {
+    const savesAtStart = groupBySavesConfirmed
     try {
       const token = await (typeof getToken === 'function' ? getToken() : null)
       if (!token) return null
@@ -190,6 +189,11 @@ export async function fetchNotificationPrefs({ getToken } = {}) {
       if (res.headers?.get?.(FROM_CACHE_HEADER)) {
         try {
           Object.defineProperty(json, FROM_CACHE, { value: true, enumerable: false, configurable: true })
+        } catch { /* frozen body — marking is best-effort */ }
+      }
+      if (groupBySavesConfirmed !== savesAtStart) {
+        try {
+          Object.defineProperty(json, PREDATES_GROUP_BY_SAVE, { value: true, enumerable: false, configurable: true })
         } catch { /* frozen body — marking is best-effort */ }
       }
       return json
@@ -328,7 +332,7 @@ export async function recordOptInDismissed({ getToken } = {}) {
 // clean this up.
 //
 // Fire-and-forget, NEVER throws, silent no-op when env unset / unauth — same contract as
-// saveGardenGroupBy above. This is the correct posture here specifically: the caller has ALREADY
+// saveGardenSortOrder above. This is the correct posture here specifically: the caller has ALREADY
 // applied the skip locally by the time this runs, so a failed sync must cost the user nothing.
 // keepalive survives the route-change unmount that follows a skip-then-navigate.
 export async function saveTodaySkipped({ getToken, date, keys } = {}) {
@@ -421,23 +425,31 @@ export async function saveHandedness({ getToken, value } = {}) {
   }
 }
 
-// V5-NAVCUSTOM-001 — THE TWO SAVERS BELOW REPORT THEIR OUTCOME, unlike every writer above them.
+// V5-NAVCUSTOM-001 — THE SAVERS BELOW REPORT THEIR OUTCOME, unlike every writer above them.
 //
 // The fire-and-forget writers above are right for what they save: the caller has already applied the
-// change locally and a lost sync costs nothing visible. These two are the opposite. A pin that fails
+// change locally and a lost sync costs nothing visible. These are the opposite. A pin that fails
 // silently reappears unpinned at the next launch, and the bar editor's Save is a page whose only job
-// is that write — a save that reports nothing is a save that lies. So both return
+// is that write — a save that reports nothing is a save that lies. A Garden grouping that fails silently
+// is overwritten at the next Garden mount by the server's older one (BUG-GARDENGROUPBYRESET-001). So all return
 // { ok: true } | { ok: false, status }, where status 0 is the house convention for "never reached the
 // server" (offline, no token, timed out, env unset) and anything else is the server's own answer.
-// NavPrefsContext reads that split: 0 and 5xx keep the change and retry, a 4xx rolls it back.
+// NavPrefsContext reads that split: 0 and 5xx keep the change and retry, a 4xx rolls it back. Garden keeps
+// its grouping on ANY non-ok: every value it can send is pinned to the Lambda's list, so a 4xx there means
+// the deployed Lambda is older than this bundle (a deploy window), and rolling back would re-create the bug.
 //
 // THE 15-SECOND BOUND IS api.js's API_TIMEOUT_MS, not a second constant. These cannot go through
 // apiFetch itself — its prefix table routes /api/notifications to the EVENTS Lambda, and the prefs
 // route lives on the critter Lambda this module has always called directly — so the bound is applied
 // here with the same AbortController pattern, around the fetch only, exactly as apiFetch applies it.
 //
-// NO keepalive, deliberately. A reported save needs its response. Durability across an app close is
-// NavPrefsContext's pending flag, which is written BEFORE the request goes out.
+// NO keepalive by default, deliberately. A reported save needs its response. Durability across an app close is
+// the caller's pending flag, written BEFORE the request goes out (NavPrefsContext's for pins, projectTree.js's
+// for the Garden grouping). ONE caller asks for keepalive per call: the Garden grouping (rimpact #5). It was a
+// keepalive write before BUG-GARDENGROUPBYRESET-001, and without it a pick followed at once by closing the
+// app reaches the server only at this device's next Garden visit — another device shows the older grouping in
+// between. A keepalive fetch still resolves with its response while the page lives (Fetch spec), so the report
+// is unchanged; the pins and the bar keep the default.
 //
 // NOT nav_tabs. The retired global order (public.app_config, V5-ADMINCENTER-001) never belonged on
 // this per-user table and still does not: bar_layout below is a different key with a different
@@ -445,7 +457,7 @@ export async function saveHandedness({ getToken, value } = {}) {
 //
 // A payload the contract refuses is reported as the 400 the server would return, with `local: true`,
 // without spending the round trip. The client check is not the boundary — the Lambda validator is.
-async function patchPrefsReported(getToken, body) {
+async function patchPrefsReported(getToken, body, { keepalive = false } = {}) {
   if (!CRITTER_BASE) return { ok: false, status: 0 }
   try {
     const token = await (typeof getToken === 'function' ? getToken() : null)
@@ -453,12 +465,15 @@ async function patchPrefsReported(getToken, body) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS)
     try {
-      const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+      const init = {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
         signal: controller.signal,
-      })
+      }
+      // Only when asked: every other caller's request is byte-for-byte what it was.
+      if (keepalive) init.keepalive = true
+      const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, init)
       return res.ok ? { ok: true } : { ok: false, status: res.status }
     } finally {
       clearTimeout(timer)
@@ -487,6 +502,20 @@ export async function saveBarLayout({ getToken, layout } = {}) {
   const r = resolveBarLayout(layout)
   if (!r.applied.order || !r.applied.hidden) return LOCAL_REFUSAL
   return patchPrefsReported(getToken, { bar_layout: { order: r.order, hidden: r.hidden } })
+}
+
+// saveGardenGroupBy — the cross-device Garden grouping (user_notification_prefs.garden_group_by).
+// BUG-GARDENGROUPBYRESET-001: was fire-and-forget, returning the row or null, so Garden could not tell a
+// save the server has from one a dead zone ate — and the first thing its next mount did was adopt the
+// server's older value. Garden now clears its pending marker only on { ok: true } (gardenGroupBy.js). The
+// body is not read: ok is the confirmation, and a 200 with an unreadable body is still a stored value.
+// A confirmed save moves the count every read compares against (PREDATES_GROUP_BY_SAVE, above the read).
+// keepalive: see the note above patchPrefsReported (rimpact #5).
+export async function saveGardenGroupBy({ getToken, value } = {}) {
+  if (!GARDEN_GROUP_BY_VALUES.includes(value)) return LOCAL_REFUSAL
+  const res = await patchPrefsReported(getToken, { garden_group_by: value }, { keepalive: true })
+  if (res.ok) groupBySavesConfirmed += 1
+  return res
 }
 
 // V4-USERPREFS-001 (V4-WHATSNEW-002) — last-seen release version, per user.

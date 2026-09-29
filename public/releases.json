@@ -9,6 +9,14 @@
     ]
   },
   {
+    "version": "4.160.1",
+    "date": "2026-09-29",
+    "highlights": [
+      "Garden remembers how you group it: Type, Lifecycle or Location stays the way you left it every time you come back, even when the save didn't get through on a weak signal.",
+      "Going Back to a project's page now always returns you to your place in its event log; once in a while it used to stay at the top."
+    ]
+  },
+  {
     "version": "4.160.0",
     "date": "2026-09-29",
     "highlights": [

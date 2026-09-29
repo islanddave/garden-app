@@ -17,8 +17,9 @@ import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
 import { SYSTEM_NOTIFICATIONS_ENABLED, PROJECTS_HIDDEN, SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
 import { useClaimPageScroll, currentPageEntry } from '../hooks/usePageScrollManager.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
-import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA } from '../lib/projectTree.js'
+import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA, loadGroupByPendingRecord, saveGroupByPending, clearGroupByPending, markLegacyGroupByPending } from '../lib/projectTree.js'
 import GroupBySlugSelect from '../components/GroupBySlugSelect.jsx'
+import { buildGardenFacetOptions, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave } from '../lib/gardenGroupBy.js'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
@@ -213,59 +214,32 @@ export default function Garden() {
   // V4-GARDENIA-001: faceted group-by overlay. tagMap = whole-garden plant->tags map; inert/empty
   // until VITE_API_TAGS is wired, so the control stays hidden and the legacy tree is unchanged.
   const [groupBy, setGroupBy] = useState(() => loadGroupBy())
-  // V4 cross-device: localStorage paints instantly; the server pref
-  // (user_notification_prefs.garden_group_by) is the cross-device source of truth, hydrated ONCE on
-  // the first prefs fetch below. An explicit user change latches the ref so a late server hydrate
-  // never clobbers it.
-  const groupByHydratedRef = useRef(false)
+  // V4 cross-device: localStorage paints instantly; the server pref (user_notification_prefs.garden_group_by)
+  // carries the choice to another device and is read by the prefs hydrate below, at mount and on resumes.
+  //
+  // BUG-GARDENGROUPBYRESET-001: that hydrate used to ADOPT the server value outright, after the scroll
+  // restore — so a choice whose save had not landed was overwritten on every return and the list regrouped
+  // under the spot. The choice now wins until its save is confirmed; the rule and its table test live in
+  // src/lib/gardenGroupBy.js, and this page only wires it. A pick is stored and marked pending BEFORE its
+  // PATCH goes out, and only that PATCH's confirmation clears the mark. A pick also SETTLES the visit: the
+  // ref latches, and no later read in this visit decides anything — not even a re-send, which would overlap
+  // the pick's own save (QA MINOR 5).
+  const groupByPickedRef = useRef(false)
+  const groupByUser = profile?.id ?? null
+  const sendGroupBy = useCallback((value) => sendGroupByChoice({
+    save: (v) => saveGardenGroupBy({ getToken, value: v }), user: groupByUser, value,
+  }), [getToken, groupByUser])
   const onGroupByChange = useCallback((v) => {
-    setGroupBy(v); saveGroupBy(v); groupByHydratedRef.current = true
-    saveGardenGroupBy({ getToken, value: v })
-  }, [getToken])
+    setGroupBy(v); saveGroupBy(v); saveGroupByPending(groupByUser, v); groupByPickedRef.current = true
+    sendGroupBy(v)
+  }, [sendGroupBy, groupByUser])
   const { entities: tagMap } = useEntityTagsBulk('plant')
-  const facetOptions = useMemo(() => {
-    const present = new Set()
-    for (const id in (tagMap || {})) {
-      const e = tagMap[id]
-      for (const t of [...(e.direct || []), ...(e.projected || [])]) present.add(t.facet)
-    }
-    const ORDER = ['type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform']
-    const LABELS = { type: 'Type', lifecycle: 'Lifespan', heat: 'Heat', determinacy: 'Determinacy', day_length: 'Day Length', allium_type: 'Allium', basil_use: 'Basil', bean_type: 'Bean Type', bean_habit: 'Bean Habit', bean_use: 'Bean Use', location: 'Location', group: 'Group', freeform: 'Tags' }
-    // V4-PROJHIDE-001: when projects are hidden, the "Projects" (none) grouping is gone and CROP TYPE
-    // leads — a real crop_type_slug grouping (tomato/pepper/...) from the cultivar join, since the
-    // entity-tags 'type' facet is unpopulated in prod. The tag 'type' facet is skipped so it can't
-    // shadow the crop-type option. Flag OFF keeps the exact prior options (Projects + tag facets).
-    //
-    // V4-FACETSLUG-001 ordering (BD0806-21: "type, project, location, lifecycle"). The option SET is
-    // unchanged in both flag states — only the ORDER moves, so nothing about grouping behavior or the
-    // stale-value fallback shifts. Three notes on the literal spec:
-    //   * "project" is DEAD. PROJECTS_HIDDEN went true 2026-08-10 (the day the row was filed), so the
-    //     'none'/Projects option is unreachable under the flag. It is NOT resurrected; with the flag
-    //     OFF it keeps its historical lead position and the rest of the head follows it.
-    //   * "lifecycle" means the option LABELLED "Lifecycle", which is the `status` facet. The
-    //     lifecycle TAG facet is labelled "Lifespan". That inversion is live and deliberate; it sorts
-    //     down with the other tag facets rather than claiming the head slot the row asked for.
-    //   * 'status' and 'location' are STRUCTURAL (every planting has both) so they are offered
-    //     unconditionally — they do not depend on tagMap having anything in it. Promoting them into
-    //     the head is what makes the head stable regardless of which tag facets happen to be present.
-    const opts = []
-    if (PROJECTS_HIDDEN) {
-      opts.push({ value: 'crop_type', label: 'Type' }) // crop_type (cultivar join) replaces the tag 'type' facet
-    } else {
-      opts.push({ value: 'none', label: 'Projects' })
-      if (present.has('type')) opts.push({ value: 'type', label: LABELS.type })
-    }
-    opts.push({ value: 'location', label: LABELS.location })
-    opts.push({ value: 'status', label: 'Lifecycle' })
-    for (const fct of ORDER) {
-      if (fct === 'type') continue // already placed in the head (or replaced by crop_type)
-      // V4-GARDENLOCFILTER-001: 'location' is STRUCTURAL (garden_node.location_id) and is placed in
-      // the head above. Skipped here so a stray location-facet tag can't add a duplicate option.
-      if (fct === 'location') continue
-      if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
-    }
-    return opts
-  }, [tagMap])
+  // The option set and its order (V4-PROJHIDE-001, V4-FACETSLUG-001) live in src/lib/gardenGroupBy.js.
+  const facetOptions = useMemo(() => buildGardenFacetOptions(tagMap, PROJECTS_HIDDEN), [tagMap])
+  // What the prefs hydrate decides against, read at the moment the body lands. A ref, because that effect is
+  // keyed on getToken alone: its garden-view POST must not re-fire when any of these change.
+  const groupByLiveRef = useRef(null)
+  groupByLiveRef.current = { local: groupBy, offerable: facetOptions.map(o => o.value), user: groupByUser, send: sendGroupBy }
   // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
   const [critters, setCritters] = useState([])
   // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
@@ -407,15 +381,32 @@ export default function Garden() {
   const prefsResumeGate = useResumeGate()
   useEffect(() => {
     let on = true
-    async function refreshPrefsAndRecord({ readPrefs = true } = {}) {
+    async function refreshPrefsAndRecord({ readPrefs = true, mountRead = false } = {}) {
       if (readPrefs) {
         const p = await fetchNotificationPrefs({ getToken })
         if (on) setPrefs(p)
-        // Cross-device hydrate (once): adopt the server group-by if set, caching it locally.
-        if (on && !groupByHydratedRef.current && p && typeof p.garden_group_by === 'string' && p.garden_group_by) {
-          groupByHydratedRef.current = true
-          setGroupBy(p.garden_group_by)
-          saveGroupBy(p.garden_group_by)
+        // Group-by hydrate (BUG-GARDENGROUPBYRESET-001), on every read of the visit until a pick settles it:
+        // decideGroupByHydrate says whether a waiting choice goes out again, another device's choice is adopted,
+        // or nothing changes. 'keep' writes no state at all, so an equal server value cannot regroup the list.
+        // Only the MOUNT-TIME read may adopt (rimpact #4): a later one — a resume, after an SW-cached first
+        // body or any other — may only keep or re-send, so the list never regroups under someone already
+        // looking at it; another device's change arrives at the next mount. A body the service worker served
+        // from its cache, or one from a read that was on the wire when a grouping save was confirmed (QA
+        // MINOR 4: its row can predate the save), never adopts and never runs the one-time pass.
+        if (on && !groupByPickedRef.current && p) {
+          const fromCache = servedFromCache(p)
+          const predatesSave = predatesGroupBySave(p)
+          const live = groupByLiveRef.current
+          if (!fromCache && !predatesSave) markLegacyGroupByPending(live.user, p.garden_group_by)
+          const waiting = loadGroupByPendingRecord(live.user)
+          const d = decideGroupByHydrate({
+            local: live.local, pending: waiting?.value ?? null, pendingAt: waiting?.at ?? null, now: Date.now(),
+            server: p.garden_group_by, fromCache, predatesSave, offerable: live.offerable, mayAdopt: mountRead,
+          })
+          // A mark waiting past GROUPBY_PENDING_MAX_AGE_MS yielded to a differing server value (rimpact #8).
+          if (d.dropPending) clearGroupByPending(live.user, waiting.value)
+          if (d.action === 'adopt') { setGroupBy(d.value); saveGroupBy(d.value) }
+          else if (d.action === 'resend') live.send(d.value)
         }
         if (on && !expandedHydratedRef.current && p && typeof p.garden_expanded === 'string') {
           try {
@@ -431,7 +422,7 @@ export default function Garden() {
       // Fire Route 6 AFTER capturing prev prefs (the post updates last_garden_view_at).
       recordGardenViewOpened({ getToken })
     }
-    refreshPrefsAndRecord()
+    refreshPrefsAndRecord({ mountRead: true })
     function onVis() {
       if (document.visibilityState !== 'visible') return
       refreshPrefsAndRecord({ readPrefs: prefsResumeGate() })

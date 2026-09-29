@@ -609,7 +609,10 @@ jobs:
         #   spot by the return's revalidate, and that one's unchanged control — checked in CONTENT terms: the
         #   planting left on screen, followed by name, comes back where it was left and does not move once on
         #   screen; the harness answers /api/members as prod's household of two, so Garden's caretaker row is
-        #   above the list, and every Garden flow checks it is: BUG-GARDENSPOTCREEP-001), Put-Up's batch, the
+        #   above the list, and every Garden flow checks it is: BUG-GARDENSPOTCREEP-001; and, with the person's
+        #   prefs row served on Lifecycle — ?prefs=, the only flows in which Garden reads prefs — Type picked and
+        #   kept through three returns, its save landing or every save lost to a dead zone:
+        #   BUG-GARDENGROUPBYRESET-001), Put-Up's batch, the
         #   Seeds view switch and a list's sort (no jump), Harvests' tab re-tapped then Back, Saved seeds opened
         #   at a lot then Back (no
         #   second jump to the lot), Back into Saved seeds and into Harvests at the top, a list blanked behind
@@ -655,7 +658,7 @@ jobs:
         # OFF". The "entry still current" write rule has no flow (its window is timing-dependent under
         # 'manual') and is pinned by usePageScrollManager.test.jsx; the reload flow proves one of the hidden and
         # pagehide flushes (location.reload() fires both), and the discard path (hidden only) is unit-pinned.
-        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~7.5 min locally (38 flows, 71
+        # `npm run gate:page-scroll:probe-nothing` exits 1 on every flow. ~8.5 min locally (40 flows, 75
         # flow-runs: the five slow ones at 426x836 only).
         # NO continue-on-error, per the policy note above.
         env:

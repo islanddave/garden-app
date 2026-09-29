@@ -53,12 +53,21 @@
 //                    the row arriving late on every return is what moved the spot one row per Today → Garden trip.
 //   __h.growPlants()  from then on the plants grid answers one planting more, sorted ABOVE the gate's tracked
 //                    tile: a list change above the spot, revealed by the revalidate a return does (GROWN_PLANTING).
+//     prefs=         (off by default) the person's prefs row is served, its garden_group_by set to this value
+//                    (BUG-GARDENGROUPBYRESET-001): Garden's once-per-mount prefs read runs, as it does in prod. Off,
+//                    the prefs client makes no request at all (VITE_API_CRITTERS is unset here), which is why no
+//                    flow saw every return regroup Garden to the server's older grouping. prefsKnob.js has the
+//                    mechanism; it must stay this entry's first import.
+//     prefsradio=up  with prefs=, 'down' makes every prefs PATCH fail as a dead zone does (the fetch rejects after
+//                    ?ms=) while the reads still answer: the weak radio Dave gardens on.
 //
 // A FLOW'S FIRST LOAD IS A FIRST VISIT: sessionStorage and localStorage are cleared before anything
 // mounts (both scroll stores, every page's persisted filters), and Garden's crop groups are opened. The one
 // exception is a reload the gate asks for (__h.reloadHere(), the app-owned reload flow): it reloads this
 // document ON the current history entry and keeps sessionStorage, as the service worker's post-update
 // reload and an Android tab restore do (the mechanism is seedsscroll.jsx's).
+// FIRST, before anything that imports the prefs client: the ?prefs= knob sets the global its base URL reads.
+import { PREFS_ORIGIN, PREFS_GROUP_BY } from './prefsKnob.js'
 import React, { useLayoutEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom'
@@ -102,6 +111,8 @@ const MS = Number(q.get('ms') ?? 300)
 const AUTH_MS = Number(q.get('auth') || 0)
 const ROSTER = q.get('roster') || 'full'
 if (ROSTER !== 'full' && ROSTER !== 'grow') throw new Error(`?roster=${ROSTER} is not 'full' or 'grow'`)
+const PREFS_RADIO = q.get('prefsradio') || 'up'
+if (PREFS_RADIO !== 'up' && PREFS_RADIO !== 'down') throw new Error(`?prefsradio=${PREFS_RADIO} is not 'up' or 'down'`)
 
 // This page's own URL, before the router moves it: where a reload has to land.
 const HARNESS_URL = location.pathname + location.search
@@ -325,6 +336,18 @@ const VARIETY = {
   sow_depth_in: null, spacing_in: null, days_to_germinate_min: null, days_to_germinate_max: null, source_url: null, notes: null,
 }
 
+// The person's prefs row (?prefs=, BUG-GARDENGROUPBYRESET-001): the route's no-row defaults (lambda/critter/index.js
+// readUserPrefs) with garden_group_by set, as a row Dave's phone once saved. A PATCH merges into it, so the next
+// read answers what the server would now hold.
+let prefsRow = {
+  critter_visit: 'in_app_only', quiet_hours_start: '21:00:00', quiet_hours_end: '07:00:00',
+  coachmark_seen_at: null, opt_in_prompt_seen_at: null, last_garden_view_at: null,
+  garden_group_by: PREFS_GROUP_BY, garden_sort_order: null, garden_expanded: null, garden_bloom_seen: null, garden_helper_rung1_seen: null,
+  today_skipped: null, log_many_all_selected: null, whats_new_last_seen: null, more_pins: null, bar_layout: null,
+}
+let prefsAnswered = 0
+const prefsPatches = []
+
 // ── network: the far side of the wire only ───────────────────────────────────────────────────────────
 const realFetch = window.fetch
 // `inflight` counts answers not yet delivered: a gate can wait for the network to go quiet before it reads a
@@ -334,11 +357,31 @@ const json = (body, ms = 20, status = 200) => {
   inflight += 1
   return new Promise((r) => setTimeout(() => { inflight -= 1; r(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })) }, ms))
 }
+// A request a dead zone eats: no answer, the fetch rejects (the prefs client reads that as status 0).
+const deadZone = (ms) => {
+  inflight += 1
+  return new Promise((_, reject) => setTimeout(() => { inflight -= 1; reject(new TypeError('Failed to fetch')) }, ms))
+}
 const unstubbed = []
+function prefsAnswer(path, method, opts) {
+  if (path === '/api/notifications/prefs' && method === 'GET') { prefsAnswered += 1; return json({ ...prefsRow }, MS) }
+  if (path === '/api/notifications/prefs' && method === 'PATCH') {
+    let body = null
+    try { body = JSON.parse(opts.body) } catch { /* recorded as null */ }
+    prefsPatches.push(body)
+    if (PREFS_RADIO === 'down') return deadZone(MS)
+    prefsRow = { ...prefsRow, ...body }
+    return json({ ...prefsRow })
+  }
+  if (path === '/api/notifications/garden-view-opened' && method === 'POST') return json({ last_garden_view_at: null })
+  unstubbed.push(`${method} ${PREFS_ORIGIN}${path}`)
+  return json({})
+}
 window.fetch = (url, opts = {}, ...rest) => {
   const u = String(url)
   const method = (opts.method || 'GET').toUpperCase()
   if (!u.includes('/api/')) return realFetch(url, opts, ...rest)
+  if (u.startsWith(PREFS_ORIGIN)) return prefsAnswer(u.slice(PREFS_ORIGIN.length), method, opts)
   if (method !== 'GET') return json({ ok: true })
   const path = u.replace(location.origin, '')
   if (path.includes('/api/photos/view-url/')) return json({ error: 'not found' }, 0, 404)
@@ -720,6 +763,13 @@ window.__h = {
   plantsAnswered: () => plantsAnswered,
   // Garden's caretaker row: its option labels, or null when the row is not on the page.
   lensOptions: () => { const g = document.querySelector(LENS_SEL); return g ? [...g.querySelectorAll('[role="radio"]')].map((b) => b.textContent.trim()) : null },
+  // The ?prefs= knob (BUG-GARDENGROUPBYRESET-001): prefs reads answered, every prefs PATCH body sent (a dead
+  // zone's included), the grouping the served row holds now, and the grouping Garden's control shows (its
+  // native select's value — GroupBySlugSelect's id — or null when Garden is not on the page).
+  prefsAnswered: () => prefsAnswered,
+  prefsPatches: () => prefsPatches.map((b) => (b && typeof b === 'object' ? { ...b } : b)),
+  prefsStored: () => prefsRow.garden_group_by,
+  groupBy: () => document.querySelector('[data-harness-pages] select#garden-groupby')?.value ?? null,
   // The manager's mirror, for failure messages only.
   store: () => { try { return JSON.parse(window.sessionStorage.getItem(PAGE_SCROLL_STORE_KEY)) } catch { return null } },
   // The page rendering shorter (and back) while a sheet covers it.
@@ -737,6 +787,7 @@ window.__h = {
   },
   reloadedDoc: () => !!RELOAD_TO,
   // `token` is what the Clerk stub itself reports (tests/harness/stubs/clerk.jsx, ?token=), not this page's URL.
-  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, token: window.__harnessClerk ? window.__harnessClerk.tokenMs : null, roster: ROSTER, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS, members: MEMBERS.length }),
+  // `prefs` is what the prefs client was actually pointed at — the knob reaching the module, not this page's URL.
+  fixture: () => ({ manager: SCROLL_MANAGER_ENABLED, ms: MS, auth: AUTH_MS, token: window.__harnessClerk ? window.__harnessClerk.tokenMs : null, roster: ROSTER, gardenPlants: GARDEN_PLANTS.length, going: GOING.length, locations: LOCATIONS.length, plantingEvents: PLANTING_EVENTS.length, chainRows: CHAIN_ROWS, members: MEMBERS.length, prefs: globalThis.__harnessPrefsBase === PREFS_ORIGIN ? PREFS_GROUP_BY : null, prefsRadio: PREFS_RADIO }),
   tokenCalls: () => (window.__harnessClerk ? window.__harnessClerk.calls : null),
 }
