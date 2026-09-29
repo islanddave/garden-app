@@ -267,12 +267,29 @@ post:
   # now missed it. If a third does, prefer converting this to "every named column is present" (which
   # widens safely and still catches a dropped column) over bumping a fourth time — a number that
   # three separate sessions have failed to maintain is telling you something about the design.
-  - name: post_column_count_is_25
+  #
+  # CONVERTED 2026-09-29 (Put-Up release 1a, V4 §4.6), BEFORE the fourth addition rather than after
+  # it: release 1b adds a dozen nullable columns to preservation_log, and this commit has to reach
+  # main before that DDL reaches prod. Was `post_column_count_is_25` (scalar_eq 25). Now it names the
+  # 25 columns preservation_log had on live prod AND staging on 2026-09-29 (read from pg_attribute on
+  # both, identical) and returns one row per name that is missing — so a dropped or renamed column
+  # still reds, by name, and an added one no longer does. Self-armed on this migration's own
+  # schema_version row, the corpus's standard shape; applied on both envs, so it asserts today.
+  - name: post_original_columns_present
     sql: |
-      SELECT count(*) FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='preservation_log'
-    expect: scalar_eq
-    value: 25
+      SELECT want.column_name
+        FROM unnest(ARRAY['id','user_id','crop_type_slug','variety_id','plant_id','harvest_log_id',
+                          'preserved_at','method','method_other_text','quantity_value','quantity_unit',
+                          'package_count','storage_location_id','use_by_target','remaining_count',
+                          'consumed_at','notes','photo_id','created_at','updated_at','deleted_at',
+                          'source_kind','source_label','preserved_at_approx','batch_id']::text[])
+             AS want(column_name)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version='4.15.0-putupprov-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema='public' AND c.table_name='preservation_log'
+                            AND c.column_name = want.column_name)
+    expect: rowcount_eq
+    value: 0
 
   - name: post_schema_version_recorded
     sql: |

@@ -65,7 +65,8 @@
 # `continuous: false` and flipping it in the apply commit is the alternative, and this repo has the
 # scar — v4-carecacheundo-001's equivalent gate sits red on prod because that flip never happened.
 #
-# ONE GATE BELOW IS DELIBERATELY *NOT* ARMED — post_column_is_still_not_null. It is TRUE against the
+# ONE GATE BELOW IS DELIBERATELY *NOT* ARMED — post_quantity_never_recorded_without_its_unit (named
+# post_column_is_still_not_null until 2026-09-29; restated, see its own comment). It is TRUE against the
 # live pre-apply schema, so arming it would make it vacuous today and DELETE a real assertion.
 # Self-arming is for a gate that would otherwise be red, never a blanket style (the rule is stated in
 # v4-putupmethod-001/gates.yml and is worth repeating because it is the easy thing to get wrong in
@@ -275,11 +276,33 @@ post:
   # unrepresentable). Arming it would delete a real assertion that holds today. What it protects is
   # the family idiom that a quantity and its unit are recorded together or not at all — dropping
   # NOT NULL here would admit a number with no unit, which is the one shape the UI renders as fact.
-  - name: post_column_is_still_not_null
+  #
+  # RESTATED 2026-09-29 (Put-Up release 1a gates-only commit; review3 data-schema-architect finding
+  # 1). Was `post_column_is_still_not_null`, which asserted the MECHANISM (quantity_unit NOT NULL).
+  # Put-Up release 1b deliberately makes the quantity pair nullable (a jar may be logged with no
+  # size) and keeps the idiom with a both-or-neither CHECK instead, so the mechanism-shaped gate
+  # would red on a correct 1b apply. This asserts the INVARIANT: it passes while quantity_unit is NOT
+  # NULL (today, both envs), OR once the column is nullable only if a VALIDATED CHECK named
+  # chk_preservation_log_quantity_pairing sits on preservation_log and names both quantity_value
+  # and quantity_unit. THAT CONSTRAINT NAME IS THE CONTRACT 1b's migration creates; renaming it there
+  # reds this, which is intended. Still deliberately unarmed, for the reason above: it holds today.
+  # Catalog joins, no ::regclass. A nullable unit with no such constraint returns one row.
+  - name: post_quantity_never_recorded_without_its_unit
     sql: |
-      SELECT 1 FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='preservation_log'
-         AND column_name='quantity_unit' AND is_nullable='YES'
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='preservation_log'
+                        AND column_name='quantity_unit' AND is_nullable='YES')
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_constraint c
+                 JOIN pg_class     t ON t.oid = c.conrelid
+                 JOIN pg_namespace n ON n.oid = t.relnamespace
+                WHERE n.nspname='public' AND t.relname='preservation_log'
+                  AND c.conname='chk_preservation_log_quantity_pairing'
+                  AND c.contype='c' AND c.convalidated
+                  AND pg_get_constraintdef(c.oid) LIKE '%quantity_value%'
+                  AND pg_get_constraintdef(c.oid) LIKE '%quantity_unit%')
     expect: rowcount_eq
     value: 0
 
