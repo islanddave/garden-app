@@ -353,6 +353,9 @@ export function projectRow(r) {
     cooked: r.cooked ?? null,
     remaining_amount: r.remaining_amount ?? null,
     stock_mode: Number(r.package_count) === 1 && isMassUnit(r.quantity_unit) ? 'weighed' : 'counted',
+    // A3: the place's kind, read-only, where the read joined it (the discard-by basis words say
+    // "general figure: hot sauce, fridge"). NULL on a write's RETURNING, which joins nothing.
+    storage_kind: r.storage_kind ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
     // From the driver's values, not the projected text: classifyUseBy reads either, and leaving its

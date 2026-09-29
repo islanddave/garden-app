@@ -134,7 +134,9 @@ describe('PATCH — validation', () => {
     [{ storage_location_id: PLACE }, /cannot be edited here: storage_location_id/],
     [{ remaining_count: 1 }, /cannot be edited here: remaining_count/],
     [{}, /nothing to update/],
-    [{ method_other_text: 'x' }, /travels with method/],
+    [{ method_other_text: ' ' }, /cannot be blank/],
+    [{ method_other_text: 'x'.repeat(121) }, /at most 120/],
+    [{ package_count: 0 }, /package_count must be >= 1/],
     [{ discard_by: 'someday' }, /discard_by must be/],
     [{ quantity_value: 2 }, /edited together/],
     [{ quantity_value: 2, quantity_unit: 'gallons' }, /quantity_unit must be one of/],
@@ -149,6 +151,7 @@ describe('PATCH — validation', () => {
     [{ discard_by: '2027-01-15' }], [{ discard_by: 'none' }], [{ discard_by: 'clear' }],
     [{ quantity_value: 2.5, quantity_unit: 'qt' }], [{ quantity_value: null, quantity_unit: null }],
     [{ ph_reading: '3.70' }], [{ label: null }], [{ method: 'other', method_other_text: 'Drinking vinegar' }],
+    [{ method_other_text: 'Drinking vinegar' }], [{ package_count: 3, quantity_value: 7.5, quantity_unit: 'qt' }],
   ])('%o is accepted', (body) => expect(validateJarPatch(body)).toBeNull())
 })
 
@@ -282,5 +285,46 @@ describe('Move — what it sends', () => {
     const w = sql.batches[0][1].norm
     const made = w.slice(w.indexOf('INSERT INTO storage_location'), w.indexOf('ON CONFLICT'))
     expect(made).toMatch(/j\.xmin = \? ::text::xid/)
+  })
+})
+
+// ── integrator follow-up to A3 ────────────────────────────────────────────────────────────────────
+describe('A3: method_other_text on its own, and the size + count in ONE PATCH', () => {
+  it('the route matcher captures [^/]+ and still claims only a uuid', () => {
+    expect(parseJarRoute(`/api/preservation/${JAR}/move`)).toEqual({ id: JAR, sub: 'move' })
+    expect(parseJarRoute('/api/preservation/p/move')).toBeNull()
+  })
+
+  it('method_other_text alone on an Other jar writes it; on a non-Other jar → 400', async () => {
+    const other = stored({ method: 'other', method_other_text: 'old' })
+    const sql = mockSql([[other], [], [other]])
+    const res = await patch(sql, { method_other_text: 'Drinking vinegar' })
+    expect(res.status).toBe(200)
+    expect(after(sql.batches[0][1], 'method_other_text = CASE WHEN ? ::boolean THEN')).toBe('Drinking vinegar')
+    const sql2 = mockSql([[stored()]])
+    expect((await patch(sql2, { method_other_text: 'x' })).status).toBe(400)
+  })
+
+  it('a count change moves remaining_count by the delta, decided in the WHERE; stamps delta_at', async () => {
+    const sql = mockSql([[stored({ package_count: 3, remaining_count: 2 })], [], [stored()]])
+    await patch(sql, { package_count: 4, quantity_value: 10, quantity_unit: 'qt' })
+    const w = sql.batches[0][1]
+    expect(w.norm).toContain('remaining_count = CASE WHEN ? ::int IS NOT NULL AND package_count <> ? ::int THEN COALESCE(remaining_count, package_count) + ( ? ::int - package_count) ELSE remaining_count END')
+    expect(w.norm).toContain('delta_at = CASE WHEN ? ::int IS NOT NULL AND package_count <> ? ::int THEN now() ELSE delta_at END')
+    expect(w.norm).toContain('AND ( ? ::int IS NULL OR COALESCE(remaining_count, package_count) + ( ? ::int - package_count) BETWEEN 0 AND ? ::int)')
+    expect(after(w, 'package_count = COALESCE(')).toBe(4)
+  })
+
+  it('the refusal: lowering below what is used → 409 count_below_used, the legacy PUT\'s words', async () => {
+    const sql = mockSql([[stored({ package_count: 3, remaining_count: 1 })], [], []])
+    const res = await patch(sql, { package_count: 1 })
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('count_below_used')
+  })
+
+  it('a count the rule allows but the row changed under → 409 client_stale', async () => {
+    const sql = mockSql([[stored({ package_count: 3, remaining_count: 3 })], [], []])
+    const res = await patch(sql, { package_count: 2 })
+    expect(res.body.code).toBe('client_stale')
   })
 })
