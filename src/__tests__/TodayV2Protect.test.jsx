@@ -270,8 +270,19 @@ describe('cold rows have ONE owner', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand all' }))
     await settle()
     for (const b of [...document.querySelectorAll('[data-testid="care-spot"] [aria-expanded="false"]')]) { fireEvent.click(b); await settle() }
+    // Integration 2 (S5 x S6): the count runs over S6's household section too — Jen's section is on the page, OPEN,
+    // with every disclosure inside it open (its spots and their "Show them" cohorts) and her plant rows rendered — so
+    // a second home for her cold row could not hide there.
+    const hh = screen.getByTestId('today-sec-hh-member_j')
+    expect(band('hh-member_j').getAttribute('aria-expanded')).toBe('true')
+    for (let i = 0, b; i < 20 && (b = hh.querySelector('[aria-expanded="false"]')); i++) { fireEvent.click(b); await settle() }
+    expect(hh.querySelectorAll('[aria-expanded="false"]').length).toBe(0)
+    expect(hh.querySelectorAll('[role="listitem"][data-key]').length).toBeGreaterThan(0)
     expect(everywhere().length).toBe(1)
     expect(everywhere()[0].closest('[data-testid="today-sec-protect"]')).toBeTruthy()
+    expect(hh.querySelectorAll('[data-key$=":cold"]').length).toBe(0)
+    // ...nor counted there: her section counts her care rows alone (water 8 + feed 7), never the cold row Protect owns.
+    expect(hh.getAttribute('data-count')).toBe('15')
     expect(band('care').textContent).toContain('233') // her rows are counted in her own section, never the viewer's
     fireEvent.click(within(rowOf('Kiwi Fern Coleus')).getByRole('button', { name: 'Covered: Kiwi Fern Coleus (Jen)' }))
     await settle()
