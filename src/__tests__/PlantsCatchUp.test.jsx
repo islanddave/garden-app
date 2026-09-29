@@ -257,7 +257,8 @@ describe('saving a row', () => {
     expect(puts()[1][1].body).toBe(puts()[0][1].body)
   })
 
-  // KILLING MUTATION: drop `loading={saving}` from Save. RESULT: RED (two PUTs).
+  // KILLING MUTATION: drop the saving lock — canSave's `!saving` and Save's `loading={saving}`.
+  // RESULT: RED (two PUTs).
   it('a double tap sends one PUT', async () => {
     let resolvePut
     putImpl = () => new Promise(r => { resolvePut = r })
