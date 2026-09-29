@@ -1,0 +1,873 @@
+# gates.yml
+# V5-PUTUPMAKE-001 — Put-Up release 1b ("Put it up"), the database half. Three files, three checkpoints:
+#
+#   0a-additive-ddl.sql         the schema, stamp '5.0.0-putupmake-001'. Before it: `pre` + the
+#                               sweep_* gates (README.md's two pre-checks are sweep_no_remaining_above_package
+#                               and sweep_no_duplicate_live_place_groups — run them IMMEDIATELY before
+#                               every apply, staging and prod).
+#   ── B's promote; verify-deploy shows B's Lambda live ──
+#   0p-post-deploy-backfill.sql the use_by_basis backfill, stamp '5.0.0-putupmake-001-backfill'. Before
+#                               it: the mid_backfill_* gates (the runner has no `mid` phase, so they sit
+#                               in `sweep`, distinguished by name — the v5-preservunit-001 convention).
+#   0r-rollback.sql             guarded; valid only while B's code is off dev (05-release-train §4).
+#
+# READ EACH CHECKPOINT'S OWN GATES. `--phase sweep` before 0a reports mid_backfill_0a_applied as FAIL,
+# correctly: that gate belongs to the 0p checkpoint. Before 0a read sweep_* only; before 0p read mid_*.
+#
+# ── SELF-ARMING, AND THE HOUSE RULE ABOUT WHEN NOT TO ────────────────────────────────────────────
+# `continuous:` defaults to true and gate-invariants.yml runs `--all --phase post --continuous-only`
+# against live prod AND staging on every migrations/** push to dev, on the Tuesday cron (MAIN's corpus)
+# and on dispatch — including dispatches on the putup-train ref BEFORE B's sitting, when neither
+# database has this DDL. So:
+#   * a post gate that is FALSE today asserts only once 0a has run: it is armed on this migration's own
+#     schema_version row (`EXISTS (... version = '5.0.0-putupmake-001')`) — vacuous before, permanent
+#     after, no follow-up edit. 0a writes the row in the same transaction as the DDL.
+#   * a post gate that is TRUE today is NOT armed (the v4-putupmethod-001 rule): arming it would make it
+#     vacuous today and delete a real assertion. Each unarmed gate below says so.
+#   * the NULL-basis gate is armed on the BACKFILL's stamp, not 0a's: pushing the directory must not red
+#     a database the post-deploy backfill has not reached (review3, data-schema-architect).
+#   * catalog joins only, never `::regclass` (a regclass cast errors even under a false WHERE), and no
+#     query names a column 0a adds: data gates over new columns read `to_jsonb(row) ->> 'col'`, which is
+#     NULL — not 42703 — on a database without the column. So every gate here is vacuous, never ERROR,
+#     on prod and staging as they stand, and stays so while only earlier releases are applied.
+#   * only rowcount_eq / rowcount_gte / scalar_eq; every count-shaped gate returns one row per violator
+#     so a FAIL names what is wrong; no prod-derived absolute (staging carries different data).
+#
+# ── THE GATE CENSUS: gates in OTHER directories this migration must keep green ─────────────────────
+# (05-release-train §6 requires v4-cascadesweep-001 and v4-evtanchordel-001 to be named here.)
+#   v4-cascadesweep-001   post_no_cascade_onto_a_soft_deletable_table — why kbi -> kitchen_batch moves
+#                         to NO ACTION in the statement that adds kbi.deleted_at; ksl gains no deleted_at.
+#   v4-evtanchordel-001   post_no_setnull_fk_inside_an_anchor_check — why no CHECK names kbi.plant_id,
+#                         and (with the implication CHECK it cannot see) why preservation_log.batch_id
+#                         leaves SET NULL.
+#   v4-archpreservguard-001  both routines name preservation_log, before the harvest_log delete.
+#   v4-archrestore-001    photo_detach_archive and its ordering, the pre-existing guards, the cross-
+#                         container guard text, the return shape.
+#   v4-softdelcascade-001 the photo detach precedes the event delete.
+#   v5-inflightbatch-001  Guard 3 and Guard 4 message text; kbi -> harvest_log RESTRICT; ksl ->
+#                         kitchen_batch CASCADE; every kitchen-table CHECK validated; the view exists.
+#   v4-putup-001          attribution / method_other / quantity_value CHECKs present by name; the
+#                         plants, harvest_log and crop_types FKs from preservation_log unchanged.
+#   v4-putupprov-001      post_attribution_check_unchanged: the relaxed CHECK names no source_kind.
+#   v4-putupsession-001   no CHECK mentions preserved_at_approx; that column untouched.
+#   v5-phrecord-001       kitchen_stage_log's pH pair is the only pH constraint there; the view keeps the
+#                         last-pH pair and its garden_ro grant (CREATE OR REPLACE keeps the ACL).
+#   v5-kbownertrigger-001 the shared prevent_ownership_transfer() stays untouched.
+#   v4-harvestaudit-001   no INSERT arm on any audit trigger.
+#   v5-preservunit-001    post_quantity_never_recorded_without_its_unit (release 1a's restatement):
+#                         satisfied by chk_preservation_log_quantity_pairing, validated, naming both.
+#   v4-putupprov-001 / v4-putupsession-001 / v5-putupmultisource-001 / v5-phrecord-001 column pins:
+#                         restated by release 1a as named-column presence, so the added columns pass.
+# Proven, not asserted: MAIN's and this branch's `--all --phase post --continuous-only` were run against
+# a local PG 17 replica of prod before and after 0a (README.md).
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_family_relations_present
+    sql: |
+      SELECT count(*)
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public'
+         AND ((c.relkind = 'r'
+               AND c.relname IN ('preservation_log','kitchen_batch','kitchen_batch_input',
+                                 'kitchen_stage_log','storage_location'))
+              OR (c.relkind = 'v' AND c.relname = 'v_kitchen_batch_current'))
+    expect: scalar_eq
+    value: 6
+
+  # Half-applied or hand-applied state: none of 0a's 29 columns may exist yet.
+  - name: pre_no_1b_column_yet
+    sql: |
+      SELECT c.table_name, c.column_name
+        FROM information_schema.columns c
+       WHERE c.table_schema = 'public'
+         AND (c.table_name, c.column_name) IN (VALUES
+               ('preservation_log','label'), ('preservation_log','container_label'),
+               ('preservation_log','use_by_basis'), ('preservation_log','storage_moved_at'),
+               ('preservation_log','texture'), ('preservation_log','is_raw'),
+               ('preservation_log','in_oil'), ('preservation_log','ph_reading'),
+               ('preservation_log','ph_read_at'), ('preservation_log','put_up_stage_id'),
+               ('preservation_log','preserved_at_precision'), ('preservation_log','idempotency_key'),
+               ('kitchen_batch','idempotency_key'),
+               ('kitchen_stage_log','entered_precision'), ('kitchen_stage_log','voids_id'),
+               ('kitchen_stage_log','idempotency_key'),
+               ('kitchen_batch_input','plant_id'), ('kitchen_batch_input','preservation_log_id'),
+               ('kitchen_batch_input','crop_type_slug'), ('kitchen_batch_input','source_label'),
+               ('kitchen_batch_input','role'), ('kitchen_batch_input','salt_pct'),
+               ('kitchen_batch_input','salt_base'), ('kitchen_batch_input','base_g'),
+               ('kitchen_batch_input','put_up_stage_id'), ('kitchen_batch_input','output_id'),
+               ('kitchen_batch_input','ordinal'), ('kitchen_batch_input','deleted_at'),
+               ('kitchen_batch_input','idempotency_key'))
+    expect: rowcount_eq
+    value: 0
+
+  # 0a names all four in CREATE TRIGGER / the audit call; a missing one fails mid-transaction.
+  - name: pre_trigger_functions_exist
+    sql: |
+      SELECT count(DISTINCT p.proname)
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('set_updated_at','prevent_kitchen_batch_ownership_transfer',
+                           'audit_stmt_update','audit_watched_slice')
+    expect: scalar_eq
+    value: 4
+
+  # preservation_log carried no trigger on 2026-09-29 (both envs); 0a attaches three. A trigger found
+  # here was added by someone else since — read it before stacking three more.
+  - name: pre_preservation_log_has_no_triggers
+    sql: |
+      SELECT g.tgname
+        FROM pg_trigger g
+        JOIN pg_class t ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND t.relname = 'preservation_log' AND NOT g.tgisinternal
+    expect: rowcount_eq
+    value: 0
+
+  # 0a replaces these three definitions wholesale. Each fingerprint was read on prod AND staging
+  # 2026-09-29 (identical, PostgreSQL 17.11) and is what 0a's own guard accepts as "pre-1b"; a mismatch
+  # means someone changed it since, and 0a would refuse. Fold their change into 0a, re-pin, re-rehearse.
+  - name: pre_archive_plant_events_is_the_captured_body
+    sql: |
+      SELECT md5(p.prosrc)
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'archive_plant_events'
+    expect: scalar_eq
+    value: 'b98b7fa25681bd8929bba311ee490869'
+
+  - name: pre_archive_container_events_is_the_captured_body
+    sql: |
+      SELECT md5(p.prosrc)
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'archive_container_events'
+    expect: scalar_eq
+    value: '76a4c2e1969ac0c675a2a853578a406d'
+
+  - name: pre_view_is_the_captured_definition
+    sql: |
+      SELECT md5(pg_get_viewdef(c.oid, true))
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'v_kitchen_batch_current' AND c.relkind = 'v'
+    expect: scalar_eq
+    value: '6eaff4dacaa1963064cd25258e1a29a3'
+
+  # 0a owns chk_preservation_log_quantity_unit (DROP IF EXISTS + ADD). A unit CHECK under ANY OTHER name
+  # would survive 0a and could be narrower than the union — two vocabularies on one column.
+  - name: pre_no_other_check_names_quantity_unit
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND t.relname = 'preservation_log' AND c.contype = 'c'
+         AND pg_get_constraintdef(c.oid) LIKE '%quantity_unit%'
+         AND c.conname NOT IN ('chk_preservation_log_quantity_unit')
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # ── 0a's checkpoint: run IMMEDIATELY before every apply of 0a (L-058) ─────────────────────────
+  # PRE-CHECK 1 (README). chk_preservation_log_remaining_within_package is created VALIDATED, so one
+  # violating row aborts the whole apply. WHOLE-TABLE: a CHECK does not read deleted_at.
+  - name: sweep_no_remaining_above_package
+    sql: |
+      SELECT id FROM public.preservation_log WHERE remaining_count > package_count
+    expect: rowcount_eq
+    value: 0
+
+  # PRE-CHECK 2 (README). The partial unique index would fail to build. LIVE rows only, because the
+  # index is partial on deleted_at IS NULL.
+  - name: sweep_no_duplicate_live_place_groups
+    sql: |
+      SELECT user_id, kind, lower(label)
+        FROM public.storage_location
+       WHERE deleted_at IS NULL
+       GROUP BY 1, 2, 3
+      HAVING count(*) > 1
+    expect: rowcount_eq
+    value: 0
+
+  # The column has had NO vocabulary until 0a; this is where the union's superset claim meets the data.
+  # WHOLE-TABLE. A hit means: widen the union in 0a (it never narrows), do not force the apply.
+  - name: sweep_every_stored_unit_in_the_union
+    sql: |
+      SELECT id, quantity_unit
+        FROM public.preservation_log
+       WHERE quantity_unit IS NOT NULL
+         AND quantity_unit NOT IN (
+               'g','kg','oz','lb','ml','l','tsp','tbsp','fl oz','cup','pint','qt','gal',
+               'count','clove','head','bunch','pinch','peck','bushel','half-bushel','flat','jar','bag',
+               'other',
+               'lbs','cups','pints','quarts','bushels','half-bushels','pecks','flats','jars','bags')
+    expect: rowcount_eq
+    value: 0
+
+  # The pairing CHECK's precondition, asserted rather than assumed (both columns are NOT NULL today).
+  - name: sweep_every_quantity_pair_whole_and_positive
+    sql: |
+      SELECT id
+        FROM public.preservation_log
+       WHERE (quantity_value IS NULL) <> (quantity_unit IS NULL) OR quantity_value <= 0
+    expect: rowcount_eq
+    value: 0
+
+  # kitchen_stage_log.amount_unit had no CHECK; 0a arms KITCHEN_UNITS on it.
+  - name: sweep_every_stage_amount_unit_in_kitchen_units
+    sql: |
+      SELECT id, amount_unit
+        FROM public.kitchen_stage_log
+       WHERE amount_unit IS NOT NULL
+         AND amount_unit NOT IN (
+               'g','kg','oz','lb','ml','l','tsp','tbsp','fl oz','cup','pint','qt','gal',
+               'count','clove','head','bunch','pinch','peck','bushel','half-bushel','flat','jar','bag',
+               'other')
+    expect: rowcount_eq
+    value: 0
+
+  # ── 0p's checkpoint: after verify-deploy shows B's Lambda live, before 0p ──────────────────────
+  - name: mid_backfill_0a_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001'
+    expect: rowcount_eq
+    value: 1
+
+  - name: mid_backfill_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001-backfill'
+    expect: rowcount_eq
+    value: 0
+
+  - name: mid_backfill_b_lambda_is_live
+    manual: true
+    note: >
+      NOT EXECUTABLE FROM POSTGRES, so it is a runbook step the runner counts as MANUAL, never as a
+      pass. Before 0p: verify-deploy for B's promote run shows the preservation Lambda's CodeSha256 is
+      the promoted build (05-release-train §3 step 11). While release 1a's Lambda is live, a basis on a
+      row lets 1a's date Edit raise 23514; after 0p, 0r is closed and recovery is forward-fix only.
+
+post:
+  # ── The apply receipt, made continuous by arming it on the DDL rather than on itself ───────────
+  # "The stamp exists" cannot be armed on the stamp. Armed on 0a's first column instead: the DDL landed
+  # AND the row is missing means a hand-applied 0a or a deleted row — the state that would silently
+  # disarm every gate below. Same shape as v5-inflightbatch-001's revised receipt.
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = 'preservation_log'
+                        AND column_name = 'use_by_basis')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-putupmake-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── Columns ─────────────────────────────────────────────────────────────────────────────────
+  # Every 0a column present, NULLABLE, NO DEFAULT (V4: every new column nullable; a default would assert
+  # a value on every row written before the column existed). Plus the three columns 0a made nullable.
+  - name: post_1b_columns_present_nullable_no_default
+    sql: |
+      SELECT v.tbl, v.col
+        FROM (VALUES
+               ('preservation_log','label'), ('preservation_log','container_label'),
+               ('preservation_log','use_by_basis'), ('preservation_log','storage_moved_at'),
+               ('preservation_log','texture'), ('preservation_log','is_raw'),
+               ('preservation_log','in_oil'), ('preservation_log','ph_reading'),
+               ('preservation_log','ph_read_at'), ('preservation_log','put_up_stage_id'),
+               ('preservation_log','preserved_at_precision'), ('preservation_log','idempotency_key'),
+               ('preservation_log','quantity_value'), ('preservation_log','quantity_unit'),
+               ('kitchen_batch','idempotency_key'),
+               ('kitchen_stage_log','entered_precision'), ('kitchen_stage_log','voids_id'),
+               ('kitchen_stage_log','idempotency_key'), ('kitchen_stage_log','entered_at'),
+               ('kitchen_batch_input','plant_id'), ('kitchen_batch_input','preservation_log_id'),
+               ('kitchen_batch_input','crop_type_slug'), ('kitchen_batch_input','source_label'),
+               ('kitchen_batch_input','role'), ('kitchen_batch_input','salt_pct'),
+               ('kitchen_batch_input','salt_base'), ('kitchen_batch_input','base_g'),
+               ('kitchen_batch_input','put_up_stage_id'), ('kitchen_batch_input','output_id'),
+               ('kitchen_batch_input','ordinal'), ('kitchen_batch_input','deleted_at'),
+               ('kitchen_batch_input','idempotency_key')) AS v(tbl, col)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = v.tbl
+                            AND c.column_name = v.col
+                            AND c.is_nullable = 'YES' AND c.column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Every CHECK the release relies on: present by name, on its table, VALIDATED ─────────────────
+  # Kept names included (quantity_value, start_pairing, attribution, method_other): a later rename or a
+  # NOT VALID re-add reds here.
+  - name: post_1b_checks_present_and_validated
+    sql: |
+      SELECT v.tbl, v.con
+        FROM (VALUES
+               ('preservation_log','chk_preservation_log_label_nonblank'),
+               ('preservation_log','chk_preservation_log_label_len'),
+               ('preservation_log','chk_preservation_log_use_by_basis'),
+               ('preservation_log','chk_preservation_log_use_by_basis_date'),
+               ('preservation_log','chk_preservation_log_texture'),
+               ('preservation_log','chk_preservation_log_texture_method'),
+               ('preservation_log','chk_preservation_log_ph_pairing'),
+               ('preservation_log','chk_preservation_log_ph_scale'),
+               ('preservation_log','chk_preservation_log_put_up_stage_batch'),
+               ('preservation_log','chk_preservation_log_preserved_at_precision'),
+               ('preservation_log','chk_preservation_log_quantity_pairing'),
+               ('preservation_log','chk_preservation_log_quantity_unit'),
+               ('preservation_log','chk_preservation_log_quantity_value'),
+               ('preservation_log','chk_preservation_log_remaining_within_package'),
+               ('preservation_log','chk_preservation_log_attribution'),
+               ('preservation_log','chk_preservation_log_method_other'),
+               ('kitchen_batch','chk_kitchen_batch_start_precision'),
+               ('kitchen_batch','chk_kitchen_batch_start_pairing'),
+               ('kitchen_batch','chk_kitchen_batch_kind_other'),
+               ('kitchen_stage_log','chk_ksl_stage_kind'),
+               ('kitchen_stage_log','chk_ksl_entered_precision'),
+               ('kitchen_stage_log','chk_ksl_entered_pairing'),
+               ('kitchen_stage_log','chk_ksl_void_pairing'),
+               ('kitchen_stage_log','chk_ksl_amount_unit'),
+               ('kitchen_batch_input','chk_kbi_kind'),
+               ('kitchen_batch_input','chk_kbi_qty_unit'),
+               ('kitchen_batch_input','chk_kbi_put_up_pairing'),
+               ('kitchen_batch_input','chk_kbi_role'),
+               ('kitchen_batch_input','chk_kbi_salt_base'),
+               ('kitchen_batch_input','chk_kbi_output_needs_put_up')) AS v(tbl, con)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND c.conname = v.con
+                            AND c.contype = 'c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # The relaxed CHECKs carry their new leg, and the attribution CHECK names neither source_kind (also
+  # v4-putupprov-001's pin) nor batch_id (V4: no batch_id leg). One row per missing or forbidden term.
+  - name: post_relaxed_checks_have_their_label_leg
+    sql: |
+      SELECT v.con, v.term, v.must
+        FROM (VALUES
+               ('chk_preservation_log_attribution', '(label IS NOT NULL)', true),
+               ('chk_preservation_log_attribution', 'source_kind', false),
+               ('chk_preservation_log_attribution', 'batch_id', false),
+               ('chk_preservation_log_method_other', '(label IS NOT NULL)', true)) AS v(con, term, must)
+        JOIN pg_constraint c ON c.conname = v.con
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND t.relname = 'preservation_log'
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND (strpos(pg_get_constraintdef(c.oid), v.term) > 0) <> v.must
+    expect: rowcount_eq
+    value: 0
+
+  # ── Vocabularies: every word 1b relies on is admitted (one row per word missing) ────────────────
+  - name: post_widened_vocabularies_admit_the_1b_words
+    sql: |
+      SELECT v.tbl, v.con, v.word
+        FROM (VALUES
+               ('kitchen_stage_log','chk_ksl_stage_kind','reopened'),
+               ('kitchen_stage_log','chk_ksl_stage_kind','paused'),
+               ('kitchen_stage_log','chk_ksl_stage_kind','resumed'),
+               ('kitchen_stage_log','chk_ksl_stage_kind','noted'),
+               ('kitchen_stage_log','chk_ksl_stage_kind','put_up'),
+               ('kitchen_stage_log','chk_ksl_stage_kind','void'),
+               ('kitchen_batch_input','chk_kbi_kind','garden'),
+               ('kitchen_batch_input','chk_kbi_kind','put_up'),
+               ('kitchen_batch_input','chk_kbi_kind','harvest'),
+               ('kitchen_batch','chk_kitchen_batch_start_precision','season'),
+               ('kitchen_batch','chk_kitchen_batch_start_precision','year'),
+               ('kitchen_stage_log','chk_ksl_entered_precision','season'),
+               ('kitchen_stage_log','chk_ksl_entered_precision','unknown'),
+               ('preservation_log','chk_preservation_log_preserved_at_precision','after'),
+               ('preservation_log','chk_preservation_log_preserved_at_precision','unknown'),
+               ('preservation_log','chk_preservation_log_use_by_basis','typed'),
+               ('preservation_log','chk_preservation_log_use_by_basis','recipe'),
+               ('preservation_log','chk_preservation_log_use_by_basis','table'),
+               ('preservation_log','chk_preservation_log_use_by_basis','house'),
+               ('preservation_log','chk_preservation_log_use_by_basis','none')) AS v(tbl, con, word)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND c.conname = v.con
+                            AND strpos(pg_get_constraintdef(c.oid), '''' || v.word || '''') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # THE UNION NEVER NARROWS (V4 "Units"): all 35 values admitted by the unit CHECK, walked against the
+  # live definition so a value lost in a DROP + ADD is named. The quotes are part of the probe, so
+  # 'half-bushel' is not satisfied by 'half-bushels' nor 'l' by 'lb'.
+  - name: post_unit_check_is_the_permissive_union
+    sql: |
+      SELECT v.word
+        FROM unnest(ARRAY[
+               'g','kg','oz','lb','ml','l','tsp','tbsp','fl oz','cup','pint','qt','gal',
+               'count','clove','head','bunch','pinch','peck','bushel','half-bushel','flat','jar','bag',
+               'other',
+               'lbs','cups','pints','quarts','bushels','half-bushels','pecks','flats','jars','bags'])
+             AS v(word)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'preservation_log'
+                            AND c.conname = 'chk_preservation_log_quantity_unit'
+                            AND strpos(pg_get_constraintdef(c.oid), '''' || v.word || '''') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # KITCHEN_UNITS (25) on both kitchen unit columns, the same walk.
+  - name: post_kitchen_unit_checks_carry_kitchen_units
+    sql: |
+      SELECT k.tbl, k.con, v.word
+        FROM (VALUES ('kitchen_batch_input','chk_kbi_qty_unit'),
+                     ('kitchen_stage_log','chk_ksl_amount_unit')) AS k(tbl, con)
+       CROSS JOIN unnest(ARRAY[
+               'g','kg','oz','lb','ml','l','tsp','tbsp','fl oz','cup','pint','qt','gal',
+               'count','clove','head','bunch','pinch','peck','bushel','half-bushel','flat','jar','bag',
+               'other']) AS v(word)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = k.tbl AND c.conname = k.con
+                            AND strpos(pg_get_constraintdef(c.oid), '''' || v.word || '''') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # LIVE UNITS ⊆ THE PERMISSIVE UNION (V4 "Units"), in the data. NOT ARMED: true on prod and staging
+  # today (prod: quarts, cups; staging: no rows), so arming it would delete a real assertion — and
+  # before 0a it is the early warning that 0a's apply would fail. WHOLE-TABLE, soft-deleted rows too: a
+  # removed row with a stray spelling still defeats the next re-add of the CHECK.
+  - name: post_live_units_inside_the_union
+    sql: |
+      SELECT id, quantity_unit
+        FROM public.preservation_log
+       WHERE quantity_unit IS NOT NULL
+         AND quantity_unit NOT IN (
+               'g','kg','oz','lb','ml','l','tsp','tbsp','fl oz','cup','pint','qt','gal',
+               'count','clove','head','bunch','pinch','peck','bushel','half-bushel','flat','jar','bag',
+               'other',
+               'lbs','cups','pints','quarts','bushels','half-bushels','pecks','flats','jars','bags')
+    expect: rowcount_eq
+    value: 0
+
+  # ── Every FK the release relies on: name, table, target, ON DELETE action, validated ───────────
+  # confdeltype: a = NO ACTION, n = SET NULL, c = CASCADE, r = RESTRICT.
+  - name: post_1b_foreign_keys_present_with_their_actions
+    sql: |
+      SELECT v.tbl, v.con
+        FROM (VALUES
+               ('preservation_log','preservation_log_batch_id_fkey','kitchen_batch','a'),
+               ('preservation_log','preservation_log_put_up_stage_id_fkey','kitchen_stage_log','a'),
+               ('preservation_log','preservation_log_put_up_stage_id_batch_id_fkey','kitchen_stage_log','a'),
+               ('kitchen_stage_log','kitchen_stage_log_batch_id_voids_id_fkey','kitchen_stage_log','a'),
+               ('kitchen_batch_input','kitchen_batch_input_batch_id_fkey','kitchen_batch','a'),
+               ('kitchen_batch_input','kitchen_batch_input_plant_id_fkey','plants','n'),
+               ('kitchen_batch_input','kitchen_batch_input_preservation_log_id_fkey','preservation_log','a'),
+               ('kitchen_batch_input','kitchen_batch_input_crop_type_slug_fkey','crop_types','a'),
+               ('kitchen_batch_input','kitchen_batch_input_output_id_fkey','preservation_log','a'),
+               ('kitchen_batch_input','kitchen_batch_input_batch_id_put_up_stage_id_fkey','kitchen_stage_log','a'))
+             AS v(tbl, con, target, deltype)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                           JOIN pg_class f ON f.oid = c.confrelid
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND c.conname = v.con
+                            AND c.contype = 'f' AND f.relname = v.target
+                            AND c.confdeltype = v.deltype AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # kitchen_batch_input -> kitchen_batch is NO ACTION, and NO other FK between them survives with any
+  # other action. (v4-cascadesweep-001 forbids CASCADE here now that the table carries deleted_at.)
+  - name: post_kbi_batch_fk_is_no_action
+    sql: |
+      WITH fk AS (
+        SELECT c.confdeltype
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          JOIN pg_class f ON f.oid = c.confrelid
+         WHERE n.nspname = 'public' AND t.relname = 'kitchen_batch_input'
+           AND f.relname = 'kitchen_batch' AND c.contype = 'f'
+      )
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND (NOT EXISTS (SELECT 1 FROM fk WHERE confdeltype = 'a')
+              OR EXISTS (SELECT 1 FROM fk WHERE confdeltype <> 'a'))
+    expect: rowcount_eq
+    value: 0
+
+  # kitchen_stage_log -> kitchen_batch STAYS CASCADE (V4; a stage row is part of its batch). NOT ARMED:
+  # true today. Duplicates v5-inflightbatch-001 post_stage_log_fk_is_cascade on purpose — this is the
+  # migration that sits next to it and could "tidy" it.
+  - name: post_ksl_batch_fk_still_cascade
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                           JOIN pg_class f ON f.oid = c.confrelid
+                          WHERE n.nspname = 'public' AND t.relname = 'kitchen_stage_log'
+                            AND f.relname = 'kitchen_batch' AND c.contype = 'f'
+                            AND c.confdeltype = 'c')
+    expect: rowcount_eq
+    value: 0
+
+  # ── Every UNIQUE the release relies on: name, table, unique, valid, and its key ────────────────
+  # The replay contract is "a 23505 on THIS name": renaming one breaks the handler without a test red.
+  - name: post_1b_uniques_present
+    sql: |
+      SELECT v.tbl, v.idx
+        FROM (VALUES
+               ('preservation_log','uq_preservation_log_idempotency_key',
+                '(idempotency_key) WHERE (idempotency_key IS NOT NULL)'),
+               ('kitchen_batch','uq_kitchen_batch_idempotency_key',
+                '(idempotency_key) WHERE (idempotency_key IS NOT NULL)'),
+               ('kitchen_stage_log','uq_ksl_idempotency_key',
+                '(idempotency_key) WHERE (idempotency_key IS NOT NULL)'),
+               ('kitchen_batch_input','uq_kbi_idempotency_key',
+                '(idempotency_key) WHERE (idempotency_key IS NOT NULL)'),
+               ('storage_location','uq_storage_location_user_kind_label',
+                '(user_id, kind, lower(label)) WHERE (deleted_at IS NULL)'),
+               ('kitchen_stage_log','uq_ksl_batch_id_id', '(batch_id, id)'),
+               ('kitchen_stage_log','uq_ksl_voids_id', '(voids_id)')) AS v(tbl, idx, key)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_index x
+                           JOIN pg_class i ON i.oid = x.indexrelid
+                           JOIN pg_class t ON t.oid = x.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND i.relname = v.idx
+                            AND x.indisunique AND x.indisvalid
+                            AND strpos(pg_get_indexdef(x.indexrelid), v.key) > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # V4: uq_kbi_batch_harvest is untouched — still partial on harvest_log_id, with NO deleted_at term
+  # (the shipped predicate insert's ON CONFLICT has no target and relies on it). NOT ARMED: true today.
+  - name: post_uq_kbi_batch_harvest_untouched
+    sql: |
+      SELECT 1
+       WHERE NOT EXISTS (SELECT 1 FROM pg_indexes
+                          WHERE schemaname = 'public' AND tablename = 'kitchen_batch_input'
+                            AND indexname = 'uq_kbi_batch_harvest'
+                            AND indexdef LIKE 'CREATE UNIQUE INDEX%(batch_id, harvest_log_id) WHERE (harvest_log_id IS NOT NULL)')
+    expect: rowcount_eq
+    value: 0
+
+  # ── Every trigger the release relies on: present, ENABLED, the right function and shape ────────
+  # tgtype bits: 1 row-level, 2 BEFORE, 16 UPDATE — so BEFORE UPDATE FOR EACH ROW = 19, AFTER UPDATE
+  # FOR EACH STATEMENT = 16 (no INSERT bit 4 and no DELETE bit 8 on the audit trigger). The shape is read
+  # from tgtype and the transition-table names, never from pg_get_triggerdef text.
+  - name: post_1b_triggers_present_and_enabled
+    sql: |
+      SELECT v.tg
+        FROM (VALUES
+               ('set_updated_at', 'set_updated_at', 19, NULL, NULL),
+               ('prevent_preservation_log_ownership_transfer', 'prevent_kitchen_batch_ownership_transfer',
+                19, NULL, NULL),
+               ('trg_audit_preservation_log_upd', 'audit_stmt_update', 16, 'old_rows', 'new_rows'))
+             AS v(tg, fn, tgtype, oldtab, newtab)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_trigger g
+                           JOIN pg_class t ON t.oid = g.tgrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                           JOIN pg_proc p ON p.oid = g.tgfoid
+                          WHERE n.nspname = 'public' AND t.relname = 'preservation_log'
+                            AND g.tgname = v.tg AND NOT g.tgisinternal AND g.tgenabled = 'O'
+                            AND p.proname = v.fn AND g.tgtype = v.tgtype
+                            AND g.tgoldtable IS NOT DISTINCT FROM v.oldtab
+                            AND g.tgnewtable IS NOT DISTINCT FROM v.newtab)
+    expect: rowcount_eq
+    value: 0
+
+  # The audit trigger watches EXACTLY V4's nine columns: one row per column watched but not listed, or
+  # listed but not watched, or watched but absent from the table (a typo'd name compares NULL = NULL
+  # forever — v4-harvestaudit-001's vacuity mode). Arguments read from the live trigger.
+  - name: post_audit_watches_exactly_the_nine
+    sql: |
+      WITH watched AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger g
+          JOIN pg_class t ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(g.oid) FROM 'audit_stmt_update\(([^)]*)\)'), ',') AS x
+         WHERE n.nspname = 'public' AND t.relname = 'preservation_log'
+           AND g.tgname = 'trg_audit_preservation_log_upd'
+      ), expected(col) AS (
+        VALUES ('storage_location_id'), ('use_by_target'), ('use_by_basis'), ('package_count'),
+               ('remaining_count'), ('label'), ('is_raw'), ('in_oil'), ('deleted_at')
+      )
+      SELECT 'not watched' AS problem, e.col FROM expected e
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1 FROM watched w WHERE w.col = e.col)
+      UNION ALL
+      SELECT 'watched but not in V4''s list', w.col FROM watched w
+       WHERE NOT EXISTS (SELECT 1 FROM expected e WHERE e.col = w.col)
+      UNION ALL
+      SELECT 'watched but not a column', w.col FROM watched w
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'preservation_log'
+                            AND c.column_name = w.col)
+    expect: rowcount_eq
+    value: 0
+
+  # ── The ownership-trigger function names real columns on its table (per touched table) ─────────
+  # BUG-KBOWNERTRIGGER-001's class: a trigger function naming OLD.<col> / NEW.<col> the table lacks
+  # raises 42703 on every UPDATE and no existence check can see it. preservation_log gains its ownership
+  # trigger in 1b (armed: it must EXIST once 0a ran); kitchen_batch has one (NOT armed: true today —
+  # v5-kbownertrigger-001's own check is apply-window only, this makes it continuous). One row per
+  # missing trigger, per column the table lacks, or per function naming no column at all.
+  - name: post_ownership_trigger_names_real_columns_preservation_log
+    sql: |
+      WITH own AS (
+        SELECT g.tgname, p.prosrc
+          FROM pg_trigger g
+          JOIN pg_class t ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          JOIN pg_proc p ON p.oid = g.tgfoid
+         WHERE n.nspname = 'public' AND t.relname = 'preservation_log' AND NOT g.tgisinternal
+           AND p.proname LIKE 'prevent%ownership_transfer'
+      ), ref AS (
+        SELECT own.tgname, lower((regexp_matches(own.prosrc, '(?:OLD|NEW)\.([a-z_][a-z0-9_]*)', 'gi'))[1]) AS col
+          FROM own
+      )
+      SELECT 'no ownership trigger' AS problem, NULL::text AS col
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1 FROM own)
+      UNION ALL
+      SELECT 'names no column', own.tgname FROM own
+       WHERE NOT EXISTS (SELECT 1 FROM ref WHERE ref.tgname = own.tgname)
+      UNION ALL
+      SELECT 'names a column the table lacks', ref.col FROM ref
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'preservation_log'
+                            AND c.column_name = ref.col)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_ownership_trigger_names_real_columns_kitchen_batch
+    sql: |
+      WITH own AS (
+        SELECT g.tgname, p.prosrc
+          FROM pg_trigger g
+          JOIN pg_class t ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          JOIN pg_proc p ON p.oid = g.tgfoid
+         WHERE n.nspname = 'public' AND t.relname = 'kitchen_batch' AND NOT g.tgisinternal
+           AND p.proname LIKE 'prevent%ownership_transfer'
+      ), ref AS (
+        SELECT own.tgname, lower((regexp_matches(own.prosrc, '(?:OLD|NEW)\.([a-z_][a-z0-9_]*)', 'gi'))[1]) AS col
+          FROM own
+      )
+      SELECT 'no ownership trigger' AS problem, NULL::text AS col
+       WHERE NOT EXISTS (SELECT 1 FROM own)
+      UNION ALL
+      SELECT 'names no column', own.tgname FROM own
+       WHERE NOT EXISTS (SELECT 1 FROM ref WHERE ref.tgname = own.tgname)
+      UNION ALL
+      SELECT 'names a column the table lacks', ref.col FROM ref
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'kitchen_batch'
+                            AND c.column_name = ref.col)
+    expect: rowcount_eq
+    value: 0
+
+  # The same class for EVERY trigger on the other three touched tables (kitchen_stage_log,
+  # kitchen_batch_input, storage_location carry none today and own through created_by or user_id with
+  # no trigger): any trigger attached to one later must name only that table's columns. NOT ARMED.
+  - name: post_trigger_functions_name_real_columns_on_other_touched_tables
+    sql: |
+      SELECT t.relname, g.tgname, r.col
+        FROM pg_trigger g
+        JOIN pg_class t ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_proc p ON p.oid = g.tgfoid
+       CROSS JOIN LATERAL (
+         SELECT DISTINCT lower((regexp_matches(p.prosrc, '(?:OLD|NEW)\.([a-z_][a-z0-9_]*)', 'gi'))[1]) AS col
+       ) r
+       WHERE n.nspname = 'public' AND NOT g.tgisinternal
+         AND t.relname IN ('kitchen_stage_log','kitchen_batch_input','storage_location')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = t.relname
+                            AND c.column_name = r.col)
+    expect: rowcount_eq
+    value: 0
+
+  # ── pH on the jar: a record, never an assessment ───────────────────────────────────────────────
+  # CLONE of v5-phrecord-001 post_no_extra_ph_constraint, for preservation_log. The pairing and the
+  # scale's own domain are the only CHECKs allowed to name ph_reading; any other is a threshold somebody
+  # added (FOODSAFETY-RULING-V101). Matched by constraint NAME, so this gate cannot itself become the
+  # place a number re-enters the code. NOT ARMED: true today (no CHECK names ph_reading at all).
+  - name: post_no_extra_ph_constraint_on_preservation_log
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND t.relname = 'preservation_log' AND c.contype = 'c'
+         AND pg_get_constraintdef(c.oid) LIKE '%ph_reading%'
+         AND c.conname NOT IN ('chk_preservation_log_ph_pairing','chk_preservation_log_ph_scale')
+    expect: rowcount_eq
+    value: 0
+
+  # And no stored verdict on the jar — V4: "no target_ph or tested column, ever". The same list as
+  # v5-phrecord-001 post_no_ph_verdict_column, plus the two V4 names. NOT ARMED: true today.
+  - name: post_no_ph_verdict_column_on_preservation_log
+    sql: |
+      SELECT column_name
+        FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'preservation_log'
+         AND column_name IN ('ph_status','ph_ok','ph_pass','ph_target','ph_threshold','ph_limit',
+                             'is_acidified','acidified','shelf_stable','is_safe','safety_status',
+                             'target_ph','tested','ph_tested')
+    expect: rowcount_eq
+    value: 0
+
+  # ── v_kitchen_batch_current ────────────────────────────────────────────────────────────────────
+  # The 30 live columns at positions 1..30, and kitchen_batch's new column at 31. A later release may
+  # append (release 4 adds recipe_id) — this names positions, not a count, so an append stays green.
+  - name: post_view_columns_in_order
+    sql: |
+      SELECT v.pos, v.col
+        FROM (VALUES
+               (1,'id'), (2,'user_id'), (3,'label'), (4,'kind'), (5,'kind_other'), (6,'started_at'),
+               (7,'start_precision'), (8,'start_anchor_kind'), (9,'start_anchor_id'),
+               (10,'first_recorded_at'), (11,'expected_days_min'), (12,'expected_days_max'),
+               (13,'brine_note'), (14,'suspended_at'), (15,'closed_at'), (16,'outcome'),
+               (17,'outcome_note'), (18,'cover_photo_id'), (19,'notes'), (20,'created_at'),
+               (21,'updated_at'), (22,'deleted_at'), (23,'current_stage_kind'),
+               (24,'current_stage_label'), (25,'current_stage_entered_at'),
+               (26,'current_storage_location_id'), (27,'input_count'), (28,'output_count'),
+               (29,'last_ph_reading'), (30,'last_ph_read_at'), (31,'idempotency_key')) AS v(pos, col)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_attribute a
+                           JOIN pg_class c ON c.oid = a.attrelid
+                           JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public' AND c.relname = 'v_kitchen_batch_current'
+                            AND a.attnum = v.pos AND a.attname = v.col AND NOT a.attisdropped)
+    expect: rowcount_eq
+    value: 0
+
+  # The stage rules, read from the live definition (fragments survive a later append): voided rows are
+  # skipped, NULL dates sort last, removed lines are not counted, the legacy current-stage LATERAL reads
+  # only the five shipped kinds.
+  - name: post_view_skips_voids_and_removed_lines
+    sql: |
+      SELECT v.fragment
+        FROM (VALUES ('voids_id = sl.id'), ('voids_id = pl.id'), ('entered_at DESC NULLS LAST'),
+                     ('i.deleted_at IS NULL'),
+                     ('ARRAY[''started''::text, ''tended''::text, ''moved''::text, ''finished''::text, ''failed''::text]'))
+             AS v(fragment)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_class c
+                           JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public' AND c.relname = 'v_kitchen_batch_current'
+                            AND c.relkind = 'v'
+                            AND strpos(pg_get_viewdef(c.oid, true), v.fragment) > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # ── The archive routines skip removed lines, and the container routine names kitchen batches ───
+  # Both filter kbi.deleted_at; the container routine carries Guard 5's message; and in BOTH the kitchen
+  # guard reads kitchen_batch_input BEFORE the harvest_log delete (positional, like
+  # v4-archpreservguard-001's gate: a guard below the delete is decoration).
+  - name: post_archive_routines_filter_removed_lines
+    sql: |
+      SELECT p.proname, v.problem
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       CROSS JOIN LATERAL (VALUES
+               ('no kbi.deleted_at filter', strpos(p.prosrc, 'kbi.deleted_at IS NULL') = 0),
+               ('kitchen guard after the harvest_log delete',
+                strpos(p.prosrc, 'kitchen_batch_input') = 0
+                OR strpos(p.prosrc, 'kitchen_batch_input')
+                   > strpos(p.prosrc, 'DELETE FROM public.harvest_log')),
+               ('no Guard 5 message',
+                p.proname = 'archive_container_events'
+                AND strpos(p.prosrc, 'kitchen_batch row(s) record a batch fed by these harvests') = 0))
+             AS v(problem, bad)
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('archive_plant_events','archive_container_events')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND v.bad
+    expect: rowcount_eq
+    value: 0
+
+  # ── The post-deploy backfill ──────────────────────────────────────────────────────────────────
+  # THE NULL-BASIS GATE (V4: post-deploy, no dated row has a NULL basis). Armed on the BACKFILL's stamp
+  # (and 0a's), so it asserts only once 0p has run. WHOLE-TABLE: 0p classifies soft-deleted rows too.
+  # to_jsonb, not the column name: vacuous rather than 42703 where 0a has not run.
+  - name: post_no_dated_row_without_a_basis
+    sql: |
+      SELECT p.id
+        FROM public.preservation_log p
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001-backfill')
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND (to_jsonb(p) ->> 'use_by_basis') IS NULL
+         AND p.use_by_target IS NOT NULL
+    expect: rowcount_eq
+    value: 0
+
+  # A FORGOTTEN BACKFILL CANNOT HIDE BEHIND THE GATE ABOVE. That gate is vacuous until 0p's stamp exists,
+  # so a backfill that never ran would leave it green forever. This one arms itself on B being USED: once
+  # any jar carries a basis (only B's writers set one) the backfill's stamp must exist. Red between B's
+  # first put-up and step 12 of B's sitting — true, and short.
+  - name: post_backfill_ran_once_b_writes_a_basis
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.preservation_log p
+                      WHERE (to_jsonb(p) ->> 'use_by_basis') IS NOT NULL)
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-putupmake-001-backfill')
+    expect: rowcount_eq
+    value: 0
+
+  # ── Apply-window receipt ──────────────────────────────────────────────────────────────────────
+  # Right after 0a, and until B's code writes: no B-shaped row exists — 0a wrote no data, and 0r's window
+  # is open. B's first put-up, key or basis ends the window, which is why this is continuous: false; and
+  # 0p's stamp closes it for good (the backfill sets a basis on every row), so it stands down there
+  # rather than reading as a failure at 0p's checkpoint. to_jsonb so a runbook run of the whole post
+  # phase on an unapplied database reports 0, not 42703.
+  - name: post_no_b_shaped_row_yet
+    continuous: false
+    sql: |
+      SELECT x.what, x.id
+        FROM (SELECT 'stage row' AS what, s.id FROM public.kitchen_stage_log s
+               WHERE (to_jsonb(s) ->> 'stage_kind') IN ('put_up','void')
+                  OR (to_jsonb(s) ->> 'idempotency_key') IS NOT NULL
+              UNION ALL
+              SELECT 'jar', p.id FROM public.preservation_log p
+               WHERE (to_jsonb(p) ->> 'use_by_basis') IS NOT NULL
+                  OR (to_jsonb(p) ->> 'idempotency_key') IS NOT NULL
+              UNION ALL
+              SELECT 'batch', b.id FROM public.kitchen_batch b
+               WHERE (to_jsonb(b) ->> 'idempotency_key') IS NOT NULL
+              UNION ALL
+              SELECT 'line', i.id FROM public.kitchen_batch_input i
+               WHERE (to_jsonb(i) ->> 'idempotency_key') IS NOT NULL) x
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version
+                          WHERE version = '5.0.0-putupmake-001-backfill')
+    expect: rowcount_eq
+    value: 0
