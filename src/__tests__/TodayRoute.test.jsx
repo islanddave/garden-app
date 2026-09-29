@@ -2,8 +2,9 @@
 // Debug & smoke row that flips it (visible to both users, default off), sign-out's scrub of every V2 key,
 // and TodaySection as a controlled section.
 // The chooser and the row as they are WITH the preview row shown (featureFlags TODAY_V2_PREVIEW_ROW true, as it
-// will be from S8a — mocked on here). As shipped until then (false: no row, a stored flag ignored) they are
-// pinned in TodayRoute.previewHidden.test.jsx.
+// ships by Dave's D14 — mocked on here, so these cases hold whichever way it ships). The shipped value and the
+// row's "Early preview" subtitle are pinned in TodayRoute.previewShipped.test.jsx; the false branch (no row, a
+// stored flag ignored) in TodayRoute.previewHidden.test.jsx.
 import React, { useState } from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'

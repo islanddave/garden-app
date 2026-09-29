@@ -117,10 +117,11 @@ export default function DebugMenu() {
     w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio,
   }))
   // V5-TODAYREDESIGN-001 S2 — the redesigned Today, per device and off by default. Visible to BOTH users on
-  // purpose (Dave 2026-09-28): it is how either of them tries the new page on their own phone, and turning
-  // it off is the way back. The page it switches lives at /today either way; nothing else moves.
-  // HIDDEN until the phone-comparison slice (featureFlags TODAY_V2_PREVIEW_ROW, the S3 + S4 pre-promote
-  // review): until then the page it switches to is missing sections the current Today has.
+  // purpose (Dave's D14, 2026-09-29, design-todayux-V100-20260928.md): Dave switches his own phone to judge
+  // each slice as releases land, and turning it off is the way back. The subtitle opens "Early preview — not
+  // finished." so Jen knows to leave it alone: until the last slice the page it switches to is missing sections
+  // the current Today has. The page lives at /today either way; nothing else moves. featureFlags
+  // TODAY_V2_PREVIEW_ROW false hides the row (and TodayRoute then ignores a stored flag).
   const todayV2 = useTodayV2Flag()
 
   useEffect(() => {
@@ -247,7 +248,7 @@ export default function DebugMenu() {
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: 'block', fontSize: '0.95rem', fontWeight: 600, color: P.dark }}>New Today (preview) on this phone</span>
             <span style={{ display: 'block', fontSize: '0.78rem', color: P.mid, lineHeight: 1.4, marginTop: 2 }}>
-              Try the redesigned Today page. Only this phone changes; turn it off to go back.
+              Early preview — not finished. Only this phone changes; turn it off to go back.
             </span>
           </span>
           <span aria-hidden="true" style={{

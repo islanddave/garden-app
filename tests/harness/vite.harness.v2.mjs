@@ -7,10 +7,11 @@
 // Layer 1 (remembered open/closed, plan §2.1) would be untestable, and silently so. The origin is `.invalid`
 // (RFC 2606): the harness fetch stubs answer it, and a request that ever escaped them could not resolve.
 //
-// A SECOND, since the S3 + S4 integration: src/lib/featureFlags.js ships TODAY_V2_PREVIEW_ROW = false (the Debug
-// row hidden, and TodayRoute ignoring a stored garden.todayV2, until S8a). The V2 gates measure the redesign
-// through that same chooser, so this config serves the module with the constant TRUE. It THROWS when neither
-// declaration is in the file: a renamed constant must not quietly put the harness back on V1.
+// A SECOND, since the S3 + S4 integration: src/lib/featureFlags.js's TODAY_V2_PREVIEW_ROW, when false, hides the
+// Debug row and makes TodayRoute ignore a stored garden.todayV2. The V2 gates measure the redesign through that
+// same chooser, so this config serves the module with the constant TRUE: a no-op while it ships true (Dave's D14,
+// 2026-09-29), a rewrite if it is ever flipped back. It THROWS when neither declaration is in the file: a renamed
+// constant must not quietly put the harness back on V1.
 //
 // A separate file for the reason vite.harness.mutant.mjs gives: every other harness entry and the v1 gate
 // keep the base config, so nothing they measure changes. A run is on this config iff it was pointed here.

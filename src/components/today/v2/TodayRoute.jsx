@@ -7,9 +7,9 @@ import { TODAY_V2_PREVIEW_ROW } from '../../../lib/featureFlags.js'
 // TodayRoute — /today's element: the current Today, or the redesign when this device's Debug & smoke switch
 // "New Today (preview) on this phone" is on (V5-TODAYREDESIGN-001 S2; off by default, so V2 ships dark).
 // The flag is read synchronously on the first render, so the chosen page paints first time.
-// While that row is hidden (featureFlags TODAY_V2_PREVIEW_ROW false, until S8a) a stored flag is IGNORED: a
-// phone that turned the preview on earlier would otherwise be held on the unfinished page with no row to turn
-// it off.
+// While that row is hidden (featureFlags TODAY_V2_PREVIEW_ROW false; it ships true by Dave's D14, 2026-09-29) a
+// stored flag is IGNORED: a phone that turned the preview on earlier would otherwise be held on the unfinished
+// page with no row to turn it off.
 //
 // Both pages are STATIC imports, not React.lazy — the plan asked for a lazy TodayV2, and App.jsx's
 // V4-LAZYRETRY-001 note is why not: React caches a rejected lazy payload for good, so one failed chunk

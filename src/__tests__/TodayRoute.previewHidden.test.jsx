@@ -1,5 +1,6 @@
-// V5-TODAYREDESIGN-001 — the preview switch as SHIPPED until the phone-comparison slice (S8a): featureFlags
-// TODAY_V2_PREVIEW_ROW is false, so Debug & smoke shows no "New Today (preview)" row and /today ignores a
+// V5-TODAYREDESIGN-001 — the preview switch with featureFlags TODAY_V2_PREVIEW_ROW FALSE, mocked here: the way to
+// hide the row again. It ships TRUE by Dave's D14 (2026-09-29; TodayRoute.previewShipped.test.jsx pins that), so
+// this file keeps the other branch working: Debug & smoke shows no "New Today (preview)" row and /today ignores a
 // stored garden.todayV2 (a phone that turned the preview on earlier is not held on the unfinished page with no
 // row to turn it off). The row and the chooser with the constant TRUE are TodayRoute.test.jsx's.
 import React from 'react'
@@ -10,6 +11,7 @@ import { MemoryRouter } from 'react-router-dom'
 vi.mock('../pages/Today.jsx', () => ({ default: () => <div data-testid="today-v1" /> }))
 vi.mock('../pages/TodayV2.jsx', () => ({ default: () => <div data-testid="today-v2" /> }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(async () => ({})) }) }))
+vi.mock('../lib/featureFlags.js', async (orig) => ({ ...(await orig()), TODAY_V2_PREVIEW_ROW: false }))
 
 import TodayRoute from '../components/today/v2/TodayRoute.jsx'
 import DebugMenu from '../pages/DebugMenu.jsx'
@@ -19,8 +21,8 @@ import { readTodayV2Flag } from '../lib/todayV2Flag.js'
 beforeEach(() => { localStorage.clear(); sessionStorage.clear() })
 afterEach(() => cleanup())
 
-describe('the preview row, hidden until S8a (TODAY_V2_PREVIEW_ROW false)', () => {
-  it('ships false — flipping it is the S8a change, made on purpose with this test', () => {
+describe('the preview row hidden (TODAY_V2_PREVIEW_ROW mocked false)', () => {
+  it('the mock took — this file measures the false branch, not the shipped value', () => {
     expect(TODAY_V2_PREVIEW_ROW).toBe(false)
   })
 
