@@ -27,8 +27,8 @@ import { resolveWebSocket } from './cdp-socket.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(here, '../..')
-const PORT = Number(process.env.GATE_HARNESS_PORT || 5319)
-const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9431)
+const PORT = Number(process.env.GATE_HARNESS_PORT || 5343)
+const CDP_PORT = Number(process.env.GATE_CDP_PORT || 9453)
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const EXTRA_CHROME_FLAGS = (process.env.GATE_CHROME_FLAGS || '').split(/\s+/).filter(Boolean)
 const PROBE_NOTHING = process.argv.includes('--probe-nothing')
