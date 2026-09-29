@@ -8,7 +8,7 @@ import {
   completionStub, containerChoices, CONTAINER_PRESETS, WHEN_ERRORS,
 } from '../components/putup/putItUp.js'
 import {
-  putUpDateWords, discardWords, basisWords, sizeWords, countedSize, METHOD_WORDS, KIND_WORDS,
+  putUpDateWords, discardWords, basisWords, sizeWords, countedSize, METHOD_WORDS, KIND_WORDS, qtyText, totalOfEach,
 } from '../components/putup/jarWords.js'
 import { VALID_METHODS } from '../../lambda/preservation/jarRules.js'
 
@@ -278,6 +278,35 @@ describe('jar words (§3.2, §3.6)', () => {
     // A container with no size of its own keeps its count and still says the total.
     expect(countedSize(3, { quantity_value: '2', quantity_unit: 'lb', container_label: 'bag' })).toBe('3 × bag · 2 lb in all')
     for (const out of [countedSize(3, ZUCCHINI), sizeWords(ZUCCHINI)]) expect(out).not.toMatch(/\d\s*×\s*2\.5/)
+  })
+
+  // numeric(10,2) comes back "2.50" / "2.00": said "2.5" / "2". MUTATION: drop qtyText from sizeWords
+  // or countedSize -> the driver-shaped arms red.
+  it('says a quantity the way it reads, not the way the column pads it', () => {
+    expect(qtyText('2.50')).toBe('2.5')
+    expect(qtyText('2.00')).toBe('2')
+    expect(qtyText('16')).toBe('16')
+    expect(qtyText('0.70')).toBe('0.7')
+    expect(qtyText(2.49)).toBe('2.49')
+    expect(qtyText('about 2')).toBe('about 2')
+    expect(qtyText(null)).toBe('')
+    expect(sizeWords({ quantity_value: '2.50', quantity_unit: 'qt', package_count: 3 })).toBe('2.5 qt in all')
+    expect(countedSize(2, { quantity_value: '2.00', quantity_unit: 'lb' })).toBe('2 containers · 2 lb in all')
+  })
+
+  // The walk's "How big is each?" (A3): the TOTAL is each × how many, in decimal, never float, rounded to
+  // the column's two places. MUTATION: compute it as Number(each) * count -> the 0.83 arm reads
+  // 2.4899999999999998; round each before multiplying -> the 0.333 arm reads 0.99.
+  it('a walk item\'s total is each × how many, decimal-safe', () => {
+    expect(totalOfEach('0.83', 3)).toBe('2.49')
+    expect(totalOfEach('1', 2)).toBe('2')
+    expect(totalOfEach('2.5', 3)).toBe('7.5')
+    expect(totalOfEach('.5', 4)).toBe('2')
+    expect(totalOfEach('0.333', 3)).toBe('1')          // 0.999 → 1.00 at two places
+    expect(totalOfEach('1.005', 1)).toBe('1.01')       // half-up on the exact digits (float would say 1)
+    expect(totalOfEach('12', 1)).toBe('12')
+    for (const bad of ['', '0', '1e3', 'abc', '-1', '.']) expect(totalOfEach(bad, 3)).toBeNull()
+    for (const n of [0, 1.5, -2, '']) expect(totalOfEach('1', n)).toBeNull()
   })
 
   it('a jar with no size reads as its container or as nothing — never null or 0', () => {

@@ -149,6 +149,35 @@ function hasQuantity({ quantity_value, quantity_unit } = {}) {
   return quantity_value != null && quantity_value !== '' && Number(quantity_value) !== 0 && !!quantity_unit
 }
 
+// A quantity as it is said. The column is numeric(10,2), so the driver hands back "2.50" and "2.00";
+// they are said "2.5" and "2". Anything that is not a plain decimal is returned as it came.
+export function qtyText(v) {
+  if (v == null || v === '') return ''
+  const s = String(v).trim()
+  if (!/^\d+(\.\d+)?$/.test(s)) return s
+  return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s
+}
+
+// THE TOTAL OF A WALK ITEM: "How big is each?" × how many, as the TOTAL the column holds (A3). Decimal
+// arithmetic on the typed digits, never floats — 3 × 0.83 is 2.49, not 2.4899999999999998 — rounded
+// half-up to the column's two places. `each` is the typed text; `count` a whole number ≥ 1. Returns the
+// total as text ("2.49", "2", "7.5"), or null when either half is not a plain positive number.
+export function totalOfEach(each, count) {
+  const m = /^\s*(\d*)(?:\.(\d*))?\s*$/.exec(String(each ?? ''))
+  const n = Number(count)
+  if (!m || (!m[1] && !m[2]) || !Number.isInteger(n) || n < 1) return null
+  const frac = m[2] ?? ''
+  let v = BigInt(`${m[1] || '0'}${frac}`) * BigInt(n)          // exact, in units of 10^-frac.length
+  if (frac.length > 2) {
+    const d = 10n ** BigInt(frac.length - 2)
+    v = (v + d / 2n) / d
+  } else {
+    v *= 10n ** BigInt(2 - frac.length)
+  }
+  if (v <= 0n) return null
+  return qtyText(`${v / 100n}.${String(v % 100n).padStart(2, '0')}`)
+}
+
 // The size of one jar row as a headline fragment (the count is said elsewhere on the row). NULL pair
 // and no container → nothing, never "null".
 export function sizeWords(rec = {}) {
@@ -156,7 +185,8 @@ export function sizeWords(rec = {}) {
   if (container_label) return String(container_label)
   if (!hasQuantity(rec)) return ''
   const n = Number(package_count)
-  return Number.isFinite(n) && n > 1 ? `${quantity_value} ${quantity_unit} in all` : `${quantity_value} ${quantity_unit}`
+  const q = `${qtyText(quantity_value)} ${quantity_unit}`
+  return Number.isFinite(n) && n > 1 ? `${q} in all` : q
 }
 
 // The count and the size together: "2 × 8 oz woozy" · "3 containers · 2.5 qt in all" · "2.5 qt" ·
@@ -164,7 +194,7 @@ export function sizeWords(rec = {}) {
 export function countedSize(count, rec = {}) {
   const n = Number(count)
   const c = Number.isFinite(n) && n >= 1 ? n : 1
-  const qty = hasQuantity(rec) ? `${rec.quantity_value} ${rec.quantity_unit}` : null
+  const qty = hasQuantity(rec) ? `${qtyText(rec.quantity_value)} ${rec.quantity_unit}` : null
   const label = rec.container_label ? String(rec.container_label) : null
   if (label) {
     if (labelCarriesSize(label) || !qty) return `${c} × ${label}`

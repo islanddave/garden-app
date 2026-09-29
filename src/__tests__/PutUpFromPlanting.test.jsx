@@ -6,6 +6,11 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+// The thumb resolves its image one layer down and renders nothing while that is pending, which would
+// hide the alt text this file asserts. A stand-in that renders the alt it is given, only for a photo.
+vi.mock('../components/PutUpPhotoThumb.jsx', () => ({
+  default: ({ photoId, alt }) => (photoId ? <img alt={alt} data-testid="putup-thumb" /> : null),
+}))
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 
 const PLANTING = {
@@ -170,5 +175,43 @@ describe('PutUpFromPlanting — consumed put-ups are fate, not stock', () => {
     renderSection(() => Promise.resolve(untracked))
     expect(await screen.findByText('3 containers')).toBeTruthy()
     expect(screen.queryByText(/all used/)).toBeNull()
+  })
+})
+
+// Put-Up release F — a jar may have NO size (the quantity pair is NULL: Put it up's "no size" rows and
+// every F bottling written without one), and a quantity is the row's TOTAL (contract-F A3). This row
+// used to print the pair raw: "null null" as the headline and "Photo of null put up" as the thumb's
+// alt. It now says what the put-up list says, through jarWords.
+// MUTATION: print `{r.quantity_value} {r.quantity_unit}` again -> the headline arms red; build the alt
+// from quantity_unit again -> the alt arms red.
+describe('PutUpFromPlanting — a jar with no size, and a size that is a total', () => {
+  const rows = (...records) => ({ group_by: 'storage', groups: [{ group_key: 'loc-f', label: 'Fridge', records }] })
+  const base = { plant_id: 'pl-w2', remaining_count: null, preserved_at: '2026-10-08', use_by_target: null }
+  const heads = () => screen.getAllByTestId('putup-from-planting-head').map(e => e.textContent)
+
+  it('a bottled jar with no size reads as its name and its container, never "null"', async () => {
+    renderSection(() => Promise.resolve(rows({ ...base, id: 'b1', label: 'Megatron plain', container_label: '8 oz woozy',
+      quantity_value: null, quantity_unit: null, package_count: 2, method: 'hot_sauce', photo_id: 'ph-1' })))
+    await screen.findByText(/1 put-up/)
+    expect(heads()).toEqual(['Megatron plain · 8 oz woozy · Hot sauce'])
+    expect(screen.getByTestId('putup-thumb').getAttribute('alt')).toBe('Photo of Megatron plain · 8 oz woozy')
+    expect(document.body.textContent).not.toMatch(/null|undefined/)
+  })
+
+  it('a jar with no size, no name and no container reads as its method alone', async () => {
+    renderSection(() => Promise.resolve(rows({ ...base, id: 'b2', label: null, container_label: null,
+      quantity_value: null, quantity_unit: null, package_count: 1, method: 'ferment', photo_id: 'ph-2' })))
+    await screen.findByText(/1 put-up/)
+    expect(heads()).toEqual(['Ferment'])
+    expect(screen.getByTestId('putup-thumb').getAttribute('alt')).toBe('Photo of ferment')
+    expect(document.body.textContent).not.toMatch(/null|undefined/)
+  })
+
+  // The zucchini as the driver returns it: numeric(10,2) "2.50" over three containers is 2.5 qt IN ALL.
+  it('a size over several containers is said as the total, the way the column holds it', async () => {
+    renderSection(() => Promise.resolve(rows({ ...base, id: 'z1', label: null, container_label: null,
+      quantity_value: '2.50', quantity_unit: 'qt', package_count: 3, remaining_count: 3, method: 'whole_freeze' })))
+    await screen.findByText(/1 put-up/)
+    expect(heads()).toEqual(['2.5 qt in all · Freeze'])
   })
 })

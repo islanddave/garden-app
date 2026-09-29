@@ -63,7 +63,7 @@ import { describeRefusal, existingPlaceId, REFRESH_NOW_LABEL } from '../lib/putU
 import { useAppUpdate } from '../hooks/useAppUpdate.js'
 // Put-Up release 1b — a jar's name, its no-size form, its date at its precision and its discard words
 // come from one module shared with Put it up and batch detail; a move is its own write (V4 §3.4).
-import { putUpDateWords, discardWords, sizeWords, ESTIMATED_PRECISIONS } from '../components/putup/jarWords.js'
+import { putUpDateWords, discardWords, sizeWords, qtyText, totalOfEach, ESTIMATED_PRECISIONS } from '../components/putup/jarWords.js'
 import MoveJarSheet from '../components/putup/MoveJarSheet.jsx'
 import { mintKey } from '../components/kitchen/idempotencyKey.js'
 
@@ -1495,11 +1495,21 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
   // the on-screen half of design §4.4 rule 4.
   const autoResolvedPlanting = session && soleForCrop && plantId === soleForCrop.id ? soleForCrop : null
 
+  // Contract-F A3 in the walk. quantity_value is the row's TOTAL, and the walk asks the size of EACH
+  // bag ("How big is each?"), so what it stores is each × how many — 3 bags of 0.83 qt is ONE row of
+  // 2.49 qt — worked out in decimal (jarWords.totalOfEach), never as floats. Outside the walk the form
+  // asks "How much in all" and the typed figure is the total already.
+  const bagCount = packageCount === '' ? 1 : Number(packageCount)
+  const walkTotal = session ? totalOfEach(qtyValue, bagCount) : null
+
   function validate() {
     // A planting is sufficient attribution on its own — the server derives crop + variety from it.
     if (!cropSlug && !effectiveVarietyId && !plantId) return 'Pick a crop, a variety, or a planting so this put-up is attributed.'
     const q = Number(qtyValue)
     if (qtyValue === '' || !Number.isFinite(q) || q <= 0) return 'Enter how much you put up (greater than zero).'
+    // The walk asks "How big is each?" and stores each × how many (walkTotal): a size it cannot
+    // multiply out exactly (1e3) is refused here, never written as something else.
+    if (session && walkTotal == null) return 'Enter how big each one is, as a plain number (greater than zero).'
     if (!qtyUnit) return 'Pick a unit.'
     if (method === 'other' && !methodOther.trim()) return 'Describe the method when you choose "Other".'
     if (!preservedAt) return 'When did you put this up?'
@@ -1529,9 +1539,9 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
       // ordinary path and leave it NULL — "nobody was asked" — when we did in fact ask.
       preserved_at_approx: dateApprox,
       method,
-      quantity_value: Number(qtyValue),
+      quantity_value: session ? Number(walkTotal) : Number(qtyValue),
       quantity_unit: qtyUnit,
-      package_count: packageCount === '' ? 1 : Number(packageCount),
+      package_count: bagCount,
       // In the BASE literal, deliberately — source_kind always has a value, and routing it through
       // the `if (x) body.x = ...` chain below would make "not set" and "empty" indistinguishable on
       // the wire for a column whose whole point is recording what is known.
@@ -1587,7 +1597,11 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
       // its Undo — so the form stays put and clears for the next bag rather than swapping itself
       // for a success screen he then has to tap past sixty times.
       if (session && onSaved) {
-        onSaved(row, `${body.package_count} × ${cropLabel}`)
+        // The readback says the TOTAL that was stored — from the saved row, the server's word for it,
+        // falling back to what was sent: "3 × Zucchini · 2.49 qt in all".
+        const stored = row?.quantity_value != null && row?.quantity_unit ? row : body
+        const size = sizeWords({ quantity_value: stored.quantity_value, quantity_unit: stored.quantity_unit, package_count: body.package_count })
+        onSaved(row, `${body.package_count} × ${cropLabel}${size ? ` · ${size}` : ''}`)
         resetForNext()
       } else {
         setSuccess({ text, row })
@@ -1724,11 +1738,12 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
   )
 
   const qtyRow = (
-    <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14 }}>
+    <div style={{ marginTop: 14 }}>
+    <div style={{ display: 'flex', gap: T.space.sm }}>
       <div style={{ flex: 2 }}>
-        {/* Contract-F A3: quantity_value is the TOTAL of the row (count × size), so the log form asks
-            for the total. The walk's own wording is unchanged and is reported, not decided, here: it
-            asks the size of EACH bag and stores that number in the same total column. */}
+        {/* Contract-F A3: quantity_value is the TOTAL of the row (count × size). The log form asks for
+            the total; the walk keeps asking the size of EACH bag — the fact at hand at a freezer — and
+            stores each × how many (walkTotal), saying that total under the field before it saves. */}
         <Field label={session ? 'How big is each? *' : 'How much in all *'} htmlFor="pu-qty">
           <Input
             id="pu-qty"
@@ -1752,6 +1767,14 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
           </Select>
         </Field>
       </div>
+    </div>
+    {/* The total the walk will store, said before it saves (A3): "3 × 0.83 qt = 2.49 qt in all". One
+        bag needs no sum — its size is its total. */}
+    {session && walkTotal != null && bagCount > 1 && (
+      <div role="status" data-testid="pu-walk-total" style={{ marginTop: 4, color: P.mid, fontSize: T.type.sm }}>
+        {bagCount} × {qtyText(qtyValue.trim())} {qtyUnit} = {walkTotal} {qtyUnit} in all
+      </div>
+    )}
     </div>
   )
 
