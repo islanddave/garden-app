@@ -318,7 +318,9 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
             value={row.discard.mode === 'auto' ? null : row.discard.mode}
             onChange={v => set({ discard: { mode: v ?? 'auto', date: v === 'date' ? row.discard.date : '' } })} />
           {row.discard.mode === 'date' && (
-            <input type="date" aria-label={`Discard by — ${name}`} data-testid={`putup-row-${index}-discard-date`}
+            // `-discard-day`, not `-discard-date`: that id is already the "From the label" chip's (ToggleChips
+            // `${idPrefix}-${value}`), and two nodes on one testid made the date field unaddressable.
+            <input type="date" aria-label={`Discard by — ${name}`} data-testid={`putup-row-${index}-discard-day`}
               value={row.discard.date} disabled={disabled} onChange={e => set({ discard: { mode: 'date', date: e.target.value } })}
               style={{ ...inputChrome(false), maxWidth: 220, marginBottom: T.space.sm, scrollMarginBottom: FOOTER_PX }} />
           )}
@@ -489,8 +491,13 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
 
   return (
     <Sheet open onClose={onClose} title={PUT_IT_UP_TITLE} size="full" busy={saving} armsBack>
+      {/* overflowAnchor none, here and on the footer: opening a row's "+ Name, added at the end…" jumped
+          the sheet ~676px at 426×492 (the ferment walks) — Chrome's scroll anchoring compensating for the
+          panel it had just opened, which put the row's first fields above the top edge and the pH field
+          under the row's sticky header. Nothing on this sheet loads in above the reader, so anchoring
+          has nothing to keep still here. */}
       <div data-testid="putup-sheet" data-batch-id={batch.id} onFocus={keepClear}
-        style={{ padding: '0 18px', scrollPaddingTop: 32, scrollPaddingBottom: FOOTER_PX }}>
+        style={{ padding: '0 18px', scrollPaddingTop: 32, scrollPaddingBottom: FOOTER_PX, overflowAnchor: 'none' }}>
         <p data-testid="putup-batch" style={{ margin: '0 0 10px', color: P.mid, fontSize: '0.86rem', fontWeight: 600 }}>{batch.label}</p>
 
         <RadioChips label="When?" name="When was it put up?" required={!preChip}
@@ -597,7 +604,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
       {/* Pinned. "More to put up later" is quieter and sits BELOW the primary, 12 px away (V4 §6.6) —
           never side by side at equal weight. */}
       <div ref={footerRef} data-testid="putup-footer" style={{ position: 'sticky', bottom: 0, background: P.white,
-        padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>
+        padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}`, overflowAnchor: 'none' }}>
         <Button data-testid="putup-finish" variant="primary" loading={saving} loadingLabel="Putting it up…"
           onClick={() => save(true)} style={{ width: '100%' }}>
           {FINISH_CTA}

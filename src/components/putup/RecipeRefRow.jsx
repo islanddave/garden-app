@@ -19,7 +19,7 @@ export const RECIPE_REF_MAX = 500
 
 const isUrl = (s) => /^https?:\/\/\S+$/i.test(String(s ?? '').trim())
 const link = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, background: 'none', border: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.82rem', fontWeight: 600,
 }
 

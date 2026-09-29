@@ -604,12 +604,16 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
         {seg === 'stores' && <StoresView useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} />}
 
         {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
-            only invalidation path and it re-reads BOTH this row and the list. */}
+            only invalidation path and it re-reads BOTH this row and the list.
+            "Opening that batch…" is for a batch not on screen yet — never for the re-read after a write
+            (release F, found by the ferment walks): that swapped the whole body for the placeholder and
+            back, remounting everything under it, so each write's own answer — "Saved · Undo", "Taken
+            out · Undo", a salt step half typed — was gone by the time the re-read landed. */}
         {batchId && (
           <div data-testid="putup-batch-mode">
             <BatchDetailView
               batch={detail} inputs={detail?.inputs ?? []} stages={detail?.stages ?? []}
-              outputs={detail?.outputs ?? []} loading={detailLoading} error={detailError}
+              outputs={detail?.outputs ?? []} loading={detailLoading && String(detail?.id ?? '') !== String(batchId)} error={detailError}
               nowMs={detailNowMs} onChanged={onBatchChanged}
               onRemoved={() => { loadGoing(); leaveMode() }} />
           </div>

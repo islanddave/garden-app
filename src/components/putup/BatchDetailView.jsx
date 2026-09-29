@@ -203,7 +203,7 @@ function todayYMD() {
 }
 
 const actionLink = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, background: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none',
   border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green,
   fontSize: '0.78rem',
 }
@@ -422,7 +422,7 @@ function Sitting({ batchId, stage, jars, lines, onChanged, nowMs, gardenNames, o
             )}
             <LineAdder lines={lines} onAdd={addLine} idPrefix={`sitting-add-${stage.id}`} forms={['fresh', 'cooked']}
               label="What was added at the end?" addLabel="Add it" />
-            {addErr && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem' }}>{addErr}</div>}
+            {addErr && <div role="alert" data-alarm-ink-exempt="error" style={{ color: P.terra, fontSize: '0.78rem' }}>{addErr}</div>}
             <button type="button" style={{ ...actionLink, color: P.light }} onClick={() => { setAdding(false); setAddErr(null) }}>Cancel</button>
           </div>
         ) : (

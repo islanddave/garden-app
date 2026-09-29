@@ -36,7 +36,7 @@ const MIN_QUERY = 2
 const MASS_CHIPS = ['g', 'oz', 'lb', 'kg']
 
 const link = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, background: 'none', border: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600,
 }
 const hitBtn = {

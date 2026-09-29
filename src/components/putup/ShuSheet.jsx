@@ -27,6 +27,9 @@ import { shuRangeWords, ratingWords, parseRating, FORM_LABELS, DRIED_FACTOR } fr
 export const SHU_SHEET_TITLE = 'Heat estimate'
 const WHY_WORDS = { no_rating: 'no listed heat', no_weight: 'no weight' }
 const SOURCE_WORDS = { typed: 'as typed', variety: 'from the variety' }
+// What the weight it was divided by IS (shuEstimate.js denominator_source): a jar with no additions of
+// its own is the sitting's figure, so its weight is the sitting's Made too.
+const DENOMINATOR_WORDS = { about: ' (what you said is in it)', made: ' made', sitting: ' made', row: ' in these bottles' }
 
 // "Can't work it out: gochugaru — no listed heat · onion — no weight". One name per line that lacks one.
 export function refusalWords(est) {
@@ -134,8 +137,7 @@ function ShuOpen({ batchId, scope, id, title, canSave, onClose, onSaved, onType 
             <p style={{ margin: '0 0 8px', color: P.mid, fontSize: '0.82rem' }}>
               Worked out from each pepper’s listed heat and weight
               {est.denominator_g ? `, over ${Math.round(Number(est.denominator_g))} g` : ''}
-              {est.denominator_source === 'about' ? ' (what you said is in it)' : ''}
-              {est.denominator_source === 'made' ? ' made' : ''}.
+              {DENOMINATOR_WORDS[est.denominator_source] ?? ''}.
               {est.about_ignored ? ' Used the weight of what went in.' : ''}
             </p>
             <ul data-testid="shu-breakdown" style={{ listStyle: 'none', margin: 0, padding: 0 }}>

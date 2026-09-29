@@ -156,6 +156,28 @@ describe('Put it up — what it asks', () => {
     expect(screen.getByTestId('putup-preview').textContent).toBe('discard by Mar 29, 2027 · general figure: hot sauce, fridge')
     expect(screen.getByTestId('putup-preview').getAttribute('role')).toBe('status')
   })
+
+  // The ferment walks: the "From the label" chip and the date field it opens shared one testid, so the
+  // field could not be addressed. MUTATION: give the field `-discard-date` back -> the count arm reds.
+  it('a typed discard-by: the chip and its date field are two things, and the day typed is the day sent', async () => {
+    await openPutUp()
+    await fillMinimum()
+    await tap('putup-row-0-more')
+    await tap('putup-row-0-discard-date')
+    expect(screen.getAllByTestId('putup-row-0-discard-date')).toHaveLength(1)
+    fireEvent.change(screen.getByTestId('putup-row-0-discard-day'), { target: { value: '2026-12-08' } })
+    await tap('putup-finish')
+    expect(bodyOf(putUps()[0]).rows[0].discard_by).toBe('2026-12-08')
+  })
+
+  // The ferment walks at 426×492: opening a row's "+ Name, added at the end…" jumped the sheet ~676 px —
+  // Chrome's scroll anchoring — so the row's first fields went above the top edge and pH sat under the
+  // row's sticky header. MUTATION: drop overflowAnchor from the body or the footer -> an arm reds.
+  it('opts out of scroll anchoring, body and footer', async () => {
+    await openPutUp()
+    expect(sheet().style.overflowAnchor).toBe('none')
+    expect(screen.getByTestId('putup-footer').style.overflowAnchor).toBe('none')
+  })
 })
 
 describe('Put it up — the one keyed write', () => {

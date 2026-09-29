@@ -18,7 +18,7 @@
 // Required at open: 0 (the census). The grams are computed in decimal and stored unrounded (15.68); the
 // words round to one decimal. What it writes is a keyed line (contract-F §2.2), role 'salt'.
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { P } from '../../lib/constants.js'
+import { P, BOTTOM_NAV_HEIGHT_PX } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import { describeRefusal } from '../../lib/putUpErrors.js'
@@ -91,7 +91,7 @@ export function saltStepBody(step, { lines, ferment, ordinal = null }) {
 }
 
 const quiet = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, background: 'none', border: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600,
 }
 
@@ -110,6 +110,35 @@ function SaltStep({ step, onChange, lines, ferment, onWrite, pctRef, idPrefix, b
     ? (parseGrams(step.grams) != null ? `I put in ${oneDecimal(parseGrams(step.grams))} g` : 'I put in the salt')
     : (res.grams != null ? `I put in ${oneDecimal(res.grams)} g` : 'I put in the salt')
 
+  // THE PAYOFF STAYS IN VIEW while a field of the step has focus (the ferment walks, 426×492: with the
+  // % focused, "I put in" sat at y494-542, under the keyboard). "I put in" is brought up first — its
+  // scroll-margin clears the nav when the keyboard is down — then the focused field itself, so both are
+  // on screen whenever they fit. Again when the keyboard resizes the viewport, and when the step changes
+  // shape under the finger (the live line appears once the % is typed, and pushes "I put in" down).
+  const writeRef = useRef(null)
+  const [typing, setTyping] = useState(null)
+  const shape = [pct != null && baseG > 0, rinsed, step.together, step.gramsOnly, !!(b && saltAsideWords(b))].join()
+  useEffect(() => {
+    if (!typing || typeof window === 'undefined') return undefined
+    const reveal = () => {
+      writeRef.current?.scrollIntoView?.({ block: 'nearest' })
+      typing.scrollIntoView?.({ block: 'nearest' })
+    }
+    const again = () => requestAnimationFrame(reveal)
+    again()
+    const vv = window.visualViewport
+    window.addEventListener('resize', again)
+    vv?.addEventListener?.('resize', again)
+    return () => {
+      window.removeEventListener('resize', again)
+      vv?.removeEventListener?.('resize', again)
+    }
+  }, [typing, shape])
+  const focusProps = {
+    onFocus: (e) => setTyping(e.currentTarget),
+    onBlur: (e) => { const el = e.currentTarget; setTyping(t => (t === el ? null : t)) },
+  }
+
   return (
     <div data-testid={`${idPrefix}`} style={{ border: `1px solid ${P.border}`, borderRadius: T.radiusBadge, padding: '10px 12px', marginTop: 8 }}>
       {ferment && (
@@ -126,7 +155,7 @@ function SaltStep({ step, onChange, lines, ferment, onWrite, pctRef, idPrefix, b
       {step.gramsOnly ? (
         <div>
           <label htmlFor={`${id}-g`} style={labelChrome}>Salt that went in, g</label>
-          <input id={`${id}-g`} data-testid={`${idPrefix}-grams`} type="text" inputMode="decimal" value={step.grams ?? ''}
+          <input id={`${id}-g`} data-testid={`${idPrefix}-grams`} type="text" inputMode="decimal" value={step.grams ?? ''} {...focusProps}
             disabled={busy} onChange={e => set({ grams: e.target.value })} style={{ ...inputChrome(false), width: 110, scrollMarginBottom: 120 }} />
         </div>
       ) : (
@@ -134,13 +163,13 @@ function SaltStep({ step, onChange, lines, ferment, onWrite, pctRef, idPrefix, b
           {rinsed && (
             <div style={{ marginBottom: 8 }}>
               <label htmlFor={`${id}-soak`} style={labelChrome}>Soak water, g</label>
-              <input id={`${id}-soak`} data-testid={`${idPrefix}-soak`} type="text" inputMode="decimal" value={step.soakG}
+              <input id={`${id}-soak`} data-testid={`${idPrefix}-soak`} type="text" inputMode="decimal" value={step.soakG} {...focusProps}
                 disabled={busy} onChange={e => set({ soakG: e.target.value, grams: null })} style={{ ...inputChrome(false), width: 110, scrollMarginBottom: 120 }} />
             </div>
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <label htmlFor={`${id}-pct`} style={{ ...labelChrome, margin: 0 }}>Salt %</label>
-            <input ref={pctRef} id={`${id}-pct`} data-testid={`${idPrefix}-pct`} type="text" inputMode="decimal" value={step.pct}
+            <input ref={pctRef} id={`${id}-pct`} data-testid={`${idPrefix}-pct`} type="text" inputMode="decimal" value={step.pct} {...focusProps}
               placeholder="e.g. 3.5" disabled={busy} onChange={e => set({ pct: e.target.value, grams: null })}
               style={{ ...inputChrome(false), width: 90, scrollMarginBottom: 120 }} />
           </div>
@@ -159,7 +188,7 @@ function SaltStep({ step, onChange, lines, ferment, onWrite, pctRef, idPrefix, b
               {step.together && (
                 <div style={{ marginTop: 8 }}>
                   <label htmlFor={`${id}-scale`} style={labelChrome}>Weight of what’s in the jar, g (tare the jar first)</label>
-                  <input id={`${id}-scale`} data-testid={`${idPrefix}-scale`} type="text" inputMode="decimal" value={step.scaleG}
+                  <input id={`${id}-scale`} data-testid={`${idPrefix}-scale`} type="text" inputMode="decimal" value={step.scaleG} {...focusProps}
                     disabled={busy} onChange={e => set({ scaleG: e.target.value, grams: null })} style={{ ...inputChrome(false), width: 110, scrollMarginBottom: 120 }} />
                 </div>
               )}
@@ -172,7 +201,7 @@ function SaltStep({ step, onChange, lines, ferment, onWrite, pctRef, idPrefix, b
                 <span data-testid={`${idPrefix}-live-words`}>
                   {rinsed ? `${pct}% of ${wholeGrams(baseG)} g soak water →` : saltLivePrefix({ pct, base: step.together ? 'all' : baseWord, baseG })}
                 </span>
-                <input aria-label="Grams of salt" data-testid={`${idPrefix}-live-grams`} type="text" inputMode="decimal" value={shownGrams}
+                <input aria-label="Grams of salt" data-testid={`${idPrefix}-live-grams`} type="text" inputMode="decimal" value={shownGrams} {...focusProps}
                   disabled={busy} onChange={e => set({ grams: e.target.value })} style={{ ...inputChrome(false), width: 80, scrollMarginBottom: 120 }} />
                 <span>g salt</span>
               </>
@@ -188,8 +217,8 @@ function SaltStep({ step, onChange, lines, ferment, onWrite, pctRef, idPrefix, b
           )}
         </>
       )}
-      <button type="button" data-testid={`${idPrefix}-write`} disabled={busy} onClick={() => onWrite(step)}
-        style={{ minHeight: T.buttonMinHeight, marginTop: 8, padding: '8px 16px', borderRadius: T.radiusButton, cursor: 'pointer',
+      <button ref={writeRef} type="button" data-testid={`${idPrefix}-write`} disabled={busy} onClick={() => onWrite(step)}
+        style={{ scrollMarginBottom: BOTTOM_NAV_HEIGHT_PX + 8, minHeight: T.buttonMinHeight, marginTop: 8, padding: '8px 16px', borderRadius: T.radiusButton, cursor: 'pointer',
           fontFamily: 'inherit', fontSize: T.type.sm2, fontWeight: 700, color: P.green, background: P.white, border: `1px solid ${P.green}` }}>
         {writeLabel}
       </button>

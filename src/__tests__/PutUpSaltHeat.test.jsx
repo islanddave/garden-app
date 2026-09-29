@@ -166,6 +166,36 @@ describe('the Salt block — the helper (golden table)', () => {
     expect(screen.queryByTestId('salt-none-set')).toBeNull()
   })
 
+  // The ferment walks at 426×492: with the % focused, "I put in" sat under the keyboard (y494-542).
+  // MUTATION: drop the write button's reveal -> the first arm reds; re-run it on focus only (not when
+  // the live line appears) -> the second reds; keep it running after blur -> the last reds.
+  it('keeps "I put in" in view while a step field has focus — on focus, and when the live line appears', async () => {
+    const seen = []
+    const hadScroll = Object.prototype.hasOwnProperty.call(Element.prototype, 'scrollIntoView')
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function scrollIntoView(opts) { seen.push([this.getAttribute('data-testid'), opts]) }
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => { cb(0); return 0 })
+    try {
+      renderDetail({ inputs: PETRI })
+      await act(async () => { step(0, 'pct').focus() })
+      expect(seen).toEqual([['salt-step-0-write', { block: 'nearest' }], ['salt-step-0-pct', { block: 'nearest' }]])
+      seen.length = 0
+      fireEvent.change(step(0, 'pct'), { target: { value: '3.5' } })       // the live line appears
+      expect(seen.map(([t]) => t)).toEqual(['salt-step-0-write', 'salt-step-0-pct'])
+      seen.length = 0
+      fireEvent.change(step(0, 'pct'), { target: { value: '3.6' } })       // same shape: nothing moves under the finger
+      expect(seen).toEqual([])
+      await act(async () => { step(0, 'pct').blur() })
+      window.dispatchEvent(new Event('resize'))
+      expect(seen).toEqual([])
+      expect(step(0, 'write').style.scrollMarginBottom).toBe('64px')      // clears the 56px nav when the keyboard is down
+    } finally {
+      if (hadScroll) Element.prototype.scrollIntoView = orig
+      else delete Element.prototype.scrollIntoView
+      raf.mockRestore()
+    }
+  })
+
   // No F writer writes 'peppers' (06 §3.1). MUTATION: suggest 'peppers' -> both arms red.
   it('the suggested base is never "peppers"', () => {
     expect(suggestedBase(PETRI)).toBe('all')
@@ -210,6 +240,14 @@ describe('Jar & heat — the summary, never opened by itself', () => {
       ['PUT', '/api/kitchen-batches/kb-1', { vessel_count: 3 }],
       ['PATCH', '/api/kitchen-batches/kb-1/stages/ksl-start', { amount: '600', amount_unit: 'g' }],
     ])
+  })
+
+  // The walk measured About's Save at 39×44 px. MUTATION: drop the quiet style's minWidth -> red.
+  it('its short Save keeps the 44 px floor across as well as down', () => {
+    renderDetail({ batch: SAVED, inputs: PETRI })
+    fireEvent.click(screen.getByTestId('jar-heat-summary'))
+    expect(screen.getByTestId('jar-about-save').style.minWidth).toBe('44px')
+    expect(screen.getByTestId('jar-about-save').style.minHeight).toBe('44px')
   })
 
   it('closes again when a line add starts (it is never left open over the add row)', () => {
@@ -269,6 +307,18 @@ describe('the heat sheet — the server works it out; never 0 from absence', () 
     expect(refusalWords({ refusal: 'row_net_unknown' })).toBe('Can’t work it out: how much is in these bottles.')
     expect(refusalWords({ low: 1 })).toBeNull()
     expect(dominantLine([])).toBeNull()
+  })
+
+  // What the weight it divided by IS. A jar with no additions of its own is the sitting's figure, so its
+  // weight is the sitting's Made too (the walks: Petri's jar read "over 256 g." with nothing after it).
+  // MUTATION: drop the 'sitting' words -> the first arm reds; drop 'row' -> the second.
+  it('says what it divided by: made, for a plain jar too; the bottles, for a row with its own additions', async () => {
+    await openSheet({ ...FIGURE, denominator_g: 256, denominator_source: 'sitting' })
+    expect(screen.getByTestId('shu-sheet').textContent).toContain('over 256 g made.')
+  })
+  it('…and a row with its own additions is over what is in those bottles', async () => {
+    await openSheet({ ...FIGURE, denominator_g: 473, denominator_source: 'row' })
+    expect(screen.getByTestId('shu-sheet').textContent).toContain('over 473 g in these bottles.')
   })
 
   it('the heat sheet requires nothing', async () => {
