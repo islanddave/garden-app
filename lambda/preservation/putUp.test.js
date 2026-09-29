@@ -3,6 +3,9 @@
 // that records what each statement SENDS. Neither can prove the SQL runs — the integration lane does,
 // on a real Postgres with v5-putupmake-001 applied.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { handleKitchenRoute } from './kitchenRoutes.js';
 import { parseKitchenRoute, validateStage, validateBatchCreate } from './kitchenBatch.js';
 import { validatePutUp, planPutUp, putUpColumns, putUpInUse, BATCH_CLOSED } from './putUp.js';
@@ -420,5 +423,50 @@ describe('POST /:id/reopen — 1b writes its row', () => {
     const sql = mockSql([CLOSED, [{ id: BATCH }], VIEW]);
     await handleKitchenRoute({ sql, ...route(`/api/kitchen-batches/${BATCH}/reopen`, 'POST', {}) });
     expect(sql.calls[1].norm).toContain("INSERT INTO kitchen_stage_log (batch_id, stage_kind, entered_at, entered_precision, created_by) SELECT b.id, 'reopened'::text");
+  });
+});
+
+// ── Boss condition F1, held structurally ─────────────────────────────────────────────────────────
+// Postgres applies only ONE of several updates a single statement makes to the same row (UPDATE…FROM
+// or a data-modifying CTE per line), so a reversal that joins lines to jars un-aggregated restores +8 g
+// instead of +13 g when two lines drew one bag — silently. 1b's statements update each jar at most once
+// by construction (Undo soft-deletes `p.id IN (SELECT id FROM sitting_jars)`; no 1b line draws a jar).
+// Release F adds the draw reversals; this guard makes the F1 shape the only one that passes: in every
+// SQL template of the kitchen routes, at most ONE `UPDATE preservation_log`, and any such UPDATE whose
+// FROM reads the line or use tables must read them through a `GROUP BY preservation_log_id`.
+function f1Violations(src) {
+  const out = [];
+  for (const m of src.matchAll(/sql`([\s\S]*?)`/g)) {
+    const t = m[1];
+    const updates = [...t.matchAll(/UPDATE\s+preservation_log\b/g)];
+    if (updates.length > 1) out.push(`two UPDATEs of preservation_log in one statement: ${t.slice(0, 60)}`);
+    for (const u of updates) {
+      const rest = t.slice(u.index);
+      const end = rest.search(/\bRETURNING\b|\)\s*,\s*\w+\s+AS\s*\(|$/);
+      const upd = rest.slice(0, end < 0 ? undefined : end);
+      const from = upd.match(/\bFROM\b([\s\S]*?)\bWHERE\b/);
+      if (from && /\b(kitchen_batch_input|pantry_use)\b/.test(from[1]) && !/GROUP BY\s+[\w.]*preservation_log_id/.test(from[1])) {
+        out.push(`un-aggregated reversal: ${upd.replace(/\s+/g, ' ').slice(0, 80)}`);
+      }
+    }
+  }
+  return out;
+}
+
+describe('boss condition F1 — one UPDATE per jar per statement', () => {
+  const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'kitchenRoutes.js'), 'utf8');
+
+  it('the kitchen routes hold it today', () => {
+    expect(src).toMatch(/UPDATE preservation_log/); // not vacuous: there are preservation_log writes to judge
+    expect(f1Violations(src)).toEqual([]);
+  });
+
+  it('the checker reds on the two shapes F1 forbids, and passes the aggregated one', () => {
+    const unaggregated = 'const x = sql`UPDATE preservation_log p SET remaining_count = p.remaining_count + u.count_used FROM pantry_use u WHERE u.preservation_log_id = p.id RETURNING p.id`;';
+    const twice = 'const y = sql`WITH a AS (UPDATE preservation_log SET x = 1 RETURNING id), b AS (UPDATE preservation_log SET y = 2 RETURNING id) SELECT 1`;';
+    const aggregated = 'const z = sql`UPDATE preservation_log p SET remaining_count = p.remaining_count + d.n FROM (SELECT u.preservation_log_id, sum(u.count_used) AS n FROM pantry_use u GROUP BY u.preservation_log_id) d WHERE d.preservation_log_id = p.id RETURNING p.id`;';
+    expect(f1Violations(unaggregated)).toHaveLength(1);
+    expect(f1Violations(twice)).toHaveLength(1);
+    expect(f1Violations(aggregated)).toEqual([]);
   });
 });

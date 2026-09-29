@@ -393,8 +393,10 @@ async function createBatch(sql, body, userId, householdIds) {
 // neon driver sends untyped params, and a bare placeholder inside a CASE gives Postgres no type
 // context — "could not determine data type of parameter" and the whole PUT 500s.
 //
-// updated_at is NOT set here: kitchen_batch carries the set_updated_at trigger the preservation family
-// lacks. Setting it by hand would be a second writer for a value that already has one.
+// updated_at is NOT set here: kitchen_batch carries the set_updated_at trigger. Setting it by hand
+// would be a second writer for a value that already has one. (preservation_log gained the same trigger
+// in Put-Up release 1b; the shipped `updated_at = NOW()` on its link/unlink writes is now redundant
+// and harmless.)
 async function updateBatch(sql, batchId, body, householdIds) {
   const verr = validateBatchUpdate(body);
   if (verr) return bad(verr);

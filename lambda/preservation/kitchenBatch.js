@@ -74,10 +74,10 @@ export const KITCHEN_STATE_STAGE_KINDS = ['paused', 'resumed', 'reopened'];
 
 export const KITCHEN_INPUT_KINDS = ['harvest', 'purchased', 'pantry', 'other'];
 
-// chk_kbi_qty_unit. Applied to kitchen_stage_log.amount_unit TOO, where the DB has no CHECK: the DDL
-// header records that preservation_log.quantity_unit is the one unit column in this family without one
-// and that it has ALREADY drifted ('quarts' beside harvest_log's 'qt', BUG-PRESERVUNITNOCHECK-001).
-// An app-layer belt is the only place that drift can be stopped for the stage log without a migration.
+// chk_kbi_qty_unit as v5-inflightbatch-001 shipped it (14 values). Applied to kitchen_stage_log.amount_unit
+// TOO. Put-Up release 1b gives both columns (and preservation_log.quantity_unit, which had drifted —
+// 'quarts' beside harvest_log's 'qt', BUG-PRESERVUNITNOCHECK-001) a real CHECK: KITCHEN_UNITS, 25 values,
+// a superset of these 14. This list stays the 14 until release F widens the line writers (lane L2b).
 export const KITCHEN_QTY_UNITS = [
   'g', 'kg', 'oz', 'lb', 'count', 'cup', 'tbsp', 'tsp', 'fl oz', 'qt', 'gal', 'ml', 'l', 'other',
 ];
