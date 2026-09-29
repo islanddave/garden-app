@@ -15,8 +15,10 @@
 //
 // MOBILE IS THE GATE (Android PWA, 426x836 CSS px): the two pickers share one line at half width each,
 // and every control — both pickers and Save — is at least 48px tall.
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApiFetch } from '../lib/api.js'
+import useNearViewport from '../hooks/useNearViewport.js'
+import { IMAGE_WINDOW_PAGE } from '../hooks/useImageWindow.js'
 import { P, T } from '../lib/tokens.js'
 import { invalidatePrefix } from '../lib/dataCache.js'
 import { TIER } from '../lib/photoModel.js'
@@ -42,6 +44,7 @@ export const plantPutPath = (id) => `/api/plants/${id}`
 const THUMB = T.space.md * 3
 const EMPTY_DRAFT = { sown: '', plantedOut: '' }
 const FRESH = { draft: EMPTY_DRAFT, saved: EMPTY_DRAFT, status: 'idle' }
+const rowIdOf = (el) => el.getAttribute('data-planting-id')
 
 export function headerLine(n) {
   return n === 1 ? '1 planting has no start dates.' : `${n} plantings have no start dates.`
@@ -64,9 +67,10 @@ export function rowDetail(p, where) {
   return parts.join(' · ')
 }
 
-function Thumb({ p }) {
+function Thumb({ p, withPhoto }) {
   // A PLANTING IS NOT A PHOTO: remapped exactly as PlantingTile does, so PhotoView's presign self-heal
-  // re-mints the PHOTO id rather than the plant id.
+  // re-mints the PHOTO id rather than the plant id. A photo outside the image window keeps its box,
+  // empty, until its row comes within reach; the sprout means the planting has no photo at all.
   const photo = useMemo(() => (p.featured_photo_view_url ? {
     id: p.featured_photo_id ?? null,
     featured_photo_view_url: p.featured_photo_view_url,
@@ -76,6 +80,7 @@ function Thumb({ p }) {
   return (
     <div
       aria-hidden="true"
+      data-testid="catchup-thumb-box"
       style={{
         width: THUMB, height: THUMB, flexShrink: 0, overflow: 'hidden',
         borderRadius: T.radiusField, backgroundColor: P.greenPale, color: P.greenDeep,
@@ -83,7 +88,7 @@ function Thumb({ p }) {
       }}
     >
       {photo
-        ? <PhotoView photo={photo} tier={TIER.THUMB} alt="" decoding="async" data-testid="catchup-thumb"
+        ? withPhoto && <PhotoView photo={photo} tier={TIER.THUMB} alt="" decoding="async" data-testid="catchup-thumb"
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
         : <Icon name="lifecycle.sprout" size={24} decorative />}
     </div>
@@ -108,7 +113,7 @@ function MonthPicker({ id, label, ariaLabel, value, saved, options, disabled, on
   )
 }
 
-function CatchUpRow({ p, where, state, today, onPick, onSave }) {
+function CatchUpRow({ p, where, state, today, withPhoto, onPick, onSave }) {
   const { draft, saved, status } = state
   const title = rowTitle(p)
   const options = useMemo(() => monthOptions(plantingGrowYear(p, today), today), [p, today])
@@ -129,7 +134,7 @@ function CatchUpRow({ p, where, state, today, onPick, onSave }) {
       style={{ padding: 0, paddingTop: T.space.md, paddingBottom: T.space.md, borderBottom: `1px solid ${P.border}` }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
-        <Thumb p={p} />
+        <Thumb p={p} withPhoto={withPhoto} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ color: P.dark, fontSize: T.type.md, fontWeight: 600 }}>{title}</div>
           <div style={{ color: P.mid, fontSize: T.type.sm }}>{rowDetail(p, where)}</div>
@@ -225,6 +230,15 @@ export default function PlantsCatchUp() {
 
   const total = groups.reduce((n, g) => n + g.count, 0)
 
+  // Photos are windowed, rows are not (the My seeds and End of season pattern, BUG-PHOTOTHUMB-001): a
+  // thumbnail mounts for the first IMAGE_WINDOW_PAGE rows on the page, or once its row comes within
+  // reach of the viewport. ~134 rows mounting every thumbnail at once is the eager-image freeze, and a
+  // photo with no thumb falls back to its full original.
+  const listRef = useRef(null)
+  const inReach = useNearViewport(listRef, { selector: '[data-testid="catchup-row"]', keyOf: rowIdOf })
+  const imageRank = useMemo(() => new Map(groups.flatMap((g) => g.plantings).map((p, n) => [p.id, n])), [groups])
+  const withPhoto = (id) => (imageRank.get(id) ?? Infinity) < IMAGE_WINDOW_PAGE || inReach.has(String(id))
+
   // PageShell for the frame and title only: its own AsyncRegion takes no retry, and a load failure
   // here must offer one, so the async states are the inner region's.
   return (
@@ -245,23 +259,25 @@ export default function PlantsCatchUp() {
         <p style={{ margin: 0, marginBottom: T.space.md, color: P.mid, fontSize: T.type.sm, lineHeight: 1.5 }}>
           A rough month is enough — it is saved as approximate.
         </p>
-        {groups.map(g => {
-          const label = g.isUnsorted ? g.label : (locationPath(g.slug, locations) || g.label)
-          const where = g.isUnsorted ? null : g.label
-          return (
-            <section key={g.slug} aria-label={label} data-testid="catchup-group" style={{ marginBottom: T.space.lg }}>
-              <h2 style={{ margin: 0, color: P.mid, fontSize: T.type.sm, fontWeight: 700 }}>{label}</h2>
-              <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-                {g.plantings.map(p => (
-                  <CatchUpRow
-                    key={p.id} p={p} where={where} today={today}
-                    state={rowStates[p.id] ?? FRESH} onPick={onPick} onSave={onSave}
-                  />
-                ))}
-              </ul>
-            </section>
-          )
-        })}
+        <div ref={listRef}>
+          {groups.map(g => {
+            const label = g.isUnsorted ? g.label : (locationPath(g.slug, locations) || g.label)
+            const where = g.isUnsorted ? null : g.label
+            return (
+              <section key={g.slug} aria-label={label} data-testid="catchup-group" style={{ marginBottom: T.space.lg }}>
+                <h2 style={{ margin: 0, color: P.mid, fontSize: T.type.sm, fontWeight: 700 }}>{label}</h2>
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                  {g.plantings.map(p => (
+                    <CatchUpRow
+                      key={p.id} p={p} where={where} today={today} withPhoto={withPhoto(p.id)}
+                      state={rowStates[p.id] ?? FRESH} onPick={onPick} onSave={onSave}
+                    />
+                  ))}
+                </ul>
+              </section>
+            )
+          })}
+        </div>
       </AsyncRegion>
     </PageShell>
   )

@@ -22,6 +22,7 @@ vi.mock('../lib/dataCache.js', async (importOriginal) => ({
 import PlantsCatchUp, {
   CATCH_UP_PLANTS_PATH, CATCH_UP_LOCATIONS_PATH, plantPutPath, headerLine,
 } from '../pages/PlantsCatchUp.jsx'
+import { IMAGE_WINDOW_PAGE } from '../hooks/useImageWindow.js'
 
 const LOCATIONS = [
   { id: 'loc-drive', name: 'Drive', parent_id: null, sort_order: 1 },
@@ -154,6 +155,27 @@ describe('who is listed, and how', () => {
     expect(await screen.findByTestId('catchup-header')).toBeDefined()
     expect(rowNames()).toHaveLength(4)
   })
+
+  // ~134 plantings have no start dates on prod. Rows are not windowed; their PhotoViews are, as on My
+  // seeds and End of season (BUG-PHOTOTHUMB-001). jsdom has no layout, so no row is ever within reach
+  // of the viewport and the window alone decides. KILLING MUTATION: mount a PhotoView on every row.
+  // RESULT: RED — 134 thumbnails.
+  it('134 rows all render, but at most 24 mount a thumbnail: the first 24 on the page, across groups', async () => {
+    plantsBody = Array.from({ length: 134 }, (_, i) => plant({
+      id: `c${i}`, name: `Planting ${String(i).padStart(3, '0')}`, location_id: i < 10 ? 'loc-bed' : 'loc-stable',
+      featured_photo_id: `ph${i}`, featured_photo_view_url: `https://cdn.test/full/${i}.jpg`,
+      featured_photo_thumb_url: `https://cdn.test/thumbs/${i}.jpg`,
+    }))
+    await renderLoaded()
+    const rows = screen.getAllByTestId('catchup-row')
+    expect(rows).toHaveLength(134)
+    expect(IMAGE_WINDOW_PAGE).toBe(24)
+    expect(screen.getAllByTestId('catchup-thumb').length).toBeLessThanOrEqual(24)
+    const withThumb = rows.filter((r) => within(r).queryByTestId('catchup-thumb')).map((r) => r.getAttribute('data-planting-id'))
+    expect(withThumb).toEqual(rows.slice(0, 24).map((r) => r.getAttribute('data-planting-id')))
+    // A row past the window keeps its box, empty: no sprout, which would say it has no photo.
+    expect(within(rows[24]).getByTestId('catchup-thumb-box').childElementCount).toBe(0)
+  }, 20000)
 
   it('headerLine says "1 planting has"', () => {
     expect(headerLine(1)).toBe('1 planting has no start dates.')
