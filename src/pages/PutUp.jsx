@@ -56,6 +56,10 @@ import {
   WALK_PARAM, coarseDate, exactDate, describeDate, describeApprox, solePlanting, unrecordedCrops,
   readWalk, writeWalk, clearWalk, readDismissed, dismissCrop,
 } from '../lib/putUpSession.js'
+// Put-Up release 1a (V4 §6.5) — every write on this page reads the server's `code` and says why it
+// was refused; client_stale is answered with a user-tapped "Refresh now", never a reload by itself.
+import { describeRefusal, REFRESH_NOW_LABEL } from '../lib/putUpErrors.js'
+import { useAppUpdate } from '../hooks/useAppUpdate.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -652,8 +656,8 @@ function PutUpWalk() {
         writeWalk(next)
         return next
       })
-    } catch {
-      setLastSaved(s => (s ? { ...s, error: "Couldn't undo — try again." } : s))
+    } catch (e) {
+      setLastSaved(s => (s ? { ...s, error: describeRefusal(e) ?? "Couldn't undo — try again." } : s))
     }
   }, [fetch, lastSaved])
 
@@ -740,9 +744,7 @@ function PutUpWalk() {
               )}
             </div>
           )}
-          {lastSaved?.error && (
-            <div role="alert" style={{ fontSize: '0.78rem', color: P.terra, marginBottom: 6 }}>{lastSaved.error}</div>
-          )}
+          <WriteError err={lastSaved?.error} style={{ marginBottom: 6 }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
             <span style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', color: P.light,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1494,7 +1496,7 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
         setSuccess({ text, row })
       }
     } catch (err) {
-      setError(friendlyError(err))
+      setError(describeRefusal(err) ?? friendlyError(err))
     } finally {
       setSaving(false)
     }
@@ -1713,7 +1715,13 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
 
   return (
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {/* `error` is a string or a refusal (describeRefusal); every entered value stays either way. */}
+      {error && (
+        <ErrorBanner>
+          {typeof error === 'string' ? error : error.text}
+          {error.refresh && <div><RefreshNowButton /></div>}
+        </ErrorBanner>
+      )}
       {offline && !error && (
         <ErrorBanner>You&rsquo;re offline — you can fill this in, but saving needs a connection.</ErrorBanner>
       )}
@@ -2086,7 +2094,7 @@ function StorageField({ value, onChange, locations, onCreated, onUpdated, onDele
       setAdding(false); setLabel(''); setKind('deep_freezer')
     } catch (e) {
       const code = e?.code ?? classify(e).code
-      setErr(`Couldn't add that location — try again. (${code})`)
+      setErr(describeRefusal(e) ?? `Couldn't add that location — try again. (${code})`)
     } finally { setBusy(false) }
   }
 
@@ -2116,7 +2124,7 @@ function StorageField({ value, onChange, locations, onCreated, onUpdated, onDele
         </div>
       ) : (
         <div style={{ marginTop: 12, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '12px 14px', backgroundColor: P.cream }}>
-          {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
+          <WriteError err={err} style={{ marginBottom: 8 }} />
           <Field label="Name *" htmlFor="pu-newloc-label">
             <Input id="pu-newloc-label" value={label} onChange={e => setLabel(e.target.value)}
               aria-label="New location name" placeholder="e.g. Garage freezer" />
@@ -2187,7 +2195,7 @@ function StorageLocationEditor({ locations, fetch, classify, selectedId, onClear
       setEditingId(null)
       onUpdated?.(row ?? { ...loc, label: trimmed, kind: draftKind })
     } catch (e) {
-      setErr(`Couldn't save that change — try again. (${classify(e).code})`)
+      setErr(describeRefusal(e) ?? `Couldn't save that change — try again. (${classify(e).code})`)
     } finally { setBusyId(null) }
   }
 
@@ -2202,14 +2210,14 @@ function StorageLocationEditor({ locations, fetch, classify, selectedId, onClear
       if (String(selectedId) === String(loc.id)) onClearSelected?.()
       onDeleted?.(loc.id)
     } catch (e) {
-      setErr(`Couldn't delete that location — try again. (${classify(e).code})`)
+      setErr(describeRefusal(e) ?? `Couldn't delete that location — try again. (${classify(e).code})`)
     } finally { setBusyId(null) }
   }
 
   return (
     <div data-testid="pu-location-editor"
       style={{ marginTop: 12, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '10px 12px', backgroundColor: P.cream }}>
-      {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
+      <WriteError err={err} style={{ marginBottom: 8 }} />
       {locations.map(loc => {
         const editing = editingId === loc.id
         const confirming = confirmingId === loc.id
@@ -2418,16 +2426,24 @@ function RecordRow({ rec, onChanged, fetch }) {
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // A string (this row's own copy) or a refusal from describeRefusal — see WriteError.
   const [err, setErr] = useState(null)
 
   const remaining = rec.remaining_count ?? rec.package_count ?? 0
 
+  // Resolves true only when the write landed. The editor closes on THAT, never on the attempt: a
+  // refused save used to close it anyway (put swallowed the throw), so the typed values vanished and
+  // the only record of them was a message about why they had not been saved (V4 §6.5 "keep the edit").
   async function put(overrides) {
     setBusy(true); setErr(null)
     try {
       await fetch(`/api/preservation/${rec.id}`, { method: 'PUT', body: JSON.stringify(buildFullPayload(rec, overrides)) })
       onChanged()
-    } catch (e) { setErr("Couldn't update — try again."); setBusy(false) }
+      return true
+    } catch (e) {
+      setErr(describeRefusal(e) ?? "Couldn't update — try again."); setBusy(false)
+      return false
+    }
   }
 
   async function markUsed() {
@@ -2441,12 +2457,12 @@ function RecordRow({ rec, onChanged, fetch }) {
     try {
       await fetch(`/api/preservation/${rec.id}`, { method: 'DELETE' })
       onChanged()
-    } catch (e) { setErr("Couldn't remove — try again."); setBusy(false) }
+    } catch (e) { setErr(describeRefusal(e) ?? "Couldn't remove — try again."); setBusy(false) }
   }
 
   if (editing) {
     return <RowEditor rec={rec} onCancel={() => setEditing(false)}
-      onSave={async (overrides) => { await put(overrides); setEditing(false) }} busy={busy} err={err} />
+      onSave={async (overrides) => { if (await put(overrides)) setEditing(false) }} busy={busy} err={err} />
   }
 
   const status = rec.use_by_status
@@ -2514,7 +2530,7 @@ function RecordRow({ rec, onChanged, fetch }) {
         </div>
       )}
       {rec.notes && <div style={{ fontSize: '0.8rem', color: P.mid, marginTop: 4 }}>{rec.notes}</div>}
-      {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginTop: 6 }}>{err}</div>}
+      <WriteError err={err} style={{ marginTop: 6 }} />
 
       <div style={{ display: 'flex', gap: 14, marginTop: 8, flexWrap: 'wrap' }}>
         <RowAction onClick={markUsed} disabled={busy || remaining <= 0}>Mark used</RowAction>
@@ -2531,6 +2547,36 @@ function RecordRow({ rec, onChanged, fetch }) {
       </div>
       </div>
     </div>
+  )
+}
+
+// The line a failed write leaves on screen. `err` is the caller's own copy (a string: offline, a
+// timeout, an uncoded 400 — unchanged from before) or a refusal from describeRefusal, which carries
+// its own sentence and, for client_stale only, the Refresh now button.
+function WriteError({ err, style }) {
+  if (!err) return null
+  const refusal = typeof err === 'string' ? null : err
+  return (
+    <div style={style}>
+      <div role="alert" style={{ color: P.terra, fontSize: '0.78rem' }}>{refusal ? refusal.text : err}</div>
+      {refusal?.refresh && <RefreshNowButton />}
+    </div>
+  )
+}
+
+// Mounted only while a client_stale refusal is on screen, so useAppUpdate's listener and version
+// probe cost nothing on an ordinary visit. apply() runs on the TAP and nowhere else (V4 §6.5, B66):
+// it reloads the page without consulting the reload gate, so running it unasked would discard any
+// other surface that is still holding one.
+function RefreshNowButton() {
+  const { apply } = useAppUpdate()
+  return (
+    <button type="button" onClick={() => apply()} data-testid="putup-refresh-now"
+      style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, marginTop: 6,
+        padding: '6px 14px', background: 'none', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
+        color: P.green, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}>
+      {REFRESH_NOW_LABEL}
+    </button>
   )
 }
 
@@ -2586,7 +2632,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
 
   return (
     <div style={{ padding: '14px 16px', borderTop: `1px solid ${P.cream}`, backgroundColor: P.cream }}>
-      {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
+      <WriteError err={err} style={{ marginBottom: 8 }} />
       <div style={{ display: 'flex', gap: T.space.sm }}>
         <div style={{ flex: 2 }}>
           <Field label="How much" htmlFor={`ed-qty-${rec.id}`}>

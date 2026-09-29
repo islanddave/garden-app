@@ -271,6 +271,34 @@ describe('delete — two taps, and the second one says what it does', () => {
   })
 })
 
+// Put-Up release 1a (V4 §6.5) — every write on the page reads the server's `code`. The storage
+// Lambda sends none today, so these pin the other half too: an uncoded failure above keeps its
+// diagnostic line, a coded one says what the server said. The error is shaped the way api.js throws
+// it (message = body.error, .status, .body) — PutUp.refusals.test.jsx proves that shape against the
+// real api.js.
+describe('a coded refusal is shown in the server’s words (rename and delete)', () => {
+  const refusal = (body) => Object.assign(new Error(body.error), { status: 409, body })
+
+  it('rename', async () => {
+    wire({ onPut: () => Promise.reject(refusal({ error: 'You already have a place called Chest Freezer 2', code: 'location_label_taken' })) })
+    await openEditor()
+    fireEvent.click(within(rowFor('loc-1')).getByTestId('pu-location-rename'))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Location name' }), { target: { value: 'Chest Freezer 2' } })
+    fireEvent.click(screen.getByTestId('pu-location-save'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('You already have a place called Chest Freezer 2'))
+    expect(screen.getByRole('textbox', { name: 'Location name' }).value).toBe('Chest Freezer 2')
+  })
+
+  it('delete', async () => {
+    wire({ onDelete: () => Promise.reject(refusal({ error: 'Something is still stored there', code: 'location_in_use' })) })
+    await openEditor()
+    fireEvent.click(within(rowFor('loc-2')).getByTestId('pu-location-delete'))
+    fireEvent.click(screen.getByTestId('pu-location-delete-confirm'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Something is still stored there'))
+    expect(rowFor('loc-2')).toBeTruthy()
+  })
+})
+
 describe('a two-user household', () => {
   it('lists and can rename a household peer\'s location — scoping is the server\'s job', async () => {
     wire({ locations: [...PROD_THREE, JEN] })
