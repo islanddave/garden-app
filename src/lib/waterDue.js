@@ -3,10 +3,13 @@
 // tiers. daysOver = time past next_water_at; indoor seedlings escalate faster (dry out sooner).
 import { P } from './constants.js'
 
+// terra's TEXT is P.severityUrgent, not P.terra (V5-TODAYREDESIGN-001 R18): P.terra on #fde8e0 is
+// 4.15:1, under AA's 4.5 for the 0.8rem chip label; P.severityUrgent is 6.42:1. The border stays
+// P.terra, so the tier still reads as terra. Shared: Today (both versions), Dashboard and CareStatus.
 export const SEVERITY_STYLES = {
   green:        { bg: P.greenPale, border: P.greenLight, text: P.green },
   gold:         { bg: P.warn,      border: P.warnBorder, text: '#7a5c00' },
-  terra:        { bg: '#fde8e0',   border: P.terra,      text: P.terra },
+  terra:        { bg: '#fde8e0',   border: P.terra,      text: P.severityUrgent },
   'terra-bold': { bg: '#fcd7c4',   border: P.terra,      text: P.bannerInk },
 }
 
