@@ -112,7 +112,12 @@ export const STATES = [
       // S3 (new family, named in KILLER_FAMILIES by S0): every chip 48 tall, numbers only on the work chips, and at
       // 200% text (WCAG 1.4.4; Android font scaling) every chip still reachable inside the strip.
       { family: 'chip-census', armedAt: 'S3', why: 'chips ≥ 48px; numbers only on Protect/Water/Feed/Check; at 200% text the strip scrolls (overflow-x auto) and no chip is stranded past its edge' },
-      { family: 'visual-census', armedAt: ['S3', 'S4'], maxFingerprints: 4, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem'], why: '(l) ≤ 4 section-level container fingerprints on busyfull' },
+      // Integration S3 × S4 (first run of this family — neither lane alone could arm it): + 0.78rem, an INHERITED
+      // line like the cue/frost lines' 0.84rem (plan §4 "the unchanged … lines keep their own"): V1's
+      // FeedSuppressedList (CareNeeded.jsx), reused unchanged at the foot of Needs care (REGIONS
+      // care-feed-suppressed), prints 0.78rem. Measured: with only that component's 0.78rem → 0.82rem the census
+      // passed on v2-frost, so it is the one source. Restyling the line for V2 is a design call, not the gate's.
+      { family: 'visual-census', armedAt: ['S3', 'S4'], maxFingerprints: 4, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem', '0.78rem'], why: '(l) ≤ 4 section-level container fingerprints on busyfull' },
       { family: 'weather-once', armedAt: 'S3', why: 'MF2: with the glance OPEN, exactly one today-weather and no repeated hi/lo text' },
       // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. Needs care is
       // OPEN at the ready point on this state (the small-pot trigger), so the chip cannot flip today-sec-care's

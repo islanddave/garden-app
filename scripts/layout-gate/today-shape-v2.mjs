@@ -402,7 +402,7 @@ const CHECKERS = {
     const allowed = new Set([...ramp].map(px))
     const off = m.fontSizes.filter(s => !allowed.has(s))
     if (!m.sections.length) F('no sections to take a visual census of')
-    if (off.length) F(`font sizes outside the T ramp ∪ {1.3rem, 36px, 23px, 0.84rem}: ${off.join(', ')}`)
+    if (off.length) F(`font sizes outside the T ramp ∪ {${(c.fontSizesExtra || []).join(', ')}}: ${off.join(', ')}`)
   },
   // S4 (§2.4): the Needs care header count is the sum of its spots' counts, with no filter on.
   'count-invariant': (m, c, F) => {
