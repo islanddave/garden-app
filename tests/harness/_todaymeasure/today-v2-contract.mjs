@@ -30,8 +30,11 @@
 // "S4-scoped": they measure the Needs care surface alone, so they hold before and after S3/S5/S6 land (the
 // full-page versions of the same families stay armed at their slice combinations).
 // S3 and S4 were built in parallel on the same base and merged by the integrator (build-int-s3s4.md).
-export const LANDED = ['S0', 'S2', 'S3', 'S4']
-export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8']
+// S4g (2026-09-29, wave 4, parallel with S5 and S6): Needs care follow-ups (build-s4.md "Not done / gaps") —
+// MF3's "Not logged · Retry" on the spot row itself, the filter result announcement (§2.6), the emptied header
+// "Needs care · all caught up" (§2.5). Its checks measure the Needs care surface alone, on v2-busy / v2-frost.
+export const LANDED = ['S0', 'S2', 'S3', 'S4', 'S4g']
+export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6', 'S7', 'S8']
 
 export function isArmed(check, landed = LANDED, armAll = false) {
   if (armAll) return true
@@ -161,6 +164,14 @@ export const STATES = [
       { family: 'header-text', armedAt: 'S4', counts: { care: 233 }, careSummary: '8 tray cells due · 9 spots', spotNotToday: true, why: 'S4-scoped: header count, the SF8 summary, a Not today on every spot (D6)' },
       { family: 'count-invariant', armedAt: 'S4', why: 'S4-scoped §2.4: the Needs care header count = Σ spot counts, no filter' },
       { family: 'region-headcount', armedAt: 'S4', why: 'S4-scoped: today-care, care-heading, care-group-bulk + care-spot-bulk on the default render' },
+      // S4g (MF3 "failures stay per spot 'Not logged · Retry'"): the Outside Water all with its first `fail` writes
+      // failing (the harness answers them 503, __h.failPosts). The group line counts what landed; every touched spot
+      // reads its OWN share (done line or "Watered N"); each spot holding a failure stays a CLOSED row with "N not
+      // logged" + Retry and no Water all; focus lands on the first Retry (§5.5); the Retries complete the run (group
+      // line back to the full N) and its ONE Undo returns the page to its rest counts. Families filed: spot-retry
+      // (the round trip), header-text (the words on the rows, the header count after Undo), group-water-all (a spot's
+      // own share on its done line), retry-focus (§5.5), announce (the result in the status region).
+      { family: 'spot-retry', armedAt: 'S4g', group: 'Outside', fail: 2, why: 'MF3: a failed write stays on its spot — "N not logged" + Retry on the closed row, out of Water all; Retry completes the run; one Undo' },
     ],
   },
   {
@@ -312,7 +323,9 @@ export const REGIONS_V2 = [
   { id: 'storage-deadline-alert', owner: 'Heads-up body', state: 'v2-storage-open', armedAt: 'S5' },
   { id: 'putup-use-soon', owner: 'Put-Up body', open: 'putup', state: 'v2-storage-mid', armedAt: 'S6' },
 ]
-export const NEW_ANCHORS = ['today-glance', 'today-jumpbar', 'today-sec-<key>', 'care-group', 'care-spot', 'care-spot-panel', 'care-exceptions', 'care-cohort', 'care-done-line', 'protect-row', 'protect-pick', 'today-status']
+export const NEW_ANCHORS = ['today-glance', 'today-jumpbar', 'today-sec-<key>', 'care-group', 'care-spot', 'care-spot-panel', 'care-exceptions', 'care-cohort', 'care-done-line', 'protect-row', 'protect-pick', 'today-status',
+  // S4g: a spot's failure line and its Retry (MF3).
+  'care-spot-failed', 'care-spot-retry']
 
 // ── THE SHELL ENTRY (today-shell-v2.mjs over tests/harness/todayshell.*) ───────────────────────────────────
 // The platform half of §9.1: what only the real TopChrome, the BottomNav band and the real page-scroll manager
@@ -332,7 +345,9 @@ export const SHELL = [
 ]
 
 // ── MUTANT KILLER FAMILIES (§9.1) and the trigger TABLE that replaced the trigger-predicate mutants ──────
-export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore', 'jump-focus']
+export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore', 'jump-focus',
+  // S4g: MF3's failure round trip, §5.5's focus after it, §5.6's status region.
+  'spot-retry', 'retry-focus', 'announce']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome

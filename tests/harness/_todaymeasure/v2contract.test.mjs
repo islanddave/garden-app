@@ -33,8 +33,8 @@ describe('today-v2 contract table', () => {
     const all = [...STATES.flatMap((s) => s.checks), ...SHELL, ...REGIONS_V2]
     for (const c of all) for (const sl of [].concat(c.armedAt)) expect(SLICES).toContain(sl)
     for (const s of STATES) expect(s.checks.some((c) => c.family === 'prefs-instrument' && isArmed(c))).toBe(true)
-    // S3 and S4 landed in parallel (wave 3), merged by the integrator.
-    expect(LANDED).toEqual(['S0', 'S2', 'S3', 'S4'])
+    // S3 and S4 landed in parallel (wave 3), merged by the integrator; S4g (wave 4) on that merge.
+    expect(LANDED).toEqual(['S0', 'S2', 'S3', 'S4', 'S4g'])
   })
   // S3 arms the glance + bar everywhere a plan exists, and split the checks that also measure a later slice: the S3
   // half is armed, the rest keeps its later slice. Pinned so the split cannot quietly arm (or drop) either half.
@@ -80,6 +80,16 @@ describe('today-v2 contract table', () => {
     expect(armedIn('v2-noplan', 'first-screen').some((c) => c.mustContain?.includes('today-noplan-card'))).toBe(true)
     expect(armedIn('v2-remembered', 'section-open-set').map((c) => c.open)).toEqual([['resting']])
     expect(armedIn('v2-remembered-conflict', 'section-open-set').map((c) => c.closed)).toEqual([['care']])
+  })
+  // S4g arms its own checks on the S4 surface only, and every S4g mutant names ≥ 2 killer families.
+  it('S4g arms MF3\'s failure round trip on v2-busy, and its mutants each name ≥ 2 killers', () => {
+    const busy = STATES.find((s) => s.name === 'v2-busy').checks.filter((c) => c.family === 'spot-retry')
+    expect(busy).toHaveLength(1)
+    expect(busy[0]).toMatchObject({ armedAt: 'S4g', group: 'Outside', fail: 2 })
+    expect(isArmed(busy[0])).toBe(true)
+    const s4g = Object.entries(MUTANTS_V2).filter(([, m]) => [].concat(m.armedAt).includes('S4g'))
+    expect(s4g.map(([n]) => n)).toEqual(expect.arrayContaining(['dropSpotRetry', 'retryNewBatch', 'spotShareIsGroupTotal']))
+    for (const [n, m] of s4g) { expect(m.file && m.find, n).toBeTruthy(); expect(new Set(m.killers).size, n).toBeGreaterThanOrEqual(2) }
   })
   it('keeps every trigger-predicate mutant as a unit-table cell (Simplify 3), never silently dropped', () => {
     const cellMutants = new Set(TRIGGER_CELLS.map((c) => c.killedMutant))

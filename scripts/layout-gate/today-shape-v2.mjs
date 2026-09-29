@@ -419,8 +419,10 @@ const CHECKERS = {
   },
   // Interaction-driven families run in the interaction phase below; here they only have to exist.
   interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {}, 'chip-census': () => {},
+  'spot-retry': () => {},
 }
-const INTERACTION_FAMILIES = ['interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all']
+// The writes run last (group-water-all, then S4g's spot-retry), each undoing itself before the next.
+const INTERACTION_FAMILIES = ['interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry']
 
 // S3 chip census, measured in the page at normal text and at 200% (WCAG 1.4.4 resize text; Android's font scaling
 // reaches the rem-sized labels the same way). Restores the root font size before it returns.
@@ -583,8 +585,101 @@ async function runInteractions(state, checks, at) {
       if (back !== name) F(`after Undo the '${c.group}' group button reads "${back}", it read "${name}" before the tap — Undo must delete exactly the created ids (MF3)`)
       const after = await evalSettled(CARE_COUNT)
       if (after !== before) fail(at, 'header-text', `after the group Water all and its Undo the Needs care header counts ${after}, it counted ${before} before the tap`)
+    } else if (c.family === 'spot-retry') {
+      await spotRetry(c, at, F)
+      await evalSettled('window.__h.failPosts(0)')
     }
   }
+}
+
+// S4g (MF3 "failures stay per spot 'Not logged · Retry'"): the group Water all with its first `c.fail` writes
+// answered 503 by the harness. Each spot's state is read off its <li>: a done line, or a row (its disclosure text,
+// aria-expanded, its "N not logged" line, its Retry and Water all names).
+const reEsc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const SPOT_STATE = (G) => `(() => Object.fromEntries([...document.querySelectorAll(${JSON.stringify(G + ' li[data-spot]')})].map(li => {
+  const t = el => (el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : null)
+  const btn = li.querySelector('[aria-expanded]'), bulk = li.querySelector('[data-testid="care-spot-bulk${SUFFIX}"]'), retry = li.querySelector('[data-testid="care-spot-retry${SUFFIX}"]')
+  const done = li.getAttribute('data-testid') === 'care-done-line${SUFFIX}'
+  return [li.getAttribute('data-spot'), { done, text: done ? t(li) : t(btn), expanded: btn ? btn.getAttribute('aria-expanded') : null,
+    failed: t(li.querySelector('[data-testid="care-spot-failed${SUFFIX}"] span')), retry: retry ? retry.getAttribute('aria-label') : null, bulk: bulk ? bulk.getAttribute('aria-label') : null }]
+})))()`
+const STATUS_TEXT = `(() => { const s = document.querySelector('[data-testid="today-status${SUFFIX}"]'); return s ? (s.textContent || '').trim() : null })()`
+async function spotRetry(c, at, F) {
+  const G = `[data-testid="care-group${SUFFIX}"][data-group="${c.group}"]`
+  const q = `[data-testid="care-group-bulk${SUFFIX}"][data-group="${c.group}"]`
+  const gq = `[data-testid="care-group-done${SUFFIX}"][data-group="${c.group}"]`
+  const lineText = `(() => { const el = document.querySelector(${JSON.stringify(gq + ' [data-focus-id]')}); return el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : null })()`
+  const name0 = await evalSettled(`(() => { const el = document.querySelector(${JSON.stringify(q)}); return el ? el.getAttribute('aria-label') : null })()`)
+  if (name0 == null) { F(`no group Water all for '${c.group}' to run with failing writes (care-group-bulk[data-group])`); return }
+  const N = Number((name0.match(/Water all (\d+)/) || [])[1])
+  const before = await evalSettled(CARE_COUNT)
+  const pre = await evalSettled(SPOT_STATE(G))
+  // Each spot's own candidates, from its own Water all's name ("Water all 97 in Bag Area" / "Water 1 in Deck").
+  const want = Object.fromEntries(Object.entries(pre).map(([s, v]) => [s, Number(((v.bulk || '').match(/^Water (?:all |the other )?(\d+) in /) || [])[1] || 0)]))
+  await evalSettled(`window.__h.failPosts(${c.fail})`)
+  await evalSettled(`document.querySelector(${JSON.stringify(q)}).click()`)
+  const ran = await evalSettled(`(async () => { for (let i = 0; i < 150; i++) { if (document.querySelector(${JSON.stringify(gq + ' [data-focus-id]')})) return true; await new Promise(r => setTimeout(r, 100)) } return false })()`)
+  const unconsumed = await evalSettled('window.__h.failPosts(0)')
+  if (!ran) { F(`after "Water all" with ${c.fail} failing writes the '${c.group}' group line never became its done line`); return }
+  if (unconsumed) { F(`VOID — ${unconsumed} of the ${c.fail} injected failures were never consumed: the run posted fewer writes than that`); return }
+  await evalSettled('new Promise(r => setTimeout(r, 150))')
+  const line = await evalSettled(lineText)
+  if (!new RegExp(`${reEsc(c.group)} · watered ${N - c.fail}\\b`).test(line || '')) F(`with ${c.fail} writes failing the group line reads "${line}", expected "${c.group} · watered ${N - c.fail}" (what landed)`)
+  const mid = await evalSettled(SPOT_STATE(G))
+  let failedTotal = 0
+  const failing = []
+  for (const [s, v] of Object.entries(mid)) {
+    const k = v.failed ? Number((v.failed.match(/^(\d+) not logged$/) || [])[1]) : 0
+    if (v.failed && !k) fail(at, 'header-text', `spot '${s}' says "${v.failed}", expected "<n> not logged"`)
+    if (k) {
+      failedTotal += k
+      failing.push(s)
+      if (v.done) fail(at, 'header-text', `spot '${s}' holds ${k} failed write(s) but shrank to a done line — failures stay on the spot (MF3)`)
+      else if (v.expanded !== 'false') fail(at, 'spot-retry', `spot '${s}' holding a failure is ${v.expanded === 'true' ? 'OPEN' : 'not a closed row'} — the claim is about the closed row`)
+      if (v.retry !== `Retry: ${k} not logged in ${s}`) fail(at, 'spot-retry', `spot '${s}' with ${k} not logged carries ${v.retry ? `a Retry named "${v.retry}"` : 'no Retry'}, expected "Retry: ${k} not logged in ${s}"`)
+      if (v.bulk) fail(at, 'spot-retry', `spot '${s}' still offers "${v.bulk}" — its failed rows must be out of Water all (only Retry re-posts them)`)
+      if (want[s] - k > 0 && !(v.text || '').includes(`Watered ${want[s] - k}`)) fail(at, 'header-text', `spot '${s}' reads "${v.text}", expected its own share "Watered ${want[s] - k}" (MF3)`)
+    } else if (want[s] > 0) {
+      // MF3 "each touched spot shrinks to its own done line": ITS share of the run, never the group's total.
+      if (v.done) { if (!new RegExp(`${reEsc(s)} · watered ${want[s]}\\b`).test(v.text || '')) fail(at, 'group-water-all', `the '${s}' done line reads "${v.text}", expected its own share "${s} · watered ${want[s]}" (MF3)`) }
+      else if (!(v.text || '').includes(`Watered ${want[s]}`)) fail(at, 'header-text', `spot '${s}' reads "${v.text}" after the group run, expected its own share "Watered ${want[s]}" (MF3)`)
+    }
+  }
+  if (failedTotal !== c.fail) fail(at, 'header-text', `the '${c.group}' spots say ${failedTotal} "not logged" in all (${failing.join(', ') || 'none'}), expected ${c.fail} — failures stay per spot (MF3)`)
+  // §5.5: a partial bulk failure puts focus on the first Retry.
+  const foc = await evalSettled(`(() => { const a = document.activeElement, first = document.querySelector(${JSON.stringify(G + ` [data-testid="care-spot-retry${SUFFIX}"]`)}); return { on: !!a && !!first && a === first, what: a ? a.tagName.toLowerCase() + ' ' + (a.getAttribute('data-focus-id') || a.getAttribute('data-testid') || (a.textContent || '').trim().slice(0, 30)) : 'nothing' } })()`)
+  if (!foc.on) fail(at, 'retry-focus', `after the partial failure focus is on ${foc.what}, not the first Retry (§5.5)`)
+  const said = await evalSettled(STATUS_TEXT)
+  if (!new RegExp(`^Watered ${N - c.fail} in ${reEsc(c.group.toLowerCase())}\\. ${c.fail} not logged in ${reEsc(c.group.toLowerCase())}: .+\\. Retry is on each\\.$`).test(said || '')) fail(at, 'announce', `after the partial failure the status region says "${said}", expected "Watered ${N - c.fail} in ${c.group.toLowerCase()}. ${c.fail} not logged in ${c.group.toLowerCase()}: <names>. Retry is on each." (§5.6)`)
+  // Retry each: the failures complete THEIR run, so the group line comes back to the full N.
+  for (const s of failing) {
+    const sq = `${G} li[data-spot="${s.replace(/"/g, '\\"')}"] [data-testid="care-spot-retry${SUFFIX}"]`
+    const tapped = await evalSettled(`(() => { const b = document.querySelector(${JSON.stringify(sq)}); if (!b) return false; b.click(); return true })()`)
+    if (!tapped) { fail(at, 'spot-retry', `spot '${s}' has no Retry to tap`); continue }
+    const cleared = await evalSettled(`(async () => { for (let i = 0; i < 100; i++) { if (!document.querySelector(${JSON.stringify(sq)})) return true; await new Promise(r => setTimeout(r, 100)) } return false })()`)
+    if (!cleared) fail(at, 'spot-retry', `after its Retry spot '${s}' still says it has writes not logged`)
+    const lost = await evalSettled('document.activeElement === document.body || document.activeElement == null')
+    if (lost) fail(at, 'retry-focus', `after the '${s}' Retry focus fell to BODY (§5.5)`)
+  }
+  const line2 = await evalSettled(lineText)
+  if (!new RegExp(`${reEsc(c.group)} · watered ${N}\\b`).test(line2 || '')) fail(at, 'spot-retry', `after every Retry the group line reads "${line2}", expected "${c.group} · watered ${N}" — a Retry completes the run it failed in (MF3)`)
+  const post = await evalSettled(SPOT_STATE(G))
+  for (const s of failing) {
+    const v = post[s]
+    if (!v) { fail(at, 'spot-retry', `after its Retry spot '${s}' left the page`); continue }
+    const ok = v.done ? new RegExp(`${reEsc(s)} · watered ${want[s]}\\b`).test(v.text || '') : (v.text || '').includes(`Watered ${want[s]}`)
+    if (!ok) fail(at, 'spot-retry', `after its Retry spot '${s}' reads "${v.text}", expected its whole share ${want[s]} watered`)
+  }
+  // The run's ONE Undo deletes every id it created, the retried ones included: the page is back where it began.
+  await evalSettled(`(() => { const b = document.querySelector(${JSON.stringify(gq + ' button')}); if (b) b.click(); return 1 })()`)
+  const back = await evalSettled(`(async () => { for (let i = 0; i < 150; i++) { const el = document.querySelector(${JSON.stringify(q)}); if (el && !document.querySelector(${JSON.stringify(gq)})) return el.getAttribute('aria-label'); await new Promise(r => setTimeout(r, 100)) } return null })()`)
+  if (back == null) { fail(at, 'spot-retry', `the group Undo never brought '${c.group}' back to its Water all`); return }
+  if (back !== name0) fail(at, 'spot-retry', `after the Undo the group button reads "${back}", it read "${name0}" before the run — the one Undo must delete every id the run created, retries included`)
+  const after = await evalSettled(CARE_COUNT)
+  if (after !== before) fail(at, 'header-text', `after the run, its Retries and its Undo the Needs care header counts ${after}, it counted ${before} before`)
+  const stuck = Object.entries(await evalSettled(SPOT_STATE(G))).filter(([, v]) => v.failed).map(([s]) => s)
+  if (stuck.length) fail(at, 'spot-retry', `after the run was undone ${stuck.join(', ')} still say "not logged" — an undone run leaves nothing to retry`)
+  console.log(`[today-shape-v2] ${at}: spot-retry · "${line}" with ${c.fail} failing (${failing.map((s) => `${s} ${mid[s].failed}`).join(', ') || 'none'}) · focus ${foc.on ? 'first Retry' : foc.what} · retried → "${line2}" · Undo → "${back}", header ${after} (was ${before})`)
 }
 
 // ── budget ───────────────────────────────────────────────────────────────────────────────────────────────
