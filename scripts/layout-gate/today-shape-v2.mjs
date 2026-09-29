@@ -874,8 +874,15 @@ try {
     if (!census.glyphs && v2.route !== 'stub') fail(at, 'instrument', 'the font census read no glyphs under #root')
     // S4: FilterChipRow (a frozen primitive) labels its tray toggle "More ▾" / "Less ▴" — mixed text, so the
     // census's whole-text allowance cannot see that only the arrow falls to a host font. That one arrow, on that
-    // one 48px-min chip, is let through here; any other host glyph still fails. NOT yet measured the way
-    // font-census.mjs asks (arrow swapped for Roboto 'v', geometry compared) — owed, see build-s4.md.
+    // one 48px-min chip, is let through here; any other host glyph still fails.
+    // S4g MEASURED it as font-census.mjs asks (scripts/layout-gate/tray-arrow-measure.mjs; 2026-09-29, Chrome 154,
+    // 426x836 @3, Roboto pin; v2-busy + v2-frost, the spot row collapsed, with a spot selected, and expanded): the
+    // arrow is host-painted (.SF NS on the Mac); swapped for Roboto 'v' / '^' only the toggle's OWN width moves
+    // (66.05 → 66.41 px; 63.13 → 62.59 px) — and a Clear sharing its line, by the same 0.53 px. Every other chip,
+    // the row's height, the task row, Needs care, every spot row, the page height and the last ink are identical,
+    // and the toggle's line keeps ≥ 57 px of slack. Recorded, not gated: with a spot selected, Clear wraps to a
+    // second line by 0.45 px, so another host's arrow width (CI's DejaVu Sans) could flip that wrap — no check
+    // measures geometry with a spot selected. Re-run the measurement if the toggle or the spot row changes.
     const TRAY = /painted 1 glyph\(s\) of "(More ▾|Less ▴)"$/
     for (const v of census.violations.filter(x => !TRAY.test(x)).slice(0, 3)) fail(at, 'instrument', `a HOST font painted text the Roboto pin should own — ${v}`)
 
