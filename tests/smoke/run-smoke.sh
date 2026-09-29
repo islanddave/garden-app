@@ -35,6 +35,10 @@
 #        through GET, which must also carry a boolean can_edit_bar; then restored to [] and the shipped bar;
 #        then garden_group_by 'crop_type' (Type) and 'bean_use' (a bean facet), each read back, then
 #        restored (BUG-GARDENGROUPBYRESET-001: the two values the Lambda refused before)
+#     P) Put-Up 1b + Ferment (06-ferment-path §5.6): P1 put-up date/basis + legacy-PUT refusal, P2 salt line,
+#        P3 draw → Mark used → RowEditor, P4 weighed draw to 0 g, P5 take out/restore, P6 check-in edit,
+#        P7 SHU save, P8 Undo put-up restores grams, P9 batch removal restores the count; WARN until F is on
+#        staging (SMOKE_REQUIRE_FERMENT=1 makes it FAIL); its own FK-ordered hard-delete (ferm_sweep)
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
 #   Per L-108 (ratified 2026-05-25): every write-path surface gets a write→read-back assert.
@@ -76,6 +80,11 @@ PASS=0
 FAIL=0
 
 cleanup() {
+  # Block P (Put-Up F): the run died between its first write and its own ferm_sweep. Hard-delete, FK order.
+  if [[ "${FERM_DIRTY:-false}" == "true" ]]; then
+    ferm_sweep >/dev/null 2>&1 && echo "✅ Cleanup: smoke-test-ferment rows hard-deleted" \
+      || echo "WARNING: smoke-test-ferment sweep failed — rows labelled smoke-test-ferment-% may remain on staging"
+  fi
   if [[ "$DATA_CREATED" == "true" && -n "$CLERK_JWT" ]]; then
     echo ""
     echo "Cleanup: deleting smoke test data (best-effort API soft-deletes)..."
@@ -1824,6 +1833,242 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
   fi
 else
   echo "⚠️  WARN [write:putup] STAGING_API_PRESERVATION or STAGING_API_STORAGE_LOCATIONS unset, or no JWT — Put-Up write-path asserts NOT run"
+fi
+
+
+# ── P) Put-Up 1b + Ferment (F): make, draw, use, take out, undo, remove — write → read-back (06-ferment-path §5.6;
+#    L-108) — Phase 2, continued ─────────────────────────────────────────────────────────────────────────────────
+# Nine sub-blocks, one per §5.6 row, each a write followed by a read-back:
+#   P1) put-up (1b): the jar reads back the date sent and use_by_basis 'typed' (discard_by sent); a legacy PUT with a
+#       DIFFERENT date → 409 client_stale; an equal echo → 200 and nothing changes.
+#   P2) batch → a typed line → a salt line; read back salt_pct / salt_base / base_g / salt_method / base_from.
+#   P3) counted draw of 1 from jar J → remaining −1 → the F bundle's Mark used (POST /api/pantry/uses) → 201,
+#       remaining −1 → the F bundle's RowEditor notes edit (PUT without remaining_count / consumed_at) → 200, count
+#       unchanged. The drawn jar stays usable (06 §1.3).
+#   P4) weighed draw 8 g from a 100 g bag → 92 g; the rest (92 g) → 0 g, count 0, consumed; use-soon lists it
+#       before and not after.
+#   P5) take P3's line out → the count comes back → restore → drawn again.
+#   P6) PATCH a check-in note → edited_at is set.
+#   P7) a jalapeño line (170 g @ 2,500-8,000) → shu-estimate → save → the batch reads back basis 'computed'.
+#   P8) put-up with a row shu + cooked and a sitting line drawing 8 g from a reaper bag → Undo that put-up → the
+#       bag's grams are back.
+#   P9) a fresh batch draws 1 from jar K → remove the batch → K's count is back (F1).
+# Stock is read back through SQL (NEON_STAGING_URL + psql, as block D does): remaining_amount and consumed_at are
+# not on every API projection, and the ledger (pantry_use) has no read route in F.
+# GATED ON F BEING DEPLOYED: F's DDL and Lambda reach staging only at F's sitting. The probe is GET
+# /api/kitchen-batches/line-search (200 only with F's Lambda). Without it this block is a WARN; with
+# SMOKE_REQUIRE_FERMENT=1 (set it in deploy-staging.yml once F is on staging) it is a FAIL.
+# SELF-CONTAINED CLEANUP (L-058): every row this block writes carries 'smoke-test-ferment-<run>' (batch label, jar
+# notes/label, place label, line labels) or hangs off a row that does. ferm_sweep hard-deletes them in FK order,
+# in ONE transaction: reversing pantry_use → pantry_use → kitchen_batch_input → preservation_source →
+# preservation_log → kitchen_stage_log → kitchen_batch → storage_location. kitchen_stage_log goes AFTER
+# preservation_log (a jar names its put_up row, preservation_log.put_up_stage_id, NO ACTION) — 06 §5.6's listed
+# order puts it before, which would 23503. It runs at the end of the block and again from cleanup() if the run
+# dies in between (FERM_DIRTY).
+FERM_DIRTY=false
+ferm_sweep() {
+  [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1 || return 1
+  psql "$NEON_STAGING_URL" -X -q -1 -v ON_ERROR_STOP=1 <<'SQL'
+CREATE TEMP TABLE fe_b ON COMMIT DROP AS SELECT id FROM kitchen_batch WHERE label LIKE 'smoke-test-ferment-%';
+CREATE TEMP TABLE fe_j ON COMMIT DROP AS SELECT id FROM preservation_log
+  WHERE notes LIKE 'smoke-test-ferment-%' OR label LIKE 'smoke-test-ferment-%' OR batch_id IN (SELECT id FROM fe_b);
+CREATE TEMP TABLE fe_l ON COMMIT DROP AS SELECT id FROM kitchen_batch_input
+  WHERE batch_id IN (SELECT id FROM fe_b) OR preservation_log_id IN (SELECT id FROM fe_j) OR output_id IN (SELECT id FROM fe_j);
+DELETE FROM pantry_use WHERE reverses_use_id IS NOT NULL
+  AND (preservation_log_id IN (SELECT id FROM fe_j) OR kitchen_batch_input_id IN (SELECT id FROM fe_l));
+DELETE FROM pantry_use WHERE preservation_log_id IN (SELECT id FROM fe_j) OR kitchen_batch_input_id IN (SELECT id FROM fe_l);
+DELETE FROM kitchen_batch_input WHERE id IN (SELECT id FROM fe_l);
+DELETE FROM preservation_source WHERE preservation_log_id IN (SELECT id FROM fe_j);
+DELETE FROM preservation_log WHERE id IN (SELECT id FROM fe_j);
+DELETE FROM kitchen_stage_log WHERE batch_id IN (SELECT id FROM fe_b);
+DELETE FROM kitchen_batch WHERE id IN (SELECT id FROM fe_b);
+DELETE FROM storage_location WHERE label LIKE 'smoke-test-ferment-%';
+SQL
+}
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" && -n "${STAGING_API_STORAGE_LOCATIONS:-}" ]]; then
+  FE_BASE="${STAGING_API_PRESERVATION%/}"
+  FE_TAG="smoke-test-ferment-$TEST_RUN_ID"
+  FE_DAY=$(TZ=America/New_York date +%Y-%m-%d)
+  FE_UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  fe_uuid() { local u; u=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid); echo "$u" | tr 'A-Z' 'a-z'; }
+  # fe_req METHOD URL [BODY] → FE_CODE (HTTP status or 000) and FE_OUT (the body, a temp file; fe_req removes the last one)
+  FE_OUT=""
+  fe_req() {
+    [[ -n "$FE_OUT" ]] && rm -f "$FE_OUT"
+    FE_OUT=$(mktemp)
+    if [[ -n "${3:-}" ]]; then
+      FE_CODE=$(curl -s --max-time 30 --connect-timeout 10 -X "$1" -H "Authorization: Bearer $CLERK_JWT" \
+        -H "Content-Type: application/json" -o "$FE_OUT" -w "%{http_code}" "$2" -d "$3") || FE_CODE="000"
+    else
+      FE_CODE=$(curl -s --max-time 30 --connect-timeout 10 -X "$1" -H "Authorization: Bearer $CLERK_JWT" \
+        -H "Content-Type: application/json" -o "$FE_OUT" -w "%{http_code}" "$2") || FE_CODE="000"
+    fi
+  }
+  fe_jq() { jq -rc "$1" "$FE_OUT" 2>/dev/null || echo "unparseable"; }
+  fe_jqx() { jq -rc --arg x "$1" "$2" "$FE_OUT" 2>/dev/null || echo "unparseable"; }   # fe_jqx <value of $x> <filter>
+  fe_pass() { echo "✅ PASS [ferment:$1] $2"; PASS=$((PASS+1)); }
+  fe_fail() { echo "❌ FAIL [ferment:$1] $2"; FAIL=$((FAIL+1)); }
+  fe_check() { if [[ "$2" == "$3" ]]; then fe_pass "$1" "$4 → '$2'"; else fe_fail "$1" "$4 → '$2' (expected '$3')"; fi; }
+  # fe_row <sql> → one row, '|'-separated, or 'sql-error'. Ids reach SQL only after matching FE_UUID_RE.
+  fe_row() { psql "$NEON_STAGING_URL" -X -qAt -v ON_ERROR_STOP=1 -c "$1" 2>/dev/null || echo "sql-error"; }
+  fe_id_ok() { [[ "${1:-}" =~ $FE_UUID_RE ]]; }
+  fe_jar() { fe_id_ok "$1" && fe_row "SELECT coalesce(remaining_count::text,'null')||'|'||coalesce(remaining_amount::numeric(12,2)::text,'null')||'|'||(consumed_at IS NOT NULL)::text FROM preservation_log WHERE id = '$1'" || echo "bad-id"; }
+  # POST one keyed line to a batch; FE_LINE_ID = the line's id read back by its key.
+  fe_line() {
+    local k; k=$(fe_uuid)
+    fe_req POST "$FE_BASE/api/kitchen-batches/$1/inputs" "{\"inputs\": [$(echo "$2" | jq -c --arg k "$k" '. + {idempotency_key: $k}')]}"
+    FE_LINE_ID=$(fe_row "SELECT id FROM kitchen_batch_input WHERE idempotency_key = '$k'")
+  }
+  # A new batch (201 → id) and a jar (POST /api/preservation → id), both carrying the tag.
+  fe_batch() { fe_req POST "$FE_BASE/api/kitchen-batches" "{\"label\": \"$FE_TAG $1\", \"kind\": \"ferment\", \"idempotency_key\": \"$(fe_uuid)\"}"; fe_jq '.id // empty'; }
+  fe_newjar() {  # fe_newjar <qty> <unit> <count> [use_by] → id
+    local ub=""; [[ -n "${4:-}" ]] && ub=", \"use_by_target\": \"$4\""
+    fe_req POST "$FE_BASE/api/preservation" "{\"crop_type_slug\": \"tomato\", \"method\": \"whole_freeze\", \"quantity_value\": $1, \"quantity_unit\": \"$2\", \"package_count\": $3, \"preserved_at\": \"$FE_DAY\", \"preserved_at_approx\": false, \"source_kind\": \"own_garden\", \"storage_location_id\": \"$FE_PLACE\", \"notes\": \"$FE_TAG\"$ub}"
+    fe_jq '.id // empty'
+  }
+
+  CLERK_JWT=$(mint_session_token)
+  fe_req GET "$FE_BASE/api/kitchen-batches/line-search?q=smoke"
+  if [[ "$FE_CODE" != "200" ]]; then
+    if [[ "${SMOKE_REQUIRE_FERMENT:-}" == "1" ]]; then
+      fe_fail "deployed" "GET /api/kitchen-batches/line-search → HTTP $FE_CODE: F's Lambda is not on staging, and SMOKE_REQUIRE_FERMENT=1"
+    else
+      echo "⚠️  WARN [ferment:deployed] GET /api/kitchen-batches/line-search → HTTP $FE_CODE — F not on staging yet; block P NOT run (set SMOKE_REQUIRE_FERMENT=1 once it is)"
+    fi
+  elif [[ -z "${NEON_STAGING_URL:-}" ]] || ! command -v psql >/dev/null 2>&1; then
+    fe_fail "readback-sql" "NEON_STAGING_URL unset or psql missing — block P reads stock back through SQL and cleans up through it"
+  else
+    FERM_DIRTY=true
+    fe_req POST "${STAGING_API_STORAGE_LOCATIONS%/}/api/storage-locations" "{\"label\": \"$FE_TAG place\", \"kind\": \"fridge\"}"
+    FE_PLACE=$(fe_jq '.id // empty')
+    if ! fe_id_ok "$FE_PLACE"; then
+      fe_fail "place" "POST /storage-locations → HTTP $FE_CODE (no id)"
+    else
+      FE_LATER=$(fe_row "SELECT (CURRENT_DATE + 60)::text")
+
+      # ── P1) put-up (1b): date + basis read back; a differing-date legacy PUT refused; an equal echo a no-op ──
+      CLERK_JWT=$(mint_session_token)
+      FE_B1=$(fe_batch "P1")
+      FE_PU_KEY=$(fe_uuid)
+      fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B1/put-up" "{\"idempotency_key\": \"$FE_PU_KEY\", \"when\": {\"date\": \"$FE_DAY\", \"precision\": \"day\"}, \"method\": \"ferment\", \"rows\": [{\"count\": 2, \"container_label\": \"pint\", \"size_value\": 450, \"size_unit\": \"g\", \"place\": {\"id\": \"$FE_PLACE\"}, \"name\": \"$FE_TAG P1\", \"discard_by\": \"$FE_LATER\"}], \"made_g\": 900, \"finish\": false}"
+      FE_J1=$(fe_jq '.jars[0].id // empty')
+      if [[ "$FE_CODE" == "201" ]] && fe_id_ok "$FE_J1"; then
+        fe_check "p1-putup-readback" "$(fe_row "SELECT preserved_at::text||'|'||coalesce(use_by_basis,'null')||'|'||coalesce(use_by_target::text,'null') FROM preservation_log WHERE id = '$FE_J1'")" "$FE_DAY|typed|$FE_LATER" "put-up → HTTP 201; the jar's date|basis|discard-by"
+        fe_req GET "$FE_BASE/api/preservation/$FE_J1"
+        FE_ROW=$(fe_jq '{crop_type_slug, variety_id, plant_id, harvest_log_id, preserved_at, preserved_at_approx, method, method_other_text, quantity_value, quantity_unit, package_count, storage_location_id, use_by_target, remaining_count, consumed_at, notes, photo_id, source_kind, source_label}')
+        FE_BEFORE=$(fe_row "SELECT preserved_at::text||'|'||coalesce(remaining_count::text,'null')||'|'||coalesce(notes,'null') FROM preservation_log WHERE id = '$FE_J1'")
+        fe_req PUT "$FE_BASE/api/preservation/$FE_J1" "$(echo "$FE_ROW" | jq -c --arg d "$(utc_days_ago 3)" '.preserved_at = $d')"
+        fe_check "p1-legacy-date-refused" "$FE_CODE $(fe_jq '.code // "-"')" "409 client_stale" "legacy PUT with a different preserved_at"
+        fe_req PUT "$FE_BASE/api/preservation/$FE_J1" "$FE_ROW"
+        fe_check "p1-legacy-echo-noop" "$FE_CODE $(fe_row "SELECT preserved_at::text||'|'||coalesce(remaining_count::text,'null')||'|'||coalesce(notes,'null') FROM preservation_log WHERE id = '$FE_J1'")" "200 $FE_BEFORE" "untouched legacy echo; date|remaining|notes after"
+      else
+        fe_fail "p1-putup-readback" "POST /put-up → HTTP $FE_CODE: $(head -c 200 "$FE_OUT")"
+      fi
+
+      # ── P2) batch → typed line → salt line; the salt facts read back ──
+      CLERK_JWT=$(mint_session_token)
+      FE_B2=$(fe_batch "P2")
+      fe_line "$FE_B2" "{\"input_kind\": \"other\", \"label\": \"$FE_TAG cabbage\", \"qty\": 1000, \"qty_unit\": \"g\"}"
+      fe_line "$FE_B2" "{\"input_kind\": \"other\", \"label\": \"$FE_TAG salt\", \"role\": \"salt\", \"qty\": 20, \"qty_unit\": \"g\", \"salt_pct\": 2, \"salt_base\": \"produce\", \"base_g\": 1000, \"salt_method\": \"dry\", \"base_from\": \"lines\"}"
+      FE_SALT="$FE_LINE_ID"
+      fe_req GET "$FE_BASE/api/kitchen-batches/$FE_B2"
+      fe_check "p2-salt-readback" "$(fe_jqx "$FE_SALT" '.inputs[] | select(.id == $x) | "\(.salt_pct|tonumber)|\(.salt_base)|\(.base_g|tonumber)|\(.salt_method)|\(.base_from)"')" "2|produce|1000|dry|lines" "salt line on the batch GET"
+
+      # ── P3) counted draw → F Mark used → F RowEditor edit (the drawn jar stays usable) ──
+      CLERK_JWT=$(mint_session_token)
+      FE_J3=$(fe_newjar 3 "jar" 4)
+      fe_line "$FE_B2" "{\"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J3\", \"count_drawn\": 1}"
+      FE_DRAW3="$FE_LINE_ID"
+      fe_check "p3-draw" "$FE_CODE $(fe_jar "$FE_J3")" "201 3|null|false" "counted draw of 1 from 4; remaining|grams|consumed"
+      fe_req POST "$FE_BASE/api/pantry/uses" "{\"idempotency_key\": \"$(fe_uuid)\", \"preservation_log_id\": \"$FE_J3\", \"count_used\": 1}"
+      fe_check "p3-mark-used" "$FE_CODE $(fe_jar "$FE_J3")" "201 2|null|false" "F Mark used (POST /api/pantry/uses)"
+      fe_req GET "$FE_BASE/api/preservation/$FE_J3"
+      FE_ROW=$(fe_jq '{crop_type_slug, variety_id, plant_id, harvest_log_id, preserved_at, preserved_at_approx, method, method_other_text, quantity_value, quantity_unit, package_count, storage_location_id, use_by_target, notes, photo_id, source_kind, source_label} | .notes = (.notes + " edited")')
+      fe_req PUT "$FE_BASE/api/preservation/$FE_J3" "$FE_ROW"
+      fe_check "p3-roweditor" "$FE_CODE $(fe_jar "$FE_J3")" "200 2|null|false" "F RowEditor notes edit (no remaining_count key)"
+
+      # ── P4) weighed: 8 g → 92 g; the rest → 0 g, used up, gone from use-soon ──
+      CLERK_JWT=$(mint_session_token)
+      FE_J4=$(fe_newjar 100 "g" 1 "$FE_DAY")   # use-by today: classifyUseBy's zero span reads use_soon
+      fe_req GET "$FE_BASE/api/preservation/use-soon"
+      FE_LISTED_BEFORE=$(fe_jqx "$FE_J4" 'any(.items[]; .id == $x)')
+      fe_line "$FE_B2" "{\"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J4\", \"qty\": 8, \"qty_unit\": \"g\"}"
+      fe_check "p4-weighed-draw" "$FE_CODE $(fe_jar "$FE_J4")" "201 null|92.00|false" "8 g from a 100 g bag"
+      fe_line "$FE_B2" "{\"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J4\", \"qty\": 92, \"qty_unit\": \"g\"}"
+      fe_req GET "$FE_BASE/api/preservation/use-soon"
+      fe_check "p4-draw-to-zero" "$(fe_jar "$FE_J4") listed-before:$FE_LISTED_BEFORE listed-after:$(fe_jqx "$FE_J4" 'any(.items[]; .id == $x)')" "0|0.00|true listed-before:true listed-after:false" "the other 92 g; use-soon before/after"
+
+      # ── P5) take P3's line out → count back; restore → drawn again ──
+      CLERK_JWT=$(mint_session_token)
+      if fe_id_ok "$FE_DRAW3"; then
+        fe_req DELETE "$FE_BASE/api/kitchen-batches/$FE_B2/inputs/$FE_DRAW3"
+        fe_check "p5-take-out" "$FE_CODE $(fe_jar "$FE_J3")" "200 3|null|false" "take the draw line out"
+        fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B2/inputs/$FE_DRAW3/restore"
+        fe_check "p5-restore" "$FE_CODE $(fe_jar "$FE_J3")" "200 2|null|false" "restore it"
+      else
+        fe_fail "p5-take-out" "no draw line from P3 to take out"
+      fi
+
+      # ── P6) a check-in, then PATCH its note → edited_at ──
+      CLERK_JWT=$(mint_session_token)
+      fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B2/stages" "{\"stage_kind\": \"tended\", \"acts\": [\"pushed_under\"], \"note\": \"$FE_TAG check-in\"}"
+      FE_STAGE=$(fe_jq '.stage.id // empty')
+      if fe_id_ok "$FE_STAGE"; then
+        fe_req PATCH "$FE_BASE/api/kitchen-batches/$FE_B2/stages/$FE_STAGE" "{\"note\": \"$FE_TAG check-in, film on top\"}"
+        fe_check "p6-stage-edit" "$FE_CODE $(fe_row "SELECT (edited_at IS NOT NULL)::text||'|'||note FROM kitchen_stage_log WHERE id = '$FE_STAGE'")" "200 true|$FE_TAG check-in, film on top" "PATCH the check-in note; edited_at|note"
+      else
+        fe_fail "p6-stage-edit" "POST /stages → HTTP $FE_CODE (no stage id)"
+      fi
+
+      # ── P7) SHU: work it out, save, read basis computed ──
+      CLERK_JWT=$(mint_session_token)
+      FE_B7=$(fe_batch "P7")
+      fe_line "$FE_B7" "{\"input_kind\": \"purchased\", \"label\": \"$FE_TAG jalapeno\", \"qty\": 170, \"qty_unit\": \"g\", \"form\": \"fresh\", \"shu_rating_low\": 2500, \"shu_rating_high\": 8000}"
+      fe_line "$FE_B7" "{\"input_kind\": \"other\", \"label\": \"$FE_TAG onion\", \"qty\": 28, \"qty_unit\": \"g\"}"
+      fe_line "$FE_B7" "{\"input_kind\": \"other\", \"label\": \"Water\", \"role\": \"water\", \"qty\": 250, \"qty_unit\": \"ml\"}"
+      fe_req GET "$FE_BASE/api/kitchen-batches/$FE_B7/shu-estimate?scope=batch"
+      FE_EST=$(fe_jq '"\(.denominator_g|tonumber)"')
+      fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B7/shu-estimate/save" '{"scope": "batch"}'
+      fe_check "p7-shu-save" "$FE_CODE denominator:$FE_EST $(fe_row "SELECT shu_est_low||'|'||shu_est_high||'|'||shu_est_basis FROM kitchen_batch WHERE id = '$FE_B7'")" "200 denominator:448 949|3036|computed" "shu-estimate over 448 g, then save"
+
+      # ── P8) put-up with row shu + cooked + a sitting line drawing 8 g from a reaper bag → Undo → grams back ──
+      CLERK_JWT=$(mint_session_token)
+      FE_B8=$(fe_batch "P8")
+      FE_J8=$(fe_newjar 100 "g" 1)
+      fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B8/put-up" "{\"idempotency_key\": \"$(fe_uuid)\", \"when\": {\"date\": \"$FE_DAY\", \"precision\": \"day\"}, \"method\": \"ferment\", \"rows\": [{\"count\": 1, \"container_label\": \"woozy\", \"size_value\": 250, \"size_unit\": \"g\", \"place\": {\"id\": \"$FE_PLACE\"}, \"name\": \"$FE_TAG P8\", \"shu_est_low\": 16000, \"shu_est_high\": 23000, \"cooked\": true}], \"sitting_lines\": [{\"idempotency_key\": \"$(fe_uuid)\", \"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J8\", \"qty\": 8, \"qty_unit\": \"g\"}], \"made_g\": 250, \"finish\": true}"
+      FE_S8=$(fe_jq '.stage.id // empty')
+      FE_R8=$(fe_jq '.jars[0].id // empty')
+      if [[ "$FE_CODE" == "201" ]] && fe_id_ok "$FE_S8" && fe_id_ok "$FE_R8"; then
+        fe_check "p8-putup-row" "$(fe_row "SELECT shu_est_low||'|'||shu_est_high||'|'||shu_est_basis||'|'||cooked FROM preservation_log WHERE id = '$FE_R8'")|$(fe_jar "$FE_J8")" "16000|23000|typed|true|null|92.00|false" "row shu|basis|cooked, then the bag"
+        fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B8/put-up/$FE_S8/undo"
+        fe_check "p8-undo" "$FE_CODE $(fe_jar "$FE_J8") $(fe_row "SELECT (deleted_at IS NOT NULL)::text FROM preservation_log WHERE id = '$FE_R8'")" "200 null|100.00|false true" "Undo that put-up; bag, then the row jar removed"
+      else
+        fe_fail "p8-putup-row" "POST /put-up → HTTP $FE_CODE: $(head -c 200 "$FE_OUT")"
+      fi
+
+      # ── P9) remove a batch → its draw is reversed ──
+      CLERK_JWT=$(mint_session_token)
+      FE_B9=$(fe_batch "P9")
+      FE_J9=$(fe_newjar 2 "jar" 3)
+      fe_line "$FE_B9" "{\"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J9\", \"count_drawn\": 1}"
+      fe_line "$FE_B9" "{\"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J9\", \"count_drawn\": 1}"
+      FE_MID=$(fe_jar "$FE_J9")
+      fe_req DELETE "$FE_BASE/api/kitchen-batches/$FE_B9"
+      fe_check "p9-batch-remove" "$FE_MID → $FE_CODE $(fe_jar "$FE_J9")" "1|null|false → 200 3|null|false" "two draws of 1 from 3 (one jar, F1), then remove the batch"
+
+      CLERK_JWT=$(mint_session_token)
+    fi
+    if ferm_sweep; then
+      FERM_DIRTY=false
+      FE_LEFT=$(fe_row "SELECT (SELECT count(*) FROM kitchen_batch WHERE label LIKE 'smoke-test-ferment-%') + (SELECT count(*) FROM preservation_log WHERE notes LIKE 'smoke-test-ferment-%' OR label LIKE 'smoke-test-ferment-%') + (SELECT count(*) FROM storage_location WHERE label LIKE 'smoke-test-ferment-%')")
+      fe_check "l058-sweep" "$FE_LEFT" "0" "hard-delete of every smoke-test-ferment row, FK order, one transaction; residue"
+    else
+      fe_fail "l058-sweep" "ferm_sweep failed — smoke-test-ferment rows may remain on staging (cleanup() retries)"
+    fi
+  fi
+  [[ -n "$FE_OUT" ]] && rm -f "$FE_OUT"
+else
+  echo "⚠️  WARN [ferment] STAGING_API_PRESERVATION or STAGING_API_STORAGE_LOCATIONS unset, or no JWT — block P NOT run"
 fi
 
 
