@@ -35,6 +35,8 @@
     "test:flag-off": "vitest run --config vitest.flagoff.config.ts",
     "gate:putup": "node scripts/layout-gate/putup-close-clearance.mjs",
     "gate:putup:probe-nothing": "node scripts/layout-gate/putup-close-clearance.mjs --probe-nothing",
+    "gate:putup-ferment": "node scripts/layout-gate/putup-ferment-walk.mjs",
+    "gate:putup-ferment:probe-nothing": "node scripts/layout-gate/putup-ferment-walk.mjs --probe-nothing",
     "gate:today-shape": "node scripts/layout-gate/today-shape.mjs",
     "gate:today-shape:probe-nothing": "node scripts/layout-gate/today-shape.mjs --probe-nothing",
     "gate:today-shape:preflight": "node scripts/layout-gate/todayshape-fixture-preflight.mjs",
