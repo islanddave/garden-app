@@ -3,7 +3,7 @@
 // entirely when empty, and NEVER throws / surfaces an error on a fetch failure (supplementary glance).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { RETRY_DELAY_MS } from '../lib/useAmbientBandFetch.js'
 
 const navigateMock = vi.fn()
@@ -58,6 +58,21 @@ describe('PutUpUseSoonBand — Today "use soon" ambient card (L10)', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/preservation/use-soon'))
     // Real timers: the RETRY_DELAY_MS gap has not elapsed, so a one-off blip is still invisible.
     expect(container.querySelector('section')).toBeNull()
+  })
+
+  // Put-Up release 1a (V4 §6.1, §10.2) — the tap carries its destination: the put-up list, narrowed
+  // to what this card showed. It opens as an overlay over Today (a `background` rides along), which
+  // is what makes Back return here. PutUp.useSoonFilter.test.jsx proves the page honours the URL.
+  it('the tap opens Put-Up on the list, filtered to use soon, over Today', async () => {
+    useSoon([
+      { id: 'a', crop_display_name: 'Tomato', quantity_value: 14, quantity_unit: 'bags', method: 'whole_freeze', storage_label: 'Garage freezer', use_by_status: 'use_soon' },
+    ])
+    render(<PutUpUseSoonBand />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Put-Up' }))
+    expect(navigateMock).toHaveBeenCalledTimes(1)
+    const [to, opts] = navigateMock.mock.calls[0]
+    expect(to).toBe('/put-up?view=pantry&filter=use-soon')
+    expect(opts.state.background.pathname).toBe('/today')
   })
 
   // BUG-READYBANDFETCH-001 — a persistent outage must not look like an empty shelf.

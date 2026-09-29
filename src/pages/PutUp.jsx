@@ -41,6 +41,7 @@ import { PUTUP_SOURCE_OPTIONS, PUTUP_SOURCE_LABELS } from '../lib/dropdownRegist
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 import { useReportOverlayDirty, useInOverlaySurface } from '../context/OverlayContext.jsx'
+import { useAuthOptional } from '../context/AuthContext.jsx'
 // V4-PUTUPSESSION-001 slice 0 — the freezer walk. A MODE FLAG on this page (?session=putup), not a
 // new page, a new endpoint or a new table, copying the weigh-in's shape rather than editing it
 // (EventNew.jsx is frozen: OPS-WEIGHINUXFROZEN-001).
@@ -56,6 +57,10 @@ import {
   WALK_PARAM, coarseDate, exactDate, describeDate, describeApprox, solePlanting, unrecordedCrops,
   readWalk, writeWalk, clearWalk, readDismissed, dismissCrop,
 } from '../lib/putUpSession.js'
+// Put-Up release 1a (V4 §6.5) — every write on this page reads the server's `code` and says why it
+// was refused; client_stale is answered with a user-tapped "Refresh now", never a reload by itself.
+import { describeRefusal, existingPlaceId, REFRESH_NOW_LABEL } from '../lib/putUpErrors.js'
+import { useAppUpdate } from '../hooks/useAppUpdate.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -218,6 +223,21 @@ export function prefillContextKey(prefill) {
 }
 export const BARE_PREFILL_KEY = prefillContextKey({})
 
+// Put-Up release 1a — a place-create can answer with a place that ALREADY exists: the storage Lambda's
+// find-or-create (200, `existing: true`), or a 409 place_exists the creator turns into that place. It
+// may already be in the list, and appending it again would list it twice (a doubled option, a doubled
+// walk chip, a duplicate React key). So a created place is merged by id, never blindly appended, and
+// the `existing` flag is the answer's, not the place's.
+export function upsertPlace(list, row) {
+  if (!row || row.id == null) return list
+  const { existing: _existing, ...place } = row
+  const i = list.findIndex(l => String(l.id) === String(place.id))
+  if (i === -1) return [...list, place]
+  const next = list.slice()
+  next[i] = { ...list[i], ...place }
+  return next
+}
+
 function prettyDate(v) {
   const s = ymd(v)
   if (!s) return ''
@@ -244,8 +264,27 @@ export function batchRows(payload) {
   return Array.isArray(payload) ? payload : (Array.isArray(payload?.batches) ? payload.batches : [])
 }
 
+// ── Put-Up release 1a — the shared Start sheet (V4 §2.2 "Start a batch", §10.1) ──────────────────
+// The sheet is the batch lane's file and lands in its own merge; its contract is
+// `{ open, onClose, onStarted(batch) }`, default or named `StartBatchSheet` export. GLOBBED rather than
+// imported so this page builds and ships with or without it: no match is `{}`, the resolved component
+// is null, and GoingNowView is handed no onStartBatch — its shipped door stays exactly as it is. When
+// the file lands, this same line picks it up with no edit here. The literal path is bound to the
+// contract by PutUp.startBatch.test.jsx, because a typo here would fail silently: a glob that matches
+// nothing is not an error.
+const START_BATCH_SHEET_MODULES = import.meta.glob('../components/kitchen/StartBatchSheet.jsx', { eager: true })
+export function pickStartBatchSheet(modules) {
+  for (const m of Object.values(modules ?? {})) {
+    const c = m?.StartBatchSheet ?? m?.default
+    if (c) return c
+  }
+  return null
+}
+export const StartBatchSheetImpl = pickStartBatchSheet(START_BATCH_SHEET_MODULES)
 
-export default function PutUp() {
+// `StartBatchSheet` is a prop only so a test can hand the page a stand-in for a file this branch does
+// not have yet; App renders the route with no props, so production always takes the default.
+export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -263,10 +302,25 @@ export default function PutUp() {
   // inventory ("what have I got?") — the more common intent from the More menu. V5-INFLIGHTBATCH-001
   // promotes a bare open to 'going' the moment there is anything to check; see autoDefaultedRef.
   const [view, setView] = useState(hasPrefill ? 'log' : 'stores')
+  // Put-Up release 1a (V4 §6.1, §10.2) — a door that NAMES its destination. `?view=pantry` is the
+  // put-up list segment ('stores'; it is renamed "Pantry" only in release 2, so nothing on screen
+  // changes now); Today's use-soon band links here with it. It counts as a choice already made, so
+  // the bare-open promote below never moves someone who was sent to the list.
+  const viewNamed = searchParams.get('view') === 'pantry'
   // Set the moment the user picks a view themselves. The auto-default below is a DEFAULT, not a
   // preference — it may never move someone off a segment they chose or off a form they are typing in.
-  const viewTouchedRef = useRef(false)
+  const viewTouchedRef = useRef(viewNamed)
   const chooseView = useCallback((v) => { viewTouchedRef.current = true; setView(v) }, [])
+
+  // `?filter=use-soon` — the list narrowed to what the band showed, behind a removable "Use soon ×"
+  // chip. Clearing REPLACES the entry, so Back still returns to where the band was tapped (Today), and
+  // carries location.state so an overlay's background survives (V4 §6.2).
+  const useSoonOnly = searchParams.get('filter') === USE_SOON_FILTER
+  const clearUseSoon = useCallback(() => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('filter')
+    setSearchParams(next, { replace: true, state: location.state })
+  }, [searchParams, setSearchParams, location.state])
 
   // ── V5-INFLIGHTBATCH-001 — open batches, fetched at the PAGE and passed down ───────────────────
   // The page owns this fetch rather than GoingNowView, because the default-view decision below needs
@@ -277,6 +331,9 @@ export default function PutUp() {
   // in that state this page must behave EXACTLY as it does today — no flip, no banner, no change to
   // the bare-open landing. Only an array is an answer.
   const { fetch: pageFetch } = useApiFetch()
+  // The signed-in user, for the landing rule below. The non-throwing selector: PutUp is only ever
+  // rendered signed in (Protected), and outside a provider it reads as nobody, never as a crash.
+  const viewerId = useAuthOptional().user?.id ?? null
   const [going, setGoing] = useState(null)
   const [goingLoading, setGoingLoading] = useState(true)
   const [goingError, setGoingError] = useState(false)
@@ -306,8 +363,8 @@ export default function PutUp() {
   const modeActive = !!batchId || closedMode
 
   // ONE instant for the detail surface, collapsed once per opened batch — GoingNowView.jsx:221-225's
-  // rule applied at the page. PutUp is a route element and takes no props, so it cannot receive an
-  // injected clock; the injection point is BatchDetailView's own `nowMs` prop, which is where a test
+  // rule applied at the page. PutUp is a route element that App renders with no props, so it cannot
+  // receive an injected clock; the injection point is BatchDetailView's own `nowMs` prop, which is where a test
   // pins an age to a fixed literal.
   const detailNowMs = useMemo(() => Date.now(), [batchId])
 
@@ -359,6 +416,23 @@ export default function PutUp() {
     setSearchParams(next)
   }, [searchParams, setSearchParams])
 
+  // Put-Up release 1a — Start a batch opens the shared sheet here instead of leaving for /capture, and
+  // a started batch opens straight into the shipped `?batch=` mode: a PUSH, so Back returns to the list
+  // it was started from, with the list re-read because it has a new card. location.state rides along
+  // so an overlay keeps its background (V4 §6.2). The keys are handled the way GoingNowView's openBatch
+  // handles them — drop `state`, set `batch`, keep everything else.
+  const [startOpen, setStartOpen] = useState(false)
+  const openStartSheet = useCallback(() => setStartOpen(true), [])
+  const closeStartSheet = useCallback(() => setStartOpen(false), [])
+  const onBatchStarted = useCallback((batch) => {
+    setStartOpen(false)
+    loadGoing()
+    if (batch?.id == null || batch.id === '') return
+    const next = new URLSearchParams(searchParams)
+    next.delete('state'); next.set('batch', String(batch.id))
+    setSearchParams(next, { state: location.state })
+  }, [loadGoing, searchParams, setSearchParams, location.state])
+
   // THE BARE-OPEN DEFAULT. A bare Put-Up open landing on "what have I got" is correct today and
   // wrong the moment batches exist, because the answer to "what is going on right now" would then be
   // one tap further away than the answer to a question nobody asked. This one flip takes "what needs
@@ -369,13 +443,21 @@ export default function PutUp() {
   // fetch may not yank someone off a form (the prefill path lands on 'log', and clearPrefill leaves
   // them there with hasPrefill false) or off a segment they chose. Hence both guards plus the
   // view === 'stores' check, which is the state this flip is defined to replace.
+  //
+  // Put-Up release 1a (V4 §6.1 "Jen's landing") — and only when a listed batch is the VIEWER's own.
+  // Batches are household-visible, so Jen opening Put-Up while Dave has a ferment going used to land
+  // on a list of his batches instead of on the jars she came for. Ownership is the row's user_id — the
+  // Clerk subject of whoever started it (kitchenRoutes createBatch), a column the list already sends
+  // (SELECT * over v_kitchen_batch_current) — compared with the signed-in user's Clerk id. An unknown
+  // viewer owns nothing, so it lands on the list: the rule, read literally.
   const autoDefaultedRef = useRef(false)
   useEffect(() => {
     if (autoDefaultedRef.current || !Array.isArray(going)) return
     autoDefaultedRef.current = true
-    if (!going.length || viewTouchedRef.current || view !== 'stores') return
+    if (viewTouchedRef.current || view !== 'stores') return
+    if (viewerId == null || !going.some(b => b?.user_id === viewerId)) return
     setView('going')
-  }, [going, view])
+  }, [going, view, viewerId])
 
   // V4-PUTUPENGINE-001 slice 2 — picking a recent harvest navigates IN PLACE with a new prefill.
   // That reuses the one prefill door PreserveOffer / PutUpFromPlanting / PutUpUseSoonBand already
@@ -510,10 +592,11 @@ export default function PutUp() {
         )}
 
         {seg === 'going' && (
-          <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing} />
+          <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing}
+            onStartBatch={StartBatchSheet ? openStartSheet : undefined} />
         )}
         {seg === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('stores')} />}
-        {seg === 'stores' && <StoresView />}
+        {seg === 'stores' && <StoresView useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} />}
 
         {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
             only invalidation path and it re-reads BOTH this row and the list. */}
@@ -531,6 +614,14 @@ export default function PutUp() {
             <ClosedBatchesView batches={closed} loading={closedLoading} error={closedError}
               onReload={onClosedChanged} now={detailNowMs} />
           </div>
+        )}
+
+        {/* Mounted only while open. Sheet renders nothing when closed and its close path IS its
+            unmount cleanup (scroll unlock, focus return), so this changes nothing about closing — but
+            it means the sheet's hooks (its draft read, anything identity-scoped) run only when someone
+            asked for it, and can never take down an ordinary visit to this page. */}
+        {StartBatchSheet && startOpen && (
+          <StartBatchSheet open onClose={closeStartSheet} onStarted={onBatchStarted} />
         )}
       </div>
     </div>
@@ -652,8 +743,8 @@ function PutUpWalk() {
         writeWalk(next)
         return next
       })
-    } catch {
-      setLastSaved(s => (s ? { ...s, error: "Couldn't undo — try again." } : s))
+    } catch (e) {
+      setLastSaved(s => (s ? { ...s, error: describeRefusal(e) ?? "Couldn't undo — try again." } : s))
     }
   }, [fetch, lastSaved])
 
@@ -693,7 +784,7 @@ function PutUpWalk() {
             storageLocations={storageLocations}
             onStart={startWalk}
             fetch={fetch}
-            onCreated={(row) => setStorageLocations(list => [...list, row])}
+            onCreated={(row) => setStorageLocations(list => upsertPlace(list, row))}
           />
         ) : (
           <>
@@ -740,9 +831,7 @@ function PutUpWalk() {
               )}
             </div>
           )}
-          {lastSaved?.error && (
-            <div role="alert" style={{ fontSize: '0.78rem', color: P.terra, marginBottom: 6 }}>{lastSaved.error}</div>
-          )}
+          <WriteError err={lastSaved?.error} style={{ marginBottom: 6 }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
             <span style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', color: P.light,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1494,7 +1583,7 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
         setSuccess({ text, row })
       }
     } catch (err) {
-      setError(friendlyError(err))
+      setError(describeRefusal(err) ?? friendlyError(err))
     } finally {
       setSaving(false)
     }
@@ -1713,7 +1802,13 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
 
   return (
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {/* `error` is a string or a refusal (describeRefusal); every entered value stays either way. */}
+      {error && (
+        <ErrorBanner>
+          {typeof error === 'string' ? error : error.text}
+          {error.refresh && <div><RefreshNowButton /></div>}
+        </ErrorBanner>
+      )}
       {offline && !error && (
         <ErrorBanner>You&rsquo;re offline — you can fill this in, but saving needs a connection.</ErrorBanner>
       )}
@@ -1864,7 +1959,7 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
             onChange={setStorageId}
             locations={storageLocations}
             manageable
-            onCreated={(row) => { setStorageLocations(list => [...list, row]); setStorageId(String(row.id)) }}
+            onCreated={(row) => { setStorageLocations(list => upsertPlace(list, row)); setStorageId(String(row.id)) }}
             onUpdated={(row) => setStorageLocations(list => list.map(l => (String(l.id) === String(row.id) ? { ...l, ...row } : l)))}
             onDeleted={(id) => setStorageLocations(list => list.filter(l => String(l.id) !== String(id)))}
             fetch={fetch}
@@ -2085,8 +2180,18 @@ function StorageField({ value, onChange, locations, onCreated, onUpdated, onDele
       onCreated(row)
       setAdding(false); setLabel(''); setKind('deep_freezer')
     } catch (e) {
+      // A create refused as place_exists (a server that refuses instead of answering with the place)
+      // names the place the person meant: select it, as a 200 `existing: true` answer would. The
+      // list's own copy wins when it has one, so a lower-case retype never relabels a stored place.
+      const existingId = existingPlaceId(e)
+      if (existingId != null) {
+        const known = locations.find(l => String(l.id) === existingId)
+        onCreated(known ?? { id: existingId, label: e.body.label || label.trim(), kind: e.body.kind || kind })
+        setAdding(false); setLabel(''); setKind('deep_freezer')
+        return
+      }
       const code = e?.code ?? classify(e).code
-      setErr(`Couldn't add that location — try again. (${code})`)
+      setErr(describeRefusal(e) ?? `Couldn't add that location — try again. (${code})`)
     } finally { setBusy(false) }
   }
 
@@ -2116,7 +2221,7 @@ function StorageField({ value, onChange, locations, onCreated, onUpdated, onDele
         </div>
       ) : (
         <div style={{ marginTop: 12, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '12px 14px', backgroundColor: P.cream }}>
-          {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
+          <WriteError err={err} style={{ marginBottom: 8 }} />
           <Field label="Name *" htmlFor="pu-newloc-label">
             <Input id="pu-newloc-label" value={label} onChange={e => setLabel(e.target.value)}
               aria-label="New location name" placeholder="e.g. Garage freezer" />
@@ -2187,7 +2292,7 @@ function StorageLocationEditor({ locations, fetch, classify, selectedId, onClear
       setEditingId(null)
       onUpdated?.(row ?? { ...loc, label: trimmed, kind: draftKind })
     } catch (e) {
-      setErr(`Couldn't save that change — try again. (${classify(e).code})`)
+      setErr(describeRefusal(e) ?? `Couldn't save that change — try again. (${classify(e).code})`)
     } finally { setBusyId(null) }
   }
 
@@ -2202,14 +2307,14 @@ function StorageLocationEditor({ locations, fetch, classify, selectedId, onClear
       if (String(selectedId) === String(loc.id)) onClearSelected?.()
       onDeleted?.(loc.id)
     } catch (e) {
-      setErr(`Couldn't delete that location — try again. (${classify(e).code})`)
+      setErr(describeRefusal(e) ?? `Couldn't delete that location — try again. (${classify(e).code})`)
     } finally { setBusyId(null) }
   }
 
   return (
     <div data-testid="pu-location-editor"
       style={{ marginTop: 12, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, padding: '10px 12px', backgroundColor: P.cream }}>
-      {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
+      <WriteError err={err} style={{ marginBottom: 8 }} />
       {locations.map(loc => {
         const editing = editingId === loc.id
         const confirming = confirmingId === loc.id
@@ -2294,7 +2399,32 @@ function StorageLocationEditor({ locations, fetch, classify, selectedId, onClear
 // ─────────────────────────────────────────────────────────────────────────────
 // "What's put up" read surface
 // ─────────────────────────────────────────────────────────────────────────────
-function StoresView() {
+
+// Put-Up release 1a — "Use soon", the only filter name (V4 §3.2). The SAME membership as Today's band
+// (/api/preservation/use-soon) and as each group's "N use soon" pill: the server's use_by_status,
+// 'use_soon' or 'past_use_by'. The server classifies (classifyUseBy); this only selects, and never
+// decides what counts as soon.
+const USE_SOON_FILTER = 'use-soon'
+const USE_SOON_STATUSES = new Set(['use_soon', 'past_use_by'])
+
+// The groups narrowed to their use-soon rows. A group left with none is dropped, and a kept group's
+// headline is re-counted from the rows it still shows: the server's total_packages and units describe
+// the WHOLE group, and "5 containers" over one visible jar would be a number about rows nobody can see.
+export function onlyUseSoon(groups) {
+  return (groups ?? []).flatMap(g => {
+    const records = (g.records ?? []).filter(r => USE_SOON_STATUSES.has(r.use_by_status))
+    if (!records.length) return []
+    return [{
+      ...g,
+      records,
+      total_packages: records.reduce((n, r) => n + (Number(r.package_count) || 0), 0),
+      units: [...new Set(records.map(r => r.quantity_unit).filter(Boolean))],
+      use_soon_count: records.length,
+    }]
+  })
+}
+
+function StoresView({ useSoonOnly = false, onClearUseSoon }) {
   const { fetch } = useApiFetch()
   const [group, setGroup] = useState('storage') // 'storage' | 'crop'
   const [data, setData] = useState(null)
@@ -2311,7 +2441,8 @@ function StoresView() {
 
   useEffect(() => { load(group) }, [load, group])
 
-  const groups = data?.groups ?? []
+  const allGroups = data?.groups ?? []
+  const groups = useSoonOnly ? onlyUseSoon(allGroups) : allGroups
 
   return (
     <div>
@@ -2329,10 +2460,30 @@ function StoresView() {
         />
       </div>
 
+      {/* The filter says it is on, and one tap takes it off (the page drops ?filter= with it). The
+          name starts with the visible words; the × is decoration. */}
+      {useSoonOnly && (
+        <div style={{ marginBottom: T.space.md }}>
+          <button type="button" onClick={onClearUseSoon} data-testid="putup-use-soon-chip"
+            aria-label="Use soon — remove this filter"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: T.buttonMinHeight,
+              padding: '6px 16px', borderRadius: 999, border: `1px solid ${P.greenLight}`,
+              backgroundColor: P.greenPale, color: P.green, fontSize: T.type.sm, fontWeight: 700,
+              fontFamily: 'inherit', cursor: 'pointer' }}>
+            Use soon <span aria-hidden="true">×</span>
+          </button>
+        </div>
+      )}
+
       {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      {!loading && !error && groups.length === 0 && (
+      {!loading && !error && groups.length === 0 && (useSoonOnly && allGroups.length > 0 ? (
+        <div data-testid="putup-use-soon-empty" style={{ padding: '28px 18px', textAlign: 'center', color: P.mid,
+          background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
+          Nothing to use soon right now.
+        </div>
+      ) : (
         <div style={{ padding: '28px 18px', textAlign: 'center', color: P.mid,
           background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
           <div style={{ fontWeight: 700, color: P.dark, marginBottom: 6 }}>Nothing put up yet.</div>
@@ -2340,7 +2491,7 @@ function StoresView() {
             Log your first put-up and it&rsquo;ll show up here, grouped by where it&rsquo;s stored.
           </div>
         </div>
-      )}
+      ))}
 
       {!loading && !error && groups.map(g => (
         <GroupCard key={g.group_key} group={g} onChanged={() => load(group)} fetch={fetch} />
@@ -2418,16 +2569,24 @@ function RecordRow({ rec, onChanged, fetch }) {
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // A string (this row's own copy) or a refusal from describeRefusal — see WriteError.
   const [err, setErr] = useState(null)
 
   const remaining = rec.remaining_count ?? rec.package_count ?? 0
 
+  // Resolves true only when the write landed. The editor closes on THAT, never on the attempt: a
+  // refused save used to close it anyway (put swallowed the throw), so the typed values vanished and
+  // the only record of them was a message about why they had not been saved (V4 §6.5 "keep the edit").
   async function put(overrides) {
     setBusy(true); setErr(null)
     try {
       await fetch(`/api/preservation/${rec.id}`, { method: 'PUT', body: JSON.stringify(buildFullPayload(rec, overrides)) })
       onChanged()
-    } catch (e) { setErr("Couldn't update — try again."); setBusy(false) }
+      return true
+    } catch (e) {
+      setErr(describeRefusal(e) ?? "Couldn't update — try again."); setBusy(false)
+      return false
+    }
   }
 
   async function markUsed() {
@@ -2441,12 +2600,12 @@ function RecordRow({ rec, onChanged, fetch }) {
     try {
       await fetch(`/api/preservation/${rec.id}`, { method: 'DELETE' })
       onChanged()
-    } catch (e) { setErr("Couldn't remove — try again."); setBusy(false) }
+    } catch (e) { setErr(describeRefusal(e) ?? "Couldn't remove — try again."); setBusy(false) }
   }
 
   if (editing) {
     return <RowEditor rec={rec} onCancel={() => setEditing(false)}
-      onSave={async (overrides) => { await put(overrides); setEditing(false) }} busy={busy} err={err} />
+      onSave={async (overrides) => { if (await put(overrides)) setEditing(false) }} busy={busy} err={err} />
   }
 
   const status = rec.use_by_status
@@ -2460,7 +2619,11 @@ function RecordRow({ rec, onChanged, fetch }) {
     <div style={{ padding: '12px 16px', borderTop: `1px solid ${P.cream}`, display: 'flex', gap: 12 }}>
       {/* V4-PUTUPPHOTO-001 — renders nothing when there is no photo (or it fails to resolve), so
           rows without one keep their original full-width layout. */}
-      <PutUpPhotoThumb photoId={rec.photo_id} fetch={fetch} alt={`Photo of ${rec.quantity_unit} put up`} />
+      {/* Put-Up release 1a — from 1b a jar can have no size at all (the quantity pair is NULL), and
+          this name is what a screen reader says: "Photo of null put up" was the stale reader's answer.
+          No unit falls back to the thumb's own default name. */}
+      <PutUpPhotoThumb photoId={rec.photo_id} fetch={fetch}
+        alt={rec.quantity_unit ? `Photo of ${rec.quantity_unit} put up` : undefined} />
       <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: T.space.sm, alignItems: 'baseline' }}>
         <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.92rem' }}>
@@ -2514,7 +2677,7 @@ function RecordRow({ rec, onChanged, fetch }) {
         </div>
       )}
       {rec.notes && <div style={{ fontSize: '0.8rem', color: P.mid, marginTop: 4 }}>{rec.notes}</div>}
-      {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginTop: 6 }}>{err}</div>}
+      <WriteError err={err} style={{ marginTop: 6 }} />
 
       <div style={{ display: 'flex', gap: 14, marginTop: 8, flexWrap: 'wrap' }}>
         <RowAction onClick={markUsed} disabled={busy || remaining <= 0}>Mark used</RowAction>
@@ -2534,6 +2697,36 @@ function RecordRow({ rec, onChanged, fetch }) {
   )
 }
 
+// The line a failed write leaves on screen. `err` is the caller's own copy (a string: offline, a
+// timeout, an uncoded 400 — unchanged from before) or a refusal from describeRefusal, which carries
+// its own sentence and, for client_stale only, the Refresh now button.
+function WriteError({ err, style }) {
+  if (!err) return null
+  const refusal = typeof err === 'string' ? null : err
+  return (
+    <div style={style}>
+      <div role="alert" style={{ color: P.terra, fontSize: '0.78rem' }}>{refusal ? refusal.text : err}</div>
+      {refusal?.refresh && <RefreshNowButton />}
+    </div>
+  )
+}
+
+// Mounted only while a client_stale refusal is on screen, so useAppUpdate's listener and version
+// probe cost nothing on an ordinary visit. apply() runs on the TAP and nowhere else (V4 §6.5, B66):
+// it reloads the page without consulting the reload gate, so running it unasked would discard any
+// other surface that is still holding one.
+function RefreshNowButton() {
+  const { apply } = useAppUpdate()
+  return (
+    <button type="button" onClick={() => apply()} data-testid="putup-refresh-now"
+      style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, marginTop: 6,
+        padding: '6px 14px', background: 'none', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
+        color: P.green, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}>
+      {REFRESH_NOW_LABEL}
+    </button>
+  )
+}
+
 function RowAction({ onClick, disabled, tone, children }) {
   return (
     <button type="button" onClick={onClick} disabled={disabled}
@@ -2547,10 +2740,21 @@ function RowAction({ onClick, disabled, tone, children }) {
 
 // Minimal per-row editor — the fields worth changing after the fact. Sends a FULL replace payload.
 function RowEditor({ rec, onCancel, onSave, busy, err }) {
-  const [qtyValue, setQtyValue] = useState(String(rec.quantity_value ?? ''))
-  const [qtyUnit, setQtyUnit] = useState(rec.quantity_unit || 'lbs')
-  const [packageCount, setPackageCount] = useState(String(rec.package_count ?? 1))
-  const [method, setMethod] = useState(rec.method || 'whole_freeze')
+  // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
+  // against it, one expression per field, so the seed and the comparison cannot drift apart.
+  const [seed] = useState(() => ({
+    qtyValue: String(rec.quantity_value ?? ''),
+    qtyUnit: rec.quantity_unit || 'lbs',
+    packageCount: String(rec.package_count ?? 1),
+    method: rec.method || 'whole_freeze',
+    methodOther: rec.method_other_text || '',
+    useByTarget: rec.use_by_target ? ymd(rec.use_by_target) : '',
+    notes: rec.notes || '',
+  }))
+  const [qtyValue, setQtyValue] = useState(seed.qtyValue)
+  const [qtyUnit, setQtyUnit] = useState(seed.qtyUnit)
+  const [packageCount, setPackageCount] = useState(seed.packageCount)
+  const [method, setMethod] = useState(seed.method)
   // PRE-EXISTING BUG, fixed under V4-PUTUPPROV-001. This editor offered 'other' in the method list
   // but had no method_other_text input, so switching a row TO 'other' sent method:'other' with
   // method_other_text:null (buildFullPayload supplies the row's existing value, which is null for a
@@ -2559,14 +2763,33 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // THE INVARIANT THIS RESTORES: a field that is CONDITIONALLY REQUIRED BY ANOTHER FIELD must be
   // editable everywhere that other field is editable, or the pair must be create-only. The new
   // source_kind/source_label pair depends on the same invariant holding.
-  const [methodOther, setMethodOther] = useState(rec.method_other_text || '')
+  const [methodOther, setMethodOther] = useState(seed.methodOther)
   // V5-PUTUPCANDY-001. The other half of FOODSAFETY-RULING-V101 §8.2: "let the cook set the real
   // date". use_by_target has always been per-row and user-overridable at CREATE time, but this
   // editor never exposed it, so the provenance line's "tap Edit to set the real date" would have
   // been a dead instruction on an existing row. Seeded exactly as buildFullPayload seeds it, so an
   // untouched save round-trips the stored value byte-for-byte.
-  const [useByTarget, setUseByTarget] = useState(rec.use_by_target ? ymd(rec.use_by_target) : '')
-  const [notes, setNotes] = useState(rec.notes || '')
+  const [useByTarget, setUseByTarget] = useState(seed.useByTarget)
+  const [notes, setNotes] = useState(seed.notes)
+
+  // Put-Up release 1a (V4 §6.5 "Reload gate"). A deploy's SW reload landing mid-Edit took the typed
+  // values with it: the log form's hold was the only one on this page. Held while anything differs
+  // from the seed OR a save is in flight — `busy` covers an untouched Save too, where a reload between
+  // the PUT leaving and its answer would leave nobody knowing whether it landed. A refused save keeps
+  // the edit on screen (RecordRow), so it keeps the hold.
+  //
+  // ONE boolean dep, as PutUpForm's hold does it: with [dirty, busy] the effect would re-run when a
+  // Save flips busy on an already-dirty editor, and the cleanup's release in between would fire the
+  // deferred reload at the exact moment of the save. The key is per instance (useId) so two open
+  // editors can never release each other's hold.
+  const dirty = qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit || packageCount !== seed.packageCount ||
+    method !== seed.method || methodOther !== seed.methodOther || useByTarget !== seed.useByTarget || notes !== seed.notes
+  const holdReload = dirty || !!busy
+  const reloadGateKey = `put-up-row:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, holdReload)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, holdReload])
 
   function save() {
     onSave({
@@ -2586,7 +2809,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
 
   return (
     <div style={{ padding: '14px 16px', borderTop: `1px solid ${P.cream}`, backgroundColor: P.cream }}>
-      {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 8 }}>{err}</div>}
+      <WriteError err={err} style={{ marginBottom: 8 }} />
       <div style={{ display: 'flex', gap: T.space.sm }}>
         <div style={{ flex: 2 }}>
           <Field label="How much" htmlFor={`ed-qty-${rec.id}`}>

@@ -48,11 +48,12 @@ const PROD_THREE = [
 const JEN = { id: 'loc-4', user_id: 'user_jen', label: "Jen's fridge", kind: 'fridge' }
 const OFF_LIST = { id: 'loc-5', user_id: 'user_dave', label: 'Old crock shelf', kind: 'root_cellar_v0' }
 
-function wire({ locations = PROD_THREE, onPut, onDelete } = {}) {
+function wire({ locations = PROD_THREE, onPut, onDelete, onPost } = {}) {
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
     if (path.startsWith('/api/kitchen-batches')) return Promise.reject(new Error('no such table'))
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve(locations)
+    if (path === '/api/storage-locations' && method === 'POST' && onPost) return onPost(path, options)
     if (path.startsWith('/api/storage-locations/') && method === 'PUT') {
       return onPut ? onPut(path, options) : Promise.resolve({ ...JSON.parse(options.body), id: path.split('/').pop() })
     }
@@ -268,6 +269,127 @@ describe('delete — two taps, and the second one says what it does', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent)
       .toBe("Couldn't delete that location — try again. (HTTP404)"))
     expect(rowFor('loc-2')).toBeTruthy()
+  })
+})
+
+// Put-Up release 1a (V4 §6.5) — every write on the page reads the server's `code`. The storage
+// Lambda sends none today, so these pin the other half too: an uncoded failure above keeps its
+// diagnostic line, a coded one says what the server said. The error is shaped the way api.js throws
+// it (message = body.error, .status, .body) — PutUp.refusals.test.jsx proves that shape against the
+// real api.js.
+describe('a coded refusal is shown in the server’s words (rename and delete)', () => {
+  const refusal = (body) => Object.assign(new Error(body.error), { status: 409, body })
+
+  it('rename', async () => {
+    wire({ onPut: () => Promise.reject(refusal({ error: 'You already have a place called Chest Freezer 2', code: 'location_label_taken' })) })
+    await openEditor()
+    fireEvent.click(within(rowFor('loc-1')).getByTestId('pu-location-rename'))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Location name' }), { target: { value: 'Chest Freezer 2' } })
+    fireEvent.click(screen.getByTestId('pu-location-save'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('You already have a place called Chest Freezer 2'))
+    expect(screen.getByRole('textbox', { name: 'Location name' }).value).toBe('Chest Freezer 2')
+  })
+
+  it('delete', async () => {
+    wire({ onDelete: () => Promise.reject(refusal({ error: 'Something is still stored there', code: 'location_in_use' })) })
+    await openEditor()
+    fireEvent.click(within(rowFor('loc-2')).getByTestId('pu-location-delete'))
+    fireEvent.click(screen.getByTestId('pu-location-delete-confirm'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Something is still stored there'))
+    expect(rowFor('loc-2')).toBeTruthy()
+  })
+})
+
+// Put-Up release 1a (brief addendum 6) — from 1b a duplicate place name is refused by the database, and
+// the storage Lambda answers a duplicate CREATE with the existing place (200, `existing: true`) and a
+// duplicate RENAME/RE-KIND with a coded 409 place_exists carrying a plain message and the existing id.
+// The creator selects the place either way (a create-409, if one ever arrives, is "select that place");
+// the rename shows the message and keeps the edit. The 409s are shaped the way api.js throws them.
+describe('a place that already exists (create selects it; rename says so and keeps the edit)', () => {
+  const placeExists = (body) => Object.assign(new Error(body.error ?? 'HTTP 409'), { status: 409, body: { code: 'place_exists', ...body } })
+  const storageSelect = () => screen.getByRole('combobox', { name: 'Storage location' })
+  const optionsLabelled = (text) => [...storageSelect().options].filter(o => o.textContent === text)
+  function create(name, kindValue) {
+    fireEvent.click(screen.getByRole('button', { name: /New location/i }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'New location name' }), { target: { value: name } })
+    if (kindValue) fireEvent.change(screen.getByRole('combobox', { name: 'Location kind' }), { target: { value: kindValue } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+  }
+
+  it('a create answered with a place already in the list (200, existing: true) selects it and lists it once', async () => {
+    wire({ onPost: () => Promise.resolve({ ...PROD_THREE[0], existing: true }) })
+    renderForm()
+    await screen.findByTestId('pu-manage-locations')
+    create('chest freezer 1')
+    await waitFor(() => expect(storageSelect().value).toBe('loc-1'))
+    expect(optionsLabelled('Chest Freezer 1')).toHaveLength(1)
+    expect(screen.queryByRole('textbox', { name: 'New location name' })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('an existing place the list had not loaded is added once and selected', async () => {
+    wire({ onPost: () => Promise.resolve({ id: 'loc-9', user_id: 'user_jen', label: 'Porch fridge', kind: 'fridge', existing: true }) })
+    renderForm()
+    await screen.findByTestId('pu-manage-locations')
+    create('Porch fridge', 'fridge')
+    await waitFor(() => expect(storageSelect().value).toBe('loc-9'))
+    expect(optionsLabelled('Porch fridge')).toHaveLength(1)
+  })
+
+  it('a create refused 409 place_exists selects the named place instead of failing, keeping the stored label', async () => {
+    wire({ onPost: () => Promise.reject(placeExists({ message: 'You already have a place called Chest Freezer 2.', id: 'loc-2' })) })
+    renderForm()
+    await screen.findByTestId('pu-manage-locations')
+    create('chest freezer 2')
+    await waitFor(() => expect(storageSelect().value).toBe('loc-2'))
+    expect(optionsLabelled('Chest Freezer 2')).toHaveLength(1)
+    expect(optionsLabelled('chest freezer 2')).toHaveLength(0)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: 'New location name' })).toBeNull()
+  })
+
+  it('the id is read in the other spellings too, and a 409 with no id says what the server said', async () => {
+    wire({ onPost: () => Promise.reject(placeExists({ message: 'Already there', existing_id: 'loc-3' })) })
+    const first = renderForm()
+    await screen.findByTestId('pu-manage-locations')
+    create('garage freezr')
+    await waitFor(() => expect(storageSelect().value).toBe('loc-3'))
+    first.unmount()
+
+    wire({ onPost: () => Promise.reject(placeExists({ message: 'That place is already there.' })) })
+    renderForm()
+    await screen.findByTestId('pu-manage-locations')
+    create('chest freezer 1')
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('That place is already there.'))
+    expect(screen.getByRole('textbox', { name: 'New location name' }).value).toBe('chest freezer 1')
+  })
+
+  it('a rename onto an existing name shows the server’s message and keeps the edit', async () => {
+    wire({ onPut: () => Promise.reject(placeExists({ message: 'You already have a place called Chest Freezer 1.', error: 'duplicate key', id: 'loc-1' })) })
+    await openEditor()
+    fireEvent.click(within(rowFor('loc-3')).getByTestId('pu-location-rename'))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Location name' }), { target: { value: 'Chest Freezer 1' } })
+    fireEvent.click(screen.getByTestId('pu-location-save'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('You already have a place called Chest Freezer 1.'))
+    expect(screen.getByRole('textbox', { name: 'Location name' }).value).toBe('Chest Freezer 1')
+    expect(screen.getByTestId('pu-location-save')).toBeTruthy()
+    // A rename refusal is never read as "select that place": the editor is still on loc-3.
+    expect(within(rowFor('loc-3')).getByRole('textbox', { name: 'Location name' })).toBeTruthy()
+  })
+})
+
+describe('a place that already exists — the freezer walk lists it once', () => {
+  it('a walk create answered with an existing place selects its chip and adds no second chip', async () => {
+    wire({ onPost: () => Promise.resolve({ ...PROD_THREE[1], existing: true }) })
+    render(<MemoryRouter initialEntries={['/put-up?session=putup']}><PutUp /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: '＋ Somewhere else' }))
+    fireEvent.click(await screen.findByRole('button', { name: /New location/i }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'New location name' }), { target: { value: 'Chest Freezer 2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'New location name' })).toBeNull())
+    const chips = screen.getAllByTestId('putup-walk-freezer')
+    expect(chips.filter(c => c.textContent === 'Chest Freezer 2')).toHaveLength(1)
+    expect(chips.map(c => c.textContent)).toEqual(['Chest Freezer 1', 'Chest Freezer 2', 'Garage freezr'])
   })
 })
 

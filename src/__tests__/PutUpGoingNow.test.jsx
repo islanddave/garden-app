@@ -42,6 +42,12 @@ vi.mock('react-router-dom', async (orig) => {
   const actual = await orig()
   return { ...actual, useNavigate: () => navigateMock }
 })
+// Put-Up 1a (V4 §6.1 "Jen's landing"): a bare open promotes to Going now only for the VIEWER's own
+// batch, so the page is mounted as Dave — the owner of every fixture below that expects the promote.
+vi.mock('../context/AuthContext.jsx', async (orig) => ({
+  ...(await orig()),
+  useAuthOptional: () => ({ user: { id: 'user_dave' }, profile: null, loading: false, identity: 'signed-in' }),
+}))
 
 import PutUp, { batchRows } from '../pages/PutUp.jsx'
 import { P } from '../lib/constants.js'
