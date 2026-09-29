@@ -86,6 +86,15 @@
 //                 down (qa-gardencreep BLOCKING, 252.8px at 426x836 — the reason Garden keeps its ~20-frame loop).
 //   garden-plantsfixed  garden-plantsgrow's control: the same trips and checks, the list unchanged (the same shape as
 //                 garden-cycles, kept as the named pair of plantsgrow).
+//   garden-groupby  BUG-GARDENGROUPBYRESET-001 (Dave, 2026-09-29: "It should ALWAYS remember my last grouping").
+//                 The person's prefs row is SERVED (?prefs=status, the harness's knob — without it the prefs client
+//                 makes no request and Garden's prefs read never runs, which is why no flow saw this) holding
+//                 Lifecycle, as Dave's did. First visit: the served grouping must show (the instrument), then Type is
+//                 picked and its save must reach the row; then garden-cycles' trips, each one also required to come
+//                 back on Type. The shipped app sent nothing for Type and re-adopted Lifecycle after every restore:
+//                 the list regrouped and the planting left on screen was gone.
+//   garden-groupby-weak  as garden-groupby with every prefs save lost to a dead zone (?prefsradio=down; the reads still
+//                 answer): the pick never reaches the row, so every return must keep Type AND send it again.
 //   putup         Put-Up's Going-now list, deep → a batch (?batch=, a same-page PUSH) → Back → the list's place.
 //                 A MUST-NOT-CHANGE guard: Chromium's own clamp carry restores it with or without the manager.
 //   putup-top     Put-Up's list at its TOP → the first batch (same page) → down → Back → the list at its top
@@ -386,6 +395,8 @@ const FLOWS = [
   { key: 'garden-cycles-grow', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, the household growing on the first return (the caretaker row arriving late), every GET 1.5 s slow`, roster: 'grow', ms: 1500 },
   { key: 'garden-plantsgrow', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, the first return's revalidate revealing a planting ABOVE the one left on screen` },
   { key: 'garden-plantsfixed', label: `Garden, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}, garden-plantsgrow's control: the list unchanged` },
+  { key: 'garden-groupby', prefs: 'status', label: `Garden with the prefs row on Lifecycle: Type picked, deep → [Today tab → Garden tab] × ${GARDEN_CYCLES}: still Type, the planting where it was left` },
+  { key: 'garden-groupby-weak', prefs: 'status', prefsRadio: 'down', label: `garden-groupby with every prefs save lost to a dead zone: still Type on every return, and sent again each time` },
   { key: 'putup', label: 'Put-Up\'s Going-now list, deep → a batch (same page) → Back (a must-not-change guard)' },
   { key: 'putup-top', label: 'Put-Up\'s Going-now list at its TOP → the first batch (same page) → down → Back' },
   { key: 'seeds-switch', label: 'My seeds, a little down → the switch to Saved seeds (same page)' },
@@ -665,7 +676,10 @@ async function runFlow(cdp, flow, vw, vh) {
     const roster = flow.roster ?? 'full'
     // A settle long enough to outlast the flow's own latency: the restore re-applies until the content lands.
     const slowMax = Math.max(10000, (ms + token) * 3 + 6000) + auth
-    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}&roster=${roster}`
+    // The prefs knob only on the flows that ask for it: every other flow's URL is exactly what it was.
+    const prefs = flow.prefs ?? null
+    const prefsRadio = flow.prefsRadio ?? 'up'
+    const url = `http://localhost:${PORT}/tests/harness/viewport.html?page=pagescroll.html&vw=${vw}&vh=${vh}&topbar=${TOP_CHROME_PX}&ms=${ms}&auth=${auth}&token=${token}&roster=${roster}${prefs ? `&prefs=${prefs}&prefsradio=${prefsRadio}` : ''}`
     const nav = await cdp.send('Page.navigate', { url }, sessionId)
     if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
     if (!await t.waitIn(`w.__h && w.__h.ready() && d.readyState === 'complete'`, 30000 + auth)) return fail(`${at}: the harness never came up in the frame — nothing to measure`)
@@ -692,6 +706,8 @@ async function runFlow(cdp, flow, vw, vh) {
     if (g.fixture.auth !== auth) geo.push(`the harness holds the user unresolved for ${g.fixture.auth}ms at each load, the flow asked for ${auth}ms`)
     if (g.fixture.token !== token) geo.push(`the Clerk stub gives a token after ${g.fixture.token}ms, the flow asked for ${token}ms`)
     if (g.fixture.roster !== roster) geo.push(`the harness answers /api/members as roster '${g.fixture.roster}', the flow asked for '${roster}'`)
+    if (g.fixture.prefs !== prefs) geo.push(`the prefs client was pointed at ${g.fixture.prefs ? `a served row on '${g.fixture.prefs}'` : 'nothing'}, the flow asked for ${prefs ? `a row on '${prefs}'` : 'none'}`)
+    if (prefs && g.fixture.prefsRadio !== prefsRadio) geo.push(`the harness's prefs radio is '${g.fixture.prefsRadio}', the flow asked for '${prefsRadio}'`)
     for (const [key, v] of Object.entries(FIXTURE)) if (g.fixture[key] !== v) geo.push(`the fixture's ${key} is ${g.fixture[key]}, the gate expects ${v}`)
     // The browser's restore mode is the one main.jsx sets for the flag this document was served: 'manual' with
     // the manager on. A harness in any other mode measures a browser prod does not run.
@@ -1165,8 +1181,37 @@ async function runFlow(cdp, flow, vw, vh) {
       return
     }
     if (k.startsWith('garden')) {
-      let why = await enter(SEL.tabGarden, 'garden', 'the Garden tab', { chrome: true })
-      if (why) return done(why)
+      let why = null
+      // BUG-GARDENGROUPBYRESET-001's flows (garden-groupby, -weak) collect their first-visit reds here; the trips add theirs.
+      const groupReds = []
+      if (prefs) {
+        // The first visit with the prefs row served. Not enter(): Garden is not `ready` (every planting on screen)
+        // while the served Lifecycle grouping shows — its one group starts closed. The served grouping reaching the
+        // control is this flow's INSTRUMENT: without it the flow measures a Garden that never reads prefs and
+        // passes over nothing.
+        why = await t.tap(SEL.tabGarden, 'the Garden tab', { chrome: true })
+        if (why) return done(why)
+        if (!await t.waitIn(`w.__h.pageKey() === 'garden' && w.__h.prefsAnswered() >= 1 && w.__h.inflight() === 0 && w.__h.groupBy() === ${JSON.stringify(prefs)}`, slowMax)) {
+          return done(`Garden never showed the served grouping '${prefs}' on its first visit (the control reads ${await t.read(`return w.__h.groupBy()`)}, prefs reads answered: ${await t.read(`return w.__h.prefsAnswered()`)}) — the ?prefs= knob never reached the prefs client, so this flow would pass over a Garden that never reads prefs${await diag()}`)
+        }
+        await t.settle(300, 3000)
+        // The pick — the one step driven through the DOM rather than as input: a native <select>'s option list is
+        // the platform's popup, which headless Chrome gives no hit-testable surface. React sees the change event a
+        // real choice fires (GroupBySlugSelect's onChange reads its target's value).
+        await t.read(`const s = d.querySelector('[data-harness-pages] select#garden-groupby'); s.value = 'crop_type'; s.dispatchEvent(new w.Event('change', { bubbles: true })); return 1`)
+        if (!await t.waitIn(`w.__h.groupBy() === 'crop_type' && w.__h.pageReady('garden') && w.__h.inflight() === 0`, slowMax)) return done(`picking Type never regrouped Garden into its crop groups (the control reads ${await t.read(`return w.__h.groupBy()`)})${await diag()}`)
+        await t.settle(400, slowMax)
+        const sent = (await t.read(`return w.__h.prefsPatches()`)).filter((b) => b && b.garden_group_by === 'crop_type').length
+        const stored = await t.read(`return w.__h.prefsStored()`)
+        note.push(`served '${prefs}' shown → Type picked: ${sent} save(s) of crop_type sent, the row on '${stored}'`)
+        if (prefsRadio === 'down') {
+          if (stored !== prefs) return done(`the row moved to '${stored}' with the prefs radio down — the dead zone let a save through, so this flow would not measure a lost one`)
+          if (!sent) groupReds.push('picking Type sent no save of crop_type at all')
+        } else if (stored !== 'crop_type') groupReds.push(`picking Type left the row on '${stored}' — the choice never reached the server`)
+      } else {
+        why = await enter(SEL.tabGarden, 'garden', 'the Garden tab', { chrome: true })
+        if (why) return done(why)
+      }
       // THE ROSTER, an instrument check (BUG-GARDENSPOTCREEP-001): prod's household is two, so Garden renders its
       // caretaker row above the list. The harness answered /api/members with [] before, no flow ever saw that row,
       // and the row arriving late is what moved the spot. roster=grow is a household of one on this first visit:
@@ -1212,7 +1257,7 @@ async function runFlow(cdp, flow, vw, vh) {
         if (!st.settled || Math.round(after.y) !== Math.round(before.y) || Math.abs(after.top - before.top) > TOP_TOL_PX) return done(`after the editor's X Garden is at y${R1(after.y)} (tile top y${R1(after.top)}), it was at y${R1(before.y)} (tile top y${R1(before.top)}) — a same-page write moved it${await diag()}`)
         return
       }
-      if (k === 'garden-cycles' || k === 'garden-cycles-grow' || k === 'garden-plantsgrow' || k === 'garden-plantsfixed') {
+      if (k === 'garden-cycles' || k === 'garden-cycles-grow' || k === 'garden-plantsgrow' || k === 'garden-plantsfixed' || k === 'garden-groupby' || k === 'garden-groupby-weak') {
         // Dave's step 27: "Scroll well down Garden, tap Today, then Garden. Do this three times." Each return is a PUSH
         // that Garden restores itself, the list painting from the cache while the household and the list re-fetch.
         // THE CRITERION IS CONTENT (qa-gardencreep IMPORTANT 1): the planting the user left on screen — followed by
@@ -1234,7 +1279,10 @@ async function runFlow(cdp, flow, vw, vh) {
         const plants0 = await t.read(`return w.__h.plantsAnswered()`)
         const wantTiles = FIXTURE.gardenPlants + (plantsGrow ? 1 : 0)
         const cycles = []
-        const reds = []
+        const reds = [...groupReds]
+        // The prefs flows: reads answered and saves sent so far, so each trip can tell its own from the ones before.
+        let prefsSeen = prefs ? await t.read(`return w.__h.prefsAnswered()`) : 0
+        let savesSeen = prefs ? (await t.read(`return w.__h.prefsPatches()`)).length : 0
         const trips = () => cycles.map((x) => `#${x.c} ${name} at y${R1(x.top)} (${x.dTop >= 0 ? '+' : ''}${R1(x.dTop)}px) · ${x.landed ? `on screen @${x.landed.t}ms at y${R1(x.landed.top)}, moved ${R1(x.excursion)}px after` : 'never on screen'} · raw y${R1(x.y)} · row ${x.row} · ${x.tiles} tiles`).join(' | ')
         for (let c = 1; c <= GARDEN_CYCLES; c++) {
           const l = await land(SEL.tabToday, `the Today tab (round trip ${c})`, 'today', { chrome: true, name: `today-${c}` })
@@ -1243,6 +1291,21 @@ async function runFlow(cdp, flow, vw, vh) {
           await t.read(`w.__h.mark(); w.__h.sampleTop(${JSON.stringify(byName)}, 0); return 1`)
           why = await t.tap(SEL.tabGarden, `the Garden tab (round trip ${c})`, { chrome: true })
           if (why) return done(`round trip ${c}: ${why}`)
+          if (prefs) {
+            // The row's read lands AFTER Garden's restore, and the flip it caused came then: judge the grouping once
+            // it has landed, before anything that needs every planting on screen (a flip to Lifecycle shows none).
+            if (!await t.waitIn(`w.__h.pageKey() === 'garden' && w.__h.prefsAnswered() > ${prefsSeen} && w.__h.inflight() === 0`, slowMax)) return done(`round trip ${c}: Garden's prefs read never landed on the return${await diag()}`)
+            prefsSeen = await t.read(`return w.__h.prefsAnswered()`)
+            await t.settle(400, slowMax)
+            const gb = await t.read(`return w.__h.groupBy()`)
+            if (gb !== 'crop_type') {
+              await t.shoot(join(OUTDIR, `page-scroll-${k}-back-garden-${c}-${vw}x${vh}.png`))
+              return done(`${[...reds, `round trip ${c}: Garden came back grouped by '${gb}', not Type (crop_type) as it was left — the row's older grouping replaced the user's after the restore (the bug)`].join('; ')}${await diag()}`)
+            }
+            const saves = (await t.read(`return w.__h.prefsPatches()`)).length
+            if (prefsRadio === 'down' && !(saves > savesSeen)) reds.push(`round trip ${c}: the Type choice the dead zone ate was not sent again on the return — a lost save would stay lost`)
+            savesSeen = saves
+          }
           if (!await page('garden')) return done(`round trip ${c}: the Garden tab never brought Garden back${await diag()}`)
           // Every answer delivered before the settle: a settle alone ends 800 ms after the last move, and a slower
           // answer (the household, the list's revalidate) can land after that.

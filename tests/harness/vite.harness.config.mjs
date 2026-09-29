@@ -14,6 +14,7 @@ import { readFileSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import baselineFromGit from './baselinePlugin.mjs'
+import { harnessPrefsBase } from './prefsBaseTransform.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '../..')
@@ -53,7 +54,9 @@ export default defineConfig({
   },
   // HARNESS_BASELINE_SHA pins src/** to a git object so a shared checkout with another session's
   // in-flight edits cannot contaminate a baseline run. Unset → the working tree, as normal.
-  plugins: [baselineFromGit({ sha: process.env.HARNESS_BASELINE_SHA, repoRoot }), react(), appGlobalStyle()],
+  // harnessPrefsBase: inert unless a page sets globalThis.__harnessPrefsBase (the page-scroll ?prefs= knob,
+  // tests/harness/prefsKnob.js) — BUG-GARDENGROUPBYRESET-001.
+  plugins: [baselineFromGit({ sha: process.env.HARNESS_BASELINE_SHA, repoRoot }), react(), appGlobalStyle(), harnessPrefsBase()],
   resolve: {
     dedupe: ['react', 'react-dom'],
     alias: {
