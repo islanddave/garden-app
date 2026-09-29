@@ -310,10 +310,14 @@ window.fetch = async (input, init = {}) => {
   else if (p === '/api/harvests/watch') body = EMPTY ? [] : (WATCH ?? [])
   else if (p === '/api/harvests') body = EMPTY ? [] : (FIX === 'busyfull' ? rebase(BATCHWIN) : (HARVESTS ?? []))
   else if (p === '/api/inventory-items/sow-candidates') body = EMPTY ? [] : (SOWCAND ?? [])
+  // V2 only (S4): a logged event answers with an id, as the events Lambda does, so a V2 Undo has something to
+  // DELETE (gate:today-shape:v2 group-water-all runs the MF3 round trip). DELETE /api/events/:id answers 200.
+  else if (V2 && p === '/api/events' && (init.method || 'GET').toUpperCase() === 'POST') body = { id: 'hv2-' + (++v2EventSeq) }
   await new Promise(r => setTimeout(r, ms))
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
 
+var v2EventSeq = 0
 let firstError = null
 window.addEventListener('error', e => { firstError ??= e.message })
 window.addEventListener('unhandledrejection', e => { firstError ??= String(e.reason?.message ?? e.reason) })
@@ -617,6 +621,10 @@ window.__h = {
     try { sel = selectorFor(step.tap); flipSel = selectorFor(step.flip || step.tap) } catch (e) { out.void = e.message; return out }
     const el = document.querySelector(sel)
     if (!el) { out.void = `tap target '${step.tap}' (${sel}) matched nothing`; return out }
+    // S4: a target wholly off screen is scrolled to first, as a thumb would (the cohort line under an opened
+    // Bag Area sits below the fold); a target ON screen is never moved, so a bar covering it still VOIDs.
+    const r0 = el.getBoundingClientRect()
+    if (r0.bottom <= 0 || r0.top >= innerHeight) { el.scrollIntoView({ block: 'center' }); await frames(3) }
     const r = el.getBoundingClientRect()
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
     if (!hit || !(hit === el || el.contains(hit))) { out.void = `tap target '${step.tap}' is not what a finger at its centre would hit (${hit ? hit.tagName.toLowerCase() + (hit.getAttribute('data-testid') ? '[' + hit.getAttribute('data-testid') + ']' : '') : 'nothing — off screen'})`; return out }

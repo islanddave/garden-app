@@ -23,7 +23,7 @@ export default function SpotRow({ spot, open, onToggle, children, busy, groupBus
   const verb = handled ? 'Water the other' : 'Water all'
   const label = busy ? `Watering ${busy.done} of ${busy.total}…` : (n === 1 && !handled ? 'Water 1' : `${verb} ${n}`)
   return (
-    <li data-testid="care-spot" data-spot={spot.name} style={card}>
+    <li data-testid="care-spot" data-spot={spot.name} data-count={total} style={card}>
       <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
         <h4 style={{ margin: 0, flex: 1, minWidth: 0, display: 'flex' }}>
           <button type="button" aria-expanded={open} aria-controls={open ? panelId : undefined} onClick={onToggle} style={hit}>

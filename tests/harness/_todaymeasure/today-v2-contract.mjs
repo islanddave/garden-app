@@ -21,7 +21,11 @@
 // must go red on the census — the proof that each armed-later check CAN fail once armed.
 // S2 (2026-09-28): the section component, the visit layer + local mirror and the route toggle — see the S2
 // notes on ANCHORS.ready and v2-remembered below.
-export const LANDED = ['S0', 'S2']
+// S4 (2026-09-29): Needs care — groups, spots, exceptions + cohort, filters, Not today, done lines, the care
+// trigger (§3's Needs care half: v2-hot / v2-never / v2-routine prove it). Its own checks below are marked
+// "S4-scoped": they measure the Needs care surface alone, so they hold before and after S3/S5/S6 land (the
+// full-page versions of the same families stay armed at their slice combinations).
+export const LANDED = ['S0', 'S2', 'S4']
 export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8']
 
 export function isArmed(check, landed = LANDED, armAll = false) {
@@ -96,13 +100,27 @@ export const STATES = [
       { family: 'jumpbar', armedAt: 'S3', present: true, chips: ['protect', 'water', 'feed', 'check', 'harvest'] },
       { family: 'visual-census', armedAt: ['S3', 'S4'], maxFingerprints: 4, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem'], why: '(l) ≤ 4 section-level container fingerprints on busyfull' },
       { family: 'weather-once', armedAt: 'S3', why: 'MF2: with the glance OPEN, exactly one today-weather and no repeated hi/lo text' },
-      { family: 'interaction', armedAt: 'S4', steps: [
+      // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. NOTE for the
+      // integrator: Needs care is OPEN at the ready point on this state (the small-pot trigger), so a chip tap
+      // cannot flip today-sec-care's aria-expanded — that step's `flip` needs another target once S3 lands.
+      { family: 'interaction', armedAt: ['S3', 'S4'], steps: [
         { tap: 'jump:water', flip: 'today-sec-care' },
         { tap: 'spot:Bag Area', flip: 'care-spot:Bag Area' },
         { tap: 'cohort:Bag Area', flip: 'care-cohort:Bag Area' },
         { scroll: '2*FIRST_SCREEN' },
         { scroll: 0 },
       ], counts: { afterSpot: { 'care-exceptions-row': 8, 'care-cohort': 1 }, afterCohort: { 'care-cohort-row': 20, 'care-show-more': 1 } }, why: '(d) Bag Area: 8 exception rows + 1 cohort line; disclosed: 20 rows + "Show 69 more"' },
+      // S4-scoped: the same (d) phases without the chip — Needs care is already open (small). Counts are of
+      // VISIBLE rows (§9.1 (d) "every row under an open body passes shown()"), exact.
+      { family: 'interaction', armedAt: 'S4', steps: [
+        { tap: 'spot:Bag Area', flip: 'care-spot:Bag Area' },
+        { tap: 'cohort:Bag Area', flip: 'care-cohort:Bag Area' },
+        { scroll: '2*FIRST_SCREEN' },
+        { scroll: 0 },
+      ], counts: { afterSpot: { 'care-exceptions-row': 8, 'care-cohort': 1 }, afterCohort: { 'care-cohort-row': 20, 'care-show-more': 1 } }, why: '(d) S4-scoped: Bag Area 8 exception rows + 1 cohort line; disclosed 20 rows + "Show 69 more"' },
+      { family: 'header-text', armedAt: 'S4', counts: { care: 233 }, why: 'S4-scoped: water 168 + feed 58 + check 7' },
+      { family: 'count-invariant', armedAt: 'S4', why: 'S4-scoped §2.4: the Needs care header count = Σ spot counts, no filter' },
+      { family: 'region-headcount', armedAt: 'S4', why: 'S4-scoped: the REGIONS_V2 rows armed at S4 alone, counted after their owner opens' },
       { family: 'region-headcount', armedAt: ['S3', 'S4', 'S5', 'S6'], why: 'every REGIONS_V2 row owned by v2-frost, counted after its owner is opened' },
     ],
   },
@@ -114,7 +132,13 @@ export const STATES = [
       { family: 'section-open-set', armedAt: ['S4', 'S5', 'S6'], order: ['protect', 'care', 'harvest', 'resting'], open: ['protect', 'care'], closed: ['harvest', 'resting'] },
       { family: 'collapsed-mounted', armedAt: ['S4', 'S5', 'S6'] },
       { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-jumpbar', 'today-sec-protect'], allRows: 'protect-row', headerTopMax: { care: 668 }, why: '(e) v2-busy: bar, Protect header + all rows, Needs care header top ≤ 668 (R16)' },
-      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', why: 'MF3: group Water all — spots shrink to done lines, "Outside · watered N · Undo", accessible name "Water all N outside"' },
+      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 154, run: true, why: 'MF3: group Water all — spots shrink to done lines, "Outside · watered N · Undo", accessible name "Water all N outside"; its ONE Undo deletes exactly the created ids' },
+      { family: 'section-open-set', armedAt: 'S4', orderOf: ['care', 'resting'], open: ['care'], closed: ['resting'], why: 'S4-scoped: Needs care opens on the small-pot trigger, before Resting' },
+      { family: 'collapsed-mounted', armedAt: 'S4', why: 'S4-scoped: closed sections AND closed spots mount no rows' },
+      { family: 'visibility', armedAt: 'S4', why: 'S4-scoped: the open Needs care shows its groups and spots, each ≥ 48px' },
+      { family: 'header-text', armedAt: 'S4', counts: { care: 233 }, careSummary: '8 tray cells due · 9 spots', spotNotToday: true, why: 'S4-scoped: header count, the SF8 summary, a Not today on every spot (D6)' },
+      { family: 'count-invariant', armedAt: 'S4', why: 'S4-scoped §2.4: the Needs care header count = Σ spot counts, no filter' },
+      { family: 'region-headcount', armedAt: 'S4', why: 'S4-scoped: today-care, care-heading, care-group-bulk + care-spot-bulk on the default render' },
     ],
   },
   {
@@ -168,7 +192,7 @@ export const STATES = [
     checks: [
       ...common(),
       { family: 'header-text', armedAt: 'S4', buttons: { 'care-group-bulk:Outside': 'Water all 135' }, spotNoButton: ['In-Ground'] },
-      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 135 },
+      { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 135, run: true },
     ],
   },
   {
@@ -220,7 +244,9 @@ export const STATES = [
   },
   {
     name: 'v2-remembered-conflict', fixture: 'busy', clock: S924, prefs: 'prefs.remembered-conflict.json', prefsDelayMs: 300,
-    local: { mirror: { care: { open: false, at: '2026-09-24' } } },
+    // S4: the care trigger exists now (small), and a close with no ack holds nothing (MF1) — the mirror's close
+    // names the reason it was made against, as a real close made while the trigger held the section open would.
+    local: { mirror: { care: { open: false, at: '2026-09-24', ack: { r: 'small' } } } },
     proves: 'the mirror wins this visit; nothing above the fold moves between ready and +2.5 s',
     checks: [...common(), { family: 'section-open-set', armedAt: 'S2', closed: ['care'] }, { family: 'remembered-conflict', armedAt: 'S2' }],
   },
@@ -241,6 +267,8 @@ export const REGIONS_V2 = [
   ...['drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list'].map((id) => ({ id, owner: 'glance details', open: 'glance', state: 'v2-frost', armedAt: 'S3' })),
   { id: 'today-substrate-note', owner: 'Needs care, Feed filter', open: 'care', filter: 'feed', state: 'v2-frost', armedAt: 'S4' },
   { id: 'today-care', owner: 'Needs care section', state: 'v2-busy', armedAt: 'S4' },
+  { id: 'care-group-bulk', owner: 'Outside group label (MF3)', state: 'v2-busy', armedAt: 'S4' },
+  { id: 'care-spot-bulk', owner: 'a spot row\'s Water all', state: 'v2-busy', armedAt: 'S4' },
   { id: 'care-heading', owner: 'Needs care band', state: 'v2-busy', armedAt: 'S4' },
   { id: 'care-cap-note', owner: 'disclosed cohort in Bag Area', open: 'cohort:Bag Area', state: 'v2-frost', armedAt: 'S4' },
   { id: 'care-show-more', owner: 'disclosed cohort in Bag Area (control)', open: 'cohort:Bag Area', state: 'v2-frost', armedAt: 'S4' },

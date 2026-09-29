@@ -33,7 +33,8 @@ describe('today-v2 contract table', () => {
     const all = [...STATES.flatMap((s) => s.checks), ...SHELL, ...REGIONS_V2]
     for (const c of all) for (const sl of [].concat(c.armedAt)) expect(SLICES).toContain(sl)
     for (const s of STATES) expect(s.checks.some((c) => c.family === 'prefs-instrument' && isArmed(c))).toBe(true)
-    expect(LANDED).toEqual(['S0', 'S2'])
+    // S4 landed in parallel with S3 (wave 3): the integrator's merge makes this ['S0', 'S2', 'S3', 'S4'].
+    expect(LANDED).toEqual(['S0', 'S2', 'S4'])
   })
   // S2 arms the skeleton on EVERY state (version, prefs-loaded, no side-scroll, floors, title + date on the
   // first screen) plus the states S2's surface can answer: the quiet and no-plan first screens and both

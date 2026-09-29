@@ -16,7 +16,7 @@ import { T } from '../../forms/formStyles.js'
 // gap spaces sections); the band → body gap is T.space.xs.
 export default function TodaySection({ sectionKey, title, count, summary, open = false, onToggle, headingLevel = 2, children, style, headerTestId }) {
   return (
-    <section data-testid={`today-sec-${sectionKey}`} data-section={sectionKey} style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs, ...style }}>
+    <section data-testid={`today-sec-${sectionKey}`} data-section={sectionKey} data-count={count ?? undefined} style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs, ...style }}>
       <FacetGroupHeader
         headingLevel={headingLevel}
         size="section"

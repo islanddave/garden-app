@@ -180,6 +180,37 @@ try {
     const m = await evalSettled(CHROME_MEASURE)
     for (const c of armed) {
       const F = (msg) => fail(at, c.family, msg)
+      // S4 — (m) Back round trip through the REAL page-scroll manager: open Bag Area, tap "Red Acre Cabbage"
+      // (a planting route, not an overlay: Today unmounts), Back → the visit restores Bag Area open and the
+      // manager's POP restore puts the same row at the same screen y (±1 px).
+      if (c.family === 'back-restore') {
+        const ROW = `[...document.querySelectorAll('[data-testid="care-exceptions-row${SUFFIX}"] a')].find(a => a.textContent.includes('Red Acre Cabbage'))`
+        const SPOT = `document.querySelector('[data-testid="care-spot${SUFFIX}"][data-spot="Bag Area"] [aria-expanded]')`
+        const r1 = await evalSettled(`(async () => {
+          const btn = ${SPOT}
+          if (!btn) return { void: 'no Bag Area spot on the page' }
+          if (btn.getAttribute('aria-expanded') !== 'true') { btn.click(); await new Promise(r => setTimeout(r, 300)) }
+          const link = ${ROW}
+          if (!link) return { void: 'no "Red Acre Cabbage" row in the opened Bag Area' }
+          link.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 400))
+          const top = Math.round(link.getBoundingClientRect().top), y = Math.round(scrollY)
+          link.click()
+          return { top, y }
+        })()`)
+        if (r1.void) { F(`VOID — ${r1.void}`); continue }
+        await sleep(1000)
+        const away = await evalSettled('location.pathname')
+        await evalSettled('(history.back(), 1)')
+        await sleep(3000)
+        const r2 = await evalSettled(`(() => { const btn = ${SPOT}; const link = ${ROW}
+          return { expanded: btn ? btn.getAttribute('aria-expanded') : null, top: link ? Math.round(link.getBoundingClientRect().top) : null, y: Math.round(scrollY), path: location.pathname } })()`)
+        if (away === r2.path) F(`the row tap never left Today (still ${away}) — the round trip is VOID`)
+        if (r2.expanded !== 'true') F(`after Back, Bag Area is ${r2.expanded ?? 'not on the page'} — expected OPEN, restored from the visit`)
+        if (r2.top == null) F('after Back, the "Red Acre Cabbage" row is not on the page')
+        else if (Math.abs(r2.top - r1.top) > 1) F(`after Back, "Red Acre Cabbage" sits at screen y=${r2.top}, it was at y=${r1.top} before the tap (±1 px; scroll ${r1.y} → ${r2.y})`)
+        console.log(`[today-shell-v2] ${at}: back-restore · tapped at screen y=${r1.top} (scroll ${r1.y}) → ${away} → Back → y=${r2.top} (scroll ${r2.y}) · Bag Area ${r2.expanded}`)
+        continue
+      }
       if (c.family !== 'shell-instrument') { F(`no checker for '${c.family}' yet — its slice must add one in the same commit that arms it (never read as passed)`); continue }
       if (m.vw !== VIEWPORT.w || m.vh !== VIEWPORT.h) { fail(at, 'void', `VOID — page self-reports ${m.vw}x${m.vh}`); continue }
       if (m.h.error) F(`the shell raised "${m.h.error}" while mounting`)

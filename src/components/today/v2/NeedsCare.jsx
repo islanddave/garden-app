@@ -59,7 +59,10 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   }, [care.rows, tasks])
   const spotSel = filters.spots.filter((k) => spotsPresent.some((s) => s.value === k))
 
-  const model = useMemo(() => buildModel(care.rows, { held: c?.order, tasks, spots: spotSel, bedWait: care.bedWait }), [care.rows, c?.order, tasks, spotSel, care.bedWait])
+  // The visit's held group + spot order (taken at the ready point): every render — the model and the done
+  // lines alike — follows it, so a log never re-ranks the spots under Dave's thumb (BD-036).
+  const heldOrder = c?.order
+  const model = useMemo(() => buildModel(care.rows, { held: heldOrder, tasks, spots: spotSel, bedWait: care.bedWait }), [care.rows, heldOrder, tasks, spotSel, care.bedWait])
   const feedOnly = tasks.length === 1 && tasks[0] === 'feed'
 
   // ── run bookkeeping ─────────────────────────────────────────────────────────────────────────────────────
@@ -285,7 +288,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   }
 
   const heldSpots = (g) => {
-    const held = c?.order?.spots?.[g.key] || []
+    const held = heldOrder?.spots?.[g.key] || []
     const inModel = new Map(g.spots.map((s) => [s.key, s]))
     const keys = [...held, ...g.spots.map((s) => s.key).filter((k) => !held.includes(k))]
     return keys.map((k) => {
@@ -297,7 +300,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   }
 
   const groupsToShow = model.groups.length ? model.groups : []
-  const heldGroups = [...(c?.order?.groups || []), ...groupsToShow.map((g) => g.key).filter((k) => !(c?.order?.groups || []).includes(k))]
+  const heldGroups = [...(heldOrder?.groups || []), ...groupsToShow.map((g) => g.key).filter((k) => !(heldOrder?.groups || []).includes(k))]
 
   return (
     <div ref={rootRef} data-testid="today-care" style={{ display: 'flex', flexDirection: 'column', gap: T.space.sm }}>
