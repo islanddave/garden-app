@@ -26,7 +26,10 @@
 //
 // Every accessor is try/catch'd and falls back to "no draft": storage throws in private modes, and a
 // lost draft is acceptable where a crash is not.
-import { useAuthOptional } from '../../context/AuthContext.jsx'
+//
+// STORAGE ONLY — no React, no AuthContext. AuthContext.signOut imports clearSheetDraftsFor from here,
+// so importing AuthContext back would make a cycle; the signed-in person's key comes from the hook in
+// ./useSheetDraftKey.js instead.
 
 export const SHEET_DRAFT_PREFIX = 'garden:putup-draft:v1:'
 export const SHEET_DRAFT_VERSION = 1
@@ -94,8 +97,8 @@ export function clearSheetDraft(key) {
   try { s.removeItem(key) } catch { /* non-fatal */ }
 }
 
-// For the sign-out funnel (V4 §6.5: "the sign-out funnel clears the sub's drafts"). NOT wired here:
-// the funnel is AuthContext.signOut, which belongs to another lane — see the lane report.
+// For the sign-out funnel (V4 §6.5: "the sign-out funnel clears the sub's drafts"), called from
+// AuthContext.signOut before the Clerk call. Removes only this person's drafts.
 export function clearSheetDraftsFor(sub) {
   const s = storage()
   if (!s || !sub) return
@@ -108,11 +111,4 @@ export function clearSheetDraftsFor(sub) {
     }
     for (const k of keys) s.removeItem(k)
   } catch { /* non-fatal */ }
-}
-
-// The signed-in person's key for one sheet. useAuthOptional, never useAuth: a sheet rendered with no
-// AuthProvider (a unit test, a harness) keeps working and simply keeps no draft.
-export function useSheetDraftKey(sheet, id) {
-  const { user } = useAuthOptional()
-  return sheetDraftKey(user?.id ?? null, sheet, id)
 }

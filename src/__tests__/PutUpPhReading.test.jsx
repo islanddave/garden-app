@@ -541,6 +541,7 @@ const LANE_SOURCES = [
   // into it), so it is squarely in the path this sweep polices; its draft carries the typed reading.
   ['src/components/putup/CheckOnItSheet.jsx', 'CheckOnItOpen'],
   ['src/components/kitchen/sheetDraft.js', 'SHEET_DRAFT_PREFIX'],
+  ['src/components/kitchen/useSheetDraftKey.js', 'useSheetDraftKey'],
   // The shared Start sheet and its chips: the start date every later clock (brine, pH, stall) is read
   // against is written here.
   ['src/components/kitchen/StartBatchSheet.jsx', 'StartBatchOpen'],

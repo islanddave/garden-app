@@ -232,4 +232,23 @@ describe('AuthContext.signOut — the wiring', () => {
 
     expect(prefsGoneAtClerkCall).toBe(true)
   })
+
+  // Put-Up 1a (V4 §6.5): "the sign-out funnel clears the sub's drafts" — this person's only.
+  it("clears the signed-in person's Put-Up sheet drafts before the Clerk call, and nobody else's", async () => {
+    const MINE = ['garden:putup-draft:v1:user-1:start:new', 'garden:putup-draft:v1:user-1:checkin:kb-9']
+    const THEIRS = 'garden:putup-draft:v1:user-2:start:new'
+    for (const k of [...MINE, THEIRS]) localStorage.setItem(k, '{"v":1}')
+    let draftsGoneAtClerkCall = null
+    clerkSignOutSpy.mockImplementation(() => {
+      draftsGoneAtClerkCall = MINE.every((k) => localStorage.getItem(k) === null)
+      return Promise.resolve()
+    })
+    const fire = { current: null }
+    render(<AuthProvider><SignOutProbe fire={fire} /></AuthProvider>)
+    await act(async () => { await fire.current() })
+
+    expect(draftsGoneAtClerkCall).toBe(true)
+    for (const k of MINE) expect(localStorage.getItem(k)).toBeNull()
+    expect(localStorage.getItem(THEIRS)).toBe('{"v":1}')
+  })
 })
