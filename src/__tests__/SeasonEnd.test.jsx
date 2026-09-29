@@ -272,32 +272,42 @@ describe('undo', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   }
 
-  // KILLING MUTATIONS: restore every row to one status; include the failed rows. RESULT: RED.
+  // KILLING MUTATIONS: restore every row to one status; include the failed rows; take each prior status
+  // by index AFTER the failed rows are filtered out. The FIRST tick fails here so that the last one
+  // shifts every landed row's index — failing the last tick left the indices aligned and the index
+  // mutation green. RESULT: RED.
   it('puts each landed row back to ITS OWN prior status, skips the failed one, and says so on a partial undo', async () => {
-    await endThree(['b1'])
+    await endThree(['t1'])
     fetchSpy.mockClear()
     putImpl = (p, body) => (p === '/api/plants/p1' ? Promise.reject(new Error('x')) : Promise.resolve({ body }))
     await act(async () => { fireEvent.click(screen.getByTestId('season-end-undo')) })
     await waitFor(() => expect(screen.getByTestId('season-end-result').textContent).toContain('Put back 1 of 2. 1 is still ended.'))
     expect(puts()).toEqual(expect.arrayContaining([
-      { path: '/api/plants/t1', body: { status: 'fruiting' } },
       { path: '/api/plants/p1', body: { status: 'harvested' } },
+      { path: '/api/plants/b1', body: { status: 'vegetative' } },
     ]))
     expect(puts()).toHaveLength(2)
-    expect(puts().some((c) => c.path === '/api/plants/b1')).toBe(false)
+    expect(puts().some((c) => c.path === '/api/plants/t1')).toBe(false)
     // The put-back row returns ticked; the one still ended stays gone; Undo is spent.
-    expect(rowNamed('Sungold').getAttribute('aria-checked')).toBe('true')
+    expect(rowNamed('Genovese').getAttribute('aria-checked')).toBe('true')
     expect(rowNamed('Aji Amarillo')).toBeUndefined()
     expect(screen.queryByTestId('season-end-undo')).toBeNull()
     expect(toastApi.dismiss).toHaveBeenCalledWith(77)
   })
 
-  it('the toast\'s Undo is the same undo', async () => {
+  // KILLING MUTATION: every row put back to one status. RESULT: RED — a sorted list of statuses could not
+  // see which row got which, so this pins the row → status map.
+  it('the toast\'s Undo is the same undo, each row to its own prior status', async () => {
     await endThree()
     fetchSpy.mockClear()
     await act(async () => { toastApi.showUndo.mock.calls[0][0].onUndo() })
     await waitFor(() => expect(screen.getByTestId('season-end-result').textContent).toContain('Put back 3 plantings.'))
-    expect(puts().map((c) => c.body.status).sort()).toEqual(['fruiting', 'harvested', 'vegetative'])
+    expect(puts()).toHaveLength(3)
+    expect(Object.fromEntries(puts().map((c) => [c.path, c.body]))).toEqual({
+      '/api/plants/t1': { status: 'fruiting' },
+      '/api/plants/p1': { status: 'harvested' },
+      '/api/plants/b1': { status: 'vegetative' },
+    })
   })
 
   // KILLING MUTATION: keep the offer when a new row is ticked. RESULT: RED.
