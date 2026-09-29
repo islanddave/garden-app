@@ -373,6 +373,26 @@ and writes PNGs with a dashed outline over what takes the tap. It also holds the
 toast's right padding, which is what catches mutant U1. `--baseline <full sha>` measures the code
 before a change; `--measure-only` prints without asserting.
 
+## `seasonend.*` — End of season, added 2026-09-29 (V5-SEASONEND-001)
+
+`/season-end` at 426x836, driven through the states jsdom cannot lay out. Its sticky bar is
+`position: fixed` at `bottom: var(--bottom-nav-height)`, so the entry mounts the **real** `BottomNav`
+through the `navcustom.jsx` provider chain (a stand-in `<nav>` would not write the variable and the bar
+would measure against 0px), a 52px TopChrome stand-in, and App.jsx's column wrapper. Start the server
+with `VITE_API_CRITTERS=https://critter.invalid` as for `navcustom.*`; the fetch stub answers it.
+
+```
+http://localhost:5311/tests/harness/seasonend.viewport.html?step=list
+    step=list|ticked|confirm|still   ticked = Bag Area open, 2 rows ticked; confirm = that + the sheet;
+                                     still = the Still growing group open, the petunia ticked
+```
+
+`__h.measure()` (mirrored into `#out` for `--dump-dom`) reports horizontal scroll, the bar's and the
+nav's boxes and `barAboveNav`, every page/bar/sheet control's height (`under48`), a hit-test of each
+visible control's centre (`blocked`), and `endClearance`: scrolled to the end, the gap between the
+list and the bar. The Sheet's own close control is 44px by design (Sheet.jsx §5.3) and reads as the
+one `under48` entry in `step=confirm`.
+
 ## Retired entries
 
 **`photostrips.*` — removed 2026-08-30, V4-PHOTOBULK-001 D4b.** It measured the staged-photo strip
