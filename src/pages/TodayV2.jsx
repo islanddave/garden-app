@@ -51,7 +51,8 @@ import { SOW_DATED_LINES_FROZEN } from '../lib/featureFlags.js'
 //   Layer 1 remembered (useTodaySections: the localStorage mirror; the server column is S7's) — written ONLY
 //           by an explicit header tap;
 //   Layer 2 the visit (useTodayVisit: Expand/Collapse all, and later chip jumps and triggers) — never saved;
-//   Layer 3 triggers (S5) — none yet, so at S2 nothing opens by itself.
+//   Layer 3 triggers (S5: triggers.js openAtStart, ONE evaluation at the ready point) — only Protect tonight,
+//           Heads-up and Needs care ever open by themselves.
 // The bands S2 can build from the plan alone are here: Needs care (count = water + feed + check, §2.4) and
 // Resting (count, names, its explainer). Each later slice fills its own: glance card + jump bar (S3), the
 // Needs care body (S4), Protect tonight + Heads-up (S5), Harvest / Put-Up / Resting rows / household (S6).
