@@ -16,7 +16,9 @@ import { stubState, resetStubs } from '../_test-stubs/state.js';
 import {
   foldSourceKey, blankToNull, slugifySourceKind, slugifyCropType,
   resolveSourceKindName, validateSourceBody, validateSourceKindBody,
+  validateSourcePatch, URL_FIELDS,
 } from './validate.js';
+import { canEditSource } from './authz.js';
 
 vi.mock('@neondatabase/serverless', async () => {
   const { stubState: state } = await import('../_test-stubs/state.js');
@@ -29,7 +31,10 @@ vi.mock('@neondatabase/serverless', async () => {
       };
       // Each element is an already-running statement promise, so ordering is preserved and the
       // set_config lands in sqlCalls ahead of the UPDATE — which is what the restore test asserts.
-      tagged.transaction = (stmts) => Promise.all(stmts);
+      // Opt-in failure for the race test: the whole transaction rejects as Postgres would.
+      tagged.transaction = (stmts) => (state.transactionError
+        ? Promise.all(stmts).then(() => { throw state.transactionError; })
+        : Promise.all(stmts));
       return tagged;
     },
   };
@@ -99,13 +104,30 @@ function db({ sources = [], kinds = SEEDED_KINDS, allowRate = true, restoreHits 
     }
     if (bindsSource(text)) {
       if (text.includes('INSERT INTO public.source')) {
-        const [name, kind, locality, address, website_url, notes, created_by] = values;
-        return [{ id: SOURCE_ID, name, kind, locality, address, website_url, notes, created_by }];
+        const [name, kind, locality, address, website_url, instagram_url, facebook_url, notes, created_by] = values;
+        return [{ id: SOURCE_ID, name, kind, locality, address, website_url, instagram_url, facebook_url, notes, created_by }];
+      }
+      // PATCH: sixteen (present?, value) pairs in PATCH_COLUMNS order, then the id.
+      if (text.includes('UPDATE public.source') && text.includes('CASE WHEN')) {
+        const row = sources.find((s) => s.id === values[16] && !s.deleted_at);
+        if (!row || !restoreHits) return [];
+        const next = { ...row };
+        PATCH_COLUMNS.forEach((col, i) => { if (values[2 * i]) next[col] = values[2 * i + 1]; });
+        const { created_by: _c, deleted_at: _d, ...out } = next;
+        return [out];
       }
       if (text.includes('UPDATE public.source')) {
         if (!restoreHits) return [];
         const row = sources.find((s) => s.id === values[0]);
         return [{ ...row, deleted_at: undefined }];
+      }
+      if (text.includes('match_key = ') && text.includes('id <> ')) {
+        return sources
+          .filter((s) => !s.deleted_at && s.id !== values[1] && foldSourceKey(s.name) === values[0])
+          .slice(0, 1);
+      }
+      if (text.includes('WHERE id = ')) {
+        return sources.filter((s) => s.id === values[0] && !s.deleted_at);
       }
       if (text.includes('match_key = ')) {
         return sources
@@ -119,10 +141,14 @@ function db({ sources = [], kinds = SEEDED_KINDS, allowRate = true, restoreHits 
   };
 }
 
+// The order the PATCH UPDATE binds its (present?, value) pairs in.
+const PATCH_COLUMNS = ['name', 'kind', 'locality', 'address', 'website_url', 'instagram_url', 'facebook_url', 'notes'];
+
 const lastSql = (pred) => [...stubState.sqlCalls].reverse().find((c) => pred(c.text));
 
 beforeEach(() => {
   resetStubs();
+  stubState.transactionError = null;
   stubState.verifyTokenResult = { sub: USER };
   db();
 });
@@ -500,6 +526,297 @@ describe('POST /api/varieties/source-kinds', () => {
 
   it('405s a method the route does not implement', async () => {
     expect((await parse(await call('DELETE', '/api/varieties/source-kinds'))).status).toBe(405);
+  });
+});
+
+// ── V5-SOURCECONTACT-001 — GET + PATCH /api/varieties/sources/:id ───────────────────────────
+
+const OTHER_ID = 'b1f3c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5f';
+const BY_ID = `/api/varieties/sources/${SOURCE_ID}`;
+const patch = async (path, body) => parse(await call('PATCH', path, body));
+const isPatchUpdate = (t) => t.includes('UPDATE public.source') && t.includes('CASE WHEN');
+const row = (over = {}) => ({
+  id: SOURCE_ID, name: 'Baker Creek', kind: 'seed_company', locality: 'Mansfield, MO',
+  address: null, website_url: null, instagram_url: null, facebook_url: null, notes: null,
+  created_by: USER, deleted_at: null, ...over,
+});
+
+describe('validateSourcePatch', () => {
+  it('accepts any single editable field, and a blank optional field as a clear', () => {
+    expect(validateSourcePatch({ notes: 'good tomatoes' })).toBeNull();
+    expect(validateSourcePatch({ instagram_url: 'https://www.instagram.com/bakercreek' })).toBeNull();
+    expect(validateSourcePatch({ facebook_url: '' })).toBeNull();
+    expect(validateSourcePatch({ kind: null })).toBeNull();
+  });
+  it('400s a non-http(s) value in EACH link field', () => {
+    expect(URL_FIELDS).toEqual(['website_url', 'instagram_url', 'facebook_url']);
+    for (const f of URL_FIELDS) {
+      expect(validateSourcePatch({ [f]: 'instagram.com/x' }), f).toMatch(new RegExp(`${f} must start with http`));
+      expect(validateSourcePatch({ [f]: 'javascript:alert(1)' }), f).toMatch(new RegExp(f));
+      expect(validateSourcePatch({ [f]: 7 }), f).toMatch(new RegExp(`${f} must be a string`));
+    }
+  });
+  it('refuses the columns a caller may not set, naming each', () => {
+    for (const k of ['id', 'match_key', 'created_by', 'deleted_at']) {
+      expect(validateSourcePatch({ name: 'Baker Creek', [k]: 'x' }), k).toBe(`${k} cannot be changed`);
+    }
+  });
+  it('refuses an unknown key rather than silently dropping it, and an empty patch', () => {
+    expect(validateSourcePatch({ website: 'https://x.com' })).toMatch(/unknown field: website/);
+    expect(validateSourcePatch({})).toMatch(/nothing to update/);
+    expect(validateSourcePatch([])).toMatch(/body required/);
+  });
+  it('name may be changed but never cleared — it is the one NOT NULL column', () => {
+    expect(validateSourcePatch({ name: 'Baker Creek Seeds' })).toBeNull();
+    expect(validateSourcePatch({ name: '' })).toMatch(/name is required/);
+    expect(validateSourcePatch({ name: null })).toMatch(/name is required/);
+    expect(validateSourcePatch({ name: 'A' })).toMatch(/2-200/);
+  });
+  it('POST validates the two new link fields the same way', () => {
+    expect(validateSourceBody({ name: 'Baker Creek', instagram_url: '@bakercreek' })).toMatch(/instagram_url/);
+    expect(validateSourceBody({ name: 'Baker Creek', facebook_url: 'facebook.com/x' })).toMatch(/facebook_url/);
+    expect(validateSourceBody({ name: 'Baker Creek', instagram_url: '', facebook_url: '  ' })).toBeNull();
+  });
+});
+
+describe('canEditSource', () => {
+  const HH = [USER, OTHER];
+  it('a household member may edit ANY live source, including a script principal\'s', () => {
+    expect(canEditSource(HH, USER, 'system')).toBe(true);
+    expect(canEditSource(HH, USER, OTHER)).toBe(true);
+    expect(canEditSource(HH, USER, 'user_stranger')).toBe(true);
+  });
+  it('a non-member may edit only rows they created', () => {
+    expect(canEditSource([USER], USER, USER)).toBe(true);
+    expect(canEditSource([USER], USER, 'system')).toBe(false);
+    expect(canEditSource([USER], USER, OTHER)).toBe(false);
+  });
+  it('fails closed on a malformed scope or an empty caller', () => {
+    expect(canEditSource(undefined, USER, 'system')).toBe(false);
+    expect(canEditSource([''], '', '')).toBe(false);
+    // A multi-id array the caller is not IN is not membership.
+    expect(canEditSource([OTHER, 'user_x'], USER, 'system')).toBe(false);
+  });
+});
+
+describe('GET /api/varieties/sources/:id', () => {
+  it('returns the live row with both link columns and without created_by', async () => {
+    db({ sources: [row({ instagram_url: 'https://www.instagram.com/bakercreek' })] });
+    const { status, body } = await get(BY_ID);
+    expect(status).toBe(200);
+    expect(body.id).toBe(SOURCE_ID);
+    expect(body.instagram_url).toBe('https://www.instagram.com/bakercreek');
+    const q = lastSql(bindsSource).text;
+    expect(q).toMatch(/instagram_url, facebook_url/);
+    expect(q).not.toMatch(/created_by/);
+    expect(q).toMatch(/AND deleted_at IS NULL/);
+  });
+  it('404s a soft-deleted id, a missing id and a non-uuid id', async () => {
+    db({ sources: [row({ id: DELETED_ID, deleted_at: '2026-01-01' })] });
+    expect((await get(`/api/varieties/sources/${DELETED_ID}`)).status).toBe(404);
+    expect((await get(`/api/varieties/sources/${OTHER_ID}`)).status).toBe(404);
+    stubState.sqlCalls.length = 0;
+    expect((await get('/api/varieties/sources/not-a-uuid')).status).toBe(404);
+    // Refused before Postgres could 22P02 it into a 500.
+    expect(stubState.sqlCalls.some((c) => bindsSource(c.text))).toBe(false);
+  });
+  it('is matched before the cultivar :id route, which would otherwise answer about a variety', () => {
+    const idMatchIdx = SRC.indexOf('const idMatch = rawPath.match');
+    const srcIdx = SRC.indexOf('rawPath.match(SOURCE_ID_RE)');
+    expect(srcIdx).toBeGreaterThan(-1);
+    expect(srcIdx).toBeLessThan(idMatchIdx);
+  });
+});
+
+describe('PATCH /api/varieties/sources/:id', () => {
+  it('writes ONLY the keys present, and returns the updated row', async () => {
+    db({ sources: [row({ website_url: 'https://rareseeds.com', notes: 'keep me' })] });
+    const { status, body } = await patch(BY_ID, { instagram_url: 'https://www.instagram.com/bakercreek' });
+    expect(status).toBe(200);
+    expect(body.instagram_url).toBe('https://www.instagram.com/bakercreek');
+    expect(body.website_url).toBe('https://rareseeds.com');
+    expect(body.notes).toBe('keep me');
+    expect(body.created_by).toBeUndefined();
+    const upd = lastSql(isPatchUpdate);
+    // (present?, value) pairs in PATCH_COLUMNS order: only instagram_url's flag is true.
+    const flags = PATCH_COLUMNS.map((_, i) => upd.values[2 * i]);
+    expect(flags).toEqual([false, false, false, false, false, true, false, false]);
+    expect(upd.values[16]).toBe(SOURCE_ID);
+    expect(upd.text).toMatch(/AND deleted_at IS NULL/);
+  });
+
+  it('stores a blank optional field as NULL (a clear), trimmed values trimmed', async () => {
+    db({ sources: [row({ address: '2278 Baker Creek Rd', facebook_url: 'https://www.facebook.com/bc' })] });
+    const { status, body } = await patch(BY_ID, { address: '   ', facebook_url: '', locality: '  Mansfield, MO ' });
+    expect(status).toBe(200);
+    expect(body.address).toBeNull();
+    expect(body.facebook_url).toBeNull();
+    expect(body.locality).toBe('Mansfield, MO');
+  });
+
+  it('binds the audit actor BEFORE the UPDATE, inside one transaction', async () => {
+    db({ sources: [row()] });
+    await patch(BY_ID, { notes: 'x' });
+    const cfgIdx = stubState.sqlCalls.findIndex((c) => isSetConfig(c.text));
+    const updIdx = stubState.sqlCalls.findIndex((c) => isPatchUpdate(c.text));
+    expect(cfgIdx).toBeGreaterThan(-1);
+    expect(updIdx).toBeGreaterThan(cfgIdx);
+    expect(stubState.sqlCalls[cfgIdx].values).toEqual([USER]);
+    expect(SRC).toMatch(/sql\.transaction\(\[\s*sql`SELECT set_config\('app\.actor_clerk_sub', \$\{auditActor\(userId\)\}, true\)`,\s*sql`\s*UPDATE public\.source\s+SET name\s+= CASE/);
+  });
+
+  for (const f of ['website_url', 'instagram_url', 'facebook_url']) {
+    it(`400s a ${f} without an http(s) scheme, before any DB work`, async () => {
+      db({ sources: [row()] });
+      const { status, body } = await patch(BY_ID, { [f]: 'www.example.com/bakercreek' });
+      expect(status).toBe(400);
+      expect(body.error).toMatch(new RegExp(f));
+      expect(stubState.sqlCalls).toHaveLength(0);
+    });
+  }
+
+  it('400s an attempt to set created_by, match_key, id or deleted_at', async () => {
+    for (const k of ['created_by', 'match_key', 'id', 'deleted_at']) {
+      const { status, body } = await patch(BY_ID, { [k]: 'x' });
+      expect(status, k).toBe(400);
+      expect(body.error).toBe(`${k} cannot be changed`);
+    }
+  });
+
+  it('400s a kind that is not a live source kind', async () => {
+    db({ sources: [row()] });
+    const { status, body } = await patch(BY_ID, { kind: 'not_a_kind' });
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/not_a_kind/);
+    expect(stubState.sqlCalls.some((c) => isPatchUpdate(c.text))).toBe(false);
+  });
+
+  it('accepts clearing kind without a vocabulary lookup', async () => {
+    db({ sources: [row()] });
+    const { status, body } = await patch(BY_ID, { kind: '' });
+    expect(status).toBe(200);
+    expect(body.kind).toBeNull();
+    expect(stubState.sqlCalls.some((c) => bindsSourceKind(c.text))).toBe(false);
+  });
+
+  it('404s a soft-deleted id and a missing id, without writing', async () => {
+    db({ sources: [row({ id: DELETED_ID, deleted_at: '2026-01-01' })] });
+    expect((await patch(`/api/varieties/sources/${DELETED_ID}`, { notes: 'x' })).status).toBe(404);
+    expect((await patch(`/api/varieties/sources/${OTHER_ID}`, { notes: 'x' })).status).toBe(404);
+    expect(stubState.sqlCalls.some((c) => isPatchUpdate(c.text))).toBe(false);
+  });
+
+  it('404s when the row is soft-deleted between the read and the write', async () => {
+    db({ sources: [row()], restoreHits: false });
+    expect((await patch(BY_ID, { notes: 'x' })).status).toBe(404);
+  });
+
+  it('409s a rename that folds onto ANOTHER live source, in the POST\'s {reason, existing} shape', async () => {
+    db({ sources: [row(), row({ id: OTHER_ID, name: 'Fedco Seeds', kind: 'seed_company', locality: 'Clinton, ME' })] });
+    const { status, body } = await patch(BY_ID, { name: 'fedco-seeds' });
+    expect(status).toBe(409);
+    expect(body.reason).toBe('exists');
+    expect(body.existing.id).toBe(OTHER_ID);
+    expect(body.existing.name).toBe('Fedco Seeds');
+    expect(body.existing.created_by).toBeUndefined();
+    expect(stubState.sqlCalls.some((c) => isPatchUpdate(c.text))).toBe(false);
+    const probe = lastSql((t) => t.includes('id <> '));
+    expect(probe.values).toEqual(['fedcoseeds', SOURCE_ID]);
+    expect(probe.text).toMatch(/deleted_at IS NULL/);
+  });
+
+  it('does NOT 409 on a soft-deleted namesake — the unique index is partial', async () => {
+    db({ sources: [row(), row({ id: DELETED_ID, name: 'Fedco Seeds', deleted_at: '2026-01-01' })] });
+    const { status, body } = await patch(BY_ID, { name: 'Fedco Seeds' });
+    expect(status).toBe(200);
+    expect(body.name).toBe('Fedco Seeds');
+  });
+
+  it('a re-case of its own name skips the probe (it folds to itself)', async () => {
+    db({ sources: [row()] });
+    const { status } = await patch(BY_ID, { name: 'BAKER CREEK' });
+    expect(status).toBe(200);
+    expect(stubState.sqlCalls.some((c) => c.text.includes('id <> '))).toBe(false);
+  });
+
+  it('turns a lost rename race (23505) into the same 409 steer', async () => {
+    const other = row({ id: OTHER_ID, name: 'Fedco Seeds' });
+    db({ sources: [row()] });
+    const base = stubState.sqlHandler;
+    // First probe sees nothing (the other rename has not committed); the retry probe sees it.
+    let probes = 0;
+    stubState.sqlHandler = (text, values) => {
+      if (text.includes('id <> ')) return ++probes === 1 ? [] : [other];
+      return base(text, values);
+    };
+    stubState.transactionError = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_source_match_key_live' });
+    const { status, body } = await patch(BY_ID, { name: 'Fedco Seeds' });
+    expect(status).toBe(409);
+    expect(body.existing.id).toBe(OTHER_ID);
+  });
+
+  it('a household member may edit a row a script principal created', async () => {
+    vi.stubEnv('GARDEN_HOUSEHOLD_IDS', `${USER},${OTHER}`);
+    try {
+      db({ sources: [row({ created_by: 'system' })] });
+      expect((await patch(BY_ID, { notes: 'x' })).status).toBe(200);
+      db({ sources: [row({ created_by: OTHER })] });
+      expect((await patch(BY_ID, { notes: 'x' })).status).toBe(200);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('403s a NON-member editing a \'system\' row, without writing', async () => {
+    vi.stubEnv('GARDEN_HOUSEHOLD_IDS', `${OTHER},user_jen`);
+    try {
+      db({ sources: [row({ created_by: 'system' })] });
+      const { status, body } = await patch(BY_ID, { notes: 'x' });
+      expect(status).toBe(403);
+      expect(body.error).toMatch(/only edit sources you added/);
+      expect(stubState.sqlCalls.some((c) => isPatchUpdate(c.text))).toBe(false);
+      expect(stubState.sqlCalls.some((c) => isSetConfig(c.text))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('a non-member may still edit a row they created themselves', async () => {
+    db({ sources: [row({ created_by: USER })] });
+    expect((await patch(BY_ID, { notes: 'x' })).status).toBe(200);
+  });
+
+  it('429s past the 60/hour source.update limit', async () => {
+    db({ sources: [row()], allowRate: false });
+    const { status } = await patch(BY_ID, { notes: 'x' });
+    expect(status).toBe(429);
+    expect(lastSql(isRateLimit).values).toEqual([USER, 'source.update', 60]);
+  });
+
+  it('400s a body that is not JSON', async () => {
+    const res = await handler({
+      requestContext: { http: { method: 'PATCH' } }, rawPath: BY_ID,
+      headers: { authorization: 'Bearer stub-token' }, body: '{nope',
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('405s DELETE (and PUT) — this route edits, it does not delete', async () => {
+    db({ sources: [row()] });
+    expect((await parse(await call('DELETE', BY_ID))).status).toBe(405);
+    expect((await parse(await call('PUT', BY_ID, { notes: 'x' }))).status).toBe(405);
+    expect(stubState.sqlCalls.some((c) => c.text.includes('UPDATE public.source'))).toBe(false);
+  });
+});
+
+describe('POST /api/varieties/sources — the two link columns', () => {
+  it('inserts instagram_url and facebook_url, blanks as NULL', async () => {
+    const { status, body } = await post('/api/varieties/sources', {
+      name: 'Bardwell Farm Stand', instagram_url: 'https://www.instagram.com/bardwell', facebook_url: '',
+    });
+    expect(status).toBe(201);
+    expect(body.instagram_url).toBe('https://www.instagram.com/bardwell');
+    expect(body.facebook_url).toBeNull();
   });
 });
 

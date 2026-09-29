@@ -13,6 +13,8 @@
 //   - GET /api/varieties/crop-types: globally readable controlled vocabulary (V4-PLANTTYPE-001)
 //   - GET/POST /api/varieties/{sources,source-kinds}: the provenance registry, same contract as
 //     crop-types — globally readable, owner-stamped on write (V4-SOURCEREG-001 / V5-SOURCEKIND-001)
+//   - GET/PATCH /api/varieties/sources/:id: one live source; PATCH is partial and audited, household
+//     members may edit any live source, anyone else only their own (V5-SOURCECONTACT-001, authz.js)
 //
 // Audit: trigger trg_audit_plant_varieties writes to audit_events. Lambda sets
 // SET LOCAL app.actor_clerk_sub = $userId after BEGIN so trigger reads the actor. The bind goes
@@ -51,13 +53,13 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import {
   validateBody, validateCropTypeBody, resolveCropTypeName, validateClear, auditActor,
-  validateSourceBody, validateSourceKindBody, resolveSourceKindName, foldSourceKey, blankToNull,
+  validateSourceBody, validateSourcePatch, validateSourceKindBody, resolveSourceKindName, foldSourceKey, blankToNull,
   normalizeOriginText, touchesBreeding, breedingPairingError, fillsCultivarRank, CONSTRAINT_MESSAGES,
 } from './validate.js';
 import { applyDerive } from './crop-derive.js';
 import { householdScope, loadOwnedPhoto, warnRejectedFk } from './household.js';
 import { loadOwnedProject } from './authz-parents.js';
-import { managedPrincipalPatterns } from './authz.js';
+import { managedPrincipalPatterns, canEditSource } from './authz.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -71,6 +73,11 @@ async function getSecrets() {
 }
 
 const CORS = {}; // Lambda URL config owns CORS — handler must not duplicate
+
+// V5-SOURCECONTACT-001 — /api/varieties/sources/:id. The segment is captured loosely and checked
+// against UUID_RE in the route, so a malformed id is a 404 there rather than a 22P02 from Postgres.
+const SOURCE_ID_RE = /^\/api\/varieties\/sources\/([^/]+)$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function resp(statusCode, body) {
   return {
@@ -315,7 +322,7 @@ export const handler = async (event) => {
     if (rawPath === '/api/varieties/sources') {
       if (method === 'GET') {
         const rows = await sql`
-          SELECT id, name, kind, locality, address, website_url, notes
+          SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes
             FROM public.source
            WHERE deleted_at IS NULL
            ORDER BY name ASC
@@ -349,7 +356,7 @@ export const handler = async (event) => {
         // may share a key while at most one live row can. NULLS FIRST puts the live one first.
         const matchKey = foldSourceKey(body.name);
         const [hit] = await sql`
-          SELECT id, name, kind, locality, address, website_url, notes, deleted_at
+          SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes, deleted_at
             FROM public.source
            WHERE match_key = ${matchKey}
            ORDER BY deleted_at DESC NULLS FIRST
@@ -359,7 +366,8 @@ export const handler = async (event) => {
         if (hit) {
           const existing = {
             id: hit.id, name: hit.name, kind: hit.kind, locality: hit.locality,
-            address: hit.address, website_url: hit.website_url, notes: hit.notes,
+            address: hit.address, website_url: hit.website_url, instagram_url: hit.instagram_url,
+            facebook_url: hit.facebook_url, notes: hit.notes,
           };
           if (hit.deleted_at) {
             // Soft-Delete-Only: the row never actually left and the caller is asking for exactly
@@ -376,7 +384,7 @@ export const handler = async (event) => {
                    SET deleted_at = NULL
                  WHERE id = ${hit.id}
                    AND deleted_at IS NOT NULL
-                RETURNING id, name, kind, locality, address, website_url, notes
+                RETURNING id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes
               `,
             ]);
             if (restoredRows.length) return resp(200, { ...restoredRows[0], restored: true });
@@ -393,19 +401,153 @@ export const handler = async (event) => {
         }
 
         const [created] = await sql`
-          INSERT INTO public.source (name, kind, locality, address, website_url, notes, created_by)
+          INSERT INTO public.source (name, kind, locality, address, website_url, instagram_url, facebook_url, notes, created_by)
           VALUES (
             ${body.name.trim()},
             ${kind},
             ${blankToNull(body.locality)},
             ${blankToNull(body.address)},
             ${blankToNull(body.website_url)},
+            ${blankToNull(body.instagram_url)},
+            ${blankToNull(body.facebook_url)},
             ${blankToNull(body.notes)},
             ${userId}
           )
-          RETURNING id, name, kind, locality, address, website_url, notes
+          RETURNING id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes
         `;
         return resp(201, created);
+      }
+
+      return resp(405, { error: 'Method not allowed' });
+    }
+
+    // ── V5-SOURCECONTACT-001 — one source: read it, and edit it ─────────────────────────────────
+    //
+    // Dave: "a source add/edit should include optional fields for website, IG, FB, physical address
+    // for me to enter". The POST above could only ever CREATE, so a source minted with a name alone
+    // could never gain its address or links afterwards.
+    //
+    // CHECKED BEFORE idMatch. idMatch is single-segment, so "sources/<uuid>" never reaches it today;
+    // this sits up here anyway so that a later widening of idMatch cannot swallow it.
+    //
+    // No DELETE. Soft-deleting a source that plants and seed lots point at is a merge question, not
+    // an edit, and nothing in the app offers it yet — so the route answers 405 rather than a
+    // half-thought delete.
+    const sourceIdMatch = rawPath.match(SOURCE_ID_RE);
+    if (sourceIdMatch) {
+      const sourceId = sourceIdMatch[1];
+      // A non-uuid id would reach Postgres as 22P02 and come back a 500. It names no row, so 404.
+      if (!UUID_RE.test(sourceId)) return resp(404, { error: 'Not found' });
+
+      if (method === 'GET') {
+        const [row] = await sql`
+          SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes
+            FROM public.source
+           WHERE id = ${sourceId}
+             AND deleted_at IS NULL
+        `;
+        if (!row) return resp(404, { error: 'Not found' });
+        return resp(200, row);
+      }
+
+      if (method === 'PATCH') {
+        let body;
+        try { body = JSON.parse(event.body ?? '{}'); } catch { return resp(400, { error: 'body must be JSON' }); }
+        const err = validateSourcePatch(body);
+        if (err) return resp(400, { error: err });
+
+        const allowed = await checkRateLimit(sql, userId, 'source.update', 60);
+        if (!allowed) return resp(429, { error: 'Rate limit exceeded — 60/hour for source.update' });
+
+        // Soft-deleted reads as missing: this route edits live rows only, and restoring one is the
+        // POST's job (it restores on a name match).
+        const [current] = await sql`
+          SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes, created_by
+            FROM public.source
+           WHERE id = ${sourceId}
+             AND deleted_at IS NULL
+        `;
+        if (!current) return resp(404, { error: 'Not found' });
+        // 403, not the cultivar routes' 404: public.source is globally readable, so there is no
+        // existence to hide — and "you can't edit this" is the sentence the screen has to say.
+        if (!canEditSource(household, userId, current.created_by)) {
+          return resp(403, { error: 'You can only edit sources you added' });
+        }
+
+        const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+        const name = has('name') ? body.name.trim() : null;
+        const kind = has('kind') ? blankToNull(body.kind) : null;
+        if (kind != null) {
+          const [liveKind] = await sql`
+            SELECT slug FROM public.source_kind WHERE slug = ${kind} AND deleted_at IS NULL
+          `;
+          if (!liveKind) return resp(400, { error: `kind "${kind}" is not a live source kind` });
+        }
+
+        // A rename that folds onto ANOTHER live row would raise 23505 on uq_source_match_key_live.
+        // Steered here in the POST's own 409 shape so the screen can name the row. Live rows only:
+        // that index is partial, so a soft-deleted namesake blocks nothing. A rename that keeps the
+        // fold ("Fedco" -> "FEDCO") collides with nothing but itself and skips the probe.
+        const steer = (hit) => resp(409, {
+          error: `Source "${hit.name}" already exists`,
+          reason: 'exists',
+          existing: {
+            id: hit.id, name: hit.name, kind: hit.kind, locality: hit.locality, address: hit.address,
+            website_url: hit.website_url, instagram_url: hit.instagram_url,
+            facebook_url: hit.facebook_url, notes: hit.notes,
+          },
+          hint: 'That name is already another source. Keep this name, or edit the other one.',
+        });
+        const newKey = name != null ? foldSourceKey(name) : null;
+        const probeRename = () => sql`
+          SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes
+            FROM public.source
+           WHERE match_key = ${newKey}
+             AND deleted_at IS NULL
+             AND id <> ${sourceId}
+           LIMIT 1
+        `;
+        if (newKey != null && newKey !== foldSourceKey(current.name)) {
+          const [hit] = await probeRename();
+          if (hit) return steer(hit);
+        }
+
+        // PARTIAL: each column is written only when its key is present (`has`), else it keeps its
+        // value. Explicit casts on every bind — a NULL parameter carries no type and Postgres will
+        // not infer one across CASE for every arm.
+        // Inside the actor transaction because public.source carries trg_audit_source_upd — the
+        // same reason as the restore arm of POST above: without the bind the audit row names
+        // 'system' instead of the person who made the edit.
+        let updatedRows;
+        try {
+          [, updatedRows] = await sql.transaction([
+            sql`SELECT set_config('app.actor_clerk_sub', ${auditActor(userId)}, true)`,
+            sql`
+              UPDATE public.source
+                 SET name          = CASE WHEN ${has('name')}::boolean          THEN ${name}::text ELSE name END,
+                     kind          = CASE WHEN ${has('kind')}::boolean          THEN ${kind}::text ELSE kind END,
+                     locality      = CASE WHEN ${has('locality')}::boolean      THEN ${blankToNull(body.locality)}::text ELSE locality END,
+                     address       = CASE WHEN ${has('address')}::boolean       THEN ${blankToNull(body.address)}::text ELSE address END,
+                     website_url   = CASE WHEN ${has('website_url')}::boolean   THEN ${blankToNull(body.website_url)}::text ELSE website_url END,
+                     instagram_url = CASE WHEN ${has('instagram_url')}::boolean THEN ${blankToNull(body.instagram_url)}::text ELSE instagram_url END,
+                     facebook_url  = CASE WHEN ${has('facebook_url')}::boolean  THEN ${blankToNull(body.facebook_url)}::text ELSE facebook_url END,
+                     notes         = CASE WHEN ${has('notes')}::boolean         THEN ${blankToNull(body.notes)}::text ELSE notes END
+               WHERE id = ${sourceId}
+                 AND deleted_at IS NULL
+              RETURNING id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes
+            `,
+          ]);
+        } catch (e) {
+          // Lost a race with another rename between the probe and the write.
+          if (e?.code === '23505' && newKey != null) {
+            const [hit] = await probeRename();
+            if (hit) return steer(hit);
+          }
+          throw e;
+        }
+        // Soft-deleted between the read and the write.
+        if (!updatedRows?.length) return resp(404, { error: 'Not found' });
+        return resp(200, updatedRows[0]);
       }
 
       return resp(405, { error: 'Method not allowed' });
