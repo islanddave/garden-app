@@ -434,6 +434,21 @@ export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibi
 // mutants: each is a cell of a table-driven unit test of src/lib/todayV2/triggers.js (S5 writes the module and
 // the test that reads this table). openAll / openNone stay as real-Chrome canaries (todayMutantsV2.mjs).
 // Each cell: inputs → the open set it must produce. `killedMutant` names the mutant the cell replaces.
+// ── FILTER × ACTION CELLS (review 4160.2 IMPORTANT-4; the orchestrator's call, 2026-09-29: pinned AS THEY BEHAVE,
+// no change). No gate state reaches either cell. Each predicate is pinned by the page test titled with its `cell` in
+// src/__tests__/TodayV2NeedsCare.test.jsx (real TodayV2, Dave's 09-24 plan); changing either is a design change,
+// made here and there in one commit.
+export const FILTER_ACTION_CELLS = [
+  {
+    cell: 'spot filter × group Water all',
+    predicate: 'Under a spot filter the group Water all counts only the spots the filter shows ("Water all 48 outside" under Trough + In-Ground). Its result is ONE group line, "Outside · watered N" with one Undo, that replaces the group button for the rest of the visit, filter cleared or not; every other spot of the group keeps its own Water all.',
+  },
+  {
+    cell: 'task filter × Not today',
+    predicate: 'Not today on a spot skips only the rows of the tasks the filter shows (plan §2.5): under Water, the spot\'s feed and check rows stay due, and the spot comes back live with them once the filter is cleared.',
+  },
+]
+
 export const TRIGGER_CELLS = [
   { cell: 'frost night opens Protect', plan: { lowRaw: 41.8, frostTonight: true, coldLevels: ['protect'] }, ack: null, expectOpen: ['protect'], killedMutant: 'openNone' },
   { cell: 'chill first seen opens Protect', plan: { lowRaw: 47, coldLevels: ['protect'] }, seen: 'unset', ack: null, expectOpen: ['protect'], killedMutant: 'openNone' },

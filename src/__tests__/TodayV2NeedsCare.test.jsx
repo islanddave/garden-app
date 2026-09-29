@@ -54,6 +54,7 @@ import { readSkipped } from '../components/today/careStore.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import { enrichRows } from '../lib/todayV2/spots.js'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
+import { FILTER_ACTION_CELLS } from '../../tests/harness/_todaymeasure/today-v2-contract.mjs'
 
 const PAYLOAD = F('dailyplan.dave.json')
 const PLANTS = (() => { const p = F('plants.json'); return Array.isArray(p) ? p : p.plants })()
@@ -589,5 +590,63 @@ describe('a failed /api/plants or /api/locations never builds a whole-garden spo
     expect(screen.getByTestId('today-page').getAttribute('data-today-ready')).toBe(null)
     expect(screen.queryByTestId('today-sec-care')).toBeNull()
     expect(document.querySelector('nav[aria-label="Today sections"]')).toBeNull()
+  })
+})
+
+// Review 4160.2 IMPORTANT-4 (integration 2; the orchestrator's call): the two filter × action cells, pinned AS THEY
+// BEHAVE — each predicate is stated in the contract (today-v2-contract.mjs FILTER_ACTION_CELLS) and each test here
+// carries its cell's name.
+describe('filter × action cells, as stated in the contract (review 4160.2 IMPORTANT-4)', () => {
+  const [SPOT_X_GROUP, TASK_X_NOTTODAY] = FILTER_ACTION_CELLS
+  const tasksRow = () => screen.getByTestId('care-filter-tasks')
+  const taskChip = (label) => [...tasksRow().querySelectorAll('button')].find((b) => b.textContent.trim() === label)
+  const spotChip = (label) => [...screen.getByTestId('care-filter-spots').querySelectorAll('button')].find((b) => b.textContent.trim().startsWith(label) && !b.textContent.trim().startsWith(label + '-'))
+  const groupLine = () => document.querySelector('[data-testid="care-group-done"][data-group="Outside"]')
+
+  it('names exactly the two cells', () => {
+    expect(FILTER_ACTION_CELLS.map((c) => c.cell)).toEqual(['spot filter × group Water all', 'task filter × Not today'])
+  })
+
+  it(`${SPOT_X_GROUP.cell}: the filtered spots only, ONE group line held for the visit, the other spots keep their own Water all`, async () => {
+    await mount()
+    fireEvent.click(spotChip('Trough')); await settle()
+    fireEvent.click(spotChip('In-Ground')); await settle()
+    const n = waterIn('Trough').length + waterIn('In-Ground').length
+    expect(n).toBe(48)
+    const group = document.querySelector('[data-testid="care-group-bulk"][data-group="Outside"]')
+    expect(group.getAttribute('aria-label')).toBe(`Water all ${n} outside`)
+    fireEvent.click(group); await settle()
+    const filtered = new Set([...waterIn('Trough'), ...waterIn('In-Ground')].map((r) => r.plantingId))
+    expect(wire.posts.length).toBe(n)
+    expect(wire.posts.every((b) => filtered.has(b.plant_id))).toBe(true)
+    expect(groupLine().textContent).toContain(`Outside · watered ${n}`)
+    // The filter cleared: the line holds, no group button comes back, every other Outside spot keeps its own button.
+    fireEvent.click(spotChip('Trough')); await settle()
+    fireEvent.click(spotChip('In-Ground')); await settle()
+    expect([...screen.getByTestId('care-filter-spots').querySelectorAll('button[aria-pressed="true"]')]).toEqual([])
+    expect(groupLine().textContent).toContain(`Outside · watered ${n}`)
+    expect(within(groupLine()).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([`Undo: Outside watered ${n}`])
+    expect(document.querySelector('[data-testid="care-group-bulk"][data-group="Outside"]')).toBeNull()
+    for (const s of ['Bag Area', 'Drive-Shade', 'Drive', 'Deck']) {
+      expect(spot(s).querySelector('[data-testid="care-spot-bulk"]').getAttribute('aria-label'), s).toBe(`Water ${waterIn(s).length === 1 ? '1' : 'all ' + waterIn(s).length} in ${s}`)
+    }
+  })
+
+  it(`${TASK_X_NOTTODAY.cell}: under Water, Not today skips only the spot's water rows; its feed row stays due`, async () => {
+    await mount()
+    fireEvent.click(taskChip('Water')); await settle()
+    expect(taskChip('Water').getAttribute('aria-pressed')).toBe('true')
+    const water = waterIn('Drive').map((r) => r.key)
+    const feed = ROWS.filter((r) => r.spotName === 'Drive' && r.task === 'feed').map((r) => r.key)
+    expect([water.length, feed.length]).toEqual([3, 1])
+    fireEvent.click(within(spot('Drive')).getByRole('button', { name: 'Not today: Drive' })); await settle()
+    expect([...readSkipped()].sort()).toEqual([...water].sort())
+    expect(doneLine('Drive').textContent).toContain('not today')
+    // The filter cleared: Drive is a live spot again holding its one feed row (its line says what was done: "Not
+    // today"), and Needs care counts everything but the three skipped water rows.
+    fireEvent.click(taskChip('Water')); await settle()
+    expect(spot('Drive').getAttribute('data-count')).toBe('1')
+    expect(readSkipped().has(feed[0])).toBe(false)
+    expect(screen.getByTestId('today-sec-care').getAttribute('data-count')).toBe(String(ROWS.length - 3))
   })
 })
