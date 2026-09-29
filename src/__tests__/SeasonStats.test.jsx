@@ -8,7 +8,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useParams } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -22,6 +22,7 @@ import { buildEnvelope, SECTION_IDS } from '../../lambda/harvests/season-stats-s
 
 const fixture = JSON.parse(readFileSync(resolve(process.cwd(), 'tests/fixtures/season-stats.v1.json'), 'utf8'))
 const draw = () => render(<MemoryRouter><SeasonStats /></MemoryRouter>)
+const EditTarget = () => <p data-testid="edit-target">{useParams().id}</p>
 const cardIds = () => screen.queryAllByTestId('stat-card').map(c => c.getAttribute('data-section'))
 
 beforeEach(() => { fetchSpy.mockReset() })
@@ -136,6 +137,34 @@ describe('SeasonStats', () => {
     const sellerRow = within(within(card).getByTestId('source-report')).getByText('Seller not recorded').closest('li')
     expect(sellerRow.textContent).toContain('96 plantings')
     expect(card.textContent).not.toMatch(/No source recorded|(^|[^:] )Not recorded/)
+  })
+
+  // QA 2026-09-29: the only way to /sources/:id was a saved-seed card, so a source with no saved lot
+  // (High Mowing) could never gain its Instagram. Every named row in the report now has "Edit".
+  it('each named source row has an Edit link to /sources/:id; the seller-not-recorded row has none', async () => {
+    fetchSpy.mockResolvedValue(fixture)
+    render(
+      <MemoryRouter initialEntries={['/season-stats']}>
+        <Routes>
+          <Route path="/season-stats" element={<SeasonStats />} />
+          <Route path="/sources/:id" element={<EditTarget />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const report = await screen.findByTestId('source-report')
+    const rows = within(report).getAllByTestId('source-row')
+    const named = fixture.sections.sources.series.cards.filter(c => c.source_id != null)
+    const edits = within(report).getAllByTestId('source-row-edit')
+    expect(edits).toHaveLength(rows.length - 1)
+    for (const a of edits) {
+      expect(a.textContent).toBe('Edit')
+      expect(a.style.minHeight).toBe('44px')
+      expect(a.style.minWidth).toBe('44px')
+    }
+    expect(within(rows[rows.length - 1]).queryByTestId('source-row-edit')).toBeNull()
+    const hm = named.find(c => c.name === 'High Mowing Organic Seeds')
+    fireEvent.click(within(report).getByRole('link', { name: 'Edit High Mowing Organic Seeds' }))
+    expect((await screen.findByTestId('edit-target')).textContent).toBe(hm.source_id)
   })
 
   it('the source report folds sources under 2 lb behind "N more sources"', async () => {
