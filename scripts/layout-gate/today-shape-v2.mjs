@@ -419,10 +419,11 @@ const CHECKERS = {
   },
   // Interaction-driven families run in the interaction phase below; here they only have to exist.
   interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {}, 'chip-census': () => {},
-  'spot-retry': () => {},
+  'spot-retry': () => {}, announce: () => {},
 }
-// The writes run last (group-water-all, then S4g's spot-retry), each undoing itself before the next.
-const INTERACTION_FAMILIES = ['interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry']
+// The writes run last (group-water-all, then S4g's spot-retry), each undoing itself before the next; S4g's filter
+// announcements after them (they leave filters pressed).
+const INTERACTION_FAMILIES = ['interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry', 'announce']
 
 // S3 chip census, measured in the page at normal text and at 200% (WCAG 1.4.4 resize text; Android's font scaling
 // reaches the rem-sized labels the same way). Restores the root font size before it returns.
@@ -588,8 +589,47 @@ async function runInteractions(state, checks, at) {
     } else if (c.family === 'spot-retry') {
       await spotRetry(c, at, F)
       await evalSettled('window.__h.failPosts(0)')
+    } else if (c.family === 'announce') {
+      await announceRun(c, at, F)
     }
   }
+}
+
+// S4g (§2.6 / §5.6): each filter change says its result ONCE through the page's one status region; a re-render that
+// changes no filter says nothing. A MutationObserver on today-status counts every WRITE — one per record, not per
+// callback (two writes in one task arrive in one callback); a same-text rewrite is a write too, and is re-spoken.
+// `announce` judges the words, `announce-once` the count.
+async function announceRun(c, at, F) {
+  const status = `[data-testid="today-status${SUFFIX}"]`
+  const row = (r) => `[data-testid="care-filter-${r}${SUFFIX}"]`
+  // Start from no filter (earlier families leave some pressed), THEN watch.
+  const reset = await evalSettled(`(async () => { const wait = () => new Promise(r => setTimeout(r, 120))
+    for (const q of ${JSON.stringify([row('tasks'), row('spots')])}) { const clear = [...document.querySelectorAll(q + ' button')].find(b => b.textContent.trim() === 'Clear'); if (clear) { clear.click(); await wait() } }
+    const s = document.querySelector(${JSON.stringify(status)}); if (!s) return 'no status region (today-status)'
+    if (!document.querySelector(${JSON.stringify(row('tasks'))})) return 'no task filter row (care-filter-tasks) — is Needs care open?'
+    window.__s4gAnn = []; window.__s4gObs = new MutationObserver((recs) => { for (const r of recs) if (r.type === 'characterData' || r.addedNodes.length) window.__s4gAnn.push((s.textContent || '').trim()) })
+    window.__s4gObs.observe(s, { childList: true, characterData: true, subtree: true }); return null })()`)
+  if (reset) { F(`could not start: ${reset}`); return }
+  const said = []
+  for (const step of c.steps) {
+    const act = step.press ? `(() => { const [r, label] = ${JSON.stringify(step.press)}.split(':'); const b = [...document.querySelectorAll('[data-testid="care-filter-' + r + '${SUFFIX}"] button[aria-pressed]')].find(x => x.textContent.trim() === label); if (!b) return 'no ' + r + ' chip "' + label + '"'; b.click(); return null })()`
+      : step.clear ? `(() => { const b = [...document.querySelectorAll('[data-testid="care-filter-${step.clear}${SUFFIX}"] button')].find(x => x.textContent.trim() === 'Clear'); if (!b) return 'no Clear on the ${step.clear} row'; b.click(); return null })()`
+        : step.jump ? `(() => { const b = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"] [data-chip="${step.jump}"]'); if (!b) return 'no jump chip ${step.jump}'; b.click(); return null })()`
+          : `(async () => { const b = document.querySelector(${JSON.stringify(selectorFor(step.quiet, SUFFIX))}); if (!b) return 'no ${step.quiet} to open'; b.click(); await new Promise(r => setTimeout(r, 150)); b.click(); return null })()`
+    const n0 = await evalSettled('window.__s4gAnn.length')
+    const miss = await evalSettled(act)
+    if (miss) { F(`VOID at ${JSON.stringify(step)}: ${miss}`); break }
+    await evalSettled('new Promise(r => setTimeout(r, 400))')
+    const got = await evalSettled(`({ n: window.__s4gAnn.length, text: (document.querySelector(${JSON.stringify(status)}).textContent || '').trim() })`)
+    const wrote = got.n - n0
+    if (step.say) {
+      said.push(got.text)
+      if (got.text !== step.say) fail(at, 'announce', `after ${JSON.stringify(step)} the status region says "${got.text}", expected "${step.say}" (§2.6)`)
+      if (wrote !== 1) fail(at, 'announce-once', `${JSON.stringify(step)} wrote the status region ${wrote}x, expected exactly once (once per filter change, not per render)`)
+    } else if (wrote !== 0) fail(at, 'announce-once', `${JSON.stringify(step)} changed no filter but wrote the status region ${wrote}x ("${got.text}") — a filter result is said per change, never per render`)
+  }
+  await evalSettled('(window.__s4gObs && window.__s4gObs.disconnect(), 1)')
+  console.log(`[today-shape-v2] ${at}: announce · ${said.map((s) => `"${s}"`).join(' · ')}`)
 }
 
 // S4g (MF3 "failures stay per spot 'Not logged · Retry'"): the group Water all with its first `c.fail` writes

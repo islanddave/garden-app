@@ -145,6 +145,19 @@ export const STATES = [
       // the glance's rows count from S3 and S4–S6's rows join as they land. S4's lane carried its own S4-scoped
       // copy of this check (armed at S4 alone); merged, the two counted the same rows, so this one is kept.
       { family: 'region-headcount', armedAt: 'S3', why: 'every ARMED REGIONS_V2 row owned by v2-frost, counted after its owner is opened' },
+      // S4g (§2.6 / §5.6): each filter change — a task chip, a spot chip, either Clear, a jump chip's pre-select —
+      // says its result ONCE through today-status; opening and closing a spot (a re-render, no filter change) says
+      // nothing. Words on the 09-24 plan (the plan's own example first). Files `announce` (the words) and
+      // `announce-once` (writes counted by a MutationObserver). `jump` is S3's chip, so the check names S3 too.
+      { family: 'announce', armedAt: ['S3', 'S4g'], steps: [
+        { press: 'tasks:Water', say: 'Needs care: Water, 168 in 8 spots.' },
+        { press: 'tasks:Feed', say: 'Needs care: Water and Feed, 226 in 9 spots.' },
+        { quiet: 'spot:Trough' },
+        { clear: 'tasks', say: 'Needs care: everything, 233 in 9 spots.' },
+        { press: 'spots:Bag Area', say: 'Needs care: Bag Area, 141 in 1 spot.' },
+        { clear: 'spots', say: 'Needs care: everything, 233 in 9 spots.' },
+        { jump: 'check', say: 'Needs care: Check, 7 in 2 spots.' },
+      ], why: '§2.6: "Needs care: Water, 168 in 8 spots." — once per filter change, not per render' },
     ],
   },
   {
@@ -346,8 +359,8 @@ export const SHELL = [
 
 // ── MUTANT KILLER FAMILIES (§9.1) and the trigger TABLE that replaced the trigger-predicate mutants ──────
 export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore', 'jump-focus',
-  // S4g: MF3's failure round trip, §5.5's focus after it, §5.6's status region.
-  'spot-retry', 'retry-focus', 'announce']
+  // S4g: MF3's failure round trip, §5.5's focus after it, §5.6's status region (its words, and once per change).
+  'spot-retry', 'retry-focus', 'announce', 'announce-once']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome

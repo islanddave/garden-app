@@ -335,7 +335,8 @@ describe('S4g: a filter change says its result once, through the one status regi
   const pressIn = (row, label) => [...screen.getByTestId(row).querySelectorAll('button[aria-pressed]')].find((b) => b.textContent.trim() === label)
   const watch = () => {
     const log = []
-    const mo = new MutationObserver(() => log.push(statusEl().textContent))
+    // One entry per WRITE (per record): two writes in one task arrive in a single callback.
+    const mo = new MutationObserver((recs) => { for (const r of recs) if (r.type === 'characterData' || r.addedNodes.length) log.push(statusEl().textContent) })
     mo.observe(statusEl(), { childList: true, characterData: true, subtree: true })
     return { log, stop: () => mo.disconnect() }
   }

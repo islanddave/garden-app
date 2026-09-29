@@ -87,8 +87,14 @@ describe('today-v2 contract table', () => {
     expect(busy).toHaveLength(1)
     expect(busy[0]).toMatchObject({ armedAt: 'S4g', group: 'Outside', fail: 2 })
     expect(isArmed(busy[0])).toBe(true)
+    // §2.6's announcement, on v2-frost (its jump step is S3's chip): the plan's own sentence first.
+    const ann = STATES.find((s) => s.name === 'v2-frost').checks.filter((c) => c.family === 'announce')
+    expect(ann).toHaveLength(1)
+    expect(ann[0].armedAt).toEqual(['S3', 'S4g'])
+    expect(ann[0].steps[0]).toEqual({ press: 'tasks:Water', say: 'Needs care: Water, 168 in 8 spots.' })
+    expect(ann[0].steps.some((s) => s.quiet)).toBe(true)
     const s4g = Object.entries(MUTANTS_V2).filter(([, m]) => [].concat(m.armedAt).includes('S4g'))
-    expect(s4g.map(([n]) => n)).toEqual(expect.arrayContaining(['dropSpotRetry', 'retryNewBatch', 'spotShareIsGroupTotal']))
+    expect(s4g.map(([n]) => n)).toEqual(expect.arrayContaining(['dropSpotRetry', 'retryNewBatch', 'spotShareIsGroupTotal', 'noFilterAnnouncement', 'announceEveryRender']))
     for (const [n, m] of s4g) { expect(m.file && m.find, n).toBeTruthy(); expect(new Set(m.killers).size, n).toBeGreaterThanOrEqual(2) }
   })
   it('keeps every trigger-predicate mutant as a unit-table cell (Simplify 3), never silently dropped', () => {
