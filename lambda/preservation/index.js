@@ -34,6 +34,9 @@ import { kitchenErrorMessage } from './kitchenBatch.js';
 // the same reason the kitchen routes do: this file loads @neondatabase/serverless and
 // @clerk/backend at module scope and therefore cannot be imported by vitest.
 import { handleSourceRoute, sourceErrorMessage } from './sourceRoutes.js';
+// Put-Up release 1b — PATCH /api/preservation/:id and POST /api/preservation/:id/move, importable for
+// the same reason (see jarRoutes.js's header).
+import { handleJarRoute } from './jarRoutes.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
 
@@ -237,6 +240,12 @@ export const handler = async (event) => {
       householdIds,
     });
     if (sources) return resp(sources.status, sources.body);
+
+    // ── PATCH /api/preservation/:id and POST /api/preservation/:id/move (Put-Up release 1b),
+    //    delegated. parseJarRoute claims only a uuid-shaped id, and handleJarRoute returns null for
+    //    every verb on /:id that is not PATCH, so GET / PUT / DELETE below are reached unchanged.
+    const jar = await handleJarRoute({ sql, rawPath, method, rawBody: event.body, userId, householdIds });
+    if (jar) return resp(jar.status, jar.body);
 
     // ── Literal sub-routes, checked BEFORE /api/preservation/:id so 'whats-put-up' / 'use-soon'
     //    are not mis-parsed as a row id (mirrors the inventory-items SEEDINV precedent). ──
@@ -736,7 +745,7 @@ export const handler = async (event) => {
             WHERE idempotency_key = ${body.idempotency_key}::uuid
               AND user_id = ANY(${householdIds})
           `;
-          if (!prior.length) return resp(409, { error: 'That key is already in use.', code: 'key_in_use' });
+          if (!prior.length) return resp(409, { error: 'That key is already in use.', code: 'key_conflict' });
           return resp(200, { ...prior[0], replayed: true });
         }
         throw err;

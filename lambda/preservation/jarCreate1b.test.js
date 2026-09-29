@@ -147,7 +147,7 @@ describe('POST /api/preservation — what 1b writes', () => {
     }
     const res = parse(await handler(post(base({ idempotency_key: KEY }))))
     expect(res.status).toBe(409)
-    expect(res.body).toEqual({ error: 'That key is already in use.', code: 'key_in_use' })
+    expect(res.body).toEqual({ error: 'That key is already in use.', code: 'key_conflict' })  // contract-F §2 common
   })
 
   it('a 23505 on any OTHER constraint is not a replay', async () => {
