@@ -16,6 +16,8 @@ import GlanceCard from '../components/today/v2/GlanceCard.jsx'
 import JumpBar, { JUMP_BAR_HEIGHT_PX } from '../components/today/v2/JumpBar.jsx'
 import ProtectTonight from '../components/today/v2/ProtectTonight.jsx'
 import { useProtect } from '../components/today/v2/useProtect.js'
+import HeadsUp from '../components/today/v2/HeadsUp.jsx'
+import { useHeadsUp } from '../components/today/v2/useHeadsUp.js'
 import { handledSummary } from '../lib/todayV2/protect.js'
 import { openAtStart } from '../lib/todayV2/triggers.js'
 import { CHIPS, taskCounts, liveChips, shownChips } from '../lib/todayV2/chips.js'
@@ -116,10 +118,12 @@ export default function TodayV2() {
   // point). Its rows are every cold row — the household's too when this person has the household view on (SF6);
   // Needs care never lists one. Needs care's rows weight its spot order, so both sections list spots alike.
   const protect = useProtect({ plan, planDate, userId, stale, householdPlans: data?.household_plans, careRows: needs.allEnriched })
+  // S5: Heads-up (storage windows) reads /api/plants and the device date — plan-independent, never stale.
+  const headsup = useHeadsUp()
   const statusRef = useRef(null)
   const announce = useCallback((msg) => { if (statusRef.current) statusRef.current.textContent = msg }, [])
   const resting = useMemo(() => (Array.isArray(plan?.dormant) ? plan.dormant.filter(Boolean) : []), [plan])
-  const present = useMemo(() => SECTION_ORDER.filter((k) => (k === 'protect' && protect.count > 0) || (k === 'care' && care.length > 0) || (k === 'resting' && resting.length > 0)), [protect.count, care.length, resting.length])
+  const present = useMemo(() => SECTION_ORDER.filter((k) => (k === 'protect' && protect.count > 0) || (k === 'headsup' && headsup.count > 0) || (k === 'care' && care.length > 0) || (k === 'resting' && resting.length > 0)), [protect.count, headsup.count, care.length, resting.length])
 
   // ── the glance card's weather: computed exactly as V1's Today.jsx computes it, so the two pages cannot
   // disagree — the live rain overlay (display only), the one low per night (V5-FROSTTWOMODELS-001), the frost
@@ -164,15 +168,17 @@ export default function TodayV2() {
   // and the small-pot trigger read them, and a snapshot taken before they land would be keyed differently.
   // S5: Protect reads the same two requests (+ the roster when a household row needs a name) — with no plan too,
   // since the household's cold rows can make Protect exist on their own.
+  // protect.settled covers Heads-up's one request (/api/plants) as well.
   const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver) && (!plan || needs.settled) && protect.settled
 
   const { record, isOpen, tap, overlayAll, update, setFilter } = useTodayVisit({
     userId, planDate, ready,
     start: () => {
       // §3 + MF1 — ONE evaluation (triggers.js openAtStart): Protect tonight (frost / hard freeze / a chill
-      // planting's first night), Needs care (never / hot / small) each open by themselves unless a close made
-      // today already covers their trigger; the descriptors are kept so a close now records the ack.
-      const opened = openAtStart({ present, planDate, resolve: layer1.resolve, triggers: { protect: protect.trigger, care: needs.trigger } })
+      // planting's first night), Heads-up (a storage window's first day, its last two days), Needs care (never /
+      // hot / small) each open by themselves unless a close made today already covers their trigger; the
+      // descriptors are kept so a close now records the ack.
+      const opened = openAtStart({ present, planDate, resolve: layer1.resolve, triggers: { protect: protect.trigger, headsup: headsup.trigger, care: needs.trigger } })
       return {
         order: { sections: present, chips: live },
         layer1: {
@@ -263,6 +269,7 @@ export default function TodayV2() {
   // S5: the urgency cue (severity.med) only when a trigger opened Protect this visit; the words are the night's
   // ("Before dark · low 42°F · Lemon Verbena, Sweet Basil +3"). Emptied mid-visit: what this visit did.
   const protectUrgent = !!record?.triggers?.protect && record?.overlay?.protect === 'open'
+  const headsupUrgent = !!record?.triggers?.headsup && record?.overlay?.headsup === 'open'
   const SECTIONS = {
     protect: {
       title: 'Protect tonight',
@@ -271,6 +278,14 @@ export default function TodayV2() {
         ? (protectUrgent ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{protect.summary}</> : protect.summary)
         : handledSummary(record?.protect),
       body: <ProtectTonight protect={protect} record={record} update={update} announce={announce} />,
+    },
+    headsup: {
+      title: 'Heads-up',
+      count: headsup.count || null,
+      summary: headsupUrgent && headsup.summary
+        ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{headsup.summary}</>
+        : headsup.summary,
+      body: <HeadsUp headsup={headsup} record={record} update={update} />,
     },
     care: {
       title: care.length ? 'Needs care' : needs.caughtUp.title,
