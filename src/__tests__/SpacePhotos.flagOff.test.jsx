@@ -126,8 +126,9 @@ describe('flag OFF — the /space routes are ABSENT from the table, not merely r
     // 57 -> 58: V5-SEEDSTAB-001 adds /seeds, the ONE Seeds page — unconditional, so it moves the
     // flag-OFF count by one exactly as it moves the flag-ON count. /sow and /seeds/saved stay in
     // the table as redirects into it, so this is +1, not a swap.
-    expect(paths).toHaveLength(58)
-    expect(new Set(paths).size).toBe(58)
+    // 58 -> 59: /season-end (End of season), not flag-gated.
+    expect(paths).toHaveLength(59)
+    expect(new Set(paths).size).toBe(59)
   })
 
   it('adds NO route to the overlay tree either', async () => {

@@ -54,6 +54,10 @@ export const MORE_ROWS = [
   // the one shape that orphans the armed Back entry.
   { id: 'catch-up',   to: '/plants/catch-up', label: 'Catch up', section: 'garden',
     enabled: CATCH_UP_EDITOR_SHIPPED, pinnable: false, component: 'catchUpBadge' },
+  // End of season — the ONLY door to /season-end. Last in Your garden so no existing row moves within
+  // its section; the icon is the Ended status glyph, the status this page sets.
+  { id: 'season-end', to: '/season-end', label: 'End of season', iconName: 'status.ended', section: 'garden',
+    sub: 'Close out finished plantings' },
   { id: 'collection', to: '/collection', label: 'Critters',  iconName: 'nav.critters',   section: 'rewards',
     sub: "Who's been visiting" },
   { id: 'helper',     to: '/helper',     label: 'Garden Helper', iconName: 'nav.helper',  section: 'help' },

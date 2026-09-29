@@ -7,10 +7,15 @@
 //
 // Not doors: the ＋ slot (a button that opens the create sheet) and, in field mode, the mic → /field,
 // which BottomNav.navConfig.test.jsx pins on its own.
+//
+// ADDED SINCE THE CENSUS — a new door is also a decision made in the open, so each one is listed at
+// its place in the sheet with the change that added it:
+//   /season-end — End of season (lane seasonend-20260929), last row of Your garden.
 export const SHIPPED_TAB_HREFS = ['/today', '/garden', '/harvests', '/put-up']
 
 // In the sheet's shipped order (SPACE_PHOTOS_ENABLED on, CATCH_UP_EDITOR_SHIPPED off).
 export const SHIPPED_MORE_HREFS = [
   '/dashboard', '/findings', '/photos', '/space', '/locations', '/inventory', '/seeds', '/achievements',
+  '/season-end',
   '/collection', '/helper', '/settings', '/settings/controls', '/about', '/releases', '/admin',
 ]

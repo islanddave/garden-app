@@ -90,8 +90,9 @@ describe('flag ON — the /space routes appear', () => {
     // together and the delta stays 2.
     // 59 -> 60: V5-SEEDSTAB-001 adds /seeds (see the flag-OFF counterpart, which moves 57 -> 58 for
     // the same route). /sow and /seeds/saved stay as redirects, so this is +1, flag-independent.
-    expect(paths).toHaveLength(60)
-    expect(new Set(paths).size).toBe(60)
+    // 60 -> 61: /season-end (End of season), not flag-gated.
+    expect(paths).toHaveLength(61)
+    expect(new Set(paths).size).toBe(61)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {
@@ -146,8 +147,9 @@ describe('flag ON — the More sheet gains a Space row and disambiguates the zon
       const label = JSON.stringify(more_pins)
       const pinned = [...(screen.queryByTestId('more-pinned')?.querySelectorAll('[data-more-row]') ?? [])].map(r => r.getAttribute('data-more-row'))
       const home = [...document.querySelectorAll('[data-more-row]')].map(r => r.getAttribute('data-more-row')).filter(id => !pinned.includes(id))
+      // 'season-end' (End of season) is the last Your garden row, after achievements.
       const expectedHome = ['dashboard', 'findings', 'photos', 'space', 'locations', 'inventory', 'seeds', 'achievements',
-        'collection', 'helper', 'settings', 'settings-controls', 'about', 'releases', 'admin'].filter(id => !pinned.includes(id))
+        'season-end', 'collection', 'helper', 'settings', 'settings-controls', 'about', 'releases', 'admin'].filter(id => !pinned.includes(id))
       expect(home, label).toEqual(expectedHome)
       expect(document.querySelectorAll('a[href="/space"]'), label).toHaveLength(1)
       // Sign out is the last control in the sheet.

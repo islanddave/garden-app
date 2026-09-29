@@ -29,6 +29,7 @@ import PhotoLibrary from './pages/PhotoLibrary.jsx'
 import RecentlyDeleted from './pages/RecentlyDeleted.jsx'
 import Favorites from './pages/Favorites.jsx'
 import ArchivedPlantings from './pages/ArchivedPlantings.jsx'
+import SeasonEnd from './pages/SeasonEnd.jsx'
 import ProjectTypes from './pages/ProjectTypes.jsx'
 import Garden from './pages/Garden.jsx'
 import FeedPage from './pages/FeedPage.jsx'
@@ -362,6 +363,10 @@ export function renderRoutes({ overlay, user, loading }) {
     // left to ranking rules a future edit might not know about. Boundaried like its data-fetching
     // siblings: this is a recovery surface, so it is the worst place to white-screen the PWA.
     { path: '/plantings/archived', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><ArchivedPlantings /></ErrorBoundary></Protected> },
+    // End of season — close out the plantings a frost finishes. Its only door is the More row of the
+    // same name (moreRegistry.js): an installed PWA has no address bar, so the two ship together. A
+    // page, not `overlayable`: a list Dave works through, with its own sticky bar and confirm sheet.
+    { path: '/season-end',    element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><SeasonEnd /></ErrorBoundary></Protected> },
     { path: '/plantings/:plantingId', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><PlantingDetail /></ErrorBoundary></Protected> },
     { path: '/varieties/:varietyId/edit', element: <Protected><ErrorBoundary scope="route" fallback={<RouteFallback />}><VarietyEdit /></ErrorBoundary></Protected> },
     { path: '/projects/:id/events/:eventId', element: <ScopedEventRedirect /> },
