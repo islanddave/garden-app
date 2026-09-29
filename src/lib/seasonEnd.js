@@ -245,9 +245,11 @@ export async function runPool(items, worker, { concurrency = WRITE_CONCURRENCY, 
 
 export const progressLine = (verb, done, total) => `${verb} ${Math.min(done + 1, total)} of ${total}…`
 
-// After a batch: what the bar says. Today reads an hourly stored plan, so the copy says the rows leave
-// Today's list within the hour — it does not claim they already left.
-export const TODAY_LAG_LINE = "They leave Today's list within the hour."
+// After a batch: what the bar says. Today reads a stored plan that runs hourly only by day (cron
+// 0 0-1,3,5,9-23 UTC, deploy-lambda.yml: hourly to 9 pm EDT, then 11 pm and 1 am, then 5 am), so the
+// wait is up to 2 h in the evening and 4 h overnight. The copy says the rows leave Today's list at its
+// next update — it does not claim they already left, nor that it happens within the hour.
+export const TODAY_LAG_LINE = "They leave Today's list at its next update, within a few hours."
 
 export function endResultLine(landed, failed) {
   if (landed === 0) return "Couldn't end these. Check your signal and try again."

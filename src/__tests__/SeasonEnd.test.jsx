@@ -219,9 +219,10 @@ describe('the writes', () => {
     // Saved rows leave the list; the toast and the bar say so without claiming Today already changed.
     expect(screen.queryAllByTestId('season-end-row')).toEqual([])
     expect(toastApi.showUndo).toHaveBeenCalledTimes(1)
-    expect(toastApi.showUndo.mock.calls[0][0]).toMatchObject({ message: 'Ended 4 plantings', detail: 'They leave Today’s list within the hour.'.replace('’', "'") })
+    // The plan runs hourly only by day (up to 4 h apart overnight), so the copy promises the next update.
+    expect(toastApi.showUndo.mock.calls[0][0]).toMatchObject({ message: 'Ended 4 plantings', detail: "They leave Today's list at its next update, within a few hours." })
     expect(screen.getByTestId('season-end-result').textContent).toContain('Ended 4 plantings.')
-    expect(screen.getByTestId('season-end-result').textContent).toContain("They leave Today's list within the hour.")
+    expect(screen.getByTestId('season-end-result').textContent).toContain("They leave Today's list at its next update, within a few hours.")
     expect(screen.getByTestId('season-end-undo')).toBeTruthy()
     expect(invalidateSpy).toHaveBeenCalledWith('/api/plants')
   })

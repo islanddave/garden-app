@@ -21,7 +21,8 @@
 // rows come back ticked, as they were before End. A put-back that fails keeps Undo offered for exactly
 // the rows still ended, and the bar names them when there are five or fewer.
 //
-// Today reads an hourly stored plan, so the copy says ended rows leave Today's list within the hour.
+// Today reads a stored plan that runs hourly only by day, so the copy says ended rows leave Today's list
+// at its next update, within a few hours (TODAY_LAG_LINE).
 //
 // REWARD UX: a task surface. No celebration, no tally, no badges — the toast is the operational
 // carve-out (ToastContext.jsx).
