@@ -1,7 +1,9 @@
-// Garden's group-by: the options its control offers. BUG-GARDENGROUPBYRESET-001 moved this out of
-// src/pages/Garden.jsx (not in coverage.include) so it is measured, and so lambda/critter/groupby.parity.test.js
-// can enumerate the REAL option set against both allow-lists instead of a copy of it — a copy is how Type
-// ('crop_type') went missing from both lists without any test noticing.
+// Garden's group-by: the options its control offers, and how a choice persists across visits and devices.
+// BUG-GARDENGROUPBYRESET-001 moved both out of src/pages/Garden.jsx (not in coverage.include) so they are
+// measured, and so lambda/critter/groupby.parity.test.js can enumerate the REAL option set against both
+// allow-lists instead of a copy of it — a copy is how Type ('crop_type') went missing from both lists
+// without any test noticing.
+import { clearGroupByPending } from './projectTree.js'
 
 // The tag facets, in the order the control lists them.
 export const GARDEN_TAG_FACETS = ['type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform']
@@ -50,3 +52,63 @@ export function buildGardenFacetOptions(tagMap, projectsHidden) {
   }
   return opts
 }
+
+// ── Keeping the choice ────────────────────────────────────────────────────────────────────────────────
+//
+// Dave, 2026-09-29: "It should ALWAYS remember my last grouping." Two copies carry a choice: the local one
+// (projectTree.js loadGroupBy/saveGroupBy) paints Garden's first frame, and the server one
+// (user_notification_prefs.garden_group_by) carries it to another device. Every Garden mount reads the
+// server copy once, and before this fix it simply ADOPTED it — after the scroll restore, so the list
+// regrouped and the spot went with it. Adopting was only safe while the server copy was never older than
+// the local one, and it was older every time a save did not land.
+//
+// THE RULE: THE USER'S CHOICE WINS UNTIL ITS SAVE IS CONFIRMED. A pick is stored locally and marked pending
+// (projectTree.js) BEFORE its PATCH goes out, and the marker comes off only when that PATCH answers ok.
+// Dave works in the garden on a weak radio, where a save routinely never lands; with the marker on, a
+// mount keeps the local choice and sends it again instead of reading the server's older value as news.
+
+// api.js's service-worker offline-cache marker, read through the global Symbol registry — the
+// dependency-free seam dataCache.js and NavPrefsContext.jsx use, so this module never imports api.js.
+const FROM_CACHE = Symbol.for('garden-app.fromCache')
+export const servedFromCache = (body) => !!body && typeof body === 'object' && body[FROM_CACHE] === true
+
+// What one Garden mount does with the prefs body's garden_group_by, in precedence order:
+//   { action: 'resend', value } — this person has a choice waiting: the local value stands and goes out again.
+//                                 Never adopt here, whatever the server says: its copy is the older one.
+//   { action: 'keep' }          — the body came from the service worker's cache (it can predate a choice this
+//                                 device already confirmed, and it answers exactly when the radio is out),
+//                                 or the server value is unset, EQUAL to the local one (no state write, so
+//                                 no regroup), or one Garden cannot offer right now.
+//   { action: 'adopt', value }  — nothing waiting here and a different value Garden can show: another
+//                                 device's choice. This one does regroup, once; it is the cross-device sync.
+// `offerable` is the control's current option values. A tag facet is offerable only once the tag map has
+// landed, so a server tag-facet choice that arrives first is kept out, never half-applied as a fallback.
+export function decideGroupByHydrate({ local, pending, server, fromCache = false, offerable = [] }) {
+  if (typeof pending === 'string' && pending) return { action: 'resend', value: pending }
+  if (fromCache) return { action: 'keep' }
+  if (typeof server !== 'string' || !server || server === local) return { action: 'keep' }
+  if (!offerable.includes(server)) return { action: 'keep' }
+  return { action: 'adopt', value: server }
+}
+
+// Send `value` through `save` (a reported saver: resolves { ok } — saveGardenGroupBy) and clear this
+// person's pending marker when, and only when, the server has confirmed THIS value.
+//
+// A SAVE THAT OVERLAPPED ANOTHER NEVER CONFIRMS. Two PATCHes in flight can be applied in either order (two
+// Lambda instances, a retransmit on a weak radio), so an ok for the newer one does not prove the server
+// ended on it — the older one may have landed after it. Neither clears the marker then; it stays, and the
+// next mount re-sends the choice on its own. Module state because a save outlives the Garden that started
+// it (the tab is left mid-save) and the next mount's re-send must see it.
+const onTheWire = new Set()
+export async function sendGroupByChoice({ save, user, value }) {
+  const flight = { overlapped: onTheWire.size > 0 }
+  for (const other of onTheWire) other.overlapped = true
+  onTheWire.add(flight)
+  let res = null
+  try { res = await save(value) } catch { res = null } finally { onTheWire.delete(flight) }
+  if (res?.ok === true && !flight.overlapped) clearGroupByPending(user, value)
+  return res
+}
+
+// Test seam: the set is module state and vitest does not reset modules between cases in a file.
+export function __resetGroupBySends() { onTheWire.clear() }

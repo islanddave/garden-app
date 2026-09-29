@@ -381,6 +381,44 @@ export function saveGroupBy(value) {
   try { localStorage.setItem(GROUPBY_KEY, value) } catch { /* private mode / quota — non-fatal */ }
 }
 
+// BUG-GARDENGROUPBYRESET-001 — a group-by choice the server has not confirmed yet. Written BEFORE its PATCH
+// goes out and removed only by that PATCH's confirmation (sendGroupByChoice in gardenGroupBy.js), so a save
+// lost to a dead zone or an app close is re-sent by the next Garden mount instead of being overwritten there
+// by the server's older value. Stamped with WHOSE choice it is (the Clerk sub), as NavPrefsContext stamps its
+// pending pins: on a shared phone, one person's unsent choice must never be PATCHed onto the next person's
+// row with their token. A record for anyone else reads as nothing pending.
+const GROUPBY_PENDING_KEY = 'garden.groupBy.pending'
+export function loadGroupByPending(user) {
+  try {
+    const rec = JSON.parse(localStorage.getItem(GROUPBY_PENDING_KEY))
+    return rec && rec.user === (user ?? null) && typeof rec.value === 'string' ? rec.value : null
+  } catch { return null }
+}
+export function saveGroupByPending(user, value) {
+  try { localStorage.setItem(GROUPBY_PENDING_KEY, JSON.stringify({ user: user ?? null, value })) } catch { /* non-fatal */ }
+}
+// Compare-and-clear: a confirmation of an OLDER choice must not clear a newer one still waiting.
+export function clearGroupByPending(user, value) {
+  try { if (loadGroupByPending(user) === value) localStorage.removeItem(GROUPBY_PENDING_KEY) } catch { /* non-fatal */ }
+}
+
+// ONE-TIME, per device. No build before this one could get these values onto the server — the client
+// refused 'crop_type' (Type) and the Lambda refused the bean facets — so one of them stored locally by an
+// earlier build is by construction a choice that was never confirmed. Marking it pending keeps it through the
+// first Garden mount after the update, where the server's older value would otherwise overwrite it one last
+// time. The checked flag makes this a single pass: after it, a stored 'crop_type' may be a confirmed choice
+// or another device's, and must be treated like any other value.
+const GROUPBY_LEGACY_UNSENDABLE = ['crop_type', 'bean_type', 'bean_habit', 'bean_use']
+const GROUPBY_LEGACY_CHECKED_KEY = 'garden.groupBy.legacyChecked'
+export function markLegacyGroupByPending(user) {
+  try {
+    if (localStorage.getItem(GROUPBY_LEGACY_CHECKED_KEY)) return
+    localStorage.setItem(GROUPBY_LEGACY_CHECKED_KEY, '1')
+    const stored = localStorage.getItem(GROUPBY_KEY)
+    if (GROUPBY_LEGACY_UNSENDABLE.includes(stored) && localStorage.getItem(GROUPBY_PENDING_KEY) == null) saveGroupByPending(user, stored)
+  } catch { /* non-fatal: the first mount simply behaves as before this build */ }
+}
+
 
 // V4: group plantings by lifecycle STAGE (plant.status: seed->seedling->...->ended). Not a tag
 // facet — status is a first-class plant field. Groups order by PLANT_STATUSES (the canonical

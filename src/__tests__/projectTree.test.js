@@ -4,6 +4,7 @@ import {
   loadExpanded, saveExpanded,
   byName, applyNameSort, loadSortOrder, saveSortOrder, SORT_RECENCY, SORT_ALPHA, buildTagGroupedList,
   NO_PROJECT_ID, cropTypeLabel,
+  loadGroupBy, saveGroupBy, loadGroupByPending, saveGroupByPending, clearGroupByPending, markLegacyGroupByPending,
 } from '../lib/projectTree.js'
 
 const PROJECTS = [
@@ -210,6 +211,79 @@ describe('loadExpanded / saveExpanded', () => {
   it('returns empty set on corrupt storage', () => {
     localStorage.setItem('garden.expanded.v1', '{not json')
     expect(loadExpanded().size).toBe(0)
+  })
+})
+
+// BUG-GARDENGROUPBYRESET-001 — the group-by choice the server has not confirmed yet.
+describe('loadGroupByPending / saveGroupByPending / clearGroupByPending', () => {
+  beforeEach(() => { localStorage.clear() })
+  it('nothing stored reads as nothing pending', () => {
+    expect(loadGroupByPending('user_dave')).toBeNull()
+  })
+  it('round-trips, stamped with whose choice it is', () => {
+    saveGroupByPending('user_dave', 'crop_type')
+    expect(loadGroupByPending('user_dave')).toBe('crop_type')
+    expect(JSON.parse(localStorage.getItem('garden.groupBy.pending'))).toEqual({ user: 'user_dave', value: 'crop_type' })
+  })
+  it('another person\'s record reads as nothing pending (and so is never re-sent under their token)', () => {
+    saveGroupByPending('user_jen', 'status')
+    expect(loadGroupByPending('user_dave')).toBeNull()
+    expect(loadGroupByPending('user_jen')).toBe('status')
+  })
+  it('no signed-in person stamps and reads as null, never as someone', () => {
+    saveGroupByPending(undefined, 'location')
+    expect(loadGroupByPending(null)).toBe('location')
+    expect(loadGroupByPending('user_dave')).toBeNull()
+  })
+  it('clear is compare-and-clear: an older value\'s confirmation leaves a newer choice waiting', () => {
+    saveGroupByPending('user_dave', 'location')
+    clearGroupByPending('user_dave', 'crop_type')
+    expect(loadGroupByPending('user_dave')).toBe('location')
+    clearGroupByPending('user_dave', 'location')
+    expect(localStorage.getItem('garden.groupBy.pending')).toBeNull()
+  })
+  it('clear never removes another person\'s record', () => {
+    saveGroupByPending('user_jen', 'status')
+    clearGroupByPending('user_dave', 'status')
+    expect(loadGroupByPending('user_jen')).toBe('status')
+  })
+  it('a corrupt or foreign-shaped record reads as nothing pending', () => {
+    for (const raw of ['{not json', '"crop_type"', '5', '{"user":"user_dave","value":7}', 'null']) {
+      localStorage.setItem('garden.groupBy.pending', raw)
+      expect(loadGroupByPending('user_dave'), raw).toBeNull()
+    }
+  })
+})
+
+describe('markLegacyGroupByPending — the one-time pass for choices no earlier build could send', () => {
+  beforeEach(() => { localStorage.clear() })
+  for (const value of ['crop_type', 'bean_type', 'bean_habit', 'bean_use']) {
+    it(`a stored '${value}' is marked pending for this person`, () => {
+      saveGroupBy(value)
+      markLegacyGroupByPending('user_dave')
+      expect(loadGroupByPending('user_dave')).toBe(value)
+    })
+  }
+  it('a value earlier builds could send is left alone', () => {
+    for (const value of ['status', 'location', 'heat', 'none']) {
+      localStorage.clear()
+      saveGroupBy(value)
+      markLegacyGroupByPending('user_dave')
+      expect(loadGroupByPending('user_dave'), value).toBeNull()
+    }
+  })
+  it('runs once per device: a later stored crop_type (confirmed, or another device\'s) is not re-marked', () => {
+    markLegacyGroupByPending('user_dave')                  // first mount after the update: nothing stored
+    saveGroupBy('crop_type')                               // a later choice, confirmed and cleared
+    markLegacyGroupByPending('user_dave')
+    expect(loadGroupByPending('user_dave')).toBeNull()
+    expect(loadGroupBy()).toBe('crop_type')
+  })
+  it('never replaces a pending record that already exists', () => {
+    saveGroupBy('crop_type')
+    saveGroupByPending('user_dave', 'location')
+    markLegacyGroupByPending('user_dave')
+    expect(loadGroupByPending('user_dave')).toBe('location')
   })
 })
 

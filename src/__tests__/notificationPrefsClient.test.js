@@ -245,33 +245,58 @@ describe('notificationPrefsClient', () => {
     })
   })
 
+  // BUG-GARDENGROUPBYRESET-001 — a REPORTED saver now: Garden clears its pending marker only on
+  // { ok: true }, so "the server has it" must be distinguishable from every way it does not.
   describe('saveGardenGroupBy', () => {
-    it('returns null when VITE_API_CRITTERS unset', async () => {
+    it('reports status 0 when VITE_API_CRITTERS unset (never reached a server)', async () => {
       const mod = await loadModule('')
       const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'type' })
-      expect(res).toBeNull()
-    })
-    it('returns null on an invalid value (no fetch)', async () => {
-      const mod = await loadModule('https://staging.example.com')
-      const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'bogus' })
-      expect(res).toBeNull()
+      expect(res).toEqual({ ok: false, status: 0 })
       expect(global.fetch).not.toHaveBeenCalled()
     })
-    it('PATCHes garden_group_by and returns the updated row', async () => {
+    it('refuses an invalid value locally as the 400 the server would give (no fetch)', async () => {
       const mod = await loadModule('https://staging.example.com')
-      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ garden_group_by: 'lifecycle' }) })
+      const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'bogus' })
+      expect(res).toEqual({ ok: false, status: 400, local: true })
+      expect(global.fetch).not.toHaveBeenCalled()
+    })
+    it('PATCHes garden_group_by alone and reports ok', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ garden_group_by: 'lifecycle' }) })
       const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'lifecycle' })
-      expect(res).toEqual({ garden_group_by: 'lifecycle' })
+      expect(res).toEqual({ ok: true })
       const [url, opts] = global.fetch.mock.calls[0]
       expect(url).toBe('https://staging.example.com/api/notifications/prefs')
       expect(opts.method).toBe('PATCH')
       expect(JSON.parse(opts.body)).toEqual({ garden_group_by: 'lifecycle' })
     })
-    it('returns null on a non-ok response', async () => {
+    it('sends the Type grouping (crop_type) — Garden\'s default and its most-used option', async () => {
       const mod = await loadModule('https://staging.example.com')
-      global.fetch.mockResolvedValueOnce({ ok: false })
+      global.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+      const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'crop_type' })
+      expect(res).toEqual({ ok: true })
+      expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ garden_group_by: 'crop_type' })
+    })
+    it('reports ok even when the body is not JSON — the save is res.ok, not the body', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new Error('not json') } })
+      expect(await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'status' })).toEqual({ ok: true })
+    })
+    it('reports the server\'s status on a non-ok response', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValueOnce({ ok: false, status: 503 })
       const res = await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'type' })
-      expect(res).toBeNull()
+      expect(res).toEqual({ ok: false, status: 503 })
+    })
+    it('reports status 0 when the request never completes (a dead zone)', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      expect(await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'type' })).toEqual({ ok: false, status: 0 })
+    })
+    it('reports status 0 with no token, without a request', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      expect(await mod.saveGardenGroupBy({ getToken: async () => null, value: 'type' })).toEqual({ ok: false, status: 0 })
+      expect(global.fetch).not.toHaveBeenCalled()
     })
   })
 

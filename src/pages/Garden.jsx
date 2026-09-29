@@ -17,9 +17,9 @@ import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
 import { SYSTEM_NOTIFICATIONS_ENABLED, PROJECTS_HIDDEN, SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
 import { useClaimPageScroll, currentPageEntry } from '../hooks/usePageScrollManager.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
-import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA } from '../lib/projectTree.js'
+import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA, loadGroupByPending, saveGroupByPending, markLegacyGroupByPending } from '../lib/projectTree.js'
 import GroupBySlugSelect from '../components/GroupBySlugSelect.jsx'
-import { buildGardenFacetOptions } from '../lib/gardenGroupBy.js'
+import { buildGardenFacetOptions, decideGroupByHydrate, sendGroupByChoice, servedFromCache } from '../lib/gardenGroupBy.js'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
@@ -214,18 +214,31 @@ export default function Garden() {
   // V4-GARDENIA-001: faceted group-by overlay. tagMap = whole-garden plant->tags map; inert/empty
   // until VITE_API_TAGS is wired, so the control stays hidden and the legacy tree is unchanged.
   const [groupBy, setGroupBy] = useState(() => loadGroupBy())
-  // V4 cross-device: localStorage paints instantly; the server pref
-  // (user_notification_prefs.garden_group_by) is the cross-device source of truth, hydrated ONCE on
-  // the first prefs fetch below. An explicit user change latches the ref so a late server hydrate
-  // never clobbers it.
+  // V4 cross-device: localStorage paints instantly; the server pref (user_notification_prefs.garden_group_by)
+  // carries the choice to another device and is read ONCE per mount by the prefs hydrate below. An explicit
+  // user change latches the ref so a late hydrate never runs over it.
+  //
+  // BUG-GARDENGROUPBYRESET-001: that hydrate used to ADOPT the server value outright, after the scroll
+  // restore — so a choice whose save had not landed was overwritten on every return and the list regrouped
+  // under the spot. The choice now wins until its save is confirmed; the rule and its table test live in
+  // src/lib/gardenGroupBy.js, and this page only wires it. A pick is stored and marked pending BEFORE its
+  // PATCH goes out, and only that PATCH's confirmation clears the mark.
   const groupByHydratedRef = useRef(false)
+  const groupByUser = profile?.id ?? null
+  const sendGroupBy = useCallback((value) => sendGroupByChoice({
+    save: (v) => saveGardenGroupBy({ getToken, value: v }), user: groupByUser, value,
+  }), [getToken, groupByUser])
   const onGroupByChange = useCallback((v) => {
-    setGroupBy(v); saveGroupBy(v); groupByHydratedRef.current = true
-    saveGardenGroupBy({ getToken, value: v })
-  }, [getToken])
+    setGroupBy(v); saveGroupBy(v); saveGroupByPending(groupByUser, v); groupByHydratedRef.current = true
+    sendGroupBy(v)
+  }, [sendGroupBy, groupByUser])
   const { entities: tagMap } = useEntityTagsBulk('plant')
   // The option set and its order (V4-PROJHIDE-001, V4-FACETSLUG-001) live in src/lib/gardenGroupBy.js.
   const facetOptions = useMemo(() => buildGardenFacetOptions(tagMap, PROJECTS_HIDDEN), [tagMap])
+  // What the prefs hydrate decides against, read at the moment the body lands. A ref, because that effect is
+  // keyed on getToken alone: its garden-view POST must not re-fire when any of these change.
+  const groupByLiveRef = useRef(null)
+  groupByLiveRef.current = { local: groupBy, offerable: facetOptions.map(o => o.value), user: groupByUser, send: sendGroupBy }
   // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
   const [critters, setCritters] = useState([])
   // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
@@ -371,11 +384,19 @@ export default function Garden() {
       if (readPrefs) {
         const p = await fetchNotificationPrefs({ getToken })
         if (on) setPrefs(p)
-        // Cross-device hydrate (once): adopt the server group-by if set, caching it locally.
-        if (on && !groupByHydratedRef.current && p && typeof p.garden_group_by === 'string' && p.garden_group_by) {
+        // Group-by hydrate (once per mount, BUG-GARDENGROUPBYRESET-001): decideGroupByHydrate says whether a
+        // waiting choice goes out again, another device's choice is adopted, or nothing changes. 'keep' writes
+        // no state at all, so an equal server value cannot regroup the list.
+        if (on && !groupByHydratedRef.current && p) {
           groupByHydratedRef.current = true
-          setGroupBy(p.garden_group_by)
-          saveGroupBy(p.garden_group_by)
+          const live = groupByLiveRef.current
+          markLegacyGroupByPending(live.user)
+          const d = decideGroupByHydrate({
+            local: live.local, pending: loadGroupByPending(live.user), server: p.garden_group_by,
+            fromCache: servedFromCache(p), offerable: live.offerable,
+          })
+          if (d.action === 'adopt') { setGroupBy(d.value); saveGroupBy(d.value) }
+          else if (d.action === 'resend') live.send(d.value)
         }
         if (on && !expandedHydratedRef.current && p && typeof p.garden_expanded === 'string') {
           try {

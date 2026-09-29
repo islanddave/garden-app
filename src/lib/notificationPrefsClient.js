@@ -34,30 +34,10 @@ export const GARDEN_SORT_ORDER_VALUES = ['alpha', 'recency']
 export const HANDEDNESS_VALUES = HANDS
 export const GARDEN_EXPANDED_MAX = 2000
 
-// saveGardenGroupBy — fire-and-forget PATCH of the cross-device Garden group-by preference
-// (user_notification_prefs.garden_group_by). Mirrors patchNotificationPrefs: NEVER throws,
-// silent no-op when env unset / unauth / value invalid. keepalive survives route-change unmount.
-export async function saveGardenGroupBy({ getToken, value } = {}) {
-  if (!CRITTER_BASE) return null
-  if (value != null && !GARDEN_GROUP_BY_VALUES.includes(value)) return null
-  try {
-    const token = await (typeof getToken === 'function' ? getToken() : null)
-    if (!token) return null
-    const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ garden_group_by: value }),
-      keepalive: true,
-    })
-    if (!res.ok) return null
-    return await res.json().catch(() => null)
-  } catch {
-    return null
-  }
-}
+// saveGardenGroupBy moved to the REPORTED savers below (BUG-GARDENGROUPBYRESET-001).
 
 // saveGardenSortOrder — fire-and-forget PATCH of the cross-device Garden sort-order preference
-// (user_notification_prefs.garden_sort_order). Mirrors saveGardenGroupBy: NEVER throws, silent
+// (user_notification_prefs.garden_sort_order). Mirrors patchNotificationPrefs: NEVER throws, silent
 // no-op when env unset / unauth / value invalid. keepalive survives route-change unmount.
 export async function saveGardenSortOrder({ getToken, value } = {}) {
   if (!CRITTER_BASE) return null
@@ -332,7 +312,7 @@ export async function recordOptInDismissed({ getToken } = {}) {
 // clean this up.
 //
 // Fire-and-forget, NEVER throws, silent no-op when env unset / unauth — same contract as
-// saveGardenGroupBy above. This is the correct posture here specifically: the caller has ALREADY
+// saveGardenSortOrder above. This is the correct posture here specifically: the caller has ALREADY
 // applied the skip locally by the time this runs, so a failed sync must cost the user nothing.
 // keepalive survives the route-change unmount that follows a skip-then-navigate.
 export async function saveTodaySkipped({ getToken, date, keys } = {}) {
@@ -425,15 +405,18 @@ export async function saveHandedness({ getToken, value } = {}) {
   }
 }
 
-// V5-NAVCUSTOM-001 — THE TWO SAVERS BELOW REPORT THEIR OUTCOME, unlike every writer above them.
+// V5-NAVCUSTOM-001 — THE SAVERS BELOW REPORT THEIR OUTCOME, unlike every writer above them.
 //
 // The fire-and-forget writers above are right for what they save: the caller has already applied the
-// change locally and a lost sync costs nothing visible. These two are the opposite. A pin that fails
+// change locally and a lost sync costs nothing visible. These are the opposite. A pin that fails
 // silently reappears unpinned at the next launch, and the bar editor's Save is a page whose only job
-// is that write — a save that reports nothing is a save that lies. So both return
+// is that write — a save that reports nothing is a save that lies. A Garden grouping that fails silently
+// is overwritten at the next Garden mount by the server's older one (BUG-GARDENGROUPBYRESET-001). So all return
 // { ok: true } | { ok: false, status }, where status 0 is the house convention for "never reached the
 // server" (offline, no token, timed out, env unset) and anything else is the server's own answer.
-// NavPrefsContext reads that split: 0 and 5xx keep the change and retry, a 4xx rolls it back.
+// NavPrefsContext reads that split: 0 and 5xx keep the change and retry, a 4xx rolls it back. Garden keeps
+// its grouping on ANY non-ok: every value it can send is pinned to the Lambda's list, so a 4xx there means
+// the deployed Lambda is older than this bundle (a deploy window), and rolling back would re-create the bug.
 //
 // THE 15-SECOND BOUND IS api.js's API_TIMEOUT_MS, not a second constant. These cannot go through
 // apiFetch itself — its prefix table routes /api/notifications to the EVENTS Lambda, and the prefs
@@ -441,7 +424,8 @@ export async function saveHandedness({ getToken, value } = {}) {
 // here with the same AbortController pattern, around the fetch only, exactly as apiFetch applies it.
 //
 // NO keepalive, deliberately. A reported save needs its response. Durability across an app close is
-// NavPrefsContext's pending flag, which is written BEFORE the request goes out.
+// the caller's pending flag, written BEFORE the request goes out (NavPrefsContext's for pins, projectTree.js's
+// for the Garden grouping).
 //
 // NOT nav_tabs. The retired global order (public.app_config, V5-ADMINCENTER-001) never belonged on
 // this per-user table and still does not: bar_layout below is a different key with a different
@@ -491,6 +475,16 @@ export async function saveBarLayout({ getToken, layout } = {}) {
   const r = resolveBarLayout(layout)
   if (!r.applied.order || !r.applied.hidden) return LOCAL_REFUSAL
   return patchPrefsReported(getToken, { bar_layout: { order: r.order, hidden: r.hidden } })
+}
+
+// saveGardenGroupBy — the cross-device Garden grouping (user_notification_prefs.garden_group_by).
+// BUG-GARDENGROUPBYRESET-001: was fire-and-forget, returning the row or null, so Garden could not tell a
+// save the server has from one a dead zone ate — and the first thing its next mount did was adopt the
+// server's older value. Garden now clears its pending marker only on { ok: true } (gardenGroupBy.js). The
+// body is not read: ok is the confirmation, and a 200 with an unreadable body is still a stored value.
+export async function saveGardenGroupBy({ getToken, value } = {}) {
+  if (!GARDEN_GROUP_BY_VALUES.includes(value)) return LOCAL_REFUSAL
+  return patchPrefsReported(getToken, { garden_group_by: value })
 }
 
 // V4-USERPREFS-001 (V4-WHATSNEW-002) — last-seen release version, per user.
