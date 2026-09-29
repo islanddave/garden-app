@@ -36,7 +36,9 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
   const bedWait = useMemo(() => bedWaitActive(plan), [plan])
   const actions = useCareActions({ allRows, bedWait, planDate, fetch, getToken, toast: SILENT, announce: NOOP })
 
-  const plantList = Array.isArray(plants.data) ? plants.data : null
+  // A failed read is no read, for either list (review 4160.2 IMPORTANT-3): an errored /api/plants may still carry a
+  // body (an empty array), and read as "no plantings anywhere" it would put the whole garden in one Unplaced spot.
+  const plantList = Array.isArray(plants.data) && !plants.error ? plants.data : null
   const locPayload = locations.data && !locations.error ? locations.data : null
   const enrich = useCallback((rows) => enrichRows(rows, { plan, plants: plantList, locations: locPayload }), [plan, plantList, locPayload])
   const rows = useMemo(() => enrich(actions.rows), [enrich, actions.rows])
@@ -72,7 +74,9 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
     plan, settled, rows, allEnriched, count: rows.length, reasons, trigger, summary, spotCount, bedWait, actions, getToken, logKey,
     rainCovered, loggedToday,
     caughtUp: { title: CAUGHT_UP_TITLE, summary: caughtUpSummary({ logged: loggedToday, rain: rainCovered }) },
-    snapshot, groupOrder, locationsOk: !!locPayload, outside: OUTSIDE,
+    // Spots are LOCATIONS only when both reads answered (enrichRows); otherwise they are projects, with no group
+    // header and no group Water all — the /api/locations fallback, now for a failed /api/plants too.
+    snapshot, groupOrder, locationsOk: !!locPayload && !!plantList, outside: OUTSIDE,
     substrate: plan?.substrate?.msg && !plan?.substrate?.on_hold ? plan.substrate.msg : null,
   }
 }

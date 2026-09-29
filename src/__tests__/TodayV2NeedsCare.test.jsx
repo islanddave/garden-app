@@ -13,7 +13,7 @@ import { resolve } from 'node:path'
 
 const F = (f) => JSON.parse(readFileSync(resolve(process.cwd(), 'tests/harness/_todaymeasure', f), 'utf8'))
 const { planState, prefsState, auth, wire, api } = vi.hoisted(() => {
-  const wire = { posts: [], deletes: [], failPlant: null, failPlants: new Set(), seq: 0, plants: null, locations: null }
+  const wire = { posts: [], deletes: [], failPlant: null, failPlants: new Set(), seq: 0, plants: null, locations: null, cf: {} }
   return {
     planState: { current: null },
     prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
@@ -41,7 +41,8 @@ vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.curre
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
 vi.mock('../lib/notificationPrefsClient.js', async (orig) => ({ ...(await orig()), fetchNotificationPrefs: vi.fn(async () => null), saveTodaySkipped: vi.fn(async () => null) }))
 vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => api }))
-vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? wire.plants : wire.locations, loading: false, error: null }) }))
+// wire.cf[path] overrides one read's whole answer (a failure, a pending read — review 4160.2 IMPORTANT-3).
+vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => (wire.cf[path] || { data: path === '/api/plants' ? wire.plants : wire.locations, loading: false, error: null }) }))
 // S6: the plan-independent bands (Harvest, Put-Up, the Sow row's lines) are fetched at the page and the ready point
 // waits for them (useTodayBands); this file is not about them, so they answer at once, settled and empty.
 vi.mock('../components/today/v2/useTodayBands.js', () => ({
@@ -71,7 +72,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(TODAY + 'T14:30:00.000Z'))
   planState.current = { data: PAYLOAD, loading: false, error: null, reload: vi.fn() }
-  wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.failPlants = new Set(); wire.seq = 0; wire.plants = PLANTS; wire.locations = LOCS
+  wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.failPlants = new Set(); wire.seq = 0; wire.plants = PLANTS; wire.locations = LOCS; wire.cf = {}
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
@@ -536,5 +537,57 @@ describe('a seeded Back remount holds every write until its revalidation lands (
     expect(bulk4.getAttribute('aria-disabled')).toBe(null)
     fireEvent.click(bulk4); await settle()
     expect(wire.posts.map((b) => b.plant_id).sort()).toEqual(drive.slice(1).map((r) => r.plantingId).sort())
+  })
+})
+
+// Review 4160.2 IMPORTANT-3 (integration 2): spots are LOCATIONS only when /api/locations AND /api/plants both
+// answered — location_id comes from the plant list. A failed /api/plants (an error, or a body that is not a list)
+// used to put every row in ONE "Unplaced" spot under Outside, whose "Water all 168 in Unplaced" covered the whole
+// garden. Now it falls back exactly as a failed /api/locations always has: one spot per project, no group header,
+// no group Water all. Still pending, the page keeps waiting (no sections, no jump bar).
+describe('a failed /api/plants or /api/locations never builds a whole-garden spot (review 4160.2 IMPORTANT-3)', () => {
+  const HTTP500 = () => Object.assign(new Error('HTTP 500'), { status: 500 })
+  const projects = [...new Set(ROWS.map((r) => r.project || 'Other'))].sort()
+  const layout = () => ({
+    spots: [...document.querySelectorAll('[data-testid="care-spot"]')].map((s) => s.getAttribute('data-spot')).sort(),
+    groupBulk: document.querySelectorAll('[data-testid="care-group-bulk"]').length,
+    spotBulk: [...document.querySelectorAll('[data-testid="care-spot-bulk"]')].map((b) => b.getAttribute('aria-label')),
+  })
+  const openCare = async () => {
+    const band = screen.getByTestId('today-sec-care').querySelector('[aria-expanded]')
+    if (band.getAttribute('aria-expanded') !== 'true') { fireEvent.click(band); await settle() }
+  }
+
+  it('/api/locations 500: one spot per project, no group Water all', async () => {
+    wire.cf['/api/locations'] = { data: undefined, loading: false, error: HTTP500() }
+    await mount(); await openCare()
+    const l = layout()
+    expect(l.spots).toEqual(projects)
+    expect(l.spots).not.toContain('Unplaced')
+    expect(l.groupBulk).toBe(0)
+    expect(l.spotBulk.length).toBeGreaterThan(1)
+  })
+
+  for (const [name, answer] of [
+    ['/api/plants 500 (an errored read that still carries an empty list)', () => ({ data: [], loading: false, error: HTTP500() })],
+    ['/api/plants answering a body that is not a list', () => ({ data: { error: 'bad gateway' }, loading: false, error: null })],
+  ]) {
+    it(`${name}: the same project spots — never one Unplaced spot holding the garden, no group Water all`, async () => {
+      wire.cf['/api/plants'] = answer()
+      await mount(); await openCare()
+      const l = layout()
+      expect(l.spots).not.toContain('Unplaced')
+      expect(l.spots).toEqual(projects)
+      expect(l.groupBulk).toBe(0)
+      expect(l.spotBulk.some((s) => /Water all 168/.test(s))).toBe(false)
+    })
+  }
+
+  it('/api/plants still pending: the page keeps waiting — no sections, no jump bar', async () => {
+    wire.cf['/api/plants'] = { data: undefined, loading: true, error: null }
+    await mount()
+    expect(screen.getByTestId('today-page').getAttribute('data-today-ready')).toBe(null)
+    expect(screen.queryByTestId('today-sec-care')).toBeNull()
+    expect(document.querySelector('nav[aria-label="Today sections"]')).toBeNull()
   })
 })

@@ -59,8 +59,13 @@ export function locationIndex(payload) {
 // The care rows, joined to what the page needs to arrange them: spot + group from /api/plants location_id,
 // container type, the planting's thumbnail (V1's photo shape, BUG-TIERLESSPHOTOS-001), and the plan item's
 // days_since / rain_note (buildCareNeeded does not carry them). `rows` = buildCareNeeded rows.
+// Location spots need BOTH reads: the locations tree AND /api/plants, whose location_id places each row. Without
+// the plant list (a failed /api/plants — its caller passes null) every row would land in one "Unplaced" spot whose
+// Water all covers the whole garden (review 4160.2 IMPORTANT-3), so it falls back to project spots exactly as a
+// failed /api/locations does.
 export function enrichRows(rows, { plan, plants, locations }) {
   const idx = locationIndex(locations)
+  const placed = idx.ok && Array.isArray(plants)
   const plantById = new Map((Array.isArray(plants) ? plants : []).map((p) => [p.id, p]))
   const itemBy = new Map()
   for (const need of ['water_due', 'no_history', 'fertilize', 'pest', 'overwintering']) {
@@ -69,7 +74,7 @@ export function enrichRows(rows, { plan, plants, locations }) {
   return rows.map((r) => {
     const pl = plantById.get(r.plantingId)
     const it = itemBy.get(r.key) || {}
-    const spot = idx.ok
+    const spot = placed
       ? idx.spotOf(pl && pl.location_id)
       : { key: 'project:' + (r.projectId || 'none'), name: r.project || 'Other', parentPath: null, group: null }
     return {

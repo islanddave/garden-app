@@ -238,6 +238,20 @@ describe('frost and freeze nights', () => {
     expect(new Set(wire.deletes).size).toBe(n)
     expect(document.querySelector(`[data-testid="protect-spot"][data-spot="${name}"]`)).toBeTruthy()
   })
+
+  // Review 4160.2 IMPORTANT-3 (integration 2), Protect's half: /api/plants answering something that is not a list
+  // must not gather the freeze night's 79 bring_in cards into ONE "Unplaced" cover row ("Cover all 79 in Unplaced"):
+  // the rows fall back to project spots, as a failed /api/locations does.
+  it('freeze with /api/plants answering a non-list: the cover rows are per project, never one Unplaced row covering all 79', async () => {
+    serve(applyGrafts(PAYLOAD, PLANTS, ['freeze'], G).payload)
+    wire.plants = { error: 'bad gateway' }
+    await mount()
+    const spots = [...document.querySelectorAll('[data-testid="protect-spot"]')]
+    expect(spots.map((s) => s.getAttribute('data-spot'))).not.toContain('Unplaced')
+    expect(spots.length).toBeGreaterThan(1)
+    expect(spots.reduce((n, s) => n + Number(s.getAttribute('data-count')), 0)).toBe(79)
+    expect(spots.every((s) => Number(s.getAttribute('data-count')) < 79)).toBe(true)
+  })
 })
 
 describe('cold rows have ONE owner', () => {

@@ -44,7 +44,8 @@ export function useProtect({ plan, planDate, userId, stale, householdPlans, care
   const allRows = useMemo(() => [...own, ...others].filter((r) => !loggedAtMount.has(r.key)), [own, others, loggedAtMount])
   const actions = useCareActions({ allRows, bedWait: false, planDate, fetch, getToken, toast: SILENT, announce: NOOP })
 
-  const plantList = Array.isArray(plants.data) ? plants.data : null
+  // As useNeedsCare: an errored /api/plants is no plant list (review 4160.2 IMPORTANT-3), so no Unplaced cover row.
+  const plantList = Array.isArray(plants.data) && !plants.error ? plants.data : null
   const locPayload = locations.data && !locations.error ? locations.data : null
   const enrich = useCallback((rows) => enrichRows(rows, { plan, plants: plantList, locations: locPayload }), [plan, plantList, locPayload])
   const rows = useMemo(() => enrich(actions.rows), [enrich, actions.rows])
