@@ -144,6 +144,20 @@ export async function saveGardenHelperRung1({ getToken } = {}) {
 // would serialise the callers on getToken() before they could join.
 let inFlight = null
 
+// BUG-GARDENGROUPBYRESET-001 (QA MINOR 4) — A READ THAT WAS ON THE WIRE WHEN A GARDEN GROUPING SAVE WAS CONFIRMED
+// IS MARKED, the way a cached body is. Its row can be the one from BEFORE that save: a later caller JOINS it
+// through the latch above (Garden, left and re-entered while its read was out), or it simply answers after the
+// save's own answer (a read sent while the save was still on the wire, handled first by another Lambda
+// instance). Either way Garden would read the older grouping as another device's choice and regroup the list.
+// Dropping the join on a confirmed save would reach only the first of those, and would change what the other
+// callers of the join get, so the join stays exactly as it is: instead each read notes the count of confirmed
+// grouping saves when it STARTS, and a body landing after the count moved carries
+// PREDATES_GROUP_BY_SAVE — a non-enumerable global-registry Symbol like FROM_CACHE, invisible to Object.keys,
+// spread and JSON. Garden (src/lib/gardenGroupBy.js) never adopts a marked body; no other caller reads the mark.
+// Scoped to garden_group_by on purpose: no other save can make that field of a body stale.
+let groupBySavesConfirmed = 0
+export const PREDATES_GROUP_BY_SAVE = Symbol.for('garden-app.prefsPredatesGroupBySave')
+
 // fetchNotificationPrefs — GETs current prefs, joining any request already in flight.
 // Returns the prefs object on success, null on no-op or failure (NEVER throws).
 //
@@ -159,6 +173,7 @@ export async function fetchNotificationPrefs({ getToken } = {}) {
   if (!CRITTER_BASE) return null
   if (inFlight) return inFlight
   inFlight = (async () => {
+    const savesAtStart = groupBySavesConfirmed
     try {
       const token = await (typeof getToken === 'function' ? getToken() : null)
       if (!token) return null
@@ -174,6 +189,11 @@ export async function fetchNotificationPrefs({ getToken } = {}) {
       if (res.headers?.get?.(FROM_CACHE_HEADER)) {
         try {
           Object.defineProperty(json, FROM_CACHE, { value: true, enumerable: false, configurable: true })
+        } catch { /* frozen body — marking is best-effort */ }
+      }
+      if (groupBySavesConfirmed !== savesAtStart) {
+        try {
+          Object.defineProperty(json, PREDATES_GROUP_BY_SAVE, { value: true, enumerable: false, configurable: true })
         } catch { /* frozen body — marking is best-effort */ }
       }
       return json
@@ -482,9 +502,12 @@ export async function saveBarLayout({ getToken, layout } = {}) {
 // save the server has from one a dead zone ate — and the first thing its next mount did was adopt the
 // server's older value. Garden now clears its pending marker only on { ok: true } (gardenGroupBy.js). The
 // body is not read: ok is the confirmation, and a 200 with an unreadable body is still a stored value.
+// A confirmed save moves the count every read compares against (PREDATES_GROUP_BY_SAVE, above the read).
 export async function saveGardenGroupBy({ getToken, value } = {}) {
   if (!GARDEN_GROUP_BY_VALUES.includes(value)) return LOCAL_REFUSAL
-  return patchPrefsReported(getToken, { garden_group_by: value })
+  const res = await patchPrefsReported(getToken, { garden_group_by: value })
+  if (res.ok) groupBySavesConfirmed += 1
+  return res
 }
 
 // V4-USERPREFS-001 (V4-WHATSNEW-002) — last-seen release version, per user.

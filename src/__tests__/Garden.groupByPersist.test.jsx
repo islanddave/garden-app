@@ -74,19 +74,29 @@ const PENDING_KEY = 'garden.groupBy.pending'
 // ── the far side of the wire, with state ─────────────────────────────────────────────────────────────
 let server          // the stored prefs row
 let patches         // every PATCH body that reached the wire, in order
-let gets            // prefs GETs answered
+let gets            // prefs GETs sent
 let radio           // 'up' | 'down' — down rejects every PATCH (a dead zone), GETs still answer
 let servedFromSW    // the next GET answers as the service worker's cached copy (X-From-Cache)
+let holds           // requests parked by hold(): the next GET / PATCH waits for its release
 const answer = (body, headers = {}) => ({
   ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(body)),
   headers: { get: (k) => headers[k] ?? null },
 })
+// Park the next request of `method` until the returned release is awaited. A parked GET answers with the row
+// as it stood when it was SENT (a read that left before a save carries the row from before it); a parked
+// PATCH is applied only when released (a slow save). AdminConfig.refreshJoin.test.jsx's shape.
+function hold(method) {
+  let release
+  holds[method].push(new Promise(r => { release = r }))
+  return async () => { release(); await flush() }
+}
 beforeEach(() => {
   server = { critter_visit: 'in_app_only', garden_group_by: 'status', garden_expanded: null, last_garden_view_at: null, coachmark_seen_at: null, opt_in_prompt_seen_at: null }
   patches = []
   gets = 0
   radio = 'up'
   servedFromSW = null
+  holds = { GET: [], PATCH: [] }
   auth.id = 'user_dave'
   __resetPrefsFlight()
   localStorage.clear()
@@ -101,13 +111,18 @@ beforeEach(() => {
       if (method === 'PATCH') {
         const body = JSON.parse(init.body)
         patches.push(body)
+        const gate = holds.PATCH.shift()
+        if (gate) await gate
         if (radio === 'down') throw new TypeError('Failed to fetch')
         server = { ...server, ...body }
         return answer(server)
       }
       gets += 1
       if (servedFromSW) { const b = servedFromSW; servedFromSW = null; return answer(b, { 'X-From-Cache': '1' }) }
-      return answer(server)
+      const snapshot = JSON.parse(JSON.stringify(server))    // the row as of THIS request
+      const gate = holds.GET.shift()
+      if (gate) await gate
+      return answer(snapshot)
     }
     if (u.endsWith('/api/critters/active')) return answer([])
     if (u.endsWith('/api/notifications/garden-view-opened')) return answer({ last_garden_view_at: null })
@@ -127,7 +142,10 @@ async function resumeAfter(ms) {
   await flush()
 }
 
-const flush = () => act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve() })
+// A macrotask, not a fixed count of microtasks: every chain the stub starts is promise-only, so one timer tick
+// drains all of it however many hops a released request takes. (A count of 8 left a released read's landing
+// for after the assertions — a false green, found when probe 2 passed on the code it must fail on.)
+const flush = () => act(async () => { await new Promise(r => setTimeout(r, 0)) })
 const groupBySelect = () => screen.getByRole('combobox', { name: /Group by/i })
 // One visit to the Garden tab: mount, let the prefs read land, hand back unmount.
 async function visitGarden() {
@@ -300,5 +318,97 @@ describe('BUG-GARDENGROUPBYRESET-001 — Garden keeps the grouping you left it i
     first.unmount()
     await visitGarden()
     expect(groupBySelect().value).toBe('crop_type')
+  })
+})
+
+// The QA seat's rework (qa-groupbypersist.md): reads and saves that cross on the wire, and the one-time pass on a
+// shared phone. Each starts where Dave's phone most likely starts after the update — Lifecycle stored locally AND
+// on his row — unless it says otherwise.
+describe('BUG-GARDENGROUPBYRESET-001 rework — reads and saves that cross', () => {
+  // Dave's phone after the update, as QA traced it: Lifecycle stored locally AND on his row, and the first Garden
+  // visit already made — nothing to send, and the one-time pass spent on it. Without that first visit the one-time
+  // pass would still be armed, and on the old code it happens to re-send a stored Type: the join case then passes
+  // on the code it must fail on (it did, until this helper).
+  async function afterFirstOpen() {
+    localStorage.setItem(GROUPBY_KEY, 'status')
+    ;(await visitGarden()).unmount()
+    gets = 0
+  }
+
+  it('QA MINOR 4 (probe 2): a read that left before a confirmed save, joined by the next visit, is not adopted', async () => {
+    await afterFirstOpen()
+    const releaseRead = hold('GET')                          // visit 1's prefs read is slow (a weak radio)
+    const first = await visitGarden()
+    expect(groupBySelect().value).toBe('status')
+    await pick('crop_type')                                  // Type: its save lands and is confirmed…
+    expect(server.garden_group_by).toBe('crop_type')
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+    first.unmount()                                          // …into a planting, and straight back
+    await visitGarden()
+    expect(gets).toBe(1)                                     // this visit JOINED visit 1's read (the precondition)
+    await releaseRead()                                      // it lands now, carrying the row from BEFORE the save
+    expect(groupBySelect().value).toBe('crop_type')
+    expect(localStorage.getItem(GROUPBY_KEY)).toBe('crop_type')
+  })
+
+  it('QA MINOR 4: a read the next visit sent itself, while that save was still on the wire, is not adopted either', async () => {
+    // Not a join, so dropping the join on a confirmed save would not reach it: the read must carry the mark.
+    await afterFirstOpen()
+    const first = await visitGarden()
+    const releaseSave = hold('PATCH')                        // the Type save is slow
+    await pick('crop_type')
+    first.unmount()
+    const releaseRead = hold('GET')
+    await visitGarden()                                      // its own read, sent while the save is out…
+    expect(gets).toBe(2)
+    await releaseSave()                                      // …the save is applied and confirmed first…
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+    await releaseRead()                                      // …then the read answers, from before it
+    expect(groupBySelect().value).toBe('crop_type')
+  })
+
+  it('QA MINOR 5 (probe 4): a pick settles its own visit — the visit\'s late read, from before the save, is not adopted', async () => {
+    await afterFirstOpen()
+    const releaseRead = hold('GET')
+    await visitGarden()
+    await pick('crop_type')                                  // confirmed while the visit's own read is still out
+    await releaseRead()
+    expect(groupBySelect().value).toBe('crop_type')
+  })
+
+  it('QA MINOR 5: while the pick\'s own save is still out, the visit\'s late read neither adopts nor sends it again', async () => {
+    // Only the pick's latch covers this one: nothing is confirmed yet, so nothing marks the read. Without the latch
+    // the read re-sends the waiting pick ON TOP of its first save, and two overlapping saves never confirm.
+    await afterFirstOpen()
+    const releaseRead = hold('GET')
+    await visitGarden()
+    const releaseSave = hold('PATCH')
+    await pick('crop_type')
+    await releaseRead()
+    expect(groupBySelect().value).toBe('crop_type')
+    expect(groupPatches()).toEqual(['crop_type'])
+    await releaseSave()
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()     // the one save, alone on the wire, confirmed
+  })
+
+  it('QA MINOR 6 (probe 6): the one-time pass never sends one person\'s old choice onto another\'s empty row', async () => {
+    localStorage.setItem(GROUPBY_KEY, 'crop_type')           // Dave's Type from the old build, on a shared phone
+    auth.id = 'user_jen'                                     // Jen opens Garden first after the update…
+    server.garden_group_by = null                            // …and her row has no grouping
+    await visitGarden()
+    expect(groupPatches()).toEqual([])
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+    expect(groupBySelect().value).toBe('crop_type')          // the phone's own grouping, as before this build
+  })
+
+  it('the one-time pass waits for a fresh read: an SW copy with no grouping neither marks nor spends it', async () => {
+    localStorage.setItem(GROUPBY_KEY, 'crop_type')           // the old build's never-sent Type
+    servedFromSW = { ...server, garden_group_by: null }       // offline at the first open after the update
+    const first = await visitGarden()
+    expect(groupPatches()).toEqual([])                       // a cached copy gives the pass nothing to go on
+    first.unmount()
+    await visitGarden()                                      // signal back: the row says Lifecycle
+    expect(groupBySelect().value).toBe('crop_type')
+    expect(groupPatches()).toEqual(['crop_type'])
   })
 })

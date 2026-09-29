@@ -255,12 +255,14 @@ describe('loadGroupByPending / saveGroupByPending / clearGroupByPending', () => 
   })
 })
 
+// The second argument is the signed-in person's server value, from a FRESH read (Garden runs the pass on nothing
+// else). QA MINOR 6: the pass marks only when that value is set AND differs — the one case a flip could happen.
 describe('markLegacyGroupByPending — the one-time pass for choices no earlier build could send', () => {
   beforeEach(() => { localStorage.clear() })
   for (const value of ['crop_type', 'bean_type', 'bean_habit', 'bean_use']) {
-    it(`a stored '${value}' is marked pending for this person`, () => {
+    it(`a stored '${value}' is marked pending for this person when their row says something else`, () => {
       saveGroupBy(value)
-      markLegacyGroupByPending('user_dave')
+      markLegacyGroupByPending('user_dave', 'status')
       expect(loadGroupByPending('user_dave')).toBe(value)
     })
   }
@@ -268,21 +270,38 @@ describe('markLegacyGroupByPending — the one-time pass for choices no earlier 
     for (const value of ['status', 'location', 'heat', 'none']) {
       localStorage.clear()
       saveGroupBy(value)
-      markLegacyGroupByPending('user_dave')
+      markLegacyGroupByPending('user_dave', 'crop_type')
       expect(loadGroupByPending('user_dave'), value).toBeNull()
     }
   })
+  it('QA MINOR 6: a row with no grouping marks nothing — one person\'s old choice never goes onto another\'s empty row', () => {
+    saveGroupBy('crop_type')                               // Dave's old-build Type on a shared phone…
+    markLegacyGroupByPending('user_jen', null)             // …and Jen, whose row is unset, opens Garden first
+    expect(loadGroupByPending('user_jen')).toBeNull()
+    expect(localStorage.getItem('garden.groupBy.pending')).toBeNull()
+  })
+  it('a row that already holds the stored value marks nothing (nothing could flip)', () => {
+    saveGroupBy('crop_type')
+    markLegacyGroupByPending('user_dave', 'crop_type')
+    expect(loadGroupByPending('user_dave')).toBeNull()
+  })
   it('runs once per device: a later stored crop_type (confirmed, or another device\'s) is not re-marked', () => {
-    markLegacyGroupByPending('user_dave')                  // first mount after the update: nothing stored
+    markLegacyGroupByPending('user_dave', 'status')        // first mount after the update: nothing stored
     saveGroupBy('crop_type')                               // a later choice, confirmed and cleared
-    markLegacyGroupByPending('user_dave')
+    markLegacyGroupByPending('user_dave', 'status')
     expect(loadGroupByPending('user_dave')).toBeNull()
     expect(loadGroupBy()).toBe('crop_type')
+  })
+  it('spent by a null row too: a later value is another device\'s choice, adopted the usual way', () => {
+    saveGroupBy('crop_type')
+    markLegacyGroupByPending('user_dave', null)
+    markLegacyGroupByPending('user_dave', 'status')
+    expect(loadGroupByPending('user_dave')).toBeNull()
   })
   it('never replaces a pending record that already exists', () => {
     saveGroupBy('crop_type')
     saveGroupByPending('user_dave', 'location')
-    markLegacyGroupByPending('user_dave')
+    markLegacyGroupByPending('user_dave', 'status')
     expect(loadGroupByPending('user_dave')).toBe('location')
   })
 })

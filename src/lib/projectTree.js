@@ -408,14 +408,22 @@ export function clearGroupByPending(user, value) {
 // first Garden mount after the update, where the server's older value would otherwise overwrite it one last
 // time. The checked flag makes this a single pass: after it, a stored 'crop_type' may be a confirmed choice
 // or another device's, and must be treated like any other value.
+//
+// `server` is the signed-in person's garden_group_by from a FRESH read (Garden never runs the pass on a cached
+// or pre-save body, so one of those cannot spend it). QA MINOR 6: it marks ONLY when that value is set and
+// differs from the stored one — the only case in which the first mount could flip the grouping. That keeps a
+// shared phone from sending one person's old Type onto another person's row: Jen's row is unset, so a Type Dave
+// left on a phone she opens first stays that phone's own grouping and is never PATCHed as hers.
 const GROUPBY_LEGACY_UNSENDABLE = ['crop_type', 'bean_type', 'bean_habit', 'bean_use']
 const GROUPBY_LEGACY_CHECKED_KEY = 'garden.groupBy.legacyChecked'
-export function markLegacyGroupByPending(user) {
+export function markLegacyGroupByPending(user, server) {
   try {
     if (localStorage.getItem(GROUPBY_LEGACY_CHECKED_KEY)) return
     localStorage.setItem(GROUPBY_LEGACY_CHECKED_KEY, '1')
     const stored = localStorage.getItem(GROUPBY_KEY)
-    if (GROUPBY_LEGACY_UNSENDABLE.includes(stored) && localStorage.getItem(GROUPBY_PENDING_KEY) == null) saveGroupByPending(user, stored)
+    if (!GROUPBY_LEGACY_UNSENDABLE.includes(stored)) return
+    if (typeof server !== 'string' || !server || server === stored) return
+    if (localStorage.getItem(GROUPBY_PENDING_KEY) == null) saveGroupByPending(user, stored)
   } catch { /* non-fatal: the first mount simply behaves as before this build */ }
 }
 

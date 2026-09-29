@@ -298,6 +298,95 @@ describe('notificationPrefsClient', () => {
       expect(await mod.saveGardenGroupBy({ getToken: async () => null, value: 'type' })).toEqual({ ok: false, status: 0 })
       expect(global.fetch).not.toHaveBeenCalled()
     })
+    // A save that hangs is given up at the house bound and reported as never reached, so Garden keeps it pending.
+    it('gives a hanging save up at api.js\'s API_TIMEOUT_MS and reports status 0', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      const { API_TIMEOUT_MS } = await import('../lib/api.js')
+      vi.useFakeTimers()
+      try {
+        let signal
+        global.fetch.mockImplementation((_url, init) => new Promise((_, reject) => {
+          signal = init.signal
+          init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        }))
+        const pending = mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'crop_type' })
+        await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS - 1)
+        expect(signal.aborted).toBe(false)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(signal.aborted).toBe(true)
+        expect(await pending).toEqual({ ok: false, status: 0 })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
+  // QA MINOR 4 (BUG-GARDENGROUPBYRESET-001 rework). A read that was on the wire when a garden_group_by save was
+  // confirmed can carry the grouping from BEFORE that save — joined by a later caller, or answered late — so it
+  // lands marked PREDATES_GROUP_BY_SAVE, a non-enumerable global-registry Symbol exactly like FROM_CACHE. Garden
+  // never adopts a marked body; no other caller reads the mark, so nothing else changes shape or behaviour.
+  describe('fetchNotificationPrefs — a read that predates a confirmed grouping save is marked', () => {
+    const BASE = 'https://staging.example.com'
+    const parked = () => {
+      let answer
+      global.fetch.mockImplementationOnce(() => new Promise(r => { answer = r }))
+      return (body) => answer({ ok: true, json: async () => body })
+    }
+    const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve() }
+
+    it('a read on the wire while a grouping save confirms lands marked, invisibly', async () => {
+      const mod = await loadModule(BASE)
+      const answerRead = parked()
+      const read = mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      await settle()
+      expect(global.fetch).toHaveBeenCalledTimes(1)                 // the GET is out first
+      global.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+      expect(await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'crop_type' })).toEqual({ ok: true })
+      answerRead({ garden_group_by: 'status' })
+      const body = await read
+      expect(body[mod.PREDATES_GROUP_BY_SAVE]).toBe(true)
+      expect(mod.PREDATES_GROUP_BY_SAVE).toBe(Symbol.for('garden-app.prefsPredatesGroupBySave'))
+      expect(Object.keys(body)).toEqual(['garden_group_by'])       // no shape change for any other caller
+      expect(JSON.parse(JSON.stringify(body))).toEqual({ garden_group_by: 'status' })
+    })
+
+    it('a caller that joins that read after the save gets the marked body too', async () => {
+      const mod = await loadModule(BASE)
+      const answerRead = parked()
+      const first = mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      await settle()
+      global.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+      await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'crop_type' })
+      const joined = mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      expect(global.fetch).toHaveBeenCalledTimes(2)                 // the GET and the PATCH — the join sent nothing
+      answerRead({ garden_group_by: 'status' })
+      expect((await joined)[mod.PREDATES_GROUP_BY_SAVE]).toBe(true)
+      expect(await first).toBe(await joined)
+    })
+
+    it('not marked: a read that starts after the save, one during a save that failed, one during another pref\'s save', async () => {
+      const mod = await loadModule(BASE)
+      global.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+      await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'crop_type' })
+      global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ garden_group_by: 'crop_type' }) })
+      expect((await mod.fetchNotificationPrefs({ getToken: async () => TOKEN }))[mod.PREDATES_GROUP_BY_SAVE]).toBeUndefined()
+
+      const answerA = parked()
+      const readA = mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      await settle()
+      global.fetch.mockResolvedValueOnce({ ok: false, status: 503 })
+      expect(await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'status' })).toEqual({ ok: false, status: 503 })
+      answerA({ garden_group_by: 'crop_type' })
+      expect((await readA)[mod.PREDATES_GROUP_BY_SAVE]).toBeUndefined()
+
+      const answerB = parked()
+      const readB = mod.fetchNotificationPrefs({ getToken: async () => TOKEN })
+      await settle()
+      global.fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+      expect(await mod.saveMorePins({ getToken: async () => TOKEN, ids: ['seeds'] })).toEqual({ ok: true })
+      answerB({ garden_group_by: 'crop_type' })
+      expect((await readB)[mod.PREDATES_GROUP_BY_SAVE]).toBeUndefined()
+    })
   })
 
   describe('saveGardenSortOrder', () => {

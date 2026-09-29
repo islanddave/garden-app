@@ -71,21 +71,32 @@ export function buildGardenFacetOptions(tagMap, projectsHidden) {
 // dependency-free seam dataCache.js and NavPrefsContext.jsx use, so this module never imports api.js.
 const FROM_CACHE = Symbol.for('garden-app.fromCache')
 export const servedFromCache = (body) => !!body && typeof body === 'object' && body[FROM_CACHE] === true
+// The prefs client's mark on a read that was on the wire when a grouping save was confirmed (QA MINOR 4;
+// PREDATES_GROUP_BY_SAVE in notificationPrefsClient.js has the why). The same registry seam, so Garden's tests,
+// which stub the prefs client, need no new export from it.
+const PREDATES_SAVE = Symbol.for('garden-app.prefsPredatesGroupBySave')
+export const predatesGroupBySave = (body) => !!body && typeof body === 'object' && body[PREDATES_SAVE] === true
 
 // What one Garden mount does with the prefs body's garden_group_by, in precedence order:
 //   { action: 'resend', value } — this person has a choice waiting: the local value stands and goes out again.
-//                                 Never adopt here, whatever the server says: its copy is the older one.
+//                                 Never adopt here, whatever the server says: its copy is the older one. Across
+//                                 devices that makes the LAST CONFIRMED save win, not the last pick (QA MINOR 9,
+//                                 a recorded decision): a choice waiting here goes out over another device's.
 //   { action: 'keep' }          — the body came from the service worker's cache (it can predate a choice this
-//                                 device already confirmed, and it answers exactly when the radio is out),
-//                                 or the server value is unset, EQUAL to the local one (no state write, so
-//                                 no regroup), or one Garden cannot offer right now.
+//                                 device already confirmed, and it answers exactly when the radio is out) or
+//                                 from a read that was on the wire when a save was confirmed (predatesSave: its
+//                                 row can be the one from before that save), or the server value is unset,
+//                                 EQUAL to the local one (no state write, so no regroup), or one Garden cannot
+//                                 offer right now.
 //   { action: 'adopt', value }  — nothing waiting here and a different value Garden can show: another
 //                                 device's choice. This one does regroup, once; it is the cross-device sync.
 // `offerable` is the control's current option values. A tag facet is offerable only once the tag map has
-// landed, so a server tag-facet choice that arrives first is kept out, never half-applied as a fallback.
-export function decideGroupByHydrate({ local, pending, server, fromCache = false, offerable = [] }) {
+// landed, so a server tag-facet choice that arrives first is kept out — and, since that fresh read ends the
+// visit's hydrate, DROPPED for the visit rather than deferred (QA MINOR 7, a recorded decision; tag groupings
+// are BUG-GARDENTAGGROUPREPAINT-001's).
+export function decideGroupByHydrate({ local, pending, server, fromCache = false, predatesSave = false, offerable = [] }) {
   if (typeof pending === 'string' && pending) return { action: 'resend', value: pending }
-  if (fromCache) return { action: 'keep' }
+  if (fromCache || predatesSave) return { action: 'keep' }
   if (typeof server !== 'string' || !server || server === local) return { action: 'keep' }
   if (!offerable.includes(server)) return { action: 'keep' }
   return { action: 'adopt', value: server }

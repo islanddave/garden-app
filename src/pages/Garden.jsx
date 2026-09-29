@@ -19,7 +19,7 @@ import { useClaimPageScroll, currentPageEntry } from '../hooks/usePageScrollMana
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA, loadGroupByPending, saveGroupByPending, markLegacyGroupByPending } from '../lib/projectTree.js'
 import GroupBySlugSelect from '../components/GroupBySlugSelect.jsx'
-import { buildGardenFacetOptions, decideGroupByHydrate, sendGroupByChoice, servedFromCache } from '../lib/gardenGroupBy.js'
+import { buildGardenFacetOptions, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave } from '../lib/gardenGroupBy.js'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
@@ -388,15 +388,21 @@ export default function Garden() {
         // waiting choice goes out again, another device's choice is adopted, or nothing changes. 'keep' writes
         // no state at all, so an equal server value cannot regroup the list. The first FRESH body ends it for
         // the mount — another device's later change arrives at the next visit, never mid-list. A body the service
-        // worker served from its cache is decided on (it can only keep, or re-send a waiting choice) but does
-        // not end it, so a fresh read on a later resume still gets its say.
+        // worker served from its cache, or one from a read that was on the wire when a grouping save was
+        // confirmed (QA MINOR 4: its row can predate the save), is decided on — it can only keep, or re-send a
+        // waiting choice — but does not end it, and never runs the one-time pass, so a fresh read on a later
+        // resume still gets its say.
         if (on && !groupByHydratedRef.current && p) {
-          if (!servedFromCache(p)) groupByHydratedRef.current = true
+          const fromCache = servedFromCache(p)
+          const predatesSave = predatesGroupBySave(p)
           const live = groupByLiveRef.current
-          markLegacyGroupByPending(live.user)
+          if (!fromCache && !predatesSave) {
+            groupByHydratedRef.current = true
+            markLegacyGroupByPending(live.user, p.garden_group_by)
+          }
           const d = decideGroupByHydrate({
             local: live.local, pending: loadGroupByPending(live.user), server: p.garden_group_by,
-            fromCache: servedFromCache(p), offerable: live.offerable,
+            fromCache, predatesSave, offerable: live.offerable,
           })
           if (d.action === 'adopt') { setGroupBy(d.value); saveGroupBy(d.value) }
           else if (d.action === 'resend') live.send(d.value)
