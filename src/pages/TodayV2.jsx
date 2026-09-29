@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import { useTodaySections } from '../hooks/useTodaySections.js'
@@ -7,8 +7,11 @@ import { usePrefs } from '../context/PrefsContext.jsx'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import TodaySection from '../components/today/v2/TodaySection.jsx'
+import NeedsCare from '../components/today/v2/NeedsCare.jsx'
+import { useNeedsCare } from '../components/today/v2/useNeedsCare.js'
+import { careOpens } from '../lib/todayV2/triggers.js'
+import { isFromCache } from '../lib/api.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
-import { subscribeSkipped, skippedSnapshot } from '../components/today/careStore.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { seedsHref } from '../lib/seedsRoutes.js'
 import { P } from '../lib/constants.js'
@@ -70,10 +73,16 @@ export default function TodayV2() {
   const { data, loading, error, reload } = useDailyPlan({ includeHousehold: true, seed: userId || undefined })
   const planDate = data?.plan_date ?? null
   const plan = data?.has_plan ? (data.plan ?? null) : null
-  const skipped = useSyncExternalStore(subscribeSkipped, skippedSnapshot, skippedSnapshot)
   const layer1 = useTodaySections({ userId, prefs })
-
-  const care = useMemo(() => activeCareRows(plan, skipped), [plan, skipped])
+  // §3: a plan served from the offline cache, or not dated today, is stale — it opens nothing.
+  const stale = !!data && (isFromCache(data) || data.plan_date !== todayLocalISO())
+  // S4: Needs care's state lives here, above its section (the header, the trigger and the visit's held order
+  // are taken at the ready point; the body is unmounted while closed). §2.4: the active rows = the plan's
+  // care rows minus logged minus skipped.
+  const needs = useNeedsCare({ plan, planDate, userId, stale })
+  const care = needs.rows
+  const statusRef = useRef(null)
+  const announce = useCallback((msg) => { if (statusRef.current) statusRef.current.textContent = msg }, [])
   const resting = useMemo(() => (Array.isArray(plan?.dormant) ? plan.dormant.filter(Boolean) : []), [plan])
   const present = useMemo(() => SECTION_ORDER.filter((k) => (k === 'care' && care.length > 0) || (k === 'resting' && resting.length > 0)), [care.length, resting.length])
 
@@ -101,16 +110,24 @@ export default function TodayV2() {
     Promise.resolve().then(() => refreshPrefs()).catch(() => null).finally(done)
     return () => { on = false; clearTimeout(t) }
   }, [day.awaiting, refreshPrefs])
-  const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver)
+  // S4 adds /api/plants + /api/locations settled (ok or failed) to the ready point (§6.4): the spots, groups
+  // and the small-pot trigger read them, and a snapshot taken before they land would be keyed differently.
+  const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver) && (!plan || needs.settled)
 
-  const { record, isOpen, tap, overlayAll } = useTodayVisit({
+  const { record, isOpen, tap, overlayAll, update } = useTodayVisit({
     userId, planDate, ready,
-    start: () => ({
-      order: { sections: present },
-      layer1: Object.fromEntries(present.map((k) => [k, layer1.resolve(k)?.open === true])),
-      overlay: {},
-      triggers: {},
-    }),
+    start: () => {
+      // §3 + MF1: Needs care opens by itself on a reason (never / hot / small) unless a close acked today
+      // already named every reason; the descriptor is kept so a close now records the ack.
+      const careOpen = present.includes('care') && careOpens(needs.trigger, layer1.resolve('care'), planDate)
+      return {
+        order: { sections: present },
+        layer1: Object.fromEntries(present.map((k) => [k, layer1.resolve(k)?.open === true])),
+        overlay: careOpen ? { care: 'open' } : {},
+        triggers: careOpen ? { care: needs.trigger } : {},
+        care: needs.snapshot(),
+      }
+    },
   })
   const shown = record ? SECTION_ORDER.filter((k) => record.order.sections.includes(k) || present.includes(k)) : []
   const anyOpen = shown.some(isOpen)
@@ -126,12 +143,19 @@ export default function TodayV2() {
     tap(key, next)
   }, [isOpen, record, planDate, layer1, tap])
 
+  // SF8: reasons + spots, never counts; the urgency cue (severity.med + the imperative) only when a trigger
+  // opened the section this visit. Emptied mid-visit: "all caught up" with what was logged and what rain took.
+  const careUrgent = !!record?.triggers?.care && record?.overlay?.care === 'open'
+  const loggedToday = Object.values(record?.care?.batches || {}).reduce((n, b) => n + (b.created ? b.created.length : 0), 0)
+    + Object.values(record?.care?.rowsDone || {}).filter((d) => d.created).length
   const SECTIONS = {
     care: {
       title: 'Needs care',
       count: care.length || null,
-      summary: care.length ? null : 'All caught up.',
-      body: <p data-testid="today-v2-pending" style={quietLine}>The spots and plants for this list arrive in a later preview.</p>,
+      summary: care.length
+        ? (careUrgent && needs.summary ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{needs.summary}</> : needs.summary)
+        : ([loggedToday ? `${loggedToday} logged today` : null, needs.rainCovered ? `${needs.rainCovered} covered by rain` : null].filter(Boolean).join(', ') || 'All caught up.'),
+      body: <NeedsCare care={needs} record={record} update={update} announce={announce} planDate={planDate} userId={userId} filterIntent={record?.filter} />,
     },
     resting: {
       title: 'Resting',
@@ -159,7 +183,7 @@ export default function TodayV2() {
       </div>
       <p data-testid="today-date" style={dateStyle}>{formatDate(planDate) || 'Your garden, at a glance'}</p>
       {/* The page's ONE live region (§5.6); the sections announce through it from S4 on. */}
-      <div role="status" aria-live="polite" data-testid="today-status" style={srOnly} />
+      <div ref={statusRef} role="status" aria-live="polite" data-testid="today-status" style={srOnly} />
 
       {/* Mounted only while it has something to say: its <section> is a flex item, and an empty one would
           still take a gap. A refresh never shows here — stale rows beat blank rows (useDailyPlan). */}
@@ -187,6 +211,7 @@ export default function TodayV2() {
                 open={isOpen(key)}
                 onToggle={() => toggle(key)}
                 style={key === 'care' ? careGap : undefined}
+                headerTestId={key === 'care' ? 'care-heading' : undefined}
               >
                 {s.body}
               </TodaySection>

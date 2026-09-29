@@ -71,5 +71,6 @@ export function useTodayVisit({ userId, planDate, ready, start }) {
 
   const isOpen = useCallback((section) => effectiveOpen(shown, section), [shown])
 
-  return { record: shown, returned, isOpen, tap, overlayAll }
+  // S4: a slice's own fields on the record (Needs care's open spots, done lines, runs) — `fn(record)` → record.
+  return { record: shown, returned, isOpen, tap, overlayAll, update }
 }

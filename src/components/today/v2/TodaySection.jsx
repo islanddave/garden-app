@@ -14,7 +14,7 @@ import { T } from '../../forms/formStyles.js'
 // its first [aria-expanded] is the header toggle. The gate treats EVERY testid starting "today-sec-" as a
 // section, so nothing inside a section may carry one. The section sets no outer margin (the page's flex
 // gap spaces sections); the band → body gap is T.space.xs.
-export default function TodaySection({ sectionKey, title, count, summary, open = false, onToggle, headingLevel = 2, children, style }) {
+export default function TodaySection({ sectionKey, title, count, summary, open = false, onToggle, headingLevel = 2, children, style, headerTestId }) {
   return (
     <section data-testid={`today-sec-${sectionKey}`} data-section={sectionKey} style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs, ...style }}>
       <FacetGroupHeader
@@ -26,6 +26,7 @@ export default function TodaySection({ sectionKey, title, count, summary, open =
         summary={summary}
         collapsed={!open}
         onToggle={onToggle}
+        testId={headerTestId}
       >
         {children}
       </FacetGroupHeader>
