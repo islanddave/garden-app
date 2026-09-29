@@ -741,13 +741,22 @@ describe('GoingNowView — the card\'s quiet actions', () => {
     expect(screen.getAllByTestId('going-open-batch')).toHaveLength(5)
   })
 
-  it('never offers more than three targets on a closed-up card', () => {
+  // Put-Up release 1b amends this in the same commit that adds "Put it up" (V4 §8.3): the card carries
+  // "at most three quiet actions — Check on it · Put it up · Open — plus at most one inline question"
+  // (V4 §2.3), so the question's own target is counted on its own line, not inside the three.
+  it('never offers more than three actions plus one question on a closed-up card', () => {
     renderView([MASH, CANDY, PAUSED, UNKNOWN_START, FERMENT_EXACT, FERMENT_MEASURED])
+    const QUESTION = '[data-testid="going-question-link"], [data-testid="going-kind-question"]'
     for (const card of screen.getAllByTestId('going-batch')) {
-      const targets = card.querySelectorAll('button, a[href], input, select, textarea').length
-      expect({ id: card.getAttribute('data-batch-id'), max3: targets <= 3 })
-        .toEqual({ id: card.getAttribute('data-batch-id'), max3: true })
+      const all = card.querySelectorAll('button, a[href], input, select, textarea').length
+      const questions = card.querySelectorAll(QUESTION).length
+      expect({ id: card.getAttribute('data-batch-id'), actions: all - questions <= 3, questions: questions <= 1 })
+        .toEqual({ id: card.getAttribute('data-batch-id'), actions: true, questions: true })
     }
+    // …and the three are exactly these, in this order.
+    const first = screen.getAllByTestId('going-batch')[0]
+    const actions = [...first.querySelectorAll('button')].filter(b => !b.matches(QUESTION)).map(b => b.getAttribute('data-testid'))
+    expect(actions).toEqual(['going-check', 'going-put-up', 'going-open-batch'])
   })
 })
 

@@ -90,6 +90,10 @@ function lastPut() {
   const call = [...fetchMock.mock.calls].reverse().find(([, o]) => (o?.method === 'PUT'))
   return call ? JSON.parse(call[1].body) : null
 }
+function lastPatch() {
+  const call = [...fetchMock.mock.calls].reverse().find(([, o]) => (o?.method === 'PATCH'))
+  return call ? JSON.parse(call[1].body) : null
+}
 
 beforeEach(() => {
   fetchMock.mockReset()
@@ -187,11 +191,13 @@ describe('and the cook can set the real date', () => {
     expect(input.value, 'the control must open on the stored date, not empty').toBe('2026-10-01')
     expect(screen.getByText(CLAIM), 'the claim follows the number into the editor').toBeTruthy()
 
+    // Release 1b (V4 §5.4, §8.3): the date goes through the PATCH as `discard_by` (the legacy PUT
+    // refuses a differing date as client_stale); the unchanged method is not sent at all.
     fireEvent.change(input, { target: { value: '2026-09-18' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(lastPut()).not.toBeNull())
-    expect(lastPut().use_by_target).toBe('2026-09-18')
-    expect(lastPut().method).toBe('candy')
+    await waitFor(() => expect(lastPatch()).not.toBeNull())
+    expect(lastPatch()).toEqual({ discard_by: '2026-09-18' })
+    expect(lastPut()).toBeNull()
   })
 
   it('leaves the editor untouched for every other method, and round-trips the stored date', async () => {
@@ -204,9 +210,11 @@ describe('and the cook can set the real date', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     expect(screen.queryByLabelText('Use-by date')).toBeNull()
 
+    // Release 1b: an untouched Save sends nothing at all, so the stored date cannot move.
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(lastPut()).not.toBeNull())
-    expect(lastPut().use_by_target).toBe('2026-10-01')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull())
+    expect(lastPut()).toBeNull()
+    expect(lastPatch()).toBeNull()
   })
 
   it('a Mark-used tap on a candy row still carries its use-by through the full-replace PUT', async () => {

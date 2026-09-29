@@ -46,6 +46,8 @@ import KindChips, { KIND_CHIPS, kindBody } from './KindChips.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from './sheetDraft.js'
 import { useSheetDraftKey } from './useSheetDraftKey.js'
 import { useFieldsClearOfFooter } from './sheetScroll.js'
+import { readCaptureMeta } from '../../lib/imagePipeline.js'
+import { mintKey } from './idempotencyKey.js'
 
 export const START_SHEET = 'start'
 export const START_SHEET_TITLE = 'Start a batch'
@@ -56,27 +58,50 @@ export const START_LABEL_PLACEHOLDER = 'e.g. Pepper mash'
 export const LAND_FALLBACK_MS = 1000
 const FOOTER_PX = 76
 
-const EMPTY = { label: '', chip: 'today', earlier: null, pickedDate: '', kind: null, kindOther: '' }
+const EMPTY = { label: '', chip: 'today', earlier: null, pickedDate: '', kind: null, kindOther: '', key: '' }
 
+// `key` (release 1b, V4 §5.2/§6.5) is optional on read: a 1a draft has none and gets one when it is
+// next written, which is before any POST can carry it.
 export function isStartDraft(d) {
   return !!d && typeof d === 'object' && !Array.isArray(d)
     && typeof d.label === 'string' && typeof d.pickedDate === 'string' && typeof d.kindOther === 'string'
     && SHEET_START_CHIPS.some(c => c.id === d.chip)
     && (d.earlier === null || EARLIER_CHIPS.some(c => c.id === d.earlier))
     && (d.kind === null || KIND_CHIPS.some(c => c.value === d.kind))
+    && (d.key === undefined || typeof d.key === 'string')
 }
 
-export default function StartBatchSheet({ open, onClose, onStarted, photo = null, photoPreview = null, now }) {
+// Put-Up release 1b (train §6a "Snap's start date"): Snap's photo carries the day it was taken, and
+// the shipped kitchen path used it. The chip that says that day: Yesterday, or Earlier… → Pick a date.
+// null when the photo is from today (Today stays), has no capture time, or is in the future.
+export function photoDayChoice(takenAt, now = new Date()) {
+  const t = takenAt instanceof Date ? takenAt : (takenAt ? new Date(takenAt) : null)
+  if (!t || Number.isNaN(t.getTime())) return null
+  const day = new Date(t.getFullYear(), t.getMonth(), t.getDate())
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const diff = Math.round((today.getTime() - day.getTime()) / 86400000)
+  if (diff <= 0) return null
+  if (diff === 1) return { chip: 'yesterday', earlier: null, pickedDate: '' }
+  const pad = n => String(n).padStart(2, '0')
+  return { chip: 'earlier', earlier: 'pickdate', pickedDate: `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}` }
+}
+
+// `photoTakenAt` (optional): a host that already knows when Snap's photo was taken. Absent, the sheet
+// reads it off the photo itself (readCaptureMeta, the upload pipeline's own EXIF read).
+export default function StartBatchSheet({ open, onClose, onStarted, photo = null, photoPreview = null, photoTakenAt, now }) {
   if (!open) return null
-  return <StartBatchOpen onClose={onClose} onStarted={onStarted} photo={photo} photoPreview={photoPreview} now={now} />
+  return <StartBatchOpen onClose={onClose} onStarted={onStarted} photo={photo} photoPreview={photoPreview}
+    photoTakenAt={photoTakenAt} now={now} />
 }
 
-function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
+function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt, now }) {
   const { fetch } = useApiFetch()
   const uploader = useUploadPhoto({ errorMode: 'surface' })
   const draftKey = useSheetDraftKey(START_SHEET, 'new')
   // Read ONCE, at open — see CheckOnItSheet for why the first commit must already hold it.
-  const [initial] = useState(() => readSheetDraft(draftKey, START_SHEET, isStartDraft) ?? EMPTY)
+  const [restored] = useState(() => readSheetDraft(draftKey, START_SHEET, isStartDraft))
+  const initial = restored ?? EMPTY
+  const [key, setKey] = useState(initial.key ?? '')
   const [label, setLabel] = useState(initial.label)
   const [chip, setChip] = useState(initial.chip)
   const [earlier, setEarlier] = useState(initial.earlier)
@@ -99,6 +124,22 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
 
   useEffect(() => () => { if (ownPreview) URL.revokeObjectURL(ownPreview) }, [ownPreview])
 
+  // Snap's photo day, preselected ONCE — never over a restored draft, and never after the cook has
+  // touched the chips (a late EXIF read must not move an answer they gave).
+  const chipTouchedRef = useRef(!!restored)
+  useEffect(() => {
+    if (!photo || chipTouchedRef.current) return
+    let alive = true
+    Promise.resolve(photoTakenAt !== undefined ? { takenAt: photoTakenAt } : readCaptureMeta(photo))
+      .then(meta => {
+        if (!alive || chipTouchedRef.current) return
+        const pick = photoDayChoice(meta?.takenAt ?? null, new Date(now ?? Date.now()))
+        if (pick) { setChip(pick.chip); setEarlier(pick.earlier); setPickedDate(pick.pickedDate) }
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [photo, photoTakenAt, now])
+
   const dirty = label.trim() !== '' || chip !== 'today' || earlier != null || pickedDate !== ''
     || kind != null || kindOther.trim() !== '' || !!ownFile
 
@@ -106,9 +147,13 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
     if (!draftKey) return
     // The draft carries what can be serialised; a picked File cannot, and is not pretended to.
     const text = label.trim() !== '' || chip !== 'today' || earlier != null || pickedDate !== '' || kind != null || kindOther.trim() !== ''
-    if (text) writeSheetDraft(draftKey, START_SHEET, { label, chip, earlier, pickedDate, kind, kindOther })
+    if (text) writeSheetDraft(draftKey, START_SHEET, { label, chip, earlier, pickedDate, kind, kindOther, key })
     else clearSheetDraft(draftKey)
-  }, [draftKey, label, chip, earlier, pickedDate, kind, kindOther])
+  }, [draftKey, label, chip, earlier, pickedDate, kind, kindOther, key])
+
+  // The create's idempotency key (release 1b, V4 §6.5): minted the first time the sheet is dirty, kept
+  // in the draft, reused on every retry — a Start it whose answer was lost is a replay, not a twin.
+  useEffect(() => { if (dirty && !key) setKey(mintKey()) }, [dirty, key])
 
   // ONE boolean dependency — see CheckOnItSheet: the release transition can fire a deferred reload.
   const holdReload = dirty || saving
@@ -157,6 +202,8 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
     if (when.error) { setErr(when.error); return }
     const kindPart = kindBody(kind, kindOther)
     if (kindPart === null) { setErr('Give the kind a short name — or leave the kind unpicked.'); setKindOpen(true); return }
+    const useKey = key || mintKey()
+    if (!key) setKey(useKey)
     writingRef.current = true
     setSaving(true); setErr(null)
     try {
@@ -170,7 +217,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
         uploadedRef.current = { file, photoId: coverId }
       }
       const batch = await fetch('/api/kitchen-batches', { method: 'POST', body: JSON.stringify({
-        label: text, ...when.start, ...kindPart, ...(coverId ? { cover_photo_id: coverId } : {}),
+        label: text, ...when.start, ...kindPart, ...(coverId ? { cover_photo_id: coverId } : {}), idempotency_key: useKey,
       }) })
       clearSheetDraft(draftKey)
       land(batch)
@@ -181,7 +228,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
         ? "Couldn't save the photo — try again, or remove it."
         : "Couldn't start it — try again. What you typed is still here.")
     }
-  }, [chip, draftKey, earlier, fetch, file, kind, kindOther, label, labelId, land, now, pickedDate, uploader])
+  }, [chip, draftKey, earlier, fetch, file, key, kind, kindOther, label, labelId, land, now, pickedDate, uploader])
 
   return (
     <Sheet open onClose={onClose} title={START_SHEET_TITLE} size="full" busy={saving} armsBack>
@@ -195,9 +242,9 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
 
         <div style={{ marginBottom: T.space.md }}>
           <SheetStartChips value={chip} disabled={saving}
-            onChange={v => { setChip(v); if (v !== 'earlier') { setEarlier(null); setPickedDate('') } setErr(null) }}
-            earlier={earlier} onEarlierChange={v => { setEarlier(v); if (v !== 'pickdate') setPickedDate(''); setErr(null) }}
-            pickedDate={pickedDate} onPickedDateChange={v => { setPickedDate(v); setErr(null) }}
+            onChange={v => { chipTouchedRef.current = true; setChip(v); if (v !== 'earlier') { setEarlier(null); setPickedDate('') } setErr(null) }}
+            earlier={earlier} onEarlierChange={v => { chipTouchedRef.current = true; setEarlier(v); if (v !== 'pickdate') setPickedDate(''); setErr(null) }}
+            pickedDate={pickedDate} onPickedDateChange={v => { chipTouchedRef.current = true; setPickedDate(v); setErr(null) }}
             now={new Date(now ?? Date.now())} />
         </div>
 
