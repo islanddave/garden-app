@@ -23,7 +23,7 @@ export default function TodaySection({ sectionKey, title, count, summary, open =
         facet="type"
         label={title}
         count={count}
-        summary={summary}
+        summary={summary == null ? summary : <span data-testid="section-summary">{summary}</span>}
         collapsed={!open}
         onToggle={onToggle}
         testId={headerTestId}

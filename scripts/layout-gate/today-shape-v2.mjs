@@ -590,7 +590,8 @@ try {
     if (!census.glyphs && v2.route !== 'stub') fail(at, 'instrument', 'the font census read no glyphs under #root')
     // S4: FilterChipRow (a frozen primitive) labels its tray toggle "More ▾" / "Less ▴" — mixed text, so the
     // census's whole-text allowance cannot see that only the arrow falls to a host font. That one arrow, on that
-    // one 48px chip, is let through here (measured: build-s4.md); any other host glyph still fails.
+    // one 48px-min chip, is let through here; any other host glyph still fails. NOT yet measured the way
+    // font-census.mjs asks (arrow swapped for Roboto 'v', geometry compared) — owed, see build-s4.md.
     const TRAY = /painted 1 glyph\(s\) of "(More ▾|Less ▴)"$/
     for (const v of census.violations.filter(x => !TRAY.test(x)).slice(0, 3)) fail(at, 'instrument', `a HOST font painted text the Roboto pin should own — ${v}`)
 

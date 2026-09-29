@@ -270,6 +270,9 @@ export const REGIONS_V2 = [
   { id: 'care-group-bulk', owner: 'Outside group label (MF3)', state: 'v2-busy', armedAt: 'S4' },
   { id: 'care-spot-bulk', owner: 'a spot row\'s Water all', state: 'v2-busy', armedAt: 'S4' },
   { id: 'care-heading', owner: 'Needs care band', state: 'v2-busy', armedAt: 'S4' },
+  // S4: a band's one-line summary is a region of its own (D2 "a header with a count and a one-line summary"):
+  // a 2-line band is still the 48px min-height band, so no geometry family can see the line vanish.
+  { id: 'section-summary', owner: 'a section band\'s one-line summary', state: 'v2-busy', armedAt: 'S4' },
   { id: 'care-cap-note', owner: 'disclosed cohort in Bag Area', open: 'cohort:Bag Area', state: 'v2-frost', armedAt: 'S4' },
   { id: 'care-show-more', owner: 'disclosed cohort in Bag Area (control)', open: 'cohort:Bag Area', state: 'v2-frost', armedAt: 'S4' },
   { id: 'care-moist', owner: 'plant rows in an opened spot (control)', open: 'spot:Bag Area', state: 'v2-frost', armedAt: 'S4' },
