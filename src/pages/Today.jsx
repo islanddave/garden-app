@@ -18,6 +18,7 @@ import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
 import { useMembers } from '../hooks/useMembers.js'
 import { useAuthOptional } from '../context/AuthContext.jsx'
+import { readShowOthers, writeShowOthers, memberFirstName } from '../lib/householdView.js'
 
 // Today — the daily care surface (DRG-TODAY-002). Reads the per-user plan the overnight Daily Plan engine
 // (DRG-TODAY-001) persisted for today: an icon-first weather widget up top, a substrate/feeding note, and
@@ -41,9 +42,10 @@ export default function Today() {
   const { members } = useMembers()
   const others = (members || []).filter(m => m && m.id && m.id !== profile?.id)
   const canShowOthers = others.length > 0
-  const [showOthers, setShowOthers] = useState(() => { try { return localStorage.getItem('garden.today.showOthers') === '1' } catch { return false } })
-  const toggleOthers = () => setShowOthers(v => { const nv = !v; try { localStorage.setItem('garden.today.showOthers', nv ? '1' : '0') } catch { /* ignore */ } return nv })
-  const nameFor = (sub) => { const m = others.find(o => o.id === sub); const n = (m?.display_name || '').trim(); return n ? n.split(/\s+/)[0] : 'Someone else' }
+  // The switch and the naming rule live in lib/householdView.js, shared with the redesigned Today (one reader).
+  const [showOthers, setShowOthers] = useState(readShowOthers)
+  const toggleOthers = () => setShowOthers(v => { const nv = !v; writeShowOthers(nv); return nv })
+  const nameFor = (sub) => memberFirstName(others, sub)
 
   const { data, loading, error } = useDailyPlan({ includeHousehold: showOthers && canShowOthers })
   const plan = data?.plan ?? null
