@@ -158,6 +158,10 @@ export const STATES = [
         { clear: 'spots', say: 'Needs care: everything, 233 in 9 spots.' },
         { jump: 'check', say: 'Needs care: Check, 7 in 2 spots.' },
       ], why: '§2.6: "Needs care: Water, 168 in 8 spots." — once per filter change, not per render' },
+      // S4g (§2.5 + §5.5): Drive-Shade's Water all (5 logged), then Not today on every spot left — the header stays and
+      // reads the emptied wording (logged today = done items + store = 5 here; rain = busyfull's 70 rain_skipped), no
+      // count, focus on it. Runs LAST on this state (it leaves Needs care empty).
+      { family: 'caught-up', armedAt: 'S4g', water: 'Drive-Shade', title: 'Needs care · all caught up', summary: '5 logged today, 70 covered by rain', why: '§2.5: an emptied Needs care reads "Needs care · all caught up" with "N logged today, M covered by rain"; §5.5 focus to its header' },
     ],
   },
   {
@@ -359,8 +363,9 @@ export const SHELL = [
 
 // ── MUTANT KILLER FAMILIES (§9.1) and the trigger TABLE that replaced the trigger-predicate mutants ──────
 export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore', 'jump-focus',
-  // S4g: MF3's failure round trip, §5.5's focus after it, §5.6's status region (its words, and once per change).
-  'spot-retry', 'retry-focus', 'announce', 'announce-once']
+  // S4g: MF3's failure round trip, §5.5's focus after it, §5.6's status region (its words, and once per change),
+  // §2.5's emptied header and §5.5's focus when a section empties.
+  'spot-retry', 'retry-focus', 'announce', 'announce-once', 'caught-up', 'empty-focus']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome

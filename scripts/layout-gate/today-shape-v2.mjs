@@ -419,11 +419,12 @@ const CHECKERS = {
   },
   // Interaction-driven families run in the interaction phase below; here they only have to exist.
   interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {}, 'chip-census': () => {},
-  'spot-retry': () => {}, announce: () => {},
+  'spot-retry': () => {}, announce: () => {}, 'caught-up': () => {},
 }
 // The writes run last (group-water-all, then S4g's spot-retry), each undoing itself before the next; S4g's filter
-// announcements after them (they leave filters pressed).
-const INTERACTION_FAMILIES = ['interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry', 'announce']
+// announcements after them (they leave filters pressed); S4g's caught-up LAST of all — it empties Needs care and
+// leaves it empty.
+const INTERACTION_FAMILIES = ['interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up']
 
 // S3 chip census, measured in the page at normal text and at 200% (WCAG 1.4.4 resize text; Android's font scaling
 // reaches the rem-sized labels the same way). Restores the root font size before it returns.
@@ -591,8 +592,54 @@ async function runInteractions(state, checks, at) {
       await evalSettled('window.__h.failPosts(0)')
     } else if (c.family === 'announce') {
       await announceRun(c, at, F)
+    } else if (c.family === 'caught-up') {
+      await caughtUpRun(c, at, F)
     }
   }
+}
+
+// S4g (§2.5 + §5.5): empty Needs care the way Dave would — one spot's Water all, then Not today on every spot left
+// (no filter) — and read what its header became: the title, the summary (logged today + covered by rain), no count,
+// and focus on it (the action that emptied the section sends focus there). Files `header-text` (the title, the
+// count), `caught-up` (the summary), `empty-focus` (§5.5: the focused element is the header and reads the whole
+// emptied wording, as TalkBack would).
+async function caughtUpRun(c, at, F) {
+  const sec = `[data-testid="today-sec-care${SUFFIX}"]`
+  const band = `${sec} [aria-expanded]`
+  const txt = (q) => `(() => { const el = document.querySelector(${JSON.stringify(q)}); return el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : null })()`
+  const wait = (ms) => evalSettled(`new Promise(r => setTimeout(r, ${ms}))`)
+  const start = await evalSettled(`(async () => {
+    for (const r of ['tasks', 'spots']) { const b = [...document.querySelectorAll('[data-testid="care-filter-' + r + '${SUFFIX}"] button')].find(x => x.textContent.trim() === 'Clear'); if (b) { b.click(); await new Promise(res => setTimeout(res, 120)) } }
+    const h = document.querySelector(${JSON.stringify(band)}); if (!h) return { miss: 'no Needs care band (today-sec-care)' }
+    if (h.getAttribute('aria-expanded') !== 'true') { h.click(); await new Promise(res => setTimeout(res, 150)) }
+    return { text: (h.textContent || '').replace(/\\s+/g, ' ').trim() } })()`)
+  if (start.miss) { F(`could not start: ${start.miss}`); return }
+  if (start.text.includes('all caught up')) F(`the Needs care band reads "${start.text}" before anything was logged`)
+  const spotQ = `[data-testid="care-spot${SUFFIX}"][data-spot="${c.water}"]`
+  const tapped = await evalSettled(`(() => { const b = document.querySelector(${JSON.stringify(spotQ + ` [data-testid="care-spot-bulk${SUFFIX}"]`)}); if (!b) return false; b.click(); return true })()`)
+  if (!tapped) { F(`no Water all on '${c.water}' to log with`); return }
+  const logged = await evalSettled(`(async () => { for (let i = 0; i < 100; i++) { if (document.querySelector('[data-testid="care-done-line${SUFFIX}"][data-spot="${c.water}"]')) return true; await new Promise(r => setTimeout(r, 100)) } return false })()`)
+  if (!logged) { F(`'${c.water}' never shrank to its done line after its Water all`); return }
+  // Not today on every spot still on the list, until none is left.
+  let skipped = 0
+  for (let i = 0; i < 30; i++) {
+    const s = await evalSettled(`(() => { const li = document.querySelector('[data-testid="care-spot${SUFFIX}"]'); if (!li) return null; const b = [...li.querySelectorAll('button')].find(x => (x.getAttribute('aria-label') || '').startsWith('Not today')); if (!b) return { stuck: li.getAttribute('data-spot') }; b.click(); return { spot: li.getAttribute('data-spot') } })()`)
+    if (!s) break
+    if (s.stuck) { F(`spot '${s.stuck}' has no Not today to empty the list with`); return }
+    skipped++
+    await wait(150)
+  }
+  await wait(250)
+  const head = await evalSettled(txt(band))
+  const summary = await evalSettled(txt(`${band} [data-testid="section-summary${SUFFIX}"]`))
+  const count = await evalSettled(`(() => { const s = document.querySelector(${JSON.stringify(sec)}); return s ? s.getAttribute('data-count') : 'no section' })()`)
+  if (!(head || '').includes(c.title)) fail(at, 'header-text', `emptied, the Needs care band reads "${head}", expected the title "${c.title}" (§2.5)`)
+  if (count != null) fail(at, 'header-text', `emptied, the Needs care section still carries a count (data-count="${count}")`)
+  if (summary !== c.summary) fail(at, 'caught-up', `emptied, the Needs care summary reads "${summary}", expected "${c.summary}" (§2.5: logged today = done items + store; rain = plan.rain_skipped)`)
+  const foc = await evalSettled(`(() => { const a = document.activeElement, h = document.querySelector(${JSON.stringify(band)}); return { on: !!a && a === h, text: a ? (a.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120) : 'nothing', tag: a ? a.tagName.toLowerCase() : 'none' } })()`)
+  if (!foc.on) fail(at, 'empty-focus', `the action that emptied Needs care left focus on ${foc.tag} "${foc.text}", not the section's header (§5.5)`)
+  else if (!foc.text.includes(c.title) || !foc.text.includes(c.summary)) fail(at, 'empty-focus', `focus is on the Needs care header, but what it reads — "${foc.text}" — is not "${c.title}" over "${c.summary}"`)
+  console.log(`[today-shape-v2] ${at}: caught-up · ${c.water} watered, ${skipped} spot(s) Not today → "${head}" · focus ${foc.on ? 'header' : foc.tag}`)
 }
 
 // S4g (§2.6 / §5.6): each filter change says its result ONCE through the page's one status region; a re-render that
