@@ -4,6 +4,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P } from '../lib/constants.js'
 import Icon from '../components/Icon.jsx'
+import { eventTitle } from '../lib/eventDisplay.js'
 
 function formatDate(iso) {
   if (!iso) return ''
@@ -94,7 +95,7 @@ function EventEntry({ event: ev, isLast }) {
       <div style={{ width: 36, height: 36, borderRadius: '50%', backgroundColor: P.white, border: `2px solid ${P.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', flexShrink: 0, position: 'relative', zIndex: 1 }}>{icon}</div>
       <div style={{ paddingTop: 6, paddingBottom: 8, flex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
-          <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{ev.title || ev.event_type.replace(/_/g, ' ')}</span>
+          <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.9rem' }}>{eventTitle(ev)}</span>
           {ev.quantity && <span style={{ fontSize: '0.78rem', color: P.mid, backgroundColor: P.greenPale, borderRadius: 10, padding: '1px 8px' }}>{ev.quantity}</span>}
           <span style={{ fontSize: '0.75rem', color: P.light, marginLeft: 'auto' }}>{formatDate(ev.event_date)}</span>
         </div>

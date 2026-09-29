@@ -44,6 +44,8 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 // V4-HARVDISPOSITION-001 — the optional pick-outcome chip row, shared verbatim with EventNew.
 import HarvestDispositionChips from '../components/HarvestDispositionChips.jsx'
 import { readHarvestDisposition } from '../lib/harvestDisposition.js'
+import { eventTitle, eventTypeText } from '../lib/eventDisplay.js'
+import { reductionReasonLabel } from '../lib/eventTypes.js'
 
 
 // V4-HARVWEIGHTREAD-001: the copy map and its deliberate fallback moved to src/lib/harvestWeight.js so
@@ -99,6 +101,8 @@ const METADATA_LABELS = {
   trend:                     'Trend',
   loss_reason:               'Loss reason',
   qty_reduced:               'Quantity reduced',
+  // BUG-LOSSEVENTLABEL-001: the give-away twin of loss_reason, decided before its first live row.
+  giveaway_reason:           'Give-away reason',
   non_chemical:              'Non-chemical',
   issue_label:               'Issue',
   status_from:               'Status before',
@@ -179,14 +183,14 @@ function photoDeleteFailureCopy(failed, total) {
 // Value formatters for keys whose stored value is a code, not display text.
 const METADATA_VALUE_FORMAT = {
   water_depth: v => waterDepthLabel(v),
+  // The chip captions the reason was picked from ("Not sure", not "unknown").
+  loss_reason: v => reductionReasonLabel(v),
+  giveaway_reason: v => reductionReasonLabel(v),
 }
 
-// The event type in words. Extracted because V4-EVENTDETAILRICH-001 reduced the type to ONE render
-// site and three call sites had the `.replace(/_/g, ' ')` inline — three chances for the header, the
-// kicker and the share title to drift apart on a type nobody has looked at in a year.
-function eventTypeLabel(type) {
-  return String(type ?? '').replace(/_/g, ' ')
-}
+// The header, the kicker and the share title all read the event through eventDisplay.js
+// (BUG-LOSSEVENTLABEL-001), so a loss says "2 plants lost" in all three and never the stored token
+// "failed", which is also a planting status.
 
 export default function EventDetail() {
   const { id: projectId, eventId } = useParams()
@@ -601,7 +605,7 @@ export default function EventDetail() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 24 }}>
         <div style={{ minWidth: 0 }}>
           <h1 style={{ margin: 0, color: P.green, fontSize: '1.3rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: T.space.sm, flexWrap: 'wrap' }}>
-            <span>{icon} {event.title || eventTypeLabel(event.event_type)}</span>
+            <span>{icon} {eventTitle(event)}</span>
             {event.flagged_as_issue && (
               <SeverityBadge reason="flagged" severity={event.severity} />
             )}
@@ -615,13 +619,13 @@ export default function EventDetail() {
               outright (recon D3.2). */}
           {event.title && (
             <div data-testid="event-type-kicker" style={{ marginTop: 4, fontSize: '0.78rem', color: P.light, textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>
-              {eventTypeLabel(event.event_type)}
+              {eventTypeText(event.event_type)}
             </div>
           )}
         </div>
         {!editing && (
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => shareEntity({ title: event.title || eventTypeLabel(event.event_type), url: window.location.href })} aria-label="Share this event" style={outlineBtn}>Share</button>
+            <button onClick={() => shareEntity({ title: eventTitle(event), url: window.location.href })} aria-label="Share this event" style={outlineBtn}>Share</button>
             <button onClick={startEdit} style={outlineBtn}>Edit</button>
             <button onClick={armDelete} disabled={deleting} style={{ ...outlineBtn, color: P.terra, borderColor: P.terra }}>
               {deleting ? '…' : 'Delete'}

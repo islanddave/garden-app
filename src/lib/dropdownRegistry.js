@@ -9,6 +9,7 @@
 // Canonical taxonomies consumed below (V3-CONFIG-001 ext). These are the SINGLE
 // sources; the option/label sets here are DERIVED from them so they cannot drift.
 import { EVENT_TYPES, EVENT_TYPE_META } from './eventTypes.js'
+import { eventTypeText } from './eventDisplay.js'
 import { PROJECT_CATEGORIES } from './constants.js'
 
 // V4-SOURCEFREE-001 (2026-07-07): single source of truth for planting source_type. The server
@@ -145,7 +146,9 @@ export const PLANT_CONTAINER_TYPE_LABELS = Object.fromEntries(
 // Label shape = the de-snaked value (V4-ICON-001: emoji prefix removed — the EventDetail
 // read surface renders the glyph via <Icon name={`event.<type>`}>, and a native <option>
 // cannot hold an SVG). Options are pre-sorted alpha by the raw value (old in-place sort).
-const eventTypeLabel = (t) => t.replace(/_/g, ' ')
+// BUG-LOSSEVENTLABEL-001: the two plant-reduction types read as "plants lost" / "plants given away"
+// rather than their stored tokens — "failed" is also a planting status (eventDisplay.js).
+const eventTypeLabel = (t) => eventTypeText(t)
 
 export const EVENT_TYPE_OPTIONS = [...EVENT_TYPES]
   .sort((a, b) => a.localeCompare(b))

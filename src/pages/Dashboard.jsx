@@ -16,6 +16,7 @@ import { levelProgress } from '../lib/xpLevel.js'
 import { useDismissable } from '../context/DismissRegistry.jsx'
 import { LAYER } from '../lib/dismissLayers.js'
 import { NEUTRAL_CARETAKER_NAME } from '../lib/caretakers.js'
+import { eventTypeText } from '../lib/eventDisplay.js'
 
 // First-name extraction (I10-greeting fix, L-063, 2026-05-18). profile.display_name may be a full
 // name like "Dave Nichols"; we render greetings with first name only. Returns null — never a
@@ -331,7 +332,7 @@ export default function Dashboard() {
                       flexShrink: 0,
                       whiteSpace: 'nowrap',
                     }}>
-                      {single ? ev.event_type?.replace(/_/g, ' ') : `${ev.event_type?.replace(/_/g, ' ')} × ${ev.batch_count}`}
+                      {single ? eventTypeText(ev.event_type) : `${eventTypeText(ev.event_type)} × ${ev.batch_count}`}
                     </span>
                     <div style={{ minWidth: 0 }}>
                       <div style={{

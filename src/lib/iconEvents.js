@@ -1,7 +1,7 @@
 // src/lib/iconEvents.js — V4-ICON-001 (Pass B V101) event-type glyph forms.
 // 42 newly-drawn mono line forms (24+18 masters) + 9 event types that REUSE an existing
 // foundation form (sowing->seed, transplant->seedling, rooting->rooting, flowering->flowering, fruit_set->fruiting,
-// harvest->harvesting basket, watering->care.drop, potting_up->nav.garden, failed->status.failed)
+// harvest->harvesting basket, watering->care.drop, potting_up->nav.garden, fertilizing->care.feed)
 // by reference (no redraw, no drift). EVENT_GLYPHS covers EVERY EVENT_TYPES value as event.<type>; consumers
 // route the event-type emoji render through <Icon name={`event.${type}`}>. Mono: stroke
 // inherits currentColor so a surface can tint per context. Drawn glyphs self-verified via resvg.
@@ -122,6 +122,14 @@ const NEW = {
   // so instead the lid band and both loops are widened to hold their aperture at the small optical
   // size, where the 24 master's lid blurs into the bow.
   given_away: { svg24: '<rect x="3.6" y="8.4" width="16.8" height="3.6" rx="1"/><path d="M5.2 12v7a1.2 1.2 0 0 0 1.2 1.2h11.2a1.2 1.2 0 0 0 1.2-1.2v-7"/><path d="M12 8.4v11.8"/><path d="M12 8.4S10.7 4.8 8.9 4.8a1.8 1.8 0 0 0 0 3.6H12"/><path d="M12 8.4s1.3-3.6 3.1-3.6a1.8 1.8 0 0 1 0 3.6H12"/>', svg18: '<rect x="4" y="8.6" width="16" height="4" rx="1"/><path d="M5.6 12.6v6.6a1.2 1.2 0 0 0 1.2 1.2h10.4a1.2 1.2 0 0 0 1.2-1.2v-6.6"/><path d="M12 8.6v11.8"/><path d="M12 8.6S10.6 4.6 8.6 4.6a2 2 0 0 0 0 4H12"/><path d="M12 8.6s1.4-4 3.4-4a2 2 0 0 1 0 4H12"/>' },
+  // BUG-LOSSEVENTLABEL-001 (Dave 2026-09-29). Was a REUSE of STATUS_GLYPHS.failed — the ✕ that IS the
+  // planting's "Failed" badge — so a row saying "2 of 8 Mini Roses lost" wore the same mark as a
+  // planting that failed outright. Dave: failed is a status, don't mix the two up. Redrawn as a
+  // wilted plant: the stem bows over, its tip leaf hangs, a side leaf droops. Calm, and read by
+  // SILHOUETTE against the upright transplant sprout (0.607 on the distinctness metric, floor 0.40).
+  // A leaf-minus mirroring fertilizing's leaf-plus was tried first and scored 0.352 against it —
+  // below the floor, one stroke apart on adjacent log rows. 18 drops the ground line, as seedling's does.
+  failed: { svg24: '<path d="M4.5 20.5h15"/><path d="M10.8 20.5c0-4.6.6-8.4 3.4-10.3 1.6-1.1 3.4-.8 4.4.5"/><path d="M18.6 10.7c1.2 1.6.9 3.8-.8 5-1.2-1.6-.9-3.8.8-5z"/><path d="M11.2 15.2c-.7 2-2.6 3.1-4.6 2.7.7-2 2.6-3.1 4.6-2.7z"/>', svg18: '<path d="M10.8 20c0-4.4.6-8 3.4-9.9 1.6-1.1 3.4-.8 4.4.5"/><path d="M18.6 10.6c1.2 1.6.9 3.8-.8 5-1.2-1.6-.9-3.8.8-5z"/><path d="M11.2 15c-.7 2-2.6 3.1-4.6 2.7.7-2 2.6-3.1 4.6-2.7z"/>' },
 }
 
 const REUSE = {
@@ -138,9 +146,10 @@ const REUSE = {
   // drawing a second would have put two marks on one meaning, the mirror of the given_away
   // defect below. Reference, not a copy, so the two can never drift.
   fertilizing: ANCHORS['care.feed'],
-  // V4-LOSSEVENT-001. `failed` REUSEs status.failed and STAYS: status.failed already IS "these
-  // plants are gone" in this language, and status.dead aliases onto the same form (iconStatus.js:27),
-  // so the X carries three keys for ONE idea. That is synonymy, which a reader recovers from.
+  // `failed` REUSEd status.failed here until 2026-09-29, on the reading that the X meant "these plants
+  // are gone" in both places. It did not: a loss event is usually PARTIAL (2 of 8), while the status
+  // says the whole planting failed. Same mark, two claims — the defect class described next. Redrawn
+  // in NEW above (BUG-LOSSEVENTLABEL-001).
   //
   // `given_away` used to REUSE ANCHORS['action.share'] on the same reasoning and it was WRONG.
   // This block guards against two glyphs on one meaning; what that reuse shipped was the inverse —
@@ -154,7 +163,6 @@ const REUSE = {
   // Before adding a REUSE here, check that the borrowed anchor is not itself an interactive
   // affordance somewhere. iconUniqueness.test.js now enforces this: every collision needs an
   // explicit allowlist entry, so the next one cannot ship silently.
-  failed:      STATUS_GLYPHS.failed,
 }
 
 const FORM = (t) => NEW[t] || REUSE[t]

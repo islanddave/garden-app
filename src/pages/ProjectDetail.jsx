@@ -7,6 +7,7 @@ import AssigneePicker from '../components/AssigneePicker.jsx'
 import { P, PROJECT_STATUSES, APP_URL } from '../lib/constants.js'
 import { T } from '../lib/tokens.js'
 import { EVENT_TYPE_META, requiresPlanting, creatableEventTypes } from '../lib/eventTypes.js'
+import { eventTitle, eventTypeText } from '../lib/eventDisplay.js'
 import { PLANTING_REQUIRED_ENABLED } from '../lib/featureFlags.js'
 import Icon from '../components/Icon.jsx'
 import ProjectStatusBadge from '../components/ProjectStatusBadge.jsx'
@@ -956,7 +957,7 @@ export default function ProjectDetail() {
           </div>
           {!eventsLoading && events.length > 0 && (
             <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 6 }}>
-              Last: <Icon name={`event.${events[0].event_type}`} size={14} decorative style={{ color: P.light, verticalAlign: '-0.1em' }} /> {events[0].event_type.replace(/_/g, ' ')} · {daysAgo(events[0].event_date)}
+              Last: <Icon name={`event.${events[0].event_type}`} size={14} decorative style={{ color: P.light, verticalAlign: '-0.1em' }} /> {eventTypeText(events[0].event_type)} · {daysAgo(events[0].event_date)}
             </div>
           )}
         </div>
@@ -1665,11 +1666,11 @@ function EventRow({ event: ev, projectId, isLast, deleting, onDelete }) {
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline', marginBottom: 2 }}>
               <span style={{ fontWeight: 600, color: P.dark, fontSize: '0.875rem' }}>
-                {ev.title || ev.event_type.replace(/_/g, ' ')}
+                {eventTitle(ev)}
               </span>
               {ev.title && (
                 <span style={{ fontSize: '0.75rem', color: P.light, fontStyle: 'italic' }}>
-                  {ev.event_type.replace(/_/g, ' ')}
+                  {eventTypeText(ev.event_type)}
                 </span>
               )}
               {ev.quantity && (
