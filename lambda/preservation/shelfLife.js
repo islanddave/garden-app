@@ -63,7 +63,7 @@ const SHELF_LIFE_MONTHS = {
   //   TEMPERATURE. `pantry` takes the WARM anchor (80F), `cold_storage` the COOL one (60F). NCHFP
   //     defines neither word; this mapping is THE ONLY INFERENCE HERE, and the numbers on both sides
   //     of it are printed. It survives its own stress test: a ~70F pantry interpolated between the
-  //     anchors gives veg 4.5 (linear) or 4.2 (log-linear), and the real response is Arrhenius-shaped,
+  //     anchors gives veg 4.5 (linear) or 4.24 (log-linear), and the real response is Arrhenius-shaped,
   //     which bends lower still. Three routes, one answer — 4 is the GENEROUS read of the warm leg.
   //     Nothing is extrapolated below 60F: no anchor exists there, and inventing one is what this
   //     table forbids. (A root cellar is also the most HUMID room in the house, which is the dried-food
