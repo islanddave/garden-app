@@ -90,8 +90,9 @@ describe('flag ON — the /space routes appear', () => {
     // 59 -> 60: V5-SEEDSTAB-001 adds /seeds (see the flag-OFF counterpart, which moves 57 -> 58 for
     // the same route). /sow and /seeds/saved stay as redirects, so this is +1, flag-independent.
     // 60 -> 61: /season-end (End of season), not flag-gated.
-    expect(paths).toHaveLength(61)
-    expect(new Set(paths).size).toBe(61)
+    // 61 -> 63: /season-stats (Season stats) and /sources/:id (source edit), not flag-gated.
+    expect(paths).toHaveLength(63)
+    expect(new Set(paths).size).toBe(63)
   })
 
   it('adds nothing to the overlay tree (the space page is a full page, not a flyover)', async () => {
