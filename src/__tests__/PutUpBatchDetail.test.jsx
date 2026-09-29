@@ -38,7 +38,7 @@ vi.mock('../lib/api.js', () => ({
 }))
 
 import { P } from '../lib/constants.js'
-import BatchDetailView, { inputRowText, stageRowText, outputRowText } from '../components/putup/BatchDetailView.jsx'
+import BatchDetailView, { inputRowText, stageRowText, stageRowDetail, outputRowText } from '../components/putup/BatchDetailView.jsx'
 import { CLOSE_OUTCOMES } from '../components/putup/batchClose.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -370,6 +370,22 @@ describe('BatchDetailView — the log is a log', () => {
     renderDetail({ stages: [{ ...STAGE_FINISHED, note: 'third tray went back in' }] })
     expect(screen.getByTestId('batch-detail-stage-detail').textContent)
       .toBe('snapped clean · third tray went back in')
+  })
+
+  // Put-Up 1a item 3: a check-in is ONE row, so reading the pH and moving the crock in one visit is a
+  // single `moved` row that carries both. The reading stays the row's subject; the move is read back
+  // on the line beneath it. MUTATION: drop the label arm from stageRowDetail -> the move vanishes.
+  it('reads back BOTH halves of a check-in that measured and moved the batch', () => {
+    const MOVED_AND_READ = {
+      ...STAGE_PH, id: 'ksl-moved', stage_kind: 'moved', label: 'Moved to Fridge', storage_location_id: 'loc-fridge',
+      ph_reading: '3.40', ph_read_at: '2026-09-03T12:00:00.000Z', cue_observed: 'All under', note: 'into the fridge',
+    }
+    renderDetail({ stages: [MOVED_AND_READ] })
+    expect(screen.getByTestId('batch-detail-stage').firstElementChild.textContent).toBe('pH 3.40 · read Sep 3')
+    expect(screen.getByTestId('batch-detail-stage-detail').textContent).toBe('Moved to Fridge · All under · into the fridge')
+    // …and a row whose subject IS its label does not repeat it underneath.
+    expect(stageRowDetail({ stage_kind: 'moved', label: 'Moved to Fridge', ph_reading: null, note: 'x' })).toBe('x')
+    expect(stageRowDetail(null)).toBe('')
   })
 
   it('degrades a row it cannot date rather than rendering half a line', () => {

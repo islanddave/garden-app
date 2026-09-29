@@ -84,6 +84,17 @@ export function stageRowText(row) {
   return at ? `${label} · ${at}` : label
 }
 
+// The line under a row: what was observed (the cue), what was noted — and, when the READING is the
+// row's subject, the row's own label too. Put-Up 1a's Check on it writes ONE row per check-in, so a
+// visit that read the pH AND moved the crock is one `moved` row labelled "Moved to Fridge" that also
+// carries the reading; stageRowText leads with the reading, and without this the move would vanish
+// from the log.
+export function stageRowDetail(row) {
+  if (!row) return ''
+  const label = row.ph_reading != null ? row.label : null
+  return [label, row.cue_observed, row.note].filter(Boolean).join(' · ')
+}
+
 export function outputRowText(row) {
   if (!row) return ''
   const parts = []
@@ -334,9 +345,9 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
             {stageRows.map(row => (
               <li key={row.id} data-testid="batch-detail-stage" style={{ padding: '4px 0' }}>
                 <div style={{ color: P.dark, fontSize: T.type.sm }}>{stageRowText(row)}</div>
-                {(row.cue_observed || row.note) && (
+                {stageRowDetail(row) && (
                   <div data-testid="batch-detail-stage-detail" style={{ color: P.light, fontSize: T.type.xs }}>
-                    {[row.cue_observed, row.note].filter(Boolean).join(' · ')}
+                    {stageRowDetail(row)}
                   </div>
                 )}
               </li>
