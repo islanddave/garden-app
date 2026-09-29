@@ -317,7 +317,16 @@ post:
   # new is a liability, not caution. Gates catch wrongness; they do not earn their place by existing.
 
   # ── PHASE B ─────────────────────────────────────────────────────────────────────────────────
+  # RETIRED 2026-09-29 — ALL FIVE, and phase B with them. Put-Up release 1b (v5-putupmake-001)
+  # supersedes 0b: chk_preservation_log_quantity_unit is the 35-value PERMISSIVE UNION and never
+  # narrows (V4 "Units"), so 0b will never run and the narrow stamp will never exist. Four of these
+  # are standing gates keyed on that stamp (vacuous forever, yet reading as live coverage); the fifth
+  # is the phase-B apply receipt (continuous: false), which a runbook post run would report FAIL
+  # forever. The runner reports RETIRED and never runs them. The union itself is asserted by
+  # v5-putupmake-001 post_unit_check_is_the_permissive_union. The mid_* sweep gates above authorise a
+  # phase that is not coming; they are sweep-only (never continuous) and are left as they are.
   - name: post_b_schema_version_recorded
+    retired: "superseded by v5-putupmake-001 — the union never narrows (V4 §4.7)"
     continuous: false
     sql: |
       SELECT 1 FROM public.schema_version WHERE version = '5.0.0-preservunit-20260904-narrow'
@@ -330,6 +339,7 @@ post:
   # post_all_eighteen_values_present, and for the same reason: a DROP + ADD is the one edit that can
   # silently lose a value.
   - name: post_b_check_is_the_canonical_twelve
+    retired: "superseded by v5-putupmake-001 — the union never narrows (V4 §4.7)"
     sql: |
       SELECT count(*) FROM unnest(ARRAY[
         'lb','oz','count','cup','pint','qt',
@@ -352,6 +362,7 @@ post:
   # its singular because the pattern carries both quotes — '%''bushels''%' does not match
   # 'half-bushel'::text, and '%''cup''%' does not match 'cups'::text. Counts plurals STILL PRESENT.
   - name: post_b_check_admits_no_legacy_plural
+    retired: "superseded by v5-putupmake-001 — the union never narrows (V4 §4.7)"
     sql: |
       SELECT count(*) FROM unnest(ARRAY[
         'lbs','cups','pints','quarts',
@@ -376,6 +387,7 @@ post:
   # 'quarts' is still a row that would defeat the next ADD CONSTRAINT, and it is also still visible
   # to any roll-up that forgets the filter.
   - name: post_b_no_row_carries_a_legacy_spelling
+    retired: "superseded by v5-putupmake-001 — the union never narrows (V4 §4.7)"
     sql: |
       SELECT id FROM public.preservation_log
        WHERE EXISTS (SELECT 1 FROM public.schema_version
@@ -399,6 +411,7 @@ post:
   # V5-INFLIGHTBATCH-001 is ever abandoned this gate stays permanently vacuous and should be retired
   # rather than left looking like a passing assertion.
   - name: post_b_shared_units_agree_with_kitchen_batch_input
+    retired: "superseded by v5-putupmake-001 — the union never narrows (V4 §4.7)"
     sql: |
       SELECT v.val FROM unnest(ARRAY['lb','oz','count','cup','qt']) AS v(val)
        WHERE EXISTS (SELECT 1 FROM public.schema_version

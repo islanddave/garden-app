@@ -1,3 +1,21 @@
+-- ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+-- ║ ⛔ SUPERSEDED — DO NOT APPLY THIS FILE, EVER. (2026-09-29, Put-Up release 1b)                 ║
+-- ║                                                                                              ║
+-- ║ migrations/v5-putupmake-001 replaces this phase (V4 plan, data model for release 1b,         ║
+-- ║ "Superseded"; project-state/_crucible-pantry-20260928/04-design-final.md). There,            ║
+-- ║ chk_preservation_log_quantity_unit is the PERMISSIVE UNION — KITCHEN_UNITS (25) plus the ten ║
+-- ║ legacy plurals, 35 values — and the union NEVER NARROWS (V4 "Units"): the Lambda normalises  ║
+-- ║ plurals on write and one display map renders both spellings. Applying this file would cut   ║
+-- ║ the CHECK to 12 values and 23514 every writer that emits a plural or any other KITCHEN_UNITS ║
+-- ║ spelling (g, kg, ml, fl oz, ...), and v5-putupmake-001's post_unit_check_is_the_permissive_  ║
+-- ║ union would go red on both databases.                                                        ║
+-- ║                                                                                              ║
+-- ║ Phase A (0a in this directory) was never applied to prod or staging either (no              ║
+-- ║ '5.0.0-preservunit-20260904' stamp on either, read 2026-09-29); v5-putupmake-001's 0a creates ║
+-- ║ the union under the same constraint name. This directory's four standing post_b_* gates and  ║
+-- ║ its phase-B receipt are retired in gates.yml for this reason. Kept for the record only.      ║
+-- ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+--
 -- V5-PRESERVUNIT-001 — phase B: normalise the legacy plural spellings and NARROW the CHECK to the
 -- canonical 12.
 --
