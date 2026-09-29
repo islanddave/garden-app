@@ -9,7 +9,7 @@
     "photos_to_deleted_inventory": "added 2026-07-29 with the BUG-PHOTOPARENT-001 fix — same orphan-edge class as photos_to_deleted_events for the fifth parent type; measured live 0",
     "phantom_photo_events": "W0.2-r1 phantom-count (22; forensic verdict W0.2b-r1 = pre-fix debris)",
     "care_dupe_groups": "W0.2-r1 care-dupe-groups (1314)",
-    "care_dupe_excess": "RE-BASELINED 1442 -> 1607 on 2026-08-14 (garden-bdwrap-20260814). Growth is the DESIGNED consequence of V4-PLANTMERGE-001 deliberately NOT collapsing same-day water rows: three specialists refuted the collapse's premise before any prod write (zero water_depth light/deep rows in 10,114, and it bucketed UTC against an ET ledger), so merged winners legitimately now hold multiple same-day water rows where two duplicate plantings each held one. Removing the collapse preserved ~198 rows of real history. Re-baselined AFTER all 14 groups merged (group 14 Echeveria ran 2026-08-14), so this value covers the complete merge, not a partial one.",
+    "care_dupe_excess": "RE-BASELINED 1607 -> 1622 on 2026-09-28 (mainsync13 G-watch). The +15 is COPIED HISTORY, not new duplication: two Dave-approved re-identification splits on 2026-09-25 copied shared pre-split care onto the new planting instead of moving it — project-state/_anchorefile-20260925/copy-history.sql (Ancho 038be13a -> Hot Portugal f04b9632, 109 events, +11 across 10 same-day water groups) and project-state/_jammushroom-20260925/split.sql step 5 (Scotch Bonnet 5d031b08 -> Jamaican Yellow Mushroom 78b8be30, 38 pre-1-Jul events, +4 across 4 groups; its post-1-Jul rows were MOVED and net 0). Each copied pair mirrors a pair already counted on its source planting, and every copy carries metadata.split_copy_of: with those rows excluded the metric reads exactly 1607, and 0 live groups hold a non-copy row created after the 2026-08-14 re-baseline. || RE-BASELINED 1442 -> 1607 on 2026-08-14 (garden-bdwrap-20260814). Growth is the DESIGNED consequence of V4-PLANTMERGE-001 deliberately NOT collapsing same-day water rows: three specialists refuted the collapse's premise before any prod write (zero water_depth light/deep rows in 10,114, and it bucketed UTC against an ET ledger), so merged winners legitimately now hold multiple same-day water rows where two duplicate plantings each held one. Removing the collapse preserved ~198 rows of real history. Re-baselined AFTER all 14 groups merged (group 14 Echeveria ran 2026-08-14), so this value covers the complete merge, not a partial one.",
     "harvest_multi_groups": "W0.2-r1 care-dupe-groups (37, legitimate/exempt — info only)",
     "user_stats_drift": "W0.2-r1 user-stats-drift (1: user_3CxBE... 275 ledger XP, no user_stats row)",
     "s3_not_in_db": "W0.2-r1 s3-db-mismatch (6)",
@@ -57,8 +57,8 @@
     "entity_memory_orphans": 4,
     "photos_parentless": 0,
     "photos_to_deleted_inventory": 0,
-    "care_dupe_groups": 1314,
-    "care_dupe_excess": 1607,
+    "care_dupe_groups": 1489,
+    "care_dupe_excess": 1622,
     "harvest_multi_groups": 37,
     "phantom_photo_events": 22,
     "user_stats_drift": 1,
@@ -67,6 +67,6 @@
     "cultivars_untyped": 0,
     "cultivars_missing_type_tag": 0
   },
-  "rebaselined_at": "2026-08-14",
-  "rebaselined_by": "garden-bdwrap-20260814 — Dave ruling on V4-SOFTDEL-001 F3 + post-merge steady state. S3 metrics NOT touched (UNMEASURED this run, PHOTOS_BUCKET unset)."
+  "rebaselined_at": "2026-09-29",
+  "rebaselined_by": "garden-bdwrap-20260814 — Dave ruling on V4-SOFTDEL-001 F3 + post-merge steady state. S3 metrics NOT touched (UNMEASURED this run, PHOTOS_BUCKET unset). | mainsync13-20260928 — care_dupe_excess 1607 -> 1622: copied split history, see evidence"
 }
