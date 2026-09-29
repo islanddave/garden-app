@@ -161,6 +161,16 @@ describe('Heads-up — the storage window on the real dataset', () => {
     expect(band().getAttribute('aria-expanded')).toBe('true')
   })
 
+  it('its chip (S3\'s table): second in the bar, after Protect and before the work chips, with no number', async () => {
+    onDay('2026-10-08', { plan: D.plan })
+    await mount()
+    const chips = [...screen.getByRole('navigation', { name: 'Today sections' }).querySelectorAll('[data-chip]')]
+    expect(chips.map((c) => c.getAttribute('data-chip')).slice(0, 3)).toEqual(['protect', 'headsup', 'water'])
+    expect(chips[1].textContent).toBe('Heads-up')
+    const order = [...document.querySelectorAll('[data-testid^="today-sec-"]')].map((s) => s.getAttribute('data-section'))
+    expect(order.slice(0, 3)).toEqual(['protect', 'headsup', 'care'])
+  })
+
   it('MF1: a close on a deadline day records {r:"deadline"} and holds that day; the next day opens again', async () => {
     onDay('2026-10-08')
     await mount()
