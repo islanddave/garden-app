@@ -45,7 +45,9 @@ export const PROBES = {
   jarPatch:       ['handleJarRoute', 'PATCH /api/preservation/:id (1b, §2.6)'],
   legacyDeltaRef: [/delta_at/, 'legacy PUT: remaining_count key + delta_at set → 409 client_stale (§2.6)'],
   closedPolicyF:  [(src) => !/return closedForEdits/.test(src), 'closed batch accepts content writes (§2 common, F §3.13)'],
+  mergeKbi:       [() => PLANTS_MERGE_SRC.includes('kitchen_batch_input'), 'plants merge SURFACES repoints kbi.plant_id (§5.5, RIA-I3)'],
 }
+const PLANTS_MERGE_SRC = readFileSync(join(LAMBDA_DIR, '../plants/merge.js'), 'utf8')
 
 // PATCH on a batch id nobody owns: with the route, the kitchen gate answers 404 (batch not found); without
 // it, parseKitchenRoute returns null for a stages/<id> path and index.js ends in 405. No fixture needed.
