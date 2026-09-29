@@ -2,7 +2,13 @@
   "_comment": "V4-HARVRATCHET-001 — cultivars whose sample-derived weight factor diverges sharply from its reference and has been REVIEWED and accepted. Adding an id here tells the ratchet job to propagate that factor. To CORRECT rather than accept a factor, void the offending samples (cultivar_weight_void) instead of listing the cultivar here. Dave's standing direction (2026-08-06): his own weighings ARE the target — the catalogue reference is the fallback, not the authority, and it phases out as more harvests get weighed.",
   "reviewed_cultivar_ids": [
     "457d4628-1531-4349-8af7-2a114c206599",
-    "f21e22d6-0556-4101-a470-0c8da3cb04ae"
+    "f21e22d6-0556-4101-a470-0c8da3cb04ae",
+    "37fa8940-df65-4eb2-8802-8cb2a38084e2",
+    "560cbc6c-3183-44f1-97a1-03caafdc45cf",
+    "6ac055ac-4830-4556-ba62-2d68054fa9dc",
+    "7cdf1dca-360d-4d7c-b6f4-1e399de1a05a",
+    "b5ec43ed-dbd0-4282-9adb-52f8666925ef",
+    "bd11098f-d239-4a69-bb61-49a19a8e1488"
   ],
   "reviews": [
     {
@@ -37,6 +43,72 @@
       "decision": "ACCEPT — the reference is a generic slicing-tomato figure that cannot describe a cherry tomato, and there is no variety-level figure to correct instead.",
       "why": "Four weighings across 13 days, 2026-08-03/05/14/16, at 28, 16, 22 and 15 g per fruit — real spread (not the stddev-0 lattice artefact that capped Pineapple Tomatillo's confidence), mean 20.25. Cherry has NO row in plant_varieties.unit_weights, so the 123 g reference is crop_types.tomato falling through. 123 g is a slicing tomato; a cherry tomato at 20 g is what a correct measurement looks like against a fallback aimed at a different fruit.",
       "caveat": "IDENTITY CHECKED FIRST, per the Aster revocation directly above — that ACCEPT was wrong because two agreeing weighings came from a planting since re-identified. All four Cherry samples trace to source events on planting 'Cherry Rescue 1', whose cultivar_id still equals this id (verified live 2026-08-16). Two of them carry note 're-filed after the source planting was re-identified', i.e. they are the CORRECTED post-v4-harvweightest-001 attribution, not a stale one. Standing weakness: all four are the same planting, so this is four samples of one plant's fruit population rather than four plants. Unlike Capeliente (migrations/v4-pepperreffix-001) this could NOT be fixed by correcting the catalogue — writing a cherry-tomato figure derived from these same samples would make the reference a copy of the measurement it is meant to check."
+    },
+    {
+      "cultivar_id": "bd11098f-d239-4a69-bb61-49a19a8e1488",
+      "name": "Ristra Cayenne II",
+      "sample_g_per_count": 71.67,
+      "reference_g": 12,
+      "ratio": 5.972,
+      "reviewed": "2026-09-29",
+      "decision": "ACCEPT — Dave, first-hand, on the harvest-weight review page (mainsync13, saved 2026-09-29T14:01Z): 'Use my weighings'.",
+      "why": "11 weighings, 44-99 g per pod, cv 0.21. Dave confirmed on 2026-09-21 that these pods are 4-8x a standard cayenne (memory ristra-cayenne-large-pods); the 12 g variety figure is a standard cayenne's.",
+      "caveat": "Identity checked 2026-09-28 (mainsync13 G-watch Q7b): every sample traces to a planting whose cultivar is this id, all logged by Dave. Evidence: Projects/Gardening/_mainsync13_20260928/G-watch/findings.md."
+    },
+    {
+      "cultivar_id": "6ac055ac-4830-4556-ba62-2d68054fa9dc",
+      "name": "Chilly Chill",
+      "sample_g_per_count": 1.21,
+      "reference_g": 45,
+      "ratio": 0.027,
+      "reviewed": "2026-09-29",
+      "decision": "ACCEPT — Dave, first-hand, on the harvest-weight review page (mainsync13, 2026-09-29): 'Use my weighings'.",
+      "why": "16 weighings, 0.3-1.8 g per pod. Chilly Chill is an ornamental with tiny pods; the 45 g reference is the generic pepper crop figure falling through (no variety figure), the same situation as the Cherry acceptance above.",
+      "caveat": "Identity checked 2026-09-28 (G-watch Q7b). Two 2-pod weighings of 0.5 g (08-14, 08-16) are at the scale's floor; Dave kept them."
+    },
+    {
+      "cultivar_id": "b5ec43ed-dbd0-4282-9adb-52f8666925ef",
+      "name": "Unknown (Unknown Tomato Cuttings)",
+      "sample_g_per_count": 5.5,
+      "reference_g": 123,
+      "ratio": 0.045,
+      "reviewed": "2026-09-29",
+      "decision": "ACCEPT — Dave, first-hand, on the harvest-weight review page (mainsync13, 2026-09-29): 'Use my weighings'.",
+      "why": "7 weighings, 4-6 g per fruit (cv 0.18): small currant/cherry-sized fruit. The 123 g reference is the generic slicing-tomato crop figure falling through.",
+      "caveat": "Identity checked 2026-09-28 (G-watch Q7b). The variety itself is unidentified; re-review if the cuttings are ever identified to a named cultivar."
+    },
+    {
+      "cultivar_id": "560cbc6c-3183-44f1-97a1-03caafdc45cf",
+      "name": "Jamaican Yellow Mushroom",
+      "sample_g_per_count": 7.53,
+      "reference_g": 45,
+      "ratio": 0.167,
+      "reviewed": "2026-09-29",
+      "decision": "ACCEPT — Dave, first-hand, on the harvest-weight review page (mainsync13, 2026-09-29): 'Use my weighings', and leave out the 0.5 g single-pod weighing of 2026-08-14 (sample f778ff49-8998-45dc-899a-66c8f5b444c2, voided 2026-09-29 by agent:mainsync13-20260928).",
+      "why": "5 remaining weighings (4 re-filed from Scotch Bonnet in the 2026-09-25 split + 1 on 2026-09-27). The 45 g reference is the generic pepper crop figure; the cultivar has no variety figure of its own.",
+      "caveat": "The factor was 7.09 g from 6 samples before the void; 7.53 g from 5 after (read live 2026-09-29). Process lesson: when a split re-files samples onto a new cultivar, give that cultivar a reference in the same change or the ratchet flags it the next Monday."
+    },
+    {
+      "cultivar_id": "7cdf1dca-360d-4d7c-b6f4-1e399de1a05a",
+      "name": "Broccoli",
+      "sample_g_per_count": 67.16,
+      "reference_g": 450,
+      "ratio": 0.149,
+      "reviewed": "2026-09-29",
+      "decision": "ACCEPT — Dave, first-hand, on the harvest-weight review page (mainsync13, 2026-09-29): 'Use my weighings'.",
+      "why": "14 weighings, 10-142 g per head-equivalent, many logged as fractions of a head (0.1-0.25): side shoots and small heads. The 450 g variety figure is a full main head.",
+      "caveat": "Identity checked 2026-09-28 (G-watch Q7b). cv 0.68 is high because fractional-head logging divides small weights by small fractions."
+    },
+    {
+      "cultivar_id": "37fa8940-df65-4eb2-8802-8cb2a38084e2",
+      "name": "Green Magic",
+      "sample_g_per_count": 42.55,
+      "reference_g": 500,
+      "ratio": 0.085,
+      "reviewed": "2026-09-29",
+      "decision": "ACCEPT — Dave, first-hand, on the harvest-weight review page (mainsync13, 2026-09-29): 'Use my weighings'.",
+      "why": "6 weighings, 18-66 g per head: side-shoot sized, against a 500 g main-head variety figure. Nothing weighed since 2026-08-22.",
+      "caveat": "Identity checked 2026-09-28 (G-watch Q7b)."
     }
   ]
 }
