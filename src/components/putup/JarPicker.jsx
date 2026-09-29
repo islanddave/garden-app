@@ -40,9 +40,13 @@ export function preservedOn(v) {
 // Identity, in the order a cook reads a shelf: what it is, how much, when it was put up. No method
 // label: the vocabulary is hand-maintained in four places already and putUpMethodParity.test.js
 // enumerates those four by path, so a fifth copy here would drift unguarded.
+// WHAT IT IS is the jar's own name when it has one (1b; "Megatron plain"), else its crop group's label.
+// A jar named but not attributed to a crop sits in the "Unattributed" group, and read by the group
+// label it said "Unattributed · …" beside a name the cook wrote on the lid (release F review M6).
 export function jarIdentity(row) {
   const parts = []
-  if (row.crop_label) parts.push(row.crop_label)
+  const what = typeof row.label === 'string' && row.label.trim() ? row.label.trim() : row.crop_label
+  if (what) parts.push(what)
   if (row.quantity_value != null && row.quantity_unit) parts.push(`${row.quantity_value} ${row.quantity_unit}`)
   const on = preservedOn(row.preserved_at)
   if (on) parts.push(on)
