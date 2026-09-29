@@ -126,7 +126,48 @@ ERROR) → `sweep` → 0a → full `post` → one planted violation per new CHEC
 `git archive <origin/main> scripts/gate_runner.py migrations`) `--all --phase post --continuous-only`
 against the replica before and after, every FAIL named.
 
-_Results: recorded below by the rehearsal commit._
+**Results, 2026-09-29** (PostgreSQL 17.10 local; prod 17.11). Replica: 153 stamps; the V4 fixture — the 5
+live put-ups verbatim (zucchini 2.5 qt × 3, the farm-stand plums with no planting, the 4-qt `other` with no
+date, the two basil "passata" pestos, plural units), a NULL-remaining jar (Jen's), a pre-1b "No expiry" row, a
+fallthrough-dated pesto on a pantry shelf (10 months), three deep-freezer places + that one shelf and no
+fridge, and a pre-1b Snapped ferment (kind NULL, precision week) with a harvest line and a purchased line
+in lb.
+
+| step | result |
+|---|---|
+| `pre` | 9/9 PASS |
+| `post --continuous-only` before 0a | 25 PASS + 1 window-only, 0 ERROR (vacuous) |
+| `sweep` | 5/5 `sweep_*` PASS (`mid_backfill_0a_applied` FAIL by design) |
+| 0a | applied, exit 0 |
+| `post` | 26/26 PASS |
+| planted violations | 48/48 refused with the expected SQLSTATE and constraint — every new CHECK, UNIQUE and FK, the kept-name relaxed CHECKs, ownership transfer (P0001), batch hard deletes (23503); positive controls accepted: a keyed season-precision batch, an undated `put_up` row (`unknown`), `noted`, a void, a jar put up from it (label, basis table, `after`, pH pair, `fl oz`), a label-only no-size jar, an unnamed Other batch, garden / salt / water / put_up / sitting lines, same-name places in another kind, for Jen, and soft-deleted |
+| 0r | applied, exit 0; fingerprint (constraints, indexes, triggers, columns, view md5 + ACL, routine md5 + comments, stamps, data) identical to before 0a |
+| 0a × 2 after 0r | identical to the first apply |
+| 0p | table 6, none 1, typed 1; the NULL-basis gate PASS |
+
+Both corpora `--all --phase post --continuous-only` (FAIL counts before 0a / after 0a / after 0p):
+
+* **this branch: 29 / 29 / 29, the same 29 names each time** — all seeded-reference-data gates that a
+  synthetic replica cannot satisfy (achievements, crop-type aliases and rows, habits of the fixture's crop
+  rows, the fixture planting's missing care cache, sow-first-year slugs, the sentinel space, xp levels, the
+  source catalogue). 1b turns nothing red.
+* **MAIN (`22e7db7cbc787129706126dbe5bfdb93ab8d63e7`): 29 / 33 / 33.** The four added are exactly the gates
+  release 1a's gates-only commit restates: `v4-putupprov-001::post_column_count_is_25`,
+  `v4-putupsession-001::post_column_count_is_25`, `v5-preservunit-001::post_column_is_still_not_null`,
+  `v5-putupmultisource-001::post_parent_column_count_unchanged`. (`v5-phrecord-001::post_view_gained_exactly_two`
+  stays green: appending kitchen_batch's one new column keeps "view = batch + 8" true.) So the Tuesday cron
+  would red on the first database 1b reaches until that commit is on main — 05 §1, A(iii).
+
+Archive routines on the fixture (+ a container C1 whose harvest feeds the batch):
+
+| case | prod bodies (pre-1b) | 1b |
+|---|---|---|
+| planting archive, live harvest line | Guard 4, named | Guard 4, named |
+| planting archive, the harvest line soft-deleted | n/a (no column) | **bare 23503** — the FK still holds (see above) |
+| planting archive, the batch soft-deleted | bare 23503 | bare 23503 (unchanged) |
+| planting archive, the harvest line removed (hard) | archived | archived |
+| container archive, live harvest line | **bare 23503** | Guard 5, named |
+| container archive, the line removed | archived | archived |
 
 ## Deployed-writer proof
 
