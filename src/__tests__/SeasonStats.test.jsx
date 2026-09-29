@@ -125,6 +125,19 @@ describe('SeasonStats', () => {
     expect(cardIds()).toEqual(STATS_SECTION_ORDER.filter(id => id !== 'heat_ladder' && id !== 'seed_lots'))
   })
 
+  // QA 2026-09-29: one card showed "Not recorded 70" and "No source recorded · 96 plantings" with nothing
+  // saying they count different things. Each label now names its question.
+  it('the two "not recorded" counts on the Sources card say what each one means', async () => {
+    fetchSpy.mockResolvedValue(fixture)
+    draw()
+    const card = (await screen.findAllByTestId('stat-card')).find(c => c.getAttribute('data-section') === 'sources')
+    const keyRow = within(card).getByText('How it started: not recorded').closest('li')
+    expect(keyRow.textContent).toBe('How it started: not recorded70213')
+    const sellerRow = within(within(card).getByTestId('source-report')).getByText('Seller not recorded').closest('li')
+    expect(sellerRow.textContent).toContain('96 plantings')
+    expect(card.textContent).not.toMatch(/No source recorded|(^|[^:] )Not recorded/)
+  })
+
   it('the source report folds sources under 2 lb behind "N more sources"', async () => {
     fetchSpy.mockResolvedValue(fixture)
     draw()
@@ -132,7 +145,7 @@ describe('SeasonStats', () => {
     const shown = within(report).getAllByTestId('source-row').length
     const more = screen.getByTestId('source-more')
     expect(more.textContent).toMatch(/^\d+ more sources · /)
-    expect(within(report).getByText('No source recorded')).toBeTruthy()
+    expect(within(report).getByText('Seller not recorded')).toBeTruthy()
     expect(within(report).getByText('96 plantings · seed saved from 3')).toBeTruthy()
     fireEvent.click(more)
     expect(within(report).getAllByTestId('source-row').length).toBeGreaterThan(shown)

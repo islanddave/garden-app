@@ -14,7 +14,7 @@ const LIMIT_TEXT = {
   weather_from: (l) => (monthDay(l.date) ? `Weather records start ${monthDay(l.date)}, so heat before then isn't counted.` : null),
   care_counted_in_days: () => 'Care is counted in days: three waterings on one day count as one.',
   archived_included: () => 'Plantings you have since archived are included, so totals can run higher than the Harvests page.',
-  no_source_lb: (l) => (Number(fmtLb(l.lb)) > 0 ? `${fmtLb(l.lb)} lb came from plantings with no source recorded, so the list isn't complete.` : null),
+  no_source_lb: (l) => (Number(fmtLb(l.lb)) > 0 ? `${fmtLb(l.lb)} lb came from plantings with no seller recorded, so the list isn't complete.` : null),
   excluded_approx_tp: () => 'Plantings with only a rough planting-out date are left out.',
   excluded_rescued_gift_swap: () => 'Rescued, gifted and swapped plants are left out, since their age when they arrived is unknown.',
   excluded_under_21d: () => 'Plantings picked within three weeks of going out are left out; they were likely fruiting already.',
@@ -76,7 +76,7 @@ function sources(s) {
     const second = named[1]
     if (second && num(second.lb) > 0) out.push(`Next was ${second.name} at ${lbText(second.lb)}.`)
   }
-  if (none && Number(fmtLb(none.lb)) > 0) out.push(`${lbText(none.lb)} came from plantings with no source recorded.`)
+  if (none && Number(fmtLb(none.lb)) > 0) out.push(`${lbText(none.lb)} came from plantings with no seller recorded.`)
   return out.join(' ')
 }
 

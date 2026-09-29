@@ -11,7 +11,7 @@ import {
 import { KEEP_WORD } from './charts/TomatoKeepChart.jsx'
 import { seedCountText } from '../../components/stats/SeedLotCard.jsx'
 import {
-  fmtInt, fmtLb, fmtPct, monthDay, kindWord, HEAT_BAND_LABEL, CARE_KINDS, CARE_LABEL, num, isNum, capitalize,
+  fmtInt, fmtLb, fmtPct, monthDay, kindWord, HEAT_BAND_LABEL, CARE_KINDS, CARE_LABEL, num, isNum, capitalize, NO_SELLER_LABEL,
 } from './format.js'
 
 const blank = (x) => (x == null || x === '' ? '—' : x)
@@ -41,7 +41,7 @@ export const STATS_REGISTRY = {
       columns: ['Source', 'Kind', 'lb', 'Plantings', 'Picked', 'Lost', 'Saved lots'],
       numeric: [false, false, true, true, true, true, true],
       rows: (s?.series?.cards ?? []).map((c) => [
-        c.source_id == null ? 'No source recorded' : c.name, blank(kindWord(c.kind)), fmtLb(num(c.lb)),
+        c.source_id == null ? NO_SELLER_LABEL : c.name, blank(kindWord(c.kind)), fmtLb(num(c.lb)),
         fmtInt(num(c.plantings)), blank(fmtInt(c.picked)), blank(fmtInt(c.lost)), fmtInt(num(c.saved_lots)),
       ]),
     }),

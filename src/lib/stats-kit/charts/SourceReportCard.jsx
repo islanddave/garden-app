@@ -1,9 +1,9 @@
 // Source report card (round-2 design): one row per named source — name and kind, pounds with a bar,
 // then "N plantings · N picked · N lost · seed saved from N" — sources under 2 lb folded behind
-// "N more sources", and a "No source recorded" row last.
+// "N more sources", and a "Seller not recorded" row last.
 import React, { useState } from 'react'
 import { v } from '../palette.js'
-import { kindWord, fmtLb, fmtInt, countOf, num, isNum } from '../format.js'
+import { kindWord, fmtLb, fmtInt, countOf, num, isNum, NO_SELLER_LABEL } from '../format.js'
 
 export const SMALL_SOURCE_LB = 2
 
@@ -59,7 +59,7 @@ export default function SourceReportCard({ section }) {
           <Row key={c.source_id} name={c.name} kind={kindWord(c.kind)} lb={c.lb} max={max} meta={sourceMetaLine(c)} />
         ))}
         {none && (
-          <Row name="No source recorded" lb={none.lb} max={max} meta={sourceMetaLine(none)} muted />
+          <Row name={NO_SELLER_LABEL} lb={none.lb} max={max} meta={sourceMetaLine(none)} muted />
         )}
       </ul>
       {small.length > 0 && (

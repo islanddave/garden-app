@@ -30,10 +30,16 @@ export function fmtShu(n) {
   return String(Math.round(n))
 }
 
+// Two different "not recorded" counts sit on the Sources card and disagree (70 vs 96 today), because
+// they answer different questions: 'none' in the by-type bar is a planting with no HOW-IT-STARTED
+// (source_type IS NULL); the report row is a planting with no SELLER (no source_id). Each label names
+// its own question so the two numbers are not read as one.
+export const NO_SELLER_LABEL = 'Seller not recorded'
+
 // compute.py SOURCE_GROUP buckets, in the order the bar draws them.
 export const SOURCE_GROUPS = ['nursery', 'seed', 'rescued', 'gift', 'other', 'none']
 export const SOURCE_GROUP_LABEL = {
-  nursery: 'Nursery', seed: 'From seed', rescued: 'Rescued', gift: 'Gift', other: 'Swap, division & other', none: 'Not recorded',
+  nursery: 'Nursery', seed: 'From seed', rescued: 'Rescued', gift: 'Gift', other: 'Swap, division & other', none: 'How it started: not recorded',
 }
 
 const KIND_WORD = {
