@@ -346,10 +346,8 @@ function RemoveBatch({ batch, fetch, onRemoved }) {
       await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'DELETE' })
       onRemoved?.()
     } catch (e) {
-      const code = e?.body?.code
-      setErr(code === 'has_jars'
-        ? 'It has jars — undo its put-ups first.'
-        : (describeRefusal(e)?.text ?? "Couldn't remove it — try again."))
+      // has_jars says to undo its put-ups first (putUpErrors, release F); every other code, the server's words.
+      setErr(describeRefusal(e)?.text ?? "Couldn't remove it — try again.")
       setBusy(false)
     }
   }, [batch.id, busy, fetch, onRemoved])

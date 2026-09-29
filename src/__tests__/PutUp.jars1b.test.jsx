@@ -152,17 +152,15 @@ describe('the row editor writes each field to its one writer (V4 §5.4 "From 1b"
     expect(writes()[0][2]).toEqual({ method: 'other', method_other_text: 'Salt-cured, dried' })
   })
 
-  // MUTATION: PATCH before PUT -> the order literal reds (and live, the PUT's echo of the old method 409s).
-  it('a count change and a method change: the PUT goes first, then the PATCH', async () => {
+  // Release F: the count rides the PATCH too (the ferment Lambda's delta rule), so an Edit is ONE
+  // write. MUTATION: split the count back onto the PUT -> a PUT appears and this literal reds.
+  it('a count change and a method change are ONE PATCH, and no PUT', async () => {
     await openEditor()
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '3' } })
     fireEvent.change(screen.getByRole('combobox', { name: 'Method' }), { target: { value: 'ferment' } })
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
-    await waitFor(() => expect(writes()).toHaveLength(2))
-    expect(writes().map(w => w[0])).toEqual(['PUT', 'PATCH'])
-    expect(writes()[0][2].package_count).toBe(3)
-    expect(writes()[0][2].method).toBe('hot_sauce')          // the stored value, an equal echo
-    expect(writes()[1][2]).toEqual({ method: 'ferment' })
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()).toEqual([['PATCH', '/api/preservation/rec-1b', { package_count: 3, method: 'ferment' }]])
   })
 })
 

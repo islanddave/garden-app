@@ -16,6 +16,7 @@ vi.mock('../lib/api.js', () => ({
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => ({ user: { id: 'user_dave' } }) }))
 
 import BatchDetailView, { liveStages, outputSittings } from '../components/putup/BatchDetailView.jsx'
+import { HAS_JARS_TEXT } from '../lib/putUpErrors.js'
 
 const NOW = new Date('2026-10-20T09:00:00').getTime()
 const local = (s) => new Date(s).toISOString()
@@ -129,7 +130,7 @@ describe('Remove this batch', () => {
     renderDetail()
     fireEvent.click(screen.getByTestId('batch-remove'))
     await act(async () => { fireEvent.click(screen.getByTestId('batch-remove-yes')) })
-    await waitFor(() => expect(screen.getByTestId('batch-remove-error').textContent).toBe('It has jars — undo its put-ups first.'))
+    await waitFor(() => expect(screen.getByTestId('batch-remove-error').textContent).toBe(HAS_JARS_TEXT))
   })
 })
 

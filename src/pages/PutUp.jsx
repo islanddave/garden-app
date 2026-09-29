@@ -2537,6 +2537,12 @@ function GroupCard({ group, onChanged, fetch }) {
 }
 
 // Build the FULL replace payload the PUT contract expects, applying overrides (decrement / edit).
+//
+// ⚠ RELEASE F: NOTHING IN THIS BUNDLE CALLS IT. Mark used / Used up are POST /api/pantry/uses and every
+// Edit is one PATCH (RecordRow). It stays, exported and pinned by preservationColumnParity.test.js and
+// putUpDateEcho.tz.test.js, because it IS the legacy wire shape the 1a bundles still on phones send —
+// the shape the Lambda's PUT keeps answering (and, from F, refuses for a drawn jar). Retire it with
+// those two tests once no 1a bundle is left to reason about.
 function buildFullPayload(rec, overrides = {}) {
   return {
     crop_type_slug: rec.crop_type_slug ?? null,
@@ -2596,20 +2602,16 @@ function RecordRow({ rec, onChanged, fetch }) {
   // Every write below resolves true only when it landed. The editor closes on THAT, never on the
   // attempt: a refused save used to close it anyway, so the typed values vanished and the only record
   // of them was a message about why they had not been saved (V4 §6.5 "keep the edit").
-  // Put-Up release 1b (V4 §5.4 "From 1b"; contract-F §2.6): the name, method, notes and discard-by
-  // change through PATCH /api/preservation/:id — the legacy PUT answers a DIFFERING method, date or
-  // notes with 409 client_stale, so the editor never sends them there. The size and count still go
-  // through the PUT, whose untouched echo of the stored method/notes/date is an equal no-op. The PUT
-  // goes FIRST: after a PATCH lands, the PUT's echo of the old method would differ and be refused.
-  async function saveEdit({ put: putOverrides, patch }) {
+  // Release F (contract-F §2.6, the ferment Lambda): every Edit is ONE PATCH /api/preservation/:id
+  // carrying only what changed — the count (with the legacy PUT's delta rule, server-side), the size as
+  // a pair, the name, the method (with its 'other' words), the notes and the discard-by. The legacy
+  // full-replace PUT is no longer sent by this bundle at all: an untouched field is an absent key, so
+  // an edit can never echo a stale place, date or count over someone else's change.
+  async function saveEdit(patch) {
+    if (!patch) return true
     setBusy(true); setErr(null)
     try {
-      if (putOverrides) {
-        await fetch(`/api/preservation/${rec.id}`, { method: 'PUT', body: JSON.stringify(buildFullPayload(rec, putOverrides)) })
-      }
-      if (patch) {
-        await fetch(`/api/preservation/${rec.id}`, { method: 'PATCH', body: JSON.stringify(patch) })
-      }
+      await fetch(`/api/preservation/${rec.id}`, { method: 'PATCH', body: JSON.stringify(patch) })
       onChanged()
       return true
     } catch (e) {
@@ -2863,13 +2865,11 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // size and count through the legacy PUT, the name, method, notes and discard-by through the PATCH.
   // An untouched field is an absent key, which both routes read as "unchanged" (V4 §5.4 "From 1b").
   function save() {
-    // The count is the one field only the legacy PUT writes (PATCH /api/preservation/:id takes the
-    // quantity PAIR but not package_count — jarRoutes.js JAR_PATCH_KEYS), so it alone rides the PUT.
-    const put = {}
-    if (packageCount !== seed.packageCount) put.package_count = packageCount === '' ? 1 : Number(packageCount)
+    // ONLY what changed, each key once, all in the one PATCH (see RecordRow.saveEdit).
     const patch = {}
-    // The size is the PATCH's (train §6: "the PATCH gains the quantity pair"), always as a pair. A
-    // blank amount leaves the stored size alone rather than clearing it.
+    if (packageCount !== seed.packageCount) patch.package_count = packageCount === '' ? 1 : Number(packageCount)
+    // The size always travels as a pair. A blank amount leaves the stored size alone rather than
+    // clearing it.
     if ((qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit) && qtyValue.trim() !== '' && Number(qtyValue) > 0) {
       patch.quantity_value = qtyValue.trim()
       patch.quantity_unit = qtyUnit || rec.quantity_unit
@@ -2883,7 +2883,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     }
     if (notes !== seed.notes) patch.notes = notes.trim() || null
     if (useByTarget !== seed.useByTarget) patch.discard_by = useByTarget || 'clear'
-    onSave({ put: Object.keys(put).length ? put : null, patch: Object.keys(patch).length ? patch : null })
+    onSave(Object.keys(patch).length ? patch : null)
   }
 
   return (

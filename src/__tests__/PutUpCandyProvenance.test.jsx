@@ -217,18 +217,18 @@ describe('and the cook can set the real date', () => {
     expect(lastPatch()).toBeNull()
   })
 
-  // Amended for release F (06 §1.3): the one-tap decrement is a use on its own route and sends no PUT,
-  // so it cannot clear the date at all; the full-replace PUT that is left (a count edit) still has to
-  // carry the use-by, or it would silently clear it and take the jar out of use-soon.
-  it('a count edit on a candy row still carries its use-by through the full-replace PUT', async () => {
+  // Amended for release F (06 §1.3; the ferment Lambda's PATCH): neither the one-tap decrement nor an Edit
+  // sends the full-replace PUT, so no write from this bundle can clear the candy date by omission. A
+  // count edit is one PATCH of the count alone.
+  it('a count edit on a candy row is one PATCH of the count, and never touches its use-by', async () => {
     renderPutUp()
     await screen.findByText('Pantry shelf')
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '3' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(lastPut()).not.toBeNull())
-    expect(lastPut().use_by_target).toBe('2026-10-01')
-    expect(lastPut().package_count).toBe(3)
+    await waitFor(() => expect(lastPatch()).not.toBeNull())
+    expect(lastPatch()).toEqual({ package_count: 3 })
+    expect(lastPut()).toBeNull()
   })
 
   it('a Mark-used tap on a candy row sends no PUT at all', async () => {

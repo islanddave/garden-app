@@ -340,31 +340,20 @@ describe('PutUp — "what\'s put up" read surface', () => {
     expect(putCalls().length).toBe(0)
   })
 
-  it('a count edit\'s full-replace PUT carries the row forward — and never remaining_count', async () => {
+  // Release F (amended again in the same commit as the change): an Edit is ONE PATCH carrying only what
+  // changed — so nothing on the row (provenance, date, place) is echoed at all, and the class of bug
+  // the full-replace carriage guarded (a stale bundle's echo rewriting a field) has no write to ride.
+  it('a count edit is one PATCH of the count alone — nothing else on the row is sent', async () => {
     renderPutUp()
     await screen.findByText('Garage freezer')
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '4' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(putCalls().length).toBe(1))
-    const [path, opts] = putCalls()[0]
-    expect(path).toBe('/api/preservation/rec-1')
-    const body = JSON.parse(opts.body)
-    expect(body.package_count).toBe(4)
-    expect('remaining_count' in body).toBe(false)
-    expect('consumed_at' in body).toBe(false)
-    // Full replace carries the row's identity fields forward.
-    expect(body.crop_type_slug).toBe('tomato')
-    expect(body.quantity_value).toBe(14)
-    // V4-PUTUPPROV-001. THE REGRESSION THIS GUARDS: before buildFullPayload carried these, every
-    // one-tap "Mark used" rewrote a farm-stand put-up as own-garden with the vendor erased, returned
-    // 200, and looked like a render glitch. Worst on exactly the rows the feature exists for, since
-    // only non-own_garden rows have anything to lose.
-    expect(body.source_kind).toBe('farm_stand')
-    expect(body.source_label).toBe('Warner Farms')
-    // Assert the NEGATIVE too: catches a client- or server-side re-default even if the positive
-    // assertion were somehow satisfied.
-    expect(opts.body).not.toMatch(/own_garden/)
+    const patches = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PATCH')
+    await waitFor(() => expect(patches().length).toBe(1))
+    expect(patches()[0][0]).toBe('/api/preservation/rec-1')
+    expect(JSON.parse(patches()[0][1].body)).toEqual({ package_count: 4 })
+    expect(putCalls().length).toBe(0)
   })
 
   it('renders provenance on a bought row, and nothing at all on a garden row', async () => {
@@ -436,31 +425,22 @@ describe('PutUp — an estimated date does not read as a date you picked', () =>
     expect(lastPost().preserved_at_approx).toBe(false)
   })
 
-  // Release F: the one-tap decrement no longer PUTs (see "Mark used" above), so these two ride the one
-  // full-replace PUT that is left — a count edit — which is where the class of bug now lives.
-  const countEdit = async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '4' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(putCalls().length).toBe(1))
-  }
-  it('a count edit carries an existing TRUE through the full-replace PUT', async () => {
-    // The class of bug that made source_kind COALESCE-preserved: a full-replace write from a stale
-    // bundle rewriting a field it never heard of. Here the payload DOES carry it, so the flag has to
-    // survive the round trip rather than being re-defaulted to false by the client.
+  // Release F: neither the one-tap decrement nor an Edit sends the full-replace PUT any more (see above),
+  // so the estimated-date flag cannot be re-defaulted by a write from this bundle. The two tests that
+  // pinned its carriage through the PUT are retired with that write; buildFullPayload's own carriage of
+  // it is still pinned below by the parity test and putUpDateEcho.tz.test.js.
+  it('an Edit of a row with an estimated date does not send the date or the flag', async () => {
     wire({ stores: withApprox(true) })
     renderPutUp()
     await screen.findByText('Garage freezer')
-    await countEdit()
-    expect(JSON.parse(putCalls()[0][1].body).preserved_at_approx).toBe(true)
-  })
-
-  it('a count edit on a pre-migration row sends NULL, which the Lambda reads as "unchanged"', async () => {
-    wire({ stores: withApprox(undefined) })
-    renderPutUp()
-    await screen.findByText('Garage freezer')
-    await countEdit()
-    expect(JSON.parse(putCalls()[0][1].body).preserved_at_approx).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '4' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    const patches = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PATCH')
+    await waitFor(() => expect(patches().length).toBe(1))
+    const body = JSON.parse(patches()[0][1].body)
+    expect('preserved_at_approx' in body).toBe(false)
+    expect('preserved_at' in body).toBe(false)
   })
 })
 
