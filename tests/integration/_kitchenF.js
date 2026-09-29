@@ -15,7 +15,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { directSql, callHandler, testRunId, insertProject } from './_harness.js'
+import { directSql, callHandler, testRunId, insertProject, setTestUserId } from './_harness.js'
 import { assertFixtureId, settle } from './_cleanup.js'
 import { handler as preservationHandler } from '../../lambda/preservation/index.js'
 
@@ -95,7 +95,12 @@ export function useHousehold(h, beforeAll, afterAll) {
   })
 }
 
-export const call = (userId, method, path, body) => callHandler(preservationHandler, { method, path, body, userId })
+// The harness's verifyToken stub answers the sub set by setTestUserId (not the bearer header), and it reads it when
+// the handler awaits verifyToken — so two calls as DIFFERENT users must not be in flight at once.
+export const call = (userId, method, path, body) => {
+  setTestUserId(userId)
+  return callHandler(preservationHandler, { method, path, body, userId })
+}
 export const key = () => randomUUID()
 
 // Real crop slugs (FK to crop_types). A pepper slug when the vocabulary has one.

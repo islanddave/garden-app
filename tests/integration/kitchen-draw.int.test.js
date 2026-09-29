@@ -292,9 +292,10 @@ describe.skipIf(!landed('keyedLines', 'draws'))('counted draw — line + use + d
 
   it('two concurrent draws on remaining 1 → exactly one 201; the other is refused; one line, one use, remaining 0', async () => {
     const b1 = (await seedBatch(DAVE)).id
-    const b2 = (await seedBatch(JEN)).id
+    const b2 = (await seedBatch(DAVE)).id
     const jar = await seedJar(DAVE, { count: 2, remaining: 1 })
-    const [x, y] = await Promise.all([drawCounted(DAVE, b1, jar, 1), drawCounted(JEN, b2, jar, 1)])
+    // Same caller on both: the harness's auth stub is process-global (see _kitchenF.js call()).
+    const [x, y] = await Promise.all([drawCounted(DAVE, b1, jar, 1), drawCounted(DAVE, b2, jar, 1)])
     const statuses = [x.res.status, y.res.status].sort()
     expect(statuses).toEqual([201, 409])
     const loser = x.res.status === 409 ? x.res : y.res

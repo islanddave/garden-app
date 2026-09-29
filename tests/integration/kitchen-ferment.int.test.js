@@ -586,7 +586,8 @@ describe.skipIf(!landed('getBatchF3', 'keyedLines', 'draws', 'lineRestore'))('GE
 describe.skipIf(!landed('mergeKbi', 'getBatchF3'))('planting merge repoints live AND taken-out garden lines (RIA-I3)', () => {
   it('both lines point at the winner after POST /api/plants/:winner/merge', async () => {
     const { handler: plantsHandler } = await import('../../lambda/plants/index.js')
-    const { callHandler } = await import('./_harness.js')
+    const { callHandler, setTestUserId } = await import('./_harness.js')
+    setTestUserId(DAVE)
     const proj = await seedPlanting(DAVE, { name: 'kf-merge-w' })
     const [{ id: loser }] = await directSql`
       INSERT INTO plants (project_id, name, created_by) VALUES (${proj.projectId}, ${`kf-merge-l-${DAVE}`}, ${DAVE}) RETURNING id`
