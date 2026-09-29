@@ -22,6 +22,12 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../hooks/useCropTypes.js', () => ({
   useCropTypes: () => ({ cropTypes: [{ slug: 'tomato', display_name: 'Tomato', category: 'vegetable' }], loading: false }),
 }))
+// Signed in as Dave, the owner of DAVES_BATCH below: the bare-open promote only moves a viewer whose
+// own batch is going (PutUp.landing.test.jsx), so the CONTROL needs the fixture's owner at the wheel.
+vi.mock('../context/AuthContext.jsx', async (importActual) => ({
+  ...(await importActual()),
+  useAuthOptional: () => ({ user: { id: 'user_dave' }, profile: null, loading: false, identity: 'signed-in' }),
+}))
 
 import PutUp, { onlyUseSoon } from '../pages/PutUp.jsx'
 import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'

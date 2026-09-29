@@ -41,6 +41,7 @@ import { PUTUP_SOURCE_OPTIONS, PUTUP_SOURCE_LABELS } from '../lib/dropdownRegist
 import { readDraft, writeDraft, clearDraft } from '../lib/draftStash.js'
 import { setReloadBlocked } from '../lib/reloadGate.js'
 import { useReportOverlayDirty, useInOverlaySurface } from '../context/OverlayContext.jsx'
+import { useAuthOptional } from '../context/AuthContext.jsx'
 // V4-PUTUPSESSION-001 slice 0 — the freezer walk. A MODE FLAG on this page (?session=putup), not a
 // new page, a new endpoint or a new table, copying the weigh-in's shape rather than editing it
 // (EventNew.jsx is frozen: OPS-WEIGHINUXFROZEN-001).
@@ -330,6 +331,9 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
   // in that state this page must behave EXACTLY as it does today — no flip, no banner, no change to
   // the bare-open landing. Only an array is an answer.
   const { fetch: pageFetch } = useApiFetch()
+  // The signed-in user, for the landing rule below. The non-throwing selector: PutUp is only ever
+  // rendered signed in (Protected), and outside a provider it reads as nobody, never as a crash.
+  const viewerId = useAuthOptional().user?.id ?? null
   const [going, setGoing] = useState(null)
   const [goingLoading, setGoingLoading] = useState(true)
   const [goingError, setGoingError] = useState(false)
@@ -439,13 +443,21 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
   // fetch may not yank someone off a form (the prefill path lands on 'log', and clearPrefill leaves
   // them there with hasPrefill false) or off a segment they chose. Hence both guards plus the
   // view === 'stores' check, which is the state this flip is defined to replace.
+  //
+  // Put-Up release 1a (V4 §6.1 "Jen's landing") — and only when a listed batch is the VIEWER's own.
+  // Batches are household-visible, so Jen opening Put-Up while Dave has a ferment going used to land
+  // on a list of his batches instead of on the jars she came for. Ownership is the row's user_id — the
+  // Clerk subject of whoever started it (kitchenRoutes createBatch), a column the list already sends
+  // (SELECT * over v_kitchen_batch_current) — compared with the signed-in user's Clerk id. An unknown
+  // viewer owns nothing, so it lands on the list: the rule, read literally.
   const autoDefaultedRef = useRef(false)
   useEffect(() => {
     if (autoDefaultedRef.current || !Array.isArray(going)) return
     autoDefaultedRef.current = true
-    if (!going.length || viewTouchedRef.current || view !== 'stores') return
+    if (viewTouchedRef.current || view !== 'stores') return
+    if (viewerId == null || !going.some(b => b?.user_id === viewerId)) return
     setView('going')
-  }, [going, view])
+  }, [going, view, viewerId])
 
   // V4-PUTUPENGINE-001 slice 2 — picking a recent harvest navigates IN PLACE with a new prefill.
   // That reuses the one prefill door PreserveOffer / PutUpFromPlanting / PutUpUseSoonBand already
