@@ -253,6 +253,30 @@ export function productGroups(rows) {
   return [...map.values()].sort((a, b) => (b.rows.length - a.rows.length) || a.product.localeCompare(b.product))
 }
 
+// §2.6 / §5.6 (S4g): what a filter selection leaves in view — by NeedsCare's own rules: a task with no rows drops
+// out, a spot with no rows of the chosen tasks drops out, and the Feed filter alone shows products (D12), not
+// spots — and the one sentence the status region says about it: "Needs care: Water, 168 in 8 spots."
+export function filterResult(rows, { tasks = [], spots = [] } = {}) {
+  const present = TASKS.filter((t) => rows.some((r) => r.task === t))
+  const ts = tasks.filter((t) => present.includes(t))
+  const inTask = rows.filter((r) => r.task && (!ts.length || ts.includes(r.task)))
+  const names = new Map()
+  for (const r of inTask) if (!names.has(r.spotKey)) names.set(r.spotKey, r.spotName)
+  const ss = spots.filter((k) => names.has(k))
+  const view = inTask.filter((r) => !ss.length || ss.includes(r.spotKey))
+  const feedOnly = ts.length === 1 && ts[0] === 'feed'
+  return { tasks: ts, spots: ss.map((k) => names.get(k)), n: view.length, spotCount: new Set(view.map((r) => r.spotKey)).size, products: feedOnly ? productGroups(view).length : null }
+}
+const andList = (xs) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`)
+export function filterAnnouncement({ tasks, spots, n, spotCount, products }) {
+  const t = tasks.length ? andList(tasks.map((x) => TASK_LABEL[x])) : null
+  const s = spots.length ? andList(spots) : null
+  const label = t && s ? `${t} in ${s}` : (t || s || 'everything')
+  if (!n) return `Needs care: ${label}, nothing due.`
+  const where = products != null ? `${products} product${products === 1 ? '' : 's'}` : `${spotCount} spot${spotCount === 1 ? '' : 's'}`
+  return `Needs care: ${label}, ${n} in ${where}.`
+}
+
 // SF8: the Needs care summary carries REASONS and spots, never counts (the counts live on the chips and the
 // header). "8 tray cells due · 9 spots". `reasons` = triggers.js careReasons().
 export function careSummary({ reasons, rows, spotCount }) {

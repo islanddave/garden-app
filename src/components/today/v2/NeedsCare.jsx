@@ -5,7 +5,7 @@ import FilterChipRow from '../../forms/FilterChipRow.jsx'
 import Icon from '../../Icon.jsx'
 import { skipMany, unskipMany } from '../careStore.js'
 import { FeedSuppressedList } from '../CareNeeded.jsx'
-import { buildModel, productGroups, TASKS, TASK_LABEL, TASK_ETYPE, OUTSIDE } from '../../../lib/todayV2/spots.js'
+import { buildModel, productGroups, filterResult, filterAnnouncement, TASKS, TASK_LABEL, TASK_ETYPE, OUTSIDE } from '../../../lib/todayV2/spots.js'
 import { MOISTURE_CHECK_EVENT } from '../../../lib/careNeeded.js'
 import SpotRow, { SpotDoneLine, tinted } from './SpotRow.jsx'
 import SpotBody from './SpotBody.jsx'
@@ -43,6 +43,12 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   const fKey = filtersKey(userId)
   const [filters, setFilters] = useState(() => readFilters(fKey, planDate))
   const setAndSave = useCallback((next) => { setFilters(next); writeFilters(fKey, planDate, next) }, [fKey, planDate])
+  // §2.6 / §5.6 (S4g): a filter change — a chip, a Clear, a jump chip's pre-select — says its result ONCE through the
+  // page's one status region ("Needs care: Water, 168 in 8 spots."), from the change itself, never from a render.
+  const changeFilters = useCallback((next) => {
+    setAndSave(next)
+    announce(filterAnnouncement(filterResult(care.rows, next)))
+  }, [setAndSave, announce, care.rows])
   // S3's jump bar writes the chip's task into the visit record (record.filter.care = { tasks: [task], n }, n
   // counting the visit's chip taps); each NEW n REPLACES the task row once. The last n applied is kept on the
   // visit record (care.intentN), not in a ref: a chip tap on a CLOSED Needs care mounts this body with the
@@ -54,8 +60,8 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     if (!intentN || intentN === appliedN) return
     setCare((cc) => ({ ...cc, intentN }))
     const t = Array.isArray(filterIntent?.tasks) ? filterIntent.tasks[0] : filterIntent?.task
-    if (TASKS.includes(t)) setAndSave({ ...filters, tasks: [t] })
-  }, [intentN, appliedN, filterIntent, filters, setAndSave, setCare])
+    if (TASKS.includes(t)) changeFilters({ ...filters, tasks: [t] })
+  }, [intentN, appliedN, filterIntent, filters, changeFilters, setCare])
 
   const presentTasks = TASKS.filter((t) => care.rows.some((r) => r.task === t))
   const tasks = filters.tasks.filter((t) => presentTasks.includes(t))
@@ -393,14 +399,14 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
         <FilterChipRow aria-label="Show tasks" data-testid="care-filter-tasks"
           options={presentTasks.map((t) => ({ value: t, label: TASK_LABEL[t] }))}
           selected={new Set(tasks)}
-          onToggle={(v) => { const n = new Set(tasks); if (n.has(v)) n.delete(v); else n.add(v); setAndSave({ ...filters, tasks: [...n] }) }}
-          onClear={tasks.length ? () => setAndSave({ ...filters, tasks: [] }) : undefined} />
+          onToggle={(v) => { const n = new Set(tasks); if (n.has(v)) n.delete(v); else n.add(v); changeFilters({ ...filters, tasks: [...n] }) }}
+          onClear={tasks.length ? () => changeFilters({ ...filters, tasks: [] }) : undefined} />
       )}
       {spotsPresent.length > 1 && !feedOnly && (
         <FilterChipRow aria-label="Show spots" data-testid="care-filter-spots"
           options={spotsPresent} selected={new Set(spotSel)} pinned={(c?.pinned || []).filter((k) => spotsPresent.some((s) => s.value === k))}
-          onToggle={(v) => { const n = new Set(spotSel); if (n.has(v)) n.delete(v); else n.add(v); setAndSave({ ...filters, spots: [...n] }) }}
-          onClear={spotSel.length ? () => setAndSave({ ...filters, spots: [] }) : undefined} />
+          onToggle={(v) => { const n = new Set(spotSel); if (n.has(v)) n.delete(v); else n.add(v); changeFilters({ ...filters, spots: [...n] }) }}
+          onClear={spotSel.length ? () => changeFilters({ ...filters, spots: [] }) : undefined} />
       )}
       {feedOnly && care.substrate && (
         <div data-testid="today-substrate-note" style={substrateNote}>

@@ -10,7 +10,7 @@ import { resolve } from 'node:path'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import {
   OUTSIDE, SMALL_VESSEL_TYPES, locationIndex, enrichRows, takeOrder, buildModel, exceptionKeys, exceptionReason,
-  sortCohort, cohortLine, cohortCapNote, productGroups, careSummary, waterCandidates,
+  sortCohort, cohortLine, cohortCapNote, productGroups, careSummary, waterCandidates, filterResult, filterAnnouncement,
 } from '../lib/todayV2/spots.js'
 import { careReasons, careTrigger, careOpens } from '../lib/todayV2/triggers.js'
 import { applyGrafts } from '../../tests/harness/_todaymeasure/v2wire.js'
@@ -237,5 +237,34 @@ describe('degrades when /api/locations is unreadable', () => {
   it('an unplaced planting lands in Outside, spot "Unplaced"', () => {
     const idx = locationIndex(LOCS)
     expect(idx.spotOf(undefined)).toEqual({ key: '_unplaced', name: 'Unplaced', parentPath: null, group: OUTSIDE })
+  })
+})
+
+// S4g — §2.6 / §5.6: the one sentence a filter change says, from NeedsCare's own selection rules.
+describe('filter result announcement (§2.6, §5.6)', () => {
+  const { rows } = state()
+  const key = (name) => rows.find((r) => r.spotName === name).spotKey
+  const say = (sel) => filterAnnouncement(filterResult(rows, sel))
+  it('the plan\'s own example: the Water filter is 168 in 8 spots', () => {
+    expect(say({ tasks: ['water'] })).toBe('Needs care: Water, 168 in 8 spots.')
+  })
+  it('tasks OR together; no filter is everything', () => {
+    expect(say({ tasks: ['water', 'feed'] })).toBe('Needs care: Water and Feed, 226 in 9 spots.')
+    expect(say({ tasks: ['water', 'feed', 'check'] })).toBe('Needs care: Water, Feed and Check, 233 in 9 spots.')
+    expect(say({})).toBe('Needs care: everything, 233 in 9 spots.')
+    expect(say({ tasks: ['check'] })).toBe('Needs care: Check, 7 in 2 spots.')
+  })
+  it('the Feed filter alone shows products (D12), so it counts products', () => {
+    expect(say({ tasks: ['feed'] })).toBe(`Needs care: Feed, 58 in ${productGroups(rows).length} products.`)
+    expect(productGroups(rows).length).toBe(3)
+  })
+  it('spots name themselves; a spot and a task read "Water in Bag Area"', () => {
+    expect(say({ spots: [key('Bag Area')] })).toBe('Needs care: Bag Area, 141 in 1 spot.')
+    expect(say({ spots: [key('Bag Area'), key('Trough')] })).toBe('Needs care: Bag Area and Trough, 175 in 2 spots.')
+    expect(say({ tasks: ['water'], spots: [key('Bag Area')] })).toBe('Needs care: Water in Bag Area, 97 in 1 spot.')
+  })
+  it('a spot with nothing of the chosen tasks drops out, as the filter row drops it; nothing left says so', () => {
+    expect(say({ tasks: ['water'], spots: [key('Yard - Stable')] })).toBe('Needs care: Water, 168 in 8 spots.')
+    expect(filterAnnouncement(filterResult([], {}))).toBe('Needs care: everything, nothing due.')
   })
 })
