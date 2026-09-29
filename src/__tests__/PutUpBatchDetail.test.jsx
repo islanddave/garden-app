@@ -678,6 +678,16 @@ describe('BatchDetailView — L4\'s inputs field IS the "what went in" section',
   })
 })
 
+describe('BatchDetailView — Put-Up 1a item 6: "Add picks from the garden" is hidden here', () => {
+  // The real host of BatchInputsField. Hidden, not deleted: garden lines replace it in release 3.
+  it('offers "Add something else" and no garden-picks door', () => {
+    renderDetail()
+    expect(within(screen.getByTestId('batch-detail-inputs')).queryByTestId('batch-inputs-open-picks')).toBeNull()
+    expect(screen.getByTestId('batch-detail-view').textContent).not.toContain('Add picks from the garden')
+    expect(within(screen.getByTestId('batch-detail-inputs')).getByTestId('batch-inputs-open-other')).toBeTruthy()
+  })
+})
+
 describe('BatchDetailView — the section titles a screen reader lands on', () => {
   it('titles the three sections and puts each list under its own', () => {
     renderDetail({ inputs: [INPUT_PANTRY], stages: [STAGE_PH], outputs: [OUTPUT_JAR] })
