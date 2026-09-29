@@ -602,6 +602,11 @@ post:
   # The audit trigger watches EXACTLY V4's nine columns: one row per column watched but not listed, or
   # listed but not watched, or watched but absent from the table (a typo'd name compares NULL = NULL
   # forever — v4-harvestaudit-001's vacuity mode). Arguments read from the live trigger.
+  #
+  # STANDS DOWN ON F'S STAMP (the one edit release F makes to this directory; 06-ferment-path §3.9):
+  # v5-fermentpath-001 re-creates this trigger watching these nine plus remaining_amount, shu_est_low,
+  # shu_est_high and cooked, and its post_audit_watches_exactly_the_thirteen takes over. Every leg carries
+  # the NOT EXISTS so no leg reds on a database F has reached. 0a, 0r and the stamp are untouched.
   - name: post_audit_watches_exactly_the_nine
     sql: |
       WITH watched AS (
@@ -619,13 +624,16 @@ post:
       )
       SELECT 'not watched' AS problem, e.col FROM expected e
        WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-putupmake-001')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
          AND NOT EXISTS (SELECT 1 FROM watched w WHERE w.col = e.col)
       UNION ALL
       SELECT 'watched but not in V4''s list', w.col FROM watched w
-       WHERE NOT EXISTS (SELECT 1 FROM expected e WHERE e.col = w.col)
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1 FROM expected e WHERE e.col = w.col)
       UNION ALL
       SELECT 'watched but not a column', w.col FROM watched w
-       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+       WHERE NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
                           WHERE c.table_schema = 'public' AND c.table_name = 'preservation_log'
                             AND c.column_name = w.col)
     expect: rowcount_eq

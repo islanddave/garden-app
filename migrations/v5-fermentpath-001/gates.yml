@@ -1,0 +1,656 @@
+# gates.yml
+# V5-FERMENTPATH-001 — Put-Up release F (the ferment path), the database half. Two files:
+#
+#   0a-additive-ddl.sql   the schema, stamp '5.0.0-fermentpath-001'. Before it: `pre` + every sweep_*
+#                         gate, IMMEDIATELY before each apply (staging, prod, and the Neon branch of prod).
+#   0r-rollback.sql       guarded; valid only while F's code is off dev.
+#
+# ── SELF-ARMING (the 1b convention, restated) ──────────────────────────────────────────────────────
+# `continuous:` defaults to true, and gate-invariants.yml runs `--all --phase post --continuous-only`
+# against live prod AND staging on every migrations/** push to dev, on the Tuesday cron and on dispatch —
+# including before F's sitting, when neither database has this DDL (or even 1b's). So:
+#   * a post gate that is FALSE today is armed on this migration's own stamp
+#     (`EXISTS (... version = '5.0.0-fermentpath-001')`): vacuous before, permanent after;
+#   * a post gate that is TRUE today is NOT armed (arming it would delete a real assertion); each says so;
+#   * catalog joins only, never `::regclass`; data gates over new columns read `to_jsonb(row) ->> 'col'`,
+#     so every gate is vacuous, never ERROR, on a database without 1b or F;
+#   * only rowcount_eq / scalar_eq; every count-shaped gate returns one row per violator.
+#
+# ── THE ONE EDIT TO 1b's DIRECTORY (06-ferment-path §3.9) ──────────────────────────────────────────
+# v5-putupmake-001/gates.yml post_audit_watches_exactly_the_nine: every leg gains
+# `AND NOT EXISTS (... version = '5.0.0-fermentpath-001')`, because this file re-creates that trigger
+# watching thirteen. post_audit_watches_exactly_the_thirteen below takes over on this stamp. 1b's 0a, 0r
+# and stamp are untouched; 1b's gate proofs were re-run with the edit (README.md).
+#
+# ── THE GATE CENSUS: gates elsewhere this migration must keep green ──────────────────────────────
+#   v5-putupmake-001      post_view_columns_in_order (positions 1-31 unchanged; F appends 32-40);
+#                         post_view_skips_voids_and_removed_lines (1b's body kept verbatim);
+#                         post_trigger_functions_name_real_columns_on_other_touched_tables (every trigger
+#                         F attaches to kitchen_stage_log / kitchen_batch_input names only that table's
+#                         columns); post_1b_checks_present_and_validated (chk_kbi_salt_base keeps its
+#                         name); post_1b_triggers_present_and_enabled (the preservation_log audit trigger
+#                         keeps its name, function and tgtype 16); post_audit_watches_exactly_the_nine
+#                         (disarmed by this stamp, above).
+#   v5-phrecord-001       post_view_gained_exactly_two (view = kitchen_batch + 8: nine columns added to
+#                         kitchen_batch, nine appended to the view).
+#   v4-cascadesweep-001   pantry_use carries no deleted_at and no FK onto it CASCADEs.
+#   v4-evtanchordel-001   no F CHECK names a SET NULL FK column (kbi.plant_id stays unnamed).
+#   v4-harvestaudit-001   no INSERT arm on any audit trigger (both new audit triggers are UPDATE only).
+#   v5-kbownertrigger-001 prevent_ownership_transfer() is reused unchanged on pantry_use (its owner column
+#                         IS created_by); prevent_kitchen_batch_ownership_transfer() untouched.
+# Proven, not asserted: MAIN's and this branch's `--all --phase post --continuous-only` were run against
+# a local PG 17 replica of prod + STATS + 1b before and after 0a (README.md).
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_1b_applied
+    sql: |
+      SELECT count(*) FROM public.schema_version WHERE version = '5.0.0-putupmake-001'
+    expect: scalar_eq
+    value: 1
+
+  # 0a replaces the view wholesale; its guard accepts 1b's definition or its own.
+  - name: pre_view_is_1b_definition
+    sql: |
+      SELECT md5(pg_get_viewdef(c.oid, true))
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'v_kitchen_batch_current' AND c.relkind = 'v'
+    expect: scalar_eq
+    value: 'c180cfc6868704fdfdf5cc4de1013d6c'
+
+  # Half-applied or hand-applied state: none of 0a's 25 columns, nor pantry_use, may exist yet.
+  - name: pre_no_f_column_yet
+    sql: |
+      SELECT c.table_name, c.column_name
+        FROM information_schema.columns c
+       WHERE c.table_schema = 'public'
+         AND ((c.table_name, c.column_name) IN (VALUES
+               ('kitchen_batch','vessel_label'), ('kitchen_batch','vessel_size'),
+               ('kitchen_batch','vessel_unit'), ('kitchen_batch','vessel_count'),
+               ('kitchen_batch','no_salt'), ('kitchen_batch','shu_est_low'),
+               ('kitchen_batch','shu_est_high'), ('kitchen_batch','shu_est_basis'),
+               ('kitchen_batch','recipe_ref'),
+               ('kitchen_batch_input','brand'), ('kitchen_batch_input','form'),
+               ('kitchen_batch_input','shu_rating_low'), ('kitchen_batch_input','shu_rating_high'),
+               ('kitchen_batch_input','salt_method'), ('kitchen_batch_input','base_from'),
+               ('kitchen_batch_input','edited_at'),
+               ('kitchen_stage_log','acts'), ('kitchen_stage_log','mash_in_g'),
+               ('kitchen_stage_log','edited_at'),
+               ('preservation_log','shu_est_low'), ('preservation_log','shu_est_high'),
+               ('preservation_log','shu_est_basis'), ('preservation_log','cooked'),
+               ('preservation_log','delta_at'), ('preservation_log','remaining_amount'))
+              OR c.table_name = 'pantry_use')
+    expect: rowcount_eq
+    value: 0
+
+  # 0a names these in CREATE TRIGGER; a missing one fails mid-transaction.
+  - name: pre_trigger_functions_exist
+    sql: |
+      SELECT count(DISTINCT p.proname)
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('audit_stmt_update','audit_watched_slice','prevent_ownership_transfer')
+    expect: scalar_eq
+    value: 3
+
+  # kitchen_stage_log and kitchen_batch_input carried no trigger after 1b; 0a attaches four. A trigger
+  # found here was added by someone else since — read it before stacking four more.
+  - name: pre_kitchen_line_and_stage_tables_have_no_triggers
+    sql: |
+      SELECT t.relname, g.tgname
+        FROM pg_trigger g
+        JOIN pg_class t ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND t.relname IN ('kitchen_stage_log','kitchen_batch_input')
+         AND NOT g.tgisinternal
+    expect: rowcount_eq
+    value: 0
+
+sweep:
+  # ── The five tightenings (06 §2 legend T, DS-I1): run IMMEDIATELY before every apply of 0a ─────────
+  # Each CHECK is created VALIDATED over a column 1b added, so one violating row aborts the whole apply.
+  # WHOLE-TABLE (a CHECK does not read deleted_at). to_jsonb so a database without 1b reports 0, not 42703.
+  - name: sweep_salt_facts_only_on_salt_lines
+    sql: |
+      SELECT i.id
+        FROM public.kitchen_batch_input i
+       WHERE ((to_jsonb(i) ->> 'salt_pct') IS NOT NULL
+              OR (to_jsonb(i) ->> 'salt_base') IS NOT NULL
+              OR (to_jsonb(i) ->> 'base_g') IS NOT NULL)
+         AND (to_jsonb(i) ->> 'role') IS DISTINCT FROM 'salt'
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_salt_facts_whole
+    sql: |
+      SELECT i.id
+        FROM public.kitchen_batch_input i
+       WHERE ((to_jsonb(i) ->> 'salt_pct') IS NULL) <> ((to_jsonb(i) ->> 'salt_base') IS NULL)
+          OR ((to_jsonb(i) ->> 'salt_pct') IS NULL) <> ((to_jsonb(i) ->> 'base_g') IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_salt_facts_in_grams
+    sql: |
+      SELECT i.id
+        FROM public.kitchen_batch_input i
+       WHERE (to_jsonb(i) ->> 'salt_pct') IS NOT NULL
+         AND i.qty_unit IS DISTINCT FROM 'g'
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_salt_pct_in_range
+    sql: |
+      SELECT i.id
+        FROM public.kitchen_batch_input i
+       WHERE (to_jsonb(i) ->> 'salt_pct') IS NOT NULL
+         AND NOT ((to_jsonb(i) ->> 'salt_pct')::numeric > 0 AND (to_jsonb(i) ->> 'salt_pct')::numeric <= 100)
+    expect: rowcount_eq
+    value: 0
+
+  - name: sweep_base_g_positive
+    sql: |
+      SELECT i.id
+        FROM public.kitchen_batch_input i
+       WHERE (to_jsonb(i) ->> 'base_g') IS NOT NULL
+         AND (to_jsonb(i) ->> 'base_g')::numeric <= 0
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── The apply receipt, armed on the DDL rather than on the stamp it checks ─────────────────────
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relname = 'pantry_use' AND c.relkind = 'r')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── Columns: every F column present, NULLABLE, NO DEFAULT, of its type ─────────────────────────────
+  - name: post_f_columns_present_nullable_no_default
+    sql: |
+      SELECT v.tbl, v.col
+        FROM (VALUES
+               ('kitchen_batch','vessel_label','text'), ('kitchen_batch','vessel_size','numeric'),
+               ('kitchen_batch','vessel_unit','text'), ('kitchen_batch','vessel_count','smallint'),
+               ('kitchen_batch','no_salt','boolean'), ('kitchen_batch','shu_est_low','integer'),
+               ('kitchen_batch','shu_est_high','integer'), ('kitchen_batch','shu_est_basis','text'),
+               ('kitchen_batch','recipe_ref','text'),
+               ('kitchen_batch_input','brand','text'), ('kitchen_batch_input','form','text'),
+               ('kitchen_batch_input','shu_rating_low','integer'),
+               ('kitchen_batch_input','shu_rating_high','integer'),
+               ('kitchen_batch_input','salt_method','text'), ('kitchen_batch_input','base_from','text'),
+               ('kitchen_batch_input','edited_at','timestamp with time zone'),
+               ('kitchen_stage_log','acts','ARRAY'), ('kitchen_stage_log','mash_in_g','numeric'),
+               ('kitchen_stage_log','edited_at','timestamp with time zone'),
+               ('preservation_log','shu_est_low','integer'), ('preservation_log','shu_est_high','integer'),
+               ('preservation_log','shu_est_basis','text'), ('preservation_log','cooked','boolean'),
+               ('preservation_log','delta_at','timestamp with time zone'),
+               ('preservation_log','remaining_amount','numeric')) AS v(tbl, col, typ)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = v.tbl
+                            AND c.column_name = v.col AND c.data_type = v.typ
+                            AND c.is_nullable = 'YES' AND c.column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Every CHECK F relies on: present by name, on its table, VALIDATED ──────────────────────────
+  - name: post_f_checks_present_and_validated
+    sql: |
+      SELECT v.tbl, v.con
+        FROM (VALUES
+               ('kitchen_batch','chk_kitchen_batch_vessel_label_nonblank'),
+               ('kitchen_batch','chk_kitchen_batch_vessel_pairing'),
+               ('kitchen_batch','chk_kitchen_batch_vessel_unit'),
+               ('kitchen_batch','chk_kitchen_batch_vessel_count'),
+               ('kitchen_batch','chk_kitchen_batch_no_salt_true'),
+               ('kitchen_batch','chk_kitchen_batch_shu_est_range'),
+               ('kitchen_batch','chk_kitchen_batch_shu_est_basis'),
+               ('kitchen_batch','chk_kitchen_batch_shu_est_pairing'),
+               ('kitchen_batch','chk_kitchen_batch_recipe_ref_nonblank'),
+               ('kitchen_batch_input','chk_kbi_salt_base'),
+               ('kitchen_batch_input','chk_kbi_salt_facts_on_salt_line'),
+               ('kitchen_batch_input','chk_kbi_salt_facts_pairing'),
+               ('kitchen_batch_input','chk_kbi_salt_facts_grams'),
+               ('kitchen_batch_input','chk_kbi_salt_pct_range'),
+               ('kitchen_batch_input','chk_kbi_base_g_positive'),
+               ('kitchen_batch_input','chk_kbi_brand_nonblank'),
+               ('kitchen_batch_input','chk_kbi_form'),
+               ('kitchen_batch_input','chk_kbi_form_not_on_role'),
+               ('kitchen_batch_input','chk_kbi_shu_rating_range'),
+               ('kitchen_batch_input','chk_kbi_shu_rating_not_on_role'),
+               ('kitchen_batch_input','chk_kbi_salt_method'),
+               ('kitchen_batch_input','chk_kbi_salt_method_on_salt_line'),
+               ('kitchen_batch_input','chk_kbi_base_from'),
+               ('kitchen_batch_input','chk_kbi_base_from_needs_base'),
+               ('kitchen_stage_log','chk_ksl_acts'),
+               ('kitchen_stage_log','chk_ksl_acts_on_tended'),
+               ('kitchen_stage_log','chk_ksl_mash_in_g'),
+               ('preservation_log','chk_preservation_log_shu_est_range'),
+               ('preservation_log','chk_preservation_log_shu_est_basis'),
+               ('preservation_log','chk_preservation_log_shu_est_pairing'),
+               ('preservation_log','chk_preservation_log_remaining_amount'),
+               ('pantry_use','chk_pantry_use_count_nonzero'),
+               ('pantry_use','chk_pantry_use_negative_is_reversal'),
+               ('pantry_use','chk_pantry_use_fate'),
+               ('pantry_use','chk_pantry_use_batch_line')) AS v(tbl, con)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND c.conname = v.con
+                            AND c.contype = 'c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # The salt_base CHECK is a SUPERSET: 'produce' is admitted and 1b's three words still are. One row per
+  # missing word (the quotes are part of the probe).
+  - name: post_salt_base_admits_produce_and_keeps_1b_words
+    sql: |
+      SELECT v.word
+        FROM unnest(ARRAY['produce','peppers','water','all']) AS v(word)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'kitchen_batch_input'
+                            AND c.conname = 'chk_kbi_salt_base'
+                            AND strpos(pg_get_constraintdef(c.oid), '''' || v.word || '''') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # ── pantry_use: shape, keys, and the ownership trigger ────────────────────────────────────────
+  - name: post_pantry_use_columns
+    sql: |
+      SELECT v.col
+        FROM (VALUES ('id','uuid','NO',true), ('created_by','text','NO',false),
+                     ('preservation_log_id','uuid','NO',false), ('count_used','integer','NO',false),
+                     ('fate','text','YES',false), ('kitchen_batch_input_id','uuid','YES',false),
+                     ('reverses_use_id','uuid','YES',false), ('idempotency_key','uuid','YES',false),
+                     ('used_at','timestamp with time zone','NO',true), ('note','text','YES',false),
+                     ('created_at','timestamp with time zone','NO',true)) AS v(col, typ, nul, has_default)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'pantry_use'
+                            AND c.column_name = v.col AND c.data_type = v.typ AND c.is_nullable = v.nul
+                            AND (c.column_default IS NOT NULL) = v.has_default)
+      UNION ALL
+      SELECT c.column_name FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = 'pantry_use'
+         AND c.column_name NOT IN ('id','created_by','preservation_log_id','count_used','fate',
+                                   'kitchen_batch_input_id','reverses_use_id','idempotency_key',
+                                   'used_at','note','created_at')
+    expect: rowcount_eq
+    value: 0
+
+  # confdeltype a = NO ACTION. The two same-jar composites are named with their column order, so a
+  # re-add that loses preservation_log_id from either side reds here.
+  - name: post_f_foreign_keys_present_with_their_actions
+    sql: |
+      SELECT v.con
+        FROM (VALUES
+               ('pantry_use_preservation_log_id_fkey','preservation_log','(preservation_log_id)'),
+               ('pantry_use_kitchen_batch_input_id_fkey','kitchen_batch_input','(kitchen_batch_input_id)'),
+               ('pantry_use_line_same_jar_fkey','kitchen_batch_input',
+                '(kitchen_batch_input_id, preservation_log_id) REFERENCES kitchen_batch_input(id, preservation_log_id)'),
+               ('pantry_use_reverses_same_jar_fkey','pantry_use',
+                '(reverses_use_id, preservation_log_id) REFERENCES pantry_use(id, preservation_log_id)'))
+             AS v(con, target, frag)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                           JOIN pg_class f ON f.oid = c.confrelid
+                          WHERE n.nspname = 'public' AND t.relname = 'pantry_use' AND c.conname = v.con
+                            AND c.contype = 'f' AND f.relname = v.target
+                            AND c.confdeltype = 'a' AND c.convalidated
+                            AND strpos(pg_get_constraintdef(c.oid), v.frag) > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # The replay contract is "a 23505 on THIS name"; the same-jar FKs depend on the two composites.
+  - name: post_f_uniques_present
+    sql: |
+      SELECT v.tbl, v.idx
+        FROM (VALUES
+               ('pantry_use','uq_pantry_use_idempotency_key',
+                '(idempotency_key) WHERE (idempotency_key IS NOT NULL)'),
+               ('pantry_use','uq_pantry_use_reverses_use_id', '(reverses_use_id)'),
+               ('pantry_use','uq_pantry_use_id_preservation_log_id', '(id, preservation_log_id)'),
+               ('pantry_use','pantry_use_pkey', '(id)'),
+               ('kitchen_batch_input','uq_kbi_id_preservation_log_id', '(id, preservation_log_id)'))
+             AS v(tbl, idx, key)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_index x
+                           JOIN pg_class i ON i.oid = x.indexrelid
+                           JOIN pg_class t ON t.oid = x.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND i.relname = v.idx
+                            AND x.indisunique AND x.indisvalid
+                            AND strpos(pg_get_indexdef(x.indexrelid), v.key) > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # pantry_use's ownership trigger names only real pantry_use columns (BUG-KBOWNERTRIGGER-001's class:
+  # the user_id variant here would raise 42703 on every UPDATE).
+  - name: post_pantry_use_ownership_trigger_names_real_columns
+    sql: |
+      WITH own AS (
+        SELECT g.tgname, p.prosrc
+          FROM pg_trigger g
+          JOIN pg_class t ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          JOIN pg_proc p ON p.oid = g.tgfoid
+         WHERE n.nspname = 'public' AND t.relname = 'pantry_use' AND NOT g.tgisinternal
+           AND p.proname LIKE 'prevent%ownership_transfer'
+      ), ref AS (
+        SELECT own.tgname, lower((regexp_matches(own.prosrc, '(?:OLD|NEW)\.([a-z_][a-z0-9_]*)', 'gi'))[1]) AS col
+          FROM own
+      )
+      SELECT 'no ownership trigger' AS problem, NULL::text AS col
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1 FROM own)
+      UNION ALL
+      SELECT 'names no column', own.tgname FROM own
+       WHERE NOT EXISTS (SELECT 1 FROM ref WHERE ref.tgname = own.tgname)
+      UNION ALL
+      SELECT 'names a column the table lacks', ref.col FROM ref
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'pantry_use'
+                            AND c.column_name = ref.col)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Every trigger F relies on: present, ENABLED, right function, tgtype, transition tables ────────
+  # tgtype: 19 = BEFORE UPDATE FOR EACH ROW; 16 = AFTER UPDATE FOR EACH STATEMENT (no INSERT/DELETE bit).
+  - name: post_f_triggers_present_and_enabled
+    sql: |
+      SELECT v.tbl, v.tg
+        FROM (VALUES
+               ('kitchen_stage_log','trg_ksl_identity','prevent_ksl_identity_change',19,NULL,NULL),
+               ('kitchen_batch_input','trg_kbi_identity','prevent_kbi_identity_change',19,NULL,NULL),
+               ('kitchen_stage_log','trg_audit_kitchen_stage_log_upd','audit_stmt_update_no_soft_delete',
+                16,'old_rows','new_rows'),
+               ('kitchen_batch_input','trg_audit_kitchen_batch_input_upd','audit_stmt_update',
+                16,'old_rows','new_rows'),
+               ('preservation_log','trg_audit_preservation_log_upd','audit_stmt_update',
+                16,'old_rows','new_rows'),
+               ('pantry_use','prevent_pantry_use_ownership_transfer','prevent_ownership_transfer',
+                19,NULL,NULL)) AS v(tbl, tg, fn, tgtype, oldtab, newtab)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_trigger g
+                           JOIN pg_class t ON t.oid = g.tgrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                           JOIN pg_proc p ON p.oid = g.tgfoid
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl
+                            AND g.tgname = v.tg AND NOT g.tgisinternal AND g.tgenabled = 'O'
+                            AND p.proname = v.fn AND g.tgtype = v.tgtype
+                            AND g.tgoldtable IS NOT DISTINCT FROM v.oldtab
+                            AND g.tgnewtable IS NOT DISTINCT FROM v.newtab)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Audit watch lists: exactly, both directions, and every name a real column ──────────────────
+  # The thirteen (06 §2.4). Takes over from 1b's post_audit_watches_exactly_the_nine on this stamp.
+  - name: post_audit_watches_exactly_the_thirteen
+    sql: |
+      WITH watched AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger g
+          JOIN pg_class t ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(g.oid) FROM 'audit_stmt_update\(([^)]*)\)'), ',') AS x
+         WHERE n.nspname = 'public' AND t.relname = 'preservation_log'
+           AND g.tgname = 'trg_audit_preservation_log_upd'
+      ), expected(col) AS (
+        VALUES ('storage_location_id'), ('use_by_target'), ('use_by_basis'), ('package_count'),
+               ('remaining_count'), ('label'), ('is_raw'), ('in_oil'), ('deleted_at'),
+               ('remaining_amount'), ('shu_est_low'), ('shu_est_high'), ('cooked')
+      ), armed AS (
+        SELECT 1 WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+      )
+      SELECT 'not watched' AS problem, e.col FROM expected e, armed
+       WHERE NOT EXISTS (SELECT 1 FROM watched w WHERE w.col = e.col)
+      UNION ALL
+      SELECT 'watched but not in the list', w.col FROM watched w, armed
+       WHERE NOT EXISTS (SELECT 1 FROM expected e WHERE e.col = w.col)
+      UNION ALL
+      SELECT 'watched but not a column', w.col FROM watched w
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'preservation_log'
+                            AND c.column_name = w.col)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_kbi_audit_watches_exactly_its_sixteen
+    sql: |
+      WITH watched AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger g
+          JOIN pg_class t ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(g.oid) FROM 'audit_stmt_update\(([^)]*)\)'), ',') AS x
+         WHERE n.nspname = 'public' AND t.relname = 'kitchen_batch_input'
+           AND g.tgname = 'trg_audit_kitchen_batch_input_upd'
+      ), expected(col) AS (
+        VALUES ('label'), ('qty'), ('qty_unit'), ('form'), ('brand'), ('note'), ('role'), ('salt_pct'),
+               ('salt_base'), ('base_g'), ('salt_method'), ('base_from'), ('shu_rating_low'),
+               ('shu_rating_high'), ('ordinal'), ('deleted_at')
+      )
+      SELECT 'not watched' AS problem, e.col FROM expected e
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1 FROM watched w WHERE w.col = e.col)
+      UNION ALL
+      SELECT 'watched but not in the list', w.col FROM watched w
+       WHERE NOT EXISTS (SELECT 1 FROM expected e WHERE e.col = w.col)
+      UNION ALL
+      SELECT 'watched but not a column', w.col FROM watched w
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'kitchen_batch_input'
+                            AND c.column_name = w.col)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_ksl_audit_watches_exactly_its_thirteen
+    sql: |
+      WITH watched AS (
+        SELECT btrim(x, ' ''') AS col
+          FROM pg_trigger g
+          JOIN pg_class t ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         CROSS JOIN LATERAL regexp_split_to_table(
+                 substring(pg_get_triggerdef(g.oid) FROM 'audit_stmt_update_no_soft_delete\(([^)]*)\)'), ',') AS x
+         WHERE n.nspname = 'public' AND t.relname = 'kitchen_stage_log'
+           AND g.tgname = 'trg_audit_kitchen_stage_log_upd'
+      ), expected(col) AS (
+        VALUES ('note'), ('cue_observed'), ('acts'), ('ph_reading'), ('ph_read_at'), ('amount'),
+               ('amount_unit'), ('mash_in_g'), ('entered_at'), ('entered_precision'),
+               ('storage_location_id'), ('label'), ('photo_id')
+      )
+      SELECT 'not watched' AS problem, e.col FROM expected e
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1 FROM watched w WHERE w.col = e.col)
+      UNION ALL
+      SELECT 'watched but not in the list', w.col FROM watched w
+       WHERE NOT EXISTS (SELECT 1 FROM expected e WHERE e.col = w.col)
+      UNION ALL
+      SELECT 'watched but not a column', w.col FROM watched w
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'kitchen_stage_log'
+                            AND c.column_name = w.col)
+    expect: rowcount_eq
+    value: 0
+
+  # audit_stmt_update() reads deleted_at on both transition tables and swallows the 42703 as a WARNING
+  # (DS-B2): attached to a table without deleted_at it audits NOTHING, silently. NOT ARMED: true today
+  # (event_log, harvest_log, plants, source, preservation_log all carry deleted_at). One row per table.
+  - name: post_audit_stmt_update_tables_have_deleted_at
+    sql: |
+      SELECT DISTINCT t.relname
+        FROM pg_trigger g
+        JOIN pg_class t ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_proc p ON p.oid = g.tgfoid
+       WHERE n.nspname = 'public' AND NOT g.tgisinternal AND p.proname = 'audit_stmt_update'
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = t.relname
+                            AND c.column_name = 'deleted_at')
+    expect: rowcount_eq
+    value: 0
+
+  # ── Identity functions: each names exactly its frozen columns, all real, on its own table ──────────
+  - name: post_identity_fn_ksl_names_its_columns
+    sql: |
+      WITH fn AS (
+        SELECT p.prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public' AND p.proname = 'prevent_ksl_identity_change'
+      ), ref AS (
+        SELECT DISTINCT lower((regexp_matches(fn.prosrc, '(?:OLD|NEW)\.([a-z_][a-z0-9_]*)', 'gi'))[1]) AS col
+          FROM fn
+      ), expected(col) AS (VALUES ('batch_id'), ('stage_kind'), ('voids_id'), ('created_by')),
+      armed AS (SELECT 1 WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001'))
+      SELECT 'not frozen' AS problem, e.col FROM expected e, armed
+       WHERE NOT EXISTS (SELECT 1 FROM ref WHERE ref.col = e.col)
+      UNION ALL
+      SELECT 'frozen but not in the list', ref.col FROM ref
+       WHERE NOT EXISTS (SELECT 1 FROM expected e WHERE e.col = ref.col)
+      UNION ALL
+      SELECT 'names a column the table lacks', ref.col FROM ref
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'kitchen_stage_log'
+                            AND c.column_name = ref.col)
+    expect: rowcount_eq
+    value: 0
+
+  # plant_id and deleted_at must NOT be frozen (SET NULL RI action, merge repoint, soft delete): naming
+  # either reds here as "frozen but not in the list".
+  - name: post_identity_fn_kbi_names_its_columns
+    sql: |
+      WITH fn AS (
+        SELECT p.prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public' AND p.proname = 'prevent_kbi_identity_change'
+      ), ref AS (
+        SELECT DISTINCT lower((regexp_matches(fn.prosrc, '(?:OLD|NEW)\.([a-z_][a-z0-9_]*)', 'gi'))[1]) AS col
+          FROM fn
+      ), expected(col) AS (VALUES ('batch_id'), ('created_by'), ('input_kind'), ('preservation_log_id'),
+                                  ('harvest_log_id'), ('put_up_stage_id'), ('output_id')),
+      armed AS (SELECT 1 WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001'))
+      SELECT 'not frozen' AS problem, e.col FROM expected e, armed
+       WHERE NOT EXISTS (SELECT 1 FROM ref WHERE ref.col = e.col)
+      UNION ALL
+      SELECT 'frozen but not in the list', ref.col FROM ref
+       WHERE NOT EXISTS (SELECT 1 FROM expected e WHERE e.col = ref.col)
+      UNION ALL
+      SELECT 'names a column the table lacks', ref.col FROM ref
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'kitchen_batch_input'
+                            AND c.column_name = ref.col)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Heat is an estimate, never a measurement ──────────────────────────────────────────────────
+  # No column that could hold a MEASURED heat: any column on the four put-up tables whose name contains
+  # 'shu' or 'scoville', other than F's five estimate/rating columns, reds. NOT ARMED: true today. Its
+  # rehearsal plants a `shu` column to prove it is not vacuous.
+  - name: post_no_measured_shu_column
+    sql: |
+      SELECT c.table_name, c.column_name
+        FROM information_schema.columns c
+       WHERE c.table_schema = 'public'
+         AND c.table_name IN ('kitchen_batch','kitchen_batch_input','kitchen_stage_log','preservation_log')
+         AND (c.column_name LIKE '%shu%' OR c.column_name LIKE '%scoville%')
+         AND c.column_name NOT IN ('shu_est_low','shu_est_high','shu_est_basis',
+                                   'shu_rating_low','shu_rating_high')
+    expect: rowcount_eq
+    value: 0
+
+  # ── Kind gating is UI-only (06 §3.10) ─────────────────────────────────────────────────────────
+  # No CHECK on the put-up tables names kitchen_batch.kind except the two shipped vocabulary CHECKs.
+  # `\m` is a word start, so stage_kind / input_kind / source_kind never match. NOT ARMED: true today.
+  - name: post_no_f_check_names_kind
+    sql: |
+      SELECT t.relname, c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND c.contype = 'c'
+         AND t.relname IN ('kitchen_batch','kitchen_batch_input','kitchen_stage_log','preservation_log',
+                           'pantry_use')
+         AND pg_get_constraintdef(c.oid) ~ '\mkind\M'
+         AND c.conname NOT IN ('chk_kitchen_batch_kind','chk_kitchen_batch_kind_other')
+    expect: rowcount_eq
+    value: 0
+
+  # ── v_kitchen_batch_current: 1b's 31, then F's nine at 32-40 ───────────────────────────────────
+  # Positions, not a count, so B''s recipe_id at 41 stays green.
+  - name: post_view_f_columns_in_order
+    sql: |
+      SELECT v.pos, v.col
+        FROM (VALUES
+               (31,'idempotency_key'), (32,'vessel_label'), (33,'vessel_size'), (34,'vessel_unit'),
+               (35,'vessel_count'), (36,'no_salt'), (37,'shu_est_low'), (38,'shu_est_high'),
+               (39,'shu_est_basis'), (40,'recipe_ref')) AS v(pos, col)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-fermentpath-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_attribute a
+                           JOIN pg_class c ON c.oid = a.attrelid
+                           JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public' AND c.relname = 'v_kitchen_batch_current'
+                            AND a.attnum = v.pos AND a.attname = v.col AND NOT a.attisdropped)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Apply-window receipt ──────────────────────────────────────────────────────────────────────
+  # Right after 0a, and until F's code writes: no F-shaped row exists — 0a wrote no data and 0r's window
+  # is open. F's first write ends the window, so this is continuous: false. to_jsonb so a runbook run on
+  # an unapplied database reports 0, not 42703. pantry_use is not read here (naming a relation that may
+  # not exist would ERROR); 0r's guard counts it.
+  - name: post_no_f_shaped_row_yet
+    continuous: false
+    sql: |
+      SELECT x.what, x.id
+        FROM (SELECT 'batch' AS what, b.id FROM public.kitchen_batch b
+               WHERE jsonb_strip_nulls(jsonb_build_object(
+                       'vl', to_jsonb(b) -> 'vessel_label', 'vs', to_jsonb(b) -> 'vessel_size',
+                       'vu', to_jsonb(b) -> 'vessel_unit', 'vc', to_jsonb(b) -> 'vessel_count',
+                       'ns', to_jsonb(b) -> 'no_salt', 'lo', to_jsonb(b) -> 'shu_est_low',
+                       'hi', to_jsonb(b) -> 'shu_est_high', 'sb', to_jsonb(b) -> 'shu_est_basis',
+                       'rr', to_jsonb(b) -> 'recipe_ref')) <> '{}'::jsonb
+              UNION ALL
+              SELECT 'line', i.id FROM public.kitchen_batch_input i
+               WHERE jsonb_strip_nulls(jsonb_build_object(
+                       'brand', to_jsonb(i) -> 'brand', 'form', to_jsonb(i) -> 'form',
+                       'lo', to_jsonb(i) -> 'shu_rating_low', 'hi', to_jsonb(i) -> 'shu_rating_high',
+                       'm', to_jsonb(i) -> 'salt_method', 'f', to_jsonb(i) -> 'base_from',
+                       'e', to_jsonb(i) -> 'edited_at', 'p', CASE WHEN to_jsonb(i) ->> 'salt_base' = 'produce'
+                                                               THEN to_jsonb(i) -> 'salt_base' END)) <> '{}'::jsonb
+              UNION ALL
+              SELECT 'stage row', s.id FROM public.kitchen_stage_log s
+               WHERE jsonb_strip_nulls(jsonb_build_object(
+                       'a', to_jsonb(s) -> 'acts', 'm', to_jsonb(s) -> 'mash_in_g',
+                       'e', to_jsonb(s) -> 'edited_at')) <> '{}'::jsonb
+              UNION ALL
+              SELECT 'jar', p.id FROM public.preservation_log p
+               WHERE jsonb_strip_nulls(jsonb_build_object(
+                       'lo', to_jsonb(p) -> 'shu_est_low', 'hi', to_jsonb(p) -> 'shu_est_high',
+                       'b', to_jsonb(p) -> 'shu_est_basis', 'c', to_jsonb(p) -> 'cooked',
+                       'd', to_jsonb(p) -> 'delta_at', 'r', to_jsonb(p) -> 'remaining_amount')) <> '{}'::jsonb) x
+    expect: rowcount_eq
+    value: 0

@@ -137,6 +137,8 @@ ALTER TABLE public.kitchen_batch
 -- new UI never writes it" no longer holds; the README records the correction.
 -- chk_kbi_salt_base is WIDENED IN PLACE (superset): 'produce' joins, 'peppers' stays for any 1b-era
 -- row. The five T CHECKs tighten 1b's salt columns; gates.yml sweeps them first.
+-- ⚠ `role IS NOT DISTINCT FROM 'salt'`, never `role = 'salt'`: a CHECK passes on NULL, so the `=`
+-- spelling admits salt facts on every role-less line (caught by the rehearsal's planted violations).
 ALTER TABLE public.kitchen_batch_input
   ADD COLUMN IF NOT EXISTS brand           text,
   ADD COLUMN IF NOT EXISTS form            text,
@@ -150,13 +152,13 @@ ALTER TABLE public.kitchen_batch_input
     CHECK (salt_base IS NULL OR salt_base IN ('peppers','water','all','produce')),
   DROP CONSTRAINT IF EXISTS chk_kbi_salt_facts_on_salt_line,
   ADD CONSTRAINT chk_kbi_salt_facts_on_salt_line
-    CHECK ((salt_pct IS NULL AND salt_base IS NULL AND base_g IS NULL) OR role = 'salt'),
+    CHECK ((salt_pct IS NULL AND salt_base IS NULL AND base_g IS NULL) OR role IS NOT DISTINCT FROM 'salt'),
   DROP CONSTRAINT IF EXISTS chk_kbi_salt_facts_pairing,
   ADD CONSTRAINT chk_kbi_salt_facts_pairing
     CHECK ((salt_pct IS NULL) = (salt_base IS NULL) AND (salt_pct IS NULL) = (base_g IS NULL)),
   DROP CONSTRAINT IF EXISTS chk_kbi_salt_facts_grams,
   ADD CONSTRAINT chk_kbi_salt_facts_grams
-    CHECK (salt_pct IS NULL OR qty_unit = 'g'),
+    CHECK (salt_pct IS NULL OR qty_unit IS NOT DISTINCT FROM 'g'),
   DROP CONSTRAINT IF EXISTS chk_kbi_salt_pct_range,
   ADD CONSTRAINT chk_kbi_salt_pct_range
     CHECK (salt_pct IS NULL OR (salt_pct > 0 AND salt_pct <= 100)),
@@ -186,7 +188,7 @@ ALTER TABLE public.kitchen_batch_input
     CHECK (salt_method IS NULL OR salt_method IN ('dry','brine','rinsed')),
   DROP CONSTRAINT IF EXISTS chk_kbi_salt_method_on_salt_line,
   ADD CONSTRAINT chk_kbi_salt_method_on_salt_line
-    CHECK (salt_method IS NULL OR role = 'salt'),
+    CHECK (salt_method IS NULL OR role IS NOT DISTINCT FROM 'salt'),
   DROP CONSTRAINT IF EXISTS chk_kbi_base_from,
   ADD CONSTRAINT chk_kbi_base_from
     CHECK (base_from IS NULL OR base_from IN ('lines','scale')),
