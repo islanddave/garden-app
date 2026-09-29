@@ -1,6 +1,6 @@
 {
  "version": 1,
- "generatedAt": "2026-09-29T19:30:00Z",
+ "generatedAt": "2026-09-29T19:33:09.000Z",
  "season": {
   "year": 2026,
   "start": "2025-11-01",
@@ -10,7 +10,7 @@
   "ribbon": {
    "section": "ribbon",
    "version": 1,
-   "generatedAt": "2026-09-29T19:30:00Z",
+   "generatedAt": "2026-09-29T19:33:09.000Z",
    "meta": {
     "pins": {
      "first_sow": "2026-04-18",
@@ -1482,7 +1482,7 @@
      },
      {
       "week_start": "2026-07-20",
-      "heat_units": 130,
+      "heat_units": 131,
       "cool_nights": 3,
       "rain_in": 0.75,
       "tomato_fruit": 69,
@@ -1524,7 +1524,7 @@
       "week_start": "2026-08-24",
       "heat_units": 120,
       "cool_nights": 3,
-      "rain_in": 0.0,
+      "rain_in": 0,
       "tomato_fruit": 268,
       "pepper_pods": 62
      },
@@ -1574,7 +1574,7 @@
   "sources": {
    "section": "sources",
    "version": 1,
-   "generatedAt": "2026-09-29T19:30:00Z",
+   "generatedAt": "2026-09-29T19:33:09.000Z",
    "meta": {
     "total_lb": 449.6,
     "limits": [
@@ -1622,7 +1622,7 @@
     ],
     "cards": [
      {
-      "source_id": "00000000-0000-4000-8000-000000000001",
+      "source_id": "684e2166-ca47-42d2-834e-b14ecf21543c",
       "name": "Starview Gardens",
       "kind": "nursery",
       "plantings": 46,
@@ -1633,7 +1633,7 @@
       "saved_lots": 11
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000002",
+      "source_id": "87a78f93-4a7e-4767-94a0-dfc0a2c4bbaf",
       "name": "High Mowing Organic Seeds",
       "kind": "seed_company",
       "plantings": 4,
@@ -1644,7 +1644,7 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000003",
+      "source_id": "0d50a7d7-9c30-4e27-bef8-80c59770b716",
       "name": "Greenfield Farmers Co-op",
       "kind": "market",
       "plantings": 4,
@@ -1655,7 +1655,7 @@
       "saved_lots": 1
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000004",
+      "source_id": "13503c22-8b71-4424-b9a2-d3115cd73d1e",
       "name": "Bonnie Plants",
       "kind": "brand",
       "plantings": 4,
@@ -1666,7 +1666,7 @@
       "saved_lots": 1
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000005",
+      "source_id": "db3b919a-4151-4254-9074-532e3531c963",
       "name": "Long River Produce Market",
       "kind": "market",
       "plantings": 27,
@@ -1677,18 +1677,18 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000006",
+      "source_id": "510c3fe0-14fb-44b0-887d-7b0f6fd17b28",
       "name": "Botanical Interests",
       "kind": "seed_company",
       "plantings": 32,
       "plants": 633,
       "picked": 6,
       "lost": 5,
-      "lb": 4.0,
+      "lb": 4,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000007",
+      "source_id": "a593e061-890d-4f2c-b57c-74addab84e0c",
       "name": "Jen",
       "kind": "person",
       "plantings": 10,
@@ -1699,7 +1699,7 @@
       "saved_lots": 1
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000008",
+      "source_id": "7d74da59-d1b3-4a6e-8861-cb663f3bc09b",
       "name": "Emma Daley",
       "kind": "person",
       "plantings": 1,
@@ -1710,7 +1710,7 @@
       "saved_lots": 1
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000009",
+      "source_id": "33d65987-fed1-40e9-967a-c3ec604b64c1",
       "name": "Burpee",
       "kind": "seed_company",
       "plantings": 4,
@@ -1721,7 +1721,7 @@
       "saved_lots": 1
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000010",
+      "source_id": "4353e5be-9ba3-41c3-8050-9acb715f51f5",
       "name": "Gurney's Seed & Nursery Co.",
       "kind": "seed_company",
       "plantings": 1,
@@ -1732,7 +1732,7 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000011",
+      "source_id": "3db8510c-1b71-4296-ab78-03e9ac69a576",
       "name": "Hart Farm",
       "kind": "farm_stand",
       "plantings": 1,
@@ -1743,7 +1743,7 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000012",
+      "source_id": "209a9ef5-b46f-4a99-b8f6-cbe99bcb10fb",
       "name": "Trust stand, Upper Road",
       "kind": "farm_stand",
       "plantings": 1,
@@ -1754,7 +1754,7 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000013",
+      "source_id": "aae935fb-66ea-4ecf-a507-5c4a41aba3c6",
       "name": "Whately Plant Swap",
       "kind": "plant_swap",
       "plantings": 4,
@@ -1765,7 +1765,7 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000014",
+      "source_id": "34064c67-f25b-4585-8f91-8fd350fad643",
       "name": "Skawski Farms",
       "kind": "nursery",
       "plantings": 4,
@@ -1776,7 +1776,7 @@
       "saved_lots": 1
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000015",
+      "source_id": "e7121205-9004-420d-a411-a4e0fe59e47d",
       "name": "Class Grass Garden Center",
       "kind": "nursery",
       "plantings": 1,
@@ -1787,7 +1787,7 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000016",
+      "source_id": "2a768b09-0a3f-46c1-bc83-6c4c0ba8d6a4",
       "name": "Chapley Gardens",
       "kind": "nursery",
       "plantings": 2,
@@ -1798,7 +1798,7 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000017",
+      "source_id": "1c71bcbe-6774-4379-b8ee-e06030e5df25",
       "name": "Bostrom Farms",
       "kind": "farm_stand",
       "plantings": 2,
@@ -1809,7 +1809,7 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000018",
+      "source_id": "66cc22a1-bd48-4e6f-bc40-9f07ad06396b",
       "name": "Hadley Plant Swap",
       "kind": "plant_swap",
       "plantings": 1,
@@ -1820,7 +1820,7 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000019",
+      "source_id": "74ca34f9-ee64-4f75-ba26-7714528a27ff",
       "name": "Greenfield Farmers Market",
       "kind": "market",
       "plantings": 1,
@@ -1831,168 +1831,168 @@
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000020",
-      "name": "Ojos de Luna",
-      "kind": "person",
-      "plantings": 4,
-      "plants": 4,
-      "picked": 0,
-      "lost": 0,
-      "lb": 0.0,
-      "saved_lots": 0
-     },
-     {
-      "source_id": "00000000-0000-4000-8000-000000000021",
+      "source_id": "26b754ac-2604-4972-8405-63b6ee363c4b",
       "name": "Imogen",
       "kind": "person",
       "plantings": 4,
       "plants": 4,
       "picked": 0,
       "lost": 0,
-      "lb": 0.0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000022",
+      "source_id": "32e02e30-69ca-44ea-adf8-418b5567ddfc",
+      "name": "Ojos de Luna",
+      "kind": "person",
+      "plantings": 4,
+      "plants": 4,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "36e1c86d-9a06-4dad-a3f0-ede7cf44c830",
       "name": "Amazon",
       "kind": "retail",
       "plantings": 3,
       "plants": 10,
       "picked": 0,
       "lost": 0,
-      "lb": 0.0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000023",
+      "source_id": "31e0eea4-48ad-4dd5-8079-0287bf037f30",
       "name": "Belchertown Plant Swap",
       "kind": "plant_swap",
       "plantings": 3,
       "plants": 3,
       "picked": 0,
       "lost": 0,
-      "lb": 0.0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000024",
+      "source_id": "b3cc8942-b664-4df0-8098-0591ee3984fc",
       "name": "Seed Savers Exchange",
       "kind": "seed_company",
       "plantings": 3,
       "plants": 10,
       "picked": 0,
       "lost": 3,
-      "lb": 0.0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000025",
+      "source_id": "caf1f9d0-a214-4438-b009-96ddab966e01",
       "name": "Home Depot",
       "kind": "retail",
       "plantings": 2,
       "plants": 2,
       "picked": 0,
       "lost": 0,
-      "lb": 0.0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000026",
-      "name": "Sunderland trust stand",
-      "kind": "farm_stand",
-      "plantings": 1,
-      "plants": 1,
-      "picked": 0,
-      "lost": 0,
-      "lb": 0.0,
-      "saved_lots": 0
-     },
-     {
-      "source_id": "00000000-0000-4000-8000-000000000027",
-      "name": "Hatfield Plant Swap",
-      "kind": "plant_swap",
-      "plantings": 1,
-      "plants": 6,
-      "picked": 0,
-      "lost": 0,
-      "lb": 0.0,
-      "saved_lots": 0
-     },
-     {
-      "source_id": "00000000-0000-4000-8000-000000000028",
-      "name": "Nettlepoint Farm",
-      "kind": "farm_stand",
-      "plantings": 1,
-      "plants": 6,
-      "picked": 0,
-      "lost": 0,
-      "lb": 0.0,
-      "saved_lots": 0
-     },
-     {
-      "source_id": "00000000-0000-4000-8000-000000000029",
+      "source_id": "019c4ea5-4b36-483b-b772-344459c6f01b",
       "name": "Big Y",
       "kind": "retail",
       "plantings": 1,
       "plants": 6,
       "picked": 0,
       "lost": 0,
-      "lb": 0.0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000030",
-      "name": "Liz Young",
-      "kind": "person",
+      "source_id": "8e47a10c-ef44-429f-bd1b-1c1be70c21b6",
+      "name": "Hatfield Plant Swap",
+      "kind": "plant_swap",
       "plantings": 1,
-      "plants": 1,
+      "plants": 6,
       "picked": 0,
       "lost": 0,
-      "lb": 0.0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000031",
-      "name": "Trust stand, Hadley",
-      "kind": "farm_stand",
-      "plantings": 1,
-      "plants": 12,
-      "picked": 0,
-      "lost": 0,
-      "lb": 0.0,
-      "saved_lots": 0
-     },
-     {
-      "source_id": "00000000-0000-4000-8000-000000000032",
+      "source_id": "62ced1db-184d-47db-8b26-26cfa387000c",
       "name": "Hillfolk Seed Collective",
       "kind": "seed_company",
       "plantings": 1,
       "plants": 4,
       "picked": 0,
       "lost": 0,
-      "lb": 0.0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000033",
-      "name": "The Warren Place Flower Farm",
-      "kind": "nursery",
+      "source_id": "f21f9ce7-c0bb-42bb-a583-ed9f3be28a37",
+      "name": "Liz Young",
+      "kind": "person",
       "plantings": 1,
       "plants": 1,
-      "picked": 1,
+      "picked": 0,
       "lost": 0,
-      "lb": 0.0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
-      "source_id": "00000000-0000-4000-8000-000000000034",
+      "source_id": "c455ed7e-cbb2-4bed-b3ca-9b879c2fc020",
+      "name": "Nettlepoint Farm",
+      "kind": "farm_stand",
+      "plantings": 1,
+      "plants": 6,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "69456fa1-a1fc-48dd-8cf3-406a01b5b726",
       "name": "Renee's Garden",
       "kind": "seed_company",
       "plantings": 1,
       "plants": 7,
       "picked": 0,
       "lost": 0,
-      "lb": 0.0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "4075b942-d92e-424a-ace4-5a2ca9447a1d",
+      "name": "Sunderland trust stand",
+      "kind": "farm_stand",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "7b4c2bcc-026c-44c2-890a-70afb4bbc489",
+      "name": "The Warren Place Flower Farm",
+      "kind": "nursery",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 1,
+      "lost": 0,
+      "lb": 0,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "90699f70-6e8d-4e7d-a1e3-ff51ec1fe14b",
+      "name": "Trust stand, Hadley",
+      "kind": "farm_stand",
+      "plantings": 1,
+      "plants": 12,
+      "picked": 0,
+      "lost": 0,
+      "lb": 0,
       "saved_lots": 0
      },
      {
@@ -2004,7 +2004,7 @@
       "picked": null,
       "lost": null,
       "lb": 187.1,
-      "saved_lots": 0
+      "saved_lots": 3
      }
     ]
    }
@@ -2012,7 +2012,7 @@
   "heat_clock": {
    "section": "heat_clock",
    "version": 1,
-   "generatedAt": "2026-09-29T19:30:00Z",
+   "generatedAt": "2026-09-29T19:33:09.000Z",
    "meta": {
     "origin_date": "2026-05-10",
     "median_heat": {
@@ -2080,22 +2080,16 @@
       "heat_units": 907
      },
      {
-      "crop_slug": "red_raspberry",
-      "crop_name": "Red Raspberry",
-      "first_pick": "2026-07-09",
-      "heat_units": 1012
-     },
-     {
       "crop_slug": "dill",
       "crop_name": "Dill",
       "first_pick": "2026-07-09",
       "heat_units": 1012
      },
      {
-      "crop_slug": "broccoli",
-      "crop_name": "Broccoli",
-      "first_pick": "2026-07-10",
-      "heat_units": 1036
+      "crop_slug": "red_raspberry",
+      "crop_name": "Red Raspberry",
+      "first_pick": "2026-07-09",
+      "heat_units": 1012
      },
      {
       "crop_slug": "bee_balm",
@@ -2104,10 +2098,10 @@
       "heat_units": 1036
      },
      {
-      "crop_slug": "thyme",
-      "crop_name": "Thyme",
-      "first_pick": "2026-07-11",
-      "heat_units": 1064
+      "crop_slug": "broccoli",
+      "crop_name": "Broccoli",
+      "first_pick": "2026-07-10",
+      "heat_units": 1036
      },
      {
       "crop_slug": "parsley",
@@ -2116,14 +2110,20 @@
       "heat_units": 1064
      },
      {
-      "crop_slug": "tomatillo",
-      "crop_name": "Tomatillo",
-      "first_pick": "2026-07-14",
-      "heat_units": 1133
+      "crop_slug": "thyme",
+      "crop_name": "Thyme",
+      "first_pick": "2026-07-11",
+      "heat_units": 1064
      },
      {
       "crop_slug": "cucumber",
       "crop_name": "Cucumber",
+      "first_pick": "2026-07-14",
+      "heat_units": 1133
+     },
+     {
+      "crop_slug": "tomatillo",
+      "crop_name": "Tomatillo",
       "first_pick": "2026-07-14",
       "heat_units": 1133
      },
@@ -2146,26 +2146,26 @@
       "heat_units": 1308
      },
      {
-      "crop_slug": "tarragon",
-      "crop_name": "Tarragon",
-      "first_pick": "2026-07-22",
-      "heat_units": 1308
-     },
-     {
       "crop_slug": "lemon_verbena",
       "crop_name": "Lemon Verbena",
       "first_pick": "2026-07-22",
       "heat_units": 1308
      },
      {
-      "crop_slug": "shallot",
-      "crop_name": "Shallot",
-      "first_pick": "2026-07-23",
-      "heat_units": 1330
+      "crop_slug": "tarragon",
+      "crop_name": "Tarragon",
+      "first_pick": "2026-07-22",
+      "heat_units": 1308
      },
      {
       "crop_slug": "leek",
       "crop_name": "Leek",
+      "first_pick": "2026-07-23",
+      "heat_units": 1330
+     },
+     {
+      "crop_slug": "shallot",
+      "crop_name": "Shallot",
       "first_pick": "2026-07-23",
       "heat_units": 1330
      },
@@ -2268,7 +2268,7 @@
     ],
     "by_cultivar": [
      {
-      "planting_id": "00000000-0000-4000-9000-000000000001",
+      "planting_id": "ad489638-a21c-49d8-aaba-ad865900345f",
       "crop_slug": "pepper",
       "cultivar": "Habanero",
       "transplanted_at": "2026-07-16",
@@ -2278,7 +2278,7 @@
       "heat_band": "superhot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000002",
+      "planting_id": "e22681d8-0b93-45e8-9b81-6092cc987f4a",
       "crop_slug": "pepper",
       "cultivar": "Cubanelle",
       "transplanted_at": "2026-07-01",
@@ -2288,7 +2288,7 @@
       "heat_band": "medium"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000003",
+      "planting_id": "6b43cdfc-ea0a-4d1d-86c3-58d4acf9d7ba",
       "crop_slug": "pepper",
       "cultivar": "Capeliente",
       "transplanted_at": "2026-07-01",
@@ -2298,17 +2298,17 @@
       "heat_band": "medium"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000004",
+      "planting_id": "1c59f943-cc60-4f30-9a27-5a84468c0aeb",
       "crop_slug": "pepper",
       "cultivar": "Cayenne Blend",
       "transplanted_at": "2026-06-23",
       "first_pick": "2026-08-02",
       "days": 40,
-      "heat_units": 858,
+      "heat_units": 859,
       "heat_band": "very_hot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000005",
+      "planting_id": "504144f1-83b0-4b36-8e88-d8e84c617e62",
       "crop_slug": "pepper",
       "cultivar": "Kori Sitakame",
       "transplanted_at": "2026-06-16",
@@ -2318,7 +2318,7 @@
       "heat_band": "hot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000006",
+      "planting_id": "b0480c3d-08bd-4e95-b3f6-f533eddaefe9",
       "crop_slug": "pepper",
       "cultivar": "Cherry Hot",
       "transplanted_at": "2026-06-12",
@@ -2328,7 +2328,7 @@
       "heat_band": "medium"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000007",
+      "planting_id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
       "crop_slug": "pepper",
       "cultivar": "Piri Piri",
       "transplanted_at": "2026-06-19",
@@ -2338,7 +2338,7 @@
       "heat_band": "very_hot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000008",
+      "planting_id": "e730d592-a9ca-4233-89d3-92f5e534fdeb",
       "crop_slug": "pepper",
       "cultivar": "Pumpkin Jalapeno",
       "transplanted_at": "2026-06-19",
@@ -2348,7 +2348,7 @@
       "heat_band": "hot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000009",
+      "planting_id": "f11b7a72-3d91-4842-9850-b2fccc8746e2",
       "crop_slug": "pepper",
       "cultivar": "Anaheim",
       "transplanted_at": "2026-06-19",
@@ -2358,7 +2358,7 @@
       "heat_band": "medium"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000010",
+      "planting_id": "e969fb61-a7fb-46f9-8d2e-2081037f9773",
       "crop_slug": "pepper",
       "cultivar": "Gatherer's Gold",
       "transplanted_at": "2026-06-16",
@@ -2368,7 +2368,7 @@
       "heat_band": "sweet"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000011",
+      "planting_id": "718e9fea-a366-4103-9fad-f364b81f1772",
       "crop_slug": "pepper",
       "cultivar": "Serrano",
       "transplanted_at": "2026-06-19",
@@ -2378,7 +2378,7 @@
       "heat_band": "hot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000012",
+      "planting_id": "d0729dda-2879-48ff-9238-a068dbe220b2",
       "crop_slug": "pepper",
       "cultivar": "Red Mini Bell",
       "transplanted_at": "2026-06-16",
@@ -2388,7 +2388,7 @@
       "heat_band": "sweet"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000013",
+      "planting_id": "b077b1ed-08b5-4626-b603-ef5b68d4bef3",
       "crop_slug": "pepper",
       "cultivar": "Sugar Rush Peach",
       "transplanted_at": "2026-06-01",
@@ -2398,7 +2398,7 @@
       "heat_band": "very_hot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000014",
+      "planting_id": "9726383b-2d3d-4015-be5f-5b269ac0cb7c",
       "crop_slug": "pepper",
       "cultivar": "Sweet Sivri",
       "transplanted_at": "2026-06-16",
@@ -2408,7 +2408,7 @@
       "heat_band": "sweet"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000015",
+      "planting_id": "b83e0a22-71e5-4119-9ef4-c3a481aace06",
       "crop_slug": "pepper",
       "cultivar": "Cherry Stuffer (Burpee)",
       "transplanted_at": "2026-05-24",
@@ -2418,7 +2418,7 @@
       "heat_band": "mild"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000016",
+      "planting_id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
       "crop_slug": "pepper",
       "cultivar": "Ristra Cayenne II",
       "transplanted_at": "2026-05-23",
@@ -2428,7 +2428,7 @@
       "heat_band": "hot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000017",
+      "planting_id": "90fbbdac-99c2-4cff-9b97-3143a9821b3a",
       "crop_slug": "pepper",
       "cultivar": "Armageddon F1",
       "transplanted_at": "2026-05-23",
@@ -2438,7 +2438,7 @@
       "heat_band": "superhot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000018",
+      "planting_id": "2b1f722f-8f3a-4803-b8c5-cabe16b479e6",
       "crop_slug": "pepper",
       "cultivar": "Gong Bao (Kung Pao)",
       "transplanted_at": "2026-06-19",
@@ -2448,7 +2448,7 @@
       "heat_band": "hot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000019",
+      "planting_id": "78b8be30-32e4-428a-b52d-98f1a3bc75c5",
       "crop_slug": "pepper",
       "cultivar": "Jamaican Yellow Mushroom",
       "transplanted_at": "2026-05-28",
@@ -2458,7 +2458,7 @@
       "heat_band": "very_hot"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000020",
+      "planting_id": "71eb286b-bee9-4593-9955-c2b1f6e9cc79",
       "crop_slug": "pepper",
       "cultivar": "Sweet Orange Pepper (Unknown)",
       "transplanted_at": "2026-06-12",
@@ -2468,7 +2468,7 @@
       "heat_band": "sweet"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000021",
+      "planting_id": "1b9e2ab1-e947-47b5-b993-9f437b5bd2d1",
       "crop_slug": "pepper",
       "cultivar": "King of the North",
       "transplanted_at": "2026-06-23",
@@ -2478,7 +2478,7 @@
       "heat_band": "sweet"
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000022",
+      "planting_id": "5df40797-5b49-48ab-b1bc-9deb35c2e782",
       "crop_slug": "tomato",
       "cultivar": "Super Sweet 100",
       "transplanted_at": "2026-05-28",
@@ -2488,7 +2488,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000023",
+      "planting_id": "15bbfb67-de07-4120-ac7c-45777b357a0f",
       "crop_slug": "tomato",
       "cultivar": "Celebrity",
       "transplanted_at": "2026-06-14",
@@ -2498,7 +2498,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000024",
+      "planting_id": "582d7ea9-7fde-48ef-a3d4-5c230ad0ba05",
       "crop_slug": "tomato",
       "cultivar": "Oregon Spring",
       "transplanted_at": "2026-06-07",
@@ -2508,17 +2508,17 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000025",
+      "planting_id": "fc9b6ee9-0dd4-41f7-a1db-157c30c93a4c",
       "crop_slug": "tomato",
       "cultivar": "Big Boy",
       "transplanted_at": "2026-06-23",
       "first_pick": "2026-08-05",
       "days": 43,
-      "heat_units": 926,
+      "heat_units": 927,
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000026",
+      "planting_id": "c9c42264-1293-46a7-9bbc-bb391626d42c",
       "crop_slug": "tomato",
       "cultivar": "Sub Arctic Plenty",
       "transplanted_at": "2026-06-07",
@@ -2528,7 +2528,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000027",
+      "planting_id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
       "crop_slug": "tomato",
       "cultivar": "Sunray",
       "transplanted_at": "2026-06-07",
@@ -2538,7 +2538,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000028",
+      "planting_id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
       "crop_slug": "tomato",
       "cultivar": "Ukrainian Purple",
       "transplanted_at": "2026-06-07",
@@ -2548,7 +2548,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000029",
+      "planting_id": "51facc08-0635-4f86-907f-b935ba6d782b",
       "crop_slug": "tomato",
       "cultivar": "Manitoba",
       "transplanted_at": "2026-06-09",
@@ -2558,7 +2558,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000030",
+      "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
       "crop_slug": "tomato",
       "cultivar": "Black Cherry",
       "transplanted_at": "2026-05-28",
@@ -2568,7 +2568,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000031",
+      "planting_id": "33c8c880-7e86-43fa-b083-0b9a36377c6a",
       "crop_slug": "tomato",
       "cultivar": "Delicious",
       "transplanted_at": "2026-06-14",
@@ -2578,7 +2578,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000032",
+      "planting_id": "37368072-8ce8-44a3-b40a-767993dd39b1",
       "crop_slug": "tomato",
       "cultivar": "1884",
       "transplanted_at": "2026-06-07",
@@ -2588,7 +2588,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000033",
+      "planting_id": "7146d741-4038-43b0-a4d8-13b5991d8614",
       "crop_slug": "tomato",
       "cultivar": "Granadero",
       "transplanted_at": "2026-05-28",
@@ -2598,7 +2598,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000034",
+      "planting_id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
       "crop_slug": "tomato",
       "cultivar": "Rosa Sicilian",
       "transplanted_at": "2026-06-07",
@@ -2608,7 +2608,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000035",
+      "planting_id": "eb366a47-b2bb-4a69-8ca3-b97bbe00ab8c",
       "crop_slug": "tomato",
       "cultivar": "Jet Star",
       "transplanted_at": "2026-06-14",
@@ -2618,7 +2618,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000036",
+      "planting_id": "5e073d53-a999-4bbd-9e64-42342678770c",
       "crop_slug": "tomato",
       "cultivar": "Speckled Roman",
       "transplanted_at": "2026-05-28",
@@ -2628,7 +2628,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000037",
+      "planting_id": "bae05057-409d-453b-addc-a218bef4f99d",
       "crop_slug": "tomato",
       "cultivar": "Cherokee Green",
       "transplanted_at": "2026-06-07",
@@ -2638,7 +2638,7 @@
       "heat_band": null
      },
      {
-      "planting_id": "00000000-0000-4000-9000-000000000038",
+      "planting_id": "a0a62ea6-dbbe-4775-85bc-c61c41db4fdf",
       "crop_slug": "tomato",
       "cultivar": "Del Tonet",
       "transplanted_at": "2026-06-07",
@@ -2653,7 +2653,7 @@
   "heat_ladder": {
    "section": "heat_ladder",
    "version": 1,
-   "generatedAt": "2026-09-29T19:30:00Z",
+   "generatedAt": "2026-09-29T19:33:09.000Z",
    "meta": {
     "limits": [
      {
@@ -2696,7 +2696,7 @@
       "plantings": 10,
       "plants": 36,
       "pods": 56,
-      "lb": 3.14
+      "lb": 3.13
      },
      {
       "band": "very_hot",
@@ -2704,7 +2704,7 @@
       "plantings": 12,
       "plants": 29,
       "pods": 186,
-      "lb": 2.56
+      "lb": 2.55
      },
      {
       "band": "superhot",
@@ -2718,7 +2718,7 @@
     "best": [
      {
       "band": "sweet",
-      "planting_id": "00000000-0000-4000-a000-000000000001",
+      "planting_id": "d0729dda-2879-48ff-9238-a068dbe220b2",
       "cultivar": "Red Mini Bell",
       "pods": 18,
       "lb": 0.45,
@@ -2726,7 +2726,7 @@
      },
      {
       "band": "sweet",
-      "planting_id": "00000000-0000-4000-a000-000000000002",
+      "planting_id": "9726383b-2d3d-4015-be5f-5b269ac0cb7c",
       "cultivar": "Sweet Sivri",
       "pods": 9,
       "lb": 0.27,
@@ -2734,7 +2734,7 @@
      },
      {
       "band": "sweet",
-      "planting_id": "00000000-0000-4000-a000-000000000003",
+      "planting_id": "e969fb61-a7fb-46f9-8d2e-2081037f9773",
       "cultivar": "Gatherer's Gold",
       "pods": 8,
       "lb": 1.04,
@@ -2742,7 +2742,7 @@
      },
      {
       "band": "sweet",
-      "planting_id": "00000000-0000-4000-a000-000000000004",
+      "planting_id": "71eb286b-bee9-4593-9955-c2b1f6e9cc79",
       "cultivar": "Sweet Orange Pepper (Unknown)",
       "pods": 2,
       "lb": 0.14,
@@ -2750,7 +2750,7 @@
      },
      {
       "band": "sweet",
-      "planting_id": "00000000-0000-4000-a000-000000000005",
+      "planting_id": "1b9e2ab1-e947-47b5-b993-9f437b5bd2d1",
       "cultivar": "King of the North",
       "pods": 1,
       "lb": 0.25,
@@ -2758,39 +2758,39 @@
      },
      {
       "band": "sweet",
-      "planting_id": "00000000-0000-4000-a000-000000000006",
-      "cultivar": "Quadrato d'Asti Rosso",
+      "planting_id": "6cb08d0d-a664-437f-a4db-e581984f758f",
+      "cultivar": "Emerald Green",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 6
      },
      {
       "band": "sweet",
-      "planting_id": "00000000-0000-4000-a000-000000000007",
-      "cultivar": "Emerald Green",
+      "planting_id": "26afb9e8-56e8-4e67-80b9-61138dccf357",
+      "cultivar": "Orange Sun",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 7
      },
      {
       "band": "sweet",
-      "planting_id": "00000000-0000-4000-a000-000000000008",
-      "cultivar": "Orange Sun",
+      "planting_id": "ffac4728-f687-4327-b431-492d88f04858",
+      "cultivar": "Quadrato d'Asti Rosso",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 8
      },
      {
       "band": "sweet",
-      "planting_id": "00000000-0000-4000-a000-000000000009",
+      "planting_id": "e3888c50-e765-4a96-a3e5-23732767c48f",
       "cultivar": "Sweet Chocolate",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 9
      },
      {
       "band": "mild",
-      "planting_id": "00000000-0000-4000-a000-000000000010",
+      "planting_id": "d3c66eaf-caf8-4236-86d3-7da6cbfd3bf4",
       "cultivar": "Dragon Roll",
       "pods": 58,
       "lb": 1.51,
@@ -2798,7 +2798,7 @@
      },
      {
       "band": "mild",
-      "planting_id": "00000000-0000-4000-a000-000000000011",
+      "planting_id": "e7bccf4b-9c28-45e1-9b4c-e4f31c0feae5",
       "cultivar": "Pick-N-Pop Yellow",
       "pods": 18,
       "lb": 1.26,
@@ -2806,7 +2806,7 @@
      },
      {
       "band": "mild",
-      "planting_id": "00000000-0000-4000-a000-000000000012",
+      "planting_id": "b83e0a22-71e5-4119-9ef4-c3a481aace06",
       "cultivar": "Cherry Stuffer (Burpee)",
       "pods": 8,
       "lb": 0.52,
@@ -2814,23 +2814,23 @@
      },
      {
       "band": "mild",
-      "planting_id": "00000000-0000-4000-a000-000000000013",
-      "cultivar": "Shishito",
+      "planting_id": "d79ba37f-0db8-4ea4-944e-a29dc57b4834",
+      "cultivar": "Katana F1 (Shishito)",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 4
      },
      {
       "band": "mild",
-      "planting_id": "00000000-0000-4000-a000-000000000014",
-      "cultivar": "Katana F1 (Shishito)",
+      "planting_id": "a0448c1f-9f7d-4fd1-ae27-8ed3f2d2755a",
+      "cultivar": "Shishito",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 5
      },
      {
       "band": "medium",
-      "planting_id": "00000000-0000-4000-a000-000000000015",
+      "planting_id": "f11b7a72-3d91-4842-9850-b2fccc8746e2",
       "cultivar": "Anaheim",
       "pods": 4,
       "lb": 0.39,
@@ -2838,7 +2838,7 @@
      },
      {
       "band": "medium",
-      "planting_id": "00000000-0000-4000-a000-000000000016",
+      "planting_id": "d6992544-bfc5-4bc1-ab07-9a6e850e3469",
       "cultivar": "New Mexico (Hatch-type)",
       "pods": 2,
       "lb": 0.16,
@@ -2846,23 +2846,23 @@
      },
      {
       "band": "medium",
-      "planting_id": "00000000-0000-4000-a000-000000000017",
-      "cultivar": "Santa Fe Grande",
+      "planting_id": "6ada8f32-fe3d-42a8-b4f8-1ea1cf9ea19d",
+      "cultivar": "Biquinho Yellow F1",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 3
      },
      {
       "band": "medium",
-      "planting_id": "00000000-0000-4000-a000-000000000018",
-      "cultivar": "Biquinho Yellow F1",
+      "planting_id": "0cfd64dc-7aed-4780-bee1-086f87d5632f",
+      "cultivar": "Santa Fe Grande",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 4
      },
      {
       "band": "hot",
-      "planting_id": "00000000-0000-4000-a000-000000000019",
+      "planting_id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
       "cultivar": "Ristra Cayenne II",
       "pods": 16,
       "lb": 2.4,
@@ -2870,23 +2870,23 @@
      },
      {
       "band": "hot",
-      "planting_id": "00000000-0000-4000-a000-000000000020",
-      "cultivar": "Gong Bao (Kung Pao)",
+      "planting_id": "f04b9632-d92d-444f-9aa3-0dbd2ee9e64e",
+      "cultivar": "Hot Portugal",
       "pods": 6,
-      "lb": 0.06,
+      "lb": 0.19,
       "rank_in_band": 2
      },
      {
       "band": "hot",
-      "planting_id": "00000000-0000-4000-a000-000000000021",
-      "cultivar": "Hot Portugal",
+      "planting_id": "2b1f722f-8f3a-4803-b8c5-cabe16b479e6",
+      "cultivar": "Gong Bao (Kung Pao)",
       "pods": 6,
-      "lb": 0.19,
+      "lb": 0.06,
       "rank_in_band": 3
      },
      {
       "band": "hot",
-      "planting_id": "00000000-0000-4000-a000-000000000022",
+      "planting_id": "e730d592-a9ca-4233-89d3-92f5e534fdeb",
       "cultivar": "Pumpkin Jalapeno",
       "pods": 5,
       "lb": 0.02,
@@ -2894,15 +2894,15 @@
      },
      {
       "band": "hot",
-      "planting_id": "00000000-0000-4000-a000-000000000023",
+      "planting_id": "23a06ab3-8467-4415-a001-bab2220a6556",
       "cultivar": "Purple Tiger",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 5
      },
      {
       "band": "very_hot",
-      "planting_id": "00000000-0000-4000-a000-000000000024",
+      "planting_id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
       "cultivar": "Piri Piri",
       "pods": 56,
       "lb": 0.52,
@@ -2910,7 +2910,7 @@
      },
      {
       "band": "very_hot",
-      "planting_id": "00000000-0000-4000-a000-000000000025",
+      "planting_id": "78b8be30-32e4-428a-b52d-98f1a3bc75c5",
       "cultivar": "Jamaican Yellow Mushroom",
       "pods": 16,
       "lb": 0.25,
@@ -2918,7 +2918,7 @@
      },
      {
       "band": "very_hot",
-      "planting_id": "00000000-0000-4000-a000-000000000026",
+      "planting_id": "f1a7690e-394d-4828-a6c7-aa36721caa66",
       "cultivar": "Thai Dragon",
       "pods": 9,
       "lb": 0.06,
@@ -2926,15 +2926,15 @@
      },
      {
       "band": "very_hot",
-      "planting_id": "00000000-0000-4000-a000-000000000027",
+      "planting_id": "8246960b-3512-4e22-a53e-d32b24e7705d",
       "cultivar": "Piquin",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 4
      },
      {
       "band": "superhot",
-      "planting_id": "00000000-0000-4000-a000-000000000028",
+      "planting_id": "90fbbdac-99c2-4cff-9b97-3143a9821b3a",
       "cultivar": "Armageddon F1",
       "pods": 9,
       "lb": 0.16,
@@ -2942,26 +2942,26 @@
      },
      {
       "band": "superhot",
-      "planting_id": "00000000-0000-4000-a000-000000000029",
-      "cultivar": "Palmetto Punch",
+      "planting_id": "ca259a01-6135-4661-8b8f-e313c73e7cf6",
+      "cultivar": "Devil's Tongue",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 2
      },
      {
       "band": "superhot",
-      "planting_id": "00000000-0000-4000-a000-000000000030",
-      "cultivar": "Devil's Tongue",
+      "planting_id": "917af9d7-4f1a-474c-8283-e41787fdfeb0",
+      "cultivar": "Palmetto Punch",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 3
      },
      {
       "band": "superhot",
-      "planting_id": "00000000-0000-4000-a000-000000000031",
+      "planting_id": "5d031b08-fa16-4815-bf25-23804d051452",
       "cultivar": "Scotch Bonnet",
       "pods": 0,
-      "lb": 0.0,
+      "lb": 0,
       "rank_in_band": 4
      }
     ]
@@ -2970,7 +2970,7 @@
   "tomato_keep": {
    "section": "tomato_keep",
    "version": 1,
-   "generatedAt": "2026-09-29T19:30:00Z",
+   "generatedAt": "2026-09-29T19:33:09.000Z",
    "meta": {
     "median_lb": 2.05,
     "limits": [
@@ -2986,7 +2986,7 @@
    "series": {
     "rows": [
      {
-      "planting_id": "00000000-0000-4000-b000-000000000001",
+      "planting_id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
       "cultivar": "Ukrainian Purple",
       "lb": 9.36,
       "fruit": 46,
@@ -2998,19 +2998,19 @@
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000002",
+      "planting_id": "bae05057-409d-453b-addc-a218bef4f99d",
       "cultivar": "Cherokee Green",
       "lb": 6.13,
       "fruit": 14,
       "g_per_fruit": 199,
       "container_size": "10 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 2.99,
       "verdict": "grow_again",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000003",
+      "planting_id": "37368072-8ce8-44a3-b40a-767993dd39b1",
       "cultivar": "1884",
       "lb": 5.87,
       "fruit": 13,
@@ -3022,19 +3022,19 @@
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000004",
+      "planting_id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
       "cultivar": "Rosa Sicilian",
       "lb": 5.55,
       "fruit": 32,
       "g_per_fruit": 79,
       "container_size": "10 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 2.71,
       "verdict": "grow_again",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000005",
+      "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
       "cultivar": "Black Cherry",
       "lb": 4.25,
       "fruit": 153,
@@ -3046,31 +3046,31 @@
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000006",
+      "planting_id": "a0a62ea6-dbbe-4775-85bc-c61c41db4fdf",
       "cultivar": "Del Tonet",
       "lb": 3.34,
       "fruit": 32,
       "g_per_fruit": 47,
       "container_size": "10 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 1.63,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000007",
+      "planting_id": "5e073d53-a999-4bbd-9e64-42342678770c",
       "cultivar": "Speckled Roman",
       "lb": 3.24,
       "fruit": 12,
       "g_per_fruit": 122,
       "container_size": "10 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 1.58,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000008",
+      "planting_id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
       "cultivar": "Sunray",
       "lb": 2.76,
       "fruit": 11,
@@ -3082,7 +3082,7 @@
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000009",
+      "planting_id": "5df40797-5b49-48ab-b1bc-9deb35c2e782",
       "cultivar": "Super Sweet 100",
       "lb": 2.45,
       "fruit": 173,
@@ -3094,7 +3094,7 @@
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000010",
+      "planting_id": "ee3fd4c5-5fa3-4202-8044-2c2d19e4835e",
       "cultivar": "Czech's Bush",
       "lb": 2.39,
       "fruit": 26,
@@ -3106,7 +3106,7 @@
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000011",
+      "planting_id": "582d7ea9-7fde-48ef-a3d4-5c230ad0ba05",
       "cultivar": "Oregon Spring",
       "lb": 2.33,
       "fruit": 18,
@@ -3118,31 +3118,31 @@
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000012",
+      "planting_id": "9274e985-1cfe-4470-ab5a-424f3e6bdcd2",
       "cultivar": "Floradade",
       "lb": 2.11,
       "fruit": 11,
       "g_per_fruit": 87,
       "container_size": "5 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 1.03,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000013",
+      "planting_id": "0f842b23-f70e-4f47-9c74-57eb1bd1cf6c",
       "cultivar": "Tie-Dye",
       "lb": 1.99,
       "fruit": 3,
       "g_per_fruit": 301,
       "container_size": "10 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 0.97,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000014",
+      "planting_id": "7146d741-4038-43b0-a4d8-13b5991d8614",
       "cultivar": "Granadero",
       "lb": 1.94,
       "fruit": 13,
@@ -3154,85 +3154,85 @@
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000015",
+      "planting_id": "cdf51d91-720b-46b8-8554-617cd9bc9b27",
       "cultivar": "Margaret Curtain",
       "lb": 1.86,
       "fruit": 6,
-      "g_per_fruit": 140,
+      "g_per_fruit": 141,
       "container_size": "10 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 0.91,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000016",
+      "planting_id": "e4f85172-c10c-42cc-849c-ae48821822b0",
       "cultivar": "Yellow Pear",
       "lb": 1.78,
       "fruit": 60,
       "g_per_fruit": 13,
       "container_size": "5 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 0.87,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000017",
+      "planting_id": "8ef2c1fb-87f5-4611-ac20-c20fc5b6d601",
       "cultivar": "Sun Sugar",
       "lb": 1.76,
       "fruit": 119,
       "g_per_fruit": 7,
       "container_size": "5 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 0.86,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000018",
+      "planting_id": "8d3127e1-771e-49d5-9322-be5147091689",
       "cultivar": "New Yorker",
       "lb": 1.52,
       "fruit": 10,
       "g_per_fruit": 69,
       "container_size": "5 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 0.74,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000019",
+      "planting_id": "feaab5a4-e57e-4343-9c9d-f0a7ff2d808a",
       "cultivar": "Banana Creme",
       "lb": 1.45,
       "fruit": 17,
       "g_per_fruit": 39,
       "container_size": "5 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 0.71,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000020",
+      "planting_id": "c57c3889-c5b7-406d-b3c4-fa46b9a791a8",
       "cultivar": "Dester",
       "lb": 1.18,
       "fruit": 3,
       "g_per_fruit": 178,
       "container_size": "5 gal",
-      "measured_share": 1.0,
-      "x_median": 0.58,
+      "measured_share": 1,
+      "x_median": 0.57,
       "verdict": "fine",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000021",
+      "planting_id": "d9836376-7f0f-4f15-87ef-0e253f4ab512",
       "cultivar": "San Marzano",
       "lb": 0.82,
       "fruit": 13,
       "g_per_fruit": 29,
       "container_size": "5 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 0.4,
       "verdict": "rethink",
       "flags": [
@@ -3240,37 +3240,37 @@
       ]
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000022",
+      "planting_id": "e210c3a7-314d-4e12-b9aa-23eb930649e2",
       "cultivar": "Stupice",
       "lb": 0.77,
       "fruit": 17,
       "g_per_fruit": 20,
       "container_size": "5 gal",
       "measured_share": 0.8,
-      "x_median": 0.38,
+      "x_median": 0.37,
       "verdict": "rethink",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000023",
+      "planting_id": "cc7d0fbf-aa0e-4770-94de-ea4e6075165c",
       "cultivar": "Thessaloniki",
       "lb": 0.48,
       "fruit": 3,
       "g_per_fruit": 73,
       "container_size": "5 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 0.23,
       "verdict": "rethink",
       "flags": []
      },
      {
-      "planting_id": "00000000-0000-4000-b000-000000000024",
+      "planting_id": "bd2c04f2-fc20-49b4-a0b6-0087a844251b",
       "cultivar": "Super Sweet 100",
       "lb": 0.21,
       "fruit": 19,
       "g_per_fruit": 5,
       "container_size": "5 gal",
-      "measured_share": 1.0,
+      "measured_share": 1,
       "x_median": 0.1,
       "verdict": "rethink",
       "flags": [
@@ -3283,7 +3283,7 @@
   "longest": {
    "section": "longest",
    "version": 1,
-   "generatedAt": "2026-09-29T19:30:00Z",
+   "generatedAt": "2026-09-29T19:33:09.000Z",
    "meta": {
     "last_pick": "2026-09-28",
     "limits": [
@@ -3295,7 +3295,7 @@
    "series": {
     "rows": [
      {
-      "planting_id": "00000000-0000-4000-c000-000000000001",
+      "planting_id": "5df40797-5b49-48ab-b1bc-9deb35c2e782",
       "cultivar": "Super Sweet 100",
       "crop_name": "Tomato",
       "plants": 1,
@@ -3358,7 +3358,7 @@
       "lb_per_plant_week": 0.22
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000002",
+      "planting_id": "4e589c00-e9b7-4f05-9ad4-ceb157c69be3",
       "cultivar": "Cherry",
       "crop_name": "Tomato",
       "plants": 2,
@@ -3396,7 +3396,7 @@
       "lb_per_plant_week": 0.1
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000003",
+      "planting_id": "faa55a9f-8062-4d5d-a547-b12a37b4b1e3",
       "cultivar": "Suyo Long",
       "crop_name": "Cucumber",
       "plants": 5,
@@ -3464,7 +3464,7 @@
       "lb_per_plant_week": 0.88
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000004",
+      "planting_id": "15fbbc7f-222f-4232-a186-9948526da67a",
       "cultivar": "Pineapple Tomatillo",
       "crop_name": "Tomatillo",
       "plants": 2,
@@ -3545,7 +3545,7 @@
       "lb_per_plant_week": 0.08
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000005",
+      "planting_id": "937c760e-3093-4a30-a6bb-48baebbb3ab2",
       "cultivar": "Chili Red",
       "crop_name": "Pepper",
       "plants": 3,
@@ -3585,7 +3585,7 @@
       "lb_per_plant_week": 0.02
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000006",
+      "planting_id": "fa0502b2-e5b4-4c24-9dd3-02cc89d45b30",
       "cultivar": "Zephyr",
       "crop_name": "Summer Squash",
       "plants": 1,
@@ -3633,11 +3633,11 @@
        "2026-09-21"
       ],
       "still_picking": false,
-      "lb": 20.0,
+      "lb": 20,
       "lb_per_plant_week": 1.92
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000007",
+      "planting_id": "ee3fd4c5-5fa3-4202-8044-2c2d19e4835e",
       "cultivar": "Czech's Bush",
       "crop_name": "Tomato",
       "plants": 1,
@@ -3668,7 +3668,7 @@
       "lb_per_plant_week": 0.24
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000008",
+      "planting_id": "5ea70334-6dc7-41cb-98de-94e3a55953b0",
       "cultivar": "San Marzano Roma",
       "crop_name": "Tomato",
       "plants": 3,
@@ -3723,7 +3723,7 @@
       "lb_per_plant_week": 0.41
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000009",
+      "planting_id": "d71e4421-9c71-4898-b8b0-2a19b42310e3",
       "cultivar": "Purple blush",
       "crop_name": "Tomatillo",
       "plants": 2,
@@ -3761,7 +3761,7 @@
       "lb_per_plant_week": 0.13
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000010",
+      "planting_id": "10b345fc-fbc3-4421-9835-1c4d3a5ab384",
       "cultivar": "Moskvich Heirloom",
       "crop_name": "Tomato",
       "plants": 3,
@@ -3801,7 +3801,7 @@
       "lb_per_plant_week": 0.74
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000011",
+      "planting_id": "56332090-5bc8-40e9-b3bc-c9a65a3bd9c8",
       "cultivar": "Cisneros",
       "crop_name": "Tomatillo",
       "plants": 2,
@@ -3843,7 +3843,7 @@
       "lb_per_plant_week": 0.15
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000012",
+      "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
       "cultivar": "Black Cherry",
       "crop_name": "Tomato",
       "plants": 1,
@@ -3900,7 +3900,7 @@
       "lb_per_plant_week": 0.47
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000013",
+      "planting_id": "e7bccf4b-9c28-45e1-9b4c-e4f31c0feae5",
       "cultivar": "Pick-N-Pop Yellow",
       "crop_name": "Pepper",
       "plants": 1,
@@ -3925,7 +3925,7 @@
       "lb_per_plant_week": 0.14
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000014",
+      "planting_id": "15bbfb67-de07-4120-ac7c-45777b357a0f",
       "cultivar": "Celebrity",
       "crop_name": "Tomato",
       "plants": 5,
@@ -3963,7 +3963,7 @@
       "lb_per_plant_week": 0.18
      },
      {
-      "planting_id": "00000000-0000-4000-c000-000000000015",
+      "planting_id": "504144f1-83b0-4b36-8e88-d8e84c617e62",
       "cultivar": "Kori Sitakame",
       "crop_name": "Pepper",
       "plants": 1,
@@ -3992,7 +3992,7 @@
   "sep_size": {
    "section": "sep_size",
    "version": 1,
-   "generatedAt": "2026-09-29T19:30:00Z",
+   "generatedAt": "2026-09-29T19:33:09.000Z",
    "meta": {
     "fruit_weighted_ratio": 0.76,
     "limits": [
@@ -4032,14 +4032,6 @@
       "ratio": 0.68
      },
      {
-      "cultivar": "Super Sweet 100",
-      "aug_g": 7,
-      "sep_g": 5,
-      "aug_n": 77,
-      "sep_n": 79,
-      "ratio": 0.7
-     },
-     {
       "cultivar": "Celebrity",
       "aug_g": 108,
       "sep_g": 75,
@@ -4056,6 +4048,22 @@
       "ratio": 0.7
      },
      {
+      "cultivar": "Super Sweet 100",
+      "aug_g": 7,
+      "sep_g": 5,
+      "aug_n": 77,
+      "sep_n": 79,
+      "ratio": 0.7
+     },
+     {
+      "cultivar": "Delicious",
+      "aug_g": 292,
+      "sep_g": 212,
+      "aug_n": 16,
+      "sep_n": 19,
+      "ratio": 0.72
+     },
+     {
       "cultivar": "Moskvich Heirloom",
       "aug_g": 121,
       "sep_g": 87,
@@ -4069,14 +4077,6 @@
       "sep_g": 36,
       "aug_n": 52,
       "sep_n": 29,
-      "ratio": 0.72
-     },
-     {
-      "cultivar": "Delicious",
-      "aug_g": 292,
-      "sep_g": 212,
-      "aug_n": 16,
-      "sep_n": 19,
       "ratio": 0.72
      },
      {
@@ -4173,7 +4173,7 @@
   "seed_lots": {
    "section": "seed_lots",
    "version": 1,
-   "generatedAt": "2026-09-29T19:30:00Z",
+   "generatedAt": "2026-09-29T19:33:09.000Z",
    "meta": {
     "limits": [
      {
@@ -4184,7 +4184,7 @@
    "series": {
     "rows": [
      {
-      "lot_id": "00000000-0000-4000-d000-000000000001",
+      "lot_id": "181627da-1405-4556-88f4-1c92de519d6d",
       "cultivar": "Sugar Baby",
       "crop_slug": "watermelon",
       "count": 175,
@@ -4192,12 +4192,12 @@
       "stage": "stored",
       "saved_on": "2026-09-02",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000001",
+       "planting_id": "4b53ac2a-dfdd-41b0-abbb-ebf0cdbac2eb",
        "name": "Sugar Baby",
        "lb": 13.2
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000001",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4209,7 +4209,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000002",
+      "lot_id": "69832d29-a7eb-4883-a0b6-c718106cf8e5",
       "cultivar": "1884",
       "crop_slug": "tomato",
       "count": 185,
@@ -4217,12 +4217,12 @@
       "stage": "stored",
       "saved_on": "2026-09-03",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000002",
+       "planting_id": "37368072-8ce8-44a3-b40a-767993dd39b1",
        "name": "1884",
        "lb": 5.9
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000002",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4234,7 +4234,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000003",
+      "lot_id": "099cfba0-78a7-4cc2-af22-6b7f42c9023d",
       "cultivar": "Ukrainian Purple",
       "crop_slug": "tomato",
       "count": 121,
@@ -4242,12 +4242,12 @@
       "stage": "stored",
       "saved_on": "2026-09-03",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000003",
+       "planting_id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
        "name": "Ukrainian Purple",
        "lb": 9.4
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000003",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4259,7 +4259,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000004",
+      "lot_id": "3457b65e-7e54-42ea-8901-fcf73cc10770",
       "cultivar": "Black Cherry",
       "crop_slug": "tomato",
       "count": 110,
@@ -4267,12 +4267,12 @@
       "stage": "stored",
       "saved_on": "2026-09-07",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000004",
+       "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
        "name": "Black Cherry",
        "lb": 4.2
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000004",
+       "id": "13503c22-8b71-4424-b9a2-d3115cd73d1e",
        "name": "Bonnie Plants",
        "kind": "brand",
        "locality": null,
@@ -4284,7 +4284,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000005",
+      "lot_id": "ef4ae33d-9c7b-4505-9b89-9c8995505d00",
       "cultivar": "Rosso Sicilian",
       "crop_slug": "tomato",
       "count": 131,
@@ -4292,12 +4292,12 @@
       "stage": "stored",
       "saved_on": "2026-09-07",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000005",
+       "planting_id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
        "name": "Rosa Sicilian",
        "lb": 5.6
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000005",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4309,7 +4309,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000006",
+      "lot_id": "ad59d62e-bef6-433b-9743-25719810d6c6",
       "cultivar": "Carolina Reaper",
       "crop_slug": "pepper",
       "count": 16,
@@ -4318,7 +4318,7 @@
       "saved_on": "2026-09-07",
       "parent": null,
       "source": {
-       "id": "00000000-0000-4000-f000-000000000006",
+       "id": "a834567e-95ff-4cb9-aaa4-df2b2605f58e",
        "name": "Dave's Natural Garden",
        "kind": "farm_stand",
        "locality": "Greenfield, MA",
@@ -4330,7 +4330,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000007",
+      "lot_id": "a1ea0ee4-f5a3-4980-990a-6cfe9a1f035f",
       "cultivar": "Wiri Wiri",
       "crop_slug": "pepper",
       "count": 42,
@@ -4339,7 +4339,7 @@
       "saved_on": "2026-09-07",
       "parent": null,
       "source": {
-       "id": "00000000-0000-4000-f000-000000000007",
+       "id": "a834567e-95ff-4cb9-aaa4-df2b2605f58e",
        "name": "Dave's Natural Garden",
        "kind": "farm_stand",
        "locality": "Greenfield, MA",
@@ -4351,7 +4351,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000008",
+      "lot_id": "ea6a760d-960e-4977-b372-dcef03b6a846",
       "cultivar": "Purple Peach Ghost",
       "crop_slug": "pepper",
       "count": 14,
@@ -4362,7 +4362,7 @@
       "source": null
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000009",
+      "lot_id": "7ae3e712-c052-4fc2-804b-31a317b0bb31",
       "cultivar": "Dill",
       "crop_slug": "dill",
       "count": 500,
@@ -4371,7 +4371,7 @@
       "saved_on": "2026-09-07",
       "parent": null,
       "source": {
-       "id": "00000000-0000-4000-f000-000000000009",
+       "id": "aae935fb-66ea-4ecf-a507-5c4a41aba3c6",
        "name": "Whately Plant Swap",
        "kind": "plant_swap",
        "locality": "Whately, MA",
@@ -4383,7 +4383,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000010",
+      "lot_id": "bf6331d0-a704-430f-a8de-d808854ae66f",
       "cultivar": "Green Flesh",
       "crop_slug": "melon",
       "count": 247,
@@ -4391,12 +4391,12 @@
       "stage": "stored",
       "saved_on": "2026-09-07",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000010",
+       "planting_id": "75aebd10-2962-4c53-8455-862723c46d72",
        "name": "Green Flesh",
        "lb": 9.1
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000010",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4408,7 +4408,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000011",
+      "lot_id": "92a85c88-894a-4538-a002-90948499021c",
       "cultivar": "Delicious",
       "crop_slug": "tomato",
       "count": 50,
@@ -4416,14 +4416,14 @@
       "stage": "stored",
       "saved_on": "2026-09-07",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000011",
+       "planting_id": "33c8c880-7e86-43fa-b083-0b9a36377c6a",
        "name": "Delicious",
        "lb": 19.2
       },
       "source": null
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000012",
+      "lot_id": "09a44ed0-3d1c-4b71-9997-85db2640d565",
       "cultivar": "Ristra Cayenne II",
       "crop_slug": "pepper",
       "count": 175,
@@ -4431,12 +4431,12 @@
       "stage": "stored",
       "saved_on": "2026-09-08",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000012",
+       "planting_id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
        "name": "Ristra Cayenne II",
        "lb": 2.4
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000012",
+       "id": "33d65987-fed1-40e9-967a-c3ec604b64c1",
        "name": "Burpee",
        "kind": "seed_company",
        "locality": null,
@@ -4448,7 +4448,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000013",
+      "lot_id": "a4e0a25b-0c75-4c55-bb45-38299b3081dd",
       "cultivar": "Cucamelon",
       "crop_slug": "cucamelon",
       "count": 35,
@@ -4456,12 +4456,12 @@
       "stage": "stored",
       "saved_on": "2026-09-09",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000013",
+       "planting_id": "54786dfd-554f-4b2c-a013-f09048c84c94",
        "name": "Cucamelon",
-       "lb": 3.0
+       "lb": 3
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000013",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4473,7 +4473,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000014",
+      "lot_id": "bbdfad14-9157-4202-a544-21e2bd3d27d6",
       "cultivar": "Green Flesh",
       "crop_slug": "melon",
       "count": 536,
@@ -4481,12 +4481,12 @@
       "stage": "stored",
       "saved_on": "2026-09-15",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000014",
+       "planting_id": "75aebd10-2962-4c53-8455-862723c46d72",
        "name": "Green Flesh",
        "lb": 9.1
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000014",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4498,7 +4498,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000015",
+      "lot_id": "cebacbe3-0301-4a21-a0ac-d478e741ad08",
       "cultivar": "Big Boy",
       "crop_slug": "tomato",
       "count": null,
@@ -4506,14 +4506,14 @@
       "stage": "drying",
       "saved_on": "2026-09-15",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000015",
+       "planting_id": "fc9b6ee9-0dd4-41f7-a1db-157c30c93a4c",
        "name": "Big Boy",
        "lb": 19.8
       },
       "source": null
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000016",
+      "lot_id": "9e5036b1-7120-47f4-8b31-099df4431eff",
       "cultivar": "Cherokee Green",
       "crop_slug": "tomato",
       "count": null,
@@ -4521,12 +4521,12 @@
       "stage": "drying",
       "saved_on": "2026-09-15",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000016",
+       "planting_id": "bae05057-409d-453b-addc-a218bef4f99d",
        "name": "Cherokee Green",
        "lb": 6.1
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000016",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4538,7 +4538,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000017",
+      "lot_id": "9a7c2da7-f2e8-421e-ab15-713ebea01381",
       "cultivar": "Pineapple Tomatillo",
       "crop_slug": "tomatillo",
       "count": 140,
@@ -4546,12 +4546,12 @@
       "stage": "stored",
       "saved_on": "2026-09-15",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000017",
+       "planting_id": "15fbbc7f-222f-4232-a186-9948526da67a",
        "name": "Pineapple Tomatillo",
        "lb": 1.7
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000017",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4563,7 +4563,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000018",
+      "lot_id": "18d771df-3384-402c-88c3-8edca6ed35d6",
       "cultivar": "Ghost",
       "crop_slug": "pepper",
       "count": 30,
@@ -4571,12 +4571,12 @@
       "stage": "stored",
       "saved_on": "2026-09-16",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000018",
+       "planting_id": "1bbfe326-5a99-4124-8bbe-b25de49e4dde",
        "name": "Ghost",
        "lb": 0.3
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000018",
+       "id": "0d50a7d7-9c30-4e27-bef8-80c59770b716",
        "name": "Greenfield Farmers Co-op",
        "kind": "market",
        "locality": "Greenfield, MA",
@@ -4588,7 +4588,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000019",
+      "lot_id": "46948653-77f7-4113-8c79-25fd62cf5273",
       "cultivar": "Piri Piri",
       "crop_slug": "pepper",
       "count": 100,
@@ -4596,12 +4596,12 @@
       "stage": "stored",
       "saved_on": "2026-09-16",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000019",
+       "planting_id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
        "name": "Piri Piri",
        "lb": 0.5
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000019",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4613,7 +4613,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000020",
+      "lot_id": "a102db33-abe7-4158-ba65-244190e8758d",
       "cultivar": "Gong Bao (Kung Pao)",
       "crop_slug": "pepper",
       "count": 85,
@@ -4621,12 +4621,12 @@
       "stage": "stored",
       "saved_on": "2026-09-16",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000020",
+       "planting_id": "2b1f722f-8f3a-4803-b8c5-cabe16b479e6",
        "name": "Gong Bao (Kung Pao)",
        "lb": 0.1
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000020",
+       "id": "a593e061-890d-4f2c-b57c-74addab84e0c",
        "name": "Jen",
        "kind": "person",
        "locality": "Greenfield, MA",
@@ -4638,7 +4638,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000021",
+      "lot_id": "9791aab7-88b7-4a70-96b9-4a8c6da9d1cb",
       "cultivar": "Thai Dragon",
       "crop_slug": "pepper",
       "count": 59,
@@ -4646,14 +4646,14 @@
       "stage": "stored",
       "saved_on": "2026-09-17",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000021",
+       "planting_id": "f1a7690e-394d-4828-a6c7-aa36721caa66",
        "name": "Thai Dragon",
        "lb": 0.1
       },
       "source": null
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000022",
+      "lot_id": "aa6ec823-106e-4aa2-83ef-6f259379a8a8",
       "cultivar": "Sunray",
       "crop_slug": "tomato",
       "count": null,
@@ -4661,12 +4661,12 @@
       "stage": "drying",
       "saved_on": "2026-09-17",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000022",
+       "planting_id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
        "name": "Sunray",
        "lb": 2.8
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000022",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4678,7 +4678,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000023",
+      "lot_id": "c83d58b8-11d5-45fa-863d-c9146b5f54b3",
       "cultivar": "Manitoba",
       "crop_slug": "tomato",
       "count": null,
@@ -4686,12 +4686,12 @@
       "stage": "drying",
       "saved_on": "2026-09-21",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000023",
+       "planting_id": "51facc08-0635-4f86-907f-b935ba6d782b",
        "name": "Manitoba",
-       "lb": 5.0
+       "lb": 5
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000023",
+       "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
        "name": "Starview Gardens",
        "kind": "nursery",
        "locality": null,
@@ -4703,7 +4703,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000024",
+      "lot_id": "f22ca372-dbed-4b29-84d1-7373cdf78f1b",
       "cultivar": "Sugar Rush Peach",
       "crop_slug": "pepper",
       "count": null,
@@ -4711,12 +4711,12 @@
       "stage": "drying",
       "saved_on": "2026-09-21",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000024",
+       "planting_id": "b077b1ed-08b5-4626-b603-ef5b68d4bef3",
        "name": "Sugar Rush Peach",
        "lb": 0.9
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000024",
+       "id": "34064c67-f25b-4585-8f91-8fd350fad643",
        "name": "Skawski Farms",
        "kind": "nursery",
        "locality": null,
@@ -4728,7 +4728,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000025",
+      "lot_id": "bce3d488-7f34-441f-9801-c6419730ec35",
       "cultivar": "Buena Mulata",
       "crop_slug": "pepper",
       "count": 50,
@@ -4737,7 +4737,7 @@
       "saved_on": "2026-09-22",
       "parent": null,
       "source": {
-       "id": "00000000-0000-4000-f000-000000000025",
+       "id": "a834567e-95ff-4cb9-aaa4-df2b2605f58e",
        "name": "Dave's Natural Garden",
        "kind": "farm_stand",
        "locality": "Greenfield, MA",
@@ -4749,7 +4749,7 @@
       }
      },
      {
-      "lot_id": "00000000-0000-4000-d000-000000000026",
+      "lot_id": "77da60a7-b46b-4338-a60e-b293006af667",
       "cultivar": "Pineapple Tomato",
       "crop_slug": "tomato",
       "count": null,
@@ -4757,12 +4757,12 @@
       "stage": "fermenting",
       "saved_on": "2026-09-25",
       "parent": {
-       "planting_id": "00000000-0000-4000-e000-000000000026",
+       "planting_id": "19f2aa28-481d-4f36-9aad-c0e8f38be056",
        "name": "Pineapple Tomato",
        "lb": 3.4
       },
       "source": {
-       "id": "00000000-0000-4000-f000-000000000026",
+       "id": "7d74da59-d1b3-4a6e-8861-cb663f3bc09b",
        "name": "Emma Daley",
        "kind": "person",
        "locality": null,
