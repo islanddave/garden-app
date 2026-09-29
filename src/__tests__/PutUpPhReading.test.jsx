@@ -568,6 +568,21 @@ const LANE_SOURCES = [
   ['src/components/putup/CheckInSaved.jsx', 'UNDONE_CHECKIN_TEXT'],
   ['src/components/kitchen/idempotencyKey.js', 'export function mintKey'],
   ['src/components/putup/MoveJarSheet.jsx', 'MOVE_RULE_TEXT'],
+  // Put-Up release F (V4 §8.4 — every lane adds its files): the ferment arithmetic and line rules, and
+  // the kind question batch detail now asks too (the door that wakes the ferment prompts).
+  ['src/components/putup/fermentMath.js', 'export function saltBase'],
+  ['src/components/putup/lines.js', 'export function lineBody'],
+  ['src/components/putup/KindQuestion.jsx', 'export default function KindQuestion'],
+  // Release F's batch-detail surfaces: the Log edit sheet records a pH; the rest render lines, salt,
+  // heat and dates on the same page the readings are shown on.
+  ['src/components/putup/StageEditSheet.jsx', 'export function stagePatch'],
+  ['src/components/putup/WhatWentIn.jsx', 'export default function WhatWentIn'],
+  ['src/components/putup/LineAdder.jsx', 'export default function LineAdder'],
+  ['src/components/putup/LineSheet.jsx', 'function LineSheetOpen'],
+  ['src/components/putup/SaltBlock.jsx', 'export function saltStepBody'],
+  ['src/components/putup/JarHeatRow.jsx', 'export function jarHeatSummary'],
+  ['src/components/putup/ShuSheet.jsx', 'export function refusalWords'],
+  ['src/components/putup/RecipeRefRow.jsx', 'TESTED_RECIPE_NOTE'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the

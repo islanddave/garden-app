@@ -219,6 +219,12 @@ const SHEET_SITES = [
   'components/putup/PutItUpSheet.jsx',
   // Put-Up release 1b (V4 §2.5) — Move it: the shared <Sheet armsBack>; busy refuses Back mid-write.
   'components/putup/MoveJarSheet.jsx',
+  // Put-Up release F — DELIBERATE additions, each the shared <Sheet armsBack> with `busy` refusing Back
+  // and the backdrop mid-write: the line sheet (edit / take out a line), the Log's edit sheet, and the
+  // heat breakdown ("Work it out").
+  'components/putup/LineSheet.jsx',
+  'components/putup/ShuSheet.jsx',
+  'components/putup/StageEditSheet.jsx',
   // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
   // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
   // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's

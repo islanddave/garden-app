@@ -265,6 +265,21 @@ describe('jar words (§3.2, §3.6)', () => {
     expect(discardWords({ date: null, basis: null })).toBeNull()
   })
 
+  // Contract-F A3: quantity_value is the TOTAL. MUTATION: render a bare quantity as `${n} × ${q}` ->
+  // the zucchini literal reds (it would read as three 2.5-qt bags).
+  it('A3: a bare quantity is a total — the zucchini (2.5 qt, 3 containers) never reads "3 × 2.5 qt"', () => {
+    const ZUCCHINI = { quantity_value: '2.5', quantity_unit: 'qt', package_count: 3, container_label: null }
+    expect(countedSize(3, ZUCCHINI)).toBe('3 containers · 2.5 qt in all')
+    expect(sizeWords(ZUCCHINI)).toBe('2.5 qt in all')
+    expect(countedSize(1, { ...ZUCCHINI, package_count: 1 })).toBe('2.5 qt')
+    expect(sizeWords({ ...ZUCCHINI, package_count: 1 })).toBe('2.5 qt')
+    // A container that says its own size keeps the per-container form, and the total is not repeated.
+    expect(countedSize(2, { quantity_value: '16', quantity_unit: 'fl oz', container_label: '8 oz woozy' })).toBe('2 × 8 oz woozy')
+    // A container with no size of its own keeps its count and still says the total.
+    expect(countedSize(3, { quantity_value: '2', quantity_unit: 'lb', container_label: 'bag' })).toBe('3 × bag · 2 lb in all')
+    for (const out of [countedSize(3, ZUCCHINI), sizeWords(ZUCCHINI)]) expect(out).not.toMatch(/\d\s*×\s*2\.5/)
+  })
+
   it('a jar with no size reads as its container or as nothing — never null or 0', () => {
     expect(sizeWords({ quantity_value: null, quantity_unit: null, container_label: null })).toBe('')
     expect(sizeWords({ quantity_value: '2.5', quantity_unit: 'qt' })).toBe('2.5 qt')

@@ -219,7 +219,10 @@ describe('RecordRow — a refused write says why, and the edit stays', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'two went to Jen' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(COUNT_BELOW_USED_TEXT))
-    expect(writeCalls('PUT').length).toBe(1)
+    // Release F: the Edit is ONE PATCH (the count rides it with the same delta rule), no PUT — amended
+    // in the same commit as the change.
+    expect(writeCalls('PATCH').length).toBe(1)
+    expect(writeCalls('PUT').length).toBe(0)
     // Still the editor, still his values.
     expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
     expect(screen.getByRole('spinbutton', { name: 'Number of containers' }).value).toBe('1')

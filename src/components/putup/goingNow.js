@@ -486,8 +486,22 @@ export const CONDITIONING_ANSWERS = Object.freeze([
 
 export function checkInFields(batch) {
   const kind = batch?.kind ?? null
-  return { ph: kind === SUBMERSION_KIND, submersion: kind === SUBMERSION_KIND, conditioning: kind === 'dehydrate' }
+  // `acts` (release F, Dave 16:30): what he did — Topped up brine · Pushed it back under · Skimmed the
+  // top — Ferment only, like the submersion question beside it (06 §3.10).
+  return { ph: kind === SUBMERSION_KIND, submersion: kind === SUBMERSION_KIND, conditioning: kind === 'dehydrate', acts: kind === SUBMERSION_KIND }
 }
+
+// Release F (Dave 16:30, binding): a check-in is a note plus THREE action chips. Film, mold, bubbling,
+// taste, smell and temperature go in the note — there is no surface column, no burp act, and no chip
+// for any of them. Stored as the words' keys in kitchen_stage_log.acts (chk_ksl_acts), tended rows only.
+export const CHECK_IN_ACTS = Object.freeze([
+  { value: 'topped_up', label: 'Topped up brine' },
+  { value: 'pushed_under', label: 'Pushed it back under' },
+  { value: 'skimmed', label: 'Skimmed the top' },
+])
+export const WHAT_YOU_DID = 'What you did'
+// The top-up amount's units (all in KITCHEN_UNITS); ml first because brine is poured.
+export const TOP_UP_UNITS = Object.freeze(['ml', 'g', 'cup'])
 
 export const CHECK_IN_EMPTY = 'Note one thing first — an answer, a reading, a place or a note.'
 
@@ -499,14 +513,27 @@ export const CHECK_IN_EMPTY = 'Note one thing first — an answer, a reading, a 
 // Whatever else was observed rides on that same row: the chosen answer as cue_observed, the pH as the
 // typed STRING with its read instant (never through a Number — see phReadingText), the note.
 // Returns { body } or { error }; the caller never sends a body this refused.
-export function checkInBody({ batch, ph = '', submersion = null, conditioning = null, place = null, note = '', atIso }) {
+// Release F: acts ride ONLY on a tended row (chk_ksl_acts_on_tended), so a visit that did something AND
+// moved the crock is two rows — the tended row with everything observed and done, then the moved row —
+// returned as { body, move }. Every other visit is still ONE row, as before.
+export const TOP_UP_HINT = 'The top-up needs a number more than 0 — or leave it empty.'
+export function checkInBody({ batch, ph = '', submersion = null, conditioning = null, place = null, note = '', atIso,
+  acts = [], topUp = '', topUpUnit = 'ml' }) {
   const fields = checkInFields(batch)
-  const body = { stage_kind: place ? 'moved' : 'tended' }
+  const did = fields.acts ? CHECK_IN_ACTS.map(a => a.value).filter(v => (acts ?? []).includes(v)) : []
+  const topUpText = did.includes('topped_up') ? String(topUp ?? '').trim().replace(',', '.') : ''
+  if (topUpText && !(Number.isFinite(Number(topUpText)) && Number(topUpText) > 0)) return { error: TOP_UP_HINT }
+  const split = !!place && did.length > 0
+  const body = { stage_kind: place && !split ? 'moved' : 'tended' }
+  let move = null
   if (place) {
     if (!place.id) return { error: CHECK_IN_EMPTY }
-    body.storage_location_id = place.id
-    body.label = `Moved to ${place.label}`
+    const moved = { storage_location_id: place.id, label: `Moved to ${place.label}` }
+    if (split) move = { stage_kind: 'moved', ...moved }
+    else Object.assign(body, moved)
   }
+  if (did.length) body.acts = did
+  if (topUpText) { body.amount = topUpText; body.amount_unit = TOP_UP_UNITS.includes(topUpUnit) ? topUpUnit : 'ml' }
   const answer = fields.submersion
     ? SUBMERSION_ANSWERS.find(a => a.value === submersion)
     : fields.conditioning ? CONDITIONING_ANSWERS.find(a => a.value === conditioning) : null
@@ -520,8 +547,9 @@ export function checkInBody({ batch, ph = '', submersion = null, conditioning = 
   }
   const text = String(note ?? '').trim()
   if (text) body.note = text
-  const observed = !!place || !!answer || typed != null || !!text
-  return observed ? { body } : { error: CHECK_IN_EMPTY }
+  const observed = !!place || !!answer || typed != null || !!text || did.length > 0
+  if (!observed) return { error: CHECK_IN_EMPTY }
+  return move ? { body, move } : { body }
 }
 
 // ── the kind of batch ────────────────────────────────────────────────────────────────────────────

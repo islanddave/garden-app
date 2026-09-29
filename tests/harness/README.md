@@ -156,7 +156,8 @@ declarations are untouched; they just resolve to Roboto, as on the phone. A `fon
 would have missed `WeatherWidget`'s inline stack. `window.__fontPin` reports what loaded.
 
 **Scoped, not global.** Only `todaymeasure.jsx` and `undotap.jsx` import it — the two entries whose
-gates run in CI on this pin (`gate:today-shape`, `gate:undo-toast`). Every other entry, and every
+gates run in CI on this pin (`gate:today-shape`, `gate:undo-toast`) — and, since 2026-09-29,
+`putupferment.jsx` (the ferment walks; its gate refuses a run where the pin did not load). Every other entry, and every
 other layout gate, still measures in the host's font exactly as before, because nothing they load
 changed (`appGlobalStyle.js` and `vite.harness.config.mjs` are untouched). Pinning globally would
 move every gate's numbers at once and needs every budget re-recorded; it is a change of its own.
@@ -392,6 +393,29 @@ nav's boxes and `barAboveNav`, every page/bar/sheet control's height (`under48`)
 visible control's centre (`blocked`), and `endClearance`: scrolled to the end, the gap between the
 list and the bar. The Sheet's own close control is 44px by design (Sheet.jsx §5.3) and reads as the
 one `under48` entry in `step=confirm`.
+
+## `putupferment.*` — the ferment walks, added 2026-09-29 (Put-Up release F, lane L3b)
+
+Five walks through the real `/put-up` page, one per load: `?walk=petri|settlers|kraut|kimchi|appendixc`
+(Petri Dish and Settlers from `hot-ones-2026/recipes-v3.md`, a kraut, a kimchi with two salt steps and
+gochugaru's heat, and 06-ferment-path §5.3's Appendix C). Each goes Start a batch → What went in (the
+line search: plantings, a pick, weighed and counted draws, typed lines, Water) → the Salt block → Jar &
+heat and Work it out → Check on it → Put it up and finish → Made g edited and a line edited after
+finishing, by clicking the controls a cook taps. The far side of the wire is `fermentFake.js`: stateful,
+and judging every body with the Lambda's own validators and planners, so a body the Lambda would refuse
+fails the walk. It proves nothing about SQL (that is `tests/integration/`).
+
+`window.__walk.run()` returns the failures: taps that land on something painted over the control, a
+focused field outside the viewport or under a pinned footer/bar, sideways scroll, controls under 44px
+(min of width and height for buttons), a sheet's primary action off screen at its first or last scroll
+position, the salt payoff (%, live line, "I put in") not on screen together with the % focused, and the
+golden values (06 §5.3) missing from the DOM or from what was written. `?probe=1` points every selector
+at nothing; `?trace=1` notes where each typed field landed and each tap's sheet scroll.
+
+`scripts/layout-gate/putup-ferment-walk.mjs` is the instrument: every walk at 426x836 and 426x492
+(keyboard up; the stand-in nav hides while a text field has focus at that height, as `BottomNav` does),
+`--walk <name>`, `--short`, `--trace`, `--probe-nothing` (must exit 1). Not yet a package.json script or
+a CI step — version files are not a lane's.
 
 ## Retired entries
 

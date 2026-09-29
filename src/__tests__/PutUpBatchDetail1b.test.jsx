@@ -16,6 +16,7 @@ vi.mock('../lib/api.js', () => ({
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => ({ user: { id: 'user_dave' } }) }))
 
 import BatchDetailView, { liveStages, outputSittings } from '../components/putup/BatchDetailView.jsx'
+import { HAS_JARS_TEXT } from '../lib/putUpErrors.js'
 
 const NOW = new Date('2026-10-20T09:00:00').getTime()
 const local = (s) => new Date(s).toISOString()
@@ -69,13 +70,15 @@ describe('the Log and What came out read the history as it stands', () => {
   it('renders each sitting with its date, yield, jars in words and one Undo', () => {
     renderDetail()
     const sitting = screen.getByTestId('batch-detail-sitting')
-    expect(sitting.firstElementChild.textContent).toBe('Put up · Oct 12')
+    // Release F: the sitting's head is a button (it opens the put-up's own Log entry, 06 §3.7).
+    expect(screen.getByTestId('batch-detail-sitting-head').firstElementChild.textContent).toBe('Put up · Oct 12')
+    expect(screen.getByTestId('batch-detail-sitting-facts').textContent).toBe('made 910 g in all')
     expect(sitting.textContent).toContain('made 910 g in all')
-    const jars = screen.getAllByTestId('batch-detail-output').map(e => e.textContent)
+    const jars = screen.getAllByTestId('batch-detail-output-text').map(e => e.textContent)
     expect(jars).toEqual([
       'Megatron plain · 2 × 8 oz woozy · put up Oct 12',
       'Megatron reaper · 2 × 8 oz woozy · put up Oct 12 · in oil',
-      '2.5 qt · 1 package · Sep 2',
+      '2.5 qt · Sep 2',                       // A3: one container, so the total is just the size
     ])
     expect(screen.getAllByTestId('batch-detail-undo-putup')).toHaveLength(1)
   })
@@ -129,7 +132,7 @@ describe('Remove this batch', () => {
     renderDetail()
     fireEvent.click(screen.getByTestId('batch-remove'))
     await act(async () => { fireEvent.click(screen.getByTestId('batch-remove-yes')) })
-    await waitFor(() => expect(screen.getByTestId('batch-remove-error').textContent).toBe('It has jars — undo its put-ups first.'))
+    await waitFor(() => expect(screen.getByTestId('batch-remove-error').textContent).toBe(HAS_JARS_TEXT))
   })
 })
 

@@ -204,9 +204,11 @@ describe('batch detail reads a B-shaped batch', () => {
       loading={false} error={false} nowMs={NOW} onChanged={vi.fn()} />,
   )
 
-  it('renders the whole surface in plain words, inputs revealed', () => {
+  // Release F (amended in the same commit): every B line has an ordinal, so none is a legacy pick and
+  // there is nothing behind a reveal — the whole surface is already on screen.
+  it('renders the whole surface in plain words', () => {
     renderDetail()
-    fireEvent.click(screen.getByTestId('batch-inputs-reveal'))
+    expect(screen.queryByTestId('batch-inputs-reveal')).toBeNull()
     expectPlainWords(screen.getByTestId('batch-detail-view'), 'batch detail')
   })
 
@@ -215,7 +217,8 @@ describe('batch detail reads a B-shaped batch', () => {
   // every stage LATERAL), and an undated "Not sure" put-up is its bare label.
   it('the 1b stage kinds read in words; a void row and the row it voids are left out', () => {
     renderDetail()
-    const rows = screen.getAllByTestId('batch-detail-stage').map(r => r.firstElementChild.textContent)
+    // Release F: each row is one tappable button; its first line is the row's own words.
+    const rows = screen.getAllByTestId('batch-detail-stage-edit').map(r => r.firstElementChild.textContent)
     expect(rows).toEqual([
       'Next time · Oct 18', 'Reopened · Oct 17', 'Picked back up · Oct 16', 'Paused · Oct 15',
       'Put up', 'Started · Oct 1',
@@ -224,19 +227,21 @@ describe('batch detail reads a B-shaped batch', () => {
     expect(screen.getAllByTestId('batch-detail-stage-detail').map(d => d.textContent)).toContain('Next time: more carrot')
   })
 
-  it('every future input kind falls back to the shipped generic words, with its amount', () => {
+  // Release F (amended in the same commit): lines are always visible in What went in, in the line words
+  // (lines.js lineWords); the salt line is said in the Salt block with its aimed and actual %; a line
+  // added at the put-up sitting is said under that sitting in What came out. A 1b-era 'peppers' base
+  // reads back as it was written.
+  it('every future input kind reads in plain words, with its amount, each in its one place', () => {
     renderDetail()
-    fireEvent.click(screen.getByTestId('batch-inputs-reveal'))
-    const lines = within(screen.getByTestId('batch-inputs-list')).getAllByRole('listitem').map(li => li.firstElementChild.textContent)
-    expect(lines).toEqual([
-      'Something that went in — 412 g',
-      'Something that went in — 8 g',
-      'Onions — the whole pick',
-      'Garlic — 4 clove',
-      'Salt — 16.25 g',
-      'Vinegar — the whole pick',
+    expect(screen.getAllByTestId('line-row-text').map(n => n.textContent)).toEqual([
+      'Something that went in · 412 g',
+      'Something that went in · 8 g',
+      'Onions',
+      'Garlic · 4 clove',
     ])
-    expect(screen.getByTestId('batch-inputs-count').textContent).toBe('6 things written down.')
+    expect(screen.getByTestId('salt-line-kbi-salt').textContent).toBe('aimed 2.5% · put in 16.3 g = 2.5% of 650 g')
+    expect(screen.getByTestId('batch-detail-sitting-added').textContent).toBe('added at the end to every jar: Vinegar')
+    expect(screen.queryByTestId('batch-inputs-count')).toBeNull()
   })
 
   // Amended with 1b's jar words (V4 §7 "jars show their name, no-size form and date words everywhere"):
@@ -244,7 +249,7 @@ describe('batch detail reads a B-shaped batch', () => {
   // sitting it came from.
   it('a label-only jar with no quantity pair renders as its name, count × container and date words — no blank, no null', () => {
     renderDetail()
-    expect(screen.getByTestId('batch-detail-output').textContent)
+    expect(screen.getByTestId('batch-detail-output-text').textContent)
       .toBe('Megatron reaper · 2 × 8 oz woozy · put up sometime after Oct 8 · pH 3.7')
     expect(screen.getByTestId('batch-detail-sitting').getAttribute('data-stage-id')).toBe('ksl-put')
   })

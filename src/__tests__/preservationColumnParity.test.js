@@ -83,8 +83,19 @@ describe('buildFullPayload carries every editable column', () => {
     pageSrc.indexOf('function buildFullPayload(rec, overrides = {}) {'),
     pageSrc.indexOf('...overrides,'))
 
-  it.each(PRESERVATION_EDITABLE_COLUMNS)('sends %s', (col) => {
+  // Release F (06 §1.3 item 3, amended in the same commit as the change): remaining_count and
+  // consumed_at are EXCLUDED. Uses go through POST /api/pantry/uses, an absent key is "unchanged" to
+  // the 1b PUT, and from F the PUT refuses a remaining_count on a drawn jar (client_stale) — so the
+  // key must never be echoed. MUTATION: re-add `remaining_count: rec.remaining_count ?? null` -> the
+  // second arm reds.
+  const USE_ROUTE_COLUMNS = ['remaining_count', 'consumed_at']
+  it.each(PRESERVATION_EDITABLE_COLUMNS.filter(c => !USE_ROUTE_COLUMNS.includes(c)))('sends %s', (col) => {
     expect(block).toContain(`${col}:`)
+  })
+
+  it.each(USE_ROUTE_COLUMNS)('never sends %s (uses go through their own route)', (col) => {
+    expect(PRESERVATION_EDITABLE_COLUMNS).toContain(col)      // green control: still an editable column server-side
+    expect(block).not.toMatch(new RegExp(`\\b${col}\\s*:`))
   })
 
   it('is anchored to a real function (guards against the slice silently matching nothing)', () => {

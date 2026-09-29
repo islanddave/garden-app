@@ -21,7 +21,7 @@
 // A finding is a finding whether axe calls it a violation or "incomplete" — see helpers/axe.js.
 import React from 'react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 
 const { fetchSpy } = vi.hoisted(() => ({ fetchSpy: vi.fn(() => Promise.resolve(null)) }))
 
@@ -63,6 +63,10 @@ import StartBatchSheet from '../components/kitchen/StartBatchSheet.jsx'
 import CheckOnItSheet from '../components/putup/CheckOnItSheet.jsx'
 import PutItUpSheet from '../components/putup/PutItUpSheet.jsx'
 import MoveJarSheet from '../components/putup/MoveJarSheet.jsx'
+import BatchDetailView from '../components/putup/BatchDetailView.jsx'
+import LineSheet from '../components/putup/LineSheet.jsx'
+import StageEditSheet from '../components/putup/StageEditSheet.jsx'
+import ShuSheet from '../components/putup/ShuSheet.jsx'
 
 afterEach(() => cleanup())
 
@@ -191,6 +195,53 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
       await screen.findByTestId('putup-row-0-ph-input')
       expect(screen.getByRole('dialog', { name: 'Put it up' })).toBeTruthy()
       await expectNoA11yViolations(container, { label: 'PutItUpSheet', rules: NEW_RULES })
+    })
+
+    // Put-Up release F (06 §4 layout gates; V4 §6.6 "new components join the a11y smoke set"): batch
+    // detail with What went in (a planting chosen, More open), the Salt block (a step with the % typed),
+    // Jar & heat open and a Log entry; then the line sheet, the Log's edit sheet and the heat sheet.
+    describe('Put-Up release F — batch detail and its sheets', () => {
+      const FB = { id: 'kb-f', user_id: 'u', label: 'Petri Dish', kind: 'ferment', started_at: '2026-09-25T13:00:00.000Z', start_precision: 'day',
+        first_recorded_at: '2026-09-25T13:00:00.000Z', suspended_at: null, closed_at: null, current_stage_kind: 'started', input_count: '2',
+        output_count: '0', garden_names: ['Megatron jalapeño'], vessel_label: 'Quart jar', vessel_count: 1, shu_est_low: 949, shu_est_high: 3036, shu_est_basis: 'computed' }
+      const LINES = [
+        { id: 'l1', input_kind: 'garden', plant_id: 'p1', label: 'Megatron jalapeño', qty: '170', qty_unit: 'g', form: 'fresh', ordinal: 1, from_garden: true, put_up_stage_id: null, role: null },
+        { id: 'l2', input_kind: 'other', label: 'Water', qty: '250', qty_unit: 'ml', role: 'water', ordinal: 2, put_up_stage_id: null },
+      ]
+      const STAGES = [{ id: 's1', stage_kind: 'started', entered_at: '2026-09-25T13:00:00.000Z', entered_precision: 'day', amount: null, amount_unit: null },
+        { id: 's2', stage_kind: 'tended', entered_at: '2026-09-28T13:00:00.000Z', acts: ['skimmed'], note: 'film', cue_observed: 'All under' }]
+      const HITS = { plantings: [{ plant_id: 'p9', label: 'Serranos', crop_type_slug: 'pepper', variety_id: 'v9', recent_picks: [{ harvest_log_id: 'h1', picked_on: '2026-09-27', qty: '230', qty_unit: 'g' }] }], put_ups: [] }
+
+      it('batch detail, every F block open, is clean (with nested-interactive)', async () => {
+        fetchSpy.mockImplementation((path) => Promise.resolve(String(path).includes('line-search') ? HITS : null))
+        const { container } = render(<BatchDetailView batch={FB} inputs={LINES} stages={STAGES} outputs={[]} loading={false} error={false}
+          nowMs={Date.parse('2026-10-02T13:00:00Z')} onChanged={() => {}} />)
+        fireEvent.change(screen.getByTestId('line-add-name'), { target: { value: 'ser' } })
+        await screen.findByTestId('line-add-hit-planting:p9', {}, { timeout: 2000 })
+        screen.getByTestId('line-add-hit-planting:p9').click()
+        await screen.findByTestId('line-add-pick-h1')
+        screen.getByTestId('line-add-more').click()
+        await screen.findByTestId('line-add-more-panel')
+        fireEvent.change(screen.getByTestId('salt-step-0-pct'), { target: { value: '3.5' } })
+        screen.getByTestId('jar-heat-summary').click()
+        await screen.findByTestId('jar-heat-panel')
+        await expectNoA11yViolations(container, { label: 'BatchDetailView F', rules: NEW_RULES })
+      })
+
+      it('the line sheet, the Log edit sheet and the heat sheet are clean (with nested-interactive)', async () => {
+        fetchSpy.mockImplementation((path) => Promise.resolve(String(path).includes('shu-estimate')
+          ? { low: 949, high: 3036, denominator_g: 448, denominator_source: 'lines', breakdown: [{ line_id: 'l1', label: 'Megatron jalapeño', grams: 170, form: 'fresh', factor_low: 1, factor_high: 1, rating_low: 2500, rating_high: 8000, rating_source: 'variety' }], not_counted: [{ label: 'Water' }] }
+          : null))
+        let r = render(<LineSheet open batchId="kb-f" line={LINES[0]} onClose={() => {}} />)
+        await expectNoA11yViolations(r.container, { label: 'LineSheet', rules: NEW_RULES })
+        cleanup()
+        r = render(<StageEditSheet open batch={FB} stage={STAGES[1]} onClose={() => {}} />)
+        await expectNoA11yViolations(r.container, { label: 'StageEditSheet', rules: NEW_RULES })
+        cleanup()
+        r = render(<ShuSheet open batchId="kb-f" scope="batch" onClose={() => {}} onType={() => {}} />)
+        await screen.findByTestId('shu-figure')
+        await expectNoA11yViolations(r.container, { label: 'ShuSheet', rules: NEW_RULES })
+      })
     })
 
     it('MoveJarSheet, Earlier… → Pick a date open, is clean (with nested-interactive)', async () => {

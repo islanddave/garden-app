@@ -522,7 +522,7 @@ describe('GoingNowView — the three named cards, as full literals', () => {
     expect(screen.getByTestId('going-kind-question').textContent).toBe('What kind of batch? →')
     expect(screen.queryByTestId('going-set-start')).toBeNull()
     expect(screen.queryByTestId('batch-set-start')).toBeNull()
-    expect(screen.getByTestId('going-batch-inputs').textContent).toBe('139 picks in')
+    expect(screen.getByTestId('going-batch-inputs').textContent).toBe('139 things in')
   })
 
   it('renders the dehydrator card with its hours and both window bounds', () => {
@@ -535,7 +535,7 @@ describe('GoingNowView — the three named cards, as full literals', () => {
     renderView([CANDY])
     expect(screen.getByTestId('going-batch-title').textContent).toBe('Candied ginger')
     expect(screen.getByTestId('going-batch-meta').textContent).toBe('12 days · Syrup rung 2 · last touched 2 days ago')
-    expect(screen.getByTestId('going-batch-inputs').textContent).toBe('3 picks in')
+    expect(screen.getByTestId('going-batch-inputs').textContent).toBe('3 things in')
   })
 
   it('renders a week-graded start as "about", the qualifier riding on the elapsed line', () => {
@@ -897,7 +897,7 @@ describe('GoingNowView — the counts arrive as STRINGS', () => {
   it('renders the singular and plural branches off string counts', () => {
     renderView([{ ...MASH, input_count: '139' }, { ...CANDY, id: 'kb-one', input_count: '1' }])
     expect(screen.getAllByTestId('going-batch-inputs').map(l => l.textContent))
-      .toEqual(['1 pick in', '139 picks in'])
+      .toEqual(['1 thing in', '139 things in'])
   })
 })
 

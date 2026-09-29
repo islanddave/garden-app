@@ -65,6 +65,7 @@ import { useAppUpdate } from '../hooks/useAppUpdate.js'
 // come from one module shared with Put it up and batch detail; a move is its own write (V4 §3.4).
 import { putUpDateWords, discardWords, sizeWords, ESTIMATED_PRECISIONS } from '../components/putup/jarWords.js'
 import MoveJarSheet from '../components/putup/MoveJarSheet.jsx'
+import { mintKey } from '../components/kitchen/idempotencyKey.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -603,12 +604,16 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
         {seg === 'stores' && <StoresView useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} />}
 
         {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
-            only invalidation path and it re-reads BOTH this row and the list. */}
+            only invalidation path and it re-reads BOTH this row and the list.
+            "Opening that batch…" is for a batch not on screen yet — never for the re-read after a write
+            (release F, found by the ferment walks): that swapped the whole body for the placeholder and
+            back, remounting everything under it, so each write's own answer — "Saved · Undo", "Taken
+            out · Undo", a salt step half typed — was gone by the time the re-read landed. */}
         {batchId && (
           <div data-testid="putup-batch-mode">
             <BatchDetailView
               batch={detail} inputs={detail?.inputs ?? []} stages={detail?.stages ?? []}
-              outputs={detail?.outputs ?? []} loading={detailLoading} error={detailError}
+              outputs={detail?.outputs ?? []} loading={detailLoading && String(detail?.id ?? '') !== String(batchId)} error={detailError}
               nowMs={detailNowMs} onChanged={onBatchChanged}
               onRemoved={() => { loadGoing(); leaveMode() }} />
           </div>
@@ -1721,7 +1726,10 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
   const qtyRow = (
     <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14 }}>
       <div style={{ flex: 2 }}>
-        <Field label={session ? 'How big is each? *' : 'How much *'} htmlFor="pu-qty">
+        {/* Contract-F A3: quantity_value is the TOTAL of the row (count × size), so the log form asks
+            for the total. The walk's own wording is unchanged and is reported, not decided, here: it
+            asks the size of EACH bag and stores that number in the same total column. */}
+        <Field label={session ? 'How big is each? *' : 'How much in all *'} htmlFor="pu-qty">
           <Input
             id="pu-qty"
             type="text"
@@ -2533,6 +2541,12 @@ function GroupCard({ group, onChanged, fetch }) {
 }
 
 // Build the FULL replace payload the PUT contract expects, applying overrides (decrement / edit).
+//
+// ⚠ RELEASE F: NOTHING IN THIS BUNDLE CALLS IT. Mark used / Used up are POST /api/pantry/uses and every
+// Edit is one PATCH (RecordRow). It stays, exported and pinned by preservationColumnParity.test.js and
+// putUpDateEcho.tz.test.js, because it IS the legacy wire shape the 1a bundles still on phones send —
+// the shape the Lambda's PUT keeps answering (and, from F, refuses for a drawn jar). Retire it with
+// those two tests once no 1a bundle is left to reason about.
 function buildFullPayload(rec, overrides = {}) {
   return {
     crop_type_slug: rec.crop_type_slug ?? null,
@@ -2552,8 +2566,10 @@ function buildFullPayload(rec, overrides = {}) {
     package_count: rec.package_count ?? 1,
     storage_location_id: rec.storage_location_id ?? null,
     use_by_target: rec.use_by_target ? ymd(rec.use_by_target) : null,
-    remaining_count: rec.remaining_count ?? null,
-    consumed_at: rec.consumed_at ?? null,
+    // remaining_count and consumed_at are DELIBERATELY ABSENT (release F, 06 §1.3 item 3): uses go
+    // through POST /api/pantry/uses, and an absent key is "unchanged" to the 1b PUT. From F the PUT
+    // refuses a remaining_count on a jar a batch has drawn from (client_stale), so sending the key —
+    // even as an untouched echo — would make every Edit of a drawn jar fail.
     notes: rec.notes ?? null,
     photo_id: rec.photo_id ?? null,
     // V4-PUTUPPROV-001 — THE HIGHEST-RISK LINE IN THIS CHANGE. This function is the single choke
@@ -2579,14 +2595,27 @@ function RecordRow({ rec, onChanged, fetch }) {
   const [err, setErr] = useState(null)
 
   const remaining = rec.remaining_count ?? rec.package_count ?? 0
+  // A synchronous guard: two taps inside one frame both read `busy` false, and each use carries its
+  // own key, so both would land.
+  const usingRef = useRef(false)
+  // Weighed stock (06 §1.4, boss F2): "about N g left" only while the jar is weighed, has grams on
+  // record, and is not used up.
+  const gramsLeft = rec.stock_mode === 'weighed' && rec.remaining_amount != null && remaining > 0
+    ? Math.round(Number(rec.remaining_amount)) : null
 
-  // Resolves true only when the write landed. The editor closes on THAT, never on the attempt: a
-  // refused save used to close it anyway (put swallowed the throw), so the typed values vanished and
-  // the only record of them was a message about why they had not been saved (V4 §6.5 "keep the edit").
-  async function put(overrides) {
+  // Every write below resolves true only when it landed. The editor closes on THAT, never on the
+  // attempt: a refused save used to close it anyway, so the typed values vanished and the only record
+  // of them was a message about why they had not been saved (V4 §6.5 "keep the edit").
+  // Release F (contract-F §2.6, the ferment Lambda): every Edit is ONE PATCH /api/preservation/:id
+  // carrying only what changed — the count (with the legacy PUT's delta rule, server-side), the size as
+  // a pair, the name, the method (with its 'other' words), the notes and the discard-by. The legacy
+  // full-replace PUT is no longer sent by this bundle at all: an untouched field is an absent key, so
+  // an edit can never echo a stale place, date or count over someone else's change.
+  async function saveEdit(patch) {
+    if (!patch) return true
     setBusy(true); setErr(null)
     try {
-      await fetch(`/api/preservation/${rec.id}`, { method: 'PUT', body: JSON.stringify(buildFullPayload(rec, overrides)) })
+      await fetch(`/api/preservation/${rec.id}`, { method: 'PATCH', body: JSON.stringify(patch) })
       onChanged()
       return true
     } catch (e) {
@@ -2595,33 +2624,30 @@ function RecordRow({ rec, onChanged, fetch }) {
     }
   }
 
-  // Put-Up release 1b (V4 §5.4 "From 1b"; contract-F §2.6): the name, method, notes and discard-by
-  // change through PATCH /api/preservation/:id — the legacy PUT answers a DIFFERING method, date or
-  // notes with 409 client_stale, so the editor never sends them there. The size and count still go
-  // through the PUT, whose untouched echo of the stored method/notes/date is an equal no-op. The PUT
-  // goes FIRST: after a PATCH lands, the PUT's echo of the old method would differ and be refused.
-  async function saveEdit({ put: putOverrides, patch }) {
+  // Release F (06 §1.3; contract-F §2.6): Mark used and Used up are USES, posted to their own route —
+  // never a remaining_count in the legacy PUT. A draw into a batch stamps the jar's delta_at, and from
+  // F the PUT refuses a remaining_count on such a jar (client_stale), so the PUT path would strand
+  // every drawn jar. Each tap mints its own key: a retried tap after a lost answer is a replay, and a
+  // second deliberate tap is a second use.
+  async function use(body) {
+    if (usingRef.current) return false
+    usingRef.current = true
     setBusy(true); setErr(null)
     try {
-      if (putOverrides) {
-        await fetch(`/api/preservation/${rec.id}`, { method: 'PUT', body: JSON.stringify(buildFullPayload(rec, putOverrides)) })
-      }
-      if (patch) {
-        await fetch(`/api/preservation/${rec.id}`, { method: 'PATCH', body: JSON.stringify(patch) })
-      }
+      await fetch('/api/pantry/uses', { method: 'POST', body: JSON.stringify({
+        idempotency_key: mintKey(), preservation_log_id: rec.id, ...body,
+      }) })
       onChanged()
       return true
     } catch (e) {
       setErr(describeRefusal(e) ?? "Couldn't update — try again."); setBusy(false)
       return false
+    } finally {
+      usingRef.current = false
     }
   }
-
-  async function markUsed() {
-    const next = Math.max(0, Number(remaining) - 1)
-    await put({ remaining_count: next })
-  }
-  async function usedUp() { await put({ remaining_count: 0 }) }
+  async function markUsed() { await use({ count_used: 1 }) }
+  async function usedUp() { await use({ all_remaining: true }) }
 
   async function doDelete() {
     setBusy(true); setErr(null)
@@ -2670,6 +2696,7 @@ function RecordRow({ rec, onChanged, fetch }) {
       <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 3 }}>
         {rec.package_count} {rec.package_count === 1 ? 'container' : 'containers'}
         {remaining !== rec.package_count ? ` · ${remaining} left` : ''}
+        {gramsLeft != null && Number.isFinite(gramsLeft) ? ` · about ${gramsLeft} g left` : ''}
         {/* V4-PUTUPSESSION-001 slice 1 — THE LINE THE SLICE EXISTS FOR. Through describeApprox, not
             a local "around " prefix, so the walk's band and the saved record are guaranteed to say
             the same words about the same date. `=== true` and not truthiness: the column is
@@ -2842,22 +2869,25 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // size and count through the legacy PUT, the name, method, notes and discard-by through the PATCH.
   // An untouched field is an absent key, which both routes read as "unchanged" (V4 §5.4 "From 1b").
   function save() {
-    const put = {}
-    if (qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit) {
-      put.quantity_value = Number(qtyValue) || rec.quantity_value
-      put.quantity_unit = qtyUnit || rec.quantity_unit
-    }
-    if (packageCount !== seed.packageCount) put.package_count = packageCount === '' ? 1 : Number(packageCount)
+    // ONLY what changed, each key once, all in the one PATCH (see RecordRow.saveEdit).
     const patch = {}
+    if (packageCount !== seed.packageCount) patch.package_count = packageCount === '' ? 1 : Number(packageCount)
+    // The size always travels as a pair. A blank amount leaves the stored size alone rather than
+    // clearing it.
+    if ((qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit) && qtyValue.trim() !== '' && Number(qtyValue) > 0) {
+      patch.quantity_value = qtyValue.trim()
+      patch.quantity_unit = qtyUnit || rec.quantity_unit
+    }
     if (name !== seed.name) patch.label = name.trim() || null
-    if (method !== seed.method) patch.method = method
-    // The 'other' partner rides with a method change or its own edit; the 1b CHECK also takes a name.
-    if (method === 'other' && (method !== seed.method || methodOther !== seed.methodOther)) {
-      patch.method_other_text = methodOther.trim() || null
+    // method_other_text travels WITH method (the PATCH refuses it alone: jarRoutes.js validateJarPatch),
+    // so an edit to the 'other' description re-sends the method it describes.
+    if (method !== seed.method || (method === 'other' && methodOther !== seed.methodOther)) {
+      patch.method = method
+      if (method === 'other') patch.method_other_text = methodOther.trim() || null
     }
     if (notes !== seed.notes) patch.notes = notes.trim() || null
     if (useByTarget !== seed.useByTarget) patch.discard_by = useByTarget || 'clear'
-    onSave({ put: Object.keys(put).length ? put : null, patch: Object.keys(patch).length ? patch : null })
+    onSave(Object.keys(patch).length ? patch : null)
   }
 
   return (
@@ -2871,7 +2901,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       </div>
       <div style={{ display: 'flex', gap: T.space.sm }}>
         <div style={{ flex: 2 }}>
-          <Field label="How much" htmlFor={`ed-qty-${rec.id}`}>
+          <Field label="How much in all" htmlFor={`ed-qty-${rec.id}`}>
             <Input id={`ed-qty-${rec.id}`} type="text" inputMode="decimal" value={qtyValue}
               onChange={e => setQtyValue(e.target.value)} aria-label="Quantity" />
           </Field>

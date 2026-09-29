@@ -93,6 +93,9 @@ const PREFIX_TO_LAMBDA = {
   // regex live in lambda/preservation/kitchenBatch.js, which this file's walker reaches because it
   // walks every non-test file in the directory rather than stopping at index.js.
   '/api/kitchen-batches': 'preservation',
+  // Put-Up release F (06 §1.3 item 2) — a THIRD prefix on the preservation Lambda, for the use route
+  // (POST /api/pantry/uses, lambda/preservation/pantryUses.js), for the same reason as the one above.
+  '/api/pantry': 'preservation',
   '/api/harvests': 'harvests',
   '/api/share/facebook': 'facebook-share',
   // Same Lambda, same Function URL — the handler routes on rawPath (V4-IGSHARE-001).

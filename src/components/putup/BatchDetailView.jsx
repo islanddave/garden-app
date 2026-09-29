@@ -24,7 +24,7 @@
 //
 // These are guarded by BatchDetailView.test.jsx's own sweep, over THIS root testid. The shipped
 // sweeps are scoped to `going-now-view` and would stay green over every one of them.
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import {
@@ -33,27 +33,39 @@ import {
 } from './goingNow.js'
 import { describeOutcome } from './batchClose.js'
 import BatchCloseField from './BatchCloseField.jsx'
-import BatchInputsField from './BatchInputsField.jsx'
 import { preservedOn } from './JarPicker.jsx'
+import WhatWentIn, { FromGarden } from './WhatWentIn.jsx'
+import SaltBlock from './SaltBlock.jsx'
+import JarHeatRow from './JarHeatRow.jsx'
+import RecipeRefRow from './RecipeRefRow.jsx'
+import StageEditSheet from './StageEditSheet.jsx'
+import ShuSheet from './ShuSheet.jsx'
+import KindQuestion from './KindQuestion.jsx'
+import CheckOnItSheet from './CheckOnItSheet.jsx'
+import CheckInSaved from './CheckInSaved.jsx'
+import LineAdder from './LineAdder.jsx'
+import { CHECK_ON_IT_CTA, CHECK_IN_ACTS } from './goingNow.js'
+import { lineWords, nextOrdinal } from './lines.js'
+import { shuRangeWords } from './fermentMath.js'
 import PutItUpSheet from './PutItUpSheet.jsx'
 import { PUT_IT_UP_CTA } from './putItUp.js'
 import { useUndoPutUp, UNDO_PUT_UP_CTA, UNDONE_TEXT } from './PutUpStub.jsx'
-import { putUpDateWords, countedSize, ESTIMATED_PRECISIONS } from './jarWords.js'
+import { putUpDateWords, countedSize, sizeWords, ESTIMATED_PRECISIONS } from './jarWords.js'
 import { describeRefusal } from '../../lib/putUpErrors.js'
 
 // Local copies of two private vocabularies. STAGE_KIND_LABELS is not exported from goingNow.js and
 // KITCHEN_INPUT_KINDS lives in the Lambda; both are bound to their sources by parity assertions in
 // BatchDetailView.test.jsx rather than by hope — the app has already shipped one bug where two
 // hand-maintained copies of one vocabulary disagreed.
+//
+// Release F: the table covers EVERY kind a stage row can carry — the Lambda's KITCHEN_STAGE_KINDS_ALL
+// (the 1b history kinds folded in; the parity test binds it). Words, never a status: a pause is a
+// different answer, not a worse one, and "Picked back up" is the card's own word for resuming. A void
+// row never renders (liveStages drops it) — its word is here only so the table is total.
 const STAGE_KIND_LABELS = {
   started: 'Started', tended: 'Tended', moved: 'Moved', finished: 'Finished', failed: 'Failed',
-}
-// Put-Up release 1b (V4 Appendix A): the stage history gains these. Words, never a status: a pause is
-// a different answer, not a worse one, and "Picked back up" is the card's own word for resuming. Kept
-// apart from STAGE_KIND_LABELS because that table is bound by parity to the Lambda's
-// KITCHEN_STAGE_KINDS, which the 1b Lambda lane widens; fold these in when it lands.
-const HISTORY_KIND_LABELS = {
-  put_up: 'Put up', noted: 'Next time', paused: 'Paused', resumed: 'Picked back up', reopened: 'Reopened',
+  reopened: 'Reopened', paused: 'Paused', resumed: 'Picked back up', noted: 'Next time', put_up: 'Put up',
+  void: 'Taken back',
 }
 
 // Put-Up release 1b — the Log is the history AS IT STANDS: a void row and the row it voids are both
@@ -100,7 +112,7 @@ export function stageRowText(row, nowMs = Date.now()) {
     const at = shortDate(row.ph_read_at)
     return at ? `pH ${row.ph_reading} · read ${at}` : `pH ${row.ph_reading}`
   }
-  const label = row.label || STAGE_KIND_LABELS[row.stage_kind] || HISTORY_KIND_LABELS[row.stage_kind] || 'Logged'
+  const label = row.label || STAGE_KIND_LABELS[row.stage_kind] || 'Logged'
   // An estimated entry (1b's entered_precision) says its window, never an invented day; an undated one
   // (precision `unknown`, entered_at NULL) is just its label.
   const at = ESTIMATED_PRECISIONS.has(row.entered_precision) && row.entered_at
@@ -121,10 +133,23 @@ function localYmd(iso) {
 // visit that read the pH AND moved the crock is one `moved` row labelled "Moved to Fridge" that also
 // carries the reading; stageRowText leads with the reading, and without this the move would vanish
 // from the log.
+//
+// Release F (06 §4 item 6) extends it with what F rows carry, as words — acts as their words ("Topped
+// up brine · Skimmed the top"), a top-up as "+250 ml", Made as "made 910 g in all", mash as "mash in
+// 180 g", the start's amount as "about 448 g in it". One line, quiet ink, no glyphs or ticks, never a
+// count or a series.
 export function stageRowDetail(row) {
   if (!row) return ''
   const label = row.ph_reading != null ? row.label : null
-  return [label, row.cue_observed, row.note].filter(Boolean).join(' · ')
+  const acts = Array.isArray(row.acts)
+    ? CHECK_IN_ACTS.filter(a => row.acts.includes(a.value)).map(a => a.label) : []
+  const amt = row.amount != null ? Math.round(Number(row.amount) * 100) / 100 : null
+  let amount = null
+  if (amt != null && row.stage_kind === 'tended' && row.amount_unit) amount = `+${amt} ${row.amount_unit}`
+  if (amt != null && row.stage_kind === 'started' && row.amount_unit) amount = `about ${amt} ${row.amount_unit} in it`
+  if (amt != null && row.stage_kind === 'put_up') amount = `made ${amt} g in all`
+  const mash = row.mash_in_g != null ? `mash in ${Math.round(Number(row.mash_in_g) * 100) / 100} g` : null
+  return [label, row.cue_observed, ...acts, amount, mash, row.note].filter(Boolean).join(' · ')
 }
 
 export function outputRowText(row, nowMs = Date.now()) {
@@ -145,9 +170,12 @@ export function outputRowText(row, nowMs = Date.now()) {
     if (row.ph_reading != null) parts.push(`pH ${row.ph_reading}`)
     return parts.join(' · ') || 'A put-up'
   }
+  // A linked jar from before 1b. Contract-F A3: its quantity is the TOTAL, so it is never said beside
+  // its count as if per-container ("3 pint · 3 packages" read as three pints each) — countedSize says
+  // "3 containers · 3 pint in all".
   const parts = []
-  if (row.quantity_value != null && row.quantity_unit) parts.push(`${row.quantity_value} ${row.quantity_unit}`)
-  if (row.package_count != null) parts.push(Number(row.package_count) === 1 ? '1 package' : `${row.package_count} packages`)
+  const size = row.package_count != null ? countedSize(row.package_count, row) : sizeWords(row)
+  if (size) parts.push(size)
   const on = preservedOn(row.preserved_at)
   if (on) parts.push(on)
   // use_by_target / use_by_status are deliberately absent here for the same reason they are absent
@@ -175,7 +203,7 @@ function todayYMD() {
 }
 
 const actionLink = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, background: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none',
   border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green,
   fontSize: '0.78rem',
 }
@@ -299,22 +327,110 @@ function PauseToggle({ batch, fetch, onChanged }) {
 }
 
 // ── one sitting in What came out, with its Undo (V4 §2.3 "Undo that put-up", no timer) ──────────────
-function Sitting({ batchId, stage, jars, onChanged, nowMs }) {
+// Release F adds, per sitting: "Mash in" beside "Made … in all" (both editable through the sitting's own
+// Log entry, 06 §3.7), the lines added at the end (to every jar, or to one), a way to add one more even
+// after bottling (06 §3.13: final-step additions, fresh or cooked, per Dave), and per jar its heat
+// estimate (worked out from the sitting, or typed) and "from the garden".
+function JarRow({ batchId, jar, nowMs, gardenNames, lines, onChanged }) {
+  const [shuOpen, setShuOpen] = useState(false)
+  const { fetch } = useApiFetch()
+  const heat = shuRangeWords(jar.shu_est_low, jar.shu_est_high)
+  const added = (lines ?? []).filter(l => l.output_id === jar.id)
+  return (
+    <li data-testid="batch-detail-output" data-jar-id={jar.id} style={{ padding: '2px 0', color: P.mid, fontSize: T.type.sm }}>
+      <span data-testid="batch-detail-output-text">{outputRowText(jar, nowMs)}</span>
+      {jar.cooked === true && <span> · cooked after blending</span>}
+      {added.length > 0 && <span data-testid="batch-detail-output-added"> · added at the end: {added.map(l => lineWords(l)).join(', ')}</span>}
+      {gardenNames.length > 0 && <FromGarden testId="batch-detail-output-garden" />}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+        <span data-testid="batch-detail-output-heat" style={{ color: P.light, fontSize: '0.78rem' }}>
+          {heat ? `heat ${heat}${jar.shu_est_basis === 'typed' ? ' (typed)' : jar.shu_est_basis === 'computed' ? ' (worked out)' : ''}` : 'heat not worked out'}
+        </span>
+        <button type="button" style={{ ...actionLink, fontSize: '0.74rem' }} data-testid="batch-detail-output-work-it-out" onClick={() => setShuOpen(true)}>
+          Work it out
+        </button>
+      </div>
+      <ShuSheet open={shuOpen} batchId={batchId} scope="jar" id={jar.id} title={`Heat · ${jar.label ?? 'this jar'}`}
+        onClose={() => setShuOpen(false)} onSaved={() => { setShuOpen(false); onChanged?.() }}
+        onType={async (r) => {
+          await fetch(`/api/preservation/${jar.id}`, { method: 'PATCH', body: JSON.stringify({ shu_est_low: r.low, shu_est_high: r.high }) })
+          setShuOpen(false); onChanged?.()
+        }} />
+    </li>
+  )
+}
+
+function Sitting({ batchId, stage, jars, lines, onChanged, nowMs, gardenNames, onEdit }) {
+  const { fetch } = useApiFetch()
   const { undo, busy, err, done } = useUndoPutUp({ batchId, stageId: stage.id, onUndone: onChanged })
+  const [adding, setAdding] = useState(false)
+  const [toJar, setToJar] = useState(null)
+  const [addErr, setAddErr] = useState(null)
   const when = stageRowText({ ...stage, label: null }, nowMs)
+  const sittingLines = (lines ?? []).filter(l => l.put_up_stage_id === stage.id && l.output_id == null)
+  const facts = [
+    stage.amount != null ? `made ${Math.round(Number(stage.amount) * 100) / 100} g in all` : null,
+    stage.mash_in_g != null ? `mash in ${Math.round(Number(stage.mash_in_g) * 100) / 100} g` : null,
+  ].filter(Boolean)
+  const addLine = async (body) => {
+    setAddErr(null)
+    try {
+      await fetch(`/api/kitchen-batches/${batchId}/inputs`, { method: 'POST', body: JSON.stringify({ inputs: [{
+        ...body, put_up_stage_id: stage.id, ...(toJar ? { output_id: toJar } : {}), ordinal: nextOrdinal(lines),
+      }] }) })
+      setAdding(false)
+      onChanged?.()
+      return true
+    } catch (e) {
+      setAddErr(describeRefusal(e)?.text ?? "Couldn't add that — try again. What you typed is still here.")
+      return false
+    }
+  }
   return (
     <li data-testid="batch-detail-sitting" data-stage-id={stage.id} style={{ padding: '6px 0', borderTop: `1px solid ${P.cream}` }}>
-      <div style={{ color: P.dark, fontSize: T.type.sm, fontWeight: 600 }}>{when}</div>
-      {stage.amount != null && stage.amount_unit === 'g' && (
-        <div style={{ color: P.light, fontSize: T.type.xs }}>made {stage.amount} g in all</div>
+      <button type="button" data-testid="batch-detail-sitting-head" onClick={() => onEdit?.(stage)}
+        style={{ display: 'block', width: '100%', textAlign: 'left', minHeight: T.tapMinHeight, background: 'none', border: 'none',
+          padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>
+        <div style={{ color: P.dark, fontSize: T.type.sm, fontWeight: 600 }}>{when}</div>
+        {facts.length > 0 && (
+          <div data-testid="batch-detail-sitting-facts" style={{ color: P.light, fontSize: T.type.xs }}>{facts.join(' · ')}</div>
+        )}
+      </button>
+      {sittingLines.length > 0 && (
+        <div data-testid="batch-detail-sitting-added" style={{ color: P.mid, fontSize: '0.78rem' }}>
+          added at the end to every jar: {sittingLines.map(l => lineWords(l)).join(', ')}
+        </div>
       )}
       <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
         {jars.map(j => (
-          <li key={j.id} data-testid="batch-detail-output" style={{ padding: '2px 0', color: P.mid, fontSize: T.type.sm }}>
-            {outputRowText(j, nowMs)}
-          </li>
+          <JarRow key={j.id} batchId={batchId} jar={j} nowMs={nowMs} gardenNames={gardenNames} lines={lines} onChanged={onChanged} />
         ))}
       </ul>
+      {!done && (
+        adding ? (
+          <div data-testid="batch-detail-sitting-adder" style={{ marginTop: 6 }}>
+            {jars.length > 1 && (
+              <div role="radiogroup" aria-label="Added to" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+                {[{ id: null, label: 'Every jar' }, ...jars.map(j => ({ id: j.id, label: j.label ?? 'This jar' }))].map(o => (
+                  <button key={o.id ?? 'all'} type="button" role="radio" aria-checked={toJar === o.id} data-testid={`batch-detail-sitting-to-${o.id ?? 'all'}`}
+                    onClick={() => setToJar(o.id)}
+                    style={{ minHeight: T.buttonMinHeight, padding: '6px 14px', borderRadius: T.radiusPill, fontFamily: 'inherit', fontSize: T.type.sm,
+                      border: `1px solid ${toJar === o.id ? P.green : P.border}`, background: toJar === o.id ? P.green : P.white,
+                      color: toJar === o.id ? P.white : P.dark, cursor: 'pointer' }}>{o.label}</button>
+                ))}
+              </div>
+            )}
+            <LineAdder lines={lines} onAdd={addLine} idPrefix={`sitting-add-${stage.id}`} forms={['fresh', 'cooked']}
+              label="What was added at the end?" addLabel="Add it" />
+            {addErr && <div role="alert" data-alarm-ink-exempt="error" style={{ color: P.terra, fontSize: '0.78rem' }}>{addErr}</div>}
+            <button type="button" style={{ ...actionLink, color: P.light }} onClick={() => { setAdding(false); setAddErr(null) }}>Cancel</button>
+          </div>
+        ) : (
+          <button type="button" style={actionLink} data-testid="batch-detail-sitting-add" onClick={() => setAdding(true)}>
+            + Something added at the end
+          </button>
+        )
+      )}
       {done ? (
         <div role="status" style={{ color: P.mid, fontSize: '0.78rem' }}>{UNDONE_TEXT}</div>
       ) : (
@@ -343,10 +459,8 @@ function RemoveBatch({ batch, fetch, onRemoved }) {
       await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'DELETE' })
       onRemoved?.()
     } catch (e) {
-      const code = e?.body?.code
-      setErr(code === 'has_jars'
-        ? 'It has jars — undo its put-ups first.'
-        : (describeRefusal(e)?.text ?? "Couldn't remove it — try again."))
+      // has_jars says to undo its put-ups first (putUpErrors, release F); every other code, the server's words.
+      setErr(describeRefusal(e)?.text ?? "Couldn't remove it — try again.")
       setBusy(false)
     }
   }, [batch.id, busy, fetch, onRemoved])
@@ -389,6 +503,17 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
   // §2.4); the stub's words (with the label hint) sit above the list until the next visit.
   const [putUpOpen, setPutUpOpen] = useState(false)
   const [stubText, setStubText] = useState(null)
+  // Release F: Jar & heat's disclosure (never opened by itself; closed when a line add starts), the
+  // [Salt] chip's hand-off to the Salt block, the stage being edited and its "Saved · Undo", and Check
+  // on it from the Log's head.
+  const [jarOpen, setJarOpen] = useState(false)
+  const [saltFocus, setSaltFocus] = useState(0)
+  const [editing, setEditing] = useState(null)
+  const [stageSaved, setStageSaved] = useState(null)       // { stageId, undo }
+  const [checking, setChecking] = useState(false)
+  const [checkSaved, setCheckSaved] = useState(null)       // stage id of the check-in just saved
+  const [logErr, setLogErr] = useState(null)
+  const undoRef = useRef(false)
   if (loading) {
     return (
       <div data-testid="batch-detail-view">
@@ -432,6 +557,20 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
   const inputRows = Array.isArray(inputs) ? inputs : []
   const stageRows = liveStages(stages)
   const { sittings, linked } = outputSittings(outputs, stages)
+  const gardenNames = Array.isArray(batch.garden_names) ? batch.garden_names : []
+
+  const undoStageEdit = async () => {
+    if (!stageSaved || undoRef.current) return
+    undoRef.current = true
+    setLogErr(null)
+    try {
+      await fetch(`/api/kitchen-batches/${batch.id}/stages/${stageSaved.stageId}`, { method: 'PATCH', body: JSON.stringify(stageSaved.undo) })
+      setStageSaved(null)
+      onChanged?.()
+    } catch (e) {
+      setLogErr(describeRefusal(e)?.text ?? "Couldn't undo that — try again.")
+    } finally { undoRef.current = false }
+  }
 
   return (
     <div data-testid="batch-detail-view" data-batch-id={batch.id}>
@@ -458,26 +597,36 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
           {batch.outcome_note}
         </div>
       )}
-      {/* The start-date door, on a batch nobody was ever asked about (start_precision NULL). Not on a
-          closed batch: the merge PUT refuses a closed row, and a door that can only fail is noise. */}
-      {!closed && startPromptState(batch) === 'prompt' && (
+      {/* Release F (06 §3.10): the kind question, inline, on open AND closed batches alike, while the
+          kind is unanswered — the Ferment fields appear with no navigation once it is. */}
+      {batch.kind == null && <KindQuestion batch={batch} fetch={fetch} onChanged={onChanged} idPrefix="batch-kind" />}
+      {/* The start-date door, on a batch nobody was ever asked about (start_precision NULL). Release F
+          (06 §3.13, Dave 15:55 "as we go"): offered on a finished batch too — the merge PUT takes
+          content writes after close, so the door can land there now. */}
+      {startPromptState(batch) === 'prompt' && (
         <SetStartDate batch={batch} fetch={fetch} onChanged={onChanged} />
       )}
+      <RecipeRefRow batch={batch} onChanged={onChanged} />
 
       <Section title="What went in" testId="batch-detail-inputs">
-        {/* L4's field IS this section (integrated 20260904). It renders the same count and the same
-            behind-a-tap list this lane wrote, plus the remove and the add flows — a superset — so
-            shipping both put two counts, two doors and two lists of one batch's inputs on one screen.
-            The subset went. `inputs` is handed DOWN rather than re-fetched: the page already holds
-            GET /:id, and a child re-read is how one screen ends up with two copies that disagree.
-            Normalised through `inputRows` on purpose — a non-array prop must degrade to an empty
-            section, never flip the child back into fetching for itself.
-            The whole-pick caveat is not repeated here: every bare pick row L4 renders already says
-            "— the whole pick" on its own line, and the add flow states it in full. */}
-        <BatchInputsField batchId={batch.id} inputs={inputRows} onChanged={onChanged} nowMs={nowMs} />
+        {/* Release F: What went in is WhatWentIn (the reworked field) with the Salt block inside it,
+            always reachable. `inputs` is handed DOWN rather than re-fetched: the page already holds
+            GET /:id, and a child re-read is how one screen ends up with two copies that disagree. */}
+        <WhatWentIn batch={batch} lines={inputRows} gardenNames={gardenNames} onChanged={onChanged}
+          onSaltTap={() => setSaltFocus(n => n + 1)} onLineStart={() => setJarOpen(false)}
+          saltSlot={<SaltBlock batch={batch} lines={inputRows} onChanged={onChanged} focusSeq={saltFocus} />} />
       </Section>
 
+      <JarHeatRow batch={batch} stages={stages} lines={inputRows} onChanged={onChanged} open={jarOpen}
+        onToggle={() => setJarOpen(o => !o)} />
+
       <Section title="Log" testId="batch-detail-stages">
+        {/* Release F (06 §4 item 6, UX-I1): a quiet "Check on it" at the head of the Log — the same sheet,
+            the same row kind and the same draft as the card's. */}
+        <button type="button" data-testid="batch-detail-check" onClick={() => setChecking(true)} style={actionLink}>
+          {CHECK_ON_IT_CTA} →
+        </button>
+        {checkSaved && <CheckInSaved key={checkSaved} batchId={batch.id} stageId={checkSaved} onUndone={onChanged} />}
         {stageRows.length === 0 ? (
           <div data-testid="batch-detail-stages-empty" style={{ color: P.light, fontSize: T.type.sm }}>
             Nothing logged yet.
@@ -485,17 +634,28 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
         ) : (
           <ul data-testid="batch-detail-stages-list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {stageRows.map(row => (
-              <li key={row.id} data-testid="batch-detail-stage" style={{ padding: '4px 0' }}>
-                <div style={{ color: P.dark, fontSize: T.type.sm }}>{stageRowText(row, nowMs)}</div>
-                {stageRowDetail(row) && (
-                  <div data-testid="batch-detail-stage-detail" style={{ color: P.light, fontSize: T.type.xs }}>
-                    {stageRowDetail(row)}
+              <li key={row.id} data-testid="batch-detail-stage" style={{ borderBottom: `1px solid ${P.cream}` }}>
+                {/* Every entry is editable (06 §3.7): the whole 48px row is the target. */}
+                <button type="button" data-testid="batch-detail-stage-edit" onClick={() => setEditing(row)}
+                  style={{ display: 'block', width: '100%', minHeight: T.buttonMinHeight, textAlign: 'left', padding: '4px 0',
+                    background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+                  <div style={{ color: P.dark, fontSize: T.type.sm }}>{stageRowText(row, nowMs)}</div>
+                  {(stageRowDetail(row) || row.edited_at) && (
+                    <div data-testid="batch-detail-stage-detail" style={{ color: P.light, fontSize: T.type.xs }}>
+                      {[stageRowDetail(row), row.edited_at ? 'edited' : null].filter(Boolean).join(' · ')}
+                    </div>
+                  )}
+                </button>
+                {stageSaved?.stageId === row.id && (
+                  <div role="status" data-testid="stage-saved" style={{ color: P.mid, fontSize: '0.78rem' }}>
+                    Saved <button type="button" style={{ ...actionLink, minWidth: 44 }} data-testid="stage-saved-undo" onClick={undoStageEdit}>Undo</button>
                   </div>
                 )}
               </li>
             ))}
           </ul>
         )}
+        {logErr && <div role="alert" data-alarm-ink-exempt="error" style={{ color: P.terra, fontSize: '0.78rem' }}>{logErr}</div>}
       </Section>
 
       <Section title="What came out" testId="batch-detail-outputs">
@@ -510,12 +670,15 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
           </div>
         ) : (
           <ul data-testid="batch-detail-outputs-list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {sittings.map(({ stage, jars }) => (
-              <Sitting key={stage.id} batchId={batch.id} stage={stage} jars={jars} onChanged={onChanged} nowMs={nowMs} />
+            {sittings.map(({ stage: st, jars }) => (
+              <Sitting key={st.id} batchId={batch.id} stage={st} jars={jars} lines={inputRows} onChanged={onChanged} nowMs={nowMs}
+                gardenNames={gardenNames} onEdit={setEditing} />
             ))}
             {linked.map(row => (
               <li key={row.id} data-testid="batch-detail-output"
-                style={{ padding: '4px 0', color: P.mid, fontSize: T.type.sm }}>{outputRowText(row, nowMs)}</li>
+                style={{ padding: '4px 0', color: P.mid, fontSize: T.type.sm }}>
+                <span data-testid="batch-detail-output-text">{outputRowText(row, nowMs)}</span>
+              </li>
             ))}
           </ul>
         )}
@@ -526,7 +689,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
             {PUT_IT_UP_CTA} →
           </button>
         )}
-        <PutItUpSheet open={putUpOpen} batch={{ ...batch, outputs }} now={nowMs}
+        <PutItUpSheet open={putUpOpen} batch={{ ...batch, outputs }} lines={inputRows} now={nowMs}
           onClose={() => setPutUpOpen(false)} onChanged={onChanged}
           onDone={({ stub }) => { setPutUpOpen(false); setStubText(stub); onChanged?.() }} />
       </Section>
@@ -538,6 +701,11 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
         {/* Last and quietest: removing is for a batch started by mistake, never an ending. */}
         <RemoveBatch batch={batch} fetch={fetch} onRemoved={onRemoved ?? onChanged} />
       </div>
+
+      <StageEditSheet open={!!editing} batch={batch} stage={editing} now={nowMs} onClose={() => setEditing(null)}
+        onSaved={({ stage: st, undo }) => { setEditing(null); setStageSaved({ stageId: st.id, undo }); onChanged?.() }} />
+      <CheckOnItSheet open={checking} batch={batch} now={nowMs} onClose={() => setChecking(false)}
+        onSaved={(body, answer) => { setChecking(false); setCheckSaved(answer?.stage?.id ?? null); onChanged?.() }} />
     </div>
   )
 }
