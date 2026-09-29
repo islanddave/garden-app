@@ -479,3 +479,16 @@ export const PHOTO_MULTI_ATTACH_ENABLED = true
 // this flag off the page is only a pass-through to it. Turning this flag ON must add a door from
 // Seeds › My seeds in the same change, or bulk intake ships unreachable in the installed PWA.
 export const SEED_BULK_EXTRACT_ENABLED = false
+
+// V5-TODAYREDESIGN-001 (2026-09-29, the S3 + S4 pre-promote review): the Debug & smoke row "New Today (preview)
+// on this phone" is HIDDEN until the redesign can stand in for the current Today on a phone. Until then one tap
+// on it strips /today on that phone down to the unfinished V2 — through S4 that means no Protect tonight (the
+// plants to cover), no Heads-up (storage deadlines), no Harvest / Put-Up, no household care — and the row is
+// visible to both users.
+// While FALSE: DebugMenu renders no row, and TodayRoute ignores a stored `garden.todayV2`, so a phone that turned
+// the preview on before the row was hidden is not left on the unfinished page with no way back (the row IS the
+// way back). The stored flag is ignored, not deleted; sign-out still scrubs it (clientPrefs CLIENT_PREF_KEYS).
+// Flip TRUE at the phone-comparison slice (S8a, plan-v2 §8), when the row returns as the way to compare.
+// The V2 gates keep measuring the page through the real chooser: tests/harness/vite.harness.v2.mjs serves this
+// module with the constant true (and throws if it cannot find it), so ?v2=1 still reaches TodayV2 there.
+export const TODAY_V2_PREVIEW_ROW = false

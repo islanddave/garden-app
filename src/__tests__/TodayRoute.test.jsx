@@ -1,6 +1,9 @@
 // V5-TODAYREDESIGN-001 S2 — /today's chooser and the per-device switch behind it (plan-v2 §6.4, §6.10), the
 // Debug & smoke row that flips it (visible to both users, default off), sign-out's scrub of every V2 key,
 // and TodaySection as a controlled section.
+// The chooser and the row as they are WITH the preview row shown (featureFlags TODAY_V2_PREVIEW_ROW true, as it
+// will be from S8a — mocked on here). As shipped until then (false: no row, a stored flag ignored) they are
+// pinned in TodayRoute.previewHidden.test.jsx.
 import React, { useState } from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
@@ -9,6 +12,7 @@ import { MemoryRouter } from 'react-router-dom'
 vi.mock('../pages/Today.jsx', () => ({ default: () => <div data-testid="today-v1" /> }))
 vi.mock('../pages/TodayV2.jsx', () => ({ default: () => <div data-testid="today-v2" /> }))
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: vi.fn(async () => ({})) }) }))
+vi.mock('../lib/featureFlags.js', async (orig) => ({ ...(await orig()), TODAY_V2_PREVIEW_ROW: true }))
 
 import TodayRoute from '../components/today/v2/TodayRoute.jsx'
 import DebugMenu from '../pages/DebugMenu.jsx'
