@@ -52,11 +52,22 @@ describe('the band is read DIRECTLY from the band map', () => {
 
 describe('FINISHED — listed, group-selectable', () => {
   it('tender and chill_sensitive crops outdoors are in, whatever their live status', () => {
-    for (const status of ['fruiting', 'harvested', 'vegetative', 'flowering', null]) {
+    for (const status of ['fruiting', 'harvested', 'vegetative', 'flowering']) {
       expect(classify(planting('tomato', { status })), String(status)).toBe(GROUP_FINISHED)
     }
     expect(classify(planting('basil'))).toBe(GROUP_FINISHED)
     expect(classify(planting('pepper', { location_id: 'trough' }))).toBe(GROUP_FINISHED)
+  })
+
+  // Undo PUTs a row back to its own prior status, and the PUT merges with COALESCE, so a planting with no
+  // status could be ended but never put back. KILLING MUTATION: drop the canRestore check in
+  // classifyPlanting. RESULT: RED.
+  it('a planting with no status is out, in either group: Undo could never put it back', () => {
+    for (const status of [null, undefined, '']) {
+      expect(classify(planting('tomato', { status })), String(status)).toBeNull()
+      expect(classify(planting('kale', { status }, 'biennial')), String(status)).toBeNull()
+    }
+    expect(classify(planting('kale', { status: 'vegetative' }, 'biennial'))).toBe(GROUP_STILL_GROWING)
   })
 
   // KILLING MUTATION: FINISHED_BANDS gains 'tropical' (the CLASS_BY_BAND fold). RESULT: RED.

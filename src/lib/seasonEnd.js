@@ -19,7 +19,8 @@
 //   · nothing up its location chain is covered or heated — the rain roof rule's recursion
 //     (lambda/daily-plan/handler.js logRainEvents), walked over GET /api/locations, which carries
 //     only live locations, so a deleted location ends the walk exactly as the SQL join does;
-//   · its status is not ended, failed or dormant.
+//   · its status is not ended, failed or dormant — and it has one: a planting with no status could be
+//     ended but never put back by Undo, so it is not listed.
 // On prod (2026-09-29) that is 114 plantings, and it catches no perennial, fruit, houseplant or
 // succulent: those are banded hardy or tropical, or sit under a roof.
 //
@@ -95,6 +96,8 @@ export function isLivePlanting(row) {
 // 'finished' | 'still_growing' | null (not listed).
 export function classifyPlanting(row, byId) {
   if (!isLivePlanting(row)) return null
+  // No status to go back to: End would work, but Undo could never put it back (canRestore).
+  if (!canRestore(row.status)) return null
   if (CLOSED_STATUSES.includes(row.status)) return null
   if (isUnderRoof(row.location_id, byId)) return null
   const band = bandForSlug(row.variety_ref?.crop_type_slug)
