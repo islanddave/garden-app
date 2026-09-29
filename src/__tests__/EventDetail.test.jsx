@@ -357,3 +357,39 @@ describe('EventDetail — reload gate (V4-DIRTYGUARDSWEEP-001)', () => {
     expect(isReloadBlocked()).toBe(false)
   })
 })
+
+// BUG-LOSSEVENTLABEL-001 — a plants-lost event's own page. Dave's Mini Rose row (prod 6dffa249): the
+// header said "failed", the word for a planting STATUS, about 2 of 8 plants on a living planting.
+describe('EventDetail — a plants-lost event (BUG-LOSSEVENTLABEL-001)', () => {
+  const LOSS = {
+    id: 'e1', project_id: 'p1', plant_id: 'pl1', event_type: 'failed',
+    event_date: '2026-09-28T12:00:00.000Z', title: null, notes: null, private_notes: null,
+    quantity: null, is_public: false, metadata: { loss_reason: 'weather', qty_reduced: 2 },
+    flagged_as_issue: false, severity: null, resolved_at: null, project_name: 'Tomatoes 2026',
+  }
+
+  it("the header reads '2 plants lost', never 'failed'", async () => {
+    dataRef.event = { ...LOSS }
+    renderEventDetail()
+    await flushLoad()
+    const h1 = document.querySelector('h1')
+    expect(h1.textContent).toContain('2 plants lost')
+    expect(h1.textContent).not.toMatch(/fail/i)
+  })
+
+  it('the Details block names the reason by its chip caption', async () => {
+    dataRef.event = { ...LOSS, metadata: { loss_reason: 'unknown', qty_reduced: 2 } }
+    renderEventDetail()
+    await flushLoad()
+    expect(screen.getByText('Loss reason')).toBeTruthy()
+    expect(screen.getByText('Not sure')).toBeTruthy()
+    expect(screen.queryByText('unknown')).toBeNull()
+  })
+
+  it('with a title, the kicker under it says "plants lost"', async () => {
+    dataRef.event = { ...LOSS, title: 'Two by the door' }
+    renderEventDetail()
+    await flushLoad()
+    expect(screen.getByTestId('event-type-kicker').textContent).toBe('plants lost')
+  })
+})

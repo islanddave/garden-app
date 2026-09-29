@@ -21,6 +21,7 @@ import { P, statusLabel } from '../lib/constants.js'
 import { sunLabel } from '../lib/varietySpec.js'
 import { PROJECTS_HIDDEN } from '../lib/featureFlags.js'
 import { T } from '../components/forms/formStyles.js'
+import { eventTitle } from '../lib/eventDisplay.js'
 
 const norm = s => (s || '').toString().toLowerCase()
 const asArray = (d, key) => (Array.isArray(d) ? d : (d?.[key] ?? []))
@@ -539,7 +540,7 @@ export default function Search() {
             {srv.events.map(ev => (
               <Row key={ev.id}
                 to={`/events/${ev.id}`}
-                name={ev.title || ev.event_type}
+                name={eventTitle(ev)}
                 // V4-PROJHIDE-001: drop the project_name term from the event subtitle when projects
                 // aren't user-facing (date + snippet remain). Flag OFF keeps project_name first.
                 sub={[PROJECTS_HIDDEN ? null : ev.project_name, ev.event_date ? String(ev.event_date).slice(0, 10) : null, ev.snippet].filter(Boolean).join(' · ') || null} />

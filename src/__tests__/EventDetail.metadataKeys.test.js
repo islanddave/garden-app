@@ -68,6 +68,9 @@ const PROD_METADATA_KEYS = [
   // of a voice batch — 101 events for one "water all bag area". Decided before its first live row
   // (0 rows in prod on 2026-09-24, read-only census by the pre-promote seat).
   ['care_input_source', 0],
+  // BUG-LOSSEVENTLABEL-001: the given_away reason key (V4-LOSSEVENT-001 writes it). 0 given_away rows
+  // in prod on 2026-09-29, so it is decided before its first live row.
+  ['giveaway_reason', 0],
 ]
 
 describe('BUG-EVTMETARAWKEYS-001 — no live metadata key renders raw', () => {

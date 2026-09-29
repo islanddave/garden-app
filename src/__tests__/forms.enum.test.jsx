@@ -81,6 +81,10 @@ describe('dropdownRegistry — EVENT_TYPE set (V3-CONFIG-001)', () => {
     expect(EVENT_TYPE_LABELS[t]).toContain('pest treatment')
     expect(EVENT_TYPE_LABELS[t]).not.toMatch(/\p{Extended_Pictographic}/u)
   })
+  it('BUG-LOSSEVENTLABEL-001: the loss event is "plants lost" in the edit select, not the status word "failed"', () => {
+    expect(EVENT_TYPE_LABELS.failed).toBe('plants lost')
+    expect(EVENT_TYPE_LABELS.given_away).toBe('plants given away')
+  })
 })
 
 describe('dropdownRegistry — PROJECT_CATEGORY set (V3-CONFIG-001)', () => {

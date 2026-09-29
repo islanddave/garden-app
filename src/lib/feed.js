@@ -3,6 +3,7 @@
 // accumulates pages and collapses the WHOLE accumulated array each render, so a Log-Many batch
 // split across a page boundary still folds into ONE entry. Mirrors the server-side collapse in
 // lambda/dashboard/handlers.js (dashboard card path) — kept in sync by intent.
+import { eventTypeText } from './eventDisplay.js';
 
 // Collapse Log-Many batches: each batch -> ONE entry, anchored at its newest row (rows arrive
 // created_at DESC). batch_count prefers event_batches.item_count (exact, window-proof) and falls
@@ -67,4 +68,6 @@ export function relativeTime(isoStr) {
   return `${Math.floor(days / 365)}y ago`;
 }
 
-export const prettyEventType = (t) => (t ?? '').replace(/_/g, ' ');
+// BUG-LOSSEVENTLABEL-001: through the shared wording, so the feed chip and filter say "plants lost"
+// rather than the stored token "failed", which is also a planting status.
+export const prettyEventType = (t) => eventTypeText(t);

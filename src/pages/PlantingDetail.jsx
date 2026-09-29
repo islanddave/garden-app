@@ -76,6 +76,7 @@ import { buildLifeStory } from '../lib/lifeStory.js'
 import { PROJECTS_HIDDEN, SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
 import { describeHarvestWeight, sumHarvestWeights, serverWeightTotal, weightBasisLabel, NO_WEIGHT_COPY } from '../lib/harvestWeight.js'
 import { vesselDataGaps } from '../lib/vesselData.js'
+import { eventTitle, reductionReasonText } from '../lib/eventDisplay.js'
 
 
 
@@ -1267,12 +1268,19 @@ export default function PlantingDetail() {
                     <Icon name={`event.${ev.event_type}`} size={18} decorative style={{ color: P.green }} />
                   </span>
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.875rem' }}>
-                      {ev.title || (ev.event_type || '').replace(/_/g, ' ')}
+                    {/* BUG-LOSSEVENTLABEL-001: a loss reads "2 plants lost", not the stored token
+                        "failed" — this planting is alive, and Failed is a planting status. */}
+                    <div data-testid="event-row-title" style={{ fontWeight: 600, color: P.dark, fontSize: '0.875rem' }}>
+                      {eventTitle(ev)}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginTop: 1 }}>
                       <span style={{ fontSize: T.type.xs2, color: P.light }}>
                         {fmtDate(ev.event_date) ?? ''}
+                        {/* Inside the date's span, so the separator sits at word spacing rather than
+                            after the row's 8px flex gap. */}
+                        {reductionReasonText(ev) && (
+                          <span data-testid="event-row-reason">{` · ${reductionReasonText(ev)}`}</span>
+                        )}
                       </span>
                       <HarvestWeightChip entry={harvestByEvent?.get(ev.id)} />
                     </div>

@@ -41,12 +41,8 @@ const DELIBERATE_SYNONYMS = {
   // one. The form moved to ANCHORS['care.feed'] and the event borrows it by reference — one mark,
   // one meaning ("give the plant food"), reached from two vocabularies. iconEvents.js REUSE block.
   [pk('care.feed', 'event.fertilizing')]:         "REUSE: fertilizing -> ANCHORS['care.feed']",
-  // V4-LOSSEVENT-001: the X carries three keys for one idea ("these plants are gone"). Kept.
-  // Caveat recorded rather than rediscovered: an unadorned X is the universal close/dismiss
-  // affordance, so it survives ONLY because it is always label-adjacent and never interactive.
-  // Never render it standalone/unlabeled, or on a tappable row that also has a dismiss control.
-  [pk('status.failed', 'event.failed')]:          'REUSE: failed -> STATUS_GLYPHS.failed',
-  [pk('status.dead', 'event.failed')]:            'REUSE: failed -> failed form, which dead also aliases',
+  // event.failed shared the status X until BUG-LOSSEVENTLABEL-001 (2026-09-29): a partial loss wore
+  // the planting's "Failed" badge. It has its own form now; the regression test below keeps it so.
 
   // Anchor-to-anchor, documented at the definition site.
   [pk('care.pause', 'media.pause')]: 'iconAnchors.js:163 — "media.pause = two rounded bars (reuses care.pause geometry; own key)"',
@@ -103,6 +99,17 @@ describe('icon language — one glyph, one meaning', () => {
     for (const master of MASTERS) {
       expect(GLYPHS['event.given_away'][master], `event.given_away.${master} is a copy of action.share`)
         .not.toBe(GLYPHS['action.share'][master])
+    }
+  })
+
+  it('event.failed is distinct from the Failed status badge (BUG-LOSSEVENTLABEL-001 regression)', () => {
+    // The loss event is usually PARTIAL (2 of 8 Mini Roses) while status.failed says the whole
+    // planting failed, and both render on PlantingDetail (the status badge and the event rows).
+    for (const master of MASTERS) {
+      for (const status of ['status.failed', 'status.dead']) {
+        expect(GLYPHS['event.failed'][master], `event.failed.${master} is a copy of ${status}`)
+          .not.toBe(GLYPHS[status][master])
+      }
     }
   })
 

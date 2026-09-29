@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.158.5",
+    "date": "2026-09-29",
+    "highlights": [
+      "A Plants lost entry now reads \"2 plants lost\" with its reason, and has its own wilted-plant icon, instead of saying \"failed\" like a failed planting."
+    ]
+  },
+  {
     "version": "4.158.4",
     "date": "2026-09-29",
     "highlights": [
