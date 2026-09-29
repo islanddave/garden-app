@@ -57,10 +57,13 @@ async function mkPick(user, projectId, plantId, date, grams) {
     VALUES (${ev[0].id}, ${projectId}, 3, 'count', ${grams}::numeric, false, 'measured', ${user})`;
   return ev[0].id;
 }
+const IG = 'https://www.instagram.com/intstats';
+const FB = 'https://www.facebook.com/intstats';
+// Bound, not inlined: lambda/sql-comment-hygiene.test.js forbids a literal '//' inside a sql`` template.
 async function mkSource(user, name) {
   const r = await directSql`
     INSERT INTO source (name, created_by, instagram_url, facebook_url)
-    VALUES (${name}, ${user}, 'https://www.instagram.com/intstats', 'https://www.facebook.com/intstats')
+    VALUES (${name}, ${user}, ${IG}, ${FB})
     RETURNING id`;
   return r[0].id;
 }
@@ -209,9 +212,7 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
     expect(Object.keys(body.sections)).toEqual(['seed_lots']);
     const lot = body.sections.seed_lots.series.rows.find((r) => r.lot_id === ids.lot);
     expect(lot.parent).toMatchObject({ planting_id: ids.plantA });
-    expect(lot.source).toMatchObject({
-      id: ids.srcA, instagram_url: 'https://www.instagram.com/intstats', facebook_url: 'https://www.facebook.com/intstats',
-    });
+    expect(lot.source).toMatchObject({ id: ids.srcA, instagram_url: IG, facebook_url: FB });
   });
 
   it('unknown section -> 400; POST -> 405', async () => {
