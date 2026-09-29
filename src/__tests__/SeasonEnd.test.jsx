@@ -36,7 +36,7 @@ const LOCS = [
 const row = (id, name, slug, status, location_id, lifecycle = null) => ({
   id, name, status, kind: 'planting', location_id, project_id: null,
   variety_ref: { name, crop_type_slug: slug, default_lifecycle: lifecycle },
-  last_logged_at: '2026-09-26T16:00:00.000Z',
+  last_logged_at: new Date(2026, 8, 26, 12, 0).toISOString(),
 })
 const ROWS = [
   row('t1', 'Sungold', 'tomato', 'fruiting', 'bag'),
