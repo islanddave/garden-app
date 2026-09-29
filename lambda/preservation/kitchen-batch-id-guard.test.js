@@ -45,6 +45,10 @@ const decomment = (s) => s.split('\n')
   .join('\n');
 
 const INDEX = decomment(readFileSync(resolve(__dirname, 'index.js'), 'utf8'));
+// Put-Up release 1a moved projectRow and the validators into jarRules.js and the shelf-life engine
+// into shelfLife.js, verbatim. They are jar-writer code, so "writes batch_id nowhere" covers them too.
+const JARRULES = decomment(readFileSync(resolve(__dirname, 'jarRules.js'), 'utf8'));
+const SHELFLIFE = decomment(readFileSync(resolve(__dirname, 'shelfLife.js'), 'utf8'));
 const KITCHEN = decomment(readFileSync(resolve(__dirname, 'kitchenRoutes.js'), 'utf8'));
 const PUTUP = decomment(readFileSync(resolve(root, 'src/pages/PutUp.jsx'), 'utf8'));
 const DDL = readFileSync(
@@ -77,8 +81,11 @@ describe('preservation_log.batch_id is not client-writable, and that is delibera
     expect(KITCHEN).toContain('SET batch_id = NULL');                 // DELETE /:id/outputs/:plid
     expect((KITCHEN.match(/\bSET batch_id\b/g) ?? [])).toHaveLength(3);
     // index.js writes it NOWHERE — the assertion below covers the INSERT and the full-replace PUT
-    // specifically; this covers every other statement in that file at once.
+    // specifically; this covers every other statement in that file at once. Same for the two
+    // modules the jar rules moved into.
     expect((INDEX.match(/\bbatch_id\s*=/g) ?? [])).toEqual([]);
+    expect((JARRULES.match(/\bbatch_id\s*=/g) ?? [])).toEqual([]);
+    expect((SHELFLIFE.match(/\bbatch_id\s*=/g) ?? [])).toEqual([]);
   });
 
   it('IS readable through projectRow, which is what makes the link observable at all', () => {
@@ -86,10 +93,10 @@ describe('preservation_log.batch_id is not client-writable, and that is delibera
     // routes, so while batch_id was absent from it a linked jar was indistinguishable from an
     // unlinked one on every read surface — the jar picker could not grey it and a silent re-point was
     // undetectable. Readable, never writable: the assertion above holds the write side.
-    // Mutation: delete the batch_id line from projectRow.
-    const at = INDEX.indexOf('function projectRow(r) {');
+    // Mutation: delete the batch_id line from projectRow (jarRules.js since Put-Up release 1a).
+    const at = JARRULES.indexOf('function projectRow(r) {');
     expect(at).toBeGreaterThan(-1);
-    const block = INDEX.slice(at, INDEX.indexOf('use_by_status:', at));
+    const block = JARRULES.slice(at, JARRULES.indexOf('use_by_status:', at));
     expect(block.length).toBeGreaterThan(200);
     expect(block).toContain('batch_id: r.batch_id');
   });

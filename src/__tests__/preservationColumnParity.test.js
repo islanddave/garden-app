@@ -1,7 +1,7 @@
 // V4-PUTUPPROV-001 — column parity across the FOUR hand-maintained enumerations that must agree:
 //   1. the INSERT column list          (lambda/preservation/index.js)
 //   2. the full-replace UPDATE SET list (lambda/preservation/index.js)
-//   3. projectRow's read whitelist      (lambda/preservation/index.js)
+//   3. projectRow's read whitelist      (lambda/preservation/jarRules.js — index.js until Put-Up 1a)
 //   4. buildFullPayload                 (src/pages/PutUp.jsx)
 //
 // Adding a column to four hand-lists is the defect generator, not the column itself. This file is
@@ -22,6 +22,8 @@ import { PRESERVATION_EDITABLE_COLUMNS } from '../../lambda/preservation/provena
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const lambdaSrc = readFileSync(resolve(root, 'lambda/preservation/index.js'), 'utf8')
+// projectRow moved verbatim into jarRules.js (Put-Up release 1a); the INSERT and the UPDATE did not move.
+const jarRulesSrc = readFileSync(resolve(root, 'lambda/preservation/jarRules.js'), 'utf8')
 const pageSrc = readFileSync(resolve(root, 'src/pages/PutUp.jsx'), 'utf8')
 
 // Columns the SERVER owns on write — never sent by a client, so never in the editable set.
@@ -40,9 +42,9 @@ describe('lambda/preservation/index.js write + read paths list every editable co
   const updateBlock = lambdaSrc.slice(
     lambdaSrc.indexOf('UPDATE preservation_log SET'),
     lambdaSrc.indexOf('updated_at          = NOW()'))
-  const projectBlock = lambdaSrc.slice(
-    lambdaSrc.indexOf('function projectRow(r) {'),
-    lambdaSrc.indexOf('use_by_status:'))
+  const projectBlock = jarRulesSrc.slice(
+    jarRulesSrc.indexOf('function projectRow(r) {'),
+    jarRulesSrc.indexOf('use_by_status:'))
 
   // consumed_at is CORRECTLY absent from the INSERT: a put-up cannot be already-consumed at the
   // moment it is created. It is set later, by the decrement path, which is a PUT — so it is asserted

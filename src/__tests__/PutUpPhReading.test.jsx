@@ -492,6 +492,10 @@ const LANE_SOURCES = [
   ['src/components/putup/GoingNowView.jsx', 'going-batch-ph-prompt'],
   ['lambda/preservation/kitchenBatch.js', 'KITCHEN_PH_SCALE_MAX'],
   ['lambda/preservation/kitchenRoutes.js', 'ph_read_at'],
+  // Put-Up release 1a — the jar engine's two new homes (V4's pH/date guard census: every lane adds its
+  // files). Every jar writer's date comes from shelfLife.js from now on.
+  ['lambda/preservation/shelfLife.js', 'const SHELF_LIFE_MONTHS = {'],
+  ['lambda/preservation/jarRules.js', 'export function projectRow(r) {'],
   ['migrations/v5-phrecord-001/0a-additive-ddl.sql', 'chk_ksl_ph_scale'],
   ['migrations/v5-phrecord-001/0r-rollback.sql', 'chk_ksl_ph_scale'],
   ['migrations/v5-phrecord-001/gates.yml', 'post_no_extra_ph_constraint'],

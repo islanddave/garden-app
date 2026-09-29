@@ -35,6 +35,11 @@
 // TEXT ASSERTION, because lambda/preservation/index.js cannot be imported by vitest — Neon, Clerk and
 // AWS all run at module scope. Same constraint that let the classifyUseBy day-boundary bug ship
 // untested, and the same workaround every other test in this directory uses.
+//
+// RE-POINTED 2026-09-29 (Put-Up release 1a): the table moved verbatim into shelfLife.js, which IS
+// importable — shelfLife.test.js executes it and pins every cell. This file keeps reading the TEXT of
+// the constant on purpose: its rules are about the declared legs as written (which kinds a row names),
+// and the parse below is what its mutation history was proved against.
 
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -44,7 +49,7 @@ import { fileURLToPath } from 'node:url'
 // resolve() against a dirname, matching the sibling guards in this directory. `new URL('./x',
 // import.meta.url)` does NOT work here — vitest hands this module a non-file scheme.
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8')
+const SRC = readFileSync(resolve(__dirname, 'shelfLife.js'), 'utf8')
 
 function shelfLifeRows() {
   // The ` = {` is load-bearing, not tidiness. `indexOf('const SHELF_LIFE_MONTHS')` PREFIX-matches
@@ -276,5 +281,40 @@ describe('SHELF_LIFE_MONTHS — an unrecorded storage kind must not be read as "
   // house-sourced shelf life should take rather than a number with a disclaimer in a migration header.
   it.each(['purchased_preserved', 'other'])('%s still has no invented default', (method) => {
     expect(rows[method].default).toBeNull()
+  })
+
+  // ── Put-Up release 1a, V4 engine rule (b): EVERY FREEZER CELL IS AN EXPLICIT LEG. ────────────────
+  //
+  // WHY THE LEGS THEMSELVES ARE PINNED, when shelfLife.test.js already pins every cell's months. In 1a
+  // an explicit freezer leg equal to `default` is behaviour-identical to no leg at all — rule (a) stops
+  // the fall-through only for a fridge — so deleting one leaves that matrix green. It stops being
+  // identical the day release 1b extends "no figure => no date" to every recorded kind: a missing
+  // freezer leg would then silently take the date off a jar in Dave's freezer. These assertions are
+  // what hold the legs in place until then, at the numbers V4 lists (today's, so nothing moves).
+  const FREEZER_LEGS_1A = {
+    passata: 12, can_water_bath: 12, can_pressure: 12, jam_preserve: 12,
+    hot_sauce: 6, ferment: 6, ferment_mash: 6,
+    dehydrate: 4, powder: 4, cure_store: 3, cold_store: 4,
+  }
+  it.each(Object.entries(FREEZER_LEGS_1A))('%s names both freezer kinds explicitly, at %i months', (method, months) => {
+    expect(rows[method].deep_freezer, `${method}.deep_freezer`).toBe(months)
+    expect(rows[method].fridge_freezer, `${method}.fridge_freezer`).toBe(months)
+  })
+
+  it('no method with a figure leaves a freezer cell to fall through to its default', () => {
+    const withFigure = Object.keys(rows).filter((m) => typeof rows[m].default === 'number')
+    expect(withFigure.length).toBeGreaterThanOrEqual(17)
+    for (const m of withFigure) {
+      for (const k of FREEZER_KINDS) expect(typeof rows[m][k], `${m}.${k} is not an explicit leg`).toBe('number')
+    }
+  })
+
+  // Candy's four non-freezer legs RESTATE ITS FLOOR (1, house): behaviour-identical today, and the
+  // reason candy keeps a date in a fridge now that a fridge no longer borrows `default`.
+  it('candy names fridge, pantry, cold_storage and other at its floor', () => {
+    for (const k of ['fridge', 'pantry', 'cold_storage', 'other']) {
+      expect(rows.candy[k], `candy.${k}`).toBe(rows.candy.default)
+    }
+    expect(rows.candy.default).toBe(1)
   })
 })
