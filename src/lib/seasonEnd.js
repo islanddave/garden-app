@@ -24,10 +24,12 @@
 // succulent: those are banded hardy or tropical, or sit under a roof.
 //
 // STILL GROWING THROUGH FROST — a second, collapsed group, ticked one at a time and never by group:
-// outdoor live plantings whose band is `hardy` or `light_frost_tolerant` AND whose CROP is an annual or
-// biennial (crop_types.default_lifecycle). Not the variety's grown_as, which is a bulk default and
-// wrong for ~50 rows. These are for a later pass after hard freezes. A hardy perennial (fruit, herbs,
-// the peach) is not listed at all: it goes dormant, it is not ended.
+// outdoor live plantings whose band is `light_frost_tolerant`, whatever the crop's lifecycle (petunia's
+// crop is not an annual or biennial, and it still dies in the first hard freeze), or whose band is
+// `hardy` AND whose CROP is an annual or biennial (crop_types.default_lifecycle). Not the variety's
+// grown_as, which is a bulk default and wrong for ~50 rows. These are for a later pass after hard
+// freezes. A hardy perennial (fruit, herbs, the peach) is not listed at all: it goes dormant, it is not
+// ended.
 //
 // "Last logged" is SHOWN on every row and never filtered on: on prod, 89 of the 114 frost-finished
 // plantings were worked in the last 14 days, so recent activity runs opposite to frost kill.
@@ -42,6 +44,9 @@ export const plantPath = (id) => `/api/plants/${id}`
 export const ENDED_STATUS = 'ended'
 export const FINISHED_BANDS = Object.freeze(['tender', 'chill_sensitive'])
 export const STILL_GROWING_BANDS = Object.freeze(['hardy', 'light_frost_tolerant'])
+// Of those, the bands listed only when the crop is an annual or biennial. light_frost_tolerant is not
+// here on purpose: it is listed whatever the crop's lifecycle.
+export const LIFECYCLE_GATED_BANDS = Object.freeze(['hardy'])
 export const SHORT_LIFECYCLES = Object.freeze(['annual', 'biennial'])
 export const CLOSED_STATUSES = Object.freeze(['ended', 'failed', 'dormant'])
 
@@ -94,10 +99,9 @@ export function classifyPlanting(row, byId) {
   if (isUnderRoof(row.location_id, byId)) return null
   const band = bandForSlug(row.variety_ref?.crop_type_slug)
   if (FINISHED_BANDS.includes(band)) return GROUP_FINISHED
-  if (STILL_GROWING_BANDS.includes(band) && SHORT_LIFECYCLES.includes(row.variety_ref?.default_lifecycle)) {
-    return GROUP_STILL_GROWING
-  }
-  return null
+  if (!STILL_GROWING_BANDS.includes(band)) return null
+  if (LIFECYCLE_GATED_BANDS.includes(band) && !SHORT_LIFECYCLES.includes(row.variety_ref?.default_lifecycle)) return null
+  return GROUP_STILL_GROWING
 }
 
 const byName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' })

@@ -128,15 +128,33 @@ describe('FINISHED — listed, group-selectable', () => {
   })
 })
 
-describe('STILL GROWING THROUGH FROST — hardy / light-frost crops that are annual or biennial', () => {
+describe('STILL GROWING THROUGH FROST — light-frost crops whatever their lifecycle; hardy crops that are annual or biennial', () => {
   it('lists hardy annuals and biennials and light-frost annuals, outdoors', () => {
     expect(classify(planting('lettuce', {}, 'annual'))).toBe(GROUP_STILL_GROWING)
     expect(classify(planting('kale', {}, 'biennial'))).toBe(GROUP_STILL_GROWING)
     expect(classify(planting('marigold', {}, 'annual'))).toBe(GROUP_STILL_GROWING)
   })
 
-  // KILLING MUTATION: SHORT_LIFECYCLES gains 'perennial' / drops the lifecycle test. RESULT: RED.
-  it('uses the CROP\'s default_lifecycle, not the variety\'s grown_as, and never lists a perennial', () => {
+  // Petunias were listed nowhere: banded light_frost_tolerant, but their crop is not an annual or
+  // biennial, so the old rule (every still-growing band gated on lifecycle) dropped them.
+  // KILLING MUTATION: LIFECYCLE_GATED_BANDS gains 'light_frost_tolerant' (the old rule). RESULT: RED.
+  it('lists a light-frost crop whatever its crop lifecycle — petunia included', () => {
+    for (const lifecycle of ['tender_perennial', 'perennial', null, 'annual', 'biennial']) {
+      expect(classify(planting('petunia', {}, lifecycle)), String(lifecycle)).toBe(GROUP_STILL_GROWING)
+    }
+    for (const slug of ['marigold', 'sunflower', 'borage', 'chamomile']) {
+      expect(classify(planting(slug, {}, 'perennial')), slug).toBe(GROUP_STILL_GROWING)
+    }
+    const noLifecycle = planting('petunia')
+    delete noLifecycle.variety_ref.default_lifecycle
+    expect(classify(noLifecycle)).toBe(GROUP_STILL_GROWING)
+    expect(buildSeasonList([planting('petunia', { id: 'pt', location_id: 'trough' }, 'tender_perennial')], LOCS))
+      .toMatchObject({ finished: [], stillGrowing: [{ id: 'pt', kind: GROUP_STILL_GROWING, band: 'light_frost_tolerant', locationName: 'Trough' }] })
+  })
+
+  // KILLING MUTATIONS: SHORT_LIFECYCLES gains 'perennial'; LIFECYCLE_GATED_BANDS emptied (no lifecycle
+  // gate at all); the gate reads grown_as. RESULT: RED.
+  it('gates a HARDY crop on the CROP\'s default_lifecycle, not the variety\'s grown_as, and never lists a hardy perennial', () => {
     const grownAsAnnual = planting('chives', {}, 'perennial')
     grownAsAnnual.variety_ref.grown_as = 'annual'
     expect(classify(grownAsAnnual)).toBeNull()
@@ -144,12 +162,18 @@ describe('STILL GROWING THROUGH FROST — hardy / light-frost crops that are ann
     grownAsPerennial.variety_ref.grown_as = 'perennial'
     expect(classify(grownAsPerennial)).toBe(GROUP_STILL_GROWING)
     expect(classify(planting('lettuce', {}, null))).toBeNull()
-    expect(classify(planting('petunia', {}, 'tender_perennial'))).toBeNull()
+    expect(classify(planting('kale', {}, 'tender_perennial'))).toBeNull()
+    expect(classify(planting('sage', {}, 'perennial'))).toBeNull()
   })
 
+  // KILLING MUTATION: classify a light-frost band before the live / status / roof checks. RESULT: RED.
   it('is subject to the same roof and status rules', () => {
     expect(classify(planting('kale', { location_id: 'rack' }, 'biennial'))).toBeNull()
     expect(classify(planting('kale', { status: 'dormant' }, 'biennial'))).toBeNull()
+    expect(classify(planting('petunia', { location_id: 'rack' }, 'tender_perennial'))).toBeNull()
+    expect(classify(planting('petunia', { location_id: 'porch' }, 'tender_perennial'))).toBeNull()
+    expect(classify(planting('petunia', { status: 'ended' }, 'tender_perennial'))).toBeNull()
+    expect(classify(planting('petunia', { archived_at: '2026-09-01T00:00:00Z' }, 'tender_perennial'))).toBeNull()
   })
 })
 

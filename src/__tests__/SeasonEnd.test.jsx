@@ -150,6 +150,23 @@ describe('group select', () => {
     fireEvent.click(kale)
     expect(rowNamed('Lacinato').getAttribute('aria-checked')).toBe('true')
   })
+
+  // KILLING MUTATION: gate light_frost_tolerant on the crop lifecycle again. RESULT: RED — the petunia
+  // (a tender-perennial crop) is listed nowhere, which is the defect this pins.
+  it('a light-frost crop that is not an annual shows under still growing; a hardy perennial still does not', async () => {
+    plantsBody = { plants: [
+      row('t1', 'Sungold', 'tomato', 'fruiting', 'bag'),
+      row('pt1', 'Wave Purple', 'petunia', 'flowering', 'trough', 'tender_perennial'),
+      row('c1', 'Chives', 'chives', 'vegetative', 'bag', 'perennial'),
+    ] }
+    await renderPage()
+    expect(screen.getAllByTestId('season-end-group').map((g) => g.getAttribute('data-group'))).toEqual(['Bag Area'])
+    openStillGrowing()
+    const petunia = rowNamed('Wave Purple')
+    expect(within(petunia).getByTestId('season-end-tag').textContent).toBe('Takes light frost')
+    expect(petunia.textContent).toContain('Trough')
+    expect(rowNamed('Chives')).toBeUndefined()
+  })
 })
 
 describe('the confirm', () => {
