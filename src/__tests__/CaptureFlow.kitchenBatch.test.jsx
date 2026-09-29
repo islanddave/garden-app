@@ -135,7 +135,11 @@ describe('CaptureFlow — Something in the kitchen', () => {
     await waitFor(() => expect(callsTo('/api/kitchen-batches', 'POST')).toHaveLength(1))
     // The whole body, as one exact literal: a `kind` key, a quantity or a planting id appearing here
     // later fails this test.
-    expect(kbBody()).toEqual({
+    // Release 1b adds the create's idempotency key (V4 §5.2); it is asserted as a v4 uuid, the rest as
+    // the same exact literal.
+    const { idempotency_key: key, ...rest } = kbBody()
+    expect(key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(rest).toEqual({
       label: 'Pepper mash',
       started_at: NOW.toISOString(), start_precision: 'exact', start_anchor_kind: 'memory', start_anchor_id: null,
       cover_photo_id: 'photo-1',

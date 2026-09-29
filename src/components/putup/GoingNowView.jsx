@@ -33,6 +33,10 @@ import {
   OPEN_BATCH_CTA, CLOSED_DOOR_CTA, KIND_QUESTION, CHECK_ON_IT_CTA, cardQuestion,
 } from './goingNow.js'
 import CheckOnItSheet from './CheckOnItSheet.jsx'
+import PutItUpSheet from './PutItUpSheet.jsx'
+import PutUpStub from './PutUpStub.jsx'
+import CheckInSaved from './CheckInSaved.jsx'
+import { PUT_IT_UP_CTA } from './putItUp.js'
 import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
 
 // A question on the card is ONE TARGET that opens Check on it (V4 §2.3: "the ruled pH prompt's link
@@ -57,8 +61,8 @@ function shortDate(iso) {
 // own surface, BatchDetailView.jsx) and for the same reason: an inline reveal is not a dismissable
 // layer. One tap on a chip IS the answer — it PUTs {kind} through
 // the shipped merge PUT (an absent key is left alone, so nothing else on the row moves) and the
-// question is never asked again. "Other" is the one two-step answer in 1a, because the live CHECK
-// still needs its short name; kindBody refuses to build that body without one.
+// question is never asked again. "Other" is the one two-step answer: it offers its short name before
+// Save — optional from release 1b, where the CHECK no longer needs it (kindBody sends kind alone).
 //
 // The question hides itself the moment the write lands, rather than waiting for the list re-read to
 // carry the new kind back: a question that re-appears for the length of a round trip after it was
@@ -147,7 +151,7 @@ function KindQuestion({ batch, fetch, onChanged }) {
 // Leads with WHAT IS KNOWN, never with the gap. The meta line is one joined string on purpose: it is
 // the thing a test can assert as a full literal with both bounds and every separator, which is the
 // standard this repo adopted after shipping an assertion that passes on a value ten days wrong.
-function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, paused }) {
+function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, stub, savedStageId, paused }) {
   const age = describeAge(batch, nowMs)
   const stage = describeStage(batch, nowMs)
   const window = describeExpectedWindow(batch)
@@ -245,6 +249,8 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, paused }) 
           {Number(batch.input_count) === 1 ? '1 pick in' : `${Number(batch.input_count)} picks in`}
         </div>
       )}
+      {savedStageId && <CheckInSaved key={savedStageId} batchId={batch.id} stageId={savedStageId} onUndone={onChanged} />}
+      {stub && <PutUpStub stub={stub} onOpen={onOpen} onUndone={onChanged} />}
       {/* THE ACTION SLOT (V4 §2.3): at most three quiet actions — Check on it · Open (release 1b adds
           Put it up between them and moves nothing). Pause and "Set a start date" moved to the batch's
           own surface in Put-Up 1a, both being desk decisions about the batch rather than check-ins,
@@ -255,6 +261,13 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, paused }) 
             background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
             fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
           {CHECK_ON_IT_CTA} →
+        </button>
+        {/* Put-Up release 1b: Put it up sits between Check on it and Open, and moves nothing else. */}
+        <button type="button" data-testid="going-put-up" onClick={() => onPutUp?.(batch.id)}
+          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+            background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
+            fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
+          {PUT_IT_UP_CTA} →
         </button>
         {/* THE ONE EXPLICIT DOOR to the batch's own surface, and the card itself deliberately stays
             INERT. The card holds interactive descendants with zero propagation guards, so a whole-card
@@ -322,7 +335,40 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
   const closeCheck = useCallback(() => setCheckingId(null), [])
   // The write landed: close, then re-read the list — the honest recovery, never a local mutation
   // (the card's clocks and "last touched" come back from the view the server computes).
-  const checkSaved = useCallback(() => { setCheckingId(null); onReload?.() }, [onReload])
+  // "Saved · Undo" in place (V4 §2.3, from 1b): the saved row's id, per batch, until the next visit.
+  const [saved, setSaved] = useState({})
+  const checkSaved = useCallback((body, answer) => {
+    const batchId = checkingId
+    const stageId = answer?.stage?.id ?? null
+    if (batchId && stageId) setSaved(m => ({ ...m, [batchId]: stageId }))
+    setCheckingId(null); onReload?.()
+  }, [checkingId, onReload])
+
+  // PUT IT UP (release 1b) — one sheet for the view, like Check on it. A landed sitting leaves a STUB in
+  // the card's slot (V4 §2.4 "Completion"): inside the card when the batch is still going, in the card's
+  // old place when "Put it up and finish" closed it. Held in this view's state, so it lasts until the
+  // next visit and no longer — there is no timer.
+  const [puttingId, setPuttingId] = useState(null)
+  const putting = useMemo(
+    () => (puttingId ? [...active, ...paused].find(b => b.id === puttingId) ?? null : null),
+    [puttingId, active, paused],
+  )
+  const [stubs, setStubs] = useState([])
+  const closePutUp = useCallback(() => setPuttingId(null), [])
+  const putUpDone = useCallback(({ finish, stub, answer, batchId }) => {
+    const index = active.findIndex(b => b.id === batchId)
+    const stageId = answer?.stage?.id ?? null
+    setStubs(ss => [...ss.filter(x => x.batchId !== batchId),
+      { batchId, stageId, text: stub, index: index < 0 ? 0 : index, focus: !!finish }])
+    setPuttingId(null)
+    onReload?.()
+  }, [active, onReload])
+  const stubFor = (id) => stubs.find(x => x.batchId === id) ?? null
+  // Stubs whose card has left the list (the batch finished) render in the card's old place.
+  const listed = new Set([...active, ...paused].map(b => b.id))
+  const orphanStubs = stubs.filter(x => !listed.has(x.batchId)).sort((a, b) => a.index - b.index)
+  const activeItems = active.map(b => ({ kind: 'card', batch: b }))
+  for (const st of orphanStubs) activeItems.splice(Math.min(st.index, activeItems.length), 0, { kind: 'stub', stub: st })
 
   // THE DOOR TO THE CLOSED LIST, rendered inside the empty block when the list is empty and after the
   // list when it is not. Exactly one instance either way.
@@ -380,9 +426,10 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
         </div>
       )}
 
-      {active.map(b => (
-        <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch}
-          onCheck={setCheckingId} />
+      {activeItems.map(item => (item.kind === 'stub'
+        ? <PutUpStub key={`stub-${item.stub.batchId}`} stub={item.stub} onOpen={openBatch} onUndone={onReload} />
+        : <BatchCard key={item.batch.id} batch={item.batch} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch}
+            onCheck={setCheckingId} onPutUp={setPuttingId} stub={stubFor(item.batch.id)} savedStageId={saved[item.batch.id] ?? null} />
       ))}
 
       {paused.length > 0 && (
@@ -394,13 +441,14 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
           </h2>
           {paused.map(b => (
             <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch}
-              onCheck={setCheckingId} paused />
+              onCheck={setCheckingId} onPutUp={setPuttingId} stub={stubFor(b.id)} savedStageId={saved[b.id] ?? null} paused />
           ))}
         </>
       )}
 
       {/* Renders NOTHING while closed, so it never displaces a sibling in the document. */}
       <CheckOnItSheet open={!!checking} batch={checking} now={now} onClose={closeCheck} onSaved={checkSaved} />
+      <PutItUpSheet open={!!putting} batch={putting} now={now} onClose={closePutUp} onDone={putUpDone} onChanged={onReload} />
 
       {!empty && closedDoor}
     </div>

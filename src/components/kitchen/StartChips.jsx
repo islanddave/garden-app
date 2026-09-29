@@ -22,11 +22,13 @@
 // 2026-09-29 (pg_constraint, read-only), identical to the migration that created it
 // (v5-inflightbatch-001/0a-additive-ddl.sql:137-139):
 //     chk_kitchen_batch_start_precision: exact · hour · day · week · month · unknown
-// So 1a offers the three whose precision is in that list — This month (month), Last month (month),
-// Pick a date (day) — and NOT "2–3 months ago" (season), "Earlier this year" (year) or "Last year"
-// (year): those words arrive only with release 1b's widening DDL, and a chip that wrote one today
-// would be a 23514 behind an opaque 500. "Not sure" is the shipped biconditional's other legal state:
-// no date + `unknown` (chk_kitchen_batch_start_pairing).
+// So 1a offered the three whose precision is in that list — This month (month), Last month (month),
+// Pick a date (day). Put-Up release 1b widens the CHECK (v5-putupmake-001/0a: + season, year) and this
+// row now offers all six §3.6 windows: "2–3 months ago" (season), "Earlier this year" (year) and "Last
+// year" (year) join, each computed from today and hidden when its window is empty — the SAME windows
+// Put it up's Earlier… offers (putup/putItUp.js estimateChips), so one estimate means one thing. "Not
+// sure" is the shipped biconditional's other legal state: no date + `unknown`
+// (chk_kitchen_batch_start_pairing).
 import React from 'react'
 // Direct import, NOT via the forms barrel — the same idiom and the same reason CaptureFlow.jsx
 // records for buttonChrome: formsPrimitivesFreeze.test.js pins the barrel's export set exactly, and
@@ -34,6 +36,7 @@ import React from 'react'
 import { labelChrome, optionalMarkChrome } from '../forms/formStyles.js'
 import Input from '../forms/Input.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
+import { estimateChips } from '../putup/putItUp.js'
 
 // `daysAgo` and `precision` are stated on the rows that resolve to a fixed day, so the parity test can
 // read them beside goingNow.js's table; Earlier… resolves through EARLIER_CHIPS instead.
@@ -43,10 +46,15 @@ export const SHEET_START_CHIPS = Object.freeze([
   { id: 'earlier',   label: 'Earlier…' },
   { id: 'unsure',    label: 'Not sure',  daysAgo: null, precision: 'unknown' },
 ])
+// Every Earlier… choice this row can ever show. Which of them are shown TODAY is estimateChips(now):
+// a window that is empty is hidden (Earlier this year, before May).
 export const EARLIER_CHIPS = Object.freeze([
-  { id: 'this_month', label: 'This month',  precision: 'month' },
-  { id: 'last_month', label: 'Last month',  precision: 'month' },
-  { id: 'pickdate',   label: 'Pick a date', precision: 'day' },
+  { id: 'this_month',   label: 'This month',        precision: 'month' },
+  { id: 'last_month',   label: 'Last month',        precision: 'month' },
+  { id: 'two_three',    label: '2–3 months ago',    precision: 'season' },
+  { id: 'earlier_year', label: 'Earlier this year', precision: 'year' },
+  { id: 'last_year',    label: 'Last year',         precision: 'year' },
+  { id: 'pickdate',     label: 'Pick a date',       precision: 'day' },
 ])
 export const START_ERRORS = Object.freeze({
   earlier: 'Pick when it started — or tap Not sure.',
@@ -84,8 +92,9 @@ function localYmd(d) {
 // quietly stored as "never asked": the chip row always holds an answer, Today by default.
 //   Today      -> the instant, exact ("Today" in this sheet is pack time: it is being recorded as made)
 //   Yesterday  -> local midnight yesterday, day
-//   This month / Last month -> the window's START at local midnight, month (derived dates start from
-//              the earliest the estimate allows, V4 §3.6)
+//   This month / Last month / 2–3 months ago / Earlier this year / Last year -> the window's START at
+//              local midnight, at its precision (derived dates start from the earliest the estimate
+//              allows, V4 §3.6); a window that is empty today is refused like an unanswered Earlier…
 //   Pick a date -> that local calendar day, day, anchored 'manual'
 //   Not sure   -> no date + unknown
 export function resolveSheetStart({ chip = 'today', earlier = null, pickedDate = '', now = new Date() } = {}) {
@@ -99,9 +108,9 @@ export function resolveSheetStart({ chip = 'today', earlier = null, pickedDate =
     return { start: { started_at: null, start_precision: 'unknown', start_anchor_kind: null, start_anchor_id: null } }
   }
   if (chip !== 'earlier') return { error: START_ERRORS.earlier }
-  if (earlier === 'this_month' || earlier === 'last_month') {
-    const first = new Date(now.getFullYear(), now.getMonth() - (earlier === 'last_month' ? 1 : 0), 1)
-    return { start: { started_at: first.toISOString(), start_precision: 'month', start_anchor_kind: 'memory', start_anchor_id: null } }
+  const win = earlier && earlier !== 'pickdate' ? estimateChips(now).find(c => c.id === earlier) : null
+  if (win) {
+    return { start: { started_at: win.start.toISOString(), start_precision: win.precision, start_anchor_kind: 'memory', start_anchor_id: null } }
   }
   if (earlier === 'pickdate') {
     const d = parseLocalDate(pickedDate)
@@ -136,7 +145,7 @@ export function SheetStartChips({
       </div>
       {value === 'earlier' && (
         <div role="group" aria-label="Earlier…" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-          {EARLIER_CHIPS.map(c => (
+          {EARLIER_CHIPS.filter(c => estimateChips(now).some(w => w.id === c.id)).map(c => (
             <SelectChip key={c.id} touch active={earlier === c.id} disabled={disabled} data-testid={`${idPrefix}-${c.id}`}
               onClick={() => onEarlierChange?.(earlier === c.id ? null : c.id)}>
               {c.label}

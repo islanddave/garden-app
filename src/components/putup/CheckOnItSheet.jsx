@@ -155,11 +155,12 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
     writingRef.current = true
     setSaving(true); setErr(null); setPhErr(null)
     try {
-      await fetch(`/api/kitchen-batches/${batch.id}/stages`, { method: 'POST', body: JSON.stringify(res.body) })
+      const answer = await fetch(`/api/kitchen-batches/${batch.id}/stages`, { method: 'POST', body: JSON.stringify(res.body) })
       clearSheetDraft(draftKey)
       writingRef.current = false
       setSaving(false)
-      onSaved?.(res.body)
+      // The server's answer rides along (release 1b): its `stage.id` is what "Saved · Undo" voids.
+      onSaved?.(res.body, answer)
     } catch {
       // Nothing is cleared: there is no offline queue in this app, so a clear failure that keeps what
       // was noted is the honest answer.

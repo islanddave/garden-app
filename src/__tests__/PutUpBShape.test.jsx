@@ -210,12 +210,15 @@ describe('batch detail reads a B-shaped batch', () => {
     expectPlainWords(screen.getByTestId('batch-detail-view'), 'batch detail')
   })
 
-  it('every future stage kind falls back to the shipped "Logged", dated when it has a date and bare when not', () => {
+  // Put-Up release 1b amends this in the same commit that teaches the Log its new kinds (V4 §8.3): the
+  // 1b kinds read in words, a void row and the check-in it voids are both gone from the Log (as from
+  // every stage LATERAL), and an undated "Not sure" put-up is its bare label.
+  it('the 1b stage kinds read in words; a void row and the row it voids are left out', () => {
     renderDetail()
     const rows = screen.getAllByTestId('batch-detail-stage').map(r => r.firstElementChild.textContent)
     expect(rows).toEqual([
-      'Logged · Oct 19', 'Logged · Oct 18', 'Logged · Oct 17', 'Logged · Oct 16', 'Logged · Oct 15',
-      'pH 3.70 · read Oct 14', 'Logged', 'Started · Oct 1',
+      'Next time · Oct 18', 'Reopened · Oct 17', 'Picked back up · Oct 16', 'Paused · Oct 15',
+      'Put up', 'Started · Oct 1',
     ])
     // The noted row's note is still read back, under its row.
     expect(screen.getAllByTestId('batch-detail-stage-detail').map(d => d.textContent)).toContain('Next time: more carrot')
@@ -236,9 +239,14 @@ describe('batch detail reads a B-shaped batch', () => {
     expect(screen.getByTestId('batch-inputs-count').textContent).toBe('6 things written down.')
   })
 
-  it('a label-only jar with no quantity pair renders as its count and date — no blank, no null', () => {
+  // Amended with 1b's jar words (V4 §7 "jars show their name, no-size form and date words everywhere"):
+  // a sitting's jar reads as its name, count × container and its date at its precision, under the
+  // sitting it came from.
+  it('a label-only jar with no quantity pair renders as its name, count × container and date words — no blank, no null', () => {
     renderDetail()
-    expect(screen.getByTestId('batch-detail-output').textContent).toBe('2 packages · Oct 8')
+    expect(screen.getByTestId('batch-detail-output').textContent)
+      .toBe('Megatron reaper · 2 × 8 oz woozy · put up sometime after Oct 8 · pH 3.7')
+    expect(screen.getByTestId('batch-detail-sitting').getAttribute('data-stage-id')).toBe('ksl-put')
   })
 
   it('reads a closed B batch back through the label table, never the raw outcome', () => {

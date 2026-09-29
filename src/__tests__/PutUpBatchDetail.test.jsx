@@ -551,32 +551,35 @@ describe('BatchDetailView — the start-date door lives on the batch\'s own surf
 })
 
 describe('BatchDetailView — pause lives on the batch\'s own surface', () => {
-  const putCalls = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PUT')
+  // Amended for release 1b in the same commit as the change (V4 Appendix A, §8.3): a pause is ONE write
+  // through the stages route, which moves suspended_at and writes the history row in one statement (the
+  // 1b Lambda's stateStage). The merge PUT is no longer sent — and the server stamps the instant.
+  const writes = () => fetchMock.mock.calls.filter(([, o]) => o?.method && o.method !== 'GET')
 
-  it('PUTs exactly suspended_at, at the INJECTED instant, and merges nothing else', async () => {
+  it('POSTs exactly one `paused` stage row, and nothing else', async () => {
     const onChanged = vi.fn()
     renderDetail({ batch: CANDY, onChanged })
     expect(screen.getByTestId('batch-pause').textContent).toBe('Pause this batch')
     fireEvent.click(screen.getByTestId('batch-pause'))
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
-    expect(putCalls()).toEqual([['/api/kitchen-batches/kb-candy', {
-      method: 'PUT', body: JSON.stringify({ suspended_at: new Date(NOW).toISOString() }),
+    expect(writes()).toEqual([['/api/kitchen-batches/kb-candy/stages', {
+      method: 'POST', body: JSON.stringify({ stage_kind: 'paused' }),
     }]])
   })
 
-  it('offers the way back on a paused batch and NULLs the column', async () => {
+  it('offers the way back on a paused batch as one `resumed` row', async () => {
     const onChanged = vi.fn()
     renderDetail({ batch: PAUSED, onChanged })
     expect(screen.getByTestId('batch-pause').textContent).toBe('Pick it back up')
     fireEvent.click(screen.getByTestId('batch-pause'))
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
-    expect(putCalls()).toEqual([['/api/kitchen-batches/kb-paused', {
-      method: 'PUT', body: JSON.stringify({ suspended_at: null }),
+    expect(writes()).toEqual([['/api/kitchen-batches/kb-paused/stages', {
+      method: 'POST', body: JSON.stringify({ stage_kind: 'resumed' }),
     }]])
   })
 
   it('keeps the batch as it was and says so when the write fails — as an error, not a body alarm', async () => {
-    fetchMock.mockImplementation((path, o) => (o?.method === 'PUT'
+    fetchMock.mockImplementation((path, o) => (o?.method === 'POST'
       ? Promise.reject(new Error('boom')) : Promise.resolve({ group_by: 'crop', groups: [] })))
     renderDetail({ batch: CANDY })
     fireEvent.click(screen.getByTestId('batch-pause'))
@@ -584,6 +587,15 @@ describe('BatchDetailView — pause lives on the batch\'s own surface', () => {
     expect(screen.getByTestId('batch-pause').textContent).toBe('Pause this batch')
     expect(screen.getByTestId('batch-pause-error').getAttribute('role')).toBe('alert')
     expect(screen.getByTestId('batch-pause-error').getAttribute('data-alarm-ink-exempt')).toBe('error')
+  })
+
+  it('a refused pause (already paused elsewhere) says why in the server\'s words', async () => {
+    fetchMock.mockImplementation((path, o) => (o?.method === 'POST'
+      ? Promise.reject(Object.assign(new Error('409'), { status: 409, body: { code: 'not_paused_able', error: 'This batch is already paused or finished.' } }))
+      : Promise.resolve(null)))
+    renderDetail({ batch: CANDY })
+    fireEvent.click(screen.getByTestId('batch-pause'))
+    await waitFor(() => expect(screen.getByTestId('batch-pause-error').textContent).toBe('This batch is already paused or finished.'))
   })
 
   it('is not offered on a closed batch — reopening is a different act on a different surface', () => {

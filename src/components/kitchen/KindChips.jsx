@@ -10,10 +10,10 @@
 // values are the column's). `age` is still a valid stored value and is deliberately NOT offered: a
 // row already carrying it reads back fine, and nothing asks it again.
 //
-// "OTHER" STILL NEEDS A SHORT NAME IN 1a. chk_kitchen_batch_kind_other refuses kind 'other' without
-// non-blank kind_other, and the Lambda's kindError mirrors it; both relax only in release 1b. So the
-// Other chip reveals one short text field and `kindBody` refuses to build a body without it — a body
-// that could never commit is caught here rather than surfacing as an opaque 400.
+// "OTHER" NEEDS NO TEXT FROM RELEASE 1b (V4 §2.3). In 1a chk_kitchen_batch_kind_other refused kind
+// 'other' without a non-blank kind_other; 1b relaxes it (v5-putupmake-001/0a) and the Lambda twin with
+// it (contract-F §2.1 "kind 'other' with no text"). The Other chip still reveals its short text field,
+// now optional: a name typed there rides along as kind_other, and a blank one sends kind alone.
 //
 // OPTIONAL SINGLE-SELECT, so role="group" + aria-pressed (V4 §6.4) — never a radiogroup, which would
 // announce a required choice. 48px touch chips with 8px gaps, the house SelectChip `touch` variant.
@@ -40,7 +40,7 @@ export function kindBody(kind, otherText) {
   if (kind == null) return {}
   if (kind === 'other') {
     const text = String(otherText ?? '').trim()
-    return text ? { kind: 'other', kind_other: text } : null
+    return text ? { kind: 'other', kind_other: text } : { kind: 'other' }
   }
   return KIND_CHIPS.some(c => c.value === kind) ? { kind } : null
 }
@@ -61,7 +61,7 @@ export default function KindChips({
         ))}
       </div>
       {value === 'other' && (
-        <input type="text" data-testid={`${idPrefix}-other-text`} aria-label="What kind is it?"
+        <input type="text" data-testid={`${idPrefix}-other-text`} aria-label="What kind is it? (optional)"
           value={otherText} placeholder={KIND_OTHER_PLACEHOLDER} maxLength={60} disabled={disabled}
           onChange={e => onOtherTextChange?.(e.target.value)}
           style={{ ...inputChrome(false), marginTop: T.space.sm, color: P.dark }} />

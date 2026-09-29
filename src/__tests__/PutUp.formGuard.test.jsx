@@ -443,7 +443,9 @@ const CANDY_ROW = { ...ROW, method: 'candy', use_by_target: '2027-01-01' }
 function wireRow({ rec = ROW, onPut } = {}) {
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
-    if (path.startsWith('/api/preservation/') && method === 'PUT') return onPut ? onPut(path, options) : Promise.resolve({ id: rec.id })
+    // Put-Up release 1b: the editor writes through the PUT (size, count) or the PATCH (name, method,
+    // notes, discard-by); both are "the write" these tests hold the gate around.
+    if (path.startsWith('/api/preservation/') && (method === 'PUT' || method === 'PATCH')) return onPut ? onPut(path, options) : Promise.resolve({ id: rec.id })
     if (path.startsWith('/api/preservation/whats-put-up')) {
       return Promise.resolve({ group_by: 'storage', groups: [{ group_key: 'loc-1', label: 'Garage freezer', total_packages: 3, units: ['bags'], use_soon_count: 0, records: [rec] }] })
     }
@@ -460,7 +462,7 @@ async function openRowEditor() {
   return view
 }
 const typeNotes = (v) => fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: v } })
-const putCount = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PUT').length
+const putCount = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PUT' || o?.method === 'PATCH').length
 
 describe('RecordRow editor — holds the reload gate while dirty or saving (Put-Up 1a)', () => {
   it('opening the editor holds nothing; an edit holds; putting it back releases', async () => {
@@ -494,12 +496,21 @@ describe('RecordRow editor — holds the reload gate while dirty or saving (Put-
     expect(isReloadBlocked()).toBe(false)
   })
 
-  it('an untouched Save holds while the PUT is in flight; a save that lands releases', async () => {
+  // Amended for release 1b (V4 §5.4 "From 1b", §8.3): the editor sends only what changed, so an
+  // untouched Save writes NOTHING and closes; the in-flight hold is proven on a save that writes.
+  it('an untouched Save writes nothing and closes; a save in flight holds, and releases when it lands', async () => {
     let land
     wireRow({ onPut: () => new Promise(r => { land = () => r({ id: 'rec-1' }) }) })
     await openRowEditor()
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull())
+    expect(putCount()).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    await screen.findByRole('button', { name: 'Save' })
+    typeNotes('two went to Jen')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(putCount()).toBe(1))
+    typeNotes('')
     expect(isReloadBlocked()).toBe(true)
     await act(async () => { land() })
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull())

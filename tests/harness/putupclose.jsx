@@ -233,7 +233,8 @@ const PLACES = [
   { id: 'loc-meat', user_id: 'user_dave', label: 'Meat deep freezer', kind: 'deep_freezer' },
   { id: 'loc-fridge', user_id: 'user_dave', label: 'Fridge', kind: 'fridge' },
 ]
-const GOING_CASE = CASE.startsWith('going') || CASE.startsWith('checkin') || CASE.startsWith('start')
+// Put-Up release 1b adds the Put it up cases (`putup*`), opened from the stalled ferment's card.
+const GOING_CASE = CASE.startsWith('going') || CASE.startsWith('checkin') || CASE.startsWith('start') || CASE.startsWith('putup')
 
 // Stub at the network layer so the REAL page, the REAL useApiFetch, the REAL Sheet and the REAL
 // JarPicker all run and only the far side of the wire is faked — aliasing src/lib/api.js would test
@@ -330,6 +331,20 @@ async function run() {
     click('start-kind-toggle'); await settle()
     click('start-kind-other'); await settle()
     byTid('start-kind-other-text')?.focus()
+    await settle()
+  }
+
+  // Put-Up release 1b (V4 §6.7 "lane entry render": Put it up, 2 rows, one expanded, keyboard up). The
+  // sheet is filled through its real chips: Today, Hot sauce, row 1's place and container, a second row
+  // (inheriting both). `putup` opens row 1's disclosure and focuses its pH field; `putup-sitting` opens
+  // the sitting's More and focuses Next time… — the field nearest the pinned two-button footer.
+  if (CASE.startsWith('putup')) {
+    click('going-put-up', cardOf('kb-going-ferment')); await settle(); await settle()
+    click('putup-when-today'); click('putup-method-hot_sauce'); await settle()
+    click('putup-row-0-place-id:loc-fridge'); click('putup-row-0-container-8 oz woozy'); await settle()
+    click('putup-row-add'); await settle()
+    if (CASE === 'putup') { click('putup-row-0-more'); await settle(); byTid('putup-row-0-ph-input')?.focus() }
+    if (CASE === 'putup-sitting') { click('putup-sitting-more'); await settle(); byTid('putup-nexttime')?.focus() }
     await settle()
   }
 
