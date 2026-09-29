@@ -5,7 +5,7 @@ import React from 'react'
 import { ChartFrame, Txt, Line, Rect, XAxis } from './ChartFrame.jsx'
 import { linear, truncate } from './geom.js'
 import { v } from '../palette.js'
-import { fmtInt, isNum } from '../format.js'
+import { fmtInt, isNum, isSmaller } from '../format.js'
 
 const RH = 17
 const TOP = 20
@@ -30,7 +30,7 @@ export function layoutSepSize(section) {
         key: `${r.cultivar}-${i}`,
         name: truncate(r.cultivar, 20),
         cy: TOP + i * RH + RH / 2,
-        a, b, color: r.ratio < 1 ? v('rust') : v('sage'),
+        a, b, color: isSmaller(r) ? v('rust') : v('sage'),
         text: `${fmtInt(r.aug_g)} → ${fmtInt(r.sep_g)} g`,
       }
     }),

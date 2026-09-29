@@ -5,7 +5,7 @@
 // make it is "lost" (house rule: events never speak in status words). A limit code this file has no
 // sentence for is left out rather than shown raw.
 import {
-  fmtInt, fmtLb, fmtPct, monthDay, dayNum, countOf, plural, listWords, num, isNum, HEAT_BAND_LABEL, CARE_LABEL,
+  fmtInt, fmtLb, fmtPct, monthDay, dayNum, countOf, plural, listWords, num, isNum, isSmaller, HEAT_BAND_LABEL, CARE_LABEL,
 } from './format.js'
 
 // A limit whose number or date is missing (an empty season) returns null and is left out: a line
@@ -125,7 +125,7 @@ function tomatoKeep(s) {
   const rethink = rows.filter((r) => r.verdict === 'rethink')
   if (rethink.length) {
     const late = rethink.filter((r) => Array.isArray(r.flags) && r.flags.includes('late_aug')).length
-    out.push(`${countOf(rethink.length, 'plant')} ${plural(rethink.length, 'is', 'are')} worth a rethink${late ? `, ${fmtInt(late)} of ${plural(late, 'it', 'them')} set out late in August` : ''}.`)
+    out.push(`${countOf(rethink.length, 'plant')} ${plural(rethink.length, 'is', 'are')} worth a rethink${late ? `, ${fmtInt(late)} of ${plural(late, 'it', 'them')} came in late or rescued` : ''}.`)
   }
   return out.join(' ')
 }
@@ -147,8 +147,8 @@ function longest(s) {
 function sepSize(s) {
   const rows = (s?.series?.rows ?? []).filter((r) => isNum(r?.ratio))
   if (!rows.length) return ''
-  const smaller = rows.filter((r) => r.ratio < 1)
-  const held = rows.filter((r) => r.ratio >= 1)
+  const smaller = rows.filter(isSmaller)
+  const held = rows.filter((r) => !isSmaller(r))
   const ratio = s?.meta?.fruit_weighted_ratio
   const out = []
   let lead = `${fmtInt(smaller.length)} of ${fmtInt(rows.length)} tomatoes picked smaller fruit in September than in August`

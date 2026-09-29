@@ -25,7 +25,7 @@ import { layoutSepSize } from '../lib/stats-kit/charts/SepSizeChart.jsx'
 import { STATS_REGISTRY } from '../lib/stats-kit/registry.js'
 import { verdictFor } from '../lib/stats-kit/verdicts.js'
 import SeedLotCard from '../components/stats/SeedLotCard.jsx'
-import { dayNum, monthDay, monthStarts, fmtShu, heatBandOf } from '../lib/stats-kit/format.js'
+import { dayNum, monthDay, monthStarts, fmtShu, heatBandOf, isSmaller } from '../lib/stats-kit/format.js'
 
 const fixture = JSON.parse(readFileSync(resolve(process.cwd(), 'tests/fixtures/season-stats.v1.json'), 'utf8'))
 const S = fixture.sections
@@ -327,5 +327,19 @@ describe('one planting, one pounds figure', () => {
     const bc = S.tomato_keep.series.rows.find(r => r.cultivar === 'Black Cherry')
     expect(bc.lb).toBe(4.245)
     expect(layoutTomatoKeep(S.tomato_keep).rows.find(r => r.key === bc.planting_id).text).toBe('4.2')
+  })
+})
+
+describe('September size: "smaller" means the shown grams differ', () => {
+  it('a 5 g → 5 g cultivar with ratio 0.97 is not smaller: sage bar, counted as held', () => {
+    const rows = [
+      { cultivar: 'Red Grape', aug_g: 5, sep_g: 5, aug_n: 40, sep_n: 30, ratio: 0.97 },
+      { cultivar: 'Big One', aug_g: 114, sep_g: 75, aug_n: 10, sep_n: 10, ratio: 0.66 },
+      { cultivar: 'Grew', aug_g: 50, sep_g: 60, aug_n: 10, sep_n: 10, ratio: 1.2 },
+    ]
+    expect(rows.map(isSmaller)).toEqual([false, true, false])
+    const L = layoutSepSize({ series: { rows } })
+    expect(L.rows.find(r => r.key.startsWith('Red Grape')).color).toBe(L.rows.find(r => r.key.startsWith('Grew')).color)
+    expect(verdictFor('sep_size', { meta: {}, series: { rows } })).toBe('1 of 3 tomatoes picked smaller fruit in September than in August (Big One 114 g → 75 g). Red Grape and Grew held their size.')
   })
 })

@@ -117,3 +117,8 @@ export function listWords(items) {
   if (xs.length <= 1) return xs.join('')
   return `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`
 }
+
+// September fruit size: smaller = the ratio is under 1 AND the grams as shown differ. "5 → 5 g" is not
+// smaller to anyone reading it, even when the unrounded ratio is 0.97. The chart colour and the
+// verdict count both use this one rule.
+export const isSmaller = (r) => isNum(r?.ratio) && r.ratio < 1 && fmtInt(r.aug_g) !== fmtInt(r.sep_g)

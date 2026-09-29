@@ -1,6 +1,6 @@
 // Tomato keep list (round-2 design): single-plant tomatoes ranked by pounds picked, as lollipops,
 // against the typical plant (dashed gold). Colour carries the server's verdict — grow again (sage),
-// fine (grey), rethink (rust) — and a hollow head marks a plant that went in late (August).
+// fine (grey), rethink (rust) — and a hollow head marks a plant that came in late or was rescued (flag late_aug: rescued OR entered on/after Aug 1).
 import React from 'react'
 import { ChartFrame, Txt, TxtBox, Line, Dot, XAxis } from './ChartFrame.jsx'
 import { linear, niceMax, ticks, truncate } from './geom.js'
@@ -67,7 +67,7 @@ export default function TomatoKeepChart({ section }) {
         {Object.keys(KEEP_WORD).map((k) => (
           <li key={k} style={legendItem}><i style={{ ...swatch, background: KEEP_COLOR[k] }} />{KEEP_WORD[k]}</li>
         ))}
-        <li style={legendItem}><i style={{ ...swatch, background: 'transparent', border: `1.6px solid ${v('ink-3')}` }} />Went in late (August)</li>
+        <li style={legendItem}><i style={{ ...swatch, background: 'transparent', border: `1.6px solid ${v('ink-3')}` }} />Came in late or rescued</li>
       </ul>
     </div>
   )
