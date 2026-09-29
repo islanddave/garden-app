@@ -248,8 +248,27 @@ export function batchRows(payload) {
   return Array.isArray(payload) ? payload : (Array.isArray(payload?.batches) ? payload.batches : [])
 }
 
+// ── Put-Up release 1a — the shared Start sheet (V4 §2.2 "Start a batch", §10.1) ──────────────────
+// The sheet is the batch lane's file and lands in its own merge; its contract is
+// `{ open, onClose, onStarted(batch) }`, default or named `StartBatchSheet` export. GLOBBED rather than
+// imported so this page builds and ships with or without it: no match is `{}`, the resolved component
+// is null, and GoingNowView is handed no onStartBatch — its shipped door stays exactly as it is. When
+// the file lands, this same line picks it up with no edit here. The literal path is bound to the
+// contract by PutUp.startBatch.test.jsx, because a typo here would fail silently: a glob that matches
+// nothing is not an error.
+const START_BATCH_SHEET_MODULES = import.meta.glob('../components/kitchen/StartBatchSheet.jsx', { eager: true })
+export function pickStartBatchSheet(modules) {
+  for (const m of Object.values(modules ?? {})) {
+    const c = m?.StartBatchSheet ?? m?.default
+    if (c) return c
+  }
+  return null
+}
+export const StartBatchSheetImpl = pickStartBatchSheet(START_BATCH_SHEET_MODULES)
 
-export default function PutUp() {
+// `StartBatchSheet` is a prop only so a test can hand the page a stand-in for a file this branch does
+// not have yet; App renders the route with no props, so production always takes the default.
+export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -325,8 +344,8 @@ export default function PutUp() {
   const modeActive = !!batchId || closedMode
 
   // ONE instant for the detail surface, collapsed once per opened batch — GoingNowView.jsx:221-225's
-  // rule applied at the page. PutUp is a route element and takes no props, so it cannot receive an
-  // injected clock; the injection point is BatchDetailView's own `nowMs` prop, which is where a test
+  // rule applied at the page. PutUp is a route element that App renders with no props, so it cannot
+  // receive an injected clock; the injection point is BatchDetailView's own `nowMs` prop, which is where a test
   // pins an age to a fixed literal.
   const detailNowMs = useMemo(() => Date.now(), [batchId])
 
@@ -377,6 +396,23 @@ export default function PutUp() {
     next.delete('batch'); next.delete('state')
     setSearchParams(next)
   }, [searchParams, setSearchParams])
+
+  // Put-Up release 1a — Start a batch opens the shared sheet here instead of leaving for /capture, and
+  // a started batch opens straight into the shipped `?batch=` mode: a PUSH, so Back returns to the list
+  // it was started from, with the list re-read because it has a new card. location.state rides along
+  // so an overlay keeps its background (V4 §6.2). The keys are handled the way GoingNowView's openBatch
+  // handles them — drop `state`, set `batch`, keep everything else.
+  const [startOpen, setStartOpen] = useState(false)
+  const openStartSheet = useCallback(() => setStartOpen(true), [])
+  const closeStartSheet = useCallback(() => setStartOpen(false), [])
+  const onBatchStarted = useCallback((batch) => {
+    setStartOpen(false)
+    loadGoing()
+    if (batch?.id == null || batch.id === '') return
+    const next = new URLSearchParams(searchParams)
+    next.delete('state'); next.set('batch', String(batch.id))
+    setSearchParams(next, { state: location.state })
+  }, [loadGoing, searchParams, setSearchParams, location.state])
 
   // THE BARE-OPEN DEFAULT. A bare Put-Up open landing on "what have I got" is correct today and
   // wrong the moment batches exist, because the answer to "what is going on right now" would then be
@@ -529,7 +565,8 @@ export default function PutUp() {
         )}
 
         {seg === 'going' && (
-          <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing} />
+          <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing}
+            onStartBatch={StartBatchSheet ? openStartSheet : undefined} />
         )}
         {seg === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('stores')} />}
         {seg === 'stores' && <StoresView useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} />}
@@ -550,6 +587,14 @@ export default function PutUp() {
             <ClosedBatchesView batches={closed} loading={closedLoading} error={closedError}
               onReload={onClosedChanged} now={detailNowMs} />
           </div>
+        )}
+
+        {/* Mounted only while open. Sheet renders nothing when closed and its close path IS its
+            unmount cleanup (scroll unlock, focus return), so this changes nothing about closing — but
+            it means the sheet's hooks (its draft read, anything identity-scoped) run only when someone
+            asked for it, and can never take down an ordinary visit to this page. */}
+        {StartBatchSheet && startOpen && (
+          <StartBatchSheet open onClose={closeStartSheet} onStarted={onBatchStarted} />
         )}
       </div>
     </div>
