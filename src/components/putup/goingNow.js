@@ -233,8 +233,6 @@ export const PH_CHECK_DAYS = 2
 // whatever about what the measurement was or should be.
 export const PH_PROMPT = 'Measured the pH in the last day or two?'
 
-export const PH_RECORD_CTA = 'Record a pH reading →'
-
 // Quoted verbatim and attributed, rather than paraphrased into house voice. The caution travels WITH
 // the recommendation because USU publishes them together and separating them would leave the cheaper
 // instrument looking equivalent to the better one.
@@ -316,18 +314,11 @@ export function phPrompt(batch, nowMs) {
   return PH_PROMPT
 }
 
-// WHO GETS THE RECORDER, and it is deliberately WIDER than who gets the prompt. The prompt is the app
-// speaking, so it must never ask a nonsense question — hence known ferments only. The recorder is an
-// affordance the cook reaches for, and offering it makes no claim about the batch, so it is also
-// offered on an UNCLASSIFIED one. That is not a loosening: `kind` is nullable because the capture path
-// never asks, the batch this whole schema was built for (a pepper mash on the counter) carries kind
-// NULL today, and there is no kind editor on this card — so a strict gate here would mean the one
-// real ferment in the system could never record a reading. Known NON-ferments stay out: a "record a
-// pH" link on a dehydrator run is noise.
-export function phRecorderVisible(batch) {
-  if (!batch) return false
-  return batch.kind === SUBMERSION_KIND || batch.kind == null
-}
+// ⚠ phRecorderVisible WAS HERE, and was RETIRED by Put-Up 1a item 3 (V4 §2.3: "the pH button moves
+// into Check on it"). It gated the card's inline recorder, deliberately wider than the prompt — it
+// admitted a NULL kind because nothing could classify a batch, so a strict gate would have locked the
+// one real ferment out of the feature. The card's one-tap kind question removes that reason, and the
+// pH field now lives in Check on it on kind = 'ferment' only: see checkInFields.
 
 // The POST body for one reading. `ph_reading` is the trimmed STRING the cook typed, never a Number —
 // see phReadingText. Returns null for anything off the scale or unparseable, so the component can say
@@ -469,6 +460,68 @@ export function startPromptState(batch) {
   if (!batch) return 'silent'
   if (batch.started_at) return 'silent'
   return batch.start_precision == null ? 'prompt' : 'silent'
+}
+
+// ── Check on it (Put-Up 1a, V4 §2.3) ─────────────────────────────────────────────────────────────
+// The check-in sheet, on every kind. What it offers depends on the kind and on nothing else:
+//   every kind   — Moved it (the household's places) and a note
+//   ferment      — also the ruled brine question and the pH field
+//   dehydrate    — also "In jars to condition" / "Condensation → back in the dryer" (Dry, NOT Candy)
+// A NULL kind gets the every-kind set only — the pH field is a ferment observation, and the card's
+// one-tap kind question is the door to it. (The old inline recorder also admitted a NULL kind, but
+// only because nothing could classify a batch; something now can.)
+export const CHECK_ON_IT_CTA = 'Check on it'
+
+// Stored verbatim in kitchen_stage_log.cue_observed — free text the log reads back as written.
+// The brine answers are the RULED pair, in both directions (V4 §2.3), and nothing else: no
+// failure-sign checklist, for the reason SUBMERSION_PROMPT's header gives.
+export const SUBMERSION_ANSWERS = Object.freeze([
+  { value: 'all_under', label: 'All under' },
+  { value: 'poking_out', label: 'Something poking out' },
+])
+export const CONDITIONING_ANSWERS = Object.freeze([
+  { value: 'jars', label: 'In jars to condition' },
+  { value: 'back_in_dryer', label: 'Condensation → back in the dryer' },
+])
+
+export function checkInFields(batch) {
+  const kind = batch?.kind ?? null
+  return { ph: kind === SUBMERSION_KIND, submersion: kind === SUBMERSION_KIND, conditioning: kind === 'dehydrate' }
+}
+
+export const CHECK_IN_EMPTY = 'Note one thing first — an answer, a reading, a place or a note.'
+
+// THE ONE ROW a check-in writes (V4 §2.3: "A check-in writes ONE tended row (Moved it writes moved)").
+// One Save, one POST, one row — never a row per observation, and never two rows for one visit:
+//   · a place was picked -> stage_kind 'moved', carrying storage_location_id (chk_ksl_moved_needs_location)
+//     and a label naming where, so the card and the log say where it went;
+//   · otherwise           -> stage_kind 'tended'.
+// Whatever else was observed rides on that same row: the chosen answer as cue_observed, the pH as the
+// typed STRING with its read instant (never through a Number — see phReadingText), the note.
+// Returns { body } or { error }; the caller never sends a body this refused.
+export function checkInBody({ batch, ph = '', submersion = null, conditioning = null, place = null, note = '', atIso }) {
+  const fields = checkInFields(batch)
+  const body = { stage_kind: place ? 'moved' : 'tended' }
+  if (place) {
+    if (!place.id) return { error: CHECK_IN_EMPTY }
+    body.storage_location_id = place.id
+    body.label = `Moved to ${place.label}`
+  }
+  const answer = fields.submersion
+    ? SUBMERSION_ANSWERS.find(a => a.value === submersion)
+    : fields.conditioning ? CONDITIONING_ANSWERS.find(a => a.value === conditioning) : null
+  if (answer) body.cue_observed = answer.label
+  const typed = fields.ph ? phReadingText(ph) : null
+  if (typed != null) {
+    const patch = phStagePatch(typed, atIso)
+    if (!patch) return { error: PH_SCALE_HINT }
+    body.ph_reading = patch.ph_reading
+    body.ph_read_at = patch.ph_read_at
+  }
+  const text = String(note ?? '').trim()
+  if (text) body.note = text
+  const observed = !!place || !!answer || typed != null || !!text
+  return observed ? { body } : { error: CHECK_IN_EMPTY }
 }
 
 // ── the kind of batch ────────────────────────────────────────────────────────────────────────────

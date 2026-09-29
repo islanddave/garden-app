@@ -44,9 +44,9 @@ vi.mock('react-router-dom', async (orig) => {
 import { P } from '../lib/constants.js'
 import GoingNowView from '../components/putup/GoingNowView.jsx'
 import {
-  phReadingText, describeLastPhReading, phPromptAnchor, phPrompt, phRecorderVisible, phStagePatch,
+  phReadingText, describeLastPhReading, phPromptAnchor, phPrompt, checkInFields, phStagePatch,
   PH_PROMPT, PH_CHECK_DAYS, PH_STAGE_KIND, PH_SCALE_MIN, PH_SCALE_MAX, PH_SCALE_HINT,
-  PH_RECORD_CTA, PH_INSTRUMENT_NOTE, PH_LINK_URL, PH_LINK_LABEL, SUBMERSION_PROMPT,
+  CHECK_ON_IT_CTA, PH_INSTRUMENT_NOTE, PH_LINK_URL, PH_LINK_LABEL, SUBMERSION_PROMPT,
   fermentStallPrompt, fermentPrompts, FERMENT_STALL_DAYS, FERMENT_STALL_PROMPT, FERMENT_STALL_NOTE,
 } from '../components/putup/goingNow.js'
 
@@ -260,23 +260,22 @@ describe('phPrompt — UMN Extension\'s published 1-to-2-day cadence', () => {
   })
 })
 
-describe('phRecorderVisible — wider than the prompt, and deliberately', () => {
-  // The prompt is the app SPEAKING and must not ask a nonsense question. The recorder is a door the
-  // cook opens, and offering it makes no claim — so it stays open on an UNCLASSIFIED batch, because
-  // kind NULL means "nobody said" and the one real ferment in the system is in exactly that state
-  // with no kind editor on this card.
-  //
-  // 'other' is EXCLUDED, and the distinction is the same one the start fields already draw twice:
-  // NULL is a blank, 'other' is an ANSWER. Overriding an answer is a different act from filling a
-  // blank.
-  it('offers on a known ferment and on an unclassified batch, never on a named non-ferment', () => {
-    expect(phRecorderVisible(FERMENT)).toBe(true)
-    expect(phRecorderVisible(MASH)).toBe(true)
-    expect(phRecorderVisible({ ...FERMENT, kind: undefined })).toBe(true)
+// ⚠ AMENDED by Put-Up 1a item 3 (V4 §2.3, §8.3), in the same commit as the behaviour change. This
+// block pinned phRecorderVisible — the card's inline recorder, deliberately WIDER than the prompt: it
+// admitted a NULL kind because nothing could classify a batch, and a strict gate would have locked
+// the one real ferment out of the feature. The recorder is retired ("the pH button moves into Check on
+// it") and the card now asks a NULL kind what it is in one tap, which removes that reason. The pH
+// field is a FERMENT observation: it appears in Check on it on kind = 'ferment' and nowhere else.
+describe('checkInFields — the pH field is a ferment observation, on Check on it', () => {
+  // MUTATION: `ph: kind === 'ferment' || kind == null` (the old recorder's width) reds the MASH arm.
+  it('offers the pH field on a known ferment only — an unclassified batch is asked its kind first', () => {
+    expect(checkInFields(FERMENT).ph).toBe(true)
+    expect(checkInFields(MASH).ph).toBe(false)
+    expect(checkInFields({ ...FERMENT, kind: undefined }).ph).toBe(false)
     for (const kind of ['other', 'dehydrate', 'candy', 'cure', 'infuse', 'age']) {
-      expect(phRecorderVisible({ ...FERMENT, kind })).toBe(false)
+      expect({ kind, ph: checkInFields({ ...FERMENT, kind }).ph }).toEqual({ kind, ph: false })
     }
-    expect(phRecorderVisible(null)).toBe(false)
+    expect(checkInFields(null).ph).toBe(false)
   })
 })
 
@@ -347,9 +346,9 @@ describe('GoingNowView — the prompt and the recorded line on the card', () => 
       .map(c => [c.getAttribute('data-batch-id'), c]))
     expect(within(byId['kb-young']).getByTestId('going-batch-ph-prompt').textContent).toBe(PH_PROMPT)
     expect(within(byId['kb-setdown']).queryByTestId('going-batch-ph-prompt')).toBeNull()
-    // The RECORDER is deliberately not gated the same way — a reading taken on a paused ferment is
-    // still a fact, and the door the cook opens makes no claim about the batch.
-    expect(within(byId['kb-setdown']).getByTestId('going-ph-open').textContent).toBe(PH_RECORD_CTA)
+    // The door the cook opens is deliberately NOT gated the same way — a reading taken on a paused
+    // ferment is still a fact. Since Put-Up 1a that door is Check on it (the recorder moved into it).
+    expect(within(byId['kb-setdown']).getByTestId('going-check').textContent).toBe(`${CHECK_ON_IT_CTA} →`)
   })
 
   it('phPrompt itself is silent under suspension and speaks without it', () => {
@@ -382,60 +381,78 @@ describe('GoingNowView — the prompt and the recorded line on the card', () => 
     expect(screen.getByTestId('going-batch').textContent).not.toMatch(/4\.60/)
   })
 
-  it('asks nothing about pH on a known non-ferment, and offers no recorder there either', () => {
+  it('asks nothing about pH on a known non-ferment, and its check-in has no pH field either', () => {
     renderView([DRY])
     expect(screen.queryByTestId('going-batch-ph-prompt')).toBeNull()
-    expect(screen.queryByTestId('going-ph-open')).toBeNull()
+    fireEvent.click(screen.getByTestId('going-check'))
+    expect(screen.getByTestId('checkin-sheet')).toBeTruthy()          // anchor: the sheet IS open
+    expect(screen.queryByTestId('checkin-ph-input')).toBeNull()
   })
 
-  it('offers the recorder on an unclassified batch while staying silent about it', () => {
+  // AMENDED by Put-Up 1a item 3: an unclassified batch no longer gets a recorder — it gets its kind
+  // question, which is the one-tap door to the pH field.
+  it('asks an unclassified batch its kind, never about pH, and offers no pH field until it is a Ferment', () => {
     renderView([MASH])
     expect(screen.queryByTestId('going-batch-ph-prompt')).toBeNull()
-    expect(screen.getByTestId('going-ph-open').textContent).toBe(PH_RECORD_CTA)
+    expect(screen.getByTestId('going-kind-question')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('going-check'))
+    expect(screen.getByTestId('checkin-sheet')).toBeTruthy()
+    expect(screen.queryByTestId('checkin-ph-input')).toBeNull()
   })
 })
 
-describe('GoingNowView — recording a reading', () => {
-  const openEditor = () => {
+// ⚠ RE-POINTED by Put-Up 1a item 3 (V4 §2.3, §8.3), in the same commit as the move: a reading is now
+// recorded inside Check on it, on its one row, by the sheet's Save. Every assertion below is the one
+// the inline recorder carried — the typed STRING, the injected instant, a tended stage, the scale
+// refusal, the instrument note, the kept value on failure, nothing sent on a close — against its new
+// home. (The places read the sheet makes on open is answered with an empty list here.)
+describe('Check on it — recording a reading', () => {
+  const stagesPosts = () => fetchMock.mock.calls.filter(([p, o]) => /\/stages$/.test(p) && o?.method === 'POST')
+  const wire = (stage = () => Promise.resolve({ stage: {}, batch: {} })) => {
+    fetchMock.mockImplementation((path, o) => (o?.method === 'POST' ? stage() : Promise.resolve([])))
+  }
+  const openSheet = () => {
     renderView([FERMENT])
-    fireEvent.click(screen.getByTestId('going-ph-open'))
+    fireEvent.click(screen.getByTestId('going-check'))
   }
 
   it('POSTs the string the cook typed, the injected instant, and a tended stage', async () => {
-    fetchMock.mockResolvedValue({ stage: {}, batch: {} })
-    openEditor()
-    fireEvent.change(screen.getByTestId('going-ph-input'), { target: { value: '4.60' } })
-    fireEvent.click(screen.getByTestId('going-ph-save'))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    wire()
+    openSheet()
+    fireEvent.change(screen.getByTestId('checkin-ph-input'), { target: { value: '4.60' } })
+    fireEvent.click(screen.getByTestId('checkin-save'))
+    await waitFor(() => expect(stagesPosts()).toHaveLength(1))
     // The whole call as one literal — path, method and body. ph_read_at is the view's INJECTED `now`,
     // which is what makes this assertion stable under the blocking TZ re-run.
-    expect(fetchMock).toHaveBeenCalledWith('/api/kitchen-batches/kb-ferment/stages', {
+    expect(stagesPosts()[0]).toEqual(['/api/kitchen-batches/kb-ferment/stages', {
       method: 'POST',
       body: JSON.stringify({
         stage_kind: 'tended', ph_reading: '4.60', ph_read_at: new Date(NOW).toISOString(),
       }),
-    })
+    }])
   })
 
   it('says so and sends nothing when the value is off the pH scale', async () => {
-    openEditor()
-    fireEvent.change(screen.getByTestId('going-ph-input'), { target: { value: '46' } })
-    fireEvent.click(screen.getByTestId('going-ph-save'))
-    expect(screen.getByTestId('going-ph-error').textContent).toBe(PH_SCALE_HINT)
+    wire()
+    openSheet()
+    fireEvent.change(screen.getByTestId('checkin-ph-input'), { target: { value: '46' } })
+    fireEvent.click(screen.getByTestId('checkin-save'))
+    expect(screen.getByTestId('checkin-ph-error').textContent).toBe(PH_SCALE_HINT)
     expect(PH_SCALE_HINT).toBe('A pH reading is a number from 0 to 14 — check what the meter showed.')
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(stagesPosts()).toHaveLength(0)
   })
 
   // THE LINK-OUT. Utah State University Extension's instrument note, quoted rather than paraphrased,
   // with the strips caution travelling WITH it — separating them would leave the cheaper instrument
   // looking equivalent to the better one.
-  it('carries the instrument note and its source link inside the editor', () => {
-    openEditor()
-    expect(screen.getByTestId('going-ph-instrument').textContent).toBe(
+  it('carries the instrument note and its source link beside the field', () => {
+    wire()
+    openSheet()
+    expect(screen.getByTestId('checkin-ph-instrument').textContent).toBe(
       'Utah State University Extension recommends "a digital pH meter or pH test strips that can '
       + 'measure to at least 1 decimal point", and notes that "Test strips are less accurate as the '
       + 'color of the food can alter the result." Utah State University Extension — how to measure →')
-    const link = screen.getByTestId('going-ph-link')
+    const link = screen.getByTestId('checkin-ph-link')
     expect(link.getAttribute('href'))
       .toBe('https://extension.usu.edu/preserve-the-harvest/research/tips-to-safely-ferment-at-home')
     expect(link.textContent).toBe(PH_LINK_LABEL)
@@ -445,27 +462,28 @@ describe('GoingNowView — recording a reading', () => {
     expect(PH_INSTRUMENT_NOTE).not.toMatch(/\bsafe\b|\bsafety\b|acidif|shelf|botul|\bready\b/i)
   })
 
-  // A failed save must not look like a successful one. The editor stays OPEN with the typed value
-  // still in it, because a reading is a thing someone walked to the counter for and silently
-  // discarding it is worse than not offering the field.
+  // A failed save must not look like a successful one. The sheet stays OPEN with the typed value
+  // still in it, because a reading is a thing someone walked to the counter for.
   it('keeps the reading on screen when the save fails', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'))
-    openEditor()
-    fireEvent.change(screen.getByTestId('going-ph-input'), { target: { value: '3.2' } })
-    fireEvent.click(screen.getByTestId('going-ph-save'))
-    await waitFor(() => expect(screen.getByTestId('going-ph-error')).toBeTruthy())
-    expect(screen.getByTestId('going-ph-error').textContent).toBe("Couldn't save that — try again.")
-    expect(screen.getByTestId('going-ph-input').value).toBe('3.2')
+    wire(() => Promise.reject(new Error('offline')))
+    openSheet()
+    fireEvent.change(screen.getByTestId('checkin-ph-input'), { target: { value: '3.2' } })
+    fireEvent.click(screen.getByTestId('checkin-save'))
+    await waitFor(() => expect(screen.getByTestId('checkin-error')).toBeTruthy())
+    expect(screen.getByTestId('checkin-error').textContent).toBe("Couldn't save that — try again. What you noted is still here.")
+    expect(screen.getByTestId('checkin-ph-input').value).toBe('3.2')
+    expect(screen.getByTestId('checkin-sheet')).toBeTruthy()
   })
 
-  it('is not open until it is asked for, and closes on cancel without sending', () => {
+  it('is not open until it is asked for, and closes without sending', () => {
+    wire()
     renderView([FERMENT])
-    expect(screen.queryByTestId('going-ph-editor')).toBeNull()
-    fireEvent.click(screen.getByTestId('going-ph-open'))
-    expect(screen.getByTestId('going-ph-editor')).toBeTruthy()
-    fireEvent.click(screen.getByTestId('going-ph-cancel'))
-    expect(screen.queryByTestId('going-ph-editor')).toBeNull()
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('checkin-sheet')).toBeNull()
+    fireEvent.click(screen.getByTestId('going-check'))
+    fireEvent.change(screen.getByTestId('checkin-ph-input'), { target: { value: '3.9' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByTestId('checkin-sheet')).toBeNull()
+    expect(stagesPosts()).toHaveLength(0)
   })
 })
 
@@ -515,6 +533,10 @@ const LANE_SOURCES = [
   // Put-Up 1a (V4 §8.4 — every lane adds its files). The kind chips are the door that WAKES the
   // ferment prompts, so they sit in the same path this sweep polices.
   ['src/components/kitchen/KindChips.jsx', 'KIND_CHIPS'],
+  // Check on it is now the ONLY surface that records a reading (the card's inline recorder moved
+  // into it), so it is squarely in the path this sweep polices; its draft carries the typed reading.
+  ['src/components/putup/CheckOnItSheet.jsx', 'CheckOnItOpen'],
+  ['src/components/kitchen/sheetDraft.js', 'SHEET_DRAFT_PREFIX'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the
@@ -563,7 +585,9 @@ describe('the rendered surface makes no assessment', () => {
     // deadline and carries the stall copy instead, and a sweep whose green control has quietly gone
     // absent is a sweep over a surface missing the thing it polices.
     renderView([FERMENT, FERMENT_YOUNG, FERMENT_READ, MASH, DRY])
-    fireEvent.click(screen.getAllByTestId('going-ph-open')[0])
+    // The instrument note lives in Check on it since Put-Up 1a item 3, so the ferment's sheet is open.
+    const fermentCard = screen.getAllByTestId('going-batch').find(c => c.getAttribute('data-batch-id') === 'kb-ferment')
+    fireEvent.click(within(fermentCard).getByTestId('going-check'))
     const view = screen.getByTestId('going-now-view')
     // Green control: the surface really is rendering this lane's copy.
     expect(view.textContent).toContain(PH_PROMPT)
