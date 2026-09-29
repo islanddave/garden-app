@@ -107,8 +107,12 @@ function installRouter(over = {}) {
   })
 }
 
+// Put-Up 1a item 6 hid the garden-picks door by default (BatchInputsField's `showGardenPicks`). This
+// suite's subject INCLUDES that hidden flow — its code stays until release 3's garden lines replace it —
+// so the helper opts it back in; the hidden default is asserted on its own below.
 const renderField = (props = {}) => render(
-  <BatchInputsField batchId={BATCH} onChanged={props.onChanged} nowMs={props.nowMs ?? NOW} />,
+  <BatchInputsField batchId={BATCH} onChanged={props.onChanged} nowMs={props.nowMs ?? NOW}
+    showGardenPicks={props.showGardenPicks ?? true} />,
 )
 const root = () => screen.getByTestId('batch-inputs-field')
 const openPicks = async () => {
@@ -120,6 +124,27 @@ const postsTo = (suffix) => fetchMock.mock.calls.filter(
 )
 
 beforeEach(() => { fetchMock.mockReset(); sessionStorage.clear(); installRouter() })
+
+// ── Put-Up 1a item 6: the garden-picks door is HIDDEN, not deleted ──────────────────────────────
+describe('BatchInputsField — "Add picks from the garden" is hidden in Put-Up 1a', () => {
+  // MUTATION: default `showGardenPicks` to true (or drop the gate on the door) -> this reds.
+  it('renders no garden-picks door and no picks panel by default, and keeps "Add something else"', () => {
+    render(<BatchInputsField batchId={BATCH} nowMs={NOW} />)
+    expect(screen.queryByTestId('batch-inputs-open-picks')).toBeNull()
+    expect(screen.queryByTestId('batch-inputs-picks')).toBeNull()
+    expect(screen.queryByText('Add picks from the garden')).toBeNull()
+    // GREEN CONTROL, same render: the other door is here and still opens its form.
+    fireEvent.click(screen.getByTestId('batch-inputs-open-other'))
+    expect(screen.getByTestId('batch-inputs-open-other').textContent).toBe('Add something else')
+  })
+
+  it('is hidden, not deleted: the door and its flow are still there for a host that opts in', async () => {
+    renderField({ showGardenPicks: true })
+    expect(screen.getByTestId('batch-inputs-open-picks').textContent).toBe('Add picks from the garden')
+    await openPicks()
+    expect(screen.getByTestId('batch-inputs-picks')).toBeTruthy()
+  })
+})
 
 // ── what is already in ───────────────────────────────────────────────────────────────────────────
 

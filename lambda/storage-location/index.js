@@ -45,6 +45,26 @@ export function validateUpdate(body) {
   return null;
 }
 
+// Put-Up release 1a — the answer to a DUPLICATE PLACE, given before the constraint that raises it.
+//
+// Release 1b adds UNIQUE (user_id, kind, lower(label)) WHERE deleted_at IS NULL on storage_location
+// (V4's data model, 1b) while THIS code is the deployed writer, and until now a 23505 here fell
+// through to a bare 500 that the shipped "+ New location" form retries once and then shows as
+// "try again (SRV)" — sometimes for a place that already exists, since its own retry after a lost
+// response re-sends a create that already landed. So both writers answer it now, in 1a, while no
+// database carries the index and the branch is dormant:
+//   POST — FIND-OR-CREATE (V4's place find-or-create): the caller's live place with that kind and
+//     that name, whatever its case, comes back with 200 and `existing: true`. Every shipped caller
+//     only needs the row (it selects row.id), so a create that turns out to be a pick still lands
+//     the jar in the right place.
+//   PUT — a rename or re-kind onto a name the owner already uses cannot be turned into a pick, so it
+//     is refused: 409 `place_exists` carrying the other place's id.
+// Every coded 409 carries a plain-words `message`, mirrored in `error` (which apiFetch surfaces).
+const PLACE_EXISTS_WORDS = 'You already have a place with that name. Pick it instead, or use a different name.';
+function placeExists(existingId) {
+  return { error: PLACE_EXISTS_WORDS, code: 'place_exists', message: PLACE_EXISTS_WORDS, existing_id: existingId };
+}
+
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
     return { statusCode: 204, headers: CORS, body: '' };
@@ -89,16 +109,40 @@ export const handler = async (event) => {
         const body = JSON.parse(event.body ?? '{}');
         const verr = validateUpdate(body);
         if (verr) return resp(400, { error: verr });
-        const rows = await sql`
-          UPDATE storage_location
-          SET
-            label = COALESCE(${body.label ?? null}, label),
-            kind  = COALESCE(${body.kind ?? null}, kind)
-          WHERE id = ${locId}
-            AND deleted_at IS NULL
-            AND user_id = ANY(${householdIds})
-          RETURNING *
-        `;
+        let rows;
+        try {
+          rows = await sql`
+            UPDATE storage_location
+            SET
+              label = COALESCE(${body.label ?? null}, label),
+              kind  = COALESCE(${body.kind ?? null}, kind)
+            WHERE id = ${locId}
+              AND deleted_at IS NULL
+              AND user_id = ANY(${householdIds})
+            RETURNING *
+          `;
+        } catch (err) {
+          if (err.code !== '23505') throw err;
+          // The clash is with another live place of the SAME OWNER (the unique key starts at user_id,
+          // and a household member may be editing someone else's place), under the name and kind this
+          // statement would have written — the same COALESCEs as the SET.
+          const clash = await sql`
+            SELECT o.id
+            FROM storage_location t
+            JOIN storage_location o
+              ON o.user_id = t.user_id
+             AND o.id <> t.id
+             AND o.deleted_at IS NULL
+             AND o.kind = COALESCE(${body.kind ?? null}, t.kind)
+             AND lower(o.label) = lower(COALESCE(${body.label ?? null}, t.label))
+            WHERE t.id = ${locId}
+              AND t.user_id = ANY(${householdIds})
+              AND t.deleted_at IS NULL
+            ORDER BY o.created_at, o.id
+            LIMIT 1
+          `;
+          return resp(409, placeExists(clash[0]?.id ?? null));
+        }
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, rows[0]);
       }
@@ -137,12 +181,30 @@ export const handler = async (event) => {
       const body = JSON.parse(event.body ?? '{}');
       const verr = validateCreate(body);
       if (verr) return resp(400, { error: verr });
-      const rows = await sql`
-        INSERT INTO storage_location (user_id, label, kind)
-        VALUES (${userId}, ${body.label.trim()}, ${body.kind})
-        RETURNING *
-      `;
-      return resp(201, rows[0]);
+      const label = body.label.trim();
+      try {
+        const rows = await sql`
+          INSERT INTO storage_location (user_id, label, kind)
+          VALUES (${userId}, ${label}, ${body.kind})
+          RETURNING *
+        `;
+        return resp(201, rows[0]);
+      } catch (err) {
+        if (err.code !== '23505') throw err;
+        // Exactly the unique key the insert collided on: this caller, this kind, this name in any case.
+        const existing = await sql`
+          SELECT id, user_id, label, kind, created_at, deleted_at
+          FROM storage_location
+          WHERE user_id = ${userId}
+            AND kind = ${body.kind}
+            AND lower(label) = lower(${label})
+            AND deleted_at IS NULL
+          ORDER BY created_at, id
+          LIMIT 1
+        `;
+        if (existing.length) return resp(200, { ...existing[0], existing: true });
+        return resp(409, placeExists(null));
+      }
     }
 
     return resp(405, { error: 'Method not allowed' });

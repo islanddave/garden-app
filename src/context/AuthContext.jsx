@@ -8,6 +8,7 @@ import { useUser, useClerk } from '@clerk/react'
 import { invalidateAll as invalidateDataCache } from '../lib/dataCache.js'
 import { useCacheLifecycle } from '../hooks/useCacheLifecycle.js'
 import { clearClientPrefs } from '../lib/clientPrefs.js'
+import { clearSheetDraftsFor } from '../components/kitchen/sheetDraft.js'
 import { POST_LOGIN_ROUTE } from '../lib/constants.js'
 
 const AuthContext = createContext(null)
@@ -113,6 +114,8 @@ export function AuthProvider({ children }) {
   // are presentation-only and rebuild from normal use within days, so that is the cheaper failure.
   async function signOut() {
     clearClientPrefs()
+    // Put-Up 1a (V4 §6.5): this person's half-typed Put-Up sheet drafts go too, same ordering reason.
+    clearSheetDraftsFor(user?.id)
     await clerkSignOut()
   }
 

@@ -38,7 +38,9 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
+import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import PutUp from '../../src/pages/PutUp.jsx'
+import StartBatchSheet from '../../src/components/kitchen/StartBatchSheet.jsx'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
 
 const q = new URLSearchParams(location.search)
@@ -191,6 +193,48 @@ const JARS = {
   ],
 }
 
+// ── Put-Up 1a item 8: the Going-now cards, Check on it and the Start sheet ───────────────────────────
+// At Dave's measured 426×836 and with the keyboard up (426×492, V4 §6.7's default until his own
+// keyboard-up height is measured). One card per state the card's single question slot can hold — a
+// NULL kind (the kind question), a ferment past its one-week deadline (the stall question, whose
+// attribution note is the tallest thing a card carries), a ferment measured after the deadline and
+// looked at since (quiet), a dehydrator run, and a paused candy parent — with LONG_LABEL on the
+// stalled ferment so the widest title meets the tallest question on one card.
+const GOING = [
+  // Owned by the signed-in viewer (the Clerk stub's USER.id): from Put-Up 1a a bare open of /put-up lands on
+  // Going now only for the viewer's own batch (V4 §6.1), and every going/checkin/start case opens /put-up bare.
+  { id: 'kb-going-mash', user_id: 'harness_user', label: 'Pepper mash', kind: null, kind_other: null,
+    started_at: null, start_precision: null, first_recorded_at: iso('2026-09-20T09:00:00'),
+    expected_days_min: null, expected_days_max: null, suspended_at: null, closed_at: null,
+    current_stage_kind: 'started', current_stage_label: null, current_stage_entered_at: iso('2026-09-20T09:00:00'),
+    input_count: '3', output_count: '0', last_ph_reading: null, last_ph_read_at: null },
+  { id: 'kb-going-ferment', user_id: 'harness_user', label: LONG_LABEL, kind: 'ferment', kind_other: null,
+    started_at: iso('2026-09-10T09:00:00'), start_precision: 'day', first_recorded_at: iso('2026-09-10T09:00:00'),
+    expected_days_min: null, expected_days_max: null, suspended_at: null, closed_at: null,
+    current_stage_kind: 'tended', current_stage_label: null, current_stage_entered_at: iso('2026-09-12T09:00:00'),
+    input_count: '0', output_count: '0', last_ph_reading: '4.1', last_ph_read_at: iso('2026-09-12T09:00:00') },
+  { id: 'kb-going-dry', user_id: 'user_jen', label: 'Apple rings', kind: 'dehydrate', kind_other: null,
+    started_at: iso('2026-09-27T09:00:00'), start_precision: 'day', first_recorded_at: iso('2026-09-27T09:00:00'),
+    expected_days_min: 1, expected_days_max: 2, suspended_at: null, closed_at: null,
+    current_stage_kind: 'started', current_stage_label: null, current_stage_entered_at: iso('2026-09-27T09:00:00'),
+    input_count: '0', output_count: '0', last_ph_reading: null, last_ph_read_at: null },
+  { id: 'kb-going-paused', user_id: 'harness_user', label: 'Candy parent, frozen', kind: 'candy', kind_other: null,
+    started_at: iso('2026-06-14T09:00:00'), start_precision: 'day', first_recorded_at: iso('2026-06-14T09:00:00'),
+    expected_days_min: null, expected_days_max: null, suspended_at: '2026-08-12T12:00:00.000Z', closed_at: null,
+    current_stage_kind: 'tended', current_stage_label: 'Frozen', current_stage_entered_at: '2026-08-12T12:00:00.000Z',
+    input_count: '0', output_count: '0', last_ph_reading: null, last_ph_read_at: null },
+]
+// The household's places. The first three are prod's own three (all deep freezers, read-only census
+// 2026-09-28); the Fridge is the place release 1a's staging walk creates, and a fourth chip is what
+// makes the Moved it row wrap at 426px.
+const PLACES = [
+  { id: 'loc-cf1', user_id: 'user_dave', label: 'Chest Freezer 1', kind: 'deep_freezer' },
+  { id: 'loc-cf2', user_id: 'user_dave', label: 'Chest Freezer 2', kind: 'deep_freezer' },
+  { id: 'loc-meat', user_id: 'user_dave', label: 'Meat deep freezer', kind: 'deep_freezer' },
+  { id: 'loc-fridge', user_id: 'user_dave', label: 'Fridge', kind: 'fridge' },
+]
+const GOING_CASE = CASE.startsWith('going') || CASE.startsWith('checkin') || CASE.startsWith('start')
+
 // Stub at the network layer so the REAL page, the REAL useApiFetch, the REAL Sheet and the REAL
 // JarPicker all run and only the far side of the wire is faked — aliasing src/lib/api.js would test
 // the harness instead. ORDER MATTERS: '/api/kitchen-batches?state=' must be matched before the bare
@@ -200,8 +244,9 @@ const json = (body) => Promise.resolve(new Response(JSON.stringify(body), { stat
 window.fetch = (url, ...rest) => {
   const u = String(url)
   if (u.includes('/close')) return json({ ok: true })
+  if (u.includes('/api/storage-locations')) return json(PLACES)
   if (u.includes('/api/kitchen-batches?state=closed')) return json({ state: 'closed', batches: CASE === 'closed-empty' ? [] : CLOSED })
-  if (u.includes('/api/kitchen-batches?state=going')) return json({ state: 'going', batches: [] })
+  if (u.includes('/api/kitchen-batches?state=going')) return json({ state: 'going', batches: GOING_CASE ? GOING : [] })
   if (u.includes('/api/kitchen-batches/')) return json(DETAIL)
   if (u.includes('/api/preservation/whats-put-up')) return json(JARS)
   // BatchInputsField's add flow self-fetches this. Left to fall through it 404s against the harness
@@ -214,13 +259,33 @@ const settle = () => new Promise((r) => setTimeout(r, 160))
 const byTid = (t) => document.querySelector(`[data-testid="${t}"]`)
 
 // The mode flag each case needs. `batch` wins over `state` at the page (PutUp.jsx:286), so the two
-// are never both set.
-const ENTRY = CASE.startsWith('closed') ? '/put-up?state=closed' : `/put-up?batch=${DETAIL.id}`
+// are never both set. The Put-Up 1a cases open /put-up bare: with batches going, the page's own
+// bare-open default lands on Going now.
+const ENTRY = CASE.startsWith('closed') ? '/put-up?state=closed'
+  : GOING_CASE ? '/put-up' : `/put-up?batch=${DETAIL.id}`
+
+// THE START SHEET, mounted beside the page exactly as the page lane's seam mounts it (PutUp.jsx holds
+// the open state and passes onStartBatch). It is a fixed-position sheet, so where it sits in the tree
+// does not move a pixel of it; mounting it here keeps this entry independent of that lane's file.
+const START_OPEN = CASE.startsWith('start')
+
+const click = (t, scope = document) => scope.querySelector(`[data-testid="${t}"]`)?.click()
+const cardOf = (id) => document.querySelector(`[data-testid="going-batch"][data-batch-id="${id}"]`)
 
 async function run() {
+  // Every case starts with no Put-Up sheet draft: with a signed-in viewer (AuthProvider above) the sheets keep
+  // drafts in localStorage, and a draft left by the previous case in the same browser profile would reopen
+  // or reshape this case's sheet.
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('garden:putup-draft:v1:')) localStorage.removeItem(k)
+  } catch { /* no storage: nothing to clear */ }
   createRoot(document.getElementById('root')).render(
+    // AuthProvider over the Clerk stub (USER.id 'harness_user'): from Put-Up 1a the bare-open landing reads
+    // the viewer, and a page with no viewer lands on the put-up list, never Going now (V4 §6.1).
+    <AuthProvider>
     <MemoryRouter initialEntries={[ENTRY]}>
       <PutUp />
+      {START_OPEN && <StartBatchSheet open onClose={() => {}} onStarted={() => {}} />}
       {/* The real element, not a stand-in div: App.jsx renders <BottomNav /> at 56px fixed for every
           signed-in route and the archive's last row sits under it or clears it. A stand-in with a
           different tag would leave the same 56px of chrome unmeasurable by selector. */}
@@ -231,7 +296,8 @@ async function run() {
           color: '#8a8a8a' }}>
         real BottomNav element ({BOTTOM_NAV_HEIGHT_PX}px)
       </nav>
-    </MemoryRouter>,
+    </MemoryRouter>
+    </AuthProvider>,
   )
   await settle(); await settle()
 
@@ -244,6 +310,28 @@ async function run() {
   }
   if (CASE === 'close-yes') { byTid('batch-close-kept-yes')?.click(); await settle(); await settle() }
   if (CASE === 'close-no') { byTid('batch-close-kept-no')?.click(); await settle(); await settle() }
+
+  // Put-Up 1a — tapped through the REAL controls, like the close cases above. The focused field is the
+  // one a cook types into last on that sheet, i.e. the one nearest the pinned footer: that is where
+  // "the focused field sits under the sticky band" would happen first with the keyboard up.
+  if (CASE === 'going-kind') {
+    click('going-kind-question', cardOf('kb-going-mash')); await settle()
+    click('going-kind-other', cardOf('kb-going-mash')); await settle()
+  }
+  if (CASE.startsWith('checkin')) {
+    click('going-check', cardOf(CASE === 'checkin-dry' ? 'kb-going-dry' : 'kb-going-ferment'))
+    await settle(); await settle()
+    byTid(CASE === 'checkin-dry' ? 'checkin-note' : 'checkin-ph-input')?.focus()
+    await settle()
+  }
+  if (CASE === 'start-full') {
+    click('start-when-earlier'); await settle()
+    click('start-when-pickdate'); await settle()
+    click('start-kind-toggle'); await settle()
+    click('start-kind-other'); await settle()
+    byTid('start-kind-other-text')?.focus()
+    await settle()
+  }
 
   window.__h = { ready: () => true, all: measure }
   paint()

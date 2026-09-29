@@ -187,6 +187,11 @@ const SHEET_SITES = [
   // the registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed; busy holds
   // it open over the PUTs, and Back dismisses it without ending anything.
   'components/SeasonEndConfirm.jsx',
+  // Put-Up 1a item 4 (V4 §2.2) — a DELIBERATE addition: the ONE shared Start sheet (label, start
+  // chips, photo, optional kind) that both Going now and Snap's "Something in the kitchen" open. A form,
+  // not a confirm. It renders the shared <Sheet armsBack>, so no DIALOG_SURFACES entry is owed;
+  // `busy={saving}` refuses Back and the backdrop while the photo upload and the create are in flight.
+  'components/kitchen/StartBatchSheet.jsx',
   'components/planting/OverwinterPrompt.jsx',
   'components/planting/SaveSeedSheet.jsx',
   'components/planting/TransplantDatePrompt.jsx',
@@ -202,6 +207,12 @@ const SHEET_SITES = [
   // close is NOT idempotent: a second POST returns 409, so a backdrop tap mid-write would discard
   // the surface over a write that may already have committed.
   'components/putup/BatchCloseField.jsx',
+  // Put-Up 1a item 3 (V4 §2.3, §6.2) — a DELIBERATE addition. "Check on it" holds a pH field, the
+  // ruled brine answers, a place and a note, and saves on a button: a form, not a confirm. It renders
+  // the shared <Sheet armsBack>, so the registered role="dialog" surface is Sheet's and no
+  // DIALOG_SURFACES entry is owed; `busy={saving}` blocks Back and the backdrop while the stage POST is
+  // in flight — load-bearing because a check-in is not keyed in 1a (V4 §5.2).
+  'components/putup/CheckOnItSheet.jsx',
   // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
   // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
   // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's

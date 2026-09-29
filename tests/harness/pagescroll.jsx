@@ -258,7 +258,9 @@ const LENS_SEL = '[role="radiogroup"][aria-label="Show plantings by caretaker"]'
 const LABELS = ['Kraut, first crock', 'Hot sauce mash', 'Dilly beans', 'Kimchi', 'Pepper mash', 'Pickled onions',
   'Blackberry shrub', 'Garlic honey', 'Corn relish', 'Plum butter', 'Cider vinegar', 'Salsa verde']
 const batch = (i) => ({
-  id: `kb-${i + 1}`, user_id: 'user_dave', label: LABELS[i], kind: i % 3 === 0 ? 'ferment' : i % 3 === 1 ? 'preserve' : 'infuse',
+  // Owned by the signed-in user (the Clerk stub's USER.id, as MEMBERS above): from Put-Up 1a a bare open
+  // promotes to Going now only for the viewer's own batch, and the putup flows start from that promote.
+  id: `kb-${i + 1}`, user_id: 'harness_user', label: LABELS[i], kind: i % 3 === 0 ? 'ferment' : i % 3 === 1 ? 'preserve' : 'infuse',
   kind_other: null, started_at: iso(40 - i * 3), start_precision: 'day', first_recorded_at: iso(40 - i * 3),
   expected_days_min: 21, expected_days_max: 42, suspended_at: null, closed_at: null, outcome: null, outcome_note: null,
   current_stage_kind: 'tended', current_stage_label: 'Skimmed', current_stage_entered_at: iso(2),

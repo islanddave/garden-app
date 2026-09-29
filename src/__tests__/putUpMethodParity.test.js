@@ -10,12 +10,12 @@
 // vocabulary by hand and NOT ONE OF THEM ERRORS on a value it has never seen. Each degrades
 // silently, in a different direction:
 //
-//   1. lambda/preservation/index.js :: VALID_METHODS
+//   1. lambda/preservation/jarRules.js :: VALID_METHODS  (in index.js until Put-Up release 1a)
 //      Not a reader — the WRITE gate. Rejects an unlisted method with a 400 before the DB ever sees
 //      it. Consequence of omission: the DB CHECK permits the value and the API refuses it, so the
 //      migration appears to have done nothing and the picker option is a dead control.
 //
-//   2. lambda/preservation/index.js :: SHELF_LIFE_MONTHS
+//   2. lambda/preservation/shelfLife.js :: SHELF_LIFE_MONTHS  (in index.js until Put-Up release 1a)
 //      THE DANGEROUS ONE. shelfLifeMonths() returns null for an unlisted method (:76-81), so
 //      defaultUseByTarget() returns null, so use_by_target is never set, so BOTH the use-soon route
 //      and the use_soon_count on every whats-put-up group skip the row forever. The jar becomes
@@ -68,7 +68,10 @@ const read = (p) => readFileSync(resolve(root, p), 'utf8')
 const migrationSql = read('migrations/v5-putupcandy-001/0a-additive-ddl.sql')
 const rollbackSql = read('migrations/v5-putupcandy-001/0r-rollback.sql')
 const gatesYml = read('migrations/v5-putupcandy-001/gates.yml')
-const lambdaSrc = read('lambda/preservation/index.js')
+// Put-Up release 1a moved the write gate and the shelf-life table out of index.js, verbatim, into two
+// importable modules. The parse below still reads them as text, like every other surface here.
+const jarRulesSrc = read('lambda/preservation/jarRules.js')
+const shelfLifeSrc = read('lambda/preservation/shelfLife.js')
 const pageSrc = read('src/pages/PutUp.jsx')
 const bandSrc = read('src/components/PutUpUseSoonBand.jsx')
 const plantingSrc = read('src/components/planting/PutUpFromPlanting.jsx')
@@ -99,13 +102,13 @@ const DB_VOCAB = checkConstraintValues(migrationSql, '0a CHECK')
 const ROLLBACK_VOCAB = checkConstraintValues(rollbackSql, '0r CHECK')
 
 const VALID_METHODS = new Set(
-  [...stripJs(between(lambdaSrc, 'const VALID_METHODS = [', '];', 'VALID_METHODS'))
+  [...stripJs(between(jarRulesSrc, 'const VALID_METHODS = [', '];', 'VALID_METHODS'))
     .matchAll(/'([a-z_]+)'/g)].map((m) => m[1]),
 )
 
 // Top-level keys only: two-space indent then `{`. The nested storage-kind keys (deep_freezer: 12)
 // are further indented and never followed by a brace, so they cannot be mistaken for methods.
-const shelfBlock = stripJs(between(lambdaSrc, 'const SHELF_LIFE_MONTHS = {', '\n};', 'SHELF_LIFE_MONTHS'))
+const shelfBlock = stripJs(between(shelfLifeSrc, 'const SHELF_LIFE_MONTHS = {', '\n};', 'SHELF_LIFE_MONTHS'))
 const SHELF_ENTRIES = new Map(
   [...shelfBlock.matchAll(/^ {2}(\w+):\s*\{([^}]*)\}/gm)].map((m) => [m[1], m[2]]),
 )
@@ -128,7 +131,7 @@ const PLANTING_LABELS = labelKeys(plantingSrc, 'PutUpFromPlanting METHOD_LABELS'
 // artifacts and cannot import each other, which is the same reason every other pair in this file is
 // compared by parsing rather than by importing.
 const HOUSE_SOURCED_LAMBDA = new Set(
-  [...stripJs(between(lambdaSrc, 'const HOUSE_SOURCED_SHELF_LIFE = [', '];', 'lambda HOUSE_SOURCED_SHELF_LIFE'))
+  [...stripJs(between(shelfLifeSrc, 'const HOUSE_SOURCED_SHELF_LIFE = [', '];', 'lambda HOUSE_SOURCED_SHELF_LIFE'))
     .matchAll(/'([a-z_]+)'/g)].map((m) => m[1]),
 )
 const HOUSE_SOURCED_PAGE = new Set(

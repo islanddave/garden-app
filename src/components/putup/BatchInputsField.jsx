@@ -108,7 +108,14 @@ const OTHER_UNITS = [...WEIGHT_UNITS, 'cup', 'qt', 'gal', 'count']
 // stands alone and reads for itself. Only the MOUNT read is conditional — every post-write re-read
 // below stays unconditional, because reporting the TRUE count after a write is a different rule
 // (ruling 6) and the host's own refresh lands too late to answer with.
-export default function BatchInputsField({ batchId, inputs, onChanged, nowMs }) {
+// `showGardenPicks` — Put-Up 1a item 6 (V4 §10.1: "'Add picks from the garden' → hidden (1a); garden
+// lines replace it (3)"). The door is HIDDEN, NOT DELETED: default false, and no shipped host passes
+// it, so the harvest-pick bulk add is unreachable in the app while its code, its predicate route and
+// its tests stay intact until release 3's garden lines replace it. Why hidden now: the bulk add claims
+// the WHOLE of every pick in a window (qty NULL = "assume the whole thing"), which the planting-level
+// lines of release 3 supersede, and a door Dave taps in 1a writes rows release 3 must then live with.
+// "Add something else" is unaffected.
+export default function BatchInputsField({ batchId, inputs, onChanged, nowMs, showGardenPicks = false }) {
   const { fetch } = useApiFetch()
   // NO OPTIONS, DELIBERATELY. useCropTypes defaults to scope 'garden', which is the scope this
   // surface wants — a harvest_log row cannot be a loaf of bread, so the 'non_plant_food' classes
@@ -397,17 +404,19 @@ export default function BatchInputsField({ batchId, inputs, onChanged, nowMs }) 
       )}
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
-        <button type="button" data-testid="batch-inputs-open-picks" style={linkBtn}
-          onClick={() => { setMode(mode === 'picks' ? null : 'picks'); resetPreview() }}>
-          Add picks from the garden
-        </button>
+        {showGardenPicks && (
+          <button type="button" data-testid="batch-inputs-open-picks" style={linkBtn}
+            onClick={() => { setMode(mode === 'picks' ? null : 'picks'); resetPreview() }}>
+            Add picks from the garden
+          </button>
+        )}
         <button type="button" data-testid="batch-inputs-open-other" style={linkBtn}
           onClick={() => { setMode(mode === 'other' ? null : 'other'); setOtherError(null) }}>
           Add something else
         </button>
       </div>
 
-      {mode === 'picks' && (
+      {showGardenPicks && mode === 'picks' && (
         <div data-testid="batch-inputs-picks" style={{ marginTop: 8 }}>
           <HarvestTimeframeChips
             value={chip}

@@ -376,14 +376,29 @@ post:
   # in a directory this change does not own, and one whose own comment records that three sessions
   # have already failed to maintain it. Re-asserted HERE so the coupling is visible from the change
   # that had to respect it, rather than only from the change that created it.
-  - name: post_parent_column_count_unchanged
+  #
+  # CONVERTED 2026-09-29 (Put-Up release 1a, V4 §4.6). Was `post_parent_column_count_unchanged`
+  # (count <> 25). "Gained nothing" was true of THIS migration and stops being a standing invariant
+  # the day release 1b gives preservation_log its own nullable columns, which it is designed to do.
+  # What survives, and is asserted now, is the half that was never about this migration's timing:
+  # the parent was not narrowed — every one of the 25 columns live prod and staging carried on
+  # 2026-09-29 is still there, one row per missing name. The v4-putupprov-001 pin it points at was
+  # converted in the same commit (now post_original_columns_present).
+  - name: post_parent_original_columns_present
     continuous: true
     sql: |
-      SELECT 1
+      SELECT want.column_name
+        FROM unnest(ARRAY['id','user_id','crop_type_slug','variety_id','plant_id','harvest_log_id',
+                          'preserved_at','method','method_other_text','quantity_value','quantity_unit',
+                          'package_count','storage_location_id','use_by_target','remaining_count',
+                          'consumed_at','notes','photo_id','created_at','updated_at','deleted_at',
+                          'source_kind','source_label','preserved_at_approx','batch_id']::text[])
+             AS want(column_name)
        WHERE EXISTS (SELECT 1 FROM public.schema_version
                       WHERE version = '5.0.0-putupmultisource-001')
-         AND (SELECT count(*) FROM information_schema.columns
-               WHERE table_schema='public' AND table_name='preservation_log') <> 25
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema='public' AND c.table_name='preservation_log'
+                            AND c.column_name = want.column_name)
     expect: rowcount_eq
     value: 0
 

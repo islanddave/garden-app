@@ -143,6 +143,26 @@ cleanup() {
     # soft-deletes and the ~60s Clerk token may have expired by now — the workflow DB sweep is
     # the AUTHORITATIVE cleanup; these are best-effort hygiene only.
   fi
+  # Block N (Put-Up): the run died before the smoke jar's or place's DELETE answered 200 (each id is cleared once
+  # it does). Soft-deletes, jar before place, on a fresh token; the L-058 sweep hard-deletes both either way.
+  if [[ -n "${CREATED_PUTUP_ID:-}${CREATED_PUTUP_PLACE_ID:-}" && -n "${CLERK_SESSION_ID:-}" ]]; then
+    local pu_jwt
+    pu_jwt=$(mint_session_token)
+    if [[ -n "${CREATED_PUTUP_ID:-}" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $pu_jwt" -H "Content-Type: application/json" \
+        "${STAGING_API_PRESERVATION%/}/api/preservation/${CREATED_PUTUP_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: smoke put-up deleted" \
+        || echo "WARNING: put-up cleanup failed (id: $CREATED_PUTUP_ID)"
+    fi
+    if [[ -n "${CREATED_PUTUP_PLACE_ID:-}" ]]; then
+      curl -sf --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $pu_jwt" -H "Content-Type: application/json" \
+        "${STAGING_API_STORAGE_LOCATIONS%/}/api/storage-locations/${CREATED_PUTUP_PLACE_ID}" -o /dev/null 2>&1 \
+        && echo "✅ Cleanup: smoke put-up place deleted" \
+        || echo "WARNING: put-up place cleanup failed (id: $CREATED_PUTUP_PLACE_ID)"
+    fi
+  fi
   # Block M (V5-NAVCUSTOM-001): the run died between its first nav-prefs PATCH and its restore. Put the
   # smoke account's own pins and bar back, best-effort, before the session is revoked below (the next
   # run's block M restores them anyway). Fresh token: the one in hand may have expired.
@@ -1586,6 +1606,224 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_SHARED_
   fi
 else
   echo "WARN [write:d2-sighting-tally] STAGING_API_SHARED_STATE unset/placeholder or no JWT -- D2 key assert NOT run"
+fi
+
+
+# ── N) Put-Up: a place and a jar, write → read-back (Put-Up release 1a; L-108) — Phase 2, continued ──────
+# Until this block the put-up family had no authed write here: preservation and storage-locations were only the
+# Phase 1 reachability probes. Release 1a changes two things this proves on the deployed stack:
+#   * the legacy PUT (lambda/preservation/index.js): a changed package_count moves remaining_count by the same
+#     delta, from COALESCE(remaining_count, package_count), and ignores the body's remaining_count; a count of
+#     jars that cannot exist is REFUSED with a coded 409, decided inside the one UPDATE;
+#   * every preservation DATE leaves projectRow (jarRules.js) as 'YYYY-MM-DD'. The driver's Date went out as
+#     "…T00:00:00.000Z", which an ET phone read as the day before and wrote back on each Mark used or Edit.
+# Independent of the test project: a place and a jar need neither a project nor a planting. One smoke place
+# (deep freezer), one smoke jar in it (tomato, the crop_types slug tests/integration/preservation.int.test.js
+# uses on its staging fork; whole_freeze; 3 containers; source_kind and preserved_at_approx sent as the Put-Up
+# form always sends them), then by READ-BACK through GET /api/preservation/:id:
+#   N1) preserved_at is the day sent (today in ET, the phone's day; the runner's UTC day turns over at 7 or 8 pm
+#       ET) and use_by_target the day the server derived: 12 months on, whole_freeze's deep_freezer leg in
+#       lambda/preservation/shelfLife.js (the cell shelfLife.test.js pins), Feb 29 clamped to Feb 28 as
+#       addMonths() does. Compared as whole strings, so the pre-1a "…T00:00:00.000Z" is a FAIL.
+#   N2) an untouched full-echo PUT leaves both dates as N1 read them. pu_put sends what buildFullPayload
+#       (src/pages/PutUp.jsx) sends: its nineteen keys, taken from the row the GET returned.
+#   N3) count 3 → 5 with no remaining_count: 5 left.
+#   N4) a Mark-used-shaped PUT (count unchanged, remaining 4): 4 left. Then a second, remaining 2, so 3 are used:
+#       N5 needs a count below what is used that is still a legal count. With 1 used the only such count is 0,
+#       which validateCommon refuses (400, package_count must be >= 1) before the count rule is reached.
+#   N5) the RowEditor count edit 5 → 2 with 3 used: 409, code count_below_used, and the row reads back
+#       unchanged — both counts, both dates and updated_at (a refused UPDATE writes nothing).
+#   N6) the jar, then the place, soft-deleted through their own routes, then absent from each default list.
+# N4 and N5 run only once the step before them passed: each one's numbers are the last one's result. No step
+# waits on a clock. Markers, the only columns the workflow's L-058 sweep matches for this block: the jar's notes
+# 'smoke-test-putup-<run>' and the place's label 'smoke-test-place-<run>'. The sweep hard-deletes the jar
+# before the place (preservation_log.storage_location_id has no ON DELETE action). Each id is cleared once its
+# DELETE answers 200; cleanup() soft-deletes whichever is left.
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" && -n "${STAGING_API_STORAGE_LOCATIONS:-}" ]]; then
+  PU_JARS_URL="${STAGING_API_PRESERVATION%/}/api/preservation"
+  PU_PLACES_URL="${STAGING_API_STORAGE_LOCATIONS%/}/api/storage-locations"
+  PU_DAY=$(TZ=America/New_York date +%Y-%m-%d)
+  PU_YEAR_ON=$(( ${PU_DAY:0:4} + 1 ))
+  if [[ "${PU_DAY:5:5}" == "02-29" ]]; then PU_USE_BY="$PU_YEAR_ON-02-28"; else PU_USE_BY="$PU_YEAR_ON-${PU_DAY:5:5}"; fi
+  pu_get() {                          # pu_get <jq filter> -> the jar's GET /:id through it (raw, compact), or http-<code>
+    local TMP CODE
+    TMP=$(mktemp)
+    CODE=$(curl -s --max-time 30 --connect-timeout 10 \
+      -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+      -o "$TMP" -w "%{http_code}" "$PU_JAR_URL") || CODE="000"
+    if [[ "$CODE" == "200" ]]; then jq -rc "$1" "$TMP" 2>/dev/null || echo "unparseable"; else echo "http-$CODE"; fi
+    rm -f "$TMP"
+  }
+  # pu_put <jq edit> -> reads the jar, builds buildFullPayload's body from that row (a key the row lacks goes as
+  # null), applies the edit and PUTs it, as RecordRow and RowEditor do. Prints "<HTTP code> <the answer's .code,
+  # or ->"; "no-row-<code> -" when the read failed, so nothing was sent.
+  pu_put() {
+    local ROW TMP CODE BODY=""
+    ROW=$(mktemp); TMP=$(mktemp)
+    CODE=$(curl -s --max-time 30 --connect-timeout 10 \
+      -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+      -o "$ROW" -w "%{http_code}" "$PU_JAR_URL") || CODE="000"
+    if [[ "$CODE" == "200" ]]; then
+      BODY=$(jq -c "{crop_type_slug, variety_id, plant_id, harvest_log_id, preserved_at, preserved_at_approx, method, method_other_text, quantity_value, quantity_unit, package_count, storage_location_id, use_by_target, remaining_count, consumed_at, notes, photo_id, source_kind, source_label} | $1" "$ROW" 2>/dev/null || echo "")
+    fi
+    if [[ -n "$BODY" ]]; then
+      CODE=$(curl -s --max-time 30 --connect-timeout 10 -X PUT \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        -o "$TMP" -w "%{http_code}" "$PU_JAR_URL" -d "$BODY") || CODE="000"
+      echo "$CODE $(jq -r '.code // "-"' "$TMP" 2>/dev/null || echo "-")"
+    else
+      echo "no-row-$CODE -"
+    fi
+    rm -f "$ROW" "$TMP"
+  }
+  pu_listed() {                       # pu_listed <list url> <id> -> listed | absent (a real array), else why not
+    local TMP CODE
+    TMP=$(mktemp)
+    CODE=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+      -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+      -o "$TMP" -w "%{http_code}" "$1") || CODE="000"
+    if [[ "$CODE" == "200" ]]; then
+      jq -r --arg id "$2" 'if type == "array" then (if any(.[]; .id == $id) then "listed" else "absent" end) else "not-an-array" end' "$TMP" 2>/dev/null || echo "unparseable"
+    else
+      echo "http-$CODE"
+    fi
+    rm -f "$TMP"
+  }
+  CLERK_JWT=$(mint_session_token)
+
+  PU_PLACE_BODY=$(mktemp)
+  PU_PLACE_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+    -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+    -o "$PU_PLACE_BODY" -w "%{http_code}" "$PU_PLACES_URL" \
+    -d "{\"label\": \"smoke-test-place-$TEST_RUN_ID\", \"kind\": \"deep_freezer\"}") || PU_PLACE_HTTP="000"
+  CREATED_PUTUP_PLACE_ID=$(jq -r '.id // empty' "$PU_PLACE_BODY" 2>/dev/null || echo "")
+  rm -f "$PU_PLACE_BODY"
+  PU_PLACE_ID="$CREATED_PUTUP_PLACE_ID"
+  if [[ "${PU_PLACE_HTTP:0:1}" == "2" && -n "$PU_PLACE_ID" ]]; then
+    echo "✅ PASS [crud:POST /storage-locations (smoke place)] HTTP $PU_PLACE_HTTP (id: $PU_PLACE_ID, deep_freezer)"
+    PASS=$((PASS+1))
+    PU_JAR_BODY=$(mktemp)
+    PU_JAR_HTTP=$(curl -s --max-time 30 --connect-timeout 10 \
+      -X POST -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+      -o "$PU_JAR_BODY" -w "%{http_code}" "$PU_JARS_URL" \
+      -d "{\"crop_type_slug\": \"tomato\", \"method\": \"whole_freeze\", \"quantity_value\": 2, \"quantity_unit\": \"lb\", \"package_count\": 3, \"preserved_at\": \"$PU_DAY\", \"preserved_at_approx\": false, \"source_kind\": \"own_garden\", \"storage_location_id\": \"$PU_PLACE_ID\", \"notes\": \"smoke-test-putup-$TEST_RUN_ID\"}") || PU_JAR_HTTP="000"
+    CREATED_PUTUP_ID=$(jq -r '.id // empty' "$PU_JAR_BODY" 2>/dev/null || echo "")
+    PU_JAR_SNIP=$(head -c 200 "$PU_JAR_BODY" 2>/dev/null || echo "")
+    rm -f "$PU_JAR_BODY"
+    PU_JAR_ID="$CREATED_PUTUP_ID"
+    PU_JAR_URL="$PU_JARS_URL/$PU_JAR_ID"
+    if [[ "${PU_JAR_HTTP:0:1}" == "2" && -n "$PU_JAR_ID" ]]; then
+      echo "✅ PASS [crud:POST /preservation (smoke jar)] HTTP $PU_JAR_HTTP (id: $PU_JAR_ID)"
+      PASS=$((PASS+1))
+
+      # N1) both dates, exactly as the GET returns them.
+      PU_DATES=$(pu_get '"\(.preserved_at) \(.use_by_target)"')
+      if [[ "$PU_DATES" == "$PU_DAY $PU_USE_BY" ]]; then
+        echo "✅ PASS [write:putup-dates-readback] preserved_at '$PU_DAY' as sent, use_by_target '$PU_USE_BY' as derived (deep freezer, 12 months), both 'YYYY-MM-DD'"
+        PASS=$((PASS+1))
+      else
+        echo "❌ FAIL [write:putup-dates-readback] read '$PU_DATES' (expected '$PU_DAY $PU_USE_BY': the day sent, then 12 months on, each exactly 'YYYY-MM-DD')"
+        FAIL=$((FAIL+1))
+      fi
+
+      # N2) the untouched echo — no key changed — must leave both dates where N1 read them.
+      CLERK_JWT=$(mint_session_token)
+      PU_PUT=$(pu_put '.')
+      PU_DATES_AFTER=$(pu_get '"\(.preserved_at) \(.use_by_target)"')
+      if [[ "$PU_PUT" == "200 -" && "$PU_DATES" == [0-9]* && "$PU_DATES_AFTER" == "$PU_DATES" ]]; then
+        echo "✅ PASS [write:putup-echo-dates-unchanged] untouched full-echo PUT → HTTP 200; dates read back '$PU_DATES_AFTER', as before"
+        PASS=$((PASS+1))
+      else
+        echo "❌ FAIL [write:putup-echo-dates-unchanged] PUT → '$PU_PUT' (expected '200 -'); dates before '$PU_DATES', after '$PU_DATES_AFTER' (expected the same two days)"
+        FAIL=$((FAIL+1))
+      fi
+
+      # N3) count 3 → 5, no remaining_count key: the delta lands on the 3 left.
+      PU_PUT=$(pu_put '.package_count = 5 | del(.remaining_count)')
+      PU_COUNTS=$(pu_get '"\(.package_count) \(.remaining_count)"')
+      if [[ "$PU_PUT" == "200 -" && "$PU_COUNTS" == "5 5" ]]; then
+        echo "✅ PASS [write:putup-count-delta] count 3 → 5 with no remaining_count → HTTP 200; reads back 5 containers, 5 left"
+        PASS=$((PASS+1))
+
+        # N4) Mark used (5 → 4 left), then count unchanged with 2 left, which leaves 3 used for N5.
+        CLERK_JWT=$(mint_session_token)
+        PU_PUT=$(pu_put '.remaining_count = 4')
+        PU_COUNTS=$(pu_get '"\(.package_count) \(.remaining_count)"')
+        if [[ "$PU_PUT" == "200 -" && "$PU_COUNTS" == "5 4" ]]; then
+          echo "✅ PASS [write:putup-mark-used] Mark-used PUT (count unchanged, remaining 4) → HTTP 200; reads back 5 containers, 4 left"
+          PASS=$((PASS+1))
+          PU_PUT=$(pu_put '.remaining_count = 2')
+          PU_COUNTS=$(pu_get '"\(.package_count) \(.remaining_count)"')
+          if [[ "$PU_PUT" == "200 -" && "$PU_COUNTS" == "5 2" ]]; then
+            echo "✅ PASS [write:putup-mark-used-again] count unchanged, remaining 2 → HTTP 200; reads back 5 containers, 2 left (3 used)"
+            PASS=$((PASS+1))
+
+            # N5) the count below what is used: refused, and nothing written.
+            CLERK_JWT=$(mint_session_token)
+            PU_SNAP='[.package_count, .remaining_count, .preserved_at, .use_by_target, .updated_at]'
+            PU_BEFORE=$(pu_get "$PU_SNAP")
+            PU_PUT=$(pu_put '.package_count = 2')
+            PU_AFTER=$(pu_get "$PU_SNAP")
+            if [[ "$PU_PUT" == "409 count_below_used" && "$PU_BEFORE" == "[5,2,"* && "$PU_AFTER" == "$PU_BEFORE" ]]; then
+              echo "✅ PASS [write:putup-count-below-used-refused] count 5 → 2 with 3 used → HTTP 409 count_below_used; the row reads back unchanged: $PU_AFTER"
+              PASS=$((PASS+1))
+            else
+              echo "❌ FAIL [write:putup-count-below-used-refused] PUT → '$PU_PUT' (expected '409 count_below_used'); row before $PU_BEFORE, after $PU_AFTER (expected equal, starting [5,2,)"
+              FAIL=$((FAIL+1))
+            fi
+          else
+            echo "❌ FAIL [write:putup-mark-used-again] PUT → '$PU_PUT' (expected '200 -'); reads back '$PU_COUNTS' (expected '5 2')"
+            FAIL=$((FAIL+1))
+          fi
+        else
+          echo "❌ FAIL [write:putup-mark-used] PUT → '$PU_PUT' (expected '200 -'); reads back '$PU_COUNTS' (expected '5 4')"
+          FAIL=$((FAIL+1))
+        fi
+      else
+        echo "❌ FAIL [write:putup-count-delta] PUT → '$PU_PUT' (expected '200 -'); reads back '$PU_COUNTS' (expected '5 5': 3 left plus the 2 added)"
+        FAIL=$((FAIL+1))
+      fi
+
+      # N6) the jar: soft-deleted, then gone from the default list.
+      CLERK_JWT=$(mint_session_token)
+      PU_DEL_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X DELETE \
+        -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+        -o /dev/null -w "%{http_code}" "$PU_JAR_URL") || PU_DEL_HTTP="000"
+      if [[ "$PU_DEL_HTTP" == "200" ]]; then CREATED_PUTUP_ID=""; fi
+      PU_LISTED=$(pu_listed "$PU_JARS_URL" "$PU_JAR_ID")
+      if [[ "$PU_DEL_HTTP" == "200" && "$PU_LISTED" == "absent" ]]; then
+        echo "✅ PASS [delete:putup-jar-gone-from-list] DELETE → HTTP 200; GET /api/preservation no longer lists $PU_JAR_ID"
+        PASS=$((PASS+1))
+      else
+        echo "❌ FAIL [delete:putup-jar-gone-from-list] DELETE → HTTP $PU_DEL_HTTP (expected 200); GET /api/preservation: '$PU_LISTED' (expected 'absent')"
+        FAIL=$((FAIL+1))
+      fi
+    else
+      echo "❌ FAIL [crud:POST /preservation (smoke jar)] HTTP $PU_JAR_HTTP"
+      echo "   Body: $PU_JAR_SNIP"
+      FAIL=$((FAIL+1))
+    fi
+
+    # N6) the place, after its jar: soft-deleted, then gone from the default list.
+    CLERK_JWT=$(mint_session_token)
+    PU_DEL_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X DELETE \
+      -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+      -o /dev/null -w "%{http_code}" "$PU_PLACES_URL/$PU_PLACE_ID") || PU_DEL_HTTP="000"
+    if [[ "$PU_DEL_HTTP" == "200" ]]; then CREATED_PUTUP_PLACE_ID=""; fi
+    PU_LISTED=$(pu_listed "$PU_PLACES_URL" "$PU_PLACE_ID")
+    if [[ "$PU_DEL_HTTP" == "200" && "$PU_LISTED" == "absent" ]]; then
+      echo "✅ PASS [delete:putup-place-gone-from-list] DELETE → HTTP 200; GET /api/storage-locations no longer lists $PU_PLACE_ID"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [delete:putup-place-gone-from-list] DELETE → HTTP $PU_DEL_HTTP (expected 200); GET /api/storage-locations: '$PU_LISTED' (expected 'absent')"
+      FAIL=$((FAIL+1))
+    fi
+  else
+    echo "❌ FAIL [crud:POST /storage-locations (smoke place)] HTTP $PU_PLACE_HTTP"
+    FAIL=$((FAIL+1))
+  fi
+else
+  echo "⚠️  WARN [write:putup] STAGING_API_PRESERVATION or STAGING_API_STORAGE_LOCATIONS unset, or no JWT — Put-Up write-path asserts NOT run"
 fi
 
 

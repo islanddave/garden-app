@@ -120,13 +120,39 @@ const tidPrefix = (name) => `[data-testid^="${name}${SUFFIX}"]`
 // `band` marks the cases measured a second time SCROLLED TO THE END, against the fixed 56px nav. It
 // is off for the sheet cases on purpose: the Sheet's backdrop is z-index 190 over a 100 nav, so the
 // page behind it is correctly unreachable and asserting there would red the modal working as designed.
+// ── Put-Up 1a item 8 (V4 §6.7) ────────────────────────────────────────────────────────────────────
+// The Going-now cards, Check on it and the shared Start sheet, at Dave's measured 426×836 and with
+// the keyboard up at 426×492 (V4 §6.7's default until his own keyboard-up height is measured). The
+// batch detail — whose actions this release changed (pause and the start-date door moved onto it) —
+// gains 426×836 beside its shipped 390×844. Every shipped case, viewport, count and assertion above
+// the `scope`/`panel` flags is untouched.
+//
+// `scope` — the new cases measure their tap census and hit-test over THEIR surface (the Going-now view
+// and any open sheet) rather than the whole page: on a bare /put-up the page's own header (the walk
+// door, the segmented view control) renders too, and it belongs to another lane's file. Those
+// out-of-scope controls are still measured and PRINTED, never silently dropped (see REPORT below).
+// `panel` — the new panel assertions, scoped to the new sheets (V4 §6.7): the primary fully visible at
+// the panel's FIRST and LAST scroll positions; min(width, height) ≥ the tap floor for every control
+// inside the panel, with the selector widened to role=radio / checkbox / switch / option; and the
+// focused field (the one the harness focused, nearest the pinned footer) under neither the sticky
+// footer nor the viewport edge.
+const NONE = { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, jarRows: 0, closedEmpty: false, detail: false, door: false, sheet: false }
+const KEYBOARD_UP = [426, 492]
 const CASES = [
   { name: 'closed-empty', viewports: [[390, 844]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, jarRows: 0, minControls: 1, closedEmpty: true, detail: false, door: false, sheet: false, band: true } },
   { name: 'closed',       viewports: [[390, 844]], expect: { closedRows: 9, monthHeadings: 4, reopenBtns: 9, outcomeChips: 0, jarRows: 0, minControls: 10, closedEmpty: false, detail: false, door: false, sheet: false, band: true } },
-  { name: 'detail',       viewports: [[390, 844]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, jarRows: 0, minControls: 2, closedEmpty: false, detail: true,  door: true,  sheet: false, band: true } },
+  { name: 'detail',       viewports: [[390, 844], [426, 836]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, jarRows: 0, minControls: 2, closedEmpty: false, detail: true,  door: true,  sheet: false, band: true } },
   { name: 'close-kept',   viewports: [[390, 844]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, jarRows: 0, minControls: 3, closedEmpty: false, detail: true,  door: false, sheet: true, band: false, keptChips: 2 } },
   { name: 'close-yes',    viewports: [[390, 844], [390, 667]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 2, jarRows: 4, minControls: 8, closedEmpty: false, detail: true, door: false, sheet: true, band: false, primary: 'batch-close-submit' } },
   { name: 'close-no',     viewports: [[390, 844], [390, 667]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 4, jarRows: 0, minControls: 8, closedEmpty: false, detail: true, door: false, sheet: true, band: false, primary: 'batch-close-submit' } },
+  // Four cards, each holding at most one question; the stalled ferment carries the longest label AND
+  // the tallest question (the stall question plus its attribution note).
+  { name: 'going',        viewports: [[426, 836]], expect: { ...NONE, goingCards: 4, minControls: 11, band: true, scope: 'going-now-view' } },
+  { name: 'going-kind',   viewports: [[426, 836]], expect: { ...NONE, goingCards: 4, kindChips: 6, minControls: 18, band: true, scope: 'going-now-view' } },
+  { name: 'checkin',      viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 8, scope: 'going-now-view', primary: 'checkin-save', panel: { footer: 'checkin-footer', focus: 'checkin-ph-input' } } },
+  { name: 'checkin-dry',  viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 8, scope: 'going-now-view', primary: 'checkin-save', panel: { footer: 'checkin-footer', focus: 'checkin-note' } } },
+  { name: 'start',        viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 8, scope: 'going-now-view', primary: 'start-submit', panel: { footer: 'start-footer', focus: 'start-label' } } },
+  { name: 'start-full',   viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, kindChips: 6, sheet: true, band: false, minControls: 16, scope: 'going-now-view', primary: 'start-submit', panel: { footer: 'start-footer', focus: 'start-kind-other-text' } } },
 ]
 
 const failures = []
@@ -260,7 +286,17 @@ const MEASURE = (c) => `(() => {
   const navR = nav ? box(nav) : null
   const primary = ${c.expect.primary ? `d.querySelector('${tid(c.expect.primary)}')` : 'null'}
 
-  const controls = [...d.querySelectorAll('button, input, select, textarea, [role="button"]')].filter(shown)
+  // SCOPE (Put-Up 1a cases only): measure the case's own surface and any open sheet; everything else
+  // on the page is still measured and returned as outOfScope, so it is printed rather than dropped.
+  const scoped = ${c.expect.scope ? 'true' : 'false'}
+  const scopeRoot = scoped ? d.querySelector('${c.expect.scope ? tid(c.expect.scope) : ''}') : null
+  const allControls = [...d.querySelectorAll('button, input, select, textarea, [role="button"]')].filter(shown)
+  const controls = scoped
+    ? allControls.filter(el => (scopeRoot && scopeRoot.contains(el)) || (panel && panel.contains(el)))
+    : allControls
+  const outOfScope = scoped
+    ? allControls.filter(el => !controls.includes(el)).map(el => ({ label: name(el), h: box(el).h, w: box(el).w }))
+    : []
   const taps = controls.map(el => {
     const r = box(el)
     // A control BEHIND an open modal correctly fails to hit-test — the backdrop is over it, by
@@ -340,8 +376,77 @@ const MEASURE = (c) => `(() => {
               controls: taps.length, links: links.length,
               reopenBtns: d.querySelectorAll('${tid('closed-batch-reopen')}').length,
               keptChips: d.querySelectorAll('${tid('batch-close-kept-yes')}, ${tid('batch-close-kept-no')}').length,
-              outcomeChips: d.querySelectorAll('${tidPrefix('batch-close-outcome-')}').length },
-    taps, links, rowMetrics, sheet, action,
+              outcomeChips: d.querySelectorAll('${tidPrefix('batch-close-outcome-')}').length,
+              goingCards: d.querySelectorAll('${tid('going-batch')}').length,
+              kindChips: d.querySelectorAll('${tid('going-kind-chips')} [role="group"] button, ${tid('start-kind-chips')} [role="group"] button').length },
+    taps, links, rowMetrics, sheet, action, outOfScope,
+  }
+})()`
+
+// ── Put-Up 1a: the PANEL measurement, run only for cases carrying `panel` ─────────────────────────
+// `where` = 'initial' (as the harness left it: the focused field already scrolled into view by the
+// browser), 'top' or 'bottom' (the panel's first and last scroll positions), or 'reach' (below). Read-
+// only apart from the scrollTop it is asked to set, which 'reach' restores before it returns.
+//
+// 'reach' — REACHABILITY, and why it replaces the census's at-rest hit-test for these panels only. The
+// new sheets pin their primary in a STICKY footer inside a panel that scrolls with the keyboard up, so
+// at any one scroll position some controls sit behind that footer — exactly the "scrollable page under
+// fixed chrome" the census already refuses to call occlusion for the bottom nav (see (a)). So each
+// panel control is brought to the middle of the band between the panel's top and the footer's top,
+// and hit-tested THERE: a control that still does not hit-test to itself (clamped under the footer at
+// the last scroll position, or painted over) genuinely cannot be tapped. The shipped cases carry no
+// `panel` flag and keep the at-rest hit-test unchanged.
+const PANEL_MEASURE = (c, where) => `(() => {
+  const d = document, w = window
+  const panel = d.querySelector('[role="dialog"]')
+  if (!panel) return { panel: false }
+  if (${JSON.stringify(where)} === 'top') panel.scrollTop = 0
+  if (${JSON.stringify(where)} === 'bottom') panel.scrollTop = panel.scrollHeight
+  const box = el => { const r = el.getBoundingClientRect(); return {
+    t: Math.round(r.top), l: Math.round(r.left), r: Math.round(r.right), b: Math.round(r.bottom),
+    w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10 } }
+  const name = el => el.getAttribute('aria-label') || el.getAttribute('data-testid') ||
+    (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 34) || ('<' + el.tagName.toLowerCase() + '>')
+  const shown = el => (!el.checkVisibility || el.checkVisibility()) && el.getBoundingClientRect().height > 0
+  const hitsSelf = (el, r) => {
+    const x = (r.l + r.r) / 2, y = (r.t + r.b) / 2
+    if (x < 0 || y < 0 || x >= w.innerWidth || y >= w.innerHeight) return null
+    const at = d.elementFromPoint(x, y)
+    if (at == null) return null
+    return at === el || el.contains(at) || at.contains(el)
+  }
+  const primary = d.querySelector('${tid(c.expect.primary)}')
+  const footer = d.querySelector('${tid(c.expect.panel.footer)}')
+  const wanted = d.querySelector('${tid(c.expect.panel.focus)}')
+  // The widened selector (V4 §6.7): radios, checkboxes, switches and options are targets too.
+  const controls = [...panel.querySelectorAll('button, input, select, textarea, [role="button"], [role="radio"], [role="checkbox"], [role="switch"], [role="option"]')].filter(shown)
+  if (${JSON.stringify(where)} === 'reach') {
+    const start = panel.scrollTop
+    const unreachable = []
+    for (const el of controls) {
+      if (!(footer && footer.contains(el))) {
+        const r = el.getBoundingClientRect()
+        const bandTop = panel.getBoundingClientRect().top
+        const bandBottom = footer ? footer.getBoundingClientRect().top : panel.getBoundingClientRect().bottom
+        panel.scrollTop += (r.top + r.bottom) / 2 - (bandTop + bandBottom) / 2
+      }
+      const rb = box(el)
+      const hs = hitsSelf(el, rb)
+      if (hs !== true) unreachable.push({ label: name(el), hitIsSelf: hs, t: rb.t, b: rb.b, scrollTop: Math.round(panel.scrollTop) })
+    }
+    panel.scrollTop = start
+    return { panel: true, reach: true, checked: controls.length, unreachable }
+  }
+  const pb = box(panel)
+  return {
+    panel: true, vw: w.innerWidth, vh: w.innerHeight, panelBox: pb,
+    scrollTop: Math.round(panel.scrollTop), scrollMax: Math.max(0, Math.round(panel.scrollHeight - panel.clientHeight)),
+    primary: primary ? (() => { const r = box(primary); return { ...r, hitIsSelf: hitsSelf(primary, r) } })() : null,
+    footer: footer ? box(footer) : null,
+    focus: { found: !!wanted, active: !!wanted && d.activeElement === wanted, box: wanted ? box(wanted) : null },
+    controls: controls.length,
+    small: controls.map(el => { const r = box(el); return { label: name(el), w: r.w, h: r.h } })
+      .filter(t => Math.min(t.w, t.h) < ${TAP_MIN_HEIGHT_PX}),
   }
 })()`
 
@@ -398,6 +503,8 @@ try {
       if (m.counts.reopenBtns !== e.reopenBtns) mismatch.push(`reopen buttons ${m.counts.reopenBtns} != ${e.reopenBtns}`)
       if (m.counts.outcomeChips !== e.outcomeChips) mismatch.push(`outcome chips ${m.counts.outcomeChips} != ${e.outcomeChips} — the two-step split offers 2 after Yes and 4 after No, so this case is measuring a step it did not reach`)
       if (m.counts.jarRows !== e.jarRows) mismatch.push(`jar picker rows ${m.counts.jarRows} != ${e.jarRows}`)
+      if (e.goingCards != null && m.counts.goingCards !== e.goingCards) mismatch.push(`Going-now cards ${m.counts.goingCards} != ${e.goingCards}`)
+      if (e.kindChips != null && m.counts.kindChips !== e.kindChips) mismatch.push(`kind chips ${m.counts.kindChips} != ${e.kindChips} — the kind row this case exists to measure did not open`)
       if (e.keptChips != null && m.counts.keptChips !== e.keptChips) mismatch.push(`kept chips ${m.counts.keptChips} != ${e.keptChips}`)
       if (m.counts.controls < e.minControls) mismatch.push(`${m.counts.controls} interactive controls, expected >=${e.minControls}`)
       if (m.closedEmpty !== e.closedEmpty) mismatch.push(`closed empty state ${m.closedEmpty}, expected ${e.closedEmpty}`)
@@ -443,7 +550,9 @@ try {
         // the same surface with 47px of clear air. Whether it fires at all depends on row heights and
         // therefore on FONT METRICS, so it reproduced on CI and not locally — an environment-shaped
         // false positive that reads exactly like a real defect.
-        if (t.inDialog && t.hitIsSelf === false && !(t.navOverlapPx > 0)) fail(`${at}: control "${t.label}" does not hit-test to itself — occluded`)
+        // Put-Up 1a panel cases replace this at-rest hit-test with the REACHABILITY pass in the panel
+        // block below (PANEL_MEASURE 'reach'); every other case is unchanged.
+        if (t.inDialog && !e.panel && t.hitIsSelf === false && !(t.navOverlapPx > 0)) fail(`${at}: control "${t.label}" does not hit-test to itself — occluded`)
         if (!t.fitsX) fail(`${at}: control "${t.label}" sits outside the ${vw}px viewport — unreachable`)
       }
 
@@ -491,6 +600,47 @@ try {
       const shortLinks = m.links.filter(l => l.h < TAP_MIN_HEIGHT_PX)
       if (m.links.length) {
         console.log(`[putup] ${at}: ${m.links.length} link target(s), ${shortLinks.length} under ${TAP_MIN_HEIGHT_PX}px [REPORTED, NOT ASSERTED — WCAG 2.5.8 exempts inline links]: ${shortLinks.map(l => `"${l.label}"=${l.h}px`).join(', ') || 'none'}`)
+      }
+
+      // Out-of-scope controls (Put-Up 1a scoped cases): REPORTED, never asserted here, never dropped.
+      const oosShort = (m.outOfScope || []).filter(t => t.h < TAP_MIN_HEIGHT_PX)
+      if (oosShort.length) {
+        console.log(`[putup] ${at}: REPORT (out of this case's scope, not asserted): ${oosShort.map(t => `"${t.label}" ${t.w}x${t.h}`).join(', ')} under ${TAP_MIN_HEIGHT_PX}px`)
+      }
+
+      // ── (e)(f)(g) THE PANEL — Put-Up 1a's new sheets only (V4 §6.7).
+      if (e.panel) {
+        const first = await evalSettled(PANEL_MEASURE(c, 'initial'))
+        if (!first.panel) { fail(`${at}: no [role="dialog"] for the panel measurement`); continue }
+        if (!first.controls) fail(`${at}: the panel holds no measurable control — the census below is over nothing`)
+        // (f) min(width, height) — the widened census, inside the panel only.
+        for (const t of first.small) fail(`${at}: panel control "${t.label}" is ${t.w}x${t.h} — min(width, height) under the ${TAP_MIN_HEIGHT_PX}px floor`)
+        // (h) REACHABILITY — every panel control hit-tests to itself once scrolled clear of the footer.
+        const reach = await evalSettled(PANEL_MEASURE(c, 'reach'))
+        if (!reach.checked) fail(`${at}: the reachability pass checked no control`)
+        for (const u of reach.unreachable) fail(`${at}: panel control "${u.label}" cannot be tapped — scrolled as clear of the footer as the panel allows (scrollTop ${u.scrollTop}) it sits y${u.t}-${u.b} and does not hit-test to itself`)
+        // (g) the focused field under neither sticky band, and on screen.
+        if (!first.focus.found) fail(`${at}: the field this case focuses (${e.panel.focus}) is not in the panel`)
+        else if (!first.focus.active) fail(`${at}: ${e.panel.focus} is not the focused element — the keyboard-up geometry was not reached`)
+        else {
+          const f = first.focus.box
+          if (!first.footer) fail(`${at}: no sticky footer (${e.panel.footer}) to clear`)
+          else if (f.b > first.footer.t + 0.5) fail(`${at}: the focused field (y${f.t}-${f.b}) runs under the sticky footer (top y${first.footer.t})`)
+          if (f.t < first.panelBox.t - 0.5 || f.b > first.vh + 0.5) fail(`${at}: the focused field (y${f.t}-${f.b}) is not inside the panel on screen (panel y${first.panelBox.t}, viewport ${first.vh})`)
+        }
+        // (e) the primary fully visible at the FIRST and LAST scroll positions.
+        const ends = []
+        for (const where of ['top', 'bottom']) {
+          const p = await evalSettled(PANEL_MEASURE(c, where))
+          const a = p.primary
+          if (!a) { fail(`${at}: no ${e.primary} at the panel's ${where}`); continue }
+          const visible = a.t >= -0.5 && a.b <= p.vh + 0.5 && a.t >= p.panelBox.t - 0.5 && a.b <= p.panelBox.b + 0.5
+          if (!visible) fail(`${at}: "${e.primary}" (y${a.t}-${a.b}) is not fully visible at the panel's ${where} (panel y${p.panelBox.t}-${p.panelBox.b}, viewport ${p.vh})`)
+          if (a.hitIsSelf !== true) fail(`${at}: "${e.primary}" does not hit-test to itself at the panel's ${where}`)
+          ends.push(`${where} y${a.t}-${a.b} (scroll ${p.scrollTop}/${p.scrollMax})`)
+        }
+        const fb = first.focus.box
+        console.log(`[putup] ${at}: panel y${first.panelBox.t}-${first.panelBox.b} · ${first.controls} controls, ${first.small.length} under min(w,h) ${TAP_MIN_HEIGHT_PX}px, ${reach.checked - reach.unreachable.length}/${reach.checked} reachable · focused ${e.panel.focus} ${fb ? `y${fb.t}-${fb.b}` : '—'} vs footer top y${first.footer?.t ?? '—'} · primary ${ends.join(' · ')}`)
       }
 
       // ── (d) BAND CLEARANCE, measured at the END of the scroll rather than at the top.
