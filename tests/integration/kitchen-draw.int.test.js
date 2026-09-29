@@ -495,9 +495,13 @@ describe.skipIf(!landed('draws', 'lineRestore'))('take out / restore — reverse
 
   it('restore after the jar was used up → 409 jar_used_up; the line stays out, no use written, jar unchanged', async () => {
     const b = (await seedBatch(DAVE)).id
-    const jar = await seedJar(DAVE, { count: 1 })
-    const { lineId } = await drawCounted(DAVE, b, jar, 1)
-    await call(DAVE, 'DELETE', linePath(b, lineId))
+    // COUNTED (3 containers): one container in a mass unit is a weighed jar (§1.4), where count_drawn is refused.
+    const jar = await seedJar(DAVE, { count: 3 })
+    const { res, lineId } = await drawCounted(DAVE, b, jar, 1)
+    expect(res.status, 'precondition: the draw landed').toBe(201)
+    expect((await call(DAVE, 'DELETE', linePath(b, lineId))).status, 'precondition: taken out').toBe(200)
+    expect((await readJar(jar)).remaining_count).toBe(3)
+    // Used up in between (another phone's Used up), so the re-draw has nothing to take.
     await directSql`UPDATE preservation_log SET remaining_count = 0, consumed_at = now() WHERE id = ${jar}`
     const before = await readJar(jar)
     const usesBefore = await usesOf(jar)

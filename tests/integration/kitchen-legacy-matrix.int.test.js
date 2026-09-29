@@ -20,6 +20,10 @@
 //   PutUpUseSoonBand.jsx:64   GET use-soon
 //   BatchInputsField "Take it out" (1a)  DELETE /api/kitchen-batches/:id/inputs/:lineId
 //
+// THE NOTE RULE (1b §5.4, contract-F §2.6; integrator ruling 2026-09-29): the legacy PUT no longer writes
+// notes, place, discard-by or method. A CHANGED value is 409 client_stale from any bundle; an unchanged echo
+// is a 200 content no-op. The F bundle edits a note (and the size and count) through PATCH /api/preservation/:id.
+//
 // Cells whose outcome is the SAME before and after F run today (the states are seeded by SQL on the F fork),
 // so they pin the N−1 contract against the current Lambda now. Cells whose outcome F changes are gated on
 // the route that changes it (_kitchenF.js).
@@ -29,13 +33,14 @@ import {
   makeHousehold, useHousehold, routeProbeReport, landed, call, key,
   seedBatch, seedJar, seedLine, seedPlace, seedPlanting, readJar, usesOf,
 } from './_kitchenF.js'
+import { describeRefusal, CLIENT_STALE_TEXT } from '../../src/lib/putUpErrors.js'
 
 const H = makeHousehold('legacy')
 const { DAVE, JEN, STRANGER } = H
 useHousehold(H, beforeAll, afterAll)
 
 routeProbeReport(it, expect, 'kitchen-legacy-matrix', [
-  'legacyDeltaRef', 'pantryUses', 'draws', 'keyedLines', 'lineRestore', 'getBatchF3',
+  'legacyDeltaRef', 'pantryUses', 'draws', 'keyedLines', 'lineRestore', 'getBatchF3', 'jarPatch',
 ])
 
 // PutUp.jsx:2531 buildFullPayload, verbatim in shape. The F bundle drops remaining_count and consumed_at (§1.3.3).
@@ -65,6 +70,23 @@ async function snap(jarId) {
     FROM preservation_log WHERE id = ${jarId}`
   return r
 }
+// Everything a PUT could change except updated_at, which every matched PUT stamps (an echo is a content no-op).
+async function content(jarId) {
+  const [r] = await directSql`
+    SELECT crop_type_slug, variety_id, plant_id, harvest_log_id, preserved_at, preserved_at_approx, method,
+           method_other_text, quantity_value, quantity_unit, package_count, storage_location_id, use_by_target,
+           remaining_count, remaining_amount, consumed_at, delta_at, notes, photo_id, source_kind, source_label, deleted_at
+    FROM preservation_log WHERE id = ${jarId}`
+  return r
+}
+// The 1b/F legacy-PUT refusal, as the server sends it and as the shipped client words it (putUpErrors.js):
+// the refresh door, never an automatic reload.
+function expectClientStale(r) {
+  expect(r.status).toBe(409)
+  expect(r.body).toMatchObject({ code: 'client_stale', error: 'This jar just changed. Refresh and try again.' })
+  expect(describeRefusal({ body: r.body })).toEqual({ code: 'client_stale', text: CLIENT_STALE_TEXT, refresh: true })
+}
+const patchJar = (user, jarId, body) => call(user, 'PATCH', `/api/preservation/${jarId}`, body)
 const recordsOf = (body) => (body.groups ? body.groups.flatMap((g) => g.records) : body.items ?? [])
 
 // ── the states ────────────────────────────────────────────────────────────────────────────────────
@@ -177,13 +199,22 @@ describe('legacy PUT on states that F does not change (runs today)', () => {
     expect(Number(s.remaining_amount)).toBe(92)
   })
 
-  it('(b) a 1a RowEditor notes edit on the weighed bag (echoing remaining_count null) → 200; grams unchanged', async () => {
-    const bag = await seedJar(DAVE, { weighed: true, remainingAmount: 92 })
+  // 1b §5.4 (contract-F §2.6): the legacy PUT no longer WRITES notes (nor place, discard-by, method); a present
+  // value that DIFFERS is a tab older than the row. delta_at is unset here, so the notes rule alone refuses it.
+  it('(b) a 1a RowEditor CHANGED note on the weighed bag → 409 client_stale with the refresh words; nothing written', async () => {
+    const bag = await seedJar(DAVE, { weighed: true, remainingAmount: 92, notes: 'kf stored note' })
+    const before = await snap(bag)
     const r = await put(JEN, bag, '1a', { notes: 'kf legacy note' })
+    expectClientStale(r)
+    expect(await snap(bag), 'a refused UPDATE writes nothing, updated_at included').toEqual(before)
+  })
+
+  it('an UNCHANGED-note echo (1a bundle, undrawn jar) → 200, a content no-op', async () => {
+    const jar = await seedJar(DAVE, { count: 3, notes: 'kf same note', useByInDays: 30 })
+    const before = await content(jar)
+    const r = await put(DAVE, jar, '1a', {})
     expect(r.status).toBe(200)
-    const s = await snap(bag)
-    expect(s.notes).toBe('kf legacy note')
-    expect(Number(s.remaining_amount)).toBe(92)
+    expect(await content(jar)).toEqual(before)
   })
 
   it('STRANGER PUT/DELETE → 404, row unchanged', async () => {
@@ -196,7 +227,7 @@ describe('legacy PUT on states that F does not change (runs today)', () => {
   })
 })
 
-describe.skipIf(!landed('legacyDeltaRef'))('legacy PUT on (a) a drawn jar — the F refusal (§1.3.4, §2.6)', () => {
+describe.skipIf(!landed('legacyDeltaRef', 'jarPatch'))('legacy PUT on (a) a drawn jar — the F refusal (§1.3.4, §2.6)', () => {
   it('quartet (c): a 1a-bundle PUT carrying remaining_count on a jar with delta_at → 409 client_stale; nothing written', async () => {
     const jar = await seedJar(DAVE, { count: 5, remaining: 4, deltaAt: true })
     const before = await snap(jar)
@@ -206,25 +237,45 @@ describe.skipIf(!landed('legacyDeltaRef'))('legacy PUT on (a) a drawn jar — th
     expect(await snap(jar)).toEqual(before)
   })
 
-  it('the refusal also covers an untouched echo (Used up / RowEditor from a 1a bundle both send the key)', async () => {
-    const jar = await seedJar(DAVE, { count: 5, remaining: 4, deltaAt: true })
-    const r = await put(DAVE, jar, '1a', { notes: 'kf echo' })
-    expect(r.status).toBe(409)
-    expect(r.body.code).toBe('client_stale')
+  it('an UNTOUCHED 1a echo (nothing changed, but it carries remaining_count) on the drawn jar → 409 client_stale', async () => {
+    // The delta_at predicate alone: every value equals the stored one, so no 1b echo rule can refuse it.
+    const jar = await seedJar(DAVE, { count: 5, remaining: 4, deltaAt: true, notes: 'kf drawn' })
+    const before = await snap(jar)
+    expectClientStale(await put(DAVE, jar, '1a', {}))
+    expect(await snap(jar)).toEqual(before)
   })
 
-  it('quartet (b): an F-bundle RowEditor notes edit (no remaining_count, no consumed_at) → 200; remaining unchanged', async () => {
-    const jar = await seedJar(DAVE, { count: 5, remaining: 4, deltaAt: true })
-    const r = await put(DAVE, jar, 'F', { notes: 'kf F note' })
-    expect(r.status, 'MUTATION ARM: re-add remaining_count to buildFullPayload → 409 here').toBe(200)
+  it('a CHANGED note through the PUT from an F-shaped body (no remaining_count) → 409 client_stale too', async () => {
+    const jar = await seedJar(DAVE, { count: 5, remaining: 4, deltaAt: true, notes: 'kf drawn' })
+    const before = await snap(jar)
+    expectClientStale(await put(DAVE, jar, 'F', { notes: 'kf F note through the PUT' }))
+    expect(await snap(jar)).toEqual(before)
+  })
+
+  it('an F-shaped untouched echo through the PUT on the drawn jar → 200 no-op (MUTATION ARM: re-add remaining_count → 409)', async () => {
+    const jar = await seedJar(DAVE, { count: 5, remaining: 4, deltaAt: true, notes: 'kf drawn' })
+    const before = await content(jar)
+    const r = await put(DAVE, jar, 'F', {})
+    expect(r.status).toBe(200)
+    expect(await content(jar)).toEqual(before)
+  })
+
+  it('quartet (b): the F bundle edits the note through PATCH /api/preservation/:id → 200, read back; count and delta_at unchanged', async () => {
+    const jar = await seedJar(DAVE, { count: 5, remaining: 4, deltaAt: true, notes: 'kf drawn' })
+    const before = await snap(jar)
+    const r = await patchJar(DAVE, jar, { notes: 'kf F note' })
+    expect(r.status).toBe(200)
+    expect(r.body.notes).toBe('kf F note')
     const s = await snap(jar)
     expect(s.notes).toBe('kf F note')
-    expect(s.remaining_count).toBe(4)
+    expect([s.package_count, s.remaining_count, s.consumed_at]).toEqual([before.package_count, 4, null])
+    expect(s.delta_at?.valueOf()).toBe(before.delta_at?.valueOf())
+    expect((await patchJar(STRANGER, jar, { notes: 'x' })).status).toBe(404)
   })
 })
 
-describe.skipIf(!landed('draws', 'keyedLines', 'pantryUses', 'legacyDeltaRef'))('§1.3 item 6 quartet end to end (draw → F Mark used → F RowEditor → 1a PUT)', () => {
-  it('(a) draw 1 from J, then F-bundle Mark used on J → 201, remaining −1 each; (b) F RowEditor → 200; (c) 1a PUT → 409', async () => {
+describe.skipIf(!landed('draws', 'keyedLines', 'pantryUses', 'legacyDeltaRef', 'jarPatch'))('§1.3 item 6 quartet end to end (draw → F Mark used → F note edit → 1a PUT)', () => {
+  it('(a) draw 1 from J, then F-bundle Mark used on J → 201, remaining −1 each; (b) F note edit (PATCH) → 200; (c) 1a PUT → 409', async () => {
     const b = (await seedBatch(DAVE)).id
     const jar = await seedJar(DAVE, { count: 4 })
     const d = await call(DAVE, 'POST', `/api/kitchen-batches/${b}/inputs`, { inputs: [{ input_kind: 'put_up', preservation_log_id: jar, count_drawn: 1, idempotency_key: key() }] })
@@ -233,12 +284,11 @@ describe.skipIf(!landed('draws', 'keyedLines', 'pantryUses', 'legacyDeltaRef'))(
     const mark = await call(DAVE, 'POST', '/api/pantry/uses', { idempotency_key: key(), preservation_log_id: jar, count_used: 1 })
     expect(mark.status).toBe(201)
     expect((await snap(jar)).remaining_count).toBe(2)
-    const edit = await put(DAVE, jar, 'F', { notes: 'kf quartet' })
+    const edit = await patchJar(DAVE, jar, { notes: 'kf quartet' })
     expect(edit.status).toBe(200)
-    expect((await snap(jar)).remaining_count).toBe(2)
+    expect(await snap(jar)).toMatchObject({ remaining_count: 2, notes: 'kf quartet' })
     const stale = await put(DAVE, jar, '1a', { remaining_count: 1 })
-    expect(stale.status).toBe(409)
-    expect(stale.body.code).toBe('client_stale')
+    expectClientStale(stale)
     expect((await snap(jar)).remaining_count).toBe(2)
     expect((await usesOf(jar)).map((u) => [u.count_used, u.fate])).toEqual([[1, 'batch'], [1, null]])
   })

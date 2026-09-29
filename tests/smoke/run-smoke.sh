@@ -1840,11 +1840,12 @@ fi
 #    L-108) — Phase 2, continued ─────────────────────────────────────────────────────────────────────────────────
 # Nine sub-blocks, one per §5.6 row, each a write followed by a read-back:
 #   P1) put-up (1b): the jar reads back the date sent and use_by_basis 'typed' (discard_by sent); a legacy PUT with a
-#       DIFFERENT date → 409 client_stale; an equal echo → 200 and nothing changes.
+#       DIFFERENT discard-by (use_by_target: V4 §5.4's "date" — a differing preserved_at is still written) → 409
+#       client_stale; an equal echo → 200 and nothing changes.
 #   P2) batch → a typed line → a salt line; read back salt_pct / salt_base / base_g / salt_method / base_from.
 #   P3) counted draw of 1 from jar J → remaining −1 → the F bundle's Mark used (POST /api/pantry/uses) → 201,
-#       remaining −1 → the F bundle's RowEditor notes edit (PUT without remaining_count / consumed_at) → 200, count
-#       unchanged. The drawn jar stays usable (06 §1.3).
+#       remaining −1 → the F bundle's note edit (PATCH /api/preservation/:id; the legacy PUT refuses a changed note
+#       from any bundle) → 200, the note reads back and the count is unchanged. The drawn jar stays usable (06 §1.3).
 #   P4) weighed draw 8 g from a 100 g bag → 92 g; the rest (92 g) → 0 g, count 0, consumed; use-soon lists it
 #       before and not after.
 #   P5) take P3's line out → the count comes back → restore → drawn again.
@@ -1945,6 +1946,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       fe_fail "place" "POST /storage-locations → HTTP $FE_CODE (no id)"
     else
       FE_LATER=$(fe_row "SELECT (CURRENT_DATE + 60)::text")
+      FE_OTHER_DAY=$(fe_row "SELECT (CURRENT_DATE + 90)::text")
 
       # ── P1) put-up (1b): date + basis read back; a differing-date legacy PUT refused; an equal echo a no-op ──
       CLERK_JWT=$(mint_session_token)
@@ -1957,8 +1959,8 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
         fe_req GET "$FE_BASE/api/preservation/$FE_J1"
         FE_ROW=$(fe_jq '{crop_type_slug, variety_id, plant_id, harvest_log_id, preserved_at, preserved_at_approx, method, method_other_text, quantity_value, quantity_unit, package_count, storage_location_id, use_by_target, remaining_count, consumed_at, notes, photo_id, source_kind, source_label}')
         FE_BEFORE=$(fe_row "SELECT preserved_at::text||'|'||coalesce(remaining_count::text,'null')||'|'||coalesce(notes,'null') FROM preservation_log WHERE id = '$FE_J1'")
-        fe_req PUT "$FE_BASE/api/preservation/$FE_J1" "$(echo "$FE_ROW" | jq -c --arg d "$(utc_days_ago 3)" '.preserved_at = $d')"
-        fe_check "p1-legacy-date-refused" "$FE_CODE $(fe_jq '.code // "-"')" "409 client_stale" "legacy PUT with a different preserved_at"
+        fe_req PUT "$FE_BASE/api/preservation/$FE_J1" "$(echo "$FE_ROW" | jq -c --arg d "$FE_OTHER_DAY" '.use_by_target = $d')"
+        fe_check "p1-legacy-date-refused" "$FE_CODE $(fe_jq '.code // "-"') $(fe_row "SELECT use_by_target::text FROM preservation_log WHERE id = '$FE_J1'")" "409 client_stale $FE_LATER" "legacy PUT with a different discard-by; the stored one after"
         fe_req PUT "$FE_BASE/api/preservation/$FE_J1" "$FE_ROW"
         fe_check "p1-legacy-echo-noop" "$FE_CODE $(fe_row "SELECT preserved_at::text||'|'||coalesce(remaining_count::text,'null')||'|'||coalesce(notes,'null') FROM preservation_log WHERE id = '$FE_J1'")" "200 $FE_BEFORE" "untouched legacy echo; date|remaining|notes after"
       else
@@ -1974,7 +1976,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       fe_req GET "$FE_BASE/api/kitchen-batches/$FE_B2"
       fe_check "p2-salt-readback" "$(fe_jqx "$FE_SALT" '.inputs[] | select(.id == $x) | "\(.salt_pct|tonumber)|\(.salt_base)|\(.base_g|tonumber)|\(.salt_method)|\(.base_from)"')" "2|produce|1000|dry|lines" "salt line on the batch GET"
 
-      # ── P3) counted draw → F Mark used → F RowEditor edit (the drawn jar stays usable) ──
+      # ── P3) counted draw → F Mark used → F note edit through PATCH (the drawn jar stays usable) ──
       CLERK_JWT=$(mint_session_token)
       FE_J3=$(fe_newjar 3 "jar" 4)
       fe_line "$FE_B2" "{\"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J3\", \"count_drawn\": 1}"
@@ -1982,10 +1984,8 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       fe_check "p3-draw" "$FE_CODE $(fe_jar "$FE_J3")" "201 3|null|false" "counted draw of 1 from 4; remaining|grams|consumed"
       fe_req POST "$FE_BASE/api/pantry/uses" "{\"idempotency_key\": \"$(fe_uuid)\", \"preservation_log_id\": \"$FE_J3\", \"count_used\": 1}"
       fe_check "p3-mark-used" "$FE_CODE $(fe_jar "$FE_J3")" "201 2|null|false" "F Mark used (POST /api/pantry/uses)"
-      fe_req GET "$FE_BASE/api/preservation/$FE_J3"
-      FE_ROW=$(fe_jq '{crop_type_slug, variety_id, plant_id, harvest_log_id, preserved_at, preserved_at_approx, method, method_other_text, quantity_value, quantity_unit, package_count, storage_location_id, use_by_target, notes, photo_id, source_kind, source_label} | .notes = (.notes + " edited")')
-      fe_req PUT "$FE_BASE/api/preservation/$FE_J3" "$FE_ROW"
-      fe_check "p3-roweditor" "$FE_CODE $(fe_jar "$FE_J3")" "200 2|null|false" "F RowEditor notes edit (no remaining_count key)"
+      fe_req PATCH "$FE_BASE/api/preservation/$FE_J3" "{\"notes\": \"$FE_TAG edited\"}"
+      fe_check "p3-note-edit" "$FE_CODE $(fe_jar "$FE_J3") $(fe_row "SELECT coalesce(notes,'null') FROM preservation_log WHERE id = '$FE_J3'")" "200 2|null|false $FE_TAG edited" "F note edit (PATCH /api/preservation/:id); remaining|grams|consumed, then the note"
 
       # ── P4) weighed: 8 g → 92 g; the rest → 0 g, used up, gone from use-soon ──
       CLERK_JWT=$(mint_session_token)
@@ -1993,7 +1993,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       fe_req GET "$FE_BASE/api/preservation/use-soon"
       FE_LISTED_BEFORE=$(fe_jqx "$FE_J4" 'any(.items[]; .id == $x)')
       fe_line "$FE_B2" "{\"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J4\", \"qty\": 8, \"qty_unit\": \"g\"}"
-      fe_check "p4-weighed-draw" "$FE_CODE $(fe_jar "$FE_J4")" "201 null|92.00|false" "8 g from a 100 g bag"
+      fe_check "p4-weighed-draw" "$FE_CODE $(fe_jar "$FE_J4")" "201 1|92.00|false" "8 g from a 100 g bag (POST seeded remaining 1 and 100 g; a gram draw leaves the count)"
       fe_line "$FE_B2" "{\"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J4\", \"qty\": 92, \"qty_unit\": \"g\"}"
       fe_req GET "$FE_BASE/api/preservation/use-soon"
       fe_check "p4-draw-to-zero" "$(fe_jar "$FE_J4") listed-before:$FE_LISTED_BEFORE listed-after:$(fe_jqx "$FE_J4" 'any(.items[]; .id == $x)')" "0|0.00|true listed-before:true listed-after:false" "the other 92 g; use-soon before/after"
@@ -2039,9 +2039,9 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       FE_S8=$(fe_jq '.stage.id // empty')
       FE_R8=$(fe_jq '.jars[0].id // empty')
       if [[ "$FE_CODE" == "201" ]] && fe_id_ok "$FE_S8" && fe_id_ok "$FE_R8"; then
-        fe_check "p8-putup-row" "$(fe_row "SELECT shu_est_low||'|'||shu_est_high||'|'||shu_est_basis||'|'||cooked FROM preservation_log WHERE id = '$FE_R8'")|$(fe_jar "$FE_J8")" "16000|23000|typed|true|null|92.00|false" "row shu|basis|cooked, then the bag"
+        fe_check "p8-putup-row" "$(fe_row "SELECT shu_est_low||'|'||shu_est_high||'|'||shu_est_basis||'|'||cooked FROM preservation_log WHERE id = '$FE_R8'")|$(fe_jar "$FE_J8")" "16000|23000|typed|true|1|92.00|false" "row shu|basis|cooked, then the bag"
         fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B8/put-up/$FE_S8/undo"
-        fe_check "p8-undo" "$FE_CODE $(fe_jar "$FE_J8") $(fe_row "SELECT (deleted_at IS NOT NULL)::text FROM preservation_log WHERE id = '$FE_R8'")" "200 null|100.00|false true" "Undo that put-up; bag, then the row jar removed"
+        fe_check "p8-undo" "$FE_CODE $(fe_jar "$FE_J8") $(fe_row "SELECT (deleted_at IS NOT NULL)::text FROM preservation_log WHERE id = '$FE_R8'")" "200 1|100.00|false true" "Undo that put-up; bag, then the row jar removed"
       else
         fe_fail "p8-putup-row" "POST /put-up → HTTP $FE_CODE: $(head -c 200 "$FE_OUT")"
       fi

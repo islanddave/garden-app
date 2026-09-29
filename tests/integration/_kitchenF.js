@@ -1,13 +1,14 @@
 // tests/integration/_kitchenF.js — shared fixtures + route-presence probes for the Put-Up 1b + Ferment (F)
 // integration files: kitchen-draw, kitchen-ferment, kitchen-legacy-matrix (06-ferment-path §5.2, lane L4).
 //
-// WRITTEN AGAINST THE FROZEN CONTRACT, AHEAD OF THE ROUTES. contract-F.md (§2) is the spec; lanes L2a/L2b build
-// the routes concurrently. A describe that needs a route that is not on this branch yet is SKIPPED through
-// landed(), so the integration run stays green on a branch that carries only the schema. Two things keep a
-// skip from reading as a pass forever (absence of signal is not green):
-//   * KITCHEN_F_FORCE=1 treats every probe as landed — the merge lane runs with it once L2a+L2b+L4 are
-//     together, and anything still missing then fails instead of skipping;
-//   * KITCHEN_F_REQUIRE=1 turns each file's "route probes" test red while any probe is pending.
+// WRITTEN AGAINST THE FROZEN CONTRACT, AHEAD OF THE ROUTES. contract-F.md (§2) is the spec; lanes L2a/L2b built
+// the routes concurrently. A describe that needs a route that is not on the branch is SKIPPED through landed().
+// Since the ferment Lambda landed on putup-train (b33fe37) every route is present, so a skip is now a defect,
+// and two things keep one from reading as a pass (absence of signal is not green):
+//   * REQUIRE IS THE DEFAULT: each file's "route probes" test is RED while any probe it lists is pending, so a
+//     probe that stops matching (a renamed code, a moved route) fails the run instead of silently skipping the
+//     tests behind it. KITCHEN_F_REQUIRE=0 turns that off (a branch that genuinely lacks the routes);
+//   * KITCHEN_F_FORCE=1 treats every probe as landed, so a missing route fails in its own tests instead.
 // The probe is a marker in the preservation Lambda's non-test source, chosen from the contract's own
 // vocabulary (an error code or a literal path the route must contain). A marker is a presence hint, not a
 // proof — the tests behind it are the proof.
@@ -68,14 +69,14 @@ export const landed = (...keys) => keys.every((k) => {
 })
 export const pendingOf = (keys) => keys.filter((k) => !HAS[k])
 
-/** One `it` per file: lists what that file skipped; red under KITCHEN_F_REQUIRE=1 while anything is pending. */
+/** One `it` per file: lists what that file skipped; red while anything is pending unless KITCHEN_F_REQUIRE=0. */
 export function routeProbeReport(it, expect, file, keys) {
   it(`${file}: route probes (a skip here is NOT a pass — see _kitchenF.js)`, () => {
     const pending = pendingOf(keys)
     if (pending.length) {
       console.warn(`[kitchen-F] ${file}: SKIPPED until the route lands: ${pending.map((k) => `${k} (${PROBES[k][1]})`).join('; ')}`)
     }
-    if (process.env.KITCHEN_F_REQUIRE === '1') expect(pending, 'KITCHEN_F_REQUIRE=1: every route this file covers must be present').toEqual([])
+    if (process.env.KITCHEN_F_REQUIRE !== '0') expect(pending, 'every route this file covers must be present (KITCHEN_F_REQUIRE=0 to allow skips)').toEqual([])
   })
 }
 
@@ -141,7 +142,7 @@ export async function closeBatchDirect(batchId, owner) {
 export async function seedJar(owner, {
   count = 3, qty, unit, weighed = false, method = 'whole_freeze', crop = CROP,
   remaining = null, remainingAmount = null, consumed = false, deleted = false, deltaAt = false,
-  useByInDays = null, sourceKind = null, varietyId = null, plantId = null, notes = null,
+  useByInDays = null, sourceKind = null, sourceLabel = null, varietyId = null, plantId = null, notes = null,
 } = {}) {
   const pc = weighed ? 1 : count
   const qv = qty ?? (weighed ? 100 : 2)
@@ -150,14 +151,14 @@ export async function seedJar(owner, {
     INSERT INTO preservation_log (user_id, crop_type_slug, variety_id, plant_id, preserved_at, method,
                                   quantity_value, quantity_unit, package_count, remaining_count,
                                   remaining_amount, consumed_at, deleted_at, delta_at, use_by_target,
-                                  source_kind, notes)
+                                  source_kind, source_label, notes)
     VALUES (${owner}, ${crop}, ${varietyId}, ${plantId}, (now() - interval '60 days')::date, ${method},
             ${qv}, ${qu}, ${pc}, ${remaining}, ${remainingAmount},
             ${consumed ? new Date().toISOString() : null}::timestamptz,
             ${deleted ? new Date().toISOString() : null}::timestamptz,
             ${deltaAt ? new Date().toISOString() : null}::timestamptz,
             ${useByInDays == null ? null : new Date(Date.now() + useByInDays * 864e5).toISOString().slice(0, 10)}::date,
-            ${sourceKind}, ${notes})
+            ${sourceKind}, ${sourceLabel}, ${notes})
     RETURNING id`
   return j.id
 }
@@ -179,9 +180,14 @@ export async function seedHarvest(owner, { projectId, plantId, qty = 2, unit = '
   return hv.id
 }
 
+// 1b's uq_storage_location_user_kind_label is UNIQUE (user_id, kind, lower(label)) over live rows, so each call
+// gets its own label (a file seeds more than one place per owner).
+let placeSeq = 0
 export async function seedPlace(owner, { kind = 'deep_freezer' } = {}) {
+  placeSeq += 1
   const [s] = await directSql`
-    INSERT INTO storage_location (user_id, label, kind) VALUES (${owner}, ${`kf place ${owner}`}, ${kind}) RETURNING id`
+    INSERT INTO storage_location (user_id, label, kind)
+    VALUES (${owner}, ${`kf place ${placeSeq} ${owner}`}, ${kind}) RETURNING id`
   return s.id
 }
 

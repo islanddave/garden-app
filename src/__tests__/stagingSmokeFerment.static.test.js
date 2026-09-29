@@ -26,7 +26,7 @@ describe('block P is present, after block N and before the water recon', () => {
   })
 
   it.each(['p1-putup-readback', 'p1-legacy-date-refused', 'p1-legacy-echo-noop', 'p2-salt-readback', 'p3-draw',
-    'p3-mark-used', 'p3-roweditor', 'p4-weighed-draw', 'p4-draw-to-zero', 'p5-take-out', 'p5-restore',
+    'p3-mark-used', 'p3-note-edit', 'p4-weighed-draw', 'p4-draw-to-zero', 'p5-take-out', 'p5-restore',
     'p6-stage-edit', 'p7-shu-save', 'p8-putup-row', 'p8-undo', 'p9-batch-remove', 'l058-sweep'])('asserts %s', (tag) => {
     expect(BLOCK).toContain(`"${tag}"`)
   })
@@ -83,17 +83,22 @@ describe('gating and read-back discipline', () => {
     expect(BLOCK).toMatch(/fe_jar\(\) \{ fe_id_ok "\$1" && fe_row/)
   })
 
-  it("P3's RowEditor edit is the F bundle's payload: no remaining_count, no consumed_at", () => {
+  // The legacy PUT refuses a CHANGED note from any bundle (1b §5.4, contract-F §2.6): the F bundle's note edit is
+  // PATCH /api/preservation/:id. A PUT here would read 409 client_stale on staging.
+  it("P3's note edit is the F bundle's: PATCH /api/preservation/:id, never the legacy PUT", () => {
     const p3 = BLOCK.slice(BLOCK.indexOf('# ── P3)'), BLOCK.indexOf('# ── P4)'))
-    const edit = p3.slice(p3.indexOf('fe_req GET "$FE_BASE/api/preservation/$FE_J3"'))
-    const filter = edit.match(/FE_ROW=\$\(fe_jq '([^']*)'\)/)[1]
-    expect(filter).not.toContain('remaining_count')
-    expect(filter).not.toContain('consumed_at')
-    expect(filter).toContain('notes')
+    expect(p3).toContain('fe_req PATCH "$FE_BASE/api/preservation/$FE_J3" "{\\"notes\\": \\"$FE_TAG edited\\"}"')
+    expect(p3).not.toMatch(/fe_req PUT /)
+    expect(p3).toContain('"200 2|null|false $FE_TAG edited"')
   })
 
-  it("P1's refused PUT is the 1a bundle's payload (it carries remaining_count), so the 1b date rule is what refuses it", () => {
+  // A drawn-jar-free 1a PUT, so the refusal is the 1b echo rule's: the "date" there is use_by_target (V4 §5.4;
+  // a differing preserved_at is written, not refused).
+  it("P1's refused PUT is the 1a payload with a different discard-by (use_by_target), and the stored one survives", () => {
     const p1 = BLOCK.slice(BLOCK.indexOf('# ── P1)'), BLOCK.indexOf('# ── P2)'))
     expect(p1.match(/FE_ROW=\$\(fe_jq '([^']*)'\)/)[1]).toContain('remaining_count')
+    expect(p1).toContain(`jq -c --arg d "$FE_OTHER_DAY" '.use_by_target = $d'`)
+    expect(p1).not.toContain('.preserved_at = $d')
+    expect(p1).toContain('"409 client_stale $FE_LATER"')
   })
 })

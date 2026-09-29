@@ -374,9 +374,13 @@ describe.skipIf(!landed('stagePostF', 'stagePatch'))('stages — acts, ph_read_a
     expect(e.edited_at).not.toBeNull()
   })
 
-  it('acts on a non-tended row → 400', async () => {
+  it('acts on a non-tended row → 400, nothing written (the note is there, so acts is the only reason)', async () => {
     const b = (await seedBatch(DAVE)).id
-    expect((await call(DAVE, 'POST', bpath(b, '/stages'), { stage_kind: 'noted', acts: ['skimmed'] })).status).toBe(400)
+    const r = await call(DAVE, 'POST', bpath(b, '/stages'), { stage_kind: 'noted', note: 'kf acts on a note', acts: ['skimmed'] })
+    expect(r.status).toBe(400)
+    expect(await directSql`SELECT id FROM kitchen_stage_log WHERE batch_id = ${b} AND stage_kind = 'noted'`).toHaveLength(0)
+    const ok = await call(DAVE, 'POST', bpath(b, '/stages'), { stage_kind: 'noted', note: 'kf acts on a note' })
+    expect(ok.status, 'control: the same note without acts is accepted').toBe(201)
   })
 
   it.each([
@@ -539,8 +543,9 @@ describe.skipIf(!landed('getBatchF3', 'keyedLines', 'draws', 'lineRestore'))('GE
     const p = await seedPlanting(DAVE, { name: 'kf-shape' })
     const hv = await seedHarvest(DAVE, p)
     const ownJar = await seedJar(DAVE, { count: 3, sourceKind: 'own_garden' })
-    const boughtJar = await seedJar(DAVE, { count: 3, sourceKind: 'purchased' })
-    const multiJar = await seedJar(DAVE, { count: 3, sourceKind: 'purchased' })
+    // 'store' is a vendor source_kind (chk_preservation_log_source_kind's closed vocabulary has no 'purchased').
+    const boughtJar = await seedJar(DAVE, { count: 3, sourceKind: 'store', sourceLabel: 'kf shop' })
+    const multiJar = await seedJar(DAVE, { count: 3, sourceKind: 'store', sourceLabel: 'kf shop' })
     // The 4th from_garden branch: a bought jar whose preservation_source rows include own_garden.
     await directSql`
       INSERT INTO preservation_source (preservation_log_id, user_id, source_kind, display_label, provenance_grade, crop_type_slug)
@@ -566,7 +571,8 @@ describe.skipIf(!landed('getBatchF3', 'keyedLines', 'draws', 'lineRestore'))('GE
     expect(by[ids[0]].from_garden).toBe(true)
     expect(by[ids[1]].from_garden).toBe(true)
     expect(by[ids[2]].from_garden).toBe(true)
-    expect(by[ids[3]].from_garden).toBe(false)
+    expect(by[ids[3]].from_garden, 'a bought jar with no garden source').toBe(false)
+    expect(by[ids[4]].from_garden, 'the 4th branch: a bought jar with an own_garden preservation_source row').toBe(true)
     expect(by[ids[5]].from_garden).toBe(false)
     expect(by[ids[2]].count_drawn).toBe(2)
     expect(by[ids[5]].count_drawn ?? null).toBeNull()
@@ -618,8 +624,10 @@ function putUpBody(place, { made, mash = undefined, finish = false, rows } = {})
 async function putUp(user, b, body) {
   const res = await call(user, 'POST', bpath(b, '/put-up'), body)
   const [s] = await directSql`SELECT id FROM kitchen_stage_log WHERE idempotency_key = ${body.idempotency_key}::uuid`
-  const jars = s ? await directSql`SELECT id FROM preservation_log WHERE put_up_stage_id = ${s.id} ORDER BY created_at, id` : []
-  return { res, stageId: s?.id, jarIds: jars.map((j) => j.id) }
+  // One statement writes every jar, so created_at ties and id is random: rows are named by container_label.
+  const jars = s ? await directSql`SELECT id, container_label FROM preservation_log WHERE put_up_stage_id = ${s.id}` : []
+  const byContainer = Object.fromEntries(jars.map((j) => [j.container_label, j.id]))
+  return { res, stageId: s?.id, jarIds: jars.map((j) => j.id), byContainer }
 }
 
 describe.skipIf(!landed('shuEstimate', 'keyedLines'))('§5.3 golden — SHU in the jar now (batch scope)', () => {
@@ -812,10 +820,13 @@ describe.skipIf(!landed('shuEstimate', 'keyedLines', 'putUp', 'stagePatch'))('§
     ] }))
     expect(p.res.status).toBe(201)
     const sit = await shu(DAVE, b, `scope=sitting&id=${p.stageId}`)
-    const row1 = await shu(DAVE, b, `scope=jar&id=${p.jarIds[0]}`)
-    expect([half(row1.body.low), half(row1.body.high)]).toEqual([half(sit.body.low), half(sit.body.high)])
-    const row2 = await shu(DAVE, b, `scope=jar&id=${p.jarIds[1]}`)
-    expect(row2.body.refusal).toBe('row_net_unknown')
+    expect(sit.body.refusal, JSON.stringify(sit.body)).toBeUndefined()
+    // (412·2,500 + 230·10,000 + 8·1.4M) / 910 and (412·8,000 + 230·23,000 + 8·2.2M) / 910.
+    expect([sit.body.low, sit.body.high]).toEqual([half((412 * 2500 + 230 * 10000 + 8 * 1400000) / 910), half((412 * 8000 + 230 * 23000 + 8 * 2200000) / 910)])
+    const row1 = await shu(DAVE, b, `scope=jar&id=${p.byContainer.bottle}`)
+    expect([row1.body.low, row1.body.high], 'row 1 has no additions: the sitting figure').toEqual([sit.body.low, sit.body.high])
+    const row2 = await shu(DAVE, b, `scope=jar&id=${p.byContainer.woozy}`)
+    expect(row2.body.refusal, '2 × 8 fl oz is a volume: no row net weight').toBe('row_net_unknown')
     expect(Number((await readJar(reaperBag)).remaining_amount)).toBe(87)
   })
 })
