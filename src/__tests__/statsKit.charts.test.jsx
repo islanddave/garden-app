@@ -129,6 +129,12 @@ describe('chart layouts on the fixture', () => {
     expect(max).toBe(154.3)
     expect(sourceMetaLine(big[0])).toBe('46 plantings · 37 picked · 5 lost · 11 saved lots')
     expect(sourceMetaLine(S.sources.series.cards.find(c => c.name === 'Hart Farm'))).toBe('1 planting · 1 picked')
+    // the no-source card (source_id null, picked/lost null) still says its saved lots
+    expect(none.source_id).toBeNull()
+    expect(sourceMetaLine(none)).toBe('96 plantings · 3 saved lots')
+    // the fixture is the regenerated real one: 35 cards (34 named + the no-source card), real ids
+    expect(S.sources.series.cards).toHaveLength(35)
+    for (const c of [...big, ...small]) expect(c.source_id).toMatch(/^[0-9a-f-]{36}$/)
   })
 
   it('heat clock by crop: the origin sits on the left axis, 0 heat on the baseline', () => {
@@ -159,6 +165,7 @@ describe('chart layouts on the fixture', () => {
   it('heat tube: one dot per variety with a Scoville number, the hottest named, ticks 0..1M left to right', () => {
     const T = layoutHeatTube(S.heat_ladder)
     const best = S.heat_ladder.series.best
+    expect(best).toHaveLength(31)
     expect(T.dots).toHaveLength(best.filter(r => typeof r.scoville_max === 'number').length)
     expect(T.hottest.text).toBe('Armageddon F1 1.3M')
     expect(T.hottest.x).toBeLessThanOrEqual(W)

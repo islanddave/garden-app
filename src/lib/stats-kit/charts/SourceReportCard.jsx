@@ -57,7 +57,7 @@ export default function SourceReportCard({ section }) {
           <Row key={c.source_id} name={c.name} kind={kindWord(c.kind)} lb={c.lb} max={max} meta={sourceMetaLine(c)} />
         ))}
         {none && (
-          <Row name="No source recorded" lb={none.lb} max={max} meta={countOf(num(none.plantings), 'planting')} muted />
+          <Row name="No source recorded" lb={none.lb} max={max} meta={sourceMetaLine(none)} muted />
         )}
       </ul>
       {small.length > 0 && (

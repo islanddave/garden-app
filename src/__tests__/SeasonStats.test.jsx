@@ -99,6 +99,7 @@ describe('SeasonStats', () => {
     const more = screen.getByTestId('source-more')
     expect(more.textContent).toMatch(/^\d+ more sources · /)
     expect(within(report).getByText('No source recorded')).toBeTruthy()
+    expect(within(report).getByText('96 plantings · 3 saved lots')).toBeTruthy()
     fireEvent.click(more)
     expect(within(report).getAllByTestId('source-row').length).toBeGreaterThan(shown)
     expect(more.getAttribute('aria-expanded')).toBe('true')
