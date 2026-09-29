@@ -39,6 +39,11 @@ vi.mock('../lib/api.js', async (orig) => ({
   }),
 }))
 vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? wire.plants : wire.locations, loading: false, error: null }) }))
+// S6: the plan-independent bands (Harvest, Put-Up, the Sow row's lines) are fetched at the page and the ready point
+// waits for them (useTodayBands); this file is not about them, so they answer at once, settled and empty.
+vi.mock('../components/today/v2/useTodayBands.js', () => ({
+  useTodayBands: () => ({ settled: true, watch: { data: null, failed: false, reload() {} }, compose: { data: null, settled: true, reload() {} }, soon: { data: null, failed: false, reload() {} }, sow: { items: null, settled: true }, harvest: { present: false, summary: null }, putup: { present: false, summary: null } }),
+}))
 
 import TodayV2 from '../pages/TodayV2.jsx'
 import { readSkipped } from '../components/today/careStore.js'

@@ -493,3 +493,12 @@ export const SEED_BULK_EXTRACT_ENABLED = false
 // The V2 gates measure the page through the real chooser: tests/harness/vite.harness.v2.mjs serves this module
 // with the constant true whichever way it ships (and throws if it cannot find it), so ?v2=1 reaches TodayV2 there.
 export const TODAY_V2_PREVIEW_ROW = true
+
+// V5-SOWFREEZELINES-001 (D3 of the Seeds-home design; Dave 2026-09-18: "leave for now until that design is
+// finalized", so it folds into the Today redesign, V5-TODAYREDESIGN-001 S6). While the 2027 sowing freeze holds,
+// the redesigned Today's Sow link row keeps its door ("All sow windows ›") and shows NO dated "Sow X by …" line —
+// it does not even ask for the candidates. COMPILE-TIME: flip FALSE to un-freeze (the C3 dated 2027 re-prompt, or
+// Dave restarting planning) and the row shows the engine's closing windows above its door again; nothing else
+// changes. It never touches frost alerts. V1 Today's CultivationLead does not read it: V1 keeps its lines until V1
+// is removed (S8c), since its gate:today-shape must stay green unmodified.
+export const SOW_DATED_LINES_FROZEN = true
