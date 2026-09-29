@@ -212,7 +212,7 @@ function PlacePicker({ chips, value, onChange, disabled, idPrefix, required, row
 
 // `row` is the row as stored (it may inherit); `shown` is the same row with the inherited container
 // and place resolved, which is what every word on screen describes.
-function RowEditorBlock({ row, shown, index, rows, method, batch, places, containers, open, onToggle, onChange, onRemove, disabled, previews }) {
+function RowEditorBlock({ row, shown, index, rows, method, batch, places, containers, open, onToggle, onChange, onRemove, onKeepDrying, disabled, previews }) {
   const n = index + 1
   const name = row.name.trim() || batch.label
   const rowName = `row ${n}`
@@ -293,6 +293,12 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
           {TEXTURE_METHODS.has(method) && (
             <ToggleChips label="How dry?" options={TEXTURE_CHIPS} value={row.texture} disabled={disabled}
               idPrefix={`putup-row-${index}-texture`} onChange={v => set({ texture: v })} />
+          )}
+          {/* V4 engine rule e: "Still soft" on a Dry batch also offers to stop here — the sheet closes, nothing
+              is put up, and the draft keeps everything for when it is dry. */}
+          {TEXTURE_METHODS.has(method) && row.texture === 'still_soft' && batch.kind === 'dehydrate' && (
+            <button type="button" data-testid={`putup-row-${index}-keep-drying`} disabled={disabled} onClick={onKeepDrying}
+              style={{ ...quietLink, marginBottom: T.space.sm }}>Not yet — keep drying</button>
           )}
           {PH_METHODS.has(method) && (
             <div style={{ marginBottom: T.space.sm }}>
@@ -514,7 +520,8 @@ function PutItUpOpen({ batch, onClose, onDone, onChanged, now }) {
             containers={containers} open={openRow === i} disabled={saving} previews={previews}
             onToggle={() => setOpenRow(o => (o === i ? null : i))}
             onChange={next => { updateRow(i, next); setErr(null) }}
-            onRemove={() => { setRows(rs => rs.filter((_, j) => j !== i)); setOpenRow(null) }} />
+            onRemove={() => { setRows(rs => rs.filter((_, j) => j !== i)); setOpenRow(null) }}
+            onKeepDrying={onClose} />
         ))}
         <button type="button" style={quietLink} disabled={saving} data-testid="putup-row-add"
           onClick={() => { setRows(rs => [...rs, newRow(rs[rs.length - 1])]); setOpenRow(null) }}>

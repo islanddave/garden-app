@@ -353,3 +353,25 @@ describe('Check on it — Saved · Undo in place (V4 §2.3, from 1b)', () => {
     await waitFor(() => expect(screen.getByTestId('going-checkin-saved').textContent).toBe('Taken back — that check-in is off the log.'))
   })
 })
+
+describe('Put it up — Still soft on a Dry batch (V4 engine rule e)', () => {
+  // MUTATION: drop the kind gate -> the Ferment arm shows the door and reds.
+  it('offers "Not yet — keep drying", which closes the sheet, writes nothing and keeps the draft', async () => {
+    await openPutUp(APPLES)
+    await tap('putup-method-dehydrate')
+    await tap('putup-row-0-more')
+    await tap('putup-row-0-texture-still_soft')
+    await tap('putup-row-0-keep-drying')
+    await waitFor(() => expect(sheet()).toBeNull())
+    expect(putUps()).toHaveLength(0)
+    expect(JSON.parse(localStorage.getItem('garden:putup-draft:v1:user_dave:putup:kb-apples')).data.method).toBe('dehydrate')
+  })
+  it('is not offered on another kind', async () => {
+    await openPutUp({ ...APPLES, id: 'kb-x', kind: 'ferment' })
+    await tap('putup-method-more')
+    await tap('putup-method-dehydrate')
+    await tap('putup-row-0-more')
+    await tap('putup-row-0-texture-still_soft')
+    expect(screen.queryByTestId('putup-row-0-keep-drying')).toBeNull()
+  })
+})
