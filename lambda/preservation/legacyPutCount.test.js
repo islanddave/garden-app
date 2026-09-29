@@ -64,7 +64,7 @@ const written = (over = {}) => ({
 })
 const refused = (storedCount, storedRemaining) => ({
   id: null, user_id: null, package_count: null, remaining_count: null,
-  stored_package_count: storedCount, stored_remaining_count: storedRemaining,
+  stored_package_count: storedCount, stored_remaining_count: storedRemaining, stored_stale: false,
 })
 
 let updateCall
@@ -93,14 +93,16 @@ describe('the count rule is decided inside the one UPDATE, not by a read-then-wr
     updateCall = theUpdate()
     const sql = updateCall.text.replace(/\s+/g, ' ')
     expect(sql.indexOf('WITH stored AS (')).toBeLessThan(sql.indexOf('UPDATE preservation_log SET'))
-    expect(sql).toMatch(/SELECT updated\.\*, stored\.stored_package_count, stored\.stored_remaining_count FROM stored LEFT JOIN updated ON TRUE/)
+    expect(sql).toMatch(/SELECT updated\.\*, stored\.stored_package_count, stored\.stored_remaining_count, stored\.stored_stale FROM stored LEFT JOIN updated ON TRUE/)
   })
 
-  it('remaining_count: the body value when the count is unchanged, else the stored left moved by the delta', async () => {
+  // Put-Up release 1b amends the 1a shape (V4 "From 1b": an absent key is unchanged). The count
+  // branch now keys on a PRESENT package_count that differs; an absent one reads the stored count.
+  it('remaining_count: moved by the delta on a count change, the body value when present, else unchanged', async () => {
     answerWith([written()])
     await handler(put(echo({ remaining_count: 2 })))
     const sql = theUpdate().text.replace(/\s+/g, ' ')
-    expect(sql).toMatch(/remaining_count = CASE WHEN package_count = \?::int THEN \?::int ELSE COALESCE\(remaining_count, package_count\) \+ \(\?::int - package_count\) END,/)
+    expect(sql).toMatch(/remaining_count = CASE WHEN \?::int IS NOT NULL AND package_count <> \?::int THEN COALESCE\(remaining_count, package_count\) \+ \(\?::int - package_count\) WHEN \?::boolean THEN \?::int ELSE remaining_count END,/)
   })
 
   it('the refusal is the same expression, bounded to 0..the new count, in the WHERE', async () => {
@@ -108,14 +110,23 @@ describe('the count rule is decided inside the one UPDATE, not by a read-then-wr
     await handler(put(echo({ remaining_count: 2 })))
     const sql = theUpdate().text.replace(/\s+/g, ' ')
     const where = sql.slice(sql.indexOf('WHERE id = ?', sql.indexOf('UPDATE preservation_log SET')))
-    expect(where).toMatch(/AND COALESCE\( CASE WHEN package_count = \?::int THEN \?::int ELSE COALESCE\(remaining_count, package_count\) \+ \(\?::int - package_count\) END BETWEEN 0 AND \?::int, TRUE\)/)
+    expect(where).toMatch(/AND COALESCE\( CASE WHEN \?::int IS NOT NULL AND package_count <> \?::int THEN COALESCE\(remaining_count, package_count\) \+ \(\?::int - package_count\) WHEN \?::boolean THEN \?::int ELSE remaining_count END BETWEEN 0 AND COALESCE\(\?::int, package_count\), TRUE\)/)
   })
 
   it('a count change re-derives consumed_at from the count it produced', async () => {
     answerWith([written()])
     await handler(put(echo({ remaining_count: 2 })))
     const sql = theUpdate().text.replace(/\s+/g, ' ')
-    expect(sql).toMatch(/consumed_at = CASE WHEN package_count = \?::int THEN \?::timestamptz WHEN COALESCE\(remaining_count, package_count\) \+ \(\?::int - package_count\) = 0 THEN COALESCE\(consumed_at, NOW\(\)\) END,/)
+    expect(sql).toMatch(/consumed_at = CASE WHEN \?::int IS NOT NULL AND package_count <> \?::int THEN CASE WHEN COALESCE\(remaining_count, package_count\) \+ \(\?::int - package_count\) = 0 THEN COALESCE\(consumed_at, NOW\(\)\) END/)
+  })
+
+  it('the write and the actor GUC share one sql.transaction, the GUC first (trg_audit_preservation_log_upd)', async () => {
+    answerWith([written()])
+    await handler(put(echo({ remaining_count: 2 })))
+    const texts = stubState.sqlCalls.map((c) => c.text.replace(/\s+/g, ' ').trim())
+    const at = texts.findIndex((t) => /UPDATE preservation_log SET/.test(t))
+    expect(texts[at - 1]).toMatch(/^SELECT set_config\('app\.actor_clerk_sub', \?, true\)$/)
+    expect(stubState.sqlCalls[at - 1].values).toEqual([USER])
   })
 })
 
@@ -124,33 +135,114 @@ describe('what the shipped client sends is what gets bound', () => {
     answerWith([written()])
     await handler(put(echo({ remaining_count: 2 })))
     const call = theUpdate()
-    expect(boundAfter(call, /package_count\s+= /)).toBe(3)
-    expect(boundAfter(call, /remaining_count\s+= CASE WHEN package_count = /)).toBe(3)
-    expect(boundAfter(call, /remaining_count\s+= CASE WHEN package_count = \?::int THEN /)).toBe(2)
+    expect(boundAfter(call, /package_count\s+= COALESCE\(/)).toBe(3)
+    expect(boundAfter(call, /remaining_count\s+= CASE WHEN /)).toBe(3)
+    expect(boundAfter(call, /package_count\)\s+WHEN \?::boolean THEN /)).toBe(2)
   })
 
-  // V4's named deployed-writer cases. The arithmetic for each is proved on PG 17 (commit message);
-  // here, that the edited count and the untouched echo reach the statement as they left the phone.
-  it('RowEditor lowering the count below what is left: new count bound, the stale echo bound only to the unchanged-count branch', async () => {
+  it('RowEditor lowering the count below what is left: the new count bound to the delta branch', async () => {
     answerWith([written({ package_count: 1, remaining_count: 1 })])
     const rec = echo()
     await handler(put({ ...rec, ...rowEditorSave(rec, { package_count: 1, use_by_target: rec.use_by_target }) }))
     const call = theUpdate()
-    expect(boundAfter(call, /package_count\s+= /)).toBe(1)
-    expect(boundAfter(call, /remaining_count\s+= CASE WHEN package_count = \?::int THEN /)).toBe(3)
+    expect(boundAfter(call, /package_count\s+= COALESCE\(/)).toBe(1)
+    expect(boundAfter(call, /remaining_count\s+= CASE WHEN /)).toBe(1)
     expect(boundAfter(call, /\+ \(/)).toBe(1)
   })
 
-  it('RowEditor changing a date, and clearing one: the date as sent, the count untouched', async () => {
+  // From 1b the PUT no longer WRITES use_by_target (PATCH owns it, with its basis): the shipped
+  // RowEditor's date is bound only to the equality test in the WHERE, and a differing one is refused.
+  it('RowEditor changing a date: bound only to the WHERE equality, never to the SET', async () => {
     answerWith([written()])
     const rec = echo({ remaining_count: 2 })
     await handler(put({ ...rec, ...rowEditorSave(rec, { package_count: 3, use_by_target: '2027-01-15' }) }))
-    expect(boundAfter(theUpdate(), /use_by_target\s+= /)).toBe('2027-01-15')
-    stubState.sqlCalls = []
-    await handler(put({ ...rec, ...rowEditorSave(rec, { package_count: 3, use_by_target: null }) }))
     const call = theUpdate()
-    expect(boundAfter(call, /use_by_target\s+= /)).toBeNull()
-    expect(boundAfter(call, /remaining_count\s+= CASE WHEN package_count = \?::int THEN /)).toBe(2)
+    expect(call.text).toMatch(/use_by_target\s+= use_by_target,/)
+    expect(call.values.filter((v) => v === '2027-01-15')).toHaveLength(2) // the snapshot and the WHERE
+  })
+})
+
+describe('Put-Up release 1b — "From 1b": absent is unchanged, a differing echo is stale', () => {
+  const sqlOf = () => theUpdate().text.replace(/\s+/g, ' ')
+  const whereOf = () => { const s = sqlOf(); return s.slice(s.indexOf('WHERE id = ?', s.indexOf('UPDATE preservation_log SET'))) }
+
+  it.each([
+    ['storage_location_id', 'storage_location_id = storage_location_id,'],
+    ['use_by_target', 'use_by_target = use_by_target,'],
+    ['method', 'method = method,'],
+    ['method_other_text', 'method_other_text = method_other_text,'],
+    ['notes', 'notes = notes,'],
+  ])('%s is never written by the legacy PUT', async (_col, set) => {
+    answerWith([written()])
+    await handler(put(echo({ remaining_count: 2 })))
+    expect(sqlOf()).toContain(set)
+  })
+
+  it.each([
+    ['storage_location_id', 'AND (NOT ?::boolean OR ?::uuid IS NOT DISTINCT FROM storage_location_id)'],
+    ['use_by_target', 'AND (NOT ?::boolean OR ?::date IS NOT DISTINCT FROM use_by_target)'],
+    ['method', 'AND (NOT ?::boolean OR ?::text IS NOT DISTINCT FROM method)'],
+    ['method_other_text', "AND (NOT ?::boolean OR NULLIF(btrim(?::text), '') IS NOT DISTINCT FROM NULLIF(btrim(method_other_text), ''))"],
+    ['notes', "AND (NOT ?::boolean OR NULLIF(btrim(?::text), '') IS NOT DISTINCT FROM NULLIF(btrim(notes), ''))"],
+    ['the count race', 'AND NOT (?::int IS NOT NULL AND package_count <> ?::int AND ?::boolean AND ?::int IS DISTINCT FROM remaining_count)'],
+  ])('%s: a present value must equal the stored one, decided in the WHERE', async (_c, clause) => {
+    answerWith([written()])
+    await handler(put(echo({ remaining_count: 2 })))
+    expect(whereOf()).toContain(clause)
+  })
+
+  it('the snapshot explains with the very same predicates (term for term)', async () => {
+    answerWith([written()])
+    await handler(put(echo({ remaining_count: 2 })))
+    const s = sqlOf()
+    const snap = s.slice(s.indexOf('NOT ( (NOT'), s.indexOf(') AS stored_stale'))
+    const where = whereOf()
+    const terms = snap.replace(/^NOT \( /, '').split(/ AND (?=\(NOT|NOT \()/)
+    expect(terms).toHaveLength(6)
+    for (const t of terms) expect(where).toContain(`AND ${t.trim()}`)
+  })
+
+  it('an absent key binds "not present" — a 1b bundle that omits the five and the counts changes none of them', async () => {
+    answerWith([written()])
+    await handler(put({ preserved_at: '2026-09-28', crop_type_slug: 'pepper' }))
+    const call = theUpdate()
+    const flag = (re) => boundAfter(call, re)
+    expect(flag(/AND \(NOT /)).toBe(false) // storage_location_id presence, the first WHERE term
+    expect(boundAfter(call, /package_count\s+= COALESCE\(/)).toBeNull()
+    expect(boundAfter(call, /remaining_count\s+= CASE WHEN /)).toBeNull()
+    expect(boundAfter(call, /package_count\)\s+WHEN /)).toBe(false) // remaining_count's presence
+  })
+
+  it('the stale-tab race: a differing count sent WITH a differing remaining binds the race term', async () => {
+    answerWith([written()])
+    await handler(put(echo({ package_count: 3, remaining_count: 2 })))
+    const call = theUpdate()
+    expect(boundAfter(call, /AND NOT \(/)).toBe(3)
+  })
+
+  it('a label-only jar (crop, variety and planting all null) is not refused by the gate: the effective row decides', async () => {
+    answerWith([written()])
+    const res = parse(await handler(put(echo({ crop_type_slug: null, remaining_count: 2 }))))
+    expect(res.status).toBe(200)
+  })
+
+  it('quantity_value null, absent or 0 keeps the stored pair; a real one writes both', async () => {
+    for (const [qv, keep] of [[null, true], [0, true], [undefined, true], ['2.50', false]]) {
+      stubState.sqlCalls = []
+      answerWith([written()])
+      const body = echo({ remaining_count: 2 })
+      if (qv === undefined) delete body.quantity_value; else body.quantity_value = qv
+      await handler(put(body))
+      expect(boundAfter(theUpdate(), /quantity_value\s+= CASE WHEN /)).toBe(keep)
+    }
+  })
+
+  it('stored_stale → 409 client_stale, whatever the counts say', async () => {
+    answerWith([{ ...refused(3, 1), stored_stale: true }])
+    const rec = echo({ remaining_count: 1 })
+    const res = parse(await handler(put({ ...rec, ...rowEditorSave(rec, { package_count: 1, use_by_target: '2027-01-15' }) })))
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('client_stale')
   })
 })
 

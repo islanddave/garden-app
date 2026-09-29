@@ -471,6 +471,19 @@ const NOT_IN_SITES = [
   // full-replace preservation PUT cannot reach it either (lambda/preservation/kitchen-batch-id-guard
   // .test.js). Same class as photos::featured_photo_id above.
   'preservation::batch_id',
+  // Put-Up release 1b (kitchenRoutes.js / putUp.js). Four pairs, none a body-chosen FK into another
+  // household's row:
+  //   put_up_stage_id — NOT BODY-SETTABLE. Put it up writes `st.id` from the statement's own `stage`
+  //     CTE (itself gated on the route's household-owned batch) onto its jars and lines.
+  //   output_id — NOT BODY-SETTABLE. A line's output_id is an id the SERVER minted for a jar of the
+  //     same statement (putUp.js planPutUp, crypto.randomUUID); no request field reaches it.
+  //   voids_id — BODY-SETTABLE and GATED IN THE STATEMENT: the stages route's void is an INSERT…SELECT
+  //     of the target row `WHERE t.id = <body> AND t.batch_id = <the route's owned batch> AND t.stage_kind
+  //     IN (tended, moved, noted)`, so a foreign or cross-batch id writes nothing; the composite FK
+  //     (batch_id, voids_id) is the backstop. Asserted by executing it in putUp.test.js.
+  //   recipe_id — REFUSED, never written: validateBatchCreate 400s a non-null recipe_id until release 4.
+  'preservation::put_up_stage_id', 'preservation::output_id', 'preservation::voids_id',
+  'preservation::recipe_id',
   // preservation_log_id — NOT BODY-SETTABLE, V5-PUTUPMULTISOURCE-001. Every write of it is
   // `${putUp.id}` where `putUp` is the row returned by sourceRoutes.js's loadOwnedPutUp, whose
   // predicate is `id = <route param> AND user_id = ANY(householdIds) AND deleted_at IS NULL` and

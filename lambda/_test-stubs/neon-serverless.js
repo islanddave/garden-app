@@ -8,5 +8,8 @@ export function neon(connectionString) {
     stubState.sqlCalls.push({ text, values, connectionString });
     return stubState.sqlHandler(text, values);
   };
+  // sql.transaction([...]): the stub has already executed each element (a tagged call runs eagerly
+  // here), in order, so the batch is just their results — the shape the real driver returns.
+  tagged.transaction = async (queries) => Promise.all(queries);
   return tagged;
 }

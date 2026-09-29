@@ -213,9 +213,29 @@ const SHELF_LIFE_MONTHS = {
 // V4 engine rule (a), staged by release: the RECORDED storage kinds that never borrow `default` when
 // the method names no figure for them. Release 1a: the fridge only (the 1a disclosure — pesto 10
 // months, the freeze family 10, jam / passata / canned 12, dried 4, cure & store 3 all become no date
-// in a fridge). Release 1b adds pantry, cold_storage and other together with the legs its Q1/Q2
-// answers keep; the freezer kinds never need to be here, every freezer cell being an explicit leg.
-const NO_FIGURE_NO_DATE_KINDS = new Set(['fridge']);
+// in a fridge). Release 1b adds pantry, cold_storage and other (V4's engine rule (c)): every explicit pantry /
+// cold_storage leg stays exactly as it was (decision 5), and each cell that only ever had a number by
+// falling through to `default` becomes no date — the freeze family on a shelf or in a cellar (frozen
+// food off the freezer is thawed), cold_store on a shelf, pesto on a shelf or in a cellar (Dave's Q1),
+// ferment and ferment_mash on a pantry shelf (Q2), and every method at the counter (`other`) except
+// candy, whose `other: 1` leg is explicit. After this, `default` answers only an UNRECORDED kind. The
+// freezer kinds never need to be here: every freezer cell is an explicit leg.
+const NO_FIGURE_NO_DATE_KINDS = new Set(['fridge', 'pantry', 'cold_storage', 'other']);
+
+// The storage kinds where nothing grows (−18 °C). V4's engine rule (d): a Raw or In-oil jar keeps its freezer
+// leg there — a thaw is a Move, and a Move nulls the date — and gets no date anywhere else.
+const FREEZER_KINDS = new Set(['deep_freezer', 'fridge_freezer']);
+
+// V4's estimated-date words on preservation_log.preserved_at_precision. 'unknown' is its own case
+// (the Walk's Not sure: the stored date is only the day it was logged).
+const ESTIMATED_PRECISIONS = new Set(['week', 'month', 'season', 'year', 'after']);
+
+// Stored produce whose "use by" would start from an estimate's earliest day: an early start shows sound
+// onions as past their use-by (V4's one discard-by rule), so an estimated date gets no table figure on these two.
+const NO_DATE_WHEN_ESTIMATED = new Set(['cure_store', 'cold_store']);
+
+// Dried-food texture words that mean "not dry enough for the dried figure" (V4's engine rule (e)).
+const UNDRIED_TEXTURES = new Set(['bends', 'still_soft']);
 
 export function shelfLifeMonths(method, kind) {
   const m = SHELF_LIFE_MONTHS[method];
@@ -233,6 +253,35 @@ export function resolveShelfLife(method, kind) {
   const months = shelfLifeMonths(method, kind);
   if (months == null) return { months: null, basis: 'none' };
   return { months, basis: HOUSE_SOURCED_SHELF_LIFE.includes(method) ? 'house' : 'table' };
+}
+
+// Put-Up release 1b — one JAR's engine answer, with the three facts 1b's columns add (V4's engine rules (d), (e))
+// and the put-up date's precision (the discard-by rule and the estimated-dates rule). Every 1b jar writer (Put it up, POST /api/preservation,
+// the PATCH correction rule, Move) resolves a non-typed date here and nowhere else; the cell table
+// above stays the single source of the months. Order of the refusals is irrelevant — each one yields
+// no date, and a no-date answer always carries basis 'none'.
+//   precision 'unknown'                        → none (the stored date is only the day it was logged)
+//   cure_store / cold_store with an estimate   → none (an early start makes sound onions look past)
+//   Raw or In oil anywhere but a freezer       → none (fridge, counter, shelf, cellar — Dave's Q1; an
+//                                                 unrecorded place is not assumed to be a freezer)
+//   dried and marked bends / still_soft        → none ("no general figure for a bendy dried food")
+//   otherwise                                  → resolveShelfLife(method, kind)
+export function resolveJarShelfLife({ method, kind = null, isRaw = null, inOil = null, texture = null, precision = null }) {
+  const none = { months: null, basis: 'none' };
+  if (precision === 'unknown') return none;
+  if (NO_DATE_WHEN_ESTIMATED.has(method) && ESTIMATED_PRECISIONS.has(precision)) return none;
+  if ((isRaw === true || inOil === true) && !FREEZER_KINDS.has(kind)) return none;
+  if (texture != null && UNDRIED_TEXTURES.has(texture)) return none;
+  return resolveShelfLife(method, kind);
+}
+
+// The jar's stored pair (use_by_target, use_by_basis) when nobody typed a date: the engine's months
+// forward from the stored anchor (preserved_at — for an estimate, its earliest day, which is what the
+// column holds), or no date. Never 'typed'; the writers decide typed from the request.
+export function resolveJarUseBy(facts, anchorDate) {
+  const { months, basis } = resolveJarShelfLife(facts);
+  if (months == null || !anchorDate) return { use_by_target: null, use_by_basis: 'none' };
+  return { use_by_target: addMonths(anchorDate, months), use_by_basis: basis };
 }
 
 // date (YYYY-MM-DD string, ISO string, or Date) + n months → YYYY-MM-DD (clamps day to the
