@@ -92,7 +92,7 @@ export default function PutUpUseSoonBand() {
         </div>
         <button
           type="button"
-          onClick={() => overlayNavigate('/put-up')}
+          onClick={() => overlayNavigate('/put-up?view=pantry&filter=use-soon')}
           style={{ background: 'none', border: 'none', color: P.green, cursor: 'pointer', fontSize: '0.82rem',
             fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline', padding: 4, flexShrink: 0 }}
         >

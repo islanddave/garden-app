@@ -267,10 +267,25 @@ export default function PutUp() {
   // inventory ("what have I got?") — the more common intent from the More menu. V5-INFLIGHTBATCH-001
   // promotes a bare open to 'going' the moment there is anything to check; see autoDefaultedRef.
   const [view, setView] = useState(hasPrefill ? 'log' : 'stores')
+  // Put-Up release 1a (V4 §6.1, §10.2) — a door that NAMES its destination. `?view=pantry` is the
+  // put-up list segment ('stores'; it is renamed "Pantry" only in release 2, so nothing on screen
+  // changes now); Today's use-soon band links here with it. It counts as a choice already made, so
+  // the bare-open promote below never moves someone who was sent to the list.
+  const viewNamed = searchParams.get('view') === 'pantry'
   // Set the moment the user picks a view themselves. The auto-default below is a DEFAULT, not a
   // preference — it may never move someone off a segment they chose or off a form they are typing in.
-  const viewTouchedRef = useRef(false)
+  const viewTouchedRef = useRef(viewNamed)
   const chooseView = useCallback((v) => { viewTouchedRef.current = true; setView(v) }, [])
+
+  // `?filter=use-soon` — the list narrowed to what the band showed, behind a removable "Use soon ×"
+  // chip. Clearing REPLACES the entry, so Back still returns to where the band was tapped (Today), and
+  // carries location.state so an overlay's background survives (V4 §6.2).
+  const useSoonOnly = searchParams.get('filter') === USE_SOON_FILTER
+  const clearUseSoon = useCallback(() => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('filter')
+    setSearchParams(next, { replace: true, state: location.state })
+  }, [searchParams, setSearchParams, location.state])
 
   // ── V5-INFLIGHTBATCH-001 — open batches, fetched at the PAGE and passed down ───────────────────
   // The page owns this fetch rather than GoingNowView, because the default-view decision below needs
@@ -517,7 +532,7 @@ export default function PutUp() {
           <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing} />
         )}
         {seg === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('stores')} />}
-        {seg === 'stores' && <StoresView />}
+        {seg === 'stores' && <StoresView useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} />}
 
         {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
             only invalidation path and it re-reads BOTH this row and the list. */}
@@ -2302,7 +2317,32 @@ function StorageLocationEditor({ locations, fetch, classify, selectedId, onClear
 // ─────────────────────────────────────────────────────────────────────────────
 // "What's put up" read surface
 // ─────────────────────────────────────────────────────────────────────────────
-function StoresView() {
+
+// Put-Up release 1a — "Use soon", the only filter name (V4 §3.2). The SAME membership as Today's band
+// (/api/preservation/use-soon) and as each group's "N use soon" pill: the server's use_by_status,
+// 'use_soon' or 'past_use_by'. The server classifies (classifyUseBy); this only selects, and never
+// decides what counts as soon.
+const USE_SOON_FILTER = 'use-soon'
+const USE_SOON_STATUSES = new Set(['use_soon', 'past_use_by'])
+
+// The groups narrowed to their use-soon rows. A group left with none is dropped, and a kept group's
+// headline is re-counted from the rows it still shows: the server's total_packages and units describe
+// the WHOLE group, and "5 containers" over one visible jar would be a number about rows nobody can see.
+export function onlyUseSoon(groups) {
+  return (groups ?? []).flatMap(g => {
+    const records = (g.records ?? []).filter(r => USE_SOON_STATUSES.has(r.use_by_status))
+    if (!records.length) return []
+    return [{
+      ...g,
+      records,
+      total_packages: records.reduce((n, r) => n + (Number(r.package_count) || 0), 0),
+      units: [...new Set(records.map(r => r.quantity_unit).filter(Boolean))],
+      use_soon_count: records.length,
+    }]
+  })
+}
+
+function StoresView({ useSoonOnly = false, onClearUseSoon }) {
   const { fetch } = useApiFetch()
   const [group, setGroup] = useState('storage') // 'storage' | 'crop'
   const [data, setData] = useState(null)
@@ -2319,7 +2359,8 @@ function StoresView() {
 
   useEffect(() => { load(group) }, [load, group])
 
-  const groups = data?.groups ?? []
+  const allGroups = data?.groups ?? []
+  const groups = useSoonOnly ? onlyUseSoon(allGroups) : allGroups
 
   return (
     <div>
@@ -2337,10 +2378,30 @@ function StoresView() {
         />
       </div>
 
+      {/* The filter says it is on, and one tap takes it off (the page drops ?filter= with it). The
+          name starts with the visible words; the × is decoration. */}
+      {useSoonOnly && (
+        <div style={{ marginBottom: T.space.md }}>
+          <button type="button" onClick={onClearUseSoon} data-testid="putup-use-soon-chip"
+            aria-label="Use soon — remove this filter"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: T.buttonMinHeight,
+              padding: '6px 16px', borderRadius: 999, border: `1px solid ${P.greenLight}`,
+              backgroundColor: P.greenPale, color: P.green, fontSize: T.type.sm, fontWeight: 700,
+              fontFamily: 'inherit', cursor: 'pointer' }}>
+            Use soon <span aria-hidden="true">×</span>
+          </button>
+        </div>
+      )}
+
       {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      {!loading && !error && groups.length === 0 && (
+      {!loading && !error && groups.length === 0 && (useSoonOnly && allGroups.length > 0 ? (
+        <div data-testid="putup-use-soon-empty" style={{ padding: '28px 18px', textAlign: 'center', color: P.mid,
+          background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
+          Nothing to use soon right now.
+        </div>
+      ) : (
         <div style={{ padding: '28px 18px', textAlign: 'center', color: P.mid,
           background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
           <div style={{ fontWeight: 700, color: P.dark, marginBottom: 6 }}>Nothing put up yet.</div>
@@ -2348,7 +2409,7 @@ function StoresView() {
             Log your first put-up and it&rsquo;ll show up here, grouped by where it&rsquo;s stored.
           </div>
         </div>
-      )}
+      ))}
 
       {!loading && !error && groups.map(g => (
         <GroupCard key={g.group_key} group={g} onChanged={() => load(group)} fetch={fetch} />
