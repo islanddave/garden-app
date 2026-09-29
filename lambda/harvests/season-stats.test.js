@@ -101,7 +101,7 @@ describe('GET /api/harvests/season-stats', () => {
     expect(body.version).toBe(1);
     expect(body.season).toEqual({ year: 2026, start: '2025-11-01', end: '2026-10-31' });
     expect(Object.keys(body.sections)).toEqual([...SECTION_IDS]);
-    expect(body.sections.sources.series.cards[0].lb).toBe(3.3);
+    expect(body.sections.sources.series.cards[0].lb).toBe(3.25);
     expect(body.sections.ribbon.series.days[0].care).toEqual(['water']);
     expect(body.sections.heat_ladder.series.best[0].scoville_max).toBe(20000);
     expect(Date.parse(body.generatedAt)).not.toBeNaN();

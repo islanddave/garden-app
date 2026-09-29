@@ -86,7 +86,7 @@ export const STATS_REGISTRY = {
       columns: ['Cultivar', 'lb', 'Fruit', 'g each', 'Bag', 'Weighed', '× typical', 'Call'],
       numeric: [false, true, true, true, false, true, true, false],
       rows: (s?.series?.rows ?? []).map((r) => [
-        r.cultivar, fmtLb(r.lb, 2), fmtInt(r.fruit), fmtInt(r.g_per_fruit), blank(r.container_size), fmtPct(r.measured_share),
+        r.cultivar, fmtLb(r.lb), fmtInt(r.fruit), fmtInt(r.g_per_fruit), blank(r.container_size), fmtPct(r.measured_share),
         isNum(r.x_median) ? `${r.x_median.toFixed(1)}×` : '—', KEEP_WORD[r.verdict] ?? blank(r.verdict),
       ]),
     }),

@@ -3,7 +3,7 @@
 // Every number is computed in the stat_* views (migrations/v5-seasonstats-001/0a-additive-ddl.sql).
 // This module only does the three things a view cannot: merge rows across household OWNERS (a view
 // is keyed by owner and cannot know the household, which lives in GARDEN_HOUSEHOLD_IDS), round for
-// the wire, and lay each section out in the v1 contract. The contract is
+// the wire (pounds to LB_DP only — display rounding is the client's), and lay each section out in the v1 contract. The contract is
 // tests/fixtures/season-stats.v1.json — keys, nesting and types there are the source of truth, and
 // season-stats-sections.test.js holds this module to that file.
 //
@@ -42,6 +42,10 @@ export const HEAT_BANDS = Object.freeze([
 export const LONGEST_LIMIT = 15;
 export const TOMATO_MEASURED_SHARE_MIN = 0.7;
 export const SEP_MIN_FRUIT = 5;
+// Every pound figure leaves the server at 3 dp and is rounded ONCE, by the client, for display. Two
+// sections rounding the same planting's pounds to different places (2 dp here, 1 dp there) put two
+// different figures for one plant on one page (4.3 on the keep list, 4.2 on its saved-seed card).
+export const LB_DP = 3;
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -190,7 +194,7 @@ export function shapeSources({ mix = [], cards = [] }, generatedAt) {
   const out = [...bySource.values()]
     .map((c) => ({
       source_id: c.source_id, name: c.name, kind: c.kind, plantings: c.plantings, plants: int(c.plants),
-      picked: c.picked, lost: c.lost, lb: round(c.lb, 1), saved_lots: c.saved_lots,
+      picked: c.picked, lost: c.lost, lb: round(c.lb, LB_DP), saved_lots: c.saved_lots,
     }))
     .sort((a, b) => b.lb - a.lb || b.plantings - a.plantings || cmp(a.name ?? '', b.name ?? ''));
   // The no-source card carries counts and pounds only: "plants/picked/lost from nowhere" reads as a
@@ -198,12 +202,12 @@ export function shapeSources({ mix = [], cards = [] }, generatedAt) {
   if (none) {
     out.push({
       source_id: null, name: null, kind: null, plantings: none.plantings, plants: null, picked: null,
-      lost: null, lb: round(none.lb, 1), saved_lots: none.saved_lots,
+      lost: null, lb: round(none.lb, LB_DP), saved_lots: none.saved_lots,
     });
   }
   return section('sources', generatedAt, {
-    total_lb: round(total, 1),
-    limits: [{ code: 'archived_included' }, { code: 'no_source_lb', lb: round(none?.lb ?? 0, 1) }],
+    total_lb: round(total, LB_DP),
+    limits: [{ code: 'archived_included' }, { code: 'no_source_lb', lb: round(none?.lb ?? 0, LB_DP) }],
   }, {
     by_type: [...groups.values()].map((g) => ({ group: g.group, plantings: g.plantings, plants: int(g.plants) })),
     cards: out,
@@ -263,13 +267,13 @@ export function shapeHeatLadder({ bands = [], best = [] }, generatedAt) {
   }, {
     bands: HEAT_BANDS.map((b) => {
       const a = acc.get(b.slug);
-      return { band: b.slug, label: b.label, plantings: a.plantings, plants: int(a.plants), pods: int(a.pods), lb: round(a.lb, 2) };
+      return { band: b.slug, label: b.label, plantings: a.plantings, plants: int(a.plants), pods: int(a.pods), lb: round(a.lb, LB_DP) };
     }),
     best: best
       .filter((r) => order.has(r.band))
       .map((r) => ({
         band: r.band, planting_id: r.planting_id, cultivar: r.cultivar ?? null, pods: int(r.pods),
-        lb: round(r.lb, 2), rank_in_band: int(r.rank_in_band), scoville_max: num(r.scoville_max),
+        lb: round(r.lb, LB_DP), rank_in_band: int(r.rank_in_band), scoville_max: num(r.scoville_max),
       }))
       .sort((a, b) => order.get(a.band) - order.get(b.band) || a.rank_in_band - b.rank_in_band
         || cmp(a.planting_id, b.planting_id)),
@@ -279,12 +283,12 @@ export function shapeHeatLadder({ bands = [], best = [] }, generatedAt) {
 export function shapeTomatoKeep({ rows = [] }, generatedAt) {
   const median = rows.length ? num(dominantOwnerValue(rows, 'median_lb')) : null;
   return section('tomato_keep', generatedAt, {
-    median_lb: round(median, 2),
+    median_lb: round(median, LB_DP),
     limits: [{ code: 'single_plant_only' }, { code: 'measured_share_min', share: TOMATO_MEASURED_SHARE_MIN }],
   }, {
     rows: rows
       .map((r) => ({
-        planting_id: r.planting_id, cultivar: r.cultivar ?? null, lb: round(r.lb, 2), fruit: int(r.fruit),
+        planting_id: r.planting_id, cultivar: r.cultivar ?? null, lb: round(r.lb, LB_DP), fruit: int(r.fruit),
         g_per_fruit: round(r.g_per_fruit), container_size: r.container_size ?? null,
         measured_share: round(r.measured_share, 2), x_median: round(r.x_median, 2), verdict: r.verdict,
         flags: r.late_aug ? ['late_aug'] : [],
@@ -304,7 +308,7 @@ export function shapeLongest({ rows = [] }, generatedAt) {
       planting_id: r.planting_id, cultivar: r.cultivar ?? null, crop_name: r.crop_name ?? null,
       plants: int(r.plants), first_pick: day(r.first_pick), last_pick: day(r.last_pick),
       window_days: int(r.window_days), pick_days: (r.pick_days ?? []).map(day),
-      still_picking: Boolean(r.still_picking), lb: round(r.lb, 1), lb_per_plant_week: round(r.lb_per_plant_week, 2),
+      still_picking: Boolean(r.still_picking), lb: round(r.lb, LB_DP), lb_per_plant_week: round(r.lb_per_plant_week, LB_DP),
     })),
   });
 }
@@ -343,7 +347,7 @@ export function shapeSeedLots({ rows = [] }, generatedAt) {
         count: r.seed_count == null ? null : int(r.seed_count), count_estimated: Boolean(r.count_estimated),
         stage: r.stage ?? '', saved_on: day(r.saved_on),
         parent: r.parent_planting_id
-          ? { planting_id: r.parent_planting_id, name: r.parent_name ?? null, lb: round(r.parent_lb, 1) }
+          ? { planting_id: r.parent_planting_id, name: r.parent_name ?? null, lb: round(r.parent_lb, LB_DP) }
           : null,
         source: r.source_name
           ? {

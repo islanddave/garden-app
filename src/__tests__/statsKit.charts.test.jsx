@@ -23,6 +23,8 @@ import { layoutTomatoKeep } from '../lib/stats-kit/charts/TomatoKeepChart.jsx'
 import { layoutLongest } from '../lib/stats-kit/charts/LongestChart.jsx'
 import { layoutSepSize } from '../lib/stats-kit/charts/SepSizeChart.jsx'
 import { STATS_REGISTRY } from '../lib/stats-kit/registry.js'
+import { verdictFor } from '../lib/stats-kit/verdicts.js'
+import SeedLotCard from '../components/stats/SeedLotCard.jsx'
 import { dayNum, monthDay, monthStarts, fmtShu, heatBandOf } from '../lib/stats-kit/format.js'
 
 const fixture = JSON.parse(readFileSync(resolve(process.cwd(), 'tests/fixtures/season-stats.v1.json'), 'utf8'))
@@ -125,8 +127,8 @@ describe('chart layouts on the fixture', () => {
     expect(big.every(c => c.lb >= 2)).toBe(true)
     expect(small.every(c => c.lb < 2)).toBe(true)
     expect(big.length + small.length).toBe(34)
-    expect(none.lb).toBe(187.1)
-    expect(max).toBe(154.3)
+    expect(none.lb).toBe(187.062)
+    expect(max).toBe(154.275)
     expect(sourceMetaLine(big[0])).toBe('46 plantings · 37 picked · 5 lost · seed saved from 11')
     expect(sourceMetaLine(S.sources.series.cards.find(c => c.name === 'Hart Farm'))).toBe('1 planting · 1 picked')
     // the no-source card (source_id null, picked/lost null) still says its saved lots
@@ -287,5 +289,43 @@ describe('no NaN in any attribute', () => {
       expect(badAttributes(container), id).toEqual([])
       unmount()
     }
+  })
+})
+
+// QA 2026-09-29: the server rounded tomato_keep to 2 dp and a lot's parent to 1 dp, so Black Cherry read
+// 4.3 lb on the keep list and 4.2 lb on its saved-seed card. Pounds now leave the server at 3 dp and are
+// rounded once, here. Every place a keep-list planting's pounds are shown must print the same string.
+describe('one planting, one pounds figure', () => {
+  it('SELF-TEST: the fixture has plantings on both the keep list and a saved-seed card', () => {
+    const keep = new Set(S.tomato_keep.series.rows.map(r => r.planting_id))
+    expect(S.seed_lots.series.rows.filter(l => l.parent && keep.has(l.parent.planting_id)).length).toBeGreaterThan(2)
+  })
+
+  it('keep-list chart, keep-list table, verdict and saved-seed card agree for every shared planting', () => {
+    const L = layoutTomatoKeep(S.tomato_keep)
+    const chartText = Object.fromEntries(L.rows.map(r => [r.key, r.text]))
+    const tableRows = STATS_REGISTRY.tomato_keep.table(S.tomato_keep).rows
+    const verdict = verdictFor('tomato_keep', S.tomato_keep)
+    const keep = Object.fromEntries(S.tomato_keep.series.rows.map((r, i) => [r.planting_id, { row: r, table: tableRows[i] }]))
+    let checked = 0
+    for (const lot of S.seed_lots.series.rows) {
+      const k = lot.parent && keep[lot.parent.planting_id]
+      if (!k) continue
+      const { container, unmount } = render(<MemoryRouter><SeedLotCard lot={lot} /></MemoryRouter>)
+      const onCard = /· (\d+\.\d) lb picked/.exec(container.textContent)?.[1]
+      unmount()
+      const shown = chartText[lot.parent.planting_id]
+      expect(onCard, lot.cultivar).toBe(shown)
+      expect(k.table[1], lot.cultivar).toBe(shown)
+      if (k.row.verdict === 'grow_again' && verdict.includes(`${k.row.cultivar} `)) expect(verdict).toContain(`${k.row.cultivar} ${shown}`)
+      checked++
+    }
+    expect(checked).toBeGreaterThan(2)
+  })
+
+  it('Black Cherry (raw 4.245 lb) reads 4.2 everywhere, not 4.3 on one card and 4.2 on another', () => {
+    const bc = S.tomato_keep.series.rows.find(r => r.cultivar === 'Black Cherry')
+    expect(bc.lb).toBe(4.245)
+    expect(layoutTomatoKeep(S.tomato_keep).rows.find(r => r.key === bc.planting_id).text).toBe('4.2')
   })
 })

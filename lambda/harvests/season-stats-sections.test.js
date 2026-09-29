@@ -290,10 +290,10 @@ describe('sources', () => {
       ],
     }, GEN);
     expect(s.series.cards.map((c) => c.name)).toEqual(['Big Seller', 'Starview Gardens', null]);
-    expect(s.series.cards[1]).toMatchObject({ plantings: 3, plants: 4, picked: 2, lost: 1, lb: 5.4, saved_lots: 1 });
-    expect(s.series.cards[2]).toEqual({ source_id: null, name: null, kind: null, plantings: 1, plants: null, picked: null, lost: null, lb: 1.3, saved_lots: 0 });
+    expect(s.series.cards[1]).toMatchObject({ plantings: 3, plants: 4, picked: 2, lost: 1, lb: 5.44, saved_lots: 1 });
+    expect(s.series.cards[2]).toEqual({ source_id: null, name: null, kind: null, plantings: 1, plants: null, picked: null, lost: null, lb: 1.26, saved_lots: 0 });
     expect(s.meta.total_lb).toBe(15.7);
-    expect(s.meta.limits).toEqual([{ code: 'archived_included' }, { code: 'no_source_lb', lb: 1.3 }]);
+    expect(s.meta.limits).toEqual([{ code: 'archived_included' }, { code: 'no_source_lb', lb: 1.26 }]);
   });
 
   it('no no-source card when every planting names a source', () => {
@@ -340,7 +340,7 @@ describe('heat_ladder', () => {
     const s = shapeHeatLadder({ bands: [...RESULTS.bands, { owner: B, band: 'sweet', plantings: 1, plants: 1, pods: 2, lb: 0.1 }, { owner: A, band: 'bogus', plantings: 9 }], best: RESULTS.best }, GEN);
     expect(s.series.bands.map((b) => b.band)).toEqual(HEAT_BANDS.map((b) => b.slug));
     expect(s.series.bands.map((b) => b.label)).toEqual(['Sweet', 'Mild', 'Medium', 'Hot', 'Very hot', 'Superhot']);
-    expect(s.series.bands[0]).toEqual({ band: 'sweet', label: 'Sweet', plantings: 3, plants: 3, pods: 20, lb: 0.55 });
+    expect(s.series.bands[0]).toEqual({ band: 'sweet', label: 'Sweet', plantings: 3, plants: 3, pods: 20, lb: 0.551 });
     expect(s.series.bands[5]).toEqual({ band: 'superhot', label: 'Superhot', plantings: 0, plants: 0, pods: 0, lb: 0 });
   });
 
@@ -419,6 +419,6 @@ describe('seed_lots', () => {
     const s = shapeSeedLots({ rows: [{ ...RESULTS.lots[0], lot_id: id(2), saved_at: '2026-09-03 01:00:00+00' }, RESULTS.lots[0]] }, GEN);
     expect(s.series.rows.map((r) => r.lot_id)).toEqual([id(7), id(2)]);
     expect(s.series.rows[0].source).toMatchObject({ instagram_url: 'https://www.instagram.com/x', facebook_url: 'https://www.facebook.com/x', via: 'A market' });
-    expect(s.series.rows[0].parent).toEqual({ planting_id: id(8), name: 'Sugar Baby', lb: 13.2 });
+    expect(s.series.rows[0].parent).toEqual({ planting_id: id(8), name: 'Sugar Baby', lb: 13.21 });
   });
 });

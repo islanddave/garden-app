@@ -11,8 +11,10 @@ export function splitSources(section) {
   const cards = section?.series?.cards ?? []
   const named = cards.filter((c) => c && c.source_id != null).sort((a, b) => num(b.lb) - num(a.lb))
   const none = cards.find((c) => c && c.source_id == null) ?? null
-  const big = named.filter((c) => num(c.lb) >= SMALL_SOURCE_LB)
-  const small = named.filter((c) => num(c.lb) < SMALL_SOURCE_LB)
+  // Split on the pounds as SHOWN (1 dp): a raw 1.96 reads "2.0 lb" and must not sit under "each under 2 lb".
+  const shown = (c) => Number(fmtLb(num(c.lb)))
+  const big = named.filter((c) => shown(c) >= SMALL_SOURCE_LB)
+  const small = named.filter((c) => shown(c) < SMALL_SOURCE_LB)
   const max = Math.max(num(named[0]?.lb), 0)
   return { big, small, none, max }
 }

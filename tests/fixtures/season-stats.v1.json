@@ -1,6 +1,6 @@
 {
  "version": 1,
- "generatedAt": "2026-09-29T19:38:13.000Z",
+ "generatedAt": "2026-09-29T20:19:37.788Z",
  "season": {
   "year": 2026,
   "start": "2025-11-01",
@@ -10,7 +10,7 @@
   "ribbon": {
    "section": "ribbon",
    "version": 1,
-   "generatedAt": "2026-09-29T19:38:13.000Z",
+   "generatedAt": "2026-09-29T20:19:37.788Z",
    "meta": {
     "pins": {
      "first_sow": "2026-04-18",
@@ -1574,16 +1574,16 @@
   "sources": {
    "section": "sources",
    "version": 1,
-   "generatedAt": "2026-09-29T19:38:13.000Z",
+   "generatedAt": "2026-09-29T20:19:37.788Z",
    "meta": {
-    "total_lb": 449.6,
+    "total_lb": 449.619,
     "limits": [
      {
       "code": "archived_included"
      },
      {
       "code": "no_source_lb",
-      "lb": 187.1
+      "lb": 187.062
      }
     ]
    },
@@ -1629,7 +1629,7 @@
       "plants": 77,
       "picked": 37,
       "lost": 5,
-      "lb": 154.3,
+      "lb": 154.275,
       "saved_lots": 11
      },
      {
@@ -1640,7 +1640,7 @@
       "plants": 15,
       "picked": 2,
       "lost": 2,
-      "lb": 65.2,
+      "lb": 65.177,
       "saved_lots": 0
      },
      {
@@ -1651,7 +1651,7 @@
       "plants": 110,
       "picked": 4,
       "lost": 0,
-      "lb": 5.7,
+      "lb": 5.665,
       "saved_lots": 1
      },
      {
@@ -1662,7 +1662,7 @@
       "plants": 6,
       "picked": 3,
       "lost": 1,
-      "lb": 5.1,
+      "lb": 5.092,
       "saved_lots": 1
      },
      {
@@ -1673,7 +1673,7 @@
       "plants": 92,
       "picked": 7,
       "lost": 2,
-      "lb": 4.3,
+      "lb": 4.318,
       "saved_lots": 0
      },
      {
@@ -1684,7 +1684,7 @@
       "plants": 633,
       "picked": 6,
       "lost": 5,
-      "lb": 4,
+      "lb": 4.004,
       "saved_lots": 0
      },
      {
@@ -1695,7 +1695,7 @@
       "plants": 10,
       "picked": 8,
       "lost": 2,
-      "lb": 3.4,
+      "lb": 3.444,
       "saved_lots": 1
      },
      {
@@ -1706,7 +1706,7 @@
       "plants": 3,
       "picked": 1,
       "lost": 0,
-      "lb": 3.4,
+      "lb": 3.408,
       "saved_lots": 1
      },
      {
@@ -1717,7 +1717,7 @@
       "plants": 4,
       "picked": 3,
       "lost": 1,
-      "lb": 3.1,
+      "lb": 3.08,
       "saved_lots": 1
      },
      {
@@ -1728,18 +1728,7 @@
       "plants": 15,
       "picked": 1,
       "lost": 0,
-      "lb": 2.7,
-      "saved_lots": 0
-     },
-     {
-      "source_id": "3db8510c-1b71-4296-ab78-03e9ac69a576",
-      "name": "Hart Farm",
-      "kind": "farm_stand",
-      "plantings": 1,
-      "plants": 1,
-      "picked": 1,
-      "lost": 0,
-      "lb": 2.5,
+      "lb": 2.748,
       "saved_lots": 0
      },
      {
@@ -1750,7 +1739,18 @@
       "plants": 2,
       "picked": 1,
       "lost": 0,
-      "lb": 2.5,
+      "lb": 2.472,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "3db8510c-1b71-4296-ab78-03e9ac69a576",
+      "name": "Hart Farm",
+      "kind": "farm_stand",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 1,
+      "lost": 0,
+      "lb": 2.45,
       "saved_lots": 0
      },
      {
@@ -1761,7 +1761,7 @@
       "plants": 19,
       "picked": 1,
       "lost": 0,
-      "lb": 2.2,
+      "lb": 2.18,
       "saved_lots": 0
      },
      {
@@ -1772,7 +1772,7 @@
       "plants": 49,
       "picked": 3,
       "lost": 0,
-      "lb": 1.8,
+      "lb": 1.81,
       "saved_lots": 1
      },
      {
@@ -1783,7 +1783,7 @@
       "plants": 1,
       "picked": 1,
       "lost": 0,
-      "lb": 1.3,
+      "lb": 1.281,
       "saved_lots": 0
      },
      {
@@ -1794,7 +1794,7 @@
       "plants": 7,
       "picked": 1,
       "lost": 0,
-      "lb": 0.5,
+      "lb": 0.514,
       "saved_lots": 0
      },
      {
@@ -1805,7 +1805,7 @@
       "plants": 4,
       "picked": 1,
       "lost": 0,
-      "lb": 0.4,
+      "lb": 0.369,
       "saved_lots": 0
      },
      {
@@ -1816,7 +1816,7 @@
       "plants": 1,
       "picked": 1,
       "lost": 0,
-      "lb": 0.2,
+      "lb": 0.183,
       "saved_lots": 0
      },
      {
@@ -1827,7 +1827,18 @@
       "plants": 1,
       "picked": 1,
       "lost": 0,
-      "lb": 0.1,
+      "lb": 0.064,
+      "saved_lots": 0
+     },
+     {
+      "source_id": "7b4c2bcc-026c-44c2-890a-70afb4bbc489",
+      "name": "The Warren Place Flower Farm",
+      "kind": "nursery",
+      "plantings": 1,
+      "plants": 1,
+      "picked": 1,
+      "lost": 0,
+      "lb": 0.023,
       "saved_lots": 0
      },
      {
@@ -1974,17 +1985,6 @@
       "saved_lots": 0
      },
      {
-      "source_id": "7b4c2bcc-026c-44c2-890a-70afb4bbc489",
-      "name": "The Warren Place Flower Farm",
-      "kind": "nursery",
-      "plantings": 1,
-      "plants": 1,
-      "picked": 1,
-      "lost": 0,
-      "lb": 0,
-      "saved_lots": 0
-     },
-     {
       "source_id": "90699f70-6e8d-4e7d-a1e3-ff51ec1fe14b",
       "name": "Trust stand, Hadley",
       "kind": "farm_stand",
@@ -2003,7 +2003,7 @@
       "plants": null,
       "picked": null,
       "lost": null,
-      "lb": 187.1,
+      "lb": 187.062,
       "saved_lots": 3
      }
     ]
@@ -2012,7 +2012,7 @@
   "heat_clock": {
    "section": "heat_clock",
    "version": 1,
-   "generatedAt": "2026-09-29T19:38:13.000Z",
+   "generatedAt": "2026-09-29T20:19:37.788Z",
    "meta": {
     "origin_date": "2026-05-10",
     "median_heat": {
@@ -2653,7 +2653,7 @@
   "heat_ladder": {
    "section": "heat_ladder",
    "version": 1,
-   "generatedAt": "2026-09-29T19:38:13.000Z",
+   "generatedAt": "2026-09-29T20:19:37.788Z",
    "meta": {
     "limits": [
      {
@@ -2672,7 +2672,7 @@
       "plantings": 12,
       "plants": 17,
       "pods": 41,
-      "lb": 2.33
+      "lb": 2.332
      },
      {
       "band": "mild",
@@ -2680,7 +2680,7 @@
       "plantings": 6,
       "plants": 7,
       "pods": 84,
-      "lb": 3.29
+      "lb": 3.289
      },
      {
       "band": "medium",
@@ -2688,7 +2688,7 @@
       "plantings": 12,
       "plants": 66,
       "pods": 62,
-      "lb": 3.78
+      "lb": 3.785
      },
      {
       "band": "hot",
@@ -2696,7 +2696,7 @@
       "plantings": 10,
       "plants": 36,
       "pods": 56,
-      "lb": 3.13
+      "lb": 3.135
      },
      {
       "band": "very_hot",
@@ -2712,7 +2712,7 @@
       "plantings": 6,
       "plants": 64,
       "pods": 57,
-      "lb": 0.51
+      "lb": 0.514
      }
     ],
     "best": [
@@ -2721,7 +2721,7 @@
       "planting_id": "d0729dda-2879-48ff-9238-a068dbe220b2",
       "cultivar": "Red Mini Bell",
       "pods": 18,
-      "lb": 0.45,
+      "lb": 0.445,
       "rank_in_band": 1,
       "scoville_max": 0
      },
@@ -2730,7 +2730,7 @@
       "planting_id": "9726383b-2d3d-4015-be5f-5b269ac0cb7c",
       "cultivar": "Sweet Sivri",
       "pods": 9,
-      "lb": 0.27,
+      "lb": 0.273,
       "rank_in_band": 2,
       "scoville_max": 0
      },
@@ -2739,7 +2739,7 @@
       "planting_id": "e969fb61-a7fb-46f9-8d2e-2081037f9773",
       "cultivar": "Gatherer's Gold",
       "pods": 8,
-      "lb": 1.04,
+      "lb": 1.045,
       "rank_in_band": 3,
       "scoville_max": 0
      },
@@ -2748,7 +2748,7 @@
       "planting_id": "71eb286b-bee9-4593-9955-c2b1f6e9cc79",
       "cultivar": "Sweet Orange Pepper (Unknown)",
       "pods": 2,
-      "lb": 0.14,
+      "lb": 0.137,
       "rank_in_band": 4,
       "scoville_max": 0
      },
@@ -2757,7 +2757,7 @@
       "planting_id": "1b9e2ab1-e947-47b5-b993-9f437b5bd2d1",
       "cultivar": "King of the North",
       "pods": 1,
-      "lb": 0.25,
+      "lb": 0.251,
       "rank_in_band": 5,
       "scoville_max": 0
      },
@@ -2802,7 +2802,7 @@
       "planting_id": "d3c66eaf-caf8-4236-86d3-7da6cbfd3bf4",
       "cultivar": "Dragon Roll",
       "pods": 58,
-      "lb": 1.51,
+      "lb": 1.506,
       "rank_in_band": 1,
       "scoville_max": 200
      },
@@ -2811,7 +2811,7 @@
       "planting_id": "e7bccf4b-9c28-45e1-9b4c-e4f31c0feae5",
       "cultivar": "Pick-N-Pop Yellow",
       "pods": 18,
-      "lb": 1.26,
+      "lb": 1.259,
       "rank_in_band": 2,
       "scoville_max": 100
      },
@@ -2820,7 +2820,7 @@
       "planting_id": "b83e0a22-71e5-4119-9ef4-c3a481aace06",
       "cultivar": "Cherry Stuffer (Burpee)",
       "pods": 8,
-      "lb": 0.52,
+      "lb": 0.525,
       "rank_in_band": 3,
       "scoville_max": 500
      },
@@ -2847,7 +2847,7 @@
       "planting_id": "f11b7a72-3d91-4842-9850-b2fccc8746e2",
       "cultivar": "Anaheim",
       "pods": 4,
-      "lb": 0.39,
+      "lb": 0.392,
       "rank_in_band": 1,
       "scoville_max": 2500
      },
@@ -2856,7 +2856,7 @@
       "planting_id": "d6992544-bfc5-4bc1-ab07-9a6e850e3469",
       "cultivar": "New Mexico (Hatch-type)",
       "pods": 2,
-      "lb": 0.16,
+      "lb": 0.159,
       "rank_in_band": 2,
       "scoville_max": 8000
      },
@@ -2883,7 +2883,7 @@
       "planting_id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
       "cultivar": "Ristra Cayenne II",
       "pods": 16,
-      "lb": 2.4,
+      "lb": 2.396,
       "rank_in_band": 1,
       "scoville_max": 35000
      },
@@ -2892,7 +2892,7 @@
       "planting_id": "f04b9632-d92d-444f-9aa3-0dbd2ee9e64e",
       "cultivar": "Hot Portugal",
       "pods": 6,
-      "lb": 0.19,
+      "lb": 0.185,
       "rank_in_band": 2,
       "scoville_max": 30000
      },
@@ -2928,7 +2928,7 @@
       "planting_id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
       "cultivar": "Piri Piri",
       "pods": 56,
-      "lb": 0.52,
+      "lb": 0.517,
       "rank_in_band": 1,
       "scoville_max": 175000
      },
@@ -2946,7 +2946,7 @@
       "planting_id": "f1a7690e-394d-4828-a6c7-aa36721caa66",
       "cultivar": "Thai Dragon",
       "pods": 9,
-      "lb": 0.06,
+      "lb": 0.057,
       "rank_in_band": 3,
       "scoville_max": 100000
      },
@@ -2964,7 +2964,7 @@
       "planting_id": "90fbbdac-99c2-4cff-9b97-3143a9821b3a",
       "cultivar": "Armageddon F1",
       "pods": 9,
-      "lb": 0.16,
+      "lb": 0.159,
       "rank_in_band": 1,
       "scoville_max": 1300000
      },
@@ -3001,7 +3001,7 @@
   "tomato_keep": {
    "section": "tomato_keep",
    "version": 1,
-   "generatedAt": "2026-09-29T19:38:13.000Z",
+   "generatedAt": "2026-09-29T20:19:37.788Z",
    "meta": {
     "median_lb": 2.05,
     "limits": [
@@ -3019,7 +3019,7 @@
      {
       "planting_id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
       "cultivar": "Ukrainian Purple",
-      "lb": 9.36,
+      "lb": 9.364,
       "fruit": 46,
       "g_per_fruit": 92,
       "container_size": "10 gal",
@@ -3031,7 +3031,7 @@
      {
       "planting_id": "bae05057-409d-453b-addc-a218bef4f99d",
       "cultivar": "Cherokee Green",
-      "lb": 6.13,
+      "lb": 6.129,
       "fruit": 14,
       "g_per_fruit": 199,
       "container_size": "10 gal",
@@ -3055,7 +3055,7 @@
      {
       "planting_id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
       "cultivar": "Rosa Sicilian",
-      "lb": 5.55,
+      "lb": 5.551,
       "fruit": 32,
       "g_per_fruit": 79,
       "container_size": "10 gal",
@@ -3067,7 +3067,7 @@
      {
       "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
       "cultivar": "Black Cherry",
-      "lb": 4.25,
+      "lb": 4.245,
       "fruit": 153,
       "g_per_fruit": 13,
       "container_size": "5 gal",
@@ -3079,7 +3079,7 @@
      {
       "planting_id": "a0a62ea6-dbbe-4775-85bc-c61c41db4fdf",
       "cultivar": "Del Tonet",
-      "lb": 3.34,
+      "lb": 3.338,
       "fruit": 32,
       "g_per_fruit": 47,
       "container_size": "10 gal",
@@ -3091,7 +3091,7 @@
      {
       "planting_id": "5e073d53-a999-4bbd-9e64-42342678770c",
       "cultivar": "Speckled Roman",
-      "lb": 3.24,
+      "lb": 3.236,
       "fruit": 12,
       "g_per_fruit": 122,
       "container_size": "10 gal",
@@ -3103,7 +3103,7 @@
      {
       "planting_id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
       "cultivar": "Sunray",
-      "lb": 2.76,
+      "lb": 2.765,
       "fruit": 11,
       "g_per_fruit": 114,
       "container_size": "10 gal",
@@ -3127,7 +3127,7 @@
      {
       "planting_id": "ee3fd4c5-5fa3-4202-8044-2c2d19e4835e",
       "cultivar": "Czech's Bush",
-      "lb": 2.39,
+      "lb": 2.395,
       "fruit": 26,
       "g_per_fruit": 42,
       "container_size": "10 gal",
@@ -3139,7 +3139,7 @@
      {
       "planting_id": "582d7ea9-7fde-48ef-a3d4-5c230ad0ba05",
       "cultivar": "Oregon Spring",
-      "lb": 2.33,
+      "lb": 2.329,
       "fruit": 18,
       "g_per_fruit": 59,
       "container_size": "10 gal",
@@ -3163,7 +3163,7 @@
      {
       "planting_id": "0f842b23-f70e-4f47-9c74-57eb1bd1cf6c",
       "cultivar": "Tie-Dye",
-      "lb": 1.99,
+      "lb": 1.991,
       "fruit": 3,
       "g_per_fruit": 301,
       "container_size": "10 gal",
@@ -3187,7 +3187,7 @@
      {
       "planting_id": "cdf51d91-720b-46b8-8554-617cd9bc9b27",
       "cultivar": "Margaret Curtain",
-      "lb": 1.86,
+      "lb": 1.858,
       "fruit": 6,
       "g_per_fruit": 141,
       "container_size": "10 gal",
@@ -3199,7 +3199,7 @@
      {
       "planting_id": "e4f85172-c10c-42cc-849c-ae48821822b0",
       "cultivar": "Yellow Pear",
-      "lb": 1.78,
+      "lb": 1.784,
       "fruit": 60,
       "g_per_fruit": 13,
       "container_size": "5 gal",
@@ -3211,7 +3211,7 @@
      {
       "planting_id": "8ef2c1fb-87f5-4611-ac20-c20fc5b6d601",
       "cultivar": "Sun Sugar",
-      "lb": 1.76,
+      "lb": 1.761,
       "fruit": 119,
       "g_per_fruit": 7,
       "container_size": "5 gal",
@@ -3223,7 +3223,7 @@
      {
       "planting_id": "8d3127e1-771e-49d5-9322-be5147091689",
       "cultivar": "New Yorker",
-      "lb": 1.52,
+      "lb": 1.523,
       "fruit": 10,
       "g_per_fruit": 69,
       "container_size": "5 gal",
@@ -3235,7 +3235,7 @@
      {
       "planting_id": "feaab5a4-e57e-4343-9c9d-f0a7ff2d808a",
       "cultivar": "Banana Creme",
-      "lb": 1.45,
+      "lb": 1.453,
       "fruit": 17,
       "g_per_fruit": 39,
       "container_size": "5 gal",
@@ -3247,7 +3247,7 @@
      {
       "planting_id": "c57c3889-c5b7-406d-b3c4-fa46b9a791a8",
       "cultivar": "Dester",
-      "lb": 1.18,
+      "lb": 1.177,
       "fruit": 3,
       "g_per_fruit": 178,
       "container_size": "5 gal",
@@ -3273,7 +3273,7 @@
      {
       "planting_id": "e210c3a7-314d-4e12-b9aa-23eb930649e2",
       "cultivar": "Stupice",
-      "lb": 0.77,
+      "lb": 0.765,
       "fruit": 17,
       "g_per_fruit": 20,
       "container_size": "5 gal",
@@ -3285,7 +3285,7 @@
      {
       "planting_id": "cc7d0fbf-aa0e-4770-94de-ea4e6075165c",
       "cultivar": "Thessaloniki",
-      "lb": 0.48,
+      "lb": 0.481,
       "fruit": 3,
       "g_per_fruit": 73,
       "container_size": "5 gal",
@@ -3297,7 +3297,7 @@
      {
       "planting_id": "bd2c04f2-fc20-49b4-a0b6-0087a844251b",
       "cultivar": "Super Sweet 100",
-      "lb": 0.21,
+      "lb": 0.205,
       "fruit": 19,
       "g_per_fruit": 5,
       "container_size": "5 gal",
@@ -3314,7 +3314,7 @@
   "longest": {
    "section": "longest",
    "version": 1,
-   "generatedAt": "2026-09-29T19:38:13.000Z",
+   "generatedAt": "2026-09-29T20:19:37.788Z",
    "meta": {
     "last_pick": "2026-09-28",
     "limits": [
@@ -3385,7 +3385,7 @@
        "2026-09-27"
       ],
       "still_picking": true,
-      "lb": 2.5,
+      "lb": 2.45,
       "lb_per_plant_week": 0.22
      },
      {
@@ -3423,8 +3423,8 @@
        "2026-09-26"
       ],
       "still_picking": true,
-      "lb": 2.2,
-      "lb_per_plant_week": 0.1
+      "lb": 2.18,
+      "lb_per_plant_week": 0.098
      },
      {
       "planting_id": "faa55a9f-8062-4d5d-a547-b12a37b4b1e3",
@@ -3491,8 +3491,8 @@
        "2026-09-28"
       ],
       "still_picking": true,
-      "lb": 48.4,
-      "lb_per_plant_week": 0.88
+      "lb": 48.442,
+      "lb_per_plant_week": 0.881
      },
      {
       "planting_id": "15fbbc7f-222f-4232-a186-9948526da67a",
@@ -3572,8 +3572,8 @@
        "2026-09-28"
       ],
       "still_picking": true,
-      "lb": 1.7,
-      "lb_per_plant_week": 0.08
+      "lb": 1.731,
+      "lb_per_plant_week": 0.079
      },
      {
       "planting_id": "937c760e-3093-4a30-a6bb-48baebbb3ab2",
@@ -3612,8 +3612,8 @@
        "2026-09-28"
       ],
       "still_picking": true,
-      "lb": 0.7,
-      "lb_per_plant_week": 0.02
+      "lb": 0.688,
+      "lb_per_plant_week": 0.021
      },
      {
       "planting_id": "fa0502b2-e5b4-4c24-9dd3-02cc89d45b30",
@@ -3664,8 +3664,8 @@
        "2026-09-21"
       ],
       "still_picking": false,
-      "lb": 20,
-      "lb_per_plant_week": 1.92
+      "lb": 19.974,
+      "lb_per_plant_week": 1.915
      },
      {
       "planting_id": "ee3fd4c5-5fa3-4202-8044-2c2d19e4835e",
@@ -3695,8 +3695,8 @@
        "2026-09-25"
       ],
       "still_picking": true,
-      "lb": 2.4,
-      "lb_per_plant_week": 0.24
+      "lb": 2.395,
+      "lb_per_plant_week": 0.243
      },
      {
       "planting_id": "5ea70334-6dc7-41cb-98de-94e3a55953b0",
@@ -3750,8 +3750,8 @@
        "2026-09-25"
       ],
       "still_picking": true,
-      "lb": 12.1,
-      "lb_per_plant_week": 0.41
+      "lb": 12.088,
+      "lb_per_plant_week": 0.415
      },
      {
       "planting_id": "d71e4421-9c71-4898-b8b0-2a19b42310e3",
@@ -3788,8 +3788,8 @@
        "2026-09-26"
       ],
       "still_picking": true,
-      "lb": 2.5,
-      "lb_per_plant_week": 0.13
+      "lb": 2.472,
+      "lb_per_plant_week": 0.129
      },
      {
       "planting_id": "10b345fc-fbc3-4421-9835-1c4d3a5ab384",
@@ -3828,8 +3828,8 @@
        "2026-09-26"
       ],
       "still_picking": true,
-      "lb": 20.9,
-      "lb_per_plant_week": 0.74
+      "lb": 20.91,
+      "lb_per_plant_week": 0.739
      },
      {
       "planting_id": "56332090-5bc8-40e9-b3bc-c9a65a3bd9c8",
@@ -3870,8 +3870,8 @@
        "2026-09-27"
       ],
       "still_picking": true,
-      "lb": 2.8,
-      "lb_per_plant_week": 0.15
+      "lb": 2.752,
+      "lb_per_plant_week": 0.148
      },
      {
       "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
@@ -3927,8 +3927,8 @@
        "2026-09-25"
       ],
       "still_picking": true,
-      "lb": 4.2,
-      "lb_per_plant_week": 0.47
+      "lb": 4.245,
+      "lb_per_plant_week": 0.472
      },
      {
       "planting_id": "e7bccf4b-9c28-45e1-9b4c-e4f31c0feae5",
@@ -3952,8 +3952,8 @@
        "2026-09-15"
       ],
       "still_picking": false,
-      "lb": 1.3,
-      "lb_per_plant_week": 0.14
+      "lb": 1.259,
+      "lb_per_plant_week": 0.142
      },
      {
       "planting_id": "15bbfb67-de07-4120-ac7c-45777b357a0f",
@@ -3990,8 +3990,8 @@
        "2026-09-26"
       ],
       "still_picking": true,
-      "lb": 7.6,
-      "lb_per_plant_week": 0.18
+      "lb": 7.633,
+      "lb_per_plant_week": 0.175
      },
      {
       "planting_id": "504144f1-83b0-4b36-8e88-d8e84c617e62",
@@ -4014,8 +4014,8 @@
        "2026-09-28"
       ],
       "still_picking": true,
-      "lb": 0.3,
-      "lb_per_plant_week": 0.04
+      "lb": 0.328,
+      "lb_per_plant_week": 0.038
      }
     ]
    }
@@ -4023,7 +4023,7 @@
   "sep_size": {
    "section": "sep_size",
    "version": 1,
-   "generatedAt": "2026-09-29T19:38:13.000Z",
+   "generatedAt": "2026-09-29T20:19:37.788Z",
    "meta": {
     "fruit_weighted_ratio": 0.76,
     "limits": [
@@ -4204,7 +4204,7 @@
   "seed_lots": {
    "section": "seed_lots",
    "version": 1,
-   "generatedAt": "2026-09-29T19:38:13.000Z",
+   "generatedAt": "2026-09-29T20:19:37.788Z",
    "meta": {
     "limits": [
      {
@@ -4225,7 +4225,7 @@
       "parent": {
        "planting_id": "4b53ac2a-dfdd-41b0-abbb-ebf0cdbac2eb",
        "name": "Sugar Baby",
-       "lb": 13.2
+       "lb": 13.184
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4250,7 +4250,7 @@
       "parent": {
        "planting_id": "37368072-8ce8-44a3-b40a-767993dd39b1",
        "name": "1884",
-       "lb": 5.9
+       "lb": 5.87
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4275,7 +4275,7 @@
       "parent": {
        "planting_id": "faf62061-8eb1-488c-a2c8-bbd2bda423bf",
        "name": "Ukrainian Purple",
-       "lb": 9.4
+       "lb": 9.364
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4300,7 +4300,7 @@
       "parent": {
        "planting_id": "eebfc2af-ea2b-44db-bb8d-1e1c907025de",
        "name": "Black Cherry",
-       "lb": 4.2
+       "lb": 4.245
       },
       "source": {
        "id": "13503c22-8b71-4424-b9a2-d3115cd73d1e",
@@ -4325,7 +4325,7 @@
       "parent": {
        "planting_id": "0ff51423-3d67-4b23-9887-1e8b7674a65a",
        "name": "Rosa Sicilian",
-       "lb": 5.6
+       "lb": 5.551
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4424,7 +4424,7 @@
       "parent": {
        "planting_id": "75aebd10-2962-4c53-8455-862723c46d72",
        "name": "Green Flesh",
-       "lb": 9.1
+       "lb": 9.052
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4449,7 +4449,7 @@
       "parent": {
        "planting_id": "33c8c880-7e86-43fa-b083-0b9a36377c6a",
        "name": "Delicious",
-       "lb": 19.2
+       "lb": 19.187
       },
       "source": null
      },
@@ -4464,7 +4464,7 @@
       "parent": {
        "planting_id": "b268f6cb-f7ae-460b-b1e7-425c3ca66b6e",
        "name": "Ristra Cayenne II",
-       "lb": 2.4
+       "lb": 2.396
       },
       "source": {
        "id": "33d65987-fed1-40e9-967a-c3ec604b64c1",
@@ -4489,7 +4489,7 @@
       "parent": {
        "planting_id": "54786dfd-554f-4b2c-a013-f09048c84c94",
        "name": "Cucamelon",
-       "lb": 3
+       "lb": 2.985
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4514,7 +4514,7 @@
       "parent": {
        "planting_id": "75aebd10-2962-4c53-8455-862723c46d72",
        "name": "Green Flesh",
-       "lb": 9.1
+       "lb": 9.052
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4539,7 +4539,7 @@
       "parent": {
        "planting_id": "fc9b6ee9-0dd4-41f7-a1db-157c30c93a4c",
        "name": "Big Boy",
-       "lb": 19.8
+       "lb": 19.781
       },
       "source": null
      },
@@ -4554,7 +4554,7 @@
       "parent": {
        "planting_id": "bae05057-409d-453b-addc-a218bef4f99d",
        "name": "Cherokee Green",
-       "lb": 6.1
+       "lb": 6.129
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4579,7 +4579,7 @@
       "parent": {
        "planting_id": "15fbbc7f-222f-4232-a186-9948526da67a",
        "name": "Pineapple Tomatillo",
-       "lb": 1.7
+       "lb": 1.731
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4604,7 +4604,7 @@
       "parent": {
        "planting_id": "1bbfe326-5a99-4124-8bbe-b25de49e4dde",
        "name": "Ghost",
-       "lb": 0.3
+       "lb": 0.271
       },
       "source": {
        "id": "0d50a7d7-9c30-4e27-bef8-80c59770b716",
@@ -4629,7 +4629,7 @@
       "parent": {
        "planting_id": "bc9d1204-89f8-4bc6-bf92-7bed2ae18c36",
        "name": "Piri Piri",
-       "lb": 0.5
+       "lb": 0.517
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4654,7 +4654,7 @@
       "parent": {
        "planting_id": "2b1f722f-8f3a-4803-b8c5-cabe16b479e6",
        "name": "Gong Bao (Kung Pao)",
-       "lb": 0.1
+       "lb": 0.06
       },
       "source": {
        "id": "a593e061-890d-4f2c-b57c-74addab84e0c",
@@ -4679,7 +4679,7 @@
       "parent": {
        "planting_id": "f1a7690e-394d-4828-a6c7-aa36721caa66",
        "name": "Thai Dragon",
-       "lb": 0.1
+       "lb": 0.057
       },
       "source": null
      },
@@ -4694,7 +4694,7 @@
       "parent": {
        "planting_id": "3f467d69-e681-4412-80d3-aab76bf54c3a",
        "name": "Sunray",
-       "lb": 2.8
+       "lb": 2.765
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4719,7 +4719,7 @@
       "parent": {
        "planting_id": "51facc08-0635-4f86-907f-b935ba6d782b",
        "name": "Manitoba",
-       "lb": 5
+       "lb": 4.993
       },
       "source": {
        "id": "684e2166-ca47-42d2-834e-b14ecf21543c",
@@ -4744,7 +4744,7 @@
       "parent": {
        "planting_id": "b077b1ed-08b5-4626-b603-ef5b68d4bef3",
        "name": "Sugar Rush Peach",
-       "lb": 0.9
+       "lb": 0.869
       },
       "source": {
        "id": "34064c67-f25b-4585-8f91-8fd350fad643",
@@ -4790,7 +4790,7 @@
       "parent": {
        "planting_id": "19f2aa28-481d-4f36-9aad-c0e8f38be056",
        "name": "Pineapple Tomato",
-       "lb": 3.4
+       "lb": 3.408
       },
       "source": {
        "id": "7d74da59-d1b3-4a6e-8861-cb663f3bc09b",

@@ -76,7 +76,7 @@ function sources(s) {
     const second = named[1]
     if (second && num(second.lb) > 0) out.push(`Next was ${second.name} at ${lbText(second.lb)}.`)
   }
-  if (none && num(none.lb) > 0) out.push(`${lbText(none.lb)} came from plantings with no source recorded.`)
+  if (none && Number(fmtLb(none.lb)) > 0) out.push(`${lbText(none.lb)} came from plantings with no source recorded.`)
   return out.join(' ')
 }
 
