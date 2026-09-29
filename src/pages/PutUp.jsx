@@ -2540,51 +2540,11 @@ function GroupCard({ group, onChanged, fetch }) {
   )
 }
 
-// Build the FULL replace payload the PUT contract expects, applying overrides (decrement / edit).
-//
-// ⚠ RELEASE F: NOTHING IN THIS BUNDLE CALLS IT. Mark used / Used up are POST /api/pantry/uses and every
-// Edit is one PATCH (RecordRow). It stays, exported and pinned by preservationColumnParity.test.js and
-// putUpDateEcho.tz.test.js, because it IS the legacy wire shape the 1a bundles still on phones send —
-// the shape the Lambda's PUT keeps answering (and, from F, refuses for a drawn jar). Retire it with
-// those two tests once no 1a bundle is left to reason about.
-function buildFullPayload(rec, overrides = {}) {
-  return {
-    crop_type_slug: rec.crop_type_slug ?? null,
-    variety_id: rec.variety_id ?? null,
-    plant_id: rec.plant_id ?? null,
-    harvest_log_id: rec.harvest_log_id ?? null,
-    preserved_at: ymd(rec.preserved_at),
-    // V4-PUTUPSESSION-001 slice 1. `?? null` and never `?? false`: null is what the Lambda's
-    // COALESCE reads as "unchanged", so a row whose flag was never recorded keeps its NULL instead
-    // of being rewritten as "the user chose this date" by a Mark-used tap that knows nothing about
-    // it. The same reasoning as source_kind below, one line up because it belongs beside its date.
-    preserved_at_approx: rec.preserved_at_approx ?? null,
-    method: rec.method,
-    method_other_text: rec.method_other_text ?? null,
-    quantity_value: rec.quantity_value,
-    quantity_unit: rec.quantity_unit,
-    package_count: rec.package_count ?? 1,
-    storage_location_id: rec.storage_location_id ?? null,
-    use_by_target: rec.use_by_target ? ymd(rec.use_by_target) : null,
-    // remaining_count and consumed_at are DELIBERATELY ABSENT (release F, 06 §1.3 item 3): uses go
-    // through POST /api/pantry/uses, and an absent key is "unchanged" to the 1b PUT. From F the PUT
-    // refuses a remaining_count on a jar a batch has drawn from (client_stale), so sending the key —
-    // even as an untouched echo — would make every Edit of a drawn jar fail.
-    notes: rec.notes ?? null,
-    photo_id: rec.photo_id ?? null,
-    // V4-PUTUPPROV-001 — THE HIGHEST-RISK LINE IN THIS CHANGE. This function is the single choke
-    // point for the one-tap "Mark used" decrement AND, via the overrides spread below, for
-    // RowEditor. Omitting a
-    // column here means every decrement tap sends a payload without it. Before the Lambda's
-    // COALESCE-preserve fix that silently rewrote a farm-stand put-up as own-garden with the vendor
-    // erased, returned 200, and looked like a render glitch. Both guards ship; keep both.
-    // src/__tests__/preservationColumnParity.test.js asserts this object's key set against
-    // PRESERVATION_EDITABLE_COLUMNS so the NEXT column cannot be half-added either.
-    source_kind: rec.source_kind ?? null,
-    source_label: rec.source_label ?? null,
-    ...overrides,
-  }
-}
+// Release F retired buildFullPayload, the full-replace echo every 1a/1b Edit and Mark used sent: Mark
+// used / Used up are POST /api/pantry/uses and every Edit is ONE PATCH of what changed (RowEditor), so
+// no write from this bundle echoes a row back. The 1a bundles still cached on phones do send that echo;
+// the Lambda's PUT keeps answering it, and putUpDateEcho.tz.test.js keeps a frozen copy of its shape to
+// prove it moves no date. preservationColumnParity.test.js now pins the PATCH this editor sends instead.
 
 function RecordRow({ rec, onChanged, fetch }) {
   const [busy, setBusy] = useState(false)
@@ -2808,7 +2768,7 @@ function RowAction({ onClick, disabled, tone, children }) {
   )
 }
 
-// Minimal per-row editor — the fields worth changing after the fact. Sends a FULL replace payload.
+// Minimal per-row editor — the fields worth changing after the fact. Sends ONE PATCH of what changed.
 function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
   // against it, one expression per field, so the seed and the comparison cannot drift apart.
@@ -2831,7 +2791,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   const [method, setMethod] = useState(seed.method)
   // PRE-EXISTING BUG, fixed under V4-PUTUPPROV-001. This editor offered 'other' in the method list
   // but had no method_other_text input, so switching a row TO 'other' sent method:'other' with
-  // method_other_text:null (buildFullPayload supplies the row's existing value, which is null for a
+  // method_other_text:null (the 1a full echo supplied the row's existing value, which is null for a
   // row that was not already 'other'), tripping validateUpdate's required-text rule. The 400 was
   // then swallowed by put()'s generic catch, so it read as "Couldn't update — try again." forever.
   // THE INVARIANT THIS RESTORES: a field that is CONDITIONALLY REQUIRED BY ANOTHER FIELD must be
@@ -2841,8 +2801,8 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // V5-PUTUPCANDY-001. The other half of FOODSAFETY-RULING-V101 §8.2: "let the cook set the real
   // date". use_by_target has always been per-row and user-overridable at CREATE time, but this
   // editor never exposed it, so the provenance line's "tap Edit to set the real date" would have
-  // been a dead instruction on an existing row. Seeded exactly as buildFullPayload seeds it, so an
-  // untouched save round-trips the stored value byte-for-byte.
+  // been a dead instruction on an existing row. Seeded through ymd(), so an untouched field is
+  // byte-for-byte the stored day and is never sent (release F: only what changed is).
   const [useByTarget, setUseByTarget] = useState(seed.useByTarget)
   const [notes, setNotes] = useState(seed.notes)
 
@@ -2865,9 +2825,8 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, holdReload])
 
-  // Put-Up release 1b: ONLY what changed is sent, each to its one writer (RecordRow.saveEdit) — the
-  // size and count through the legacy PUT, the name, method, notes and discard-by through the PATCH.
-  // An untouched field is an absent key, which both routes read as "unchanged" (V4 §5.4 "From 1b").
+  // ONLY what changed is sent, in ONE PATCH (RecordRow.saveEdit; release F moved the size and count onto
+  // it too). An untouched field is an absent key, which the route reads as "unchanged" (V4 §5.4).
   function save() {
     // ONLY what changed, each key once, all in the one PATCH (see RecordRow.saveEdit).
     const patch = {}
@@ -2993,4 +2952,4 @@ function friendlyError(err) {
   }
   return "Couldn't save — try again."
 }
-export { buildFullPayload, ymd, prettyDate }
+export { ymd, prettyDate }

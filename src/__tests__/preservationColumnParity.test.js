@@ -2,7 +2,8 @@
 //   1. the INSERT column list          (lambda/preservation/index.js)
 //   2. the full-replace UPDATE SET list (lambda/preservation/index.js)
 //   3. projectRow's read whitelist      (lambda/preservation/jarRules.js — index.js until Put-Up 1a)
-//   4. buildFullPayload                 (src/pages/PutUp.jsx)
+//   4. buildFullPayload                 (src/pages/PutUp.jsx) — RETIRED in release F; the client's list
+//      is now the jar editor's PATCH keys, pinned against JAR_PATCH_KEYS below
 //
 // Adding a column to four hand-lists is the defect generator, not the column itself. This file is
 // the tripwire; the Lambda's COALESCE-preserve UPDATE is the safety net. Both ship.
@@ -19,6 +20,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { PRESERVATION_EDITABLE_COLUMNS } from '../../lambda/preservation/provenance.js'
+import { JAR_PATCH_KEYS } from '../../lambda/preservation/jarRoutes.js'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const lambdaSrc = readFileSync(resolve(root, 'lambda/preservation/index.js'), 'utf8')
@@ -77,30 +79,40 @@ describe('lambda/preservation/index.js write + read paths list every editable co
   })
 })
 
-describe('buildFullPayload carries every editable column', () => {
-  // The single choke point for the one-tap decrement and, via ...overrides, for RowEditor.
-  const block = pageSrc.slice(
-    pageSrc.indexOf('function buildFullPayload(rec, overrides = {}) {'),
-    pageSrc.indexOf('...overrides,'))
+// Release F retired the fourth list: buildFullPayload, the full-replace echo every Edit and Mark used
+// sent, is gone from the client. Mark used / Used up are POST /api/pantry/uses and an Edit is ONE PATCH
+// of what changed (RowEditor.save), so the client's copy of the column list is now the PATCH's keys —
+// and the PATCH refuses any key outside JAR_PATCH_KEYS, so a key the editor builds that the route does
+// not take is a 400 behind an ordinary Save. The legacy PUT's echo is pinned where it still lives:
+// putUpDateEcho.tz.test.js keeps a frozen copy of the shape the shipped bundles send.
+describe('the jar editor writes only what the jar PATCH takes (the client list since release F)', () => {
+  const at = pageSrc.indexOf('function RowEditor(')
+  const block = pageSrc.slice(at, pageSrc.indexOf('\n  return (', at))
+  const sent = [...new Set([...block.matchAll(/\bpatch\.(\w+)\s*=/g)].map(m => m[1]))]
 
-  // Release F (06 §1.3 item 3, amended in the same commit as the change): remaining_count and
-  // consumed_at are EXCLUDED. Uses go through POST /api/pantry/uses, an absent key is "unchanged" to
-  // the 1b PUT, and from F the PUT refuses a remaining_count on a drawn jar (client_stale) — so the
-  // key must never be echoed. MUTATION: re-add `remaining_count: rec.remaining_count ?? null` -> the
-  // second arm reds.
-  const USE_ROUTE_COLUMNS = ['remaining_count', 'consumed_at']
-  it.each(PRESERVATION_EDITABLE_COLUMNS.filter(c => !USE_ROUTE_COLUMNS.includes(c)))('sends %s', (col) => {
-    expect(block).toContain(`${col}:`)
+  it('is anchored to the real save (guards against the slice silently matching nothing)', () => {
+    expect(at).toBeGreaterThan(-1)
+    expect(block).toContain('function save()')
+    // The eight things the editor offers, each written through one key (method_other_text with method).
+    expect(sent.sort()).toEqual(['discard_by', 'label', 'method', 'method_other_text', 'notes', 'package_count',
+      'quantity_unit', 'quantity_value'])
   })
 
-  it.each(USE_ROUTE_COLUMNS)('never sends %s (uses go through their own route)', (col) => {
-    expect(PRESERVATION_EDITABLE_COLUMNS).toContain(col)      // green control: still an editable column server-side
-    expect(block).not.toMatch(new RegExp(`\\b${col}\\s*:`))
+  // MUTATION: add `patch.remaining_count = …` (or any key the route refuses) to RowEditor.save -> reds.
+  it('every key it builds is one the PATCH takes', () => {
+    for (const k of sent) expect(JAR_PATCH_KEYS).toContain(k)
   })
 
-  it('is anchored to a real function (guards against the slice silently matching nothing)', () => {
-    expect(block.length).toBeGreaterThan(200)
-    expect(pageSrc).toContain('function buildFullPayload(rec, overrides = {})')
+  // Uses go through their own route; from F the legacy PUT refuses a remaining_count on a drawn jar.
+  it.each(['remaining_count', 'consumed_at'])('never writes %s', (col) => {
+    expect(PRESERVATION_EDITABLE_COLUMNS).toContain(col)      // green control: still editable server-side
+    expect(block).not.toMatch(new RegExp(`\\b${col}\\b`))
+  })
+
+  // MUTATION: bring buildFullPayload back -> reds. A second copy of the full echo in the client is the
+  // defect generator this file exists for, with nothing left to keep it in step.
+  it('no full-replace echo is left in the page', () => {
+    expect(pageSrc).not.toMatch(/function buildFullPayload\s*\(/)
   })
 })
 
