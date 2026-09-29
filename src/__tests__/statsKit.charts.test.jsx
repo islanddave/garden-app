@@ -127,11 +127,11 @@ describe('chart layouts on the fixture', () => {
     expect(big.length + small.length).toBe(34)
     expect(none.lb).toBe(187.1)
     expect(max).toBe(154.3)
-    expect(sourceMetaLine(big[0])).toBe('46 plantings · 37 picked · 5 lost · 11 saved lots')
+    expect(sourceMetaLine(big[0])).toBe('46 plantings · 37 picked · 5 lost · seed saved from 11')
     expect(sourceMetaLine(S.sources.series.cards.find(c => c.name === 'Hart Farm'))).toBe('1 planting · 1 picked')
     // the no-source card (source_id null, picked/lost null) still says its saved lots
     expect(none.source_id).toBeNull()
-    expect(sourceMetaLine(none)).toBe('96 plantings · 3 saved lots')
+    expect(sourceMetaLine(none)).toBe('96 plantings · seed saved from 3')
     // the fixture is the regenerated real one: 35 cards (34 named + the no-source card), real ids
     expect(S.sources.series.cards).toHaveLength(35)
     for (const c of [...big, ...small]) expect(c.source_id).toMatch(/^[0-9a-f-]{36}$/)

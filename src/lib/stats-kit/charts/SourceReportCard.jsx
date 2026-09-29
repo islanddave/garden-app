@@ -1,5 +1,5 @@
 // Source report card (round-2 design): one row per named source — name and kind, pounds with a bar,
-// then "N plantings · N picked · N lost · N saved lots" — sources under 2 lb folded behind
+// then "N plantings · N picked · N lost · seed saved from N" — sources under 2 lb folded behind
 // "N more sources", and a "No source recorded" row last.
 import React, { useState } from 'react'
 import { v } from '../palette.js'
@@ -21,7 +21,7 @@ export function sourceMetaLine(c) {
   const parts = [countOf(num(c.plantings), 'planting')]
   if (isNum(c.picked)) parts.push(`${fmtInt(c.picked)} picked`)
   if (num(c.lost) > 0) parts.push(`${fmtInt(c.lost)} lost`)
-  if (num(c.saved_lots) > 0) parts.push(countOf(c.saved_lots, 'saved lot'))
+  if (num(c.saved_lots) > 0) parts.push(`seed saved from ${fmtInt(c.saved_lots)}`)
   return parts.join(' · ')
 }
 
