@@ -48,7 +48,7 @@ const AUDIT_COLUMNS = {
   stat_heat_clock_crop: ['crop_name', 'crop_slug', 'first_pick', 'grow_year', 'heat_units', 'origin_date', 'owner'],
   stat_heat_clock_cultivar: ['crop_median_heat', 'crop_slug', 'cultivar', 'days', 'first_pick', 'grow_year', 'heat_band', 'heat_units', 'owner', 'planting_id', 'transplanted_at'],
   stat_heat_ladder: ['band', 'grow_year', 'lb', 'owner', 'plantings', 'plants', 'pods'],
-  stat_pepper_best: ['band', 'cultivar', 'grow_year', 'lb', 'owner', 'planting_id', 'pods', 'rank_in_band'],
+  stat_pepper_best: ['band', 'cultivar', 'grow_year', 'lb', 'owner', 'planting_id', 'pods', 'rank_in_band', 'scoville_max'],
   stat_tomato_keep: ['container_size', 'cultivar', 'fruit', 'g_per_fruit', 'grow_year', 'late_aug', 'lb', 'measured_share', 'median_lb', 'owner', 'planting_id', 'verdict', 'x_median'],
   stat_longest_giving: ['crop_name', 'cultivar', 'first_pick', 'grow_year', 'last_pick', 'lb', 'lb_per_plant_week', 'owner', 'pick_days', 'planting_id', 'plants', 'rank_by_window', 'season_last_pick', 'still_picking', 'window_days'],
   stat_tomato_month_size: ['aug_fruit', 'aug_g', 'aug_grams', 'cultivar', 'fruit_weighted_ratio', 'grow_year', 'owner', 'ratio', 'sep_fruit', 'sep_g', 'sep_grams'],

@@ -40,7 +40,7 @@ const ROWS = {
   stat_heat_clock_crop: [{ owner: USER, crop_slug: 'bean', crop_name: 'Bean', first_pick: '2026-07-01', origin_date: '2026-05-10', heat_units: 700.2 }],
   stat_heat_clock_cultivar: [{ owner: USER, planting_id: 'a0000000-0000-4000-8000-000000000002', crop_slug: 'tomato', cultivar: 'Stupice', transplanted_at: '2026-06-01', first_pick: '2026-07-10', days: 39, heat_units: 900, heat_band: null, crop_median_heat: 900 }],
   stat_heat_ladder: [{ owner: USER, band: 'hot', plantings: 1, plants: 1, pods: 6, lb: 0.2 }],
-  stat_pepper_best: [{ owner: USER, planting_id: 'a0000000-0000-4000-8000-000000000003', band: 'hot', cultivar: 'Hot Portugal', pods: 6, lb: 0.2, rank_in_band: 1 }],
+  stat_pepper_best: [{ owner: USER, planting_id: 'a0000000-0000-4000-8000-000000000003', band: 'hot', cultivar: 'Hot Portugal', pods: 6, lb: 0.2, rank_in_band: 1, scoville_max: 20000 }],
   stat_tomato_keep: [{ owner: USER, planting_id: 'a0000000-0000-4000-8000-000000000004', cultivar: 'Stupice', lb: 2, fruit: 20, g_per_fruit: 45, container_size: '10 gal', measured_share: 1, late_aug: false, median_lb: 2, x_median: 1, verdict: 'fine' }],
   stat_longest_giving: [{ owner: USER, planting_id: 'a0000000-0000-4000-8000-000000000005', cultivar: 'Cherry', crop_name: 'Tomato', plants: 1, first_pick: '2026-07-01', last_pick: '2026-09-20', window_days: 82, pick_days: ['2026-07-01', '2026-09-20'], still_picking: false, lb: 3, lb_per_plant_week: 0.26, season_last_pick: '2026-09-28' }],
   stat_tomato_month_size: [{ owner: USER, cultivar: 'Stupice', aug_grams: 500, aug_fruit: 10, sep_grams: 400, sep_fruit: 10, aug_g: 50, sep_g: 40, ratio: 0.8, fruit_weighted_ratio: 0.8 }],
@@ -103,6 +103,7 @@ describe('GET /api/harvests/season-stats', () => {
     expect(Object.keys(body.sections)).toEqual([...SECTION_IDS]);
     expect(body.sections.sources.series.cards[0].lb).toBe(3.3);
     expect(body.sections.ribbon.series.days[0].care).toEqual(['water']);
+    expect(body.sections.heat_ladder.series.best[0].scoville_max).toBe(20000);
     expect(Date.parse(body.generatedAt)).not.toBeNaN();
   });
 

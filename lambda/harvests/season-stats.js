@@ -106,7 +106,7 @@ const QUERIES = {
       FROM public.stat_heat_ladder hl
      WHERE hl.owner = ANY(${ids}::text[]) AND hl.grow_year = ${y}::int`,
   best: (sql, ids, y) => sql`
-    SELECT pb.owner, pb.planting_id, pb.band, pb.cultivar, pb.pods, pb.lb, pb.rank_in_band
+    SELECT pb.owner, pb.planting_id, pb.band, pb.cultivar, pb.pods, pb.lb, pb.rank_in_band, pb.scoville_max
       FROM public.stat_pepper_best pb
      WHERE pb.owner = ANY(${ids}::text[]) AND pb.grow_year = ${y}::int`,
   tomatoKeep: (sql, ids, y) => sql`

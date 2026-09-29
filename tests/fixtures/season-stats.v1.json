@@ -1,6 +1,6 @@
 {
  "version": 1,
- "generatedAt": "2026-09-29T19:33:09.000Z",
+ "generatedAt": "2026-09-29T19:38:13.000Z",
  "season": {
   "year": 2026,
   "start": "2025-11-01",
@@ -10,7 +10,7 @@
   "ribbon": {
    "section": "ribbon",
    "version": 1,
-   "generatedAt": "2026-09-29T19:33:09.000Z",
+   "generatedAt": "2026-09-29T19:38:13.000Z",
    "meta": {
     "pins": {
      "first_sow": "2026-04-18",
@@ -1574,7 +1574,7 @@
   "sources": {
    "section": "sources",
    "version": 1,
-   "generatedAt": "2026-09-29T19:33:09.000Z",
+   "generatedAt": "2026-09-29T19:38:13.000Z",
    "meta": {
     "total_lb": 449.6,
     "limits": [
@@ -2012,7 +2012,7 @@
   "heat_clock": {
    "section": "heat_clock",
    "version": 1,
-   "generatedAt": "2026-09-29T19:33:09.000Z",
+   "generatedAt": "2026-09-29T19:38:13.000Z",
    "meta": {
     "origin_date": "2026-05-10",
     "median_heat": {
@@ -2653,7 +2653,7 @@
   "heat_ladder": {
    "section": "heat_ladder",
    "version": 1,
-   "generatedAt": "2026-09-29T19:33:09.000Z",
+   "generatedAt": "2026-09-29T19:38:13.000Z",
    "meta": {
     "limits": [
      {
@@ -2722,7 +2722,8 @@
       "cultivar": "Red Mini Bell",
       "pods": 18,
       "lb": 0.45,
-      "rank_in_band": 1
+      "rank_in_band": 1,
+      "scoville_max": 0
      },
      {
       "band": "sweet",
@@ -2730,7 +2731,8 @@
       "cultivar": "Sweet Sivri",
       "pods": 9,
       "lb": 0.27,
-      "rank_in_band": 2
+      "rank_in_band": 2,
+      "scoville_max": 0
      },
      {
       "band": "sweet",
@@ -2738,7 +2740,8 @@
       "cultivar": "Gatherer's Gold",
       "pods": 8,
       "lb": 1.04,
-      "rank_in_band": 3
+      "rank_in_band": 3,
+      "scoville_max": 0
      },
      {
       "band": "sweet",
@@ -2746,7 +2749,8 @@
       "cultivar": "Sweet Orange Pepper (Unknown)",
       "pods": 2,
       "lb": 0.14,
-      "rank_in_band": 4
+      "rank_in_band": 4,
+      "scoville_max": 0
      },
      {
       "band": "sweet",
@@ -2754,7 +2758,8 @@
       "cultivar": "King of the North",
       "pods": 1,
       "lb": 0.25,
-      "rank_in_band": 5
+      "rank_in_band": 5,
+      "scoville_max": 0
      },
      {
       "band": "sweet",
@@ -2762,7 +2767,8 @@
       "cultivar": "Emerald Green",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 6
+      "rank_in_band": 6,
+      "scoville_max": 0
      },
      {
       "band": "sweet",
@@ -2770,7 +2776,8 @@
       "cultivar": "Orange Sun",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 7
+      "rank_in_band": 7,
+      "scoville_max": 0
      },
      {
       "band": "sweet",
@@ -2778,7 +2785,8 @@
       "cultivar": "Quadrato d'Asti Rosso",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 8
+      "rank_in_band": 8,
+      "scoville_max": 0
      },
      {
       "band": "sweet",
@@ -2786,7 +2794,8 @@
       "cultivar": "Sweet Chocolate",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 9
+      "rank_in_band": 9,
+      "scoville_max": 0
      },
      {
       "band": "mild",
@@ -2794,7 +2803,8 @@
       "cultivar": "Dragon Roll",
       "pods": 58,
       "lb": 1.51,
-      "rank_in_band": 1
+      "rank_in_band": 1,
+      "scoville_max": 200
      },
      {
       "band": "mild",
@@ -2802,7 +2812,8 @@
       "cultivar": "Pick-N-Pop Yellow",
       "pods": 18,
       "lb": 1.26,
-      "rank_in_band": 2
+      "rank_in_band": 2,
+      "scoville_max": 100
      },
      {
       "band": "mild",
@@ -2810,7 +2821,8 @@
       "cultivar": "Cherry Stuffer (Burpee)",
       "pods": 8,
       "lb": 0.52,
-      "rank_in_band": 3
+      "rank_in_band": 3,
+      "scoville_max": 500
      },
      {
       "band": "mild",
@@ -2818,7 +2830,8 @@
       "cultivar": "Katana F1 (Shishito)",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 4
+      "rank_in_band": 4,
+      "scoville_max": 200
      },
      {
       "band": "mild",
@@ -2826,7 +2839,8 @@
       "cultivar": "Shishito",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 5
+      "rank_in_band": 5,
+      "scoville_max": 200
      },
      {
       "band": "medium",
@@ -2834,7 +2848,8 @@
       "cultivar": "Anaheim",
       "pods": 4,
       "lb": 0.39,
-      "rank_in_band": 1
+      "rank_in_band": 1,
+      "scoville_max": 2500
      },
      {
       "band": "medium",
@@ -2842,7 +2857,8 @@
       "cultivar": "New Mexico (Hatch-type)",
       "pods": 2,
       "lb": 0.16,
-      "rank_in_band": 2
+      "rank_in_band": 2,
+      "scoville_max": 8000
      },
      {
       "band": "medium",
@@ -2850,7 +2866,8 @@
       "cultivar": "Biquinho Yellow F1",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 3
+      "rank_in_band": 3,
+      "scoville_max": 1000
      },
      {
       "band": "medium",
@@ -2858,7 +2875,8 @@
       "cultivar": "Santa Fe Grande",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 4
+      "rank_in_band": 4,
+      "scoville_max": 8000
      },
      {
       "band": "hot",
@@ -2866,7 +2884,8 @@
       "cultivar": "Ristra Cayenne II",
       "pods": 16,
       "lb": 2.4,
-      "rank_in_band": 1
+      "rank_in_band": 1,
+      "scoville_max": 35000
      },
      {
       "band": "hot",
@@ -2874,7 +2893,8 @@
       "cultivar": "Hot Portugal",
       "pods": 6,
       "lb": 0.19,
-      "rank_in_band": 2
+      "rank_in_band": 2,
+      "scoville_max": 30000
      },
      {
       "band": "hot",
@@ -2882,7 +2902,8 @@
       "cultivar": "Gong Bao (Kung Pao)",
       "pods": 6,
       "lb": 0.06,
-      "rank_in_band": 3
+      "rank_in_band": 3,
+      "scoville_max": 12000
      },
      {
       "band": "hot",
@@ -2890,7 +2911,8 @@
       "cultivar": "Pumpkin Jalapeno",
       "pods": 5,
       "lb": 0.02,
-      "rank_in_band": 4
+      "rank_in_band": 4,
+      "scoville_max": 25000
      },
      {
       "band": "hot",
@@ -2898,7 +2920,8 @@
       "cultivar": "Purple Tiger",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 5
+      "rank_in_band": 5,
+      "scoville_max": 10000
      },
      {
       "band": "very_hot",
@@ -2906,7 +2929,8 @@
       "cultivar": "Piri Piri",
       "pods": 56,
       "lb": 0.52,
-      "rank_in_band": 1
+      "rank_in_band": 1,
+      "scoville_max": 175000
      },
      {
       "band": "very_hot",
@@ -2914,7 +2938,8 @@
       "cultivar": "Jamaican Yellow Mushroom",
       "pods": 16,
       "lb": 0.25,
-      "rank_in_band": 2
+      "rank_in_band": 2,
+      "scoville_max": 200000
      },
      {
       "band": "very_hot",
@@ -2922,7 +2947,8 @@
       "cultivar": "Thai Dragon",
       "pods": 9,
       "lb": 0.06,
-      "rank_in_band": 3
+      "rank_in_band": 3,
+      "scoville_max": 100000
      },
      {
       "band": "very_hot",
@@ -2930,7 +2956,8 @@
       "cultivar": "Piquin",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 4
+      "rank_in_band": 4,
+      "scoville_max": 60000
      },
      {
       "band": "superhot",
@@ -2938,7 +2965,8 @@
       "cultivar": "Armageddon F1",
       "pods": 9,
       "lb": 0.16,
-      "rank_in_band": 1
+      "rank_in_band": 1,
+      "scoville_max": 1300000
      },
      {
       "band": "superhot",
@@ -2946,7 +2974,8 @@
       "cultivar": "Devil's Tongue",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 2
+      "rank_in_band": 2,
+      "scoville_max": 325000
      },
      {
       "band": "superhot",
@@ -2954,7 +2983,8 @@
       "cultivar": "Palmetto Punch",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 3
+      "rank_in_band": 3,
+      "scoville_max": 350000
      },
      {
       "band": "superhot",
@@ -2962,7 +2992,8 @@
       "cultivar": "Scotch Bonnet",
       "pods": 0,
       "lb": 0,
-      "rank_in_band": 4
+      "rank_in_band": 4,
+      "scoville_max": 350000
      }
     ]
    }
@@ -2970,7 +3001,7 @@
   "tomato_keep": {
    "section": "tomato_keep",
    "version": 1,
-   "generatedAt": "2026-09-29T19:33:09.000Z",
+   "generatedAt": "2026-09-29T19:38:13.000Z",
    "meta": {
     "median_lb": 2.05,
     "limits": [
@@ -3283,7 +3314,7 @@
   "longest": {
    "section": "longest",
    "version": 1,
-   "generatedAt": "2026-09-29T19:33:09.000Z",
+   "generatedAt": "2026-09-29T19:38:13.000Z",
    "meta": {
     "last_pick": "2026-09-28",
     "limits": [
@@ -3992,7 +4023,7 @@
   "sep_size": {
    "section": "sep_size",
    "version": 1,
-   "generatedAt": "2026-09-29T19:33:09.000Z",
+   "generatedAt": "2026-09-29T19:38:13.000Z",
    "meta": {
     "fruit_weighted_ratio": 0.76,
     "limits": [
@@ -4173,7 +4204,7 @@
   "seed_lots": {
    "section": "seed_lots",
    "version": 1,
-   "generatedAt": "2026-09-29T19:33:09.000Z",
+   "generatedAt": "2026-09-29T19:38:13.000Z",
    "meta": {
     "limits": [
      {

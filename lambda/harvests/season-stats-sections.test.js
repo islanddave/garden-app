@@ -56,7 +56,7 @@ const RESULTS = {
     first_pick: '2026-07-10', days: 39, heat_units: 1151, heat_band: 'sweet', crop_median_heat: 1151,
   }],
   bands: [{ owner: A, band: 'sweet', plantings: 2, plants: 2, pods: 18, lb: 0.451 }],
-  best: [{ owner: A, planting_id: id(4), band: 'sweet', cultivar: 'Red Mini Bell', pods: 18, lb: 0.451, rank_in_band: 1 }],
+  best: [{ owner: A, planting_id: id(4), band: 'sweet', cultivar: 'Red Mini Bell', pods: 18, lb: 0.451, rank_in_band: 1, scoville_max: 0 }],
   tomatoKeep: [{
     owner: A, planting_id: id(5), cultivar: 'Ukrainian Purple', lb: 9.36, fruit: 46, g_per_fruit: 92.3,
     container_size: '10 gal', measured_share: 0.861, late_aug: false, median_lb: 2.05, x_median: 4.566, verdict: 'grow_again',
@@ -344,16 +344,23 @@ describe('heat_ladder', () => {
     expect(s.series.bands[5]).toEqual({ band: 'superhot', label: 'Superhot', plantings: 0, plants: 0, pods: 0, lb: 0 });
   });
 
-  it('best is ordered by band, then rank; unknown bands dropped', () => {
+  it('best keeps EVERY ranked planting, ordered by band then rank; unknown bands dropped', () => {
     const s = shapeHeatLadder({
       best: [
-        { planting_id: id(1), band: 'hot', cultivar: 'b', pods: 1, lb: 0, rank_in_band: 2 },
-        { planting_id: id(2), band: 'hot', cultivar: 'a', pods: 5, lb: 0, rank_in_band: 1 },
-        { planting_id: id(3), band: 'sweet', cultivar: 'c', pods: 0, lb: 0, rank_in_band: 1 },
-        { planting_id: id(4), band: 'nope', cultivar: 'd', pods: 0, lb: 0, rank_in_band: 1 },
+        { planting_id: id(1), band: 'hot', cultivar: 'b', pods: 1, lb: 0, rank_in_band: 2, scoville_max: '30000' },
+        { planting_id: id(2), band: 'hot', cultivar: 'a', pods: 5, lb: 0, rank_in_band: 1, scoville_max: 50000 - 1 },
+        { planting_id: id(3), band: 'sweet', cultivar: 'c', pods: 0, lb: 0, rank_in_band: 1, scoville_max: 0 },
+        { planting_id: id(4), band: 'nope', cultivar: 'd', pods: 0, lb: 0, rank_in_band: 1, scoville_max: 1 },
       ],
     }, GEN);
     expect(s.series.best.map((r) => r.cultivar)).toEqual(['c', 'a', 'b']);
+    // The per-variety heat tube: the catalogue ceiling on every row, numeric even from a numeric string.
+    expect(s.series.best.map((r) => r.scoville_max)).toEqual([0, 49999, 30000]);
+  });
+
+  it('scoville_max is null when the row carries none', () => {
+    const s = shapeHeatLadder({ best: [{ planting_id: id(1), band: 'hot', cultivar: 'x', pods: 0, lb: 0, rank_in_band: 1 }] }, GEN);
+    expect(s.series.best[0].scoville_max).toBeNull();
   });
 });
 

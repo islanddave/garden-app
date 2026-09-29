@@ -269,7 +269,7 @@ export function shapeHeatLadder({ bands = [], best = [] }, generatedAt) {
       .filter((r) => order.has(r.band))
       .map((r) => ({
         band: r.band, planting_id: r.planting_id, cultivar: r.cultivar ?? null, pods: int(r.pods),
-        lb: round(r.lb, 2), rank_in_band: int(r.rank_in_band),
+        lb: round(r.lb, 2), rank_in_band: int(r.rank_in_band), scoville_max: num(r.scoville_max),
       }))
       .sort((a, b) => order.get(a.band) - order.get(b.band) || a.rank_in_band - b.rank_in_band
         || cmp(a.planting_id, b.planting_id)),

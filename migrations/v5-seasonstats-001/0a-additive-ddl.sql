@@ -396,7 +396,8 @@ SELECT sp.owner,
  WHERE sp.crop_slug = 'pepper' AND sp.heat_band IS NOT NULL
  GROUP BY sp.owner, sp.grow_year, sp.heat_band;
 
--- Single-plant peppers ranked by pods within their band.
+-- Every single-plant pepper planting with a band, ranked by pods within that band. scoville_max
+-- (the catalogue ceiling) rides along so the page can place each variety on its heat tube.
 CREATE OR REPLACE VIEW public.stat_pepper_best AS
 SELECT sp.planting_id,
        sp.owner,
@@ -408,7 +409,8 @@ SELECT sp.planting_id,
        sp.status,
        row_number() OVER (PARTITION BY sp.owner, sp.grow_year, sp.heat_band
                           ORDER BY coalesce(ph.fruit_count, 0) DESC, coalesce(ph.lb, 0) DESC,
-                                   sp.display_name, sp.planting_id)::int AS rank_in_band
+                                   sp.display_name, sp.planting_id)::int AS rank_in_band,
+       sp.scoville_max
   FROM public.stat_planting sp
   LEFT JOIN public.stat_planting_harvest ph ON ph.planting_id = sp.planting_id AND ph.grow_year = sp.grow_year
  WHERE sp.crop_slug = 'pepper' AND sp.is_single AND sp.heat_band IS NOT NULL;

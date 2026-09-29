@@ -296,7 +296,7 @@ post:
 
   - name: post_stat_pepper_best_columns
     note: >
-      stat_pepper_best projects every column the handler or a sibling view reads (9 named, not a count
+      stat_pepper_best projects every column the handler or a sibling view reads (10 named, not a count
       of the whole view). Armed on the receipt, so vacuously green before the apply.
     sql: |
       SELECT 1
@@ -304,7 +304,8 @@ post:
          AND (SELECT count(*) FROM information_schema.columns
                WHERE table_schema = 'public' AND table_name = 'stat_pepper_best'
                  AND column_name IN ('planting_id', 'owner', 'grow_year', 'band', 'cultivar',
-                                     'pods', 'lb', 'status', 'rank_in_band')) <> 9
+                                     'pods', 'lb', 'status', 'rank_in_band',
+                                     'scoville_max')) <> 10
     expect: rowcount_eq
     value: 0
 
