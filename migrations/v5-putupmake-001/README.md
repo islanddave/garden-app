@@ -176,4 +176,39 @@ Archive routines on the fixture (+ a container C1 whose harvest feeds the batch)
 left, Mark used) and of the shipped storage-location POST and PUT with a duplicate label (must be 23505,
 which 1a maps). Nothing may violate a 1b CHECK except that intended 23505.
 
-_Results: recorded below by the deployed-writer commit._
+**Results, 2026-09-29**, against `lane-putup1a-server-20260929` HEAD
+`3d9e83d8b41182855907182adbb972140c46ca15` (the PUT count delta is `1b3ae36`, the place answers `3d9e83d`).
+Each statement PREPAREd with its placeholders numbered in order (one number per reused value) and **no declared
+types**, so the server infers them from context as it does for the neon driver's untyped params; EXECUTEd in
+autocommit on the rehearsed 1b schema with every basis NULL (the A-to-B window). Arguments mirror the client's
+`buildFullPayload` + RowEditor overrides and the handler's own derivations (`package_count ?? 1`,
+`consumed_at` stamped at 0 left).
+
+| case (1a legacy PUT) | outcome |
+|---|---|
+| RowEditor clears the date (zucchini: 3 packages, 3 left) | written, date NULL, basis NULL |
+| RowEditor changes the date | written |
+| Mark used 3 → 2, then 2 → 1 | written |
+| RowEditor lowers the count 3 → 1 with 1 left (1 + (1 − 3) = −1) | **refused inside 1a's UPDATE** (no row; the handler answers 409) — never a 23514 |
+| RowEditor lowers the count 3 → 2 with 1 left | written: 2 packages, 0 left, consumed_at stamped |
+| raise 1 → 3, then lower 3 → 2 with 3 left (the basil passata) | written: 3/3, then 2/2 |
+| Mark used on the NULL-remaining jar (Jen's, 2 packages) | written: 1 left |
+| Used up on the no-date Other; Mark used on the farm-stand plums | written; method_other_text and the source pair kept |
+| a stale unit `lbs` → `g` on the "No expiry" row | written (both inside the union) |
+| 1a POST, 1a createBatch + its started row, a tended row with a unit and pH, unlink of a plain jar | written |
+
+| case (storage location, 1a) | outcome |
+|---|---|
+| POST a duplicate (`chest freezer 1`, deep freezer) | **23505 `uq_storage_location_user_kind_label`**; 1a's lookup returns Chest Freezer 1 (200, `existing: true`) |
+| POST a new name / the same name in another kind / Jen's same name | created |
+| PUT rename Chest Freezer 1 → `CHEST FREEZER 2` | **23505**; 1a's clash lookup returns Chest Freezer 2's id (409 `place_exists`) |
+| PUT re-kind the pantry "Chest Freezer 1" → deep freezer | **23505**; the clash lookup returns the freezer's id |
+| PUT rename to a free name | written |
+
+Three errors in the whole run, all the intended 23505. Every row it left satisfies every 1b CHECK.
+
+**Why 0p waits for B's Lambda, measured:** on the same schema AFTER 0p, 1a's PUT clearing a backfilled date
+raises 23514 `chk_preservation_log_use_by_basis_date` — and, the quieter half, 1a's PUT *changing* the date
+succeeds and leaves `use_by_basis = 'table'` beside a hand-typed date (a "general figure" label on a date no
+table produced). B's legacy PUT refuses a differing date (409 `client_stale`), so neither can happen once B is
+live.
