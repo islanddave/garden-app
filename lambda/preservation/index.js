@@ -16,7 +16,7 @@ import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.j
 // it yields. jarRules.js: the per-jar rules — the method vocabulary, the validators, the read
 // projection. Moved verbatim; re-exported below so any existing importer of this file keeps resolving.
 import { HOUSE_SOURCED_SHELF_LIFE, defaultUseByTarget } from './shelfLife.js';
-import { validateCreate, validateUpdate, projectRow } from './jarRules.js';
+import { validateCreate, validateUpdate, projectRow, countRefusal } from './jarRules.js';
 // V5-INFLIGHTBATCH-001 — /api/kitchen-batches rides THIS Lambda, not a 27th one. A new function needs
 // an AWS function + Function URL created out of band, a new VITE_API_* repo variable, a row in
 // deploy-staging.yml's hardcoded env: block and a 27th row in deploy-lambda.yml's matrix — and that
@@ -423,7 +423,32 @@ export const handler = async (event) => {
         // client did not supply one. Otherwise pass the client value through (L4 minimal decrement).
         const consumedAt = body.consumed_at ?? (Number(remaining) === 0 ? new Date().toISOString() : null);
 
+        // Put-Up release 1a — ONE WRITER FOR THE COUNT (V4's legacy-PUT section, "From 1a"; lead
+        // condition 1, fix (ii)). A package_count that DIFFERS from the stored one moves
+        // remaining_count by the same delta, from COALESCE(remaining_count, package_count) — what has
+        // been used stays used — and the body's remaining_count is IGNORED on that write: it was echoed
+        // from a row that is about to have a different count, so it describes nothing. When the count
+        // is unchanged a present remaining_count applies exactly as before (the shipped Mark used /
+        // Used up), and consumed_at keeps its old rule.
+        //
+        // WHY IT LANDS IN 1a, a release before the constraint it serves: release 1b's DDL arms
+        // CHECK (remaining_count IS NULL OR remaining_count <= package_count) while THIS code is the
+        // deployed writer, and the shipped RowEditor could lower the count below what is left (3 left,
+        // count edited to 1: the old PUT wrote 1 with 3 left). So this writer must never write
+        // remaining > package_count, and never below 0: either one is REFUSED — a coded 409 whose
+        // words the client shows as they are — never clamped, because a clamp would quietly invent a
+        // number of jars. Refusal, like the arithmetic, is decided INSIDE the one UPDATE, on the row it
+        // locks (every CASE below reads that row's own columns), so a concurrent Mark used cannot slip
+        // between a read and this write. The `stored` CTE is the statement's own snapshot, read only to
+        // tell a missing jar (404) from a refused write (409) and to put numbers in the refusal.
         const rows = await sql`
+          WITH stored AS (
+            SELECT package_count AS stored_package_count, remaining_count AS stored_remaining_count
+            FROM preservation_log
+            WHERE id = ${rowId}
+              AND user_id = ANY(${householdIds})
+              AND deleted_at IS NULL
+          ), updated AS (
           UPDATE preservation_log SET
             crop_type_slug      = ${attr.crop_type_slug ?? null},
             variety_id          = ${attr.variety_id ?? null},
@@ -447,8 +472,17 @@ export const handler = async (event) => {
             package_count       = ${packageCount},
             storage_location_id = ${body.storage_location_id ?? null},
             use_by_target       = ${body.use_by_target ?? null},
-            remaining_count     = ${remaining},
-            consumed_at         = ${consumedAt},
+            remaining_count     = CASE WHEN package_count = ${packageCount}::int THEN ${remaining}::int
+                                       ELSE COALESCE(remaining_count, package_count)
+                                            + (${packageCount}::int - package_count)
+                                  END,
+            -- A count change re-derives consumed_at from the count it produced: stamped (or kept) at
+            -- 0 left, cleared otherwise. The echoed consumed_at described the old count.
+            consumed_at         = CASE WHEN package_count = ${packageCount}::int THEN ${consumedAt}::timestamptz
+                                       WHEN COALESCE(remaining_count, package_count)
+                                            + (${packageCount}::int - package_count) = 0
+                                         THEN COALESCE(consumed_at, NOW())
+                                  END,
             notes               = ${body.notes ?? null},
             photo_id            = ${body.photo_id ?? null},
             -- V4-PUTUPPROV-001 — DELIBERATE DEVIATION FROM THIS BLOCK'S HOUSE STYLE. Do not
@@ -485,10 +519,25 @@ export const handler = async (event) => {
           WHERE id = ${rowId}
             AND user_id = ANY(${householdIds})
             AND deleted_at IS NULL
+            -- The refusal. The same expression as remaining_count's SET, on the same row: the write
+            -- happens only if what it would store is a count of jars that can exist, 0..package_count.
+            -- NULL stays legal exactly as before (a count-unchanged body with no remaining_count).
+            AND COALESCE(
+                  CASE WHEN package_count = ${packageCount}::int THEN ${remaining}::int
+                       ELSE COALESCE(remaining_count, package_count) + (${packageCount}::int - package_count)
+                  END BETWEEN 0 AND ${packageCount}::int,
+                  TRUE)
           RETURNING *
+          )
+          SELECT updated.*, stored.stored_package_count, stored.stored_remaining_count
+          FROM stored LEFT JOIN updated ON TRUE
         `;
         if (!rows.length) return resp(404, { error: 'Not found' });
-        return resp(200, rows[0]);
+        const { stored_package_count: storedCount, stored_remaining_count: storedRemaining, ...row } = rows[0];
+        if (row.id == null) {
+          return resp(409, countRefusal({ storedCount, storedRemaining, packageCount, remaining }));
+        }
+        return resp(200, row);
       }
 
       if (method === 'DELETE') {

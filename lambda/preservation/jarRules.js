@@ -156,3 +156,31 @@ export function projectRow(r) {
     use_by_status: classifyUseBy(r.preserved_at, r.use_by_target),
   };
 }
+
+// Put-Up release 1a — the words for a legacy PUT the count rule refused (see the PUT in index.js).
+// The UPDATE decides; this only explains, from the statement's own snapshot of the stored counts,
+// which of the two refusals it was. Every refusal is a 409 carrying a `code` for the client to
+// branch on and a plain-words `message` (mirrored in `error`, which apiFetch surfaces as the
+// Error's message) that can be shown as it is.
+function coded(code, message) {
+  return { error: message, code, message };
+}
+
+export function countRefusal({ storedCount, storedRemaining, packageCount, remaining }) {
+  const stored = Number(storedCount);
+  const count = Number(packageCount);
+  const left = storedRemaining == null ? stored : Number(storedRemaining);
+  const next = stored !== count ? left + (count - stored) : (remaining == null ? null : Number(remaining));
+  if (next != null && next < 0) {
+    const used = stored - left;
+    return coded('count_below_used',
+      `${used} of these ${used === 1 ? 'is' : 'are'} already used, so the count can't go below ${used}.`);
+  }
+  if (next != null && next > count) {
+    return coded('remaining_above_count',
+      "That would leave more left than there are containers. Refresh and try again.");
+  }
+  // The snapshot says the write would have passed, so the jar changed between the statement's
+  // snapshot and its row lock (another tap, another phone). The words say so.
+  return coded('client_stale', 'This jar just changed. Refresh and try again.');
+}

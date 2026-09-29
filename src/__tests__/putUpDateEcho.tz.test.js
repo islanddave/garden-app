@@ -135,7 +135,8 @@ describe('an untouched echo leaves the stored dates unchanged (the 1a exit proof
       stubState.sqlHandler = (text) => {
         if (/FROM storage_location/.test(text)) return [{ id: PLACE, kind: 'deep_freezer' }]
         if (/FROM garden_node/.test(text)) return [{ id: PLANTING, variety_id: null, crop_type_slug: 'pepper' }]
-        return [{ ...driverRow(), remaining_count: 2 }]
+        // The PUT statement's shape since 1a's count rule: the written row beside the snapshot counts.
+        return [{ ...driverRow(), remaining_count: 2, stored_package_count: 3, stored_remaining_count: 3 }]
       }
       const res = await handler(event('PUT', `/api/preservation/${JAR}`, payload))
       expect(res.statusCode).toBe(200)
