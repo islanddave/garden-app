@@ -201,9 +201,12 @@ const SOWN_FROM_SQL = norm(templates('index.js').find((t) => /FROM public\.garde
 
 describe('sown_from uses the plants grid/picker views\' WHERE, verbatim (Archive-Hiding Rule)', () => {
   it('finds both plants grid/picker views and the sown_from read, so the comparison is not vacuous', () => {
-    expect(GRID_PICKER_VIEWS).toHaveLength(2);
+    // 2 -> 3: GET /api/plants/season-end (End of season) copies the grid WHERE verbatim, so it joins
+    // this set and is held to the same equality.
+    expect(GRID_PICKER_VIEWS).toHaveLength(3);
     expect(PLANTS_WHERE.every(Boolean)).toBe(true);
     expect(PLANTS_WHERE[0]).toBe(PLANTS_WHERE[1]);
+    expect(PLANTS_WHERE[2]).toBe(PLANTS_WHERE[0]);
     expect(PLANTS_WHERE[0]).toMatch(/p\.archived_at IS NULL AND pp\.archived_at IS NULL$/);
     expect(SOWN_FROM_SQL).toMatch(/^SELECT p\.id, p\.display_name AS name, p\.sown_at, p\.status FROM public\.garden_node p/);
   });

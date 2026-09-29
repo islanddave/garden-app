@@ -181,6 +181,12 @@ const SHEET_SITES = [
   // own — the dismiss behaviour is Sheet's, exactly like HarvestTimeframeChips.
   'components/photo/PlantingPhotoSheet.jsx',
   'components/HarvestTimeframeChips.jsx',
+  // End of season (lane seasonend-20260929) — a DELIBERATE addition, the BatchUndoConfirm shape. The
+  // confirm for ending a ticked set of plantings must state the count by location and name every
+  // ticked still-growing row, which window.confirm cannot. It renders the shared <Sheet armsBack>, so
+  // the registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed; busy holds
+  // it open over the PUTs, and Back dismisses it without ending anything.
+  'components/SeasonEndConfirm.jsx',
   'components/planting/OverwinterPrompt.jsx',
   'components/planting/SaveSeedSheet.jsx',
   'components/planting/TransplantDatePrompt.jsx',
