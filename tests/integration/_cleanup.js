@@ -150,6 +150,9 @@ const STEPS = [
   ['seen_event',                  `DELETE FROM seen_event WHERE leaf_id IN (${NS_PLANTS})`],
   ['critter_state',               `DELETE FROM critter_state WHERE created_by LIKE ${NS} OR plant_id IN (${NS_PLANTS})`],
   ['entity_memory',               `DELETE FROM entity_memory WHERE plant_id IN (${NS_PLANTS}) OR project_id IN (${NS_PROJECTS})`],
+  // V5-FERMENTPATH-001: kitchen-ferment's planting-merge case (RIA-I3) writes a merge_event, whose
+  // winner_plant_id has no ON DELETE action — without this step the plants sweep 23503s and leaks the lot.
+  ['merge_event',                 `DELETE FROM merge_event WHERE merged_by LIKE ${NS} OR winner_plant_id IN (${NS_PLANTS})`],
   ['proj_rescope_events',         `DELETE FROM proj_rescope_events WHERE plant_id IN (${NS_PLANTS}) OR project_id IN (${NS_PROJECTS})`],
   ['event_log',                   `DELETE FROM event_log WHERE created_by LIKE ${NS} OR logged_by LIKE ${NS} OR project_id IN (${NS_PROJECTS}) OR plant_id IN (${NS_PLANTS})`],
   ['entity',                      `DELETE FROM entity WHERE display_name LIKE ${NS} OR planting_ref_id IN (${NS_PLANTS}) OR cultivar_ref_id IN (${NS_VARIETIES})`],

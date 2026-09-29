@@ -238,6 +238,10 @@ export async function teardownHousehold(h) {
     () => directSql`DELETE FROM harvest_log WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM event_log WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM entity WHERE planting_ref_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
+    // The planting merge (kitchen-ferment, RIA-I3) leaves a merge_event naming the winner and entity_memory
+    // rows for the plantings; both point at plants with no ON DELETE action.
+    () => directSql`DELETE FROM merge_event WHERE merged_by = ANY(${ids}) OR winner_plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids}))`,
+    () => directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by = ANY(${ids})) OR project_id IN (SELECT id FROM plant_projects WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM plants WHERE created_by = ANY(${ids})`,
     () => directSql`DELETE FROM entity WHERE cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ANY(${ids}))`,
     () => directSql`DELETE FROM plant_varieties WHERE created_by = ANY(${ids})`,
