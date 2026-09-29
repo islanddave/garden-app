@@ -19,10 +19,13 @@ vi.mock('react-router-dom', () => ({
 }))
 const fetchMock = vi.fn()
 vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchMock, getToken: vi.fn() }) }))
+const authRef = vi.hoisted(() => ({ current: { user: null, profile: { id: 'viewer' }, loading: false } }))
+vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => authRef.current }))
 
 import '../lib/harvestWindows.js'
 import HarvestWatchBand, { useHarvestWatchFeed, watchSelection } from '../components/HarvestWatchBand.jsx'
 import AmbientBandNotice, { COULD_NOT_CHECK } from '../components/AmbientBandNotice.jsx'
+import ComposeHarvestBand, { useComposeHarvestFeed, composeBatchState } from '../components/ComposeHarvestBand.jsx'
 
 const WATCH = '/api/harvests/watch?limit=200'
 const cand = (i, over = {}) => ({
@@ -90,6 +93,76 @@ describe('HarvestWatchBand — data hook + data / bare', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
     expect(container.textContent).not.toMatch(/Looking ahead/)
     expect(screen.queryByRole('region')).toBeNull()
+  })
+})
+
+// A harvest batch of the viewer's: six picks, minutes old (the band's 18 h freshness window and its
+// MIN_POST_LINES floor both satisfied).
+const HARVESTS = '/api/harvests'
+const ago = (mins) => new Date(Date.now() - mins * 60000).toISOString()
+const pick = (mins, name, crop, by = 'viewer') => ({ event_id: name + mins, event_type: 'harvest', created_at: ago(mins), created_by: by, planting_name: name, variety_name: name, crop_name: crop, quantity: 2, unit: 'count', note_excerpt: null })
+const BATCH = { entries: [pick(20, 'Moskvich', 'Tomato'), pick(19, 'San Marzano', 'Tomato'), pick(18, 'Cubanelle', 'Pepper'), pick(17, 'Piri Piri', 'Pepper'), pick(16, 'Sungold', 'Tomato'), pick(15, 'Lemon Drop', 'Pepper')], aggregates: null }
+const composeWire = (body) => fetchMock.mockImplementation((u) => Promise.resolve(String(u).startsWith(HARVESTS) ? body : null))
+
+describe('ComposeHarvestBand — data hook + data / bare', () => {
+  it('the data path renders the self-fetch path\'s HTML, and the band adds no fetch of its own', async () => {
+    composeWire(BATCH)
+    const self = render(<ComposeHarvestBand />)
+    await settle()
+    const selfHtml = self.container.innerHTML
+    expect(selfHtml).toContain('6 picks')
+    cleanup()
+    fetchMock.mockClear()
+    const fed = render(<PageFed Band={ComposeHarvestBand} useFeed={useComposeHarvestFeed} />)
+    await settle()
+    expect(fed.container.innerHTML).toBe(selfHtml)
+    expect(fetchMock.mock.calls.filter(([u]) => String(u).startsWith(HARVESTS))).toHaveLength(1)
+  })
+
+  it('bare: no card and no title; the picks line and Compose post stay', async () => {
+    composeWire(BATCH)
+    const { container } = render(<PageFed Band={ComposeHarvestBand} useFeed={useComposeHarvestFeed} bare />)
+    await settle()
+    const band = screen.getByTestId('compose-harvest-band')
+    expect(band.getAttribute('style')).toBeNull()
+    expect(container.textContent).not.toMatch(/Tonight.s harvest/)
+    expect(container.textContent).toMatch(/^6 picks · logged (just now|\d+ min ago)Compose post$/)
+  })
+
+  // composeBatchState is the header's read of the band's own three gates; it must agree with the band on
+  // every side of each gate, or the section header would announce a post the body does not offer.
+  it('composeBatchState agrees with the band: present exactly when the band renders, with its picks line', async () => {
+    const cases = {
+      fresh: BATCH,
+      someoneElses: { entries: BATCH.entries.map((e) => ({ ...e, created_by: 'jen' })), aggregates: null },
+      stale: { entries: BATCH.entries.map((e) => ({ ...e, created_at: ago(19 * 60) })), aggregates: null },
+      tooFew: { entries: BATCH.entries.slice(0, 1), aggregates: null },
+      empty: { entries: [], aggregates: null },
+    }
+    for (const [name, body] of Object.entries(cases)) {
+      composeWire(body)
+      const { container } = render(<ComposeHarvestBand />)
+      await settle()
+      const state = composeBatchState(body, 'viewer')
+      const shown = !!container.querySelector('[data-testid="compose-harvest-band"]')
+      expect(!!state, name).toBe(shown)
+      if (state) expect(container.textContent).toContain(`${state.postableCount} picks · logged ${state.logged}`)
+      cleanup()
+      sessionStorage.clear()
+    }
+    expect(composeBatchState(BATCH, null)).toBeNull() // no viewer, no batch — as the band
+    expect(composeBatchState(null, 'viewer')).toBeNull()
+  })
+
+  it('the hook reports settled once the first request answers — or fails', async () => {
+    let seen = null
+    function Probe() { const f = useComposeHarvestFeed(); seen = f; return null }
+    fetchMock.mockImplementation(() => Promise.reject(new Error('offline')))
+    render(<Probe />)
+    expect(seen.settled).toBe(false)
+    await settle()
+    expect(seen.settled).toBe(true)
+    expect(seen.data).toBeNull()
   })
 })
 
