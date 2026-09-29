@@ -32,6 +32,7 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, optionalMarkChrome, textareaChrome } from '../forms/formStyles.js'
 import PhReadingField from './PhReadingField.jsx'
 import { useSheetDraftKey, readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
+import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import {
   CHECK_ON_IT_CTA, SUBMERSION_PROMPT, SUBMERSION_ANSWERS, CONDITIONING_ANSWERS, PH_SCALE_HINT,
   checkInFields, checkInBody,
@@ -101,6 +102,9 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
   // Synchronous exclusion. `saving` disables Save only after React commits; two taps inside one frame
   // would both read it false, and a check-in is not keyed in 1a, so both would land as two rows.
   const writingRef = useRef(false)
+  // The focused field is kept clear of the pinned Save (gate:putup at 426×492 found the note under it).
+  const footerRef = useRef(null)
+  const keepClear = useFieldsClearOfFooter(footerRef)
   const noteId = `checkin-note-${useId()}`
   const hintId = `checkin-hint-${useId()}`
 
@@ -170,7 +174,7 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
 
   return (
     <Sheet open onClose={onClose} title={CHECK_ON_IT_CTA} size="full" busy={saving} armsBack>
-      <div data-testid="checkin-sheet" data-batch-id={batch.id} style={{ padding: '0 18px' }}>
+      <div data-testid="checkin-sheet" data-batch-id={batch.id} onFocus={keepClear} style={{ padding: '0 18px' }}>
         <p data-testid="checkin-batch" style={{ margin: '0 0 2px', color: P.mid, fontSize: '0.86rem', fontWeight: 600 }}>
           {batch.label}
         </p>
@@ -234,7 +238,7 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
 
       {/* Pinned: the Save stays on screen however far the fields scroll, and with the keyboard up it
           sits directly above it (the app's viewport meta resizes content for the keyboard). */}
-      <div data-testid="checkin-footer" style={{ position: 'sticky', bottom: 0, background: P.white,
+      <div ref={footerRef} data-testid="checkin-footer" style={{ position: 'sticky', bottom: 0, background: P.white,
         padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>
         <Button data-testid="checkin-save" variant="primary" loading={saving} loadingLabel="Saving…"
           onClick={save} style={{ width: '100%' }}>

@@ -44,6 +44,7 @@ import Input from '../forms/Input.jsx'
 import { SheetStartChips, SHEET_START_CHIPS, EARLIER_CHIPS, resolveSheetStart } from './StartChips.jsx'
 import KindChips, { KIND_CHIPS, kindBody } from './KindChips.jsx'
 import { useSheetDraftKey, readSheetDraft, writeSheetDraft, clearSheetDraft } from './sheetDraft.js'
+import { useFieldsClearOfFooter } from './sheetScroll.js'
 
 export const START_SHEET = 'start'
 export const START_SHEET_TITLE = 'Start a batch'
@@ -90,6 +91,9 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
   const writingRef = useRef(false)
   const uploadedRef = useRef(null)          // { file, photoId } — a retry never uploads twice
   const fileRef = useRef(null)
+  // The focused field is kept clear of the pinned Start it (see sheetScroll.js).
+  const footerRef = useRef(null)
+  const keepClear = useFieldsClearOfFooter(footerRef)
   const labelId = `start-label-${useId()}`
 
   useEffect(() => () => { if (ownPreview) URL.revokeObjectURL(ownPreview) }, [ownPreview])
@@ -180,7 +184,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
 
   return (
     <Sheet open onClose={onClose} title={START_SHEET_TITLE} size="full" busy={saving} armsBack>
-      <div data-testid="start-sheet" style={{ padding: '0 18px' }}>
+      <div data-testid="start-sheet" onFocus={keepClear} style={{ padding: '0 18px' }}>
         <Field label="What is it?" htmlFor={labelId} required style={{ marginBottom: T.space.md }}>
           <Input id={labelId} data-testid="start-label" value={label} disabled={saving}
             placeholder={START_LABEL_PLACEHOLDER} maxLength={120}
@@ -251,7 +255,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, now }) {
         )}
       </div>
 
-      <div data-testid="start-footer" style={{ position: 'sticky', bottom: 0, background: P.white,
+      <div ref={footerRef} data-testid="start-footer" style={{ position: 'sticky', bottom: 0, background: P.white,
         padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>
         <Button data-testid="start-submit" variant="primary" loading={saving} loadingLabel="Starting…"
           onClick={start} style={{ width: '100%' }}>

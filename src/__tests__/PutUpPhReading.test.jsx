@@ -541,6 +541,7 @@ const LANE_SOURCES = [
   // against is written here.
   ['src/components/kitchen/StartBatchSheet.jsx', 'StartBatchOpen'],
   ['src/components/kitchen/StartChips.jsx', 'resolveSheetStart'],
+  ['src/components/kitchen/sheetScroll.js', 'scrollClearOfFooter'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the
