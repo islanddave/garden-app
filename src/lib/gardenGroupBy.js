@@ -57,10 +57,11 @@ export function buildGardenFacetOptions(tagMap, projectsHidden) {
 //
 // Dave, 2026-09-29: "It should ALWAYS remember my last grouping." Two copies carry a choice: the local one
 // (projectTree.js loadGroupBy/saveGroupBy) paints Garden's first frame, and the server one
-// (user_notification_prefs.garden_group_by) carries it to another device. Every Garden mount reads the
+// (user_notification_prefs.garden_group_by) carries it to another device. Every Garden mount read the
 // server copy once, and before this fix it simply ADOPTED it — after the scroll restore, so the list
 // regrouped and the spot went with it. Adopting was only safe while the server copy was never older than
-// the local one, and it was older every time a save did not land.
+// the local one, and it was older every time a save did not land. Now each read of a visit is decided here,
+// and only the mount-time read may adopt.
 //
 // THE RULE: THE USER'S CHOICE WINS UNTIL ITS SAVE IS CONFIRMED. A pick is stored locally and marked pending
 // (projectTree.js) BEFORE its PATCH goes out, and the marker comes off only when that PATCH answers ok.
@@ -77,29 +78,51 @@ export const servedFromCache = (body) => !!body && typeof body === 'object' && b
 const PREDATES_SAVE = Symbol.for('garden-app.prefsPredatesGroupBySave')
 export const predatesGroupBySave = (body) => !!body && typeof body === 'object' && body[PREDATES_SAVE] === true
 
-// What one Garden mount does with the prefs body's garden_group_by, in precedence order:
+// A choice waiting longer than this yields to a differing server value instead of going out over it (rimpact #8):
+// an unsent pick left on a tablet in a dead zone must not, days later, overwrite a newer choice confirmed on the
+// phone — which the phone would then adopt back. Seven days outlasts any dead zone Dave works in.
+export const GROUPBY_PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+
+// What Garden does with one prefs body's garden_group_by, in precedence order:
 //   { action: 'resend', value } — this person has a choice waiting: the local value stands and goes out again.
 //                                 Never adopt here, whatever the server says: its copy is the older one. Across
 //                                 devices that makes the LAST CONFIRMED save win, not the last pick (QA MINOR 9,
-//                                 a recorded decision): a choice waiting here goes out over another device's.
+//                                 a recorded decision): a choice waiting here goes out over another device's —
+//                                 unless it has waited more than GROUPBY_PENDING_MAX_AGE_MS (`pendingAt` against
+//                                 `now`): then a differing value in a FRESH body wins, and `dropPending: true` tells
+//                                 the caller to remove the mark. An expired mark is never re-sent on a body that
+//                                 cannot show what the server holds now (cached or pre-save): that answer is keep.
 //   { action: 'keep' }          — the body came from the service worker's cache (it can predate a choice this
 //                                 device already confirmed, and it answers exactly when the radio is out) or
 //                                 from a read that was on the wire when a save was confirmed (predatesSave: its
 //                                 row can be the one from before that save), or the server value is unset,
 //                                 EQUAL to the local one (no state write, so no regroup), or one Garden cannot
-//                                 offer right now.
+//                                 offer right now, or this is not the visit's mount-time read.
 //   { action: 'adopt', value }  — nothing waiting here and a different value Garden can show: another
-//                                 device's choice. This one does regroup, once; it is the cross-device sync.
+//                                 device's choice. This one does regroup, once — so ONLY at the mount-time read
+//                                 (`mayAdopt`, rimpact #4): a later read in the same visit may keep or resend,
+//                                 never adopt, and another device's change arrives at the next mount, never
+//                                 under a user already looking at the list.
 // `offerable` is the control's current option values. A tag facet is offerable only once the tag map has
-// landed, so a server tag-facet choice that arrives first is kept out — and, since that fresh read ends the
-// visit's hydrate, DROPPED for the visit rather than deferred (QA MINOR 7, a recorded decision; tag groupings
-// are BUG-GARDENTAGGROUPREPAINT-001's).
-export function decideGroupByHydrate({ local, pending, server, fromCache = false, predatesSave = false, offerable = [] }) {
-  if (typeof pending === 'string' && pending) return { action: 'resend', value: pending }
-  if (fromCache || predatesSave) return { action: 'keep' }
-  if (typeof server !== 'string' || !server || server === local) return { action: 'keep' }
-  if (!offerable.includes(server)) return { action: 'keep' }
-  return { action: 'adopt', value: server }
+// landed, so a server tag-facet choice that arrives first is kept out — and, since only the mount-time read may
+// adopt, DROPPED for the visit rather than deferred (QA MINOR 7 / rimpact #1, a recorded decision: tag groupings
+// are BUG-GARDENTAGGROUPREPAINT-001's, whose cached tag map removes the race).
+export function decideGroupByHydrate({
+  local, pending, pendingAt = null, now = Date.now(), server,
+  fromCache = false, predatesSave = false, offerable = [], mayAdopt = true,
+}) {
+  const waiting = typeof pending === 'string' && pending !== ''
+  const serverSet = typeof server === 'string' && server !== ''
+  const untrusted = fromCache || predatesSave
+  const expired = waiting && Number.isFinite(pendingAt) && now - pendingAt > GROUPBY_PENDING_MAX_AGE_MS
+  const yields = expired && !untrusted && serverSet && server !== pending
+  if (waiting && !expired) return { action: 'resend', value: pending }
+  if (waiting && !yields) return untrusted ? { action: 'keep' } : { action: 'resend', value: pending }
+  // Nothing waiting — or an expired mark yielding to a differing fresh value, which removes it.
+  const dropped = yields ? { action: 'keep', dropPending: true } : { action: 'keep' }
+  if (untrusted || !serverSet || server === local) return dropped
+  if (!mayAdopt || !offerable.includes(server)) return dropped
+  return yields ? { action: 'adopt', value: server, dropPending: true } : { action: 'adopt', value: server }
 }
 
 // Send `value` through `save` (a reported saver: resolves { ok } — saveGardenGroupBy) and clear this

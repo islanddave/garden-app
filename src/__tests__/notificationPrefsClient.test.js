@@ -298,6 +298,20 @@ describe('notificationPrefsClient', () => {
       expect(await mod.saveGardenGroupBy({ getToken: async () => null, value: 'type' })).toEqual({ ok: false, status: 0 })
       expect(global.fetch).not.toHaveBeenCalled()
     })
+    // rimpact #5: keepalive for THIS save only, so a pick made just before the app closes still reaches the row;
+    // the pins and the bar keep the reported savers' default (no keepalive key at all), and the bound still applies.
+    it('asks for keepalive on this save alone; the pins and the bar are sent exactly as before', async () => {
+      const mod = await loadModule('https://staging.example.com')
+      global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
+      expect(await mod.saveGardenGroupBy({ getToken: async () => TOKEN, value: 'crop_type' })).toEqual({ ok: true })
+      await mod.saveMorePins({ getToken: async () => TOKEN, ids: ['seeds'] })
+      await mod.saveBarLayout({ getToken: async () => TOKEN, layout: { order: ['today', 'garden', 'create', 'harvests', 'put-up'], hidden: [] } })
+      const [grouping, pins, bar] = global.fetch.mock.calls.map((c) => c[1])
+      expect(grouping.keepalive).toBe(true)
+      expect(grouping.signal).toBeTruthy()
+      expect(Object.keys(pins).sort()).toEqual(['body', 'headers', 'method', 'signal'])
+      expect(Object.keys(bar).sort()).toEqual(['body', 'headers', 'method', 'signal'])
+    })
     // A save that hangs is given up at the house bound and reported as never reached, so Garden keeps it pending.
     it('gives a hanging save up at api.js\'s API_TIMEOUT_MS and reports status 0', async () => {
       const mod = await loadModule('https://staging.example.com')

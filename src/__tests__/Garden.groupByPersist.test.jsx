@@ -213,7 +213,7 @@ describe('BUG-GARDENGROUPBYRESET-001 — Garden keeps the grouping you left it i
     await visitGarden()
     radio = 'down'
     await pick('location')
-    expect(JSON.parse(localStorage.getItem(PENDING_KEY))).toEqual({ user: 'user_dave', value: 'location' })
+    expect(JSON.parse(localStorage.getItem(PENDING_KEY))).toEqual({ user: 'user_dave', value: 'location', at: expect.any(Number) })
     radio = 'up'
     await pick('crop_type')
     expect(localStorage.getItem(PENDING_KEY)).toBeNull()
@@ -284,11 +284,13 @@ describe('BUG-GARDENGROUPBYRESET-001 — Garden keeps the grouping you left it i
     expect(groupBySelect().value).toBe('status')           // this person's own server choice
   })
 
-  it('the first fresh read ends the hydrate for the visit: a later change waits for the next visit, never mid-list', async () => {
+  // rimpact #4: ONLY the mount-time read may adopt. A later read in the visit may keep or re-send, never regroup the
+  // list under someone already looking at it; another device's change arrives at the next mount.
+  it('a later read in the visit never adopts: another device\'s change waits for the next mount, never mid-list', async () => {
     const first = await visitGarden()
     await pick('location')
     first.unmount()
-    await visitGarden()                                    // fresh read, equal: decided, and done for this visit
+    await visitGarden()                                    // mount-time read, equal: nothing to do
     const reads = gets
     server.garden_group_by = 'status'                      // the other phone changes it while this one is open
     await resumeAfter(RESUME_MIN_AGE_MS + 1000)
@@ -296,16 +298,36 @@ describe('BUG-GARDENGROUPBYRESET-001 — Garden keeps the grouping you left it i
     expect(groupBySelect().value).toBe('location')         // …and did not regroup the list under the user
   })
 
-  it('a service-worker copy does not end it: a fresh read on a later resume still gets its say', async () => {
+  it('…the same after an SW copy at mount: the fresh read on the resume does not adopt either; the next mount does', async () => {
     const first = await visitGarden()
     await pick('location')
     first.unmount()
     server.garden_group_by = 'status'                      // the other phone's choice, not yet seen here
-    servedFromSW = { ...server, garden_group_by: 'location' }  // offline: this visit's read is the cached copy
-    await visitGarden()
+    servedFromSW = { ...server, garden_group_by: 'location' }  // offline: this visit's mount read is the cached copy
+    const second = await visitGarden()
     expect(groupBySelect().value).toBe('location')
-    await resumeAfter(RESUME_MIN_AGE_MS + 1000)            // signal back: a fresh read
+    await resumeAfter(RESUME_MIN_AGE_MS + 1000)            // signal back: a fresh read, but not at mount
+    expect(groupBySelect().value).toBe('location')
+    second.unmount()
+    Date.now = realNow
+    await visitGarden()                                    // the next mount takes the other phone's choice
     expect(groupBySelect().value).toBe('status')
+  })
+
+  it('a later read still re-sends a choice waiting since the mount — the signal came back while Garden stayed open', async () => {
+    const first = await visitGarden()
+    radio = 'down'                                         // saves are lost; reads still answer (a flaky radio)
+    await pick('crop_type')                                // lost to the dead zone
+    first.unmount()
+    await visitGarden()                                    // a fresh mount read: re-sent, lost again
+    expect(groupBySelect().value).toBe('crop_type')
+    expect(groupPatches()).toEqual(['crop_type', 'crop_type'])
+    radio = 'up'
+    await resumeAfter(RESUME_MIN_AGE_MS + 1000)            // a resume read, radio back
+    expect(groupPatches()).toEqual(['crop_type', 'crop_type', 'crop_type'])
+    expect(server.garden_group_by).toBe('crop_type')
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+    expect(groupBySelect().value).toBe('crop_type')
   })
 
   it('a Type choice made before this build (never sendable) is kept and sent, not overwritten', async () => {
@@ -410,5 +432,39 @@ describe('BUG-GARDENGROUPBYRESET-001 rework — reads and saves that cross', () 
     await visitGarden()                                      // signal back: the row says Lifecycle
     expect(groupBySelect().value).toBe('crop_type')
     expect(groupPatches()).toEqual(['crop_type'])
+  })
+
+  it('rimpact #2: on a shared phone the one-time pass is each person\'s — Jen first does not spend it for Dave', async () => {
+    localStorage.setItem(GROUPBY_KEY, 'crop_type')           // Dave's Type from the old build
+    auth.id = 'user_jen'
+    server.garden_group_by = null                            // Jen's row: no grouping
+    const jens = await visitGarden()
+    expect(groupPatches()).toEqual([])                       // nothing sent onto her row
+    jens.unmount()
+    auth.id = 'user_dave'
+    server.garden_group_by = 'status'                        // Dave's row: Lifecycle, as in prod
+    await visitGarden()
+    expect(groupBySelect().value).toBe('crop_type')          // his old Type is kept…
+    expect(groupPatches()).toEqual(['crop_type'])            // …and sent, as his
+    expect(server.garden_group_by).toBe('crop_type')
+  })
+
+  it('rimpact #8: a choice waiting more than 7 days yields to a differing value — not re-sent over it, the mark dropped', async () => {
+    localStorage.setItem(GROUPBY_KEY, 'crop_type')
+    const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000
+    localStorage.setItem(PENDING_KEY, JSON.stringify({ user: 'user_dave', value: 'crop_type', at: eightDaysAgo }))
+    await visitGarden()                                      // the row says Lifecycle — a newer choice, elsewhere
+    expect(groupPatches()).toEqual([])
+    expect(localStorage.getItem(PENDING_KEY)).toBeNull()
+    expect(groupBySelect().value).toBe('status')
+  })
+
+  it('…while a choice waiting under 7 days still goes out over it', async () => {
+    localStorage.setItem(GROUPBY_KEY, 'crop_type')
+    const sixDaysAgo = Date.now() - 6 * 24 * 60 * 60 * 1000
+    localStorage.setItem(PENDING_KEY, JSON.stringify({ user: 'user_dave', value: 'crop_type', at: sixDaysAgo }))
+    await visitGarden()
+    expect(groupPatches()).toEqual(['crop_type'])
+    expect(groupBySelect().value).toBe('crop_type')
   })
 })

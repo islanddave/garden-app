@@ -1,8 +1,8 @@
 // src/lib/gardenGroupBy.js — Garden's group-by options and how a choice is kept (BUG-GARDENGROUPBYRESET-001).
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   buildGardenFacetOptions, GARDEN_TAG_FACETS, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave,
-  __resetGroupBySends,
+  __resetGroupBySends, GROUPBY_PENDING_MAX_AGE_MS,
 } from '../lib/gardenGroupBy.js'
 import { FROM_CACHE } from '../lib/api.js'
 import { PREDATES_GROUP_BY_SAVE } from '../lib/notificationPrefsClient.js'
@@ -88,6 +88,89 @@ describe('decideGroupByHydrate — the choice wins until its save is confirmed',
   }
   it('defaults: no fromCache flag and no offerable list mean nothing is adopted', () => {
     expect(decideGroupByHydrate({ local: 'crop_type', pending: null, server: 'status' })).toEqual({ action: 'keep' })
+  })
+})
+
+// The mark's age (rimpact #8: past GROUPBY_PENDING_MAX_AGE_MS a waiting choice yields to a differing FRESH value,
+// is never re-sent over it, and is dropped) and the read's place in the visit (rimpact #4: only the mount-time
+// read may adopt). Local is 'crop_type' throughout; ages in days before NOW.
+const NOW = Date.UTC(2026, 8, 29, 12)
+const DAY = 24 * 60 * 60 * 1000
+const AGED = [
+  // name                                                                pending      age   server      body        mayAdopt → expected
+  ['an expired mark yields to a differing fresh value: dropped, value adopted', 'crop_type', 8,  'status',   'fresh',    true,  { action: 'adopt', value: 'status', dropPending: true }],
+  ['…on a later read it is dropped too, the value left for the next mount',   'crop_type', 8,  'status',   'fresh',    false, { action: 'keep', dropPending: true }],
+  ['…and dropped when Garden cannot show the value yet',                       'crop_type', 8,  'bean_use', 'fresh',    true,  { action: 'keep', dropPending: true }],
+  ['an expired mark is never re-sent on a cached body (it cannot show the row)', 'crop_type', 8, 'status',   'cached',   true,  { action: 'keep' }],
+  ['…nor on one that predates a save',                                         'crop_type', 8,  'status',   'predates', true,  { action: 'keep' }],
+  ['an expired mark still goes out when the row holds nothing to yield to',   'crop_type', 8,  null,       'fresh',    true,  { action: 'resend', value: 'crop_type' }],
+  ['…or already holds the same value (its ok confirms and clears it)',        'crop_type', 8,  'crop_type', 'fresh',   true,  { action: 'resend', value: 'crop_type' }],
+  ['exactly 7 days has not expired yet',                                       'crop_type', 7,  'status',   'fresh',    true,  { action: 'resend', value: 'crop_type' }],
+  ['a mark with no recorded age never expires',                                'crop_type', null, 'status', 'fresh',    true,  { action: 'resend', value: 'crop_type' }],
+  ['rimpact #4: a later read in the visit never adopts',                        null,       null, 'status',   'fresh',    false, { action: 'keep' }],
+  ['…but still re-sends a choice that is waiting',                             'crop_type', 1,  'status',   'fresh',    false, { action: 'resend', value: 'crop_type' }],
+]
+
+describe('decideGroupByHydrate — how long a mark waits, and which read may adopt', () => {
+  for (const [name, pending, age, server, body, mayAdopt, expected] of AGED) {
+    it(name, () => {
+      const pendingAt = age == null ? null : NOW - age * DAY
+      const d = decideGroupByHydrate({
+        local: 'crop_type', pending, pendingAt, now: NOW, server,
+        fromCache: body === 'cached', predatesSave: body === 'predates', offerable: OFFER, mayAdopt,
+      })
+      expect(d).toEqual(expected)
+    })
+  }
+  it('the limit is seven days', () => {
+    expect(GROUPBY_PENDING_MAX_AGE_MS).toBe(7 * DAY)
+  })
+})
+
+// rimpact #3, simulation S5 — with the REAL prefs client and this lib, wired the way Garden wires them. Garden: Type
+// picked, its save on the wire. Today: its prefs read goes out and the server answers it with the row from BEFORE
+// the save. The save's ok arrives first and clears the mark. Garden again, joining Today's read. That body must
+// be kept, never adopted: before the mark, it regrouped the list back to Lifecycle (S5's double flip).
+describe('rimpact S5 — Garden → Type → Today → Garden on a slow radio', () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
+
+  it('the read Today sent before the save was confirmed is kept, not adopted, when Garden joins it', async () => {
+    vi.resetModules()
+    vi.stubEnv('VITE_API_CRITTERS', 'https://critter.test')
+    const prefs = await import('../lib/notificationPrefsClient.js')
+    const lib = await import('../lib/gardenGroupBy.js')
+    const tree = await import('../lib/projectTree.js')
+    localStorage.clear()
+    const wire = []
+    vi.stubGlobal('fetch', vi.fn((_url, init = {}) => new Promise((resolve) => wire.push({ method: init.method || 'GET', resolve }))))
+    const getToken = async () => 'tk'
+    const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve() }
+    const user = 'user_dave'
+
+    tree.saveGroupBy('crop_type')                                   // Garden: the pick, stored and marked…
+    tree.saveGroupByPending(user, 'crop_type')
+    const saving = lib.sendGroupByChoice({ save: (v) => prefs.saveGardenGroupBy({ getToken, value: v }), user, value: 'crop_type' })
+    const todayRead = prefs.fetchNotificationPrefs({ getToken })     // …then Today, its read going out
+    await settle()
+    expect(wire.map(r => r.method)).toEqual(['PATCH', 'GET'])
+
+    wire[0].resolve({ ok: true, status: 200, json: async () => ({}) })   // the save's ok lands first
+    await saving
+    expect(tree.loadGroupByPending(user)).toBeNull()
+
+    const gardenRead = prefs.fetchNotificationPrefs({ getToken })    // Garden again: it JOINS Today's read
+    expect(wire).toHaveLength(2)
+    wire[1].resolve({ ok: true, json: async () => ({ garden_group_by: 'status' }) })   // the row from before the save
+    const body = await gardenRead
+    expect(body).toBe(await todayRead)
+
+    const d = lib.decideGroupByHydrate({
+      local: tree.loadGroupBy(), pending: tree.loadGroupByPending(user), server: body.garden_group_by,
+      fromCache: lib.servedFromCache(body), predatesSave: lib.predatesGroupBySave(body),
+      offerable: ['crop_type', 'location', 'status'], mayAdopt: true,
+    })
+    expect(lib.predatesGroupBySave(body)).toBe(true)
+    expect(d).toEqual({ action: 'keep' })                            // unmarked, this was { adopt: 'status' }
   })
 })
 

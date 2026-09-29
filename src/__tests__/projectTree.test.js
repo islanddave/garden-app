@@ -4,7 +4,8 @@ import {
   loadExpanded, saveExpanded,
   byName, applyNameSort, loadSortOrder, saveSortOrder, SORT_RECENCY, SORT_ALPHA, buildTagGroupedList,
   NO_PROJECT_ID, cropTypeLabel,
-  loadGroupBy, saveGroupBy, loadGroupByPending, saveGroupByPending, clearGroupByPending, markLegacyGroupByPending,
+  loadGroupBy, saveGroupBy, loadGroupByPending, loadGroupByPendingRecord, saveGroupByPending, clearGroupByPending,
+  markLegacyGroupByPending,
 } from '../lib/projectTree.js'
 
 const PROJECTS = [
@@ -220,10 +221,21 @@ describe('loadGroupByPending / saveGroupByPending / clearGroupByPending', () => 
   it('nothing stored reads as nothing pending', () => {
     expect(loadGroupByPending('user_dave')).toBeNull()
   })
-  it('round-trips, stamped with whose choice it is', () => {
+  it('round-trips, stamped with whose choice it is and when it was made', () => {
+    const before = Date.now()
     saveGroupByPending('user_dave', 'crop_type')
     expect(loadGroupByPending('user_dave')).toBe('crop_type')
-    expect(JSON.parse(localStorage.getItem('garden.groupBy.pending'))).toEqual({ user: 'user_dave', value: 'crop_type' })
+    const stored = JSON.parse(localStorage.getItem('garden.groupBy.pending'))
+    expect(stored).toEqual({ user: 'user_dave', value: 'crop_type', at: expect.any(Number) })
+    expect(stored.at).toBeGreaterThanOrEqual(before)
+    expect(stored.at).toBeLessThanOrEqual(Date.now())
+  })
+  it('the record reader carries the age (rimpact #8); a record with none has no known age', () => {
+    saveGroupByPending('user_dave', 'status', 12345)
+    expect(loadGroupByPendingRecord('user_dave')).toEqual({ value: 'status', at: 12345 })
+    localStorage.setItem('garden.groupBy.pending', JSON.stringify({ user: 'user_dave', value: 'status' }))
+    expect(loadGroupByPendingRecord('user_dave')).toEqual({ value: 'status', at: null })
+    expect(loadGroupByPendingRecord('user_jen')).toBeNull()
   })
   it('another person\'s record reads as nothing pending (and so is never re-sent under their token)', () => {
     saveGroupByPending('user_jen', 'status')
@@ -285,7 +297,16 @@ describe('markLegacyGroupByPending — the one-time pass for choices no earlier 
     markLegacyGroupByPending('user_dave', 'crop_type')
     expect(loadGroupByPending('user_dave')).toBeNull()
   })
-  it('runs once per device: a later stored crop_type (confirmed, or another device\'s) is not re-marked', () => {
+  it('rimpact #2: the pass is each person\'s — Jen opening first on a shared phone does not spend it for Dave', () => {
+    saveGroupBy('crop_type')                               // Dave's old-build Type on the phone
+    markLegacyGroupByPending('user_jen', null)             // Jen first: her row unset — nothing marked…
+    expect(loadGroupByPending('user_jen')).toBeNull()
+    markLegacyGroupByPending('user_dave', 'status')        // …and Dave's own pass is still to come
+    expect(loadGroupByPending('user_dave')).toBe('crop_type')
+    expect(localStorage.getItem('garden.groupBy.legacyChecked:user_jen')).toBe('1')
+    expect(localStorage.getItem('garden.groupBy.legacyChecked:user_dave')).toBe('1')
+  })
+  it('runs once per person: a later stored crop_type (confirmed, or another device\'s) is not re-marked', () => {
     markLegacyGroupByPending('user_dave', 'status')        // first mount after the update: nothing stored
     saveGroupBy('crop_type')                               // a later choice, confirmed and cleared
     markLegacyGroupByPending('user_dave', 'status')

@@ -387,23 +387,31 @@ export function saveGroupBy(value) {
 // by the server's older value. Stamped with WHOSE choice it is (the Clerk sub), as NavPrefsContext stamps its
 // pending pins: on a shared phone, one person's unsent choice must never be PATCHed onto the next person's
 // row with their token. A record for anyone else reads as nothing pending.
+//
+// It also carries WHEN the choice was made (`at`, epoch ms; rimpact #8). A mark left for days on a secondary or
+// shared device must not go out over a newer choice confirmed elsewhere: past GROUPBY_PENDING_MAX_AGE_MS
+// (gardenGroupBy.js) it yields to a differing server value instead. A record with no `at` has no known age.
 const GROUPBY_PENDING_KEY = 'garden.groupBy.pending'
-export function loadGroupByPending(user) {
+export function loadGroupByPendingRecord(user) {
   try {
     const rec = JSON.parse(localStorage.getItem(GROUPBY_PENDING_KEY))
-    return rec && rec.user === (user ?? null) && typeof rec.value === 'string' ? rec.value : null
+    if (!rec || rec.user !== (user ?? null) || typeof rec.value !== 'string') return null
+    return { value: rec.value, at: Number.isFinite(rec.at) ? rec.at : null }
   } catch { return null }
 }
-export function saveGroupByPending(user, value) {
-  try { localStorage.setItem(GROUPBY_PENDING_KEY, JSON.stringify({ user: user ?? null, value })) } catch { /* non-fatal */ }
+export function loadGroupByPending(user) {
+  return loadGroupByPendingRecord(user)?.value ?? null
+}
+export function saveGroupByPending(user, value, at = Date.now()) {
+  try { localStorage.setItem(GROUPBY_PENDING_KEY, JSON.stringify({ user: user ?? null, value, at })) } catch { /* non-fatal */ }
 }
 // Compare-and-clear: a confirmation of an OLDER choice must not clear a newer one still waiting.
 export function clearGroupByPending(user, value) {
   try { if (loadGroupByPending(user) === value) localStorage.removeItem(GROUPBY_PENDING_KEY) } catch { /* non-fatal */ }
 }
 
-// ONE-TIME, per device. No build before this one could get these values onto the server — the client
-// refused 'crop_type' (Type) and the Lambda refused the bean facets — so one of them stored locally by an
+// ONE-TIME, per person on this device. No build before this one could get these values onto the server — the
+// client refused 'crop_type' (Type) and the Lambda refused the bean facets — so one of them stored locally by an
 // earlier build is by construction a choice that was never confirmed. Marking it pending keeps it through the
 // first Garden mount after the update, where the server's older value would otherwise overwrite it one last
 // time. The checked flag makes this a single pass: after it, a stored 'crop_type' may be a confirmed choice
@@ -413,13 +421,16 @@ export function clearGroupByPending(user, value) {
 // or pre-save body, so one of those cannot spend it). QA MINOR 6: it marks ONLY when that value is set and
 // differs from the stored one — the only case in which the first mount could flip the grouping. That keeps a
 // shared phone from sending one person's old Type onto another person's row: Jen's row is unset, so a Type Dave
-// left on a phone she opens first stays that phone's own grouping and is never PATCHed as hers.
+// left on a phone she opens first stays that phone's own grouping and is never PATCHed as hers. And the flag is
+// keyed by the Clerk sub (rimpact #2), so her visit does not spend the pass for him: when he opens Garden there
+// afterwards, his old Type is still kept over his row's Lifecycle.
 const GROUPBY_LEGACY_UNSENDABLE = ['crop_type', 'bean_type', 'bean_habit', 'bean_use']
-const GROUPBY_LEGACY_CHECKED_KEY = 'garden.groupBy.legacyChecked'
+const GROUPBY_LEGACY_CHECKED_KEY = 'garden.groupBy.legacyChecked'   // + ':<Clerk sub>'
 export function markLegacyGroupByPending(user, server) {
   try {
-    if (localStorage.getItem(GROUPBY_LEGACY_CHECKED_KEY)) return
-    localStorage.setItem(GROUPBY_LEGACY_CHECKED_KEY, '1')
+    const flag = `${GROUPBY_LEGACY_CHECKED_KEY}:${user ?? ''}`
+    if (localStorage.getItem(flag)) return
+    localStorage.setItem(flag, '1')
     const stored = localStorage.getItem(GROUPBY_KEY)
     if (!GROUPBY_LEGACY_UNSENDABLE.includes(stored)) return
     if (typeof server !== 'string' || !server || server === stored) return

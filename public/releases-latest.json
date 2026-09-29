@@ -1,7 +1,8 @@
 {
-  "version": "4.160.0",
+  "version": "4.160.1",
   "date": "2026-09-29",
   "highlights": [
-    "Behind the scenes: a Plants lost entry is now stored as reduction_lost instead of failed, so it can never be mistaken for a failed planting. Nothing changes on screen; entries logged from an older copy of the app still save correctly."
+    "Garden remembers how you group it: Type, Lifecycle or Location stays the way you left it every time you come back, even when the save didn't get through on a weak signal.",
+    "Going Back to a project's page now always returns you to your place in its event log; once in a while it used to stay at the top."
   ]
 }

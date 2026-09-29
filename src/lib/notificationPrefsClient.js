@@ -443,9 +443,13 @@ export async function saveHandedness({ getToken, value } = {}) {
 // route lives on the critter Lambda this module has always called directly — so the bound is applied
 // here with the same AbortController pattern, around the fetch only, exactly as apiFetch applies it.
 //
-// NO keepalive, deliberately. A reported save needs its response. Durability across an app close is
+// NO keepalive by default, deliberately. A reported save needs its response. Durability across an app close is
 // the caller's pending flag, written BEFORE the request goes out (NavPrefsContext's for pins, projectTree.js's
-// for the Garden grouping).
+// for the Garden grouping). ONE caller asks for keepalive per call: the Garden grouping (rimpact #5). It was a
+// keepalive write before BUG-GARDENGROUPBYRESET-001, and without it a pick followed at once by closing the
+// app reaches the server only at this device's next Garden visit — another device shows the older grouping in
+// between. A keepalive fetch still resolves with its response while the page lives (Fetch spec), so the report
+// is unchanged; the pins and the bar keep the default.
 //
 // NOT nav_tabs. The retired global order (public.app_config, V5-ADMINCENTER-001) never belonged on
 // this per-user table and still does not: bar_layout below is a different key with a different
@@ -453,7 +457,7 @@ export async function saveHandedness({ getToken, value } = {}) {
 //
 // A payload the contract refuses is reported as the 400 the server would return, with `local: true`,
 // without spending the round trip. The client check is not the boundary — the Lambda validator is.
-async function patchPrefsReported(getToken, body) {
+async function patchPrefsReported(getToken, body, { keepalive = false } = {}) {
   if (!CRITTER_BASE) return { ok: false, status: 0 }
   try {
     const token = await (typeof getToken === 'function' ? getToken() : null)
@@ -461,12 +465,15 @@ async function patchPrefsReported(getToken, body) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS)
     try {
-      const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, {
+      const init = {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
         signal: controller.signal,
-      })
+      }
+      // Only when asked: every other caller's request is byte-for-byte what it was.
+      if (keepalive) init.keepalive = true
+      const res = await fetch(`${CRITTER_BASE}/api/notifications/prefs`, init)
       return res.ok ? { ok: true } : { ok: false, status: res.status }
     } finally {
       clearTimeout(timer)
@@ -503,9 +510,10 @@ export async function saveBarLayout({ getToken, layout } = {}) {
 // server's older value. Garden now clears its pending marker only on { ok: true } (gardenGroupBy.js). The
 // body is not read: ok is the confirmation, and a 200 with an unreadable body is still a stored value.
 // A confirmed save moves the count every read compares against (PREDATES_GROUP_BY_SAVE, above the read).
+// keepalive: see the note above patchPrefsReported (rimpact #5).
 export async function saveGardenGroupBy({ getToken, value } = {}) {
   if (!GARDEN_GROUP_BY_VALUES.includes(value)) return LOCAL_REFUSAL
-  const res = await patchPrefsReported(getToken, { garden_group_by: value })
+  const res = await patchPrefsReported(getToken, { garden_group_by: value }, { keepalive: true })
   if (res.ok) groupBySavesConfirmed += 1
   return res
 }

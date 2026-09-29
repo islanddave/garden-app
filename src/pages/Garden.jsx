@@ -17,7 +17,7 @@ import { OPT_IN_CRITTER_THRESHOLD } from '../lib/critterCoachmarkCopy.js'
 import { SYSTEM_NOTIFICATIONS_ENABLED, PROJECTS_HIDDEN, SCROLL_MANAGER_ENABLED } from '../lib/featureFlags.js'
 import { useClaimPageScroll, currentPageEntry } from '../hooks/usePageScrollManager.js'
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
-import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA, loadGroupByPending, saveGroupByPending, markLegacyGroupByPending } from '../lib/projectTree.js'
+import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA, loadGroupByPendingRecord, saveGroupByPending, clearGroupByPending, markLegacyGroupByPending } from '../lib/projectTree.js'
 import GroupBySlugSelect from '../components/GroupBySlugSelect.jsx'
 import { buildGardenFacetOptions, decideGroupByHydrate, sendGroupByChoice, servedFromCache, predatesGroupBySave } from '../lib/gardenGroupBy.js'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
@@ -215,21 +215,22 @@ export default function Garden() {
   // until VITE_API_TAGS is wired, so the control stays hidden and the legacy tree is unchanged.
   const [groupBy, setGroupBy] = useState(() => loadGroupBy())
   // V4 cross-device: localStorage paints instantly; the server pref (user_notification_prefs.garden_group_by)
-  // carries the choice to another device and is read ONCE per mount by the prefs hydrate below. An explicit
-  // user change latches the ref so a late hydrate never runs over it.
+  // carries the choice to another device and is read by the prefs hydrate below, at mount and on resumes.
   //
   // BUG-GARDENGROUPBYRESET-001: that hydrate used to ADOPT the server value outright, after the scroll
   // restore — so a choice whose save had not landed was overwritten on every return and the list regrouped
   // under the spot. The choice now wins until its save is confirmed; the rule and its table test live in
   // src/lib/gardenGroupBy.js, and this page only wires it. A pick is stored and marked pending BEFORE its
-  // PATCH goes out, and only that PATCH's confirmation clears the mark.
-  const groupByHydratedRef = useRef(false)
+  // PATCH goes out, and only that PATCH's confirmation clears the mark. A pick also SETTLES the visit: the
+  // ref latches, and no later read in this visit decides anything — not even a re-send, which would overlap
+  // the pick's own save (QA MINOR 5).
+  const groupByPickedRef = useRef(false)
   const groupByUser = profile?.id ?? null
   const sendGroupBy = useCallback((value) => sendGroupByChoice({
     save: (v) => saveGardenGroupBy({ getToken, value: v }), user: groupByUser, value,
   }), [getToken, groupByUser])
   const onGroupByChange = useCallback((v) => {
-    setGroupBy(v); saveGroupBy(v); saveGroupByPending(groupByUser, v); groupByHydratedRef.current = true
+    setGroupBy(v); saveGroupBy(v); saveGroupByPending(groupByUser, v); groupByPickedRef.current = true
     sendGroupBy(v)
   }, [sendGroupBy, groupByUser])
   const { entities: tagMap } = useEntityTagsBulk('plant')
@@ -380,30 +381,30 @@ export default function Garden() {
   const prefsResumeGate = useResumeGate()
   useEffect(() => {
     let on = true
-    async function refreshPrefsAndRecord({ readPrefs = true } = {}) {
+    async function refreshPrefsAndRecord({ readPrefs = true, mountRead = false } = {}) {
       if (readPrefs) {
         const p = await fetchNotificationPrefs({ getToken })
         if (on) setPrefs(p)
-        // Group-by hydrate (once per mount, BUG-GARDENGROUPBYRESET-001): decideGroupByHydrate says whether a
-        // waiting choice goes out again, another device's choice is adopted, or nothing changes. 'keep' writes
-        // no state at all, so an equal server value cannot regroup the list. The first FRESH body ends it for
-        // the mount — another device's later change arrives at the next visit, never mid-list. A body the service
-        // worker served from its cache, or one from a read that was on the wire when a grouping save was
-        // confirmed (QA MINOR 4: its row can predate the save), is decided on — it can only keep, or re-send a
-        // waiting choice — but does not end it, and never runs the one-time pass, so a fresh read on a later
-        // resume still gets its say.
-        if (on && !groupByHydratedRef.current && p) {
+        // Group-by hydrate (BUG-GARDENGROUPBYRESET-001), on every read of the visit until a pick settles it:
+        // decideGroupByHydrate says whether a waiting choice goes out again, another device's choice is adopted,
+        // or nothing changes. 'keep' writes no state at all, so an equal server value cannot regroup the list.
+        // Only the MOUNT-TIME read may adopt (rimpact #4): a later one — a resume, after an SW-cached first
+        // body or any other — may only keep or re-send, so the list never regroups under someone already
+        // looking at it; another device's change arrives at the next mount. A body the service worker served
+        // from its cache, or one from a read that was on the wire when a grouping save was confirmed (QA
+        // MINOR 4: its row can predate the save), never adopts and never runs the one-time pass.
+        if (on && !groupByPickedRef.current && p) {
           const fromCache = servedFromCache(p)
           const predatesSave = predatesGroupBySave(p)
           const live = groupByLiveRef.current
-          if (!fromCache && !predatesSave) {
-            groupByHydratedRef.current = true
-            markLegacyGroupByPending(live.user, p.garden_group_by)
-          }
+          if (!fromCache && !predatesSave) markLegacyGroupByPending(live.user, p.garden_group_by)
+          const waiting = loadGroupByPendingRecord(live.user)
           const d = decideGroupByHydrate({
-            local: live.local, pending: loadGroupByPending(live.user), server: p.garden_group_by,
-            fromCache, predatesSave, offerable: live.offerable,
+            local: live.local, pending: waiting?.value ?? null, pendingAt: waiting?.at ?? null, now: Date.now(),
+            server: p.garden_group_by, fromCache, predatesSave, offerable: live.offerable, mayAdopt: mountRead,
           })
+          // A mark waiting past GROUPBY_PENDING_MAX_AGE_MS yielded to a differing server value (rimpact #8).
+          if (d.dropPending) clearGroupByPending(live.user, waiting.value)
           if (d.action === 'adopt') { setGroupBy(d.value); saveGroupBy(d.value) }
           else if (d.action === 'resend') live.send(d.value)
         }
@@ -421,7 +422,7 @@ export default function Garden() {
       // Fire Route 6 AFTER capturing prev prefs (the post updates last_garden_view_at).
       recordGardenViewOpened({ getToken })
     }
-    refreshPrefsAndRecord()
+    refreshPrefsAndRecord({ mountRead: true })
     function onVis() {
       if (document.visibilityState !== 'visible') return
       refreshPrefsAndRecord({ readPrefs: prefsResumeGate() })

@@ -32,7 +32,9 @@
 #        → the GET reads its hit_count exactly one higher, with a last_used_at (BUG-VOICEALIASHITCOUNT-001)
 #     M) (after the project blocks, independent of them) the smoke account's own nav prefs
 #        (V5-NAVCUSTOM-001): PATCH more_pins, then bar_layout, on the critter Lambda, each read back
-#        through GET, which must also carry a boolean can_edit_bar; then restored to [] and the shipped bar
+#        through GET, which must also carry a boolean can_edit_bar; then restored to [] and the shipped bar;
+#        then garden_group_by 'crop_type' (Type) and 'bean_use' (a bean facet), each read back, then
+#        restored (BUG-GARDENGROUPBYRESET-001: the two values the Lambda refused before)
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
 #   Per L-108 (ratified 2026-05-25): every write-path surface gets a write→read-back assert.
@@ -65,6 +67,8 @@ CREATED_SEEDPKT_ID=""
 CREATED_SOWN_PLANT_ID=""
 CREATED_FAVORITE_DONE=false
 NAVP_DIRTY=false
+NAVP_GB_DIRTY=false
+NAVP_GB_RESTORE=""
 DATA_CREATED=false
 CLERK_JWT=""
 CLERK_SESSION_ID=""
@@ -149,6 +153,15 @@ cleanup() {
       -H "Authorization: Bearer $navp_jwt" -H "Content-Type: application/json" -o /dev/null \
       "$NAVP_URL" -d '{"more_pins": [], "bar_layout": {"order": ["today","garden","create","harvests","put-up"], "hidden": []}}' \
       && echo "✅ Cleanup: smoke account nav prefs restored" || true
+  fi
+  # Block M4 (BUG-GARDENGROUPBYRESET-001): died between its first garden_group_by PATCH and its restore.
+  if [[ "$NAVP_GB_DIRTY" == "true" && -n "${CLERK_SESSION_ID:-}" && -n "${NAVP_URL:-}" && -n "$NAVP_GB_RESTORE" ]]; then
+    local navp_gb_jwt
+    navp_gb_jwt=$(mint_session_token)
+    curl -s --max-time 15 --connect-timeout 10 -X PATCH \
+      -H "Authorization: Bearer $navp_gb_jwt" -H "Content-Type: application/json" -o /dev/null \
+      "$NAVP_URL" -d "{\"garden_group_by\": \"$NAVP_GB_RESTORE\"}" \
+      && echo "✅ Cleanup: smoke account Garden grouping restored" || true
   fi
   # Revoke the Clerk test session we created (best-effort hygiene).
   if [[ -n "${CLERK_SESSION_ID:-}" && -n "${CLERK_SECRET_KEY_STAGING:-}" ]]; then
@@ -1462,6 +1475,40 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_CRITTER
     PASS=$((PASS+1))
   else
     echo "❌ FAIL [write:prefs-nav-restore-readback] PATCH HTTP $NAVP_CODE, read-back '$NAVP_GOT' (expected $NAVP_WANT)"
+    FAIL=$((FAIL+1))
+  fi
+
+  # M4) garden_group_by (BUG-GARDENGROUPBYRESET-001; L-108): Type ('crop_type') and a bean facet ('bean_use') —
+  # the two kinds of value the Lambda refused before the fix, so Garden's choice never reached the row — each
+  # PATCHed and read back through GET, then the row restored. The order makes each write DIFFER from what the row
+  # held just before it, so a leftover from a run that died mid-block cannot pass vacuously. RESTORE: the value
+  # the first GET read, or 'crop_type' when it was unset — a PATCH cannot write NULL back (COALESCE), and Garden
+  # shows an unset grouping as Type anyway.
+  NAVP_GB_BEFORE=$(echo "$NAVP_BEFORE" | jq -r '.garden_group_by // empty' 2>/dev/null || echo "")
+  NAVP_GB_RESTORE="${NAVP_GB_BEFORE:-crop_type}"
+  if [[ "$NAVP_GB_BEFORE" == "crop_type" ]]; then NAVP_GB_SEQ="bean_use crop_type"; else NAVP_GB_SEQ="crop_type bean_use"; fi
+  NAVP_GB_DIRTY=true
+  for NAVP_GB in $NAVP_GB_SEQ; do
+    CLERK_JWT=$(mint_session_token)
+    NAVP_CODE=$(navp_patch "{\"garden_group_by\": \"$NAVP_GB\"}")
+    NAVP_GOT=$(navp_get '.garden_group_by')
+    if [[ "${NAVP_CODE:0:1}" == "2" && "$NAVP_GOT" == "\"$NAVP_GB\"" ]]; then
+      echo "✅ PASS [write:prefs-garden-group-by-readback] $NAVP_GB read back"
+      PASS=$((PASS+1))
+    else
+      echo "❌ FAIL [write:prefs-garden-group-by-readback] PATCH HTTP $NAVP_CODE, read-back '$NAVP_GOT' (expected \"$NAVP_GB\")"
+      FAIL=$((FAIL+1))
+    fi
+  done
+  CLERK_JWT=$(mint_session_token)
+  NAVP_CODE=$(navp_patch "{\"garden_group_by\": \"$NAVP_GB_RESTORE\"}")
+  [[ "${NAVP_CODE:0:1}" == "2" ]] && NAVP_GB_DIRTY=false
+  NAVP_GOT=$(navp_get '.garden_group_by')
+  if [[ "${NAVP_CODE:0:1}" == "2" && "$NAVP_GOT" == "\"$NAVP_GB_RESTORE\"" ]]; then
+    echo "✅ PASS [write:prefs-garden-group-by-restore-readback] smoke account back on '$NAVP_GB_RESTORE'"
+    PASS=$((PASS+1))
+  else
+    echo "❌ FAIL [write:prefs-garden-group-by-restore-readback] PATCH HTTP $NAVP_CODE, read-back '$NAVP_GOT' (expected \"$NAVP_GB_RESTORE\")"
     FAIL=$((FAIL+1))
   fi
 else
