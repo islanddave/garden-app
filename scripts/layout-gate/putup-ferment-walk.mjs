@@ -154,6 +154,9 @@ try {
       const r = await evalSettled(cdp, 'window.__walk.run()', 240000)
       // ── INSTRUMENT CHECK, before the verdict.
       if (r.vw !== vw || r.vh !== vh) { fail(`${at}: the page self-reports ${r.vw}x${r.vh} — emulation did not take`); continue }
+      if (!r.font || !(r.font.faces > 0) || r.font.failed > 0) {
+        fail(`${at}: the Roboto pin did not load (${JSON.stringify(r.font)}) — every "fits" below was measured in this machine's font, not the phone's`)
+      }
       const thin = Object.entries(FLOOR).filter(([k, n]) => !(r[k] >= n)).map(([k, n]) => `${k} ${r[k]} < ${n}`)
       if (thin.length) fail(`${at}: the walk did almost nothing (${thin.join(', ')}) — whatever it reports below is about an empty run`)
       for (const f of r.failures) fail(`${at}: ${f}`)

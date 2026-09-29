@@ -20,6 +20,10 @@
 // `window.__walk.run()` resolves { walk, vw, vh, failures, notes, taps, typed, checks, writes }.
 // `?probe=1` points every selector at a testid nothing renders: the walk MUST fail (the gate's
 // --probe-nothing arm).
+//
+// FIRST IMPORT, on purpose: the Roboto pin (robotoPin.js) — the face Dave's Android lays these screens
+// out in, and the same on every machine, so "fits at 426×492" means the same thing here and on CI.
+import './robotoPin.js'
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
@@ -724,7 +728,8 @@ async function run() {
     try { await WALKS[WALK]() } catch (e) { fail(`the walk stopped: ${e.message}`) }
   }
   result = {
-    walk: WALK, vw: innerWidth, vh: innerHeight, failures: [...failures], notes: [...notes, ...state.unknown.map(p => `unplanned GET ${p}`)],
+    walk: WALK, vw: innerWidth, vh: innerHeight, font: window.__fontPin ? { faces: window.__fontPin.faces, failed: window.__fontPin.failed?.length ?? 0 } : null,
+    failures: [...failures], notes: [...notes, ...state.unknown.map(p => `unplanned GET ${p}`)],
     ...counts, writes: state.calls.filter(c => c.method !== 'GET').length, ms: Math.round(performance.now() - t0),
   }
   document.title = `${WALK}: ${result.failures.length ? `FAIL ${result.failures.length}` : 'PASS'}`
