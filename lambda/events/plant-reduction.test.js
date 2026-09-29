@@ -44,12 +44,14 @@ function statementAfter(anchor) {
 const REDUCE_SQL = statementAfter('V4-LOSSEVENT-001 — the counter half of the plant-reduction ledger');
 const UNDO_SQL = statementAfter('qty_lost floors at 0 rather than going negative');
 
+// V5-LOSSTOKEN-001: the canonical tokens. The legacy spellings (`failed` / `given_away`) are covered
+// by the parity block at the end of this file and by loss-token-alias.test.js, which drives the handler.
 const failedBody = (over = {}) => ({
-  event_type: 'failed', plant_id: PLANT_UUID,
+  event_type: 'reduction_lost', plant_id: PLANT_UUID,
   metadata: { [REDUCTION_QTY_KEY]: 3, [LOSS_REASON_KEY]: 'pest' }, ...over,
 });
 const giftBody = (over = {}) => ({
-  event_type: 'given_away', plant_id: PLANT_UUID,
+  event_type: 'reduction_given_away', plant_id: PLANT_UUID,
   metadata: { [REDUCTION_QTY_KEY]: 2, [GIVEAWAY_REASON_KEY]: 'friend' }, ...over,
 });
 
@@ -98,6 +100,9 @@ describe('the two vocabularies stay apart', () => {
   });
 
   it('only a LOSS accrues into plants.qty_lost', () => {
+    expect(accruesQtyLost('reduction_lost')).toBe(true);
+    expect(accruesQtyLost('reduction_given_away')).toBe(false);
+    // ...and the legacy spellings answer the same (stored rows, stale bundles).
     expect(accruesQtyLost('failed')).toBe(true);
     expect(accruesQtyLost('given_away')).toBe(false);
     expect(accruesQtyLost('harvest')).toBe(false);
@@ -210,7 +215,7 @@ describe('validateReduction — the wire contract', () => {
     // validatePostBody's general rule is project_id OR plant_id. A project-scoped reduction would
     // insert an event and silently decrement nothing, behind a 201.
     const err = validateReduction({
-      event_type: 'failed', project_id: PLANT_UUID,
+      event_type: 'reduction_lost', project_id: PLANT_UUID,
       metadata: { [REDUCTION_QTY_KEY]: 3, [LOSS_REASON_KEY]: 'pest' },
     });
     expect(err?.status).toBe(400);
@@ -366,7 +371,9 @@ describe('the shipped statements — structure the arithmetic proof depends on',
     expect(INDEX_SRC).toMatch(/if \(reduction\.qty === available\) \{/);
     // The offer is composed from real totals, not from the fact that zero was reached.
     expect(INDEX_SRC).toMatch(/COALESCE\(qty_harvested, 0\)::int AS harvested/);
-    expect(INDEX_SRC).toMatch(/el\.event_type = 'given_away'/);
+    // V5-LOSSTOKEN-001: the gift total sums EVERY stored spelling, not one literal token.
+    expect(INDEX_SRC).toMatch(/el\.event_type = ANY\(\$\{eventTypeTokens\(GIVEAWAY_EVENT_TYPE\)\}::text\[\]\)/);
+    expect(INDEX_SRC).not.toMatch(/el\.event_type = 'given_away'/);
   });
 
   it('qty_current may reach 0 while quantity floors at 1 — the schema forces the divergence', () => {
@@ -379,7 +386,27 @@ describe('the shipped statements — structure the arithmetic proof depends on',
 
   it('the PUT refuses to edit a reduction event rather than desynchronise the counter', () => {
     expect(INDEX_SRC).toMatch(/code: 'REDUCTION_EVENT_IMMUTABLE'/);
-    expect(INDEX_SRC).toMatch(/const wasReduction = PLANT_REDUCTION_EVENT_TYPES\.includes\(existing\.event_type\)/);
-    expect(INDEX_SRC).toMatch(/const willBeReduction = PLANT_REDUCTION_EVENT_TYPES\.includes\(body\.event_type\)/);
+    // V5-LOSSTOKEN-001: through the alias-aware predicate. A raw includes() on the STORED type let a
+    // legacy `failed` row be re-typed with its counters applied (proved on the handler by the review).
+    expect(INDEX_SRC).toMatch(/const wasReduction = isPlantReductionEventType\(existing\.event_type\)/);
+    expect(INDEX_SRC).toMatch(/const willBeReduction = isPlantReductionEventType\(body\.event_type\)/);
+  });
+});
+
+describe('V5-LOSSTOKEN-001 — the wire contract accepts the legacy spellings exactly as the new ones', () => {
+  // A phone on a cached older bundle still sends `failed` / `given_away`. The handler normalises the
+  // body first (loss-token-alias.test.js); these pin that the validators would agree even if it didn't.
+  const legacy = (body) => ({ ...body, event_type: body.event_type === 'reduction_lost' ? 'failed' : 'given_away' });
+  it('validateReduction / validatePostBody / readReductionPlan', () => {
+    for (const make of [failedBody, giftBody]) {
+      expect(validateReduction(legacy(make()))).toEqual(validateReduction(make()));
+      expect(validatePostBody(legacy(make()))).toEqual(validatePostBody(make()));
+      expect(readReductionPlan(legacy(make()))).toEqual(readReductionPlan(make()));
+    }
+    expect(readReductionPlan(legacy(failedBody()))).toEqual({ qty: 3, lostAccrual: 3, reason: 'pest' });
+  });
+  it('a legacy spelling is still refused by the batch allowlist', () => {
+    const base = { idempotency_key: 'k', scope: { type: 'all' } };
+    for (const t of ['failed', 'given_away']) expect(validateBatchBody({ ...base, event_type: t })?.status, t).toBe(400);
   });
 });

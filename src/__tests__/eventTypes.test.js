@@ -15,7 +15,10 @@ import {
   requiresPlanting,
   PLANT_REDUCTION_EVENT_TYPES,
   SELECTABLE_EVENT_TYPES,
+  LEGACY_EVENT_TYPE_ALIASES,
+  isPlantReductionEventType,
 } from '../lib/eventTypes.js';
+import { PLANT_STATUSES } from '../lib/constants.js';
 
 const isRaw = (s) => /^[a-z_]+$/.test(s);
 
@@ -75,7 +78,8 @@ describe('BATCH_EVENT_TYPES (derived)', () => {
     // V4-WATERMATH-001 F0 added moisture_check: a per-plant JUDGEMENT ("this one is still damp"),
     // the opposite of a scope-wide assertion. Bulk-logging "none of these 500 need water" without
     // touching them fabricates an observation and lets one tap suppress the whole water bar.
-    // V4-LOSSEVENT-001 added failed + given_away: each carries a PER-PLANTING quantity (harvest's
+    // V4-LOSSEVENT-001 added the two reduction types (stored as failed + given_away until
+    // V5-LOSSTOKEN-001 renamed them reduction_lost + reduction_given_away): each carries a PER-PLANTING quantity (harvest's
     // disqualifier) and, worse, an invisible side effect — one "lost 3" across a 500-planting scope
     // would decrement 500 plantings and accrue 1500 to qty_lost.
     // BUG-SEEDSAVEDBATCHXP-001 added seed_saved: the single path (SaveSeedSheet) creates an
@@ -85,8 +89,8 @@ describe('BATCH_EVENT_TYPES (derived)', () => {
     // It is deliberately still reward-bearing (V4-SEEDEVENT-001), which is what made the batch
     // multiplier worth closing: 500 plantings was 500 events and 500 xp for one empty gesture.
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
-      ['cutting_taken', 'divided', 'failed', 'first_harvest', 'given_away', 'hand_pollinated',
-        'harvest', 'moisture_check', 'photo', 'seed_saved'],
+      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated',
+        'harvest', 'moisture_check', 'photo', 'reduction_given_away', 'reduction_lost', 'seed_saved'],
     );
   });
 
@@ -197,8 +201,8 @@ describe('V4-EVENTSEL-001 — taxonomy fix + explicit category order', () => {
 
 describe('V4-LOSSUI-001 — the reduction types are SELECTABLE now that the capture panel exists', () => {
   it('both are real EVENT_TYPES values, so the API and the feed know them', () => {
-    expect(EVENT_TYPES).toContain('failed');
-    expect(EVENT_TYPES).toContain('given_away');
+    expect(EVENT_TYPES).toContain('reduction_lost');
+    expect(EVENT_TYPES).toContain('reduction_given_away');
   });
 
   // V4-LOSSUI-001 — INVERTED, WITH REASONING, NOT DELETED.
@@ -222,12 +226,40 @@ describe('V4-LOSSUI-001 — the reduction types are SELECTABLE now that the capt
     for (const t of PLANT_REDUCTION_EVENT_TYPES) expect(SELECTABLE_EVENT_TYPES).toContain(t);
   });
 
-  it("'failed' the EVENT TYPE is not 'failed' the STATUS — nothing maps one onto the other", () => {
-    // plants.status already has a 'failed' member. The collision is real and Dave named the event
-    // type anyway; what makes it safe is that a reduction never writes status (asserted against
-    // the shipped SQL in lambda/events/plant-reduction.test.js) and that the two live in different
-    // vocabularies entirely. Recorded here so a future reader does not "unify" them.
-    expect(EVENT_TYPE_META.failed.label).not.toMatch(/status/i);
+  // V5-LOSSTOKEN-001 — REWRITTEN, WITH REASONING. This used to say "the collision is real and Dave
+  // named the event type anyway; what makes it safe is that the two live in different vocabularies".
+  // On 2026-09-29 Dave ruled the other way: "I worry that the namespace 'failed' will confuse future
+  // session given that there is also a status called 'failed'". The event token moved out of the
+  // status vocabulary, and this now pins that it STAYS out — of every vocabulary it was confusable with.
+  it('the reduction tokens live in a reserved namespace, disjoint from the status/outcome vocabularies', () => {
+    for (const t of PLANT_REDUCTION_EVENT_TYPES) {
+      expect(t, t).toMatch(/^reduction_/);
+      expect(PLANT_STATUSES, `${t} collides with a planting status`).not.toContain(t);
+      expect(['put_up', 'put_up_different', 'consumed', 'given_away', 'discarded_spoiled', 'abandoned'],
+        `${t} collides with a kitchen-batch outcome`).not.toContain(t);
+      expect(['started', 'tended', 'moved', 'finished', 'failed'], `${t} collides with a batch stage`).not.toContain(t);
+      expect(['pending', 'uploading', 'posted', 'failed', 'orphan_cleaned', 'orphan_cleanup_failed', 'retracted'],
+        `${t} collides with a share-post status`).not.toContain(t);
+    }
+    // The prefix is RESERVED: nothing else in the vocabulary may claim it.
+    expect(EVENT_TYPES.filter((t) => t.startsWith('reduction_')).sort())
+      .toEqual([...PLANT_REDUCTION_EVENT_TYPES].sort());
+    // Scoped, not blanket: rooting and flowering are genuinely both a stage and an event, and that
+    // synonymy is deliberate. Only the reduction pair had to leave.
+    expect(EVENT_TYPES.filter((t) => PLANT_STATUSES.includes(t)).sort()).toEqual(['flowering', 'rooting']);
+    expect(EVENT_TYPE_META.reduction_lost.label).toBe('Plants lost');
+  });
+
+  it('the legacy spellings are ALIASES, never vocabulary', () => {
+    // A stale bundle or an old row can still say `failed` / `given_away`; the alias answers for them.
+    // They must never come back as selectable types, or the picker would offer the status word again.
+    expect(LEGACY_EVENT_TYPE_ALIASES).toEqual({ failed: 'reduction_lost', given_away: 'reduction_given_away' });
+    for (const legacy of Object.keys(LEGACY_EVENT_TYPE_ALIASES)) {
+      expect(EVENT_TYPES, legacy).not.toContain(legacy);
+      expect(SELECTABLE_EVENT_TYPES, legacy).not.toContain(legacy);
+      expect(isPlantReductionEventType(legacy), legacy).toBe(true);
+      expect(requiresPlanting(legacy), legacy).toBe(true);
+    }
   });
 });
 

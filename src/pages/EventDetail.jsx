@@ -45,7 +45,7 @@ import { HARVEST_UNITS, MAX_PLAUSIBLE, WEIGHT_UNITS, MAX_PLAUSIBLE_WEIGHT_G, toG
 import HarvestDispositionChips from '../components/HarvestDispositionChips.jsx'
 import { readHarvestDisposition } from '../lib/harvestDisposition.js'
 import { eventTitle, eventTypeText } from '../lib/eventDisplay.js'
-import { reductionReasonLabel } from '../lib/eventTypes.js'
+import { reductionReasonLabel, canonicalEventType } from '../lib/eventTypes.js'
 
 
 // V4-HARVWEIGHTREAD-001: the copy map and its deliberate fallback moved to src/lib/harvestWeight.js so
@@ -253,7 +253,9 @@ export default function EventDetail() {
 
   function startEdit() {
     const seeded = {
-      event_type:    event.event_type,
+      // V5-LOSSTOKEN-001: a row still stored under a legacy `failed` / `given_away` must seed the
+      // select with an option that exists (EVENT_TYPE_OPTIONS carries only canonical tokens).
+      event_type:    canonicalEventType(event.event_type),
       event_date:    event.event_date ? new Date(event.event_date).toISOString().split('T')[0] : '',
       title:         event.title ?? '',
       notes:         event.notes ?? '',

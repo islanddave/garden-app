@@ -82,7 +82,7 @@ const PAIRS = [
   ['event.germination', 'care.plantedOut', 'both are a plant meeting a soil line'],
   ['event.transplant', 'care.plantedOut', "named in care.plantedOut's own docstring as the pair it must not collapse into"],
   ['event.germination', 'event.sowing', 'germination now carries a seed, and sowing IS a seed'],
-  ['event.failed', 'event.transplant', 'BUG-LOSSEVENTLABEL-001: the wilted plant is the upright sprout bowed over; a loss must not read as a planting'],
+  ['event.reduction_lost', 'event.transplant', 'BUG-LOSSEVENTLABEL-001: the wilted plant is the upright sprout bowed over; a loss must not read as a planting'],
 ]
 
 // Anchored between two MEASURED points, not chosen by feel: above the 0.171 defect, below the 0.489

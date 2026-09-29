@@ -8,7 +8,7 @@
 //
 // WHY this file exists: the events Lambda ships as a standalone zip with NO
 // bundler, so it cannot import from src/lib/ at runtime. validators.js imports
-// THIS sibling instead. (Source byte-length at generation: 37361.)
+// THIS sibling instead. (Source byte-length at generation: 40500.)
 
 export const EVENT_TYPES = [
   'sowing',
@@ -57,8 +57,8 @@ export const EVENT_TYPES = [
   'seed_saved',
   'cloves_saved',
   'overwinter_survived',
-  'failed',
-  'given_away',
+  'reduction_lost',
+  'reduction_given_away',
   'observation',
   'photo',
   'other',
@@ -72,8 +72,8 @@ export const BATCH_EXCLUDED_TYPES = [
   'cutting_taken',
   'hand_pollinated',
   'moisture_check',
-  'failed',
-  'given_away',
+  'reduction_lost',
+  'reduction_given_away',
   'seed_saved',
 ]
 
@@ -150,8 +150,8 @@ export const WATER_DEPTH_SOURCES = [
 // is not a loss, and keeping loss_reason off given_away rows is what stops a loss aggregate from
 // counting one. See src/lib/eventTypes.js for the full contract.
 export const PLANT_REDUCTION_EVENT_TYPES = [
-  'failed',
-  'given_away',
+  'reduction_lost',
+  'reduction_given_away',
 ]
 
 export const LOSS_REASONS = [
@@ -177,9 +177,29 @@ export const REDUCTION_QTY_KEY = 'qty_reduced'
 export const LOSS_REASON_KEY = 'loss_reason'
 export const GIVEAWAY_REASON_KEY = 'giveaway_reason'
 
+// V5-LOSSTOKEN-001 — canonical tokens and the PERMANENT legacy alias (the old spellings were
+// `failed` / `given_away`, which collided with a planting status and a kitchen-batch outcome).
+// Every predicate canonicalises first, because DELETE and the PUT guard read the STORED token.
+export const LOSS_EVENT_TYPE = 'reduction_lost'
+export const GIVEAWAY_EVENT_TYPE = 'reduction_given_away'
+
+export const LEGACY_EVENT_TYPE_ALIASES = Object.freeze({
+  failed: 'reduction_lost',
+  given_away: 'reduction_given_away',
+})
+
+export function canonicalEventType(eventType) {
+  return Object.hasOwn(LEGACY_EVENT_TYPE_ALIASES, eventType) ? LEGACY_EVENT_TYPE_ALIASES[eventType] : eventType
+}
+
+export function eventTypeTokens(eventType) {
+  const canon = canonicalEventType(eventType)
+  return [canon, ...Object.keys(LEGACY_EVENT_TYPE_ALIASES).filter((k) => LEGACY_EVENT_TYPE_ALIASES[k] === canon)]
+}
+
 export const REDUCTION_REASON_KEY_BY_TYPE = {
-  failed: LOSS_REASON_KEY,
-  given_away: GIVEAWAY_REASON_KEY,
+  reduction_lost: 'loss_reason',
+  reduction_given_away: 'giveaway_reason',
 }
 
 export const REDUCTION_REASONS_BY_KEY = {
@@ -187,11 +207,15 @@ export const REDUCTION_REASONS_BY_KEY = {
   [GIVEAWAY_REASON_KEY]: GIVEAWAY_REASONS,
 }
 
+export function reductionReasonKey(eventType) {
+  return REDUCTION_REASON_KEY_BY_TYPE[canonicalEventType(eventType)]
+}
+
 export function isPlantReductionEventType(eventType) {
-  return PLANT_REDUCTION_EVENT_TYPES.includes(eventType)
+  return PLANT_REDUCTION_EVENT_TYPES.includes(canonicalEventType(eventType))
 }
 
 // Only a LOSS accrues into plants.qty_lost — a given-away plant is alive somewhere else.
 export function accruesQtyLost(eventType) {
-  return eventType === 'failed'
+  return canonicalEventType(eventType) === LOSS_EVENT_TYPE
 }

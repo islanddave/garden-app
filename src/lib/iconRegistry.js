@@ -55,7 +55,7 @@ export function statusGlyph(status) {
 // DERIVED (Boolean(svg24 && svg18)) — never hand-stored (removes a drift vector).
 import ANCHORS from './iconAnchors.js'
 import { STATUS_GLYPHS } from './iconStatus.js'
-import { EVENT_GLYPHS } from './iconEvents.js'
+import { EVENT_GLYPHS, LEGACY_EVENT_GLYPHS } from './iconEvents.js'
 
 const ANCHOR_META = {
   'nav.today':      { accessibleName: 'Today' },
@@ -121,7 +121,7 @@ export const GLYPHS = Object.fromEntries(
   }])
 )
 Object.assign(GLYPHS, Object.fromEntries(Object.entries(STATUS_GLYPHS).map(([k,e])=>[`status.${k}`, e])))
-Object.assign(GLYPHS, EVENT_GLYPHS)
+Object.assign(GLYPHS, EVENT_GLYPHS, LEGACY_EVENT_GLYPHS)
 
 // Neutral fallback — V101 successor to the statusGlyph '•' dot. Never throws.
 export const NEUTRAL_ICON = {

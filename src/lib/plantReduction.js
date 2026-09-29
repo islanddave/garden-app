@@ -21,10 +21,13 @@
 // V4-LOSSEVENT-001 refused (a clamped row is indistinguishable from a correct one afterwards). The
 // remaining count is rendered as INFORMATION beside the field; the refusal is the server's.
 import {
+  LOSS_EVENT_TYPE,
+  GIVEAWAY_EVENT_TYPE,
   REDUCTION_QTY_KEY,
-  REDUCTION_REASON_KEY_BY_TYPE,
   REDUCTION_REASONS_BY_KEY,
+  canonicalEventType,
   isPlantReductionEventType,
+  reductionReasonKey,
 } from './eventTypes.js'
 
 export const REDUCTION_QTY_ERROR = 'How many? Enter a whole number, at least 1.'
@@ -32,18 +35,20 @@ export const REDUCTION_QTY_ERROR = 'How many? Enter a whole number, at least 1.'
 // Per-type because the two vocabularies are separated at the storage layer and the copy should not
 // pretend otherwise — "pick a reason" over a giveaway row would be asking for a loss reason.
 export const REDUCTION_REASON_ERRORS = {
-  failed: 'Pick what happened to them.',
-  given_away: 'Pick where they went.',
+  [LOSS_EVENT_TYPE]: 'Pick what happened to them.',
+  [GIVEAWAY_EVENT_TYPE]: 'Pick where they went.',
 }
 
+// Every lookup here canonicalises (V5-LOSSTOKEN-001), so a legacy `failed` / `given_away` restored from
+// an old draft or deep link behaves exactly like the new token.
 export function reductionReasonError(eventType) {
-  return REDUCTION_REASON_ERRORS[eventType] ?? 'Pick a reason.'
+  return REDUCTION_REASON_ERRORS[canonicalEventType(eventType)] ?? 'Pick a reason.'
 }
 
 // The vocabulary this event type's chip row renders. Empty for every non-reduction type, so the
-// panel is driven by the same map the server validates against rather than by a `=== 'failed'`.
+// panel is driven by the same map the server validates against rather than by a type comparison.
 export function reductionReasonsFor(eventType) {
-  const key = REDUCTION_REASON_KEY_BY_TYPE[eventType]
+  const key = reductionReasonKey(eventType)
   return key ? REDUCTION_REASONS_BY_KEY[key] : []
 }
 
@@ -70,6 +75,6 @@ export function buildReductionMetadata(eventType, { qty, reason } = {}) {
   if (!isPlantReductionEventType(eventType)) return {}
   return {
     [REDUCTION_QTY_KEY]: Number(String(qty ?? '').trim()),
-    [REDUCTION_REASON_KEY_BY_TYPE[eventType]]: reason,
+    [reductionReasonKey(eventType)]: reason,
   }
 }

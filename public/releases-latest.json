@@ -1,8 +1,7 @@
 {
-  "version": "4.159.0",
+  "version": "4.160.0",
   "date": "2026-09-29",
   "highlights": [
-    "End of season, in More: tick the frost-tender plantings that are done and mark them all Finished at once. Nothing is pre-ticked, Undo puts them back, and their harvests stay in your totals.",
-    "Catch up, in More: a list of plantings that have no start date, where a rough month is enough."
+    "Behind the scenes: a Plants lost entry is now stored as reduction_lost instead of failed, so it can never be mistaken for a failed planting. Nothing changes on screen; entries logged from an older copy of the app still save correctly."
   ]
 }

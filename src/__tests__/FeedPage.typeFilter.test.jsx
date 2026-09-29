@@ -59,8 +59,12 @@ describe('V4-PICKERGATE-001 — FeedPage keeps the WHOLE vocabulary (read filter
     for (const t of CAPTURE_PANEL_REQUIRED_TYPES) {
       expect(values, `${t} rows exist and must stay findable`).toContain(t)
     }
-    expect(values).toContain('failed')
-    expect(values).toContain('given_away')
+    expect(values).toContain('reduction_lost')
+    expect(values).toContain('reduction_given_away')
+    // V5-LOSSTOKEN-001: the legacy spellings are not options of their own — the server's filter
+    // matches them under the canonical value (loss-token-alias.test.js).
+    expect(values).not.toContain('failed')
+    expect(values).not.toContain('given_away')
     expect(values).toContain('harvest')
   })
 

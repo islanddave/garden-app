@@ -21,21 +21,23 @@ import SelectChip from './forms/SelectChip.jsx'
 import Field from './forms/Field.jsx'
 import Input from './forms/Input.jsx'
 import Section from './FormSection.jsx'
-import { REDUCTION_REASON_HINTS, reductionReasonLabel } from '../lib/eventTypes.js'
+import {
+  LOSS_EVENT_TYPE, GIVEAWAY_EVENT_TYPE, REDUCTION_REASON_HINTS, canonicalEventType, reductionReasonLabel,
+} from '../lib/eventTypes.js'
 import { reductionReasonsFor } from '../lib/plantReduction.js'
 
 // Per-type copy. Keyed by event type rather than branched on, so adding a third reduction type is a
 // data change; and worded as the question the user is actually answering — "How many did you lose?"
 // rather than "Quantity", which on a form that also has a harvest quantity is ambiguous.
 const COPY = {
-  failed: {
+  [LOSS_EVENT_TYPE]: {
     section: 'Plants lost *',
     qtyLabel: 'How many did you lose? *',
     qtyPlaceholder: 'e.g. 3',
     reasonLabel: 'What happened?',
     reasonGroup: 'What happened to them',
   },
-  given_away: {
+  [GIVEAWAY_EVENT_TYPE]: {
     section: 'Plants given away *',
     qtyLabel: 'How many did you give away? *',
     qtyPlaceholder: 'e.g. 2',
@@ -45,7 +47,7 @@ const COPY = {
 }
 
 export default function PlantReductionFields({
-  eventType,
+  eventType: rawEventType,
   qty,
   reason,
   onQty,
@@ -55,6 +57,8 @@ export default function PlantReductionFields({
   // lib/plantReduction.js for why this never gates the save.
   remaining = null,
 }) {
+  // V5-LOSSTOKEN-001: a legacy `failed` / `given_away` renders the same panel as its new token.
+  const eventType = canonicalEventType(rawEventType)
   const copy = COPY[eventType]
   const reasons = reductionReasonsFor(eventType)
   if (!copy || reasons.length === 0) return null

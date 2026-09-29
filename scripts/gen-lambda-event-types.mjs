@@ -36,10 +36,26 @@ const {
   // the API edge and the events Lambda is a bundler-less zip, so it cannot import src/lib/.
   PLANT_REDUCTION_EVENT_TYPES, LOSS_REASONS, GIVEAWAY_REASONS,
   REDUCTION_QTY_KEY, LOSS_REASON_KEY, GIVEAWAY_REASON_KEY,
+  // V5-LOSSTOKEN-001. The tokens, the permanent legacy alias and every predicate that reads them are
+  // DERIVED from the canonical module below — never typed here. Until 2026-09-29 this template
+  // hand-wrote `failed` into REDUCTION_REASON_KEY_BY_TYPE and accruesQtyLost, and --check compared
+  // the template with itself, so a rename that missed it would have passed CI and 400'd every loss.
+  LOSS_EVENT_TYPE, GIVEAWAY_EVENT_TYPE, LEGACY_EVENT_TYPE_ALIASES, REDUCTION_REASON_KEY_BY_TYPE,
+  canonicalEventType, eventTypeTokens, reductionReasonKey, isPlantReductionEventType, accruesQtyLost,
 } = canon
 
 function emit(arr) {
   return '[\n' + arr.map((v) => `  '${v}',`).join('\n') + '\n]'
+}
+
+function emitMap(obj) {
+  return '{\n' + Object.entries(obj).map(([k, v]) => `  ${k}: '${v}',`).join('\n') + '\n}'
+}
+
+// A canonical function, copied as source. Every name it references must be defined in the generated
+// module too — lambda/events/eventtypes-parity.test.js proves the two agree on every token.
+function emitFn(fn) {
+  return 'export ' + fn.toString()
 }
 
 // Stamp the source mtime-independent hash-ish marker via the source byte length so a
@@ -95,24 +111,31 @@ export const REDUCTION_QTY_KEY = '${REDUCTION_QTY_KEY}'
 export const LOSS_REASON_KEY = '${LOSS_REASON_KEY}'
 export const GIVEAWAY_REASON_KEY = '${GIVEAWAY_REASON_KEY}'
 
-export const REDUCTION_REASON_KEY_BY_TYPE = {
-  failed: LOSS_REASON_KEY,
-  given_away: GIVEAWAY_REASON_KEY,
-}
+// V5-LOSSTOKEN-001 — canonical tokens and the PERMANENT legacy alias (the old spellings were
+// \`failed\` / \`given_away\`, which collided with a planting status and a kitchen-batch outcome).
+// Every predicate canonicalises first, because DELETE and the PUT guard read the STORED token.
+export const LOSS_EVENT_TYPE = '${LOSS_EVENT_TYPE}'
+export const GIVEAWAY_EVENT_TYPE = '${GIVEAWAY_EVENT_TYPE}'
+
+export const LEGACY_EVENT_TYPE_ALIASES = Object.freeze(${emitMap(LEGACY_EVENT_TYPE_ALIASES)})
+
+${emitFn(canonicalEventType)}
+
+${emitFn(eventTypeTokens)}
+
+export const REDUCTION_REASON_KEY_BY_TYPE = ${emitMap(REDUCTION_REASON_KEY_BY_TYPE)}
 
 export const REDUCTION_REASONS_BY_KEY = {
   [LOSS_REASON_KEY]: LOSS_REASONS,
   [GIVEAWAY_REASON_KEY]: GIVEAWAY_REASONS,
 }
 
-export function isPlantReductionEventType(eventType) {
-  return PLANT_REDUCTION_EVENT_TYPES.includes(eventType)
-}
+${emitFn(reductionReasonKey)}
+
+${emitFn(isPlantReductionEventType)}
 
 // Only a LOSS accrues into plants.qty_lost — a given-away plant is alive somewhere else.
-export function accruesQtyLost(eventType) {
-  return eventType === 'failed'
-}
+${emitFn(accruesQtyLost)}
 `
 
 const isCheck = process.argv.includes('--check')

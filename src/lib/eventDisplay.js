@@ -10,11 +10,18 @@
 // So the two plant-reduction types speak in the words Dave picked them by ("Plants lost"), with
 // the count when the row carries one: "2 plants lost", "1 plant given away". Every other type keeps
 // the de-snaked token exactly as before — this module changes what two types say, not the voice of
-// the whole log. The stored `event_type` stays 'failed': renaming a live token is a data migration
-// plus a stale-bundle hazard, to change a word nobody sees once every surface reads it through here.
+// the whole log.
+//
+// V5-LOSSTOKEN-001 then moved the STORED tokens themselves to `reduction_lost` /
+// `reduction_given_away`. Every function here canonicalises first, so a row still stored under the
+// legacy `failed` / `given_away` (before the backfill, or brought back by a restore) reads exactly
+// like a new one.
 import {
+  LOSS_EVENT_TYPE,
+  GIVEAWAY_EVENT_TYPE,
   REDUCTION_QTY_KEY,
-  REDUCTION_REASON_KEY_BY_TYPE,
+  canonicalEventType,
+  reductionReasonKey,
   reductionReasonLabel,
 } from './eventTypes.js'
 
@@ -22,13 +29,13 @@ import {
 // pinned to EVENT_TYPE_META's picker label by eventDisplay.test.js, so the log and the picker can
 // never name the same event two ways.
 const REDUCTION_PHRASES = {
-  failed: ['plant lost', 'plants lost'],
-  given_away: ['plant given away', 'plants given away'],
+  [LOSS_EVENT_TYPE]: ['plant lost', 'plants lost'],
+  [GIVEAWAY_EVENT_TYPE]: ['plant given away', 'plants given away'],
 }
 
 // The type alone, for chips, filters and kickers that have no row to count.
 export function eventTypeText(type) {
-  const t = String(type ?? '')
+  const t = canonicalEventType(String(type ?? ''))
   return REDUCTION_PHRASES[t]?.[1] ?? t.replace(/_/g, ' ')
 }
 
@@ -36,7 +43,7 @@ export function eventTypeText(type) {
 // (validators.js validateReduction), but a surface whose query leaves metadata out (the feed) or a
 // hand-edited row must still render — as the uncounted phrase, never as "NaN plants lost".
 export function reductionCount(ev) {
-  if (!REDUCTION_PHRASES[ev?.event_type]) return null
+  if (!REDUCTION_PHRASES[canonicalEventType(ev?.event_type)]) return null
   const n = Number(ev?.metadata?.[REDUCTION_QTY_KEY])
   return Number.isInteger(n) && n > 0 ? n : null
 }
@@ -46,14 +53,14 @@ export function eventTitle(ev) {
   if (ev?.title) return ev.title
   const n = reductionCount(ev)
   if (n == null) return eventTypeText(ev?.event_type)
-  const [one, many] = REDUCTION_PHRASES[ev.event_type]
+  const [one, many] = REDUCTION_PHRASES[canonicalEventType(ev.event_type)]
   return `${n} ${n === 1 ? one : many}`
 }
 
 // Why the count went down ("Weather", "A friend"), or null for a row that is not a reduction or
 // carries no reason.
 export function reductionReasonText(ev) {
-  const key = REDUCTION_REASON_KEY_BY_TYPE[ev?.event_type]
+  const key = reductionReasonKey(ev?.event_type)
   const v = key ? ev?.metadata?.[key] : null
   return v ? reductionReasonLabel(v) : null
 }
