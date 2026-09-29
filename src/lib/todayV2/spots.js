@@ -186,22 +186,26 @@ export function taskCounts(rows) {
 
 // Bulk candidates for one spot's rows (§2.4 candidateKeys, careNeeded.js's predicate): watering rows, minus
 // in-ground beds while bed-wait is on — Outside only (D7). `bedsWaiting` = the beds that rule held back.
-export function waterCandidates(rows, group, bedWait) {
+// `exclude` (S4g, MF3): keys a bulk never takes — rows whose write failed this visit, which only their Retry
+// re-posts (so a fresh Water all cannot split one run's failures into a second batch). Absent = none.
+export function waterCandidates(rows, group, bedWait, exclude) {
   const wait = !!bedWait && (group == null || group === OUTSIDE)
   const keys = new Set()
   let bedsWaiting = 0
   for (const r of rows) {
     if (r.eventType !== 'watering') continue
     if (wait && r.inGround) { bedsWaiting++; continue }
+    if (exclude && exclude.has(r.key)) continue
     keys.add(r.key)
   }
   return { keys, bedsWaiting }
 }
 
 // The page's model for one render. `rows` = the enriched rows ON THE LIST (logged and skipped removed);
-// `held` = the visit's order ({groups, spots}); `tasks` / `spots` = the filter selections (empty = all).
-// Filters hide, never re-sort (§2.6). New spots (a refetch) are appended to their group in held order's tail.
-export function buildModel(rows, { held, tasks = [], spots = [], bedWait = false } = {}) {
+// `held` = the visit's order ({groups, spots}); `tasks` / `spots` = the filter selections (empty = all);
+// `exclude` = keys no bulk takes (waterCandidates). Filters hide, never re-sort (§2.6). New spots (a refetch)
+// are appended to their group in held order's tail.
+export function buildModel(rows, { held, tasks = [], spots = [], bedWait = false, exclude } = {}) {
   const taskSet = new Set(tasks), spotSet = new Set(spots)
   const inTask = (r) => !taskSet.size || taskSet.has(r.task)
   const bySpot = new Map()
@@ -222,7 +226,7 @@ export function buildModel(rows, { held, tasks = [], spots = [], bedWait = false
       const s = bySpot.get(k)
       if (spotSet.size && !spotSet.has(k)) continue
       const view = s.all.filter(inTask)
-      const cand = waterCandidates(view, s.group, bedWait)
+      const cand = waterCandidates(view, s.group, bedWait, exclude)
       list.push({
         ...s, rows: view, counts: taskCounts(view), allCounts: taskCounts(s.all),
         dryFastest: view.filter((r) => isWater(r) && SMALL_VESSEL_TYPES.has(r.containerType)).length,

@@ -81,6 +81,22 @@ describe('groups and spots on the busy plan (SF5, D7)', () => {
     const n = buildModel(rows, { held: partial })
     expect(n.groups[0].spots.map((s) => s.name).slice(-2)).toEqual(['Bag Area', 'Trough'])
   })
+  // S4g (MF3): rows whose write failed this visit are out of every bulk — spot and group — and only their Retry
+  // re-posts them; they still count (they are still due), so chip == header == Σ spots holds.
+  it('`exclude` keeps failed rows out of Water all (spot and group) and in the counts', () => {
+    const bag = rows.filter((r) => r.spotName === 'Bag Area' && r.task === 'water').slice(0, 2).map((r) => r.key)
+    const ds = rows.filter((r) => r.spotName === 'Drive-Shade').map((r) => r.key)
+    const x = buildModel(rows, { held, exclude: new Set([...bag, ...ds]) })
+    expect(spotByName(x, 'Bag Area').candidates.size).toBe(95)
+    expect(bag.some((k) => spotByName(x, 'Bag Area').candidates.has(k))).toBe(false)
+    expect(spotByName(x, 'Drive-Shade').candidates.size).toBe(0)
+    expect(x.groups[0].candidates.size).toBe(147)
+    expect(x.groups[0].spotsWithWater).toBe(5)
+    expect(spotByName(x, 'Bag Area').counts).toEqual(spotByName(m, 'Bag Area').counts)
+    expect(x.groups.flatMap((g) => g.spots).reduce((n, s) => n + s.counts.water, 0)).toBe(168)
+    expect(waterCandidates(spotByName(m, 'Drive-Shade').rows, OUTSIDE, false, new Set(ds.slice(0, 1))).keys.size).toBe(4)
+    expect(waterCandidates(spotByName(m, 'Drive-Shade').rows, OUTSIDE, false).keys.size).toBe(5)
+  })
 })
 
 describe('exceptions and cohort (D11, §11.0 E8, SF2)', () => {
