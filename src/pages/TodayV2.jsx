@@ -1,20 +1,29 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import { useTodaySections } from '../hooks/useTodaySections.js'
 import { useTodayVisit } from '../hooks/useTodayVisit.js'
+import { useLiveRain } from '../hooks/useLiveRain.js'
+import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion.js'
+import { usePageScrollYield } from '../hooks/usePageScrollManager.js'
 import { usePrefs } from '../context/PrefsContext.jsx'
 import { useAuthOptional } from '../context/AuthContext.jsx'
 import AsyncRegion from '../components/forms/AsyncRegion.jsx'
 import TodaySection from '../components/today/v2/TodaySection.jsx'
 import NeedsCare from '../components/today/v2/NeedsCare.jsx'
 import { useNeedsCare } from '../components/today/v2/useNeedsCare.js'
+import GlanceCard from '../components/today/v2/GlanceCard.jsx'
+import JumpBar, { JUMP_BAR_HEIGHT_PX } from '../components/today/v2/JumpBar.jsx'
 import { careOpens } from '../lib/todayV2/triggers.js'
+import { CHIPS, taskCounts, liveChips, shownChips } from '../lib/todayV2/chips.js'
+import { staleMarker } from '../lib/todayV2/verdict.js'
+import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
+import { currentLows } from '../lib/frostAlertLine.js'
 import { isFromCache } from '../lib/api.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
 import { seedsHref } from '../lib/seedsRoutes.js'
-import { P } from '../lib/constants.js'
+import { P, TOP_CHROME_HEIGHT_PX, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import { T } from '../components/forms/formStyles.js'
 import Icon from '../components/Icon.jsx'
 
@@ -32,6 +41,13 @@ import Icon from '../components/Icon.jsx'
 // Resting (count, names, its explainer). Each later slice fills its own: glance card + jump bar (S3), the
 // Needs care body (S4), Protect tonight + Heads-up (S5), Harvest / Put-Up / Resting rows / household (S6).
 //
+// S3 — the GLANCE CARD paints as soon as the plan is in (it needs nothing else); its open/closed is Layer 1
+// key 'glance' (a tap is remembered, nothing ever opens it by itself). The JUMP BAR paints at the ready point
+// with the chips live there, HELD for the visit (order.chips); it is the page's one sticky layer. A chip tap
+// opens its section as a visit overlay, scrolls its header under the bar and focuses it; Water / Feed / Check
+// also leave S4's filter row a pre-select intent (useTodayVisit `setFilter`). While this page is mounted the
+// document scrolls with the sticky layers subtracted (html scroll-padding).
+//
 // THE READY POINT (§6.4): the plan has settled (a plan, no plan, or an error) and Layer 1 can be read — prefs
 // have loaded, OR this device has a mirror, OR 300 ms have passed. Sections paint THERE, all at once, from a
 // snapshot taken there; nothing sits below them that could be pushed down, and a prefs answer that lands
@@ -42,6 +58,18 @@ import Icon from '../components/Icon.jsx'
 export const SECTION_ORDER = ['protect', 'headsup', 'care', 'harvest', 'putup', 'resting']
 const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'overwintering'])
 const PREFS_WAIT_MS = 300
+// §6.2's bottom allowance: one toast's height above BottomNav, so a focused control is never under either.
+const TOAST_ALLOWANCE_PX = 64
+
+// The tapped chip, when cut at the strip's edge, slides fully into view. The STRIP scrolls (strip.scrollTo) —
+// never chip.scrollIntoView, which would scroll the page as well (§6.2).
+function revealChip(strip, chip, behavior) {
+  if (!strip || !chip || typeof strip.scrollTo !== 'function') return
+  const s = strip.getBoundingClientRect()
+  const c = chip.getBoundingClientRect()
+  const dx = c.left < s.left ? c.left - s.left : c.right > s.right ? c.right - s.right : 0
+  if (dx) strip.scrollTo({ left: strip.scrollLeft + dx, behavior })
+}
 
 function formatDate(iso) {
   if (!iso) return ''
@@ -86,6 +114,21 @@ export default function TodayV2() {
   const resting = useMemo(() => (Array.isArray(plan?.dormant) ? plan.dormant.filter(Boolean) : []), [plan])
   const present = useMemo(() => SECTION_ORDER.filter((k) => (k === 'care' && care.length > 0) || (k === 'resting' && resting.length > 0)), [care.length, resting.length])
 
+  // ── the glance card's weather: computed exactly as V1's Today.jsx computes it, so the two pages cannot
+  // disagree — the live rain overlay (display only), the one low per night (V5-FROSTTWOMODELS-001), the frost
+  // line's current lows (V5-TODAYFROSTWARMEDADVISORY-001) and the engine cue re-worded at that low.
+  const { liveHydrology, refreshedAt } = useLiveRain(plan?.weather_coords ?? plan?.coords)
+  const agreed = useMemo(() => agreedTonightLow(plan), [plan])
+  const current = useMemo(() => currentLows(plan), [plan])
+  const cueCallout = useMemo(() => agreeCallout(plan?.weather?.callout, agreed), [plan, agreed])
+  // The glance card's stale marker (verdict.js): the conditions of `stale` above, worded for the card (null
+  // when the plan is today's).
+  const staleMark = plan ? staleMarker({ planDate, generatedAt: data?.generated_at ?? null, fromCache: isFromCache(data), today: todayLocalISO() }) : null
+
+  // ── the jump chips (§2.4, §2.7): Water / Feed / Check from the same active rows as the Needs care count.
+  const counts = useMemo(() => taskCounts(care), [care])
+  const live = useMemo(() => liveChips(present, counts), [present, counts])
+
   // ── the ready point ───────────────────────────────────────────────────────────────────────────────────────
   const settled = !loading
   const [prefsWaitOver, setPrefsWaitOver] = useState(false)
@@ -114,15 +157,18 @@ export default function TodayV2() {
   // and the small-pot trigger read them, and a snapshot taken before they land would be keyed differently.
   const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver) && (!plan || needs.settled)
 
-  const { record, isOpen, tap, overlayAll, update } = useTodayVisit({
+  const { record, isOpen, tap, overlayAll, update, setFilter } = useTodayVisit({
     userId, planDate, ready,
     start: () => {
       // §3 + MF1: Needs care opens by itself on a reason (never / hot / small) unless a close acked today
       // already named every reason; the descriptor is kept so a close now records the ack.
       const careOpen = present.includes('care') && careOpens(needs.trigger, layer1.resolve('care'), planDate)
       return {
-        order: { sections: present },
-        layer1: Object.fromEntries(present.map((k) => [k, layer1.resolve(k)?.open === true])),
+        order: { sections: present, chips: live },
+        layer1: {
+          ...Object.fromEntries(present.map((k) => [k, layer1.resolve(k)?.open === true])),
+          glance: layer1.resolve('glance')?.open === true,
+        },
         overlay: careOpen ? { care: 'open' } : {},
         triggers: careOpen ? { care: needs.trigger } : {},
         care: needs.snapshot(),
@@ -131,6 +177,62 @@ export default function TodayV2() {
   })
   const shown = record ? SECTION_ORDER.filter((k) => record.order.sections.includes(k) || present.includes(k)) : []
   const anyOpen = shown.some(isOpen)
+
+  // The glance paints before the visit starts: until then Layer 1 answers directly (a tap lands there first,
+  // so the visit's snapshot at the ready point carries it).
+  const glanceOpen = record ? isOpen('glance') : layer1.resolve('glance')?.open === true
+  const toggleGlance = useCallback(() => {
+    const next = !glanceOpen
+    layer1.remember('glance', { open: next, at: planDate || todayLocalISO() })
+    tap('glance', next)
+  }, [glanceOpen, layer1, planDate, tap])
+
+  // The bar exists for the visit only when ≥ 2 chips did at the ready point (§2.7); a chip that goes live later
+  // takes its slot, a held one that empties reads "· done".
+  const heldChips = record?.order?.chips || []
+  const barShown = ready && !!record && heldChips.length >= 2
+  const chips = barShown ? shownChips(heldChips, live) : []
+
+  // A chip tap (§2.7, §5.5): the page-scroll manager stands down (usePageScrollYield), the target opens as a
+  // visit overlay (never remembered), a task chip leaves S4 its pre-select intent, and — after the commit that
+  // mounts the target's body — the header scrolls under the bar (instant under reduced motion, smooth
+  // otherwise) and takes focus without a second scroll.
+  const frameRef = useRef(null)
+  const barRef = useRef(null)
+  const reduced = usePrefersReducedMotion()
+  const reducedRef = useRef(reduced)
+  reducedRef.current = reduced
+  const yieldScroll = usePageScrollYield()
+  const [landing, setLanding] = useState(null)
+  const jump = useCallback((key, chipEl) => {
+    const c = CHIPS[key]
+    if (!c) return
+    yieldScroll()
+    overlayAll([c.section], 'open')
+    if (c.task) setFilter(c.section, { tasks: [c.task] })
+    revealChip(barRef.current, chipEl, reducedRef.current ? 'instant' : 'smooth')
+    setLanding((l) => ({ section: c.section, seq: (l ? l.seq : 0) + 1 }))
+  }, [yieldScroll, overlayAll, setFilter])
+  useLayoutEffect(() => {
+    if (!landing) return
+    const sec = frameRef.current?.querySelector(`[data-section="${landing.section}"]`)
+    if (!sec) return
+    if (typeof sec.scrollIntoView === 'function') sec.scrollIntoView({ block: 'start', behavior: reducedRef.current ? 'instant' : 'smooth' })
+    const header = sec.querySelector('[aria-expanded]')
+    if (header && typeof header.focus === 'function') header.focus({ preventScroll: true })
+  }, [landing])
+
+  // While this page is mounted the document scrolls with its sticky layers subtracted (§6.2): a focus move,
+  // TalkBack's own scroll or a jump lands BELOW TopChrome and the bar and ABOVE BottomNav plus one toast. The
+  // 8px landing gap is each section's scroll-margin-top (TodaySection), so a jump lands a header 8px under the
+  // bar. Cleared on unmount — no other page inherits it.
+  useLayoutEffect(() => {
+    const s = document.documentElement.style
+    const before = [s.scrollPaddingTop, s.scrollPaddingBottom]
+    s.scrollPaddingTop = `calc(${TOP_CHROME_HEIGHT_PX}px + env(safe-area-inset-top)${barShown ? ` + ${JUMP_BAR_HEIGHT_PX}px` : ''})`
+    s.scrollPaddingBottom = `calc(var(--bottom-nav-height, ${BOTTOM_NAV_HEIGHT_PX}px) + env(safe-area-inset-bottom) + ${TOAST_ALLOWANCE_PX}px)`
+    return () => { s.scrollPaddingTop = before[0]; s.scrollPaddingBottom = before[1] }
+  }, [barShown])
 
   // An explicit tap: the visit's state for the section AND Layer 1. A close made while a trigger holds the
   // section open records that trigger as a date-scoped ack (MF1); an open drops any ack.
@@ -167,6 +269,7 @@ export default function TodayV2() {
 
   return (
     <div
+      ref={frameRef}
       data-testid="today-page"
       data-today-version="2"
       data-today-ready={ready && record ? 'true' : undefined}
@@ -193,9 +296,19 @@ export default function TodayV2() {
       {data && !data.has_plan && (
         <p data-testid="today-noplan-card" style={noPlanStyle}>Today’s plan hasn’t arrived yet — it’s built overnight.</p>
       )}
+      {/* The glance card needs only the plan (its weather comes from it): no plan, no card (§1.4). */}
+      {plan && plan.weather && (
+        <GlanceCard
+          plan={plan} generatedAt={data?.generated_at ?? null} planDate={planDate}
+          liveHydrology={liveHydrology} refreshedAt={refreshedAt} agreed={agreed} current={current} cueCallout={cueCallout}
+          stale={staleMark} open={glanceOpen} onToggle={toggleGlance}
+        />
+      )}
 
       {ready && record && (
         <>
+          {/* The one sticky layer: a direct child of this frame, so it pins across every section below it. */}
+          {barShown && <JumpBar ref={barRef} chips={chips} counts={counts} onJump={jump} />}
           {plan && care.length === 0 && !record.order.sections.includes('care') && (
             <p data-testid="care-empty" style={quietLine}>Needs care: all caught up — nothing due today.</p>
           )}

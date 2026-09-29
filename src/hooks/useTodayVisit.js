@@ -12,6 +12,11 @@
 //   overlay         visit-only opens/closes: Expand/Collapse all, a chip jump (S3), a trigger (S5)
 //   triggers        the trigger descriptors that fired at the ready point (S5) — a close made while one has
 //                   the section open is what records a date-scoped ack
+//   order.chips     the jump-bar chips present at the ready point (S3) — held for the visit
+//   filter          a jump chip's PRE-SELECT INTENT per section (S3 writes it, S4's filter row reads it):
+//                   filter.care = { tasks: ['water'|'feed'|'check'], n } — "replace the task filter with this
+//                   task". `n` counts the chip taps of this visit, so a second tap of the same chip is a new
+//                   intent; a reader applies each n once. Visit-only, like every overlay here.
 // Effective open = overlay > layer1 > closed. An explicit header tap is the page's to route: it writes Layer
 // 1 (useTodaySections.remember) and calls `tap`, which records the new state and clears the overlay, so the
 // tap wins for the rest of the visit. A section that appears mid-visit is in no snapshot: it is closed.
@@ -69,8 +74,15 @@ export function useTodayVisit({ userId, planDate, ready, start }) {
     return { ...r, overlay }
   }), [update])
 
+  // A jump chip's pre-select intent for a section's filter row (S3 → S4): replaces the section's intent and
+  // counts the tap, so the same chip tapped twice is two intents.
+  const setFilter = useCallback((section, value) => update((r) => {
+    const prev = r.filter?.[section]
+    return { ...r, filter: { ...(r.filter || {}), [section]: { ...value, n: ((prev && prev.n) || 0) + 1 } } }
+  }), [update])
+
   const isOpen = useCallback((section) => effectiveOpen(shown, section), [shown])
 
   // S4: a slice's own fields on the record (Needs care's open spots, done lines, runs) — `fn(record)` → record.
-  return { record: shown, returned, isOpen, tap, overlayAll, update }
+  return { record: shown, returned, isOpen, tap, overlayAll, update, setFilter }
 }
