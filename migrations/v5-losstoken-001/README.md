@@ -126,13 +126,15 @@ case "$NEON_DATABASE_URL" in *ep-lucky-bird-amju6iqt*) echo prod-host-ok ;; *) e
 case "$NEON_STAGING_URL" in *ep-mute-firefly-amq424mj*) echo staging-host-ok ;; *) echo WRONG-STAGING-HOST ;; esac
 ```
 
-**2. The two MANUAL gates.** `R1B` is the full 40-hex dev SHA of the commit that makes the new tokens canonical; it does
-not exist yet, so **fill it in from the release lane's report** (left as a placeholder, the ancestry checks print the
-failure line, which is the safe direction). Go on only on `garden-events Successful code-matches-marker`,
+**2. The two MANUAL gates.** `R1B` is the full 40-hex dev SHA of the commit that makes the new tokens canonical: the
+v4.160.0 release commit (`feat(events): store plant losses as reduction_lost …`). It is found by the version it set
+rather than written in here, so a rebase before the push cannot leave a stale SHA behind; an empty `R1B` makes the
+ancestry checks print the failure line, which is the safe direction. Go on only on `garden-events Successful code-matches-marker`,
 `events-has-release`, `spa-has-release`, and both gam-site greps printing a match.
 
 ```zsh
-R1B=FILL-IN-THE-40-HEX-SHA
+git -C /Users/davenichols/AI/Claude/Projects/Gardening/garden-app fetch -q origin dev
+R1B="$(git log -1 --format=%H -S'"version": "4.160.0"' origin/dev -- package.json)"; echo "R1B=$R1B"
 aws lambda get-function-configuration --region us-east-1 --function-name garden-events --query '[CodeSha256,LastUpdateStatus,Description]' --output text | awk '{ split($0, a, " code="); split(a[2], b, " "); print "garden-events", $2, ($1 == b[1] ? "code-matches-marker" : "CODE-MISMATCH") }'
 EV_SRC="$(aws lambda get-function-configuration --region us-east-1 --function-name garden-events --query Description --output text | sed -E 's/.* src=([0-9a-f]{40}) .*/\1/')"
 git merge-base --is-ancestor "$R1B" "$EV_SRC" && echo events-has-release || echo EVENTS-LACKS-RELEASE
