@@ -259,12 +259,14 @@ post:
   # CREATE OR REPLACE that quietly drops the pair or re-expands `b.*` over a widened kitchen_batch
   # goes red here rather than in a client that renders an undefined.
   #
-  # CONVERTED 2026-09-29 (Put-Up release 1a, V4 §4.6). Was `post_view_gained_exactly_two`
-  # (view columns = kitchen_batch columns + 8). Release 1b re-creates this view with its 30 live
-  # columns in order and new columns APPENDED, and widens kitchen_batch, so an exact-arithmetic pin
-  # would red on a correct 1b. Now names the 30 columns the view carried on live prod AND staging on
-  # 2026-09-29 (identical on both) and returns one row per missing name: a re-create that drops the
-  # pH pair or any other column still reds, by name; an appended column does not.
+  # CONVERTED 2026-09-29 (Put-Up release 1a gates-only commit; the V4 design's "Gates" section — cited
+  # by name, not number, because this file sits in the pH guard's census, which forbids the acid-line
+  # literals and that section's number is one of them). Was `post_view_gained_exactly_two` (view
+  # columns = kitchen_batch columns + 8). Release 1b re-creates this view with its 30 live columns in
+  # order and new columns APPENDED, and widens kitchen_batch, so an exact-arithmetic pin would red on
+  # a correct 1b. Now names the 30 columns the view carried on live prod AND staging on 2026-09-29
+  # (identical on both) and returns one row per missing name: a re-create that drops the pH pair or
+  # any other column still reds, by name; an appended column does not.
   # WHAT THE CONVERSION GIVES UP, stated so nobody assumes it is still guarded: the old arithmetic
   # also caught kitchen_batch gaining a column while this view (whose `b.*` froze at CREATE) was not
   # re-created, leaving the new column invisible to every batch read. Nothing here asserts that now;
