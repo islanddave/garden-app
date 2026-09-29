@@ -10,7 +10,7 @@
 // use-soon (in-window include / null-use-by exclude / past-date distinct flag / not-yet-soon exclude),
 // ON-DELETE-SET-NULL (delete plant -> plant_id NULL; delete harvest_log -> harvest_log_id NULL).
 // Put-Up release 1a (at the end): the legacy PUT's count delta and its two coded refusals, and the DATE
-// columns' wire shape on every read surface.
+// columns' wire shape on GET /:id, the list and whats-put-up.
 //
 // quantity_value is NUMERIC -> the driver returns it as a JS string; readbacks coerce via Number().
 
@@ -680,7 +680,8 @@ describe('PUT /api/preservation/:id — a changed count moves what is left; a co
   })
 })
 
-describe('DATE columns leave every read surface as YYYY-MM-DD through the real driver (Put-Up 1a)', () => {
+// use-soon runs the same projectRow but lists only jars near their use-by, which a fresh deep-freezer jar is not.
+describe('DATE columns leave the read surfaces as YYYY-MM-DD through the real driver (Put-Up 1a)', () => {
   it('GET /:id, the list and whats-put-up carry preserved_at and use_by_target as the stored calendar day', async () => {
     setTestUserId(USER)
     const preserved = isoDate(-3)
