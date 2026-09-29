@@ -2607,7 +2607,11 @@ function RecordRow({ rec, onChanged, fetch }) {
     <div style={{ padding: '12px 16px', borderTop: `1px solid ${P.cream}`, display: 'flex', gap: 12 }}>
       {/* V4-PUTUPPHOTO-001 — renders nothing when there is no photo (or it fails to resolve), so
           rows without one keep their original full-width layout. */}
-      <PutUpPhotoThumb photoId={rec.photo_id} fetch={fetch} alt={`Photo of ${rec.quantity_unit} put up`} />
+      {/* Put-Up release 1a — from 1b a jar can have no size at all (the quantity pair is NULL), and
+          this name is what a screen reader says: "Photo of null put up" was the stale reader's answer.
+          No unit falls back to the thumb's own default name. */}
+      <PutUpPhotoThumb photoId={rec.photo_id} fetch={fetch}
+        alt={rec.quantity_unit ? `Photo of ${rec.quantity_unit} put up` : undefined} />
       <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: T.space.sm, alignItems: 'baseline' }}>
         <div style={{ fontWeight: 600, color: P.dark, fontSize: '0.92rem' }}>
