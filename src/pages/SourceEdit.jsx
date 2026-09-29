@@ -13,7 +13,7 @@
 //
 // NOT routed here. App.jsx belongs to the coordinator lane; it mounts this at /sources/:id.
 import React, { useEffect, useMemo, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { useSources, useSourceKinds } from '../hooks/useSources.js'
 import { useOptionalToast } from '../context/ToastContext.jsx'
@@ -70,6 +70,11 @@ export function saveErrorMessage(res) {
 export default function SourceEdit() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  // A deep link or a fresh window opens here with no page behind it in this app, and navigate(-1)
+  // would leave the app (or do nothing). The router's first entry is keyed 'default' — its own
+  // "history.length <= 1", and unlike window.history.length it is also true under MemoryRouter.
+  const goBack = () => (location.key === 'default' ? navigate('/season-stats', { replace: true }) : navigate(-1))
   const { fetch } = useApiFetch()
   // The list is not needed here; updateSource is. `enabled: false` keeps this page from fetching it.
   const { updateSource } = useSources({ enabled: false })
@@ -117,14 +122,14 @@ export default function SourceEdit() {
     if (saving) return
     const name = form.name.trim()
     if (name.length < 2) { setNameErr('Give it a name of at least two letters.'); return }
-    if (!dirty) { navigate(-1); return }
+    if (!dirty) { goBack(); return }
     setSaving(true); setSaveErr(null)
     const res = await updateSource(source.id, patch)
     setSaving(false)
     if (res?.error) { setSaveErr({ message: saveErrorMessage(res), existing: res.reason === 'exists' ? res.existing : null }); return }
     setSource(res.source); setForm(toForm(res.source))
     show?.(`Saved ${res.source.name}`)
-    navigate(-1)
+    goBack()
   }
 
   const fid = (k) => `source-edit-${k}`
@@ -205,7 +210,7 @@ export default function SourceEdit() {
               data-testid="source-edit-save" style={{ flex: 1 }}>
               Save
             </Button>
-            <Button type="button" variant="secondary" onClick={() => navigate(-1)}
+            <Button type="button" variant="secondary" onClick={goBack}
               data-testid="source-edit-cancel" style={{ flex: 1 }}>
               Cancel
             </Button>

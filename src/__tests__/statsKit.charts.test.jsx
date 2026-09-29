@@ -17,7 +17,7 @@ import { layoutSourceMix } from '../lib/stats-kit/charts/SourceMixChart.jsx'
 import { splitSources, sourceMetaLine } from '../lib/stats-kit/charts/SourceReportCard.jsx'
 import { layoutHeatClockCrop } from '../lib/stats-kit/charts/HeatClockCropChart.jsx'
 import { layoutCultivarClock } from '../lib/stats-kit/charts/CultivarClockChart.jsx'
-import { layoutHeatLadder, layoutHeatTube } from '../lib/stats-kit/charts/HeatLadderChart.jsx'
+import HeatLadderChart, { layoutHeatLadder, layoutHeatTube, TUBE_AXIS_CAPTION } from '../lib/stats-kit/charts/HeatLadderChart.jsx'
 import { layoutPepperBest } from '../lib/stats-kit/charts/PepperBestChart.jsx'
 import { layoutTomatoKeep } from '../lib/stats-kit/charts/TomatoKeepChart.jsx'
 import { layoutLongest } from '../lib/stats-kit/charts/LongestChart.jsx'
@@ -171,7 +171,7 @@ describe('chart layouts on the fixture', () => {
     expect(T.dots).toHaveLength(best.filter(r => typeof r.scoville_max === 'number').length)
     expect(T.hottest.text).toBe('Armageddon F1 1.3M')
     expect(T.hottest.x).toBeLessThanOrEqual(W)
-    expect(T.ticks.map(t => t.label)).toEqual(['0 SHU', '100', '1k', '10k', '100k', '1M'])
+    expect(T.ticks.map(t => t.label)).toEqual(['0 (sweet)', '100', '1k', '10k', '100k', '1M'])
     for (let i = 1; i < T.ticks.length; i++) expect(T.ticks[i].x).toBeGreaterThan(T.ticks[i - 1].x)
     // hotter never sits left of milder
     const byShu = [...T.dots].sort((a, b) => a.shu - b.shu)
@@ -343,5 +343,16 @@ describe('September size: "smaller" means the shown grams differ', () => {
     const L = layoutSepSize({ series: { rows } })
     expect(L.rows.find(r => r.key.startsWith('Red Grape')).color).toBe(L.rows.find(r => r.key.startsWith('Grew')).color)
     expect(verdictFor('sep_size', { meta: {}, series: { rows } })).toBe('1 of 3 tomatoes picked smaller fruit in September than in August (Big One 114 g → 75 g). Red Grape and Grew held their size.')
+  })
+})
+
+describe('heat tube words', () => {
+  it('no "SHU" on the card; Scoville is named once, in words', () => {
+    const { container } = render(<MemoryRouter><HeatLadderChart section={S.heat_ladder} /></MemoryRouter>)
+    const text = [...container.querySelectorAll('text')].map(t => t.textContent).join(' | ')
+    expect(text).not.toMatch(/SHU/)
+    expect(text.match(/Scoville/g)).toHaveLength(1)
+    expect(text).toContain('0 (sweet)')
+    expect(text).toContain(TUBE_AXIS_CAPTION)
   })
 })

@@ -38,7 +38,7 @@ export const STATS_REGISTRY = {
     title: 'Where your plants came from',
     Body: SourcesBody,
     table: (s) => ({
-      columns: ['Source', 'Kind', 'lb', 'Plantings', 'Picked', 'Lost', 'Saved lots'],
+      columns: ['Source', 'Kind', 'lb', 'Plantings', 'Picked', 'Lost', 'Seed saved from'],
       numeric: [false, false, true, true, true, true, true],
       rows: (s?.series?.cards ?? []).map((c) => [
         c.source_id == null ? NO_SELLER_LABEL : c.name, blank(kindWord(c.kind)), fmtLb(num(c.lb)),

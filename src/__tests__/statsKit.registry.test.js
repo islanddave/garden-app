@@ -64,6 +64,11 @@ describe('registry', () => {
     }
   })
 
+  // The field counts PLANTINGS seed was saved from, not lots (the card already says "seed saved from N").
+  it('the Sources table header says "Seed saved from", not "Saved lots"', () => {
+    expect(getRenderer('sources').table(fixture.sections.sources).columns).toEqual(['Source', 'Kind', 'lb', 'Plantings', 'Picked', 'Lost', 'Seed saved from'])
+  })
+
   it('table builders survive an empty section', () => {
     for (const id of ids) expect(() => getRenderer(id).table({}), id).not.toThrow()
   })

@@ -101,6 +101,22 @@ describe('SourceEdit — save', () => {
     })
   })
 
+  it('opened with nothing behind it (a deep link), Save lands on Season stats instead of leaving the app', async () => {
+    render(
+      <MemoryRouter initialEntries={[`/sources/${ID}`]}>
+        <Routes>
+          <Route path="/season-stats" element={<div data-testid="season-stats-page" />} />
+          <Route path="/sources/:id" element={<SourceEdit />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByTestId('source-edit-name')
+    typeInto('source-edit-notes', 'x')
+    fireEvent.click(screen.getByTestId('source-edit-save'))
+    await screen.findByTestId('season-stats-page')
+    expect(patchCalls()).toHaveLength(1)
+  })
+
   it('clearing a field sends null for it', async () => {
     renderPage()
     await screen.findByTestId('source-edit-name')

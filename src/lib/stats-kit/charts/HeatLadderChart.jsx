@@ -1,5 +1,5 @@
 // Heat ladder (round-1 design): the heat tube — one dot per single-plant pepper variety on a log
-// Scoville axis, a thermometer whose bulb holds the sweet (0 SHU) ones and the hottest named — above
+// Scoville axis, a thermometer whose bulb holds the sweet (0 heat) ones and the hottest named — above
 // the pods picked in each pepper heat band, hottest at the top, with pounds.
 import React from 'react'
 import { ChartFrame, Txt, Rect, Line, Dot } from './ChartFrame.jsx'
@@ -24,6 +24,9 @@ const DOT_GAP = 2 * DOT_R + 0.8
 const LABEL_Y = 12
 const STACK_TOP = 22
 const SHU_TICKS = [100, 1000, 10000, 100000, 1000000]
+// "SHU" is jargon on a plain-words page: the axis says "0 (sweet)" and names Scoville once, in words.
+export const TUBE_AXIS_CAPTION = 'Scoville heat units: each mark is ten times hotter'
+const CAPTION_H = 16
 
 // Pure: one dot per `best` row that carries a Scoville number; a null/junk scoville_max is skipped.
 // Dots at the same heat stack upward (lowest free level wins), the 0-SHU ones in two columns on the bulb.
@@ -67,8 +70,8 @@ export function layoutHeatTube(section) {
   }
   return {
     x, maxShu, dots, hottest, segs, tubeY,
-    ticks: [{ v: 0, x: TUBE_X0, label: '0 SHU' }, ...SHU_TICKS.map((t) => ({ v: t, x: x(t), label: fmtShu(t) }))],
-    height: tubeY + BULB_R + 22,
+    ticks: [{ v: 0, x: TUBE_X0, label: '0 (sweet)' }, ...SHU_TICKS.map((t) => ({ v: t, x: x(t), label: fmtShu(t) }))],
+    height: tubeY + BULB_R + 22 + CAPTION_H,
   }
 }
 
@@ -118,6 +121,7 @@ function HeatTube({ T }) {
           <Txt x={t.x} y={y + BULB_R + 16} anchor={t.v > 0 ? 'middle' : 'start'} tone="muted">{t.label}</Txt>
         </g>
       ))}
+      <Txt x={TUBE_X0 - BULB_R} y={y + BULB_R + 16 + CAPTION_H} tone="muted">{TUBE_AXIS_CAPTION}</Txt>
     </g>
   )
 }
