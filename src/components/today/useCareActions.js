@@ -303,9 +303,78 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
   // button twice) both start a fan-out and every row in it is logged twice.
   const bulkInFlightRef = useRef(false)
 
-  // `opts` is the V2 seam (plan-v2 §8 S4: concurrency, in-flight exclusion, a body event type). No
-  // option is read yet, so every call — with or without opts — is the V1 run below, one POST at a time.
+  // V5-TODAYREDESIGN-001 S4 — the V2 run (plan-v2 §6.7 as cut by §13 Simplify 1 + SF12). Taken only when
+  // the caller passes `opts`; V1 never does, so its run below is untouched. Differences, each on purpose:
+  //   · `keys` are the caller's own candidate set, used as given (only rows still on the list, of this
+  //     type). V2 decides bed-wait PER GROUP (D7: Outside only), so re-filtering here by the list-wide
+  //     `bedWait` would drop a covered group's beds from its own Water all.
+  //   · `concurrency` POSTs in flight (4), each `keepalive` so a run survives the page going away.
+  //   · `excludeInFlight`: keys already being written — a one-tap Water, another run — are left out
+  //     and reported, instead of the V1 whole-run guard dropping the second tap (BUG-BULKDOUBLELOGINFLIGHT-001).
+  //     Every claimed key sits in writeInFlightRef until ITS post settles, so logRow/moistRow refuse it too.
+  //   · `bodyEventType` posts that type instead of the row's own (Moist on a water row; `cover` for S5).
+  //   · no toast and no announce: V2 keeps its Undo on the done line and speaks through its own status
+  //     region (§11.1 C2). The result is returned — created {id,key,on}, failed keys, excluded keys.
+  //   · each row fades as its own post lands, dated by its write (the new-day rule above), so a run cut
+  //     short leaves exactly the landed rows faded. Nothing is persisted: the plan read re-derives done-ness.
+  const runBulkV2 = useCallback(async (etype, keys, opts) => {
+    const conc = Math.max(1, Math.floor(Number(opts.concurrency) || 1))
+    const want = keys instanceof Set ? keys : new Set(keys)
+    const excluded = []
+    const targets = rows.filter(r => {
+      if (!want.has(r.key) || r.eventType !== etype) return false
+      if (opts.excludeInFlight && (writeInFlightRef.current.has(r.key) || pendingKeys.has(r.key))) { excluded.push(r.key); return false }
+      return true
+    })
+    const created = [], failed = []
+    if (!targets.length) return { created, failed, excluded, total: 0 }
+    for (const r of targets) writeInFlightRef.current.add(r.key)
+    setPendingKeys(prev => { const n = new Set(prev); for (const r of targets) n.add(r.key); return n })
+    const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : NOOP
+    let next = 0, settled = 0
+    const worker = async () => {
+      while (next < targets.length) {
+        const row = targets[next++]
+        const body = eventBody(row, opts.bodyEventType)
+        try {
+          const res = await fetch('/api/events', { method: 'POST', body: JSON.stringify(body), keepalive: true })
+          const made = { id: (res && res.id) || null, key: row.key, on: body.event_date }
+          created.push(made)
+          fade([[made.key, made.on]])
+        } catch { failed.push(row.key) }
+        writeInFlightRef.current.delete(row.key)
+        setPending(row.key, false)
+        onProgress({ done: ++settled, total: targets.length })
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(conc, targets.length) }, worker))
+    return { created, failed, excluded, total: targets.length }
+  }, [rows, pendingKeys, fetch, fade, setPending])
+
+  // V2's Undo for a run (SF12): DELETE each created id, at most `concurrency` in flight, and un-fade only
+  // what is confirmed gone (a 404 is gone). An id-less write cannot be deleted, so it stays faded and is
+  // reported with the failures — the WS-A5 rule the V1 undo keeps: never re-surface a row whose log may
+  // still stand.
+  const undoMany = useCallback(async (created, { concurrency = 4 } = {}) => {
+    const list = Array.isArray(created) ? created : []
+    const undone = [], failed = []
+    let next = 0
+    const worker = async () => {
+      while (next < list.length) {
+        const c = list[next++]
+        if (!c || !c.id) { if (c) failed.push(c); continue }
+        try { await fetch('/api/events/' + c.id, { method: 'DELETE', keepalive: true }); undone.push(c) }
+        catch (e) { if (e?.status === 404) undone.push(c); else failed.push(c) }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), list.length) }, worker))
+    if (undone.length) unfade(undone.map(c => [c.key, c.on]))
+    return { undone, failed }
+  }, [fetch, unfade])
+
+  // `opts` is the V2 seam: present = the V2 run above; absent (every V1 call) = the V1 run below.
   const runBulk = useCallback(async (etype, keys, opts) => {
+    if (opts) return runBulkV2(etype, keys, opts)
     if (bulkInFlightRef.current) return
     const targets = candidatesFor(etype).filter(r => keys.has(r.key))
     if (!targets.length) { onBulkEnd(); return }
@@ -353,10 +422,10 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
     } finally {
       bulkInFlightRef.current = false
     }
-  }, [fetch, toast, candidatesFor, announce, fade, unfade, onBulkEnd])
+  }, [fetch, toast, candidatesFor, announce, fade, unfade, onBulkEnd, runBulkV2])
 
   return {
     logged, skipped, rows, pendingKeys, writeInFlightRef, bulkInFlightRef, bulkProgress, setBulkProgress,
-    candidatesFor, logRow, moistRow, skipRow, unskipRow, runBulk,
+    candidatesFor, logRow, moistRow, skipRow, unskipRow, runBulk, undoMany,
   }
 }
