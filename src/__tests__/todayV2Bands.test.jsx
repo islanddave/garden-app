@@ -12,8 +12,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act, cleanup } from '@testing-library/react'
 import { RETRY_DELAY_MS } from '../lib/useAmbientBandFetch.js'
 
+const navigateMock = vi.hoisted(() => vi.fn())
 vi.mock('react-router-dom', () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navigateMock,
   useLocation: () => ({ pathname: '/today' }),
   Link: ({ children, to, ...rest }) => <a href={typeof to === 'string' ? to : '#'} {...rest}>{children}</a>,
 }))
@@ -26,6 +27,7 @@ import '../lib/harvestWindows.js'
 import HarvestWatchBand, { useHarvestWatchFeed, watchSelection } from '../components/HarvestWatchBand.jsx'
 import AmbientBandNotice, { COULD_NOT_CHECK } from '../components/AmbientBandNotice.jsx'
 import ComposeHarvestBand, { useComposeHarvestFeed, composeBatchState } from '../components/ComposeHarvestBand.jsx'
+import PutUpUseSoonBand, { usePutUpUseSoonFeed, putUpSoonSlice, putUpSoonTitle } from '../components/PutUpUseSoonBand.jsx'
 
 const WATCH = '/api/harvests/watch?limit=200'
 const cand = (i, over = {}) => ({
@@ -35,7 +37,7 @@ const cand = (i, over = {}) => ({
 const nine = { candidates: Array.from({ length: 9 }, (_, i) => cand(i)), snoozed: [] }
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 30)) })
 
-beforeEach(() => { fetchMock.mockReset(); sessionStorage.clear() })
+beforeEach(() => { fetchMock.mockReset(); navigateMock.mockReset(); sessionStorage.clear() })
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 // The redesigned Today's shape: the page runs the hook, the band gets the result.
@@ -163,6 +165,54 @@ describe('ComposeHarvestBand — data hook + data / bare', () => {
     await settle()
     expect(seen.settled).toBe(true)
     expect(seen.data).toBeNull()
+  })
+})
+
+const USE_SOON = '/api/preservation/use-soon'
+const jar = (i, over = {}) => ({ id: 'j' + i, crop_display_name: 'Crop ' + i, quantity_value: i + 1, quantity_unit: 'bags', method: 'whole_freeze', storage_label: 'Freezer', use_by_status: i === 0 ? 'past_use_by' : 'use_soon', ...over })
+const SEVEN = { items: Array.from({ length: 7 }, (_, i) => jar(i)) }
+const soonWire = (body) => fetchMock.mockImplementation((u) => Promise.resolve(u === USE_SOON ? body : null))
+
+describe('PutUpUseSoonBand — data hook + data / bare', () => {
+  it('the data path renders the self-fetch path\'s HTML, and the band adds no fetch of its own', async () => {
+    soonWire(SEVEN)
+    const self = render(<PutUpUseSoonBand />)
+    await settle()
+    const selfHtml = self.container.innerHTML
+    expect(selfHtml).toContain('Crop 1')
+    cleanup()
+    fetchMock.mockClear()
+    const fed = render(<PageFed Band={PutUpUseSoonBand} useFeed={usePutUpUseSoonFeed} />)
+    await settle()
+    expect(fed.container.innerHTML).toBe(selfHtml)
+    expect(fetchMock.mock.calls.filter(([u]) => u === USE_SOON)).toHaveLength(1)
+  })
+
+  // The destination is PUTUP's (release 1a moves it to the filtered list): this pins only that the bare band keeps
+  // its one door to Put-Up and that the door still navigates — never where to.
+  it('bare: no card, eyebrow, title or landmark; the rows and the Open Put-Up door stay', async () => {
+    soonWire(SEVEN)
+    const { container } = render(<PageFed Band={PutUpUseSoonBand} useFeed={usePutUpUseSoonFeed} bare />)
+    await settle()
+    const band = screen.getByTestId('putup-use-soon')
+    expect(band.getAttribute('style')).toBeNull()
+    expect(band.hasAttribute('aria-label')).toBe(false)
+    expect(container.textContent).not.toMatch(/From your stores|Cook these next/)
+    expect(container.textContent).toContain('+2 more in your stores')
+    screen.getByRole('button', { name: 'Open Put-Up' }).click()
+    expect(navigateMock).toHaveBeenCalledTimes(1)
+    expect(String(navigateMock.mock.calls[0][0])).toMatch(/^\/put-up/)
+  })
+
+  it('putUpSoonSlice is the band\'s own: the jars a header names are the rows the band lists, in order', async () => {
+    soonWire(SEVEN)
+    const { container } = render(<PutUpUseSoonBand />)
+    await settle()
+    const rows = [...container.querySelectorAll('li')].map((li) => li.firstElementChild.firstElementChild.textContent)
+    const { shown, more } = putUpSoonSlice(SEVEN.items)
+    expect(shown.map(putUpSoonTitle)).toEqual(rows)
+    expect(more).toBe(2)
+    expect(putUpSoonSlice(null)).toEqual({ shown: [], more: 0 })
   })
 })
 
