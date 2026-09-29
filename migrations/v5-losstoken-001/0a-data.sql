@@ -56,9 +56,9 @@
 -- either token (read on prod), so nothing is armed or disarmed.
 --
 -- SAFETY: on a database with no legacy row the snapshot and both UPDATEs match nothing and only an empty
--- snapshot and the stamp land. Staging is expected to be one (cut from prod on 2026-08-11; the first prod
--- loss row is 2026-08-21) but was not read by this lane. On PROD expect `INSERT 0 N` with N >= 7 for the
--- snapshot: 0 there means the wrong host. ROLLBACK: 0r-rollback.sql.
+-- snapshot and the stamp land. Staging is one: cut from prod on 2026-08-11, before the first loss on
+-- 2026-08-21, and read-only on 2026-09-29 it held no reduction row of either spelling. On PROD expect
+-- `INSERT 0 N` with N >= 7 for the snapshot: 0 there means the wrong host. ROLLBACK: 0r-rollback.sql.
 
 BEGIN;
 

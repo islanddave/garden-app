@@ -147,11 +147,12 @@ The SPA line reads prod's `sw.js`, which read `v4.158.1-22e7db7` on 2026-09-29 (
 The gam-site greps prove the edits are on origin/main, not that a publish has run since: confirm that from gam-site's
 own publish record.
 
-**3. Staging first.** Expect `pre`: 9 PASS + 2 MANUAL, with the one prod-only gate n/a. Staging was cut from prod on
-2026-08-11 and the first prod loss is from 08-21, so staging most likely holds no legacy row; this lane did not read it
-(cleared for prod reads only), and the `sweep` run says what it holds. Expect 0a to print `INSERT 0 N` for the snapshot
-(N = the sweep's legacy total, most likely 0), `UPDATE N` / `UPDATE M` for the two tables, the NOTICE, the report,
-`INSERT 0 1` and `COMMIT`. Expect `post`: 10 PASS, the prod non-vacuity gate n/a.
+**3. Staging first.** Expect `pre`: 9 PASS + 2 MANUAL, with the one prod-only gate n/a (read-only on 2026-09-29 it
+printed exactly that). Staging was cut from prod on 2026-08-11, before the first loss on 08-21, and read-only on
+2026-09-29 its `sweep` was 0 on every line: no reduction row of either spelling. The first `sweep` run says what it
+holds at apply time. With nothing there, expect 0a to print `INSERT 0 0` for the snapshot, `UPDATE 0` twice, the NOTICE
+with three zeros, an empty report, `INSERT 0 1` and `COMMIT`: only the stamp and an empty snapshot land, and that is the
+correct result, not a wrong host. Expect `post`: 10 PASS, the prod non-vacuity gate n/a.
 
 ```zsh
 python3 scripts/gate_runner.py --migration migrations/v5-losstoken-001 --env staging --phase pre
@@ -230,12 +231,17 @@ rows, a per-plant family table, and plantings whose `qty_lost` differs from the 
 
 ## Verification at authoring (2026-09-29)
 
-**Nothing was applied to staging or prod.** Prod reads were read-only (owner URL by key name, host checked, `BEGIN
-TRANSACTION READ ONLY` + `SET LOCAL search_path TO DEFAULT`, or gate_runner, which is read-only by construction).
+**Nothing was applied to staging or prod.** Every read was read-only (owner URLs by key name, hosts checked; `BEGIN
+TRANSACTION READ ONLY` + `SET LOCAL search_path TO DEFAULT` for prod queries, gate_runner — read-only by construction —
+for every gate run, staging's included).
 
 - **Prod, this migration's gates:** `pre` 10 PASS + 2 MANUAL; `sweep` failed live 7, everything else 0, 7 per-plant
   groups, 0 `qty_lost` mismatches; `post --continuous-only` 4 PASS + 7 window-only. With the arming clause removed:
   three standing gates FAIL at 7, the fourth PASS at 0.
+- **Staging, this migration's gates (read-only):** `pre` 9 PASS + 2 MANUAL + 1 n/a; `sweep` 0 on all eight lines.
+- **The whole corpus with this directory in it, `--all --phase post --continuous-only`, read-only:** prod 793 PASS,
+  174 window-only, 13 MANUAL, 4 RETIRED, 0 FAIL, 0 ERROR; staging 769 PASS, 24 n/a, 174 window-only, 13 MANUAL, 4
+  RETIRED, 0 FAIL, 0 ERROR. The four standing gates PASS on both (vacuous: unapplied).
 - **Prod, the facts behind the design:** PostgreSQL 17.11; event_log triggers `prevent_ownership_transfer`,
   `set_updated_at`, `trg_audit_event_log_upd` (watches `event_type` and `metadata`), `trg_audit_event_log_del`; none on
   event_log_archive or event_batches; no constraint on event_log names either token; the archive's `event_type` column
