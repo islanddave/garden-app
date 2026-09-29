@@ -91,8 +91,8 @@ export default function GlanceCard({
                 {urgent && (
                   <>
                     {' · '}
-                    <Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em' }} />
-                    {` ${urgent.text}`}
+                    <Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />
+                    {urgent.text}
                   </>
                 )}
               </span>
