@@ -149,7 +149,7 @@ cleanup() {
   if [[ "$NAVP_DIRTY" == "true" && -n "${CLERK_SESSION_ID:-}" && -n "${NAVP_URL:-}" ]]; then
     local navp_jwt
     navp_jwt=$(mint_session_token)
-    curl -s --max-time 15 --connect-timeout 10 -X PATCH \
+    curl -sf --max-time 15 --connect-timeout 10 -X PATCH \
       -H "Authorization: Bearer $navp_jwt" -H "Content-Type: application/json" -o /dev/null \
       "$NAVP_URL" -d '{"more_pins": [], "bar_layout": {"order": ["today","garden","create","harvests","put-up"], "hidden": []}}' \
       && echo "✅ Cleanup: smoke account nav prefs restored" || true
@@ -158,7 +158,7 @@ cleanup() {
   if [[ "$NAVP_GB_DIRTY" == "true" && -n "${CLERK_SESSION_ID:-}" && -n "${NAVP_URL:-}" && -n "$NAVP_GB_RESTORE" ]]; then
     local navp_gb_jwt
     navp_gb_jwt=$(mint_session_token)
-    curl -s --max-time 15 --connect-timeout 10 -X PATCH \
+    curl -sf --max-time 15 --connect-timeout 10 -X PATCH \
       -H "Authorization: Bearer $navp_gb_jwt" -H "Content-Type: application/json" -o /dev/null \
       "$NAVP_URL" -d "{\"garden_group_by\": \"$NAVP_GB_RESTORE\"}" \
       && echo "✅ Cleanup: smoke account Garden grouping restored" || true
