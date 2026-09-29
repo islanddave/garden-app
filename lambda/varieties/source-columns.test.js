@@ -47,12 +47,15 @@ const HANDLERS = readdirSync(__dirname)
   .sort();
 
 // L-081 KEYED contract. Every column below verified present on live prod Neon 2026-09-04 through
-// information_schema.columns (source: 12 columns, source_kind: 7).
+// information_schema.columns (source: 12 columns, source_kind: 7) — EXCEPT instagram_url and
+// facebook_url, which v5-sourcecontact-001 adds. That migration must be applied to staging and prod
+// before this contract (and the handler that reads them) is promoted, or Phase 1 reds on prod.
+// created_by joined with the same change: PATCH /sources/:id reads it to decide who may edit.
 // The keyed form binds columns to ONE relation each, so this file cannot assert source's list onto
 // source_kind — the cross-product the unkeyed form produces is what made joined relations
 // unauditable in the first place.
 const AUDIT_COLUMNS = {
-  source: ['address', 'deleted_at', 'id', 'kind', 'locality', 'match_key', 'name', 'notes', 'website_url'],
+  source: ['address', 'created_by', 'deleted_at', 'facebook_url', 'id', 'instagram_url', 'kind', 'locality', 'match_key', 'name', 'notes', 'website_url'],
   source_kind: ['deleted_at', 'display_name', 'slug', 'sort_order'],
 };
 
@@ -106,8 +109,8 @@ const UNALIASED_ARMS = {
       file: 'index.js',
       // GET /api/varieties/sources — the list SourcePicker renders. This projection IS the wire
       // contract; deleted_at appears as a filter only and never reaches the client.
-      pin: /SELECT id, name, kind, locality, address, website_url, notes\s+FROM public\.source\s+WHERE deleted_at IS NULL\s+ORDER BY name ASC/,
-      columns: ['id', 'name', 'kind', 'locality', 'address', 'website_url', 'notes', 'deleted_at'],
+      pin: /SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes\s+FROM public\.source\s+WHERE deleted_at IS NULL\s+ORDER BY name ASC/,
+      columns: ['id', 'name', 'kind', 'locality', 'address', 'website_url', 'instagram_url', 'facebook_url', 'notes', 'deleted_at'],
     },
     {
       file: 'index.js',
@@ -116,8 +119,29 @@ const UNALIASED_ARMS = {
       // indexes. The ABSENCE of a deleted_at filter is also the point and is pinned for it — that
       // index is PARTIAL, so a soft-deleted row does not block the INSERT but IS the row the
       // caller wants restored, and deleted_at is selected here as DATA rather than as a filter.
-      pin: /SELECT id, name, kind, locality, address, website_url, notes, deleted_at\s+FROM public\.source\s+WHERE match_key = \$\{matchKey\}\s+ORDER BY deleted_at DESC NULLS FIRST\s+LIMIT 1/,
-      columns: ['id', 'name', 'kind', 'locality', 'address', 'website_url', 'notes', 'deleted_at', 'match_key'],
+      pin: /SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes, deleted_at\s+FROM public\.source\s+WHERE match_key = \$\{matchKey\}\s+ORDER BY deleted_at DESC NULLS FIRST\s+LIMIT 1/,
+      columns: ['id', 'name', 'kind', 'locality', 'address', 'website_url', 'instagram_url', 'facebook_url', 'notes', 'deleted_at', 'match_key'],
+    },
+    {
+      file: 'index.js',
+      // GET /api/varieties/sources/:id — what SourceEdit loads. Live rows only; created_by is NOT
+      // projected here, the screen has no use for it.
+      pin: /SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes\s+FROM public\.source\s+WHERE id = \$\{sourceId\}\s+AND deleted_at IS NULL\s+`/,
+      columns: ['id', 'name', 'kind', 'locality', 'address', 'website_url', 'instagram_url', 'facebook_url', 'notes', 'deleted_at'],
+    },
+    {
+      file: 'index.js',
+      // PATCH /api/varieties/sources/:id, the pre-write read. created_by is read for canEditSource
+      // (authz.js) and for nothing else — it never reaches the response.
+      pin: /SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes, created_by\s+FROM public\.source\s+WHERE id = \$\{sourceId\}\s+AND deleted_at IS NULL/,
+      columns: ['id', 'name', 'kind', 'locality', 'address', 'website_url', 'instagram_url', 'facebook_url', 'notes', 'created_by', 'deleted_at'],
+    },
+    {
+      file: 'index.js',
+      // The rename collision probe. LIVE rows only, unlike the POST probe above: this route never
+      // restores, and uq_source_match_key_live is partial, so a soft-deleted namesake blocks nothing.
+      pin: /SELECT id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes\s+FROM public\.source\s+WHERE match_key = \$\{newKey\}\s+AND deleted_at IS NULL\s+AND id <> \$\{sourceId\}\s+LIMIT 1/,
+      columns: ['id', 'name', 'kind', 'locality', 'address', 'website_url', 'instagram_url', 'facebook_url', 'notes', 'match_key', 'deleted_at'],
     },
   ],
   source_kind: [
@@ -127,6 +151,13 @@ const UNALIASED_ARMS = {
       // kind still satisfies fk_source_kind, so leaving this to the constraint would let a source
       // be typed to a retired kind.
       pin: /SELECT slug FROM public\.source_kind WHERE slug = \$\{kind\} AND deleted_at IS NULL/,
+      columns: ['slug', 'deleted_at'],
+    },
+    {
+      file: 'index.js',
+      // The same check on PATCH /sources/:id (V5-SOURCECONTACT-001), byte-identical. Pinned as the
+      // SECOND occurrence so each of the two unaliased reads has its own arm.
+      pin: /SELECT slug FROM public\.source_kind WHERE slug = \$\{kind\} AND deleted_at IS NULL[\s\S]*SELECT slug FROM public\.source_kind WHERE slug = \$\{kind\} AND deleted_at IS NULL/,
       columns: ['slug', 'deleted_at'],
     },
     {
@@ -162,8 +193,11 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/varieties source + source_kind colu
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact counts, not floors: a new statement against either table should be reviewed against the
     // contract rather than inherit it. Update these in the same commit that adds one.
-    expect(statementsFor('source')).toHaveLength(2);
-    expect(statementsFor('source_kind')).toHaveLength(4);
+    // source 2 -> 5 and source_kind 4 -> 5 on 2026-09-29 (V5-SOURCECONTACT-001): GET + PATCH
+    // /sources/:id add the by-id read, the pre-write read, the rename probe, and a second live-kind
+    // check (the PATCH's copy of the POST's).
+    expect(statementsFor('source')).toHaveLength(5);
+    expect(statementsFor('source_kind')).toHaveLength(5);
   });
 
   it('keeps public.source and public.source_kind apart despite the prefix', () => {

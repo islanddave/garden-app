@@ -55,3 +55,19 @@ export const MANAGED_PRINCIPAL_PATTERNS = [
 export function managedPrincipalPatterns(household) {
   return Array.isArray(household) && household.length > 1 ? MANAGED_PRINCIPAL_PATTERNS : [];
 }
+
+// V5-SOURCECONTACT-001 — who may PATCH /api/varieties/sources/:id.
+//
+// public.source is a SHARED catalogue (globally readable, RLS off, no ownership trigger — see
+// v5-sourceentity-001's header): created_by records who first typed the row, not who owns the place.
+// So a proven household member may edit ANY live source, including the ones intake/backfill
+// principals created ('system' and friends), which no human could otherwise correct. Everyone else
+// may edit only rows they created themselves — the pre-household owner-only behaviour, and the only
+// thing a stranger holding a valid Clerk token can reach.
+//
+// Same membership test as managedPrincipalPatterns (household.length > 1), for the same reason:
+// derived from householdScope's return value, fail-closed for a single-id household.
+export function canEditSource(household, userId, createdBy) {
+  if (Array.isArray(household) && household.length > 1 && household.includes(userId)) return true;
+  return typeof userId === 'string' && userId !== '' && createdBy === userId;
+}

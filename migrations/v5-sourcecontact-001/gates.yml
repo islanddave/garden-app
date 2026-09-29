@@ -1,0 +1,196 @@
+# gates.yml — v5-sourcecontact-001
+#
+# V5-SOURCECONTACT-001. public.source gains instagram_url + facebook_url (nullable text, scheme
+# CHECK), and trg_audit_source_upd is re-armed with both in its watched set (9 -> 11).
+#
+# NO `env:` KEY ANYWHERE: every gate reads pg_catalog / information_schema / schema_version, so each
+# means the same thing on staging and prod.
+#
+# ── READING THE WATCHED SET ─────────────────────────────────────────────────────────────────────
+# Parsed from pg_trigger.tgargs exactly as v5-plantsourceaudit-001 does: encode(tgargs,'escape')
+# renders each NUL separator as the four characters \000, so string_to_array(..., E'\\000') yields
+# the names plus a trailing empty element (filtered out where a count depends on it).
+#
+# ── POST GATES: VIOLATION-COUNT SHAPE, ARMED ON THIS MIGRATION'S RECEIPT ────────────────────────
+# `SELECT 1 WHERE EXISTS(receipt) AND <bad thing>`, expect 0. Vacuously green before the apply, a
+# real assertion after it, so the continuous ones can be swept on both environments with no flip.
+#
+# ── THE SIBLING GATE THIS MIGRATION EXISTS TO KEEP GREEN ────────────────────────────────────────
+# v5-sourceentity-001 post_audit_update_watches_every_mutable_column (continuous) derives the
+# expected watched list from information_schema.columns. Adding a column to public.source without
+# re-arming the trigger reds it. 0a does both in one transaction, so there is no window in which the
+# columns exist unwatched.
+
+pre:
+  - name: pre_source_table_present
+    note: >
+      The table this ALTERs. A wrong-database connection fails here by name instead of as an opaque
+      42P01 mid-apply.
+    sql: |
+      SELECT 1 WHERE to_regclass('public.source') IS NOT NULL
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_contact_columns_absent
+    note: >
+      Neither column exists yet. Counted rather than named so a partial prior apply (one of two) also
+      reds. continuous false — false forever once 0a lands.
+    sql: |
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'source'
+         AND column_name IN ('instagram_url', 'facebook_url')
+    expect: rowcount_eq
+    value: 0
+    continuous: false
+
+  - name: pre_audit_trigger_armed
+    note: >
+      0a DROPs and re-CREATEs trg_audit_source_upd. If it is missing, something removed the audit
+      log from public.source and that needs understanding before an apply quietly puts it back.
+    sql: |
+      SELECT 1 FROM pg_trigger t
+       WHERE t.tgrelid = to_regclass('public.source')
+         AND t.tgname = 'trg_audit_source_upd'
+    expect: rowcount_eq
+    value: 1
+
+  - name: pre_audit_trigger_list_is_the_known_nine
+    note: >
+      A DROP + CREATE rewrites the WHOLE argument list. 0a's list is v5-sourceentity-001's nine plus
+      the two new names; if the live list has since gained a tenth, 0a would silently drop it. Asserts
+      the live set is exactly those nine — 9 non-empty args, every one in the list. continuous false:
+      after 0a the set is eleven by design.
+    sql: |
+      SELECT 1 FROM pg_trigger t
+       WHERE t.tgrelid = to_regclass('public.source')
+         AND t.tgname = 'trg_audit_source_upd'
+         AND (SELECT count(*) FROM unnest(string_to_array(encode(t.tgargs, 'escape'), E'\\000')) AS w(col)
+               WHERE w.col <> '') = 9
+         AND NOT EXISTS (
+               SELECT 1 FROM unnest(string_to_array(encode(t.tgargs, 'escape'), E'\\000')) AS w(col)
+                WHERE w.col <> ''
+                  AND w.col NOT IN ('name', 'kind', 'locality', 'address', 'website_url', 'notes',
+                                    'created_by', 'created_at', 'deleted_at'))
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: pre_audit_function_present
+    note: >
+      CREATE TRIGGER resolves audit_stmt_update at creation time; a missing function would abort
+      the transaction AFTER the DROP had already been issued inside it. Reads pg_proc, not
+      information_schema.routines, which is privilege-filtered for garden_ro.
+    sql: |
+      SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'audit_stmt_update'
+    expect: rowcount_gte
+    value: 1
+
+  - name: pre_schema_version_readable
+    note: >
+      Every post gate arms off the receipt. An unreadable schema_version (the RLS-with-no-policy
+      trap found 2026-09-01) makes this whole file vacuously green; fix that first.
+    sql: |
+      SELECT 1 FROM public.schema_version LIMIT 1
+    expect: rowcount_eq
+    value: 1
+
+post:
+  - name: post_receipt_written
+    note: Apply-time receipt. continuous false — an apply record, not a standing invariant.
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcecontact-001'
+    expect: rowcount_eq
+    value: 1
+    continuous: false
+
+  - name: post_contact_columns_present_nullable_defaultless
+    note: >
+      Both columns exist as nullable text with no default. Nullable is the design: every existing
+      source has no social link, and a default would assert one nobody entered.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcecontact-001')
+         AND (SELECT count(*) FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'source'
+                 AND column_name IN ('instagram_url', 'facebook_url')
+                 AND data_type = 'text'
+                 AND is_nullable = 'YES'
+                 AND column_default IS NULL) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_contact_url_checks_intact
+    note: >
+      Both CHECKs exist, each on ITS OWN column, each asserting the http(s) scheme, and neither NOT
+      VALID. Matched by definition, not by name, so a constraint rebuilt looser (or pointed at the
+      wrong column) reds.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcecontact-001')
+         AND (SELECT count(*) FROM pg_constraint c
+               WHERE c.conrelid = to_regclass('public.source')
+                 AND c.contype = 'c'
+                 AND pg_get_constraintdef(c.oid) ~ '\^https\?://'
+                 AND pg_get_constraintdef(c.oid) ~ 'IS NULL'
+                 AND pg_get_constraintdef(c.oid) !~ 'NOT VALID'
+                 AND ((c.conname = 'chk_source_instagram_url' AND pg_get_constraintdef(c.oid) ~ 'instagram_url')
+                   OR (c.conname = 'chk_source_facebook_url'  AND pg_get_constraintdef(c.oid) ~ 'facebook_url'))
+             ) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_contact_columns_watched
+    note: >
+      THE POINT OF THE RE-ARM. Continuous, because the failure it guards is RECURRENCE: any later
+      DROP + CREATE of this trigger that forgets these two names makes a social-link-only edit leave
+      no audit row, with every other gate in this file still green.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcecontact-001')
+         AND (SELECT count(*)
+                FROM pg_trigger t,
+                     unnest(string_to_array(encode(t.tgargs, 'escape'), E'\\000')) AS w(col)
+               WHERE t.tgrelid = to_regclass('public.source')
+                 AND t.tgname = 'trg_audit_source_upd'
+                 AND w.col IN ('instagram_url', 'facebook_url')) <> 2
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_watched_column_was_lost
+    note: >
+      The DROP + CREATE rewrote all eleven names; omitting one of the original nine would be
+      invisible. Asserted per name rather than by a count, so it stays correct when the set widens
+      again later.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcecontact-001')
+         AND EXISTS (
+           SELECT 1
+             FROM unnest(ARRAY['name', 'kind', 'locality', 'address', 'website_url', 'notes',
+                               'created_by', 'created_at', 'deleted_at']) AS want(col)
+            WHERE NOT EXISTS (
+              SELECT 1
+                FROM pg_trigger t,
+                     unnest(string_to_array(encode(t.tgargs, 'escape'), E'\\000')) AS w(col)
+               WHERE t.tgrelid = to_regclass('public.source')
+                 AND t.tgname = 'trg_audit_source_upd'
+                 AND w.col = want.col))
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_trigger_shape_preserved
+    note: >
+      audit_stmt_update reads old_rows / new_rows and swallows its own failures as a WARNING, so a
+      re-arm that lost the transition tables or went FOR EACH ROW would log nothing and never error.
+      Same full-form triggerdef match v5-sourceentity-001 uses for this trigger.
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-sourcecontact-001')
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_trigger t
+            WHERE t.tgrelid = to_regclass('public.source')
+              AND t.tgname = 'trg_audit_source_upd'
+              AND pg_get_triggerdef(t.oid) ~ 'AFTER UPDATE ON public\.source REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION audit_stmt_update\(')
+    expect: rowcount_eq
+    value: 0

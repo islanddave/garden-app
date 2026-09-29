@@ -160,7 +160,8 @@ describe('varieties write predicates — source-level invariants', () => {
     // source_proj_rescope_project_id gates, so the assertion pins the SYMBOL and the MODULE rather
     // than the exact one-symbol import line it used to be.
     expect(SRC).toMatch(/import \{[^}]*\bhouseholdScope\b[^}]*\} from '\.\/household\.js'/);
-    expect(SRC).toMatch(/import \{ managedPrincipalPatterns \} from '\.\/authz\.js'/);
+    // V5-SOURCECONTACT-001 added canEditSource to this import; pinned by symbol + module, as above.
+    expect(SRC).toMatch(/import \{[^}]*\bmanagedPrincipalPatterns\b[^}]*\} from '\.\/authz\.js'/);
     expect(SRC).toMatch(/const household = householdScope\(userId\)/);
     expect(SRC).toMatch(/const managedPatterns = managedPrincipalPatterns\(household\)/);
   });
@@ -261,9 +262,10 @@ describe('varieties write predicates — source-level invariants', () => {
     // The count is a REVIEW GATE, not a ceiling: it goes up in the same change that adds an audited
     // write, and the for-loop below is the invariant. 4 -> 5 on 2026-09-04 (V4-SOURCEREG-001), the
     // restore arm of POST /api/varieties/sources — public.source carries trg_audit_source_upd, so
-    // that UPDATE is audited and must name the human who asked for it rather than 'system'.
+    // that UPDATE is audited and must name the human who asked for it rather than 'system'. 5 -> 6 on
+    // 2026-09-29 (V5-SOURCECONTACT-001), PATCH /api/varieties/sources/:id, same table, same reason.
     const binds = [...SRC.matchAll(/set_config\('app\.actor_clerk_sub', \$\{([^}]*)\}, true\)/g)].map((m) => m[1]);
-    expect(binds).toHaveLength(5);
+    expect(binds).toHaveLength(6);
     for (const b of binds) expect(b).toBe('auditActor(userId)');
     expect(SRC).not.toMatch(/set_config\('app\.actor_clerk_sub', \$\{[^}]*household/);
   });

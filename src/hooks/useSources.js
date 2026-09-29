@@ -24,10 +24,12 @@
 // serves both and the axis lives in the call site's `label`.
 //
 // Contract:
-//   useSources({ enabled }) -> { sources, loading, createSource(payload) }
-//     sources: [{ id, name, kind, locality, address, website_url, notes }]
-//     createSource({ name, kind?, locality?, address?, website_url?, notes? })
+//   useSources({ enabled }) -> { sources, loading, createSource(payload), updateSource(id, patch) }
+//     sources: [{ id, name, kind, locality, address, website_url, instagram_url, facebook_url, notes }]
+//     createSource({ name, kind?, locality?, address?, website_url?, instagram_url?, facebook_url?, notes? })
 //       -> { source } | { error, existing, reason }
+//     updateSource(id, { ...only the fields to change })  — PATCH /api/varieties/sources/:id
+//       -> { source } | { error, existing, reason, status }   (409 'exists' = the new name is taken)
 //   useSourceKinds({ enabled }) -> { sourceKinds, loading, createSourceKind(payload) }
 //     sourceKinds: [{ slug, display_name, sort_order }]
 //     createSourceKind({ display_name })  — `slug` is SERVER-DERIVED and must never be sent
@@ -123,7 +125,23 @@ export function useSources({ enabled = true } = {}) {
     }
   }, [fetch])
 
-  return { sources, loading, createSource }
+  // PARTIAL: send only the keys that changed; a blank optional field clears it server-side. The
+  // row is REPLACED in place and the list re-sorted, because a rename moves it. `status` rides on
+  // the failure so a screen can tell "you can't edit this" (403) from "gone" (404).
+  const updateSource = useCallback(async (id, patch) => {
+    try {
+      const updated = await fetch(`${SOURCES_PATH}/${encodeURIComponent(id)}`, {
+        method: 'PATCH', body: JSON.stringify(patch),
+      })
+      setSources(prev =>
+        prev.map(s => (String(s.id) === String(updated.id) ? updated : s)).sort(byName))
+      return { source: updated }
+    } catch (err) {
+      return { ...failure(err, 'Failed to save source'), status: err?.status ?? null }
+    }
+  }, [fetch])
+
+  return { sources, loading, createSource, updateSource }
 }
 
 export function useSourceKinds({ enabled = true } = {}) {
