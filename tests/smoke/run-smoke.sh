@@ -649,6 +649,95 @@ else
         echo "⚠️  WARN [write:seen] no test planting (block D skipped) — seen-contract assert NOT run"
       fi
 
+      # ── D3) End of season + Catch up write paths → read-back (V5-SEASONEND-001, V5-PLANTSTARTDATES-001; L-108) ──
+      # Both pages write through PUT /api/plants/:id alone. End sends {status:"ended"} and the PUT must
+      # record exactly one status_change event (metadata.status_to) in the same transaction; Undo sends
+      # the row's own prior status back; Catch up sends a month-level sown_at on the 15th with
+      # sown_at_approx:true. The smoke planting is POSTed with no status, and a null cannot be put back
+      # (the PUT merges with COALESCE, which is why the page never lists one), so a real status is set
+      # first and that is the prior status Undo restores. Events are read on the planting-scoped list
+      # (project_id + plant_id, PlantingDetail's read). The workflow's L-058 sweep deletes smoke events
+      # by project and by plant, so no new cleanup line is needed.
+      if [[ -n "$CREATED_PLANT_ID" ]]; then
+        CLERK_JWT=$(mint_session_token)
+        SE_PLANT_URL="${STAGING_API_PLANTS%/}/api/plants/${CREATED_PLANT_ID}"
+        SE_EVENTS_URL="${STAGING_API_EVENTS%/}/api/events?project_id=${CREATED_PROJECT_ID}&plant_id=${CREATED_PLANT_ID}&limit=200"
+        # Emits the count of this planting's status_change events (to status $1, or all when $1 is
+        # empty), or a non-numeric reason when the read fails.
+        se_status_changes() {
+          local TMP CODE
+          TMP=$(mktemp)
+          CODE=$(curl -s --max-time 30 --connect-timeout 10 \
+            -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+            -o "$TMP" -w "%{http_code}" "$SE_EVENTS_URL") || CODE="000"
+          if [[ "${CODE:0:1}" == "2" ]]; then
+            jq -r --arg to "$1" 'if type == "array" then [.[] | select(.event_type == "status_change" and ($to == "" or .metadata.status_to == $to))] | length else "not-an-array" end' "$TMP" 2>/dev/null || echo "unparseable"
+          else
+            echo "http-$CODE"
+          fi
+          rm -f "$TMP"
+        }
+        SE_PRIOR="vegetative"
+        auth_request "write:PUT /plants/$CREATED_PLANT_ID status=$SE_PRIOR (the prior status)" \
+          "$SE_PLANT_URL" "PUT" "{\"status\": \"$SE_PRIOR\"}" >/dev/null || true
+        assert_readback "write:plant-status-prior" "$SE_PLANT_URL" ".status" "$SE_PRIOR"
+        SC_BEFORE=$(se_status_changes "")
+
+        # (a) End: status reads back ended, and exactly one new status_change event, to "ended".
+        auth_request "write:PUT /plants/$CREATED_PLANT_ID status=ended (End of season)" \
+          "$SE_PLANT_URL" "PUT" '{"status": "ended"}' >/dev/null || true
+        assert_readback "write:season-end-status" "$SE_PLANT_URL" ".status" "ended"
+        SC_AFTER=$(se_status_changes "")
+        SC_ENDED=$(se_status_changes "ended")
+        SC_WANT="n/a"
+        if [[ "$SC_BEFORE" =~ ^[0-9]+$ ]]; then SC_WANT=$((SC_BEFORE + 1)); fi
+        if [[ "$SC_AFTER" == "$SC_WANT" && "$SC_ENDED" == "1" ]]; then
+          echo "✅ PASS [write:season-end-status-event] one new status_change event, status_to=ended ($SC_BEFORE → $SC_AFTER)"
+          PASS=$((PASS+1))
+        else
+          echo "❌ FAIL [write:season-end-status-event] status_change events before=$SC_BEFORE after=$SC_AFTER (want $SC_WANT), to ended=$SC_ENDED (want 1)"
+          FAIL=$((FAIL+1))
+        fi
+
+        # (b) Undo: the row's own prior status goes back.
+        auth_request "write:PUT /plants/$CREATED_PLANT_ID status=$SE_PRIOR (Undo)" \
+          "$SE_PLANT_URL" "PUT" "{\"status\": \"$SE_PRIOR\"}" >/dev/null || true
+        assert_readback "write:season-end-undo-status" "$SE_PLANT_URL" ".status" "$SE_PRIOR"
+
+        # (c) Catch up: the 15th of last month (never a future day), marked approximate. The date is
+        # compared on its first 10 characters, whether the read returns a date or a timestamp.
+        CLERK_JWT=$(mint_session_token)
+        CU_SOWN="$(utc_days_ago 31 | cut -c1-7)-15"
+        auth_request "write:PUT /plants/$CREATED_PLANT_ID sown_at=$CU_SOWN approx (Catch up)" \
+          "$SE_PLANT_URL" "PUT" "{\"sown_at\": \"$CU_SOWN\", \"sown_at_approx\": true}" >/dev/null || true
+        assert_readback "write:catch-up-sown-at" "$SE_PLANT_URL" '(.sown_at // "")[0:10]' "$CU_SOWN"
+        assert_readback "write:catch-up-sown-approx" "$SE_PLANT_URL" ".sown_at_approx" "true"
+
+        # (d) The End of season read: 200, { plants: [...] }, every row carrying kind, variety_ref and
+        # last_logged_at. The route returns EVERY live planting in a live container (the frost-band
+        # rule runs in the page, src/lib/seasonEnd.js), so the smoke planting must be in it — even though
+        # the page itself would not list it: block D cleared its cultivar, so it has no crop, no band.
+        SE_LIST=$(mktemp)
+        SE_LIST_HTTP=$(curl -s --compressed --max-time 30 --connect-timeout 10 \
+          -H "Authorization: Bearer $CLERK_JWT" -H "Content-Type: application/json" \
+          -o "$SE_LIST" -w "%{http_code}" "${STAGING_API_PLANTS%/}/api/plants/season-end") || SE_LIST_HTTP="000"
+        SE_SHAPE=$(jq -r --arg id "$CREATED_PLANT_ID" '
+          if (.plants | type) != "array" then "not-an-array"
+          elif ([.plants[] | select(has("kind") and has("variety_ref") and has("last_logged_at") | not)] | length) > 0 then "a-row-lacks-kind/variety_ref/last_logged_at"
+          elif ([.plants[] | select(.id == $id)] | length) != 1 then "smoke-planting-not-listed"
+          else "ok, \(.plants | length) rows" end' "$SE_LIST" 2>/dev/null || echo "unparseable")
+        rm -f "$SE_LIST"
+        if [[ "$SE_LIST_HTTP" == "200" && "$SE_SHAPE" == ok* ]]; then
+          echo "✅ PASS [read:season-end-list] HTTP 200, $SE_SHAPE, the smoke planting among them"
+          PASS=$((PASS+1))
+        else
+          echo "❌ FAIL [read:season-end-list] HTTP $SE_LIST_HTTP, $SE_SHAPE"
+          FAIL=$((FAIL+1))
+        fi
+      else
+        echo "⚠️  WARN [write:season-end] no test planting (block D skipped) — End/Undo/Catch up asserts NOT run"
+      fi
+
       # Refresh the token for the back half of the write path (E/F/G add more round trips).
       CLERK_JWT=$(mint_session_token)
 
