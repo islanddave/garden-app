@@ -156,7 +156,6 @@ vi.mock('../context/AuthContext.jsx', async (importOriginal) => ({
   ...(await importOriginal()),
   useAuth: () => ({ user: { id: 'u1' }, profile: { display_name: 'Dave' }, signOut: signOutSpy }),
 }))
-vi.mock('../components/CatchUpBadge.jsx', () => ({ default: () => null }))
 vi.mock('../components/BottomNavDot.jsx', () => ({ default: () => null }))
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: apiFetchSpy, getToken: () => Promise.resolve(null) }),

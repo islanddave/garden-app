@@ -57,7 +57,6 @@ vi.mock('../context/AuthContext.jsx', () => ({
   }),
 }))
 // Clerk-dependent children with their own suites — stubbed, same as BottomNav.test.jsx.
-vi.mock('../components/CatchUpBadge.jsx', () => ({ default: () => null }))
 vi.mock('../components/BottomNavDot.jsx', () => ({ default: () => null }))
 vi.mock('../lib/api.js', () => ({
   useApiFetch: () => ({ fetch: () => Promise.resolve(null), getToken: () => Promise.resolve(null) }),

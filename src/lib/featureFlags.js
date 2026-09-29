@@ -7,7 +7,11 @@ export const VARIETY_REF_UI_SHIPPED = false // Flips true when VARIETY-REF S4 sh
 // /plants/catch-up, whose S1.1 editor was never built — it shipped into V2 as a
 // "coming soon" dead-end. Badge is hidden until the editor ships. Flip true when the
 // S1.1 catch-up editor lands (planned 2.1). See v2-increment-audit-2.0.1-to-2.1-V001.
-export const CATCH_UP_EDITOR_SHIPPED = false
+// FLIPPED TRUE with V5-PLANTSTARTDATES-001: /plants/catch-up is now the rough-start-date editor.
+// It returns as a plain More row with NO count — the old CatchUpBadge's count pill was a
+// fill-your-data nudge, which Reward UX V102 puts out of scope, so the badge was deleted, not
+// re-enabled. Rollback = flip false: the row is not drawn and the route stays reachable by URL.
+export const CATCH_UP_EDITOR_SHIPPED = true
 
 // MVP-Critter Session 4 (revision §3.24 + §6 deferred note): SYSTEM (push) notifications
 // option in Settings → Notifications tri-state toggle. Bi-state literal const — when

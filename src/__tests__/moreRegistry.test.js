@@ -117,8 +117,11 @@ describe('the rows — every door leads somewhere real', () => {
     expect(byId.seeds).toMatchObject({ sub: 'My seeds · Saved seeds · Sow now', testId: 'more-seeds' })
     expect(byId.collection.sub).toBe("Who's been visiting")
     expect(byId.releases.adornment).toBe('whatsNew')
-    // Only catch-up is unpinnable: it is a component row, not a SheetRowLink.
-    expect(MORE_ROWS.filter(r => r.pinnable === false).map(r => r.id)).toEqual(['catch-up'])
+    // V5-PLANTSTARTDATES-001: catch-up was the one unpinnable row (a CatchUpBadge component row). It is
+    // a plain link row now, with a fixed subtitle and no count — so no row is unpinnable.
+    expect(MORE_ROWS.filter(r => r.pinnable === false).map(r => r.id)).toEqual([])
+    expect(byId['catch-up']).toMatchObject({ to: '/plants/catch-up', label: 'Catch up', sub: 'Add missing start dates' })
+    expect(byId['catch-up']).not.toHaveProperty('component')
   })
 })
 
@@ -208,7 +211,9 @@ describe('resolvePins — entry by entry, never throws', () => {
 describe('layoutMoreSheet — I1 at the data level: exactly one door per destination', () => {
   const idsOf = (layout) => [...layout.pinned, ...layout.sections.flatMap(s => s.rows)].map(r => r.id)
   const spaceOff = MORE_ROWS.map(r => (r.id === 'space' ? { ...r, enabled: false } : r))
-  const catchUpOn = MORE_ROWS.map(r => (r.id === 'catch-up' ? { ...r, enabled: true } : r))
+  // CATCH_UP_EDITOR_SHIPPED is on in MORE_ROWS since V5-PLANTSTARTDATES-001, so the third flag state
+  // enumerated is now its OFF arm (the rollback lever).
+  const catchUpOff = MORE_ROWS.map(r => (r.id === 'catch-up' ? { ...r, enabled: false } : r))
   const movedSets = [[], ['garden'], ['harvests'], ['put-up'], ['garden', 'harvests'], ['garden', 'put-up'],
     ['harvests', 'put-up'], ['garden', 'harvests', 'put-up']]
   const pinSets = [
@@ -220,7 +225,7 @@ describe('layoutMoreSheet — I1 at the data level: exactly one door per destina
   // home too (drop the home filter) → a duplicate; drop the moved rows → a lost door; draw a flag-off
   // row → a door to a route that does not exist. RESULT: RED for each.
   it('every drawable row appears once — pinned or at home, never both, never neither', () => {
-    for (const rows of [MORE_ROWS, spaceOff, catchUpOn]) {
+    for (const rows of [MORE_ROWS, spaceOff, catchUpOff]) {
       for (const moved of movedSets) {
         for (const pins of pinSets) {
           const layout = layoutMoreSheet({ pins, moved, rows })
@@ -264,11 +269,12 @@ describe('layoutMoreSheet — I1 at the data level: exactly one door per destina
     expect(layout.sections.find(s => s.key === 'help').rows.map(r => r.id)).toContain('helper')
   })
 
-  it('a pin on a tab that is back on the bar sleeps; a flag-off row’s pin sleeps; catch-up never pins', () => {
+  it('a pin on a tab that is back on the bar sleeps; a flag-off row’s pin sleeps; catch-up pins like any row', () => {
     expect(layoutMoreSheet({ pins: ['put-up'], moved: [] }).pinned).toEqual([])
     expect(layoutMoreSheet({ pins: ['put-up'], moved: ['put-up'] }).pinned.map(r => r.id)).toEqual(['put-up'])
     expect(layoutMoreSheet({ pins: ['space'], rows: spaceOff }).pinned).toEqual([])
-    expect(layoutMoreSheet({ pins: ['catch-up'], rows: catchUpOn }).pinned).toEqual([])
+    expect(layoutMoreSheet({ pins: ['catch-up'], rows: catchUpOff }).pinned).toEqual([])
+    expect(layoutMoreSheet({ pins: ['catch-up'] }).pinned.map(r => r.id)).toEqual(['catch-up'])
   })
 
   // I10, from the render side: relabel the row and the pin still holds, because it is keyed by id.
