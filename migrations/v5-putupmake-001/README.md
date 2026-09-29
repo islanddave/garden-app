@@ -158,6 +158,25 @@ Both corpora `--all --phase post --continuous-only` (FAIL counts before 0a / aft
   stays green: appending kitchen_batch's one new column keeps "view = batch + 8" true.) So the Tuesday cron
   would red on the first database 1b reaches until that commit is on main — 05 §1, A(iii).
 
+**Re-measured for the sitting, 2026-09-29 (review-F-prepromote-early I6).** The MAIN line above is `22e7db7c`; the
+main that exists at the sitting is `421a1f943f61fd762f7ac1087f65cb602458e45b` or later, which adds V5-LOSSTOKEN-001,
+STATS's `v5-sourcecontact-001` + `v5-seasonstats-001`, and release 1a's restatement of the four gates above. The
+replica was re-seeded from scratch on local PG 17: the same prod dump, 153 stamps and V4 fixture, plus STATS's two 0a
+files (applied to prod and staging on 2026-09-29; byte-identical in `421a1f94` and the train) = 155 stamps; then this
+0a; then `v5-fermentpath-001`'s. `--all --phase post --continuous-only`, every gate keyed by migration directory +
+name (`--json`); FAIL counts before 1b / after 1b / after F:
+
+| corpus | gates | FAIL | gates whose status changed, before 1b → after F |
+|---|---|---|---|
+| main-to-be `421a1f94` | 1009 | 29 / 29 / 29 | 0 |
+| putup-train `a4491acc` (1b's and F's own gates included) | 1054 | 29 / 29 / 29 | 0 |
+| old main `22e7db7c` (continuity with the line above) | 973 | 29 / 33 / 33 | 4: the four named above, PASS → FAIL |
+
+**0 new FAIL** in both current corpora. Their 29 are the same set, identical before and after, and all are the
+replica-only reference-data gates listed above (none names a kitchen, preservation, STATS or LOSSTOKEN relation).
+Repeated with LOSSTOKEN's `0a-data.sql` also applied first (its stamp present, as it will be if its backfill runs
+before the sitting): the same counts, the same 29, 0 status changes.
+
 Archive routines on the fixture (+ a container C1 whose harvest feeds the batch):
 
 | case | prod bodies (pre-1b) | 1b |

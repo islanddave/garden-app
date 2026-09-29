@@ -146,6 +146,25 @@ Both corpora `--all --phase post --continuous-only` (FAIL counts pre-1b / after 
 * **MAIN (`22e7db7cbc787129706126dbe5bfdb93ab8d63e7`): 29 / 33 / 33.** The four added at 1b are the four release 1a
   restates (1b README); F adds none.
 
+**Re-measured for the sitting, 2026-09-29 (review-F-prepromote-early I6).** The MAIN line above is `22e7db7c`; the
+main that exists at the sitting is `421a1f943f61fd762f7ac1087f65cb602458e45b` or later (V5-LOSSTOKEN-001, STATS's two
+directories, release 1a's restated gates). The replica was re-seeded from scratch (the same prod dump, 153 stamps and V4
+fixture, plus STATS's two 0a files, byte-identical in `421a1f94`, the train and `stats-integ` @ 9d32464 = 155 stamps),
+then 1b's 0a, then this 0a. `--all --phase post --continuous-only`, every gate keyed by migration directory + name
+(`--json`); FAIL counts before 1b / after 1b / after F:
+
+| corpus | gates | FAIL | gates whose status changed, before 1b → after F |
+|---|---|---|---|
+| main-to-be `421a1f94` | 1009 | 29 / 29 / 29 | 0 |
+| putup-train `a4491acc` (1b's and F's own gates included) | 1054 | 29 / 29 / 29 | 0 |
+| old main `22e7db7c` (continuity with the line above) | 973 | 29 / 33 / 33 | 4: 1a's four restated gates, PASS → FAIL at 1b |
+
+**0 new FAIL** in both current corpora. Their 29 are the same set, identical before and after: the replica-only
+reference-data gates of 1b's README (none names a kitchen, preservation, STATS or LOSSTOKEN relation). In the train
+corpus after F, 1b's directory reads 25 PASS + 1 window-only and this one 18 PASS + 1 window-only. Repeated with
+LOSSTOKEN's `0a-data.sql` also applied first (its stamp present, as it will be if its backfill runs before the
+sitting): the same counts, the same 29, 0 status changes.
+
 **Integration (real Postgres, CI):** `integration-test.yml` on `lane-F-migration-20260929` — run 36624301265 @
 `3ebbd5d`: the train step applied `v5-putupmake-001` then `v5-fermentpath-001` to a fork of (post-STATS) staging, and
 60 integration files / 919 tests passed against 1b+F.
