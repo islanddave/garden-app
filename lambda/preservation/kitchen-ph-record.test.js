@@ -38,6 +38,13 @@ function mockSql(queue = []) {
     }
     return Promise.resolve(queue.shift());
   };
+  // sql.transaction([...]): each element already ran (this mock is eager), in order — the batch is
+  // their results. Recorded so a test can assert which statements shared one transaction.
+  fn.batches = [];
+  fn.transaction = async (qs) => {
+    fn.batches.push(calls.slice(calls.length - qs.length));
+    return Promise.all(qs);
+  };
   fn.calls = calls;
   return fn;
 }
@@ -134,12 +141,14 @@ describe('POST /stages — the reading reaches the column VERBATIM', () => {
       ...stageCall({ stage_kind: 'tended', ph_reading: '3.20', ph_read_at: READ_AT }), sql,
     });
     const insert = sql.calls.find((c) => c.norm.includes('INSERT INTO kitchen_stage_log'));
+    // Put-Up release 1b adds entered_precision to the INSERT and entered_precision / voids_id to the
+    // projection; the pH pair sits where it did.
     expect(insert.norm).toContain(
       'batch_id, stage_kind, label, amount, amount_unit, cue_observed, '
-      + 'entered_at, ph_reading, ph_read_at, storage_location_id, photo_id, note, created_by');
+      + 'entered_at, entered_precision, ph_reading, ph_read_at, storage_location_id, photo_id, note, created_by');
     expect(insert.norm).toContain(
-      'RETURNING id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at, '
-      + 'ph_reading, ph_read_at, storage_location_id, photo_id, note, created_by, created_at');
+      'RETURNING id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at, entered_precision, '
+      + 'ph_reading, ph_read_at, voids_id, storage_location_id, photo_id, note, created_by, created_at');
   });
 
   // NO COALESCE ON ph_read_at, and the clause is asserted as a full literal because that is the only
@@ -152,7 +161,9 @@ describe('POST /stages — the reading reaches the column VERBATIM', () => {
       ...stageCall({ stage_kind: 'tended', ph_reading: '4.60', ph_read_at: READ_AT }), sql,
     });
     const insert = sql.calls.find((c) => c.norm.includes('INSERT INTO kitchen_stage_log'));
-    expect(insert.norm).toContain('COALESCE( ? ::timestamptz, now()), ? ::numeric, ? ::timestamptz,');
+    // 1b: entered_at's legacy arm still coalesces to now(); then entered_precision, then the pH pair
+    // with NO coalesce.
+    expect(insert.norm).toContain('COALESCE( ? ::timestamptz, now()) END, ? ::text, ? ::numeric, ? ::timestamptz,');
     expect(insert.values).toContain(READ_AT);
   });
 
@@ -179,8 +190,8 @@ describe('GET /:id — the reading history is a list of dated rows, never a summ
     expect(res.status).toBe(200);
     const stages = sql.calls.find((c) => c.norm.includes('FROM kitchen_stage_log'));
     expect(stages.norm).toContain(
-      'SELECT id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at, '
-      + 'ph_reading, ph_read_at, storage_location_id, photo_id, note, created_by, created_at');
+      'SELECT id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at, entered_precision, '
+      + 'ph_reading, ph_read_at, voids_id, storage_location_id, photo_id, note, created_by, created_at');
   });
 
   // ⚠ NO AGGREGATE OVER READINGS, EVER — the ruling, expressed against what the route SENDS. A batch

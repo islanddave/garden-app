@@ -20,6 +20,7 @@ import {
   KITCHEN_BATCH_KINDS, KITCHEN_START_PRECISIONS, KITCHEN_START_ANCHOR_KINDS, VERIFIABLE_ANCHOR_KINDS,
   KITCHEN_OUTCOMES,
   KITCHEN_STAGE_KINDS, KITCHEN_INPUT_KINDS, KITCHEN_QTY_UNITS,
+  KITCHEN_ENTERED_PRECISIONS, KITCHEN_STAGE_KINDS_ALL,
   KITCHEN_BATCH_EDITABLE_COLUMNS, KITCHEN_BATCH_SERVER_OWNED_COLUMNS,
   KITCHEN_BATCH_CLOSE_COLUMNS, KITCHEN_PREDICATE_MAX_SPAN_DAYS,
   STAGE_LOG_ORDER, INPUT_ORDER, BATCH_LIST_ORDER,
@@ -32,6 +33,16 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DDL = readFileSync(
   resolve(__dirname, '../../migrations/v5-inflightbatch-001/0a-additive-ddl.sql'), 'utf8');
+// Put-Up release 1b re-states the CHECKs it widens (DROP + ADD under the same name), written `IN (...)`.
+const DDL_1B = readFileSync(
+  resolve(__dirname, '../../migrations/v5-putupmake-001/0a-additive-ddl.sql'), 'utf8');
+function ddl1bIn(constraintName) {
+  const at = DDL_1B.indexOf(`ADD CONSTRAINT ${constraintName}`);
+  expect(at, `no ADD CONSTRAINT ${constraintName} in the 1b migration`).toBeGreaterThan(-1);
+  const open = DDL_1B.indexOf(' IN (', at);
+  const close = DDL_1B.indexOf(')', open);
+  return [...DDL_1B.slice(open, close).matchAll(/'([^']*)'/g)].map((m) => m[1]);
+}
 
 // The vocabulary literal a named CHECK constrains. ARRAY[...] never nests a ']' in this file, so the
 // first ']' after the constraint's ARRAY[ is its close.
@@ -49,8 +60,15 @@ describe('the vocabularies match the migration, not a memory of it', () => {
   // unreachable. Both directions, and both sourced from the schema authority rather than restated.
   // Mutation: drop 'age' from KITCHEN_BATCH_KINDS, or add 'pickle' to it. Either turns this red.
   it('kind', () => expect(KITCHEN_BATCH_KINDS).toEqual(ddlArray('chk_kitchen_batch_kind')));
+  // Put-Up release 1b widened this CHECK in place (+ season, year); the widened list is the 1b DDL's.
   it('start_precision', () =>
-    expect(KITCHEN_START_PRECISIONS).toEqual(ddlArray('chk_kitchen_batch_start_precision')));
+    expect(KITCHEN_START_PRECISIONS).toEqual(ddl1bIn('chk_kitchen_batch_start_precision')));
+  it('1b: chk_ksl_entered_precision carries the same eight words', () =>
+    expect(KITCHEN_ENTERED_PRECISIONS).toEqual(ddl1bIn('chk_ksl_entered_precision')));
+  it('1b: KITCHEN_STAGE_KINDS_ALL is chk_ksl_stage_kind as 1b widened it; the shipped five stay first', () => {
+    expect(KITCHEN_STAGE_KINDS_ALL).toEqual(ddl1bIn('chk_ksl_stage_kind'));
+    expect(KITCHEN_STAGE_KINDS_ALL.slice(0, 5)).toEqual(KITCHEN_STAGE_KINDS);
+  });
   it('start_anchor_kind', () =>
     expect(KITCHEN_START_ANCHOR_KINDS).toEqual(ddlArray('chk_kitchen_batch_anchor_kind')));
   it('outcome', () => expect(KITCHEN_OUTCOMES).toEqual(ddlArray('chk_kitchen_batch_outcome')));
@@ -82,6 +100,19 @@ describe('every CHECK this schema ships has words a cook can act on', () => {
   });
 
   it.each(named)('%s has a message', (name) => {
+    const msg = kitchenErrorMessage({ code: '23514', constraint: name });
+    expect(msg).toBeTruthy();
+    expect(msg).not.toContain('chk_');
+  });
+
+  // Put-Up release 1b: every kitchen CHECK 1b adds or re-states has words too. (Its preservation_log
+  // CHECKs are worded by jarRules.js's jarErrorMessage.)
+  const named1b = [...new Set([...DDL_1B.matchAll(/ADD CONSTRAINT\s+(chk_(?:kitchen_batch|ksl|kbi)_\w+)/g)].map((m) => m[1]))];
+  it('found 1b\'s kitchen constraints, so the loop below is not vacuous', () => {
+    expect(named1b.length).toBeGreaterThanOrEqual(12);
+    expect(named1b).toContain('chk_ksl_void_pairing');
+  });
+  it.each(named1b)('1b: %s has a message', (name) => {
     const msg = kitchenErrorMessage({ code: '23514', constraint: name });
     expect(msg).toBeTruthy();
     expect(msg).not.toContain('chk_');
@@ -346,9 +377,12 @@ describe('expected duration is a RANGE, and both ends move together', () => {
 
 describe("kind owns the pair, matching source_kind's contract over source_label", () => {
   const L = { label: 'Mash' };
-  it("requires kind_other when kind is 'other'", () => {
-    expect(validateBatchCreate({ ...L, kind: 'other' })).toContain('kind_other is required');
-    expect(validateBatchCreate({ ...L, kind: 'other', kind_other: '  ' })).toContain('kind_other is required');
+  // Put-Up release 1b: "Other" needs no text (chk_kitchen_batch_kind_other relaxed in place; V4
+  // "Batches"). A blank name is normalised to none, which the relaxed CHECK admits.
+  // Mutation: restore the kind_other requirement — the first two arms red.
+  it("accepts 'other' with no name (1b), and with one", () => {
+    expect(validateBatchCreate({ ...L, kind: 'other' })).toBeNull();
+    expect(validateBatchCreate({ ...L, kind: 'other', kind_other: '  ' })).toBeNull();
     expect(validateBatchCreate({ ...L, kind: 'other', kind_other: 'koji' })).toBeNull();
   });
   it('accepts every kind the CHECK allows and refuses one it does not', () => {

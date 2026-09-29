@@ -30,12 +30,13 @@ describeAuthzMatrix({
     return r[0].id
   },
   read: (id) => ({ method: 'GET', path: `/api/preservation/${id}` }),
-  // PUT is a FULL replace validated by validateUpdate (validateCommon) — send a complete valid
-  // payload. blanch_freeze avoids the method='other' method_other_text requirement; omitting
-  // source_kind leaves validateUpdate's provenance check inert and the stored (null) source intact.
+  // The legacy PUT. From Put-Up release 1b it no longer WRITES method (PATCH owns it): a method that
+  // differs from the stored one is a stale tab, 409 client_stale. So the write echoes the stored
+  // method and changes the quantity pair, which readBack observes. Omitting source_kind leaves the
+  // provenance check inert and the stored (null) source intact.
   write: (id) => ({
     method: 'PUT', path: `/api/preservation/${id}`,
-    body: { crop_type_slug: CROP, method: 'blanch_freeze', quantity_value: 2, quantity_unit: 'jar', preserved_at: '2026-07-02' },
+    body: { crop_type_slug: CROP, method: 'whole_freeze', quantity_value: 2, quantity_unit: 'jar', preserved_at: '2026-07-02' },
   }),
   softDelete: async (id) => { await directSql`UPDATE preservation_log SET deleted_at = NOW() WHERE id = ${id}` },
   readBack: async (id) => {

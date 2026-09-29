@@ -164,6 +164,8 @@ describe('the contract matches the SQL that is actually issued', () => {
     expect(statements.length, 'per-statement split collapsed').toBeGreaterThan(3);
     for (const s of statements) {
       if (/INSERT INTO preservation_source/.test(s)) continue; // scoped by the loaded parent row
+      // Put-Up release 1b: the actor GUC set before each audited preservation_log write reads no row.
+      if (/^\s*SELECT set_config\('app\.actor_clerk_sub'/.test(s)) continue;
       expect(s, 'statement missing household scope').toMatch(/user_id = ANY\(/);
     }
     expect(SQL).not.toMatch(/user_id = \$\{userId\}/);

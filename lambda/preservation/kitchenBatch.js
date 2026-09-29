@@ -18,7 +18,12 @@ export const KITCHEN_BATCH_KINDS = ['ferment', 'dehydrate', 'candy', 'cure', 'in
 
 // chk_kitchen_batch_start_precision. 'hour' exists because a dehydrator run has no rung for "sometime
 // this afternoon"; grading that as `day` renders a 100%+ error as a confident figure.
-export const KITCHEN_START_PRECISIONS = ['exact', 'hour', 'day', 'week', 'month', 'unknown'];
+export const KITCHEN_START_PRECISIONS = ['exact', 'hour', 'day', 'week', 'month', 'season', 'year', 'unknown'];
+
+// Put-Up release 1b — the estimated-date vocabulary widens by the two dated estimate words the estimate
+// chips store (V4 "Estimated dates": "2–3 months ago" → season, "Earlier this year" / "Last year" →
+// year). chk_kitchen_batch_start_precision and chk_ksl_entered_precision carry the same eight.
+export const KITCHEN_ENTERED_PRECISIONS = KITCHEN_START_PRECISIONS;
 
 export const KITCHEN_START_ANCHOR_KINDS = ['harvest', 'photo', 'purchase', 'memory', 'manual'];
 
@@ -42,6 +47,30 @@ export const KITCHEN_OUTCOMES = [
 // chk_ksl_stage_kind. ORDER IS NOT MONOTONIC: a `tended` row legitimately arrives after a `finished`
 // one (three of six documented candy recoveries re-enter the sequence). Nothing here may sort on it.
 export const KITCHEN_STAGE_KINDS = ['started', 'tended', 'moved', 'finished', 'failed'];
+
+// Put-Up release 1b — chk_ksl_stage_kind as 1b widened it: every kind a stage row can CARRY, which is
+// every kind getBatch can send. KITCHEN_STAGE_KINDS above stays the five shipped kinds on purpose: it is
+// what the view's legacy current_stage_* LATERAL reads, and the shipped client's label maps are bound to
+// it (src/__tests__/PutUpBatchDetail.test.jsx) — the 1b client binds its maps to this list instead.
+export const KITCHEN_STAGE_KINDS_ALL = [
+  'started', 'tended', 'moved', 'finished', 'failed',
+  'reopened', 'paused', 'resumed', 'noted', 'put_up', 'void',
+];
+
+// What POST /:id/stages accepts. put_up is written only by Put it up; a void of a put_up or finished row
+// only by Undo that put-up (V4 Appendix A).
+export const KITCHEN_STAGE_ROUTE_KINDS = [
+  'started', 'tended', 'moved', 'finished', 'failed', 'reopened', 'paused', 'resumed', 'noted', 'void',
+];
+// The kinds a stages-route void may point at (V4 Appendix A: "tended, moved, noted — the only kinds the
+// stages route voids").
+export const KITCHEN_VOIDABLE_KINDS = ['tended', 'moved', 'noted'];
+// The lifecycle kinds Undo that put-up reads when it decides whether to reopen (V4 "Undo that put-up":
+// "noted, tended, moved and void rows do not count").
+export const KITCHEN_LIFECYCLE_KINDS = ['put_up', 'finished', 'failed', 'reopened', 'paused', 'resumed'];
+// The kinds that are a batch STATE change as well as a row: the stages route writes the row and moves
+// the batch column in ONE statement, so the column stays authoritative and the log cannot disagree.
+export const KITCHEN_STATE_STAGE_KINDS = ['paused', 'resumed', 'reopened'];
 
 export const KITCHEN_INPUT_KINDS = ['harvest', 'purchased', 'pantry', 'other'];
 
@@ -153,10 +182,14 @@ export function parseKitchenRoute(rawPath) {
   if (typeof rawPath !== 'string') return null;
   const path = rawPath.length > 1 && rawPath.endsWith('/') ? rawPath.slice(0, -1) : rawPath;
   if (path === '/api/kitchen-batches') return { kind: 'collection' };
-  const m = path.match(/^\/api\/kitchen-batches\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?$/);
+  const m = path.match(/^\/api\/kitchen-batches\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?(?:\/([^/]+))?$/);
   if (!m) return null;
-  const [, id, sub, tail] = m;
+  const [, id, sub, tail, fourth] = m;
+  // Put-Up release 1b: the one four-segment shape. Every other arm below requires no fourth segment.
+  if (sub === 'put-up' && tail && fourth === 'undo') return { kind: 'put_up_undo', id, stageId: tail };
+  if (fourth) return null;
   if (!sub) return { kind: 'batch', id };
+  if (sub === 'put-up' && !tail) return { kind: 'put_up', id };
   if (sub === 'stages' && !tail) return { kind: 'stages', id };
   if (sub === 'inputs' && !tail) return { kind: 'inputs', id };
   if (sub === 'inputs' && tail) return { kind: 'input', id, inputId: tail };
@@ -251,9 +284,8 @@ function kindError(body, { requirePair }) {
   if (kind != null && !KITCHEN_BATCH_KINDS.includes(kind)) {
     return `kind must be one of: ${KITCHEN_BATCH_KINDS.join(', ')}`;
   }
-  if (kind === 'other' && normalizeText(body.kind_other) == null) {
-    return "kind_other is required when kind is 'other' — name what this is";
-  }
+  // Put-Up release 1b: "Other" needs no text (chk_kitchen_batch_kind_other relaxed in place — it still
+  // refuses a BLANK name, which normalizeText turns into NULL before it can reach the column).
   if (requirePair && kind !== 'other' && normalizeText(body.kind_other) != null) {
     return "kind_other only applies when kind is 'other'";
   }
@@ -268,11 +300,15 @@ export function validateBatchCreate(body) {
   if (normalizeText(body.label) == null) return 'label is required';
   const rejected = KITCHEN_BATCH_SERVER_OWNED_COLUMNS.filter((c) => has(body, c));
   if (rejected.length) return `these fields are set by the server, not the client: ${rejected.join(', ')}`;
+  // Put-Up release 1b (V4 API table, row "POST /api/kitchen-batches"): the key lives on the batch row
+  // (uq_kitchen_batch_idempotency_key), and a recipe cannot be named before recipes exist (release 4).
+  if (body.recipe_id != null) return 'recipes arrive in a later release — send no recipe_id';
   return kindError(body, { requirePair: false })
     ?? startPairingError(body, { requirePair: false })
     ?? anchorError(body)
     ?? expectedDaysError(body, { requirePair: false })
-    ?? uuidFieldError(body, 'cover_photo_id');
+    ?? uuidFieldError(body, 'cover_photo_id')
+    ?? uuidFieldError(body, 'idempotency_key');
 }
 
 function uuidFieldError(body, field) {
@@ -321,12 +357,34 @@ export function batchUpdatePatch(body) {
 // ── POST /api/kitchen-batches/:id/stages ─────────────────────────────────────────────────────────
 // Append-only. There is no PUT and no DELETE on a stage row and that absence IS the design: the
 // off-log repair path is what produced the seed-lot divergence this schema refuses to copy.
+//
+// Put-Up release 1b widens what it takes (V4 API table, row "POST /:id/stages"): reopened, paused,
+// resumed, noted and void, and entered_precision. There is still no PUT or DELETE — an Undo is a VOID
+// row appended beside the row it undoes, which is what keeps the log readable afterwards.
 export function validateStage(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
   const kind = normalizeText(body.stage_kind);
-  if (kind == null || !KITCHEN_STAGE_KINDS.includes(kind)) {
-    return `stage_kind must be one of: ${KITCHEN_STAGE_KINDS.join(', ')}`;
+  if (kind == null || !KITCHEN_STAGE_ROUTE_KINDS.includes(kind)) {
+    return `stage_kind must be one of: ${KITCHEN_STAGE_ROUTE_KINDS.join(', ')}`;
   }
+  // "A void row carries nothing else" (V4 Appendix A) — a writer rule, not a CHECK, so it is here.
+  if (kind === 'void') {
+    const extra = Object.keys(body).filter((k) => k !== 'stage_kind' && k !== 'voids_id');
+    if (extra.length) return `an undo carries only the row it undoes (voids_id), not: ${extra.join(', ')}`;
+    if (!isUuid(body.voids_id ?? null)) return 'voids_id must be the id of the row to undo';
+    return null;
+  }
+  if (body.voids_id != null) return "voids_id only goes with stage_kind 'void'";
+  // Rows written "now, exact" (V4 Appendix A): a note, a pause, a resume, a reopen. Nothing retrospective
+  // may be stamped on them, so a date or a precision sent with one is refused rather than ignored.
+  if (kind === 'noted' || KITCHEN_STATE_STAGE_KINDS.includes(kind)) {
+    if (body.entered_at != null || body.entered_precision != null) {
+      return `a '${kind}' row is stamped when it is written — send no entered_at or entered_precision`;
+    }
+  }
+  if (kind === 'noted' && normalizeText(body.note) == null) return "a 'noted' row needs the note";
+  const precErr = enteredPrecisionError(body);
+  if (precErr) return precErr;
   // chk_ksl_moved_needs_location. Placement is a RATE input, not a milestone — a 'moved' row with no
   // destination records that something changed while destroying the only thing that changed.
   if (kind === 'moved' && !isUuid(body.storage_location_id ?? null)) {
@@ -343,6 +401,22 @@ export function validateStage(body) {
     if (!KITCHEN_QTY_UNITS.includes(unit)) return `amount_unit must be one of: ${KITCHEN_QTY_UNITS.join(', ')}`;
   }
   return phError(body) ?? uuidFieldError(body, 'storage_location_id') ?? uuidFieldError(body, 'photo_id');
+}
+
+// chk_ksl_entered_precision + chk_ksl_entered_pairing, mirrored: `unknown` iff there is no date, and a
+// dated precision needs its date. ABSENT precision is the pre-1b writer's shape and stays legal forever
+// (the route then stamps entered_at as it always did, with a NULL precision) — "never tightened".
+function enteredPrecisionError(body) {
+  const prec = normalizeText(body.entered_precision);
+  const at = body.entered_at ?? null;
+  if (at != null && Number.isNaN(new Date(String(at)).getTime())) return 'entered_at has to be a timestamp';
+  if (prec == null) return null;
+  if (!KITCHEN_ENTERED_PRECISIONS.includes(prec)) {
+    return `entered_precision must be one of: ${KITCHEN_ENTERED_PRECISIONS.join(', ')}`;
+  }
+  if (prec === 'unknown' && at != null) return "'unknown' means there is no date — send no entered_at with it";
+  if (prec !== 'unknown' && at == null) return `entered_precision '${prec}' needs an entered_at — use 'unknown' to record that you do not know`;
+  return null;
 }
 
 // chk_ksl_ph_pairing + chk_ksl_ph_scale, mirrored. A reading always carries the instant it was read:
@@ -587,6 +661,15 @@ const CONSTRAINT_MESSAGES = {
   chk_ksl_ph_scale: 'that is not a reading on the pH scale',
   // The two-truths guard on the fan-out. A jar either came from a batch (whose inputs live on the
   // batch) or directly from one harvest — never both.
+  // Put-Up release 1b (v5-putupmake-001).
+  chk_ksl_entered_precision: 'that is not a date precision this app knows',
+  chk_ksl_entered_pairing: "a date always carries its precision, and 'unknown' always comes without a date",
+  chk_ksl_void_pairing: 'an undo row points at the row it undoes, and nothing else does',
+  chk_ksl_amount_unit: 'that is not a unit this app knows',
+  chk_kbi_put_up_pairing: 'a line drawn from a put-up names that put-up, and no other line does',
+  chk_kbi_role: 'that is not a line role this app knows',
+  chk_kbi_salt_base: 'that is not a salt base this app knows',
+  chk_kbi_output_needs_put_up: 'a line added to a jar belongs to the put-up that made it',
   chk_preservation_log_one_provenance:
     'one of those put-ups is already linked to a single harvest — a jar comes from a batch or from one harvest, not both',
 };

@@ -34,10 +34,18 @@ function mockSql(queue = []) {
   const fn = (strings, ...values) => {
     const text = strings.raw.join(' ? ');
     calls.push({ text, norm: text.replace(/\s+/g, ' ').trim(), values });
+    // Put-Up release 1b: the actor GUC that rides each preservation_log write answers nothing a test
+    // queues for, so it takes no queue entry (the queues below stay the statements that matter).
+    if (/^SELECT set_config\('app\.actor_clerk_sub'/.test(text)) return Promise.resolve([]);
     if (!queue.length) {
       return Promise.reject(new Error(`unexpected extra query: ${text.replace(/\s+/g, ' ').slice(0, 90)}`));
     }
     return Promise.resolve(queue.shift());
+  };
+  fn.batches = [];
+  fn.transaction = async (qs) => {
+    fn.batches.push(calls.slice(calls.length - qs.length));
+    return Promise.all(qs);
   };
   fn.calls = calls;
   return fn;

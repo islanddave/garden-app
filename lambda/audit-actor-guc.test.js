@@ -64,8 +64,10 @@ const isSqlTransaction = (n) =>
   n.callee.object.type === 'Identifier' && n.callee.object.name === 'sql' &&
   n.callee.property.type === 'Identifier' && n.callee.property.name === 'transaction'
 
-// Direct DML against the two statement-level-audited tables …
-const AUDITED_DML = /\b(update|delete\s+from)\s+(only\s+)?(public\.)?(event_log|harvest_log)\b/is
+// Direct DML against the statement-level-audited tables … preservation_log joined in Put-Up release
+// 1b (v5-putupmake-001 attaches trg_audit_preservation_log_upd; V4 "Audit": "preservation_log joins
+// AUDITED_DML").
+const AUDITED_DML = /\b(update|delete\s+from)\s+(only\s+)?(public\.)?(event_log|harvest_log|preservation_log)\b/is
 // … plus the four prod functions whose bodies mutate them. archive_events_subset soft-deletes the
 // merge drop set, which writes event_log.deleted_at — a watched column — so a call to it is an
 // audited write even though no `UPDATE event_log` string appears at the call site.
@@ -149,7 +151,11 @@ const ALL_AUDITED = FILES.flatMap((rel) => {
 // repoint is built in plantMemoryRepoint.js and handed back as an object property for the caller to
 // put in ITS transaction. Exempt here, and the handoff is closed by the named merge.js test below
 // — remove that test and this exemption becomes a hole.
-const DEFERRED_TO_CALLER = new Set(['lambda/plants/plantMemoryRepoint.js'])
+// Put-Up release 1b adds the second: lambda/photos/photoDelete.js builds its pointer-null statements
+// (one of them `UPDATE public.preservation_log SET photo_id = NULL`) in pointerNullStatement() and
+// spreads them into softDeletePhoto's `statements`, whose element 0 is the GUC — the checker models a
+// spread call as opaque. Closed by the named photoDelete test below.
+const DEFERRED_TO_CALLER = new Set(['lambda/plants/plantMemoryRepoint.js', 'lambda/photos/photoDelete.js'])
 
 describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every audited write', () => {
   // ── anti-vacuity ────────────────────────────────────────────────────────────────────────────
@@ -178,6 +184,8 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
     expect(isAuditedWrite(mk('UPDATE event_log el SET event_type =  ? '))).toBe(true)
     expect(isAuditedWrite(mk('SELECT archive_events_subset( ? ::uuid[],  ? ,  ? )'))).toBe(true)
     expect(isAuditedWrite(mk('SELECT id FROM event_log WHERE id =  ? '))).toBe(false)
+    expect(isAuditedWrite(mk('UPDATE preservation_log p SET batch_id = NULL'))).toBe(true)
+    expect(isAuditedWrite(mk('SELECT id FROM preservation_log WHERE id =  ? '))).toBe(false)
   })
 
   // ── the core property ───────────────────────────────────────────────────────────────────────
@@ -213,6 +221,23 @@ describe('BUG-EVENTAUDITACTOR-001 — actor GUC shares a transaction with every 
     const g = site(file, needle)
     expect(g, 'no sql.transaction batch executes this statement').toBeTruthy()
     expect(isSetConfig(g.element0)).toBe(true)
+  })
+
+  // Closes the photoDelete exemption above: the pointer nulls are spread into the batch whose element
+  // 0 is the GUC, and pointerNullStatement is where the preservation_log write lives.
+  it('the photo-delete pointer nulls ride softDeletePhoto\'s transaction, element 0 the GUC', () => {
+    const src = readFileSync(join(ROOT, 'lambda/photos/photoDelete.js'), 'utf8')
+    const ast = acorn.parse(src, { ecmaVersion: 'latest', sourceType: 'module', locations: true })
+    let found = false
+    walkAst(ast, (n) => {
+      if (n.type === 'VariableDeclarator' && n.id.name === 'statements' && n.init?.type === 'ArrayExpression') {
+        expect(isSetConfig(n.init.elements[0])).toBe(true)
+        found = n.init.elements.some((e) => e?.type === 'SpreadElement' && /pointerNullStatement/.test(src.slice(e.start, e.end)))
+      }
+    })
+    expect(found, 'pointerNullStatement is no longer spread into softDeletePhoto statements').toBe(true)
+    expect(src).toMatch(/await sql\.transaction\(statements\)/)
+    expect(src).toMatch(/UPDATE public\.preservation_log SET photo_id = NULL/)
   })
 
   // Closes the plantMemoryRepoint exemption above: the repoint template is only safe because

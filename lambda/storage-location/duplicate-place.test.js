@@ -137,6 +137,17 @@ describe('PUT — a rename or re-kind onto a name the owner already uses is refu
     expect(boundAfter(find, /t\.user_id = ANY\(/)).toEqual([DAVE])
   })
 
+  // Put-Up release 1b (05 §6a): the PUT trims as the POST does, in the SET and in the clash lookup.
+  // Mutation: bind body.label raw again — both bindings below read ' Kitchen Fridge  '.
+  it('a rename is trimmed — in the write and in the clash lookup alike', async () => {
+    wire()
+    await handler(putReq({ label: ' Kitchen Fridge  ' }))
+    const update = stubState.sqlCalls.find((c) => /UPDATE storage_location/.test(c.text))
+    expect(boundAfter(update, /label = COALESCE\(/)).toBe('Kitchen Fridge')
+    const find = stubState.sqlCalls.find((c) => /FROM storage_location t/.test(c.text))
+    expect(boundAfter(find, /lower\(COALESCE\(/)).toBe('Kitchen Fridge')
+  })
+
   it('a clash it cannot locate still answers 409 place_exists (existing_id null), never a 500', async () => {
     wire({ clash: [] })
     const res = parse(await handler(putReq({ label: 'Kitchen Fridge' })))
