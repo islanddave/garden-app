@@ -29,14 +29,14 @@ import { setReloadBlocked } from '../../lib/reloadGate.js'
 import Sheet from '../forms/Sheet.jsx'
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
-import { labelChrome, optionalMarkChrome, textareaChrome } from '../forms/formStyles.js'
+import { labelChrome, optionalMarkChrome, textareaChrome, inputChrome } from '../forms/formStyles.js'
 import PhReadingField from './PhReadingField.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import {
   CHECK_ON_IT_CTA, SUBMERSION_PROMPT, SUBMERSION_ANSWERS, CONDITIONING_ANSWERS, PH_SCALE_HINT,
-  checkInFields, checkInBody,
+  checkInFields, checkInBody, CHECK_IN_ACTS, WHAT_YOU_DID, TOP_UP_UNITS, TOP_UP_HINT,
 } from './goingNow.js'
 
 export const CHECK_IN_SHEET = 'checkin'
@@ -45,7 +45,7 @@ export const CHECK_IN_HINT = 'One thing is enough — an answer, a reading, a pl
 // scrolls it clear of the pinned Save rather than under it.
 const FOOTER_PX = 76
 
-const EMPTY = { ph: '', submersion: null, conditioning: null, placeId: null, note: '' }
+const EMPTY = { ph: '', submersion: null, conditioning: null, placeId: null, note: '', acts: [], topUp: '', topUpUnit: 'ml' }
 
 // The draft's shape, checked on read: a record that fails any arm is dropped, never half-restored.
 export function isCheckInDraft(d) {
@@ -54,6 +54,59 @@ export function isCheckInDraft(d) {
     && (d.submersion === null || SUBMERSION_ANSWERS.some(a => a.value === d.submersion))
     && (d.conditioning === null || CONDITIONING_ANSWERS.some(a => a.value === d.conditioning))
     && (d.placeId === null || typeof d.placeId === 'string')
+    // Release F's three keys are optional on READ: a 1a draft has none of them and restores as "nothing
+    // done yet", never as a dropped draft.
+    && (d.acts === undefined || (Array.isArray(d.acts) && d.acts.every(a => CHECK_IN_ACTS.some(x => x.value === a))))
+    && (d.topUp === undefined || typeof d.topUp === 'string')
+    && (d.topUpUnit === undefined || TOP_UP_UNITS.includes(d.topUpUnit))
+}
+
+// "What you did" (release F, Dave 16:30). A MULTI-select — role="group" + aria-pressed, 48px chips — whose
+// pressed state is drawn differently from the single-select answer chips above it (an outline on the
+// pale green, not the filled green), so a done-it chip never reads as an answer to the brine question.
+// The top-up amount opens DIRECTLY BENEATH this row when Topped up brine is pressed, so nothing above
+// the finger moves. The row itself is ALWAYS here, in the same place, whatever the brine answer is
+// (06 §3.5; FS minor, V101 §5.3): it is never revealed, highlighted or reordered by that answer.
+function ActChips({ value, onChange, topUp, onTopUp, topUpUnit, onTopUpUnit, disabled, topUpError, inputStyle }) {
+  const toggle = (v) => onChange(value.includes(v) ? value.filter(x => x !== v) : [...value, v])
+  const toppedUp = value.includes('topped_up')
+  return (
+    <div data-testid="checkin-acts" style={{ marginBottom: T.space.md }}>
+      <span style={labelChrome} aria-hidden="true">
+        {WHAT_YOU_DID}<span style={optionalMarkChrome}>optional</span>
+      </span>
+      <div role="group" aria-label={WHAT_YOU_DID} style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {CHECK_IN_ACTS.map(a => {
+          const on = value.includes(a.value)
+          return (
+            <button key={a.value} type="button" aria-pressed={on} disabled={disabled}
+              data-testid={`checkin-act-${a.value}`} onClick={() => toggle(a.value)}
+              style={{ minHeight: T.buttonMinHeight, minWidth: 44, padding: T.chipPadLg, borderRadius: T.radiusPill,
+                cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: T.type.sm2,
+                fontWeight: on ? 700 : 600, border: `${on ? 2 : 1}px solid ${on ? P.green : P.border}`,
+                background: on ? P.greenPale : P.white, color: on ? P.green : P.dark }}>
+              {a.label}
+            </button>
+          )
+        })}
+      </div>
+      {toppedUp && (
+        <div data-testid="checkin-topup" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+          <label htmlFor="checkin-topup-amount" style={{ ...labelChrome, margin: 0 }}>Topped up with</label>
+          <input id="checkin-topup-amount" data-testid="checkin-topup-amount" type="text" inputMode="decimal" value={topUp}
+            disabled={disabled} aria-invalid={topUpError ? true : undefined} onChange={e => onTopUp(e.target.value)}
+            style={{ ...inputChrome(!!topUpError), width: 90, ...inputStyle }} />
+          <select aria-label="Top-up unit" data-testid="checkin-topup-unit" value={topUpUnit} disabled={disabled}
+            onChange={e => onTopUpUnit(e.target.value)} style={{ ...inputChrome(false), width: 84 }}>
+            {TOP_UP_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+      )}
+      {topUpError && (
+        <div role="alert" data-testid="checkin-topup-error" style={{ marginTop: 4, color: P.terra, fontSize: '0.78rem' }}>{topUpError}</div>
+      )}
+    </div>
+  )
 }
 
 // An OPTIONAL single-select: role="group" + aria-pressed (V4 §6.4), 48px touch chips, 8px gaps. A
@@ -96,6 +149,10 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
   const [conditioning, setConditioning] = useState(initial.conditioning)
   const [placeId, setPlaceId] = useState(initial.placeId)
   const [note, setNote] = useState(initial.note)
+  const [acts, setActs] = useState(initial.acts ?? [])
+  const [topUp, setTopUp] = useState(initial.topUp ?? '')
+  const [topUpUnit, setTopUpUnit] = useState(initial.topUpUnit ?? 'ml')
+  const [topUpErr, setTopUpErr] = useState(null)
   const [places, setPlaces] = useState(null)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
@@ -126,12 +183,13 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
   }, [places, placeId])
 
   const dirty = ph.trim() !== '' || submersion != null || conditioning != null || placeId != null || note.trim() !== ''
+    || acts.length > 0 || topUp.trim() !== ''
 
   useEffect(() => {
     if (!draftKey) return
-    if (dirty) writeSheetDraft(draftKey, CHECK_IN_SHEET, { ph, submersion, conditioning, placeId, note })
+    if (dirty) writeSheetDraft(draftKey, CHECK_IN_SHEET, { ph, submersion, conditioning, placeId, note, acts, topUp, topUpUnit })
     else clearSheetDraft(draftKey)
-  }, [draftKey, dirty, ph, submersion, conditioning, placeId, note])
+  }, [draftKey, dirty, ph, submersion, conditioning, placeId, note, acts, topUp, topUpUnit])
 
   // ONE boolean dependency, deliberately: the gate fires a deferred reload on its release transition,
   // so an effect keyed on two values would release-and-re-hold (and could reload mid-write) whenever
@@ -147,32 +205,49 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
     if (writingRef.current) return
     const place = placeId ? (places ?? []).find(p => p.id === placeId) ?? null : null
     const at = new Date(now ?? Date.now()).toISOString()
-    const res = checkInBody({ batch, ph, submersion, conditioning, place, note, atIso: at })
+    const res = checkInBody({ batch, ph, submersion, conditioning, place, note, atIso: at, acts, topUp, topUpUnit })
     if (res.error) {
-      if (res.error === PH_SCALE_HINT) { setPhErr(PH_SCALE_HINT); setErr(null) } else { setErr(res.error); setPhErr(null) }
+      setPhErr(res.error === PH_SCALE_HINT ? PH_SCALE_HINT : null)
+      setTopUpErr(res.error === TOP_UP_HINT ? TOP_UP_HINT : null)
+      setErr(res.error === PH_SCALE_HINT || res.error === TOP_UP_HINT ? null : res.error)
       return
     }
     writingRef.current = true
-    setSaving(true); setErr(null); setPhErr(null)
+    setSaving(true); setErr(null); setPhErr(null); setTopUpErr(null)
+    let first
     try {
-      const answer = await fetch(`/api/kitchen-batches/${batch.id}/stages`, { method: 'POST', body: JSON.stringify(res.body) })
-      clearSheetDraft(draftKey)
-      writingRef.current = false
-      setSaving(false)
-      // The server's answer rides along (release 1b): its `stage.id` is what "Saved · Undo" voids.
-      onSaved?.(res.body, answer)
+      first = await fetch(`/api/kitchen-batches/${batch.id}/stages`, { method: 'POST', body: JSON.stringify(res.body) })
     } catch {
       // Nothing is cleared: there is no offline queue in this app, so a clear failure that keeps what
       // was noted is the honest answer.
       writingRef.current = false
       setSaving(false)
       setErr("Couldn't save that — try again. What you noted is still here.")
+      return
     }
-  }, [batch, conditioning, draftKey, fetch, note, now, onSaved, ph, placeId, places, submersion])
+    if (res.move) {
+      // The second row of a visit that did something AND moved the crock. The check-in has landed, so
+      // on a failure only the move is left on the sheet — a retry must not write the check-in twice.
+      try {
+        await fetch(`/api/kitchen-batches/${batch.id}/stages`, { method: 'POST', body: JSON.stringify(res.move) })
+      } catch {
+        writingRef.current = false
+        setSaving(false)
+        setPh(''); setSubmersion(null); setConditioning(null); setNote(''); setActs([]); setTopUp('')
+        setErr("The check-in is saved, but the move didn't go through — tap Save to try the move again.")
+        return
+      }
+    }
+    clearSheetDraft(draftKey)
+    writingRef.current = false
+    setSaving(false)
+    // The server's answer rides along (release 1b): its `stage.id` is what "Saved · Undo" voids.
+    onSaved?.(res.body, first)
+  }, [acts, batch, conditioning, draftKey, fetch, note, now, onSaved, ph, placeId, places, submersion, topUp, topUpUnit])
 
   // The "1 observation" required at open (V4 §6.3) rides on the note, because the note is the one
   // observation every kind has: while nothing else is given, the note is what is needed.
-  const nothingElse = !(ph.trim() || submersion || conditioning || placeId)
+  const nothingElse = !(ph.trim() || submersion || conditioning || placeId || acts.length)
 
   return (
     <Sheet open onClose={onClose} title={CHECK_ON_IT_CTA} size="full" busy={saving} armsBack>
@@ -190,6 +265,11 @@ function CheckOnItOpen({ batch, onClose, onSaved, now }) {
         {fields.submersion && (
           <ChipAnswers label={SUBMERSION_PROMPT} answers={SUBMERSION_ANSWERS} value={submersion}
             onChange={v => { setSubmersion(v); setErr(null) }} disabled={saving} idPrefix="checkin-submersion" />
+        )}
+        {fields.acts && (
+          <ActChips value={acts} onChange={v => { setActs(v); setErr(null); setTopUpErr(null) }}
+            topUp={topUp} onTopUp={v => { setTopUp(v); setTopUpErr(null) }} topUpUnit={topUpUnit} onTopUpUnit={setTopUpUnit}
+            disabled={saving} topUpError={topUpErr} inputStyle={{ scrollMarginBottom: FOOTER_PX }} />
         )}
         {fields.conditioning && (
           <ChipAnswers label="Conditioning" answers={CONDITIONING_ANSWERS} value={conditioning}

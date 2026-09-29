@@ -12,7 +12,7 @@
 //
 // PURE: no React, no clock, no fetch.
 
-// ── units (contract-F conventions; 06 §1.4, §3.3) ───────────────────────────────────────────────────
+// ── units (contract-F conventions; 06 §1.4 and its water-conversion rule) ───────────────────────────────────────────────────
 export const KITCHEN_UNITS = Object.freeze([
   'g', 'kg', 'oz', 'lb', 'ml', 'l', 'tsp', 'tbsp', 'fl oz', 'cup', 'pint', 'qt', 'gal',
   'count', 'clove', 'head', 'bunch', 'pinch', 'peck', 'bushel', 'half-bushel', 'flat', 'jar', 'bag', 'other',
@@ -52,7 +52,7 @@ export const ACT_LABELS = Object.freeze({
 // rating is always the fresh pepper's).
 export const DRIED_FACTOR = Object.freeze({ low: 7, high: 10 })
 
-// ── the salt helper (06 §3.1-§3.3) ──────────────────────────────────────────────────────────────────
+// ── the salt helper (06, the salt sections) ──────────────────────────────────────────────────────────────────
 // produce = every live weighed line with no role and no put_up_stage_id (spices and sugar included);
 // water = the role='water' lines at 1 g/ml; all = both. Salt lines and sitting lines are in no base. A
 // line in no mass unit is "no weight" — named, never guessed.

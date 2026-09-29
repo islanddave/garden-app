@@ -21,7 +21,7 @@
 // rendered exactly as it was typed, beside the date it was taken, in the card's ordinary ink. It is
 // never scored, never coloured, never compared to anything, never counted, and never gates anything.
 // The reasoning, and the reversal's audit trail, are at the top of ./goingNow.js and ./PhReadingField.jsx.
-import React, { useState, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
@@ -30,14 +30,14 @@ import { ErrorBanner } from '../forms'
 import {
   partitionGoing, describeAge, describeStage, describeExpectedWindow,
   FERMENT_STALL_NOTE, describeLastPhReading,
-  OPEN_BATCH_CTA, CLOSED_DOOR_CTA, KIND_QUESTION, CHECK_ON_IT_CTA, cardQuestion,
+  OPEN_BATCH_CTA, CLOSED_DOOR_CTA, CHECK_ON_IT_CTA, cardQuestion,
 } from './goingNow.js'
 import CheckOnItSheet from './CheckOnItSheet.jsx'
 import PutItUpSheet from './PutItUpSheet.jsx'
 import PutUpStub from './PutUpStub.jsx'
 import CheckInSaved from './CheckInSaved.jsx'
 import { PUT_IT_UP_CTA } from './putItUp.js'
-import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
+import KindQuestion from './KindQuestion.jsx'
 
 // A question on the card is ONE TARGET that opens Check on it (V4 §2.3: "the ruled pH prompt's link
 // opens Check on it", the IA seat's F14 — the question is the door, not a second control beside it).
@@ -57,96 +57,8 @@ function shortDate(iso) {
 }
 
 // ── "What kind of batch? →" ──────────────────────────────────────────────────────────────────────
-// Put-Up 1a (V4 §2.3). The same inline-expand shape as the start-date editor (now on the batch's
-// own surface, BatchDetailView.jsx) and for the same reason: an inline reveal is not a dismissable
-// layer. One tap on a chip IS the answer — it PUTs {kind} through
-// the shipped merge PUT (an absent key is left alone, so nothing else on the row moves) and the
-// question is never asked again. "Other" is the one two-step answer: it offers its short name before
-// Save — optional from release 1b, where the CHECK no longer needs it (kindBody sends kind alone).
-//
-// The question hides itself the moment the write lands, rather than waiting for the list re-read to
-// carry the new kind back: a question that re-appears for the length of a round trip after it was
-// answered reads as "that didn't take", which invites a second tap.
-function KindQuestion({ batch, fetch, onChanged }) {
-  const [open, setOpen] = useState(false)
-  const [picked, setPicked] = useState(null)
-  const [otherText, setOtherText] = useState('')
-  const [answered, setAnswered] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState(null)
-  // Synchronous exclusion, the BatchInputsField idiom: `busy` only disables the chips after React
-  // commits, so two taps inside one frame would both read it false and both PUT.
-  const writingRef = useRef(false)
-
-  // Resolves true when the kind landed. A refused or failed write leaves the question open with the
-  // chips un-pressed, so the next tap is a retry rather than a toggle-off.
-  const save = useCallback(async (kind, text) => {
-    const body = kindBody(kind, text)
-    if (!body || !Object.keys(body).length) { setErr('Give it a short name first.'); return false }
-    if (writingRef.current) return false
-    writingRef.current = true
-    setBusy(true); setErr(null)
-    try {
-      await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(body) })
-      setAnswered(true)
-      onChanged?.()
-      return true
-    } catch {
-      setErr("Couldn't save that — try again.")
-      return false
-    } finally {
-      writingRef.current = false
-      setBusy(false)
-    }
-  }, [batch.id, fetch, onChanged])
-
-  const choose = useCallback((kind) => {
-    setErr(null)
-    if (kind === 'other' || kind == null) { setPicked(kind); return }
-    setPicked(kind)
-    save(kind).then(ok => { if (!ok) setPicked(null) })
-  }, [save])
-
-  if (answered) return null
-
-  if (!open) {
-    return (
-      <button type="button" data-testid="going-kind-question" onClick={() => setOpen(true)}
-        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
-          background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
-          fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
-        {KIND_QUESTION} →
-      </button>
-    )
-  }
-
-  return (
-    <div data-testid="going-kind-editor" style={{ marginTop: 6 }}>
-      {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="going-kind-error"
-        style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 6 }}>{err}</div>}
-      <KindChips idPrefix="going-kind" value={picked} onChange={choose} disabled={busy}
-        otherText={otherText} onOtherTextChange={setOtherText} ariaLabel={KIND_QUESTION} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, marginTop: 6 }}>
-        {picked === 'other' && (
-          <button type="button" data-testid="going-kind-save" disabled={busy}
-            onClick={() => save('other', otherText)}
-            style={{ minHeight: T.tapMinHeight, padding: '6px 12px', cursor: busy ? 'default' : 'pointer',
-              background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '0.78rem',
-              fontWeight: 700, color: P.green }}>
-            Save
-          </button>
-        )}
-        <button type="button" data-testid="going-kind-cancel" disabled={busy}
-          onClick={() => { setOpen(false); setPicked(null); setOtherText(''); setErr(null) }}
-          style={{ minHeight: T.tapMinHeight, padding: '6px 4px', cursor: 'pointer', background: 'none',
-            border: 'none', fontFamily: 'inherit', fontSize: '0.78rem', color: P.light }}>
-          Not now
-        </button>
-      </div>
-    </div>
-  )
-}
-
+// Moved to ./KindQuestion.jsx in release F so batch detail asks the same question the same way (06
+// §3.10); the card's testids and behaviour are unchanged.
 // ── one batch ────────────────────────────────────────────────────────────────────────────────────
 // Leads with WHAT IS KNOWN, never with the gap. The meta line is one joined string on purpose: it is
 // the thing a test can assert as a full literal with both bounds and every separator, which is the
@@ -195,7 +107,7 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
       {/* The kind question, on a NULL kind only and never again once answered. It is the one door to
           the three ferment questions below: all are gated on kind = 'ferment', so a batch nobody has
           classified can never be asked about its brine or its pH. */}
-      {question?.kind === 'kind' && <KindQuestion batch={batch} fetch={fetch} onChanged={onChanged} />}
+      {question?.kind === 'kind' && <KindQuestion batch={batch} fetch={fetch} onChanged={onChanged} idPrefix="going-kind" />}
       {/* The submersion prompt. A QUESTION, in the card's ordinary ink, with no verdict beside it
           and no list of failure signs under it — a checklist of what going wrong looks like invites
           the reader to conclude that its absence means success, which is the specific inference
@@ -246,7 +158,9 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
       )}
       {Number(batch.input_count) > 0 && (
         <div data-testid="going-batch-inputs" style={{ marginTop: 3, color: P.light, fontSize: '0.78rem' }}>
-          {Number(batch.input_count) === 1 ? '1 pick in' : `${Number(batch.input_count)} picks in`}
+          {/* Release F (06 §2.8): input_count counts every live line — salt, water and sitting lines
+              included — so it is "things", not "picks". */}
+          {Number(batch.input_count) === 1 ? '1 thing in' : `${Number(batch.input_count)} things in`}
         </div>
       )}
       {savedStageId && <CheckInSaved key={savedStageId} batchId={batch.id} stageId={savedStageId} onUndone={onChanged} />}

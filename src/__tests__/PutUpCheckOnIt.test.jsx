@@ -118,9 +118,10 @@ describe('checkInBody — ONE row per check-in', () => {
     expect(checkInBody({ batch: DRY, conditioning: 'back_in_dryer', atIso: AT }))
       .toEqual({ body: { stage_kind: 'tended', cue_observed: 'Condensation → back in the dryer' } })
     expect(checkInBody({ batch: CANDY, conditioning: 'jars', atIso: AT })).toEqual({ error: CHECK_IN_EMPTY })
-    expect(checkInFields(CANDY)).toEqual({ ph: false, submersion: false, conditioning: false })
-    expect(checkInFields(DRY)).toEqual({ ph: false, submersion: false, conditioning: true })
-    expect(checkInFields(FERMENT)).toEqual({ ph: true, submersion: true, conditioning: false })
+    // Release F: `acts` (what you did) is a Ferment field, like the brine question (amended in the same commit).
+    expect(checkInFields(CANDY)).toEqual({ ph: false, submersion: false, conditioning: false, acts: false })
+    expect(checkInFields(DRY)).toEqual({ ph: false, submersion: false, conditioning: true, acts: false })
+    expect(checkInFields(FERMENT)).toEqual({ ph: true, submersion: true, conditioning: false, acts: true })
   })
 
   it('refuses an empty check-in, and a whitespace note is not an observation', () => {
@@ -280,7 +281,8 @@ describe('Check on it — the draft survives a dismiss (V4 §6.5)', () => {
     expect(rec.v).toBe(1)
     expect(rec.sheet).toBe('checkin')
     expect(typeof rec.savedAt).toBe('number')
-    expect(rec.data).toEqual({ ph: '3.9', submersion: null, conditioning: null, placeId: null, note: '' })
+    // Release F adds the three "what you did" keys to the draft (amended in the same commit).
+    expect(rec.data).toEqual({ ph: '3.9', submersion: null, conditioning: null, placeId: null, note: '', acts: [], topUp: '', topUpUnit: 'ml' })
   })
 
   it('restores it on the next open after a close, and a successful Save clears it', async () => {

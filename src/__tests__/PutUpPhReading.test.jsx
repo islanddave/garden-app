@@ -556,6 +556,11 @@ const LANE_SOURCES = [
   ['src/components/putup/CheckInSaved.jsx', 'UNDONE_CHECKIN_TEXT'],
   ['src/components/kitchen/idempotencyKey.js', 'export function mintKey'],
   ['src/components/putup/MoveJarSheet.jsx', 'MOVE_RULE_TEXT'],
+  // Put-Up release F (V4 §8.4 — every lane adds its files): the ferment arithmetic and line rules, and
+  // the kind question batch detail now asks too (the door that wakes the ferment prompts).
+  ['src/components/putup/fermentMath.js', 'export function saltBase'],
+  ['src/components/putup/lines.js', 'export function lineBody'],
+  ['src/components/putup/KindQuestion.jsx', 'export default function KindQuestion'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the
