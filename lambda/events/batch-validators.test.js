@@ -97,7 +97,8 @@ describe('BATCH_EVENT_TYPES drift guard (exact equality)', () => {
     // and the exclusion rationale in src/lib/eventTypes.js. This is the LAMBDA-side mirror: it
     // reads the GENERATED copy, so it also proves codegen carried the exclusion across the
     // bundler-less boundary rather than the Lambda silently keeping the old allowlist.
-    // V4-LOSSEVENT-001 added failed + given_away, and the mirror matters more for these two than
+    // V4-LOSSEVENT-001 added the two reduction types (reduction_lost + reduction_given_away since
+    // V5-LOSSTOKEN-001; stored as failed + given_away before), and the mirror matters more for these two than
     // for any earlier entry: the batch INSERT writes no plants counters, so a reduction type that
     // leaked into the Lambda's allowlist would fan ledger rows across a whole scope while
     // decrementing nothing — a loss recorded on 500 plantings that never lost anything.
@@ -107,8 +108,8 @@ describe('BATCH_EVENT_TYPES drift guard (exact equality)', () => {
     // seed_saved is deliberately reward-bearing (V4-SEEDEVENT-001). The server arm is the one that
     // matters here — a stale PWA bundle still holding the old allowlist reaches this validator.
     expect([...BATCH_EXCLUDED_TYPES].sort()).toEqual(
-      ['cutting_taken', 'divided', 'failed', 'first_harvest', 'given_away', 'hand_pollinated',
-        'harvest', 'moisture_check', 'photo', 'seed_saved'],
+      ['cutting_taken', 'divided', 'first_harvest', 'hand_pollinated',
+        'harvest', 'moisture_check', 'photo', 'reduction_given_away', 'reduction_lost', 'seed_saved'],
     );
   });
 });

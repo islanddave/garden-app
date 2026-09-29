@@ -9,7 +9,7 @@ import ProjectOptions from '../components/ProjectOptions.jsx'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useApiFetch } from '../lib/api.js'
 import { P, EVENT_TYPES, LOGGABLE_PROJECT_STATUSES, statusLabel } from '../lib/constants.js'
-import { EVENT_TYPE_META, requiresPlanting, isPlantReductionEventType } from '../lib/eventTypes.js'
+import { EVENT_TYPE_META, requiresPlanting, isPlantReductionEventType, canonicalEventType } from '../lib/eventTypes.js'
 import { PLANTING_REQUIRED_ENABLED, PROJECTS_HIDDEN, HARVEST_QUALITY_HIDDEN, SAVE_TO_DEVICE_HIDDEN, WEIGH_IN_FRAME_ENABLED } from '../lib/featureFlags.js'
 import EventTypePicker, { EVENT_TYPES_UI, SECONDARY_GROUPS } from '../components/forms/EventTypePicker.jsx'
 // POI-SEEDDOORMENU-001 — the create-a-lot sheet, shared with the planting page's Save seed button so
@@ -657,7 +657,8 @@ export default function EventNew({ harvestSession = false } = {}) {
   const navigate       = useNavigate()
   const [searchParams] = useSearchParams()
   const preselectedProjectId = searchParams.get('project') || ''
-  const preselectedEventType = searchParams.get('event_type') || ''
+  // V5-LOSSTOKEN-001: a saved or stale link can still say ?event_type=failed / given_away.
+  const preselectedEventType = canonicalEventType(searchParams.get('event_type') || '')
   const preselectedPlantId = searchParams.get('plant') || ''
   // V4-TREATLOG-001: DrG "Treated…" deep-link — resolve this source finding after the treatment logs.
   const resolveEventId = searchParams.get('resolve') || ''
@@ -1104,6 +1105,10 @@ export default function EventNew({ harvestSession = false } = {}) {
     // back, which is what the stash exists for. The user lands on the chooser with their text intact
     // and picks a type — including this one, deliberately, if that is what they meant.
     if (picked.event_type === 'seed_saved') picked.event_type = ''
+    // V5-LOSSTOKEN-001: a draft stashed by a bundle from before the rename can carry the legacy
+    // `failed` / `given_away`. Restored raw, the reduction panel would not render and the save would
+    // 400 with the form stuck, so the restore canonicalises it.
+    if ('event_type' in picked) picked.event_type = canonicalEventType(picked.event_type)
     setForm(f => ({ ...f, ...picked }))
     if (typeof draft.showPrivate === 'boolean') setShowPrivate(draft.showPrivate)
     if (typeof draft.showAddDetails === 'boolean') setShowAddDetails(draft.showAddDetails)

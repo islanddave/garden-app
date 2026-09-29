@@ -43,6 +43,11 @@ const DELIBERATE_SYNONYMS = {
   [pk('care.feed', 'event.fertilizing')]:         "REUSE: fertilizing -> ANCHORS['care.feed']",
   // event.failed shared the status X until BUG-LOSSEVENTLABEL-001 (2026-09-29): a partial loss wore
   // the planting's "Failed" badge. It has its own form now; the regression test below keeps it so.
+  // V5-LOSSTOKEN-001: the loss/gift types were renamed reduction_lost / reduction_given_away. The old
+  // keys stay registered for rows and cached responses that still carry the old token, and each borrows
+  // its canonical key's form BY REFERENCE (iconEvents.js LEGACY_EVENT_GLYPHS) — one idea, two spellings.
+  [pk('event.reduction_lost', 'event.failed')]:            'LEGACY: failed -> reduction_lost (iconEvents.js LEGACY_EVENT_GLYPHS)',
+  [pk('event.reduction_given_away', 'event.given_away')]:  'LEGACY: given_away -> reduction_given_away (iconEvents.js LEGACY_EVENT_GLYPHS)',
 
   // Anchor-to-anchor, documented at the definition site.
   [pk('care.pause', 'media.pause')]: 'iconAnchors.js:163 — "media.pause = two rounded bars (reuses care.pause geometry; own key)"',
@@ -93,23 +98,37 @@ describe('icon language — one glyph, one meaning', () => {
     })
   }
 
-  it('event.given_away is distinct from action.share (V4-LOSSEVENT-001 regression)', () => {
+  it('the gift glyph is distinct from action.share (V4-LOSSEVENT-001 regression)', () => {
     // The specific defect this guard was built for: action.share is the live Share button, so
-    // reusing it for "Plants given away" put one mark on two meanings.
-    for (const master of MASTERS) {
-      expect(GLYPHS['event.given_away'][master], `event.given_away.${master} is a copy of action.share`)
-        .not.toBe(GLYPHS['action.share'][master])
+    // reusing it for "Plants given away" put one mark on two meanings. Checked under both spellings.
+    for (const key of ['event.reduction_given_away', 'event.given_away']) {
+      for (const master of MASTERS) {
+        expect(GLYPHS[key][master], `${key}.${master} is a copy of action.share`)
+          .not.toBe(GLYPHS['action.share'][master])
+      }
     }
   })
 
-  it('event.failed is distinct from the Failed status badge (BUG-LOSSEVENTLABEL-001 regression)', () => {
+  it('the loss glyph is distinct from the Failed status badge (BUG-LOSSEVENTLABEL-001 regression)', () => {
     // The loss event is usually PARTIAL (2 of 8 Mini Roses) while status.failed says the whole
     // planting failed, and both render on PlantingDetail (the status badge and the event rows).
-    for (const master of MASTERS) {
-      for (const status of ['status.failed', 'status.dead']) {
-        expect(GLYPHS['event.failed'][master], `event.failed.${master} is a copy of ${status}`)
-          .not.toBe(GLYPHS[status][master])
+    // Checked under both spellings: a legacy `failed` row must not fall back to the status X either.
+    for (const key of ['event.reduction_lost', 'event.failed']) {
+      for (const master of MASTERS) {
+        for (const status of ['status.failed', 'status.dead']) {
+          expect(GLYPHS[key][master], `${key}.${master} is a copy of ${status}`)
+            .not.toBe(GLYPHS[status][master])
+        }
       }
+    }
+  })
+
+  it('the legacy loss/gift keys resolve to their canonical forms (V5-LOSSTOKEN-001)', () => {
+    for (const [legacy, canon] of [['event.failed', 'event.reduction_lost'], ['event.given_away', 'event.reduction_given_away']]) {
+      expect(GLYPHS[legacy], legacy).toBeTruthy()
+      expect(GLYPHS[legacy].key).toBe(legacy)
+      for (const master of MASTERS) expect(GLYPHS[legacy][master]).toBe(GLYPHS[canon][master])
+      expect(GLYPHS[legacy].accessibleName).toBe(GLYPHS[canon].accessibleName)
     }
   })
 

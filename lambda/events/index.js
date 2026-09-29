@@ -24,7 +24,7 @@
 import { neon } from '@neondatabase/serverless';
 import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES, deriveEventProjectId, normalizeScopeIds } from './validators.js';
+import { validatePostBody, validateBatchBody, validateHarvestFields, validateTreatmentCategory, validateEventMetadata, HARVEST_UNITS, MAX_PLAUSIBLE, UUID_RE, normalizeEventDate, normalizeNotes, toGrams, isUserSuppliedWeight, seedsWeightCalibration, buildBatchMetadataPlan, isRewardedEventType, NON_REWARD_EVENT_TYPES, readReductionPlan, orderEndStatusOffer, PLANT_REDUCTION_EVENT_TYPES, deriveEventProjectId, normalizeScopeIds, normalizeLegacyEventType, isPlantReductionEventType, eventTypeTokens, GIVEAWAY_EVENT_TYPE } from './validators.js';
 import { isEventOwned } from './eventOwnership.js';
 import { loadEventPhotos } from './eventPhotos.js';
 import { validateClear, resolveFlagPair, resolveMetadataArm } from './clearFields.js';
@@ -924,6 +924,10 @@ export const handler = async (event) => {
       const offset = Math.max(parseInt(qp.offset ?? '0', 10) || 0, 0);
       const fProject = qp.project_id || null;
       const fType = qp.event_type || null;
+      // V5-LOSSTOKEN-001: a type filter matches EVERY stored spelling of that type, in both
+      // directions — the new token finds rows not yet backfilled, and a stale bundle's
+      // ?event_type=failed still finds rows written under the new token.
+      const fTypes = fType ? eventTypeTokens(fType) : null;
       const fFrom = qp.from || null;
       const fTo = qp.to || null;
       const rows = await sql`
@@ -962,7 +966,7 @@ export const handler = async (event) => {
                OR EXISTS (SELECT 1 FROM public.garden_node gn
                            WHERE gn.id = e.plant_id AND gn.deleted_at IS NULL))
           AND (${fProject}::uuid IS NULL OR e.project_id = ${fProject}::uuid)
-          AND (${fType}::text IS NULL OR e.event_type = ${fType}::text)
+          AND (${fTypes}::text[] IS NULL OR e.event_type = ANY(${fTypes}::text[]))
           AND (${fFrom}::timestamptz IS NULL OR e.event_date >= ${fFrom}::timestamptz)
           AND (${fTo}::timestamptz IS NULL OR e.event_date <= ${fTo}::timestamptz)
         ORDER BY e.created_at DESC
@@ -1545,6 +1549,9 @@ export const handler = async (event) => {
       // a non-harvest edit — and every existing caller — stay byte-identical in behaviour.
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
+        // V5-LOSSTOKEN-001: a stale bundle's `failed` / `given_away` becomes the canonical token here,
+        // before every check below and before the UPDATE writes it back.
+        normalizeLegacyEventType(body, 'PUT');
 
         if (!body.event_type) return resp(400, { error: 'event_type is required' });
         // Same reservation as the POST path: status_change is server-emitted only, so it can be
@@ -1659,11 +1666,16 @@ export const handler = async (event) => {
         // half of it that silently desynchronises the two.
         //
         // Delete-and-relog IS a complete repair, because the DELETE arm reverses the counters.
-        const wasReduction = PLANT_REDUCTION_EVENT_TYPES.includes(existing.event_type);
-        const willBeReduction = PLANT_REDUCTION_EVENT_TYPES.includes(body.event_type);
+        //
+        // V5-LOSSTOKEN-001: through the alias-aware predicate, never a raw includes(). The STORED type
+        // can still be a legacy `failed` / `given_away` (rows written before the rename, until the
+        // backfill; any row a restore brings back), and a raw match would let such a row be re-typed
+        // with its counters still applied.
+        const wasReduction = isPlantReductionEventType(existing.event_type);
+        const willBeReduction = isPlantReductionEventType(body.event_type);
         if (wasReduction || willBeReduction) {
           return resp(400, {
-            error: `${wasReduction ? existing.event_type : body.event_type} events cannot be edited because they changed a planting's count — delete this event and log a new one`,
+            error: `plant-count events (plants lost or given away) cannot be edited because they changed a planting's count — delete this event and log a new one`,
             code: 'REDUCTION_EVENT_IMMUTABLE',
           });
         }
@@ -2973,6 +2985,9 @@ export const handler = async (event) => {
 
     if (method === 'POST') {
       const body = JSON.parse(event.body ?? '{}');
+      // V5-LOSSTOKEN-001: before validation, so the reduction contract, the INSERT and the counter
+      // UPDATE below all see the canonical token a stale bundle did not send.
+      normalizeLegacyEventType(body, 'POST');
       const vErr = validatePostBody(body);
       if (vErr) return resp(vErr.status, { error: vErr.error });
 
@@ -3134,7 +3149,8 @@ export const handler = async (event) => {
                      FROM event_log el
                     WHERE el.plant_id = ${body.plant_id}
                       AND el.deleted_at IS NULL
-                      AND el.event_type = 'given_away'
+                      -- V5-LOSSTOKEN-001: every stored spelling, legacy given_away rows too.
+                      AND el.event_type = ANY(${eventTypeTokens(GIVEAWAY_EVENT_TYPE)}::text[])
                  ), 0)::int AS given_away
             FROM public.garden_node
            WHERE id = ${body.plant_id}

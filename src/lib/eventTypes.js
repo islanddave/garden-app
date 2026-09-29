@@ -73,8 +73,10 @@ export const EVENT_TYPES = [
   'overwinter_survived',
   // V4-LOSSEVENT-001 — the two PLANT-REDUCTION types. See PLANT_REDUCTION_EVENT_TYPES below for
   // the whole contract; they are ordinary EVENT_TYPES members in every other respect.
-  'failed',
-  'given_away',
+  // V5-LOSSTOKEN-001: stored as `failed` / `given_away` until 2026-09-29 — see
+  // LEGACY_EVENT_TYPE_ALIASES for why they moved and how the old spellings keep working.
+  'reduction_lost',
+  'reduction_given_away',
   'observation',
   'photo',
   'other',
@@ -146,11 +148,11 @@ export const EVENT_TYPE_META = {
   // V4-LOSSEVENT-001. The labels name the EVENT (what happened to the plants), never the cause —
   // the cause is the reason value, and Dave's ruling was that a reason naming the outcome
   // ("plant death") is not a reason at all. 'Attrition' is a NEW category: 'Pest & Health' would
-  // have been a defensible home for `failed` and an actively wrong one for `given_away` (a plant
+  // have been a defensible home for the loss type and an actively wrong one for the give-away (a plant
   // swap is not a health event), and the whole point of keeping the two vocabularies apart is that
   // a gift never reads as a loss. Category placement is a taste call — Dave's to overrule.
-  failed:              { label: 'Plants lost',            category: 'Attrition' },
-  given_away:          { label: 'Plants given away',      category: 'Attrition' },
+  reduction_lost:        { label: 'Plants lost',          category: 'Attrition' },
+  reduction_given_away:  { label: 'Plants given away',    category: 'Attrition' },
   observation:         { label: 'Observed / Note',        category: 'Notes & Photos' },
   photo:               { label: 'Photo only',             category: 'Notes & Photos' },
   other:               { label: 'Other',                  category: 'Environmental' },
@@ -220,7 +222,8 @@ export const PRIMARY_EVENT_TYPES = [
 //                              and it would let one tap suppress the whole water bar. Also see
 //                              NON_REWARD_EVENT_TYPES: it earns nothing, so bulk has no upside.
 //   V4-LOSSEVENT-001:
-//     failed, given_away    — carry a PER-PLANTING quantity, the same disqualifier `harvest` has.
+//     reduction_lost, reduction_given_away — carry a PER-PLANTING quantity, the same disqualifier
+//                             `harvest` has.
 //                             Worse here than for harvest, because the batch path writes a
 //                             side-effect the user cannot see: one "lost 3" fanned across a
 //                             500-planting scope would decrement 500 plantings by 3 each and accrue
@@ -250,8 +253,8 @@ export const BATCH_EXCLUDED_TYPES = [
   'cutting_taken',
   'hand_pollinated',
   'moisture_check',
-  'failed',
-  'given_away',
+  'reduction_lost',
+  'reduction_given_away',
   'seed_saved',
 ]
 
@@ -336,12 +339,48 @@ export const WATER_DEPTH_SOURCES = ['user', 'default']
 // TWO TYPES, TWO VOCABULARIES, AND THE SEPARATION IS THE POINT. A plant swap is not a loss. If
 // give-away reasons were folded into loss_cause then "how much did I lose to problems this season"
 // would count every gift. They are kept apart at the STORAGE layer, not merely the vocabulary
-// layer: `loss_reason` is only ever written on `failed` rows and `giveaway_reason` only on
-// `given_away` rows, so a loss aggregate that forgets to filter by event_type STILL cannot pick up
-// a gift.
-export const PLANT_REDUCTION_EVENT_TYPES = ['failed', 'given_away']
+// layer: `loss_reason` is only ever written on `reduction_lost` rows and `giveaway_reason` only on
+// `reduction_given_away` rows, so a loss aggregate that forgets to filter by event_type STILL
+// cannot pick up a gift.
+//
+// V5-LOSSTOKEN-001 (Dave, 2026-09-29) — THE `reduction_` PREFIX IS RESERVED FOR THESE TWO. They
+// were stored as `failed` and `given_away` until then, and both spellings collided with another
+// vocabulary: `failed` is also a planting STATUS (constants.js PLANT_STATUSES), a kitchen-batch
+// stage and a share-post status; `given_away` is also a kitchen-batch OUTCOME (putup/batchClose.js,
+// lambda/preservation/kitchenBatch.js). Dave, verbatim: "I worry that the namespace 'failed' will
+// confuse future session given that there is also a status called 'failed'". `plants_` was
+// considered and rejected: it is already the plants table's naming namespace (plants_loss_cause_check,
+// chk_plants_status, ...). eventTypes.test.js pins the prefix as reserved and disjoint from those
+// vocabularies. Review: Gardening/project-state/_lossrename-20260929/.
+export const LOSS_EVENT_TYPE = 'reduction_lost'
+export const GIVEAWAY_EVENT_TYPE = 'reduction_given_away'
+export const PLANT_REDUCTION_EVENT_TYPES = [LOSS_EVENT_TYPE, GIVEAWAY_EVENT_TYPE]
 
-// The reason vocabulary for `failed`. THIS IS THE SAME VOCABULARY AS plants.loss_cause — one
+// THE LEGACY SPELLINGS, AND THE ALIAS IS PERMANENT. Rows written before the rename carry them until
+// migrations/v5-losstoken-001 rewrites them, and a phone running a cached older bundle keeps POSTing
+// them for as long as it stays unrefreshed — which has no upper bound (an offline launch runs the old
+// shell). So every predicate below canonicalises FIRST: the DELETE that reverses a loss's counters
+// and the PUT guard that refuses to edit one both read the STORED token, and an alias applied only to
+// request bodies would let a legacy row be deleted without restoring its plants. Never remove an entry
+// here; never apply canonicalEventType to anything but an EVENT type — `failed` the planting status
+// is a different word that happens to be spelled the same.
+export const LEGACY_EVENT_TYPE_ALIASES = Object.freeze({
+  failed: LOSS_EVENT_TYPE,
+  given_away: GIVEAWAY_EVENT_TYPE,
+})
+
+export function canonicalEventType(eventType) {
+  return Object.hasOwn(LEGACY_EVENT_TYPE_ALIASES, eventType) ? LEGACY_EVENT_TYPE_ALIASES[eventType] : eventType
+}
+
+// Every stored spelling of one event type: the canonical token plus its legacy aliases. For SQL that
+// matches STORED rows (`= ANY(...)`), which the canonicalising predicates cannot reach.
+export function eventTypeTokens(eventType) {
+  const canon = canonicalEventType(eventType)
+  return [canon, ...Object.keys(LEGACY_EVENT_TYPE_ALIASES).filter((k) => LEGACY_EVENT_TYPE_ALIASES[k] === canon)]
+}
+
+// The reason vocabulary for `reduction_lost`. THIS IS THE SAME VOCABULARY AS plants.loss_cause — one
 // vocabulary, five homes (here, the generated Lambda mirror, migrations/v4-losscapture-001's
 // ARRAY, both ALLOWED_LOSS literals in lambda/plants/index.js, and gates.yml's set-equality
 // expectation), pinned against each other by lambda/plants/loss-cause-vocab.test.js.
@@ -363,7 +402,7 @@ export const LOSS_REASONS = [
   'culled',
 ]
 
-// The reason vocabulary for `given_away`. Dave confirmed this is the PLANT being given away, not
+// The reason vocabulary for `reduction_given_away`. Dave confirmed this is the PLANT being given away, not
 // the produce (produce disposition is harvest_log.disposition, V4-HARVDISPOSITION-001 — a third
 // and unrelated vocabulary that happens to share the token 'culled'; do not merge them).
 //
@@ -396,10 +435,15 @@ export const LOSS_REASON_KEY = 'loss_reason'
 export const GIVEAWAY_REASON_KEY = 'giveaway_reason'
 
 // Which reason key belongs to which type, and therefore which vocabulary applies. An event type
-// absent from this map carries NO reduction keys at all.
+// absent from this map carries NO reduction keys at all. Keyed by the CANONICAL token only — look it
+// up through reductionReasonKey(), which also answers for a legacy spelling.
 export const REDUCTION_REASON_KEY_BY_TYPE = {
-  failed: LOSS_REASON_KEY,
-  given_away: GIVEAWAY_REASON_KEY,
+  [LOSS_EVENT_TYPE]: LOSS_REASON_KEY,
+  [GIVEAWAY_EVENT_TYPE]: GIVEAWAY_REASON_KEY,
+}
+
+export function reductionReasonKey(eventType) {
+  return REDUCTION_REASON_KEY_BY_TYPE[canonicalEventType(eventType)]
 }
 
 export const REDUCTION_REASONS_BY_KEY = {
@@ -446,7 +490,7 @@ export function reductionReasonLabel(reason) {
 }
 
 export function isPlantReductionEventType(eventType) {
-  return PLANT_REDUCTION_EVENT_TYPES.includes(eventType)
+  return PLANT_REDUCTION_EVENT_TYPES.includes(canonicalEventType(eventType))
 }
 
 // Only a LOSS accrues into plants.qty_lost. A give-away is a reduction, not a loss: the plant is
@@ -454,7 +498,7 @@ export function isPlantReductionEventType(eventType) {
 // column — a `qty_given_away` counter would need its own CHECK, its own non-negative guard and its
 // own deploy ordering to answer a question one SUM already answers.
 export function accruesQtyLost(eventType) {
-  return eventType === 'failed'
+  return canonicalEventType(eventType) === LOSS_EVENT_TYPE
 }
 
 // The list every EVENT-CREATION picker renders, as opposed to the vocabulary the API accepts.
@@ -478,7 +522,7 @@ export function accruesQtyLost(eventType) {
 //
 // V4-PICKERGATE-001 — this is now the INPUT to creatableEventTypes() at the bottom of this file,
 // not the list a creation surface renders directly. Opening the gate here made the three types
-// with required capture fields (harvest, failed, given_away) visible on three surfaces that cannot
+// with required capture fields (harvest, reduction_lost, reduction_given_away) visible on three surfaces that cannot
 // collect those fields, where every save is a guaranteed 400. Global narrowing stays a one-line
 // change here; per-surface narrowing is the capability cross down there.
 export const SELECTABLE_EVENT_TYPES = EVENT_TYPES
@@ -547,7 +591,7 @@ export const PLANTING_REQUIRED_TYPES = new Set([
   // there is no count to reduce, so this is the strongest predication in the whole map — and unlike
   // the rest of it the SERVER enforces this pair too (validatePostBody), because the write has a
   // side effect on plants and a planting-less one would be a no-op behind a success response.
-  'failed', 'given_away',
+  'reduction_lost', 'reduction_given_away',
 ])
 
 // EXEMPT (a space/garden target, never nothing): rain, cover, uncover, mulched, mesh_netting,
@@ -560,7 +604,7 @@ export const PLANTING_EXEMPT_TYPES = EVENT_TYPES.filter((t) => !PLANTING_REQUIRE
 // text / non-vocabulary types (e.g. the V4-FLAG-001 'flag_issue' mode, which is NOT in EVENT_TYPES
 // and carries its own plant_id gate) return false here — they are governed by their own rules.
 export function requiresPlanting(eventType) {
-  return PLANTING_REQUIRED_TYPES.has(eventType)
+  return PLANTING_REQUIRED_TYPES.has(canonicalEventType(eventType))
 }
 
 // ── V4-PICKERGATE-001 — creation-surface capability gate ────────────
@@ -576,8 +620,8 @@ export function requiresPlanting(eventType) {
 // third member is named here because nothing else names it:
 //   harvest     -> lambda/events/validators.js validateHarvestFields — `body.harvest` {quantity,unit}
 //                  is REQUIRED. Absent -> 400 'harvest fields required for event_type=harvest'.
-//   failed      -> validateReduction — `metadata.qty_reduced` + `metadata.loss_reason` REQUIRED.
-//   given_away  -> validateReduction — `metadata.qty_reduced` + `metadata.giveaway_reason` REQUIRED.
+//   reduction_lost       -> validateReduction — `metadata.qty_reduced` + `metadata.loss_reason` REQUIRED.
+//   reduction_given_away -> validateReduction — `metadata.qty_reduced` + `metadata.giveaway_reason` REQUIRED.
 //
 // The membership is HAND-LISTED here and PROVEN elsewhere, deliberately: this module has ZERO
 // imports by design (it is copied verbatim into the Lambda by gen-lambda-event-types.mjs), so it
@@ -587,7 +631,7 @@ export function requiresPlanting(eventType) {
 export const CAPTURE_PANEL_REQUIRED_TYPES = ['harvest', ...PLANT_REDUCTION_EVENT_TYPES]
 
 export function requiresCapturePanel(eventType) {
-  return CAPTURE_PANEL_REQUIRED_TYPES.includes(eventType)
+  return CAPTURE_PANEL_REQUIRED_TYPES.includes(canonicalEventType(eventType))
 }
 
 // The list a CREATION surface renders, given what that surface can collect. Reads

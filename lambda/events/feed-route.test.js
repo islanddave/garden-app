@@ -45,7 +45,11 @@ describe('events Lambda — V3-FEED-001 /api/events/feed', () => {
   });
   it('supports project_id / event_type / from / to filters (null-guarded, cast-safe)', () => {
     expect(b).toMatch(/\$\{fProject\}::uuid IS NULL OR e\.project_id = \$\{fProject\}::uuid/);
-    expect(b).toMatch(/\$\{fType\}::text IS NULL OR e\.event_type = \$\{fType\}::text/);
+    // V5-LOSSTOKEN-001: the type filter matches every stored spelling of the type (eventTypeTokens),
+    // so a legacy `failed` row and a new `reduction_lost` row answer the same filter. Behaviour is
+    // driven through the handler in loss-token-alias.test.js.
+    expect(b).toMatch(/const fTypes = fType \? eventTypeTokens\(fType\) : null;/);
+    expect(b).toMatch(/\$\{fTypes\}::text\[\] IS NULL OR e\.event_type = ANY\(\$\{fTypes\}::text\[\]\)/);
     expect(b).toMatch(/\$\{fFrom\}::timestamptz IS NULL OR e\.event_date >= \$\{fFrom\}::timestamptz/);
     expect(b).toMatch(/\$\{fTo\}::timestamptz IS NULL OR e\.event_date <= \$\{fTo\}::timestamptz/);
   });

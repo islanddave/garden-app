@@ -250,15 +250,35 @@ import {
   WATER_DEPTH_CLASSES, WATER_DEPTH_SOURCES,
   PLANT_REDUCTION_EVENT_TYPES, LOSS_REASONS, GIVEAWAY_REASONS,
   REDUCTION_QTY_KEY, LOSS_REASON_KEY, GIVEAWAY_REASON_KEY,
-  REDUCTION_REASON_KEY_BY_TYPE, REDUCTION_REASONS_BY_KEY,
+  REDUCTION_REASONS_BY_KEY,
   isPlantReductionEventType, accruesQtyLost,
+  // V5-LOSSTOKEN-001 — the permanent legacy alias (`failed` / `given_away`).
+  LOSS_EVENT_TYPE, GIVEAWAY_EVENT_TYPE, LEGACY_EVENT_TYPE_ALIASES,
+  canonicalEventType, eventTypeTokens, reductionReasonKey,
 } from './eventTypes.generated.js';
 export { NON_REWARD_EVENT_TYPES, isRewardedEventType, WATER_DEPTH_CLASSES, WATER_DEPTH_SOURCES };
 export {
   PLANT_REDUCTION_EVENT_TYPES, LOSS_REASONS, GIVEAWAY_REASONS,
   REDUCTION_QTY_KEY, LOSS_REASON_KEY, GIVEAWAY_REASON_KEY,
   isPlantReductionEventType, accruesQtyLost,
+  LOSS_EVENT_TYPE, GIVEAWAY_EVENT_TYPE, LEGACY_EVENT_TYPE_ALIASES,
+  canonicalEventType, eventTypeTokens, reductionReasonKey,
 };
+
+// V5-LOSSTOKEN-001 — rewrite a legacy event_type on an incoming body to its canonical token, IN
+// PLACE, before anything validates or stores it. A phone running a cached older bundle keeps sending
+// `failed` / `given_away` for as long as it stays unrefreshed, and the row must land under the new
+// token or the zero-legacy gate in migrations/v5-losstoken-001 goes red. Logged, so a surviving stale
+// client is visible in CloudWatch rather than silent. Returns the original token when it rewrote one.
+export function normalizeLegacyEventType(body, route) {
+  if (!body || typeof body !== 'object') return null;
+  const original = body.event_type;
+  const canon = canonicalEventType(original);
+  if (canon === original) return null;
+  body.event_type = canon;
+  console.log(JSON.stringify({ evt: 'legacy_event_type_alias', route, from: original, to: canon }));
+  return original;
+}
 
 export const WATER_DEPTH_ERROR = `metadata.water_depth must be one of: ${WATER_DEPTH_CLASSES.join(', ')}`;
 export const WATER_DEPTH_SOURCE_ERROR = `metadata.water_depth_source must be one of: ${WATER_DEPTH_SOURCES.join(', ')}`;
@@ -294,10 +314,11 @@ export function validateEventMetadata(metadata) {
 }
 
 // ── V4-LOSSEVENT-001 — plant-reduction ledger, wire contract ────────────────────────────────────
-// `failed` / `given_away` carry THREE metadata keys and this is the only place they are policed:
+// `reduction_lost` / `reduction_given_away` (stored as `failed` / `given_away` before
+// V5-LOSSTOKEN-001) carry THREE metadata keys and this is the only place they are policed:
 //   qty_reduced     integer >= 1  — how many plants this reduction removed. REQUIRED on both types.
-//   loss_reason     LOSS_REASONS      — REQUIRED on `failed`, and legal NOWHERE else.
-//   giveaway_reason GIVEAWAY_REASONS  — REQUIRED on `given_away`, and legal NOWHERE else.
+//   loss_reason     LOSS_REASONS      — REQUIRED on `reduction_lost`, and legal NOWHERE else.
+//   giveaway_reason GIVEAWAY_REASONS  — REQUIRED on `reduction_given_away`, and legal NOWHERE else.
 //
 // EVERY EVENT CARRIES A QUANTITY, and that is the requirement rather than a nicety: without it,
 // losing one pepper is indistinguishable from losing nineteen, and `SUM` over the ledger — the only
@@ -361,7 +382,7 @@ export function validateReduction(body = {}) {
   }
   if (qty > MAX_REDUCTION_QTY) return { status: 400, error: REDUCTION_QTY_MAX_ERROR };
 
-  const wantKey = REDUCTION_REASON_KEY_BY_TYPE[eventType];
+  const wantKey = reductionReasonKey(eventType);
   const otherKey = wantKey === LOSS_REASON_KEY ? GIVEAWAY_REASON_KEY : LOSS_REASON_KEY;
   if (meta[otherKey] != null) {
     return { status: 400, error: reductionKeyForbiddenError(otherKey, eventType) };
@@ -412,7 +433,7 @@ export function readReductionPlan(body = {}) {
     // A give-away is a reduction, not a loss — the plant is alive somewhere else. Give-away totals
     // are read off the ledger rather than getting a column of their own.
     lostAccrual: accruesQtyLost(body.event_type) ? qty : 0,
-    reason: meta[REDUCTION_REASON_KEY_BY_TYPE[body.event_type]],
+    reason: meta[reductionReasonKey(body.event_type)],
   };
 }
 

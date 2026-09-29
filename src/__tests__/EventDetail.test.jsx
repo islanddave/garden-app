@@ -368,14 +368,17 @@ describe('EventDetail — a plants-lost event (BUG-LOSSEVENTLABEL-001)', () => {
     flagged_as_issue: false, severity: null, resolved_at: null, project_name: 'Tomatoes 2026',
   }
 
-  it("the header reads '2 plants lost', never 'failed'", async () => {
-    dataRef.event = { ...LOSS }
-    renderEventDetail()
-    await flushLoad()
-    const h1 = document.querySelector('h1')
-    expect(h1.textContent).toContain('2 plants lost')
-    expect(h1.textContent).not.toMatch(/fail/i)
-  })
+  // V5-LOSSTOKEN-001: under both spellings — LOSS above is a pre-rename row stored as `failed`.
+  for (const event_type of ['failed', 'reduction_lost']) {
+    it(`the header reads '2 plants lost', never 'failed' (stored as ${event_type})`, async () => {
+      dataRef.event = { ...LOSS, event_type }
+      renderEventDetail()
+      await flushLoad()
+      const h1 = document.querySelector('h1')
+      expect(h1.textContent).toContain('2 plants lost')
+      expect(h1.textContent).not.toMatch(/fail/i)
+    })
+  }
 
   it('the Details block names the reason by its chip caption', async () => {
     dataRef.event = { ...LOSS, metadata: { loss_reason: 'unknown', qty_reduced: 2 } }
@@ -384,6 +387,18 @@ describe('EventDetail — a plants-lost event (BUG-LOSSEVENTLABEL-001)', () => {
     expect(screen.getByText('Loss reason')).toBeTruthy()
     expect(screen.getByText('Not sure')).toBeTruthy()
     expect(screen.queryByText('unknown')).toBeNull()
+  })
+
+  it('editing a row stored under the legacy token seeds the select with the new one (V5-LOSSTOKEN-001)', async () => {
+    // EVENT_TYPE_OPTIONS carries only canonical tokens, so a raw `failed` would seed a select with no
+    // matching option — it would silently show the first option instead of the event's own type.
+    dataRef.event = { ...LOSS, event_type: 'failed' }
+    renderEventDetail()
+    await flushLoad()
+    fireEvent.click(screen.getByText('Edit'))
+    const sel = document.getElementById('ev-event-type')
+    expect(sel.value).toBe('reduction_lost')
+    expect(sel.options[sel.selectedIndex].textContent).toBe('plants lost')
   })
 
   it('with a title, the kicker under it says "plants lost"', async () => {

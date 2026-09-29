@@ -64,6 +64,7 @@ import { readMarker } from '../lib/backNav.js'
 // without an OverlayContext. Asserting on a spy would re-create the blind spot
 // EventNew.reloadGateWire.test.jsx exists to close.
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
+import { writeDraft, clearDraft } from '../lib/draftStash.js'
 
 const PROJECT = { id: 'proj-1', name: 'Lettuce 2026', status: 'growing' }
 const PLANT = { id: 'plant-1', name: 'Buttercrunch #1', project_id: 'proj-1', quantity: 10, status: 'vegetative' }
@@ -92,7 +93,7 @@ function wireApiFetch() {
   })
 }
 
-function renderEventNew(query = 'event_type=failed&plant=plant-1&project=proj-1') {
+function renderEventNew(query = 'event_type=reduction_lost&plant=plant-1&project=proj-1') {
   searchParamsRef.current = new URLSearchParams(query)
   return render(
     <DismissRegistryProvider>
@@ -109,6 +110,7 @@ beforeEach(() => {
   dataRef.postError = null
   dataRef.putError = null
   try { localStorage.clear() } catch { /* noop */ }
+  clearDraft('logone')
   window.history.replaceState(SENTINEL, '')
   clearReloadBlocks()
   wireApiFetch()
@@ -125,10 +127,10 @@ const settle = () => act(async () => { await new Promise(r => setTimeout(r, 50))
 // ── The panel exists, and it exists for BOTH types ──────────────────────────────────────────────
 
 describe('the required capture panel renders for the reduction types and nothing else', () => {
-  it('failed gets a quantity field and the SEVEN loss reasons', async () => {
+  it('a loss gets a quantity field and the SEVEN loss reasons', async () => {
     renderEventNew()
     await flushLoad()
-    expect(screen.getByTestId('reduction-panel-failed')).toBeTruthy()
+    expect(screen.getByTestId('reduction-panel-reduction_lost')).toBeTruthy()
     expect(screen.getByTestId('reduction-qty')).toBeTruthy()
     for (const r of ['pest', 'disease', 'weather', 'transplant_shock', 'unknown', 'animal_damage', 'culled']) {
       expect(screen.getByTestId(`reduction-reason-${r}`), r).toBeTruthy()
@@ -137,10 +139,10 @@ describe('the required capture panel renders for the reduction types and nothing
     expect(screen.queryByTestId('reduction-reason-friend')).toBeNull()
   })
 
-  it('given_away gets the SIX giveaway reasons, including the three Dave just approved', async () => {
-    renderEventNew('event_type=given_away&plant=plant-1&project=proj-1')
+  it('a gift gets the SIX giveaway reasons, including the three Dave just approved', async () => {
+    renderEventNew('event_type=reduction_given_away&plant=plant-1&project=proj-1')
     await flushLoad()
-    expect(screen.getByTestId('reduction-panel-given_away')).toBeTruthy()
+    expect(screen.getByTestId('reduction-panel-reduction_given_away')).toBeTruthy()
     for (const r of ['friend', 'donated', 'plant_swap', 'sold', 'traded', 'community']) {
       expect(screen.getByTestId(`reduction-reason-${r}`), r).toBeTruthy()
     }
@@ -151,14 +153,14 @@ describe('the required capture panel renders for the reduction types and nothing
     for (const t of ['watering', 'harvest', 'observation']) {
       const { unmount } = renderEventNew(`event_type=${t}&plant=plant-1&project=proj-1`)
       await flushLoad()
-      expect(screen.queryByTestId('reduction-panel-failed'), t).toBeNull()
-      expect(screen.queryByTestId('reduction-panel-given_away'), t).toBeNull()
+      expect(screen.queryByTestId('reduction-panel-reduction_lost'), t).toBeNull()
+      expect(screen.queryByTestId('reduction-panel-reduction_given_away'), t).toBeNull()
       unmount()
     }
   })
 
   it('the catch-all hint appears only once its chip is chosen', async () => {
-    renderEventNew('event_type=given_away&plant=plant-1&project=proj-1')
+    renderEventNew('event_type=reduction_given_away&plant=plant-1&project=proj-1')
     await flushLoad()
     expect(screen.queryByTestId('reduction-reason-hint')).toBeNull()
     fireEvent.click(screen.getByTestId('reduction-reason-community'))
@@ -258,21 +260,21 @@ describe('Save is blocked until both required fields are filled', () => {
 // ── The payload ─────────────────────────────────────────────────────────────────────────────────
 
 describe('a satisfied panel posts the reduction metadata the API requires', () => {
-  it('failed posts qty_reduced + loss_reason, with the quantity as a NUMBER', async () => {
+  it('a loss posts qty_reduced + loss_reason, with the quantity as a NUMBER', async () => {
     renderEventNew()
     await flushLoad()
     fireEvent.change(screen.getByTestId('reduction-qty'), { target: { value: '3' } })
     fireEvent.click(screen.getByTestId('reduction-reason-culled'))
     await save()
     expect(postCalls.length).toBe(1)
-    expect(postCalls[0].event_type).toBe('failed')
+    expect(postCalls[0].event_type).toBe('reduction_lost')
     expect(postCalls[0].plant_id).toBe('plant-1')
     expect(postCalls[0].metadata).toEqual({ qty_reduced: 3, loss_reason: 'culled' })
     expect(typeof postCalls[0].metadata.qty_reduced).toBe('number')
   })
 
-  it('given_away posts giveaway_reason and NEVER loss_reason — a gift is not a loss', async () => {
-    renderEventNew('event_type=given_away&plant=plant-1&project=proj-1')
+  it('a gift posts giveaway_reason and NEVER loss_reason — a gift is not a loss', async () => {
+    renderEventNew('event_type=reduction_given_away&plant=plant-1&project=proj-1')
     await flushLoad()
     fireEvent.change(screen.getByTestId('reduction-qty'), { target: { value: '2' } })
     fireEvent.click(screen.getByTestId('reduction-reason-community'))
@@ -309,8 +311,49 @@ describe('a satisfied panel posts the reduction metadata the API requires', () =
     // Reach the type through the picker's own affordance, as a user would.
     fireEvent.click(screen.getByText('More event types'))
     fireEvent.click(screen.getByText('Plants given away'))
-    expect(screen.getByTestId('reduction-panel-given_away')).toBeTruthy()
+    expect(screen.getByTestId('reduction-panel-reduction_given_away')).toBeTruthy()
     expect(screen.getByTestId('reduction-qty').value).toBe('')
+  })
+})
+
+// ── V5-LOSSTOKEN-001: the legacy spellings still open the right panel and post the new token ─────
+// Until 2026-09-29 the loss/gift types were `failed` / `given_away`. A link saved before the rename, or
+// a draft an older bundle stashed in sessionStorage, still carries them. Before the alias both left the
+// form with NO panel, an empty metadata object and a guaranteed 400 (review: seat-mobile-pwa, item 3).
+
+describe('a legacy spelling reaching the form is read as the new token', () => {
+  it('?event_type=failed opens the loss panel and posts reduction_lost', async () => {
+    renderEventNew('event_type=failed&plant=plant-1&project=proj-1')
+    await flushLoad()
+    expect(screen.getByTestId('reduction-panel-reduction_lost')).toBeTruthy()
+    fireEvent.change(screen.getByTestId('reduction-qty'), { target: { value: '2' } })
+    fireEvent.click(screen.getByTestId('reduction-reason-weather'))
+    await save()
+    expect(postCalls.length).toBe(1)
+    expect(postCalls[0].event_type).toBe('reduction_lost')
+    expect(postCalls[0].metadata).toEqual({ qty_reduced: 2, loss_reason: 'weather' })
+  })
+
+  it('?event_type=given_away opens the gift panel and posts reduction_given_away', async () => {
+    renderEventNew('event_type=given_away&plant=plant-1&project=proj-1')
+    await flushLoad()
+    expect(screen.getByTestId('reduction-panel-reduction_given_away')).toBeTruthy()
+    fireEvent.change(screen.getByTestId('reduction-qty'), { target: { value: '1' } })
+    fireEvent.click(screen.getByTestId('reduction-reason-friend'))
+    await save()
+    expect(postCalls[0].event_type).toBe('reduction_given_away')
+    expect(postCalls[0].metadata).toEqual({ qty_reduced: 1, giveaway_reason: 'friend' })
+  })
+
+  it('a draft stashed with the legacy type restores into the loss panel, not a dead form', async () => {
+    writeDraft('logone', { form: { event_type: 'failed', plant_id: 'plant-1', notes: 'two died by the door' } })
+    renderEventNew('')
+    await flushLoad()
+    expect(screen.getByTestId('reduction-panel-reduction_lost')).toBeTruthy()
+    fireEvent.change(screen.getByTestId('reduction-qty'), { target: { value: '2' } })
+    fireEvent.click(screen.getByTestId('reduction-reason-weather'))
+    await save()
+    expect(postCalls[0].event_type).toBe('reduction_lost')
   })
 })
 

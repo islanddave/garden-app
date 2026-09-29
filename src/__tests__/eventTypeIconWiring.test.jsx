@@ -19,7 +19,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { EVENT_TYPES, EVENT_TYPE_META, REQUIRED_META_FIELDS, buildSecondaryGroups } from '../lib/eventTypes.js'
+import { EVENT_TYPES, EVENT_TYPE_META, REQUIRED_META_FIELDS, buildSecondaryGroups, LEGACY_EVENT_TYPE_ALIASES } from '../lib/eventTypes.js'
 import { GLYPHS, getIcon, isSvg, NEUTRAL_ICON } from '../lib/iconRegistry.js'
 // The picker's `available` default — SELECTABLE_EVENT_TYPES, not EVENT_TYPES. The two
 // plant-reduction types are creatable-excluded, so they never reach the "More" panel.
@@ -44,9 +44,15 @@ const named = (label) => (accessibleName) =>
   accessibleName.replace(/\s+/g, ' ').trim() === label.replace(/\s+/g, ' ').trim()
 
 describe('every event type resolves to a registry glyph', () => {
-  it('EVENT_TYPES and the event.* registry keys are exactly 1:1', () => {
+  it('EVENT_TYPES and the event.* registry keys are exactly 1:1, plus the legacy aliases', () => {
+    // V5-LOSSTOKEN-001: event.failed / event.given_away stay registered for rows and cached responses
+    // still carrying the pre-rename token; each borrows its canonical form (iconEvents.js
+    // LEGACY_EVENT_GLYPHS). They are the ONLY extra keys allowed, and only while they are aliases.
     const registryKeys = Object.keys(GLYPHS).filter((k) => k.startsWith('event.')).map((k) => k.slice(6))
-    expect(registryKeys.sort()).toEqual([...EVENT_TYPES].sort())
+    const legacy = Object.keys(LEGACY_EVENT_TYPE_ALIASES)
+    expect(legacy.length).toBeGreaterThan(0)
+    expect(registryKeys.sort()).toEqual([...EVENT_TYPES, ...legacy].sort())
+    for (const t of legacy) expect(EVENT_TYPES, t).not.toContain(t)
   })
 
   it('no event type falls through to the neutral fallback', () => {

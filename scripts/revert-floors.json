@@ -1,6 +1,13 @@
 {
   "floors": [
     {
+      "floor": "v4.160.0",
+      "since": "v4.160.0",
+      "reason": "plant-reduction event tokens renamed (failed -> reduction_lost, given_away -> reduction_given_away): once prod writes or backfills the new tokens, older code does not treat those rows as reductions, so deleting one would not restore its planting's count and the edit guard would let it be re-typed with its counters applied",
+      "ledger": "V5-LOSSTOKEN-001",
+      "undo_instead": null
+    },
+    {
       "floor": "v4.156.0",
       "since": "v4.156.0",
       "reason": "page-scroll manager: history.scrollRestoration is 'manual' per history entry and only a bundle that knows SCROLL_MANAGER_ENABLED writes 'auto' back, so an older bundle leaves open sessions losing their place on Back until the app is closed",

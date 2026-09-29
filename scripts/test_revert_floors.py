@@ -49,6 +49,10 @@ def test_the_real_file_parses_and_carries_the_seeded_floors():
     # v4.134.0's own deploy-lambda.yml re-creates the retired nightly rule, so the floor is v4.135.0.
     assert by_floor["v4.135.0"]["since"] == "v4.135.0"
     assert by_floor["v4.135.0"]["undo_instead"] is None
+    # V5-LOSSTOKEN-001: older code cannot read the renamed reduction tokens, and there is no switch.
+    assert by_floor["v4.160.0"]["since"] == "v4.160.0"
+    assert by_floor["v4.160.0"]["ledger"] == "V5-LOSSTOKEN-001"
+    assert by_floor["v4.160.0"]["undo_instead"] is None
 
 
 def test_every_flag_a_floor_names_is_one_live_switch_in_this_tree():
@@ -251,8 +255,17 @@ def test_a_target_at_the_floor_is_allowed(monkeypatch, capsys):
 
 
 def test_a_target_above_the_floor_is_allowed(monkeypatch):
-    monkeypatch.setattr(rt, "requests", FakeRequests(prod_routes("4.160.0")))
+    # Prod was 4.160.0 here until that version became a real floor (V5-LOSSTOKEN-001); 4.159.0 keeps
+    # the case it tests — a target above the governing (v4.156.0) floor passes.
+    monkeypatch.setattr(rt, "requests", FakeRequests(prod_routes("4.159.0")))
     assert rt.require_target_above_floor(cfg_for("v4.158")) is None
+
+
+def test_the_token_rename_floor_refuses_older_code_once_it_ships(monkeypatch):
+    monkeypatch.setattr(rt, "requests", FakeRequests(prod_routes("4.160.0")))
+    with pytest.raises(rt.RevertError) as e:
+        rt.require_target_above_floor(cfg_for("v4.159.0"))
+    assert "below the revert floor v4.160.0" in str(e.value)
 
 
 def test_the_floor_in_force_follows_the_version_prod_runs(monkeypatch):

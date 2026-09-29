@@ -112,9 +112,10 @@ describe('the rule reaches BOTH write paths, not just the one it was written for
   it('a disposition cannot ride on a non-harvest event', () => {
     // The harvest sub-object is already forbidden on every other type, which is what keeps the pick
     // grain and the plant grain from leaking into each other at the API edge. Pinned here because
-    // `failed` (V4-LOSSEVENT-001's reduction event) is precisely the type someone would try it on.
+    // the loss event (V4-LOSSEVENT-001; `reduction_lost` since V5-LOSSTOKEN-001) is precisely the
+    // type someone would try it on.
     const r = validatePostBody({
-      project_id: UUID, event_type: 'failed',
+      project_id: UUID, event_type: 'reduction_lost',
       harvest: { quantity: 1, unit: 'count', disposition: 'aborted' },
     });
     expect(r).not.toBeNull();

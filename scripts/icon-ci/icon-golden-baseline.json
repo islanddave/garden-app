@@ -154,10 +154,12 @@
     "event.seed_saved": 30.71,
     "event.cloves_saved": 27.68,
     "event.overwinter_survived": 19.71,
-    "event.failed": 22.16,
-    "event.given_away": 40,
+    "event.reduction_lost": 22.16,
+    "event.reduction_given_away": 40,
     "event.observation": 22.86,
     "event.photo": 33.59,
-    "event.other": 21.18
+    "event.other": 21.18,
+    "event.failed": 22.16,
+    "event.given_away": 40
   }
 }

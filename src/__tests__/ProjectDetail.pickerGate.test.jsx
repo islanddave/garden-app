@@ -93,6 +93,9 @@ describe('V4-PICKERGATE-001 — ProjectDetail mini-logger event-type <select>', 
     for (const t of CAPTURE_PANEL_REQUIRED_TYPES) expect(values).not.toContain(t)
     // Named as well as derived: this lane exists because of these two, and `harvest` is the
     // pre-existing member the general fix picks up for free.
+    expect(values).not.toContain('reduction_lost')
+    expect(values).not.toContain('reduction_given_away')
+    // ...nor under their pre-V5-LOSSTOKEN-001 spellings.
     expect(values).not.toContain('failed')
     expect(values).not.toContain('given_away')
     expect(values).not.toContain('harvest')

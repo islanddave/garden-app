@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.160.0",
+    "date": "2026-09-29",
+    "highlights": [
+      "Behind the scenes: a Plants lost entry is now stored as reduction_lost instead of failed, so it can never be mistaken for a failed planting. Nothing changes on screen; entries logged from an older copy of the app still save correctly."
+    ]
+  },
+  {
     "version": "4.159.0",
     "date": "2026-09-29",
     "highlights": [

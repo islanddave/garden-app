@@ -82,8 +82,11 @@ describe('dropdownRegistry — EVENT_TYPE set (V3-CONFIG-001)', () => {
     expect(EVENT_TYPE_LABELS[t]).not.toMatch(/\p{Extended_Pictographic}/u)
   })
   it('BUG-LOSSEVENTLABEL-001: the loss event is "plants lost" in the edit select, not the status word "failed"', () => {
-    expect(EVENT_TYPE_LABELS.failed).toBe('plants lost')
-    expect(EVENT_TYPE_LABELS.given_away).toBe('plants given away')
+    expect(EVENT_TYPE_LABELS.reduction_lost).toBe('plants lost')
+    expect(EVENT_TYPE_LABELS.reduction_given_away).toBe('plants given away')
+    // V5-LOSSTOKEN-001: the legacy tokens are not options (the edit form canonicalises a legacy row).
+    expect('failed' in EVENT_TYPE_LABELS).toBe(false)
+    expect('given_away' in EVENT_TYPE_LABELS).toBe(false)
   })
 })
 

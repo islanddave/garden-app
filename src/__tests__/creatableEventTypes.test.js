@@ -49,8 +49,8 @@ const SURFACES = [
     body: (t) => ({
       project_id: 'proj-1', plant_id: 'plant-1', event_type: t, event_date: DATE,
       ...(t === 'harvest' ? { harvest: { quantity: 3, unit: 'count' } } : {}),
-      ...(t === 'failed' ? { metadata: { qty_reduced: 2, loss_reason: 'pest' } } : {}),
-      ...(t === 'given_away' ? { metadata: { qty_reduced: 2, giveaway_reason: 'friend' } } : {}),
+      ...(t === 'reduction_lost' ? { metadata: { qty_reduced: 2, loss_reason: 'pest' } } : {}),
+      ...(t === 'reduction_given_away' ? { metadata: { qty_reduced: 2, giveaway_reason: 'friend' } } : {}),
     }),
   },
   {
@@ -85,7 +85,7 @@ describe('V4-PICKERGATE-001 — the required-field set is derived from the serve
     // Named explicitly as well, so the failure message says WHICH type moved rather than only that
     // two arrays differ. Three, not the two this lane was briefed on — `harvest` has been a
     // guaranteed 400 on the panel-less surfaces since long before the reduction types existed.
-    expect([...derived].sort()).toEqual(['failed', 'given_away', 'harvest'])
+    expect([...derived].sort()).toEqual(['harvest', 'reduction_given_away', 'reduction_lost'])
   })
 
   it('requiresCapturePanel agrees with the constant across the whole vocabulary', () => {
@@ -130,7 +130,7 @@ describe('V4-PICKERGATE-001 Tier 1 — every offered type actually POSTs clean (
     // Guards the direction the per-surface tests cannot: a fix that narrowed every surface would
     // satisfy all of the above and quietly undo V4-LOSSUI-001.
     expect(creatableEventTypes({ capturePanels: true, plantScoped: true })).toEqual(SELECTABLE_EVENT_TYPES)
-    for (const t of ['harvest', 'failed', 'given_away']) {
+    for (const t of ['harvest', 'reduction_lost', 'reduction_given_away']) {
       expect(creatableEventTypes({ capturePanels: true, plantScoped: true })).toContain(t)
     }
   })
