@@ -207,14 +207,16 @@ BEGIN
     v_live, v_deleted, v_archive;
 END $$;
 
-\echo '=== renamed (the BEFORE copy) ==='
+\echo '=== renamed (the BEFORE copy; an archive row reports its row_data) ==='
 SELECT s.source_table, s.id, s.old_event_type, s.new_event_type,
-       s.row_before->>'plant_id'                  AS plant_id,
-       s.row_before->'metadata'->>'qty_reduced'   AS qty_reduced,
-       COALESCE(s.row_before->'metadata'->>'loss_reason', s.row_before->'metadata'->>'giveaway_reason') AS reason,
-       s.row_before->>'deleted_at' IS NOT NULL   AS soft_deleted
+       r.ev->>'plant_id'                                                  AS plant_id,
+       r.ev->'metadata'->>'qty_reduced'                                   AS qty_reduced,
+       COALESCE(r.ev->'metadata'->>'loss_reason', r.ev->'metadata'->>'giveaway_reason') AS reason,
+       r.ev->>'deleted_at' IS NOT NULL                                    AS soft_deleted
   FROM public.snap_losstoken001_event_rows s
- ORDER BY s.source_table, s.row_before->>'created_at', s.id;
+  CROSS JOIN LATERAL (SELECT CASE s.source_table WHEN 'event_log' THEN s.row_before
+                                                 ELSE s.row_before->'row_data' END AS ev) r
+ ORDER BY s.source_table, r.ev->>'created_at', s.id;
 
 INSERT INTO public.schema_version (version, description, applied_at)
 VALUES ('5.0.0-losstoken-001',
