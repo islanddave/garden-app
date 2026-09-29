@@ -11,7 +11,9 @@
 // THE WRITE is one PUT /api/plants/:id per planting with `{ status: 'ended' }` and nothing else — the
 // PUT is a COALESCE partial update that records the status_change event in the same transaction
 // (lambda/plants/index.js). 3 in flight; the confirm sheet stays open and busy with "Ending 3 of 7…".
-// Saved rows leave the list; failed rows stay ticked, tagged "Didn't save", with Try again.
+// Saved rows leave the list; failed rows stay ticked, tagged "Didn't save", with Try again. After 3
+// failures in a row the run sends nothing new (lie-fi hangs each write to the 15 s timeout), so the
+// sheet lets go and every row not sent is a "Didn't save" too (runPool, src/lib/seasonEnd.js).
 //
 // UNDO is one, for the last batch: the house toast "Ended 7 plantings · Undo", and the same undo kept
 // in the sticky bar until the page is left or something is ticked again. It PUTs each landed row back

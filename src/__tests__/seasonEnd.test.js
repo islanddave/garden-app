@@ -11,7 +11,7 @@ import {
   bandForSlug, indexLocations, isUnderRoof, classifyPlanting, buildSeasonList, groupSelectAction,
   applyGroupSelect, confirmSummary, countsByLocation, plantingsPhrase, endBody, restoreBody, canRestore,
   runPool, progressLine, endResultLine, undoResultLine, lastLoggedLabel, GROUP_FINISHED, GROUP_STILL_GROWING,
-  WRITE_CONCURRENCY,
+  WRITE_CONCURRENCY, STOP_AFTER_FAILURES,
 } from '../lib/seasonEnd.js'
 
 // A small location tree: an open bed, a covered building with an uncovered shelf inside it, a heated
@@ -273,6 +273,26 @@ describe('runPool', () => {
     expect(progress.at(-1)).toBe('7/7')
     expect(progress).toHaveLength(7)
     expect(await runPool([], async () => 1)).toEqual([])
+  })
+
+  // KILLING MUTATION: keep sending after 3 failures in a row. RESULT: RED — all 10 are sent.
+  it('sends nothing new after 3 failures in a row; every item never sent comes back failed and skipped', async () => {
+    expect(STOP_AFTER_FAILURES).toBe(3)
+    const sent = []
+    const results = await runPool(Array.from({ length: 10 }, (_, i) => i), async (x) => { sent.push(x); throw new Error('timed out') })
+    expect(sent).toEqual([0, 1, 2])
+    expect(results).toHaveLength(10)
+    expect(results.every((r) => r.ok === false)).toBe(true)
+    expect(results.slice(0, 3).map((r) => r.error.message)).toEqual(['timed out', 'timed out', 'timed out'])
+    expect(results.slice(3).every((r) => r.skipped === true)).toBe(true)
+  })
+
+  it('a success resets the count: failures that never reach 3 in a row never stop the pool', async () => {
+    const sent = []
+    const results = await runPool([1, 2, 3, 4, 5, 6, 7], async (x) => { sent.push(x); if (x % 3) throw new Error('x'); return x }, { concurrency: 1 })
+    expect(sent).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(results.map((r) => r.ok)).toEqual([false, false, true, false, false, true, false])
+    expect(results.some((r) => r.skipped)).toBe(false)
   })
 })
 

@@ -246,6 +246,39 @@ describe('the writes', () => {
     expect(toastApi.showUndo.mock.calls.at(-1)[0].message).toBe('Ended 2 plantings')
   })
 
+  // Lie-fi: every write hangs until api.js aborts it at API_TIMEOUT_MS. KILLING MUTATIONS: keep sending
+  // after 3 failures in a row; or stop, but send the next row as soon as one write fails. RESULT: RED —
+  // either way more writes go out and the sheet is still held once the first three have timed out.
+  it('lie-fi: once 3 writes time out in a row nothing new is sent, the sheet lets go, and every row not sent is Try again', async () => {
+    const { API_TIMEOUT_MS } = await vi.importActual('../lib/api.js')
+    expect(API_TIMEOUT_MS).toBe(15000)
+    plantsBody = { plants: Array.from({ length: 8 }, (_, i) => row(`h${i}`, `Hung ${i}`, 'tomato', 'fruiting', 'bag')) }
+    await renderPage()
+    openGroup('Bag Area')
+    fireEvent.click(within(group('Bag Area')).getByTestId('season-end-group-select'))
+    openConfirm()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      putImpl = () => new Promise((_, reject) => { setTimeout(() => reject(new Error('Request timed out')), API_TIMEOUT_MS) })
+      await confirmEnd()
+      expect(puts()).toHaveLength(3)
+      await act(async () => { await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS - 1) })
+      expect(screen.getByRole('dialog', { name: 'End 8 plantings?' })).toBeTruthy()
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(screen.queryByRole('dialog')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(puts()).toHaveLength(3)
+    expect(screen.getAllByTestId('season-end-failed')).toHaveLength(8)
+    expect(screen.getByTestId('season-end-result').textContent).toContain("Couldn't end these. Check your signal and try again.")
+    // The signal is back: Try again sends all 8, the 5 never sent included, into one undo.
+    putImpl = () => Promise.resolve({})
+    await act(async () => { fireEvent.click(screen.getByTestId('season-end-retry')) })
+    await waitFor(() => expect(screen.getByTestId('season-end-result').textContent).toContain('Ended 8 plantings.'))
+    expect(puts()).toHaveLength(11)
+  })
+
   it('nothing saved: the ticks are kept and the bar says so', async () => {
     putImpl = () => Promise.reject(new Error('offline'))
     await renderPage()

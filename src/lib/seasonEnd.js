@@ -195,26 +195,51 @@ export const restoreBody = (prevStatus) => ({ status: prevStatus })
 // leave it ended while the page claimed otherwise.
 export const canRestore = (prevStatus) => typeof prevStatus === 'string' && prevStatus.length > 0
 
+// LIE-FI. Rural signal fails by hanging, not by refusing: each request then runs to the 15 s API
+// timeout (src/lib/api.js API_TIMEOUT_MS), and a pool that kept sending would hold the busy sheet for
+// ceil(80 / 3) x 15 s ≈ 6.75 min on an 80-row batch. So after this many failures in a row the pool
+// sends nothing new, and every row it never sent comes back failed, for the page's Try again.
+export const STOP_AFTER_FAILURES = 3
+
 // Runs `worker` over `items` with at most `concurrency` in flight. Never rejects: each result is
-// { ok, value } or { ok: false, error }, in input order. onProgress(done, total) after each one.
-export async function runPool(items, worker, { concurrency = WRITE_CONCURRENCY, onProgress } = {}) {
+// { ok, value } or { ok: false, error } — or { ok: false, skipped: true } for an item never sent
+// because the pool stopped — in input order. onProgress(done, total) after each one that was sent.
+export async function runPool(items, worker, { concurrency = WRITE_CONCURRENCY, stopAfter = STOP_AFTER_FAILURES, onProgress } = {}) {
   const results = new Array(items.length)
   let next = 0
   let done = 0
+  let live = 0
+  let failsInARow = 0
+  let stopped = false
+  const waiters = new Set()
+  const nextSettle = () => new Promise((resolve) => waiters.add(resolve))
+  const wake = () => { for (const w of waiters) w(); waiters.clear() }
   async function lane() {
-    while (next < items.length) {
+    while (!stopped && next < items.length) {
+      // After a failure, send nothing on top of writes still in flight until one of them settles: a
+      // success means the signal is back; on lie-fi the three first writes time out together and the
+      // pool stops there, instead of a fresh round of 15 s timeouts later.
+      if (failsInARow > 0 && live > 0) { await nextSettle(); continue }
       const i = next++
+      live++
       try {
         results[i] = { ok: true, value: await worker(items[i], i) }
+        failsInARow = 0
       } catch (error) {
         results[i] = { ok: false, error }
+        if (++failsInARow >= stopAfter) stopped = true
       }
+      live--
       done++
       onProgress?.(done, items.length)
+      wake()
     }
   }
   const lanes = Math.max(1, Math.min(concurrency, items.length))
   await Promise.all(Array.from({ length: lanes }, lane))
+  for (let i = 0; i < items.length; i++) {
+    if (!results[i]) results[i] = { ok: false, skipped: true }
+  }
   return results
 }
 
