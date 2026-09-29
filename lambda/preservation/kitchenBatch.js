@@ -82,6 +82,48 @@ export const KITCHEN_QTY_UNITS = [
   'g', 'kg', 'oz', 'lb', 'count', 'cup', 'tbsp', 'tsp', 'fl oz', 'qt', 'gal', 'ml', 'l', 'other',
 ];
 
+// ── Release F (contract-F.md conventions) ─────────────────────────────────────────────────────────
+// KITCHEN_UNITS — the one list (V4 "Units"), = chk_kbi_qty_unit / chk_ksl_amount_unit as 1b widened
+// them and chk_kitchen_batch_vessel_unit (F). Every F writer (keyed lines, line PATCH, stage PATCH,
+// vessel) takes these 25. KITCHEN_QTY_UNITS above stays the 14 the SHIPPED forms were built on, because
+// the shipped client mirror (src/components/putup/batchInputs.js) is bound to it; the un-keyed bulk form
+// keeps it.
+export const KITCHEN_UNITS = [
+  'g', 'kg', 'oz', 'lb', 'ml', 'l', 'tsp', 'tbsp', 'fl oz', 'cup', 'pint', 'qt', 'gal',
+  'count', 'clove', 'head', 'bunch', 'pinch', 'peck', 'bushel', 'half-bushel', 'flat', 'jar', 'bag', 'other',
+];
+// Grams per unit — THE one mass table (06 §1.4). A unit not here is not a mass.
+export const MASS_G = Object.freeze({ g: 1, kg: 1000, oz: 28.3495, lb: 453.592 });
+// Grams per unit for a role='water' line ONLY (1 g/ml; 06 §3.3). Every other volume is "no weight".
+export const WATER_G = Object.freeze({
+  ml: 1, l: 1000, tsp: 4.92892, tbsp: 14.7868, 'fl oz': 29.5735, cup: 236.588, pint: 473.176,
+  qt: 946.353, gal: 3785.41,
+});
+export const isMassUnit = (u) => Object.prototype.hasOwnProperty.call(MASS_G, u);
+// qty in grams, or null ("no weight"). Water volumes convert only when the line IS water.
+export function gramsOf(qty, unit, { water = false } = {}) {
+  if (qty == null || unit == null) return null;
+  const n = Number(qty);
+  if (!Number.isFinite(n)) return null;
+  if (isMassUnit(unit)) return n * MASS_G[unit];
+  if (water && Object.prototype.hasOwnProperty.call(WATER_G, unit)) return n * WATER_G[unit];
+  return null;
+}
+
+// chk_kbi_form, chk_kbi_salt_method, chk_kbi_base_from, chk_ksl_acts, chk_kbi_role.
+export const KITCHEN_FORMS = ['fresh', 'frozen', 'dried', 'cooked'];
+export const KITCHEN_SALT_METHODS = ['dry', 'brine', 'rinsed'];
+export const KITCHEN_BASE_FROM = ['lines', 'scale'];
+export const KITCHEN_ACTS = ['topped_up', 'pushed_under', 'skimmed'];
+export const KITCHEN_ROLES = ['salt', 'water'];
+// chk_kbi_salt_base admits 'peppers' for a 1b-era row; no F writer writes it (06 §3.1).
+export const KITCHEN_SALT_BASES = ['produce', 'water', 'all'];
+// The kinds an F line POST writes (contract-F §2.2). 'pantry' is reserved for B′.
+export const KITCHEN_LINE_KINDS = ['garden', 'harvest', 'put_up', 'purchased', 'other'];
+export const KITCHEN_SHU_BASES = ['computed', 'typed'];
+// chk_kitchen_batch_vessel_count.
+export const KITCHEN_VESSEL_COUNT_MAX = 50;
+
 // V5-PHRECORD-001. chk_ksl_ph_scale, mirrored — the pH scale's definitional range and nothing else.
 //
 // ⚠ NOT A SAFETY BAND, and the distinction is the whole ruling. This range is symmetric, prefers no
