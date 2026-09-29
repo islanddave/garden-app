@@ -100,17 +100,38 @@ const NS_INVENTORY = `SELECT id FROM inventory_items WHERE created_by LIKE ${NS}
 
 const SAMPLE_PRED = `created_by LIKE ${NS} OR cultivar_id IN (${NS_VARIETIES}) OR source_event_id IN (${NS_EVENTLOG})`
 
+// V5-FERMENTPATH-001 (06-ferment-path §5.2, RIA-I5). The kitchen family + the use ledger. Owner columns:
+// kitchen_batch.user_id, kitchen_batch_input.created_by, pantry_use.created_by, preservation_log.user_id.
+const NS_KBATCH = `SELECT id FROM kitchen_batch WHERE user_id LIKE ${NS}`
+const NS_JARS   = `SELECT id FROM preservation_log WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR variety_id IN (${NS_VARIETIES}) OR harvest_log_id IN (${NS_HARVEST})`
+// Only the two columns the inflightbatch table has always had, so this step still runs on a pre-1b fork. Every
+// line a route writes carries the caller as created_by, and every fixture batch is namespaced, so the 1b
+// pointer columns (preservation_log_id, output_id, plant_id) would add no row these two arms miss.
+const NS_KBI    = `SELECT id FROM kitchen_batch_input WHERE created_by LIKE ${NS} OR batch_id IN (${NS_KBATCH})`
+const PANTRY_USE_PRED = `created_by LIKE ${NS} OR preservation_log_id IN (${NS_JARS}) OR kitchen_batch_input_id IN (${NS_KBI})`
+
 // FK-ordered: children strictly before parents. Verified against pg_constraint on the staging branch
 // (see BUG-INTFIXTURELEAK-001 investigation) — every FK into plants / plant_varieties /
 // plant_projects / crop_types / entity / event_log / harvest_log / cultivar_weight_sample is covered.
 const STEPS = [
   ['cultivar_weight_void',        `DELETE FROM cultivar_weight_void WHERE created_by LIKE ${NS} OR sample_id IN (SELECT id FROM cultivar_weight_sample WHERE ${SAMPLE_PRED})`],
+  // V5-FERMENTPATH-001 (06 §5.2 _cleanup.js STEPS). Every FK here is NO ACTION, so the order is the whole
+  // job: a reversing use names its forward use (pantry_use_reverses_same_jar_fkey), a use names its line and
+  // its jar, a line names its jar, its output row and its sitting, and a jar names its sitting
+  // (preservation_log.put_up_stage_id) and its batch. So: reversing uses → uses → lines → [jars, below] →
+  // stage rows → batches. The stage rows go AFTER preservation_log because a jar points at its put_up row;
+  // their own void self-FK is satisfied inside one DELETE (NO ACTION is checked at statement end).
+  ['pantry_use (reversing)',      `DELETE FROM pantry_use WHERE reverses_use_id IS NOT NULL AND (${PANTRY_USE_PRED})`],
+  ['pantry_use',                  `DELETE FROM pantry_use WHERE ${PANTRY_USE_PRED}`],
+  ['kitchen_batch_input',         `DELETE FROM kitchen_batch_input WHERE id IN (${NS_KBI})`],
   // BUG-PUTUPSRCCASCADE-001: preservation_source.preservation_log_id is ON DELETE RESTRICT (it
   // carries deleted_at, so cascade-sweep's class guard forbids a CASCADE into it), which means a
   // source row must go before its parent put-up or this DELETE 23503s. Same shape, same reason, as
   // the share_log step below.
   ['preservation_source',         `DELETE FROM preservation_source WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR variety_id IN (${NS_VARIETIES}) OR harvest_log_id IN (${NS_HARVEST}) OR preservation_log_id IN (SELECT id FROM preservation_log WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR variety_id IN (${NS_VARIETIES}) OR harvest_log_id IN (${NS_HARVEST}))`],
   ['preservation_log',            `DELETE FROM preservation_log WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR variety_id IN (${NS_VARIETIES}) OR harvest_log_id IN (${NS_HARVEST})`],
+  ['kitchen_stage_log',           `DELETE FROM kitchen_stage_log WHERE created_by LIKE ${NS} OR batch_id IN (${NS_KBATCH})`],
+  ['kitchen_batch',               `DELETE FROM kitchen_batch WHERE user_id LIKE ${NS}`],
   // V4-CASCADESWEEP-001: share_log.photo_id is ON DELETE RESTRICT (it is a LEDGER pointer — a post
   // to an external page cannot be retracted by deleting our record of it, per photoDelete.js DD4),
   // so any share row must go before its photo. There was no share_log step here at all.
@@ -161,6 +182,9 @@ const STEPS = [
   ['rate_limit_buckets',          `DELETE FROM rate_limit_buckets WHERE actor_clerk_sub LIKE ${NS}`],
   ['event_batches',               `DELETE FROM event_batches WHERE created_by LIKE ${NS} OR idempotency_key LIKE ${NS}`],
 ].map(([table, stmt]) => [table, assertGuarded(stmt)])
+
+/** The static statements, by step name, in sweep order — read-only, for the sweep's own order proofs. */
+export const STEP_SQL = Object.freeze(STEPS.map(([table, stmt]) => Object.freeze([table, stmt])))
 
 async function tableExists(sql, table) {
   const r = await sql(`SELECT to_regclass('public.${table}') IS NOT NULL AS ok`)
@@ -269,6 +293,10 @@ export async function countFixtureResidue(sql) {
     ['event_batches', `created_by LIKE ${NS}`],
     ['critter_state', `created_by LIKE ${NS}`],
     ['entity', `display_name LIKE ${NS}`],
+    ['pantry_use', `created_by LIKE ${NS}`],
+    ['kitchen_batch_input', `created_by LIKE ${NS}`],
+    ['kitchen_stage_log', `created_by LIKE ${NS}`],
+    ['kitchen_batch', `user_id LIKE ${NS}`],
   ]
   const out = {}
   let total = 0
