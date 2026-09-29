@@ -133,12 +133,18 @@ describe('CaptureFlow — Something in the kitchen (V5-INFLIGHTBATCH-001)', () =
     expect(opts.parentId).toBe(null)
   })
 
+  // ⚠ AMENDED by Put-Up 1a item 1 (V4 §2.3 / §8.3), in the same commit as the behaviour change. The
+  // ruling this pinned was "kind is assignable later" at a time when NOTHING could assign it, so every
+  // app-made batch carried kind NULL for life and the ferment prompts could never fire. "Later" is now
+  // a real surface: the card's one-tap "What kind of batch? →" (PutUpKinds.test.jsx). The capture
+  // form still asks nothing at the counter — until Snap opens the shared Start sheet (item 5), where
+  // the kind is an optional, collapsed row.
   it('asks for no kind, and sends none', async () => {
     await act(async () => { render(<CaptureFlow />) })
     await snapTo('mode-kitchen')
     // No picker of any sort on this form — the put-up method picker mis-files 40% of its live rows,
     // and a kind chosen at the moment of lowest available attention is the decision this card
-    // removes. Kind is nullable in the schema on purpose and is assignable later.
+    // removes. Kind is nullable in the schema on purpose and is answered on the Going-now card.
     expect(document.querySelectorAll('select')).toHaveLength(0)
     for (const k of ['ferment', 'dehydrate', 'candy', 'cure', 'infuse']) {
       expect(screen.queryByText(new RegExp(k, 'i'))).toBeNull()

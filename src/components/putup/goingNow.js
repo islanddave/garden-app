@@ -444,6 +444,22 @@ export function startPromptState(batch) {
   return batch.start_precision == null ? 'prompt' : 'silent'
 }
 
+// ── the kind of batch ────────────────────────────────────────────────────────────────────────────
+// Put-Up 1a (V4 §2.3). A NULL kind shows ONE inline question, answered by the kind chips in one tap
+// through the shipped merge PUT, and NEVER ASKED AGAIN once any kind is stored — including `age`,
+// which is still a valid stored value though no chip offers it, and `other`, which is an answer.
+// NULL is the only unanswered state, the same distinction the start fields draw between "never
+// asked" and "asked, doesn't know". A closed batch is not on the card, and is not asked either.
+//
+// Not gated on a pause: the ferment prompts go silent under suspension because they are the app
+// asking about the batch's state, which a pause answers. This asks what the batch IS, which a pause
+// does not answer, and it is the one door that wakes those prompts at all.
+export const KIND_QUESTION = 'What kind of batch?'
+
+export function kindQuestionVisible(batch) {
+  return !!batch && batch.kind == null && !batch.closed_at
+}
+
 // ── suspended ────────────────────────────────────────────────────────────────────────────────────
 // Ruling from the DDL: "A frozen candy parent resumes N times over months; showing it beside a day-2
 // syrup pot as equally 'in flight' misreports the only thing the Going-now view exists to say."
