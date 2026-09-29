@@ -308,7 +308,11 @@ const CHECKERS = {
   },
   'first-screen': (m, c, F) => {
     for (const id of c.mustContain || []) {
-      const boxes = id.startsWith('today-sec-') ? (m.sections.filter(s => 'today-sec-' + s.key === id).map(s => s.box)) : (m.firstBoxes[id + SUFFIX] || [])
+      // S5 (first arming of a section id here): a section named in mustContain is its HEADER — §9.1 (e)'s "Protect
+      // header", "Heads-up header". The whole open section cannot be the claim: on a frost night its band, pick link
+      // and five rows run past the fold by design (§12 A cuts the fifth row there); its rows carry their own claims
+      // (minCount / allRows below).
+      const boxes = id.startsWith('today-sec-') ? (m.sections.filter(s => 'today-sec-' + s.key === id).map(s => (s.header ? s.header.box : s.box))) : (m.firstBoxes[id + SUFFIX] || [])
       if (!boxes.length) F(`'${id}' is not on the page — the first screen must contain it`)
       else if (!inFirst(boxes[0])) F(`'${id}' paints at y=${boxes[0].t}..${boxes[0].b}, not fully inside the first screen [0, ${FIRST_SCREEN})`)
     }

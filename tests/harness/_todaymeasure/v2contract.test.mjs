@@ -33,8 +33,8 @@ describe('today-v2 contract table', () => {
     const all = [...STATES.flatMap((s) => s.checks), ...SHELL, ...REGIONS_V2]
     for (const c of all) for (const sl of [].concat(c.armedAt)) expect(SLICES).toContain(sl)
     for (const s of STATES) expect(s.checks.some((c) => c.family === 'prefs-instrument' && isArmed(c))).toBe(true)
-    // S3 and S4 landed in parallel (wave 3), merged by the integrator; S4g (wave 4) on that merge.
-    expect(LANDED).toEqual(['S0', 'S2', 'S3', 'S4', 'S4g'])
+    // S3 and S4 landed in parallel (wave 3), merged by the integrator; S4g and S5 (wave 4, beside S6) on that merge.
+    expect(LANDED).toEqual(['S0', 'S2', 'S3', 'S4', 'S4g', 'S5'])
   })
   // S3 arms the glance + bar everywhere a plan exists, and split the checks that also measure a later slice: the S3
   // half is armed, the rest keeps its later slice. Pinned so the split cannot quietly arm (or drop) either half.
@@ -47,7 +47,9 @@ describe('today-v2 contract table', () => {
     }
     expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar']))
     expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustShowText || [])).toEqual(['today-verdict'])
-    expect(pendingIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(['today-sec-protect', 'protect-pick'])
+    // S5 landed the Protect half of the split.
+    expect(pendingIn('v2-frost', 'first-screen')).toEqual([])
+    expect(armedIn('v2-frost', 'first-screen').flatMap((c) => c.mustContain)).toEqual(expect.arrayContaining(['today-sec-protect', 'protect-pick']))
     expect(armedIn('v2-frost', 'jumpbar').map((c) => c.chipsOfPresent)).toEqual([['protect', 'water', 'feed', 'check', 'harvest']])
     expect(pendingIn('v2-frost', 'jumpbar').map((c) => c.chips)).toEqual([['protect', 'water', 'feed', 'check', 'harvest']])
     for (const fam of ['chip-census', 'weather-once', 'region-headcount']) expect(armedIn('v2-frost', fam), fam).toHaveLength(1)
@@ -57,10 +59,39 @@ describe('today-v2 contract table', () => {
     // The page must be taller than a screen for the bar to pin or a jump to land under it: S4's body gives that.
     for (const fam of ['sticky', 'jump-landing', 'jump-focus']) expect(SHELL.find((c) => c.family === fam).armedAt).toEqual(['S3', 'S4'])
     // The glance's REGIONS rows arm with S3 (the gate counts a row only once its own slice has landed); merged with
-    // S4, Needs care's v2-frost rows are armed beside them, and nothing of S5/S6's is.
+    // S4, Needs care's v2-frost rows are armed beside them; S5 adds the pick link; nothing of S6's is.
     const glanceRows = ['today-weather', 'weather-cue-line', 'frost-alert-line', 'drought-line', 'leaf-wetness-line', 'today-basis-stamp', 'care-rain-note', 'care-drought-list']
     expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && r.armedAt === 'S3').map((r) => r.id)).toEqual(glanceRows)
-    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && isArmed(r)).map((r) => r.id)).toEqual([...glanceRows, 'today-substrate-note', 'care-cap-note', 'care-show-more', 'care-moist', 'care-bulk-chips', 'care-feed-suppressed'])
+    expect(REGIONS_V2.filter((r) => r.state === 'v2-frost' && isArmed(r)).map((r) => r.id)).toEqual([...glanceRows, 'today-substrate-note', 'care-cap-note', 'care-show-more', 'care-moist', 'care-bulk-chips', 'care-feed-suppressed', 'protect-pick'])
+  })
+  // S5 arms what Protect tonight and Heads-up can answer. Pinned so a later edit cannot quietly un-arm (or drop) any
+  // of it — and so the three contract rows S5 had to restate stay restated.
+  it('S5 arms the Protect / Heads-up states, with the rows it restated', () => {
+    const armedIn = (name, fam) => STATES.find((s) => s.name === name).checks.filter((c) => c.family === fam && isArmed(c))
+    const openSet = (name) => armedIn(name, 'section-open-set').map((c) => ({ open: c.open, closed: c.closed }))
+    expect(openSet('v2-freeze')).toEqual([{ open: ['protect'], closed: undefined }])
+    expect(openSet('v2-storage-open')).toEqual([{ open: ['headsup'], closed: undefined }])
+    expect(openSet('v2-storage-deadline')).toEqual([{ open: ['headsup'], closed: undefined }])
+    expect(openSet('v2-storage-past')).toEqual([{ open: undefined, closed: ['headsup'] }])
+    expect(openSet('v2-remembered-urgent')).toEqual([{ open: ['protect'], closed: undefined }])
+    expect(openSet('v2-routine')).toEqual([{ open: ['protect'], closed: ['care'] }])
+    expect(openSet('v2-stale')).toEqual([{ open: [], closed: undefined }])
+    for (const name of ['v2-busy-seen', 'v2-closed-today']) {
+      const [c] = armedIn(name, 'section-open-set')
+      expect(c.orderOf).toEqual(['protect', 'care'])
+      expect(c.order).toBeUndefined() // the busy fixture carries Resting: a strict whole-page order could never be [protect, care]
+    }
+    expect(armedIn('v2-storage-open', 'region-headcount')).toHaveLength(1)
+    expect(REGIONS_V2.filter((r) => r.state === 'v2-storage-open' && isArmed(r)).map((r) => r.id)).toEqual(['storage-deadline-alert'])
+    // R16 re-stated from the measurement (673 vs 668): the Needs care header whole on the first screen.
+    expect(armedIn('v2-busy', 'first-screen').some((c) => c.allRows === 'protect-row' && c.headerTopMax?.care === 'FIRST_SCREEN+-48')).toBe(true)
+    expect(armedIn('v2-frost', 'first-screen').some((c) => c.headerTopMax?.care === 'FIRST_SCREEN+72')).toBe(true)
+    expect(armedIn('v2-frost', 'visibility')).toHaveLength(1)
+    // The S5 real-Chrome mutants carry their source (the runner refuses an armed mutant without one).
+    for (const n of ['openNone', 'coldRowsInNeedsCare', 'pickLinkMissing', 'openAll', 'reorderSections']) {
+      expect(isArmed(MUTANTS_V2[n]), n).toBe(true)
+      expect(MUTANTS_V2[n].file && MUTANTS_V2[n].find, n).toBeTruthy()
+    }
   })
   it('every chip the contract names is a chip the bar knows, and lands where the contract thinks', async () => {
     const { CHIP_ORDER, CHIPS } = await import('../../../src/lib/todayV2/chips.js')

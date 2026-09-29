@@ -49,15 +49,16 @@ export const MUTANTS_V2 = {
     killers: ['visibility', 'region-headcount', 'floors'],
     defect: 'an open body height:0; overflow:hidden (ancestor clip)',
   },
-  // At S2 there is no trigger predicate yet (S5), so the canary forces the one place every open state resolves:
-  // the visit's effective-open. S5 re-points it at triggers.js when the predicate exists.
+  // At S2 there was no trigger predicate, so the canary forced the visit's effective-open. S5 re-pointed it, as S2
+  // asked, at the predicate itself: the one evaluation at the ready point (triggers.js openAtStart) opens every
+  // section on the page — a trigger for everything, so what Dave last left closed, and what nothing urgent holds, opens.
   openAll: {
-    armedAt: 'S2', kind: 'chrome',
-    file: 'src/hooks/useTodayVisit.js',
-    find: "  if (!record) return false\n  const o = record.overlay?.[key]",
-    replace: "  if (!record || record) return true\n  const o = record.overlay?.[key]",
-    killers: ['section-open-set', 'first-screen', 'floors'],
-    defect: 'real-Chrome canary (Simplify 3): every section forced open — v2-remembered-conflict\'s closed care opens, the scroll ceiling trips',
+    armedAt: ['S2', 'S5'], kind: 'chrome',
+    file: 'src/lib/todayV2/triggers.js',
+    find: '  const overlay = {}, fired = {}\n  for (const key of TRIGGER_SECTIONS) {',
+    replace: "  const overlay = Object.fromEntries((present || []).map((k) => [k, 'open'])), fired = {}\n  for (const key of TRIGGER_SECTIONS) {",
+    killers: ['section-open-set', 'floors'],
+    defect: 'real-Chrome canary (Simplify 3): the trigger predicate forced open for every section on the page — the busy-seen / closed-today / conflict / routine / stale / past closes open, the ceilings trip',
   },
   // "Never reads": the provider's boot read never settles, so data-prefs-loaded stays false (it never lies at
   // S2 — nothing else sets it), the GET is never observed, and the server's remembered open never applies.
@@ -192,10 +193,35 @@ export const MUTANTS_V2 = {
   dropCaughtUpSummary: { armedAt: 'S4g', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '        : needs.caughtUp.summary,\n', replace: '        : null,\n', killers: ['caught-up', 'empty-focus'], defect: '§2.5: the emptied header loses its "N logged today, M covered by rain" line' },
   announceEveryRender: { armedAt: ['S3', 'S4g'], kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: "  const feedOnly = tasks.length === 1 && tasks[0] === 'feed'\n", replace: "  const feedOnly = tasks.length === 1 && tasks[0] === 'feed'\n  useEffect(() => { announce(filterAnnouncement(filterResult(care.rows, filters))) })\n", killers: ['announce-once', 'announce'], defect: '§2.6: the filter result is said from a render effect — every render repeats it and talks over the run results (a bulk\'s "Watered N…")' },
 
-  // ── S5: protect tonight + heads-up
-  openNone: P('S5', ['section-open-set', 'first-screen'], 'real-Chrome canary (Simplify 3): the trigger predicate forced false — nothing auto-opens'),
-  coldRowsInNeedsCare: P('S5', ['region-headcount', 'header-text'], 'cold rows render in two homes'),
-  pickLinkMissing: P('S5', ['region-headcount', 'first-screen'], 'the "Pick what\'s ripe first" link is gone'),
+  // ── S5: protect tonight + heads-up (patterns filled by S5, 2026-09-29; exact source text — the plugin throws on a
+  // miss). The trigger-predicate mutants are cells of the triggers.js unit table (below, §13 Simplify 3); these three
+  // and openAll (S2 block, re-pointed) are the real-Chrome half. reorderSections (S4 block) arms with S5 too.
+  openNone: {
+    armedAt: 'S5', kind: 'chrome',
+    file: 'src/lib/todayV2/triggers.js',
+    find: '    if (!reopens(t, resolve ? resolve(key) : null, planDate)) continue\n',
+    replace: '    continue\n',
+    killers: ['section-open-set', 'first-screen'],
+    defect: 'real-Chrome canary (Simplify 3): the trigger predicate forced false — nothing auto-opens (frost, chill first seen, the storage window, small pots)',
+  },
+  coldRowsInNeedsCare: {
+    armedAt: 'S5', kind: 'chrome',
+    file: 'src/components/today/v2/useNeedsCare.js',
+    find: "const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'overwintering'])",
+    replace: "const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'overwintering', 'cold'])",
+    // S5: the rows a second home adds carry no task, so no spot renders them — they show as a header count that no
+    // longer matches its spots (S0 predicted region-headcount; the count families are the ones that can see it).
+    killers: ['header-text', 'count-invariant'],
+    defect: 'cold rows join Needs care as well as Protect (two homes): its header counts 238 over spots that sum to 233',
+  },
+  pickLinkMissing: {
+    armedAt: 'S5', kind: 'chrome',
+    file: 'src/components/today/v2/ProtectTonight.jsx',
+    find: '      {protect.pick && (\n',
+    replace: '      {false && protect.pick && (\n',
+    killers: ['region-headcount', 'first-screen'],
+    defect: 'the "Pick what\'s ripe first" link is gone from a frost / freeze night',
+  },
 
   // ── S6: harvest, put-up, resting, household, sow link; a moved region deleted inside its owner, ×10
   ...Object.fromEntries(['watchBand', 'compose', 'putUp', 'dormant', 'dryList', 'feedSuppressed', 'rainNote', 'basisStamp', 'droughtLine', 'leafLine']
