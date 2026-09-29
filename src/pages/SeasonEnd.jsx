@@ -126,7 +126,7 @@ function Row({ item, checked, failed, withPhoto, hand, onToggle }) {
         <span style={rowName}>{item.name}</span>
         <span style={rowMeta}>
           <PlantStatusBadge status={item.status} />
-          {stillGrowing && <span>{item.locationName}</span>}
+          {stillGrowing && <span>{item.locationName} ·</span>}
           <span>{lastLoggedLabel(item.lastLoggedAt)}</span>
           {stillGrowing && (
             <span data-testid="season-end-tag" style={tag()}>{item.band === 'hardy' ? 'Takes frost' : 'Takes light frost'}</span>
