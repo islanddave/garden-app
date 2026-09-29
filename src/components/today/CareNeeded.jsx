@@ -749,10 +749,18 @@ function bulkVerb(etype) {
 // Target is 'vegetative': the canonical growing-but-not-yet-flowering state, which is where garlic,
 // asparagus, strawberry and a Christmas cactus all actually restart. Anything more specific the
 // gardener can still set on the planting itself.
-export function DormantList({ plan }) {
+//
+// V5-TODAYREDESIGN-001 S6 — two optional seams for the redesigned Today, V1 unchanged without them:
+//   `bare`               the rows only — the "Dormant" heading and its explainer belong to the section holding the
+//                        list (Today V2's Resting), and Resume meets the 44px target floor there (plan-v2 §5.8).
+//   `resumed`/`onResumed` the caller holds the resumed set (a Set of planting ids). Today V2 unmounts a closed
+//                        section, and a set kept in here would forget a resume on the next open, putting the plant
+//                        back with its Resume button. Without them the list keeps its own set, as always.
+export function DormantList({ plan, bare = false, resumed: resumedHeld, onResumed }) {
   const { fetch } = useApiFetch()
   const toast = useOptionalToast()
-  const [resumed, setResumed] = useState(() => new Set())
+  const [resumedOwn, setResumed] = useState(() => new Set())
+  const resumed = resumedHeld || resumedOwn
   const [pending, setPending] = useState(() => new Set())
   const rows = useMemo(() => dormantRows(plan).filter(r => !resumed.has(r.plantingId)), [plan, resumed])
   if (rows.length === 0) return null
@@ -765,7 +773,8 @@ export function DormantList({ plan }) {
         method: 'PUT',
         body: JSON.stringify({ status: 'vegetative' }),
       })
-      setResumed(prev => new Set(prev).add(row.plantingId))
+      if (onResumed) onResumed(row.plantingId)
+      else setResumed(prev => new Set(prev).add(row.plantingId))
       toast?.show?.({ message: row.name + ' is growing again', tone: 'success' })
     } catch {
       // Never optimistic: a failed resume must leave the row where it was, or the planting goes
@@ -778,10 +787,12 @@ export function DormantList({ plan }) {
 
   return (
     <div data-testid="care-dormant" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 2px' }}>
-      <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, margin: 0 }}>Dormant</h3>
+      {!bare && <h3 style={{ fontSize: '0.82rem', fontWeight: 700, color: P.dark, margin: 0 }}>Dormant</h3>}
+      {!bare && (
       <div style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4 }}>
         Resting — no routine care. Resume one when it starts growing again.
       </div>
+      )}
       {rows.map(row => (
         <div key={row.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           gap: 8, flexWrap: 'wrap', minHeight: 44 }}>
@@ -795,7 +806,7 @@ export function DormantList({ plan }) {
           {row.resumable && (
             <button type="button" onClick={() => resume(row)} disabled={pending.has(row.plantingId)}
               aria-label={'Resume ' + row.name}
-              style={{ minHeight: 32, padding: '5px 12px', borderRadius: 12, border: '1px solid ' + P.border,
+              style={{ minHeight: bare ? 44 : 32, padding: '5px 12px', borderRadius: 12, border: '1px solid ' + P.border,
                 backgroundColor: P.white, color: P.dark, fontSize: '0.78rem', fontWeight: 600,
                 cursor: 'pointer', opacity: pending.has(row.plantingId) ? 0.6 : 1, flex: '0 0 auto' }}>
               Resume
