@@ -1,3 +1,4 @@
+-- Roll back v5-seasonstats-001 first: stat_saved_lot depends on these columns
 -- 0r-rollback.sql
 -- Reverses V5-SOURCECONTACT-001: re-arms trg_audit_source_upd with the ORIGINAL nine-column watched
 -- set, drops both CHECKs, drops both columns, and deletes the receipt so the post gates return to
@@ -25,8 +26,22 @@
 --
 -- The nine names below are v5-sourceentity-001's list, verbatim and in order — the live set before
 -- this migration, asserted by pre_audit_trigger_list_is_the_known_nine.
+--
+-- v5-seasonstats-001's stat_saved_lot selects instagram_url and facebook_url (pg_depend on prod,
+-- 2026-09-29), so the DROP COLUMN below would abort the transaction with "other objects depend on
+-- it". The guard refuses up front with the order to follow instead.
 
 BEGIN;
+
+DO $$
+BEGIN
+  IF to_regclass('public.stat_saved_lot') IS NOT NULL THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'raise_exception',
+      MESSAGE = 'sourcecontact 0r: public.stat_saved_lot still exists and depends on source.instagram_url / facebook_url',
+      HINT    = 'Roll back v5-seasonstats-001 first (migrations/v5-seasonstats-001/0r-rollback.sql), then re-run this rollback.';
+  END IF;
+END $$;
 
 DROP TRIGGER IF EXISTS trg_audit_source_upd ON public.source;
 CREATE TRIGGER trg_audit_source_upd
