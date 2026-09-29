@@ -41,7 +41,7 @@ import { PrefsProvider } from '../../src/context/PrefsContext.jsx'
 import { P } from '../../src/lib/constants.js'
 import { T } from '../../src/components/forms/formStyles.js'
 import { stateByName } from './_todaymeasure/today-v2-contract.mjs'
-import { buildV2State, localSeeds, selectorFor } from './_todaymeasure/v2wire.js'
+import { buildV2State, localSeeds, selectorFor, flipState, flipAttr } from './_todaymeasure/v2wire.js'
 
 const realFetch = window.fetch.bind(window)
 const params = new URLSearchParams(location.search)
@@ -602,8 +602,9 @@ window.__h = {
   expanded: (target) => { try { return document.querySelector(selectorFor(target))?.getAttribute('aria-expanded') ?? null } catch { return null } },
   // (c) The interaction driver. A tap is hit-tested at its target's centre first (covered = VOID: a sticky
   // bar over a chip is a defect, not something to click through), then clicked; its `flip` target (the tap
-  // target itself by default) must change aria-expanded, or the step did nothing measurable and the run is
-  // VOID. A scroll must land where it was sent (clamped to the document). Steps come from the contract.
+  // target itself by default) must change aria-expanded — aria-pressed for a `task-filter:` chip (v2wire
+  // flipState) — or the step did nothing measurable and the run is VOID. A scroll must land where it was sent
+  // (clamped to the document). Steps come from the contract.
   async act(step) {
     const frames = (n) => new Promise(r => { const f = k => (k <= 0 ? r() : requestAnimationFrame(() => f(k - 1))); f(n) })
     const out = { step, ok: false, void: null, before: null, after: null, scrollY: null }
@@ -617,8 +618,9 @@ window.__h = {
       else out.ok = true
       return out
     }
-    let sel, flipSel
-    try { sel = selectorFor(step.tap); flipSel = selectorFor(step.flip || step.tap) } catch (e) { out.void = e.message; return out }
+    const flip = step.flip || step.tap
+    let sel
+    try { sel = selectorFor(step.tap); flipState(flip) } catch (e) { out.void = e.message; return out }
     const el = document.querySelector(sel)
     if (!el) { out.void = `tap target '${step.tap}' (${sel}) matched nothing`; return out }
     // S4: a target wholly off screen is scrolled to first, as a thumb would (the cohort line under an opened
@@ -628,11 +630,11 @@ window.__h = {
     const r = el.getBoundingClientRect()
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
     if (!hit || !(hit === el || el.contains(hit))) { out.void = `tap target '${step.tap}' is not what a finger at its centre would hit (${hit ? hit.tagName.toLowerCase() + (hit.getAttribute('data-testid') ? '[' + hit.getAttribute('data-testid') + ']' : '') : 'nothing — off screen'})`; return out }
-    out.before = document.querySelector(flipSel)?.getAttribute('aria-expanded') ?? null
+    out.before = flipState(flip)
     el.click()
     await frames(3); await new Promise(res => setTimeout(res, 50))
-    out.after = document.querySelector(flipSel)?.getAttribute('aria-expanded') ?? null
-    if (out.before == null || out.after == null || out.before === out.after) out.void = `aria-expanded on '${step.flip || step.tap}' did not flip (${out.before} → ${out.after}) — the step did nothing measurable, so the run is VOID`
+    out.after = flipState(flip)
+    if (out.before == null || out.after == null || out.before === out.after) out.void = `${flipAttr(flip)} on '${flip}' did not flip (${out.before} → ${out.after}) — the step did nothing measurable, so the run is VOID`
     else out.ok = true
     return out
   },

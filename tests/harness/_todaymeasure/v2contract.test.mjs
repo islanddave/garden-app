@@ -6,7 +6,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { STATES, SLICES, LANDED, SHELL, REGIONS_V2, TRIGGER_CELLS, isArmed } from './today-v2-contract.mjs'
-import { redatePayload, applyGrafts, localSeeds, selectorFor } from './v2wire.js'
+import { redatePayload, applyGrafts, localSeeds, selectorFor, flipState, flipAttr } from './v2wire.js'
 import { groupsOfRows, EXPECTED_GROUPS } from './v2groups.mjs'
 import { MUTANTS_V2 } from '../todayMutantsV2.mjs'
 
@@ -126,6 +126,24 @@ describe('v2 grafts and the re-dating helper', () => {
     expect(selectorFor('jump:water')).toBe('[data-testid="today-jumpbar"] [data-chip="water"]')
     expect(selectorFor('today-sec-care', '-X')).toBe('[data-testid="today-sec-care-X"] [aria-expanded]')
     expect(() => selectorFor('bogus:thing')).toThrow()
+  })
+  // Integration S3 × S4: v2-frost's chip step flips the Water task filter's pre-select (aria-pressed), since Needs
+  // care is already open there and a flip of today-sec-care could never happen (the step VOIDed as first written).
+  it('reads a task-filter flip as aria-pressed and every other flip as aria-expanded', () => {
+    document.body.innerHTML = '<div data-testid="care-filter-tasks"><button aria-pressed="false">Water</button><button aria-pressed="true">Feed</button></div>'
+      + '<section data-testid="today-sec-care"><button aria-expanded="true">Needs care</button></section>'
+    expect(flipState('task-filter:Water')).toBe('false')
+    expect(flipState('task-filter:Feed')).toBe('true')
+    expect(flipState('task-filter:Check')).toBeNull()
+    expect(flipState('today-sec-care')).toBe('true')
+    expect(flipAttr('task-filter:Water')).toBe('aria-pressed')
+    expect(flipAttr('spot:Bag Area')).toBe('aria-expanded')
+    expect(() => flipState('bogus:thing')).toThrow()
+    document.body.innerHTML = ''
+    const frost = STATES.find((x) => x.name === 'v2-frost').checks.filter((c) => c.family === 'interaction')
+    expect(frost).toHaveLength(1)
+    expect(frost[0].armedAt).toEqual(['S3', 'S4'])
+    expect(frost[0].steps[0]).toEqual({ tap: 'jump:water', flip: 'task-filter:Water' })
   })
 })
 

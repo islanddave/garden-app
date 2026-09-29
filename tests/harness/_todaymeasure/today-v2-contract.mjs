@@ -114,24 +114,21 @@ export const STATES = [
       { family: 'chip-census', armedAt: 'S3', why: 'chips ≥ 48px; numbers only on Protect/Water/Feed/Check; at 200% text the strip scrolls (overflow-x auto) and no chip is stranded past its edge' },
       { family: 'visual-census', armedAt: ['S3', 'S4'], maxFingerprints: 4, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem'], why: '(l) ≤ 4 section-level container fingerprints on busyfull' },
       { family: 'weather-once', armedAt: 'S3', why: 'MF2: with the glance OPEN, exactly one today-weather and no repeated hi/lo text' },
-      // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. NOTE for the
-      // integrator: Needs care is OPEN at the ready point on this state (the small-pot trigger), so a chip tap
-      // cannot flip today-sec-care's aria-expanded — that step's `flip` needs another target once S3 lands.
+      // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. Needs care is
+      // OPEN at the ready point on this state (the small-pot trigger), so the chip cannot flip today-sec-care's
+      // aria-expanded (the step VOIDed as first written); what it always moves is the Water task filter's
+      // pre-select (aria-pressed false → true, S3 → S4 through the visit record), so that is the step's flip.
+      // Counts are of VISIBLE rows (§9.1 (d) "every row under an open body passes shown()"), exact — with the
+      // Water filter on, as §9.1's phases run (tap the Water chip, open Bag Area, show the cohort).
+      // S4's lane also carried these phases without the chip (armed at S4 alone); merged, a second run on the
+      // same page would re-tap Bag Area CLOSED, so this one run carries them.
       { family: 'interaction', armedAt: ['S3', 'S4'], steps: [
-        { tap: 'jump:water', flip: 'today-sec-care' },
+        { tap: 'jump:water', flip: 'task-filter:Water' },
         { tap: 'spot:Bag Area', flip: 'care-spot:Bag Area' },
         { tap: 'cohort:Bag Area', flip: 'care-cohort:Bag Area' },
         { scroll: '2*FIRST_SCREEN' },
         { scroll: 0 },
       ], counts: { afterSpot: { 'care-exceptions-row': 8, 'care-cohort': 1 }, afterCohort: { 'care-cohort-row': 20, 'care-show-more': 1 } }, why: '(d) Bag Area: 8 exception rows + 1 cohort line; disclosed: 20 rows + "Show 69 more"' },
-      // S4-scoped: the same (d) phases without the chip — Needs care is already open (small). Counts are of
-      // VISIBLE rows (§9.1 (d) "every row under an open body passes shown()"), exact.
-      { family: 'interaction', armedAt: 'S4', steps: [
-        { tap: 'spot:Bag Area', flip: 'care-spot:Bag Area' },
-        { tap: 'cohort:Bag Area', flip: 'care-cohort:Bag Area' },
-        { scroll: '2*FIRST_SCREEN' },
-        { scroll: 0 },
-      ], counts: { afterSpot: { 'care-exceptions-row': 8, 'care-cohort': 1 }, afterCohort: { 'care-cohort-row': 20, 'care-show-more': 1 } }, why: '(d) S4-scoped: Bag Area 8 exception rows + 1 cohort line; disclosed 20 rows + "Show 69 more"' },
       { family: 'header-text', armedAt: 'S4', counts: { care: 233 }, why: 'S4-scoped: water 168 + feed 58 + check 7' },
       { family: 'count-invariant', armedAt: 'S4', why: 'S4-scoped §2.4: the Needs care header count = Σ spot counts, no filter' },
       // S3: each REGIONS_V2 row arms with its OWN slice (the gate skips a row whose armedAt has not landed), so

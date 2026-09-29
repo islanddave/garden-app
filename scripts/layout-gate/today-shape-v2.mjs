@@ -532,9 +532,14 @@ async function runInteractions(state, checks, at) {
           const cur = await evalSettled(`window.__h.expanded(${JSON.stringify(r.closed)})`)
           if (cur === 'true') { const a = await evalSettled(`window.__h.act({ tap: ${JSON.stringify(r.closed)} })`); if (a.void) { F(`could not close '${r.closed}' to count '${r.id}': ${a.void}`); continue } }
         }
-        // S4: a region that lives under a task filter (the substrate note under Feed) — press that chip first.
+        // S4: a region that lives under a task filter (the substrate note under Feed) — that filter ALONE first. The
+        // row is multi-select (OR), and a chip jump may have pre-selected another task (S3 × S4: the Water chip
+        // leaves Water pressed), so every other pressed task is released before the named one is pressed.
         if (r.filter) {
-          const pressed = await evalSettled(`(() => { const b = [...document.querySelectorAll('[data-testid="care-filter-tasks${SUFFIX}"] button[aria-pressed]')].find(x => x.textContent.trim().toLowerCase() === ${JSON.stringify(r.filter)}); if (!b) return null; if (b.getAttribute('aria-pressed') !== 'true') b.click(); return true })()`)
+          const pressed = await evalSettled(`(async () => { const row = () => [...document.querySelectorAll('[data-testid="care-filter-tasks${SUFFIX}"] button[aria-pressed]')]; const is = x => x.textContent.trim().toLowerCase() === ${JSON.stringify(r.filter)}
+            if (!row().some(is)) return null
+            for (let o; (o = row().find(x => !is(x) && x.getAttribute('aria-pressed') === 'true'));) { o.click(); await new Promise(res => setTimeout(res, 50)) }
+            const b = row().find(is); if (b.getAttribute('aria-pressed') !== 'true') b.click(); return true })()`)
           if (!pressed) { F(`could not press the '${r.filter}' task filter to count '${r.id}'`); continue }
           await evalSettled('new Promise(r => setTimeout(r, 120))')
         }
