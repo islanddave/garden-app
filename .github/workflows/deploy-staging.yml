@@ -820,6 +820,18 @@ jobs:
         # carries 145 orphan cultivar profiles from care-cadence-001-seed.sql (`_seeded: true`, 2026-06-18). Their
         # scope_ids match no plant_varieties row and no audited delete (measured 2026-09-18). Those are not
         # smoke rows, and a global count would red on its first run.
+        #
+        # 2026-09-29 (Put-Up release 1a, run-smoke.sh block N): the smoke now writes one storage_location (a place)
+        # and one preservation_log row (a jar in it) per run, and the sweep opens with their two deletes. They match
+        # ONLY the markers block N writes: preservation_log.notes 'smoke-test-putup-<run>' and storage_location.label
+        # 'smoke-test-place-<run>'. A prefix, not this sweep's usual '%smoke%', which would also take a real
+        # "smoked paprika" put-up or a place called "Smokehouse". The jar goes first, before its place and before
+        # everything below: preservation_log.storage_location_id, variety_id and photo_id have no ON DELETE action,
+        # so a jar still pointing at a smoke place, variety or photo would refuse that row's delete. The jar arm also
+        # takes any row filed in a smoke place. Nothing is left pointing at a smoke jar: preservation_source (ON
+        # DELETE RESTRICT) is written only by the /sources route, which the smoke never calls. The 2026-08-04 note
+        # above that "smoke creates no preservation rows" is no longer true; its conclusion holds, because the smoke
+        # jar carries no photo_id.
         if: always()
         env:
           NEON_STAGING_URL: ${{ secrets.NEON_STAGING_URL }}
@@ -831,6 +843,8 @@ jobs:
           echo "🧹 L-058 cleanup sweep starting against staging Neon (FK-safe order)..."
           SMOKE_VARIETY_IDS=$(psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 -At -c "SELECT COALESCE(string_agg(id::text, ','), '') FROM plant_varieties WHERE name ILIKE '%smoke%';")
           psql "$NEON_STAGING_URL" -v ON_ERROR_STOP=1 \
+            -c "DELETE FROM preservation_log WHERE notes LIKE 'smoke-test-putup-%' OR storage_location_id IN (SELECT id FROM storage_location WHERE label LIKE 'smoke-test-place-%');" \
+            -c "DELETE FROM storage_location WHERE label LIKE 'smoke-test-place-%';" \
             -c "DELETE FROM harvest_log    WHERE project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%');" \
             -c "DELETE FROM harvest_log    WHERE event_id IN (SELECT id FROM event_log WHERE plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%' OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%')));" \
             -c "DELETE FROM share_log      WHERE photo_id IN (SELECT id FROM photos WHERE plant_id IN (SELECT id FROM plants WHERE name ILIKE '%smoke%') OR project_id IN (SELECT id FROM plant_projects WHERE name ILIKE '%smoke%') OR location_id IN (SELECT id FROM locations WHERE name ILIKE '%smoke%') OR inventory_item_id IN (SELECT id FROM inventory_items WHERE name ILIKE '%smoke%'));" \
