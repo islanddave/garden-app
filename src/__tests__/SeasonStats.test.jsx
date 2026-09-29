@@ -18,6 +18,7 @@ vi.mock('../lib/api.js', () => ({ useApiFetch: () => ({ fetch: fetchSpy }) }))
 import SeasonStats from '../pages/SeasonStats.jsx'
 import { STATS_SECTION_ORDER } from '../lib/stats-kit/registry.js'
 import { currentGrowYear } from '../lib/growYear.js'
+import { buildEnvelope, SECTION_IDS } from '../../lambda/harvests/season-stats-sections.js'
 
 const fixture = JSON.parse(readFileSync(resolve(process.cwd(), 'tests/fixtures/season-stats.v1.json'), 'utf8'))
 const draw = () => render(<MemoryRouter><SeasonStats /></MemoryRouter>)
@@ -85,10 +86,43 @@ describe('SeasonStats', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Couldn’t load your season stats.')
   })
 
-  it('an envelope with no drawable sections shows the empty state', async () => {
-    fetchSpy.mockResolvedValue({ ...fixture, sections: {} })
+  // The REAL server output for a season with no rows: all eight sections, every series empty.
+  const emptySeason = (year) => buildEnvelope({ year, sections: SECTION_IDS, results: {}, generatedAt: '2026-11-02T12:00:00Z' })
+  const BROKEN = [/\b0 days\b/, /start ,/, / , /, /0\.0 lb came from/, /0 pods · 0\.0 lb/, /NaN|undefined|null/]
+
+  it('an empty season (real server shape) shows the empty state and none of the broken sentences', async () => {
+    const cur = currentGrowYear(new Date())
+    fetchSpy.mockImplementation((path) => Promise.resolve(emptySeason(Number(path.split('season=')[1]))))
     draw()
     expect(await screen.findByText('Nothing to show yet.')).toBeTruthy()
+    expect(cardIds()).toEqual([])
+    const text = screen.getByTestId('season-stats').textContent
+    for (const re of BROKEN) expect(text).not.toMatch(re)
+    // Looked back SEASON_FALLBACK_YEARS for a season with picks, found none, and shows the current one.
+    const asked = fetchSpy.mock.calls.map(c => c[0])
+    expect(asked).toEqual(expect.arrayContaining([0, 1, 2].map(b => `/api/harvests/season-stats?season=${cur - b}`)))
+    expect(screen.getByText(`${cur} season · Nov 1 to Oct 31`)).toBeTruthy()
+    expect(screen.queryByTestId('season-stats-earlier')).toBeNull()
+  })
+
+  it('no picks in the current season: the page shows the last season with picks and says so', async () => {
+    const cur = currentGrowYear(new Date())
+    const prev = { ...fixture, season: { year: cur - 1, start: `${cur - 2}-11-01`, end: `${cur - 1}-10-31` } }
+    fetchSpy.mockImplementation((path) => Promise.resolve(path.endsWith(`season=${cur}`) ? emptySeason(cur) : prev))
+    draw()
+    await screen.findAllByTestId('stat-card')
+    expect(cardIds()).toEqual(STATS_SECTION_ORDER)
+    expect(screen.getByText(`${cur - 1} season · Nov 1 to Oct 31`)).toBeTruthy()
+    expect(screen.getByTestId('season-stats-earlier').textContent)
+      .toBe(`Nothing has been picked in the ${cur} season yet, so this shows ${cur - 1}, your last season with picks.`)
+  })
+
+  it('a section whose series is empty is skipped, the rest still draw', async () => {
+    const empty = emptySeason(2026).sections
+    fetchSpy.mockResolvedValue({ ...fixture, sections: { ...fixture.sections, heat_ladder: empty.heat_ladder, seed_lots: empty.seed_lots } })
+    draw()
+    await screen.findAllByTestId('stat-card')
+    expect(cardIds()).toEqual(STATS_SECTION_ORDER.filter(id => id !== 'heat_ladder' && id !== 'seed_lots'))
   })
 
   it('the source report folds sources under 2 lb behind "N more sources"', async () => {

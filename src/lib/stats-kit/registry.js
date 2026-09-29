@@ -129,10 +129,41 @@ export function getRenderer(id) {
   return Object.hasOwn(STATS_REGISTRY, id) ? STATS_REGISTRY[id] : null
 }
 
+// The server sends every section even for an empty season, each with empty series. A section with
+// nothing in its series is ABSENT for the page: drawing it would print "on 0 days", "0 pods · 0.0 lb"
+// and a Limits line about data that is not there.
+const len = (xs) => (Array.isArray(xs) ? xs.length : 0)
+const CONTENT = {
+  ribbon: (s) => len(s.series?.days) > 0 || len(s.series?.weeks) > 0,
+  sources: (s) => len(s.series?.cards) > 0 || (s.series?.by_type ?? []).some((g) => num(g?.plantings) > 0),
+  heat_clock: (s) => len(s.series?.by_crop) > 0 || len(s.series?.by_cultivar) > 0,
+  heat_ladder: (s) => len(s.series?.best) > 0 || (s.series?.bands ?? []).some((b) => num(b?.plantings) > 0 || num(b?.pods) > 0),
+  tomato_keep: (s) => len(s.series?.rows) > 0,
+  longest: (s) => len(s.series?.rows) > 0,
+  sep_size: (s) => len(s.series?.rows) > 0,
+  seed_lots: (s) => len(s.series?.rows) > 0,
+}
+
+export function sectionHasContent(id, section) {
+  if (!section || typeof section !== 'object') return false
+  const fn = CONTENT[id]
+  return fn ? fn(section) : true
+}
+
+// Did anything get picked this season? The page falls back to an earlier season when not.
+export function seasonHasPicks(stats) {
+  const s = stats?.sections ?? {}
+  return num(s.sources?.meta?.total_lb) > 0
+    || len(s.longest?.series?.rows) > 0
+    || len(s.tomato_keep?.series?.rows) > 0
+    || (s.heat_ladder?.series?.bands ?? []).some((b) => num(b?.pods) > 0)
+    || (s.ribbon?.series?.weeks ?? []).some((w) => num(w?.tomato_fruit) > 0 || num(w?.pepper_pods) > 0)
+}
+
 // The ids the page will draw for an envelope, in page order: known ids first (registry order), then
-// nothing else — unknown ids are dropped here.
+// nothing else — unknown ids and sections with an empty series are dropped here.
 export function drawableSectionIds(stats) {
   const sections = stats?.sections
   if (!sections || typeof sections !== 'object') return []
-  return STATS_SECTION_ORDER.filter((id) => sections[id] && typeof sections[id] === 'object' && getRenderer(id))
+  return STATS_SECTION_ORDER.filter((id) => getRenderer(id) && sectionHasContent(id, sections[id]))
 }

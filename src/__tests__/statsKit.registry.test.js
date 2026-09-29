@@ -6,8 +6,9 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { STATS_REGISTRY, STATS_SECTION_ORDER, getRenderer, drawableSectionIds } from '../lib/stats-kit/registry.js'
+import { STATS_REGISTRY, STATS_SECTION_ORDER, getRenderer, drawableSectionIds, seasonHasPicks } from '../lib/stats-kit/registry.js'
 import { verdictFor, limitLines, limitsText } from '../lib/stats-kit/verdicts.js'
+import { buildEnvelope, SECTION_IDS } from '../../lambda/harvests/season-stats-sections.js'
 
 const fixture = JSON.parse(readFileSync(resolve(process.cwd(), 'tests/fixtures/season-stats.v1.json'), 'utf8'))
 const ids = Object.keys(fixture.sections)
@@ -105,6 +106,21 @@ describe('verdicts', () => {
     expect(verdictFor('heat_clock', fixture.sections.heat_clock)).toContain('the typical tomato took 1,151 heat units and the typical pepper 1,184.')
     expect(verdictFor('tomato_keep', fixture.sections.tomato_keep)).toContain('The typical single tomato plant gave 2.05 lb')
     expect(verdictFor('sep_size', fixture.sections.sep_size)).toContain('about 24% lighter overall (Ukrainian Purple 114 g → 75 g)')
+  })
+
+  it('the real empty-season envelope: nothing drawable, no verdicts, no limit line with a hole in it', () => {
+    const env = buildEnvelope({ year: 2027, sections: SECTION_IDS, results: {}, generatedAt: '2026-11-02T12:00:00Z' })
+    expect(drawableSectionIds(env)).toEqual([])
+    expect(seasonHasPicks(env)).toBe(false)
+    expect(seasonHasPicks(fixture)).toBe(true)
+    for (const id of SECTION_IDS) {
+      expect(verdictFor(id, env.sections[id]), id).toBe('')
+      const lim = limitsText(env.sections[id])
+      expect(lim, id).not.toMatch(/start ,|0\.0 lb|NaN|undefined|null/)
+    }
+    // Weather but no care and no picks: no "most common care, on 0 days".
+    const ribbon = { ...env.sections.ribbon, series: { days: [{ date: '2026-11-02', tmax_f: 50, tmin_f: 30, precip_in: 0, care: [] }], weeks: [] } }
+    expect(verdictFor('ribbon', ribbon)).not.toMatch(/0 days/)
   })
 
   it('an unknown id or an empty section gets no verdict and does not throw', () => {

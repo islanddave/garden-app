@@ -8,20 +8,22 @@ import {
   fmtInt, fmtLb, fmtPct, monthDay, dayNum, countOf, plural, listWords, num, isNum, HEAT_BAND_LABEL, CARE_LABEL,
 } from './format.js'
 
+// A limit whose number or date is missing (an empty season) returns null and is left out: a line
+// reading "Weather records start , so…" or "0.0 lb came from…" says something false.
 const LIMIT_TEXT = {
-  weather_from: (l) => `Weather records start ${monthDay(l.date)}, so heat before then isn't counted.`,
+  weather_from: (l) => (monthDay(l.date) ? `Weather records start ${monthDay(l.date)}, so heat before then isn't counted.` : null),
   care_counted_in_days: () => 'Care is counted in days: three waterings on one day count as one.',
   archived_included: () => 'Plantings you have since archived are included, so totals can run higher than the Harvests page.',
-  no_source_lb: (l) => `${fmtLb(num(l.lb))} lb came from plantings with no source recorded, so the list isn't complete.`,
+  no_source_lb: (l) => (Number(fmtLb(l.lb)) > 0 ? `${fmtLb(l.lb)} lb came from plantings with no source recorded, so the list isn't complete.` : null),
   excluded_approx_tp: () => 'Plantings with only a rough planting-out date are left out.',
   excluded_rescued_gift_swap: () => 'Rescued, gifted and swapped plants are left out, since their age when they arrived is unknown.',
   excluded_under_21d: () => 'Plantings picked within three weeks of going out are left out; they were likely fruiting already.',
   heat_is_catalogue_ceiling: () => "Heat is each variety's catalogue top rating, not a measured pod.",
   single_plant_only: () => 'Only plantings of a single plant are ranked, so one plant is compared with one plant.',
-  measured_share_min: (l) => `Only plants with at least ${fmtPct(num(l.share))} of their picks weighed are included.`,
+  measured_share_min: (l) => (isNum(l.share) ? `Only plants with at least ${fmtPct(l.share)} of their picks weighed are included.` : null),
   so_far: () => 'So far: the season is still running, and an arrow marks a plant that is still being picked.',
   measured_counts_only: () => 'Only fruit that was both counted and weighed is used.',
-  min_fruit_per_month: (l) => `A tomato needs at least ${fmtInt(num(l.n))} fruit in each month to be shown.`,
+  min_fruit_per_month: (l) => (isNum(l.n) ? `A tomato needs at least ${fmtInt(l.n)} fruit in each month to be shown.` : null),
   chain_stops_at_nursery: () => 'The trail stops at the nursery: nothing records who grew the seed behind a nursery start.',
 }
 
@@ -44,7 +46,7 @@ function ribbon(s) {
   if (pins.wettest?.date && isNum(pins.wettest.precip_in)) parts.push(`the wettest ${monthDay(pins.wettest.date)} with ${pins.wettest.precip_in.toFixed(2)} in of rain`)
   let out = parts.length ? `${parts.join(', and ')}.` : ''
   const busiest = Object.entries(care).filter(([, n]) => isNum(n)).sort((a, b) => b[1] - a[1])[0]
-  if (busiest) out += ` ${CARE_LABEL[busiest[0]] ?? busiest[0]} was the most common care, on ${countOf(busiest[1], 'day')}.`
+  if (busiest && busiest[1] > 0) out += ` ${CARE_LABEL[busiest[0]] ?? busiest[0]} was the most common care, on ${countOf(busiest[1], 'day')}.`
   const weeks = s?.series?.weeks ?? []
   if (weeks.length) {
     let hi = weeks[0]

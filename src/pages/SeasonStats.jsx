@@ -5,7 +5,9 @@
 // envelope keyed by section id (plan D4). This page only draws it: it walks the stats-kit registry's
 // order, draws each section it has a renderer for, and skips any section that is missing or unknown.
 // Verdict sentences and Limits lines are written client-side from each section's meta
-// (src/lib/stats-kit/verdicts.js).
+// (src/lib/stats-kit/verdicts.js). A section whose series is empty is skipped like a missing one, and
+// when the current season has no picks the hook falls back to the last season that does; the line
+// under the title says so.
 //
 // Structure copied from SeasonEnd.jsx: page shell, title + lede, skeleton while cold, AsyncRegion for
 // error (with Try again) / empty / content.
@@ -42,17 +44,24 @@ function seasonLine(stats, year) {
 }
 
 export default function SeasonStats() {
-  const { year, stats, loading, error, refetch } = useSeasonStats()
+  const { year, requestedYear, stats, loading, error, refetch } = useSeasonStats()
   const ids = useMemo(() => drawableSectionIds(stats), [stats])
   const themeVars = useMemo(() => statsThemeVars(), [])
   const empty = !loading && !error && ids.length === 0
+  const earlier = !loading && !error && year !== requestedYear
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: v('page'), ...themeVars }} data-testid="season-stats">
       <div style={column}>
         <h1 style={title}>Season stats</h1>
         <p style={lede}>{seasonLine(stats, year)}</p>
-        <p style={aside}>Numbers so far this season. Tap “The numbers” on any card for the table behind it.</p>
+        {earlier ? (
+          <p style={aside} data-testid="season-stats-earlier">
+            Nothing has been picked in the {requestedYear} season yet, so this shows {year}, your last season with picks.
+          </p>
+        ) : (
+          <p style={aside}>Numbers so far this season. Tap “The numbers” on any card for the table behind it.</p>
+        )}
 
         {loading ? (
           <div role="status" aria-label="Loading your season stats" data-testid="season-stats-loading">
