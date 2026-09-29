@@ -53,6 +53,7 @@
     "mutate:today-shape": "node scripts/mutate-today-shape-check.mjs",
     "gen:event-types": "node scripts/gen-lambda-event-types.mjs",
     "check:event-types": "node scripts/gen-lambda-event-types.mjs --check",
+    "gen:frost-bands": "node scripts/gen-frost-bands.mjs",
     "lint": "eslint .",
     "icon:golden": "node scripts/icon-ci/optical-weight.mjs",
     "icon:golden:update": "node scripts/icon-ci/optical-weight.mjs --update",
