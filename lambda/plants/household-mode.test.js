@@ -47,7 +47,8 @@ describe('plants Lambda — Household Mode scope widening', () => {
       // project project_name — and carries the same widened arm as the /deleted list it copies.
       // 14 -> 15: BUG-PLANTSLISTARCHIVEDCONTAINER-001's unarchiveContainerOfLivePlanting, a container
       // WRITE (clears archived_at when a planting comes back), scoped by the same widened arm.
-      .toBe(15); // 8 at d9afab95; 11 after V4-RESTORESURFACE-001 added the /deleted list, the
+      // 15 -> 16: GET /api/plants/season-end, a container-reaching read with the same widened arm.
+      .toBe(16); // 8 at d9afab95; 11 after V4-RESTORESURFACE-001 added the /deleted list, the
                  // restore preflight and the restore UPDATE — three new container-ownership
                  // sites, each carrying the F4 `pp.deleted_at IS NULL` gate. Deliberate bump.
   });

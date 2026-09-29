@@ -45,7 +45,8 @@ const HANDLERS = readdirSync(__dirname)
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  crop_types: ['default_unit', 'deleted_at', 'dtm_basis', 'harvest_habit', 'slug'],
+  // default_lifecycle: GET /api/plants/season-end reads it (verified on live prod 2026-09-29).
+  crop_types: ['default_lifecycle', 'default_unit', 'deleted_at', 'dtm_basis', 'harvest_habit', 'slug'],
 };
 
 const CROP_TYPES_COLUMNS = AUDIT_COLUMNS.crop_types;
@@ -99,7 +100,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants crop_types column contract',
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(4);
+    // 4 -> 5: GET /api/plants/season-end reads default_lifecycle (a scalar read, not a default_unit join).
+    expect(STATEMENTS).toHaveLength(5);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['ct']);
   });

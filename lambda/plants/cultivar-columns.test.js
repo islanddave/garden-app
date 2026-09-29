@@ -120,7 +120,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants cultivar column contract', (
     // 5 -> 6: V4-SEEDREVERSE-001's GET /api/plants/:id/seed-lots joins the view to label a saved
     // seed lot with its variety. It reads `pv.display_name` and `pv.id` only — both already in the
     // contract below — so the column set is unchanged and this count is the whole of the edit.
-    expect(STATEMENTS).toHaveLength(6);
+    // 6 -> 7: GET /api/plants/season-end joins cultivar for the name and crop slug, like the grid.
+    expect(STATEMENTS).toHaveLength(7);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['pv']);
   });

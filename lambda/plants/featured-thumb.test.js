@@ -63,7 +63,7 @@ describe('the thumb is ADDITIVE — featured_photo_view_url must keep pointing a
   it('both GET paths (by-id and list) emit the pair', () => {
     const sites = SRC.match(/await featuredPhotoUrls\(row\.featured_photo_storage_path\)/g) ?? [];
     expect(sites, 'the by-id GET and the list GET must BOTH return the thumb; a tile fed by one and '
-      + 'a hero fed by the other diverging is how the last thumb bug shipped').toHaveLength(2);
+      + 'a hero fed by the other diverging is how the last thumb bug shipped').toHaveLength(3); // 2 -> 3: GET /api/plants/season-end signs its hero through the same helper
     // And no site may bypass the helper to sign the featured photo by hand.
     expect(SRC).not.toMatch(/featured_photo_view_url = await resolvePhotoViewUrl\(row\./);
   });

@@ -67,7 +67,9 @@ describe('plants Lambda — F4 container soft-delete gate', () => {
     // appear with no audit at all; an ADD is a deliberate change, so bump this in the same commit.
     expect(joined.length,
       'plants container-reaching query count changed. An ADD needs this number bumped deliberately; ' +
-      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(15);
+      'a DROP means the sweep has gone blind rather than the query having been removed.').toBe(16);
+    // 15 -> 16: GET /api/plants/season-end (the End of season page). gp-aliased like the grid it
+    // copies, and carries the same pp.deleted_at IS NULL gate plus the container's own archived_at.
     // 14 -> 15: BUG-PLANTSLISTARCHIVEDCONTAINER-001's unarchiveContainerOfLivePlanting, the first
     // statement in this Lambda that WRITES container (it clears archived_at when an unarchive or a
     // restore brings a planting back). It carries `pp.deleted_at IS NULL` like every read here, and
