@@ -99,6 +99,7 @@ describe('SeasonStats', () => {
     expect(cardIds()).toEqual([])
     const text = screen.getByTestId('season-stats').textContent
     for (const re of BROKEN) expect(text).not.toMatch(re)
+    expect(text).not.toContain('Tap “The numbers”')
     // Looked back SEASON_FALLBACK_YEARS for a season with picks, found none, and shows the current one.
     const asked = fetchSpy.mock.calls.map(c => c[0])
     expect(asked).toEqual(expect.arrayContaining([0, 1, 2].map(b => `/api/harvests/season-stats?season=${cur - b}`)))

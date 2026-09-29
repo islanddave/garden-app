@@ -59,7 +59,7 @@ export default function SeasonStats() {
           <p style={aside} data-testid="season-stats-earlier">
             Nothing has been picked in the {requestedYear} season yet, so this shows {year}, your last season with picks.
           </p>
-        ) : (
+        ) : !empty && (
           <p style={aside}>Numbers so far this season. Tap “The numbers” on any card for the table behind it.</p>
         )}
 

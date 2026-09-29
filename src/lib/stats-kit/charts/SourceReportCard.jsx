@@ -78,7 +78,8 @@ export default function SourceReportCard({ section }) {
 }
 
 const list = { listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 10 }
-const row = { display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '2px 10px', alignItems: 'baseline' }
+// A fixed Edit column, so the pounds line up on the seller-not-recorded row too (it has no Edit).
+const row = { display: 'grid', gridTemplateColumns: '1fr auto 44px', gap: '2px 10px', alignItems: 'baseline' }
 const nameStyle = { fontWeight: 600, fontSize: '0.9rem', minWidth: 0 }
 const kindStyle = { marginLeft: 6, fontWeight: 400, fontSize: '0.75rem', color: v('ink-3') }
 const lbStyle = { fontWeight: 600, fontSize: '0.88rem', fontVariantNumeric: 'tabular-nums', color: v('ink'), whiteSpace: 'nowrap' }
@@ -88,7 +89,7 @@ const metaStyle = { gridColumn: '1 / -1', fontSize: '0.78rem', color: v('ink-3')
 // 44 px tall and wide: a thumb target, not a text link.
 const editLink = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minHeight: 44, minWidth: 44,
-  padding: '0 6px', margin: '-8px -6px -8px 0', boxSizing: 'border-box', color: v('link'), fontWeight: 600,
+  padding: 0, margin: '-8px 0', boxSizing: 'border-box', color: v('link'), fontWeight: 600,
   fontSize: '0.85rem', textDecoration: 'none',
 }
 const moreBtn = {
