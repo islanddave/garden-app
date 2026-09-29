@@ -11,6 +11,7 @@ import { buildCareNeeded } from '../lib/careNeeded.js'
 import {
   OUTSIDE, SMALL_VESSEL_TYPES, locationIndex, enrichRows, takeOrder, buildModel, exceptionKeys, exceptionReason,
   sortCohort, cohortLine, cohortCapNote, productGroups, careSummary, waterCandidates, filterResult, filterAnnouncement,
+  loggedTodayCount, caughtUpSummary, CAUGHT_UP_TITLE,
 } from '../lib/todayV2/spots.js'
 import { careReasons, careTrigger, careOpens } from '../lib/todayV2/triggers.js'
 import { applyGrafts } from '../../tests/harness/_todaymeasure/v2wire.js'
@@ -266,5 +267,26 @@ describe('filter result announcement (§2.6, §5.6)', () => {
   it('a spot with nothing of the chosen tasks drops out, as the filter row drops it; nothing left says so', () => {
     expect(say({ tasks: ['water'], spots: [key('Yard - Stable')] })).toBe('Needs care: Water, 168 in 8 spots.')
     expect(filterAnnouncement(filterResult([], {}))).toBe('Needs care: everything, nothing due.')
+  })
+})
+
+// S4g — §2.5: the emptied Needs care header. Logged = the plan's done care items ∪ this tab's store, by key.
+describe('the emptied Needs care header (§2.5)', () => {
+  const { plan } = state()
+  const done = (n) => ({ ...plan, water_due: plan.water_due.map((it, i) => (i < n ? { ...it, done: true } : it)) })
+  const k = (i) => plan.water_due[i].id + ':water_due'
+  it('logged = done items ∪ the store, each key once, care needs only', () => {
+    expect(loggedTodayCount(plan, [])).toBe(0)
+    expect(loggedTodayCount(done(3), [])).toBe(3)
+    // k(0) is both done and stored (logged here, then the refetch annotated it): once. A cold key is Protect's.
+    expect(loggedTodayCount(done(3), [k(0), k(5), k(6), plan.cold[0].id + ':cold', 'junk'])).toBe(5)
+    expect(loggedTodayCount(null, [k(1)])).toBe(1)
+  })
+  it('the plan\'s one wording; nothing to report is no summary (the title already says it)', () => {
+    expect(CAUGHT_UP_TITLE).toBe('Needs care · all caught up')
+    expect(caughtUpSummary({ logged: 95, rain: 70 })).toBe('95 logged today, 70 covered by rain')
+    expect(caughtUpSummary({ logged: 5, rain: 0 })).toBe('5 logged today')
+    expect(caughtUpSummary({ logged: 0, rain: 70 })).toBe('70 covered by rain')
+    expect(caughtUpSummary({ logged: 0, rain: 0 })).toBe(null)
   })
 })

@@ -246,17 +246,16 @@ export default function TodayV2() {
   }, [isOpen, record, planDate, layer1, tap])
 
   // SF8: reasons + spots, never counts; the urgency cue (severity.med + the imperative) only when a trigger
-  // opened the section this visit. Emptied mid-visit: "all caught up" with what was logged and what rain took.
+  // opened the section this visit. Emptied mid-visit (§2.5, S4g): "Needs care · all caught up" over what was
+  // logged today and what rain took (useNeedsCare caughtUp).
   const careUrgent = !!record?.triggers?.care && record?.overlay?.care === 'open'
-  const loggedToday = Object.values(record?.care?.batches || {}).reduce((n, b) => n + (b.created ? b.created.length : 0), 0)
-    + Object.values(record?.care?.rowsDone || {}).filter((d) => d.created).length
   const SECTIONS = {
     care: {
-      title: 'Needs care',
+      title: care.length ? 'Needs care' : needs.caughtUp.title,
       count: care.length || null,
       summary: care.length
         ? (careUrgent && needs.summary ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{needs.summary}</> : needs.summary)
-        : ([loggedToday ? `${loggedToday} logged today` : null, needs.rainCovered ? `${needs.rainCovered} covered by rain` : null].filter(Boolean).join(', ') || 'All caught up.'),
+        : needs.caughtUp.summary,
       body: <NeedsCare care={needs} record={record} update={update} announce={announce} planDate={planDate} userId={userId} filterIntent={record?.filter?.care} />,
     },
     resting: {

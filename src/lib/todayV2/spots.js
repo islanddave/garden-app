@@ -277,6 +277,22 @@ export function filterAnnouncement({ tasks, spots, n, spotCount, products }) {
   return `Needs care: ${label}, ${n} in ${where}.`
 }
 
+// §2.5 (S4g): an emptied Needs care keeps its header, which reads "Needs care · all caught up" over "95 logged
+// today, 70 covered by rain". LOGGED = the plan's care items the read path marks `done` today (logged anywhere:
+// another device, V1, a rain event on a listed item — lambda/daily-plan-read/doneEvents.js) ∪ this tab's
+// today-logged store (logged here, not yet in a plan read), by key, care needs only (a Protect key is not Needs
+// care's). RAIN = the plan's rain_skipped. Neither → no summary (the title already says it).
+export const CAUGHT_UP_TITLE = 'Needs care · all caught up'
+export function loggedTodayCount(plan, storeKeys = []) {
+  const keys = new Set()
+  for (const need of Object.keys(TASK_OF_NEED)) for (const it of (plan && Array.isArray(plan[need]) ? plan[need] : [])) if (it && it.done && it.id) keys.add(it.id + ':' + need)
+  for (const k of storeKeys) if (Object.hasOwn(TASK_OF_NEED, String(k).split(':')[1])) keys.add(k)
+  return keys.size
+}
+export function caughtUpSummary({ logged, rain }) {
+  return [logged ? `${logged} logged today` : null, rain ? `${rain} covered by rain` : null].filter(Boolean).join(', ') || null
+}
+
 // SF8: the Needs care summary carries REASONS and spots, never counts (the counts live on the chips and the
 // header). "8 tray cells due · 9 spots". `reasons` = triggers.js careReasons().
 export function careSummary({ reasons, rows, spotCount }) {

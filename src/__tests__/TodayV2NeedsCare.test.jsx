@@ -370,3 +370,42 @@ describe('S4g: a filter change says its result once, through the one status regi
     w.stop()
   })
 })
+
+// S4g — §2.5: an emptied Needs care keeps its header, which reads "Needs care · all caught up" over what was logged
+// today (the plan's done items ∪ this tab's store) and what rain took; §5.5: the action that empties it sends focus
+// to that header. On a small day built from the real plan: Drive-Shade's 5 and House's 2 still due, 3 items already
+// done today (the read path's annotation), 1 logged in this tab before a remount (the store), rain_skipped = busyfull's 70.
+describe('S4g: an emptied Needs care reads "Needs care · all caught up" (§2.5)', () => {
+  const band = () => screen.getByTestId('today-sec-care').querySelector('[aria-expanded]')
+  const small = () => {
+    const p = PAYLOAD.plan
+    const listed = new Set([...waterIn('Drive-Shade'), ...waterIn('House')].map((r) => r.plantingId))
+    const others = p.water_due.filter((it) => !listed.has(it.id))
+    const water_due = [...p.water_due.filter((it) => listed.has(it.id)), ...others.slice(0, 3).map((it) => ({ ...it, done: true })), others[3]]
+    const rain = F('busyfull-grafts.json').rain_skipped.value
+    return { payload: { ...PAYLOAD, plan: { ...p, water_due, no_history: [], fertilize: [], pest: [], overwintering: [], rain_skipped: rain } }, stored: others[3].id + ':water_due', rain: rain.length }
+  }
+
+  it('logging the last rows turns the header to "all caught up" with "11 logged today, 70 covered by rain", focus on it; an Undo brings the work back', async () => {
+    const day = small()
+    expect(day.rain).toBe(70)
+    sessionStorage.setItem('today-logged:u:' + TODAY, JSON.stringify([day.stored]))
+    planState.current = { data: day.payload, loading: false, error: null, reload: vi.fn() }
+    await mount()
+    if (band().getAttribute('aria-expanded') !== 'true') { fireEvent.click(band()); await settle() }
+    expect(band().textContent).not.toContain('all caught up')
+    expect(screen.getByTestId('today-sec-care').getAttribute('data-count')).toBe('7')
+    fireEvent.click(within(spot('Drive-Shade')).getByRole('button', { name: 'Water all 5 in Drive-Shade' }))
+    await settle()
+    fireEvent.click(within(spot('House')).getByRole('button', { name: 'Water all 2 in House' }))
+    await settle()
+    expect(band().textContent).toContain('Needs care · all caught up')
+    expect(band().textContent).toContain('11 logged today, 70 covered by rain')
+    expect(screen.getByTestId('today-sec-care').getAttribute('data-count')).toBe(null)
+    expect(document.activeElement).toBe(band())
+    fireEvent.click(within(doneLine('House')).getByRole('button', { name: /^Undo/ }))
+    await settle()
+    expect(band().textContent).not.toContain('all caught up')
+    expect(screen.getByTestId('today-sec-care').getAttribute('data-count')).toBe('2')
+  })
+})

@@ -89,16 +89,21 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // A focus target by data-focus-id, or (§5.5) "first-retry:<group>" — the first spot Retry in that group after
   // a run with failures — or "row-retry:<rowKey>" — the Retry a failed one-tap write leaves on its row in place
   // of the control that had focus (a removed focused node must never drop focus to BODY).
+  // §5.5 (S4g): an action that EMPTIES Needs care sends focus to the section's header instead — it now reads
+  // "Needs care · all caught up" and what was logged. Only an action here moves focus: a refetch that empties the
+  // list sets no focusId, so it never pulls focus from wherever Dave is reading.
+  const emptied = care.rows.length === 0
   useEffect(() => {
     if (!focusId || !rootRef.current) return
     const [kind, ...rest] = focusId.split(':')
     const arg = css(rest.join(':'))
-    const el = kind === 'first-retry' ? rootRef.current.querySelector(`[data-testid="care-group"][data-group="${arg}"] [data-focus-id^="retry:"]`)
+    const header = emptied ? rootRef.current.closest('[data-section="care"]')?.querySelector('[aria-expanded]') : null
+    const el = header || (kind === 'first-retry' ? rootRef.current.querySelector(`[data-testid="care-group"][data-group="${arg}"] [data-focus-id^="retry:"]`)
       : kind === 'row-retry' ? rootRef.current.querySelector(`[data-key="${arg}"] button[aria-label^="Retry"]`)
-        : rootRef.current.querySelector(`[data-focus-id="${css(focusId)}"]`)
+        : rootRef.current.querySelector(`[data-focus-id="${css(focusId)}"]`))
     if (el) el.focus({ preventScroll: true })
     setFocusId(null)
-  }, [focusId, record])
+  }, [focusId, record, emptied])
 
   const batches = c?.batches || {}
   const rowsDone = c?.rowsDone || {}

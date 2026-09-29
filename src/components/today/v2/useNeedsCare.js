@@ -3,7 +3,7 @@ import { useApiFetch } from '../../../lib/api.js'
 import { useCachedFetch } from '../../../hooks/useCachedFetch.js'
 import { buildCareNeeded, bedWaitActive } from '../../../lib/careNeeded.js'
 import { useCareActions } from '../useCareActions.js'
-import { locationIndex, enrichRows, takeOrder, exceptionKeys, careSummary, OUTSIDE } from '../../../lib/todayV2/spots.js'
+import { locationIndex, enrichRows, takeOrder, exceptionKeys, careSummary, loggedTodayCount, caughtUpSummary, CAUGHT_UP_TITLE, OUTSIDE } from '../../../lib/todayV2/spots.js'
 import { careReasons, careTrigger } from '../../../lib/todayV2/triggers.js'
 import { loggedKey, readLogged } from './needsCareStore.js'
 
@@ -63,9 +63,15 @@ export function useNeedsCare({ plan, planDate, userId, stale }) {
     return { order, exceptions, pinned, open: [], cohort: [], shown: {}, products: [], batches: {}, rowsDone: {} }
   }, [enrich, allRows, actions.skipped, groupOrder])
 
+  // §2.5 (S4g): the emptied header — "Needs care · all caught up" over "95 logged today, 70 covered by rain".
+  // The store is read live (a cheap sessionStorage read): every log and Undo re-renders the page anyway.
+  const rainCovered = Array.isArray(plan?.rain_skipped) ? plan.rain_skipped.length : 0
+  const loggedToday = loggedTodayCount(plan, readLogged(logKey))
+
   return {
     plan, settled, rows, allEnriched, count: rows.length, reasons, trigger, summary, spotCount, bedWait, actions, getToken, logKey,
-    rainCovered: Array.isArray(plan?.rain_skipped) ? plan.rain_skipped.length : 0,
+    rainCovered, loggedToday,
+    caughtUp: { title: CAUGHT_UP_TITLE, summary: caughtUpSummary({ logged: loggedToday, rain: rainCovered }) },
     snapshot, groupOrder, locationsOk: !!locPayload, outside: OUTSIDE,
     substrate: plan?.substrate?.msg && !plan?.substrate?.on_hold ? plan.substrate.msg : null,
   }
