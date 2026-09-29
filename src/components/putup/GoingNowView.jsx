@@ -280,7 +280,11 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, paused }) 
 // fixed literal instead of to the wall clock. The wall-clock version of this passed under
 // America/New_York and failed under UTC by four hours, which is precisely the class the blocking TZ
 // re-run exists to catch and which millisecond-offset fixtures are structurally unable to expose.
-export default function GoingNowView({ batches, loading, error, onReload, now }) {
+// `onStartBatch` (Put-Up 1a, the seam with the page lane): the page mounts the shared StartBatchSheet
+// and hands this view the callback that opens it. Absent — a host that has not wired the seam — the
+// door keeps its shipped behaviour and goes to /capture, whose "Something in the kitchen" card opens
+// the same sheet, so a missed wiring degrades to one extra step rather than a dead button.
+export default function GoingNowView({ batches, loading, error, onReload, now, onStartBatch }) {
   const navigate = useNavigate()
   const { fetch } = useApiFetch()
   const nowMs = now ?? Date.now()
@@ -320,15 +324,15 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
   // (the card's clocks and "last touched" come back from the view the server computes).
   const checkSaved = useCallback(() => { setCheckingId(null); onReload?.() }, [onReload])
 
-  // THE DOOR TO THE CLOSED LIST, rendered inside the empty block when the list is empty and above
-  // "Start a batch" when it is not. Exactly one instance either way.
+  // THE DOOR TO THE CLOSED LIST, rendered inside the empty block when the list is empty and after the
+  // list when it is not. Exactly one instance either way.
   //
   // Placement is the whole finding: the state in which a user hunts a six-week-old batch is the state
   // that currently hides the door — a doorway behind a segment whose own empty state reads "Nothing
   // going right now." has INVERTED scent, and the bare-open promote does not even select this segment
-  // when the going list is empty. Above "Start a batch" rather than below it, deliberately: the
-  // bottom-placement ruling for that button is asserted as literal last-child, and moving it would
-  // red a test about something else entirely.
+  // when the going list is empty. (It used to sit "above Start a batch" only because that button was
+  // pinned as the literal last child; Start a batch moved to the top in Put-Up 1a, so this is now
+  // simply the end of the list.)
   //
   // Labelled with its object, not as the bare adjective "Closed" — that predicts nothing about its
   // destination. NOT "Finished batches", which the seat proposed: `finished` is a live, re-enterable
@@ -343,8 +347,25 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
     </button>
   )
 
+  // START A BATCH — Put-Up 1a (V4 §2.2, the adhd seat's "the door moves" finding): a QUIET TEXT
+  // button at the TOP of Going now. At the bottom, with the several ferments Dave keeps going, the
+  // door fell below the fold and moved as the list grew — a start cue the cook has to hunt for at the
+  // one moment of starting. Still quiet (not a filled CTA, not floating, not in the header row, not in
+  // the ＋ sheet with its hard 4-cap): the page's job on a normal visit is still "what needs checking".
+  // It opens the shared Start sheet through the page (onStartBatch) — the same sheet Snap opens.
+  const startBatch = useCallback(() => {
+    if (onStartBatch) onStartBatch()
+    else navigate('/capture')
+  }, [navigate, onStartBatch])
+
   return (
     <div data-testid="going-now-view">
+      <button type="button" data-testid="start-a-batch" onClick={startBatch}
+        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+          background: 'none', border: 'none', padding: '2px 8px 2px 0', marginBottom: T.space.sm,
+          cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 700 }}>
+        Start a batch →
+      </button>
       {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
       {error && <ErrorBanner>Couldn&rsquo;t load what&rsquo;s going right now — try again.</ErrorBanner>}
 
@@ -382,27 +403,6 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
       <CheckOnItSheet open={!!checking} batch={checking} now={now} onClose={closeCheck} onSaved={checkSaved} />
 
       {!empty && closedDoor}
-
-      {/* Start a batch. Deliberately at the BOTTOM, deliberately not a floating button, deliberately
-          not in the header row and deliberately not in the ＋ sheet — that sheet has a hard 4-cap
-          where "any FIFTH action requires DISPLACEMENT, not expansion", and none of its four is
-          displaceable for a feature with zero users. The sibling surface already ruled the placement
-          (SavedSeeds.jsx:1012-1014): starting is the once-per-lot action while checking is the
-          repeated one, and the page's job on a normal visit is to answer "what needs checking"
-          rather than to invite data entry.
-
-          Destination is /capture rather than a form here: the start happens in the kitchen with the
-          app closed, and the one trigger that fires reliably in that moment is the camera. The
-          capture flow owns the "Something in the kitchen" card (a sibling lane's file); this button
-          is the in-app door to the same place. */}
-      <button type="button" data-testid="start-a-batch" onClick={() => navigate('/capture')}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          width: '100%', minHeight: T.buttonMinHeight, marginTop: T.space.md,
-          background: 'none', color: P.green, border: `1px solid ${P.greenLight}`,
-          borderRadius: T.radiusCard, fontSize: T.type.md, fontWeight: 700,
-          fontFamily: 'inherit', cursor: 'pointer' }}>
-        <span aria-hidden="true">🍲</span><span>Start a batch</span>
-      </button>
     </div>
   )
 }

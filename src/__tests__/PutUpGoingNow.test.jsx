@@ -613,45 +613,56 @@ describe('GoingNowView — no readiness affordance anywhere', () => {
   })
 })
 
-describe('GoingNowView — Start a batch sits at the BOTTOM', () => {
-  // ⚠ STRENGTHENED, NOT WEAKENED, 2026-09-04. `lastElementChild` was standing in for the claim in the
-  // test's own name, and the two are not the same claim: it would keep passing if a card were ever
-  // rendered outside the view's direct children, and it reds for the WRONG reason the moment anything
-  // legitimate is appended. Both assertions are now made, so neither can rot into the other. Mutation
-  // M13 ("Start-a-batch moved above the cards") was re-run against this version and still kills.
-  it('is the last element of the view, below every card', () => {
+// ⚠ AMENDED by Put-Up 1a item 4 (V4 §2.2 "Start a batch — top of Going now (quiet text button)"), in
+// the same commit as the move. The bottom placement this block pinned was ruled on the SavedSeeds
+// precedent; the plan overrules it on the adhd seat's evidence — with several batches going, a door
+// at the bottom falls below the fold and moves as the list grows, at the one moment the cook is
+// trying to start. It is still quiet: not filled, not floating, not in the header row.
+describe('GoingNowView — Start a batch is a quiet door at the TOP', () => {
+  // Both claims, so neither can rot into the other: first child of the view, AND ahead of every card.
+  // MUTATION: render the door after the list again -> both assertions red.
+  it('is the first element of the view, above every card', () => {
     renderView([CANDY, PAUSED])
     const view = screen.getByTestId('going-now-view')
     const btn = screen.getByTestId('start-a-batch')
-    expect(view.lastElementChild).toBe(btn)
+    expect(view.firstElementChild).toBe(btn)
     const cards = screen.getAllByTestId('going-batch')
     expect(cards).toHaveLength(2)   // instrument check: the loop below is not over an empty set
     for (const card of cards) {
-      expect(`${card.getAttribute('data-batch-id')} precedes the button: `
-        + `${!!(card.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING)}`)
-        .toBe(`${card.getAttribute('data-batch-id')} precedes the button: true`)
+      expect(`${card.getAttribute('data-batch-id')} follows the button: `
+        + `${!!(btn.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING)}`)
+        .toBe(`${card.getAttribute('data-batch-id')} follows the button: true`)
     }
-    expect(btn.textContent).toBe('🍲Start a batch')
+    expect(btn.textContent).toBe('Start a batch →')
   })
 
-  it('is not a floating button', () => {
+  it('is a quiet text button — not floating, not a filled CTA — at the 44px floor', () => {
     renderView([CANDY])
     const btn = screen.getByTestId('start-a-batch')
     expect(btn.style.position).not.toBe('fixed')
     expect(btn.style.position).not.toBe('absolute')
+    expect(btn.style.background).toBe('none')
+    expect(btn.style.minHeight).toBe('44px')
   })
 
-  it('is present on an empty list too, under the empty state and under the closed door', () => {
+  it('is present on an empty list too, above the empty state', () => {
     renderView([])
-    expect(screen.getByTestId('going-empty')).toBeTruthy()
     const btn = screen.getByTestId('start-a-batch')
-    expect(screen.getByTestId('going-now-view').lastElementChild).toBe(btn)
-    // Same strengthening as above, against the one other thing that now precedes it.
-    expect(!!(screen.getByTestId('going-closed-door')
-      .compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    expect(screen.getByTestId('going-now-view').firstElementChild).toBe(btn)
+    expect(!!(btn.compareDocumentPosition(screen.getByTestId('going-empty')) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
   })
 
-  it('routes to the camera-first capture flow', () => {
+  // THE SEAM with the page lane: PutUp.jsx mounts the shared StartBatchSheet and passes onStartBatch.
+  // MUTATION: leave the shipped navigate('/capture') as the only branch -> the first call reds.
+  it('opens the shared Start sheet through onStartBatch, and navigates nowhere', () => {
+    const onStartBatch = vi.fn()
+    renderView([CANDY], { onStartBatch })
+    fireEvent.click(screen.getByTestId('start-a-batch'))
+    expect(onStartBatch).toHaveBeenCalledTimes(1)
+    expect(navigateMock).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the capture flow (which opens the same sheet) when a host has not wired the seam', () => {
     renderView([CANDY])
     fireEvent.click(screen.getByTestId('start-a-batch'))
     expect(navigateMock).toHaveBeenCalledWith('/capture')
@@ -851,13 +862,16 @@ describe('GoingNowView — the door to closed batches', () => {
     expect(within(screen.getByTestId('going-empty')).getByTestId('going-closed-door')).toBeTruthy()
   })
 
-  it('renders exactly one door, above Start a batch, when the list is populated', () => {
+  // AMENDED by Put-Up 1a item 4: Start a batch moved to the top, so the door now closes the list.
+  it('renders exactly one door, at the end of the list, when the list is populated', () => {
     renderView([CANDY, PAUSED])
     const doors = screen.getAllByTestId('going-closed-door')
     expect(doors).toHaveLength(1)
     expect(screen.queryByTestId('going-empty')).toBeNull()
-    expect(!!(doors[0].compareDocumentPosition(screen.getByTestId('start-a-batch'))
-      & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    expect(screen.getByTestId('going-now-view').lastElementChild).toBe(doors[0])
+    for (const card of screen.getAllByTestId('going-batch')) {
+      expect(!!(card.compareDocumentPosition(doors[0]) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    }
   })
 })
 

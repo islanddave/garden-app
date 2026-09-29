@@ -181,6 +181,11 @@ const SHEET_SITES = [
   // own — the dismiss behaviour is Sheet's, exactly like HarvestTimeframeChips.
   'components/photo/PlantingPhotoSheet.jsx',
   'components/HarvestTimeframeChips.jsx',
+  // Put-Up 1a item 4 (V4 §2.2) — a DELIBERATE addition: the ONE shared Start sheet (label, start
+  // chips, photo, optional kind) that both Going now and Snap's "Something in the kitchen" open. A form,
+  // not a confirm. It renders the shared <Sheet armsBack>, so no DIALOG_SURFACES entry is owed;
+  // `busy={saving}` refuses Back and the backdrop while the photo upload and the create are in flight.
+  'components/kitchen/StartBatchSheet.jsx',
   'components/planting/OverwinterPrompt.jsx',
   'components/planting/SaveSeedSheet.jsx',
   'components/planting/TransplantDatePrompt.jsx',

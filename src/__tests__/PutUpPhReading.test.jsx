@@ -537,6 +537,10 @@ const LANE_SOURCES = [
   // into it), so it is squarely in the path this sweep polices; its draft carries the typed reading.
   ['src/components/putup/CheckOnItSheet.jsx', 'CheckOnItOpen'],
   ['src/components/kitchen/sheetDraft.js', 'SHEET_DRAFT_PREFIX'],
+  // The shared Start sheet and its chips: the start date every later clock (brine, pH, stall) is read
+  // against is written here.
+  ['src/components/kitchen/StartBatchSheet.jsx', 'StartBatchOpen'],
+  ['src/components/kitchen/StartChips.jsx', 'resolveSheetStart'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the
