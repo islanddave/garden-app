@@ -298,19 +298,22 @@ function CoverSpotRow({ spot, n, open, onToggle, onCover, busy, retry, partial, 
 }
 
 // ── styles (plan-v2 §4; tokens P / T — every size on the T ramp, the visual census reads them) ─────────────────
+// A row is 48 px, its border included (the mockup's row cards, §12 A): the row sets the 48, and the name link and
+// the Skip cell STRETCH to it (46 inside the border — still over the 44 floor) rather than each asking for 48 of
+// their own, which made every row 50 and pushed Needs care 10 px further down a frost night's first screen.
 const list = { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: T.space.xs }
 const panelList = { listStyle: 'none', margin: 0, padding: 0 }
-const cardRow = { listStyle: 'none', background: P.white, border: '1px solid ' + P.border, borderRadius: T.radiusCard, overflow: 'clip', display: 'flex', alignItems: 'stretch', minHeight: 48 }
-const inRow = { listStyle: 'none', display: 'flex', alignItems: 'stretch', minHeight: 48, borderTop: '1px solid ' + P.border }
+const cardRow = { listStyle: 'none', background: P.white, border: '1px solid ' + P.border, borderRadius: T.radiusCard, overflow: 'clip', display: 'flex', alignItems: 'stretch', minHeight: 48, boxSizing: 'border-box' }
+const inRow = { listStyle: 'none', display: 'flex', alignItems: 'stretch', minHeight: 48, boxSizing: 'border-box', borderTop: '1px solid ' + P.border }
 const doneRow = { alignItems: 'center', gap: 8, padding: '0 6px 0 10px' }
 const doneText = { flex: 1, minWidth: 0, fontSize: T.type.sm, outline: 'none' }
-const bodyLink = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1, padding: '4px 10px', textDecoration: 'none', color: P.dark, minHeight: 48 }
+const bodyLink = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 1, padding: '4px 10px', textDecoration: 'none', color: P.dark }
 const nameStyle = { fontSize: T.type.base, fontWeight: 600, color: P.dark, overflowWrap: 'anywhere' }
 const ownerStyle = { fontWeight: 400, color: P.mid }
 const metaStyle = { fontSize: T.type.xs, color: P.mid }
 const failStyle = { fontSize: T.type.xs, color: P.severityUrgent, fontWeight: 600 }
 const skipCell = {
-  flexShrink: 0, width: 48, marginRight: 8, minHeight: 48, border: 'none', borderLeft: '1px solid ' + P.border,
+  flexShrink: 0, width: 48, marginRight: 8, border: 'none', borderLeft: '1px solid ' + P.border,
   background: 'none', color: P.mid, cursor: 'pointer', fontSize: T.type.xs, fontFamily: 'inherit',
 }
 const controls = { display: 'flex', alignItems: 'center', gap: 8, paddingRight: 6, flexShrink: 0 }

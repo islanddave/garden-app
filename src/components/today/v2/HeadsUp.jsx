@@ -36,8 +36,10 @@ function HeadsUpRow({ g, open, onToggle }) {
   const head = (
     <>
       <span style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        {/* The chevron is its own element, never inside the text-bearing span: ▸ / ▾ are not in the pinned Roboto,
+            and the font census allows a host glyph only on an element whose whole text is that glyph. */}
         <span style={titleStyle}>
-          {line1}
+          <span>{line1}</span>
           {rest && <span aria-hidden="true" style={{ fontSize: T.type.xs, fontWeight: 400, color: P.light }}>{open ? ' ▾' : ' ▸'}</span>}
         </span>
         <Badge tone={soon ? 'warn' : 'neutral'} data-testid="headsup-plate" data-soon={soon ? 'true' : 'false'} style={{ flexShrink: 0, gap: 4 }}>
