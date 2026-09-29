@@ -839,7 +839,14 @@ try {
     const v2 = m.harness.v2
 
     // ── (a) INSTRUMENT — armed from S0 on every state. Each is a way this file could print PASS over nothing.
-    if (m.vw !== VIEWPORT.w || m.vh !== VIEWPORT.h) { fail(at, 'void', `VOID — page self-reports ${m.vw}x${m.vh}; emulation did not take, so every number here is from the wrong layout (never --window-size)`); continue }
+    if (m.vw !== VIEWPORT.w || m.vh !== VIEWPORT.h) {
+      // S5: a page WIDER than the phone is not emulation failing — mobile Chrome zooms the whole layout out to fit the
+      // widest box, and the self-report grows with it (measured: the chip strip at overflow-x visible with Protect's
+      // chip → 477x935). That is the horizontal overflow no-hscroll exists for, so it is named as that defect; the
+      // state is still VOID, since every other number here is from the zoomed layout.
+      if (m.vw > VIEWPORT.w && m.scrollWidth > VIEWPORT.w) fail(at, 'no-hscroll', `the page is ${m.scrollWidth}px wide on the ${VIEWPORT.w}px phone — mobile Chrome zoomed the whole page out to fit it (self-report ${m.vw}x${m.vh}): a box overflows sideways`)
+      fail(at, 'void', `VOID — page self-reports ${m.vw}x${m.vh}; emulation did not take, so every number here is from the wrong layout (never --window-size)`); continue
+    }
     if (m.harness.error) fail(at, 'instrument', `the page raised "${m.harness.error}" while mounting`)
     if (!v2?.requested || v2.problem) fail(at, 'instrument', `the V2 seam did not engage: ${v2?.problem || 'v2 not requested'}`)
     if (v2.flag !== '1') fail(at, 'instrument', `localStorage garden.todayV2 is ${JSON.stringify(v2.flag)}, expected "1" (seam a)`)
