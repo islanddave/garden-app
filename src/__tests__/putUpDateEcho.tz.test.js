@@ -136,15 +136,20 @@ describe('an untouched echo leaves the stored dates unchanged (the 1a exit proof
         if (/FROM storage_location/.test(text)) return [{ id: PLACE, kind: 'deep_freezer' }]
         if (/FROM garden_node/.test(text)) return [{ id: PLANTING, variety_id: null, crop_type_slug: 'pepper' }]
         // The PUT statement's shape since 1a's count rule: the written row beside the snapshot counts.
-        return [{ ...driverRow(), remaining_count: 2, stored_package_count: 3, stored_remaining_count: 3 }]
+        // Release 1b adds stored_stale (the echo rule's explanation) to the snapshot.
+        return [{ ...driverRow(), remaining_count: 2, stored_package_count: 3, stored_remaining_count: 3, stored_stale: false }]
       }
       const res = await handler(event('PUT', `/api/preservation/${JAR}`, payload))
       expect(res.statusCode).toBe(200)
     })
     const update = stubState.sqlCalls.find((c) => /UPDATE preservation_log SET/.test(c.text))
     expect(update, 'the PUT never reached its UPDATE').toBeTruthy()
-    expect(boundAfter(update, /preserved_at\s+= /)).toBe(STORED.preserved_at)
-    expect(boundAfter(update, /use_by_target\s+= /)).toBe(STORED.use_by_target)
+    // Release 1b: preserved_at is COALESCE(sent, stored) and use_by_target is no longer written by
+    // this PUT at all — the echoed day is bound only to the equality test that refuses a differing
+    // one (V4 "From 1b"). Either way the day that reaches Postgres must be the stored calendar day.
+    expect(boundAfter(update, /preserved_at\s+= COALESCE\(/)).toBe(STORED.preserved_at)
+    expect(update.text).toMatch(/use_by_target\s+= use_by_target,/)
+    expect(boundAfter(update, /\(NOT \?::boolean OR (?=\?::date)/)).toBe(STORED.use_by_target)
   })
 })
 

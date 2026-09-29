@@ -15,8 +15,11 @@ import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.j
 // kitchenRoutes is imported BY this file). shelfLife.js: the method × storage-kind table and the date
 // it yields. jarRules.js: the per-jar rules — the method vocabulary, the validators, the read
 // projection. Moved verbatim; re-exported below so any existing importer of this file keeps resolving.
-import { HOUSE_SOURCED_SHELF_LIFE, defaultUseByTarget } from './shelfLife.js';
-import { validateCreate, validateUpdate, projectRow, countRefusal } from './jarRules.js';
+import { HOUSE_SOURCED_SHELF_LIFE, defaultUseByTarget, resolveJarUseBy } from './shelfLife.js';
+import {
+  validateCreate, validateUpdate, validateLegacyPut, projectRow, countRefusal, clientStale,
+  normalizeJarText as normalizeText, normalizeJarUnit, jarErrorMessage,
+} from './jarRules.js';
 // V5-INFLIGHTBATCH-001 — /api/kitchen-batches rides THIS Lambda, not a 27th one. A new function needs
 // an AWS function + Function URL created out of band, a new VITE_API_* repo variable, a row in
 // deploy-staging.yml's hardcoded env: block and a 27th row in deploy-lambda.yml's matrix — and that
@@ -388,8 +391,9 @@ export const handler = async (event) => {
 
       if (method === 'PUT') {
         const body = JSON.parse(event.body ?? '{}');
-        const verr = validateUpdate(body);
+        const verr = validateLegacyPut(body);
         if (verr) return resp(400, { error: verr });
+        const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
 
         // L7 cross-field: same planting reconciliation as POST, so an edit can't drift a put-up
         // onto a planting of a different crop.
@@ -417,44 +421,70 @@ export const handler = async (event) => {
           if (!ph) return resp(400, { error: 'photo_id does not match a photo you can use' });
         }
 
-        const packageCount = body.package_count ?? 1;
+        // Put-Up release 1b — THE LEGACY PUT'S "FROM 1b" RULES (V4's legacy-PUT section). This PUT is
+        // now the shipped bundle's door only: the 1b client moves a jar through Move and edits its
+        // date, method and notes through PATCH /api/preservation/:id, and it stops echoing them here.
+        //   * AN ABSENT KEY IS UNCHANGED, on every column. Today (1a) an absent remaining_count wrote
+        //     NULL and an absent package_count wrote 1; a 1b bundle that omits them must not do that.
+        //     A present key behaves as 1a's did, except for the five below.
+        //   * storage_location_id, use_by_target, method, method_other_text, notes: this PUT no longer
+        //     WRITES them. A present value EQUAL to the stored one is the shipped echo (a no-op); one
+        //     that DIFFERS is a tab older than the row (another phone moved the jar, or corrected its
+        //     date) — 409 client_stale, decided in the UPDATE's WHERE on the row it locks. Dates
+        //     compare as ::date; the two text columns compare trimmed, with blank = NULL, which is how
+        //     the shipped RowEditor writes them, so an untouched echo can never read as a change.
+        //   * THE STALE-TAB COUNT RACE (05 §6a). A package_count that differs from the stored one AND
+        //     a remaining_count that differs from the stored one is neither shipped action on a fresh
+        //     row (a count edit echoes the remaining; a Mark used echoes the count): it is a tab that
+        //     missed somebody else's count edit, whose Mark used would otherwise be read as a count
+        //     change and revert their count. Refused as client_stale, in the WHERE, race-free.
+        //   * The stored quantity pair is KEPT when quantity_value is null, absent or 0.
+        //   * Attribution and a named Other are judged on the EFFECTIVE row, by the relaxed CHECKs
+        //     (chk_preservation_log_attribution / _method_other name the stored label), mapped to words
+        //     in the catch below.
+        // Every preservation_log write runs in sql.transaction([set_config(actor), write]):
+        // trg_audit_preservation_log_upd records who changed what (V4 "Audit").
+        const hasAttr = has('crop_type_slug') || has('variety_id') || has('plant_id');
+        const keepQuantity = body.quantity_value == null || Number(body.quantity_value) === 0;
+        const packageCount = body.package_count == null ? null : Number(body.package_count);
+        const hasRemaining = has('remaining_count');
         const remaining = body.remaining_count ?? null;
-        // Server convenience for the "used up" case: stamp consumed_at when count hits 0 and the
-        // client did not supply one. Otherwise pass the client value through (L4 minimal decrement).
-        const consumedAt = body.consumed_at ?? (Number(remaining) === 0 ? new Date().toISOString() : null);
+        const hasConsumed = has('consumed_at');
+        const hasLoc = has('storage_location_id');
+        const hasUseBy = has('use_by_target');
+        const hasMethod = has('method');
+        const hasMethodOther = has('method_other_text');
+        const hasNotes = has('notes');
+        const useBy = body.use_by_target == null ? null : String(body.use_by_target).slice(0, 10);
 
-        // Put-Up release 1a — ONE WRITER FOR THE COUNT (V4's legacy-PUT section, "From 1a"; lead
-        // condition 1, fix (ii)). A package_count that DIFFERS from the stored one moves
-        // remaining_count by the same delta, from COALESCE(remaining_count, package_count) — what has
-        // been used stays used — and the body's remaining_count is IGNORED on that write: it was echoed
-        // from a row that is about to have a different count, so it describes nothing. When the count
-        // is unchanged a present remaining_count applies exactly as before (the shipped Mark used /
-        // Used up), and consumed_at keeps its old rule.
-        //
-        // WHY IT LANDS IN 1a, a release before the constraint it serves: release 1b's DDL arms
-        // CHECK (remaining_count IS NULL OR remaining_count <= package_count) while THIS code is the
-        // deployed writer, and the shipped RowEditor could lower the count below what is left (3 left,
-        // count edited to 1: the old PUT wrote 1 with 3 left). So this writer must never write
-        // remaining > package_count, and never below 0: either one is REFUSED — a coded 409 whose
-        // words the client shows as they are — never clamped, because a clamp would quietly invent a
-        // number of jars. Refusal, like the arithmetic, is decided INSIDE the one UPDATE, on the row it
-        // locks (every CASE below reads that row's own columns), so a concurrent Mark used cannot slip
-        // between a read and this write. The `stored` CTE is the statement's own snapshot, read only to
-        // tell a missing jar (404) from a refused write (409) and to put numbers in the refusal.
-        const rows = await sql`
+        const [, rows] = await sql.transaction([
+          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          sql`
           WITH stored AS (
-            SELECT package_count AS stored_package_count, remaining_count AS stored_remaining_count
+            SELECT package_count AS stored_package_count, remaining_count AS stored_remaining_count,
+                   -- The five-column echo rule and the count race, restated over the SNAPSHOT so a
+                   -- refusal can say which it was. The UPDATE below decides on the locked row; this
+                   -- only explains. Keep the two blocks term-for-term identical.
+                   NOT (
+                         (NOT ${hasLoc}::boolean OR ${body.storage_location_id ?? null}::uuid IS NOT DISTINCT FROM storage_location_id)
+                     AND (NOT ${hasUseBy}::boolean OR ${useBy}::date IS NOT DISTINCT FROM use_by_target)
+                     AND (NOT ${hasMethod}::boolean OR ${body.method ?? null}::text IS NOT DISTINCT FROM method)
+                     AND (NOT ${hasMethodOther}::boolean OR NULLIF(btrim(${body.method_other_text ?? null}::text), '') IS NOT DISTINCT FROM NULLIF(btrim(method_other_text), ''))
+                     AND (NOT ${hasNotes}::boolean OR NULLIF(btrim(${body.notes ?? null}::text), '') IS NOT DISTINCT FROM NULLIF(btrim(notes), ''))
+                     AND NOT (${packageCount}::int IS NOT NULL AND package_count <> ${packageCount}::int
+                              AND ${hasRemaining}::boolean AND ${remaining}::int IS DISTINCT FROM remaining_count)
+                   ) AS stored_stale
             FROM preservation_log
             WHERE id = ${rowId}
               AND user_id = ANY(${householdIds})
               AND deleted_at IS NULL
           ), updated AS (
           UPDATE preservation_log SET
-            crop_type_slug      = ${attr.crop_type_slug ?? null},
-            variety_id          = ${attr.variety_id ?? null},
-            plant_id            = ${body.plant_id ?? null},
-            harvest_log_id      = ${body.harvest_log_id ?? null},
-            preserved_at        = ${body.preserved_at},
+            crop_type_slug      = CASE WHEN ${hasAttr}::boolean THEN ${attr.crop_type_slug ?? null}::text ELSE crop_type_slug END,
+            variety_id          = CASE WHEN ${hasAttr}::boolean THEN ${attr.variety_id ?? null}::uuid ELSE variety_id END,
+            plant_id            = CASE WHEN ${hasAttr}::boolean THEN ${body.plant_id ?? null}::uuid ELSE plant_id END,
+            harvest_log_id      = CASE WHEN ${has('harvest_log_id')}::boolean THEN ${body.harvest_log_id ?? null}::uuid ELSE harvest_log_id END,
+            preserved_at        = COALESCE(${body.preserved_at ?? null}::date, preserved_at),
             -- V4-PUTUPSESSION-001 slice 1 — COALESCE-PRESERVED, same contract and same reason as
             -- source_kind below. Written house-style (a plain body-or-null replace) every "Mark
             -- used" tap from a service-worker-cached bundle would rewrite an estimate as a date the
@@ -465,26 +495,45 @@ export const handler = async (event) => {
             -- driver sends untyped params, and an untyped placeholder in COALESCE() gives Postgres
             -- no type context to resolve against.
             preserved_at_approx = COALESCE(${body.preserved_at_approx ?? null}::boolean, preserved_at_approx),
-            method              = ${body.method},
-            method_other_text   = ${body.method === 'other' ? (body.method_other_text ?? null) : null},
-            quantity_value      = ${body.quantity_value},
-            quantity_unit       = ${body.quantity_unit},
-            package_count       = ${packageCount},
-            storage_location_id = ${body.storage_location_id ?? null},
-            use_by_target       = ${body.use_by_target ?? null},
-            remaining_count     = CASE WHEN package_count = ${packageCount}::int THEN ${remaining}::int
-                                       ELSE COALESCE(remaining_count, package_count)
-                                            + (${packageCount}::int - package_count)
+            -- 1b: never written here (PATCH owns it); a present value is equal or refused below.
+            method              = method,
+            method_other_text   = method_other_text,
+            quantity_value      = CASE WHEN ${keepQuantity}::boolean THEN quantity_value ELSE ${keepQuantity ? null : body.quantity_value}::numeric END,
+            quantity_unit       = CASE WHEN ${keepQuantity}::boolean THEN quantity_unit ELSE ${keepQuantity ? null : normalizeText(body.quantity_unit)}::text END,
+            package_count       = COALESCE(${packageCount}::int, package_count),
+            -- 1b: never written here (Move owns it); a present value is equal or refused below.
+            storage_location_id = storage_location_id,
+            -- 1b: never written here (PATCH owns it, with its basis); equal or refused below.
+            use_by_target       = use_by_target,
+            -- Put-Up release 1a — ONE WRITER FOR THE COUNT (V4's legacy-PUT section, "From 1a"). A
+            -- package_count that DIFFERS from the stored one moves remaining_count by the same delta,
+            -- from COALESCE(remaining_count, package_count) — what has been used stays used — and the
+            -- body's remaining_count is IGNORED on that write. With the count unchanged (or absent) a
+            -- PRESENT remaining_count applies exactly as before (the shipped Mark used / Used up) and an
+            -- ABSENT one is unchanged (1b). Refusal, like the arithmetic, is decided INSIDE the one
+            -- UPDATE on the row it locks, so a concurrent Mark used cannot slip between a read and this
+            -- write; the stored CTE only tells a missing jar (404) from a refused write (409).
+            remaining_count     = CASE WHEN ${packageCount}::int IS NOT NULL AND package_count <> ${packageCount}::int
+                                         THEN COALESCE(remaining_count, package_count) + (${packageCount}::int - package_count)
+                                       WHEN ${hasRemaining}::boolean THEN ${remaining}::int
+                                       ELSE remaining_count
                                   END,
             -- A count change re-derives consumed_at from the count it produced: stamped (or kept) at
-            -- 0 left, cleared otherwise. The echoed consumed_at described the old count.
-            consumed_at         = CASE WHEN package_count = ${packageCount}::int THEN ${consumedAt}::timestamptz
-                                       WHEN COALESCE(remaining_count, package_count)
-                                            + (${packageCount}::int - package_count) = 0
-                                         THEN COALESCE(consumed_at, NOW())
+            -- 0 left, cleared otherwise. A present remaining_count: the body's consumed_at if it sent
+            -- one, else stamped (kept) at 0 and cleared above 0. Neither: the body's consumed_at if
+            -- present, else unchanged.
+            consumed_at         = CASE WHEN ${packageCount}::int IS NOT NULL AND package_count <> ${packageCount}::int
+                                         THEN CASE WHEN COALESCE(remaining_count, package_count) + (${packageCount}::int - package_count) = 0
+                                                   THEN COALESCE(consumed_at, NOW()) END
+                                       WHEN ${hasRemaining}::boolean
+                                         THEN COALESCE(${body.consumed_at ?? null}::timestamptz,
+                                                       CASE WHEN ${remaining}::int = 0 THEN COALESCE(consumed_at, NOW()) END)
+                                       WHEN ${hasConsumed}::boolean THEN ${body.consumed_at ?? null}::timestamptz
+                                       ELSE consumed_at
                                   END,
-            notes               = ${body.notes ?? null},
-            photo_id            = ${body.photo_id ?? null},
+            -- 1b: never written here (PATCH owns it); a present value is equal or refused below.
+            notes               = notes,
+            photo_id            = CASE WHEN ${has('photo_id')}::boolean THEN ${body.photo_id ?? null}::uuid ELSE photo_id END,
             -- V4-PUTUPPROV-001 — DELIBERATE DEVIATION FROM THIS BLOCK'S HOUSE STYLE. Do not
             -- "correct" these two back to the plain body-or-null interpolation every other column
             -- above uses; that reopens a silent data-loss bug.
@@ -519,36 +568,59 @@ export const handler = async (event) => {
           WHERE id = ${rowId}
             AND user_id = ANY(${householdIds})
             AND deleted_at IS NULL
-            -- The refusal. The same expression as remaining_count's SET, on the same row: the write
-            -- happens only if what it would store is a count of jars that can exist, 0..package_count.
-            -- NULL stays legal exactly as before (a count-unchanged body with no remaining_count).
+            -- 1b: the five-column echo rule and the count race (see above). Term-for-term the
+            -- stored_stale expression, un-negated.
+            AND (NOT ${hasLoc}::boolean OR ${body.storage_location_id ?? null}::uuid IS NOT DISTINCT FROM storage_location_id)
+            AND (NOT ${hasUseBy}::boolean OR ${useBy}::date IS NOT DISTINCT FROM use_by_target)
+            AND (NOT ${hasMethod}::boolean OR ${body.method ?? null}::text IS NOT DISTINCT FROM method)
+            AND (NOT ${hasMethodOther}::boolean OR NULLIF(btrim(${body.method_other_text ?? null}::text), '') IS NOT DISTINCT FROM NULLIF(btrim(method_other_text), ''))
+            AND (NOT ${hasNotes}::boolean OR NULLIF(btrim(${body.notes ?? null}::text), '') IS NOT DISTINCT FROM NULLIF(btrim(notes), ''))
+            AND NOT (${packageCount}::int IS NOT NULL AND package_count <> ${packageCount}::int
+                     AND ${hasRemaining}::boolean AND ${remaining}::int IS DISTINCT FROM remaining_count)
+            -- The count refusal. The same expression as remaining_count's SET, on the same row: the
+            -- write happens only if what it would store is a count of jars that can exist,
+            -- 0..package_count. NULL stays legal exactly as before.
             AND COALESCE(
-                  CASE WHEN package_count = ${packageCount}::int THEN ${remaining}::int
-                       ELSE COALESCE(remaining_count, package_count) + (${packageCount}::int - package_count)
-                  END BETWEEN 0 AND ${packageCount}::int,
+                  CASE WHEN ${packageCount}::int IS NOT NULL AND package_count <> ${packageCount}::int
+                         THEN COALESCE(remaining_count, package_count) + (${packageCount}::int - package_count)
+                       WHEN ${hasRemaining}::boolean THEN ${remaining}::int
+                       ELSE remaining_count
+                  END BETWEEN 0 AND COALESCE(${packageCount}::int, package_count),
                   TRUE)
           RETURNING *
           )
-          SELECT updated.*, stored.stored_package_count, stored.stored_remaining_count
+          SELECT updated.*, stored.stored_package_count, stored.stored_remaining_count, stored.stored_stale
           FROM stored LEFT JOIN updated ON TRUE
-        `;
+        `,
+        ]);
         if (!rows.length) return resp(404, { error: 'Not found' });
-        const { stored_package_count: storedCount, stored_remaining_count: storedRemaining, ...row } = rows[0];
+        const { stored_package_count: storedCount, stored_remaining_count: storedRemaining,
+                stored_stale: storedStale, ...row } = rows[0];
         if (row.id == null) {
-          return resp(409, countRefusal({ storedCount, storedRemaining, packageCount, remaining }));
+          if (storedStale) return resp(409, clientStale());
+          return resp(409, countRefusal({
+            storedCount, storedRemaining,
+            packageCount: packageCount ?? storedCount,
+            remaining: hasRemaining ? remaining : storedRemaining,
+          }));
         }
         return resp(200, row);
       }
 
       if (method === 'DELETE') {
-        const rows = await sql`
+        // Put-Up release 1b: deleted_at is a watched column of trg_audit_preservation_log_upd, so the
+        // actor GUC rides in the same transaction (V4 "Audit"; lambda/audit-actor-guc.test.js).
+        const [, rows] = await sql.transaction([
+          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
+          sql`
           UPDATE preservation_log
           SET deleted_at = NOW()
           WHERE id = ${rowId}
             AND user_id = ANY(${householdIds})
             AND deleted_at IS NULL
           RETURNING id
-        `;
+        `,
+        ]);
         if (!rows.length) return resp(404, { error: 'Not found' });
         return resp(200, { ok: true });
       }
@@ -585,7 +657,8 @@ export const handler = async (event) => {
         if (rec.error) return resp(400, { error: rec.error });
         attr = rec;
       }
-      if (!attr.crop_type_slug && !attr.variety_id) {
+      // 1b: a label attributes a jar on its own (chk_preservation_log_attribution, relaxed in place).
+      if (!attr.crop_type_slug && !attr.variety_id && normalizeText(body.label) == null) {
         return resp(400, { error: 'that planting has no variety — pick a crop as well' });
       }
 
@@ -618,27 +691,56 @@ export const handler = async (event) => {
       // filter are meaningful from the first row (L4). Client may override.
       const remaining = body.remaining_count ?? packageCount;
 
-      // L6: auto-apply the shelf-life default use_by_target when the client did not send one.
-      // Explicit null => "no expiry" (kept null, excluded from use-soon). storageKind was resolved
-      // (and ownership-validated) above — no second lookup.
-      let useByTarget = body.use_by_target;
-      if (useByTarget === undefined) {
-        useByTarget = defaultUseByTarget(body.method, storageKind, body.preserved_at);
-      }
+      // L6, as release 1b states it (V4's one discard-by rule): a PRESENT use_by_target is his date —
+      // basis 'typed', including an explicit null ("no date · set by hand"); an ABSENT one is the
+      // engine's, resolved from the method, the place's kind and the 1b facts, with its basis.
+      // storageKind was resolved (and ownership-validated) above — no second lookup.
+      const typed = Object.prototype.hasOwnProperty.call(body, 'use_by_target');
+      const precision = body.preserved_at_precision ?? null;
+      const resolved = typed
+        ? { use_by_target: body.use_by_target == null ? null : String(body.use_by_target).slice(0, 10), use_by_basis: 'typed' }
+        : resolveJarUseBy({
+            method: body.method, kind: storageKind, isRaw: body.is_raw ?? null, inOil: body.in_oil ?? null,
+            texture: body.texture ?? null, precision,
+          }, body.preserved_at);
+      // pH at bottling: ph_read_at defaults to the jar's own date, never earlier (V4 pH section).
+      const phReading = body.ph_reading == null ? null : String(body.ph_reading).trim();
+      const phReadAt = phReading == null ? null : (body.ph_read_at ?? String(body.preserved_at).slice(0, 10));
 
-      const rows = await sql`
-        INSERT INTO preservation_log (
-          user_id, crop_type_slug, variety_id, plant_id, harvest_log_id,
-          preserved_at, preserved_at_approx, method, method_other_text, quantity_value, quantity_unit,
-          package_count, storage_location_id, use_by_target, remaining_count, notes, photo_id,
-          source_kind, source_label
-        ) VALUES (
-          ${userId}, ${attr.crop_type_slug ?? null}, ${attr.variety_id ?? null}, ${body.plant_id ?? null}, ${body.harvest_log_id ?? null},
-          ${body.preserved_at}, ${body.preserved_at_approx ?? null}, ${body.method}, ${body.method === 'other' ? (body.method_other_text ?? null) : null}, ${body.quantity_value}, ${body.quantity_unit},
-          ${packageCount}, ${body.storage_location_id ?? null}, ${useByTarget ?? null}, ${remaining}, ${body.notes ?? null}, ${body.photo_id ?? null},
-          ${body.source_kind ?? null}, ${body.source_kind === 'own_garden' ? null : normalizeSourceLabel(body.source_label)}
-        ) RETURNING *
-      `;
+      let rows;
+      try {
+        rows = await sql`
+          INSERT INTO preservation_log (
+            user_id, crop_type_slug, variety_id, plant_id, harvest_log_id,
+            preserved_at, preserved_at_approx, method, method_other_text, quantity_value, quantity_unit,
+            package_count, storage_location_id, use_by_target, remaining_count, notes, photo_id,
+            source_kind, source_label,
+            label, container_label, use_by_basis, preserved_at_precision, is_raw, in_oil, texture,
+            ph_reading, ph_read_at, idempotency_key
+          ) VALUES (
+            ${userId}, ${attr.crop_type_slug ?? null}, ${attr.variety_id ?? null}, ${body.plant_id ?? null}, ${body.harvest_log_id ?? null},
+            ${body.preserved_at}, ${body.preserved_at_approx ?? null}, ${body.method}, ${body.method === 'other' ? normalizeText(body.method_other_text) : null}, ${body.quantity_value ?? null}, ${normalizeJarUnit(body.quantity_unit)},
+            ${packageCount}, ${body.storage_location_id ?? null}, ${resolved.use_by_target}, ${remaining}, ${body.notes ?? null}, ${body.photo_id ?? null},
+            ${body.source_kind ?? null}, ${body.source_kind === 'own_garden' ? null : normalizeSourceLabel(body.source_label)},
+            ${normalizeText(body.label)}, ${normalizeText(body.container_label)}, ${resolved.use_by_basis}, ${precision},
+            ${body.is_raw ?? null}, ${body.in_oil ?? null}, ${body.texture ?? null},
+            ${phReading}::numeric, ${phReadAt}::timestamptz, ${body.idempotency_key ?? null}::uuid
+          ) RETURNING *
+        `;
+      } catch (err) {
+        // V4 "Idempotency": a 23505 on THIS index (only this one) is a replay — re-read the jar by its
+        // key, owner-scoped; a key someone outside the household holds is a 409 with no payload.
+        if (err?.code === '23505' && err.constraint === 'uq_preservation_log_idempotency_key') {
+          const prior = await sql`
+            SELECT * FROM preservation_log
+            WHERE idempotency_key = ${body.idempotency_key}::uuid
+              AND user_id = ANY(${householdIds})
+          `;
+          if (!prior.length) return resp(409, { error: 'That key is already in use.', code: 'key_in_use' });
+          return resp(200, { ...prior[0], replayed: true });
+        }
+        throw err;
+      }
       return resp(201, rows[0]);
     }
 
@@ -651,6 +753,9 @@ export const handler = async (event) => {
     // is chk_preservation_log_one_provenance, which only the batch close-out route can violate.
     const kitchenMsg = kitchenErrorMessage(err);
     if (kitchenMsg) return resp(400, { error: kitchenMsg });
+    // Put-Up release 1b: the relaxed and new preservation_log CHECKs, given words (jarRules.js).
+    const jarMsg = jarErrorMessage(err);
+    if (jarMsg) return resp(400, { error: jarMsg });
     // V5-PUTUPMULTISOURCE-001: the preservation_source CHECKs, given words. Same null-for-not-mine
     // contract, and it cannot shadow the kitchen mapper above or the two putupprov mappings below —
     // its constraint names are all chk_ps_* and share no spelling with either set.

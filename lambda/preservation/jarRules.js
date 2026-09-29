@@ -70,8 +70,175 @@ export function validateCommon(body) {
   return null;
 }
 
+// ── Put-Up release 1b: the jar vocabularies and the relaxed create gate ───────────────────────────────
+// Every list below mirrors a CHECK in migrations/v5-putupmake-001/0a-additive-ddl.sql, the same
+// belt-and-suspenders VALID_METHODS is: a raw 23514 is not something a cook can act on.
+
+// chk_preservation_log_quantity_unit — THE PERMISSIVE UNION (V4 "Units"): the 25 KITCHEN_UNITS plus the
+// ten legacy plurals the shipped picker writes. Never narrowed. New writers store the singular
+// (normalizeJarUnit); the legacy PUT stores what it is sent, so a stale bundle's echo is never rewritten.
+export const JAR_UNITS = [
+  'g', 'kg', 'oz', 'lb', 'ml', 'l', 'tsp', 'tbsp', 'fl oz', 'cup', 'pint', 'qt', 'gal',
+  'count', 'clove', 'head', 'bunch', 'pinch', 'peck', 'bushel', 'half-bushel', 'flat', 'jar', 'bag', 'other',
+  'lbs', 'cups', 'pints', 'quarts', 'bushels', 'half-bushels', 'pecks', 'flats', 'jars', 'bags',
+];
+const JAR_UNIT_PLURALS = {
+  lbs: 'lb', cups: 'cup', pints: 'pint', quarts: 'qt', bushels: 'bushel', 'half-bushels': 'half-bushel',
+  pecks: 'peck', flats: 'flat', jars: 'jar', bags: 'bag',
+};
+export function normalizeJarUnit(u) {
+  if (u == null) return null;
+  const t = String(u).trim();
+  if (t === '') return null;
+  return JAR_UNIT_PLURALS[t] ?? t;
+}
+
+// chk_preservation_log_preserved_at_precision. On this table the date is NOT NULL, so 'after' means
+// "the stored date is the earliest it could be" (Put it up's Not sure) and 'unknown' means "the stored
+// date is only the day it was logged" (the Walk's Not sure) — V4's estimated-dates section.
+export const JAR_PRECISIONS = ['exact', 'hour', 'day', 'week', 'month', 'season', 'year', 'after', 'unknown'];
+// chk_preservation_log_texture / _texture_method.
+export const JAR_TEXTURES = ['snaps', 'bends', 'still_soft'];
+export const JAR_TEXTURE_METHODS = ['dehydrate', 'powder'];
+// chk_preservation_log_label_len.
+export const JAR_LABEL_MAX = 120;
+
+const JAR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const JAR_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const hasKey = (body, k) => Object.prototype.hasOwnProperty.call(body, k);
+
+export function normalizeJarText(v) {
+  if (v == null) return null;
+  const t = String(v).trim();
+  return t === '' ? null : t;
+}
+
+export function isJarDate(v) {
+  if (typeof v !== 'string' || !JAR_DATE_RE.test(v)) return false;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
+
+// A label is optional and, when given, a name: nonblank after trim and at most 120 characters.
+export function jarLabelError(v, field = 'label') {
+  if (v == null) return null;
+  if (typeof v !== 'string') return `${field} must be text`;
+  if (v.trim() === '') return `${field} cannot be blank`;
+  if (v.trim().length > JAR_LABEL_MAX) return `${field} can be at most ${JAR_LABEL_MAX} characters`;
+  return null;
+}
+
+// The quantity pair: both or neither, value > 0, unit inside the union (chk_preservation_log_
+// quantity_pairing + _quantity_unit). A jar may be logged with no size.
+export function jarQuantityError(value, unit) {
+  const hasValue = value != null && String(value).trim() !== '';
+  const u = normalizeJarText(unit);
+  if (!hasValue && u == null) return null;
+  if (!hasValue) return 'quantity_value and quantity_unit go together — give an amount with the unit';
+  if (!Number.isFinite(Number(value)) || Number(value) <= 0) return 'quantity_value must be > 0';
+  if (u == null) return 'quantity_unit is required';
+  if (!JAR_UNITS.includes(u)) return `quantity_unit must be one of: ${JAR_UNITS.join(', ')}`;
+  return null;
+}
+
+// chk_preservation_log_ph_pairing + _ph_scale, and nothing else (FOODSAFETY-RULING-V101 §2 — see
+// kitchenBatch.js's KITCHEN_PH_SCALE_MIN). The reading stays the STRING that was sent.
+export function jarPhError(reading, readAt, { readAtRequired = true } = {}) {
+  if (reading == null && readAt == null) return null;
+  if (reading == null) return 'a pH time needs a pH reading';
+  const s = String(reading).trim();
+  const n = Number(s);
+  if (s === '' || !Number.isFinite(n)) return 'a pH reading has to be a number';
+  if (n < 0 || n > 14) return 'a pH reading has to be on the pH scale — 0 to 14';
+  if (readAt == null) return readAtRequired ? 'a pH reading needs the time it was read' : null;
+  if (Number.isNaN(new Date(String(readAt)).getTime())) return 'ph_read_at has to be a timestamp';
+  return null;
+}
+
+// The 1b facts a jar row carries, shape-checked the same way on every 1b writer (Put it up rows, the
+// create, the PATCH). `method` is the jar's method AFTER the write, for the texture rule.
+export function jarFactsError(body, method) {
+  for (const k of ['is_raw', 'in_oil']) {
+    if (body[k] != null && typeof body[k] !== 'boolean') return `${k} must be true or false`;
+  }
+  if (body.texture != null) {
+    if (!JAR_TEXTURES.includes(body.texture)) return `texture must be one of: ${JAR_TEXTURES.join(', ')}`;
+    if (!JAR_TEXTURE_METHODS.includes(method)) return 'texture only applies to a dried food (dehydrate or powder)';
+  }
+  if (body.preserved_at_precision != null && !JAR_PRECISIONS.includes(body.preserved_at_precision)) {
+    return `preserved_at_precision must be one of: ${JAR_PRECISIONS.join(', ')}`;
+  }
+  return jarLabelError(body.label) ?? jarLabelError(body.container_label, 'container_label');
+}
+
+// POST /api/preservation from release 1b (V4 API table, row "POST /api/preservation"). The 1a gate
+// (validateCommon) required a crop, a variety or a planting, a named Other and a size; 1b's DDL relaxes
+// each of those under its own name, and this gate relaxes with it: a label attributes a jar and names an
+// Other, and a jar may be logged with no size. The messages keep their 1a words where 1a had one, so an
+// integration assertion on the old text still reads true about the new rule.
 export function validateCreate(body) {
-  return validateCommon(body) ?? validateProvenance(body);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
+  const label = normalizeJarText(body.label);
+  if (!body.crop_type_slug && !body.variety_id && !body.plant_id && label == null) {
+    return 'at least one of crop_type_slug, variety_id or plant_id is required (or a label)';
+  }
+  if (!body.method || !VALID_METHODS.includes(body.method)) return `method must be one of: ${VALID_METHODS.join(', ')}`;
+  if (body.method === 'other' && normalizeJarText(body.method_other_text) == null && label == null) {
+    return "method_other_text is required when method is 'other' (or give the put-up a label)";
+  }
+  const qErr = jarQuantityError(body.quantity_value, body.quantity_unit);
+  if (qErr) return qErr;
+  if (body.package_count != null && (!Number.isInteger(Number(body.package_count)) || Number(body.package_count) < 1)) {
+    return 'package_count must be >= 1';
+  }
+  if (!body.preserved_at) return 'preserved_at is required';
+  if (body.preserved_at_approx != null && typeof body.preserved_at_approx !== 'boolean') {
+    return 'preserved_at_approx must be true or false';
+  }
+  if (body.remaining_count != null && Number(body.remaining_count) < 0) return 'remaining_count must be >= 0';
+  if (body.use_by_target != null && !isJarDate(String(body.use_by_target).slice(0, 10))) {
+    return 'use_by_target must be a YYYY-MM-DD date';
+  }
+  if (body.idempotency_key != null && !JAR_UUID_RE.test(String(body.idempotency_key))) {
+    return 'idempotency_key must be a uuid';
+  }
+  return jarFactsError(body, body.method)
+    ?? jarPhError(body.ph_reading ?? null, body.ph_read_at ?? null, { readAtRequired: false })
+    ?? validateProvenance(body);
+}
+
+// The legacy full-replace PUT from release 1b (V4's legacy-PUT section, "From 1b"). An ABSENT key is
+// unchanged, so nothing here requires a key; a PRESENT key is shape-checked as 1a checked it. The
+// attribution and method-other rules are judged on the EFFECTIVE row by the database (the relaxed
+// CHECKs), because this gate cannot see the stored label: a label-only jar from Put it up echoes
+// crop_type_slug: null and must still take a Mark used. method is never WRITTEN by this PUT from 1b —
+// a differing one is a stale tab (409) — so it is checked for shape only.
+export function validateLegacyPut(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body required';
+  if (hasKey(body, 'method') && (!body.method || !VALID_METHODS.includes(body.method))) {
+    return `method must be one of: ${VALID_METHODS.join(', ')}`;
+  }
+  // The stored pair is KEPT when quantity_value is null, absent or 0 (the shipped RowEditor sends
+  // `Number(x) || rec.quantity_value`, and a label-only jar has no size to echo).
+  const qv = body.quantity_value;
+  const keepsQuantity = qv == null || Number(qv) === 0;
+  if (!keepsQuantity) {
+    if (!Number.isFinite(Number(qv)) || Number(qv) < 0) return 'quantity_value must be > 0';
+    const u = normalizeJarText(body.quantity_unit);
+    if (u == null) return 'quantity_unit is required';
+    if (!JAR_UNITS.includes(u)) return `quantity_unit must be one of: ${JAR_UNITS.join(', ')}`;
+  }
+  if (body.package_count != null && (!Number.isInteger(Number(body.package_count)) || Number(body.package_count) < 1)) {
+    return 'package_count must be >= 1';
+  }
+  if (hasKey(body, 'preserved_at') && !body.preserved_at) return 'preserved_at is required';
+  if (body.preserved_at_approx != null && typeof body.preserved_at_approx !== 'boolean') {
+    return 'preserved_at_approx must be true or false';
+  }
+  if (body.remaining_count != null && (!Number.isInteger(Number(body.remaining_count)) || Number(body.remaining_count) < 0)) {
+    return 'remaining_count must be >= 0';
+  }
+  return body.source_kind === undefined ? null : validateProvenance(body);
 }
 
 // PUT is "replace editable fields" (frontend sends a complete payload) INCLUDING the minimal
@@ -149,6 +316,21 @@ export function projectRow(r) {
     // surface renders blank. That asymmetry is why this line has a comment.
     source_kind: r.source_kind ?? null,
     source_label: r.source_label ?? null,
+    // Put-Up release 1b. READ-ONLY on every legacy surface: none of these is in
+    // PRESERVATION_EDITABLE_COLUMNS or buildFullPayload, so the full-replace PUT never echoes them —
+    // they are written by Put it up, the create, PATCH /api/preservation/:id and Move only. `?? null`
+    // throughout: a pre-1b row has none of them, and NULL is what "never asked" means.
+    label: r.label ?? null,
+    container_label: r.container_label ?? null,
+    use_by_basis: r.use_by_basis ?? null,
+    preserved_at_precision: r.preserved_at_precision ?? null,
+    storage_moved_at: r.storage_moved_at ?? null,
+    texture: r.texture ?? null,
+    is_raw: r.is_raw ?? null,
+    in_oil: r.in_oil ?? null,
+    ph_reading: r.ph_reading ?? null,
+    ph_read_at: r.ph_read_at ?? null,
+    put_up_stage_id: r.put_up_stage_id ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
     // From the driver's values, not the projected text: classifyUseBy reads either, and leaving its
@@ -182,5 +364,38 @@ export function countRefusal({ storedCount, storedRemaining, packageCount, remai
   }
   // The snapshot says the write would have passed, so the jar changed between the statement's
   // snapshot and its row lock (another tap, another phone). The words say so.
+  return clientStale();
+}
+
+// Put-Up release 1b — the preservation_log CHECKs 1b relaxes or adds, given words. Returns null for
+// anything else, so index.js's existing PG-code map keeps its behaviour. The two provenance CHECKs keep
+// their own mapping in index.js (chk_preservation_log_source*), which this map does not shadow.
+const JAR_CONSTRAINT_MESSAGES = {
+  chk_preservation_log_attribution: 'Say what this is — a crop, a variety, a planting or a name.',
+  chk_preservation_log_method_other: "Name an 'Other' put-up — give it a name or say what was done.",
+  chk_preservation_log_label_nonblank: 'A name cannot be blank.',
+  chk_preservation_log_label_len: `A name can be at most ${JAR_LABEL_MAX} characters.`,
+  chk_preservation_log_use_by_basis: 'That is not a discard-by basis this app knows.',
+  chk_preservation_log_use_by_basis_date: 'That discard-by date does not match where it came from. Refresh and try again.',
+  chk_preservation_log_texture: 'That is not a texture this app knows.',
+  chk_preservation_log_texture_method: 'Texture only applies to a dried food.',
+  chk_preservation_log_ph_pairing: 'A pH reading needs the time it was read, and a time needs a reading.',
+  chk_preservation_log_ph_scale: 'That is not a reading on the pH scale.',
+  chk_preservation_log_put_up_stage_batch: 'That jar has to belong to its batch.',
+  chk_preservation_log_preserved_at_precision: 'That is not a date precision this app knows.',
+  chk_preservation_log_quantity_pairing: 'An amount needs its unit, and a unit needs an amount above 0.',
+  chk_preservation_log_quantity_unit: 'That is not a unit this app knows.',
+  chk_preservation_log_remaining_within_package: 'That would leave more left than there are containers.',
+};
+
+export function jarErrorMessage(err) {
+  if (!err || err.code !== '23514') return null;
+  return JAR_CONSTRAINT_MESSAGES[String(err.constraint ?? '')] ?? null;
+}
+
+// Put-Up release 1b: the refusal for a tab older than the row — the legacy PUT's echo rule and count
+// race, and the optimistic guard on PATCH / Move. The same code and words as countRefusal's fall-through,
+// so the shipped client's CLIENT_STALE_TEXT and its Refresh door apply unchanged.
+export function clientStale() {
   return coded('client_stale', 'This jar just changed. Refresh and try again.');
 }
