@@ -1,7 +1,8 @@
 {
-  "version": "4.158.5",
+  "version": "4.159.0",
   "date": "2026-09-29",
   "highlights": [
-    "A Plants lost entry now reads \"2 plants lost\" with its reason, and has its own wilted-plant icon, instead of saying \"failed\" like a failed planting."
+    "End of season, in More: tick the frost-tender plantings that are done and mark them all Finished at once. Nothing is pre-ticked, Undo puts them back, and their harvests stay in your totals.",
+    "Catch up, in More: a list of plantings that have no start date, where a rough month is enough."
   ]
 }
