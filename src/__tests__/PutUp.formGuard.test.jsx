@@ -422,3 +422,155 @@ describe('PutUp ↔ registerSW end to end', () => {
     teardown()
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Put-Up release 1a (V4 §6.5 "Reload gate") — RecordRow's editor, the other typed surface on this
+// page. Before this it held nothing: a deploy landing mid-Edit reloaded the page and the typed values
+// went with it (review2 mobile-pwa R2 #6, verified at PutUp.jsx 2426-2430). Same shape as the form's
+// proof above: the REAL reloadGate and, below, the real registerSW, nothing mocked between them.
+const ROW = {
+  id: 'rec-1', crop_type_slug: 'tomato', variety_id: null, plant_id: null, harvest_log_id: null,
+  preserved_at: '2026-07-01', method: 'whole_freeze', method_other_text: null,
+  quantity_value: 14, quantity_unit: 'bags', package_count: 3, storage_location_id: 'loc-1',
+  use_by_target: null, remaining_count: 3, consumed_at: null, notes: null, photo_id: null, use_by_status: null,
+  source_kind: 'own_garden', source_label: null,
+}
+// The two conditional fields each need a row that shows them: 'other' shows the method description,
+// a house-sourced method (candy) shows the use-by date.
+const OTHER_ROW = { ...ROW, method: 'other', method_other_text: 'Vinegar dill pickles' }
+const CANDY_ROW = { ...ROW, method: 'candy', use_by_target: '2027-01-01' }
+
+function wireRow({ rec = ROW, onPut } = {}) {
+  fetchMock.mockImplementation((path, options = {}) => {
+    const method = options.method || 'GET'
+    if (path.startsWith('/api/preservation/') && method === 'PUT') return onPut ? onPut(path, options) : Promise.resolve({ id: rec.id })
+    if (path.startsWith('/api/preservation/whats-put-up')) {
+      return Promise.resolve({ group_by: 'storage', groups: [{ group_key: 'loc-1', label: 'Garage freezer', total_packages: 3, units: ['bags'], use_soon_count: 0, records: [rec] }] })
+    }
+    if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
+    if (path.startsWith('/api/plants')) return Promise.resolve([])
+    return Promise.resolve(null)
+  })
+}
+async function openRowEditor() {
+  const view = renderFullPage()
+  await screen.findByText('Garage freezer')
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+  await screen.findByRole('button', { name: 'Save' })
+  return view
+}
+const typeNotes = (v) => fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: v } })
+const putCount = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PUT').length
+
+describe('RecordRow editor — holds the reload gate while dirty or saving (Put-Up 1a)', () => {
+  it('opening the editor holds nothing; an edit holds; putting it back releases', async () => {
+    wireRow()
+    await openRowEditor()
+    expect(isReloadBlocked()).toBe(false)
+    typeNotes('two went to Jen')
+    expect(isReloadBlocked()).toBe(true)
+    typeNotes('')
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  // Every field the editor offers, one at a time, each changed and then put back. A field missing
+  // from the predicate is a field a deploy can still erase.
+  it.each([
+    ['How much', ROW, () => screen.getByRole('textbox', { name: 'Quantity' }), '9'],
+    ['Unit', ROW, () => screen.getByRole('combobox', { name: 'Unit' }), 'jars'],
+    ['Containers', ROW, () => screen.getByRole('spinbutton', { name: 'Number of containers' }), '2'],
+    ['Method', ROW, () => screen.getByRole('combobox', { name: 'Method' }), 'dehydrate'],
+    ['What method?', OTHER_ROW, () => screen.getByRole('textbox', { name: 'Method description' }), 'Fridge pickles'],
+    ['Use-by date', CANDY_ROW, () => screen.getByLabelText('Use-by date'), '2027-02-01'],
+    ['Notes', ROW, () => screen.getByRole('textbox', { name: 'Notes' }), 'two went to Jen'],
+  ])('%s', async (_field, rec, control, changed) => {
+    wireRow({ rec })
+    await openRowEditor()
+    const seeded = control().value
+    expect(isReloadBlocked()).toBe(false)
+    fireEvent.change(control(), { target: { value: changed } })
+    expect(isReloadBlocked()).toBe(true)
+    fireEvent.change(control(), { target: { value: seeded } })
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('an untouched Save holds while the PUT is in flight; a save that lands releases', async () => {
+    let land
+    wireRow({ onPut: () => new Promise(r => { land = () => r({ id: 'rec-1' }) }) })
+    await openRowEditor()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(putCount()).toBe(1))
+    expect(isReloadBlocked()).toBe(true)
+    await act(async () => { land() })
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull())
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('a refused save keeps the hold, because the edit is still on screen; Cancel releases it', async () => {
+    const refusal = Object.assign(new Error('below'), { status: 409, body: { error: 'below', code: 'count_below_used' } })
+    wireRow({ onPut: () => Promise.reject(refusal) })
+    await openRowEditor()
+    typeNotes('two went to Jen')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByRole('alert')
+    expect(screen.getByRole('textbox', { name: 'Notes' }).value).toBe('two went to Jen')
+    expect(isReloadBlocked()).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(isReloadBlocked()).toBe(false)
+  })
+
+  it('unmounting a dirty editor releases the hold (never wedge updates)', async () => {
+    wireRow()
+    const { unmount } = await openRowEditor()
+    typeNotes('two went to Jen')
+    expect(isReloadBlocked()).toBe(true)
+    unmount()
+    expect(isReloadBlocked()).toBe(false)
+  })
+})
+
+describe('RecordRow editor ↔ registerSW end to end', () => {
+  it('an edit in progress DEFERS the SW reload; Cancel lets it fire exactly once', async () => {
+    wireRow()
+    const env = makeSwEnv()
+    const teardown = registerServiceWorker(env)
+    await flush()
+    await openRowEditor()
+    typeNotes('two went to Jen')
+    env.sw.dispatchEvent(new Event('controllerchange'))
+    expect(env.reload).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(env.reload).toHaveBeenCalledTimes(1)
+    teardown()
+  })
+
+  // The one-boolean dep, stated as the user would meet its absence: a deploy deferred while he typed
+  // must not fire at the instant he taps Save, with the PUT still in the air.
+  it('tapping Save on a dirty editor does not let a deferred reload through; the landed save does', async () => {
+    let land
+    wireRow({ onPut: () => new Promise(r => { land = () => r({ id: 'rec-1' }) }) })
+    const env = makeSwEnv()
+    const teardown = registerServiceWorker(env)
+    await flush()
+    await openRowEditor()
+    typeNotes('two went to Jen')
+    env.sw.dispatchEvent(new Event('controllerchange'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(putCount()).toBe(1))
+    expect(env.reload).not.toHaveBeenCalled()
+    await act(async () => { land() })
+    await waitFor(() => expect(env.reload).toHaveBeenCalledTimes(1))
+    teardown()
+  })
+
+  it('an untouched editor does not defer a deploy reload (the gate is not a disarm)', async () => {
+    wireRow()
+    const env = makeSwEnv()
+    const teardown = registerServiceWorker(env)
+    await flush()
+    await openRowEditor()
+    env.sw.dispatchEvent(new Event('controllerchange'))
+    expect(env.reload).toHaveBeenCalledTimes(1)
+    teardown()
+  })
+})

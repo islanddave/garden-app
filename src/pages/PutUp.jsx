@@ -2593,10 +2593,21 @@ function RowAction({ onClick, disabled, tone, children }) {
 
 // Minimal per-row editor — the fields worth changing after the fact. Sends a FULL replace payload.
 function RowEditor({ rec, onCancel, onSave, busy, err }) {
-  const [qtyValue, setQtyValue] = useState(String(rec.quantity_value ?? ''))
-  const [qtyUnit, setQtyUnit] = useState(rec.quantity_unit || 'lbs')
-  const [packageCount, setPackageCount] = useState(String(rec.package_count ?? 1))
-  const [method, setMethod] = useState(rec.method || 'whole_freeze')
+  // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
+  // against it, one expression per field, so the seed and the comparison cannot drift apart.
+  const [seed] = useState(() => ({
+    qtyValue: String(rec.quantity_value ?? ''),
+    qtyUnit: rec.quantity_unit || 'lbs',
+    packageCount: String(rec.package_count ?? 1),
+    method: rec.method || 'whole_freeze',
+    methodOther: rec.method_other_text || '',
+    useByTarget: rec.use_by_target ? ymd(rec.use_by_target) : '',
+    notes: rec.notes || '',
+  }))
+  const [qtyValue, setQtyValue] = useState(seed.qtyValue)
+  const [qtyUnit, setQtyUnit] = useState(seed.qtyUnit)
+  const [packageCount, setPackageCount] = useState(seed.packageCount)
+  const [method, setMethod] = useState(seed.method)
   // PRE-EXISTING BUG, fixed under V4-PUTUPPROV-001. This editor offered 'other' in the method list
   // but had no method_other_text input, so switching a row TO 'other' sent method:'other' with
   // method_other_text:null (buildFullPayload supplies the row's existing value, which is null for a
@@ -2605,14 +2616,33 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // THE INVARIANT THIS RESTORES: a field that is CONDITIONALLY REQUIRED BY ANOTHER FIELD must be
   // editable everywhere that other field is editable, or the pair must be create-only. The new
   // source_kind/source_label pair depends on the same invariant holding.
-  const [methodOther, setMethodOther] = useState(rec.method_other_text || '')
+  const [methodOther, setMethodOther] = useState(seed.methodOther)
   // V5-PUTUPCANDY-001. The other half of FOODSAFETY-RULING-V101 §8.2: "let the cook set the real
   // date". use_by_target has always been per-row and user-overridable at CREATE time, but this
   // editor never exposed it, so the provenance line's "tap Edit to set the real date" would have
   // been a dead instruction on an existing row. Seeded exactly as buildFullPayload seeds it, so an
   // untouched save round-trips the stored value byte-for-byte.
-  const [useByTarget, setUseByTarget] = useState(rec.use_by_target ? ymd(rec.use_by_target) : '')
-  const [notes, setNotes] = useState(rec.notes || '')
+  const [useByTarget, setUseByTarget] = useState(seed.useByTarget)
+  const [notes, setNotes] = useState(seed.notes)
+
+  // Put-Up release 1a (V4 §6.5 "Reload gate"). A deploy's SW reload landing mid-Edit took the typed
+  // values with it: the log form's hold was the only one on this page. Held while anything differs
+  // from the seed OR a save is in flight — `busy` covers an untouched Save too, where a reload between
+  // the PUT leaving and its answer would leave nobody knowing whether it landed. A refused save keeps
+  // the edit on screen (RecordRow), so it keeps the hold.
+  //
+  // ONE boolean dep, as PutUpForm's hold does it: with [dirty, busy] the effect would re-run when a
+  // Save flips busy on an already-dirty editor, and the cleanup's release in between would fire the
+  // deferred reload at the exact moment of the save. The key is per instance (useId) so two open
+  // editors can never release each other's hold.
+  const dirty = qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit || packageCount !== seed.packageCount ||
+    method !== seed.method || methodOther !== seed.methodOther || useByTarget !== seed.useByTarget || notes !== seed.notes
+  const holdReload = dirty || !!busy
+  const reloadGateKey = `put-up-row:${useId()}`
+  useEffect(() => {
+    setReloadBlocked(reloadGateKey, holdReload)
+    return () => setReloadBlocked(reloadGateKey, false)
+  }, [reloadGateKey, holdReload])
 
   function save() {
     onSave({
