@@ -281,19 +281,58 @@ describe('undo', () => {
     fetchSpy.mockClear()
     putImpl = (p, body) => (p === '/api/plants/p1' ? Promise.reject(new Error('x')) : Promise.resolve({ body }))
     await act(async () => { fireEvent.click(screen.getByTestId('season-end-undo')) })
-    await waitFor(() => expect(screen.getByTestId('season-end-result').textContent).toContain('Put back 1 of 2. 1 is still ended.'))
+    await waitFor(() => expect(screen.getByTestId('season-end-result').textContent).toContain('Put back 1 of 2. 1 is still ended: Aji Amarillo.'))
     expect(puts()).toEqual(expect.arrayContaining([
       { path: '/api/plants/p1', body: { status: 'harvested' } },
       { path: '/api/plants/b1', body: { status: 'vegetative' } },
     ]))
     expect(puts()).toHaveLength(2)
     expect(puts().some((c) => c.path === '/api/plants/t1')).toBe(false)
-    // The put-back row returns ticked; the one still ended stays gone; Undo is spent.
+    // The put-back row returns ticked; the one still ended stays gone, named, with Undo still offered.
     expect(rowNamed('Genovese').getAttribute('aria-checked')).toBe('true')
     expect(rowNamed('Aji Amarillo')).toBeUndefined()
-    expect(screen.queryByTestId('season-end-undo')).toBeNull()
+    expect(screen.getByTestId('season-end-undo')).toBeTruthy()
     expect(toastApi.dismiss).toHaveBeenCalledWith(77)
   })
+
+  // KILLING MUTATION: spend the whole offer on a partial undo (undo() nulled it before the pool ran).
+  // RESULT: RED — no Undo is left for the rows still ended, and nothing names them.
+  it('a partial undo keeps Undo for exactly the put-backs that failed, names them, and a second Undo puts back only those', async () => {
+    const STATUSES = ['fruiting', 'harvested', 'vegetative', 'flowering']
+    plantsBody = { plants: Array.from({ length: 80 }, (_, i) => row(`r${i}`, `Plant ${String(i).padStart(2, '0')}`, i % 2 ? 'pepper' : 'tomato', STATUSES[i % 4], 'bag')) }
+    const failEnd = new Set(['r0', 'r10', 'r33', 'r50', 'r79'])
+    const idOf = (p) => p.split('/').pop()
+    putImpl = (p, body) => (body.status === 'ended' && failEnd.has(idOf(p)) ? Promise.reject(new Error('x')) : Promise.resolve({}))
+    await renderPage()
+    openGroup('Bag Area')
+    fireEvent.click(within(group('Bag Area')).getByTestId('season-end-group-select'))
+    openConfirm()
+    await confirmEnd()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), { timeout: 5000 })
+    expect(screen.getByTestId('season-end-result').textContent).toContain("Ended 75. 5 didn't save.")
+
+    fetchSpy.mockClear()
+    putImpl = (p) => (['r1', 'r2'].includes(idOf(p)) ? Promise.reject(new Error('x')) : Promise.resolve({}))
+    await act(async () => { fireEvent.click(screen.getByTestId('season-end-undo')) })
+    await waitFor(() => expect(screen.getByTestId('season-end-result').textContent)
+      .toContain('Put back 73 of 75. 2 are still ended: Plant 01, Plant 02.'), { timeout: 5000 })
+    expect(puts()).toHaveLength(75)
+    for (const c of puts()) expect(c.body, c.path).toEqual({ status: STATUSES[Number(idOf(c.path).slice(1)) % 4] })
+    expect(rowNamed('Plant 01')).toBeUndefined()
+
+    fetchSpy.mockClear()
+    putImpl = () => Promise.resolve({})
+    await act(async () => { fireEvent.click(screen.getByTestId('season-end-undo')) })
+    await waitFor(() => expect(screen.getByTestId('season-end-result').textContent).toContain('Put back 2 plantings.'), { timeout: 5000 })
+    expect(puts()).toHaveLength(2)
+    expect(Object.fromEntries(puts().map((c) => [c.path, c.body]))).toEqual({
+      '/api/plants/r1': { status: 'harvested' },
+      '/api/plants/r2': { status: 'vegetative' },
+    })
+    expect(rowNamed('Plant 01').getAttribute('aria-checked')).toBe('true')
+    expect(rowNamed('Plant 02').getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByTestId('season-end-undo')).toBeNull()
+  }, 20000)
 
   // KILLING MUTATION: every row put back to one status. RESULT: RED — a sorted list of statuses could not
   // see which row got which, so this pins the row → status map.

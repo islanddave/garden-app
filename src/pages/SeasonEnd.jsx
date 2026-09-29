@@ -16,7 +16,8 @@
 // UNDO is one, for the last batch: the house toast "Ended 7 plantings · Undo", and the same undo kept
 // in the sticky bar until the page is left or something is ticked again. It PUTs each landed row back
 // to ITS OWN prior status (a new status_change; nothing is deleted) and only rows that landed. Put-back
-// rows come back ticked, as they were before End.
+// rows come back ticked, as they were before End. A put-back that fails keeps Undo offered for exactly
+// the rows still ended, and the bar names them when there are five or fewer.
 //
 // Today reads an hourly stored plan, so the copy says ended rows leave Today's list within the hour.
 //
@@ -238,8 +239,9 @@ export default function SeasonEnd() {
     setFailedIds(new Set())
   }
 
-  // Ends `items`. A run while the last batch's undo is still offered can only be a retry of that
-  // batch's failed rows (ticking anything drops the offer), so its landed rows join the same undo.
+  // Ends `items`. A run while an undo is still offered is a retry of that batch's failed rows, or an End
+  // of the rows a partial undo put back (ticking anything new drops the offer). Either way its landed
+  // rows join the same undo, where every row keeps its own prior status.
   const endItems = useCallback(async (items) => {
     if (inFlightRef.current || items.length === 0) return
     inFlightRef.current = true
@@ -289,7 +291,14 @@ export default function SeasonEnd() {
     const back = new Map(targets.filter((_, i) => results[i].ok).map((it) => [it.id, it.prevStatus]))
     setRows((prev) => prev.map((r) => (back.has(r.id) ? { ...r, status: back.get(r.id) } : r)))
     setSelected((prev) => new Set([...prev, ...back.keys()]))
-    setResult({ line: undoResultLine(back.size, current.items.length), sub: null, retry: false })
+    // A put-back that failed leaves its row ended and off the list, so the offer stays for exactly those
+    // rows (each still carrying its own prior status), and the bar names them when there are few.
+    const unrestored = targets.filter((_, i) => !results[i].ok)
+    const nextBatch = unrestored.length ? { items: unrestored } : null
+    batchRef.current = nextBatch
+    setBatch(nextBatch)
+    const stillEndedNames = current.items.filter((it) => !back.has(it.id)).map((it) => it.name)
+    setResult({ line: undoResultLine(back.size, current.items.length, stillEndedNames), sub: null, retry: false })
     if (back.size) invalidatePrefix('/api/plants')
     setProgress(null)
     inFlightRef.current = false

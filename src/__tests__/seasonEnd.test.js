@@ -288,6 +288,17 @@ describe('copy', () => {
     expect(undoResultLine(7, 7)).toBe('Put back 7 plantings.')
   })
 
+  // An ended row has left the list, so a partial undo names what is still ended — up to five, and only
+  // when it has a name for every one of them.
+  it('a partial undo names up to five rows still ended', () => {
+    expect(undoResultLine(1, 2, ['Aji Amarillo'])).toBe('Put back 1 of 2. 1 is still ended: Aji Amarillo.')
+    expect(undoResultLine(73, 75, ['Plant 01', 'Plant 02'])).toBe('Put back 73 of 75. 2 are still ended: Plant 01, Plant 02.')
+    expect(undoResultLine(0, 5, ['a', 'b', 'c', 'd', 'e'])).toBe('Put back 0 of 5. 5 are still ended: a, b, c, d, e.')
+    expect(undoResultLine(1, 7, ['a', 'b', 'c', 'd', 'e', 'f'])).toBe('Put back 1 of 7. 6 are still ended.')
+    expect(undoResultLine(5, 7, ['a'])).toBe('Put back 5 of 7. 2 are still ended.')
+    expect(undoResultLine(2, 2, ['a'])).toBe('Put back 2 plantings.')
+  })
+
   it('"Last logged" is the LOCAL day, and drops the year only for this year', () => {
     const now = new Date('2026-09-29T12:00:00')
     // 01:30 UTC on the 27th is the evening of the 26th in Massachusetts (the suite runs in America/New_York).

@@ -230,10 +230,16 @@ export function endResultLine(landed, failed) {
   return `Ended ${landed}. ${failed} didn't save.`
 }
 
-export function undoResultLine(putBack, attempted) {
+// A partial undo names the rows still ended when there are this many or fewer: an ended row has left
+// the list, so its name is the only way to find it again once the offer is gone.
+export const NAME_STILL_ENDED_MAX = 5
+
+export function undoResultLine(putBack, attempted, stillEndedNames = []) {
   const stillEnded = attempted - putBack
   if (stillEnded === 0) return `Put back ${plantingsPhrase(putBack)}.`
-  return `Put back ${putBack} of ${attempted}. ${stillEnded} ${stillEnded === 1 ? 'is' : 'are'} still ended.`
+  const line = `Put back ${putBack} of ${attempted}. ${stillEnded} ${stillEnded === 1 ? 'is' : 'are'} still ended`
+  const named = stillEndedNames.length === stillEnded && stillEnded <= NAME_STILL_ENDED_MAX
+  return named ? `${line}: ${stillEndedNames.join(', ')}.` : `${line}.`
 }
 
 // "Last logged Sep 26" (this year) / "Last logged Sep 26, 2025". The event time is a timestamp, so it
