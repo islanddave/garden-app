@@ -3,6 +3,7 @@ import {
   validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
   validateMarkViewedPatchBody, MAX_MARK_VIEWED_BATCH, UUID_RE,
   GARDEN_EXPANDED_MAX, NAV_TAB_KEYS, MOVABLE_TAB_KEYS, MORE_PIN_ID_RE, MORE_PINS_MAX,
+  GARDEN_GROUP_BY_VALUES,
 } from './validators.js'
 
 const VALID_UUID = '11111111-2222-3333-4444-555555555555'
@@ -43,8 +44,23 @@ describe('validatePrefsPatchBody', () => {
       expect(validatePrefsPatchBody({ garden_group_by: v })).toBeNull()
     }
   })
+  // BUG-GARDENGROUPBYRESET-001 — Garden's Type option is 'crop_type', and the three bean facets are offered
+  // whenever a planting carries them. All four used to 400 here, so the choice never reached the server and
+  // every Garden mount re-adopted the older one. The full list is pinned against the client's in
+  // groupby.parity.test.js.
+  it('accepts the Type grouping (crop_type) and the three bean facets', () => {
+    for (const v of ['crop_type', 'bean_type', 'bean_habit', 'bean_use']) {
+      expect(validatePrefsPatchBody({ garden_group_by: v })).toBeNull()
+    }
+  })
   it('rejects an invalid garden_group_by value', () => {
     expect(validatePrefsPatchBody({ garden_group_by: 'bogus' })?.status).toBe(400)
+  })
+  it('the garden_group_by 400 names every accepted value', () => {
+    const { error } = validatePrefsPatchBody({ garden_group_by: 'bogus' })
+    const named = error.replace(/^garden_group_by must be /, '').split('|')
+    expect(named).toEqual([...GARDEN_GROUP_BY_VALUES])
+    expect(named).toEqual(expect.arrayContaining(['crop_type', 'bean_type', 'bean_habit', 'bean_use', 'status']))
   })
   it('accepts each valid garden_sort_order value', () => {
     expect(validatePrefsPatchBody({ garden_sort_order: 'alpha' })).toBeNull()

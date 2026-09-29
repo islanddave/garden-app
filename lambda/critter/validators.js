@@ -18,7 +18,11 @@ export const MVP_SPECIES_MAX = 254
 
 // PATCH /api/notifications/prefs body validator
 const CRITTER_VISIT_VALUES = new Set(['off', 'in_app_only', 'system'])
-export const GARDEN_GROUP_BY_VALUES = new Set(['none', 'type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'location', 'group', 'freeform', 'status'])
+// Every value Garden's group-by control can offer (src/lib/gardenGroupBy.js). The client keeps its own copy
+// (GARDEN_GROUP_BY_VALUES in src/lib/notificationPrefsClient.js); groupby.parity.test.js pins the two lists
+// together AND against the control. BUG-GARDENGROUPBYRESET-001: 'crop_type' (Type) and the three bean
+// facets were missing here, so those choices 400'd, the server kept an older one, and Garden re-adopted it.
+export const GARDEN_GROUP_BY_VALUES = new Set(['none', 'type', 'crop_type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform', 'status'])
 export const GARDEN_SORT_ORDER_VALUES = new Set(['alpha', 'recency'])
 export const GARDEN_EXPANDED_MAX = 2000
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
@@ -60,7 +64,8 @@ export function validatePrefsPatchBody(body) {
     return { status: 400, error: 'quiet_hours_end must be HH:MM' }
   }
   if (body.garden_group_by != null && !GARDEN_GROUP_BY_VALUES.has(body.garden_group_by)) {
-    return { status: 400, error: 'garden_group_by must be none|type|lifecycle|heat|determinacy|day_length|allium_type|basil_use|location|group|freeform|status' }
+    // Built from the set so the text cannot drift from what is accepted.
+    return { status: 400, error: `garden_group_by must be ${[...GARDEN_GROUP_BY_VALUES].join('|')}` }
   }
   if (body.garden_sort_order != null && !GARDEN_SORT_ORDER_VALUES.has(body.garden_sort_order)) {
     return { status: 400, error: 'garden_sort_order must be alpha|recency' }

@@ -21,7 +21,11 @@ import { resolveBarLayout } from './navConfig.js'
 const CRITTER_BASE = (import.meta.env.VITE_API_CRITTERS ?? '').replace(/\/$/, '')
 
 export const CRITTER_VISIT_VALUES = ['off', 'in_app_only', 'system']
-export const GARDEN_GROUP_BY_VALUES = ['none', 'type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform', 'status']
+// Every value Garden's group-by control can offer (src/lib/gardenGroupBy.js); the Lambda's copy is
+// lambda/critter/validators.js, and lambda/critter/groupby.parity.test.js pins both to the control.
+// BUG-GARDENGROUPBYRESET-001: 'crop_type' — the Type option, Garden's default — was missing, so a Type
+// choice was never sent and every Garden mount re-adopted the server's older one.
+export const GARDEN_GROUP_BY_VALUES = ['none', 'type', 'crop_type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform', 'status']
 export const GARDEN_SORT_ORDER_VALUES = ['alpha', 'recency']
 // Re-exported (not redeclared) from the layout module so the wire contract and the render contract
 // cannot drift: handedness.js is what every surface reads, and this is what gets PATCHed. Imported
