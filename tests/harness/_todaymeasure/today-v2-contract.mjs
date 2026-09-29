@@ -117,6 +117,8 @@ export const STATES = [
       // FeedSuppressedList (CareNeeded.jsx), reused unchanged at the foot of Needs care (REGIONS
       // care-feed-suppressed), prints 0.78rem. Measured: with only that component's 0.78rem → 0.82rem the census
       // passed on v2-frost, so it is the one source. Restyling the line for V2 is a design call, not the gate's.
+      // The cap is plan §9.1(l)'s 4 design surfaces; at S3 + S4 v2-frost carries 3 of them (measured 2026-09-29),
+      // so one extra treatment still passes here: todayMutantsV2 extraCardFingerprint is scheduled for S5+S6.
       { family: 'visual-census', armedAt: ['S3', 'S4'], maxFingerprints: 4, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem', '0.78rem'], why: '(l) ≤ 4 section-level container fingerprints on busyfull' },
       { family: 'weather-once', armedAt: 'S3', why: 'MF2: with the glance OPEN, exactly one today-weather and no repeated hi/lo text' },
       // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. Needs care is
