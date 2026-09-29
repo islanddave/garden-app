@@ -484,6 +484,19 @@ async function editLine(label, edit) {
   await find('line-saved')
   return lineNamed(label)
 }
+// A Log entry's date, through its edit sheet's "When was this?" chips (the Start sheet's own).
+async function editStageDate(rowText, chip) {
+  const row = await waitFor(() => [...document.querySelectorAll(sel('batch-detail-stage-edit'))]
+    .find(b => norm(b.textContent).includes(rowText)), `the Log row reading "${rowText}"`)
+  await press(row, `the Log row "${rowText}"`)
+  await find('stage-edit')
+  await tap(`stage-edit-when-${chip}`)
+  await checkSheet('stage-edit-save', `the date of "${rowText}"`)
+  await tap('stage-edit-save')
+  await waitFor(() => !topDialog(), 'the edit sheet to close')
+  await settle()
+  await find('stage-saved')
+}
 function gardenAmbient(names) {
   const el = document.querySelector(sel('what-went-in-garden'))
   const text = el ? norm(el.textContent) : ''
@@ -628,6 +641,12 @@ const WALKS = {
     // A line edited after finishing moves the worked-out heat: flagged, never silently recomputed.
     await editLine('Gochugaru', { qty: 45 })
     await expectText('jar-heat-stale', 'worked out before later changes')
+    // Dave: stage dates are editable — the top-up was yesterday, not today (after finishing, too).
+    await editStageDate('Topped up brine', 'yesterday')
+    const tended = state.stages.find(s => s.batch_id === theBatch().id && s.stage_kind === 'tended')
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0); midnight.setDate(midnight.getDate() - 1)
+    expect(tended?.entered_precision === 'day' && new Date(tended.entered_at).getTime() === midnight.getTime() && tended.edited_at,
+      `the check-in's date wrote ${tended?.entered_at} / ${tended?.entered_precision}`)
     await checkPage('Kimchi — finished and edited')
     noRefusals('Kimchi')
   },

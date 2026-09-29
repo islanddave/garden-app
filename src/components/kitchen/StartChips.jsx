@@ -125,17 +125,18 @@ export function resolveSheetStart({ chip = 'today', earlier = null, pickedDate =
 // answer — Today until another is tapped — so re-tapping the chosen chip keeps it: "Not sure" is how
 // "I don't know" is said, not an empty row. 48px touch chips, 8px gaps: the house SelectChip `touch`.
 // NOT wrapped in <Field>: Field takes exactly one control child, and this is a group of buttons plus a
-// conditional date input.
+// conditional date input. `label` / `dateLabel` (release F): the batch detail's stage edit asks the
+// same question of a Log entry — "When was this?" — through this same row.
 export function SheetStartChips({
   value = 'today', onChange, earlier = null, onEarlierChange, pickedDate = '', onPickedDateChange,
-  disabled = false, idPrefix = 'start-when', now = new Date(),
+  disabled = false, idPrefix = 'start-when', now = new Date(), label = 'When did it start?', dateLabel = 'Start date',
 }) {
   return (
     <div>
       <span style={labelChrome} aria-hidden="true">
-        When did it start?<span style={optionalMarkChrome}>optional</span>
+        {label}<span style={optionalMarkChrome}>optional</span>
       </span>
-      <div role="group" aria-label="When did it start?" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div role="group" aria-label={label} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {SHEET_START_CHIPS.map(c => (
           <SelectChip key={c.id} touch active={value === c.id} disabled={disabled} data-testid={`${idPrefix}-${c.id}`}
             onClick={() => { if (value !== c.id) onChange?.(c.id) }}>
@@ -154,7 +155,7 @@ export function SheetStartChips({
         </div>
       )}
       {value === 'earlier' && earlier === 'pickdate' && (
-        <Input type="date" data-testid={`${idPrefix}-date`} aria-label="Start date" value={pickedDate}
+        <Input type="date" data-testid={`${idPrefix}-date`} aria-label={dateLabel} value={pickedDate}
           max={localYmd(now)} disabled={disabled}
           onChange={e => onPickedDateChange?.(e.target.value)} style={{ marginTop: 8, maxWidth: 220 }} />
       )}
