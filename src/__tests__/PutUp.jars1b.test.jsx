@@ -79,8 +79,31 @@ describe('the jar row says its name, its no-size form and its date words', () =>
     wire({ ...JAR_1B, label: undefined, container_label: undefined, preserved_at_precision: undefined, use_by_basis: undefined,
       quantity_value: '2.5', quantity_unit: 'qt', preserved_at_approx: null })
     await renderList()
-    expect(screen.getByTestId('putup-row-headline').textContent).toBe('2.5 qt · Hot sauce')
+    // Its date and use-by words are the shipped ones; its size says "in all" (A3 — two containers).
+    expect(screen.getByTestId('putup-row-headline').textContent).toBe('2.5 qt in all · Hot sauce')
     expect(document.body.textContent).toContain('use by Feb 1, 2027')
+  })
+})
+
+// Contract-F A3 — the zucchini, pinned: 2afee2e3 is 2.5 qt IN TOTAL across 3 containers (Dave), and
+// the stored 2.5 is already right; only the words change. MUTATION: drop the "in all" arm of
+// jarWords.sizeWords -> the headline reads "2.5 qt · …" beside "3 containers" and this reds.
+describe('A3: the zucchini reads as a total', () => {
+  const ZUCCHINI = { ...JAR_1B, id: 'rec-zuke', label: null, container_label: null, quantity_value: 2.5, quantity_unit: 'qt',
+    package_count: 3, remaining_count: 3, method: 'whole_freeze', preserved_at_precision: null, use_by_basis: null,
+    preserved_at: '2026-08-10', preserved_at_approx: null, use_by_target: null }
+  it('says "2.5 qt in all" beside "3 containers", never "3 × 2.5 qt"', async () => {
+    wire(ZUCCHINI)
+    await renderList()
+    expect(screen.getByTestId('putup-row-headline').textContent).toBe('2.5 qt in all · Freeze (raw / whole)')
+    expect(document.body.textContent).toContain('3 containers')
+    expect(document.body.textContent).not.toMatch(/3\s*×\s*2\.5/)
+  })
+  it('the editor asks for the total', async () => {
+    wire(ZUCCHINI)
+    await renderList()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    expect(await screen.findByText('How much in all')).toBeTruthy()
   })
 })
 
@@ -105,6 +128,28 @@ describe('the row editor writes each field to its one writer (V4 §5.4 "From 1b"
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
     await waitFor(() => expect(writes()).toHaveLength(1))
     expect(writes()).toEqual([['PATCH', '/api/preservation/rec-1b', { label: 'Reaper, hot', method: 'ferment', notes: 'the good one' }]])
+  })
+
+  // The size is the PATCH's, as a pair (train §6; jarRoutes.js JAR_PATCH_KEYS). MUTATION: send it
+  // through the PUT again -> a PUT appears and this literal reds.
+  it('a size change is a PATCH carrying the quantity pair, and nothing rides the PUT', async () => {
+    await openEditor()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '16' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Unit' }), { target: { value: 'oz' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()).toEqual([['PATCH', '/api/preservation/rec-1b', { quantity_value: '16', quantity_unit: 'oz' }]])
+  })
+
+  // The PATCH refuses method_other_text without method (validateJarPatch). MUTATION: send it alone ->
+  // the literal loses `method` and reds.
+  it('editing only the "other" description re-sends the method it describes', async () => {
+    wire({ ...JAR_1B, method: 'other', method_other_text: 'Salt-cured' })
+    await openEditor()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Method description' }), { target: { value: 'Salt-cured, dried' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })) })
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()[0][2]).toEqual({ method: 'other', method_other_text: 'Salt-cured, dried' })
   })
 
   // MUTATION: PATCH before PUT -> the order literal reds (and live, the PUT's echo of the old method 409s).

@@ -75,7 +75,7 @@ describe('the Log and What came out read the history as it stands', () => {
     expect(jars).toEqual([
       'Megatron plain · 2 × 8 oz woozy · put up Oct 12',
       'Megatron reaper · 2 × 8 oz woozy · put up Oct 12 · in oil',
-      '2.5 qt · 1 package · Sep 2',
+      '2.5 qt · Sep 2',                       // A3: one container, so the total is just the size
     ])
     expect(screen.getAllByTestId('batch-detail-undo-putup')).toHaveLength(1)
   })

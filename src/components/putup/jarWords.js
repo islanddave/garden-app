@@ -131,20 +131,45 @@ export function discardWords({ date, basis, method, kind, status, estimated = fa
   return [head, ...tail].join(' · ')
 }
 
-// Size words. A container label with an explicit size ("8 oz woozy") already says its size, so the
-// quantity is not repeated beside it; a bare quantity keeps today's "2.5 qt". NULL pair → the
-// container alone, or nothing.
-export function sizeWords({ quantity_value, quantity_unit, container_label } = {}) {
-  const hasQty = quantity_value != null && quantity_value !== '' && Number(quantity_value) !== 0 && !!quantity_unit
-  if (container_label) return String(container_label)
-  return hasQty ? `${quantity_value} ${quantity_unit}` : ''
+// ── Size words — contract-F amendment A3: QUANTITY IS THE TOTAL, everywhere ─────────────────────
+// preservation_log.quantity_value is the jar row's TOTAL contents (v4-putup-001: "package_count = #
+// of containers, distinct from quantity_value = total"; 1b's Put it up writes count × size). So a bare
+// quantity is never drawn as "N × Q" — that reads as per-container and would triple the zucchini's
+// 2.5 qt. With more than one container it reads "3 containers · 2.5 qt in all"; with one, "2.5 qt".
+// A container label that SAYS its own size ("8 oz woozy", "pint") is the per-container word, so it
+// keeps "2 × 8 oz woozy" and the total is not repeated beside it. A label with no size of its own
+// ("bag") keeps its count and still says the total when there is one.
+const SIZED_CONTAINERS = new Set(['5 oz woozy', '8 oz woozy', '4 oz jar', 'half-pint', 'pint', 'quart'])
+export function labelCarriesSize(label) {
+  const l = String(label ?? '').trim().toLowerCase()
+  return !!l && (SIZED_CONTAINERS.has(l) || /\d/.test(l))
 }
 
-// "2 × 8 oz woozy" / "2 jars" / "1 bag". Count first, always a number, never a word.
+function hasQuantity({ quantity_value, quantity_unit } = {}) {
+  return quantity_value != null && quantity_value !== '' && Number(quantity_value) !== 0 && !!quantity_unit
+}
+
+// The size of one jar row as a headline fragment (the count is said elsewhere on the row). NULL pair
+// and no container → nothing, never "null".
+export function sizeWords(rec = {}) {
+  const { quantity_value, quantity_unit, container_label, package_count } = rec
+  if (container_label) return String(container_label)
+  if (!hasQuantity(rec)) return ''
+  const n = Number(package_count)
+  return Number.isFinite(n) && n > 1 ? `${quantity_value} ${quantity_unit} in all` : `${quantity_value} ${quantity_unit}`
+}
+
+// The count and the size together: "2 × 8 oz woozy" · "3 containers · 2.5 qt in all" · "2.5 qt" ·
+// "3 × bag · 2 lb in all" · "1 container". Count first, always a number, never a word.
 export function countedSize(count, rec = {}) {
   const n = Number(count)
-  const size = sizeWords(rec)
-  if (!Number.isFinite(n) || n < 1) return size
-  if (size) return `${n} × ${size}`
-  return n === 1 ? '1 container' : `${n} containers`
+  const c = Number.isFinite(n) && n >= 1 ? n : 1
+  const qty = hasQuantity(rec) ? `${rec.quantity_value} ${rec.quantity_unit}` : null
+  const label = rec.container_label ? String(rec.container_label) : null
+  if (label) {
+    if (labelCarriesSize(label) || !qty) return `${c} × ${label}`
+    return `${c} × ${label} · ${qty}${c > 1 ? ' in all' : ''}`
+  }
+  if (qty) return c > 1 ? `${c} containers · ${qty} in all` : qty
+  return c === 1 ? '1 container' : `${c} containers`
 }

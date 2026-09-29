@@ -1721,7 +1721,10 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
   const qtyRow = (
     <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14 }}>
       <div style={{ flex: 2 }}>
-        <Field label={session ? 'How big is each? *' : 'How much *'} htmlFor="pu-qty">
+        {/* Contract-F A3: quantity_value is the TOTAL of the row (count × size), so the log form asks
+            for the total. The walk's own wording is unchanged and is reported, not decided, here: it
+            asks the size of EACH bag and stores that number in the same total column. */}
+        <Field label={session ? 'How big is each? *' : 'How much in all *'} htmlFor="pu-qty">
           <Input
             id="pu-qty"
             type="text"
@@ -2842,18 +2845,23 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // size and count through the legacy PUT, the name, method, notes and discard-by through the PATCH.
   // An untouched field is an absent key, which both routes read as "unchanged" (V4 §5.4 "From 1b").
   function save() {
+    // The count is the one field only the legacy PUT writes (PATCH /api/preservation/:id takes the
+    // quantity PAIR but not package_count — jarRoutes.js JAR_PATCH_KEYS), so it alone rides the PUT.
     const put = {}
-    if (qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit) {
-      put.quantity_value = Number(qtyValue) || rec.quantity_value
-      put.quantity_unit = qtyUnit || rec.quantity_unit
-    }
     if (packageCount !== seed.packageCount) put.package_count = packageCount === '' ? 1 : Number(packageCount)
     const patch = {}
+    // The size is the PATCH's (train §6: "the PATCH gains the quantity pair"), always as a pair. A
+    // blank amount leaves the stored size alone rather than clearing it.
+    if ((qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit) && qtyValue.trim() !== '' && Number(qtyValue) > 0) {
+      patch.quantity_value = qtyValue.trim()
+      patch.quantity_unit = qtyUnit || rec.quantity_unit
+    }
     if (name !== seed.name) patch.label = name.trim() || null
-    if (method !== seed.method) patch.method = method
-    // The 'other' partner rides with a method change or its own edit; the 1b CHECK also takes a name.
-    if (method === 'other' && (method !== seed.method || methodOther !== seed.methodOther)) {
-      patch.method_other_text = methodOther.trim() || null
+    // method_other_text travels WITH method (the PATCH refuses it alone: jarRoutes.js validateJarPatch),
+    // so an edit to the 'other' description re-sends the method it describes.
+    if (method !== seed.method || (method === 'other' && methodOther !== seed.methodOther)) {
+      patch.method = method
+      if (method === 'other') patch.method_other_text = methodOther.trim() || null
     }
     if (notes !== seed.notes) patch.notes = notes.trim() || null
     if (useByTarget !== seed.useByTarget) patch.discard_by = useByTarget || 'clear'
@@ -2871,7 +2879,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       </div>
       <div style={{ display: 'flex', gap: T.space.sm }}>
         <div style={{ flex: 2 }}>
-          <Field label="How much" htmlFor={`ed-qty-${rec.id}`}>
+          <Field label="How much in all" htmlFor={`ed-qty-${rec.id}`}>
             <Input id={`ed-qty-${rec.id}`} type="text" inputMode="decimal" value={qtyValue}
               onChange={e => setQtyValue(e.target.value)} aria-label="Quantity" />
           </Field>

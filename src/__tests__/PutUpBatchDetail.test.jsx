@@ -399,9 +399,11 @@ describe('BatchDetailView — the log is a log', () => {
 })
 
 describe('BatchDetailView — what came out', () => {
+  // Amended with contract-F A3 in the same commit as the change (V4 §8.3): quantity_value is the jar
+  // row's TOTAL, so "3 pint · 3 packages" (read as three pints each) is now "3 containers · 3 pint in all".
   it('lists the jars as identity only, against the real projection', () => {
     renderDetail({ outputs: [OUTPUT_JAR] })
-    expect(screen.getByTestId('batch-detail-output').textContent).toBe('3 pint · 3 packages · Aug 12')
+    expect(screen.getByTestId('batch-detail-output').textContent).toBe('3 containers · 3 pint in all · Aug 12')
     // The server's own SELECT omits both use-by columns, so this arm is about the projection holding.
     expect(OUTPUT_JAR.use_by_target).toBeUndefined()
     expect(OUTPUT_JAR.use_by_status).toBeUndefined()
@@ -418,7 +420,7 @@ describe('BatchDetailView — what came out', () => {
     // GREEN CONTROLS: the row DID carry both fields, and the identity line IS on screen — so this is
     // a suppression the client performs, not an accident of the fixture.
     expect(OUTPUT_JAR_WIDENED.use_by_status).toBe('use_soon')
-    expect(html).toContain('3 pint · 3 packages · Aug 12')
+    expect(html).toContain('3 containers · 3 pint in all · Aug 12')
   })
 
   it('answers "which jars came from that mash" with a plain nothing when there are none', () => {
@@ -428,7 +430,7 @@ describe('BatchDetailView — what came out', () => {
 
   it('degrades a jar with nothing recorded on it rather than rendering a blank row', () => {
     expect(outputRowText({ id: 'pl-x' })).toBe('A put-up')
-    expect(outputRowText({ package_count: 1, preserved_at: '2026-08-12' })).toBe('1 package · Aug 12')
+    expect(outputRowText({ package_count: 1, preserved_at: '2026-08-12' })).toBe('1 container · Aug 12')
     expect(outputRowText(null)).toBe('')
   })
 
@@ -629,7 +631,7 @@ describe('BatchDetailView — the inherited rulings, on this surface\'s own root
     expect(html).toContain('It spoiled — threw it out')
     expect(html).toContain('pH 4.60 · read Sep 2')
     expect(html).toContain('Kosher salt — 40 g')
-    expect(html).toContain('3 pint · 3 packages · Aug 12')
+    expect(html).toContain('3 containers · 3 pint in all · Aug 12')
   })
 
   it('never puts a raw outcome value in the DOM, in any attribute or text node', () => {

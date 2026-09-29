@@ -38,7 +38,7 @@ import { preservedOn } from './JarPicker.jsx'
 import PutItUpSheet from './PutItUpSheet.jsx'
 import { PUT_IT_UP_CTA } from './putItUp.js'
 import { useUndoPutUp, UNDO_PUT_UP_CTA, UNDONE_TEXT } from './PutUpStub.jsx'
-import { putUpDateWords, countedSize, ESTIMATED_PRECISIONS } from './jarWords.js'
+import { putUpDateWords, countedSize, sizeWords, ESTIMATED_PRECISIONS } from './jarWords.js'
 import { describeRefusal } from '../../lib/putUpErrors.js'
 
 // Local copies of two private vocabularies. STAGE_KIND_LABELS is not exported from goingNow.js and
@@ -145,9 +145,12 @@ export function outputRowText(row, nowMs = Date.now()) {
     if (row.ph_reading != null) parts.push(`pH ${row.ph_reading}`)
     return parts.join(' · ') || 'A put-up'
   }
+  // A linked jar from before 1b. Contract-F A3: its quantity is the TOTAL, so it is never said beside
+  // its count as if per-container ("3 pint · 3 packages" read as three pints each) — countedSize says
+  // "3 containers · 3 pint in all".
   const parts = []
-  if (row.quantity_value != null && row.quantity_unit) parts.push(`${row.quantity_value} ${row.quantity_unit}`)
-  if (row.package_count != null) parts.push(Number(row.package_count) === 1 ? '1 package' : `${row.package_count} packages`)
+  const size = row.package_count != null ? countedSize(row.package_count, row) : sizeWords(row)
+  if (size) parts.push(size)
   const on = preservedOn(row.preserved_at)
   if (on) parts.push(on)
   // use_by_target / use_by_status are deliberately absent here for the same reason they are absent
