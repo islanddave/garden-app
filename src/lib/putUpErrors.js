@@ -27,6 +27,11 @@ export const REFUSAL_CODES = Object.freeze({
   // (V4 §5.4 "From 1a": the delta would take remaining_count below 0). Its name is the server lane's
   // to confirm; a different name still renders, through the unknown-code arm, as the server's text.
   COUNT_BELOW_USED: 'count_below_used',
+  // The storage Lambda, from 1a: a place with that kind and name is already there (1b's UNIQUE on
+  // storage_location). Its words are the SERVER's — the server lane writes a message meant to be shown
+  // as-is — so it has no sentence here and describeRefusal renders it through the unknown-code arm.
+  // On a create it is not a failure at all: see existingPlaceId.
+  PLACE_EXISTS: 'place_exists',
 })
 
 export const REFRESH_NOW_LABEL = 'Refresh now'
@@ -63,6 +68,23 @@ function serverText(body) {
   for (const k of ['message', 'error']) {
     const v = body[k]
     if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return null
+}
+
+// place_exists names the place the person meant, so a create that meets it selects that place instead
+// of reporting a failure. err -> the existing place's id (a string) | null. The key is read in every
+// spelling a server might pick — the lane sending it is being built alongside this one, and once this
+// bundle is the stale one it cannot learn a new spelling.
+const PLACE_ID_KEYS = ['existing_id', 'id', 'place_id']
+
+export function existingPlaceId(err) {
+  const body = err && typeof err === 'object' ? err.body : null
+  if (!body || typeof body !== 'object' || body.code !== REFUSAL_CODES.PLACE_EXISTS) return null
+  const candidates = [...PLACE_ID_KEYS.map(k => body[k]), body.existing?.id, body.place?.id]
+  for (const v of candidates) {
+    if (typeof v === 'string' && v.trim()) return v.trim()
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v)
   }
   return null
 }

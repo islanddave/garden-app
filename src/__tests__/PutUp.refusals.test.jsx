@@ -41,7 +41,7 @@ vi.mock('../hooks/useAppUpdate.js', () => ({ useAppUpdate: () => ({ update: null
 
 import PutUp from '../pages/PutUp.jsx'
 import {
-  describeRefusal, REFUSAL_CODES, REFRESH_NOW_LABEL, CLIENT_STALE_TEXT, BATCH_CLOSED_TEXT,
+  describeRefusal, existingPlaceId, REFUSAL_CODES, REFRESH_NOW_LABEL, CLIENT_STALE_TEXT, BATCH_CLOSED_TEXT,
   COUNT_BELOW_USED_TEXT, ONLY_SOME_LEFT_TEXT, onlyNLeftText,
 } from '../lib/putUpErrors.js'
 
@@ -150,6 +150,22 @@ describe('describeRefusal — the code decides the words', () => {
     expect(describeRefusal(Object.assign(new Error('offline'), { code: 'clerk_offline' }))).toBeNull()
     expect(describeRefusal(null)).toBeNull()
     expect(describeRefusal('boom')).toBeNull()
+  })
+
+  it('place_exists: the server’s words (it writes them to be shown as-is), and the existing id for a create', () => {
+    expect(describeRefusal(err({ message: 'You already have a place called Chest Freezer 1.', error: 'dup', code: 'place_exists', id: 'loc-1' })))
+      .toEqual({ code: 'place_exists', text: 'You already have a place called Chest Freezer 1.', refresh: false })
+    expect(existingPlaceId(err({ code: 'place_exists', id: 'loc-1' }))).toBe('loc-1')
+    expect(existingPlaceId(err({ code: 'place_exists', existing_id: ' loc-2 ' }))).toBe('loc-2')
+    expect(existingPlaceId(err({ code: 'place_exists', place_id: 'loc-3' }))).toBe('loc-3')
+    expect(existingPlaceId(err({ code: 'place_exists', existing: { id: 'loc-4' } }))).toBe('loc-4')
+    expect(existingPlaceId(err({ code: 'place_exists', place: { id: 'loc-5' } }))).toBe('loc-5')
+    // Only place_exists names a place: an id on any other refusal is not an invitation to select it.
+    expect(existingPlaceId(err({ code: 'client_stale', id: 'loc-1' }))).toBeNull()
+    expect(existingPlaceId(err({ error: 'dup', id: 'loc-1' }))).toBeNull()
+    expect(existingPlaceId(err({ code: 'place_exists', id: '  ' }))).toBeNull()
+    expect(existingPlaceId(err({ code: 'place_exists' }))).toBeNull()
+    expect(existingPlaceId(null)).toBeNull()
   })
 
   it('refresh is offered for client_stale and for nothing else', () => {

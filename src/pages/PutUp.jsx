@@ -58,7 +58,7 @@ import {
 } from '../lib/putUpSession.js'
 // Put-Up release 1a (V4 §6.5) — every write on this page reads the server's `code` and says why it
 // was refused; client_stale is answered with a user-tapped "Refresh now", never a reload by itself.
-import { describeRefusal, REFRESH_NOW_LABEL } from '../lib/putUpErrors.js'
+import { describeRefusal, existingPlaceId, REFRESH_NOW_LABEL } from '../lib/putUpErrors.js'
 import { useAppUpdate } from '../hooks/useAppUpdate.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
@@ -221,6 +221,21 @@ export function prefillContextKey(prefill) {
   return [p.crop_type_slug, p.variety_id, p.plant_id, p.harvest_log_id].map(v => (v ? String(v) : '')).join('|')
 }
 export const BARE_PREFILL_KEY = prefillContextKey({})
+
+// Put-Up release 1a — a place-create can answer with a place that ALREADY exists: the storage Lambda's
+// find-or-create (200, `existing: true`), or a 409 place_exists the creator turns into that place. It
+// may already be in the list, and appending it again would list it twice (a doubled option, a doubled
+// walk chip, a duplicate React key). So a created place is merged by id, never blindly appended, and
+// the `existing` flag is the answer's, not the place's.
+export function upsertPlace(list, row) {
+  if (!row || row.id == null) return list
+  const { existing: _existing, ...place } = row
+  const i = list.findIndex(l => String(l.id) === String(place.id))
+  if (i === -1) return [...list, place]
+  const next = list.slice()
+  next[i] = { ...list[i], ...place }
+  return next
+}
 
 function prettyDate(v) {
   const s = ymd(v)
@@ -757,7 +772,7 @@ function PutUpWalk() {
             storageLocations={storageLocations}
             onStart={startWalk}
             fetch={fetch}
-            onCreated={(row) => setStorageLocations(list => [...list, row])}
+            onCreated={(row) => setStorageLocations(list => upsertPlace(list, row))}
           />
         ) : (
           <>
@@ -1932,7 +1947,7 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
             onChange={setStorageId}
             locations={storageLocations}
             manageable
-            onCreated={(row) => { setStorageLocations(list => [...list, row]); setStorageId(String(row.id)) }}
+            onCreated={(row) => { setStorageLocations(list => upsertPlace(list, row)); setStorageId(String(row.id)) }}
             onUpdated={(row) => setStorageLocations(list => list.map(l => (String(l.id) === String(row.id) ? { ...l, ...row } : l)))}
             onDeleted={(id) => setStorageLocations(list => list.filter(l => String(l.id) !== String(id)))}
             fetch={fetch}
@@ -2153,6 +2168,16 @@ function StorageField({ value, onChange, locations, onCreated, onUpdated, onDele
       onCreated(row)
       setAdding(false); setLabel(''); setKind('deep_freezer')
     } catch (e) {
+      // A create refused as place_exists (a server that refuses instead of answering with the place)
+      // names the place the person meant: select it, as a 200 `existing: true` answer would. The
+      // list's own copy wins when it has one, so a lower-case retype never relabels a stored place.
+      const existingId = existingPlaceId(e)
+      if (existingId != null) {
+        const known = locations.find(l => String(l.id) === existingId)
+        onCreated(known ?? { id: existingId, label: e.body.label || label.trim(), kind: e.body.kind || kind })
+        setAdding(false); setLabel(''); setKind('deep_freezer')
+        return
+      }
       const code = e?.code ?? classify(e).code
       setErr(describeRefusal(e) ?? `Couldn't add that location — try again. (${code})`)
     } finally { setBusy(false) }
