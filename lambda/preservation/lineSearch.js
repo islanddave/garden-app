@@ -15,7 +15,9 @@
 import { MASS_G } from './kitchenBatch.js';
 import { ET_TZ } from './useBy.js';
 
-export const LINE_SEARCH_LIMIT = 12;
+// Per arm. Wide enough that a household with many jars of one crop still sees every live one (a
+// short cap silently hid the jar he meant — integration run 36631452977); the list is the search.
+export const LINE_SEARCH_LIMIT = 50;
 export const RECENT_PICKS = 5;
 const MASS_UNITS = Object.keys(MASS_G);
 
