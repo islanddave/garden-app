@@ -144,6 +144,14 @@ describe('the discard-by preview (§3.1, §3.3)', () => {
     expect(previewDiscard({ row: { ...newRow(), place: pantry, texture: 'still_soft' }, method: 'dehydrate', when, now: NOW }).basis).toBe('none')
     expect(previewDiscard({ row: { ...newRow(), place: pantry, texture: 'snaps' }, method: 'dehydrate', when, now: NOW }).basis).not.toBe('none')
   })
+  it('cured or cellared produce with an estimated date gets no date; with a day it does', () => {
+    const pantry = { key: 'new:pantry:pantry shelf', id: null, label: 'Pantry shelf', kind: 'pantry' }
+    expect(previewDiscard({ row: { ...newRow(), place: pantry }, method: 'cure_store', when: { date: '2026-08-01', precision: 'month' }, now: NOW }).basis).toBe('none')
+    expect(previewDiscard({ row: { ...newRow(), place: pantry }, method: 'cure_store', when, now: NOW }).basis).toBe('table')
+  })
+  it('Raw on a method that does not offer it is not counted (the chip was never shown)', () => {
+    expect(previewDiscard({ row: { ...newRow(), place: fridge, isRaw: true }, method: 'ferment', when, now: NOW }).basis).toBe('table')
+  })
   it('typed beats the engine; "No date" is typed with no date', () => {
     const typed = previewDiscard({ row: { ...newRow(), place: fridge, discard: { mode: 'date', date: '2026-12-08' } }, method: 'hot_sauce', when, now: NOW })
     expect(typed).toEqual({ date: '2026-12-08', basis: 'typed', words: 'discard by Dec 8 · set by hand' })

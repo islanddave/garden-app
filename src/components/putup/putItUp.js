@@ -13,7 +13,7 @@
 //
 // THE RULINGS (V4 §3, FOODSAFETY-RULING-V101): record and prompt, never assess. Nothing here grades a
 // pH, derives a readiness, or words a date as anything but a date with where it came from.
-import { resolveShelfLife, addMonths } from '../../../lambda/preservation/shelfLife.js'
+import * as engine from '../../../lambda/preservation/shelfLife.js'
 import {
   parseYmd, toYmd, shortDay, putUpDateWords, basisWords, KIND_WORDS, ESTIMATED_PRECISIONS, countedSize,
 } from './jarWords.js'
@@ -234,13 +234,29 @@ export function rowCount(row) {
   return Number.isInteger(n) && n >= 1 ? n : 1
 }
 
-// ── The discard-by preview (§3.1 and the V4 engine) ──────────────────────────────────────────────────────────
-// typed > (recipe: none in 1b) > the engine > none. The engine cell comes from shelfLife.js; the two
-// 1b rules that need a jar's own answers are applied here in the order the V4 engine states them:
-//   (d) Raw or In oil anywhere but a freezer → no date (at a freezer the freezer leg applies);
-//   (e) dried and marked Bends or Still soft → no date.
-// A put-up date known only as `unknown` gets no engine date (§3.1).
+// ── The discard-by preview (§3.1 and the V4 engine) ──────────────────────────────────────────────
+// typed > (recipe: none in 1b) > the engine > none. The engine cell for a jar comes from shelfLife.js's
+// resolveJarShelfLife — the SAME function the 1b Put it up route resolves each jar with, so the
+// preview cannot drift from what is stored. Until the 1b Lambda lane's engine lands on this branch the
+// function is absent and jarCell applies the same four jar rules over the shipped resolveShelfLife, in
+// the V4 engine's order: an unknown put-up date → no date; cured or cellared produce with an
+// estimated date → no date; Raw or In oil anywhere but a freezer → no date; dried and Bends or Still
+// soft → no date. (Once both are merged the fallback is dead and can go.)
 const FREEZER_KINDS = new Set(['deep_freezer', 'fridge_freezer'])
+const UNDRIED_TEXTURES = new Set(['bends', 'still_soft'])
+const NO_DATE_WHEN_ESTIMATED = new Set(['cure_store', 'cold_store'])
+export function jarCell({ method, kind = null, isRaw = null, inOil = null, texture = null, precision = null }) {
+  if (typeof engine.resolveJarShelfLife === 'function') {
+    return engine.resolveJarShelfLife({ method, kind, isRaw, inOil, texture, precision })
+  }
+  const none = { months: null, basis: 'none' }
+  if (precision === 'unknown') return none
+  if (NO_DATE_WHEN_ESTIMATED.has(method) && ESTIMATED_PRECISIONS.has(precision)) return none
+  if ((isRaw === true || inOil === true) && !FREEZER_KINDS.has(kind)) return none
+  if (texture != null && UNDRIED_TEXTURES.has(texture)) return none
+  return engine.resolveShelfLife(method, kind)
+}
+
 export function previewDiscard({ row, method, when, now = new Date() }) {
   const kind = row?.place?.kind ?? null
   if (row?.discard?.mode === 'none') return { date: null, basis: 'typed', words: 'no date · set by hand' }
@@ -250,13 +266,14 @@ export function previewDiscard({ row, method, when, now = new Date() }) {
     return { date: toYmd(d), basis: 'typed', words: `discard by ${shortDay(d, now)} · set by hand` }
   }
   if (!method || !when?.date) return null
-  const none = { date: null, basis: 'none', words: basisWords('none') }
-  if (when.precision === 'unknown') return none
-  if ((row?.isRaw || row?.inOil) && !FREEZER_KINDS.has(kind)) return none
-  if (TEXTURE_METHODS.has(method) && (row?.texture === 'bends' || row?.texture === 'still_soft')) return none
-  const cell = resolveShelfLife(method, kind)
-  if (cell.months == null) return none
-  const date = addMonths(when.date, cell.months)
+  const cell = jarCell({
+    method, kind, precision: when.precision,
+    isRaw: RAW_METHODS.has(method) && row?.isRaw ? true : null,
+    inOil: row?.inOil ? true : null,
+    texture: TEXTURE_METHODS.has(method) ? (row?.texture ?? null) : null,
+  })
+  if (cell.months == null) return { date: null, basis: 'none', words: basisWords('none') }
+  const date = engine.addMonths(when.date, cell.months)
   const shown = ESTIMATED_PRECISIONS.has(when.precision) ? `around ${shortDay(date, now)}` : shortDay(date, now)
   return { date, basis: cell.basis, words: `discard by ${shown} · ${basisWords(cell.basis, { method, kind })}` }
 }
