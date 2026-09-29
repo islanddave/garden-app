@@ -35,6 +35,11 @@
 // TEXT ASSERTION, because lambda/preservation/index.js cannot be imported by vitest — Neon, Clerk and
 // AWS all run at module scope. Same constraint that let the classifyUseBy day-boundary bug ship
 // untested, and the same workaround every other test in this directory uses.
+//
+// RE-POINTED 2026-09-29 (Put-Up release 1a): the table moved verbatim into shelfLife.js, which IS
+// importable — shelfLife.test.js executes it and pins every cell. This file keeps reading the TEXT of
+// the constant on purpose: its rules are about the declared legs as written (which kinds a row names),
+// and the parse below is what its mutation history was proved against.
 
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -44,7 +49,7 @@ import { fileURLToPath } from 'node:url'
 // resolve() against a dirname, matching the sibling guards in this directory. `new URL('./x',
 // import.meta.url)` does NOT work here — vitest hands this module a non-file scheme.
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const SRC = readFileSync(resolve(__dirname, 'index.js'), 'utf8')
+const SRC = readFileSync(resolve(__dirname, 'shelfLife.js'), 'utf8')
 
 function shelfLifeRows() {
   // The ` = {` is load-bearing, not tidiness. `indexOf('const SHELF_LIFE_MONTHS')` PREFIX-matches

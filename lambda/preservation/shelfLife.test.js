@@ -14,30 +14,13 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// The engine under test, imported: it moved out of index.js into its own modules in the commit
+// after the one that pinned it, and the literal below did not change by one byte across that move.
+import { shelfLifeMonths, defaultUseByTarget } from './shelfLife.js'
+import { VALID_METHODS } from './jarRules.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '../..')
-
-// ── The engine under test ─────────────────────────────────────────────────────────────────────────
-// TEMPORARY LOADER, for the one commit before the move: the engine still lives inside index.js, where
-// shelfLifeMonths and VALID_METHODS are module-private. So the exact source text of the engine is
-// sliced out and executed — today's code, not a re-implementation of it. The move commit replaces
-// this block with plain imports and leaves every literal below byte-identical.
-function loadEngineFromIndexSource() {
-  const src = readFileSync(resolve(__dirname, 'index.js'), 'utf8')
-  const vmAt = src.indexOf('const VALID_METHODS = [')
-  const vm = src.slice(vmAt, src.indexOf('];', vmAt) + 2)
-  const start = src.indexOf('export const HOUSE_SOURCED_SHELF_LIFE')
-  const fnAt = src.indexOf('export function defaultUseByTarget')
-  const end = src.indexOf('\n}\n', fnAt) + 3
-  expect(vmAt, 'VALID_METHODS not found in index.js').toBeGreaterThan(-1)
-  expect(start, 'HOUSE_SOURCED_SHELF_LIFE not found in index.js').toBeGreaterThan(-1)
-  expect(fnAt, 'defaultUseByTarget not found in index.js').toBeGreaterThan(start)
-  const engine = src.slice(start, end).replace(/^export /gm, '')
-  // eslint-disable-next-line no-new-func
-  return new Function(`${vm}\n${engine}\nreturn { VALID_METHODS, shelfLifeMonths, defaultUseByTarget };`)()
-}
-const { VALID_METHODS, shelfLifeMonths, defaultUseByTarget } = loadEngineFromIndexSource()
 
 // Every storage_location kind the database admits, plus the unrecorded case (a jar with no place, or
 // no kind resolved). Checked against the DDL below so a new kind cannot quietly escape the matrix.

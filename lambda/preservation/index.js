@@ -8,8 +8,15 @@ import { verifyToken } from '@clerk/backend';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { householdScope, loadOwnedPhoto } from './household.js';
 import { reconcilePlantAttribution, plantingLabel } from './attribution.js';
-import { VALID_SOURCE_KINDS, validateProvenance, normalizeSourceLabel } from './provenance.js';
+import { VALID_SOURCE_KINDS, normalizeSourceLabel } from './provenance.js';
 import { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ } from './useBy.js';
+// Put-Up release 1a (V4 §3.3, §4.1) — the jar engine lives in two dependency-free siblings so every
+// jar writer can import it, which this file cannot offer (neon/clerk/aws at module scope, and
+// kitchenRoutes is imported BY this file). shelfLife.js: the method × storage-kind table and the date
+// it yields. jarRules.js: the per-jar rules — the method vocabulary, the validators, the read
+// projection. Moved verbatim; re-exported below so any existing importer of this file keeps resolving.
+import { HOUSE_SOURCED_SHELF_LIFE, defaultUseByTarget } from './shelfLife.js';
+import { validateCreate, validateUpdate, projectRow } from './jarRules.js';
 // V5-INFLIGHTBATCH-001 — /api/kitchen-batches rides THIS Lambda, not a 27th one. A new function needs
 // an AWS function + Function URL created out of band, a new VITE_API_* repo variable, a row in
 // deploy-staging.yml's hardcoded env: block and a 27th row in deploy-lambda.yml's matrix — and that
@@ -46,293 +53,13 @@ function resp(statusCode, body) {
   };
 }
 
-// Mirrors chk_preservation_log_method — belt-and-suspenders over the DB CHECK (L5 vocab).
-const VALID_METHODS = [
-  'roast_freeze', 'whole_freeze', 'blanch_freeze', 'dehydrate', 'powder', 'passata',
-  'can_water_bath', 'can_pressure', 'jam_preserve', 'ferment', 'cure_store', 'cold_store',
-  // D6 (V4-PUTUPPROV-001): bought already preserved. No method was performed here — every other
-  // value in this list asserts an action Dave took, so store-bought frozen fruit previously had to
-  // be logged as 'other', overloading that escape hatch until it meant two unrelated things.
-  'purchased_preserved',
-  // V4-PUTUPTAXONOMY-001 (BD-034). Four values Dave's practice needed and this list did not have.
-  // quick_pickle: vinegar pickling — NOT a ferment (no lactic culture) and not necessarily
-  //   processed (a fridge pickle never is). It was already the ONLY method='other' row in prod
-  //   ('Vinegar dill pickles'), i.e. a food-safety-distinct process living in the escape hatch.
-  // pesto / hot_sauce: named by Dave. Both name a DISH rather than a process and so fail the strict
-  //   "does it move the shelf-life number" axis test — recorded in the migration header rather than
-  //   silently resolved. They ship because this is the field he reads back, and 2 of 5 live rows are
-  //   pesto currently mis-filed as passata.
-  // ferment_mash: an UNFINISHED intermediate — still working, not a finished preserve.
-  'quick_pickle', 'pesto', 'hot_sauce', 'ferment_mash',
-  // V5-PUTUPCANDY-001. Sugar-preserved confection — the staged-syrup candying method. Passes the
-  // strict axis test pesto and hot_sauce failed: it names a PROCESS that genuinely moves the
-  // shelf-life number (weeks dusted at room temperature against months undusted frozen), not a dish.
-  // Its shelf-life figures are HOUSE-SOURCED — see HOUSE_SOURCED_SHELF_LIFE below before touching
-  // them, and note that its entry in SHELF_LIFE_MONTHS is a hard precondition of this value existing
-  // at all: a method absent from that table never gets a use_by_target and vanishes from use-soon.
-  'candy',
-  'other',
-];
-
-// ── Methods whose SHELF_LIFE_MONTHS figures come from the HOUSE, not from published guidance. ──
-// A DATA fact, not a comment, because the UI has to be able to act on it: FOODSAFETY-RULING-V101 §8.2
-// rules that a house-sourced shelf life is either DISTINGUISHABLE ON THE SURFACE — a provenance line
-// the user can see — or it takes `default: null`. A migration header is read by nobody using the app,
-// and the number reaches every viewer in the household as a use-by date and a warn-coloured chip.
-// src/pages/PutUp.jsx keeps its own copy of this list (the two are separate deploy artifacts and
-// cannot import each other) and renders the label off it; src/__tests__/putUpMethodParity.test.js
-// binds the two and asserts every member is labelled. Adding a method here without adding it there
-// is the failure that ruling exists to prevent.
-//
-// EXPORTED with no importer today, deliberately: it is a contract about the table below rather than
-// this file's private state, and nothing in this Lambda branches on it — the label is a client
-// concern. What this list CANNOT prove is its own completeness. Provenance is not in the data, so a
-// figure invented at a keyboard and left off this list is indistinguishable here from a cited one.
-// The only defence against that is the citation discipline in the table's header.
-export const HOUSE_SOURCED_SHELF_LIFE = ['candy'];
-
-// ── Shelf-life defaults (L6): MONTHS from the put-up date, keyed by method × storage-kind. ──
-// SOURCE (cited per boss-strategic safety note — these drive "use soon" on stored FOOD and must
-// NOT be one-person hand-invented): National Center for Home Food Preservation (NCHFP,
-// nchfp.uga.edu) & USDA Complete Guide to Home Canning (Agriculture Information Bulletin No. 539);
-// freezer figures per USDA "Freezing and Food Safety" (0°F / -18°C storage). Published ranges are
-// collapsed to a single conservative default; deep_freezer (0°F) gets the upper end, fridge_freezer
-// (3–6 mo, not held at 0°F) the lower. Values are DEFAULTS: user-overridable per row (L6). A null
-// result => no default expiry (row excluded from "use soon" until a use_by_target is set).
-//
-// ONE EXCEPTION, AND THE SENTENCE ABOVE IS AMENDED RATHER THAN LEFT TO READ FALSE (V5-PUTUPCANDY-001,
-// 2026-09-04). `candy` is the first and only entry here with NO published source, because none
-// exists: a search of NCHFP, UGA, Penn State, OSU, UMN, USU, MSU and NC State found no home-
-// preservation guidance covering candied-fruit endpoints, storage or shelf life — a documented
-// negative result, not an unfinished search (project-state/_build-inflight-20260904/
-// foodsafety-research.md §6.3, §9.1: "there is nothing to cite"). Its figures come from Dave's own
-// house guide and are a HOUSE PROCEDURE'S STORAGE NOTE, never Extension or USDA guidance; they must
-// not be described as either, anywhere. Every OTHER row here still holds to the original rule, and
-// the next uncited figure does not inherit a precedent from this one — it inherits a CONDITION.
-// FOODSAFETY-RULING-V101 §8.2 attaches it: a house-sourced shelf life is either distinguishable on
-// the surface, as a provenance line the user can see, or it takes `default: null`. The list above,
-// HOUSE_SOURCED_SHELF_LIFE, is how that condition is carried into the UI, and the parity test is
-// what stops a future entry from arriving without one.
-const SHELF_LIFE_MONTHS = {
-  roast_freeze:   { deep_freezer: 12, fridge_freezer: 4, default: 10 },
-  whole_freeze:   { deep_freezer: 12, fridge_freezer: 4, default: 10 },
-  blanch_freeze:  { deep_freezer: 12, fridge_freezer: 4, default: 10 },
-  // ── Dried foods. THE ONE ROW WITH A PUBLISHED FRUIT/VEGETABLE SPLIT THE METHOD CANNOT SEE. ─────
-  // NCHFP, verbatim (foodsafety-research.md §6.2): "Recommended storage times for dried foods range
-  // from 4 months to 1 year... Most dried fruits can be stored for 1 year at 60F, 6 months at 80F.
-  // Vegetables have about half the shelf-life of fruits." That is a 2x2 — fruit 12/6, veg 6/3, by
-  // storage temperature — plus a printed 4-to-12 envelope. Three decisions, all declared:
-  //   TEMPERATURE. `pantry` takes the WARM anchor (80F), `cold_storage` the COOL one (60F). NCHFP
-  //     defines neither word; this mapping is THE ONLY INFERENCE HERE, and the numbers on both sides
-  //     of it are printed. It survives its own stress test: a ~70F pantry interpolated between the
-  //     anchors gives veg 4.5 (linear) or 4.2 (log-linear), and the real response is Arrhenius-shaped,
-  //     which bends lower still. Three routes, one answer — 4 is the GENEROUS read of the warm leg.
-  //     Nothing is extrapolated below 60F: no anchor exists there, and inventing one is what this
-  //     table forbids. (A root cellar is also the most HUMID room in the house, which is the dried-food
-  //     enemy NCHFP names; that is why cold_storage takes 6 exactly and is never rounded up.)
-  //   FRUIT vs VEGETABLE. Takes the VEGETABLE leg. The method spans both; splitting it is
-  //     V5-PUTUPOUTPUTSHELF-001, not this constant. The chosen error is UNDERSTATING A DRIED FRUIT,
-  //     chosen because the errors are not symmetric: overstating points at NCHFP's named dried-food
-  //     failure ("Moldy foods should be discarded" — and the mould floor a_w ~0.65 sits far below any
-  //     pathogen threshold, research §6.1), understating points at an early chip on a row the cook can
-  //     override. cure_store, one line down, already set this precedent — a published 3-9 crop spread
-  //     shipped as 3/4, the low end.
-  //   PANTRY IS 4, NOT 3. "About half" of 6 is 3, but 3 falls below NCHFP's own printed envelope floor
-  //     of 4 months. 4 is a number the source prints; 3 would be this file's arithmetic overruling it.
-  //   DEFAULT = the pantry (shorter) leg. No fridge figure here, so shelf-life-default-floor.test.js
-  //     does not bind — but its rule does, restated: an unrecorded storage kind must not be read as
-  //     "somebody put this somewhere cool". It is also the leg that will actually fire; prod has three
-  //     deep_freezer locations and zero pantry/cold_storage rows (verified 2026-09-06).
-  dehydrate:      { pantry: 4, cold_storage: 6, default: 4 },   // fruit 12 @60F / 6 @80F, veg half that (fruit/veg-varying; vegetable leg)
-  // powder INHERITS dehydrate EXACTLY — no new source, one existing row reused (the ferment_mash
-  // pattern). It previously read { 18, 18, 18 } with the comment "powdered: 18-24 mo (NCHFP dehydrate)".
-  // THAT CITATION IS FALSE AND IS BEING REMOVED, NOT SOFTENED: NCHFP's dried-food ceiling in the text
-  // above is ONE YEAR and half that for vegetables, so 18 was 1.5x its own cited source's maximum and
-  // 4.5x the vegetable figure; a 2026-09-06 grep of the whole evidence base found no 18- and no
-  // 24-month figure anywhere in it; and git log -S dates the line to c2371b4, 2026-07-20, seven weeks
-  // BEFORE that evidence base existed. Grinding also runs the wrong way mechanically — a powder has far
-  // more surface area than the slices it came from, is more hygroscopic, and CAKES as it reabsorbs
-  // moisture, which is the failure NCHFP names ("Foods that are packaged seemingly 'bone dry' can spoil
-  // if moisture is reabsorbed during storage"). Equal-to-dehydrate is already the generous reading;
-  // longer is unsupportable in citation AND in mechanism. Not house-sourced — every figure is derived
-  // from the printed NCHFP text above — so HOUSE_SOURCED_SHELF_LIFE stays ['candy'].
-  powder:         { pantry: 4, cold_storage: 6, default: 4 },   // ground dried food = dehydrate, same source, same figures
-  passata:        { pantry: 12, cold_storage: 18, default: 12 },   // canned tomato sauce, high-acid
-  can_water_bath: { pantry: 12, cold_storage: 18, default: 12 },   // high-acid: 12–18 mo best quality
-  can_pressure:   { pantry: 12, cold_storage: 12, default: 12 },   // low-acid pressure-canned: ~12 mo
-  jam_preserve:   { pantry: 12, cold_storage: 18, default: 12 },
-  ferment:        { fridge: 6, fridge_freezer: 6, cold_storage: 8, default: 6 }, // fridge ferment 4–8 mo
-  // DEFAULT CORRECTED 4 -> 3, 2026-09-08 (BUG-SHELFDEFAULTGUARDGAP-001). It was the COLD_STORAGE
-  // figure — the LONGER of the two legs this row declares — so a cure-and-store logged with no
-  // storage kind was read as "somebody put this somewhere cool", which is the pantry/cold_storage
-  // form of the exact error hot_sauce was corrected for four days earlier. No new source and no new
-  // number: 3 is this row's own already-cited pantry figure, and the legs are untouched. It shipped
-  // this way because shelf-life-default-floor.test.js only checked rows that declare a FRIDGE leg,
-  // and this row declares none; that gate is now a floor over the shortest declared route.
-  cure_store:     { cold_storage: 4, pantry: 3, default: 3 },      // squash 3–6, garlic 6–8, potatoes 4–9 (crop-varying; default = the shorter declared leg)
-  cold_store:     { cold_storage: 6, fridge: 4, default: 4 },
-  // ── V4-PUTUPTAXONOMY-001 (BD-034). ───────────────────────────────────────────────────────────
-  // A CITED ENTRY HERE IS A HARD PRECONDITION FOR A NEW METHOD, not a nicety. shelfLifeMonths()
-  // returns null for a method absent from this table, which yields no use_by_target, and use-soon
-  // then never surfaces the row: the 'Vinegar dill pickles' row is already the only one of five
-  // live put-ups with use_by_target IS NULL, purely because it had to be logged as 'other'. Four
-  // uncited methods would have taken that from one-in-five to five-in-nine.
-  //
-  // Every figure below is DERIVED from a source already cited at the head of this table, never
-  // freshly invented — the derivation is named per line. `smoke` was dropped from this change for
-  // exactly this reason: no defensible published figure could be sourced, and shipping it uncited
-  // would have widened the blind spot this block exists to close.
-  //
-  // quick_pickle spans two real cases. Processed in a water-bath it IS shelf-stable, so the pantry
-  // and cold-storage figures are the high-acid canning ones; unprocessed it is a fridge item, so
-  // `fridge` takes NCHFP's refrigerator-pickle figure. The DEFAULT is the fridge number, because an
-  // unrecorded storage kind must not be read as "somebody processed this".
-  quick_pickle:   { pantry: 12, cold_storage: 12, fridge: 2, deep_freezer: 12, fridge_freezer: 4, default: 2 },
-  // pesto is a frozen product — both live pesto rows sit in a deep freezer (prod, 2026-08-25) — so
-  // it inherits the freeze family verbatim (USDA "Freezing and Food Safety", 0degF). This is also
-  // the point the crucible made against pesto as a METHOD: frozen pesto keeps exactly as long as
-  // anything else frozen, which is why these numbers are identical to whole_freeze's and not a
-  // separate judgement.
-  pesto:          { deep_freezer: 12, fridge_freezer: 4, default: 10 },
-  // hot_sauce is an acidified product — fermented or vinegar-based — so the shelf-stable kinds take
-  // the high-acid canning figures (as passata and can_water_bath do) and the fridge kind takes the
-  // fermented figure from `ferment` below-line. No new source, two existing rows recombined.
-  //
-  // DEFAULT CORRECTED 12 -> 6, 2026-09-04. It was the PANTRY figure, which broke the rule stated
-  // eleven lines above on quick_pickle — "the DEFAULT is the fridge number, because an unrecorded
-  // storage kind must not be read as 'somebody processed this'" — and broke it in the more dangerous
-  // direction than quick_pickle would have. Same reasoning, opposite outcome, adjacent lines; ferment
-  // and ferment_mash below both already default to their fridge figure.
-  //
-  // The two explicit shelf-stable legs are DELIBERATELY unchanged. A vinegar hot sauce made to a
-  // tested recipe and water-bath processed is genuinely shelf-stable, and the user who picked
-  // `pantry` made that determination themselves — which the app records rather than second-guesses.
-  // What it must not do is make that determination FOR them out of a blank field.
-  //
-  // Worth knowing when revisiting: this method spans two products the corpus treats differently. A
-  // 2026-09-04 search of NCHFP, Penn State, UMN, USU, OSU, UGA and NC State found no tested home
-  // recipe for a fermented pepper-mash hot sauce and no home path to making one shelf-stable, and BC
-  // CDC's default for an unverified ferment is explicit: refrigerated. The shelf-stable legs are
-  // defensible for the vinegar-and-processed case and not for the fermented one, and `method` cannot
-  // tell them apart. Splitting that is a vocabulary change, not a constant change — see
-  // project-state/_build-inflight-20260904/FOODSAFETY-RULING-V100.md and its adversarial review.
-  hot_sauce:      { pantry: 12, cold_storage: 18, fridge: 6, default: 6 },
-  // ferment_mash inherits `ferment` EXACTLY. A mash under brine is preserved by the same acidity as
-  // a finished ferment and lives in the same places, so shortening it would be an invented number
-  // dressed as caution. What makes it a distinct value is that it is UNFINISHED, which the label
-  // carries; that is a fact about the food, not about how long it keeps.
-  ferment_mash:   { fridge: 6, fridge_freezer: 6, cold_storage: 8, default: 6 },
-  // ── V5-PUTUPCANDY-001. THE ONE HOUSE-SOURCED ROW IN THIS TABLE. ───────────────────────────────
-  // Read the amended header above first. Nothing below is published guidance and none of it may be
-  // presented as such; every figure is from Dave's own crucible-hardened house guide,
-  // unsweet-watermelon-guide-V100-20260811.html (Part 5 and Part 6), and it ships only because
-  // FOODSAFETY-RULING-V101 §8.2's condition is met — HOUSE_SOURCED_SHELF_LIFE carries `candy` into
-  // the UI, which labels the estimate on screen and asks the cook for the real date.
-  //   deep_freezer 6   — the one figure the guide states directly: Part 5 "Candied rind, uncoated
-  //                      ... ~6 months", Part 6 "undusted 6 months frozen".
-  //   fridge_freezer 4 — NOT stated by the guide. DERIVED, and marked as derived: this table's own
-  //                      convention gives deep_freezer the upper end and fridge_freezer the lower
-  //                      (it is not held at 0°F), and the guide names self-defrost cycling as the
-  //                      specific enemy of a candied product.
-  //   default 1        — the room-temperature case, and it is THE TABLE'S FLOOR rather than an
-  //                      answer. The guide says 2-3 weeks; the unit here is whole months and
-  //                      addMonths() takes an integer, so 1 is the shortest expressible non-zero and
-  //                      it OVERRUNS the house figure by about a week. 0 would read "past use by" on
-  //                      day one, teaching the user that the warn state means nothing; null would
-  //                      make the row invisible to use-soon forever, which is the exact failure this
-  //                      value exists to prevent; anything above 1 would be invention, since there is
-  //                      no published figure to round toward. Nobody may later read this as a sourced
-  //                      30-day claim.
-  // fridge, pantry and cold_storage are deliberately UNLISTED — they fall through to the same floor
-  // without implying a per-kind judgement that nothing supports.
-  candy:          { deep_freezer: 6, fridge_freezer: 4, default: 1 },
-  // D6: acquisition age is unknown, so there is no honest shelf-life anchor. NULL => no default
-  // expiry => excluded from "use soon" until the user sets one. Same reasoning as the non-garden
-  // suppression in the create path below.
-  purchased_preserved: { default: null },
-  other:          { default: null },
-};
-
-function shelfLifeMonths(method, kind) {
-  const m = SHELF_LIFE_MONTHS[method];
-  if (!m) return null;
-  const v = kind != null && kind in m ? m[kind] : m.default;
-  return v ?? null;
-}
-
-// date (YYYY-MM-DD string, ISO string, or Date) + n months → YYYY-MM-DD (clamps day to the
-// target month's last day).
-function addMonths(dateInput, months) {
-  const src = dateInput instanceof Date ? dateInput.toISOString() : String(dateInput);
-  const [y, mo, d] = src.slice(0, 10).split('-').map(Number);
-  const base = new Date(Date.UTC(y, mo - 1, d));
-  const targetMonth = base.getUTCMonth() + months;
-  const t = new Date(Date.UTC(base.getUTCFullYear(), targetMonth, 1));
-  const lastDay = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
-  t.setUTCDate(Math.min(d, lastDay));
-  return t.toISOString().slice(0, 10);
-}
-
-// L6 default use-by from the shelf-life table; null method/kind combo => null (no expiry).
-export function defaultUseByTarget(method, kind, preservedAt) {
-  const months = shelfLifeMonths(method, kind);
-  if (months == null || !preservedAt) return null;
-  return addMonths(preservedAt, months);
-}
-
 // dayMs and classifyUseBy MOVED to ./useBy.js under BUG-USEBYDAYBOUNDARY-001 — imported above with
 // the other local modules, and re-exported here so any existing importer of this file keeps
 // resolving. The definitions live in a module with no @neondatabase / @clerk / @aws-sdk imports,
 // which is the whole point: THIS file cannot be imported by vitest at all, so a date boundary
 // defined in it can only ever be asserted by spelling. See useBy.js's header and useBy.test.js.
 export { classifyUseBy, dayMs, USE_SOON_FRACTION, etDay, ET_TZ };
-
-function validateCommon(body) {
-  if (!body || typeof body !== 'object') return 'body required';
-  // L7: at least one of {crop_type_slug, variety_id, plant_id}. The DB CHECK only knows about the
-  // first two (chk_preservation_log_attribution) — plant_id is accepted here because the handler
-  // DERIVES crop+variety from the planting before insert, so the CHECK is always satisfied by the
-  // time the row lands. Picking a planting alone is complete attribution from the user's side.
-  if (!body.crop_type_slug && !body.variety_id && !body.plant_id) {
-    return 'at least one of crop_type_slug, variety_id or plant_id is required';
-  }
-  if (!body.method || !VALID_METHODS.includes(body.method)) return `method must be one of: ${VALID_METHODS.join(', ')}`;
-  if (body.method === 'other' && (!body.method_other_text || !String(body.method_other_text).trim())) {
-    return "method_other_text is required when method is 'other'";
-  }
-  if (body.quantity_value == null || Number(body.quantity_value) <= 0) return 'quantity_value must be > 0';
-  if (!body.quantity_unit || !String(body.quantity_unit).trim()) return 'quantity_unit is required';
-  if (body.package_count != null && Number(body.package_count) < 1) return 'package_count must be >= 1';
-  if (!body.preserved_at) return 'preserved_at is required';
-  // V4-PUTUPSESSION-001 slice 1. Shape-only, and absent stays legal on BOTH verbs — the column is
-  // nullable with NULL meaning "nobody was ever asked", and a service-worker-cached bundle from
-  // before this ship never sends the key. Rejecting a non-boolean matters because Postgres would
-  // silently accept 'yes'/'on'/'t' through a ::boolean cast, so a client typo would land as TRUE and
-  // stamp a date the user picked as an estimate — the defect inverted.
-  if (body.preserved_at_approx != null && typeof body.preserved_at_approx !== 'boolean') {
-    return 'preserved_at_approx must be true or false';
-  }
-  if (body.remaining_count != null && Number(body.remaining_count) < 0) return 'remaining_count must be >= 0';
-  return null;
-}
-
-export function validateCreate(body) {
-  return validateCommon(body) ?? validateProvenance(body);
-}
-
-// PUT is "replace editable fields" (frontend sends a complete payload) INCLUDING the minimal
-// decrement (remaining_count / consumed_at).
-//
-// validateUpdate is NO LONGER an alias for validateCreate (V4-PUTUPPROV-001). It was
-// `export const validateUpdate = validateCreate`, which meant every rule added to create became a
-// hard requirement on every PUT — including the one-tap "Mark used" decrement the user never
-// experiences as a form submit. A service-worker-cached bundle built before this ship omits
-// source_kind entirely, so aliasing would 400 every decrement for the length of the cache window.
-// Rule: a payload that never mentions provenance is not judged on it. Pairs with the
-// COALESCE-preserve UPDATE below — absent key means "unchanged", at both layers.
-export function validateUpdate(body) {
-  return validateCommon(body) ?? (body.source_kind === undefined ? null : validateProvenance(body));
-}
+export { HOUSE_SOURCED_SHELF_LIFE, defaultUseByTarget, validateCreate, validateUpdate };
 
 export { reconcilePlantAttribution, plantingLabel };
 
@@ -439,56 +166,6 @@ async function loadHarvestLog(sql, harvestLogId, householdIds) {
 //
 // MEASURED: 0 live preservation_log rows carry a photo_id on prod, so this gate rejects nothing that
 // exists today.
-
-// Shared row projection for the read surfaces (single source of columns).
-function projectRow(r) {
-  return {
-    id: r.id,
-    user_id: r.user_id,
-    crop_type_slug: r.crop_type_slug,
-    variety_id: r.variety_id,
-    plant_id: r.plant_id,
-    // Planting provenance for display (present only on reads that JOIN garden_node). Lets the
-    // record row say WHICH wave a put-up came from without a second round-trip.
-    planting_name: r.planting_name ?? null,
-    planting_sown_at: r.planting_sown_at ?? null,
-    planting_succession_order: r.planting_succession_order ?? null,
-    harvest_log_id: r.harvest_log_id,
-    // V5-INFLIGHTBATCH-001 / BUG-JARSTEAL-001. READ-ONLY here and nowhere else: batch_id stays out of
-    // PRESERVATION_EDITABLE_COLUMNS (see kitchen-batch-id-guard.test.js — a stale cached bundle's
-    // full-replace PUT would NULL it and return 200), but it must be READABLE or no picker can tell a
-    // linked jar from an unlinked one, and a close that re-points another batch's jar is undetectable
-    // by any client. Written only by the kitchen-batch close / outputs routes, server-side.
-    batch_id: r.batch_id ?? null,
-    preserved_at: r.preserved_at,
-    method: r.method,
-    method_other_text: r.method_other_text,
-    quantity_value: r.quantity_value,
-    quantity_unit: r.quantity_unit,
-    package_count: r.package_count,
-    storage_location_id: r.storage_location_id,
-    use_by_target: r.use_by_target,
-    remaining_count: r.remaining_count,
-    consumed_at: r.consumed_at,
-    notes: r.notes,
-    photo_id: r.photo_id,
-    // V4-PUTUPSESSION-001 slice 1 — the whole point of the slice reaches the UI through THIS LINE.
-    // Every read surface that prints a put-up date (RecordRow, PutUpFromPlanting) goes through the
-    // four GET routes, so without this key an estimate reads back as a date the user chose and the
-    // column changes nothing the user can see. `?? null` and never `?? false`: NULL means unrecorded
-    // and FALSE means chosen, and the read path must not invent the second.
-    preserved_at_approx: r.preserved_at_approx ?? null,
-    // V4-PUTUPPROV-001. projectRow is an explicit whitelist and is the ONLY projection for all four
-    // GET routes, while POST/PUT return raw rows[0] from RETURNING *. So omitting these here is
-    // INVISIBLE to create-path smoke testing: the POST echoes them back correctly while every read
-    // surface renders blank. That asymmetry is why this line has a comment.
-    source_kind: r.source_kind ?? null,
-    source_label: r.source_label ?? null,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
-    use_by_status: classifyUseBy(r.preserved_at, r.use_by_target),
-  };
-}
 
 export const handler = async (event) => {
   if (event.requestContext?.http?.method === 'OPTIONS') {
