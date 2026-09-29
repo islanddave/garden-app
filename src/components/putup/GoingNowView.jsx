@@ -21,19 +21,28 @@
 // rendered exactly as it was typed, beside the date it was taken, in the card's ordinary ink. It is
 // never scored, never coloured, never compared to anything, never counted, and never gates anything.
 // The reasoning, and the reversal's audit trail, are at the top of ./goingNow.js and ./PhReadingField.jsx.
-import React, { useState, useMemo, useCallback } from 'react'
+import React, { useState, useMemo, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { ErrorBanner } from '../forms'
 import {
-  partitionGoing, describeAge, describeStage, describeExpectedWindow, startPromptState,
-  submersionPrompt, START_CHIPS, startChipPatch, pickedDatePatch, startPatchViolatesPairing,
-  fermentPrompts, FERMENT_STALL_NOTE, describeLastPhReading, phRecorderVisible,
-  PAUSE_CTA, RESUME_CTA, OPEN_BATCH_CTA, CLOSED_DOOR_CTA, pausePatch,
+  partitionGoing, describeAge, describeStage, describeExpectedWindow,
+  FERMENT_STALL_NOTE, describeLastPhReading,
+  OPEN_BATCH_CTA, CLOSED_DOOR_CTA, KIND_QUESTION, CHECK_ON_IT_CTA, cardQuestion,
 } from './goingNow.js'
-import PhReadingField from './PhReadingField.jsx'
+import CheckOnItSheet from './CheckOnItSheet.jsx'
+import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
+
+// A question on the card is ONE TARGET that opens Check on it (V4 §2.3: "the ruled pH prompt's link
+// opens Check on it", the IA seat's F14 — the question is the door, not a second control beside it).
+// It keeps the question's own ordinary ink; only the arrow wears the link colour.
+const questionLink = {
+  display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: T.tapMinHeight, padding: '2px 0',
+  background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+  fontSize: '0.82rem', color: P.mid,
+}
 
 // "Sep 3". Month + day only: the year is noise on a surface whose entire subject is the recent past,
 // and the one card that shows a year is a card about something that has been going for a year.
@@ -43,137 +52,94 @@ function shortDate(iso) {
   return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-function todayYMD() {
-  const d = new Date()
-  const pad = n => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
-// ── the missing-datum CTA ────────────────────────────────────────────────────────────────────────
-// The shipped "Set parent plant →" pattern (SavedSeeds.jsx:955-958): same type size, same ink as any
-// other line on the card, in the card's ACTION slot rather than as a validation error or an empty
-// field. Never a badge and never a warning colour — an unknown start is a permanent, acceptable
-// terminal state, and a card that scolds for it teaches the user to stop reading the card.
+// ── "What kind of batch? →" ──────────────────────────────────────────────────────────────────────
+// Put-Up 1a (V4 §2.3). The same inline-expand shape as the start-date editor (now on the batch's
+// own surface, BatchDetailView.jsx) and for the same reason: an inline reveal is not a dismissable
+// layer. One tap on a chip IS the answer — it PUTs {kind} through
+// the shipped merge PUT (an absent key is left alone, so nothing else on the row moves) and the
+// question is never asked again. "Other" is the one two-step answer in 1a, because the live CHECK
+// still needs its short name; kindBody refuses to build that body without one.
 //
-// Expands IN PLACE rather than opening a Sheet, matching StorageField's "＋ New location" on this
-// same page. An inline reveal is not a dismissable layer, so it needs no DismissRegistry
-// coordination — which is exactly why it is the cheaper shape here.
-function SetStartDate({ batch, fetch, onChanged }) {
+// The question hides itself the moment the write lands, rather than waiting for the list re-read to
+// carry the new kind back: a question that re-appears for the length of a round trip after it was
+// answered reads as "that didn't take", which invites a second tap.
+function KindQuestion({ batch, fetch, onChanged }) {
   const [open, setOpen] = useState(false)
+  const [picked, setPicked] = useState(null)
+  const [otherText, setOtherText] = useState('')
+  const [answered, setAnswered] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
-  const [picked, setPicked] = useState('')
+  // Synchronous exclusion, the BatchInputsField idiom: `busy` only disables the chips after React
+  // commits, so two taps inside one frame would both read it false and both PUT.
+  const writingRef = useRef(false)
 
-  const save = useCallback(async (patch) => {
-    // The client-side restatement of chk_kitchen_batch_start_pairing. A patch that could never
-    // commit is caught here rather than surfacing as an opaque 400 from a route the user cannot see.
-    if (!patch || startPatchViolatesPairing(patch)) { setErr("That start doesn't make sense — pick another."); return }
+  // Resolves true when the kind landed. A refused or failed write leaves the question open with the
+  // chips un-pressed, so the next tap is a retry rather than a toggle-off.
+  const save = useCallback(async (kind, text) => {
+    const body = kindBody(kind, text)
+    if (!body || !Object.keys(body).length) { setErr('Give it a short name first.'); return false }
+    if (writingRef.current) return false
+    writingRef.current = true
     setBusy(true); setErr(null)
     try {
-      await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(patch) })
-      setOpen(false)
+      await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(body) })
+      setAnswered(true)
       onChanged?.()
+      return true
     } catch {
       setErr("Couldn't save that — try again.")
-    } finally { setBusy(false) }
+      return false
+    } finally {
+      writingRef.current = false
+      setBusy(false)
+    }
   }, [batch.id, fetch, onChanged])
+
+  const choose = useCallback((kind) => {
+    setErr(null)
+    if (kind === 'other' || kind == null) { setPicked(kind); return }
+    setPicked(kind)
+    save(kind).then(ok => { if (!ok) setPicked(null) })
+  }, [save])
+
+  if (answered) return null
 
   if (!open) {
     return (
-      <button type="button" data-testid="going-set-start" onClick={() => setOpen(true)}
+      <button type="button" data-testid="going-kind-question" onClick={() => setOpen(true)}
         style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
           background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
           fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
-        Set a start date →
+        {KIND_QUESTION} →
       </button>
     )
   }
 
   return (
-    <div data-testid="going-start-chips" style={{ marginTop: 6 }}>
-      {err && <div role="alert" style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 6 }}>{err}</div>}
-      {/* Ruling 5: NEVER ask for a precision grade. `exact` vs `day` are not humanly distinguishable
-          and rating your own memory is a second decision stacked on the one already avoided. The
-          grade is derived from WHICH CHIP was tapped; uncertainty is expressed by choosing a wider
-          chip, which is a natural act. "Longer / not sure" is a first-class answer, not a decline. */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {START_CHIPS.map(chip => (
-          <button key={chip.value} type="button" disabled={busy}
-            data-testid={`going-start-chip-${chip.value}`}
-            onClick={() => save(startChipPatch(chip.value, Date.now()))}
+    <div data-testid="going-kind-editor" style={{ marginTop: 6 }}>
+      {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="going-kind-error"
+        style={{ color: P.terra, fontSize: '0.78rem', marginBottom: 6 }}>{err}</div>}
+      <KindChips idPrefix="going-kind" value={picked} onChange={choose} disabled={busy}
+        otherText={otherText} onOtherTextChange={setOtherText} ariaLabel={KIND_QUESTION} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, marginTop: 6 }}>
+        {picked === 'other' && (
+          <button type="button" data-testid="going-kind-save" disabled={busy}
+            onClick={() => save('other', otherText)}
             style={{ minHeight: T.tapMinHeight, padding: '6px 12px', cursor: busy ? 'default' : 'pointer',
-              background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusButton,
-              fontFamily: 'inherit', fontSize: T.type.sm, color: P.dark }}>
-            {chip.label}
+              background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '0.78rem',
+              fontWeight: 700, color: P.green }}>
+            Save
           </button>
-        ))}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, marginTop: 8 }}>
-        <input type="date" aria-label="Pick a start date" value={picked} max={todayYMD()}
-          onChange={e => setPicked(e.target.value)}
-          style={{ minHeight: T.tapMinHeight, padding: '6px 10px', fontFamily: 'inherit',
-            fontSize: T.type.sm, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, background: P.white }} />
-        <button type="button" disabled={busy || !picked} data-testid="going-start-pick-save"
-          onClick={() => save(pickedDatePatch(picked))}
-          style={{ minHeight: T.tapMinHeight, padding: '6px 12px', cursor: busy || !picked ? 'default' : 'pointer',
-            background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '0.78rem',
-            fontWeight: 700, color: picked ? P.green : P.light }}>
-          Use this date
-        </button>
-        <button type="button" onClick={() => { setOpen(false); setErr(null) }}
+        )}
+        <button type="button" data-testid="going-kind-cancel" disabled={busy}
+          onClick={() => { setOpen(false); setPicked(null); setOtherText(''); setErr(null) }}
           style={{ minHeight: T.tapMinHeight, padding: '6px 4px', cursor: 'pointer', background: 'none',
             border: 'none', fontFamily: 'inherit', fontSize: '0.78rem', color: P.light }}>
-          Cancel
+          Not now
         </button>
       </div>
     </div>
-  )
-}
-
-// ── pause / pick back up ─────────────────────────────────────────────────────────────────────────
-// A one-tap MERGE PUT on suspended_at, the card's only write that is not an expand-then-save. No
-// confirm: it is reversible by the same control it was taken with, and a confirm on a reversible act
-// is the tax that teaches people to stop reading confirms. Same ink, type size and tap floor as the
-// two inline expanders — it is an ordinary line on the card, not a destructive one, because pausing
-// is a DIFFERENT ANSWER and not a worse one (see the dashed edge above).
-function PauseToggle({ batch, nowMs, fetch, onChanged, paused }) {
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState(null)
-
-  const toggle = useCallback(async () => {
-    const patch = pausePatch(paused, nowMs)
-    if (!patch) { setErr("Couldn't save that — try again."); return }
-    setBusy(true); setErr(null)
-    try {
-      await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(patch) })
-      onChanged?.()
-    } catch {
-      // The row stays exactly as it was and says so. There is no offline queue in this app and none
-      // is possible (apiFetch needs a Clerk bearer minted by a React hook), so a clear failure is the
-      // honest answer — but it must not also discard the state the user was looking at.
-      setErr("Couldn't save that — try again.")
-    } finally { setBusy(false) }
-  }, [batch.id, fetch, nowMs, onChanged, paused])
-
-  return (
-    <>
-      <button type="button" data-testid="going-pause" disabled={busy} onClick={toggle}
-        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
-          background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: busy ? 'default' : 'pointer',
-          fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
-        {paused ? RESUME_CTA : PAUSE_CTA}
-      </button>
-      {/* P.terra is the house ERROR ink and this is a role="alert" string, which is the one permitted
-          use of it on this surface (GoingNowView.jsx:93 already does exactly this inside the start
-          editor). data-alarm-ink-exempt marks it for the card-scoped alarm-ink sweep, which is about
-          the card BODY never reddening for a batch that is fine — not about forbidding an error to
-          look like an error. The attribute is explicit and per-element, so the carve-out cannot widen
-          by accident: anything unmarked is still swept. */}
-      {err && (
-        <div role="alert" data-alarm-ink-exempt="error" data-testid="going-pause-error"
-          style={{ color: P.terra, fontSize: '0.78rem', marginTop: 4 }}>{err}</div>
-      )}
-    </>
   )
 }
 
@@ -181,15 +147,13 @@ function PauseToggle({ batch, nowMs, fetch, onChanged, paused }) {
 // Leads with WHAT IS KNOWN, never with the gap. The meta line is one joined string on purpose: it is
 // the thing a test can assert as a full literal with both bounds and every separator, which is the
 // standard this repo adopted after shipping an assertion that passes on a value ten days wrong.
-function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, paused }) {
+function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, paused }) {
   const age = describeAge(batch, nowMs)
   const stage = describeStage(batch, nowMs)
   const window = describeExpectedWindow(batch)
-  const prompt = startPromptState(batch) === 'prompt'
-  const submersion = submersionPrompt(batch, nowMs)
-  // ONE pH question per card, chosen in goingNow.js — see fermentPrompts. Destructured rather than
-  // held as an object so a future edit cannot render both by reaching past the decision.
-  const { stall, cadence: phAsk } = fermentPrompts(batch, nowMs)
+  // ONE inline question per card, chosen in goingNow.js — see cardQuestion. The card paints the
+  // shape it is handed and decides nothing, so no edit here can render two questions at once.
+  const question = cardQuestion(batch, nowMs)
   const lastPh = describeLastPhReading(batch)
   // Both halves or neither: a reading whose date will not render is not a dated line, so it does not
   // render at all rather than becoming a bare "current pH".
@@ -223,24 +187,31 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, paused }) {
           {shortDate(batch.suspended_at) ? `Paused since ${shortDate(batch.suspended_at)}` : 'Paused'}
         </div>
       )}
+      {/* THE ONE INLINE QUESTION (V4 §2.3), in one slot, chosen by cardQuestion. */}
+      {/* The kind question, on a NULL kind only and never again once answered. It is the one door to
+          the three ferment questions below: all are gated on kind = 'ferment', so a batch nobody has
+          classified can never be asked about its brine or its pH. */}
+      {question?.kind === 'kind' && <KindQuestion batch={batch} fetch={fetch} onChanged={onChanged} />}
       {/* The submersion prompt. A QUESTION, in the card's ordinary ink, with no verdict beside it
           and no list of failure signs under it — a checklist of what going wrong looks like invites
           the reader to conclude that its absence means success, which is the specific inference
           behind the documented olive botulism outbreak. Deliberately not a badge and not a warning
           colour: it asks you to go and look, it does not claim anything is wrong. */}
-      {submersion && (
-        <div data-testid="going-batch-submersion" style={{ marginTop: 4, color: P.mid, fontSize: '0.82rem' }}>
-          {submersion}
-        </div>
+      {question?.kind === 'submersion' && (
+        <button type="button" data-testid="going-question-link" onClick={() => onCheck?.(batch.id)} style={questionLink}>
+          <span data-testid="going-batch-submersion" style={{ color: P.mid, fontSize: '0.82rem' }}>{question.text}</span>
+          <span aria-hidden="true" style={{ color: P.green }}>→</span>
+        </button>
       )}
       {/* The measure prompt. Another QUESTION, same ink, same absence of a verdict — it asks whether
           you measured and says nothing about what the number was or ought to be. UMN Extension's
           published "check the pH every 1 to 2 days" is the only cadence in the evidence base with a
           sourced number behind it, and this is that cadence and nothing more. */}
-      {phAsk && (
-        <div data-testid="going-batch-ph-prompt" style={{ marginTop: 4, color: P.mid, fontSize: '0.82rem' }}>
-          {phAsk}
-        </div>
+      {question?.kind === 'cadence' && (
+        <button type="button" data-testid="going-question-link" onClick={() => onCheck?.(batch.id)} style={questionLink}>
+          <span data-testid="going-batch-ph-prompt" style={{ color: P.mid, fontSize: '0.82rem' }}>{question.text}</span>
+          <span aria-hidden="true" style={{ color: P.green }}>→</span>
+        </button>
       )}
       {/* The one-week stall prompt (FOODSAFETY-RULING-V101 §4). It replaces the cadence line above
           rather than stacking under it — the choice is made in goingNow.js, not here. Ordinary ink,
@@ -248,9 +219,12 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, paused }) {
           and asking you to go and measure, which is the only thing it is entitled to do. The
           attribution beneath it is not decoration — the deadline is borrowed from guidance written
           for businesses, and §4 requires the card to say whose it is. */}
-      {stall && (
+      {question?.kind === 'stall' && (
         <div data-testid="going-batch-stall" style={{ marginTop: 4, color: P.mid, fontSize: '0.82rem' }}>
-          {stall}
+          <button type="button" data-testid="going-question-link" onClick={() => onCheck?.(batch.id)} style={questionLink}>
+            <span>{question.text}</span>
+            <span aria-hidden="true" style={{ color: P.green }}>→</span>
+          </button>
           <div data-testid="going-batch-stall-note"
             style={{ marginTop: 3, color: P.light, fontSize: '0.78rem', lineHeight: 1.45 }}>
             {FERMENT_STALL_NOTE}
@@ -271,31 +245,32 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, paused }) {
           {Number(batch.input_count) === 1 ? '1 pick in' : `${Number(batch.input_count)} picks in`}
         </div>
       )}
-      {prompt && <SetStartDate batch={batch} fetch={fetch} onChanged={onChanged} />}
-      {/* WIDER THAN THE PROMPT ABOVE, on purpose — see phRecorderVisible. The prompt is the app
-          speaking and must not ask a nonsense question; the recorder is a door the cook opens, and
-          it stays open on an unclassified batch because the one real ferment in the system carries
-          kind NULL and this card has no kind editor. */}
-      {phRecorderVisible(batch) && (
-        <PhReadingField batch={batch} fetch={fetch} onChanged={onChanged} nowMs={nowMs} />
-      )}
-      {/* THE ONE EXPLICIT DOOR to the batch's own surface, and the card itself deliberately stays
-          INERT. The card holds up to nine interactive descendants — six start chips, a date input,
-          three buttons in the start editor, the pH recorder — with zero propagation guards, so a
-          whole-card tap handler would make every one of them do two things, and wrapping the card in
-          a <button> is invalid nesting. On a 390px screen with wet hands a stray tap on the chrome
-          beside a chip would navigate away mid-edit. Worse, useNavigate is a no-op spy in every test
-          that renders this file, so NOT ONE of the 112 shipped tests could have caught that
-          regression. So: one labelled affordance in the card's action slot, a SIBLING of the two
-          inline expanders rather than their ancestor — the shipped "Set parent plant →" pattern this
-          card already cites, same ink, same type size, same tap floor. */}
-      <button type="button" data-testid="going-open-batch" onClick={() => onOpen?.(batch.id)}
-        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
-          background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
-          fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
-        {OPEN_BATCH_CTA}
-      </button>
-      <PauseToggle batch={batch} nowMs={nowMs} fetch={fetch} onChanged={onChanged} paused={paused} />
+      {/* THE ACTION SLOT (V4 §2.3): at most three quiet actions — Check on it · Open (release 1b adds
+          Put it up between them and moves nothing). Pause and "Set a start date" moved to the batch's
+          own surface in Put-Up 1a, both being desk decisions about the batch rather than check-ins,
+          and the inline pH recorder moved INTO Check on it — the pH button moves into Check on it. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: T.space.md }}>
+        <button type="button" data-testid="going-check" onClick={() => onCheck?.(batch.id)}
+          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+            background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
+            fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
+          {CHECK_ON_IT_CTA} →
+        </button>
+        {/* THE ONE EXPLICIT DOOR to the batch's own surface, and the card itself deliberately stays
+            INERT. The card holds interactive descendants with zero propagation guards, so a whole-card
+            tap handler would make every one of them do two things, and wrapping the card in a <button>
+            is invalid nesting. On a 390px screen with wet hands a stray tap on the chrome beside a chip
+            would navigate away mid-edit. Worse, useNavigate is a no-op spy in every test that renders
+            this file, so no test could have caught that regression. So: one labelled affordance in the
+            card's action slot, a SIBLING of the inline expanders rather than their ancestor — the
+            shipped "Set parent plant →" pattern, same ink, same type size, same tap floor. */}
+        <button type="button" data-testid="going-open-batch" onClick={() => onOpen?.(batch.id)}
+          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+            background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
+            fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
+          {OPEN_BATCH_CTA}
+        </button>
+      </div>
     </div>
   )
 }
@@ -305,7 +280,11 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, paused }) {
 // fixed literal instead of to the wall clock. The wall-clock version of this passed under
 // America/New_York and failed under UTC by four hours, which is precisely the class the blocking TZ
 // re-run exists to catch and which millisecond-offset fixtures are structurally unable to expose.
-export default function GoingNowView({ batches, loading, error, onReload, now }) {
+// `onStartBatch` (Put-Up 1a, the seam with the page lane): the page mounts the shared StartBatchSheet
+// and hands this view the callback that opens it. Absent — a host that has not wired the seam — the
+// door keeps its shipped behaviour and goes to /capture, whose "Something in the kitchen" card opens
+// the same sheet, so a missed wiring degrades to one extra step rather than a dead button.
+export default function GoingNowView({ batches, loading, error, onReload, now, onStartBatch }) {
   const navigate = useNavigate()
   const { fetch } = useApiFetch()
   const nowMs = now ?? Date.now()
@@ -332,15 +311,28 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
     setSearchParams(next)
   }, [searchParams, setSearchParams])
 
-  // THE DOOR TO THE CLOSED LIST, rendered inside the empty block when the list is empty and above
-  // "Start a batch" when it is not. Exactly one instance either way.
+  // CHECK ON IT — one sheet for the whole view, holding the id of the batch being checked. The row
+  // itself is read from the CURRENT list on every render, so a re-read that lands while the sheet is
+  // open updates what it shows, and a batch that left the list closes it.
+  const [checkingId, setCheckingId] = useState(null)
+  const checking = useMemo(
+    () => (checkingId ? [...active, ...paused].find(b => b.id === checkingId) ?? null : null),
+    [checkingId, active, paused],
+  )
+  const closeCheck = useCallback(() => setCheckingId(null), [])
+  // The write landed: close, then re-read the list — the honest recovery, never a local mutation
+  // (the card's clocks and "last touched" come back from the view the server computes).
+  const checkSaved = useCallback(() => { setCheckingId(null); onReload?.() }, [onReload])
+
+  // THE DOOR TO THE CLOSED LIST, rendered inside the empty block when the list is empty and after the
+  // list when it is not. Exactly one instance either way.
   //
   // Placement is the whole finding: the state in which a user hunts a six-week-old batch is the state
   // that currently hides the door — a doorway behind a segment whose own empty state reads "Nothing
   // going right now." has INVERTED scent, and the bare-open promote does not even select this segment
-  // when the going list is empty. Above "Start a batch" rather than below it, deliberately: the
-  // bottom-placement ruling for that button is asserted as literal last-child, and moving it would
-  // red a test about something else entirely.
+  // when the going list is empty. (It used to sit "above Start a batch" only because that button was
+  // pinned as the literal last child; Start a batch moved to the top in Put-Up 1a, so this is now
+  // simply the end of the list.)
   //
   // Labelled with its object, not as the bare adjective "Closed" — that predicts nothing about its
   // destination. NOT "Finished batches", which the seat proposed: `finished` is a live, re-enterable
@@ -355,8 +347,25 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
     </button>
   )
 
+  // START A BATCH — Put-Up 1a (V4 §2.2, the adhd seat's "the door moves" finding): a QUIET TEXT
+  // button at the TOP of Going now. At the bottom, with the several ferments Dave keeps going, the
+  // door fell below the fold and moved as the list grew — a start cue the cook has to hunt for at the
+  // one moment of starting. Still quiet (not a filled CTA, not floating, not in the header row, not in
+  // the ＋ sheet with its hard 4-cap): the page's job on a normal visit is still "what needs checking".
+  // It opens the shared Start sheet through the page (onStartBatch) — the same sheet Snap opens.
+  const startBatch = useCallback(() => {
+    if (onStartBatch) onStartBatch()
+    else navigate('/capture')
+  }, [navigate, onStartBatch])
+
   return (
     <div data-testid="going-now-view">
+      <button type="button" data-testid="start-a-batch" onClick={startBatch}
+        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+          background: 'none', border: 'none', padding: '2px 8px 2px 0', marginBottom: T.space.sm,
+          cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 700 }}>
+        Start a batch →
+      </button>
       {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
       {error && <ErrorBanner>Couldn&rsquo;t load what&rsquo;s going right now — try again.</ErrorBanner>}
 
@@ -372,7 +381,8 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
       )}
 
       {active.map(b => (
-        <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch} />
+        <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch}
+          onCheck={setCheckingId} />
       ))}
 
       {paused.length > 0 && (
@@ -383,33 +393,16 @@ export default function GoingNowView({ batches, loading, error, onReload, now })
             Paused
           </h2>
           {paused.map(b => (
-            <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch} paused />
+            <BatchCard key={b.id} batch={b} nowMs={nowMs} fetch={fetch} onChanged={onReload} onOpen={openBatch}
+              onCheck={setCheckingId} paused />
           ))}
         </>
       )}
 
+      {/* Renders NOTHING while closed, so it never displaces a sibling in the document. */}
+      <CheckOnItSheet open={!!checking} batch={checking} now={now} onClose={closeCheck} onSaved={checkSaved} />
+
       {!empty && closedDoor}
-
-      {/* Start a batch. Deliberately at the BOTTOM, deliberately not a floating button, deliberately
-          not in the header row and deliberately not in the ＋ sheet — that sheet has a hard 4-cap
-          where "any FIFTH action requires DISPLACEMENT, not expansion", and none of its four is
-          displaceable for a feature with zero users. The sibling surface already ruled the placement
-          (SavedSeeds.jsx:1012-1014): starting is the once-per-lot action while checking is the
-          repeated one, and the page's job on a normal visit is to answer "what needs checking"
-          rather than to invite data entry.
-
-          Destination is /capture rather than a form here: the start happens in the kitchen with the
-          app closed, and the one trigger that fires reliably in that moment is the camera. The
-          capture flow owns the "Something in the kitchen" card (a sibling lane's file); this button
-          is the in-app door to the same place. */}
-      <button type="button" data-testid="start-a-batch" onClick={() => navigate('/capture')}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          width: '100%', minHeight: T.buttonMinHeight, marginTop: T.space.md,
-          background: 'none', color: P.green, border: `1px solid ${P.greenLight}`,
-          borderRadius: T.radiusCard, fontSize: T.type.md, fontWeight: 700,
-          fontFamily: 'inherit', cursor: 'pointer' }}>
-        <span aria-hidden="true">🍲</span><span>Start a batch</span>
-      </button>
     </div>
   )
 }

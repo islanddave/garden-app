@@ -26,7 +26,7 @@
 // has real assertions to bite on here (every rendered date).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,7 +38,7 @@ vi.mock('../lib/api.js', () => ({
 }))
 
 import { P } from '../lib/constants.js'
-import BatchDetailView, { inputRowText, stageRowText, outputRowText } from '../components/putup/BatchDetailView.jsx'
+import BatchDetailView, { inputRowText, stageRowText, stageRowDetail, outputRowText } from '../components/putup/BatchDetailView.jsx'
 import { CLOSE_OUTCOMES } from '../components/putup/batchClose.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -372,6 +372,22 @@ describe('BatchDetailView — the log is a log', () => {
       .toBe('snapped clean · third tray went back in')
   })
 
+  // Put-Up 1a item 3: a check-in is ONE row, so reading the pH and moving the crock in one visit is a
+  // single `moved` row that carries both. The reading stays the row's subject; the move is read back
+  // on the line beneath it. MUTATION: drop the label arm from stageRowDetail -> the move vanishes.
+  it('reads back BOTH halves of a check-in that measured and moved the batch', () => {
+    const MOVED_AND_READ = {
+      ...STAGE_PH, id: 'ksl-moved', stage_kind: 'moved', label: 'Moved to Fridge', storage_location_id: 'loc-fridge',
+      ph_reading: '3.40', ph_read_at: '2026-09-03T12:00:00.000Z', cue_observed: 'All under', note: 'into the fridge',
+    }
+    renderDetail({ stages: [MOVED_AND_READ] })
+    expect(screen.getByTestId('batch-detail-stage').firstElementChild.textContent).toBe('pH 3.40 · read Sep 3')
+    expect(screen.getByTestId('batch-detail-stage-detail').textContent).toBe('Moved to Fridge · All under · into the fridge')
+    // …and a row whose subject IS its label does not repeat it underneath.
+    expect(stageRowDetail({ stage_kind: 'moved', label: 'Moved to Fridge', ph_reading: null, note: 'x' })).toBe('x')
+    expect(stageRowDetail(null)).toBe('')
+  })
+
   it('degrades a row it cannot date rather than rendering half a line', () => {
     expect(stageRowText({ stage_kind: 'tended', entered_at: null })).toBe('Tended')
     expect(stageRowText({ stage_kind: 'tended', entered_at: 'not a date' })).toBe('Tended')
@@ -478,6 +494,106 @@ describe('BatchDetailView — the close door', () => {
   })
 })
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Put-Up 1a item 2 (V4 §2.3): "Pause and start-date setting live on batch detail." Both controls
+// MOVED here from the Going-now card, and their component tests moved with them from
+// PutUpGoingNow.test.jsx in the same commit — same assertions, this surface's testids.
+const UNKNOWN_START = { ...MASH, id: 'kb-unk', start_precision: 'unknown' }
+
+describe('BatchDetailView — the start-date door lives on the batch\'s own surface', () => {
+  it('offers it on a going batch nobody was ever asked about', () => {
+    renderDetail()
+    expect(screen.getByTestId('batch-set-start').textContent).toBe('Set a start date →')
+    expect(screen.getByTestId('batch-set-start').style.minHeight).toBe('44px')
+  })
+
+  // The terminal-state ruling, now on this surface: "an unknown one must never prompt again".
+  it('never prompts again once the answer is "unknown", nor on a batch with a start, nor on a closed one', () => {
+    renderDetail({ batch: UNKNOWN_START })
+    renderDetail({ batch: CANDY })
+    renderDetail({ batch: { ...CLOSED_SPOILED, start_precision: null, started_at: null } })
+    expect(screen.getAllByTestId('batch-detail-view')).toHaveLength(3)   // instrument: three renders
+    expect(screen.queryByTestId('batch-set-start')).toBeNull()
+    expect(hasNoAlarmInk(screen.getAllByTestId('batch-detail-view')[0])).toBe(true)
+  })
+
+  it('PUTs exactly the three start keys and nothing else on the allowlist', async () => {
+    fetchMock.mockResolvedValue({ ...MASH, started_at: local('2026-08-17T09:00:00'), start_precision: 'week' })
+    const onChanged = vi.fn()
+    renderDetail({ onChanged })
+    fireEvent.click(screen.getByTestId('batch-set-start'))
+    fireEvent.click(screen.getByTestId('batch-start-chip-few_weeks'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    const [path, opts] = fetchMock.mock.calls.find(([, o]) => o?.method === 'PUT')
+    expect(path).toBe('/api/kitchen-batches/kb-mash')
+    expect(Object.keys(JSON.parse(opts.body)).sort())
+      .toEqual(['start_anchor_kind', 'start_precision', 'started_at'])
+  })
+
+  it('"Longer / not sure" writes the terminal grade with a null instant', async () => {
+    renderDetail()
+    fireEvent.click(screen.getByTestId('batch-set-start'))
+    fireEvent.click(screen.getByTestId('batch-start-chip-unsure'))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, o]) => o?.method === 'PUT')).toBe(true))
+    const put = fetchMock.mock.calls.find(([, o]) => o?.method === 'PUT')
+    expect(JSON.parse(put[1].body)).toEqual({ started_at: null, start_precision: 'unknown', start_anchor_kind: 'memory' })
+  })
+
+  it('keeps the row and says so when the write fails', async () => {
+    fetchMock.mockImplementation((path, o) => (o?.method === 'PUT'
+      ? Promise.reject(new Error('boom')) : Promise.resolve({ group_by: 'crop', groups: [] })))
+    renderDetail()
+    fireEvent.click(screen.getByTestId('batch-set-start'))
+    fireEvent.click(screen.getByTestId('batch-start-chip-today'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe("Couldn't save that — try again."))
+    expect(screen.getByTestId('batch-start-chips')).toBeTruthy()
+  })
+})
+
+describe('BatchDetailView — pause lives on the batch\'s own surface', () => {
+  const putCalls = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PUT')
+
+  it('PUTs exactly suspended_at, at the INJECTED instant, and merges nothing else', async () => {
+    const onChanged = vi.fn()
+    renderDetail({ batch: CANDY, onChanged })
+    expect(screen.getByTestId('batch-pause').textContent).toBe('Pause this batch')
+    fireEvent.click(screen.getByTestId('batch-pause'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    expect(putCalls()).toEqual([['/api/kitchen-batches/kb-candy', {
+      method: 'PUT', body: JSON.stringify({ suspended_at: new Date(NOW).toISOString() }),
+    }]])
+  })
+
+  it('offers the way back on a paused batch and NULLs the column', async () => {
+    const onChanged = vi.fn()
+    renderDetail({ batch: PAUSED, onChanged })
+    expect(screen.getByTestId('batch-pause').textContent).toBe('Pick it back up')
+    fireEvent.click(screen.getByTestId('batch-pause'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    expect(putCalls()).toEqual([['/api/kitchen-batches/kb-paused', {
+      method: 'PUT', body: JSON.stringify({ suspended_at: null }),
+    }]])
+  })
+
+  it('keeps the batch as it was and says so when the write fails — as an error, not a body alarm', async () => {
+    fetchMock.mockImplementation((path, o) => (o?.method === 'PUT'
+      ? Promise.reject(new Error('boom')) : Promise.resolve({ group_by: 'crop', groups: [] })))
+    renderDetail({ batch: CANDY })
+    fireEvent.click(screen.getByTestId('batch-pause'))
+    await waitFor(() => expect(screen.getByTestId('batch-pause-error').textContent).toBe("Couldn't save that — try again."))
+    expect(screen.getByTestId('batch-pause').textContent).toBe('Pause this batch')
+    expect(screen.getByTestId('batch-pause-error').getAttribute('role')).toBe('alert')
+    expect(screen.getByTestId('batch-pause-error').getAttribute('data-alarm-ink-exempt')).toBe('error')
+  })
+
+  it('is not offered on a closed batch — reopening is a different act on a different surface', () => {
+    renderDetail({ batch: CLOSED_SPOILED })
+    expect(screen.queryByTestId('batch-pause')).toBeNull()
+    renderDetail({ batch: REOPENED })   // GREEN CONTROL: the reopened twin DOES offer it
+    expect(screen.getByTestId('batch-pause')).toBeTruthy()
+  })
+})
+
 describe('BatchDetailView — the inherited rulings, on this surface\'s own root', () => {
   const FOOD_SAFETY = /acidif|shelf.stab|\bsafe\b|\bsafety\b|botul/i
   const READINESS = /\bdue\b|\bremaining\b|\boverdue\b|\bready\b|\bdays left\b|\blate\b/i
@@ -575,6 +691,16 @@ describe('BatchDetailView — L4\'s inputs field IS the "what went in" section',
     // it renders inside the section that now owns it.
     renderDetail({ inputs: [INPUT_PANTRY] })
     expect(within(screen.getByTestId('batch-detail-inputs')).getByTestId('batch-inputs-field')).toBeTruthy()
+  })
+})
+
+describe('BatchDetailView — Put-Up 1a item 6: "Add picks from the garden" is hidden here', () => {
+  // The real host of BatchInputsField. Hidden, not deleted: garden lines replace it in release 3.
+  it('offers "Add something else" and no garden-picks door', () => {
+    renderDetail()
+    expect(within(screen.getByTestId('batch-detail-inputs')).queryByTestId('batch-inputs-open-picks')).toBeNull()
+    expect(screen.getByTestId('batch-detail-view').textContent).not.toContain('Add picks from the garden')
+    expect(within(screen.getByTestId('batch-detail-inputs')).getByTestId('batch-inputs-open-other')).toBeTruthy()
   })
 })
 

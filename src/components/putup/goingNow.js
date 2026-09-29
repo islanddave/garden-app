@@ -233,8 +233,6 @@ export const PH_CHECK_DAYS = 2
 // whatever about what the measurement was or should be.
 export const PH_PROMPT = 'Measured the pH in the last day or two?'
 
-export const PH_RECORD_CTA = 'Record a pH reading →'
-
 // Quoted verbatim and attributed, rather than paraphrased into house voice. The caution travels WITH
 // the recommendation because USU publishes them together and separating them would leave the cheaper
 // instrument looking equivalent to the better one.
@@ -316,18 +314,11 @@ export function phPrompt(batch, nowMs) {
   return PH_PROMPT
 }
 
-// WHO GETS THE RECORDER, and it is deliberately WIDER than who gets the prompt. The prompt is the app
-// speaking, so it must never ask a nonsense question — hence known ferments only. The recorder is an
-// affordance the cook reaches for, and offering it makes no claim about the batch, so it is also
-// offered on an UNCLASSIFIED one. That is not a loosening: `kind` is nullable because the capture path
-// never asks, the batch this whole schema was built for (a pepper mash on the counter) carries kind
-// NULL today, and there is no kind editor on this card — so a strict gate here would mean the one
-// real ferment in the system could never record a reading. Known NON-ferments stay out: a "record a
-// pH" link on a dehydrator run is noise.
-export function phRecorderVisible(batch) {
-  if (!batch) return false
-  return batch.kind === SUBMERSION_KIND || batch.kind == null
-}
+// ⚠ phRecorderVisible WAS HERE, and was RETIRED by Put-Up 1a item 3 (V4 §2.3: "the pH button moves
+// into Check on it"). It gated the card's inline recorder, deliberately wider than the prompt — it
+// admitted a NULL kind because nothing could classify a batch, so a strict gate would have locked the
+// one real ferment out of the feature. The card's one-tap kind question removes that reason, and the
+// pH field now lives in Check on it on kind = 'ferment' only: see checkInFields.
 
 // The POST body for one reading. `ph_reading` is the trimmed STRING the cook typed, never a Number —
 // see phReadingText. Returns null for anything off the scale or unparseable, so the component can say
@@ -430,6 +421,33 @@ export function fermentPrompts(batch, nowMs) {
   return { stall, cadence: stall ? null : phPrompt(batch, nowMs) }
 }
 
+// ── the card's ONE inline question ───────────────────────────────────────────────────────────────
+// Put-Up 1a (V4 §2.3 "Card"): at most three quiet actions plus AT MOST ONE inline question. The card
+// used to be able to stack the submersion question over a pH question, and a NULL-kind card would now
+// add "What kind of batch?" to that — three questions about one crock is the noise the four retired
+// signalling surfaces died of, and the adhd seat's split-attention finding. So the questions share
+// ONE slot and this function picks, in this order:
+//   1. kind      — a NULL kind. Exclusive with the rest by construction: every ferment question is
+//                  gated on kind = 'ferment', so an unclassified batch cannot be asked any of them.
+//   2. stall     — FOODSAFETY-RULING-V101 §4, the one question that carries information the cook does
+//                  not already have; it already beat the cadence question (fermentPrompts above).
+//   3. submersion— the shipped brine question. It outranks the cadence question because the pH clock
+//                  anchors no later than the stage clock, so whenever this one is due the cadence
+//                  question is too: ranking it second would mean it could NEVER appear. This way all
+//                  three shipped prompts still speak at their shipped timing, one at a time.
+//   4. cadence   — the shipped pH question.
+// Each prompt keeps its own predicate unchanged; this only chooses which one is on screen. Returning
+// a SHAPE, not a string, keeps the testids of the three shipped prompts independent.
+export function cardQuestion(batch, nowMs) {
+  if (kindQuestionVisible(batch)) return { kind: 'kind' }
+  const { stall, cadence } = fermentPrompts(batch, nowMs)
+  if (stall) return { kind: 'stall', text: stall }
+  const submersion = submersionPrompt(batch, nowMs)
+  if (submersion) return { kind: 'submersion', text: submersion }
+  if (cadence) return { kind: 'cadence', text: cadence }
+  return null
+}
+
 // ── the missing-datum CTA ────────────────────────────────────────────────────────────────────────
 // THE THREE STATES ARE NOT TWO. The 0a DDL is explicit that the two started_at-NULL states are
 // different claims: "an un-asked batch may prompt, an `unknown` one must never prompt again."
@@ -442,6 +460,84 @@ export function startPromptState(batch) {
   if (!batch) return 'silent'
   if (batch.started_at) return 'silent'
   return batch.start_precision == null ? 'prompt' : 'silent'
+}
+
+// ── Check on it (Put-Up 1a, V4 §2.3) ─────────────────────────────────────────────────────────────
+// The check-in sheet, on every kind. What it offers depends on the kind and on nothing else:
+//   every kind   — Moved it (the household's places) and a note
+//   ferment      — also the ruled brine question and the pH field
+//   dehydrate    — also "In jars to condition" / "Condensation → back in the dryer" (Dry, NOT Candy)
+// A NULL kind gets the every-kind set only — the pH field is a ferment observation, and the card's
+// one-tap kind question is the door to it. (The old inline recorder also admitted a NULL kind, but
+// only because nothing could classify a batch; something now can.)
+export const CHECK_ON_IT_CTA = 'Check on it'
+
+// Stored verbatim in kitchen_stage_log.cue_observed — free text the log reads back as written.
+// The brine answers are the RULED pair, in both directions (V4 §2.3), and nothing else: no
+// failure-sign checklist, for the reason SUBMERSION_PROMPT's header gives.
+export const SUBMERSION_ANSWERS = Object.freeze([
+  { value: 'all_under', label: 'All under' },
+  { value: 'poking_out', label: 'Something poking out' },
+])
+export const CONDITIONING_ANSWERS = Object.freeze([
+  { value: 'jars', label: 'In jars to condition' },
+  { value: 'back_in_dryer', label: 'Condensation → back in the dryer' },
+])
+
+export function checkInFields(batch) {
+  const kind = batch?.kind ?? null
+  return { ph: kind === SUBMERSION_KIND, submersion: kind === SUBMERSION_KIND, conditioning: kind === 'dehydrate' }
+}
+
+export const CHECK_IN_EMPTY = 'Note one thing first — an answer, a reading, a place or a note.'
+
+// THE ONE ROW a check-in writes (V4 §2.3: "A check-in writes ONE tended row (Moved it writes moved)").
+// One Save, one POST, one row — never a row per observation, and never two rows for one visit:
+//   · a place was picked -> stage_kind 'moved', carrying storage_location_id (chk_ksl_moved_needs_location)
+//     and a label naming where, so the card and the log say where it went;
+//   · otherwise           -> stage_kind 'tended'.
+// Whatever else was observed rides on that same row: the chosen answer as cue_observed, the pH as the
+// typed STRING with its read instant (never through a Number — see phReadingText), the note.
+// Returns { body } or { error }; the caller never sends a body this refused.
+export function checkInBody({ batch, ph = '', submersion = null, conditioning = null, place = null, note = '', atIso }) {
+  const fields = checkInFields(batch)
+  const body = { stage_kind: place ? 'moved' : 'tended' }
+  if (place) {
+    if (!place.id) return { error: CHECK_IN_EMPTY }
+    body.storage_location_id = place.id
+    body.label = `Moved to ${place.label}`
+  }
+  const answer = fields.submersion
+    ? SUBMERSION_ANSWERS.find(a => a.value === submersion)
+    : fields.conditioning ? CONDITIONING_ANSWERS.find(a => a.value === conditioning) : null
+  if (answer) body.cue_observed = answer.label
+  const typed = fields.ph ? phReadingText(ph) : null
+  if (typed != null) {
+    const patch = phStagePatch(typed, atIso)
+    if (!patch) return { error: PH_SCALE_HINT }
+    body.ph_reading = patch.ph_reading
+    body.ph_read_at = patch.ph_read_at
+  }
+  const text = String(note ?? '').trim()
+  if (text) body.note = text
+  const observed = !!place || !!answer || typed != null || !!text
+  return observed ? { body } : { error: CHECK_IN_EMPTY }
+}
+
+// ── the kind of batch ────────────────────────────────────────────────────────────────────────────
+// Put-Up 1a (V4 §2.3). A NULL kind shows ONE inline question, answered by the kind chips in one tap
+// through the shipped merge PUT, and NEVER ASKED AGAIN once any kind is stored — including `age`,
+// which is still a valid stored value though no chip offers it, and `other`, which is an answer.
+// NULL is the only unanswered state, the same distinction the start fields draw between "never
+// asked" and "asked, doesn't know". A closed batch is not on the card, and is not asked either.
+//
+// Not gated on a pause: the ferment prompts go silent under suspension because they are the app
+// asking about the batch's state, which a pause answers. This asks what the batch IS, which a pause
+// does not answer, and it is the one door that wakes those prompts at all.
+export const KIND_QUESTION = 'What kind of batch?'
+
+export function kindQuestionVisible(batch) {
+  return !!batch && batch.kind == null && !batch.closed_at
 }
 
 // ── suspended ────────────────────────────────────────────────────────────────────────────────────
@@ -548,14 +644,11 @@ export function describeStage(batch, nowMs) {
 export const START_CHIPS = [
   { value: 'today',      label: 'Today',             days: 0,    precision: 'exact',   anchor: 'memory' },
   { value: 'yesterday',  label: 'Yesterday',         days: 1,    precision: 'day',     anchor: 'memory' },
-  // 4, not 3, CORRECTED at integration 2026-09-04. This table and START_CHIPS in
-  // src/components/kitchen/StartChips.jsx were built by two concurrent lanes from the same panel
-  // ruling. They agreed on 18 for "2–3 weeks" and DISAGREED here — capture back-dated 4 days and this
-  // surface back-dated 3, so the same chip on the same batch produced a different date depending on
-  // which screen the user happened to tap it from. The rule the panel actually stated is the MIDPOINT
-  // of the window each chip names (3–5 d → 4, 14–21 d → 18), so capture was right. See
-  // src/__tests__/startChipParity.test.js, which now makes the two tables agree by assertion rather
-  // than by coincidence.
+  // 4, not 3, CORRECTED at integration 2026-09-04: the panel's rule is the MIDPOINT of the window each
+  // chip names (3–5 d → 4, 14–21 d → 18). The Snap-card table this was reconciled against was retired
+  // in Put-Up 1a item 5 (Snap opens the shared Start sheet); src/__tests__/startChipParity.test.js now
+  // binds the labels this table shares with the Start sheet's (Today, Yesterday) and pins the two
+  // midpoints here directly.
   { value: 'few_days',   label: 'A few days ago',    days: 4,    precision: 'day',     anchor: 'memory' },
   { value: 'about_week', label: 'About a week',      days: 7,    precision: 'week',    anchor: 'memory' },
   { value: 'few_weeks',  label: '2–3 weeks',         days: 18,   precision: 'week',    anchor: 'memory' },

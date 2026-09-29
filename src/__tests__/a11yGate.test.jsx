@@ -40,6 +40,9 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 vi.mock('../components/FavoriteToggle.jsx', () => ({
   default: () => <button type="button" aria-label="Favorite" />,
 }))
+// The Put-Up 1a sheets read the signed-in person for their draft key; a signed-out stub keeps Clerk
+// out of this smoke test the same way the FavoriteToggle stub does (the sheets simply keep no draft).
+vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => ({ user: null }) }))
 
 import { expectNoA11yViolations, A11Y_RULES } from './helpers/axe.js'
 import PlantStatusBadge from '../components/PlantStatusBadge.jsx'
@@ -55,6 +58,9 @@ import SpaceAttachPicker from '../components/SpaceAttachPicker.jsx'
 import SegmentedControl from '../components/forms/SegmentedControl.jsx'
 import ChoiceGrid from '../components/forms/ChoiceGrid.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
+import KindChips from '../components/kitchen/KindChips.jsx'
+import StartBatchSheet from '../components/kitchen/StartBatchSheet.jsx'
+import CheckOnItSheet from '../components/putup/CheckOnItSheet.jsx'
 
 afterEach(() => cleanup())
 
@@ -130,6 +136,41 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
     )
     await screen.findByRole('list', { name: 'Photos you can add' })
     await expectNoA11yViolations(container, { label: 'SpaceAttachPicker' })
+  })
+
+  // ── Put-Up 1a (V4 §6.6: "new components join the a11y smoke set", with `nested-interactive` on the
+  // new components' entries). Each is rendered in its FULLEST state — every optional section open —
+  // because a closed disclosure is an audit of nothing.
+  describe('Put-Up 1a — the new sheets and chips', () => {
+    const NEW_RULES = [...A11Y_RULES, 'nested-interactive']
+    const PLACES = [{ id: 'loc-1', label: 'Fridge', kind: 'fridge' }, { id: 'loc-2', label: 'Chest Freezer 1', kind: 'deep_freezer' }]
+    const batch = (kind) => ({ id: `kb-${kind ?? 'none'}`, label: 'Pepper mash', kind, suspended_at: null, closed_at: null })
+
+    it('KindChips, Other chosen, is clean (with nested-interactive)', async () => {
+      const { container } = render(<KindChips value="other" onChange={() => {}} otherText="" onOtherTextChange={() => {}} />)
+      expect(screen.getByRole('group', { name: 'What kind of batch?' })).toBeTruthy()
+      await expectNoA11yViolations(container, { label: 'KindChips', rules: NEW_RULES })
+    })
+
+    it.each([['ferment'], ['dehydrate'], [null]])('CheckOnItSheet (%s), places loaded, is clean (with nested-interactive)', async (kind) => {
+      fetchSpy.mockImplementation((path) => Promise.resolve(path === '/api/storage-locations' ? PLACES : null))
+      const { container } = render(<CheckOnItSheet open batch={batch(kind)} onClose={() => {}} onSaved={() => {}} />)
+      await screen.findByRole('group', { name: 'Moved it' })
+      expect(screen.getByRole('dialog', { name: 'Check on it' })).toBeTruthy()
+      await expectNoA11yViolations(container, { label: `CheckOnItSheet ${kind}`, rules: NEW_RULES })
+    })
+
+    it('StartBatchSheet, Earlier… → Pick a date and the kind row open, is clean (with nested-interactive)', async () => {
+      fetchSpy.mockImplementation(() => Promise.resolve(null))
+      const { container } = render(<StartBatchSheet open onClose={() => {}} onStarted={() => {}} />)
+      screen.getByTestId('start-when-earlier').click()
+      await screen.findByTestId('start-when-pickdate')
+      screen.getByTestId('start-when-pickdate').click()
+      screen.getByTestId('start-kind-toggle').click()
+      await screen.findByTestId('start-kind-other')
+      expect(screen.getByRole('dialog', { name: 'Start a batch' })).toBeTruthy()
+      await expectNoA11yViolations(container, { label: 'StartBatchSheet', rules: NEW_RULES })
+    })
   })
 
   // axe going quiet proves the label is no longer PROHIBITED. It does not prove the label now
