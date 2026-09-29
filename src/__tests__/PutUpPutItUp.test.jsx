@@ -241,13 +241,18 @@ describe('Put it up — the one keyed write', () => {
     expect(bodyOf(putUps()[0]).rows.map(r => r.place)).toEqual([{ id: 'loc-cf1' }, { id: 'loc-cf1' }])
   })
 
+  // Release F (amended in the same commit): added-at-the-end goes through the line search (LineAdder),
+  // so a typed addition is built by lines.js — the same keyed body, now with the ferment fields when
+  // they are answered.
   it('an added-at-the-end line carries its own key and the typed amount', async () => {
     await openPutUp()
     await fillMinimum()
     await tap('putup-row-0-more')
-    fireEvent.change(screen.getByTestId('putup-row-0-added-line-name'), { target: { value: 'vinegar' } })
-    fireEvent.change(screen.getByTestId('putup-row-0-added-line-qty'), { target: { value: '72' } })
-    await tap('putup-row-0-added-line-add')
+    await tap('putup-row-0-added-open')
+    fireEvent.change(screen.getByTestId('putup-row-0-added-add-name'), { target: { value: 'vinegar' } })
+    fireEvent.change(screen.getByTestId('putup-row-0-added-add-qty'), { target: { value: '72' } })
+    await tap('putup-row-0-added-add-submit')
+    expect(screen.getByTestId('putup-row-0-added-line').textContent).toBe('vinegar · 72 g')
     await tap('putup-finish')
     await waitFor(() => expect(putUps()).toHaveLength(1))
     const [line] = bodyOf(putUps()[0]).rows[0].added_lines
@@ -388,5 +393,91 @@ describe('Put it up — Not sure on the wire (contract-F §2.4, the 1b Lambda pu
     await tap('putup-finish')
     await waitFor(() => expect(putUps()).toHaveLength(1))
     expect(bodyOf(putUps()[0]).when).toEqual({ date: null, precision: 'unknown' })
+  })
+})
+
+// Release F (06 §3.6, §4 item 7; HS-I3; Dave: "fresh ingredients added at the final step, may or may not
+// be cooked") — the additions go through the same line search; the rows gain Cooked and a typed heat;
+// the sitting gains Mash in. A sitting may name a jar ONCE (the ferment Lambda refuses a second draw
+// from one jar in one put-up), so the sheet never offers a jar it has already named.
+describe('Put it up — release F additions', () => {
+  const REAPER = { preservation_log_id: 'j-reaper', label: 'Reaper, frozen', method: 'whole_freeze', stock_mode: 'weighed',
+    quantity_value: '100', quantity_unit: 'g', package_count: 1, remaining_count: 1, remaining_amount: '100', suggested_form: 'frozen' }
+  const withSearch = () => wire({ other: () => Promise.resolve({}), putUp: () => Promise.resolve({ stage: { id: 'ksl-1' }, jars: [JAR] }) })
+  beforeEach(() => {
+    withSearch()
+    const base = fetchMock.getMockImplementation()
+    fetchMock.mockImplementation((path, o = {}) => (String(path).startsWith('/api/kitchen-batches/line-search')
+      ? Promise.resolve({ plantings: [], put_ups: [REAPER] }) : base(path, o)))
+  })
+
+  it('a draw added at the end (8 g from the frozen reaper bag) is a keyed put_up line; fresh or cooked only', async () => {
+    await openPutUp()
+    await fillMinimum()
+    await tap('putup-row-0-more')
+    await tap('putup-row-0-added-open')
+    fireEvent.change(screen.getByTestId('putup-row-0-added-add-name'), { target: { value: 'rea' } })
+    await waitFor(() => expect(screen.getByTestId('putup-row-0-added-add-hit-jar:j-reaper')).toBeTruthy())
+    await tap('putup-row-0-added-add-hit-jar:j-reaper')
+    fireEvent.change(screen.getByTestId('putup-row-0-added-add-qty'), { target: { value: '8' } })
+    await tap('putup-row-0-added-add-more')
+    expect(within(screen.getByRole('group', { name: 'Form' })).getAllByRole('button').map(b => b.textContent)).toEqual(['Fresh', 'Cooked'])
+    await tap('putup-row-0-added-add-submit')
+    await tap('putup-finish')
+    await waitFor(() => expect(putUps()).toHaveLength(1))
+    const [line] = bodyOf(putUps()[0]).rows[0].added_lines
+    expect({ ...line, idempotency_key: 'K' }).toEqual({ idempotency_key: 'K', input_kind: 'put_up', preservation_log_id: 'j-reaper',
+      label: 'Reaper, frozen', qty: '8', qty_unit: 'g' })
+  })
+
+  // MUTATION: drop excludeJarIds -> the named jar is offered again and this reds.
+  it('a jar named once in the sheet is not offered again', async () => {
+    await openPutUp()
+    await fillMinimum()
+    await tap('putup-row-0-more')
+    await tap('putup-row-0-added-open')
+    fireEvent.change(screen.getByTestId('putup-row-0-added-add-name'), { target: { value: 'rea' } })
+    await waitFor(() => expect(screen.getByTestId('putup-row-0-added-add-hit-jar:j-reaper')).toBeTruthy())
+    await tap('putup-row-0-added-add-hit-jar:j-reaper')
+    fireEvent.change(screen.getByTestId('putup-row-0-added-add-qty'), { target: { value: '8' } })
+    await tap('putup-row-0-added-add-submit')
+    await tap('putup-sitting-more')
+    await tap('putup-sitting-added-open')
+    fireEvent.change(screen.getByTestId('putup-sitting-added-add-name'), { target: { value: 'rea' } })
+    await waitFor(() => expect(screen.getByTestId('putup-sitting-added-add-hits')).toBeTruthy())
+    expect(screen.queryByTestId('putup-sitting-added-add-hit-jar:j-reaper')).toBeNull()
+  })
+
+  it('the body refuses a jar named twice, in words', async () => {
+    const { putUpBody, newRow } = await import('../components/putup/putItUp.js')
+    const draw = { idempotency_key: 'k1', input_kind: 'put_up', preservation_log_id: 'j-reaper', qty: '8', qty_unit: 'g', label: 'Reaper' }
+    const r = putUpBody({ key: 'k', when: { date: '2026-09-29', precision: 'day' }, method: 'hot_sauce',
+      rows: [{ ...newRow(), place: { key: 'id:p', id: 'p', label: 'Fridge', kind: 'fridge' }, lines: [draw] }],
+      sittingLines: [{ ...draw, idempotency_key: 'k2' }], batch: {} })
+    expect(r).toEqual({ error: 'That jar is named twice in this put-up — take one out.', field: 'lines' })
+  })
+
+  it('Cooked after blending and a typed heat ride on the row; Mash in on the sitting (Ferment)', async () => {
+    await openPutUp()
+    await fillMinimum()
+    await tap('putup-row-0-more')
+    await tap('putup-row-0-cooked')
+    fireEvent.change(screen.getByTestId('putup-row-0-heat'), { target: { value: '1700–5300' } })
+    await tap('putup-sitting-more')
+    fireEvent.change(screen.getByTestId('putup-made'), { target: { value: '256' } })
+    fireEvent.change(screen.getByTestId('putup-mash'), { target: { value: '198' } })
+    await tap('putup-finish')
+    await waitFor(() => expect(putUps()).toHaveLength(1))
+    const body = bodyOf(putUps()[0])
+    expect(body.rows[0]).toMatchObject({ cooked: true, shu_est_low: 1700, shu_est_high: 5300 })
+    expect(body.made_g).toBe('256')
+    expect(body.mash_in_g).toBe('198')
+  })
+
+  it('Mash in is a Ferment field', async () => {
+    await openPutUp(APPLES)
+    await tap('putup-sitting-more')
+    expect(screen.queryByTestId('putup-mash')).toBeNull()
+    expect(screen.getByTestId('putup-made')).toBeTruthy()
   })
 })

@@ -63,9 +63,12 @@ function Stepper({ value, onChange, disabled, name, idPrefix }) {
   )
 }
 
+// `pinnable` false keeps the Add button in the flow — inside a sheet whose own footer is pinned, a
+// second pinned bar would sit on it. `excludeJarIds`: jars the host has already named (a put-up sitting
+// may draw from a jar once), left out of the matches.
 export default function LineAdder({
   lines = [], onAdd, idPrefix = 'line-add', disabled = false, forms = KITCHEN_FORMS, preset = null,
-  presetSeq = 0, label = 'What went in?', addLabel = 'Add', onStarted,
+  presetSeq = 0, label = 'What went in?', addLabel = 'Add', onStarted, pinnable = true, excludeJarIds = [],
 }) {
   const { fetch } = useApiFetch()
   const unit0 = useMemo(() => defaultUnit(lines), [lines])
@@ -155,10 +158,11 @@ export default function LineAdder({
   const planting = src?.kind === 'planting' ? src.hit : null
   const unitChoices = weighed ? MASS_CHIPS : QUICK_UNITS
   const after = weighed ? gramsLeftAfter(jar, draft.qty, draft.unit) : null
-  const pinned = focused === 'name' || focused === 'qty'
+  const pinned = pinnable && (focused === 'name' || focused === 'qty')
+  const jarHits = hits ? hits.put_ups.filter(h => !excludeJarIds.includes(h.preservation_log_id)) : []
   const rating = offerListedHeat(draft) || String(draft.rating ?? '').trim() !== ''
   const q = query.trim()
-  const exactHit = hits && [...hits.plantings, ...hits.put_ups].some(h => String(h.label ?? '').trim().toLowerCase() === q.toLowerCase())
+  const exactHit = hits && [...hits.plantings, ...(hits.put_ups ?? [])].some(h => String(h.label ?? '').trim().toLowerCase() === q.toLowerCase())
 
   return (
     <div data-testid={idPrefix} style={{ marginTop: T.space.sm }}>
@@ -191,7 +195,7 @@ export default function LineAdder({
               </button>
             </li>
           ))}
-          {hits.put_ups.map(h => (
+          {jarHits.map(h => (
             <li key={hitKey(h)}>
               <button type="button" style={hitBtn} data-testid={`${idPrefix}-hit-${hitKey(h)}`}
                 onClick={() => pick({ kind: 'jar', hit: h })}>

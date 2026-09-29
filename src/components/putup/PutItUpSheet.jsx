@@ -38,15 +38,16 @@ import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/she
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
+import LineAdder from './LineAdder.jsx'
+import { lineWords } from './lines.js'
 import {
   PUT_IT_UP_TITLE, FINISH_CTA, LATER_CTA, PUT_IT_UP_SHEET, WHEN_CHIPS, estimateChips, preselectWhen,
   resolveWhen, METHOD_LABELS, ALL_PUT_UP_METHODS, methodChipsForKind, RAW_METHODS, TEXTURE_METHODS,
   PH_METHODS, TEXTURE_CHIPS, RAW_LABEL, RAW_HINT, IN_OIL_LABEL, containerChoices, placeChips, newRow,
-  rowSummary, rowCount, previewDiscard, groupPreviews, putUpBody, completionStub, effectiveRows,
+  rowSummary, rowCount, previewDiscard, groupPreviews, putUpBody, completionStub, effectiveRows, drawnJarIds,
 } from './putItUp.js'
 
 const FOOTER_PX = 132
-const LINE_UNITS = ['g', 'ml', 'count']
 const NEW_PLACE_KINDS = [
   { kind: 'fridge', label: 'Fridge' }, { kind: 'deep_freezer', label: 'Freezer' },
   { kind: 'pantry', label: 'Pantry shelf' }, { kind: 'cold_storage', label: 'Cellar' },
@@ -55,16 +56,21 @@ const NEW_PLACE_KINDS = [
 
 export { mintKey }
 
-const EMPTY_SITTING = { lines: [], madeG: '', nextTime: '' }
+const EMPTY_SITTING = { lines: [], madeG: '', mashG: '', nextTime: '' }
 
 function isPlace(p) {
   return p === null || (!!p && typeof p === 'object' && typeof p.label === 'string' && typeof p.key === 'string')
 }
-function isLine(l) { return !!l && typeof l === 'object' && typeof l.label === 'string' && typeof l.key === 'string' }
+// A line in a draft: a release-F line body (it carries its own key), or the 1b typed shape.
+function isLine(l) {
+  return !!l && typeof l === 'object'
+    && ((typeof l.input_kind === 'string' && typeof l.idempotency_key === 'string') || (typeof l.label === 'string' && typeof l.key === 'string'))
+}
 function isRow(r) {
   return !!r && typeof r === 'object' && typeof r.count === 'string' && typeof r.name === 'string'
     && typeof r.ph === 'string' && isPlace(r.place) && Array.isArray(r.lines) && r.lines.every(isLine)
     && typeof r.inherit === 'boolean'
+    && (r.cooked === undefined || typeof r.cooked === 'boolean') && (r.heat === undefined || typeof r.heat === 'string')
     && (r.container === null || (!!r.container && typeof r.container.label === 'string'))
     && !!r.discard && ['auto', 'date', 'none'].includes(r.discard.mode)
 }
@@ -75,7 +81,8 @@ export function isPutItUpDraft(d) {
     && (d.estimate === null || typeof d.estimate === 'string') && typeof d.pickedDate === 'string'
     && (d.method === null || typeof d.method === 'string')
     && Array.isArray(d.rows) && d.rows.length > 0 && d.rows.every(isRow)
-    && !!d.sitting && Array.isArray(d.sitting.lines) && typeof d.sitting.madeG === 'string'
+    && !!d.sitting && Array.isArray(d.sitting.lines) && d.sitting.lines.every(isLine) && typeof d.sitting.madeG === 'string'
+    && (d.sitting.mashG === undefined || typeof d.sitting.mashG === 'string')
     && typeof d.sitting.nextTime === 'string'
 }
 
@@ -123,27 +130,21 @@ function ToggleChips({ label, options, value, onChange, disabled, idPrefix, hint
   )
 }
 
-// Lines added at the end (to one row's jars, or to every jar of the sitting). Typed names in 1b; the
-// line search arrives with the ferment path and fills the same list.
-function AddedLines({ lines, onChange, disabled, idPrefix, label }) {
-  const [name, setName] = useState('')
-  const [qty, setQty] = useState('')
-  const [unit, setUnit] = useState('g')
-  const add = () => {
-    const l = name.trim()
-    if (!l) return
-    onChange([...lines, { key: mintKey(), label: l, qty: qty.trim(), unit }])
-    setName(''); setQty('')
-  }
+// Lines added at the end (to one row's jars, or to every jar of the sitting) — release F: through the
+// same line search as What went in (06 §3.6, HS-I3: a pick, a planting, a draw such as "8 g from the
+// frozen reaper bag", or typed), taking form (fresh or cooked, per Dave), brand, note and listed heat.
+// Each is a whole keyed line body; the sheet sends them with the sitting in its one write.
+function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, excludeJarIds }) {
+  const [open, setOpen] = useState(false)
   return (
     <div data-testid={`${idPrefix}-lines`} style={{ marginBottom: T.space.sm }}>
       <span style={labelChrome} aria-hidden="true">{label}<span style={optionalMarkChrome}>optional</span></span>
       {lines.length > 0 && (
         <ul style={{ listStyle: 'none', margin: '0 0 6px', padding: 0 }}>
           {lines.map((l, i) => (
-            <li key={`${l.label}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, color: P.dark, fontSize: T.type.sm }}>
-              <span style={{ flex: 1 }} data-testid={`${idPrefix}-line`}>{[l.label, l.qty ? `${l.qty} ${l.unit}` : null].filter(Boolean).join(' · ')}</span>
-              <button type="button" disabled={disabled} aria-label={`Take out ${l.label}`}
+            <li key={`${l.idempotency_key ?? l.key ?? i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, color: P.dark, fontSize: T.type.sm }}>
+              <span style={{ flex: 1 }} data-testid={`${idPrefix}-line`}>{lineWords(l.input_kind ? l : { label: l.label, qty: l.qty || null, qty_unit: l.qty ? l.unit : null })}</span>
+              <button type="button" disabled={disabled} aria-label={`Take out ${l.label ?? 'that'}`}
                 onClick={() => onChange(lines.filter((_, j) => j !== i))}
                 style={{ minWidth: 48, minHeight: 48, background: 'none', border: 'none', color: P.light, cursor: 'pointer', fontFamily: 'inherit' }}>
                 ×
@@ -152,20 +153,14 @@ function AddedLines({ lines, onChange, disabled, idPrefix, label }) {
           ))}
         </ul>
       )}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-        <input type="text" aria-label={`${label} — name`} data-testid={`${idPrefix}-line-name`} value={name}
-          disabled={disabled} placeholder="e.g. vinegar" maxLength={120} onChange={e => setName(e.target.value)}
-          style={{ ...inputChrome(false), flex: '2 1 140px', scrollMarginBottom: FOOTER_PX }} />
-        <input type="text" inputMode="decimal" aria-label={`${label} — how much`} data-testid={`${idPrefix}-line-qty`}
-          value={qty} disabled={disabled} onChange={e => setQty(e.target.value)}
-          style={{ ...inputChrome(false), flex: '1 1 64px', width: 64, scrollMarginBottom: FOOTER_PX }} />
-        <select aria-label={`${label} — unit`} value={unit} disabled={disabled} onChange={e => setUnit(e.target.value)}
-          style={{ ...inputChrome(false), flex: '0 0 auto', width: 84 }}>
-          {LINE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-        </select>
-        <button type="button" disabled={disabled || !name.trim()} data-testid={`${idPrefix}-line-add`} onClick={add}
-          style={{ ...quietLink, minHeight: 48, minWidth: 48, justifyContent: 'center', padding: '2px 8px' }}>Add</button>
-      </div>
+      {open ? (
+        <LineAdder lines={batchLines} idPrefix={`${idPrefix}-add`} disabled={disabled} forms={['fresh', 'cooked']}
+          label="What was added?" addLabel="Add it" pinnable={false} excludeJarIds={excludeJarIds}
+          onAdd={async (body) => { onChange([...lines, body]); setOpen(false); return true }} />
+      ) : (
+        <button type="button" disabled={disabled} data-testid={`${idPrefix}-open`} onClick={() => setOpen(true)}
+          style={{ ...quietLink, minHeight: 48 }}>+ Add something</button>
+      )}
     </div>
   )
 }
@@ -212,7 +207,7 @@ function PlacePicker({ chips, value, onChange, disabled, idPrefix, required, row
 
 // `row` is the row as stored (it may inherit); `shown` is the same row with the inherited container
 // and place resolved, which is what every word on screen describes.
-function RowEditorBlock({ row, shown, index, rows, method, batch, places, containers, open, onToggle, onChange, onRemove, onKeepDrying, disabled, previews }) {
+function RowEditorBlock({ row, shown, index, rows, method, batch, places, containers, open, onToggle, onChange, onRemove, onKeepDrying, disabled, previews, batchLines, excludeJarIds }) {
   const n = index + 1
   const name = row.name.trim() || batch.label
   const rowName = `row ${n}`
@@ -278,7 +273,12 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
             placeholder={batch.label} maxLength={120} disabled={disabled} onChange={e => set({ name: e.target.value })}
             style={{ ...inputChrome(false), marginBottom: T.space.sm, scrollMarginBottom: FOOTER_PX }} />
           <AddedLines label="Added at the end" lines={row.lines} disabled={disabled} idPrefix={`putup-row-${index}-added`}
-            onChange={lines => set({ lines })} />
+            batchLines={batchLines} excludeJarIds={excludeJarIds} onChange={lines => set({ lines })} />
+          {/* Release F (06 §3.6): cooked after blending is a RECORD — no date reads it. */}
+          <div role="group" aria-label="Cooked after blending" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: T.space.sm }}>
+            <SelectChip touch active={row.cooked === true} disabled={disabled} data-testid={`putup-row-${index}-cooked`}
+              onClick={() => set({ cooked: row.cooked !== true })}>Cooked after blending</SelectChip>
+          </div>
           <div role="group" aria-label="Raw or in oil" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: T.space.sm }}>
             {RAW_METHODS.has(method) && (
               <SelectChip touch active={row.isRaw} disabled={disabled} data-testid={`putup-row-${index}-raw`}
@@ -306,6 +306,13 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
                 idPrefix={`putup-row-${index}-ph`} inputStyle={{ scrollMarginBottom: FOOTER_PX }} />
             </div>
           )}
+          <div style={{ marginBottom: T.space.sm }}>
+            <label htmlFor={`putup-row-${index}-heat`} style={labelChrome}>Heat, if you know it (SHU)<span style={optionalMarkChrome}>optional</span></label>
+            <input id={`putup-row-${index}-heat`} type="text" data-testid={`putup-row-${index}-heat`} value={row.heat ?? ''} placeholder="e.g. 1700–5300"
+              disabled={disabled} onChange={e => set({ heat: e.target.value })}
+              style={{ ...inputChrome(false), width: 180, scrollMarginBottom: FOOTER_PX }} />
+            <div style={{ marginTop: 4, color: P.light, fontSize: '0.74rem' }}>Or work it out from the put-up once it is saved.</div>
+          </div>
           <ToggleChips label="Discard by" disabled={disabled} idPrefix={`putup-row-${index}-discard`}
             options={[{ value: 'date', label: 'From the label' }, { value: 'none', label: 'No date' }]}
             value={row.discard.mode === 'auto' ? null : row.discard.mode}
@@ -332,13 +339,15 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
   )
 }
 
-export default function PutItUpSheet({ open, batch, onClose, onDone, onChanged, now }) {
+// `lines` (release F): the batch's live lines, for the additions' unit preselect. Optional — the card's
+// door has no lines in hand and the additions then preselect g.
+export default function PutItUpSheet({ open, batch, lines = [], onClose, onDone, onChanged, now }) {
   if (!open || !batch) return null
   // Keyed on the batch so switching from one crock straight to another never carries a row across.
-  return <PutItUpOpen key={batch.id} batch={batch} onClose={onClose} onDone={onDone} onChanged={onChanged} now={now} />
+  return <PutItUpOpen key={batch.id} batch={batch} lines={lines} onClose={onClose} onDone={onDone} onChanged={onChanged} now={now} />
 }
 
-function PutItUpOpen({ batch, onClose, onDone, onChanged, now }) {
+function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now }) {
   const { fetch } = useApiFetch()
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
   const draftKey = useSheetDraftKey(PUT_IT_UP_SHEET, batch.id)
@@ -391,7 +400,7 @@ function PutItUpOpen({ batch, onClose, onDone, onChanged, now }) {
 
   const dirty = chip !== preChip || estimate != null || pickedDate !== '' || method != null
     || rows.length > 1 || JSON.stringify(rows[0]) !== JSON.stringify(newRow())
-    || sitting.lines.length > 0 || sitting.madeG !== '' || sitting.nextTime !== ''
+    || sitting.lines.length > 0 || sitting.madeG !== '' || (sitting.mashG ?? '') !== '' || sitting.nextTime !== ''
 
   // The key is minted when the sheet first becomes dirty and never changes afterwards (V4 §6.5).
   useEffect(() => { if (dirty && !key) setKey(mintKey()) }, [dirty, key])
@@ -428,7 +437,7 @@ function PutItUpOpen({ batch, onClose, onDone, onChanged, now }) {
     if (!w || w.error) { setErr(w?.error ?? 'When was it put up? Pick one — or Not sure.'); return }
     const useKey = key || mintKey()
     if (!key) setKey(useKey)
-    const res = putUpBody({ key: useKey, when: w.when, method, rows, sittingLines: sitting.lines, madeG: sitting.madeG,
+    const res = putUpBody({ key: useKey, when: w.when, method, rows, sittingLines: sitting.lines, madeG: sitting.madeG, mashG: sitting.mashG ?? '',
       nextTime: sitting.nextTime, finish, batch })
     if (res.error) {
       setErr(res.error)
@@ -519,6 +528,7 @@ function PutItUpOpen({ batch, onClose, onDone, onChanged, now }) {
         {rows.map((r, i) => (
           <RowEditorBlock key={i} row={r} shown={shownRows[i]} index={i} rows={rows} method={method} batch={batch} places={chips}
             containers={containers} open={openRow === i} disabled={saving} previews={previews}
+            batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)}
             onToggle={() => setOpenRow(o => (o === i ? null : i))}
             onChange={next => { updateRow(i, next); setErr(null) }}
             onRemove={() => { setRows(rs => rs.filter((_, j) => j !== i)); setOpenRow(null) }}
@@ -537,11 +547,25 @@ function PutItUpOpen({ batch, onClose, onDone, onChanged, now }) {
           {sittingOpen && (
             <div data-testid="putup-sitting" style={{ marginTop: 6 }}>
               <AddedLines label="Added at the end to every jar" lines={sitting.lines} disabled={saving} idPrefix="putup-sitting-added"
+                batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)}
                 onChange={lines => setSitting(s => ({ ...s, lines }))} />
-              <label htmlFor={madeId} style={labelChrome}>Made ___ g in all<span style={optionalMarkChrome}>optional</span></label>
-              <input id={madeId} type="text" inputMode="decimal" data-testid="putup-made" value={sitting.madeG} disabled={saving}
-                onChange={e => setSitting(s => ({ ...s, madeG: e.target.value }))}
-                style={{ ...inputChrome(false), width: 120, marginBottom: T.space.sm, scrollMarginBottom: FOOTER_PX }} />
+              {/* "Mash in ___ g" beside "Made ___ g in all" (Ferment; 06 §4 item 7). */}
+              <div style={{ display: 'flex', gap: T.space.md, flexWrap: 'wrap' }}>
+                <div>
+                  <label htmlFor={madeId} style={labelChrome}>Made ___ g in all<span style={optionalMarkChrome}>optional</span></label>
+                  <input id={madeId} type="text" inputMode="decimal" data-testid="putup-made" value={sitting.madeG} disabled={saving}
+                    onChange={e => setSitting(s => ({ ...s, madeG: e.target.value }))}
+                    style={{ ...inputChrome(false), width: 120, marginBottom: T.space.sm, scrollMarginBottom: FOOTER_PX }} />
+                </div>
+                {batch.kind === 'ferment' && (
+                  <div>
+                    <label htmlFor={`${madeId}-mash`} style={labelChrome}>Mash in ___ g<span style={optionalMarkChrome}>optional</span></label>
+                    <input id={`${madeId}-mash`} type="text" inputMode="decimal" data-testid="putup-mash" value={sitting.mashG ?? ''} disabled={saving}
+                      onChange={e => setSitting(s => ({ ...s, mashG: e.target.value }))}
+                      style={{ ...inputChrome(false), width: 120, marginBottom: T.space.sm, scrollMarginBottom: FOOTER_PX }} />
+                  </div>
+                )}
+              </div>
               <label htmlFor={nextTimeId} style={labelChrome}>Next time…<span style={optionalMarkChrome}>optional</span></label>
               <textarea id={nextTimeId} rows={2} data-testid="putup-nexttime" value={sitting.nextTime} disabled={saving}
                 onChange={e => setSitting(s => ({ ...s, nextTime: e.target.value }))}

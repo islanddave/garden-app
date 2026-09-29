@@ -17,6 +17,7 @@ import * as engine from '../../../lambda/preservation/shelfLife.js'
 import {
   parseYmd, toYmd, shortDay, putUpDateWords, basisWords, KIND_WORDS, ESTIMATED_PRECISIONS, countedSize,
 } from './jarWords.js'
+import { parseRating } from './fermentMath.js'
 
 export const PUT_IT_UP_CTA = 'Put it up'
 export const PUT_IT_UP_TITLE = 'Put it up'
@@ -210,10 +211,13 @@ export function placeChips(places = []) {
 // Rows 2..N INHERIT container and place from the row above (§2.4) — live, not copied once: changing
 // row 1's place moves every inheriting row with it, until that row's own "Change" is tapped, which
 // takes the values it was showing as its own.
+// Release F adds `cooked` ("Cooked after blending?", a record only) and `heat` (a typed heat estimate
+// for the row's jars, basis typed) — both optional, absent from the body when unanswered.
 export function newRow(prev = null) {
   return {
     count: '1', inherit: !!prev, container: null, place: null,
     name: '', lines: [], isRaw: false, inOil: false, texture: null, ph: '', discard: { mode: 'auto', date: '' },
+    cooked: false, heat: '',
   }
 }
 
@@ -298,14 +302,31 @@ export function groupPreviews(previews) {
 
 // ── The one body (§5.1) ──────────────────────────────────────────────────────────────────────────
 // contract-F §2.2: every line carries its own idempotency_key, minted when the line was added and kept
-// in the draft, so a replayed put-up names the same lines.
+// in the draft, so a replayed put-up names the same lines. Release F's additions are whole line bodies
+// already (LineAdder → lines.js lineBody: a planting, a pick, a draw, or a typed name, with form, brand,
+// note and listed heat), passed through as built; the 1b shape ({key, label, qty, unit}) is still read.
 function lineBody(l) {
+  if (l && typeof l.input_kind === 'string') {
+    const { ordinal: _o, ...body } = l
+    return body
+  }
   const label = String(l?.label ?? '').trim()
   if (!label) return null
   const qty = String(l?.qty ?? '').trim()
   const out = { input_kind: 'other', idempotency_key: l.key, label }
   if (qty !== '' && Number.isFinite(Number(qty)) && Number(qty) > 0 && l.unit) { out.qty = qty; out.qty_unit = l.unit }
   return out
+}
+
+// The jars a sheet's lines already draw from. A sitting may name a jar once (the ferment Lambda refuses
+// a second draw from one jar in one put-up — more from it goes through a line POST), so the line search
+// in the sheet offers no jar already named here.
+export function drawnJarIds(rows, sittingLines) {
+  const ids = []
+  for (const l of [...(rows ?? []).flatMap(r => r.lines ?? []), ...(sittingLines ?? [])]) {
+    if (l?.preservation_log_id) ids.push(l.preservation_log_id)
+  }
+  return ids
 }
 
 function placeBody(place) {
@@ -317,7 +338,7 @@ function placeBody(place) {
 // { body } or { error, field, row? }. The only refusals are the three required answers (§6.3): when,
 // what it is now, and row 1's place (rows 2..N inherit). Everything else is optional and absent when
 // unanswered — an absent key, never a guessed default.
-export function putUpBody({ key, when, method, rows, sittingLines = [], madeG = '', nextTime = '', finish, batch }) {
+export function putUpBody({ key, when, method, rows, sittingLines = [], madeG = '', mashG = '', nextTime = '', finish, batch }) {
   if (!when) return { error: WHEN_ERRORS.none, field: 'when' }
   if (!method) return { error: 'What is it now? Pick one.', field: 'method' }
   const list = effectiveRows(Array.isArray(rows) && rows.length ? rows : [newRow()])
@@ -346,6 +367,10 @@ export function putUpBody({ key, when, method, rows, sittingLines = [], madeG = 
       if (!d) return { error: `Pick the discard date for row ${i + 1} — or let the app work it out.`, field: 'discard', row: i }
       row.discard_by = toYmd(d)
     }
+    if (r.cooked === true) row.cooked = true
+    const heat = parseRating(r.heat)
+    if (heat?.error) return { error: `Row ${i + 1}: ${heat.error}`, field: 'heat', row: i }
+    if (heat) { row.shu_est_low = heat.low; row.shu_est_high = heat.high }
     const lines = (r.lines ?? []).map(lineBody).filter(Boolean)
     if (lines.some(l => !l.idempotency_key)) return { error: 'Take that line out and add it again.', field: 'lines', row: i }
     if (lines.length) row.added_lines = lines
@@ -361,6 +386,12 @@ export function putUpBody({ key, when, method, rows, sittingLines = [], madeG = 
   if (sl.length) body.sitting_lines = sl
   const made = String(madeG ?? '').trim()
   if (made !== '' && Number.isFinite(Number(made)) && Number(made) > 0) body.made_g = made
+  // "Mash in ___ g" beside Made (Ferment; 06 §4 item 7): the drained solids at blend — it also prorates
+  // the heat across sittings.
+  const mash = String(mashG ?? '').trim()
+  if (mash !== '' && Number.isFinite(Number(mash)) && Number(mash) > 0) body.mash_in_g = mash
+  const drawn = drawnJarIds(rows, sittingLines)
+  if (new Set(drawn).size !== drawn.length) return { error: 'That jar is named twice in this put-up — take one out.', field: 'lines' }
   const nt = String(nextTime ?? '').trim()
   if (nt) body.next_time = nt
   return { body }
