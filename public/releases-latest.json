@@ -1,7 +1,9 @@
 {
-  "version": "4.160.0",
+  "version": "4.161.0",
   "date": "2026-09-29",
   "highlights": [
-    "Behind the scenes: a Plants lost entry is now stored as reduction_lost instead of failed, so it can never be mistaken for a failed planting. Nothing changes on screen; entries logged from an older copy of the app still save correctly."
+    "Put-Up: put-up and use-by dates now show the right day (they read a day early), and a jar kept in the fridge no longer gets a discard date borrowed from the freezer or shelf figures.",
+    "Batches: say once what kind of batch it is, use Check on it to note a look, a move or a pH reading, and start a batch from one sheet (from Going now or from Snap) that opens the new batch when you're done.",
+    "Today's Use soon band now opens the put-up list filtered to the jars to use soon."
   ]
 }
