@@ -35,10 +35,10 @@
 #        through GET, which must also carry a boolean can_edit_bar; then restored to [] and the shipped bar;
 #        then garden_group_by 'crop_type' (Type) and 'bean_use' (a bean facet), each read back, then
 #        restored (BUG-GARDENGROUPBYRESET-001: the two values the Lambda refused before)
-#     O) (after Put-Up's N, independent of the project) one fixed-name source (V5-SOURCECONTACT-001):
+#     Q) (after Put-Up's N, independent of the project) one fixed-name source (V5-SOURCECONTACT-001):
 #        Instagram + Facebook links PATCHed and read back by id and in the list, a scheme-less link
 #        refused 400 with nothing changed, then both cleared to null and read back
-#     P) (right after D) GET /api/harvests/season-stats (V5-SEASONSTATS-001): envelope v1, the 8 sections
+#     R) (right after D) GET /api/harvests/season-stats (V5-SEASONSTATS-001): envelope v1, the 8 sections
 #        in page order, block D's planting counted, 400 on an unknown section
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
@@ -190,7 +190,7 @@ cleanup() {
       "$NAVP_URL" -d "{\"garden_group_by\": \"$NAVP_GB_RESTORE\"}" \
       && echo "✅ Cleanup: smoke account Garden grouping restored" || true
   fi
-  # Block O (V5-SOURCECONTACT-001): died between its first link PATCH and its restore. Clear the smoke
+  # Block Q (V5-SOURCECONTACT-001): died between its first link PATCH and its restore. Clear the smoke
   # source's two links, best-effort, before the session is revoked (the next run's O4 clears them anyway).
   if [[ "$SRC_DIRTY" == "true" && -n "${CLERK_SESSION_ID:-}" && -n "$SRC_ID" && -n "${STAGING_API_VARIETIES:-}" ]]; then
     local src_jwt
@@ -334,7 +334,7 @@ check_reachable "lambda:events:harvest-summary" "${STAGING_API_EVENTS%/}/api/eve
 
 # Season stats (V5-SEASONSTATS-001) rides lambda/harvests. That handler verifies the token BEFORE it
 # routes, so an unauthenticated 401 proves the Lambda is up and its module graph (season-stats.js is a
-# top-level import) loads; it does not reach the route or the stat_* views. Block P does, authed.
+# top-level import) loads; it does not reach the route or the stat_* views. Block R does, authed.
 if [[ -n "${STAGING_API_HARVESTS:-}" && "$STAGING_API_HARVESTS" != *placeholder* ]]; then
   check_reachable "lambda:harvests:season-stats" "${STAGING_API_HARVESTS%/}/api/harvests/season-stats"
 else
@@ -667,7 +667,7 @@ else
         echo "     (legit skip only if the varieties endpoint is unconfigured; the staging workflow DOES set it)"
       fi
 
-      # ── P) Season stats read (V5-SEASONSTATS-001): envelope v1, the 8 sections in page order, 400 on an
+      # ── R) Season stats read (V5-SEASONSTATS-001): envelope v1, the 8 sections in page order, 400 on an
       #       unknown section, and block D's planting counted through the stat_* views ──────────────────────
       # Placed HERE, straight after D and before D3: stat_planting dates a planting by
       # coalesce(sown_at, transplanted_at, planted_at, created_at) in ET, and D POSTs no dates, so its planting
@@ -1905,7 +1905,7 @@ else
 fi
 
 
-# ── O) A source's contact links: PATCH → GET read-back → refused bad link → PATCH to null → read-back
+# ── Q) A source's contact links: PATCH → GET read-back → refused bad link → PATCH to null → read-back
 #       (V5-SOURCECONTACT-001; L-108) — Phase 2, continued ─────────────────────────────────────────────
 # public.source has no DELETE (the route answers 405), so the block reuses ONE fixed-name row: POST it, and a
 # 409 {reason:'exists', existing} hands back existing.id (a soft-deleted one comes back 200, restored). The
@@ -1934,7 +1934,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
   }
   CLERK_JWT=$(mint_session_token)
 
-  # O0) find-or-create the fixed-name row. The stored name is taken from the answer: a 409 names the row
+  # Q0) find-or-create the fixed-name row. The stored name is taken from the answer: a 409 names the row
   # that already holds this match_key, whose casing may differ.
   SRC_B=$(mktemp)
   SRC_HTTP=$(curl -s --max-time 30 --connect-timeout 10 -X POST \
@@ -1951,7 +1951,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
     SRC_FB="https://www.facebook.com/smoke${SRC_TAG}"
     SRC_DIRTY=true
 
-    # O1) both links → GET by id → equal, name untouched.
+    # Q1) both links → GET by id → equal, name untouched.
     SRC_CODE=$(src_patch "{\"instagram_url\": \"$SRC_IG\", \"facebook_url\": \"$SRC_FB\"}")
     SRC_GOT=$(src_get '[.instagram_url, .facebook_url, .name]')
     SRC_WANT="200 $(jq -c -n --arg ig "$SRC_IG" --arg fb "$SRC_FB" --arg n "$SRC_STORED_NAME" '[$ig, $fb, $n]')"
@@ -1963,7 +1963,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
       FAIL=$((FAIL+1))
     fi
 
-    # O2) the list GET (what SourcePicker loads) carries the same links for this row.
+    # Q2) the list GET (what SourcePicker loads) carries the same links for this row.
     SRC_LIST=$(curl -s --compressed --max-time 30 --connect-timeout 10 -H "Authorization: Bearer $CLERK_JWT" "$SRC_BASE" \
       | jq -c --arg id "$SRC_ID" 'if type == "array" then ([.[] | select(.id == $id) | [.instagram_url, .facebook_url]][0]) else "not-an-array" end' 2>/dev/null || echo "unreadable")
     if [[ "$SRC_LIST" == "[\"$SRC_IG\",\"$SRC_FB\"]" ]]; then
@@ -1974,7 +1974,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
       FAIL=$((FAIL+1))
     fi
 
-    # O3) a scheme-less link is refused (400, validateSourcePatch, before any read or write) and changes nothing.
+    # Q3) a scheme-less link is refused (400, validateSourcePatch, before any read or write) and changes nothing.
     CLERK_JWT=$(mint_session_token)
     SRC_CODE=$(src_patch '{"instagram_url": "instagram.com/not-a-full-link"}')
     SRC_GOT=$(src_get '.instagram_url')
@@ -1986,7 +1986,7 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_VARIETI
       FAIL=$((FAIL+1))
     fi
 
-    # O4) restore: null clears both (a present key with null IS a clear on this route), read back.
+    # Q4) restore: null clears both (a present key with null IS a clear on this route), read back.
     SRC_CODE=$(src_patch '{"instagram_url": null, "facebook_url": null}')
     [[ "$SRC_CODE" == "200" ]] && SRC_DIRTY=false
     SRC_GOT=$(src_get '[.instagram_url, .facebook_url]')
