@@ -2,7 +2,7 @@
 // heat units, with the crop's typical (median) value as a dashed gold line. Drawn once for tomatoes
 // and once for peppers; pepper bars take their heat band's colour.
 import React from 'react'
-import { ChartFrame, Txt, Line, Rect, Dot, XAxis } from './ChartFrame.jsx'
+import { ChartFrame, Txt, TxtBox, Line, Rect, Dot, XAxis } from './ChartFrame.jsx'
 import { linear, niceMax, ticks, truncate } from './geom.js'
 import { v, BAND_COLOR } from '../palette.js'
 import { fmtInt, num, isNum } from '../format.js'
@@ -50,7 +50,7 @@ export default function CultivarClockChart({ rows, median, crop, title }) {
           <Txt x={X0 - 6} y={r.cy + 4} anchor="end" size={11.5}>{r.name}</Txt>
           <Rect x={X0} y={r.cy - 2} w={r.x - X0} h={4} fill={r.color} rx={2} />
           <Dot x={r.x} y={r.cy} r={4} fill={r.color} />
-          <Txt x={r.x + 7} y={r.cy + 4} tone="muted" size={11}>{r.text}</Txt>
+          <TxtBox x={r.x + 7} y={r.cy + 4} tone="muted" size={11}>{r.text}</TxtBox>
         </g>
       ))}
       <XAxis scale={L.x} values={L.ticks} y={L.axisY} format={fmtInt} />

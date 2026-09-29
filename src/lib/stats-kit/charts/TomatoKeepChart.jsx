@@ -2,7 +2,7 @@
 // against the typical plant (dashed gold). Colour carries the server's verdict — grow again (sage),
 // fine (grey), rethink (rust) — and a hollow head marks a plant that went in late (August).
 import React from 'react'
-import { ChartFrame, Txt, Line, Dot, XAxis } from './ChartFrame.jsx'
+import { ChartFrame, Txt, TxtBox, Line, Dot, XAxis } from './ChartFrame.jsx'
 import { linear, niceMax, ticks, truncate } from './geom.js'
 import { v } from '../palette.js'
 import { fmtLb, num, isNum } from '../format.js'
@@ -58,7 +58,7 @@ export default function TomatoKeepChart({ section }) {
             <Txt x={X0 - 6} y={r.cy + 4} anchor="end" tone={r.strong ? 'key' : 'body'}>{r.name}</Txt>
             <Line x1={X0} y1={r.cy} x2={r.x} y2={r.cy} stroke={r.color} width={2} />
             <Dot x={r.x} y={r.cy} r={4.5} fill={r.color} hollow={r.late} />
-            <Txt x={r.x + 8} y={r.cy + 4} tone="muted">{r.text}</Txt>
+            <TxtBox x={r.x + 8} y={r.cy + 4} tone="muted">{r.text}</TxtBox>
           </g>
         ))}
         <XAxis scale={L.x} values={L.ticks} y={L.bottom} label="lb picked per plant" />

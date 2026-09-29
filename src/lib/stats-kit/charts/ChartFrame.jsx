@@ -22,18 +22,39 @@ export function ChartFrame({ height, label, testId, children }) {
 
 const TONE = { ink: 'ink', key: 'ink', body: 'ink-2', muted: 'ink-3' }
 
+// A card-coloured outline painted under each glyph, so a label that a reference line, gridline or
+// bar end runs through stays legible (the 426px render showed "typical" lines striking through values).
+// paint-order rides as an attribute, not in `style`: jsdom's CSSStyleDeclaration drops the property it
+// does not know, so a style-only halo serialises (and renders from a DOM dump) as a stroke OVER the text.
+const HALO = { stroke: v('card'), strokeWidth: 5, strokeLinejoin: 'round' }
+
 // tone: 'key' (bold ink), 'body' (ink-2), 'muted' (ink-3, small). `fill` overrides the tone colour.
-export function Txt({ x, y, anchor = 'start', tone = 'body', size, fill, weight, children }) {
+// halo={false} for text drawn on a coloured mark rather than on the card.
+export function Txt({ x, y, anchor = 'start', tone = 'body', size, fill, weight, halo = true, children }) {
   const fontSize = size ?? (tone === 'muted' ? FS_SM : FS)
   return (
     <text
       x={f1(x)}
       y={f1(y)}
       textAnchor={anchor}
-      style={{ fontSize, fill: fill ?? v(TONE[tone] ?? 'ink-2'), fontWeight: weight ?? (tone === 'key' ? 600 : 400) }}
+      paintOrder={halo ? 'stroke' : undefined}
+      style={{ fontSize, fill: fill ?? v(TONE[tone] ?? 'ink-2'), fontWeight: weight ?? (tone === 'key' ? 600 : 400), ...(halo ? HALO : null) }}
     >
       {children}
     </text>
+  )
+}
+
+// A start-anchored value label on a card-coloured box, for labels that sit where a reference line or
+// gridline crosses them (the halo alone leaves the line showing in the gaps between glyphs). Width is
+// an estimate — about 0.56 em a character for the app's tabular figures — padded 2 units each side.
+export function TxtBox({ x, y, size = FS_SM, children, ...rest }) {
+  const w = String(children ?? '').length * size * 0.56 + 4
+  return (
+    <g>
+      <Rect x={x - 2} y={y - size + 1} w={w} h={size + 2} fill={v('card')} />
+      <Txt x={x} y={y} size={size} {...rest}>{children}</Txt>
+    </g>
   )
 }
 

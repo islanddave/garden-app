@@ -12,7 +12,8 @@ const RIGHT = 388
 const MID = 150
 const UP = 110
 const DOWN = 118
-const HEIGHT = 318
+const HEIGHT = 334
+const MONTH_Y = 310
 
 export function layoutWeekly(section) {
   const weeks = (section?.series?.weeks ?? []).filter((w) => dayNum(w?.week_start) != null)
@@ -44,7 +45,7 @@ export function layoutWeekly(section) {
   const tx = LEFT + ti * cw + cw / 2
   return {
     height: HEIGHT, yu, yd, hMax, fMax, cw, cols,
-    bracket: ti > hi && num(weeks[ti].tomato_fruit) > 0 ? { hx, tx, y: MID + 128, weeks: ti - hi } : null,
+    bracket: ti > hi && num(weeks[ti].tomato_fruit) > 0 ? { hx, tx, y: MID + 138, weeks: ti - hi } : null,
   }
 }
 
@@ -74,11 +75,12 @@ export default function WeeklyHeatFruitChart({ section }) {
           {c.cool > 0 && <Txt x={c.x0 + L.cw / 2} y={26} anchor="middle" size={11} fill={v('water')} weight={600}>{c.cool}</Txt>}
           <Rect {...c.tom} fill={v('tomato')} rx={1} />
           <Rect {...c.pep} fill={v('pepper')} rx={1} />
-          {c.month && <Txt x={c.x0 + 1} y={L.height - 8} tone="muted">{c.month}</Txt>}
+          {c.month && <Txt x={c.x0 + 1} y={MONTH_Y} tone="muted">{c.month}</Txt>}
         </g>
       ))}
       <Line x1={LEFT} y1={MID} x2={RIGHT} y2={MID} stroke={v('ink-3')} />
-      <Txt x={LEFT + 2} y={MID + 16} tone="muted">
+      {/* Under the month row, not beside the centre line: at 426px the legend sat on the first pick bars. */}
+      <Txt x={LEFT} y={L.height - 4} tone="muted">
         picked: <tspan style={{ fill: v('tomato'), fontWeight: 600 }}>tomatoes</tspan> · <tspan style={{ fill: v('pepper'), fontWeight: 600 }}>peppers</tspan>
       </Txt>
       {L.bracket && (
@@ -86,7 +88,7 @@ export default function WeeklyHeatFruitChart({ section }) {
           <Line x1={L.bracket.hx} y1={L.bracket.y} x2={L.bracket.tx} y2={L.bracket.y} stroke={v('ink-3')} width={1.2} />
           <Line x1={L.bracket.hx} y1={L.bracket.y - 4} x2={L.bracket.hx} y2={L.bracket.y + 4} stroke={v('ink-3')} width={1.2} />
           <Line x1={L.bracket.tx} y1={L.bracket.y - 4} x2={L.bracket.tx} y2={L.bracket.y + 4} stroke={v('ink-3')} width={1.2} />
-          <Txt x={(L.bracket.hx + L.bracket.tx) / 2} y={L.bracket.y - 5} anchor="middle" tone="key" size={11.5}>
+          <Txt x={(L.bracket.hx + L.bracket.tx) / 2} y={L.bracket.y - 7} anchor="middle" tone="key" size={11.5}>
             {`${L.bracket.weeks} ${plural(L.bracket.weeks, 'week')} from hottest week to most tomatoes`}
           </Txt>
         </g>
