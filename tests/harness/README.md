@@ -414,8 +414,9 @@ at nothing; `?trace=1` notes where each typed field landed and each tap's sheet 
 
 `scripts/layout-gate/putup-ferment-walk.mjs` is the instrument: every walk at 426x836 and 426x492
 (keyboard up; the stand-in nav hides while a text field has focus at that height, as `BottomNav` does),
-`--walk <name>`, `--short`, `--trace`, `--probe-nothing` (must exit 1). Not yet a package.json script or
-a CI step — version files are not a lane's.
+`--walk <name>`, `--short`, `--trace`, `--probe-nothing` (must exit 1). `npm run gate:putup-ferment`, in
+CI's build-and-test right after `gate:putup` (~81 s locally); `npm run gate:putup-ferment:probe-nothing`
+exits 1 on all ten walk/viewport pairs.
 
 ## Retired entries
 
