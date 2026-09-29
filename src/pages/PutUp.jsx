@@ -387,6 +387,9 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
       .finally(() => setDetailLoading(false))
   }, [pageFetch, batchId])
   useEffect(() => { loadDetail() }, [loadDetail])
+  // The batch this page is showing IS the one the URL names (a switch to another batch shows the new
+  // one's opening state, never the old one's body).
+  const detailOnScreen = !!detail && String(detail.id) === String(batchId)
 
   // BOTH, always. A write from the detail surface changes the row the LIST renders too (a pause moves
   // a card into the Paused group, a close removes it entirely), and a retry after a dropped response
@@ -605,15 +608,18 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
 
         {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
             only invalidation path and it re-reads BOTH this row and the list.
-            "Opening that batch…" is for a batch not on screen yet — never for the re-read after a write
-            (release F, found by the ferment walks): that swapped the whole body for the placeholder and
-            back, remounting everything under it, so each write's own answer — "Saved · Undo", "Taken
-            out · Undo", a salt step half typed — was gone by the time the re-read landed. */}
+            "Opening that batch…" and "Couldn't open that batch." are for a batch not on screen yet —
+            never for the re-read after a write (release F, found by the ferment walks): that swapped the
+            whole body out and back, remounting everything under it, so each write's own answer — "Saved ·
+            Undo", "Taken out · Undo", a salt step half typed — was gone by the time the re-read landed,
+            and a re-read that FAILED replaced a batch that was already on screen with an error. A failed
+            re-read keeps the batch and says so in one quiet line, with Try again. */}
         {batchId && (
           <div data-testid="putup-batch-mode">
             <BatchDetailView
               batch={detail} inputs={detail?.inputs ?? []} stages={detail?.stages ?? []}
-              outputs={detail?.outputs ?? []} loading={detailLoading && String(detail?.id ?? '') !== String(batchId)} error={detailError}
+              outputs={detail?.outputs ?? []} loading={detailLoading && !detailOnScreen} error={detailError && !detailOnScreen}
+              refreshFailed={detailError && detailOnScreen} refreshing={detailLoading} onRetry={loadDetail}
               nowMs={detailNowMs} onChanged={onBatchChanged}
               onRemoved={() => { loadGoing(); leaveMode() }} />
           </div>

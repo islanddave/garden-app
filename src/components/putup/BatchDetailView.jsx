@@ -495,7 +495,12 @@ function Section({ title, testId, children }) {
   )
 }
 
-export default function BatchDetailView({ batch, inputs, stages, outputs, loading, error, nowMs, onChanged, onRemoved }) {
+// `refreshFailed` (release F): the page's re-read after a write failed while this batch was already on
+// screen. The body stays — it is still the batch, a write earlier — and one quiet line says the refresh
+// did not land, with Try again (`onRetry`, disabled while `refreshing`). `error` is only ever a batch
+// that never opened.
+export default function BatchDetailView({ batch, inputs, stages, outputs, loading, error, nowMs, onChanged, onRemoved,
+  refreshFailed = false, refreshing = false, onRetry }) {
   // For the WRITES this surface makes itself (start date, pause, remove). It still issues no GET for its
   // own data — that contract is about reads, and BatchCloseField already writes the same way.
   const { fetch } = useApiFetch()
@@ -579,6 +584,17 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
       </div>
       {meta && (
         <div data-testid="batch-detail-meta" style={{ marginTop: 3, color: P.mid, fontSize: T.type.sm }}>{meta}</div>
+      )}
+      {refreshFailed && (
+        // Quiet ink, on purpose: nothing was lost — the write landed, only its read-back did not.
+        <div role="status" data-testid="batch-detail-refresh-failed"
+          style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4, marginTop: 3, color: P.mid, fontSize: T.type.sm }}>
+          <span>Couldn’t refresh this batch —</span>
+          <button type="button" data-testid="batch-detail-refresh-retry" disabled={refreshing} onClick={() => onRetry?.()}
+            style={{ ...actionLink, cursor: refreshing ? 'default' : 'pointer' }}>
+            {refreshing ? 'Trying again…' : 'Try again'}
+          </button>
+        </div>
       )}
       {isSuspended(batch) && (
         <div data-testid="batch-detail-paused" style={{ marginTop: 3, color: P.mid, fontSize: T.type.sm }}>
