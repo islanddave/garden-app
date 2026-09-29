@@ -235,6 +235,57 @@ describe('ProjectDetail — back-nav scroll restore', () => {
     expect(listCalls()).toHaveLength(3)
   })
 
+  // OPS-PROJECTDETAILSCROLLFLAKE-001. The test above went red on CI in THIS interleaving, which it
+  // only meets on a slow machine. A walk's setEventsMore(true) is rendered by a React Scheduler task,
+  // while its fetch resolves at once, so the continuation that dedupes the page away (or catches the
+  // failure) and calls setEventsMore(false) is a microtask. When the slice that started the walk runs
+  // past the Scheduler's 5 ms budget, the Scheduler yields, the microtask wins, and the flag's rise and
+  // fall fold into one commit that changes none of the walk's other deps. The walk used to stop there,
+  // with the restore held at `ready: false` for the life of the mount; now it re-runs when each
+  // request settles.
+  //
+  // Forced here by skewing performance.now() inside each walk request, so the slice that issued it
+  // reads 100 ms long (what a GC pause or a loaded CI runner does to it) and the Scheduler yields
+  // every time. Show more is disabled on any commit that shows a walk in flight, so a disabled
+  // button means the fold did NOT happen and the run proved nothing: that is the non-vacuity check.
+  // MUTATION: drop depthWalksSettled from the walk's deps -> RED, "not yet restored".
+  it.each([
+    ['a page the dedupe empties', 0, () => Promise.resolve({ events: page(1, 3), limit: 200, offset: 0, has_more: true })],
+    ['a walk request that fails', 2, () => Promise.reject(new Error('network down'))],
+  ])('restores when a walk settles before its in-flight flag ever commits: %s', async (_, failures, walkAnswer) => {
+    const realNow = performance.now.bind(performance)
+    let skew = 0
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => realNow() + skew)
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const disabledFlips = []
+    const observer = new MutationObserver(records => { disabledFlips.push(...records) })
+    try {
+      wire({ pages: {} })
+      const prev = apiFetchSpy.getMockImplementation()
+      apiFetchSpy.mockImplementation((path, opts = {}) => {
+        if (!path.startsWith('/api/events?project_id=proj-1') || (opts.method ?? 'GET') !== 'GET') return prev(path, opts)
+        if (path.endsWith('&offset=0')) return Promise.resolve({ events: page(1, 3), limit: 200, offset: 0, has_more: true })
+        skew += 100
+        return walkAnswer()
+      })
+      __seedScrollRestoreEntry('project-detail', 900, 500)
+      maxScroll = 4000
+      const { container } = render(<ProjectDetail />)
+      observer.observe(container, { subtree: true, attributes: true, attributeFilter: ['disabled'] })
+      await pumpFramesUntil(() => window.scrollTo.mock.calls.length > 0)
+      expect(window.scrollTo).toHaveBeenCalledWith(0, 900)
+      expect(listCalls()).toHaveLength(3)
+      disabledFlips.push(...observer.takeRecords())
+      const showMoreFlips = disabledFlips.filter(r => r.target.getAttribute('data-testid') === 'project-event-log-show-more')
+      expect(showMoreFlips.length, 'a walk\'s in-flight state reached the DOM, so this run never folded the flag').toBe(0)
+      expect(errSpy.mock.calls.filter(([msg]) => msg === 'load more events failed')).toHaveLength(failures)
+    } finally {
+      observer.disconnect()
+      nowSpy.mockRestore()
+      errSpy.mockRestore()
+    }
+  })
+
   it('records the depth it was showing when the user navigated away', async () => {
     wire({ pages: { 0: { events: page(1, 3), has_more: true }, 3: { events: page(4, 2), has_more: false } } })
     const { unmount } = render(<ProjectDetail />)

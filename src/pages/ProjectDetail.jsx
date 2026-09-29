@@ -398,6 +398,15 @@ export default function ProjectDetail() {
   })
   const restoredDepth = Math.min(Math.max(Number(restoredDepthRaw) || 0, 0), MAX_RESTORED_EVENTS)
   const depthWalks = useRef(0)
+  // Bumped when each walk request SETTLES, and a dep of the walk below for that reason alone
+  // (OPS-PROJECTDETAILSCROLLFLAKE-001). The other deps cannot be trusted to re-run the walk. A page
+  // the dedupe empties, or a request that fails, changes nothing but eventsMore, and that flag's rise
+  // and fall can land in ONE commit: setEventsMore(true) is rendered by a Scheduler task, a fetch that
+  // has already resolved continues in a microtask, and a slice that runs past React's 5 ms budget
+  // yields between the two. The commit after that carries exactly the deps the walk last ran with, so
+  // React never runs it again, depthRestored never flips, and the restore sits at `ready: false` for
+  // good.
+  const [depthWalksSettled, setDepthWalksSettled] = useState(0)
 
   useEffect(() => { saveEventDepth(events.length) }, [events.length, saveEventDepth])
 
@@ -408,8 +417,8 @@ export default function ProjectDetail() {
       return
     }
     depthWalks.current += 1
-    loadMoreEvents()
-  }, [depthRestored, eventsLoading, eventsMore, eventsHasMore, events.length, restoredDepth]) // eslint-disable-line react-hooks/exhaustive-deps
+    loadMoreEvents().then(() => setDepthWalksSettled(n => n + 1))
+  }, [depthRestored, eventsLoading, eventsMore, eventsHasMore, events.length, restoredDepth, depthWalksSettled]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleAddPlant(e) {
     e.preventDefault()
