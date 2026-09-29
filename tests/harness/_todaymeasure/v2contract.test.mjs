@@ -168,6 +168,20 @@ describe('today-v2 contract table', () => {
     const cellMutants = new Set(TRIGGER_CELLS.map((c) => c.killedMutant))
     for (const [n, m] of Object.entries(MUTANTS_V2)) if (m.kind === 'unit-table') expect(cellMutants.has(n)).toBe(true)
   })
+  // Integration 2 (S4g x S5 x S6): lanes built in parallel point mutants into each other's files (S5's
+  // coldRowsInNeedsCare at useNeedsCare's CARE_NEEDS line, S6's five dropRegionInOwner at GlanceCard.jsx and one at
+  // NeedsCare's FeedSuppressedList mount). The served plugin (vite.harness.v2mutant.mjs) throws on a missing pattern
+  // and replaces EVERY occurrence, so each armed real-Chrome mutant's text must occur exactly once in its file —
+  // checked here, so a merge that moves the text reds the unit suite, not the matrix forty minutes later.
+  it('every armed real-Chrome mutant\'s pattern occurs exactly once in its file', () => {
+    const root = join(HERE, '..', '..', '..')
+    const armed = Object.entries(MUTANTS_V2).filter(([, m]) => m.kind === 'chrome' && isArmed(m))
+    expect(armed.length).toBeGreaterThan(40)
+    for (const [n, m] of armed) {
+      expect(m.file && m.find, n).toBeTruthy()
+      expect(readFileSync(join(root, m.file), 'utf8').split(m.find).length - 1, `${n} → ${m.file}`).toBe(1)
+    }
+  })
 })
 
 describe('v2 grafts and the re-dating helper', () => {
