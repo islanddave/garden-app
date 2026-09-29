@@ -257,7 +257,7 @@ export default function TodayV2() {
       summary: care.length
         ? (careUrgent && needs.summary ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{needs.summary}</> : needs.summary)
         : ([loggedToday ? `${loggedToday} logged today` : null, needs.rainCovered ? `${needs.rainCovered} covered by rain` : null].filter(Boolean).join(', ') || 'All caught up.'),
-      body: <NeedsCare care={needs} record={record} update={update} announce={announce} planDate={planDate} userId={userId} filterIntent={record?.filter} />,
+      body: <NeedsCare care={needs} record={record} update={update} announce={announce} planDate={planDate} userId={userId} filterIntent={record?.filter?.care} />,
     },
     resting: {
       title: 'Resting',

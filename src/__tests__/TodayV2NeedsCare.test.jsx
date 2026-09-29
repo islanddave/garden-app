@@ -155,3 +155,54 @@ describe('Needs care on Dave\'s 09-24 plan', () => {
     expect(document.querySelector('[data-testid="care-group-bulk"][data-group="Outside"]').getAttribute('aria-label')).toBe('Water all 154 outside')
   })
 })
+
+// S3 × S4 (integration): a Water / Feed / Check chip in S3's jump bar pre-selects that task filter in S4's Needs
+// care, through the visit record (record.filter.care = { tasks, n }). Each lane tested its own half alone and
+// both stayed green with the halves keyed differently, so this drives the real chip and reads the real filter row.
+describe('a jump chip pre-selects its task filter in Needs care (S3 → S4)', () => {
+  const chip = (k) => screen.getByRole('navigation', { name: 'Today sections' }).querySelector(`[data-chip="${k}"]`)
+  const taskRow = () => screen.getByTestId('care-filter-tasks')
+  const pressed = () => [...taskRow().querySelectorAll('button[aria-pressed="true"]')].map((b) => b.textContent.trim())
+  const filterBtn = (label) => [...taskRow().querySelectorAll('button[aria-pressed]')].find((b) => b.textContent.trim() === label)
+  const careBand = () => screen.getByTestId('today-sec-care').querySelector('[aria-expanded]')
+  const tap = async (el) => { fireEvent.click(el); await settle() }
+
+  it('Water, Feed and Check each replace the task row with their own task; the same chip again re-applies over a hand change', async () => {
+    await mount()
+    expect(careBand().getAttribute('aria-expanded')).toBe('true') // open already (the small-pot trigger)
+    expect(pressed()).toEqual([])
+    await tap(chip('water'))
+    expect(pressed()).toEqual(['Water'])
+    await tap(chip('feed'))
+    expect(pressed()).toEqual(['Feed'])
+    await tap(chip('check'))
+    expect(pressed()).toEqual(['Check'])
+    await tap(filterBtn('Water'))
+    expect(pressed()).toEqual(['Water', 'Check'])
+    await tap(chip('check'))
+    expect(pressed()).toEqual(['Check'])
+  })
+
+  it('also when the chip is what opens a closed Needs care — its body mounts with the intent already written', async () => {
+    await mount()
+    await tap(careBand())
+    expect(careBand().getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByTestId('care-filter-tasks')).toBeNull()
+    await tap(chip('water'))
+    expect(careBand().getAttribute('aria-expanded')).toBe('true')
+    expect(pressed()).toEqual(['Water'])
+  })
+
+  it('an intent already applied is not applied again when the body remounts: a filter chosen by hand survives a close and re-open', async () => {
+    await mount()
+    await tap(chip('water'))
+    expect(pressed()).toEqual(['Water'])
+    await tap(filterBtn('Water'))
+    await tap(filterBtn('Feed'))
+    expect(pressed()).toEqual(['Feed'])
+    await tap(careBand())
+    await tap(careBand())
+    expect(careBand().getAttribute('aria-expanded')).toBe('true')
+    expect(pressed()).toEqual(['Feed'])
+  })
+})

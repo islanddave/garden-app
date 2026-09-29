@@ -40,15 +40,19 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   const fKey = filtersKey(userId)
   const [filters, setFilters] = useState(() => readFilters(fKey, planDate))
   const setAndSave = useCallback((next) => { setFilters(next); writeFilters(fKey, planDate, next) }, [fKey, planDate])
-  // S3's jump bar writes the chip's task into the visit record (`filter`); a new intent REPLACES the task row.
-  const seenIntent = useRef(JSON.stringify(filterIntent ?? null))
+  // S3's jump bar writes the chip's task into the visit record (record.filter.care = { tasks: [task], n }, n
+  // counting the visit's chip taps); each NEW n REPLACES the task row once. The last n applied is kept on the
+  // visit record (care.intentN), not in a ref: a chip tap on a CLOSED Needs care mounts this body with the
+  // intent already written, and must still apply; a Back return or a close and re-open remounts it with an
+  // intent already applied, and must not undo a filter chosen by hand since.
+  const intentN = Number(filterIntent?.n) || 0
+  const appliedN = Number(c?.intentN) || 0
   useEffect(() => {
-    const sig = JSON.stringify(filterIntent ?? null)
-    if (sig === seenIntent.current) return
-    seenIntent.current = sig
-    const t = typeof filterIntent === 'string' ? filterIntent : (filterIntent?.task || (Array.isArray(filterIntent?.tasks) ? filterIntent.tasks[0] : null))
+    if (!intentN || intentN === appliedN) return
+    setCare((cc) => ({ ...cc, intentN }))
+    const t = Array.isArray(filterIntent?.tasks) ? filterIntent.tasks[0] : filterIntent?.task
     if (TASKS.includes(t)) setAndSave({ ...filters, tasks: [t] })
-  }, [filterIntent, filters, setAndSave])
+  }, [intentN, appliedN, filterIntent, filters, setAndSave, setCare])
 
   const presentTasks = TASKS.filter((t) => care.rows.some((r) => r.task === t))
   const tasks = filters.tasks.filter((t) => presentTasks.includes(t))
