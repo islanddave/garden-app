@@ -37,8 +37,8 @@
 #        restored (BUG-GARDENGROUPBYRESET-001: the two values the Lambda refused before)
 #     P) Put-Up 1b + Ferment (06-ferment-path §5.6): P1 put-up date/basis + legacy-PUT refusal, P2 salt line,
 #        P3 draw → Mark used → RowEditor, P4 weighed draw to 0 g, P5 take out/restore, P6 check-in edit,
-#        P7 SHU save, P8 Undo put-up restores grams, P9 batch removal restores the count; WARN until F is on
-#        staging (SMOKE_REQUIRE_FERMENT=1 makes it FAIL); its own FK-ordered hard-delete (ferm_sweep)
+#        P7 SHU save, P8 Undo put-up restores grams, P9 batch removal restores the count; REQUIRED (a FAIL, never a
+#        WARN) whenever the checked-out tree carries migrations/v5-fermentpath-001; its own FK-ordered hard-delete
 #     Q) (after Put-Up's N, independent of the project) one fixed-name source (V5-SOURCECONTACT-001):
 #        Instagram + Facebook links PATCHed and read back by id and in the list, a scheme-less link
 #        refused 400 with nothing changed, then both cleared to null and read back
@@ -1921,7 +1921,8 @@ fi
 #       DIFFERENT discard-by (use_by_target: V4 §5.4's "date" — a differing preserved_at is still written) → 409
 #       client_stale; an equal echo → 200 and nothing changes.
 #   P2) batch → a typed line → a salt line; read back salt_pct / salt_base / base_g / salt_method / base_from.
-#   P3) counted draw of 1 from jar J → remaining −1 → the F bundle's Mark used (POST /api/pantry/uses) → 201,
+#   P3) counted draw of 1 from jar J → remaining −1 → a stale 1a Mark used on J (the 19-key legacy PUT, remaining
+#       n−1) → 409 client_stale, count and delta_at unchanged → the F bundle's Mark used (POST /api/pantry/uses) → 201,
 #       remaining −1 → the F bundle's note edit (PATCH /api/preservation/:id; the legacy PUT refuses a changed note
 #       from any bundle) → 200, the note reads back and the count is unchanged. The drawn jar stays usable (06 §1.3).
 #   P4) weighed draw 8 g from a 100 g bag → 92 g; the rest (92 g) → 0 g, count 0, consumed; use-soon lists it
@@ -1935,8 +1936,11 @@ fi
 # Stock is read back through SQL (NEON_STAGING_URL + psql, as block D does): remaining_amount and consumed_at are
 # not on every API projection, and the ledger (pantry_use) has no read route in F.
 # GATED ON F BEING DEPLOYED: F's DDL and Lambda reach staging only at F's sitting. The probe is GET
-# /api/kitchen-batches/line-search (200 only with F's Lambda). Without it this block is a WARN; with
-# SMOKE_REQUIRE_FERMENT=1 (set it in deploy-staging.yml once F is on staging) it is a FAIL.
+# /api/kitchen-batches/line-search (200 only with F's Lambda). THE REQUIREMENT TRAVELS WITH THE SHA
+# (review-F-prepromote-early I1): deploy-staging is dispatched --ref dev, so its env block is dev's workflow file,
+# not the tree under test — a flag set there would not reach step 5's run. So a checked-out tree that carries F's
+# migration requires this block: the probe failing, or the block not running at all, is a FAIL there. Only a tree
+# without F (dev before F lands) keeps the WARN. SMOKE_REQUIRE_FERMENT=1 still forces the requirement by hand.
 # SELF-CONTAINED CLEANUP (L-058): every row this block writes carries 'smoke-test-ferment-<run>' (batch label, jar
 # notes/label, place label, line labels) or hangs off a row that does. ferm_sweep hard-deletes them in FK order,
 # in ONE transaction: reversing pantry_use → pantry_use → kitchen_batch_input → preservation_source →
@@ -1964,6 +1968,9 @@ DELETE FROM kitchen_batch WHERE id IN (SELECT id FROM fe_b);
 DELETE FROM storage_location WHERE label LIKE 'smoke-test-ferment-%';
 SQL
 }
+# I1: from the checked-out tree (this script's own repo root, so the working directory cannot matter).
+FE_TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[[ -d "$FE_TREE/migrations/v5-fermentpath-001" ]] && SMOKE_REQUIRE_FERMENT=1
 if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" && -n "${STAGING_API_STORAGE_LOCATIONS:-}" ]]; then
   FE_BASE="${STAGING_API_PRESERVATION%/}"
   FE_TAG="smoke-test-ferment-$TEST_RUN_ID"
@@ -2010,9 +2017,9 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
   fe_req GET "$FE_BASE/api/kitchen-batches/line-search?q=smoke"
   if [[ "$FE_CODE" != "200" ]]; then
     if [[ "${SMOKE_REQUIRE_FERMENT:-}" == "1" ]]; then
-      fe_fail "deployed" "GET /api/kitchen-batches/line-search → HTTP $FE_CODE: F's Lambda is not on staging, and SMOKE_REQUIRE_FERMENT=1"
+      fe_fail "deployed" "GET /api/kitchen-batches/line-search → HTTP $FE_CODE: this tree carries F (or SMOKE_REQUIRE_FERMENT=1), but F's Lambda is not answering on staging"
     else
-      echo "⚠️  WARN [ferment:deployed] GET /api/kitchen-batches/line-search → HTTP $FE_CODE — F not on staging yet; block P NOT run (set SMOKE_REQUIRE_FERMENT=1 once it is)"
+      echo "⚠️  WARN [ferment:deployed] GET /api/kitchen-batches/line-search → HTTP $FE_CODE — this tree has no F (no migrations/v5-fermentpath-001); block P NOT run"
     fi
   elif [[ -z "${NEON_STAGING_URL:-}" ]] || ! command -v psql >/dev/null 2>&1; then
     fe_fail "readback-sql" "NEON_STAGING_URL unset or psql missing — block P reads stock back through SQL and cleans up through it"
@@ -2060,6 +2067,20 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       fe_line "$FE_B2" "{\"input_kind\": \"put_up\", \"preservation_log_id\": \"$FE_J3\", \"count_drawn\": 1}"
       FE_DRAW3="$FE_LINE_ID"
       fe_check "p3-draw" "$FE_CODE $(fe_jar "$FE_J3")" "201 3|null|false" "counted draw of 1 from 4; remaining|grams|consumed"
+      # I2 (review-F-prepromote-early; 06 §1.3 item 6 case c): a stale 1a phone's Mark used on the DRAWN jar — the
+      # full nineteen-key buildFullPayload echo (block N's pu_put shape), remaining_count n-1 — is refused 409
+      # client_stale by the delta_at predicate (every other value is the stored one), and the count and delta_at are
+      # exactly as the draw left them.
+      if fe_id_ok "$FE_J3"; then
+        FE_STALE_SQL="SELECT coalesce(remaining_count::text,'null')||'|'||coalesce(delta_at::text,'null') FROM preservation_log WHERE id = '$FE_J3'"
+        FE_BEFORE=$(fe_row "$FE_STALE_SQL")
+        fe_req GET "$FE_BASE/api/preservation/$FE_J3"
+        FE_ROW=$(fe_jq '{crop_type_slug, variety_id, plant_id, harvest_log_id, preserved_at, preserved_at_approx, method, method_other_text, quantity_value, quantity_unit, package_count, storage_location_id, use_by_target, remaining_count, consumed_at, notes, photo_id, source_kind, source_label} | .remaining_count = (.remaining_count - 1)')
+        fe_req PUT "$FE_BASE/api/preservation/$FE_J3" "$FE_ROW"
+        fe_check "p3-legacy-stale-refused" "$FE_CODE $(fe_jq '.code // "-"') $(fe_row "$FE_STALE_SQL")" "409 client_stale $FE_BEFORE" "1a full-echo PUT, remaining_count n-1, on the drawn jar; remaining|delta_at after"
+      else
+        fe_fail "p3-legacy-stale-refused" "no jar id from P3's POST /api/preservation"
+      fi
       fe_req POST "$FE_BASE/api/pantry/uses" "{\"idempotency_key\": \"$(fe_uuid)\", \"preservation_log_id\": \"$FE_J3\", \"count_used\": 1}"
       fe_check "p3-mark-used" "$FE_CODE $(fe_jar "$FE_J3")" "201 2|null|false" "F Mark used (POST /api/pantry/uses)"
       fe_req PATCH "$FE_BASE/api/preservation/$FE_J3" "{\"notes\": \"$FE_TAG edited\"}"
@@ -2145,6 +2166,9 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
     fi
   fi
   [[ -n "$FE_OUT" ]] && rm -f "$FE_OUT"
+elif [[ "${SMOKE_REQUIRE_FERMENT:-}" == "1" ]]; then
+  echo "❌ FAIL [ferment:deployed] this tree carries F (or SMOKE_REQUIRE_FERMENT=1), but block P could not run: STAGING_API_PRESERVATION or STAGING_API_STORAGE_LOCATIONS unset, or no JWT"
+  FAIL=$((FAIL+1))
 else
   echo "⚠️  WARN [ferment] STAGING_API_PRESERVATION or STAGING_API_STORAGE_LOCATIONS unset, or no JWT — block P NOT run"
 fi

@@ -7,26 +7,34 @@
 // would fail), its scope widened to a pattern that reaches real rows, the dirty-run retry dropped from cleanup(),
 // a sub-block dropped, the F-deployed gate turned into a silent skip, or the RowEditor edit quietly sent the
 // remaining_count key again (which F refuses on a drawn jar, so the assert would test the 1a bundle instead).
+// review-F-prepromote-early I1: the requirement is derived from the CHECKED-OUT TREE (deploy-staging runs dev's
+// workflow file, so an env flag set there never reaches step 5); the derivation is executed below, not just read.
+// I2: P3 smokes the stale 1a Mark used on a drawn jar (06 §1.3 item 6 case c).
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { resolve, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
 
 const SMOKE = readFileSync(resolve(process.cwd(), 'tests/smoke/run-smoke.sh'), 'utf8')
 const start = SMOKE.indexOf('# ── P) Put-Up 1b + Ferment')
-const end = SMOKE.indexOf('# ── DRG-WATERRECON-002')
+// Block P ends at the next block heading (block Q, STATS, follows it since 4.162.0), so nothing below reads a
+// neighbour's lines as P's.
+const end = SMOKE.indexOf('\n# ── ', start + 1)
 const BLOCK = SMOKE.slice(start, end)
 const sweepStart = BLOCK.indexOf('ferm_sweep() {')
 const SWEEP = BLOCK.slice(sweepStart, BLOCK.indexOf('\nSQL\n}', sweepStart))
 
-describe('block P is present, after block N and before the water recon', () => {
-  it('sits between N and DRG-WATERRECON-002', () => {
+describe('block P is present, after block N, and closed by the next block heading', () => {
+  it('sits after N; the slice ends before the next block and before the water recon', () => {
     expect(start).toBeGreaterThan(SMOKE.indexOf('# ── N) Put-Up: a place and a jar'))
     expect(end).toBeGreaterThan(start)
+    expect(end).toBeLessThanOrEqual(SMOKE.indexOf('# ── DRG-WATERRECON-002'))
     expect(sweepStart).toBeGreaterThan(0)
   })
 
   it.each(['p1-putup-readback', 'p1-legacy-date-refused', 'p1-legacy-echo-noop', 'p2-salt-readback', 'p3-draw',
-    'p3-mark-used', 'p3-note-edit', 'p4-weighed-draw', 'p4-draw-to-zero', 'p5-take-out', 'p5-restore',
+    'p3-legacy-stale-refused', 'p3-mark-used', 'p3-note-edit', 'p4-weighed-draw', 'p4-draw-to-zero', 'p5-take-out', 'p5-restore',
     'p6-stage-edit', 'p7-shu-save', 'p8-putup-row', 'p8-undo', 'p9-batch-remove', 'l058-sweep'])('asserts %s', (tag) => {
     expect(BLOCK).toContain(`"${tag}"`)
   })
@@ -74,6 +82,61 @@ describe('gating and read-back discipline', () => {
     expect(BLOCK).toMatch(/if \[\[ "\$\{SMOKE_REQUIRE_FERMENT:-\}" == "1" \]\]; then\s+fe_fail "deployed"/)
   })
 
+  // I1. The derivation sits in block P before its outer `if` (so before the probe), and when the block cannot run
+  // at all (no JWT, no preservation URL) a required block FAILs instead of WARNing.
+  const outerIf = BLOCK.indexOf('if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}"')
+  const derive = BLOCK.indexOf('[[ -d "$FE_TREE/migrations/v5-fermentpath-001" ]] && SMOKE_REQUIRE_FERMENT=1')
+  it('I1: the requirement is derived from the checked-out tree, before the block runs or probes', () => {
+    expect(outerIf).toBeGreaterThan(0)
+    expect(derive, 'the derivation line is present').toBeGreaterThan(0)
+    expect(derive).toBeLessThan(outerIf)
+    expect(BLOCK.indexOf('FE_TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"')).toBeLessThan(derive)
+    expect(BLOCK.indexOf('line-search?q=smoke')).toBeGreaterThan(outerIf)
+  })
+
+  it('I1: a required block that cannot run at all is a FAIL, not the WARN', () => {
+    const tail = BLOCK.slice(BLOCK.lastIndexOf('\nelif '))
+    expect(tail).toMatch(/^\nelif \[\[ "\$\{SMOKE_REQUIRE_FERMENT:-\}" == "1" \]\]; then\s+echo "❌ FAIL \[ferment:deployed\][^\n]*\n\s+FAIL=\$\(\(FAIL\+1\)\)\nelse\s+echo "⚠️  WARN \[ferment\]/)
+  })
+
+  // Executed, not read: the two derivation lines, cut from the script, run under the script's own `set -euo
+  // pipefail` from a temp tree with and without F's migration, and from a working directory that is not the root.
+  describe('I1: the derivation, executed', () => {
+    const lines = BLOCK.split('\n')
+    const i = lines.findIndex((l) => l.startsWith('FE_TREE="$('))
+    const snippet = i >= 0 ? lines.slice(i, i + 2).join('\n') : ''
+    const run = ({ withF, preset, cwdIsRoot }) => {
+      const root = mkdtempSync(join(tmpdir(), 'smokeP-'))
+      try {
+        mkdirSync(join(root, 'tests', 'smoke'), { recursive: true })
+        if (withF) mkdirSync(join(root, 'migrations', 'v5-fermentpath-001'), { recursive: true })
+        const script = join(root, 'tests', 'smoke', 'probe.sh')
+        writeFileSync(script, `#!/usr/bin/env bash\nset -euo pipefail\n${snippet}\necho "REQ=\${SMOKE_REQUIRE_FERMENT:-unset}"\n`)
+        const env = { PATH: process.env.PATH, ...(preset ? { SMOKE_REQUIRE_FERMENT: preset } : {}) }
+        const cwd = cwdIsRoot ? root : tmpdir()
+        const arg = cwdIsRoot ? 'tests/smoke/probe.sh' : script
+        return execFileSync('bash', [arg], { cwd, env, encoding: 'utf8' }).trim()
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+    it('cut two lines from the script', () => {
+      expect(snippet.split('\n')).toHaveLength(2)
+      expect(snippet).toContain('SMOKE_REQUIRE_FERMENT=1')
+    })
+    it('a tree WITH migrations/v5-fermentpath-001 requires block P (from the root, and from elsewhere)', () => {
+      expect(run({ withF: true, cwdIsRoot: true })).toBe('REQ=1')
+      expect(run({ withF: true, cwdIsRoot: false })).toBe('REQ=1')
+    })
+    it('a tree WITHOUT it leaves the requirement unset, and set -e survives the false test', () => {
+      expect(run({ withF: false, cwdIsRoot: true })).toBe('REQ=unset')
+      expect(run({ withF: false, cwdIsRoot: false })).toBe('REQ=unset')
+    })
+    it('a hand-set SMOKE_REQUIRE_FERMENT=1 still holds on a tree without F', () => {
+      expect(run({ withF: false, preset: '1', cwdIsRoot: true })).toBe('REQ=1')
+    })
+  })
+
   it('a missing SQL read-back path is a FAIL, not a skip', () => {
     expect(BLOCK).toMatch(/fe_fail "readback-sql"/)
   })
@@ -85,11 +148,35 @@ describe('gating and read-back discipline', () => {
 
   // The legacy PUT refuses a CHANGED note from any bundle (1b §5.4, contract-F §2.6): the F bundle's note edit is
   // PATCH /api/preservation/:id. A PUT here would read 409 client_stale on staging.
+  const P3 = BLOCK.slice(BLOCK.indexOf('# ── P3)'), BLOCK.indexOf('# ── P4)'))
+  const markUsed = P3.indexOf('fe_req POST "$FE_BASE/api/pantry/uses"')
   it("P3's note edit is the F bundle's: PATCH /api/preservation/:id, never the legacy PUT", () => {
-    const p3 = BLOCK.slice(BLOCK.indexOf('# ── P3)'), BLOCK.indexOf('# ── P4)'))
-    expect(p3).toContain('fe_req PATCH "$FE_BASE/api/preservation/$FE_J3" "{\\"notes\\": \\"$FE_TAG edited\\"}"')
-    expect(p3).not.toMatch(/fe_req PUT /)
-    expect(p3).toContain('"200 2|null|false $FE_TAG edited"')
+    const afterUse = P3.slice(markUsed)
+    expect(markUsed).toBeGreaterThan(0)
+    expect(afterUse).toContain('fe_req PATCH "$FE_BASE/api/preservation/$FE_J3" "{\\"notes\\": \\"$FE_TAG edited\\"}"')
+    expect(afterUse).not.toMatch(/fe_req PUT /)
+    expect(afterUse).toContain('"200 2|null|false $FE_TAG edited"')
+  })
+
+  // I2 (06 §1.3 item 6 case c): after the draw and before the F Mark used, the stale 1a phone's Mark used — the full
+  // nineteen-key echo WITH remaining_count, set to n-1 — must read 409 client_stale with count and delta_at unchanged.
+  it("I2: P3 sends the 1a nineteen-key echo with remaining_count n-1 on the drawn jar and expects 409, nothing moved", () => {
+    const draw = P3.indexOf('fe_check "p3-draw"')
+    const stale = P3.indexOf('fe_check "p3-legacy-stale-refused"')
+    expect(draw).toBeGreaterThan(0)
+    expect(stale).toBeGreaterThan(draw)
+    expect(stale).toBeLessThan(markUsed)
+    const seg = P3.slice(draw, stale)
+    const filter = seg.match(/FE_ROW=\$\(fe_jq '([^']*)'\)/)[1]
+    const keys = filter.match(/^\{([^}]*)\}/)[1].split(',').map((k) => k.trim())
+    expect(keys).toEqual(['crop_type_slug', 'variety_id', 'plant_id', 'harvest_log_id', 'preserved_at', 'preserved_at_approx',
+      'method', 'method_other_text', 'quantity_value', 'quantity_unit', 'package_count', 'storage_location_id',
+      'use_by_target', 'remaining_count', 'consumed_at', 'notes', 'photo_id', 'source_kind', 'source_label'])
+    expect(filter).toContain('.remaining_count = (.remaining_count - 1)')
+    expect(seg).toContain('fe_req PUT "$FE_BASE/api/preservation/$FE_J3" "$FE_ROW"')
+    expect(seg).toContain("FE_STALE_SQL=\"SELECT coalesce(remaining_count::text,'null')||'|'||coalesce(delta_at::text,'null') FROM preservation_log WHERE id = '$FE_J3'\"")
+    expect(seg.indexOf('FE_BEFORE=$(fe_row "$FE_STALE_SQL")')).toBeLessThan(seg.indexOf('fe_req PUT'))
+    expect(P3.slice(stale)).toMatch(/^fe_check "p3-legacy-stale-refused" "\$FE_CODE \$\(fe_jq '\.code \/\/ "-"'\) \$\(fe_row "\$FE_STALE_SQL"\)" "409 client_stale \$FE_BEFORE"/)
   })
 
   // A drawn-jar-free 1a PUT, so the refusal is the 1b echo rule's: the "date" there is use_by_target (V4 §5.4;
