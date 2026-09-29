@@ -91,9 +91,12 @@ export function notSureDate(batch) {
   return toYmd(cands.reduce((a, b) => (b.getTime() > a.getTime() ? b : a)))
 }
 
-// { when: {date, precision}, words } or { error }. `date` is the jar's put-up day (a DATE column);
-// the precision word rides beside it (§3.6). Not sure stores the earliest it could be, precision
-// 'after' (§3.6 "Put it up's Not sure").
+// { when: {date, precision}, words, anchor? } or { error }. `when` is the WIRE value (contract-F §2.4,
+// as the 1b Lambda's putUp.js validates it): a day and its precision, or — for Not sure — no date and
+// precision 'unknown', which the server resolves to the batch's latest dated event and stores on each
+// jar with precision 'after' (§3.6 "Put it up's Not sure"; 'after' is a jar word only and is refused
+// on the wire). `anchor` is the date the PREVIEW counts from — the same earliest day the server will
+// store — so the sheet can show "sometime after Sep 12" and a discard-by before Save.
 export function resolveWhen({ chip, estimate = null, pickedDate = '', batch = null, now = new Date() }) {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   if (chip === 'today') return { when: { date: toYmd(today), precision: 'day' }, words: 'today' }
@@ -104,7 +107,11 @@ export function resolveWhen({ chip, estimate = null, pickedDate = '', batch = nu
   if (chip === 'unsure') {
     const after = notSureDate(batch)
     if (!after) return { error: WHEN_ERRORS.unsure }
-    return { when: { date: after, precision: 'after' }, words: `sometime after ${shortDay(after, now)} — the last date we have` }
+    return {
+      when: { date: null, precision: 'unknown' },
+      anchor: { date: after, precision: 'after' },
+      words: `sometime after ${shortDay(after, now)} — the last date we have`,
+    }
   }
   if (chip !== 'earlier') return { error: WHEN_ERRORS.none }
   if (!estimate) return { error: WHEN_ERRORS.earlier }

@@ -134,24 +134,15 @@ describe('Remove this batch', () => {
 })
 
 describe('pause history (Appendix A)', () => {
-  // MUTATION: skip the stage POST -> no paused row and this reds.
-  it('a pause writes the batch column, then a `paused` row; picking back up writes `resumed`', async () => {
+  // MUTATION: go back to the merge PUT of suspended_at -> no stage POST and this reds.
+  it('a pause is ONE stages POST (`paused`); picking back up is one `resumed` — the server writes column and row together', async () => {
     renderDetail()
     await act(async () => { fireEvent.click(screen.getByTestId('batch-pause')) })
-    const posts = calls(/\/stages$/, 'POST').map(c => JSON.parse(c[1].body))
-    expect(posts).toEqual([{ stage_kind: 'paused', entered_at: new Date(NOW).toISOString(), entered_precision: 'exact' }])
+    expect(calls(/./, 'PUT')).toHaveLength(0)
+    expect(calls(/\/stages$/, 'POST').map(c => JSON.parse(c[1].body))).toEqual([{ stage_kind: 'paused' }])
     fetchMock.mockClear()
     renderDetail({ batch: { suspended_at: local('2026-10-15T09:00:00') } })
     await act(async () => { fireEvent.click(screen.getAllByTestId('batch-pause')[1]) })
     expect(calls(/\/stages$/, 'POST').map(c => JSON.parse(c[1].body).stage_kind)).toEqual(['resumed'])
-  })
-
-  it('a lost history row never undoes the pause', async () => {
-    const onChanged = vi.fn()
-    fetchMock.mockImplementation((p) => (/\/stages$/.test(p) ? Promise.reject(new Error('x')) : Promise.resolve({})))
-    renderDetail({ onChanged })
-    await act(async () => { fireEvent.click(screen.getByTestId('batch-pause')) })
-    expect(onChanged).toHaveBeenCalled()
-    expect(screen.queryByTestId('batch-pause-error')).toBeNull()
   })
 })

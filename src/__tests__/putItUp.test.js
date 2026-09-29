@@ -57,11 +57,14 @@ describe('When — preselect and resolve (§2.4)', () => {
     expect(resolveWhen({ chip: 'earlier', estimate: 'two_three', now: NOW }).words).toBe('sometime in Jun–Jul')
   })
 
-  it('Not sure is the latest dated event, never before the start, precision after', () => {
+  it('Not sure goes on the wire as unknown with no date; its anchor is the latest dated event, never before the start', () => {
     const batch = { started_at: new Date(2026, 8, 1, 9).toISOString(), current_stage_entered_at: new Date(2026, 8, 12, 9).toISOString() }
     expect(notSureDate(batch)).toBe('2026-09-12')
     const r = resolveWhen({ chip: 'unsure', batch, now: NOW })
-    expect(r.when).toEqual({ date: '2026-09-12', precision: 'after' })
+    // The wire says unknown with no date (the 1b Lambda refuses 'after' there and resolves the day
+    // itself); the preview counts from the same earliest day, precision after.
+    expect(r.when).toEqual({ date: null, precision: 'unknown' })
+    expect(r.anchor).toEqual({ date: '2026-09-12', precision: 'after' })
     expect(r.words).toBe('sometime after Sep 12 — the last date we have')
     // A stage row dated before the start (a mis-typed check-in) never pulls the date earlier.
     expect(notSureDate({ started_at: new Date(2026, 8, 5).toISOString(), current_stage_entered_at: new Date(2026, 7, 1).toISOString() }))

@@ -410,7 +410,8 @@ function PutItUpOpen({ batch, onClose, onDone, onChanged, now }) {
   }, [gateKey, holdReload])
 
   const whenRes = chip ? resolveWhen({ chip, estimate, pickedDate, batch, now: nowDate }) : null
-  const when = whenRes?.when ?? null
+  // The preview counts from the day the server will store (Not sure's anchor), never from the wire value.
+  const when = whenRes?.anchor ?? whenRes?.when ?? null
   const shownRows = effectiveRows(rows)
   const previews = shownRows.map(r => previewDiscard({ row: r, method, when, now: nowDate }))
   const previewGroups = groupPreviews(previews)

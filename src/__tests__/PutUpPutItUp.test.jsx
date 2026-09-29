@@ -375,3 +375,18 @@ describe('Put it up — Still soft on a Dry batch (V4 engine rule e)', () => {
     expect(screen.queryByTestId('putup-row-0-keep-drying')).toBeNull()
   })
 })
+
+describe('Put it up — Not sure on the wire (contract-F §2.4, the 1b Lambda putUp.js)', () => {
+  // MUTATION: send the anchor ('after' + a date) as `when` -> the 1b Lambda 400s it, and this literal reds.
+  it('sends precision unknown with no date, and previews from the last dated event', async () => {
+    await openPutUp()
+    await tap('putup-when-unsure')
+    expect(screen.getByTestId('putup-when-words').textContent).toBe('Put up sometime after Sep 27 — the last date we have')
+    await tap('putup-method-hot_sauce')
+    await tap('putup-row-0-place-id:loc-fridge')
+    expect(screen.getByTestId('putup-preview').textContent).toBe('discard by around Mar 27, 2027 · general figure: hot sauce, fridge')
+    await tap('putup-finish')
+    await waitFor(() => expect(putUps()).toHaveLength(1))
+    expect(bodyOf(putUps()[0]).when).toEqual({ date: null, precision: 'unknown' })
+  })
+})

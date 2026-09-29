@@ -29,7 +29,7 @@ import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import {
   describeAge, describeStage, isSuspended, startPromptState, START_CHIPS, startChipPatch,
-  pickedDatePatch, startPatchViolatesPairing, pausePatch, PAUSE_CTA, RESUME_CTA,
+  pickedDatePatch, startPatchViolatesPairing, PAUSE_CTA, RESUME_CTA,
 } from './goingNow.js'
 import { describeOutcome } from './batchClose.js'
 import BatchCloseField from './BatchCloseField.jsx'
@@ -255,35 +255,31 @@ function SetStartDate({ batch, fetch, onChanged }) {
 }
 
 // ── pause / pick back up — MOVED HERE from the Going-now card in Put-Up 1a (V4 §2.3) ────────────
-// A one-tap MERGE PUT on suspended_at. No confirm: it is reversible by the same control it was taken
-// with, and a confirm on a reversible act is the tax that teaches people to stop reading confirms.
-// Pausing is a DIFFERENT ANSWER and not a worse one, so it is an ordinary line, never an alarm. The
-// instant is the surface's injected `nowMs`, so a test pins the PUT body to a fixed literal.
-function PauseToggle({ batch, nowMs, fetch, onChanged }) {
+// One tap, one stage row (release 1b; see toggle below). No confirm: it is reversible by the same control
+// it was taken with, and a confirm on a reversible act is the tax that teaches people to stop reading
+// confirms. Pausing is a DIFFERENT ANSWER and not a worse one, so it is an ordinary line, never an alarm.
+function PauseToggle({ batch, fetch, onChanged }) {
   const paused = isSuspended(batch)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
+  // Put-Up release 1b (V4 Appendix A; the 1b Lambda's stateStage): a pause is ONE write — POST
+  // /:id/stages {stage_kind: 'paused'|'resumed'} moves suspended_at AND writes the history row in one
+  // statement, whose WHERE is the state precondition. The merge PUT of suspended_at is no longer used
+  // here: it moved the column with no history row, and a row posted after it would be refused (the
+  // batch would already be paused). A refusal (a double tap, a stale tab) says so in the server's words.
   const toggle = useCallback(async () => {
-    const patch = pausePatch(paused, nowMs)
-    if (!patch) { setErr("Couldn't save that — try again."); return }
     setBusy(true); setErr(null)
     try {
-      await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(patch) })
-      // Put-Up release 1b (V4 Appendix A): the pause history. The batch column stays authoritative; the
-      // stage row is the record that it happened, written after the PUT lands and best-effort — a lost
-      // history line must never undo or block the pause itself.
-      try {
-        await fetch(`/api/kitchen-batches/${batch.id}/stages`, { method: 'POST', body: JSON.stringify({
-          stage_kind: paused ? 'resumed' : 'paused', entered_at: new Date(nowMs).toISOString(), entered_precision: 'exact',
-        }) })
-      } catch { /* history only */ }
+      await fetch(`/api/kitchen-batches/${batch.id}/stages`, { method: 'POST', body: JSON.stringify({
+        stage_kind: paused ? 'resumed' : 'paused',
+      }) })
       onChanged?.()
-    } catch {
+    } catch (e) {
       // The row stays exactly as it was and says so. There is no offline queue in this app.
-      setErr("Couldn't save that — try again.")
+      setErr(describeRefusal(e)?.text ?? "Couldn't save that — try again.")
     } finally { setBusy(false) }
-  }, [batch.id, fetch, nowMs, onChanged, paused])
+  }, [batch.id, fetch, onChanged, paused])
 
   return (
     <div>
@@ -537,7 +533,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
 
       <div style={{ marginTop: T.space.md }}>
         {/* Pause sits with the other decision about the batch as a whole, above the terminal one. */}
-        {!closed && <PauseToggle batch={batch} nowMs={nowMs} fetch={fetch} onChanged={onChanged} />}
+        {!closed && <PauseToggle batch={batch} fetch={fetch} onChanged={onChanged} />}
         <BatchCloseField batch={batch} onChanged={onChanged} />
         {/* Last and quietest: removing is for a batch started by mistake, never an ending. */}
         <RemoveBatch batch={batch} fetch={fetch} onRemoved={onRemoved ?? onChanged} />
