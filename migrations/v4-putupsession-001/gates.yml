@@ -172,7 +172,7 @@ post:
     value: 0
     continuous: true
 
-  - name: post_column_count_is_25
+  - name: post_original_columns_present
     note: >
       The sibling of the re-pinned gate in v4-putupprov-001/gates.yml, self-armed so it is honest
       before the apply as well as after. Two gates asserting the same count is deliberate: that one
@@ -186,13 +186,25 @@ post:
       THIRD MISS ON THIS PIN. Per the note now in the sibling: if a fourth column addition misses it,
       convert both to "every named column is present" — that widens safely, still catches a dropped
       column, and removes a cross-migration coupling that three separate sessions have not maintained.
+      CONVERTED 2026-09-29 (Put-Up release 1a, V4 §4.6), ahead of release 1b's dozen nullable
+      columns rather than after a fourth miss. Was `post_column_count_is_25`. Names the 25 columns
+      live prod and staging both carried on 2026-09-29 and returns one row per missing name; an added
+      column no longer reds it, a dropped or renamed one still does. Same self-arm as before (the
+      column this migration adds), so it is still vacuous before the apply and permanent after it.
     sql: |
-      SELECT 1
+      SELECT want.column_name
+        FROM unnest(ARRAY['id','user_id','crop_type_slug','variety_id','plant_id','harvest_log_id',
+                          'preserved_at','method','method_other_text','quantity_value','quantity_unit',
+                          'package_count','storage_location_id','use_by_target','remaining_count',
+                          'consumed_at','notes','photo_id','created_at','updated_at','deleted_at',
+                          'source_kind','source_label','preserved_at_approx','batch_id']::text[])
+             AS want(column_name)
        WHERE EXISTS (SELECT 1 FROM information_schema.columns
                       WHERE table_schema='public' AND table_name='preservation_log'
                         AND column_name='preserved_at_approx')
-         AND (SELECT count(*) FROM information_schema.columns
-               WHERE table_schema='public' AND table_name='preservation_log') <> 25
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema='public' AND c.table_name='preservation_log'
+                            AND c.column_name = want.column_name)
     expect: rowcount_eq
     value: 0
     continuous: true
