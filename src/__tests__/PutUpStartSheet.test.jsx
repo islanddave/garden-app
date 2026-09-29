@@ -14,7 +14,7 @@
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act, cleanup } from '@testing-library/react'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 
 installStoragePolyfill()
@@ -27,7 +27,7 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
 const auth = { user: { id: 'user_dave' } }
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
 
-import StartBatchSheet, { START_CTA } from '../components/kitchen/StartBatchSheet.jsx'
+import StartBatchSheet, { START_CTA, photoDayChoice } from '../components/kitchen/StartBatchSheet.jsx'
 import { resolveSheetStart, SHEET_START_CHIPS, EARLIER_CHIPS, START_ERRORS } from '../components/kitchen/StartChips.jsx'
 import { SHEET_DRAFT_TTL_MS } from '../components/kitchen/sheetDraft.js'
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
@@ -38,18 +38,22 @@ import { readMarker } from '../lib/backNav.js'
 const NOW = new Date(2026, 8, 29, 21, 30, 0, 0)          // 2026-09-29 21:30 local
 const JAN = new Date(2026, 0, 3, 8, 0, 0, 0)             // 2026-01-03 08:00 local — month rollover
 const DRAFT_KEY = 'garden:putup-draft:v1:user_dave:start:new'
-const ALLOWED = ['exact', 'hour', 'day', 'week', 'month', 'unknown']   // chk_kitchen_batch_start_precision, live
+// chk_kitchen_batch_start_precision as release 1b widens it (v5-putupmake-001/0a: + season, year).
+const ALLOWED = ['exact', 'hour', 'day', 'week', 'month', 'season', 'year', 'unknown']
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+// The create body minus its minted key, which is asserted separately (V4 §5.2).
+const unkeyed = (b) => { const { idempotency_key: k, ...rest } = b; expect(k).toMatch(UUID); return rest }
 const CREATED = { id: 'kb-new', label: 'Pepper mash', kind: null }
 
 const kbPosts = () => fetchSpy.mock.calls.filter(([p, o]) => p === '/api/kitchen-batches' && o?.method === 'POST')
 const body = (i = 0) => JSON.parse(kbPosts()[i][1].body)
 
-function Host({ onStarted, photo, photoPreview, withRegistry = false }) {
+function Host({ onStarted, photo, photoPreview, photoTakenAt, withRegistry = false }) {
   const [open, setOpen] = useState(true)
   const tree = (
     <>
       <StartBatchSheet open={open} onClose={() => setOpen(false)} onStarted={onStarted} photo={photo}
-        photoPreview={photoPreview} now={NOW.getTime()} />
+        photoPreview={photoPreview} photoTakenAt={photoTakenAt} now={NOW.getTime()} />
       {!open && <button type="button" onClick={() => setOpen(true)}>reopen</button>}
     </>
   )
@@ -74,13 +78,15 @@ beforeEach(() => {
 afterEach(() => { clearReloadBlocks() })
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe('resolveSheetStart — only what the live CHECK can store in 1a', () => {
+describe('resolveSheetStart — only what the 1b CHECK can store', () => {
   const pairing = (s) => (s.started_at !== null) === (s.start_precision !== null && s.start_precision !== 'unknown')
 
   it('every chip and every Earlier… choice resolves to an allowed precision that satisfies the pairing', () => {
     const cases = [
       { chip: 'today' }, { chip: 'yesterday' }, { chip: 'unsure' },
       { chip: 'earlier', earlier: 'this_month' }, { chip: 'earlier', earlier: 'last_month' },
+      { chip: 'earlier', earlier: 'two_three' }, { chip: 'earlier', earlier: 'earlier_year' },
+      { chip: 'earlier', earlier: 'last_year' },
       { chip: 'earlier', earlier: 'pickdate', pickedDate: '2026-07-04' },
     ]
     for (const c of cases) {
@@ -91,11 +97,12 @@ describe('resolveSheetStart — only what the live CHECK can store in 1a', () =>
     }
   })
 
-  // MUTATION: add a `season`/`year` chip ("2–3 months ago", "Last year") -> both assertions red.
-  it('offers Today · Yesterday · Earlier… · Not sure, and under Earlier… only month- and day-precision windows', () => {
+  // Amended for release 1b (V4 §3.6, §8.3): the CHECK widens, so Earlier… offers all six windows.
+  it('offers Today · Yesterday · Earlier… · Not sure, and under Earlier… the six §3.6 windows', () => {
     expect(SHEET_START_CHIPS.map(c => c.label)).toEqual(['Today', 'Yesterday', 'Earlier…', 'Not sure'])
     expect(EARLIER_CHIPS.map(c => [c.label, c.precision])).toEqual([
-      ['This month', 'month'], ['Last month', 'month'], ['Pick a date', 'day'],
+      ['This month', 'month'], ['Last month', 'month'], ['2–3 months ago', 'season'],
+      ['Earlier this year', 'year'], ['Last year', 'year'], ['Pick a date', 'day'],
     ])
     for (const c of EARLIER_CHIPS) expect(ALLOWED).toContain(c.precision)
   })
@@ -157,12 +164,12 @@ describe('the Start sheet — what it asks', () => {
     expect(screen.queryByRole('radiogroup')).toBeNull()
   })
 
-  it('Earlier… reveals This month · Last month · Pick a date, and the date field only for Pick a date', () => {
+  it('Earlier… reveals the windows that are not empty today, and the date field only for Pick a date', () => {
     render(<Host />)
     expect(screen.queryByTestId('start-when-this_month')).toBeNull()
     tap('start-when-earlier')
     expect(within(screen.getByRole('group', { name: 'Earlier…' })).getAllByRole('button').map(b => b.textContent))
-      .toEqual(['This month', 'Last month', 'Pick a date'])
+      .toEqual(['This month', 'Last month', '2–3 months ago', 'Earlier this year', 'Last year', 'Pick a date'])
     expect(screen.queryByTestId('start-when-date')).toBeNull()
     tap('start-when-pickdate')
     expect(screen.getByTestId('start-when-date').getAttribute('max')).toBe('2026-09-29')
@@ -192,7 +199,7 @@ describe('the Start sheet — the write', () => {
     await startIt()
     await waitFor(() => expect(onStarted).toHaveBeenCalledWith(CREATED))
     expect(kbPosts()).toHaveLength(1)
-    expect(body()).toEqual({
+    expect(unkeyed(body())).toEqual({
       label: 'Pepper mash', started_at: NOW.toISOString(), start_precision: 'exact',
       start_anchor_kind: 'memory', start_anchor_id: null,
     })
@@ -217,26 +224,49 @@ describe('the Start sheet — the write', () => {
     tap('start-kind-ferment')
     await startIt()
     await waitFor(() => expect(kbPosts()).toHaveLength(1))
-    expect(body()).toEqual({
+    expect(unkeyed(body())).toEqual({
       label: 'Kraut', started_at: null, start_precision: 'unknown', start_anchor_kind: null, start_anchor_id: null,
       kind: 'ferment',
     })
   })
 
-  // MUTATION: let kindBody build {kind:'other'} without kind_other -> the refusal disappears and the
-  // live chk_kitchen_batch_kind_other would reject the POST.
-  it('"Other" needs its short name in 1a, and sends it', async () => {
+  // Amended for release 1b (V4 §2.3): "Other" needs no text; a typed name still rides along.
+  it('"Other" needs no short name from 1b, and sends one when it is typed', async () => {
     render(<Host />)
     type('start-label', 'Shrub')
     tap('start-kind-toggle')
     tap('start-kind-other')
     await startIt()
-    expect(screen.getByTestId('start-error').textContent).toBe('Give the kind a short name — or leave the kind unpicked.')
-    expect(kbPosts()).toHaveLength(0)
+    await waitFor(() => expect(kbPosts()).toHaveLength(1))
+    expect(body().kind).toBe('other')
+    expect('kind_other' in body()).toBe(false)
+  })
+
+  it('a typed name for Other rides with the kind', async () => {
+    render(<Host />)
+    type('start-label', 'Shrub')
+    tap('start-kind-toggle')
+    tap('start-kind-other')
     type('start-kind-other-text', 'drinking vinegar')
     await startIt()
     await waitFor(() => expect(kbPosts()).toHaveLength(1))
     expect(body()).toMatchObject({ kind: 'other', kind_other: 'drinking vinegar' })
+  })
+
+  // MUTATION: mint a key per Start it -> the two keys differ.
+  it('a retry carries the SAME idempotency key (V4 §5.2)', async () => {
+    let fail = true
+    fetchSpy.mockImplementation((p, o = {}) => (o.method === 'POST'
+      ? (fail ? Promise.reject(new Error('502')) : Promise.resolve(CREATED)) : Promise.resolve(null)))
+    render(<Host />)
+    type('start-label', 'Pepper mash')
+    await startIt()
+    await waitFor(() => expect(screen.getByTestId('start-error')).toBeTruthy())
+    fail = false
+    await startIt()
+    await waitFor(() => expect(kbPosts()).toHaveLength(2))
+    expect(body(1).idempotency_key).toMatch(UUID)
+    expect(body(1).idempotency_key).toBe(body(0).idempotency_key)
   })
 
   it('refuses an Earlier… with nothing picked under it', async () => {
@@ -317,7 +347,9 @@ describe('the Start sheet — the draft survives a dismiss (V4 §6.5)', () => {
     tap('start-kind-ferment')
     const rec = JSON.parse(localStorage.getItem(DRAFT_KEY))
     expect([rec.v, rec.sheet, typeof rec.savedAt]).toEqual([1, 'start', 'number'])
-    expect(rec.data).toEqual({ label: 'Megatron mash', chip: 'yesterday', earlier: null, pickedDate: '', kind: 'ferment', kindOther: '' })
+    const { key, ...data } = rec.data
+    expect(key).toMatch(UUID)
+    expect(data).toEqual({ label: 'Megatron mash', chip: 'yesterday', earlier: null, pickedDate: '', kind: 'ferment', kindOther: '' })
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(sheet()).toBeNull()
     fireEvent.click(screen.getByText('reopen'))
@@ -453,5 +485,43 @@ describe('the Start sheet uses none of the banned words (V4 §3.2)', () => {
     const text = screen.getByRole('dialog', { name: 'Start a batch' }).textContent
     expect(text).toContain('This month')                   // green control: the open sheet is what is read
     expect(text).not.toMatch(BANNED)
+  })
+})
+
+// Put-Up release 1b (train §6a "Snap's start date"): the Start sheet preselects the photo's capture day
+// when it is not today — the shipped kitchen path used the photo's date, and 1a lost it.
+describe('the Start sheet — Snap\'s photo day', () => {
+  const file = () => new File(['x'], 'crock.jpg', { type: 'image/jpeg' })
+  const pressed = (id) => screen.getByTestId(id).getAttribute('aria-pressed')
+
+  it('photoDayChoice: today → none; yesterday → Yesterday; older → Pick a date on that day; no time → none', () => {
+    expect(photoDayChoice(new Date(2026, 8, 29, 7), NOW)).toBeNull()
+    expect(photoDayChoice(new Date(2026, 8, 28, 23), NOW)).toEqual({ chip: 'yesterday', earlier: null, pickedDate: '' })
+    expect(photoDayChoice(new Date(2026, 8, 20, 12), NOW)).toEqual({ chip: 'earlier', earlier: 'pickdate', pickedDate: '2026-09-20' })
+    expect(photoDayChoice(null, NOW)).toBeNull()
+    expect(photoDayChoice(new Date(2026, 8, 30, 12), NOW)).toBeNull()
+  })
+
+  // MUTATION: drop the preselect effect -> Today stays pressed and this reds.
+  it('an older Snap photo opens on its own day, and writes it', async () => {
+    render(<Host photo={file()} photoPreview="blob:snap" photoTakenAt={new Date(2026, 8, 20, 12)} />)
+    await waitFor(() => expect(screen.getByTestId('start-when-date').value).toBe('2026-09-20'))
+    expect(pressed('start-when-earlier')).toBe('true')
+    type('start-label', 'Pepper mash')
+    await startIt()
+    await waitFor(() => expect(kbPosts()).toHaveLength(1))
+    expect(body()).toMatchObject({ started_at: new Date(2026, 8, 20).toISOString(), start_precision: 'day', start_anchor_kind: 'manual' })
+  })
+
+  it('a photo taken today keeps Today; a restored draft is never overridden', async () => {
+    render(<Host photo={file()} photoPreview="blob:snap" photoTakenAt={new Date(2026, 8, 29, 6)} />)
+    await act(async () => { await Promise.resolve() })
+    expect(pressed('start-when-today')).toBe('true')
+    cleanup()
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ v: 1, sheet: 'start', savedAt: Date.now(),
+      data: { label: 'x', chip: 'unsure', earlier: null, pickedDate: '', kind: null, kindOther: '' } }))
+    render(<Host photo={file()} photoPreview="blob:snap" photoTakenAt={new Date(2026, 8, 20, 12)} />)
+    await act(async () => { await Promise.resolve() })
+    expect(pressed('start-when-unsure')).toBe('true')
   })
 })

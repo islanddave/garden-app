@@ -22,7 +22,8 @@ import { SHEET_START_CHIPS, EARLIER_CHIPS, START_ERRORS, resolveSheetStart } fro
 // day arithmetic done through toISOString().slice(0,10) lands one day early and the TZ lane catches it.
 const EVENING = () => new Date(2026, 7, 13, 21, 30, 0, 0)   // 2026-08-13 21:30 local
 const MORNING = () => new Date(2026, 4, 2, 6, 5, 0, 0)      // 2026-05-02 06:05 local
-const LIVE_PRECISIONS = ['exact', 'hour', 'day', 'week', 'month', 'unknown']
+// Release 1b widens chk_kitchen_batch_start_precision (v5-putupmake-001/0a): + season, year.
+const LIVE_PRECISIONS = ['exact', 'hour', 'day', 'week', 'month', 'season', 'year', 'unknown']
 
 const pairingHolds = (r) =>
   (r.started_at !== null) === (r.start_precision !== null && r.start_precision !== 'unknown')
@@ -30,6 +31,8 @@ const pairingHolds = (r) =>
 const EVERY_PATH = [
   { chip: 'today' }, { chip: 'yesterday' }, { chip: 'unsure' },
   { chip: 'earlier', earlier: 'this_month' }, { chip: 'earlier', earlier: 'last_month' },
+  { chip: 'earlier', earlier: 'two_three' }, { chip: 'earlier', earlier: 'earlier_year' },
+  { chip: 'earlier', earlier: 'last_year' },
   { chip: 'earlier', earlier: 'pickdate', pickedDate: '2026-08-01' },
 ]
 

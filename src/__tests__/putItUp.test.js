@@ -279,3 +279,20 @@ describe('jar words (§3.2, §3.6)', () => {
     for (const s of said) expect(`${s}: ${BANNED.test(s)}`).toBe(`${s}: false`)
   })
 })
+
+describe('mintKey — a v4 uuid on every platform', () => {
+  it('uses randomUUID, and without it still makes a well-formed v4 key from getRandomValues', async () => {
+    const { mintKey } = await import('../components/kitchen/idempotencyKey.js')
+    const V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    expect(mintKey()).toMatch(V4)
+    const orig = crypto.randomUUID
+    try {
+      Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true })
+      const a = mintKey(); const b = mintKey()
+      expect(a).toMatch(V4)
+      expect(a).not.toBe(b)
+    } finally {
+      Object.defineProperty(crypto, 'randomUUID', { value: orig, configurable: true })
+    }
+  })
+})

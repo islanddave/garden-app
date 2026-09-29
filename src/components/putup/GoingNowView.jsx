@@ -61,8 +61,8 @@ function shortDate(iso) {
 // own surface, BatchDetailView.jsx) and for the same reason: an inline reveal is not a dismissable
 // layer. One tap on a chip IS the answer — it PUTs {kind} through
 // the shipped merge PUT (an absent key is left alone, so nothing else on the row moves) and the
-// question is never asked again. "Other" is the one two-step answer in 1a, because the live CHECK
-// still needs its short name; kindBody refuses to build that body without one.
+// question is never asked again. "Other" is the one two-step answer: it offers its short name before
+// Save — optional from release 1b, where the CHECK no longer needs it (kindBody sends kind alone).
 //
 // The question hides itself the moment the write lands, rather than waiting for the list re-read to
 // carry the new kind back: a question that re-appears for the length of a round trip after it was

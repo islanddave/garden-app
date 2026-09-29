@@ -37,6 +37,7 @@ import PhReadingField from './PhReadingField.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
+import { mintKey } from '../kitchen/idempotencyKey.js'
 import {
   PUT_IT_UP_TITLE, FINISH_CTA, LATER_CTA, PUT_IT_UP_SHEET, WHEN_CHIPS, estimateChips, preselectWhen,
   resolveWhen, METHOD_LABELS, ALL_PUT_UP_METHODS, methodChipsForKind, RAW_METHODS, TEXTURE_METHODS,
@@ -52,16 +53,7 @@ const NEW_PLACE_KINDS = [
   { kind: 'other', label: 'Counter or other' },
 ]
 
-// A v4 uuid: the server refuses a malformed key with a 400, so a timestamp fallback would be worse
-// than none. getRandomValues exists wherever randomUUID does not (older Android WebViews).
-export function mintKey() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
-  const b = new Uint8Array(16)
-  crypto.getRandomValues(b)
-  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80
-  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('')
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
-}
+export { mintKey }
 
 const EMPTY_SITTING = { lines: [], madeG: '', nextTime: '' }
 

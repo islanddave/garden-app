@@ -11,7 +11,7 @@
 // CI LANE: `npm test` plus the blocking TZ=America/New_York re-run. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -91,13 +91,14 @@ describe('kindBody — what a chosen kind puts on the wire', () => {
     expect(kindBody(undefined)).toEqual({})
   })
 
-  // MUTATION: drop kind_other from the 'other' branch -> the first literal reds, and the live CHECK
-  // (chk_kitchen_batch_kind_other) would refuse every such PUT.
-  it('"Other" carries its short name, trimmed, and cannot be built without one (1a CHECK)', () => {
+  // MUTATION: drop kind_other from the 'other' branch -> the first literal reds.
+  // Put-Up release 1b amends this in the same commit that relaxes the client twin (V4 §2.3, §8.3): the
+  // 1b CHECK takes kind 'other' with no name, so a blank name sends the kind alone.
+  it('"Other" carries its short name, trimmed, and without one sends the kind alone (1b)', () => {
     expect(kindBody('other', '  vinegar ')).toEqual({ kind: 'other', kind_other: 'vinegar' })
-    expect(kindBody('other', '   ')).toBeNull()
-    expect(kindBody('other', '')).toBeNull()
-    expect(kindBody('other')).toBeNull()
+    expect(kindBody('other', '   ')).toEqual({ kind: 'other' })
+    expect(kindBody('other', '')).toEqual({ kind: 'other' })
+    expect(kindBody('other')).toEqual({ kind: 'other' })
   })
 
   it('refuses a value that is not a chip', () => {
@@ -132,7 +133,7 @@ describe('KindChips — an optional single-select, 48px touch chips, 8px apart',
     const { rerender } = render(<KindChips value="cure" onChange={vi.fn()} />)
     expect(screen.queryByTestId('kind-other-text')).toBeNull()
     rerender(<KindChips value="other" onChange={vi.fn()} otherText="" onOtherTextChange={vi.fn()} />)
-    expect(screen.getByLabelText('What kind is it?')).toBe(screen.getByTestId('kind-other-text'))
+    expect(screen.getByLabelText('What kind is it? (optional)')).toBe(screen.getByTestId('kind-other-text'))
   })
 })
 
@@ -181,7 +182,9 @@ describe('the card asks "What kind of batch? →" on a NULL kind, and never agai
     expect(screen.queryByTestId('going-kind-editor')).toBeNull()
   })
 
-  it('"Other" asks its short name first and sends it with the kind', async () => {
+  // Amended for 1b (V4 §2.3): Other offers its short name before Save, and a blank one is a complete
+  // answer — kind 'other' alone.
+  it('"Other" offers its short name first; blank sends the kind alone, a name rides with it', async () => {
     fetchMock.mockResolvedValue({})
     const onReload = vi.fn()
     renderView([MASH], { onReload })
@@ -189,8 +192,15 @@ describe('the card asks "What kind of batch? →" on a NULL kind, and never agai
     fireEvent.click(screen.getByTestId('going-kind-other'))
     expect(fetchMock).not.toHaveBeenCalled()             // Other alone commits nothing
     fireEvent.click(screen.getByTestId('going-kind-save'))
-    expect(screen.getByTestId('going-kind-error').textContent).toBe('Give it a short name first.')
-    expect(fetchMock).not.toHaveBeenCalled()
+    await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1))
+    expect(fetchMock).toHaveBeenCalledWith('/api/kitchen-batches/kb-mash', {
+      method: 'PUT', body: JSON.stringify({ kind: 'other' }),
+    })
+    fetchMock.mockClear(); onReload.mockClear()
+    cleanup()
+    renderView([MASH], { onReload })
+    fireEvent.click(screen.getByTestId('going-kind-question'))
+    fireEvent.click(screen.getByTestId('going-kind-other'))
     fireEvent.change(screen.getByTestId('going-kind-other-text'), { target: { value: 'Shrub' } })
     fireEvent.click(screen.getByTestId('going-kind-save'))
     await waitFor(() => expect(onReload).toHaveBeenCalledTimes(1))
