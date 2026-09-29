@@ -416,4 +416,29 @@ describe('S4g: an emptied Needs care reads "Needs care · all caught up" (§2.5)
     expect(band().textContent).not.toContain('all caught up')
     expect(screen.getByTestId('today-sec-care').getAttribute('data-count')).toBe('2')
   })
+
+  // Integration 2 (S4g x S5): Protect tonight keeps its double-log guard in the SAME today-logged store, as `<id>:cold`
+  // keys. "N logged today" under an emptied Needs care counts care rows only — a plant covered for the night is not
+  // care logged, so the same small day still reads 11 after two Covered taps.
+  it('Protect\'s Covered writes land in the same store but never count as "logged today" in Needs care', async () => {
+    const day = small()
+    sessionStorage.setItem('today-logged:u:' + TODAY, JSON.stringify([day.stored]))
+    planState.current = { data: day.payload, loading: false, error: null, reload: vi.fn() }
+    await mount()
+    const protect = screen.getByTestId('today-sec-protect')
+    const header = protect.querySelector('[aria-expanded]')
+    if (header.getAttribute('aria-expanded') !== 'true') { fireEvent.click(header); await settle() }
+    const cold = day.payload.plan.cold.slice(0, 2)
+    for (const c of cold) { fireEvent.click(within(protect).getByRole('button', { name: `Covered: ${c.name}` })); await settle() }
+    expect(wire.posts.filter((b) => b.event_type === 'cover').map((b) => b.plant_id).sort()).toEqual(cold.map((c) => c.id).sort())
+    const stored = JSON.parse(sessionStorage.getItem('today-logged:u:' + TODAY))
+    expect(stored.filter((k) => k.endsWith(':cold')).sort()).toEqual(cold.map((c) => c.id + ':cold').sort())
+    if (band().getAttribute('aria-expanded') !== 'true') { fireEvent.click(band()); await settle() }
+    fireEvent.click(within(spot('Drive-Shade')).getByRole('button', { name: 'Water all 5 in Drive-Shade' }))
+    await settle()
+    fireEvent.click(within(spot('House')).getByRole('button', { name: 'Water all 2 in House' }))
+    await settle()
+    expect(band().textContent).toContain('Needs care · all caught up')
+    expect(band().textContent).toContain('11 logged today, 70 covered by rain')
+  })
 })
