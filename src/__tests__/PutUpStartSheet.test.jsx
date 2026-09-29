@@ -369,11 +369,11 @@ describe('the Start sheet — Android Back and the landing (popstate)', () => {
 
   it('Back closes the sheet, not the page under it, and the draft survives', async () => {
     await act(async () => { render(<Host withRegistry />) })
-    await settle()
+    await waitFor(() => expect(armed()).toBe(true))
     expect(armed()).toBe(true)
     type('start-label', 'Kraut, second crock')
     act(() => { window.history.back() }); await settle()
-    expect(sheet()).toBeNull()
+    await waitFor(() => expect(sheet()).toBeNull())
     expect(JSON.parse(localStorage.getItem(DRAFT_KEY)).data.label).toBe('Kraut, second crock')
   })
 
@@ -383,7 +383,7 @@ describe('the Start sheet — Android Back and the landing (popstate)', () => {
     const seen = []
     const onStarted = vi.fn(() => seen.push({ sheetOpen: !!sheet(), markerCurrent: armed() }))
     await act(async () => { render(<Host withRegistry onStarted={onStarted} />) })
-    await settle()
+    await waitFor(() => expect(armed()).toBe(true))
     expect(armed()).toBe(true)
     type('start-label', 'Mash')
     await startIt()
@@ -400,7 +400,12 @@ describe('the Start sheet — Android Back and the landing (popstate)', () => {
     await settle()
     type('start-label', 'Mash')
     await startIt()
+    const seq0 = readMarker(window.history.state).seq
     act(() => { window.history.back() }); await settle()
+    // The Back WAS processed and refused: the registry pushes a FRESH marker (a higher seq) on a
+    // BLOCKED Back. Waiting on the new seq — not on `armed()`, which is also true before the
+    // traversal lands — is what makes the assertion below about a refused Back, not an early look.
+    await waitFor(() => expect(readMarker(window.history.state)?.seq).toBeGreaterThan(seq0))
     expect(sheet()).toBeTruthy()
     await act(async () => { settleWrite(CREATED) })
   })
@@ -417,7 +422,7 @@ describe('the Start sheet — the Sheet contract (item 7)', () => {
     type('start-label', 'Mash')
     act(() => { window.history.back() }); await settle()
     expect(screen.queryByTestId('confirm-sheet')).toBeNull()
-    expect(sheet()).toBeNull()
+    await waitFor(() => expect(sheet()).toBeNull())
     expect(JSON.parse(localStorage.getItem(DRAFT_KEY)).data.label).toBe('Mash')
   })
 

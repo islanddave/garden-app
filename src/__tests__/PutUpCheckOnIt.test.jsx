@@ -377,11 +377,11 @@ describe('Check on it — Android Back (popstate)', () => {
 
   it('Back closes the sheet — not the page under it — and the draft survives', async () => {
     await act(async () => { render(<Host />) })
-    await settle()
+    await waitFor(() => expect(armed()).toBe(true))
     expect(armed()).toBe(true)                       // the sheet armed its own Back entry
     fireEvent.change(screen.getByTestId('checkin-note'), { target: { value: 'skimmed the top' } })
     await back()
-    expect(sheet()).toBeNull()
+    await waitFor(() => expect(sheet()).toBeNull())
     expect(JSON.parse(localStorage.getItem(DRAFT_KEY)).data.note).toBe('skimmed the top')
     await act(async () => { fireEvent.click(screen.getByText('reopen')) })
     expect(screen.getByTestId('checkin-note').value).toBe('skimmed the top')
@@ -394,7 +394,12 @@ describe('Check on it — Android Back (popstate)', () => {
     await settle()
     fireEvent.change(screen.getByTestId('checkin-note'), { target: { value: 'x' } })
     await act(async () => { fireEvent.click(screen.getByTestId('checkin-save')) })
+    const seq0 = readMarker(window.history.state).seq
     await back()
+    // The Back WAS processed and refused: the registry pushes a FRESH marker (a higher seq) on a
+    // BLOCKED Back. Waiting on the new seq — not on `armed()`, which is also true before the
+    // traversal lands — is what makes the assertion below about a refused Back, not an early look.
+    await waitFor(() => expect(readMarker(window.history.state)?.seq).toBeGreaterThan(seq0))
     expect(sheet()).toBeTruthy()
     await act(async () => { settleWrite({}) })
     await waitFor(() => expect(sheet()).toBeNull())
@@ -423,7 +428,7 @@ describe('Check on it — the Sheet contract (item 7)', () => {
     fireEvent.change(screen.getByTestId('checkin-note'), { target: { value: 'looked fine' } })
     act(() => { window.history.back() }); await settle()
     expect(screen.queryByTestId('confirm-sheet')).toBeNull()
-    expect(sheet()).toBeNull()
+    await waitFor(() => expect(sheet()).toBeNull())
     expect(JSON.parse(localStorage.getItem(DRAFT_KEY)).data.note).toBe('looked fine')
   })
 
