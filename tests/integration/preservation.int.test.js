@@ -9,12 +9,15 @@
 // DELETE (soft-delete), whats-put-up (storage grouping + Unassigned bucket + crop regroup),
 // use-soon (in-window include / null-use-by exclude / past-date distinct flag / not-yet-soon exclude),
 // ON-DELETE-SET-NULL (delete plant -> plant_id NULL; delete harvest_log -> harvest_log_id NULL).
+// Put-Up release 1a (at the end): the legacy PUT's count delta and its two coded refusals, and the DATE
+// columns' wire shape on every read surface.
 //
 // quantity_value is NUMERIC -> the driver returns it as a JS string; readbacks coerce via Number().
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { directSql, callHandler, testRunId, setTestUserId, insertProject } from './_harness.js'
 import { handler } from '../../lambda/preservation/index.js'
+import { PRESERVATION_EDITABLE_COLUMNS } from '../../lambda/preservation/provenance.js'
 
 const RUN = testRunId()
 const USER = `user_int_pres_${RUN}`
@@ -598,5 +601,113 @@ describe('planting attribution — derive, reject, scope (L7)', () => {
     expect(rec.planting_name).toBeTruthy()
     expect(rec.planting_succession_order).toBe(2)
     expect(rec.planting_sown_at).toBeTruthy()
+  })
+})
+
+// ── Put-Up release 1a: the legacy PUT's count rule and the DATE wire shape, on the real driver ─────────────
+// The unit suites (lambda/preservation/legacyPutCount.test.js, src/__tests__/putUpDateEcho.tz.test.js) run a
+// mocked SQL driver, so neither the one UPDATE that decides the count nor the driver's DATE parsing executes
+// there. These do, on the staging fork. Every PUT here is what the client sends: the full echo of the row
+// GET /:id returned — PRESERVATION_EDITABLE_COLUMNS, the key set preservationColumnParity.test.js binds to
+// buildFullPayload — with the one edit a tap or RowEditor makes.
+function fullEcho(row, edit) {
+  return { ...Object.fromEntries(PRESERVATION_EDITABLE_COLUMNS.map((k) => [k, row[k] ?? null])), ...edit }
+}
+
+async function readJar(id) {
+  const { status, body } = await callHandler(handler, { method: 'GET', path: `/api/preservation/${id}` })
+  expect(status).toBe(200)
+  return body
+}
+
+async function putJar(id, edit) {
+  return callHandler(handler, { method: 'PUT', path: `/api/preservation/${id}`, body: fullEcho(await readJar(id), edit) })
+}
+
+async function newJar(packageCount) {
+  const { status, body } = await callHandler(handler, {
+    method: 'POST', path: '/api/preservation',
+    body: { crop_type_slug: CROP, method: 'whole_freeze', quantity_value: 2, quantity_unit: 'lb', package_count: packageCount, preserved_at: isoDate(-1), storage_location_id: storageId },
+  })
+  expect(status).toBe(201)
+  return body.id
+}
+
+// The stored counts, straight from the table: what a refused write must leave exactly as it found.
+async function storedCounts(id) {
+  const rows = await directSql`SELECT package_count, remaining_count, consumed_at, updated_at FROM preservation_log WHERE id = ${id}`
+  return rows[0]
+}
+
+describe('PUT /api/preservation/:id — a changed count moves what is left; a count that cannot exist is refused (Put-Up 1a)', () => {
+  it('count 3 -> 5 with 2 left -> 4 left: the delta lands on what is left and the echoed remaining_count is ignored', async () => {
+    setTestUserId(USER)
+    const id = await newJar(3)
+    expect((await putJar(id, { remaining_count: 2 })).status).toBe(200) // Mark used: 1 used, 2 left
+    // RowEditor's count edit: its body still carries remaining_count 2, echoed from the row it read.
+    const { status, body } = await putJar(id, { package_count: 5 })
+    expect(status).toBe(200)
+    expect(body.remaining_count).toBe(4)
+    const row = await storedCounts(id)
+    expect(row.package_count).toBe(5)
+    expect(row.remaining_count).toBe(4)
+    expect(row.consumed_at).toBeNull()
+  })
+
+  it('a count below what is used -> 409 count_below_used, and nothing is written', async () => {
+    setTestUserId(USER)
+    const id = await newJar(3)
+    expect((await putJar(id, { remaining_count: 1 })).status).toBe(200) // 2 used, 1 left
+    const before = await storedCounts(id)
+    const { status, body } = await putJar(id, { package_count: 1 }) // 1 left + (1 - 3) = -1
+    expect(status).toBe(409)
+    expect(body.code).toBe('count_below_used')
+    expect(body.message).toBe(body.error)
+    // "2 used" comes from the statement's own snapshot of the stored counts, not from the request.
+    expect(body.error).toContain('2 of these are already used')
+    expect(await storedCounts(id)).toEqual(before)
+  })
+
+  it('more left than the count -> 409 remaining_above_count, and nothing is written', async () => {
+    setTestUserId(USER)
+    const id = await newJar(3)
+    const before = await storedCounts(id)
+    const { status, body } = await putJar(id, { remaining_count: 5 }) // count unchanged, 5 left of 3
+    expect(status).toBe(409)
+    expect(body.code).toBe('remaining_above_count')
+    expect(body.message).toBe(body.error)
+    expect(await storedCounts(id)).toEqual(before)
+  })
+})
+
+describe('DATE columns leave every read surface as YYYY-MM-DD through the real driver (Put-Up 1a)', () => {
+  it('GET /:id, the list and whats-put-up carry preserved_at and use_by_target as the stored calendar day', async () => {
+    setTestUserId(USER)
+    const preserved = isoDate(-3)
+    const created = await callHandler(handler, {
+      method: 'POST', path: '/api/preservation',
+      body: { crop_type_slug: CROP, method: 'whole_freeze', quantity_value: 1, quantity_unit: 'lb', preserved_at: preserved, storage_location_id: storageId },
+    })
+    expect(created.status).toBe(201)
+    const id = created.body.id
+    // The days as Postgres itself spells them: the value every surface must return, character for character.
+    // The driver hands a DATE back as a Date, and a Date reaches JSON as "YYYY-MM-DDT00:00:00.000Z" (pre-1a).
+    const [stored] = await directSql`
+      SELECT to_char(preserved_at, 'YYYY-MM-DD') AS preserved_at, to_char(use_by_target, 'YYYY-MM-DD') AS use_by_target
+      FROM preservation_log WHERE id = ${id}
+    `
+    expect(stored.preserved_at).toBe(preserved)
+    expect(stored.use_by_target).toMatch(/^\d{4}-\d{2}-\d{2}$/) // derived (deep freezer), so not null
+    const list = await callHandler(handler, { method: 'GET', path: '/api/preservation' })
+    const wpu = await callHandler(handler, { method: 'GET', path: '/api/preservation/whats-put-up' })
+    const surfaces = {
+      'GET /:id': await readJar(id),
+      'GET list': list.body.find((r) => r.id === id),
+      'whats-put-up': wpu.body.groups.flatMap((g) => g.records).find((r) => r.id === id),
+    }
+    for (const [surface, row] of Object.entries(surfaces)) {
+      expect(row, surface).toBeTruthy()
+      expect({ surface, preserved_at: row.preserved_at, use_by_target: row.use_by_target }).toEqual({ surface, ...stored })
+    }
   })
 })
