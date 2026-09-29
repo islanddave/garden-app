@@ -19,6 +19,7 @@ import { useClaimPageScroll, currentPageEntry } from '../hooks/usePageScrollMana
 import { BY_ID as SPECIES_BY_ID } from '../lib/critterSpecies.js'
 import { buildGardenTree, nodeHasChildren, loadExpanded, saveExpanded, buildTagGroupedList, loadGroupBy, saveGroupBy, SORT_ALPHA } from '../lib/projectTree.js'
 import GroupBySlugSelect from '../components/GroupBySlugSelect.jsx'
+import { buildGardenFacetOptions } from '../lib/gardenGroupBy.js'
 import FacetGroupHeader from '../components/forms/FacetGroupHeader.jsx'
 import Spinner from '../components/forms/Spinner.jsx'
 import TileGrid from '../components/forms/TileGrid.jsx'
@@ -223,49 +224,8 @@ export default function Garden() {
     saveGardenGroupBy({ getToken, value: v })
   }, [getToken])
   const { entities: tagMap } = useEntityTagsBulk('plant')
-  const facetOptions = useMemo(() => {
-    const present = new Set()
-    for (const id in (tagMap || {})) {
-      const e = tagMap[id]
-      for (const t of [...(e.direct || []), ...(e.projected || [])]) present.add(t.facet)
-    }
-    const ORDER = ['type', 'lifecycle', 'heat', 'determinacy', 'day_length', 'allium_type', 'basil_use', 'bean_type', 'bean_habit', 'bean_use', 'location', 'group', 'freeform']
-    const LABELS = { type: 'Type', lifecycle: 'Lifespan', heat: 'Heat', determinacy: 'Determinacy', day_length: 'Day Length', allium_type: 'Allium', basil_use: 'Basil', bean_type: 'Bean Type', bean_habit: 'Bean Habit', bean_use: 'Bean Use', location: 'Location', group: 'Group', freeform: 'Tags' }
-    // V4-PROJHIDE-001: when projects are hidden, the "Projects" (none) grouping is gone and CROP TYPE
-    // leads — a real crop_type_slug grouping (tomato/pepper/...) from the cultivar join, since the
-    // entity-tags 'type' facet is unpopulated in prod. The tag 'type' facet is skipped so it can't
-    // shadow the crop-type option. Flag OFF keeps the exact prior options (Projects + tag facets).
-    //
-    // V4-FACETSLUG-001 ordering (BD0806-21: "type, project, location, lifecycle"). The option SET is
-    // unchanged in both flag states — only the ORDER moves, so nothing about grouping behavior or the
-    // stale-value fallback shifts. Three notes on the literal spec:
-    //   * "project" is DEAD. PROJECTS_HIDDEN went true 2026-08-10 (the day the row was filed), so the
-    //     'none'/Projects option is unreachable under the flag. It is NOT resurrected; with the flag
-    //     OFF it keeps its historical lead position and the rest of the head follows it.
-    //   * "lifecycle" means the option LABELLED "Lifecycle", which is the `status` facet. The
-    //     lifecycle TAG facet is labelled "Lifespan". That inversion is live and deliberate; it sorts
-    //     down with the other tag facets rather than claiming the head slot the row asked for.
-    //   * 'status' and 'location' are STRUCTURAL (every planting has both) so they are offered
-    //     unconditionally — they do not depend on tagMap having anything in it. Promoting them into
-    //     the head is what makes the head stable regardless of which tag facets happen to be present.
-    const opts = []
-    if (PROJECTS_HIDDEN) {
-      opts.push({ value: 'crop_type', label: 'Type' }) // crop_type (cultivar join) replaces the tag 'type' facet
-    } else {
-      opts.push({ value: 'none', label: 'Projects' })
-      if (present.has('type')) opts.push({ value: 'type', label: LABELS.type })
-    }
-    opts.push({ value: 'location', label: LABELS.location })
-    opts.push({ value: 'status', label: 'Lifecycle' })
-    for (const fct of ORDER) {
-      if (fct === 'type') continue // already placed in the head (or replaced by crop_type)
-      // V4-GARDENLOCFILTER-001: 'location' is STRUCTURAL (garden_node.location_id) and is placed in
-      // the head above. Skipped here so a stray location-facet tag can't add a duplicate option.
-      if (fct === 'location') continue
-      if (present.has(fct)) opts.push({ value: fct, label: LABELS[fct] || fct })
-    }
-    return opts
-  }, [tagMap])
+  // The option set and its order (V4-PROJHIDE-001, V4-FACETSLUG-001) live in src/lib/gardenGroupBy.js.
+  const facetOptions = useMemo(() => buildGardenFacetOptions(tagMap, PROJECTS_HIDDEN), [tagMap])
   // MVP-Critter Session 3: active critters for this household, grouped by plant_id.
   const [critters, setCritters] = useState([])
   // D-INV-1 long-press popover state. anchorEl is the long-pressed sprite DOM node.
