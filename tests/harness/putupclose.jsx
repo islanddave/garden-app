@@ -38,6 +38,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
+import { AuthProvider } from '../../src/context/AuthContext.jsx'
 import PutUp from '../../src/pages/PutUp.jsx'
 import StartBatchSheet from '../../src/components/kitchen/StartBatchSheet.jsx'
 import { BOTTOM_NAV_HEIGHT_PX } from '../../src/lib/constants.js'
@@ -200,12 +201,14 @@ const JARS = {
 // looked at since (quiet), a dehydrator run, and a paused candy parent — with LONG_LABEL on the
 // stalled ferment so the widest title meets the tallest question on one card.
 const GOING = [
-  { id: 'kb-going-mash', user_id: 'user_dave', label: 'Pepper mash', kind: null, kind_other: null,
+  // Owned by the signed-in viewer (the Clerk stub's USER.id): from Put-Up 1a a bare open of /put-up lands on
+  // Going now only for the viewer's own batch (V4 §6.1), and every going/checkin/start case opens /put-up bare.
+  { id: 'kb-going-mash', user_id: 'harness_user', label: 'Pepper mash', kind: null, kind_other: null,
     started_at: null, start_precision: null, first_recorded_at: iso('2026-09-20T09:00:00'),
     expected_days_min: null, expected_days_max: null, suspended_at: null, closed_at: null,
     current_stage_kind: 'started', current_stage_label: null, current_stage_entered_at: iso('2026-09-20T09:00:00'),
     input_count: '3', output_count: '0', last_ph_reading: null, last_ph_read_at: null },
-  { id: 'kb-going-ferment', user_id: 'user_dave', label: LONG_LABEL, kind: 'ferment', kind_other: null,
+  { id: 'kb-going-ferment', user_id: 'harness_user', label: LONG_LABEL, kind: 'ferment', kind_other: null,
     started_at: iso('2026-09-10T09:00:00'), start_precision: 'day', first_recorded_at: iso('2026-09-10T09:00:00'),
     expected_days_min: null, expected_days_max: null, suspended_at: null, closed_at: null,
     current_stage_kind: 'tended', current_stage_label: null, current_stage_entered_at: iso('2026-09-12T09:00:00'),
@@ -215,7 +218,7 @@ const GOING = [
     expected_days_min: 1, expected_days_max: 2, suspended_at: null, closed_at: null,
     current_stage_kind: 'started', current_stage_label: null, current_stage_entered_at: iso('2026-09-27T09:00:00'),
     input_count: '0', output_count: '0', last_ph_reading: null, last_ph_read_at: null },
-  { id: 'kb-going-paused', user_id: 'user_dave', label: 'Candy parent, frozen', kind: 'candy', kind_other: null,
+  { id: 'kb-going-paused', user_id: 'harness_user', label: 'Candy parent, frozen', kind: 'candy', kind_other: null,
     started_at: iso('2026-06-14T09:00:00'), start_precision: 'day', first_recorded_at: iso('2026-06-14T09:00:00'),
     expected_days_min: null, expected_days_max: null, suspended_at: '2026-08-12T12:00:00.000Z', closed_at: null,
     current_stage_kind: 'tended', current_stage_label: 'Frozen', current_stage_entered_at: '2026-08-12T12:00:00.000Z',
@@ -270,7 +273,16 @@ const click = (t, scope = document) => scope.querySelector(`[data-testid="${t}"]
 const cardOf = (id) => document.querySelector(`[data-testid="going-batch"][data-batch-id="${id}"]`)
 
 async function run() {
+  // Every case starts with no Put-Up sheet draft: with a signed-in viewer (AuthProvider above) the sheets keep
+  // drafts in localStorage, and a draft left by the previous case in the same browser profile would reopen
+  // or reshape this case's sheet.
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('garden:putup-draft:v1:')) localStorage.removeItem(k)
+  } catch { /* no storage: nothing to clear */ }
   createRoot(document.getElementById('root')).render(
+    // AuthProvider over the Clerk stub (USER.id 'harness_user'): from Put-Up 1a the bare-open landing reads
+    // the viewer, and a page with no viewer lands on the put-up list, never Going now (V4 §6.1).
+    <AuthProvider>
     <MemoryRouter initialEntries={[ENTRY]}>
       <PutUp />
       {START_OPEN && <StartBatchSheet open onClose={() => {}} onStarted={() => {}} />}
@@ -284,7 +296,8 @@ async function run() {
           color: '#8a8a8a' }}>
         real BottomNav element ({BOTTOM_NAV_HEIGHT_PX}px)
       </nav>
-    </MemoryRouter>,
+    </MemoryRouter>
+    </AuthProvider>,
   )
   await settle(); await settle()
 
