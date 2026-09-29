@@ -106,8 +106,10 @@ describe('App route table (single source of truth)', () => {
     // +1, not a swap: /sow and /seeds/saved STAY in the table as REPLACE redirects into it
     // (LegacySeedsRedirect), for the same launcher-cache/bookmark reason /log/voice stayed. Their
     // redirect behaviour is pinned in LegacySeedsRedirect.test.jsx.
-    expect(paths).toHaveLength(60)
-    expect(new Set(paths).size).toBe(60)
+    // 60 -> 61: /season-end, the End of season page. Its only door is the More row of the same name
+    // (an installed PWA has no address bar), so the row and the route ship together.
+    expect(paths).toHaveLength(61)
+    expect(new Set(paths).size).toBe(61)
   })
 
   it('/log/voice is a PAGE, never an overlay — a live mic must not mount over another surface', () => {

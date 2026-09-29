@@ -127,7 +127,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants event_log column contract', 
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(12);
+    // 12 -> 13: GET /api/plants/season-end (hero laterals + its last_logged_at lateral).
+    expect(STATEMENTS).toHaveLength(13);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['e', 'el', 'ev']);
   });

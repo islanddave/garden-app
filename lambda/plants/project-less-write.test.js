@@ -140,7 +140,9 @@ describe('plants Lambda — the widened predicate stays narrow (authz guard)', (
     // 12 -> 13: V4-ARCHIVEBROWSE-001's GET /api/plants/archived carries the same own-created_by
     // arm, guarded by its own `p.container_id IS NULL AND` conjunct — proved by the per-alias
     // assertion above; this line only counts it.
-    expect(total, 'expected 13 own-created_by ownership arms (list + grid + picker + 6 by-id + 3 restore-surface + archived)').toBe(13);
+    // 13 -> 14: GET /api/plants/season-end carries the grid's arm, guarded by its own
+    // gp.container_id IS NULL AND conjunct — proved by the per-alias assertion above.
+    expect(total, 'expected 14 own-created_by ownership arms (list + grid + picker + 6 by-id + 3 restore-surface + archived + season-end)').toBe(14);
   });
 
   it('container ownership is still asserted on every by-id route', () => {

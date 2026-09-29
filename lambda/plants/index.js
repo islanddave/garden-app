@@ -242,7 +242,7 @@ export const handler = async (event) => {
   // routes are handled inside the try below, mirroring lambda/locations and lambda/photos.
   // Add any future literal collection route to this list AND to archived-route.test.js's exclusion
   // assertion — the failure is silent (a 404 that looks like an empty archive, not like a bug).
-  const COLLECTION_PATHS = ['/api/plants/deleted', '/api/plants/archived'];
+  const COLLECTION_PATHS = ['/api/plants/deleted', '/api/plants/archived', '/api/plants/season-end'];
   const idMatch = !COLLECTION_PATHS.includes(rawPath) && rawPath.match(/^\/api\/plants\/([^/]+)$/);
   // V3-SEEN-001 (Lane A Foundation): seen-contract write path. New-endpoint-only,
   // additive — does NOT touch any existing GET/PUT/POST/DELETE handler. idMatch's
@@ -271,6 +271,106 @@ export const handler = async (event) => {
   const seedLotsMatch = rawPath.match(/^\/api\/plants\/([^/]+)\/seed-lots$/);
 
   try {
+    // ── End of season — the read behind src/pages/SeasonEnd.jsx ──────────────────────────────────
+    //
+    // RAW FACTS, NO VERDICT. The page decides which plantings are finished for the year from the
+    // frost band (src/lib/frostBands.generated.js, a copy of daily-plan's BAND_BY_SLUG), the location
+    // chain (GET /api/locations) and the status, in src/lib/seasonEnd.js, where the rule can be
+    // tested both ways. This read only supplies what no existing read carries: `kind`, the crop's
+    // default_lifecycle, and when anyone last logged something on the planting. The band map is NOT
+    // copied into this Lambda: one copy of it, on the side that decides.
+    //
+    // A SEPARATE ROUTE, NOT A ?view= BRANCH, because an old Lambda answers an unknown ?view= with the
+    // wide list (200) and the page would decide on rows with no `kind`; this path 404s on an old
+    // Lambda instead, which the page shows as a load failure. Same literal-collection shape as
+    // /archived above, and listed in COLLECTION_PATHS for the same reason.
+    //
+    // The live predicates are the ?view=grid projection's, verbatim: not deleted, not archived, a
+    // live container (F4 deleted gate + the container's own archived_at). The hero laterals are
+    // copied from it too, so hero-read-derivation.test.js holds this read to the same contract.
+    //
+    // last_logged_at leaves out 'rain' (the station writes it) and 'status_change' (the side effect
+    // of a status edit — and of this page's own Undo, which would otherwise read "Last logged today"
+    // on every row it just put back). Shown on the page, never filtered on.
+    //
+    // default_lifecycle is a scalar read inside variety_ref rather than a crop_types JOIN: this read
+    // carries no default_unit, and select-columns.test.js counts that join as a default_unit reader.
+    if (rawPath === '/api/plants/season-end' && method === 'GET') {
+      const rows = await sql`
+        SELECT gp.id, gp.display_name AS name, gp.status, gp.kind,
+               gp.container_id AS project_id, gp.location_id,
+               COALESCE(fp.id, fb.id) AS featured_photo_id,
+               (fp.id IS NOT NULL) AS featured_is_explicit,
+               COALESCE(fp.storage_path, fb.storage_path) AS featured_photo_storage_path,
+               CASE WHEN pv.id IS NOT NULL THEN
+                 jsonb_build_object(
+                   'name', pv.display_name, 'crop_type_slug', pv.crop_type_slug,
+                   'default_lifecycle', (SELECT ct.default_lifecycle FROM public.crop_types ct
+                                          WHERE ct.slug = pv.crop_type_slug AND ct.deleted_at IS NULL
+                                          LIMIT 1))
+               ELSE NULL END AS variety_ref,
+               la.last_logged_at
+        FROM public.garden_node gp
+        LEFT JOIN public.container pp ON pp.id = gp.container_id
+        LEFT JOIN public.cultivar pv ON pv.id = gp.cultivar_id AND pv.deleted_at IS NULL
+        LEFT JOIN LATERAL (
+               SELECT ph.id, ph.storage_path
+                 FROM photos ph
+                 LEFT JOIN public.event_log e ON e.id = ph.event_id
+                WHERE ph.id = gp.featured_photo_id
+                  AND ph.deleted_at IS NULL
+                  AND ph.created_by = ANY(${householdIds})
+                  AND (ph.plant_id = gp.id OR e.plant_id = gp.id)
+                LIMIT 1
+             ) fp ON TRUE
+        LEFT JOIN LATERAL (
+               SELECT x.id, x.storage_path
+                 FROM (
+                        ( SELECT ph.id, ph.storage_path, ph.created_at
+                            FROM photos ph
+                           WHERE fp.storage_path IS NULL
+                             AND ph.plant_id = gp.id
+                             AND ph.deleted_at IS NULL
+                             AND ph.created_by = ANY(${householdIds})
+                           ORDER BY ph.created_at DESC, ph.id DESC
+                           LIMIT 1 )
+                        UNION ALL
+                        ( SELECT ph.id, ph.storage_path, ph.created_at
+                            FROM photos ph
+                            JOIN public.event_log e ON e.id = ph.event_id
+                           WHERE fp.storage_path IS NULL
+                             AND e.plant_id = gp.id
+                             AND ph.deleted_at IS NULL
+                             AND ph.created_by = ANY(${householdIds})
+                           ORDER BY ph.created_at DESC, ph.id DESC
+                           LIMIT 1 )
+                      ) x
+                ORDER BY x.created_at DESC, x.id DESC
+                LIMIT 1
+             ) fb ON TRUE
+        LEFT JOIN LATERAL (
+               SELECT max(el.event_date) AS last_logged_at
+                 FROM public.event_log el
+                WHERE el.plant_id = gp.id
+                  AND el.deleted_at IS NULL
+                  AND el.event_type NOT IN ('rain', 'status_change')
+             ) la ON TRUE
+        WHERE (( pp.created_by = ANY(${householdIds}) AND pp.deleted_at IS NULL )
+               OR (gp.container_id IS NULL AND gp.created_by = ANY(${householdIds})))
+          AND gp.deleted_at IS NULL
+          AND gp.archived_at IS NULL
+          AND pp.archived_at IS NULL
+        ORDER BY gp.created_at DESC
+        LIMIT 5000
+      `;
+      const enrichedSeason = await Promise.all(rows.map(async (row) => {
+        const photoUrls = await featuredPhotoUrls(row.featured_photo_storage_path);
+        const { featured_photo_storage_path: _ignore, ...rest } = row;
+        return { ...rest, ...photoUrls };
+      }));
+      return resp(200, { plants: enrichedSeason });
+    }
+
     // ── V4-RESTORESURFACE-001 — the recovery path for plantings (audit I9) ───────────────────────
     //
     // 33 plantings are soft-deleted in prod with no affordance to bring any of them back. The

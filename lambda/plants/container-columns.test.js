@@ -102,7 +102,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants container column contract', 
     expect(HANDLERS.length).toBeGreaterThan(0);
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
-    expect(STATEMENTS).toHaveLength(16);
+    // 16 -> 17: GET /api/plants/season-end reaches container for ownership and liveness, like the grid.
+    expect(STATEMENTS).toHaveLength(17);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['c', 'dc', 'pp']);
   });

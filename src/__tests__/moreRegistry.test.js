@@ -28,6 +28,8 @@ const MINTED = [
   'dashboard', 'findings', 'photos', 'space', 'locations', 'inventory', 'seeds', 'achievements',
   'catch-up', 'collection', 'helper', 'settings', 'settings-controls', 'about', 'releases', 'admin',
   'today', 'garden', 'create', 'harvests', 'put-up',
+  // End of season (lane seasonend-20260929) — a NEW row, minted here on purpose.
+  'season-end',
 ]
 
 describe('the ids — minted once, frozen', () => {

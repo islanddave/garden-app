@@ -96,7 +96,8 @@ describe('W-HERO — every hero-resolving read DERIVES the effective hero', () =
     expect(heroReads.length).toBeGreaterThanOrEqual(8);
     const byFile = heroReads.reduce((a, r) => ({ ...a, [r.file]: (a[r.file] ?? 0) + 1 }), {});
     expect(byFile).toMatchObject({
-      'plants/index.js': 4,
+      // 4 -> 5: GET /api/plants/season-end (the End of season page) copies the grid's hero laterals.
+      'plants/index.js': 5,
       'projects/index.js': 1,
       'locations/index.js': 1,
       // V5-SEEDCARDS-001: the by-id read plus BOTH list templates (?category= and bare), which
@@ -190,7 +191,8 @@ describe('W-HERO — every hero-resolving read DERIVES the effective hero', () =
     const reads = heroReads.filter((r) => r.file === 'plants/index.js');
     // 3 -> 4: V4-PLANTSPAYLOAD-001's ?view=grid projection resolves a hero too, so it is held to
     // the same event-inclusive membership.
-    expect(reads).toHaveLength(4);
+    // 4 -> 5: the season-end read (src/pages/SeasonEnd.jsx) is held to the same membership.
+    expect(reads).toHaveLength(5);
     for (const { sql } of reads) {
       expect(sql, `plants hero read does not join event_log:\n${sql}`)
         .toMatch(/LEFT JOIN public\.event_log e ON e\.id = ph\.event_id/);
@@ -226,15 +228,16 @@ describe('W-HERO — every hero-resolving read DERIVES the effective hero', () =
     const lists = plants.filter((r) => /LIMIT\s+5000/i.test(r.sql));
     const byId = plants.filter((r) => !/LIMIT\s+5000/i.test(r.sql));
 
-    it('finds 3 list reads and 1 by-id read (anti-vacuity floor)', () => {
+    it('finds 4 list reads and 1 by-id read (anti-vacuity floor)', () => {
       // 2 -> 3: the ?view=grid projection is a LIST read and copies this fallback verbatim, so it
       // inherits the 187x regression guard rather than being a place the old shape can creep back.
-      expect(lists).toHaveLength(3);
+      // 3 -> 4: the season-end read is a LIST read with the grid fallback copied verbatim.
+      expect(lists).toHaveLength(4);
       expect(byId).toHaveLength(1);
       for (const r of plants) expect(fallbackOf(r.sql)).not.toBe('');
     });
 
-    it.each([0, 1, 2])('list read %i: fallback has no cross-relation OR', (i) => {
+    it.each([0, 1, 2, 3])('list read %i: fallback has no cross-relation OR', (i) => {
       const fb = fallbackOf(lists[i].sql);
       const node = nodeAliasOf(lists[i].sql); // see the EVENT-INCLUSIVE clause for why not `p`
       // THE regression. This disjunction spans photos and event_log, so the planner cannot use

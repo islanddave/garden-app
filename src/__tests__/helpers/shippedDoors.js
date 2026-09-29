@@ -7,12 +7,17 @@
 //
 // Not doors: the ＋ slot (a button that opens the create sheet) and, in field mode, the mic → /field,
 // which BottomNav.navConfig.test.jsx pins on its own.
+//
+// ADDED SINCE THE CENSUS — a new door is also a decision made in the open, so each one is listed at
+// its place in the sheet with the change that added it:
+//   /plants/catch-up — Catch up (V5-PLANTSTARTDATES-001), after Achievements (see below).
+//   /season-end — End of season (lane seasonend-20260929), last row of Your garden, after Catch up.
 export const SHIPPED_TAB_HREFS = ['/today', '/garden', '/harvests', '/put-up']
 
 // In the sheet's shipped order (SPACE_PHOTOS_ENABLED on). '/plants/catch-up' was ADDED with
 // V5-PLANTSTARTDATES-001, when CATCH_UP_EDITOR_SHIPPED went true and that row became a door.
 export const SHIPPED_MORE_HREFS = [
   '/dashboard', '/findings', '/photos', '/space', '/locations', '/inventory', '/seeds', '/achievements',
-  '/plants/catch-up',
+  '/plants/catch-up', '/season-end',
   '/collection', '/helper', '/settings', '/settings/controls', '/about', '/releases', '/admin',
 ]
