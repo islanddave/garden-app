@@ -1,0 +1,548 @@
+# gates.yml
+# v5-losstoken-001 — V5-LOSSTOKEN-001. Renames the stored plant-reduction event tokens out of the status and
+# outcome vocabularies: failed -> reduction_lost, given_away -> reduction_given_away, on every event_log row
+# (soft-deleted included) and on both copies event_log_archive keeps (its event_type column and
+# row_data->'event_type'). Data-only. What, why and ORDER: README.md. Statement by statement: 0a-data.sql.
+#
+# STATUS AT AUTHORING (2026-09-29): AUTHORED, NOT APPLIED on staging or prod. rehearse_local.py drives this
+# file through scripts/gate_runner.py on a throwaway local Postgres 17 and proves every executable gate below
+# can fail.
+#
+# SEQUENCING — README.md. The two MANUAL pre gates first. Then per environment, staging first:
+#   --phase pre -> --phase sweep -> apply 0a -> --phase post -> --phase sweep
+# then `gate_runner.py --all --phase post --continuous-only` on BOTH envs.
+# Pushing this directory before the apply cannot red gate-invariants.yml: the four continuous post gates
+# self-arm on this migration's schema_version row, and every other post gate is window-only.
+#
+# GATE CLASSIFICATION (decided at authoring, not after the first false red)
+#   * Standing invariants (continuous, self-armed on '5.0.0-losstoken-001', env both): no stored row carries a
+#     legacy token (event_log incl. soft-deleted, both archive copies, event_batches); the three reduction
+#     metadata keys sit only on the two new tokens; loss_reason only on reduction_lost; giveaway_reason only on
+#     reduction_given_away. The key invariants were MEASURED on prod read-only on 2026-09-29, over the legacy
+#     tokens: 0 violations across all 22,358 event_log rows (947 soft-deleted) and 0 in the archive. The PUT
+#     route never runs validateReduction, so that measurement is what licenses arming them; the pre gates
+#     re-measure it on each environment before its apply, so an environment nobody has read cannot arm red.
+#   * Apply-window receipts (continuous: false): the stamp, prod non-vacuity, and the BEFORE copy against the
+#     live rows — mapped token, nothing else moved, per-plant totals, no row outside the copy touched, the
+#     audit receipts. All but the stamp read the snap_ table 0a creates, so on an UNAPPLIED database they
+#     ERROR rather than fail (the v5-cacheorphan-001 / v4-cachemissingrow-001 precedent); --continuous-only,
+#     what CI runs, never executes them. A later ordinary edit (a renamed loss soft-deleted, or archived with
+#     its planting) is not a regression, which is why they are window-only.
+#   * Every gate that names a prod id is env: prod. Everything else is env: both: the rename is defined by the
+#     token, not by an id, so the same assertions hold on any database.
+#   * No gate casts ::regclass; every continuous gate parses and runs on an unapplied database.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-losstoken-001'
+    expect: rowcount_eq
+    value: 0
+
+  # A leftover copy means a half-finished earlier apply or rollback. 0a's CREATE TABLE fails on it anyway; this
+  # says why before anything runs.
+  - name: pre_snapshot_table_absent
+    sql: |
+      SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'snap_losstoken001_event_rows'
+    expect: rowcount_eq
+    value: 0
+
+  # THE ORDERING PRECONDITION. "A Lambda and a bundle are deployed" is not database state, so these two are
+  # manual gates rather than fake SQL ones; gate_runner reports MANUAL and does NOT count them as passes.
+  - name: pre_app_release_reads_both_tokens_and_writes_the_new_ones
+    manual: true
+    note: >
+      MUST NEVER BE SKIPPED. Code that knows only `failed` cannot read `reduction_lost`: its DELETE reverses no
+      counter for a renamed loss (lambda/events/index.js:2640, readReductionPlan on the STORED type), its PUT
+      lets a renamed loss be edited (:1662, the REDUCTION_EVENT_IMMUTABLE guard reads the stored type), and the
+      SPA prints the raw token. The release that makes reduction_lost / reduction_given_away canonical and keeps
+      the permanent alias for the old tokens (plan stage R1b, which carries R1a's alias) must be LIVE on the
+      prod garden-events Lambda AND the prod SPA before 0a runs. R1a alone is not enough: it still writes
+      `failed`, so the first loss logged after the apply would turn post_no_legacy_reduction_token_is_stored
+      red. A green promote is not the proof; the live artifacts are. garden-events' Description marker
+      (src=<commit> ... code=<CodeSha256>, see scripts/check-lambda-current.py) must name a commit that
+      contains the release, with code= equal to the function's CodeSha256, and prod sw.js's CACHE_VERSION
+      (v<version>-<sha>) must name one too. README.md §Apply step 2 gives the commands. Verifier = whoever
+      runs the apply.
+
+  - name: pre_gam_site_reads_both_tokens
+    manual: true
+    note: >
+      gam-site reads event_log directly, so this rename changes what it publishes. On gam-site origin/main,
+      design-prototype/refresh_live.py Q_LOSSES must count both tokens (it hard-codes 'failed' three times at
+      436570f2, 2026-09-29, which after the apply publishes zero losses), and public-export.yaml's
+      allowed_types must carry reduction_lost (Gate 1 is a closed world: after the apply `failed` drops to 0
+      live rows while reduction_lost gains history before the cutoff, and Gate 1 reads that pair as a rename
+      and freezes the publisher unless the new type is already allowed). `failed` stays in allowed_types for
+      good. reduction_given_away must be classified too (allowed or denied): `given_away` is in neither list
+      today, so the first give-away of either spelling freezes the publisher. Published, not merely pushed —
+      refresh.sh is the deploy. README.md §Apply step 2. Verifier = whoever runs the apply.
+
+  - name: pre_every_reduction_row_is_well_formed
+    note: >
+      Every row of either token family (legacy or new), soft-deleted included, and every archived one (read
+      from row_data, the copy unarchive restores): plant_id set, an integer qty_reduced >= 1, its own reason
+      key as a string and the other reason key absent or JSON null (the value test validateReduction applies).
+      A malformed row would carry its defect across the rename and red a standing gate the moment the stamp
+      arms it — the rename cannot fix it, so stop and read the row. Measured on prod 2026-09-29: 0 of 7.
+    sql: |
+      WITH reductions AS (
+        SELECT 'event_log' AS src, e.id, e.event_type, e.plant_id::text AS plant_id, e.metadata AS meta
+          FROM public.event_log e
+         WHERE e.event_type IN ('failed', 'given_away', 'reduction_lost', 'reduction_given_away')
+        UNION ALL
+        SELECT 'event_log_archive', a.id, a.row_data->>'event_type', a.row_data->>'plant_id', a.row_data->'metadata'
+          FROM public.event_log_archive a
+         WHERE a.row_data->>'event_type' IN ('failed', 'given_away', 'reduction_lost', 'reduction_given_away')
+      )
+      SELECT r.src, r.id, r.event_type
+        FROM reductions r
+       WHERE NOT COALESCE(
+               r.plant_id IS NOT NULL
+               AND jsonb_typeof(r.meta->'qty_reduced') = 'number'
+               AND (r.meta->>'qty_reduced') ~ '^[1-9][0-9]*$'
+               AND CASE WHEN r.event_type IN ('failed', 'reduction_lost')
+                        THEN jsonb_typeof(r.meta->'loss_reason') = 'string'
+                             AND COALESCE(jsonb_typeof(r.meta->'giveaway_reason'), 'null') = 'null'
+                        ELSE jsonb_typeof(r.meta->'giveaway_reason') = 'string'
+                             AND COALESCE(jsonb_typeof(r.meta->'loss_reason'), 'null') = 'null'
+                   END,
+               false)
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_reduction_keys_only_on_reduction_rows
+    note: >
+      The other half of the standing key gates, measured before they arm: no row outside the four reduction
+      tokens carries a non-null qty_reduced, loss_reason or giveaway_reason. The PUT route never calls
+      validateReduction, so nothing but this measurement says the state holds. Prod 2026-09-29: 0.
+    sql: |
+      SELECT 'event_log' AS src, e.id, e.event_type
+        FROM public.event_log e
+       WHERE e.event_type NOT IN ('failed', 'given_away', 'reduction_lost', 'reduction_given_away')
+         AND (COALESCE(jsonb_typeof(e.metadata->'qty_reduced'), 'null') <> 'null'
+              OR COALESCE(jsonb_typeof(e.metadata->'loss_reason'), 'null') <> 'null'
+              OR COALESCE(jsonb_typeof(e.metadata->'giveaway_reason'), 'null') <> 'null')
+      UNION ALL
+      SELECT 'event_log_archive', a.id, a.row_data->>'event_type'
+        FROM public.event_log_archive a
+       WHERE COALESCE(a.row_data->>'event_type', '') NOT IN ('failed', 'given_away', 'reduction_lost', 'reduction_given_away')
+         AND (COALESCE(jsonb_typeof(a.row_data->'metadata'->'qty_reduced'), 'null') <> 'null'
+              OR COALESCE(jsonb_typeof(a.row_data->'metadata'->'loss_reason'), 'null') <> 'null'
+              OR COALESCE(jsonb_typeof(a.row_data->'metadata'->'giveaway_reason'), 'null') <> 'null')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_archive_copies_of_a_legacy_token_agree
+    note: >
+      Unarchive rebuilds the event from row_data; the event_type column is a denormalised copy. 0a renames
+      both and refuses a row whose two copies disagree, because one CASE cannot decide two tokens. Prod
+      2026-09-29: 494 archive rows, 0 disagree anywhere.
+    sql: |
+      SELECT a.id, a.event_type, a.row_data->>'event_type' AS row_data_event_type
+        FROM public.event_log_archive a
+       WHERE (a.event_type IN ('failed', 'given_away') OR a.row_data->>'event_type' IN ('failed', 'given_away'))
+         AND a.event_type IS DISTINCT FROM a.row_data->>'event_type'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_near_miss_legacy_spelling
+    note: >
+      0a matches the tokens exactly. A near miss (case, padding, a space or hyphen for the underscore) would
+      survive the rename as an unmigrated loss that no reader recognises as one. Checked wherever a token is
+      stored. Prod 2026-09-29: 0.
+    sql: |
+      WITH tokens AS (
+        SELECT 'event_log' AS src, e.id, e.event_type AS token FROM public.event_log e
+        UNION ALL
+        SELECT 'event_log_archive', a.id, a.event_type FROM public.event_log_archive a
+        UNION ALL
+        SELECT 'event_log_archive.row_data', a.id, a.row_data->>'event_type' FROM public.event_log_archive a
+        UNION ALL
+        SELECT 'event_batches', b.id, b.event_type FROM public.event_batches b
+      )
+      SELECT t.src, t.id, t.token
+        FROM tokens t
+       WHERE lower(btrim(regexp_replace(t.token, '[[:space:]-]+', '_', 'g'), '_')) IN ('failed', 'given_away')
+         AND t.token NOT IN ('failed', 'given_away')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_legacy_token_in_event_batches
+    note: >
+      The batch route refuses both reduction tokens, so a legacy token here is an anomaly 0a does not rename;
+      0a refuses to run over one, and the standing gate covers this table. Prod 2026-09-29: 0.
+    sql: |
+      SELECT b.id, b.event_type FROM public.event_batches b WHERE b.event_type IN ('failed', 'given_away')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_achievement_counts_a_legacy_token
+    note: >
+      Achievements match trigger_value->>'type' against the logged event type (lambda/events/index.js:3917,
+      batchSideEffects.js:300) — data, which no code search sees. One keyed on a legacy token would stop
+      counting at the rename. Inactive rows included: they can be switched back on. Prod 2026-09-29: 0 of 39
+      (nine of the ten event_type_count rows name harvest, observation, pruning, transplant or watering; the
+      tenth names no type).
+    sql: |
+      SELECT a.slug, a.trigger_type, a.trigger_value->>'type' AS type, a.is_active
+        FROM public.achievements a
+       WHERE lower(btrim(a.trigger_value->>'type')) IN ('failed', 'given_away')
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_no_legacy_row_written_after_the_new_tokens_went_live
+    note: >
+      A cross-check on the first MANUAL gate, from the data: once the release that writes the new tokens is
+      live, no row takes a legacy token again (its server rewrites a stale bundle's `failed`). A legacy row
+      newer than the oldest new-token row means legacy writes continued (a revert to R1a, or a writer that
+      skips the normalisation) and the standing gate would red on the next one. VACUOUS while no new-token row
+      exists, which is why the MANUAL gate, not this one, is the control.
+    sql: |
+      SELECT e.id, e.event_type, e.created_at
+        FROM public.event_log e
+       WHERE e.event_type IN ('failed', 'given_away')
+         AND e.created_at > (SELECT min(n.created_at) FROM public.event_log n
+                              WHERE n.event_type IN ('reduction_lost', 'reduction_given_away'))
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_the_rows_read_at_authoring_still_carry_failed
+    env: prod
+    note: >
+      Identity receipt for the 7 loss rows read on prod 2026-09-29 (each on its own planting; logged
+      2026-08-21 x4, 2026-09-01 x2, 2026-09-29). NOT the target set — 0a takes whatever carries a legacy token
+      when it runs, and more rows are expected — but these seven must be in it, wherever they now live. A
+      failure means one was hard-deleted or retyped since: read it before applying.
+    sql: |
+      SELECT v.id
+        FROM (VALUES
+               ('71d90490-aa6d-41d3-aa04-45b2eb424c34'::uuid),
+               ('d0a9b0b4-b49a-4f53-9d28-fd13d214a718'::uuid),
+               ('30517b7d-8675-4b98-a7c0-90c9f7281f0e'::uuid),
+               ('3fa4869f-d910-48b9-84ba-396753ffe785'::uuid),
+               ('b21d6c72-f3e9-44d1-94bc-3c20894f18e3'::uuid),
+               ('2e3a7526-ce8e-44ca-b983-ba307964f336'::uuid),
+               ('6dffa249-a23a-4e19-8f7a-5ce159bd9def'::uuid)
+             ) AS v(id)
+       WHERE EXISTS (SELECT 1 FROM public.event_log e WHERE e.id = v.id AND e.event_type = 'failed')
+          OR EXISTS (SELECT 1 FROM public.event_log_archive a
+                      WHERE a.id = v.id AND a.event_type = 'failed' AND a.row_data->>'event_type' = 'failed')
+    expect: rowcount_eq
+    value: 7
+
+# RECORD ONLY. rowcount_gte 0 always passes and still runs; `--phase sweep --json` puts each count on the
+# record in its detail. Run before AND after the apply: the legacy counts must move to 0 and the new-token
+# count must grow by exactly the legacy total, the two per-plant tables must match row for row (run that
+# SQL by hand to see the sums), and the qty_lost count must not move.
+sweep:
+  - name: sweep_record_failed_live
+    sql: |
+      SELECT e.id FROM public.event_log e WHERE e.event_type = 'failed' AND e.deleted_at IS NULL
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_failed_soft_deleted
+    sql: |
+      SELECT e.id FROM public.event_log e WHERE e.event_type = 'failed' AND e.deleted_at IS NOT NULL
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_given_away_live
+    sql: |
+      SELECT e.id FROM public.event_log e WHERE e.event_type = 'given_away' AND e.deleted_at IS NULL
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_given_away_soft_deleted
+    sql: |
+      SELECT e.id FROM public.event_log e WHERE e.event_type = 'given_away' AND e.deleted_at IS NOT NULL
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_legacy_rows_in_the_archive
+    sql: |
+      SELECT a.id FROM public.event_log_archive a
+       WHERE a.event_type IN ('failed', 'given_away') OR a.row_data->>'event_type' IN ('failed', 'given_away')
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_new_token_rows
+    sql: |
+      SELECT e.id FROM public.event_log e WHERE e.event_type IN ('reduction_lost', 'reduction_given_away')
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_plant_family_totals
+    note: >
+      One row per planting and family (lost = failed or reduction_lost, given_away = given_away or
+      reduction_given_away), both spellings together, so the table reads the same before and after a correct
+      rename. The rowcount is the number of groups; the sums are in the columns.
+    sql: |
+      SELECT e.plant_id,
+             CASE WHEN e.event_type IN ('failed', 'reduction_lost') THEN 'lost' ELSE 'given_away' END AS family,
+             count(*) AS n_rows,
+             count(*) FILTER (WHERE e.deleted_at IS NULL) AS n_live,
+             sum(CASE WHEN jsonb_typeof(e.metadata->'qty_reduced') = 'number'
+                      THEN (e.metadata->>'qty_reduced')::numeric END) AS qty_all,
+             sum(CASE WHEN jsonb_typeof(e.metadata->'qty_reduced') = 'number' AND e.deleted_at IS NULL
+                      THEN (e.metadata->>'qty_reduced')::numeric END) AS qty_live
+        FROM public.event_log e
+       WHERE e.event_type IN ('failed', 'given_away', 'reduction_lost', 'reduction_given_away')
+       GROUP BY 1, 2
+    expect: rowcount_gte
+    value: 0
+
+  - name: sweep_record_plants_whose_qty_lost_differs_from_the_loss_ledger
+    note: >
+      plants.qty_lost against the live loss ledger, both spellings. The rename cannot move this (no trigger on
+      event_log touches plants), so it is a record, not a gate: prod 2026-09-29 reads 0 over the 7 plantings
+      with a loss row (3 other plantings carry a hand-set qty_lost with no loss row and are out of scope).
+    sql: |
+      SELECT p.id, p.qty_lost, l.qty_live
+        FROM public.plants p
+        JOIN (SELECT e.plant_id,
+                     sum(CASE WHEN jsonb_typeof(e.metadata->'qty_reduced') = 'number'
+                              THEN (e.metadata->>'qty_reduced')::numeric END) AS qty_live
+                FROM public.event_log e
+               WHERE e.event_type IN ('failed', 'reduction_lost') AND e.deleted_at IS NULL
+               GROUP BY e.plant_id) l ON l.plant_id = p.id
+       WHERE COALESCE(p.qty_lost, 0) IS DISTINCT FROM COALESCE(l.qty_live, 0)
+    expect: rowcount_gte
+    value: 0
+
+post:
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-losstoken-001'
+    expect: rowcount_eq
+    value: 1
+
+  # ── STANDING INVARIANTS (continuous, self-armed) ────────────────────────────────────────────────────────
+
+  - name: post_no_legacy_reduction_token_is_stored
+    note: >
+      Dave's decision as an invariant: once the rename is applied, no stored event row speaks `failed` or
+      `given_away` — event_log (soft-deleted included), both archive copies, event_batches. A row here after the
+      apply means a writer is on the old code again (an app revert below the release that writes the new
+      tokens, a stale path that skips the server's normalisation, a direct SQL insert). audit_events and
+      app_events telemetry keep the old token as history and are deliberately out of scope. Self-armed:
+      vacuous until the stamp exists.
+    sql: |
+      SELECT x.src, x.id, x.token
+        FROM (SELECT 'event_log' AS src, e.id, e.event_type AS token
+                FROM public.event_log e WHERE e.event_type IN ('failed', 'given_away')
+              UNION ALL
+              SELECT 'event_log_archive', a.id, a.event_type
+                FROM public.event_log_archive a WHERE a.event_type IN ('failed', 'given_away')
+              UNION ALL
+              SELECT 'event_log_archive.row_data', a.id, a.row_data->>'event_type'
+                FROM public.event_log_archive a WHERE a.row_data->>'event_type' IN ('failed', 'given_away')
+              UNION ALL
+              SELECT 'event_batches', b.id, b.event_type
+                FROM public.event_batches b WHERE b.event_type IN ('failed', 'given_away')) x
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-losstoken-001')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_reduction_keys_only_on_the_new_tokens
+    note: >
+      The reduction ledger's storage-layer separation (src/lib/eventTypes.js, V4-LOSSEVENT-001): a non-null
+      qty_reduced, loss_reason or giveaway_reason on any other event type is a loss or a gift nobody recorded
+      that an aggregate would still count. Every row incl. soft-deleted, and archived rows via row_data. The
+      POST validator forbids it; the PUT route does not run that validator, which is what this watches.
+      Self-armed.
+    sql: |
+      SELECT x.src, x.id, x.event_type
+        FROM (SELECT 'event_log' AS src, e.id, e.event_type, e.metadata AS meta FROM public.event_log e
+              UNION ALL
+              SELECT 'event_log_archive', a.id, a.row_data->>'event_type', a.row_data->'metadata'
+                FROM public.event_log_archive a) x
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-losstoken-001')
+         AND COALESCE(x.event_type, '') NOT IN ('reduction_lost', 'reduction_given_away')
+         AND (COALESCE(jsonb_typeof(x.meta->'qty_reduced'), 'null') <> 'null'
+              OR COALESCE(jsonb_typeof(x.meta->'loss_reason'), 'null') <> 'null'
+              OR COALESCE(jsonb_typeof(x.meta->'giveaway_reason'), 'null') <> 'null')
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_loss_reason_only_on_reduction_lost
+    note: >
+      A give-away is not a loss: loss_reason on any row but reduction_lost would count a gift as a loss (or a
+      loss nobody logged). A swapped rename mapping lands here and in the next gate. Self-armed.
+    sql: |
+      SELECT x.src, x.id, x.event_type
+        FROM (SELECT 'event_log' AS src, e.id, e.event_type, e.metadata AS meta FROM public.event_log e
+              UNION ALL
+              SELECT 'event_log_archive', a.id, a.row_data->>'event_type', a.row_data->'metadata'
+                FROM public.event_log_archive a) x
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-losstoken-001')
+         AND COALESCE(x.event_type, '') <> 'reduction_lost'
+         AND COALESCE(jsonb_typeof(x.meta->'loss_reason'), 'null') <> 'null'
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_giveaway_reason_only_on_reduction_given_away
+    note: >
+      The mirror of the gate above: giveaway_reason on any row but reduction_given_away. Self-armed.
+    sql: |
+      SELECT x.src, x.id, x.event_type
+        FROM (SELECT 'event_log' AS src, e.id, e.event_type, e.metadata AS meta FROM public.event_log e
+              UNION ALL
+              SELECT 'event_log_archive', a.id, a.row_data->>'event_type', a.row_data->'metadata'
+                FROM public.event_log_archive a) x
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-losstoken-001')
+         AND COALESCE(x.event_type, '') <> 'reduction_given_away'
+         AND COALESCE(jsonb_typeof(x.meta->'giveaway_reason'), 'null') <> 'null'
+    expect: rowcount_eq
+    value: 0
+
+  # ── APPLY-WINDOW RECEIPTS (continuous: false) ─────────────────────────────────────────────────────────────
+
+  - name: post_snapshot_holds_the_rows_read_at_authoring
+    env: prod
+    continuous: false
+    note: >
+      NON-VACUITY, prod only: the BEFORE copy holds all 7 loss rows read at authoring, as failed ->
+      reduction_lost. Every env-both receipt below passes on an empty copy — which is correct on a database
+      with no legacy row (staging, most likely) and would be a wrong-host apply on prod. This is the gate that
+      tells them apart; the local rehearsal is what proves the env-both receipts non-vacuous.
+    sql: |
+      SELECT s.id
+        FROM public.snap_losstoken001_event_rows s
+        JOIN (VALUES
+               ('71d90490-aa6d-41d3-aa04-45b2eb424c34'::uuid),
+               ('d0a9b0b4-b49a-4f53-9d28-fd13d214a718'::uuid),
+               ('30517b7d-8675-4b98-a7c0-90c9f7281f0e'::uuid),
+               ('3fa4869f-d910-48b9-84ba-396753ffe785'::uuid),
+               ('b21d6c72-f3e9-44d1-94bc-3c20894f18e3'::uuid),
+               ('2e3a7526-ce8e-44ca-b983-ba307964f336'::uuid),
+               ('6dffa249-a23a-4e19-8f7a-5ce159bd9def'::uuid)
+             ) AS v(id) ON v.id = s.id
+       WHERE s.old_event_type = 'failed' AND s.new_event_type = 'reduction_lost'
+    expect: rowcount_eq
+    value: 7
+
+  - name: post_every_snapshot_row_carries_its_mapped_token
+    continuous: false
+    note: >
+      Each row in the BEFORE copy, in the table it was renamed in, now carries its mapped token — judged
+      against the two pairs written out here, from the row's own before image, never against the copy's
+      new_event_type column, so a swapped CASE in 0a is caught rather than trusted. Archive rows: both copies.
+      Returns one row per miss, including a row that is no longer where 0a left it.
+    sql: |
+      SELECT s.source_table, s.id
+        FROM public.snap_losstoken001_event_rows s
+        LEFT JOIN public.event_log e         ON s.source_table = 'event_log'         AND e.id = s.id
+        LEFT JOIN public.event_log_archive a ON s.source_table = 'event_log_archive' AND a.id = s.id
+       WHERE NOT COALESCE(
+               (s.row_before->>'event_type', COALESCE(e.event_type, a.event_type))
+                 IN (('failed', 'reduction_lost'), ('given_away', 'reduction_given_away'))
+               AND s.old_event_type = s.row_before->>'event_type'
+               AND s.new_event_type = COALESCE(e.event_type, a.event_type)
+               AND (s.source_table = 'event_log'
+                    OR (a.row_data->>'event_type' = a.event_type
+                        AND s.row_before->'row_data'->>'event_type' = s.old_event_type)),
+               false)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_nothing_but_the_token_moved
+    continuous: false
+    note: >
+      Each renamed row equals its before image in every column but event_type and updated_at (set_updated_at
+      stamps the apply time) — created_by, plant_id, metadata and deleted_at included. Archive rows: every
+      column but event_type, and row_data but its event_type key. The before image is re-read through
+      jsonb_populate_record so timestamps compare as timestamps, whatever TimeZone this session has.
+    sql: |
+      SELECT s.source_table, s.id
+        FROM public.snap_losstoken001_event_rows s
+        LEFT JOIN public.event_log e         ON s.source_table = 'event_log'         AND e.id = s.id
+        LEFT JOIN public.event_log_archive a ON s.source_table = 'event_log_archive' AND a.id = s.id
+       WHERE (s.source_table = 'event_log'
+              AND (e.id IS NULL
+                   OR (to_jsonb(e) - 'event_type' - 'updated_at')
+                      IS DISTINCT FROM
+                      (to_jsonb(jsonb_populate_record(NULL::public.event_log, s.row_before)) - 'event_type' - 'updated_at')))
+          OR (s.source_table = 'event_log_archive'
+              AND (a.id IS NULL
+                   OR (to_jsonb(a) - 'event_type' - 'row_data')
+                      IS DISTINCT FROM
+                      (to_jsonb(jsonb_populate_record(NULL::public.event_log_archive, s.row_before)) - 'event_type' - 'row_data')
+                   OR (a.row_data - 'event_type') IS DISTINCT FROM ((s.row_before->'row_data') - 'event_type')))
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_per_plant_reduction_totals_preserved
+    continuous: false
+    note: >
+      Per planting and family (lost / given_away), the row count and the qty_reduced sum of the renamed
+      event_log rows, before (the copy) and after (the live rows), as rows of the symmetric difference. The
+      aggregate statement of the two receipts above: a swapped mapping moves quantity between families, a
+      touched metadata moves a sum, a lost or duplicated row moves a count.
+    sql: |
+      WITH before AS (
+        SELECT s.row_before->>'plant_id' AS plant_id,
+               CASE s.row_before->>'event_type' WHEN 'failed' THEN 'lost' WHEN 'given_away' THEN 'given_away' END AS family,
+               count(*) AS n_rows,
+               sum(CASE WHEN jsonb_typeof(s.row_before->'metadata'->'qty_reduced') = 'number'
+                        THEN (s.row_before->'metadata'->>'qty_reduced')::numeric END) AS qty
+          FROM public.snap_losstoken001_event_rows s
+         WHERE s.source_table = 'event_log'
+         GROUP BY 1, 2
+      ), after AS (
+        SELECT e.plant_id::text AS plant_id,
+               CASE e.event_type WHEN 'reduction_lost' THEN 'lost' WHEN 'reduction_given_away' THEN 'given_away' END AS family,
+               count(*) AS n_rows,
+               sum(CASE WHEN jsonb_typeof(e.metadata->'qty_reduced') = 'number'
+                        THEN (e.metadata->>'qty_reduced')::numeric END) AS qty
+          FROM public.event_log e
+          JOIN public.snap_losstoken001_event_rows s ON s.source_table = 'event_log' AND s.id = e.id
+         GROUP BY 1, 2
+      )
+      (SELECT 'before' AS side, * FROM (SELECT * FROM before EXCEPT SELECT * FROM after) d)
+      UNION ALL
+      (SELECT 'after', * FROM (SELECT * FROM after EXCEPT SELECT * FROM before) d)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_apply_touched_no_event_row_outside_the_snapshot
+    continuous: false
+    note: >
+      The apply's own fingerprint: set_updated_at stamps every row an UPDATE touches with the transaction's
+      now(), which is also the stamp's applied_at. An event_log row carrying that instant but absent from the
+      BEFORE copy was touched by the apply without being in the target set — a rename keyed on the token
+      instead of the copy, or a full-table CASE ... ELSE event_type that rewrote every updated_at. Works on an
+      empty copy too. (The archive has no updated_at; its UPDATE is keyed on the copy and read back above.)
+    sql: |
+      SELECT e.id, e.event_type
+        FROM public.event_log e
+       WHERE e.updated_at = (SELECT sv.applied_at FROM public.schema_version sv WHERE sv.version = '5.0.0-losstoken-001')
+         AND NOT EXISTS (SELECT 1 FROM public.snap_losstoken001_event_rows s
+                          WHERE s.source_table = 'event_log' AND s.id = e.id)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_every_renamed_event_row_has_its_audit_receipt
+    continuous: false
+    note: >
+      trg_audit_event_log_upd should have written one audit_events row per renamed event_log row, attributed
+      to migration:v5-losstoken-001, old token before and mapped token after. The writer is best effort (it
+      downgrades its own failure to a WARNING), so a red here means the AUDIT TRAIL is missing, not the data:
+      the receipts above judge the data. At least one row, not exactly one, so an apply after a rollback
+      still reads clean.
+    sql: |
+      SELECT s.id
+        FROM public.snap_losstoken001_event_rows s
+       WHERE s.source_table = 'event_log'
+         AND NOT EXISTS (
+               SELECT 1 FROM public.audit_events ae
+                WHERE ae.table_name = 'event_log'
+                  AND ae.row_id = s.id
+                  AND ae.actor_clerk_sub = 'migration:v5-losstoken-001'
+                  AND ae.before_jsonb->>'event_type' = s.old_event_type
+                  AND ae.after_jsonb->>'event_type' = s.new_event_type)
+    expect: rowcount_eq
+    value: 0
