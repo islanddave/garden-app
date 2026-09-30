@@ -17,6 +17,9 @@
 //     what the live CHECK can store in 1a (see StartChips.jsx SHEET_START_CHIPS).
 //   · Photo — optional; Snap hands its photo in, Going now can add one.
 //   · "What kind of batch?" — collapsed, optional (KindChips). "Other" still asks its short name in 1a.
+//   · "Like a past batch, except…" — B′ release 3 (V4 §2.2), optional: copies that batch's lines and
+//     kind in (putup/likeBatch.js); the copied lines are posted, keyed, to POST /:id/inputs right after
+//     the create, and are then ordinary lines of the new batch to edit or take out.
 // The salt/brine note Snap used to ask at pack time is NOT here: the plan puts Salt with What went in
 // in release 3 (V4 §2.2) — recorded in the lane report as a disclosed change.
 //
@@ -48,6 +51,7 @@ import { useSheetDraftKey } from './useSheetDraftKey.js'
 import { useFieldsClearOfFooter } from './sheetScroll.js'
 import { readCaptureMeta } from '../../lib/imagePipeline.js'
 import { mintKey } from './idempotencyKey.js'
+import LikeBatchPicker from '../putup/LikeBatchPicker.jsx'
 
 export const START_SHEET = 'start'
 export const START_SHEET_TITLE = 'Start a batch'
@@ -109,6 +113,8 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
   const [kind, setKind] = useState(initial.kind)
   const [kindOther, setKindOther] = useState(initial.kindOther)
   const [kindOpen, setKindOpen] = useState(initial.kind != null)
+  // B′ release 3: "Like <batch>, except…" — { from, lines, kind } or null. Held for this open only.
+  const [like, setLike] = useState(null)
   // A photo added HERE (the Going-now door). Snap's arrives as `photo` and is the host's to keep.
   const [ownFile, setOwnFile] = useState(null)
   const [ownPreview, setOwnPreview] = useState(null)
@@ -219,6 +225,13 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
       const batch = await fetch('/api/kitchen-batches', { method: 'POST', body: JSON.stringify({
         label: text, ...when.start, ...kindPart, ...(coverId ? { cover_photo_id: coverId } : {}), idempotency_key: useKey,
       }) })
+      // The copied lines, keyed (a retry replays them). A refusal here leaves a batch with fewer lines,
+      // never a lost batch: its detail page adds or edits lines as usual.
+      if (like?.lines?.length && batch?.id) {
+        await Promise.resolve(fetch(`/api/kitchen-batches/${batch.id}/inputs`, {
+          method: 'POST', body: JSON.stringify({ inputs: like.lines }),
+        })).catch(() => {})
+      }
       clearSheetDraft(draftKey)
       land(batch)
     } catch (e) {
@@ -228,7 +241,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
         ? "Couldn't save the photo — try again, or remove it."
         : "Couldn't start it — try again. What you typed is still here.")
     }
-  }, [chip, draftKey, earlier, fetch, file, key, kind, kindOther, label, labelId, land, now, pickedDate, uploader])
+  }, [chip, draftKey, earlier, fetch, file, key, kind, kindOther, label, labelId, land, like, now, pickedDate, uploader])
 
   return (
     <Sheet open onClose={onClose} title={START_SHEET_TITLE} size="full" busy={saving} armsBack>
@@ -277,6 +290,12 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
             </>
           )}
           {photo && <span style={{ color: P.light, fontSize: '0.78rem' }}>This photo goes with it.</span>}
+        </div>
+
+        <div style={{ marginBottom: T.space.sm }}>
+          <LikeBatchPicker idPrefix="start-like" picked={like} disabled={saving}
+            onPick={d => { setLike(d); if (d.kind && kind == null) { setKind(d.kind); setKindOpen(true) } }}
+            onClear={() => setLike(null)} />
         </div>
 
         <div style={{ marginBottom: T.space.sm }}>

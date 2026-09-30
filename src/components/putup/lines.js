@@ -11,6 +11,10 @@
 //   · a draw from something put up        → input_kind 'put_up'  (preservation_log_id; a counted jar
 //                                           takes count_drawn, a weighed bag takes grams)
 //   · a typed name                        → input_kind 'other'   (the name kept as typed)
+// B′ release 3 adds two (V4 §2.5a's whole corpus):
+//   · a bought item in the Pantry         → input_kind 'pantry'  (pantry_item_id)
+//   · a crop or a variety                 → input_kind 'other'   (its name, and its crop_type_slug)
+// and a typed name carries the search's resolved crop when there is one (an exact variety name).
 // Salt and water are typed lines with a role. Every line carries its own idempotency_key, minted when
 // the draft was begun and reused on every retry (V4 §5.2).
 //
@@ -76,6 +80,9 @@ export const DRIED_NOTE = `counted ${DRIED_FACTOR.low}–${DRIED_FACTOR.high}× 
 // ── line-search hits ────────────────────────────────────────────────────────────────────────────────
 export function hitKey(hit) {
   if (!hit) return null
+  // B′ release 3: a ranked hit carries its own key (planting:/jar:/pantry:/crop:/variety:) — a pantry
+  // item from a planting has a plant_id too, so the key must come first.
+  if (hit.key) return hit.key
   if (hit.plant_id) return `planting:${hit.plant_id}`
   if (hit.preservation_log_id) return `jar:${hit.preservation_log_id}`
   return null
@@ -99,6 +106,33 @@ export function plantingHitWords(hit) {
   if (!hit) return ''
   const n = Array.isArray(hit.recent_picks) ? hit.recent_picks.length : 0
   return [String(hit.label ?? '').trim() || 'A planting', n ? `${n} recent ${n === 1 ? 'pick' : 'picks'}` : 'planting'].join(' · ')
+}
+
+// B′ release 3 — the words for the other ranked hits.
+export function pantryHitWords(hit) {
+  if (!hit) return ''
+  return [String(hit.label ?? '').trim() || 'Something bought', hit.place_label].filter(Boolean).join(' · ')
+}
+export function catalogHitWords(hit) {
+  if (!hit) return ''
+  return [String(hit.label ?? '').trim(), hit.kind === 'variety' ? 'variety' : 'crop'].filter(Boolean).join(' · ')
+}
+// The one line a ranked hit says, and its quiet tail.
+export function rankedHitWords(hit) {
+  if (!hit) return { text: '', tail: '' }
+  if (hit.kind === 'planting') return { text: plantingHitWords(hit), tail: hit.ended ? 'ended · from the garden' : 'from the garden' }
+  if (hit.kind === 'put_up') return { text: jarHitWords(hit), tail: 'put up' }
+  if (hit.kind === 'pantry_item') return { text: pantryHitWords(hit), tail: 'in the pantry' }
+  return { text: String(hit.label ?? '').trim(), tail: hit.kind === 'variety' ? 'variety' : 'crop' }
+}
+// The draft source a ranked hit becomes.
+export function sourceOfHit(hit) {
+  if (!hit) return null
+  if (hit.kind === 'planting') return { kind: 'planting', hit, pickId: null }
+  if (hit.kind === 'put_up') return { kind: 'jar', hit }
+  if (hit.kind === 'pantry_item') return { kind: 'pantry', hit }
+  if (hit.kind === 'crop' || hit.kind === 'variety') return { kind: 'catalog', hit }
+  return null
 }
 
 export function pickWords(pick) {
@@ -144,7 +178,7 @@ function textOrNull(v) {
 }
 
 // { body } or { error, field }. Only what the draft answered is sent: an absent key, never a guess.
-export function lineBody(draft, { ordinal = null } = {}) {
+export function lineBody(draft, { ordinal = null, crop = null } = {}) {
   if (!draft) return { error: LINE_ERRORS.name, field: 'name' }
   const src = draft.source
   const label = textOrNull(draft.label) ?? textOrNull(src?.hit?.label)
@@ -169,10 +203,21 @@ export function lineBody(draft, { ordinal = null } = {}) {
       if (!Number.isInteger(n) || n < 1) return { error: LINE_ERRORS.count, field: 'count' }
       body.count_drawn = n
     }
+  } else if (src?.kind === 'pantry') {
+    body.input_kind = 'pantry'
+    body.pantry_item_id = src.hit.pantry_item_id
+    if (label) body.label = label
+    if (src.hit.crop_type_slug) body.crop_type_slug = src.hit.crop_type_slug
+  } else if (src?.kind === 'catalog') {
+    if (!label) return { error: LINE_ERRORS.name, field: 'name' }
+    body.input_kind = 'other'
+    body.label = label
+    if (src.hit.crop_type_slug) body.crop_type_slug = src.hit.crop_type_slug
   } else {
     if (!label) return { error: LINE_ERRORS.name, field: 'name' }
     body.input_kind = 'other'
     body.label = label
+    if (crop && !draft.role) body.crop_type_slug = crop
   }
   if (qty != null) { body.qty = qtyText.replace(',', '.'); body.qty_unit = draft.unit }
   if (draft.role === 'water' && (!src || src.kind == null)) body.role = 'water'
@@ -203,7 +248,8 @@ export function offerListedHeat(draft) {
   if (draft.role) return false
   if (draft.form) return true
   const src = draft.source
-  return !src || !(src.hit?.variety_id)
+  // A crop/variety hit or a pantry item is a typed-kind line on the server: no variety rating reaches it.
+  return !src || src.kind === 'catalog' || src.kind === 'pantry' || !(src.hit?.variety_id)
 }
 
 // The fields a line PATCH may carry (contract-F §2.2 allowlist), and the changed subset of a sheet's

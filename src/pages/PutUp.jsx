@@ -64,6 +64,8 @@ import { useAppUpdate } from '../hooks/useAppUpdate.js'
 // Put-Up release 1b — a jar's name, its no-size form, its date at its precision and its discard words
 // come from one module shared with Put it up and batch detail; a move is its own write (V4 §3.4).
 import { putUpDateWords, discardWords, sizeWords, qtyText, totalOfEach, ESTIMATED_PRECISIONS } from '../components/putup/jarWords.js'
+// B′ release 3 — How it was made → on a batchless jar (V4 §2.2).
+import { useHowItWasMade, canSayHowItWasMade } from '../components/putup/HowItWasMadeSheet.jsx'
 import MoveJarSheet from '../components/putup/MoveJarSheet.jsx'
 import { mintKey } from '../components/kitchen/idempotencyKey.js'
 
@@ -2580,6 +2582,7 @@ function RecordRow({ rec, onChanged, fetch }) {
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [moving, setMoving] = useState(false)
+  const how = useHowItWasMade({ onSaved: () => onChanged() })
   // A string (this row's own copy) or a refusal from describeRefusal — see WriteError.
   const [err, setErr] = useState(null)
 
@@ -2740,6 +2743,7 @@ function RecordRow({ rec, onChanged, fetch }) {
         <RowAction onClick={usedUp} disabled={busy || remaining <= 0}>Used up</RowAction>
         <RowAction onClick={() => setEditing(true)} disabled={busy}>Edit</RowAction>
         <RowAction onClick={() => setMoving(true)} disabled={busy}>Move</RowAction>
+        {canSayHowItWasMade(rec) && <RowAction onClick={() => how.open(rec)} disabled={busy}>How it was made →</RowAction>}
         {!confirmDelete ? (
           <RowAction onClick={() => setConfirmDelete(true)} disabled={busy} tone="terra">Remove</RowAction>
         ) : (
@@ -2751,6 +2755,7 @@ function RecordRow({ rec, onChanged, fetch }) {
       </div>
       <MoveJarSheet open={moving} jar={rec} onClose={() => setMoving(false)}
         onMoved={() => { setMoving(false); onChanged() }} />
+      {how.sheet}
       </div>
     </div>
   )

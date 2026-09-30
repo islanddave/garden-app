@@ -225,6 +225,11 @@ const SHEET_SITES = [
   'components/putup/LineSheet.jsx',
   'components/putup/ShuSheet.jsx',
   'components/putup/StageEditSheet.jsx',
+  // Put-Up B′ release 3 (V4 §2.2) — a DELIBERATE addition: How it was made →, the Start-a-batch sheet in
+  // retrospective posture (name, start, kind, What went in, which jars, how many, next time). The shared
+  // <Sheet armsBack>, so no DIALOG_SURFACES entry is owed; `busy={saving}` refuses Back and the backdrop
+  // while the one keyed POST is in flight.
+  'components/putup/HowItWasMadeSheet.jsx',
   // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
   // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
   // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's

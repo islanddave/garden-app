@@ -37,6 +37,9 @@ import {
 } from './lineRoutes.js';
 import { lineSearch } from './lineSearch.js';
 import { estimateShu, isStale } from './shuEstimate.js';
+// B′ release 3 — How it was made → and the planting read (batchBuilderRoutes.js).
+import { fromJars, plantingBatches } from './batchBuilderRoutes.js';
+import { closeWhenOf } from './batchBuilder.js';
 
 const notFound = { status: 404, body: { error: 'Not found' } };
 const notAllowed = { status: 405, body: { error: 'Method not allowed' } };
@@ -142,6 +145,8 @@ export async function handleKitchenRoute({ sql, rawPath, method, rawBody, query,
   const parseBody = () => JSON.parse(rawBody ?? '{}');
 
   if (route.kind === 'collection') {
+    // B′ release 3: ?plant_id= is the planting read (its own shape; batchBuilderRoutes.js).
+    if (method === 'GET' && q.plant_id != null) return plantingBatches(sql, q.plant_id, householdIds);
     if (method === 'GET') return listBatches(sql, q, householdIds);
     if (method === 'POST') return createBatch(sql, parseBody(), userId, householdIds);
     return notAllowed;
@@ -149,6 +154,13 @@ export async function handleKitchenRoute({ sql, rawPath, method, rawBody, query,
   // Release F: a literal, matched before any :id (parseKitchenRoute), household-scoped inside.
   if (route.kind === 'line_search') {
     if (method === 'GET') return lineSearch(sql, q, householdIds);
+    return notAllowed;
+  }
+  // B′ release 3: How it was made → — a literal, household-scoped inside; answers in GET /:id's shape.
+  if (route.kind === 'from_jars') {
+    if (method === 'POST') {
+      return fromJars(sql, parseBody(), userId, householdIds, async (id) => (await getBatch(sql, id, householdIds)).body);
+    }
     return notAllowed;
   }
 
@@ -1072,6 +1084,9 @@ async function addInputsByPredicate(sql, batchId, predicate, userId, householdId
 async function closeBatch(sql, batchId, body, userId, householdIds) {
   const verr = validateClose(body);
   if (verr) return bad(verr);
+  // B′ release 3: the close sheet's optional When dates the finished row (absent = the shipped now()).
+  const when = closeWhenOf(body);
+  if (when?.error) return bad(when.error);
   const outputIds = outputIdsIn(body);
   // Put-Up release 1b: `linked` writes preservation_log, which now carries an audit trigger, so the
   // statement rides a set_config in one transaction (V4 "Audit").
@@ -1099,9 +1114,10 @@ async function closeBatch(sql, batchId, body, userId, householdIds) {
         AND p.batch_id IS NULL
       RETURNING p.id
     ), finished AS (
-      INSERT INTO kitchen_stage_log (batch_id, stage_kind, cue_observed, entered_at, created_by)
-      SELECT c.id, 'finished'::text, ${normalizeText(body.cue_observed)}::text, now(),
-             ${userId}::text
+      INSERT INTO kitchen_stage_log (batch_id, stage_kind, cue_observed, entered_at, entered_precision, created_by)
+      SELECT c.id, 'finished'::text, ${normalizeText(body.cue_observed)}::text,
+             CASE WHEN ${when != null}::boolean THEN ${when?.at ?? null}::timestamptz ELSE now() END,
+             ${when?.precision ?? null}::text, ${userId}::text
       FROM closed c
       RETURNING id
     )

@@ -84,7 +84,9 @@ describe('validatePutUp', () => {
     [{ rows: [{ count: 1, ph: '15' }] }, /pH scale/],
     [{ rows: [{ count: 1, discard_by: 'soon' }] }, /discard_by must be/],
     [{ rows: [{ count: 1, added_lines: [{ qty: 5, qty_unit: 'g' }] }] }, /name what went in/],
-    [{ rows: [{ count: 1, added_lines: [{ label: 'x', input_kind: 'pantry' }] }] }, /input_kind must be one of/],
+    // B′ release 3 amends this arm: 'pantry' became a line kind (What went in names a bought item by
+    // pantry_item_id), and a bottling still refuses it — with the words that say where it goes instead.
+    [{ rows: [{ count: 1, added_lines: [{ label: 'x', input_kind: 'pantry' }] }] }, /a bought item goes in What went in/],
     [{ rows: [{ count: 1, added_lines: [{ label: 'x', input_kind: 'put_up' }] }] }, /a draw names its jar/],
     [{ rows: [{ count: 1, added_lines: [{ label: 'x', output_id: KEY, put_up_stage_id: KEY }] }] }, /belongs to this bottling/],
     [{ rows: [{ count: 1, added_lines: [{ label: 'salt', role: 'salt', qty: 5, qty_unit: 'g', salt_pct: 2, salt_base: 'produce', base_g: 250 }] }] }, /salt facts go on a line in What went in/],
@@ -168,8 +170,9 @@ describe('planPutUp — what one sitting writes', () => {
     const lens = [...Object.values(c.jar), ...Object.values(c.line)].map((a) => a.length);
     expect(new Set(Object.values(c.jar).map((a) => a.length))).toEqual(new Set([2]));
     expect(new Set(Object.values(c.line).map((a) => a.length))).toEqual(new Set([2]));
-    // 20 jar columns (16 from 1b + F's shu_est_low/high/basis and cooked) + the 27 F line columns.
-    expect(lens.length).toBe(47);
+    // 20 jar columns (16 from 1b + F's shu_est_low/high/basis and cooked) + the 28 line columns (F's 27 +
+    // B′ release 3's pantry_item_id, which a bottling never sets — the arrays still bind in step).
+    expect(lens.length).toBe(48);
   });
 });
 

@@ -34,6 +34,8 @@ import Sheet from '../forms/Sheet.jsx'
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import JarPicker from './JarPicker.jsx'
+import { SheetStartChips, resolveSheetStart } from '../kitchen/StartChips.jsx'
+import { closeWhenBody } from './batchCloseWhen.js'
 import { useApiFetch } from '../../lib/api.js'
 import { readDraft, writeDraft, clearDraft } from '../../lib/draftStash.js'
 import {
@@ -64,6 +66,11 @@ export default function BatchCloseField({ batch, onChanged }) {
   const [selected, setSelected] = useState(() => new Set())
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
+  // B′ release 3 ("A make with nothing kept", V4 Appendix A): the close sheet's When dates the finished
+  // row. Today (the default) sends nothing — the server keeps the shipped now().
+  const [whenChip, setWhenChip] = useState('today')
+  const [whenEarlier, setWhenEarlier] = useState(null)
+  const [whenDate, setWhenDate] = useState('')
 
   const batchId = batch?.id ?? null
 
@@ -72,6 +79,7 @@ export default function BatchCloseField({ batch, onChanged }) {
     setStep(e.step); setKept(e.kept); setOutcome(e.outcome); setNote(e.note); setCue(e.cue)
     setSelected(new Set())
     setErr(null)
+    setWhenChip('today'); setWhenEarlier(null); setWhenDate('')
   }, [])
 
   const openSheet = useCallback(() => {
@@ -117,6 +125,9 @@ export default function BatchCloseField({ batch, onChanged }) {
   const submit = useCallback(async () => {
     const patch = closePatch({ outcome, note, cue, outputIds: [...selected] })
     if (!patch) { setErr('Pick what happened to it first.'); return }
+    const when = closeWhenBody(resolveSheetStart({ chip: whenChip, earlier: whenEarlier, pickedDate: whenDate, now: new Date() }), whenChip)
+    if (when?.error) { setErr(when.error); return }
+    if (when) patch.when = when
     setSaving(true)
     setErr(null)
     try {
@@ -136,7 +147,7 @@ export default function BatchCloseField({ batch, onChanged }) {
     } finally {
       setSaving(false)
     }
-  }, [batchId, cue, fetch, note, onChanged, outcome, reset, selected])
+  }, [batchId, cue, fetch, note, onChanged, outcome, reset, selected, whenChip, whenDate, whenEarlier])
 
   // A closed batch has no close affordance. Reopening is a different act on a different surface.
   if (!batch || batch.closed_at) return null
@@ -229,6 +240,14 @@ export default function BatchCloseField({ batch, onChanged }) {
               style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', fontFamily: 'inherit',
                 fontSize: T.type.sm, border: `1px solid ${P.border}`, borderRadius: T.radiusButton,
                 background: P.white }} />
+
+            <div data-testid="batch-close-when" style={{ marginTop: 14 }}>
+              <SheetStartChips idPrefix="batch-close-when" label="When did it finish?" dateLabel="Finish date"
+                value={whenChip} disabled={saving} now={new Date()}
+                onChange={v => { setWhenChip(v); if (v !== 'earlier') { setWhenEarlier(null); setWhenDate('') } setErr(null) }}
+                earlier={whenEarlier} onEarlierChange={v => { setWhenEarlier(v); if (v !== 'pickdate') setWhenDate(''); setErr(null) }}
+                pickedDate={whenDate} onPickedDateChange={v => { setWhenDate(v); setErr(null) }} />
+            </div>
 
             {kept && (
               <>

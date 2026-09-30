@@ -64,7 +64,8 @@ const after = (call, needle) => {
 describe('kitchenLines — the line body rules (contract-F §2.2)', () => {
   const ok = (over) => ({ input_kind: 'other', idempotency_key: K1, label: 'onion', ...over });
   it.each([
-    [{ input_kind: 'pantry' }, /input_kind must be one of/],
+    // B′ release 3 amends this arm: 'pantry' is now a line kind, and it must name its item.
+    [{ input_kind: 'pantry' }, /a pantry line names its item/],
     [{ idempotency_key: 'x' }, /idempotency_key must be a uuid/],
     [{ input_kind: 'garden', label: null }, /names its planting/],
     [{ input_kind: 'harvest', label: null }, /names its pick/],
@@ -556,15 +557,17 @@ describe('POST /api/pantry/uses', () => {
 // ── the line search ───────────────────────────────────────────────────────────────────────────────
 describe('GET /api/kitchen-batches/line-search', () => {
   it('is a literal matched before any :id — no ownership gate reads "line-search" as a batch', async () => {
-    const sql = mockSql([[], []]);
+    // B′ release 3 amends this: five arms now (plantings, put-ups, pantry items, crops, varieties), and the
+    // body gains the ranked `hits` and `resolved_crop` beside F's two unchanged keys.
+    const sql = mockSql([[], [], [], [], []]);
     const res = await handleKitchenRoute({ sql, ...route('/api/kitchen-batches/line-search', 'GET', null, HOUSEHOLD, { q: 'reaper' }) });
-    expect(res).toEqual({ status: 200, body: { plantings: [], put_ups: [] } });
+    expect(res).toEqual({ status: 200, body: { plantings: [], put_ups: [], pantry_items: [], crops: [], varieties: [], hits: [], resolved_crop: null } });
     expect(sql.calls[0].norm).toContain('FROM garden_node gn');
     expect(sql.calls[0].norm).not.toContain('v_kitchen_batch_current');
   });
 
   it('household-scoped on both arms; used-up and removed jars are not offered (F2)', async () => {
-    const sql = mockSql([[], [{ preservation_log_id: JAR, method: 'dehydrate', storage_kind: 'pantry', stock_mode: 'weighed' }]]);
+    const sql = mockSql([[], [{ preservation_log_id: JAR, method: 'dehydrate', storage_kind: 'pantry', stock_mode: 'weighed' }], [], [], []]);
     const res = await handleKitchenRoute({ sql, ...route('/api/kitchen-batches/line-search', 'GET', null, STRANGER, { q: 'rea' }) });
     expect(sql.calls[0].values).toContainEqual(STRANGER);
     expect(sql.calls[1].values).toContainEqual(STRANGER);

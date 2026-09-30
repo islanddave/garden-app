@@ -1,0 +1,108 @@
+# gates.yml
+# V5-BATCHBUILDER-001 — Put-Up B′ release 3 (the batch builder), the database half. Two files:
+#
+#   0a-additive-ddl.sql   no DDL; the one-time dead-pick-link sweep (BUG-ARCHIVESOFTDELBATCH-001) and the
+#                         stamp '5.0.0-batchbuilder-001'. Before it: `pre`, immediately before each apply.
+#   0r-rollback.sql       removes the stamp; valid only while release 3's code is off dev.
+#
+# ── SELF-ARMING (the 1b / F convention, restated) ──────────────────────────────────────────────────
+# `continuous:` defaults to true, and gate-invariants.yml runs `--all --phase post --continuous-only`
+# against live prod AND staging on every migrations/** push to dev, on the Tuesday cron and on dispatch —
+# including before B′'s sitting, when neither database has this stamp. So every post gate below is armed
+# on this migration's own stamp (vacuous before, permanent after), reads columns 1b added through
+# `to_jsonb(row) ->> 'col'` (never 42703 on a database without 1b), and uses catalog joins only, never
+# `::regclass`. Only rowcount_eq / scalar_eq; every count-shaped gate returns one row per violator.
+#
+# ── THE GATE CENSUS: gates elsewhere this migration must keep green ──────────────────────────────
+#   v5-putupmake-001      the archive routines' md5 fingerprints and every text fragment their gates match —
+#                         UNTOUCHED (this release changes no routine; that is the point of option (c)).
+#   v4-archpreservguard-001, v4-archrestore-001, v4-softdelcascade-001, v5-inflightbatch-001 — the archive
+#                         routine text gates; untouched for the same reason.
+#   v5-fermentpath-001    post_audit_watches_exactly_the_thirteen (05 §6 "3:" is already met by it; this
+#                         file does not re-create the trigger).
+#   v4-cascadesweep-001   no FK is added or changed.
+#   v4-evtanchordel-001   no CHECK is added.
+#   v4-harvestaudit-001   no audit trigger is added.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-batchbuilder-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_fermentpath_applied
+    sql: |
+      SELECT count(*) FROM public.schema_version WHERE version = '5.0.0-fermentpath-001'
+    expect: scalar_eq
+    value: 1
+
+  # The pick-line FK is still RESTRICT — the premise of the sweep. If it ever became SET NULL or CASCADE,
+  # re-read the README before applying: the sweep would be answering a question nobody asks any more.
+  - name: pre_pick_line_fk_is_restrict
+    sql: |
+      SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class t ON t.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (con.conkey)
+       WHERE n.nspname = 'public' AND t.relname = 'kitchen_batch_input' AND con.contype = 'f'
+         AND a.attname = 'harvest_log_id' AND con.confdeltype <> 'r'
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── The apply receipt ───────────────────────────────────────────────────────────────────────────
+  - name: post_schema_version_recorded
+    continuous: false
+    sql: |
+      SELECT count(*) FROM public.schema_version WHERE version = '5.0.0-batchbuilder-001'
+    expect: scalar_eq
+    value: 1
+
+  # ── BUG-ARCHIVESOFTDELBATCH-001, standing ───────────────────────────────────────────────────────
+  # No pick line is soft-deleted, and none belongs to a soft-deleted batch: either would pin its
+  # harvest_log row under the RESTRICT FK and turn a planting or container archive into a bare 23503.
+  # Since release F no route makes either shape (take-out and "Remove this batch" hard-delete pick lines);
+  # this gate reds the day one does. One row per violator.
+  - name: post_no_dead_pick_link
+    sql: |
+      SELECT i.id, i.batch_id
+        FROM public.kitchen_batch_input i
+        LEFT JOIN public.kitchen_batch b ON b.id = i.batch_id
+       WHERE i.harvest_log_id IS NOT NULL
+         AND ( to_jsonb(i) ->> 'deleted_at' IS NOT NULL OR b.deleted_at IS NOT NULL )
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-batchbuilder-001')
+    expect: rowcount_eq
+    value: 0
+
+  # The pick-line FK stays RESTRICT (the archive guards and this sweep both rest on it). Armed on the stamp.
+  - name: post_pick_line_fk_still_restrict
+    sql: |
+      SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class t ON t.oid = con.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (con.conkey)
+       WHERE n.nspname = 'public' AND t.relname = 'kitchen_batch_input' AND con.contype = 'f'
+         AND a.attname = 'harvest_log_id' AND con.confdeltype <> 'r'
+         AND EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-batchbuilder-001')
+    expect: rowcount_eq
+    value: 0
+
+  # 05 §6 "3:" — remaining_amount is watched by preservation_log's audit trigger. Met by F's 0a; this
+  # release re-asserts it on its own stamp so the release-3 obligation has a gate of its own.
+  - name: post_audit_watches_remaining_amount
+    sql: |
+      SELECT 'remaining_amount not watched' AS problem
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-batchbuilder-001')
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_trigger g
+             JOIN pg_class t ON t.oid = g.tgrelid
+             JOIN pg_namespace n ON n.oid = t.relnamespace
+            WHERE n.nspname = 'public' AND t.relname = 'preservation_log'
+              AND g.tgname = 'trg_audit_preservation_log_upd'
+              AND pg_get_triggerdef(g.oid) ~ '''remaining_amount''')
+    expect: rowcount_eq
+    value: 0
