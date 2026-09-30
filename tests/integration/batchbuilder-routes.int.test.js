@@ -188,6 +188,32 @@ describe('POST /api/kitchen-batches/from-jars — How it was made →', () => {
     expect((await readBatchRow(b)).closed_at).not.toBeNull()
     expect((await directSql`SELECT batch_id, deleted_at FROM preservation_log WHERE id = ${jar}`)[0]).toMatchObject({ batch_id: b, deleted_at: null })
   })
+
+  // Remove this batch on it: the jars were logged before the batch, so the one statement unlinks them (they stay,
+  // live, batchless), soft-deletes the lines and gives back their draws. STRANGER 404, nothing touched.
+  it('Remove this batch: 200 — its jars unlinked and kept, its lines out, their draws given back; STRANGER 404', async () => {
+    const jar = await seedJar(DAVE, { count: 2 })
+    const drawn = await seedJar(DAVE, { count: 3 })
+    const res = await call(DAVE, 'POST', FROM, {
+      idempotency_key: key(), label: 'Pieced', started: { date: '2026-09-01', precision: 'day' }, jar_ids: [jar],
+      inputs: [{ input_kind: 'put_up', preservation_log_id: drawn, count_drawn: 1 }],
+    })
+    expect(res.status, JSON.stringify(res.body)).toBe(201)
+    const b = res.body.id
+    expect((await readJar(drawn)).remaining_count).toBe(2)
+    expect((await call(STRANGER, 'DELETE', `/api/kitchen-batches/${b}`)).status).toBe(404)
+    expect((await readBatchRow(b)).deleted_at).toBeNull()
+    const d = await call(JEN, 'DELETE', `/api/kitchen-batches/${b}`)
+    expect(d.status, JSON.stringify(d.body)).toBe(200)
+    expect((await readBatchRow(b)).deleted_at).not.toBeNull()
+    expect((await directSql`SELECT batch_id, deleted_at FROM preservation_log WHERE id = ${jar}`)[0]).toMatchObject({ batch_id: null, deleted_at: null })
+    expect((await linesOf(b)).every((l) => l.deleted_at != null)).toBe(true)
+    expect((await readJar(drawn)).remaining_count).toBe(3)
+    expect((await usesOf(drawn)).map((u) => u.count_used).sort()).toEqual([-1, 1])
+    // Unlinked, the jar can be pieced into a batch again.
+    const again = await call(DAVE, 'POST', FROM, { idempotency_key: key(), label: 'Pieced again', started: { date: '2026-09-01', precision: 'day' }, jar_ids: [jar] })
+    expect(again.status, JSON.stringify(again.body)).toBe(201)
+  })
 })
 
 describe('pantry lines — POST /:id/inputs with pantry_item_id', () => {

@@ -639,20 +639,36 @@ async function updateBatch(sql, batchId, body, householdIds) {
 // pantry_use per counted draw; the grams back for a weighed one, F2's un-consume rule), aggregated per
 // jar FIRST and applied as ONE UPDATE per jar (boss condition F1). Any 23514 aborts it all and the batch
 // stays live.
+// B′ release 3: a batch made by How it was made → ("pieced": it has a put_up row that wrote no jar of its
+// own — only that route writes one, and Undo refuses it) is removable with its jars: those jars were logged
+// before the batch, so the same statement UNLINKS them (batch_id → NULL, in the one jar UPDATE below) instead
+// of refusing. A pieced batch is still refused while a later Put it up sitting's jars are live. Every other
+// batch keeps the shipped rule: refused while it has any live jar. ("How many did you make?" raised the first
+// jar's made count; nothing records the old count, so it stays raised.)
 // The whole statement rides a set_config: release F attaches an audit trigger to kitchen_batch_input.
 async function deleteBatch(sql, batchId, userId, householdIds) {
   const [, rows] = await sql.transaction([
     sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
     sql`
-    WITH gone AS (
+    WITH pieced AS (
+      SELECT s.id FROM kitchen_stage_log s
+      WHERE s.batch_id = ${batchId}::uuid
+        AND s.stage_kind = 'put_up'
+        AND NOT EXISTS (SELECT 1 FROM preservation_log oj WHERE oj.put_up_stage_id = s.id)
+    ), gone AS (
       UPDATE kitchen_batch
       SET deleted_at = NOW()
       WHERE id = ${batchId}::uuid
         AND user_id = ANY(${householdIds})
         AND deleted_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM preservation_log p
-                         WHERE p.batch_id = ${batchId}::uuid AND p.deleted_at IS NULL)
+                         WHERE p.batch_id = ${batchId}::uuid AND p.deleted_at IS NULL
+                           AND (p.put_up_stage_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM pieced)))
       RETURNING id
+    ), unlinked AS (
+      -- Only a pieced batch reaches here with live jars, and then only jars no sitting made.
+      SELECT p.id FROM preservation_log p JOIN gone g ON p.batch_id = g.id
+      WHERE p.deleted_at IS NULL AND p.put_up_stage_id IS NULL
     ), lines_out AS (
       UPDATE kitchen_batch_input i
       SET deleted_at = NOW()
@@ -688,6 +704,7 @@ async function deleteBatch(sql, batchId, userId, householdIds) {
       RETURNING id
     ), moved AS (
       -- Boss F1: every jar moves ONCE — two lines of this batch drawing one jar give back their SUM.
+      -- B′: a pieced batch's jars are unlinked in this same UPDATE (a jar can be both linked and drawn).
       UPDATE preservation_log p SET
         remaining_count  = CASE WHEN a.n IS NOT NULL THEN COALESCE(p.remaining_count, p.package_count) + a.n
                                 WHEN a.g IS NOT NULL
@@ -708,18 +725,24 @@ async function deleteBatch(sql, batchId, userId, householdIds) {
                                       AND COALESCE(p.remaining_amount, p.quantity_value * (SELECT factor FROM mass WHERE unit = p.quantity_unit)) = 0
                                       AND NOT EXISTS (SELECT 1 FROM pantry_use t WHERE t.preservation_log_id = p.id AND t.kitchen_batch_input_id IS NULL))
                                   THEN now()
-                                ELSE p.delta_at END
-      FROM (SELECT x.preservation_log_id, sum(x.n) AS n, sum(x.g) AS g FROM (
-              SELECT f.preservation_log_id, f.count_used AS n, NULL::numeric AS g FROM fwd f
+                                ELSE p.delta_at END,
+        batch_id         = CASE WHEN a.unlink THEN NULL ELSE p.batch_id END,
+        updated_at       = CASE WHEN a.unlink THEN now() ELSE p.updated_at END
+      FROM (SELECT x.preservation_log_id, bool_or(x.unlink) AS unlink, sum(x.n) AS n, sum(x.g) AS g FROM (
+              SELECT f.preservation_log_id, false AS unlink, f.count_used AS n, NULL::numeric AS g FROM fwd f
               UNION ALL
-              SELECT w.preservation_log_id, NULL::int, w.g FROM weighed w
+              SELECT w.preservation_log_id, false, NULL::int, w.g FROM weighed w
+              UNION ALL
+              SELECT u.id, true, NULL::int, NULL::numeric FROM unlinked u
             ) x GROUP BY x.preservation_log_id) a
       WHERE p.id = a.preservation_log_id
-      RETURNING p.id
+      RETURNING p.id, a.unlink
     )
     SELECT (SELECT count(*)::int FROM gone) AS deleted_count,
            (SELECT count(*)::int FROM preservation_log p
-             WHERE p.batch_id = ${batchId}::uuid AND p.deleted_at IS NULL) AS live_jar_count,
+             WHERE p.batch_id = ${batchId}::uuid AND p.deleted_at IS NULL
+               AND (p.put_up_stage_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM pieced))) AS live_jar_count,
+           (SELECT count(*)::int FROM moved WHERE unlink) AS jars_unlinked,
            (SELECT count(*)::int FROM lines_out) AS lines_removed,
            (SELECT count(*)::int FROM picks_gone) AS picks_unlinked,
            (SELECT count(*)::int FROM rev) AS uses_reversed,
