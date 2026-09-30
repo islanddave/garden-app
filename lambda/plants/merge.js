@@ -570,16 +570,10 @@ export async function mergeCore(sql, {
          WHERE l.plant_id = ANY(${loserIds})
            AND (EXISTS (SELECT 1 FROM ready_impression w
                         WHERE w.plant_id = ${winnerId}
-                          AND w.user_id = l.user_id AND w.shown_on = l.shown_on AND w.region = l.region)
-                OR EXISTS (SELECT 1 FROM ready_impression o
-                           WHERE o.plant_id = ANY(${loserIds}) AND o.id < l.id
-                             AND o.user_id = l.user_id AND o.shown_on = l.shown_on AND o.region = l.region))`,
+                          AND w.user_id = l.user_id AND w.shown_on = l.shown_on AND w.region = l.region))`,
     sql`DELETE FROM watch_exclusion l
          WHERE l.plant_id = ANY(${loserIds})
-           AND (EXISTS (SELECT 1 FROM watch_exclusion w
-                        WHERE w.plant_id = ${winnerId}
-                          AND w.user_id = l.user_id AND w.evaluated_on = l.evaluated_on AND w.reason = l.reason)
-                OR EXISTS (SELECT 1 FROM watch_exclusion o
+           AND (EXISTS (SELECT 1 FROM watch_exclusion o
                            WHERE o.plant_id = ANY(${loserIds}) AND o.id < l.id
                              AND o.user_id = l.user_id AND o.evaluated_on = l.evaluated_on AND o.reason = l.reason))`,
     sql`DELETE FROM findings l
