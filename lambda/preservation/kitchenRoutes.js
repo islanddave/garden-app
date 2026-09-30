@@ -28,6 +28,7 @@ import {
 } from './kitchenBatch.js';
 import {
   validatePutUp, planPutUp, putUpColumns, putUpPlaceIds, putUpInUse, putUpLineBodies, BATCH_CLOSED,
+  NOTHING_PUT_UP_HERE,
 } from './putUp.js';
 import { projectRow } from './jarRules.js';
 import { inputsForm, lineError, actsOf, phReadAtError, stagePatchError } from './kitchenLines.js';
@@ -1590,6 +1591,9 @@ async function putUp(sql, batchId, body, userId, householdIds) {
 // "The finished row this sitting wrote" is the finished row with the put_up row's created_at: both were
 // inserted by one statement, so they share now() — and no other statement can produce that instant.
 // A second Undo is a 23505 on uq_ksl_voids_id → 200 replayed (any household member).
+// B′: REFUSED (409 nothing_put_up_here) when the put_up row owns no jar at all — live or removed — i.e.
+// How it was made →'s sitting, whose jars pre-existed the batch and are linked by batch_id only. Put it
+// up never writes such a row (putUp.js NOTHING_PUT_UP_HERE); the way out is Remove this batch.
 // preservation_log is audited from 1b, so the statement rides a set_config in one transaction.
 async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
   if (!KITCHEN_UUID_RE.test(String(stageId))) return notFound;
@@ -1610,6 +1614,12 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
         WHERE p.put_up_stage_id = ${stageId}::uuid
           AND p.batch_id = ${batchId}::uuid
           AND p.deleted_at IS NULL
+      ), owned AS (
+        -- B′: every jar this sitting ever wrote, removed ones included (a sitting whose jars were each
+        -- removed is still Put it up's, and keeps its shipped Undo).
+        SELECT p.id FROM preservation_log p
+        WHERE p.put_up_stage_id = ${stageId}::uuid
+          AND p.batch_id = ${batchId}::uuid
       ), used AS (
         -- REFUSED if any of the sitting's jars was used. 1b: fewer left than made, or marked used up.
         -- F (06 §5.2, DS-I4): an unreversed pantry_use on them that is not from the sitting's own
@@ -1630,7 +1640,7 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
         WHERE k.deleted_at IS NULL
           AND k.preservation_log_id IN (SELECT id FROM sitting_jars)
       ), go AS (
-        SELECT t.id FROM target t WHERE NOT EXISTS (SELECT 1 FROM used)
+        SELECT t.id FROM target t WHERE NOT EXISTS (SELECT 1 FROM used) AND EXISTS (SELECT 1 FROM owned)
       ), fin AS (
         SELECT f.id
         FROM kitchen_stage_log f
@@ -1737,6 +1747,7 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
         RETURNING b.id
       )
       SELECT (SELECT count(*)::int FROM target) AS found_count,
+             (SELECT count(*)::int FROM owned) AS own_jar_count,
              (SELECT array_agg(id) FROM used) AS used_jar_ids,
              (SELECT count(*)::int FROM voids) AS voided_count,
              (SELECT count(*)::int FROM gone_jars WHERE remove) AS jars_removed,
@@ -1756,6 +1767,7 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
   }
   const r = rows[0] ?? {};
   if (!r.found_count) return notFound;
+  if (!r.own_jar_count) return { status: 409, body: NOTHING_PUT_UP_HERE };
   if (r.used_jar_ids?.length) return { status: 409, body: putUpInUse(r.used_jar_ids) };
   return {
     status: 200,

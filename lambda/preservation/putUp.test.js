@@ -8,7 +8,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleKitchenRoute } from './kitchenRoutes.js';
 import { parseKitchenRoute, validateStage, validateBatchCreate } from './kitchenBatch.js';
-import { validatePutUp, planPutUp, putUpColumns, putUpInUse, BATCH_CLOSED } from './putUp.js';
+import { validatePutUp, planPutUp, putUpColumns, putUpInUse, BATCH_CLOSED, NOTHING_PUT_UP_HERE } from './putUp.js';
 
 const HOUSEHOLD = ['user_dave', 'user_jen'];
 const DAVE = 'user_dave';
@@ -299,7 +299,7 @@ describe('POST /:id/put-up — what it sends', () => {
 
 describe('POST /:id/put-up/:stageId/undo — what it sends', () => {
   const undo = () => route(`/api/kitchen-batches/${BATCH}/put-up/${STAGE}/undo`, 'POST', {});
-  const DONE = [{ found_count: 1, used_jar_ids: null, voided_count: 2, jars_removed: 2, lines_removed: 1, reopened_count: 1 }];
+  const DONE = [{ found_count: 1, own_jar_count: 2, used_jar_ids: null, voided_count: 2, jars_removed: 2, lines_removed: 1, reopened_count: 1 }];
 
   it('ONE statement in the actor transaction; voids, jar and line removal and the reopen all gated on the void', async () => {
     const sql = mockSql([CLOSED, [], DONE, VIEW]);
@@ -315,13 +315,42 @@ describe('POST /:id/put-up/:stageId/undo — what it sends', () => {
   });
 
   it('refused while a jar of the sitting was used: fewer left than made, or marked used up', async () => {
-    const sql = mockSql([OPEN, [], [{ found_count: 1, used_jar_ids: ['j1'], voided_count: 0, jars_removed: 0, lines_removed: 0, reopened_count: 0 }]]);
+    const sql = mockSql([OPEN, [], [{ found_count: 1, own_jar_count: 1, used_jar_ids: ['j1'], voided_count: 0, jars_removed: 0, lines_removed: 0, reopened_count: 0 }]]);
     const res = await handleKitchenRoute({ sql, ...undo() });
     expect(res).toEqual({ status: 409, body: putUpInUse(['j1']) });
     const w = sql.calls[2].norm;
     expect(w).toContain('WHERE COALESCE(j.remaining_count, j.package_count) < j.package_count OR j.consumed_at IS NOT NULL');
     // The voids read `go`, and `go` is empty while `used` is not — nothing is written.
-    expect(w).toContain('go AS ( SELECT t.id FROM target t WHERE NOT EXISTS (SELECT 1 FROM used) )');
+    // B′ amends: `go` is also gated on the sitting owning a jar (the nothing_put_up_here refusal below).
+    expect(w).toContain('go AS ( SELECT t.id FROM target t WHERE NOT EXISTS (SELECT 1 FROM used) AND EXISTS (SELECT 1 FROM owned) )');
+  });
+
+  // B′: How it was made → writes a put_up row that owns no jars (its jars pre-existed the batch and are
+  // linked by batch_id only). Undoing it would void the put_up + finished rows and reopen the batch with
+  // those jars still linked — so it is refused, and nothing is written.
+  it('refused (409 nothing_put_up_here) when the put_up row owns no jar, live or removed — nothing written', async () => {
+    const sql = mockSql([CLOSED, [], [{ found_count: 1, own_jar_count: 0, used_jar_ids: null, voided_count: 0, jars_removed: 0, lines_removed: 0, reopened_count: 0 }]]);
+    const res = await handleKitchenRoute({ sql, ...undo() });
+    expect(res).toEqual({ status: 409, body: NOTHING_PUT_UP_HERE });
+    expect(res.body.code).toBe('nothing_put_up_here');
+    expect(res.body.error).toMatch(/Remove the batch instead/);
+    const w = sql.calls[2].norm;
+    // owned counts REMOVED jars too (no deleted_at filter), scoped to this sitting and batch.
+    const owned = w.slice(w.indexOf('owned AS ('), w.indexOf('), used AS ('));
+    expect(owned).toContain('WHERE p.put_up_stage_id = ? ::uuid AND p.batch_id = ? ::uuid');
+    expect(owned).not.toContain('deleted_at');
+    expect(w).toContain('AND EXISTS (SELECT 1 FROM owned)');
+  });
+
+  it('keeps Put it up\'s Undo: every sitting it writes owns a jar, even one whose jars were all removed since', async () => {
+    // Put it up cannot write a jarless sitting: rows are required and each makes at least one jar
+    // ("Finished — none kept" writes a finished row, never a put_up row).
+    expect(validatePutUp({ ...sitting(), rows: [] })).toMatch(/rows must be a non-empty array/);
+    expect(validatePutUp({ ...sitting(), rows: [{ ...sitting().rows[0], count: 0 }] })).toMatch(/count must be a whole number, 1 or more/);
+    // A sitting whose only jar was removed on its own still owns it → the shipped Undo runs.
+    const sql = mockSql([CLOSED, [], [{ found_count: 1, own_jar_count: 1, used_jar_ids: null, voided_count: 2, jars_removed: 0, lines_removed: 0, reopened_count: 1 }], VIEW]);
+    const res = await handleKitchenRoute({ sql, ...undo() });
+    expect(res).toEqual({ status: 200, body: { ok: true, reopened: true, batch: VIEW[0] } });
   });
 
   it('reopens ONLY if this sitting closed it (its finished row) and no lifecycle row came after', async () => {

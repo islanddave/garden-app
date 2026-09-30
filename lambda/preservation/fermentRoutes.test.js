@@ -468,7 +468,7 @@ describe('Remove this batch — F1', () => {
 
 describe('Undo that put-up — the widened refusal and the one jar UPDATE', () => {
   it('refused when a use not from the sitting\'s own lines, or ANY live line, touches a sitting jar', async () => {
-    const sql = mockSql([OPEN, [], [{ found_count: 1, used_jar_ids: [JAR] }]]);
+    const sql = mockSql([OPEN, [], [{ found_count: 1, own_jar_count: 1, used_jar_ids: [JAR] }]]);
     const res = await handleKitchenRoute({ sql, ...route(`${B}/put-up/${STAGE}/undo`, 'POST', {}) });
     expect(res.body.code).toBe('put_up_in_use');
     const s = sql.batches[0][1].norm;
@@ -476,7 +476,7 @@ describe('Undo that put-up — the widened refusal and the one jar UPDATE', () =
     expect(s).toContain('SELECT k.preservation_log_id FROM kitchen_batch_input k WHERE k.deleted_at IS NULL AND k.preservation_log_id IN (SELECT id FROM sitting_jars)');
   });
   it('removes the jars and gives back the lines\' draws in ONE UPDATE of preservation_log (F1)', async () => {
-    const sql = mockSql([OPEN, [], [{ found_count: 1, used_jar_ids: null, reopened_count: 0 }], VIEW]);
+    const sql = mockSql([OPEN, [], [{ found_count: 1, own_jar_count: 1, used_jar_ids: null, reopened_count: 0 }], VIEW]);
     await handleKitchenRoute({ sql, ...route(`${B}/put-up/${STAGE}/undo`, 'POST', {}) });
     const s = sql.batches[0][1].norm;
     expect((s.match(/UPDATE preservation_log/g) ?? [])).toHaveLength(1);

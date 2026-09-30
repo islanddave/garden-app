@@ -881,8 +881,9 @@ describe('POST /api/kitchen-batches/:id/close', () => {
     expect(SRC).toMatch(/deleted_at\s+= CASE WHEN a\.remove THEN now\(\) ELSE p\.deleted_at END/);
     expect(SRC).not.toMatch(/DELETE FROM\s+preservation_log/);
     // The reads, each named: getBatch's outputs, shu-estimate's jar, delete's live-jar gate and its
-    // count, unlink's snapshot, readSitting's jars, undo's sitting_jars.
-    expect((SRC.match(/FROM preservation_log\b/g) ?? [])).toHaveLength(7);
+    // count, unlink's snapshot, readSitting's jars, undo's sitting_jars — and (B′) undo's owned, the
+    // jars the sitting ever wrote, which refuses How it was made →'s jarless put_up row.
+    expect((SRC.match(/FROM preservation_log\b/g) ?? [])).toHaveLength(8);
   });
 
   it('every preservation_log write rides the actor GUC (trg_audit_preservation_log_upd, 1b)', async () => {

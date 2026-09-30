@@ -165,6 +165,26 @@ describe('POST /api/kitchen-batches/from-jars — How it was made →', () => {
     expect(await directSql`SELECT id FROM kitchen_batch WHERE idempotency_key = ${k}`).toHaveLength(0)
     expect((await directSql`SELECT batch_id FROM preservation_log WHERE id = ${jar}`)[0].batch_id).toBeNull()
   })
+
+  // Its put_up row owns no jars (they pre-existed the batch), so Undo that put-up is refused: voiding it
+  // would reopen the batch with the jars still linked. STRANGER cannot see the batch at all.
+  it('Undo that put-up on its sitting: 409 nothing_put_up_here, nothing written; STRANGER 404', async () => {
+    const jar = await seedJar(DAVE, { count: 2 })
+    const res = await call(DAVE, 'POST', FROM, { idempotency_key: key(), label: 'No undo', started: { date: '2026-09-01', precision: 'day' }, jar_ids: [jar] })
+    expect(res.status, JSON.stringify(res.body)).toBe(201)
+    const b = res.body.id
+    const [pu] = await directSql`SELECT id FROM kitchen_stage_log WHERE batch_id = ${b} AND stage_kind = 'put_up'`
+    const path = `/api/kitchen-batches/${b}/put-up/${pu.id}/undo`
+    for (const who of [DAVE, JEN]) {
+      const u = await call(who, 'POST', path, {})
+      expect(u.status, JSON.stringify(u.body)).toBe(409)
+      expect(u.body.code).toBe('nothing_put_up_here')
+    }
+    expect((await call(STRANGER, 'POST', path, {})).status).toBe(404)
+    expect(await directSql`SELECT id FROM kitchen_stage_log WHERE batch_id = ${b} AND stage_kind = 'void'`).toHaveLength(0)
+    expect((await readBatchRow(b)).closed_at).not.toBeNull()
+    expect((await directSql`SELECT batch_id, deleted_at FROM preservation_log WHERE id = ${jar}`)[0]).toMatchObject({ batch_id: b, deleted_at: null })
+  })
 })
 
 describe('pantry lines — POST /:id/inputs with pantry_item_id', () => {

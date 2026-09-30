@@ -317,6 +317,16 @@ export function putUpInUse(jarIds) {
   };
 }
 
+// The refusal Undo gives a put_up row that wrote no jars of its own — How it was made →'s sitting
+// (batchBuilderRoutes.js fromJars links jars that existed before the batch by batch_id only, never
+// put_up_stage_id). Voiding it would reopen the batch with those jars still linked. Every sitting Put it up
+// writes has at least one jar (validatePutUp: rows non-empty, count ≥ 1; "Finished — none kept" writes no
+// put_up row), so this refuses nothing Put it up can produce.
+export const NOTHING_PUT_UP_HERE = {
+  error: "This batch was pieced together from jars you'd already logged — there's nothing to undo here. Remove the batch instead.",
+  code: 'nothing_put_up_here',
+};
+
 export const BATCH_CLOSED = {
   error: 'This batch is finished. Reopen it to bottle more →',
   code: 'batch_closed',
