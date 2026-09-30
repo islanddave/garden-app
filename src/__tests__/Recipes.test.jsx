@@ -329,3 +329,42 @@ describe('batch detail — Save as recipe and Made it as written', () => {
     expect(screen.getByTestId('batch-recipe').textContent).not.toMatch(/Target|pH/)
   })
 })
+
+describe('words — no banned word on the recipe surfaces (V4 §3.2), his notes aside', () => {
+  const BANNED = /\b(safe|shelf life|shelf-stable|keeps|good|ready|done|expired|table|default|basis)\b/i
+  const textWithoutNotes = (root) => {
+    const clone = root.cloneNode(true)
+    clone.querySelectorAll('[data-testid="recipe-detail-notes"]').forEach(n => n.remove())
+    return clone.textContent
+  }
+
+  it('INSTRUMENT: the pattern catches a banned word', () => {
+    expect('How long it keeps').toMatch(BANNED)
+  })
+
+  it('the list, the detail, the sheet, Following a recipe? and the batch row', async () => {
+    renderView()
+    await waitFor(() => expect(screen.getAllByTestId('recipes-row')).toHaveLength(3))
+    expect(screen.getByTestId('recipes-view').textContent).not.toMatch(BANNED)
+    tap('recipes-new')
+    tap('recipe-line-add')
+    expect(screen.getByTestId('recipe-sheet').textContent).not.toMatch(BANNED)
+    cleanup()
+    renderView()
+    await waitFor(() => expect(screen.getAllByTestId('recipes-row')).toHaveLength(3))
+    fireEvent.click(screen.getAllByTestId('recipes-row')[0])
+    await waitFor(() => expect(screen.getByTestId('recipe-detail-name')).toBeTruthy())
+    tap('recipe-i-made-this')
+    tap('recipe-remove')
+    expect(textWithoutNotes(screen.getByTestId('recipe-detail'))).not.toMatch(BANNED)
+    cleanup()
+    render(<StartBatchSheet open onClose={() => {}} onStarted={() => {}} now={NOW} />)
+    tap('following-recipe-toggle')
+    expect(screen.getByTestId('following-recipe').textContent).not.toMatch(BANNED)
+    cleanup()
+    render(<BatchRecipeRow batch={{ id: 'kb1', label: 'x', recipe: { id: 'r1', name: 'R', lines: DETAIL.lines } }} inputs={[]} onChanged={() => {}} />)
+    tap('batch-recipe-lines-toggle')
+    tap('batch-save-as-recipe')
+    expect(screen.getByTestId('batch-recipe').textContent).not.toMatch(BANNED)
+  })
+})
