@@ -14,7 +14,7 @@ import { resolve } from 'node:path'
 
 const F = (f) => JSON.parse(readFileSync(resolve(process.cwd(), 'tests/harness/_todaymeasure', f), 'utf8'))
 const { planState, prefsState, auth, wire, api } = vi.hoisted(() => {
-  const wire = { posts: [], deletes: [], failPlant: null, seq: 0, plants: null, locations: null, members: null }
+  const wire = { posts: [], deletes: [], failPlant: null, seq: 0, plants: null, locations: null, members: null, hold: false, held: [] }
   return {
     planState: { current: null },
     prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
@@ -28,6 +28,12 @@ const { planState, prefsState, auth, wire, api } = vi.hoisted(() => {
         if (init.method === 'DELETE') { wire.deletes.push(path); return {} }
         if (init.method === 'POST') {
           const body = JSON.parse(init.body)
+          // wire.hold: the POST is SENT (counted) but answers only when the test releases it — weak signal.
+          if (wire.hold) {
+            wire.posts.push(body)
+            await new Promise((r) => wire.held.push(r))
+            return { id: 'ev' + (++wire.seq) }
+          }
           if (body.plant_id === wire.failPlant) throw new Error('offline')
           wire.posts.push(body)
           return { id: 'ev' + (++wire.seq) }
@@ -53,6 +59,7 @@ vi.mock('../components/today/v2/useTodayBands.js', () => ({
 }))
 
 import TodayV2 from '../pages/TodayV2.jsx'
+import { PageScrollProvider } from '../hooks/usePageScrollManager.js'
 import { readSkipped } from '../components/today/careStore.js'
 import { applyGrafts } from '../../tests/harness/_todaymeasure/v2wire.js'
 
@@ -77,7 +84,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date(TODAY + 'T14:30:00.000Z'))
   serve(PAYLOAD)
   prefsState.current = { prefs: null, prefsLoaded: true, refreshPrefs: async () => null }
-  wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.seq = 0
+  wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.seq = 0; wire.hold = false; wire.held = []
   wire.plants = PLANTS; wire.locations = LOCS; wire.members = { members: [{ id: 'u', display_name: 'Dave' }, { id: 'member_jen', display_name: 'Jen' }] }
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
@@ -251,6 +258,99 @@ describe('frost and freeze nights', () => {
     expect(spots.length).toBeGreaterThan(1)
     expect(spots.reduce((n, s) => n + Number(s.getAttribute('data-count')), 0)).toBe(79)
     expect(spots.every((s) => Number(s.getAttribute('data-count')) < 79)).toBe(true)
+  })
+})
+
+// Review 4162.1 IMPORTANT-B (QA-T4): Protect's copy of the §6.3 double-log guard — useProtect's `loggedAtMount` over the
+// today-logged store — pinned. Remounted as a Back (a page-scroll return: the visit record is restored) on the SAME plan,
+// as useDailyPlan's seed would paint it before the refetch: what was covered or brought in stays off the list, and the
+// page's every live cover control re-posts none of it. The in-flight variant is IMPORTANT-A's twin for Cover all.
+describe('§6.3 in Protect: a covered plant never comes back live on the Back remount (review 4162.1 IMPORTANT-B)', () => {
+  const back = async () => {
+    render(<MemoryRouter><PageScrollProvider value={{ api: null, isReturn: true }}><TodayV2 /></PageScrollProvider></MemoryRouter>)
+    await settle()
+  }
+  const coverSpot = (name) => document.querySelector(`[data-testid="protect-spot"][data-spot="${name}"]`)
+  const spotNames = () => [...document.querySelectorAll('[data-testid="protect-spot"]')].map((s) => s.getAttribute('data-spot'))
+  const perPlant = (ids) => ids.map((id) => wire.posts.filter((b) => b.plant_id === id).length)
+  // Every live write control Protect offers after the Back, tapped once: whatever came back would be re-posted.
+  const tapEverything = async () => {
+    for (const b of [...document.querySelectorAll('[data-testid="protect-cover-all"]')]) { fireEvent.click(b); await settle() }
+    for (const b of within(screen.getByTestId('protect-body')).queryAllByRole('button', { name: /^(Covered|Brought in): / })) { fireEvent.click(b); await settle() }
+  }
+  const freezeSpot = () => {
+    const s = document.querySelectorAll('[data-testid="protect-spot"]')[0]
+    return { name: s.getAttribute('data-spot'), n: Number(s.getAttribute('data-count')), el: s }
+  }
+  const plantsOf = (name) => {
+    const s = coverSpot(name)
+    if (s.querySelector('[aria-expanded]').getAttribute('aria-expanded') !== 'true') fireEvent.click(s.querySelector('[aria-expanded]'))
+    return [...s.querySelectorAll('[data-testid="protect-row"] a')].map((a) => a.getAttribute('href').split('/').pop())
+  }
+
+  it('QA-T4: freeze graft, Cover all, unmount, Back on the same plan — the spot is not live and nothing is re-posted', async () => {
+    serve(applyGrafts(PAYLOAD, PLANTS, ['freeze'], G).payload)
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    const { name, n, el } = freezeSpot()
+    const others = spotNames().filter((x) => x !== name)
+    const ids = plantsOf(name); await settle()
+    expect(ids.length).toBe(n)
+    fireEvent.click(within(el).getByRole('button', { name: `Cover all ${n} in ${name}` }))
+    await settle()
+    expect(perPlant(ids)).toEqual(Array(n).fill(1))
+    first.unmount()
+    await back()
+    expect(band('protect').getAttribute('aria-expanded')).toBe('true')
+    expect(spotNames()).toEqual(others) // the other cover rows are there, live — only the covered spot is gone
+    expect(coverSpot(name)).toBeNull()
+    expect(within(screen.getByTestId('protect-body')).queryByRole('button', { name: `Cover all ${n} in ${name}` })).toBeNull()
+    await tapEverything()
+    expect(perPlant(ids)).toEqual(Array(n).fill(1))
+  })
+
+  // On a Back the restored visit record's rowsDone also draws these two as done lines, so the guard is what holds them
+  // on a NEW visit of the same plan day in this tab — Today's tab tapped from another page, the plan not yet refetched.
+  it('one row each: Covered and Brought in, unmount, then a Back and a new visit on the same plan — neither row is live, neither is re-posted', async () => {
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    fireEvent.click(within(rowOf('Lantana')).getByRole('button', { name: 'Covered: Lantana' })); await settle()
+    fireEvent.click(within(rowOf('Spider Plant')).getByRole('button', { name: 'Brought in: Spider Plant' })); await settle()
+    expect(wire.posts.map((b) => [b.event_type, b.plant_id])).toEqual([['cover', ID.Lantana], ['brought_inside', ID['Spider Plant']]])
+    first.unmount()
+    await back()
+    expect(band('protect').getAttribute('aria-expanded')).toBe('true')
+    expect(rowOf('Lemon Verbena')).toBeTruthy() // the section's other rows are there, live
+    expect(rowOf('Lantana')).toBeUndefined()
+    expect(rowOf('Spider Plant')).toBeUndefined()
+    cleanup()
+    await mount() // a new visit: no record restored
+    expect(band('protect').getAttribute('aria-expanded')).toBe('true')
+    expect(rowOf('Lemon Verbena')).toBeTruthy()
+    expect(rowOf('Lantana')).toBeUndefined()
+    expect(rowOf('Spider Plant')).toBeUndefined()
+    expect(doneOf('Lantana')).toBeUndefined()
+    expect(band('protect').textContent).toContain('3')
+    await tapEverything()
+    expect(perPlant([ID.Lantana, ID['Spider Plant']])).toEqual([1, 1])
+  })
+
+  it('IMPORTANT-A\'s twin: a Cover all still in flight at unmount — Back, tap everything, release — each plant POSTed exactly once', async () => {
+    serve(applyGrafts(PAYLOAD, PLANTS, ['freeze'], G).payload)
+    wire.hold = true
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    const { name, n, el } = freezeSpot()
+    const others = spotNames().filter((x) => x !== name)
+    const ids = plantsOf(name); await settle()
+    fireEvent.click(within(el).getByRole('button', { name: `Cover all ${n} in ${name}` }))
+    await settle()
+    expect(wire.posts.length).toBe(4) // concurrency 4: four sent, none answered
+    first.unmount()
+    await back()
+    wire.hold = false
+    expect(spotNames()).toEqual(others)
+    expect(coverSpot(name)).toBeNull()
+    await tapEverything()
+    for (let i = 0; i < 20 && wire.held.length; i++) { wire.held.splice(0).forEach((r) => r()); await settle() }
+    expect(perPlant(ids)).toEqual(Array(n).fill(1))
   })
 })
 

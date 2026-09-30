@@ -73,9 +73,14 @@ export default function ProtectTonight({ protect, record, update, announce, writ
   // ── writes ───────────────────────────────────────────────────────────────────────────────────────────────
   // Review 4160.2 IMPORTANT-2: while the page holds its writes (a seeded Back remount still revalidating, TodayV2
   // writesHeld), Covered, Brought in, Cover all, Retry and Skip post and skip nothing, and their controls are inert.
+  // Review 4162.1 IMPORTANT-A (Cover all's twin): every write claims its keys in the today-logged store before it posts,
+  // and releases each that fails, so a run still going when V2 unmounts (keepalive) is left out of the Back remount
+  // (useProtect's loggedAtMount) instead of offered again. Undo un-writes, as before. No batch goes on the record at the
+  // start: the remount builds no cover row for a spot whose keys are all claimed, so there is no line to draw it on.
+  const claim = { onClaim: (ks) => addLogged(protect.logKey, ks), onRelease: (ks) => removeLogged(protect.logKey, ks) }
   const plantRun = async (row, kind) => {
     if (writesHeld) return
-    const res = await actions.runBulk('brought_inside', new Set([row.key]), kind === 'covered' ? { ...ONE, bodyEventType: COVER } : ONE)
+    const res = await actions.runBulk('brought_inside', new Set([row.key]), kind === 'covered' ? { ...ONE, ...claim, bodyEventType: COVER } : { ...ONE, ...claim })
     if (res.created.length) {
       addLogged(protect.logKey, [row.key])
       setSlice((s) => {
@@ -119,7 +124,7 @@ export default function ProtectTonight({ protect, record, update, announce, writ
     announce(`Covering ${want.size} in ${spot.name}…`)
     let spoke = Date.now()
     const res = await actions.runBulk('brought_inside', want, {
-      ...RUN, bodyEventType: COVER,
+      ...RUN, ...claim, bodyEventType: COVER,
       onProgress: (p) => {
         setBusy({ spot: spot.key, done: p.done, total: p.total })
         if (Date.now() - spoke >= 5000) { spoke = Date.now(); announce(`${p.done} of ${p.total} covered in ${spot.name}.`) }
