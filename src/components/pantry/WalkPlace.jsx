@@ -193,7 +193,7 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
             )}
             <AlreadyHere fetch={fetch} placeId={walk.place.id} seq={hereSeq} onOpen={setOpenRow} />
             <UnrecordedLine fetch={fetch} />
-            <WalkGroup walk={walk} fetch={fetch} online={online} stock={stock} now={nowDate}
+            <WalkGroup walk={walk} fetch={fetch} online={online} stock={stock} now={nowDate} bandH={bandH}
               onSaved={onSaved} onOpenExisting={setOpenRow} onMoveHere={moveHere} />
           </>
         )}
@@ -365,7 +365,7 @@ function AlreadyHere({ fetch, placeId, seq, onOpen }) {
 }
 
 // One group: what · method-or-As is · how many · Save → next.
-function WalkGroup({ walk, fetch, online, stock, now, onSaved, onOpenExisting, onMoveHere }) {
+function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK_PX, onSaved, onOpenExisting, onMoveHere }) {
   const [what, setWhat] = useState(null)
   const [method, setMethod] = useState(null)
   const [count, setCount] = useState('1')
@@ -478,7 +478,10 @@ function WalkGroup({ walk, fetch, online, stock, now, onSaved, onOpenExisting, o
       )}
       {preview && <p role="status" data-testid="walk-preview" style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{preview}</p>}
       <RefusalLine err={err} testId="walk-error" />
-      <Button variant="primary" data-testid="walk-save" loading={saving} loadingLabel="Saving…" onClick={save} style={{ width: '100%' }}>
+      {/* scroll-margin = the band's MEASURED height: anything scrolled into view (a focused field, the
+          button itself) stops above the fixed band rather than under it, at the band's tallest too. */}
+      <Button variant="primary" data-testid="walk-save" loading={saving} loadingLabel="Saving…" onClick={save}
+        style={{ width: '100%', scrollMarginBottom: bandH + 12 }}>
         Save → next
       </Button>
     </div>

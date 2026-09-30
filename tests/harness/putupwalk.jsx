@@ -1,5 +1,10 @@
 // V4-PUTUPSESSION-001 slice 0 — the freezer walk at Dave's real geometry.
 //
+// UPDATED for B′ release 2 (Walk a place, V4 §2.2): the per-group form is what · method-or-As is · a
+// how-many stepper · "Save → next" (no number pad). The question is the same one: does every control
+// of a group — the stepper's 48 px buttons and the pinned-looking "Save → next" — clear the fixed band?
+// The historical notes below describe the pad the shipped walk had.
+//
 // THE ONE QUESTION THIS EXISTS TO ANSWER: does the bag-count NumberPad clear the walk's fixed
 // bottom band? The brief was explicit that the weigh-in's answer does not transfer — that pad lives
 // in a fixed three-track grid over a band that grows 48 -> 184px, this one lives in ordinary
@@ -43,6 +48,8 @@ window.fetch = async (url, opts = {}) => {
   if (u.includes('/api/plants')) return ok(PLANTS)
   if (u.includes('/api/harvests')) return ok({ aggregates: { crops: [{ crop_type_slug: 'watermelon', crop_name: 'Watermelon' }] } })
   if (u.includes('/api/preservation/whats-put-up')) return ok({ groups: [] })
+  if (u.includes('/api/pantry?')) return ok({ rows: [] })
+  if (u.includes('/api/kitchen-batches/line-search')) return ok({ plantings: [], put_ups: [] })
   if (u.includes('/api/preservation') && method === 'POST') return ok({ id: `pl-${Math.round(performance.now())}`, source_kind: 'own_garden', crop_type_slug: 'blueberry' })
   return ok({})
 }
@@ -74,14 +81,14 @@ const settle = () => new Promise(r => setTimeout(r, 60))
 // does the band? elementFromPoint is the only honest answer — a rect comparison misses a key that
 // is on screen but painted under something (BUG-WEIGHPADSAVEBAND-001 was found exactly this way).
 function padKeyHits() {
-  const keys = [...document.querySelectorAll('[data-testid^="pu-bagpad-"]')]
+  const keys = [...document.querySelectorAll('[data-testid^="walk-count-"], [data-testid="walk-save"]')]
   return keys.map(k => {
     const r = k.getBoundingClientRect()
     const cx = Math.round(r.left + r.width / 2)
     const cy = Math.round(r.top + r.height / 2)
     const hit = document.elementFromPoint(cx, cy)
     return {
-      key: k.dataset.testid.replace('pu-bagpad-', ''),
+      key: k.dataset.testid,
       top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), w: Math.round(r.width),
       selfHit: !!hit && (hit === k || k.contains(hit)),
       hitTestId: hit ? (hit.dataset?.testid || hit.tagName.toLowerCase()) : null,
@@ -92,24 +99,24 @@ function padKeyHits() {
 
 async function enterWalk() {
   await settle()
-  const freezer = [...document.querySelectorAll('[data-testid="putup-walk-freezer"]')][0]
-  click(freezer)
-  const when = [...document.querySelectorAll('[data-testid="putup-walk-date"]')][0]
-  click(when)
+  click(byTid('putup-walk-place-id:loc-1'))
+  click(byTid('putup-walk-when-this_month'))
   await settle()
   click(byTid('putup-walk-start'))
   await settle(); await settle()
-  return !!q('#pu-crop')
+  return !!byTid('putup-walk-group')
 }
 
-async function pickCrop(slug) {
-  const sel = q('#pu-crop')
-  if (!sel) return false
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
-  setter.call(sel, slug)
-  sel.dispatchEvent(new Event('change', { bubbles: true }))
+async function pickCrop(name = 'Blueberries') {
+  const input = byTid('walk-what-name')
+  if (!input) return false
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+  setter.call(input, name)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  await settle()
+  click(byTid('walk-method-whole_freeze'))
   await settle(); await settle()
-  return sel.value === slug
+  return !!byTid('walk-count-count')
 }
 
 window.__h = {
@@ -127,19 +134,15 @@ window.__h = {
   // Undo. Measuring only the empty band would certify a clearance that stops holding on save 1 of
   // 60, which is the shape of BUG-WEIGHPADSAVEBAND-001 (a band that grew 48 -> 184px).
   async measure() {
-    const started = !!q('#pu-crop') || await enterWalk()
+    const started = !!byTid('putup-walk-group') || await enterWalk()
     if (!started) return { error: 'could not enter the walk' }
-    await pickCrop('blueberry')
+    await pickCrop('Blueberries')
     if (new URLSearchParams(location.search).get('saved') === '1') {
-      const qty = q('#pu-qty')
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
-      setter.call(qty, '1')
-      qty.dispatchEvent(new Event('input', { bubbles: true }))
-      await settle()
-      click([...document.querySelectorAll('button[type="submit"]')][0])
+      click(byTid('walk-save'))
       await settle(); await settle(); await settle()
+      await pickCrop('Blueberries')
     }
-    const pad = q('[aria-label="How many bags or jars"][role="group"]')
+    const pad = byTid('walk-save')
     if (pad) pad.scrollIntoView({ block: 'end' })
     await settle()
     const band = byTid('putup-walk-band')
@@ -166,8 +169,7 @@ window.__h = {
       scrollHeight: scroller.scrollHeight,
       scrollTop: Math.round(scroller.scrollTop),
       maxScrollTop: Math.round(scroller.scrollHeight - window.innerHeight),
-      autoPlantingLine: byTid('pu-auto-planting')?.textContent?.replace(/\s+/g, ' ').trim() ?? null,
-      saveButton: rect([...document.querySelectorAll('button[type="submit"]')][0]),
+      saveButton: rect(byTid('walk-save')),
     }
   },
 }
