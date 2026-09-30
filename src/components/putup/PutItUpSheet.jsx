@@ -155,7 +155,7 @@ function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, ex
       )}
       {open ? (
         <LineAdder lines={batchLines} idPrefix={`${idPrefix}-add`} disabled={disabled} forms={['fresh', 'cooked']}
-          label="What was added?" addLabel="Add it" pinnable={false} excludeJarIds={excludeJarIds}
+          label="What was added?" addLabel="Add it" pinnable={false} excludeJarIds={excludeJarIds} pantryHits={false}
           onAdd={async (body) => { onChange([...lines, body]); setOpen(false); return true }} />
       ) : (
         <button type="button" disabled={disabled} data-testid={`${idPrefix}-open`} onClick={() => setOpen(true)}

@@ -51,7 +51,9 @@ export async function readLines(sql, batchId, { ids = null, includeDeleted = fal
            i.plant_id, i.preservation_log_id, i.crop_type_slug, i.source_label, i.role, i.salt_pct,
            i.salt_base, i.base_g, i.put_up_stage_id, i.output_id, i.ordinal, i.deleted_at,
            i.brand, i.form, i.shu_rating_low, i.shu_rating_high, i.salt_method, i.base_from, i.edited_at,
+           i.pantry_item_id,
            (i.input_kind IN ('garden', 'harvest')
+             OR (i.input_kind = 'pantry' AND pit.plant_id IS NOT NULL)
              OR (i.input_kind = 'put_up'
                  AND (jar.source_kind = 'own_garden'
                       OR EXISTS (SELECT 1 FROM preservation_source ps
@@ -68,6 +70,7 @@ export async function readLines(sql, batchId, { ids = null, includeDeleted = fal
            jar.package_count AS _jar_package_count
     FROM kitchen_batch_input i
     LEFT JOIN preservation_log jar ON jar.id = i.preservation_log_id
+    LEFT JOIN pantry_item pit ON pit.id = i.pantry_item_id
     LEFT JOIN garden_node gn ON gn.id = i.plant_id
     LEFT JOIN cultivar cv ON cv.id = COALESCE(gn.cultivar_id, jar.variety_id) AND cv.deleted_at IS NULL
     WHERE i.batch_id = ${batchId}::uuid
@@ -142,6 +145,19 @@ export async function loadJars(sql, ids, householdIds) {
   `;
 }
 
+// B′ release 3: a bought item from the Pantry (V4 §5.3 — pantry_item_id is body-settable, so it has a
+// household loader). A removed item is refused; a used-up one may still go in (the last of it).
+export async function loadPantryItems(sql, ids, householdIds) {
+  if (!ids.length) return [];
+  return sql`
+    SELECT pit.id, pit.name, pit.crop_type_slug, pit.plant_id
+    FROM pantry_item pit
+    WHERE pit.id = ANY(${ids}::uuid[])
+      AND pit.user_id = ANY(${householdIds})
+      AND pit.deleted_at IS NULL
+  `;
+}
+
 // Live put_up rows of THIS batch (not voided), with their live jars.
 async function loadSittings(sql, batchId, ids) {
   if (!ids.length) return [];
@@ -165,6 +181,8 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
   const plantings = await loadPlantings(sql, uuids(bodies.filter((l) => l.input_kind === 'garden').map((l) => l.plant_id)), householdIds);
   const picks = await loadPicks(sql, uuids(bodies.map((l) => l.harvest_log_id)), householdIds);
   const jars = await loadJars(sql, uuids(bodies.map((l) => l.preservation_log_id)), householdIds);
+  const pantryIds = uuids(bodies.map((l) => l.pantry_item_id));
+  const pantryItems = pantryIds.length ? await loadPantryItems(sql, pantryIds, householdIds) : [];
   const sittingIds = uuids(bodies.map((l) => l.put_up_stage_id));
   const sittings = opts.sittingFixed ? [] : await loadSittings(sql, batchId, sittingIds);
   const byId = (rows) => new Map(rows.map((r) => [r.id, r]));
@@ -172,6 +190,7 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
   const H = byId(picks);
   const J = byId(jars);
   const S = byId(sittings);
+  const I = byId(pantryItems);
   const rows = [];
   for (const [i, l] of bodies.entries()) {
     const where = `line ${i + 1}`;
@@ -198,6 +217,13 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
       draw = plan;
       label = label ?? j.label ?? j.crop_type_slug ?? 'Put-up';
     }
+    let pantryCrop = null;
+    if (l.input_kind === 'pantry') {
+      const it = I.get(l.pantry_item_id);
+      if (!it) return { refusal: bad(`${where}: that item does not match something in your pantry`) };
+      label = label ?? it.name;
+      pantryCrop = it.crop_type_slug ?? null;
+    }
     if (!opts.sittingFixed && l.put_up_stage_id != null) {
       const s = S.get(l.put_up_stage_id);
       if (!s) return { refusal: bad(`${where}: that is not a bottling of this batch`) };
@@ -211,7 +237,7 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
       harvest_log_id: l.harvest_log_id ?? null,
       plant_id: plantId,
       preservation_log_id: l.preservation_log_id ?? null,
-      crop_type_slug: normalizeText(l.crop_type_slug) ?? P.get(l.plant_id)?.crop_type_slug ?? null,
+      crop_type_slug: normalizeText(l.crop_type_slug) ?? P.get(l.plant_id)?.crop_type_slug ?? pantryCrop ?? null,
       label,
       source_label: normalizeText(l.source_label),
       qty: l.qty == null ? null : String(l.qty),
@@ -233,6 +259,7 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
       idempotency_key: l.idempotency_key ?? null,
       draw_count: draw.count,
       draw_weighed: draw.weighed === true,
+      pantry_item_id: l.input_kind === 'pantry' ? l.pantry_item_id : null,
     });
   }
   return { rows };
@@ -291,7 +318,7 @@ export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
           id, batch_id, input_kind, harvest_log_id, plant_id, preservation_log_id, crop_type_slug, label,
           source_label, qty, qty_unit, form, brand, note, shu_rating_low, shu_rating_high, role, salt_pct,
           salt_base, base_g, salt_method, base_from, put_up_stage_id, output_id, ordinal, idempotency_key,
-          created_by
+          created_by, pantry_item_id
         )
         SELECT u.id, ${batchId}::uuid, u.input_kind, u.harvest_log_id, u.plant_id, u.preservation_log_id,
                u.crop_type_slug, u.label, u.source_label, u.qty, u.qty_unit, u.form, u.brand, u.note,
@@ -299,7 +326,7 @@ export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
                u.base_from, u.put_up_stage_id, u.output_id,
                COALESCE(u.ordinal, (SELECT COALESCE(max(k.ordinal), -1) FROM kitchen_batch_input k
                                      WHERE k.batch_id = ${batchId}::uuid) + u.n::int),
-               u.idempotency_key, ${userId}::text
+               u.idempotency_key, ${userId}::text, u.pantry_item_id
         FROM unnest(
           ${c.id}::uuid[], ${c.input_kind}::text[], ${c.harvest_log_id}::uuid[], ${c.plant_id}::uuid[],
           ${c.preservation_log_id}::uuid[], ${c.crop_type_slug}::text[], ${c.label}::text[],
@@ -307,11 +334,11 @@ export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
           ${c.brand}::text[], ${c.note}::text[], ${c.shu_rating_low}::int[], ${c.shu_rating_high}::int[],
           ${c.role}::text[], ${c.salt_pct}::numeric[], ${c.salt_base}::text[], ${c.base_g}::numeric[],
           ${c.salt_method}::text[], ${c.base_from}::text[], ${c.put_up_stage_id}::uuid[],
-          ${c.output_id}::uuid[], ${c.ordinal}::int[], ${c.idempotency_key}::uuid[]
+          ${c.output_id}::uuid[], ${c.ordinal}::int[], ${c.idempotency_key}::uuid[], ${c.pantry_item_id}::uuid[]
         ) WITH ORDINALITY AS u(id, input_kind, harvest_log_id, plant_id, preservation_log_id, crop_type_slug,
                                label, source_label, qty, qty_unit, form, brand, note, shu_rating_low,
                                shu_rating_high, role, salt_pct, salt_base, base_g, salt_method, base_from,
-                               put_up_stage_id, output_id, ordinal, idempotency_key, n)
+                               put_up_stage_id, output_id, ordinal, idempotency_key, pantry_item_id, n)
         RETURNING id, preservation_log_id, qty, qty_unit, role
       ), mass AS (
         SELECT m.unit, m.factor FROM unnest(${MASS_UNITS}::text[], ${MASS_FACTORS}::numeric[]) AS m(unit, factor)

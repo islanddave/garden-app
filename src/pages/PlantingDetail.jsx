@@ -65,7 +65,7 @@ import HeatResponseNote from '../components/planting/HeatResponseNote.jsx'
 import GrowthStrip from '../components/planting/GrowthStrip.jsx'
 import PhotoView from '../components/photo/PhotoView.jsx'
 import { TIER } from '../lib/photoModel.js'
-import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
+import PlantingKitchen from '../components/planting/PlantingKitchen.jsx'
 import SeedLotsFromPlanting, { useSeedLotsFromPlanting, seedLotsWorthRendering } from '../components/planting/SeedLotsFromPlanting.jsx'
 import { lotHref } from '../components/seed/seedLots.js'
 import HarvestFromPlanting from '../components/planting/HarvestFromPlanting.jsx'
@@ -1154,7 +1154,8 @@ export default function PlantingDetail() {
       {plantingIsHarvestTracked(pl) && (<>
       <SectionHeader>Put up</SectionHeader>
       <div style={cardStyle}>
-        <PutUpFromPlanting planting={pl} fetch={fetch} />
+        {/* B′ release 3: the shipped put-up list, plus kept fresh and the batches that used it. */}
+        <PlantingKitchen planting={pl} fetch={fetch} />
       </div>
       </>)}
 

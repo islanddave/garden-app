@@ -19,7 +19,7 @@ export const LINE_BODY_KEYS = [
   'input_kind', 'idempotency_key', 'label', 'qty', 'qty_unit', 'form', 'brand', 'note', 'source_label',
   'shu_rating_low', 'shu_rating_high', 'role', 'salt_pct', 'salt_base', 'base_g', 'salt_method', 'base_from',
   'ordinal', 'crop_type_slug', 'plant_id', 'harvest_log_id', 'preservation_log_id', 'count_drawn',
-  'put_up_stage_id', 'output_id',
+  'put_up_stage_id', 'output_id', 'pantry_item_id',
 ];
 
 // The line PATCH allowlist (06 §3.7; contract-F §2.2). Identity (kind, the pick, the jar, the sitting)
@@ -108,7 +108,7 @@ export function lineError(line, { keyed = true, where = 'line' } = {}) {
   if (!KITCHEN_LINE_KINDS.includes(kind)) return `${where}: input_kind must be one of: ${KITCHEN_LINE_KINDS.join(', ')}`;
   if (keyed && !isUuid(line.idempotency_key ?? null)) return `${where}: idempotency_key must be a uuid`;
   if (!keyed && line.idempotency_key != null && !isUuid(line.idempotency_key)) return `${where}: idempotency_key must be a uuid`;
-  for (const k of ['plant_id', 'harvest_log_id', 'preservation_log_id', 'put_up_stage_id', 'output_id']) {
+  for (const k of ['plant_id', 'harvest_log_id', 'preservation_log_id', 'put_up_stage_id', 'output_id', 'pantry_item_id']) {
     if (line[k] != null && !isUuid(line[k])) return `${where}: ${k} must be a uuid`;
   }
   if (kind === 'garden' && line.plant_id == null) return `${where}: a garden line names its planting (plant_id)`;
@@ -117,6 +117,10 @@ export function lineError(line, { keyed = true, where = 'line' } = {}) {
   }
   if ((kind === 'put_up') !== (line.preservation_log_id != null)) {
     return kind === 'put_up' ? `${where}: a draw names its jar (preservation_log_id)` : `${where}: only a draw carries preservation_log_id`;
+  }
+  // B′ release 3: a bought item from the Pantry (v5-pantry-001's CHECK: the id implies the kind).
+  if ((kind === 'pantry') !== (line.pantry_item_id != null)) {
+    return kind === 'pantry' ? `${where}: a pantry line names its item (pantry_item_id)` : `${where}: only a pantry line carries pantry_item_id`;
   }
   if (kind !== 'garden' && kind !== 'harvest' && line.plant_id != null) return `${where}: only a garden or pick line names a planting`;
   if ((kind === 'purchased' || kind === 'other') && normalizeText(line.label) == null) {
@@ -291,7 +295,7 @@ export const LINE_COLUMNS = [
   'id', 'input_kind', 'harvest_log_id', 'plant_id', 'preservation_log_id', 'crop_type_slug', 'label',
   'source_label', 'qty', 'qty_unit', 'form', 'brand', 'note', 'shu_rating_low', 'shu_rating_high', 'role',
   'salt_pct', 'salt_base', 'base_g', 'salt_method', 'base_from', 'put_up_stage_id', 'output_id', 'ordinal',
-  'idempotency_key', 'draw_count', 'draw_weighed',
+  'idempotency_key', 'draw_count', 'draw_weighed', 'pantry_item_id',
 ];
 export function lineColumns(rows) {
   return Object.fromEntries(LINE_COLUMNS.map((k) => [k, rows.map((r) => r[k])]));

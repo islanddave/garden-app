@@ -56,6 +56,11 @@ function lineError(line, where) {
   if (isObj(line) && ['salt_pct', 'salt_base', 'base_g', 'salt_method', 'base_from'].some((k) => line[k] != null)) {
     return `${where}: salt facts go on a line in What went in, not on a bottling`;
   }
+  // B′ release 3: a bought item from the Pantry is a What went in line; a bottling's INSERT carries no
+  // pantry_item_id, so it is refused here rather than stored as a nameless 'pantry' line.
+  if (isObj(line) && (line.input_kind === 'pantry' || line.pantry_item_id != null)) {
+    return `${where}: a bought item goes in What went in, not on a bottling`;
+  }
   return fLineError(withKind(line), { keyed: false, where });
 }
 
