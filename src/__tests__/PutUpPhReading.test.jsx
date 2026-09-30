@@ -599,6 +599,7 @@ const LANE_SOURCES = [
   ['src/components/recipes/BatchRecipeRow.jsx', 'export default function BatchRecipeRow'],
   ['src/components/recipes/FollowingRecipe.jsx', 'export function followingBody'],
   ['src/components/recipes/TypePicker.jsx', 'export default function TypePicker'],
+  ['scripts/seed-recipes.mjs', 'export function planRecipe'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the
