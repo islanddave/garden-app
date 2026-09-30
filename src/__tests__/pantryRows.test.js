@@ -157,6 +157,8 @@ describe('Put something up / the Walk — method chips by place, As is, and rout
     expect(doorError({ what: typed, place: null, method: 'x' }).field).toBe('where')
     expect(doorError({ what: typed, place: { key: 'id:loc-1' }, method: null })).toEqual({ error: METHOD_REQUIRED_TEXT, field: 'method' })
     expect(doorError({ what: typed, place: { key: 'id:loc-1' }, method: AS_IS })).toBeNull()
+    expect(doorError({ what: typed, place: { key: 'id:loc-1' }, method: 'pesto', discard: { mode: 'date', date: '' } }).field).toBe('discard')
+    expect(doorError({ what: typed, place: { key: 'id:loc-1' }, method: 'pesto', discard: { mode: 'date', date: '2027-01-01' } })).toBeNull()
   })
   it('a put-up body: the name as label, the planting and crop from the hit, key-presence discard', () => {
     const when = { date: '2026-09-30', precision: 'day' }

@@ -39,7 +39,7 @@ import RefusalLine, { refusalOf, refusalText } from './RefusalLine.jsx'
 import { leftWords, rowKey } from './pantryRows.js'
 import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
-  methodLabel,
+  methodLabel, doorError,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
@@ -54,7 +54,7 @@ export function resumableWalk(stash) {
     && typeof stash.when.precision === 'string' ? stash : null
 }
 
-export default function WalkPlace({ JarEditor = null, now }) {
+export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, now }) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { fetch } = useApiFetch()
@@ -240,7 +240,7 @@ export default function WalkPlace({ JarEditor = null, now }) {
       )}
 
       <PantryRowSheet row={openRow} fetch={fetch} onClose={() => setOpenRow(null)} now={now} JarEditor={JarEditor}
-        onUsed={() => changed()} onChanged={() => changed()} />
+        onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} onUsed={() => changed()} onChanged={() => changed()} />
     </div>
   )
 }
@@ -408,6 +408,8 @@ function WalkGroup({ walk, fetch, online, stock, now, onSaved, onOpenExisting, o
     if (!String(what?.name ?? '').trim()) { setErr('What is it? Type a name.'); setField('what'); whatRef.current?.focus?.(); return }
     if (!method) { setErr(METHOD_REQUIRED_TEXT); setField('method'); focusFirstRadio(methodRef); return }
     if (own?.error) { setErr(own.error); setField('when'); setMoreOpen(true); return }
+    const dErr = doorError({ what, place, method, discard })
+    if (dErr) { setErr(dErr.error); setField(dErr.field); setMoreOpen(true); return }
     const useKey = key || mintKey()
     if (!key) setKey(useKey)
     writingRef.current = true

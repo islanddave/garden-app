@@ -68,7 +68,7 @@ export function mergeRecent(rows, recent) {
 
 export default function PantryView({
   fetch, group, onGroupChange, rows, loading, error, onReload, recent, onRecent,
-  useSoonOnly = false, onClearUseSoon, JarEditor = null, onHowItWasMade = null, completion = null, onCompletionDone,
+  useSoonOnly = false, onClearUseSoon, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, completion = null, onCompletionDone,
   showBridge = false, onDismissBridge, now,
 }) {
   const [openRow, setOpenRow] = useState(null)
@@ -100,7 +100,7 @@ export default function PantryView({
 
       {completion && (
         <CompletionLine completion={completion} fetch={fetch} onDone={onCompletionDone} onChanged={onReload}
-          onHowItWasMade={onHowItWasMade} />
+          onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} />
       )}
 
       <div style={{ marginBottom: T.space.md }}>
@@ -152,7 +152,7 @@ export default function PantryView({
       ))}
 
       <PantryRowSheet row={openRow} fetch={fetch} onClose={() => setOpenRow(null)} now={now}
-        JarEditor={JarEditor} onHowItWasMade={onHowItWasMade}
+        JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
         onUsed={record} onChanged={() => onReload?.()} />
     </div>
   )
@@ -227,6 +227,9 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
           <span style={{ display: 'block', fontWeight: 600, fontSize: '0.92rem' }}>{row.name}</span>
           {detail && <span style={{ display: 'block', fontSize: T.type.sm, color: P.mid }}>{detail}</span>}
           {chip && <span data-testid={`pantry-row-chip-${key}`} style={{ display: 'block', fontSize: T.type.sm, color: P.mid, overflowWrap: 'anywhere' }}>{chip}</span>}
+          {isItem(row) && typeof row.notes === 'string' && row.notes.trim() && (
+            <span style={{ display: 'block', fontSize: T.type.sm, color: P.mid, overflowWrap: 'anywhere' }}>{row.notes.trim()}</span>
+          )}
           {row.from_garden && (
             <span style={{ display: 'block', fontSize: T.type.sm, color: P.green }}>
               <span aria-hidden="true">🌿 </span>{FROM_GARDEN_TEXT}
@@ -262,7 +265,7 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
 
 // The door's completion, in place on the Pantry (V4 §2.2): what was saved, in the server's words, with
 // Undo (a soft delete of what was just made) and — for a put-up — How it was made → when wired.
-function CompletionLine({ completion, fetch, onDone, onChanged, onHowItWasMade }) {
+function CompletionLine({ completion, fetch, onDone, onChanged, onHowItWasMade, canHowItWasMade }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
   const [undone, setUndone] = useState(false)
@@ -295,7 +298,7 @@ function CompletionLine({ completion, fetch, onDone, onChanged, onHowItWasMade }
             style={{ minHeight: 48, minWidth: 48, background: 'none', border: 'none', color: P.terra, fontWeight: 700,
               fontFamily: 'inherit', fontSize: T.type.sm, textDecoration: 'underline', cursor: 'pointer' }}>Undo</button>
         )}
-        {!undone && asRow && typeof onHowItWasMade === 'function' && (
+        {!undone && asRow && typeof onHowItWasMade === 'function' && (typeof canHowItWasMade !== 'function' || canHowItWasMade(asRow)) && (
           <button type="button" onClick={() => onHowItWasMade(asRow)} data-testid="pantry-completion-how"
             style={{ minHeight: 48, background: 'none', border: 'none', color: P.green, fontWeight: 700,
               fontFamily: 'inherit', fontSize: T.type.sm, textDecoration: 'underline', cursor: 'pointer' }}>How it was made →</button>

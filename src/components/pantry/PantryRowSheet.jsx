@@ -51,13 +51,15 @@ export function jarRecordWords(rec, now = new Date()) {
 }
 
 
-export default function PantryRowSheet({ row, fetch, onClose, onUsed, onChanged, JarEditor = null, onHowItWasMade = null, now }) {
+// `onHowItWasMade(row)` is the batch-builder lane's door (useHowItWasMade().open); `canHowItWasMade(row)`
+// says whether this row may offer it (a put-up with no batch). Neither handed in → no door.
+export default function PantryRowSheet({ row, fetch, onClose, onUsed, onChanged, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, now }) {
   if (!row) return null
   return <RowSheetOpen key={`${row.stock_kind}:${row.stock_id}`} row={row} fetch={fetch} onClose={onClose} onUsed={onUsed}
-    onChanged={onChanged} JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} now={now} />
+    onChanged={onChanged} JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} now={now} />
 }
 
-function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHowItWasMade, now }) {
+function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHowItWasMade, canHowItWasMade, now }) {
   const [panel, setPanel] = useState(null)      // null | 'give' | 'move' | 'edit' | 'next'
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
@@ -117,7 +119,9 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHow
       <div data-testid="row-sheet" data-row-key={`${row.stock_kind}:${row.stock_id}`} style={{ padding: '0 18px 18px', display: 'flex', flexDirection: 'column', gap: T.space.sm }}>
         {detail && <p style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{detail}</p>}
         {recWords && <p data-testid="row-sheet-record" style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{recWords}</p>}
-        {rec?.notes && <p data-testid="row-sheet-notes" style={{ margin: 0, color: P.mid, fontSize: T.type.sm, whiteSpace: 'pre-wrap' }}>{rec.notes}</p>}
+        {(rec?.notes || (!jar && row.notes)) && (
+          <p data-testid="row-sheet-notes" style={{ margin: 0, color: P.mid, fontSize: T.type.sm, whiteSpace: 'pre-wrap' }}>{rec?.notes || row.notes}</p>
+        )}
         {chip && <p style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{chip}</p>}
         {jar && effectiveBasis(row) === 'house' && row.discard?.date && (
           <p role="note" data-testid="row-sheet-house" style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{HOUSE_DETAIL_TEXT}</p>
@@ -138,7 +142,7 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHow
             {jar && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-next" onClick={() => setPanel('next')}>Next time…</button>
             )}
-            {jar && typeof onHowItWasMade === 'function' && (
+            {jar && typeof onHowItWasMade === 'function' && (typeof canHowItWasMade !== 'function' || canHowItWasMade(row)) && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-how"
                 onClick={() => { onHowItWasMade(row); onClose?.() }}>How it was made →</button>
             )}

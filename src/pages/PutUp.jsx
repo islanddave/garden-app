@@ -292,20 +292,30 @@ export function pickStartBatchSheet(modules) {
 }
 export const StartBatchSheetImpl = pickStartBatchSheet(START_BATCH_SHEET_MODULES)
 
-// Put-Up B′ — "How it was made →" (V4 §2.2, release 3) is the batch-builder lane's sheet. Its contract:
-// `{ open, jar, onClose, onDone }`, default or named `HowItWasMadeSheet` export, where `jar` is a Pantry
-// row ({ stock_kind: 'put_up', stock_id, name, batch_id, place, … }). Globbed exactly like the Start
-// sheet above, so the entry points (the row sheet's "How it was made →" and the completion line's) render
-// only once the file exists, with no edit here. `HowItWasMadeSheet` is also a PutUp prop for tests.
+// Put-Up B′ — "How it was made →" (V4 §2.2, release 3) is the batch-builder lane's sheet, and its seam is
+// `useHowItWasMade({ onSaved })` → `{ open(rowOrJar), sheet }` (+ `canSayHowItWasMade(jar)`), exported from
+// components/putup/HowItWasMadeSheet.jsx. Globbed exactly like the Start sheet above, so this page builds
+// with or without that file: without it there is no seam and no "How it was made →" anywhere; with it,
+// the Pantry row sheet and the Put something up completion offer the door for a batchless put-up. The
+// module is chosen once per build, so the hook below is always the same hook (rules of hooks hold).
+// `howItWasMade` is also a PutUp prop so a test can hand in a stand-in.
 const HOW_IT_WAS_MADE_MODULES = import.meta.glob('../components/putup/HowItWasMadeSheet.jsx', { eager: true })
-export function pickHowItWasMadeSheet(modules) {
+export function pickHowItWasMade(modules) {
   for (const m of Object.values(modules ?? {})) {
-    const c = m?.HowItWasMadeSheet ?? m?.default
-    if (c) return c
+    if (typeof m?.useHowItWasMade === 'function') {
+      return { useHowItWasMade: m.useHowItWasMade, canSay: typeof m.canSayHowItWasMade === 'function' ? m.canSayHowItWasMade : null }
+    }
   }
   return null
 }
-export const HowItWasMadeSheetImpl = pickHowItWasMadeSheet(HOW_IT_WAS_MADE_MODULES)
+export const HowItWasMadeImpl = pickHowItWasMade(HOW_IT_WAS_MADE_MODULES)
+const NO_HOW = { open: null, sheet: null }
+function useNoHowItWasMade() { return NO_HOW }
+// A Pantry row can say how it was made when it is a put-up with no batch yet (and the seam agrees).
+function howRowCheck(seam) {
+  return (row) => !!row && row.stock_kind === 'put_up' && row.batch_id == null
+    && (!seam?.canSay || seam.canSay({ id: row.stock_id, batch_id: null, harvest_log_id: null, deleted_at: null }))
+}
 const NO_EXTRA_SEARCH_ITEMS = []
 
 // `StartBatchSheet` is a prop only so a test can hand the page a stand-in for a file this branch does
@@ -318,10 +328,10 @@ export const PUT_UP_SEGMENTS = [
   { value: 'pantry', label: 'Pantry' },
 ]
 
-// `HowItWasMadeSheet` and `extraSearchItems` are the B′ seams (see above and the page search below);
+// `howItWasMade` and `extraSearchItems` are the B′ seams (see above and the page search below);
 // App renders the route with no props, so production takes the defaults.
 export default function PutUp({
-  StartBatchSheet = StartBatchSheetImpl, HowItWasMadeSheet = HowItWasMadeSheetImpl, extraSearchItems: extraSearchItemsProp = NO_EXTRA_SEARCH_ITEMS,
+  StartBatchSheet = StartBatchSheetImpl, howItWasMade = HowItWasMadeImpl, extraSearchItems: extraSearchItemsProp = NO_EXTRA_SEARCH_ITEMS,
 } = {}) {
   const location = useLocation()
   const navigate = useNavigate()
@@ -541,7 +551,11 @@ export default function PutUp({
   const [pantryRecent, setPantryRecent] = useState({})
   // The door's completion, shown in place on the Pantry with Undo (V4 §2.2).
   const [completion, setCompletion] = useState(null)
-  const [howJar, setHowJar] = useState(null)
+  // How it was made → (the batch-builder seam; absent → no door anywhere).
+  const useHow = howItWasMade?.useHowItWasMade ?? useNoHowItWasMade
+  const how = useHow({ onSaved: () => { pantry.reload(); loadGoing() } })
+  const onHowItWasMade = typeof how?.open === 'function' ? how.open : null
+  const canHowItWasMade = useMemo(() => howRowCheck(howItWasMade), [howItWasMade])
   // The page search's extra corpus: the recipes lane hands its loaded recipes in through
   // `setExtraSearchItems` (or the `extraSearchItems` prop): `{ key, name, kindLabel?, onOpen }`.
   const [extraSearchState, setExtraSearchItems] = useState(NO_EXTRA_SEARCH_ITEMS)
@@ -568,7 +582,12 @@ export default function PutUp({
   }, [chooseView, clearFind, findText, pantry])
 
   // Declared AFTER every hook above, so the walk branch cannot reorder them.
-  if (inWalk) return <WalkPlace JarEditor={RowEditor} />
+  if (inWalk) {
+    return (<>
+      <WalkPlace JarEditor={RowEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} />
+      {how?.sheet ?? null}
+    </>)
+  }
 
   // The segment bodies stand down while a mode is open, and while the page search holds text (its
   // results replace the body, V4 §2.5). `view` itself is untouched, which is the whole point of the mode
@@ -638,7 +657,7 @@ export default function PutUp({
         {searching && (
           <PantrySearchResults query={findText} rows={pantry.rows} loading={pantry.loading} extraSearchItems={extraSearchItems}
             fetch={pageFetch} onPutUp={(text) => openDoor(text)} JarEditor={RowEditor}
-            onHowItWasMade={HowItWasMadeSheet ? setHowJar : null}
+            onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
             onUsed={(entry) => { setPantryRecent(prev => ({ ...prev, [`${entry.row.stock_kind}:${entry.row.stock_id}`]: { ...entry, undone: false, err: null, undoKey: null } })); pantry.reload() }}
             onChanged={() => pantry.reload()} />
         )}
@@ -675,7 +694,7 @@ export default function PutUp({
           <PantryView fetch={pageFetch} group={pantryGroup} onGroupChange={setPantryGroup} rows={pantry.rows}
             loading={pantry.loading} error={pantry.error} onReload={pantry.reload} recent={pantryRecent} onRecent={setPantryRecent}
             useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} JarEditor={RowEditor}
-            onHowItWasMade={HowItWasMadeSheet ? setHowJar : null}
+            onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
             completion={completion} onCompletionDone={() => setCompletion(null)}
             showBridge={bridgeShown} onDismissBridge={onDismissBridge} />
         )}
@@ -717,10 +736,7 @@ export default function PutUp({
           <PutSomethingUpSheet open initialName={doorName} stockRows={pantry.rows} onClose={() => setDoorOpen(false)}
             onSaved={onDoorSaved} />
         )}
-        {HowItWasMadeSheet && howJar && (
-          <HowItWasMadeSheet open jar={howJar} onClose={() => setHowJar(null)}
-            onDone={() => { setHowJar(null); pantry.reload() }} />
-        )}
+        {how?.sheet ?? null}
       </div>
     </div>
   )

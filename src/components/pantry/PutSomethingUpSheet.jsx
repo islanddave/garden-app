@@ -126,11 +126,12 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }
 
   const save = useCallback(async () => {
     if (writingRef.current) return
-    const e = doorError({ what, place, method })
+    const e = doorError({ what, place, method, discard })
     if (e) {
       setErr(e.error); setField(e.field)
       if (e.field === 'method') focusFirstRadio(methodRef)
       else if (e.field === 'what') whatRef.current?.focus?.()
+      else if (e.field === 'discard') setMoreOpen(true)
       return
     }
     if (w.error) { setErr(w.error); setField('when'); setMoreOpen(true); return }

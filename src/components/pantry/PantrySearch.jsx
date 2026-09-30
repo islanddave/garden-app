@@ -31,7 +31,8 @@ export function PantrySearchBox({ value, onChange, onClear }) {
 }
 
 export default function PantrySearchResults({
-  query, rows, loading, extraSearchItems = [], fetch, onPutUp, onUsed, onChanged, JarEditor = null, onHowItWasMade = null, now,
+  query, rows, loading, extraSearchItems = [], fetch, onPutUp, onUsed, onChanged, JarEditor = null, onHowItWasMade = null,
+  canHowItWasMade = null, now,
 }) {
   const [openRow, setOpenRow] = useState(null)
   const hits = useMemo(() => searchHits(rows ?? [], extraSearchItems, query), [rows, extraSearchItems, query])
@@ -68,7 +69,7 @@ export default function PantrySearchResults({
         </button>
       )}
       <PantryRowSheet row={openRow} fetch={fetch} onClose={() => setOpenRow(null)} now={now}
-        JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} onUsed={onUsed} onChanged={onChanged} />
+        JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} onUsed={onUsed} onChanged={onChanged} />
     </div>
   )
 }

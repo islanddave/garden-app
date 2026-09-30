@@ -127,11 +127,14 @@ function placeKeys(place) {
   return { place: { kind: place?.kind, label: String(place?.label ?? '').trim() } }
 }
 
-// { error, field } for the three required answers (§6.3: what · where · how), else null.
-export function doorError({ what, place, method }) {
+// { error, field } for the three required answers (§6.3: what · where · how), else null. A "date from
+// the label" chosen with no date is refused rather than silently saved as the worked-out one.
+export const DISCARD_DATE_TEXT = 'Pick the date from the label — or tap Work it out.'
+export function doorError({ what, place, method, discard = null }) {
   if (!String(what?.name ?? '').trim()) return { error: WHAT_REQUIRED_TEXT, field: 'what' }
   if (!place) return { error: WHERE_REQUIRED_TEXT, field: 'where' }
   if (!method) return { error: METHOD_REQUIRED_TEXT, field: 'method' }
+  if (discard?.mode === 'date' && !parseYmd(discard.date)) return { error: DISCARD_DATE_TEXT, field: 'discard' }
   return null
 }
 
