@@ -538,7 +538,8 @@ export default function PutUp({
   const searching = !modeActive && findText.trim() !== ''
   const [doorOpen, setDoorOpen] = useState(false)
   const [doorName, setDoorName] = useState('')
-  const pantry = usePantryList({ fetch: pageFetch, group: pantryGroup, enabled: !inWalk && (view === 'pantry' || searching || doorOpen) })
+  const pantry = usePantryList({ fetch: pageFetch, group: pantryGroup,
+    enabled: !inWalk && ((!modeActive && view === 'pantry') || searching || doorOpen) })
   // What the person did on a row this visit — "3 left · used one · Undo" until their next visit (V4 §2.5).
   const [pantryRecent, setPantryRecent] = useState({})
   // The door's completion, shown in place on the Pantry with Undo (V4 §2.2).

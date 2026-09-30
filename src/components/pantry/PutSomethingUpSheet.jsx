@@ -85,6 +85,9 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }
   const [err, setErr] = useState(null)
   const [field, setField] = useState(null)
   const writingRef = useRef(false)
+  // Set once a save lands: the draft is cleared then, and nothing may write it back before the door
+  // unmounts (a render between the clear and the close would otherwise re-stash a spent draft).
+  const savedRef = useRef(false)
   const methodRef = useRef(null)
   const whatRef = useRef(null)
   const notesId = `door-notes-${useId()}`
@@ -109,7 +112,7 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }
     || discard.mode !== 'auto' || whenChip !== 'today')
   useEffect(() => { if (dirty && !key) setKey(mintKey()) }, [dirty, key])
   useEffect(() => {
-    if (!draftKey) return
+    if (!draftKey || savedRef.current) return
     if (dirty) writeSheetDraft(draftKey, DOOR_SHEET, { key, what, place, method, count, whenChip, estimate, pickedDate, discard, notes })
     else clearSheetDraft(draftKey)
   }, [draftKey, dirty, key, what, place, method, count, whenChip, estimate, pickedDate, discard, notes])
@@ -151,6 +154,7 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }
         const r = await createPantryItem(fetch, itemBody({ key: useKey, what, place, when: w.when, discard, notes }))
         saved = r?.item ?? r
       }
+      savedRef.current = true
       clearSheetDraft(draftKey)
       writingRef.current = false
       setSaving(false)

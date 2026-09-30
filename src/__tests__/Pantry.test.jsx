@@ -344,6 +344,28 @@ describe('Put something up — one door, routed by the method chip (V4 §2.1, §
     expect(keys[0]).toBe(keys[1])
   })
 
+  it('the draft survives a close (Back) and its key with it; a landed save leaves nothing to restore', async () => {
+    await openDoor()
+    typeWhat('Kale')
+    fireEvent.click(await screen.findByTestId('door-place-id:loc-3'))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Put something up' })).toBeNull())
+    const stashed = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i))
+    expect(stashed).toContain('garden:putup-draft:v1:user_dave:putsomethingup:new')
+    fireEvent.click(screen.getByTestId('putup-door'))
+    await screen.findByRole('dialog', { name: 'Put something up' })
+    expect(screen.getByTestId('door-what-name').value).toBe('Kale')
+    expect(screen.getByTestId('door-place-id:loc-3').getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(screen.getByTestId('door-method-as_is'))
+    fireEvent.click(screen.getByTestId('door-save'))
+    await screen.findByTestId('pantry-completion')
+    fireEvent.click(screen.getByTestId('putup-door'))
+    await screen.findByRole('dialog', { name: 'Put something up' })
+    expect(screen.getByTestId('door-what-name').value).toBe('')
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i))
+    expect(keys.filter(k => k.includes('putsomethingup'))).toEqual([])
+  })
+
   // The batch-builder lane's seam: useHowItWasMade({ onSaved }) → { open(rowOrJar), sheet }.
   function useFakeHow() {
     const [jar, setJar] = React.useState(null)
