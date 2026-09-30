@@ -76,14 +76,14 @@ function ageLabel(iso, now = Date.now()) {
   return hrs === 1 ? 'an hour ago' : `${hrs} hours ago`
 }
 
-export default function ComposeHarvestBand() {
+// V5-TODAYREDESIGN-001 S6 — THE DATA HOOK, split out of the band: the redesigned Today fetches at the PAGE (its
+// Harvest section's presence and header summary are read while the section's body — this band — is unmounted)
+// and hands the result in as `data`. Without `data` the band calls it itself. `settled` turns true once the
+// first request has answered or failed (the page's ready point waits on it, §6.4); nothing here renders it.
+export function useComposeHarvestFeed() {
   const { fetch } = useApiFetch()
-  const { profile } = useAuthOptional()
-  const viewerId = profile?.id ?? null
   const [data, setData] = useState(null)
-  const [open, setOpen] = useState(false)
-  // Long pickers start collapsed so the post and its action stay above the fold (see the picker block).
-  const [pickerOpen, setPickerOpen] = useState(false)
+  const [settled, setSettled] = useState(false)
   const inflight = useRef(false)
 
   const load = useCallback(() => {
@@ -102,10 +102,46 @@ export default function ComposeHarvestBand() {
         aggregates: d?.aggregates ?? null,
       }))
       .catch(() => { /* supplementary glance — never surface a fetch error onto Today */ })
-      .finally(() => { inflight.current = false })
+      .finally(() => { inflight.current = false; setSettled(true) })
   }, [fetch])
 
   useEffect(() => { load() }, [load])
+
+  return { data, settled, reload: load }
+}
+
+// The band's own "is there a post to compose?" — the three gates at the foot of the band (a batch of the
+// viewer's, logged within MAX_BATCH_AGE_MS, with at least MIN_POST_LINES postable lines), as one pure read for a
+// header that must agree with the band (plan-v2 §8 S6). null = the band renders nothing. todayV2Bands.test pins
+// it to the band's render.
+export function composeBatchState(data, viewerId, now = Date.now()) {
+  const entries = data?.entries ?? null
+  const batch = entries && viewerId ? detectLastBatch(entries, { createdBy: viewerId }) : null
+  if (!batch) return null
+  if (now - new Date(batch.endedAt).getTime() > MAX_BATCH_AGE_MS) return null
+  const postableCount = toLines(batch.items).filter((l) => l.postable).length
+  if (postableCount < MIN_POST_LINES) return null
+  return { batch, postableCount, logged: ageLabel(batch.endedAt, now) }
+}
+
+// `data` = useComposeHarvestFeed()'s result, fetched by the caller; `bare` = no card and no title — the section
+// holding it is the heading (Today V2's Harvest). With neither, the band as it always was.
+export default function ComposeHarvestBand({ data, bare = false }) {
+  return data ? <ComposeBand feed={data} bare={bare} /> : <OwnComposeBand bare={bare} />
+}
+
+function OwnComposeBand({ bare }) {
+  return <ComposeBand feed={useComposeHarvestFeed()} bare={bare} />
+}
+
+function ComposeBand({ feed, bare }) {
+  const { fetch } = useApiFetch()
+  const { profile } = useAuthOptional()
+  const viewerId = profile?.id ?? null
+  const data = feed.data
+  const [open, setOpen] = useState(false)
+  // Long pickers start collapsed so the post and its action stay above the fold (see the picker block).
+  const [pickerOpen, setPickerOpen] = useState(false)
 
   const entries = data?.entries ?? null
   // Scoped to the viewer. The read model is HOUSEHOLD-scoped by design, so without this the most
@@ -303,10 +339,10 @@ export default function ComposeHarvestBand() {
   }
 
   return (
-    <div style={S.card} data-testid="compose-harvest-band">
+    <div style={bare ? undefined : S.card} data-testid="compose-harvest-band">
       <div style={S.head}>
         <div style={{ minWidth: 0 }}>
-          <div style={S.title}>Tonight&rsquo;s harvest</div>
+          {!bare && <div style={S.title}>Tonight&rsquo;s harvest</div>}
           <div style={S.sub}>
             {postableCount} {postableCount === 1 ? 'pick' : 'picks'} &middot; logged {ageLabel(batch.endedAt)}
           </div>

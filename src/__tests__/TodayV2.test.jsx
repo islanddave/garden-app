@@ -5,18 +5,26 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-const { planState, prefsState, auth } = vi.hoisted(() => ({
+const { planState, prefsState, auth, api } = vi.hoisted(() => ({
   planState: { current: null },
   prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
   auth: { user: { id: 'u' } },
+  // ONE api object for the file, as the real useApiFetch memoises its own: hooks keep `fetch` in their effects'
+  // deps, so a new function per render re-runs them on every render (integration 2, seam 5).
+  api: { fetch: async () => ({ id: 'ev' }), getToken: async () => 't' },
 }))
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: (opts) => { planState.lastOpts = opts; return planState.current } }))
 vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.current }))
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
 // S4: Needs care reads /api/plants + /api/locations (useCachedFetch) and writes through useApiFetch — the
 // documented test seam (api.js), so no Clerk provider is needed here.
-vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => ({ fetch: async () => ({ id: 'ev' }), getToken: async () => 't' }) }))
+vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => api }))
 vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? [] : { locations: [] }, loading: false, error: null }) }))
+// S6: the plan-independent bands (Harvest, Put-Up, the Sow row's lines) are fetched at the page and the ready point
+// waits for them (useTodayBands); this file is not about them, so they answer at once, settled and empty.
+vi.mock('../components/today/v2/useTodayBands.js', () => ({
+  useTodayBands: () => ({ settled: true, watch: { data: null, failed: false, reload() {} }, compose: { data: null, settled: true, reload() {} }, soon: { data: null, failed: false, reload() {} }, sow: { items: null, settled: true }, harvest: { present: false, summary: null }, putup: { present: false, summary: null } }),
+}))
 
 import TodayV2, { namesSummary, activeCareRows } from '../pages/TodayV2.jsx'
 

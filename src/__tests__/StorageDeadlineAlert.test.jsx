@@ -126,6 +126,26 @@ describe('storageDeadlineGroups — what it will and will not speak about', () =
   })
 })
 
+// V5-TODAYREDESIGN-001 S5 — the redesigned Today's Heads-up reads the window's own dates and the crop's
+// display name off these group objects (its auto-open: the day the window opens, the last two days before
+// the deadline). Additive: V1 renders none of them.
+describe('storageDeadlineGroups — the fields V2 Heads-up reads (additive)', () => {
+  it('carries checkFromISO / deadlineISO from the dataset, dated in the year asked about, and the display name', () => {
+    const g = storageDeadlineGroups([sweet()], '2026-10-01')[0]
+    expect(g).toMatchObject({ slug: 'sweet_potato', phase: 'check', checkFromISO: '2026-09-28', deadlineISO: '2026-10-10', displayName: 'Sweet potato', daysUntil: 9 })
+    expect(storageDeadlineGroups([sweet()], '2027-10-09')[0]).toMatchObject({ checkFromISO: '2027-09-28', deadlineISO: '2027-10-10', daysUntil: 1 })
+  })
+  it('keeps them through the grace phase (a past group still names its deadline)', () => {
+    expect(storageDeadlineGroups([sweet()], '2026-10-12')[0]).toMatchObject({ phase: 'past', deadlineISO: '2026-10-10', daysUntil: -2 })
+  })
+  it('V1 renders none of them: no ISO date and no display name in the alert', async () => {
+    fetchMock.mockResolvedValue([sweet()])
+    render(<StorageDeadlineAlert todayISO="2026-10-01" />)
+    const el = await screen.findByTestId('storage-deadline-alert')
+    expect(el.textContent).not.toMatch(/2026-|Sweet potato/)
+  })
+})
+
 describe('StorageDeadlineAlert component', () => {
   it('renders NOTHING today, with real plantings wired', async () => {
     fetchMock.mockResolvedValue([sweet(), sweet({ id: 'p-sp2', name: 'Georgia Jet' }), carrot()])

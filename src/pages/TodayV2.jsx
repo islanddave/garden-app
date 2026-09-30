@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useDailyPlan } from '../hooks/useDailyPlan.js'
 import { useTodaySections } from '../hooks/useTodaySections.js'
 import { useTodayVisit } from '../hooks/useTodayVisit.js'
@@ -14,7 +13,12 @@ import NeedsCare from '../components/today/v2/NeedsCare.jsx'
 import { useNeedsCare } from '../components/today/v2/useNeedsCare.js'
 import GlanceCard from '../components/today/v2/GlanceCard.jsx'
 import JumpBar, { JUMP_BAR_HEIGHT_PX } from '../components/today/v2/JumpBar.jsx'
-import { careOpens } from '../lib/todayV2/triggers.js'
+import ProtectTonight from '../components/today/v2/ProtectTonight.jsx'
+import { useProtect } from '../components/today/v2/useProtect.js'
+import HeadsUp from '../components/today/v2/HeadsUp.jsx'
+import { useHeadsUp } from '../components/today/v2/useHeadsUp.js'
+import { handledSummary } from '../lib/todayV2/protect.js'
+import { openAtStart } from '../lib/todayV2/triggers.js'
 import { CHIPS, taskCounts, liveChips, shownChips } from '../lib/todayV2/chips.js'
 import { staleMarker } from '../lib/todayV2/verdict.js'
 import { agreedTonightLow, agreeCallout } from '../lib/tonightLow.js'
@@ -22,10 +26,21 @@ import { currentLows } from '../lib/frostAlertLine.js'
 import { isFromCache } from '../lib/api.js'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
-import { seedsHref } from '../lib/seedsRoutes.js'
 import { P, TOP_CHROME_HEIGHT_PX, BOTTOM_NAV_HEIGHT_PX } from '../lib/constants.js'
 import { T } from '../components/forms/formStyles.js'
 import Icon from '../components/Icon.jsx'
+// S6: Harvest, Put-Up, Resting's rows, the household sections, the Sow link row.
+import HarvestWatchBand from '../components/HarvestWatchBand.jsx'
+import ComposeHarvestBand from '../components/ComposeHarvestBand.jsx'
+import PutUpUseSoonBand from '../components/PutUpUseSoonBand.jsx'
+import CultivationLead from '../components/today/CultivationLead.jsx'
+import { DormantList } from '../components/today/CareNeeded.jsx'
+import HouseholdSection, { householdKey } from '../components/today/v2/HouseholdSection.jsx'
+import { useTodayBands } from '../components/today/v2/useTodayBands.js'
+import { useHandednessSync } from '../hooks/useHandedness.js'
+import { useMembers } from '../hooks/useMembers.js'
+import { readShowOthers, memberFirstName } from '../lib/householdView.js'
+import { SOW_DATED_LINES_FROZEN } from '../lib/featureFlags.js'
 
 // TodayV2 — the redesigned Today (V5-TODAYREDESIGN-001; plan-v2 §1, §2.1–2.2, §4–§6). Behind the per-device
 // switch (TodayRoute), off by default: this page is DARK until Dave flips the default (S8b).
@@ -36,7 +51,8 @@ import Icon from '../components/Icon.jsx'
 //   Layer 1 remembered (useTodaySections: the localStorage mirror; the server column is S7's) — written ONLY
 //           by an explicit header tap;
 //   Layer 2 the visit (useTodayVisit: Expand/Collapse all, and later chip jumps and triggers) — never saved;
-//   Layer 3 triggers (S5) — none yet, so at S2 nothing opens by itself.
+//   Layer 3 triggers (S5: triggers.js openAtStart, ONE evaluation at the ready point) — only Protect tonight,
+//           Heads-up and Needs care ever open by themselves.
 // The bands S2 can build from the plan alone are here: Needs care (count = water + feed + check, §2.4) and
 // Resting (count, names, its explainer). Each later slice fills its own: glance card + jump bar (S3), the
 // Needs care body (S4), Protect tonight + Heads-up (S5), Harvest / Put-Up / Resting rows / household (S6).
@@ -94,11 +110,16 @@ export function activeCareRows(plan, skipped) {
 }
 
 export default function TodayV2() {
-  const { user } = useAuthOptional()
+  const { user, profile } = useAuthOptional()
   const userId = user?.id ?? null
   const { prefs, prefsLoaded, refreshPrefs } = usePrefs()
   // Always the household question (§2.9): the server answers [] with no one else, so no toggle reloads.
-  const { data, loading, error, reload } = useDailyPlan({ includeHousehold: true, seed: userId || undefined })
+  const { data, loading, error, reload, seedPending } = useDailyPlan({ includeHousehold: true, seed: userId || undefined })
+  // Review 4160.2 IMPORTANT-2 (integration 2): a Back paints the last good plan (the seed) at once, read BEFORE the
+  // page was left — a watering logged meanwhile on a planting's own page is still due in it. Until that remount's
+  // revalidation settles, every write control on the page (Needs care, Protect tonight, the household sections) is
+  // inert: aria-disabled, and its handler posts nothing. Undo stays live (it only deletes this visit's own writes).
+  const writesHeld = !!seedPending
   const planDate = data?.plan_date ?? null
   const plan = data?.has_plan ? (data.plan ?? null) : null
   const layer1 = useTodaySections({ userId, prefs })
@@ -109,10 +130,42 @@ export default function TodayV2() {
   // care rows minus logged minus skipped.
   const needs = useNeedsCare({ plan, planDate, userId, stale })
   const care = needs.rows
+  // S5: Protect tonight's state lives here too (header, chip count, trigger and held order are taken at the ready
+  // point). Its rows are every cold row — the household's too when this person has the household view on (SF6);
+  // Needs care never lists one. Needs care's rows weight its spot order, so both sections list spots alike.
+  const protect = useProtect({ plan, planDate, userId, stale, householdPlans: data?.household_plans, careRows: needs.allEnriched })
+  // S5: Heads-up (storage windows) reads /api/plants and the device date — plan-independent, never stale.
+  const headsup = useHeadsUp()
   const statusRef = useRef(null)
   const announce = useCallback((msg) => { if (statusRef.current) statusRef.current.textContent = msg }, [])
   const resting = useMemo(() => (Array.isArray(plan?.dormant) ? plan.dormant.filter(Boolean) : []), [plan])
-  const present = useMemo(() => SECTION_ORDER.filter((k) => (k === 'care' && care.length > 0) || (k === 'resting' && resting.length > 0)), [care.length, resting.length])
+
+  // ── S6: the plan-INDEPENDENT sections — Harvest and From your Put-Up (plan-v2 §1.0 rows 4–5; they render with no
+  // plan too, §1.4) — the household sections (row 7) and the Sow link row (row 8). The bands are fetched HERE and
+  // handed to their sections' bodies, which are unmounted while closed (useTodayBands). No sow lines are asked for
+  // while the 2027 sowing freeze holds (V5-SOWFREEZELINES-001).
+  const bands = useTodayBands({ viewerId: profile?.id ?? null, sowLines: !SOW_DATED_LINES_FROZEN })
+  // Hoisted from HarvestWatchBand (plan §8 S6): the band's once-per-session handedness adopt ran because the band
+  // was always mounted on Today; here the Harvest body is unmounted while closed, so the page runs it.
+  useHandednessSync(needs.getToken)
+  // SF6: another member's section only when THIS device has the household view on — V1's switch, read through
+  // the one reader both pages share (lib/householdView.js), and only for a member with care rows today. The plan
+  // read always asks for the household (§2.9, above); this decides what is SHOWN. Names as V1 names them.
+  const [showOthers] = useState(readShowOthers)
+  const { members } = useMembers()
+  const household = useMemo(() => {
+    if (!showOthers || !Array.isArray(data?.household_plans)) return []
+    const others = (members || []).filter((m) => m && m.id && m.id !== profile?.id)
+    return data.household_plans.filter((hp) => hp && hp.user_id && hp.plan)
+      .map((hp) => ({ key: householdKey(hp.user_id), userId: hp.user_id, plan: hp.plan, name: memberFirstName(others, hp.user_id) }))
+  }, [showOthers, data, members, profile?.id])
+  const skippedNow = needs.actions.skipped
+  const hhPresent = useMemo(() => household.filter((h) => activeCareRows(h.plan, skippedNow).length > 0).map((h) => h.key), [household, skippedNow])
+
+  const present = useMemo(() => [
+    ...SECTION_ORDER.filter((k) => (k === 'protect' && protect.count > 0) || (k === 'headsup' && headsup.count > 0) || (k === 'care' && care.length > 0) || (k === 'resting' && resting.length > 0) || (k === 'harvest' && bands.harvest.present) || (k === 'putup' && bands.putup.present)),
+    ...hhPresent,
+  ], [protect.count, headsup.count, care.length, resting.length, bands.harvest.present, bands.putup.present, hhPresent])
 
   // ── the glance card's weather: computed exactly as V1's Today.jsx computes it, so the two pages cannot
   // disagree — the live rain overlay (display only), the one low per night (V5-FROSTTWOMODELS-001), the frost
@@ -126,7 +179,7 @@ export default function TodayV2() {
   const staleMark = plan ? staleMarker({ planDate, generatedAt: data?.generated_at ?? null, fromCache: isFromCache(data), today: todayLocalISO() }) : null
 
   // ── the jump chips (§2.4, §2.7): Water / Feed / Check from the same active rows as the Needs care count.
-  const counts = useMemo(() => taskCounts(care), [care])
+  const counts = useMemo(() => ({ ...taskCounts(care), protect: protect.count }), [care, protect.count])
   const live = useMemo(() => liveChips(present, counts), [present, counts])
 
   // ── the ready point ───────────────────────────────────────────────────────────────────────────────────────
@@ -155,28 +208,41 @@ export default function TodayV2() {
   }, [day.awaiting, refreshPrefs])
   // S4 adds /api/plants + /api/locations settled (ok or failed) to the ready point (§6.4): the spots, groups
   // and the small-pot trigger read them, and a snapshot taken before they land would be keyed differently.
-  const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver) && (!plan || needs.settled)
+  // S5: Protect reads the same two requests (+ the roster when a household row needs a name) — with no plan too,
+  // since the household's cold rows can make Protect exist on their own.
+  // protect.settled covers Heads-up's one request (/api/plants) as well.
+  // S6 adds the bands' first answers (ok or failed), capped by the same 300 ms window: a remembered-open Harvest
+  // is then open at the visit's start and nothing below Needs care moves when they land; a band slower than that
+  // is inserted closed in its slot when it arrives (§2.9).
+  const ready = settled && !awaitingPrefs && (prefsLoaded || layer1.mirrorExists || prefsWaitOver) && (!plan || needs.settled) && protect.settled && (bands.settled || prefsWaitOver)
 
   const { record, isOpen, tap, overlayAll, update, setFilter } = useTodayVisit({
     userId, planDate, ready,
     start: () => {
-      // §3 + MF1: Needs care opens by itself on a reason (never / hot / small) unless a close acked today
-      // already named every reason; the descriptor is kept so a close now records the ack.
-      const careOpen = present.includes('care') && careOpens(needs.trigger, layer1.resolve('care'), planDate)
+      // §3 + MF1 — ONE evaluation (triggers.js openAtStart): Protect tonight (frost / hard freeze / a chill
+      // planting's first night), Heads-up (a storage window's first day, its last two days), Needs care (never /
+      // hot / small) each open by themselves unless a close made today already covers their trigger; the
+      // descriptors are kept so a close now records the ack.
+      const opened = openAtStart({ present, planDate, resolve: layer1.resolve, triggers: { protect: protect.trigger, headsup: headsup.trigger, care: needs.trigger } })
       return {
         order: { sections: present, chips: live },
         layer1: {
           ...Object.fromEntries(present.map((k) => [k, layer1.resolve(k)?.open === true])),
           glance: layer1.resolve('glance')?.open === true,
         },
-        overlay: careOpen ? { care: 'open' } : {},
-        triggers: careOpen ? { care: needs.trigger } : {},
+        overlay: opened.overlay,
+        triggers: opened.triggers,
         care: needs.snapshot(),
+        protect: protect.snapshot(),
       }
     },
   })
   const shown = record ? SECTION_ORDER.filter((k) => record.order.sections.includes(k) || present.includes(k)) : []
-  const anyOpen = shown.some(isOpen)
+  // S6: the household sections, after Resting (held in the visit's order like every section; a member's first
+  // appearance mid-visit takes the next slot). Expand / Collapse all move them with the rest.
+  const hhShown = record ? [...new Set([...record.order.sections, ...present])].filter((k) => k.startsWith('hh-')) : []
+  const allShown = [...shown, ...hhShown]
+  const anyOpen = allShown.some(isOpen)
 
   // The glance paints before the visit starts: until then Layer 1 answers directly (a tap lands there first,
   // so the visit's snapshot at the ready point carries it).
@@ -246,24 +312,74 @@ export default function TodayV2() {
   }, [isOpen, record, planDate, layer1, tap])
 
   // SF8: reasons + spots, never counts; the urgency cue (severity.med + the imperative) only when a trigger
-  // opened the section this visit. Emptied mid-visit: "all caught up" with what was logged and what rain took.
+  // opened the section this visit. Emptied mid-visit (§2.5, S4g): "Needs care · all caught up" over what was
+  // logged today and what rain took (useNeedsCare caughtUp).
+  const resumedSet = useMemo(() => new Set(record?.resting?.resumed || []), [record])
+  const markResumed = useCallback((id) => update((r) => ({ ...r, resting: { resumed: [...new Set([...(r.resting?.resumed || []), id])] } })), [update])
+  const restingLeft = resting.filter((it) => !resumedSet.has(it.id))
   const careUrgent = !!record?.triggers?.care && record?.overlay?.care === 'open'
-  const loggedToday = Object.values(record?.care?.batches || {}).reduce((n, b) => n + (b.created ? b.created.length : 0), 0)
-    + Object.values(record?.care?.rowsDone || {}).filter((d) => d.created).length
+  // S5: the urgency cue (severity.med) only when a trigger opened Protect this visit; the words are the night's
+  // ("Before dark · low 42°F · Lemon Verbena, Sweet Basil +3"). Emptied mid-visit: what this visit did.
+  const protectUrgent = !!record?.triggers?.protect && record?.overlay?.protect === 'open'
+  const headsupUrgent = !!record?.triggers?.headsup && record?.overlay?.headsup === 'open'
   const SECTIONS = {
+    protect: {
+      title: 'Protect tonight',
+      count: protect.count || null,
+      summary: protect.count
+        ? (protectUrgent ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{protect.summary}</> : protect.summary)
+        : handledSummary(record?.protect),
+      body: <ProtectTonight protect={protect} record={record} update={update} announce={announce} writesHeld={writesHeld} />,
+    },
+    headsup: {
+      title: 'Heads-up',
+      count: headsup.count || null,
+      summary: headsupUrgent && headsup.summary
+        ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{headsup.summary}</>
+        : headsup.summary,
+      body: <HeadsUp headsup={headsup} record={record} update={update} />,
+    },
     care: {
-      title: 'Needs care',
+      title: care.length ? 'Needs care' : needs.caughtUp.title,
       count: care.length || null,
       summary: care.length
         ? (careUrgent && needs.summary ? <><Icon name="severity.med" size={16} decorative style={{ verticalAlign: '-0.2em', marginRight: 4 }} />{needs.summary}</> : needs.summary)
-        : ([loggedToday ? `${loggedToday} logged today` : null, needs.rainCovered ? `${needs.rainCovered} covered by rain` : null].filter(Boolean).join(', ') || 'All caught up.'),
-      body: <NeedsCare care={needs} record={record} update={update} announce={announce} planDate={planDate} userId={userId} filterIntent={record?.filter?.care} />,
+        : needs.caughtUp.summary,
+      body: <NeedsCare care={needs} record={record} update={update} announce={announce} planDate={planDate} userId={userId} filterIntent={record?.filter?.care} writesHeld={writesHeld} />,
     },
+    // S6: the explainer (S2), then DormantList's rows, bare. Resume is never optimistic (DormantList); the plants it
+    // resumed are held on the visit record, so a close and re-open (closed = unmounted) keeps them off the list,
+    // and the count and names follow.
     resting: {
       title: 'Resting',
-      count: resting.length || null,
-      summary: namesSummary(resting),
-      body: <p style={quietLine}>No routine care while resting — Resume one when it starts growing.</p>,
+      count: restingLeft.length || null,
+      summary: namesSummary(restingLeft),
+      body: (
+        <div style={stackBody}>
+          <p style={quietLine}>No routine care while resting — Resume one when it starts growing.</p>
+          <DormantList plan={plan} bare resumed={resumedSet} onResumed={markResumed} />
+        </div>
+      ),
+    },
+    // S6 (plan-v2 §1.1 row 7, §4): the compose band's picks line and the watch band's own selection in the header —
+    // names, never a count (Reward UX, §10 item 4) — and both bands' rows, bare, behind the tap.
+    harvest: {
+      title: 'Harvest',
+      count: null,
+      summary: bands.harvest.summary,
+      body: (
+        <div style={stackBody}>
+          <ComposeHarvestBand data={bands.compose} bare />
+          <HarvestWatchBand data={bands.watch} bare />
+        </div>
+      ),
+    },
+    // S6 (§1.5): the use-soon slice's jars in the header; the band's rows and its Open Put-Up door, bare.
+    putup: {
+      title: 'From your Put-Up',
+      count: null,
+      summary: bands.putup.summary,
+      body: <PutUpUseSoonBand data={bands.soon} bare />,
     },
   }
 
@@ -278,8 +394,8 @@ export default function TodayV2() {
     >
       <div style={titleRow}>
         <h1 data-testid="today-title" style={titleStyle}>Today</h1>
-        {ready && shown.length > 0 && (
-          <button type="button" data-testid="today-expand-all" onClick={() => overlayAll(shown, anyOpen ? 'closed' : 'open')} style={textButton}>
+        {ready && allShown.length > 0 && (
+          <button type="button" data-testid="today-expand-all" onClick={() => overlayAll(allShown, anyOpen ? 'closed' : 'open')} style={textButton}>
             {anyOpen ? 'Collapse all' : 'Expand all'}
           </button>
         )}
@@ -330,12 +446,25 @@ export default function TodayV2() {
               </TodaySection>
             )
           })}
-          {/* The Sow link row (BD-067): a link, not a section, and LAST — the durable door to Seeds › Sow now.
-              Dated sow lines stay hidden while the 2027 sowing freeze holds (V5-SOWFREEZELINES-001, S6). */}
-          <Link to={seedsHref('sow')} data-testid="cultivation-lead" style={sowLink}>
-            <Icon name="lifecycle.sprout" size={20} decorative style={{ flexShrink: 0 }} />
-            <span>All sow windows ›</span>
-          </Link>
+          {/* S6: one section per other member with care rows today (SF6: only while this device has the household
+              view on), after Resting — closed by default, never opened by a trigger. `today-household` anchors them. */}
+          {hhShown.length > 0 && (
+            <div data-testid="today-household" style={stackSections}>
+              {hhShown.map((key) => {
+                const h = household.find((x) => x.key === key)
+                return h ? (
+                  <HouseholdSection
+                    key={key} sectionKey={key} name={h.name} plan={h.plan} planDate={planDate} viewerId={userId} stale={stale}
+                    record={record} update={update} announce={announce} open={isOpen(key)} onToggle={() => toggle(key)} writesHeld={writesHeld}
+                  />
+                ) : null
+              })}
+            </div>
+          )}
+          {/* The Sow link row (BD-067): a link, not a section, and LAST — the durable door to Seeds › Sow now. It is
+              CultivationLead, bare (S6); its dated lines stay unasked-for and hidden while the 2027 sowing freeze
+              holds (featureFlags SOW_DATED_LINES_FROZEN, V5-SOWFREEZELINES-001). */}
+          <CultivationLead data={bands.sow} bare />
         </>
       )}
     </div>
@@ -356,9 +485,8 @@ const noPlanStyle = { margin: 0, fontSize: T.type.base, color: P.dark }
 const quietLine = { margin: 0, fontSize: T.type.sm, color: P.mid }
 // T.space.md before Needs care: the frame's gap gives T.space.sm, the band asks for the difference.
 const careGap = { marginTop: T.space.md - T.space.sm }
-// BUG-LINKICONBLUE-001: an explicit ink on any <Link> holding an <Icon>, or a mono glyph renders link-blue.
-const sowLink = {
-  display: 'flex', alignItems: 'center', gap: T.space.sm, minHeight: T.tapMinHeight, textDecoration: 'none',
-  color: P.green, fontWeight: 600, fontSize: T.type.sm,
-}
+// S6: a section body holding more than one block (Resting's explainer + rows; Harvest's two bands), and the
+// household sections' stack — spaced like the frame, since children never set outer margins.
+const stackBody = { display: 'flex', flexDirection: 'column', gap: T.space.xs }
+const stackSections = { display: 'flex', flexDirection: 'column', gap: T.space.sm }
 const srOnly = { position: 'absolute', width: 1, height: 1, margin: -1, padding: 0, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 }

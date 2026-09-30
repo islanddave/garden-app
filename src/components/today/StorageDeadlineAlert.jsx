@@ -50,6 +50,7 @@ import { P } from '../../lib/constants.js'
 import Icon from '../Icon.jsx'
 import {
   plantingsWithOpenDeadline,
+  DEADLINES_BY_CROP_TYPE,
   PHASE_PAST,
 } from '../../lib/storageDeadlines.js'
 
@@ -86,6 +87,12 @@ function plantingLabel(p) {
  * One group per CROP, not per planting — two sweet potato beds are one thing to go and do, and
  * repeating the same sourced sentence twice would read as two separate problems. Returns [] for
  * junk input and never throws; [] is the overwhelmingly common and CORRECT result.
+ *
+ * V5-TODAYREDESIGN-001 S5 — each group also carries the window's own dates (`checkFromISO`,
+ * `deadlineISO`, from storageDeadlineStatus) and the dataset's `displayName`, which the redesigned
+ * Today's Heads-up reads: its auto-open keys on the day the window opens and the last two days before
+ * the deadline, and its date plate names the deadline. ADDITIVE ONLY — this component renders none of
+ * them, so V1's alert is unchanged.
  */
 export function storageDeadlineGroups(plantings, todayISO, cap = STORAGE_DEADLINE_CAP) {
   if (!Array.isArray(plantings) || plantings.length === 0) return []
@@ -104,7 +111,11 @@ export function storageDeadlineGroups(plantings, todayISO, cap = STORAGE_DEADLIN
     if (!slug) continue
     let g = byCrop.get(slug)
     if (!g) {
-      g = { slug, phase: status.phase, copy: status.copy, daysUntil: status.daysUntil, names: [] }
+      g = {
+        slug, phase: status.phase, copy: status.copy, daysUntil: status.daysUntil, names: [],
+        checkFromISO: status.checkFromISO, deadlineISO: status.deadlineISO,
+        displayName: DEADLINES_BY_CROP_TYPE[slug]?.display_name ?? null,
+      }
       byCrop.set(slug, g)
     }
     g.names.push(plantingLabel(planting))

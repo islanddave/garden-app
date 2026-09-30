@@ -194,9 +194,15 @@ const MEASURE = `(() => {
     const hb = hdr ? box(hdr) : null
     const rows = {}; let visibleRows = 0, shortRows = 0, rowTotal = 0
     for (const r of ROWS) { const els = [...el.querySelectorAll(tid(r))]; rows[r] = els.length; rowTotal += els.length; for (const x of els) { if (shown(x)) visibleRows++; if (box(x).h < 48) shortRows++ } }
+    // S6: the section's own count attribute (a names-not-counts section carries none) and its summary line.
+    const sumEl = el.querySelector(tid('section-summary'))
     return { key, box: box(el), shown: shown(el), header: hdr ? { expanded: hdr.getAttribute('aria-expanded'), controls: hdr.getAttribute('aria-controls'), box: hb, shown: shown(hdr), text: textOf(hdr).slice(0, 140) } : null,
-      rows, rowTotal, visibleRows, shortRows, overflowsX: el.scrollWidth > el.clientWidth + 1 }
+      rows, rowTotal, visibleRows, shortRows, overflowsX: el.scrollWidth > el.clientWidth + 1,
+      dataCount: el.getAttribute('data-count'), summary: sumEl ? (sumEl.textContent || '').replace(/\\s+/g, ' ').trim() : null }
   })
+  // S6: the Sow link row's words (the whole row is one link).
+  const sowEl = d.querySelector(tid('cultivation-lead'))
+  const sowRowText = sowEl ? (sowEl.textContent || '').replace(/\\s+/g, ' ').trim() : null
   const regions = Object.fromEntries(${JSON.stringify(REGION_IDS)}.map(id => { const els = all(tid(id)); return [id, { count: els.length, boxes: els.slice(0, 3).map(el => ({ ...box(el), shown: shown(el) })) }] }))
   const one = id => { const el = d.querySelector(tid(id)); return el ? { ...box(el), shown: shown(el), sw: el.scrollWidth, cw: el.clientWidth, ox: w.getComputedStyle(el).overflowX, text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 200) } : null }
   const glanceEl = d.querySelector(tid('today-glance'))
@@ -232,13 +238,21 @@ const MEASURE = `(() => {
   while ((n = tw.nextNode())) { if (!n.nodeValue || !n.nodeValue.trim()) continue; if (badge && badge.contains(n)) continue; const range = d.createRange(); range.selectNodeContents(n); for (const rc of range.getClientRects()) if (rc.width > 0.5 && rc.height > 0.5) lastInk = Math.max(lastInk, Math.ceil(rc.bottom + sy)) }
   const controls = all('button, a[href], [role="button"], summary, input, select, textarea').filter(el => !(badge && badge.contains(el))).filter(shown)
   // section-level containers (v1 containers(), width ≥ 120 and height ≥ 20) → fingerprints; font sizes
-  const fps = new Set(); const fonts = new Set()
+  // Integration 2: and the CARDS among them — a radius with a fill or a four-sided border — for card-nesting.
+  const fps = new Set(); const fonts = new Set(); const cards = []
   for (const el of all('#root *')) {
     const cs = w.getComputedStyle(el); const r = el.getBoundingClientRect()
     if ((el.childNodes.length && [...el.childNodes].some(c => c.nodeType === 3 && c.nodeValue.trim()))) fonts.add(cs.fontSize)
     const bg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)', bord = parseFloat(cs.borderTopWidth) > 0 && cs.borderTopStyle !== 'none', rad = parseFloat(cs.borderTopLeftRadius) > 0
-    if ((bg || bord || rad) && r.width >= 120 && r.height >= 20) fps.add([cs.backgroundColor, cs.borderTopWidth + ' ' + cs.borderTopStyle + ' ' + cs.borderTopColor, cs.borderTopLeftRadius, cs.boxShadow].join(' | '))
+    if ((bg || bord || rad) && r.width >= 120 && r.height >= 20) {
+      fps.add([cs.backgroundColor, cs.borderTopWidth + ' ' + cs.borderTopStyle + ' ' + cs.borderTopColor, cs.borderTopLeftRadius, cs.boxShadow].join(' | '))
+      if (rad && (bg || ['Top', 'Right', 'Bottom', 'Left'].every(s => parseFloat(cs['border' + s + 'Width']) > 0 && cs['border' + s + 'Style'] !== 'none'))) cards.push(el)
+    }
   }
+  const cardSet = new Set(cards)
+  const cardLabel = el => { for (let e = el; e && e.id !== 'root'; e = e.parentElement) { const t = e.getAttribute('data-testid'); if (t) return (e === el ? '' : 'in ') + t } return el.tagName.toLowerCase() }
+  const cardNest = []
+  for (const c of cards) for (let p = c.parentElement; p && p.id !== 'root'; p = p.parentElement) if (cardSet.has(p)) { cardNest.push(cardLabel(p) + ' > ' + cardLabel(c)); break }
   // S4: closed SPOTS mount no rows either (§9.1 (c) "no row testid under a closed section or spot"); the
   // header count against the spot counts (§2.4 invariant), read off data-count.
   const spotEls = all(tid('care-spot'))
@@ -253,15 +267,16 @@ const MEASURE = `(() => {
   const reqs = w.__h.requests()
   return {
     vw: w.innerWidth, vh: w.innerHeight, dpr: w.devicePixelRatio,
+    screenW: w.screen.width, vvScale: w.visualViewport ? w.visualViewport.scale : null, vvW: w.visualViewport ? w.visualViewport.width : null,
     scrollHeight: H, scrollWidth: de.scrollWidth, clientWidth: de.clientWidth, contentBottom: lastInk,
     controls: controls.length,
     version: all('[data-today-version="2' + SUF + '"]').length,
     prefsLoaded: (d.querySelector('[data-prefs-loaded]') || { getAttribute: () => null }).getAttribute('data-prefs-loaded'),
-    sections, regions, testidCounts, firstBoxes, closedSpots, counts, spotCtl, groupBulk, careSummary,
+    sections, regions, testidCounts, firstBoxes, closedSpots, counts, spotCtl, groupBulk, careSummary, sowRowText,
     glance: glanceEl ? { ...box(glanceEl), shown: shown(glanceEl), expanded: glanceToggle ? glanceToggle.getAttribute('aria-expanded') : null, stale: !!glanceEl.querySelector('[data-stale="true"]') } : null,
     verdict, textFit, bar: bar ? { ...box(bar), sw: bar.scrollWidth, cw: bar.clientWidth, ox: w.getComputedStyle(bar).overflowX, chips } : null,
     weather: all(tid('today-weather')).length,
-    fingerprints: [...fps], fontSizes: [...fonts],
+    fingerprints: [...fps], fontSizes: [...fonts], cards: cards.length, cardNest,
     harness: {
       error: w.__h.error(), clock: w.__h.clock(), weatherStubbed: w.__h.weatherStubbed(), fixtures: w.__h.fixtures(),
       liveRequests: reqs.filter(r => r.live).map(r => r.path),
@@ -308,7 +323,11 @@ const CHECKERS = {
   },
   'first-screen': (m, c, F) => {
     for (const id of c.mustContain || []) {
-      const boxes = id.startsWith('today-sec-') ? (m.sections.filter(s => 'today-sec-' + s.key === id).map(s => s.box)) : (m.firstBoxes[id + SUFFIX] || [])
+      // S5 (first arming of a section id here): a section named in mustContain is its HEADER — §9.1 (e)'s "Protect
+      // header", "Heads-up header". The whole open section cannot be the claim: on a frost night its band, pick link
+      // and five rows run past the fold by design (§12 A cuts the fifth row there); its rows carry their own claims
+      // (minCount / allRows below).
+      const boxes = id.startsWith('today-sec-') ? (m.sections.filter(s => 'today-sec-' + s.key === id).map(s => (s.header ? s.header.box : s.box))) : (m.firstBoxes[id + SUFFIX] || [])
       if (!boxes.length) F(`'${id}' is not on the page — the first screen must contain it`)
       else if (!inFirst(boxes[0])) F(`'${id}' paints at y=${boxes[0].t}..${boxes[0].b}, not fully inside the first screen [0, ${FIRST_SCREEN})`)
     }
@@ -381,6 +400,11 @@ const CHECKERS = {
     // S4 (D6): every spot row carries its own Not today; SF8: the Needs care summary is reasons + spots.
     if (c.spotNotToday) for (const [spot, ctl] of Object.entries(m.spotCtl || {})) if (ctl.notToday !== 1) F(`spot '${spot}' carries ${ctl.notToday} Not today control(s), expected 1 (D6)`)
     if (c.careSummary && !(m.careSummary || '').includes(c.careSummary)) F(`the Needs care header reads "${m.careSummary}", expected its summary "${c.careSummary}" (SF8)`)
+    // S6: a section's summary line, exactly; a section that names what it lists carries no count (Reward UX, plan §10
+    // item 4); the Sow link row reads exactly its door while the 2027 sowing freeze holds.
+    for (const [key, text] of Object.entries(c.summaries || {})) { const s = secOf(m, key); if (!s) F(`section '${key}' is not on the page to read its summary`); else if (s.summary !== text) F(`the '${key}' summary reads ${JSON.stringify(s.summary)}, expected ${JSON.stringify(text)}`) }
+    for (const key of c.noCount || []) { const s = secOf(m, key); if (!s) F(`section '${key}' is not on the page`); else if (s.dataCount != null) F(`section '${key}' carries a count (${s.dataCount}) — its header names what it lists, never a number`) }
+    if (c.sowRow != null && m.sowRowText !== c.sowRow) F(`the Sow link row reads ${JSON.stringify(m.sowRowText)}, expected exactly ${JSON.stringify(c.sowRow)} — dated sow lines during the 2027 freeze (SOW_DATED_LINES_FROZEN)?`)
   },
   jumpbar: (m, c, F) => {
     if (c.present === false) { if (m.bar) F('a jump bar rendered with fewer than 2 chips'); return }
@@ -395,14 +419,25 @@ const CHECKERS = {
       for (const ch of m.bar.chips) if (!CHIPS[ch] || !on.has(CHIPS[ch].section)) F(`chip '${ch}' lands on a section that is not on the page`)
     }
   },
+  // Integration 2 (orchestrator, 2026-09-29): an IDENTITY check, not a count — every section-level container
+  // fingerprint on the page is one of the design's surfaces, as measured on the merged page and pinned in the
+  // contract (`surfaces`). A count could not see an extra treatment while the page carried fewer than its cap.
   'visual-census': (m, c, F) => {
-    if (m.fingerprints.length > c.maxFingerprints) F(`${m.fingerprints.length} distinct section-level container fingerprints, over the ${c.maxFingerprints} the design allows`)
+    const known = new Set(Object.values(c.surfaces || {}))
+    const extra = m.fingerprints.filter(f => !known.has(f))
+    if (!known.size) F('the contract names no design surfaces to hold the container census against')
+    else if (extra.length) F(`${extra.length} section-level container fingerprint(s) that are none of the design's surfaces [${Object.keys(c.surfaces).join(', ')}]: ${extra.join(' ; ')}`)
     const ramp = new Set([...Object.values(m.harness.tokens || {}).map(String), ...(c.fontSizesExtra || [])])
     const px = s => (String(s).endsWith('rem') ? `${parseFloat(s) * 16}px` : String(s))
     const allowed = new Set([...ramp].map(px))
     const off = m.fontSizes.filter(s => !allowed.has(s))
     if (!m.sections.length) F('no sections to take a visual census of')
     if (off.length) F(`font sizes outside the T ramp ∪ {${(c.fontSizesExtra || []).join(', ')}}: ${off.join(', ')}`)
+  },
+  // Integration 2 — plan-v2 "Visual": card-in-card → none (D8: flat bands, each item its own white card). A card is
+  // a section-level container with a radius and a fill or a four-sided border (MEASURE); none sits inside another.
+  'card-nesting': (m, c, F) => {
+    if (m.cardNest.length) F(`${m.cardNest.length} card(s) inside another card (plan-v2: card-in-card → none; D8): ${m.cardNest.slice(0, 4).join('; ')}${m.cardNest.length > 4 ? ' …' : ''}`)
   },
   // S4 (§2.4): the Needs care header count is the sum of its spots' counts, with no filter on.
   'count-invariant': (m, c, F) => {
@@ -419,8 +454,17 @@ const CHECKERS = {
   },
   // Interaction-driven families run in the interaction phase below; here they only have to exist.
   interaction: () => {}, 'region-headcount': () => {}, 'weather-once': () => {}, 'group-water-all': () => {}, 'chip-census': () => {},
+  'spot-retry': () => {}, announce: () => {}, 'caught-up': () => {},
+  'owner-floors': () => {},
 }
-const INTERACTION_FAMILIES = ['interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all']
+// S6: owner-floors runs FIRST, on the page as it first rendered (it opens each owner it measures and closes it again),
+// so what it records does not depend on what the other families leave open, pressed or scrolled.
+// The writes run last (group-water-all, then S4g's spot-retry), each undoing itself before the next; S4g's filter
+// announcements after them (they leave filters pressed); S4g's caught-up LAST of all — it empties Needs care and
+// leaves it empty.
+const INTERACTION_FAMILIES = ['owner-floors', 'interaction', 'region-headcount', 'weather-once', 'chip-census', 'group-water-all', 'spot-retry', 'announce', 'caught-up']
+// S6: owner heights measured this run, per state — written into the v2 budget by --record, judged against it otherwise.
+const ownerRecord = {}
 
 // S3 chip census, measured in the page at normal text and at 200% (WCAG 1.4.4 resize text; Android's font scaling
 // reaches the rem-sized labels the same way). Restores the root font size before it returns.
@@ -476,6 +520,28 @@ async function runInteractions(state, checks, at) {
           const rowsShown = (await evalSettled(VISIBLE_COUNT('care-exceptions-row'))).shown
           if (lab != null && lab !== rowsShown) fail(at, 'count-invariant', `the exceptions label counts ${lab}, ${rowsShown} exception row(s) show under it`)
         }
+      }
+    } else if (c.family === 'owner-floors') {
+      // S6: the geometric witness for a region moved into an owner (the glance's details, Needs care's foot, Harvest's two
+      // bands, Put-Up's band, Resting's rows): opened from the default render, the owner is at least as tall as the
+      // budget recorded (0.99×) — a region deleted inside it shortens it, whatever element census says. Put back as found.
+      for (const owner of c.owners) {
+        const target = owner === 'glance' ? 'glance' : `section:${owner}`
+        const anchor = owner === 'glance' ? 'today-glance' : `today-sec-${owner}`
+        const wasOpen = (await evalSettled(`window.__h.expanded(${JSON.stringify(target)})`)) === 'true'
+        if (!wasOpen) { const a = await evalSettled(`window.__h.act({ tap: ${JSON.stringify(target)} })`); if (a.void) { F(`could not open '${owner}' to measure it: ${a.void}`); continue } }
+        await evalSettled('new Promise(r => setTimeout(r, 150))')
+        const h = await evalSettled(`(() => { const el = document.querySelector('[data-testid="${anchor}${SUFFIX}"]'); return el ? Math.round(el.getBoundingClientRect().height) : null })()`)
+        if (h == null) F(`owner '${owner}' (${anchor}) is not on the page to measure`)
+        else {
+          ;(ownerRecord[state.name] ||= {})[owner] = h
+          const floor = budget?.states?.[state.name]?.owners?.[owner]?.floor
+          if (!RECORD) {
+            if (floor == null) F(`no owner floor for '${owner}' in the v2 budget — record it on a clean tree (an armed floor with no number is unguarded)`)
+            else if (h < floor) F(`'${owner}' opened is ${h}px tall, under its ${floor}px floor — something inside it is gone`)
+          }
+        }
+        if (!wasOpen) await evalSettled(`window.__h.act({ tap: ${JSON.stringify(target)} })`)
       }
     } else if (c.family === 'weather-once') {
       // Opened only if closed, and left as found: region-headcount runs first and leaves the glance OPEN (its last
@@ -583,8 +649,186 @@ async function runInteractions(state, checks, at) {
       if (back !== name) F(`after Undo the '${c.group}' group button reads "${back}", it read "${name}" before the tap — Undo must delete exactly the created ids (MF3)`)
       const after = await evalSettled(CARE_COUNT)
       if (after !== before) fail(at, 'header-text', `after the group Water all and its Undo the Needs care header counts ${after}, it counted ${before} before the tap`)
+    } else if (c.family === 'spot-retry') {
+      await spotRetry(c, at, F)
+      await evalSettled('window.__h.failPosts(0)')
+    } else if (c.family === 'announce') {
+      await announceRun(c, at, F)
+    } else if (c.family === 'caught-up') {
+      await caughtUpRun(c, at, F)
     }
   }
+}
+
+// S4g (§2.5 + §5.5): empty Needs care the way Dave would — one spot's Water all, then Not today on every spot left
+// (no filter) — and read what its header became: the title, the summary (logged today + covered by rain), no count,
+// and focus on it (the action that emptied the section sends focus there). Files `header-text` (the title, the
+// count), `caught-up` (the summary), `empty-focus` (§5.5: the focused element is the header and reads the whole
+// emptied wording, as TalkBack would).
+async function caughtUpRun(c, at, F) {
+  const sec = `[data-testid="today-sec-care${SUFFIX}"]`
+  const band = `${sec} [aria-expanded]`
+  const txt = (q) => `(() => { const el = document.querySelector(${JSON.stringify(q)}); return el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : null })()`
+  const wait = (ms) => evalSettled(`new Promise(r => setTimeout(r, ${ms}))`)
+  const start = await evalSettled(`(async () => {
+    for (const r of ['tasks', 'spots']) { const b = [...document.querySelectorAll('[data-testid="care-filter-' + r + '${SUFFIX}"] button')].find(x => x.textContent.trim() === 'Clear'); if (b) { b.click(); await new Promise(res => setTimeout(res, 120)) } }
+    const h = document.querySelector(${JSON.stringify(band)}); if (!h) return { miss: 'no Needs care band (today-sec-care)' }
+    if (h.getAttribute('aria-expanded') !== 'true') { h.click(); await new Promise(res => setTimeout(res, 150)) }
+    return { text: (h.textContent || '').replace(/\\s+/g, ' ').trim() } })()`)
+  if (start.miss) { F(`could not start: ${start.miss}`); return }
+  if (start.text.includes('all caught up')) F(`the Needs care band reads "${start.text}" before anything was logged`)
+  const spotQ = `[data-testid="care-spot${SUFFIX}"][data-spot="${c.water}"]`
+  const tapped = await evalSettled(`(() => { const b = document.querySelector(${JSON.stringify(spotQ + ` [data-testid="care-spot-bulk${SUFFIX}"]`)}); if (!b) return false; b.click(); return true })()`)
+  if (!tapped) { F(`no Water all on '${c.water}' to log with`); return }
+  const logged = await evalSettled(`(async () => { for (let i = 0; i < 100; i++) { if (document.querySelector('[data-testid="care-done-line${SUFFIX}"][data-spot="${c.water}"]')) return true; await new Promise(r => setTimeout(r, 100)) } return false })()`)
+  if (!logged) { F(`'${c.water}' never shrank to its done line after its Water all`); return }
+  // Not today on every spot still on the list, until none is left.
+  let skipped = 0
+  for (let i = 0; i < 30; i++) {
+    const s = await evalSettled(`(() => { const li = document.querySelector('[data-testid="care-spot${SUFFIX}"]'); if (!li) return null; const b = [...li.querySelectorAll('button')].find(x => (x.getAttribute('aria-label') || '').startsWith('Not today')); if (!b) return { stuck: li.getAttribute('data-spot') }; b.click(); return { spot: li.getAttribute('data-spot') } })()`)
+    if (!s) break
+    if (s.stuck) { F(`spot '${s.stuck}' has no Not today to empty the list with`); return }
+    skipped++
+    await wait(150)
+  }
+  await wait(250)
+  const head = await evalSettled(txt(band))
+  const summary = await evalSettled(txt(`${band} [data-testid="section-summary${SUFFIX}"]`))
+  const count = await evalSettled(`(() => { const s = document.querySelector(${JSON.stringify(sec)}); return s ? s.getAttribute('data-count') : 'no section' })()`)
+  if (!(head || '').includes(c.title)) fail(at, 'header-text', `emptied, the Needs care band reads "${head}", expected the title "${c.title}" (§2.5)`)
+  if (count != null) fail(at, 'header-text', `emptied, the Needs care section still carries a count (data-count="${count}")`)
+  if (summary !== c.summary) fail(at, 'caught-up', `emptied, the Needs care summary reads "${summary}", expected "${c.summary}" (§2.5: logged today = done items + store; rain = plan.rain_skipped)`)
+  const foc = await evalSettled(`(() => { const a = document.activeElement, h = document.querySelector(${JSON.stringify(band)}); return { on: !!a && a === h, text: a ? (a.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120) : 'nothing', tag: a ? a.tagName.toLowerCase() : 'none' } })()`)
+  if (!foc.on) fail(at, 'empty-focus', `the action that emptied Needs care left focus on ${foc.tag} "${foc.text}", not the section's header (§5.5)`)
+  else if (!foc.text.includes(c.title) || !foc.text.includes(c.summary)) fail(at, 'empty-focus', `focus is on the Needs care header, but what it reads — "${foc.text}" — is not "${c.title}" over "${c.summary}"`)
+  console.log(`[today-shape-v2] ${at}: caught-up · ${c.water} watered, ${skipped} spot(s) Not today → "${head}" · focus ${foc.on ? 'header' : foc.tag}`)
+}
+
+// S4g (§2.6 / §5.6): each filter change says its result ONCE through the page's one status region; a re-render that
+// changes no filter says nothing. A MutationObserver on today-status counts every WRITE — one per record, not per
+// callback (two writes in one task arrive in one callback); a same-text rewrite is a write too, and is re-spoken.
+// `announce` judges the words, `announce-once` the count.
+async function announceRun(c, at, F) {
+  const status = `[data-testid="today-status${SUFFIX}"]`
+  const row = (r) => `[data-testid="care-filter-${r}${SUFFIX}"]`
+  // Start from no filter (earlier families leave some pressed), THEN watch.
+  const reset = await evalSettled(`(async () => { const wait = () => new Promise(r => setTimeout(r, 120))
+    for (const q of ${JSON.stringify([row('tasks'), row('spots')])}) { const clear = [...document.querySelectorAll(q + ' button')].find(b => b.textContent.trim() === 'Clear'); if (clear) { clear.click(); await wait() } }
+    const s = document.querySelector(${JSON.stringify(status)}); if (!s) return 'no status region (today-status)'
+    if (!document.querySelector(${JSON.stringify(row('tasks'))})) return 'no task filter row (care-filter-tasks) — is Needs care open?'
+    window.__s4gAnn = []; window.__s4gObs = new MutationObserver((recs) => { for (const r of recs) if (r.type === 'characterData' || r.addedNodes.length) window.__s4gAnn.push((s.textContent || '').trim()) })
+    window.__s4gObs.observe(s, { childList: true, characterData: true, subtree: true }); return null })()`)
+  if (reset) { F(`could not start: ${reset}`); return }
+  const said = []
+  for (const step of c.steps) {
+    const act = step.press ? `(() => { const [r, label] = ${JSON.stringify(step.press)}.split(':'); const b = [...document.querySelectorAll('[data-testid="care-filter-' + r + '${SUFFIX}"] button[aria-pressed]')].find(x => x.textContent.trim() === label); if (!b) return 'no ' + r + ' chip "' + label + '"'; b.click(); return null })()`
+      : step.clear ? `(() => { const b = [...document.querySelectorAll('[data-testid="care-filter-${step.clear}${SUFFIX}"] button')].find(x => x.textContent.trim() === 'Clear'); if (!b) return 'no Clear on the ${step.clear} row'; b.click(); return null })()`
+        : step.jump ? `(() => { const b = document.querySelector('[data-testid="today-jumpbar${SUFFIX}"] [data-chip="${step.jump}"]'); if (!b) return 'no jump chip ${step.jump}'; b.click(); return null })()`
+          : `(async () => { const b = document.querySelector(${JSON.stringify(selectorFor(step.quiet, SUFFIX))}); if (!b) return 'no ${step.quiet} to open'; b.click(); await new Promise(r => setTimeout(r, 150)); b.click(); return null })()`
+    const n0 = await evalSettled('window.__s4gAnn.length')
+    const miss = await evalSettled(act)
+    if (miss) { F(`VOID at ${JSON.stringify(step)}: ${miss}`); break }
+    await evalSettled('new Promise(r => setTimeout(r, 400))')
+    const got = await evalSettled(`({ n: window.__s4gAnn.length, text: (document.querySelector(${JSON.stringify(status)}).textContent || '').trim() })`)
+    const wrote = got.n - n0
+    if (step.say) {
+      said.push(got.text)
+      if (got.text !== step.say) fail(at, 'announce', `after ${JSON.stringify(step)} the status region says "${got.text}", expected "${step.say}" (§2.6)`)
+      if (wrote !== 1) fail(at, 'announce-once', `${JSON.stringify(step)} wrote the status region ${wrote}x, expected exactly once (once per filter change, not per render)`)
+    } else if (wrote !== 0) fail(at, 'announce-once', `${JSON.stringify(step)} changed no filter but wrote the status region ${wrote}x ("${got.text}") — a filter result is said per change, never per render`)
+  }
+  await evalSettled('(window.__s4gObs && window.__s4gObs.disconnect(), 1)')
+  console.log(`[today-shape-v2] ${at}: announce · ${said.map((s) => `"${s}"`).join(' · ')}`)
+}
+
+// S4g (MF3 "failures stay per spot 'Not logged · Retry'"): the group Water all with its first `c.fail` writes
+// answered 503 by the harness. Each spot's state is read off its <li>: a done line, or a row (its disclosure text,
+// aria-expanded, its "N not logged" line, its Retry and Water all names).
+const reEsc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const SPOT_STATE = (G) => `(() => Object.fromEntries([...document.querySelectorAll(${JSON.stringify(G + ' li[data-spot]')})].map(li => {
+  const t = el => (el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : null)
+  const btn = li.querySelector('[aria-expanded]'), bulk = li.querySelector('[data-testid="care-spot-bulk${SUFFIX}"]'), retry = li.querySelector('[data-testid="care-spot-retry${SUFFIX}"]')
+  const done = li.getAttribute('data-testid') === 'care-done-line${SUFFIX}'
+  return [li.getAttribute('data-spot'), { done, text: done ? t(li) : t(btn), expanded: btn ? btn.getAttribute('aria-expanded') : null,
+    failed: t(li.querySelector('[data-testid="care-spot-failed${SUFFIX}"] span')), retry: retry ? retry.getAttribute('aria-label') : null, bulk: bulk ? bulk.getAttribute('aria-label') : null }]
+})))()`
+const STATUS_TEXT = `(() => { const s = document.querySelector('[data-testid="today-status${SUFFIX}"]'); return s ? (s.textContent || '').trim() : null })()`
+async function spotRetry(c, at, F) {
+  const G = `[data-testid="care-group${SUFFIX}"][data-group="${c.group}"]`
+  const q = `[data-testid="care-group-bulk${SUFFIX}"][data-group="${c.group}"]`
+  const gq = `[data-testid="care-group-done${SUFFIX}"][data-group="${c.group}"]`
+  const lineText = `(() => { const el = document.querySelector(${JSON.stringify(gq + ' [data-focus-id]')}); return el ? (el.textContent || '').replace(/\\s+/g, ' ').trim() : null })()`
+  const name0 = await evalSettled(`(() => { const el = document.querySelector(${JSON.stringify(q)}); return el ? el.getAttribute('aria-label') : null })()`)
+  if (name0 == null) { F(`no group Water all for '${c.group}' to run with failing writes (care-group-bulk[data-group])`); return }
+  const N = Number((name0.match(/Water all (\d+)/) || [])[1])
+  const before = await evalSettled(CARE_COUNT)
+  const pre = await evalSettled(SPOT_STATE(G))
+  // Each spot's own candidates, from its own Water all's name ("Water all 97 in Bag Area" / "Water 1 in Deck").
+  const want = Object.fromEntries(Object.entries(pre).map(([s, v]) => [s, Number(((v.bulk || '').match(/^Water (?:all |the other )?(\d+) in /) || [])[1] || 0)]))
+  await evalSettled(`window.__h.failPosts(${c.fail})`)
+  await evalSettled(`document.querySelector(${JSON.stringify(q)}).click()`)
+  const ran = await evalSettled(`(async () => { for (let i = 0; i < 150; i++) { if (document.querySelector(${JSON.stringify(gq + ' [data-focus-id]')})) return true; await new Promise(r => setTimeout(r, 100)) } return false })()`)
+  const unconsumed = await evalSettled('window.__h.failPosts(0)')
+  if (!ran) { F(`after "Water all" with ${c.fail} failing writes the '${c.group}' group line never became its done line`); return }
+  if (unconsumed) { F(`VOID — ${unconsumed} of the ${c.fail} injected failures were never consumed: the run posted fewer writes than that`); return }
+  await evalSettled('new Promise(r => setTimeout(r, 150))')
+  const line = await evalSettled(lineText)
+  if (!new RegExp(`${reEsc(c.group)} · watered ${N - c.fail}\\b`).test(line || '')) F(`with ${c.fail} writes failing the group line reads "${line}", expected "${c.group} · watered ${N - c.fail}" (what landed)`)
+  const mid = await evalSettled(SPOT_STATE(G))
+  let failedTotal = 0
+  const failing = []
+  for (const [s, v] of Object.entries(mid)) {
+    const k = v.failed ? Number((v.failed.match(/^(\d+) not logged$/) || [])[1]) : 0
+    if (v.failed && !k) fail(at, 'header-text', `spot '${s}' says "${v.failed}", expected "<n> not logged"`)
+    if (k) {
+      failedTotal += k
+      failing.push(s)
+      if (v.done) fail(at, 'header-text', `spot '${s}' holds ${k} failed write(s) but shrank to a done line — failures stay on the spot (MF3)`)
+      else if (v.expanded !== 'false') fail(at, 'spot-retry', `spot '${s}' holding a failure is ${v.expanded === 'true' ? 'OPEN' : 'not a closed row'} — the claim is about the closed row`)
+      if (v.retry !== `Retry: ${k} not logged in ${s}`) fail(at, 'spot-retry', `spot '${s}' with ${k} not logged carries ${v.retry ? `a Retry named "${v.retry}"` : 'no Retry'}, expected "Retry: ${k} not logged in ${s}"`)
+      if (v.bulk) fail(at, 'spot-retry', `spot '${s}' still offers "${v.bulk}" — its failed rows must be out of Water all (only Retry re-posts them)`)
+      if (want[s] - k > 0 && !(v.text || '').includes(`Watered ${want[s] - k}`)) fail(at, 'header-text', `spot '${s}' reads "${v.text}", expected its own share "Watered ${want[s] - k}" (MF3)`)
+    } else if (want[s] > 0) {
+      // MF3 "each touched spot shrinks to its own done line": ITS share of the run, never the group's total.
+      if (v.done) { if (!new RegExp(`${reEsc(s)} · watered ${want[s]}\\b`).test(v.text || '')) fail(at, 'group-water-all', `the '${s}' done line reads "${v.text}", expected its own share "${s} · watered ${want[s]}" (MF3)`) }
+      else if (!(v.text || '').includes(`Watered ${want[s]}`)) fail(at, 'header-text', `spot '${s}' reads "${v.text}" after the group run, expected its own share "Watered ${want[s]}" (MF3)`)
+    }
+  }
+  if (failedTotal !== c.fail) fail(at, 'header-text', `the '${c.group}' spots say ${failedTotal} "not logged" in all (${failing.join(', ') || 'none'}), expected ${c.fail} — failures stay per spot (MF3)`)
+  // §5.5: a partial bulk failure puts focus on the first Retry.
+  const foc = await evalSettled(`(() => { const a = document.activeElement, first = document.querySelector(${JSON.stringify(G + ` [data-testid="care-spot-retry${SUFFIX}"]`)}); return { on: !!a && !!first && a === first, what: a ? a.tagName.toLowerCase() + ' ' + (a.getAttribute('data-focus-id') || a.getAttribute('data-testid') || (a.textContent || '').trim().slice(0, 30)) : 'nothing' } })()`)
+  if (!foc.on) fail(at, 'retry-focus', `after the partial failure focus is on ${foc.what}, not the first Retry (§5.5)`)
+  const said = await evalSettled(STATUS_TEXT)
+  if (!new RegExp(`^Watered ${N - c.fail} in ${reEsc(c.group.toLowerCase())}\\. ${c.fail} not logged in ${reEsc(c.group.toLowerCase())}: .+\\. Retry is on each\\.$`).test(said || '')) fail(at, 'announce', `after the partial failure the status region says "${said}", expected "Watered ${N - c.fail} in ${c.group.toLowerCase()}. ${c.fail} not logged in ${c.group.toLowerCase()}: <names>. Retry is on each." (§5.6)`)
+  // Retry each: the failures complete THEIR run, so the group line comes back to the full N.
+  for (const s of failing) {
+    const sq = `${G} li[data-spot="${s.replace(/"/g, '\\"')}"] [data-testid="care-spot-retry${SUFFIX}"]`
+    const tapped = await evalSettled(`(() => { const b = document.querySelector(${JSON.stringify(sq)}); if (!b) return false; b.click(); return true })()`)
+    if (!tapped) { fail(at, 'spot-retry', `spot '${s}' has no Retry to tap`); continue }
+    const cleared = await evalSettled(`(async () => { for (let i = 0; i < 100; i++) { if (!document.querySelector(${JSON.stringify(sq)})) return true; await new Promise(r => setTimeout(r, 100)) } return false })()`)
+    if (!cleared) fail(at, 'spot-retry', `after its Retry spot '${s}' still says it has writes not logged`)
+    const lost = await evalSettled('document.activeElement === document.body || document.activeElement == null')
+    if (lost) fail(at, 'retry-focus', `after the '${s}' Retry focus fell to BODY (§5.5)`)
+  }
+  const line2 = await evalSettled(lineText)
+  if (!new RegExp(`${reEsc(c.group)} · watered ${N}\\b`).test(line2 || '')) fail(at, 'spot-retry', `after every Retry the group line reads "${line2}", expected "${c.group} · watered ${N}" — a Retry completes the run it failed in (MF3)`)
+  const post = await evalSettled(SPOT_STATE(G))
+  for (const s of failing) {
+    const v = post[s]
+    if (!v) { fail(at, 'spot-retry', `after its Retry spot '${s}' left the page`); continue }
+    const ok = v.done ? new RegExp(`${reEsc(s)} · watered ${want[s]}\\b`).test(v.text || '') : (v.text || '').includes(`Watered ${want[s]}`)
+    if (!ok) fail(at, 'spot-retry', `after its Retry spot '${s}' reads "${v.text}", expected its whole share ${want[s]} watered`)
+  }
+  // The run's ONE Undo deletes every id it created, the retried ones included: the page is back where it began.
+  await evalSettled(`(() => { const b = document.querySelector(${JSON.stringify(gq + ' button')}); if (b) b.click(); return 1 })()`)
+  const back = await evalSettled(`(async () => { for (let i = 0; i < 150; i++) { const el = document.querySelector(${JSON.stringify(q)}); if (el && !document.querySelector(${JSON.stringify(gq)})) return el.getAttribute('aria-label'); await new Promise(r => setTimeout(r, 100)) } return null })()`)
+  if (back == null) { fail(at, 'spot-retry', `the group Undo never brought '${c.group}' back to its Water all`); return }
+  if (back !== name0) fail(at, 'spot-retry', `after the Undo the group button reads "${back}", it read "${name0}" before the run — the one Undo must delete every id the run created, retries included`)
+  const after = await evalSettled(CARE_COUNT)
+  if (after !== before) fail(at, 'header-text', `after the run, its Retries and its Undo the Needs care header counts ${after}, it counted ${before} before`)
+  const stuck = Object.entries(await evalSettled(SPOT_STATE(G))).filter(([, v]) => v.failed).map(([s]) => s)
+  if (stuck.length) fail(at, 'spot-retry', `after the run was undone ${stuck.join(', ')} still say "not logged" — an undone run leaves nothing to retry`)
+  console.log(`[today-shape-v2] ${at}: spot-retry · "${line}" with ${c.fail} failing (${failing.map((s) => `${s} ${mid[s].failed}`).join(', ') || 'none'}) · focus ${foc.on ? 'first Retry' : foc.what} · retried → "${line2}" · Undo → "${back}", header ${after} (was ${before})`)
 }
 
 // ── budget ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -653,7 +897,16 @@ try {
     const v2 = m.harness.v2
 
     // ── (a) INSTRUMENT — armed from S0 on every state. Each is a way this file could print PASS over nothing.
-    if (m.vw !== VIEWPORT.w || m.vh !== VIEWPORT.h) { fail(at, 'void', `VOID — page self-reports ${m.vw}x${m.vh}; emulation did not take, so every number here is from the wrong layout (never --window-size)`); continue }
+    if (m.vw !== VIEWPORT.w || m.vh !== VIEWPORT.h) {
+      // S5 + S6 (one implementation since integration 2): a page WIDER than the phone is not emulation failing. With the
+      // emulated screen at the phone's width, the page's own horizontal overflow makes mobile Chrome grow the layout
+      // viewport to fit it — S5 measured a zoomed-out self-report of 477x935 (the chip strip at overflow-x visible with
+      // Protect's chip), S6 an innerWidth of 465 with the visual viewport still 426 (with Harvest's chip). That is the
+      // defect no-hscroll exists for, so it is filed there, and the state's other checks are skipped, as for a VOID,
+      // since every later number would be read off the wider layout. A screen that is not the phone's is still a VOID.
+      if (m.screenW === VIEWPORT.w && m.vw > VIEWPORT.w && m.scrollWidth > VIEWPORT.w) { fail(at, 'no-hscroll', `the page is ${m.scrollWidth}px wide on the ${VIEWPORT.w}px phone: its content pushed the layout viewport to ${m.vw}x${m.vh} (emulation in force: screen.width ${m.screenW}, visual viewport ${m.vvW}px at scale ${m.vvScale}) — something overflows sideways`); continue }
+      fail(at, 'void', `VOID — page self-reports ${m.vw}x${m.vh} (screen.width ${m.screenW}, visual viewport ${m.vvW}px); emulation did not take, so every number here is from the wrong layout (never --window-size)`); continue
+    }
     if (m.harness.error) fail(at, 'instrument', `the page raised "${m.harness.error}" while mounting`)
     if (!v2?.requested || v2.problem) fail(at, 'instrument', `the V2 seam did not engage: ${v2?.problem || 'v2 not requested'}`)
     if (v2.flag !== '1') fail(at, 'instrument', `localStorage garden.todayV2 is ${JSON.stringify(v2.flag)}, expected "1" (seam a)`)
@@ -692,8 +945,15 @@ try {
     if (!census.glyphs && v2.route !== 'stub') fail(at, 'instrument', 'the font census read no glyphs under #root')
     // S4: FilterChipRow (a frozen primitive) labels its tray toggle "More ▾" / "Less ▴" — mixed text, so the
     // census's whole-text allowance cannot see that only the arrow falls to a host font. That one arrow, on that
-    // one 48px-min chip, is let through here; any other host glyph still fails. NOT yet measured the way
-    // font-census.mjs asks (arrow swapped for Roboto 'v', geometry compared) — owed, see build-s4.md.
+    // one 48px-min chip, is let through here; any other host glyph still fails.
+    // S4g MEASURED it as font-census.mjs asks (scripts/layout-gate/tray-arrow-measure.mjs; 2026-09-29, Chrome 154,
+    // 426x836 @3, Roboto pin; v2-busy + v2-frost, the spot row collapsed, with a spot selected, and expanded): the
+    // arrow is host-painted (.SF NS on the Mac); swapped for Roboto 'v' / '^' only the toggle's OWN width moves
+    // (66.05 → 66.41 px; 63.13 → 62.59 px) — and a Clear sharing its line, by the same 0.53 px. Every other chip,
+    // the row's height, the task row, Needs care, every spot row, the page height and the last ink are identical,
+    // and the toggle's line keeps ≥ 57 px of slack. Recorded, not gated: with a spot selected, Clear wraps to a
+    // second line by 0.45 px, so another host's arrow width (CI's DejaVu Sans) could flip that wrap — no check
+    // measures geometry with a spot selected. Re-run the measurement if the toggle or the spot row changes.
     const TRAY = /painted 1 glyph\(s\) of "(More ▾|Less ▴)"$/
     for (const v of census.violations.filter(x => !TRAY.test(x)).slice(0, 3)) fail(at, 'instrument', `a HOST font painted text the Roboto pin should own — ${v}`)
 
@@ -705,6 +965,8 @@ try {
       controlsFloor: m.controls > 0 ? Math.max(1, m.controls - 2) : 0,
       scrollHeightCeiling: Math.round(m.scrollHeight * 1.02),
       measured: { scrollHeight: m.scrollHeight, contentBottom: m.contentBottom, controls: m.controls },
+      // S6: each owner-floors owner, as opened this run.
+      ...(ownerRecord[state.name] ? { owners: Object.fromEntries(Object.entries(ownerRecord[state.name]).map(([k, h]) => [k, { floor: Math.round(h * 0.99), measured: h }])) } : {}),
     }
   }
   if (!failures.length || PROBE_NOTHING || SELF_TEST) console.log(`[today-shape-v2] font: ${pinned ?? 'NO PIN'} · ${chrome.version.Browser} · probe widths ${JSON.stringify(await fontProbe(cdp.evalIn))}`)

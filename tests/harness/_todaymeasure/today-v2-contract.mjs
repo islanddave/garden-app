@@ -30,8 +30,21 @@
 // "S4-scoped": they measure the Needs care surface alone, so they hold before and after S3/S5/S6 land (the
 // full-page versions of the same families stay armed at their slice combinations).
 // S3 and S4 were built in parallel on the same base and merged by the integrator (build-int-s3s4.md).
-export const LANDED = ['S0', 'S2', 'S3', 'S4']
-export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8']
+// S4g (2026-09-29, wave 4, parallel with S5 and S6): Needs care follow-ups (build-s4.md "Not done / gaps") —
+// MF3's "Not logged · Retry" on the spot row itself, the filter result announcement (§2.6), the emptied header
+// "Needs care · all caught up" (§2.5). Its checks measure the Needs care surface alone, on v2-busy / v2-frost.
+// S5 (2026-09-29): Protect tonight + Heads-up and §3's other two trigger halves (triggers.js openAtStart: one
+// evaluation at the ready point for protect / headsup / care). Arms every check whose slices are now all landed —
+// the Protect half of the v2-frost / v2-busy first screens, visibility on v2-frost, the busy-seen / closed-today /
+// routine / freeze / storage / remembered-urgent / stale open sets. Rows S5 changed are marked "S5:" below.
+// S6 (2026-09-29, wave 4, parallel with S5 and S4g): Harvest, From your Put-Up, Resting's rows, the household
+// sections, the Sow link row. Its own checks are marked "S6-scoped" where the full-page version also needs S5
+// (Protect, Heads-up). New family `owner-floors`: a section (or the glance) opened from the default render must be
+// at least as tall as the budget recorded — the geometric witness that a region moved into an owner was not
+// deleted inside it (dropRegionInOwner), independent of region-headcount's element census.
+// S4g, S5 and S6 were built in parallel on the same base and merged by the integrator (build-int2.md).
+export const LANDED = ['S0', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6']
+export const SLICES = ['S0', 'S1', 'S2', 'S3', 'S4', 'S4g', 'S5', 'S6', 'S7', 'S8']
 
 export function isArmed(check, landed = LANDED, armAll = false) {
   if (armAll) return true
@@ -83,6 +96,10 @@ const common = ({ plan = true, glanceClosed = true } = {}) => [
   { family: 'no-hscroll', armedAt: 'S2', why: '(h) no horizontal overflow; only the chip strip may scroll sideways, with overflow-x:auto' },
   { family: 'floors', armedAt: 'S2', why: '(j) floors before ceilings — contentBottom, controls ≥ 1, from the v2 budget' },
   { family: 'first-screen', armedAt: 'S2', mustContain: ['today-title', 'today-date'], why: '(e) title + date fully inside [0, FIRST_SCREEN)' },
+  // Integration 2: plan-v2 "Visual" — card-in-card → none (D8: flat bands, each item its own white card). Measured on
+  // the merged S4g + S5 + S6 page: no card inside a card on any of the 20 default renders. Armed with every slice whose
+  // surface draws a card (the glance S3, spot rows S4, Protect / Heads-up rows S5, the bands and household S6).
+  { family: 'card-nesting', armedAt: ['S3', 'S4', 'S5', 'S6'], why: 'plan-v2 Visual "card-in-card → none" (D8): no card (a radius with a fill or a four-sided border) inside another card on the default render' },
   ...(plan ? [
     { family: 'glance', armedAt: 'S3', present: true, closed: glanceClosed, why: '(e) the closed glance card on the first screen' },
     { family: 'verdict-truncation', armedAt: 'S3', why: '(e) verdict untruncated: scrollWidth ≤ clientWidth, last glyph inside the card' },
@@ -104,7 +121,10 @@ export const STATES = [
       // S3 split: the glance, its cue + frost lines, the bar and the WHOLE verdict (every glyph painted, inside its
       // clip) are S3's and arm now; Protect's header, pick link, rows and the Needs care ceiling wait for S5.
       { family: 'first-screen', armedAt: 'S3', mustContain: ['today-glance', 'weather-cue-line', 'frost-alert-line', 'today-jumpbar'], mustShowText: ['today-verdict'], why: '(e) v2-frost, the S3 half: the closed glance card with both alert lines, the bar, and a verdict nothing cuts off' },
-      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+60' }, why: '(e) v2-frost; the +60 is §11.0 E4, est., to be recorded' },
+      // S5 recorded the §11.0 E4 estimate (+60, "est., to be recorded"): measured 797 on the S5 tree (Roboto pin,
+      // 426×836) — the glance card with the cue and the two-line frost line is 223 (S3), Protect's band 48 + pick link
+      // 44 + five 48px rows, one of them the three-line "Tuberous Begonia (bronze-leaf, hanging)" at 76. +72 = 800.
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect', 'protect-pick'], minCount: { 'protect-row': 3 }, headerTopMax: { care: 'FIRST_SCREEN+72' }, why: '(e) v2-frost; E4 recorded at S5 (measured 797)' },
       // S3 split: the bar carries a chip for every section on the page, in the fixed order (at S3: Water / Feed /
       // Check — Needs care is the only chip-bearing section built); the full set waits for Protect (S5) and Harvest (S6).
       { family: 'jumpbar', armedAt: 'S3', present: true, chipsOfPresent: ['protect', 'water', 'feed', 'check', 'harvest'] },
@@ -117,9 +137,19 @@ export const STATES = [
       // FeedSuppressedList (CareNeeded.jsx), reused unchanged at the foot of Needs care (REGIONS
       // care-feed-suppressed), prints 0.78rem. Measured: with only that component's 0.78rem → 0.82rem the census
       // passed on v2-frost, so it is the one source. Restyling the line for V2 is a design call, not the gate's.
-      // The cap is plan §9.1(l)'s 4 design surfaces; at S3 + S4 v2-frost carries 3 of them (measured 2026-09-29),
-      // so one extra treatment still passes here: todayMutantsV2 extraCardFingerprint is scheduled for S5+S6.
-      { family: 'visual-census', armedAt: ['S3', 'S4'], maxFingerprints: 4, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem', '0.78rem'], why: '(l) ≤ 4 section-level container fingerprints on busyfull' },
+      // Integration 2 (orchestrator, 2026-09-29) — plan §9.1(l)'s cap of 4 fingerprints is replaced by an IDENTITY
+      // check, in this commit, with this reason: the glance card and the row card are ONE material (white, 1px
+      // P.border, radius 10 — measured on the merged S4g + S5 + S6 page, 2026-09-29), so the design's four surfaces
+      // (glance card, bar, band, row card) give THREE distinct fingerprints, and a count of 4 let one extra treatment
+      // through (extraCardFingerprint survived the S3 + S4 matrix twice). Every section-level container fingerprint
+      // on v2-frost must now be one of these, verbatim as the gate measures them; a new surface is added here, in the
+      // commit that adds it, with its reason. (Harvest's bare watch rows add a hairline fingerprint when Harvest is
+      // open — v2-remembered — outside this census, which runs on v2-frost's default render only.)
+      { family: 'visual-census', armedAt: ['S3', 'S4'], surfaces: {
+        'glance card + row card (one material)': 'rgb(255, 255, 255) | 1px solid rgb(212, 201, 190) | 10px | none',
+        'jump bar': 'rgb(248, 245, 240) | 0px none rgb(0, 0, 0) | 0px | none',
+        'section band': 'rgb(230, 240, 232) | 0px none rgb(31, 81, 56) | 7px | none',
+      }, fontSizesExtra: ['1.3rem', '36px', '23px', '0.84rem', '0.78rem'], why: '(l) every section-level container fingerprint on busyfull is one of the design surfaces (identity, not a count)' },
       { family: 'weather-once', armedAt: 'S3', why: 'MF2: with the glance OPEN, exactly one today-weather and no repeated hi/lo text' },
       // S4 split the §9.1 phase list: the Water chip is S3's, so the chip step arms with S3 AND S4. Needs care is
       // OPEN at the ready point on this state (the small-pot trigger), so the chip cannot flip today-sec-care's
@@ -142,6 +172,28 @@ export const STATES = [
       // the glance's rows count from S3 and S4–S6's rows join as they land. S4's lane carried its own S4-scoped
       // copy of this check (armed at S4 alone); merged, the two counted the same rows, so this one is kept.
       { family: 'region-headcount', armedAt: 'S3', why: 'every ARMED REGIONS_V2 row owned by v2-frost, counted after its owner is opened' },
+      // S4g (§2.6 / §5.6): each filter change — a task chip, a spot chip, either Clear, a jump chip's pre-select —
+      // says its result ONCE through today-status; opening and closing a spot (a re-render, no filter change) says
+      // nothing. Words on the 09-24 plan (the plan's own example first). Files `announce` (the words) and
+      // `announce-once` (writes counted by a MutationObserver). `jump` is S3's chip, so the check names S3 too.
+      { family: 'announce', armedAt: ['S3', 'S4g'], steps: [
+        { press: 'tasks:Water', say: 'Needs care: Water, 168 in 8 spots.' },
+        { press: 'tasks:Feed', say: 'Needs care: Water and Feed, 226 in 9 spots.' },
+        { quiet: 'spot:Trough' },
+        { clear: 'tasks', say: 'Needs care: everything, 233 in 9 spots.' },
+        { press: 'spots:Bag Area', say: 'Needs care: Bag Area, 141 in 1 spot.' },
+        { clear: 'spots', say: 'Needs care: everything, 233 in 9 spots.' },
+        { jump: 'check', say: 'Needs care: Check, 7 in 2 spots.' },
+      ], why: '§2.6: "Needs care: Water, 168 in 8 spots." — once per filter change, not per render' },
+      // S4g (§2.5 + §5.5): Drive-Shade's Water all (5 logged), then Not today on every spot left — the header stays and
+      // reads the emptied wording (logged today = done items + store = 5 here; rain = busyfull's 70 rain_skipped), no
+      // count, focus on it. Runs LAST on this state (it leaves Needs care empty).
+      { family: 'caught-up', armedAt: 'S4g', water: 'Drive-Shade', title: 'Needs care · all caught up', summary: '5 logged today, 70 covered by rain', why: '§2.5: an emptied Needs care reads "Needs care · all caught up" with "N logged today, M covered by rain"; §5.5 focus to its header' },
+      // S6-scoped: busyfull carries a composable harvest batch AND the watch list, so Harvest exists between Needs care
+      // and Resting; nothing opens it (never a trigger). Its header names, never counts; the Sow row is the door alone.
+      { family: 'section-open-set', armedAt: ['S4', 'S6'], orderOf: ['care', 'harvest', 'resting'], closed: ['harvest', 'resting'], why: 'S6-scoped: Harvest between Needs care and Resting, closed by default' },
+      { family: 'header-text', armedAt: 'S6', noCount: ['harvest'], summaries: { harvest: '20 picks · logged an hour ago · check Palla Rossa Mavrik Radicchio, Gourmet Blend Beets, Red Acre Cabbage…' }, sowRow: 'All sow windows ›', why: 'S6: the Harvest header names the compose band\'s picks line and the watch band\'s own first three (no count, no denominator); the Sow link row is exactly its door while the 2027 freeze holds (09-24 has two dated engine lines to hide)' },
+      { family: 'owner-floors', armedAt: 'S6', owners: ['glance', 'care', 'harvest', 'resting'], why: 'S6: each owner of a moved region, opened from the default render, is at least its recorded height — a region deleted inside it (dropRegionInOwner) shortens it' },
     ],
   },
   {
@@ -153,7 +205,12 @@ export const STATES = [
       { family: 'collapsed-mounted', armedAt: ['S4', 'S5', 'S6'] },
       // S3 split: the glance and the bar arm now; Protect and the R16 ceiling wait for S5.
       { family: 'first-screen', armedAt: 'S3', mustContain: ['today-glance', 'today-jumpbar'], mustShowText: ['today-verdict'], why: '(e) v2-busy, the S3 half: the glance and the bar on the first screen' },
-      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect'], allRows: 'protect-row', headerTopMax: { care: 668 }, why: '(e) v2-busy: bar, Protect header + all rows, Needs care header top ≤ 668 (R16)' },
+      // S5 — R16's 668 (from §1.2's ≈ 658 est.) is MISSED by 5px on the real fixture: measured 673, because the glance
+      // card is 148 (est. 145) and the three-line "Tuberous Begonia (bronze-leaf, hanging)" row is 76 (est. 66 — at the
+      // plan's own ≈160px column no two-line wrap of that name exists). Re-stated as the claim R16 makes, the Needs
+      // care header WHOLE on the first screen: top ≤ FIRST_SCREEN − 48 (the resolver sums '+' terms). FLAGGED for the
+      // orchestrator in build-s5.md — a ruling's number moved, with the measurement, not quietly.
+      { family: 'first-screen', armedAt: ['S3', 'S5'], mustContain: ['today-sec-protect'], allRows: 'protect-row', headerTopMax: { care: 'FIRST_SCREEN+-48' }, why: '(e) v2-busy: bar, Protect header + all rows, the Needs care header whole on the first screen (R16 re-stated at S5: measured 673)' },
       { family: 'group-water-all', armedAt: 'S4', group: 'Outside', expectN: 154, run: true, why: 'MF3: group Water all — spots shrink to done lines, "Outside · watered N · Undo", accessible name "Water all N outside"; its ONE Undo deletes exactly the created ids' },
       { family: 'section-open-set', armedAt: 'S4', orderOf: ['care', 'resting'], open: ['care'], closed: ['resting'], why: 'S4-scoped: Needs care opens on the small-pot trigger, before Resting' },
       { family: 'collapsed-mounted', armedAt: 'S4', why: 'S4-scoped: closed sections AND closed spots mount no rows' },
@@ -161,6 +218,17 @@ export const STATES = [
       { family: 'header-text', armedAt: 'S4', counts: { care: 233 }, careSummary: '8 tray cells due · 9 spots', spotNotToday: true, why: 'S4-scoped: header count, the SF8 summary, a Not today on every spot (D6)' },
       { family: 'count-invariant', armedAt: 'S4', why: 'S4-scoped §2.4: the Needs care header count = Σ spot counts, no filter' },
       { family: 'region-headcount', armedAt: 'S4', why: 'S4-scoped: today-care, care-heading, care-group-bulk + care-spot-bulk on the default render' },
+      // S4g (MF3 "failures stay per spot 'Not logged · Retry'"): the Outside Water all with its first `fail` writes
+      // failing (the harness answers them 503, __h.failPosts). The group line counts what landed; every touched spot
+      // reads its OWN share (done line or "Watered N"); each spot holding a failure stays a CLOSED row with "N not
+      // logged" + Retry and no Water all; focus lands on the first Retry (§5.5); the Retries complete the run (group
+      // line back to the full N) and its ONE Undo returns the page to its rest counts. Families filed: spot-retry
+      // (the round trip), header-text (the words on the rows, the header count after Undo), group-water-all (a spot's
+      // own share on its done line), retry-focus (§5.5), announce (the result in the status region).
+      { family: 'spot-retry', armedAt: 'S4g', group: 'Outside', fail: 2, why: 'MF3: a failed write stays on its spot — "N not logged" + Retry on the closed row, out of Water all; Retry completes the run; one Undo' },
+      // S6-scoped: busy has the watch list but no fresh harvest batch — Harvest is the watch band alone.
+      { family: 'section-open-set', armedAt: ['S4', 'S6'], orderOf: ['care', 'harvest', 'resting'], closed: ['harvest', 'resting'], why: 'S6-scoped: Harvest between Needs care and Resting, closed by default' },
+      { family: 'header-text', armedAt: 'S6', noCount: ['harvest'], summaries: { harvest: 'check Palla Rossa Mavrik Radicchio, Gourmet Blend Beets, Red Acre Cabbage…' }, sowRow: 'All sow windows ›', why: 'S6: names, no count; the Sow link row is exactly its door while the 2027 freeze holds' },
     ],
   },
   {
@@ -171,7 +239,9 @@ export const STATES = [
     proves: 'MF1: an ack dated yesterday does not hold today — Needs care re-opens (small); Protect stays closed (chill already seen)',
     checks: [
       ...common(),
-      { family: 'section-open-set', armedAt: ['S4', 'S5'], order: ['protect', 'care'], open: ['care'], closed: ['protect'] },
+      // S5: `order` → `orderOf`. The busy fixture also carries Resting (9 dormant), and Harvest joins at S6, so the
+      // strict whole-page order can never be [protect, care]; the pair's relative order is the claim.
+      { family: 'section-open-set', armedAt: ['S4', 'S5'], orderOf: ['protect', 'care'], open: ['care'], closed: ['protect'] },
     ],
   },
   {
@@ -179,7 +249,8 @@ export const STATES = [
     proves: 'MF1 (new state): a close acked today holds for the rest of today — both stay closed',
     checks: [
       ...common(),
-      { family: 'section-open-set', armedAt: ['S4', 'S5'], order: ['protect', 'care'], open: [], closed: ['protect', 'care'] },
+      // S5: `orderOf`, for the reason given on v2-busy-seen.
+      { family: 'section-open-set', armedAt: ['S4', 'S5'], orderOf: ['protect', 'care'], open: [], closed: ['protect', 'care'] },
     ],
   },
   {
@@ -234,10 +305,18 @@ export const STATES = [
       { family: 'first-screen', armedAt: 'S2', mustContain: ['today-noplan-card'] },
     ],
   },
+  // S5: + region-headcount, so the REGIONS row this state owns (storage-deadline-alert → the Heads-up body) is counted
+  // at all: the family only runs on a state that carries a check of it.
   { name: 'v2-storage-open', fixture: 'storage', redate: '2026-09-28', clock: AT('2026-09-28'), prefs: 'prefs.default.json', proves: 'Heads-up opens on the first day of the window',
-    checks: [...common(), { family: 'section-open-set', armedAt: 'S5', open: ['headsup'] }, { family: 'first-screen', armedAt: 'S5', mustContain: ['today-sec-headsup'] }] },
+    checks: [...common(), { family: 'section-open-set', armedAt: 'S5', open: ['headsup'] }, { family: 'first-screen', armedAt: 'S5', mustContain: ['today-sec-headsup'] }, { family: 'region-headcount', armedAt: 'S5' }] },
   { name: 'v2-storage-mid', fixture: 'storage', clock: AT('2026-10-01'), prefs: 'prefs.default.json', proves: 'Heads-up closed mid-window (negative)',
-    checks: [...common(), { family: 'section-open-set', armedAt: ['S5', 'S6'], closed: ['headsup', 'putup'] }, { family: 'first-screen', armedAt: 'S5', mustContain: ['today-sec-headsup'] }] },
+    checks: [...common(), { family: 'section-open-set', armedAt: ['S5', 'S6'], closed: ['headsup', 'putup'] }, { family: 'first-screen', armedAt: 'S5', mustContain: ['today-sec-headsup'] },
+      // S6-scoped: the storage state's four jars (storage-grafts.json use_soon) are the one fixture with a Put-Up shelf.
+      // This state had no region-headcount check, so REGIONS' putup-use-soon row (v2-storage-mid, S6) was never counted.
+      { family: 'section-open-set', armedAt: 'S6', closed: ['putup'], why: 'S6-scoped: From your Put-Up exists and never opens by itself' },
+      { family: 'header-text', armedAt: 'S6', noCount: ['putup'], summaries: { putup: 'Summer Squash (past date) · Plum · Basil · Basil' }, why: 'S6: the use-soon slice by name, past date marked, no count (plan §1.5)' },
+      { family: 'region-headcount', armedAt: 'S6', why: 'S6: putup-use-soon counted inside Put-Up once opened' },
+      { family: 'owner-floors', armedAt: 'S6', owners: ['putup'], why: 'S6: Put-Up opened is at least its recorded height' }] },
   { name: 'v2-storage-deadline', fixture: 'storage', redate: '2026-10-08', clock: AT('2026-10-08'), prefs: 'prefs.default.json', proves: 'deadline ≤ 2 days: open, warn plate',
     checks: [...common(), { family: 'section-open-set', armedAt: 'S5', open: ['headsup'] }, { family: 'first-screen', armedAt: 'S5', mustContain: ['today-sec-headsup'] }] },
   { name: 'v2-storage-past', fixture: 'storage', redate: '2026-10-12', clock: AT('2026-10-12'), prefs: 'prefs.default.json', proves: 'grace phase: past copy, closed',
@@ -246,7 +325,11 @@ export const STATES = [
     // SF6: household stays opt-in per person, so the lens is switched on for this device before mount.
     name: 'v2-household', fixture: 'busyhh', clock: S924, prefs: 'prefs.default.json', local: { showOthers: true },
     proves: '"Jen\'s care · 15" closed, never auto-opens; the shared skip set',
-    checks: [...common(), { family: 'section-open-set', armedAt: 'S6', closed: ['hh-member_j'] }, { family: 'header-text', armedAt: 'S6', counts: { 'hh-member_j': 15 } }],
+    // S6: + her summary (task counts, plan §1.6), and a region-headcount — this state had none, so REGIONS'
+    // today-household row (v2-household, S6) was never counted. The shared skip set is a unit test
+    // (TodayV2.household.test.jsx), not a geometry.
+    checks: [...common(), { family: 'section-open-set', armedAt: 'S6', closed: ['hh-member_j'] }, { family: 'header-text', armedAt: 'S6', counts: { 'hh-member_j': 15 }, summaries: { 'hh-member_j': 'Water 8 · Feed 7' } },
+      { family: 'region-headcount', armedAt: 'S6', why: 'S6: today-household on the default render (her section closed)' }],
   },
   {
     name: 'v2-remembered', fixture: 'busy', clock: S924, prefs: 'prefs.remembered.json',
@@ -310,9 +393,14 @@ export const REGIONS_V2 = [
   { id: 'today-household', owner: 'household sections', state: 'v2-household', armedAt: 'S6' },
   { id: 'today-noplan-card', owner: 'the no-plan sentence', state: 'v2-noplan', armedAt: 'S2' },
   { id: 'storage-deadline-alert', owner: 'Heads-up body', state: 'v2-storage-open', armedAt: 'S5' },
+  // S5: a NEW anchor, not a v1 region (as S4's section-summary): the frost-night pick link inside Protect (§1.1). Counted
+  // after its owner is opened, so the link going missing is seen by a second family beside the first screen.
+  { id: 'protect-pick', owner: 'Protect tonight, frost / freeze nights (§1.1)', open: 'protect', state: 'v2-frost', armedAt: 'S5' },
   { id: 'putup-use-soon', owner: 'Put-Up body', open: 'putup', state: 'v2-storage-mid', armedAt: 'S6' },
 ]
-export const NEW_ANCHORS = ['today-glance', 'today-jumpbar', 'today-sec-<key>', 'care-group', 'care-spot', 'care-spot-panel', 'care-exceptions', 'care-cohort', 'care-done-line', 'protect-row', 'protect-pick', 'today-status']
+export const NEW_ANCHORS = ['today-glance', 'today-jumpbar', 'today-sec-<key>', 'care-group', 'care-spot', 'care-spot-panel', 'care-exceptions', 'care-cohort', 'care-done-line', 'protect-row', 'protect-pick', 'today-status',
+  // S4g: a spot's failure line and its Retry (MF3).
+  'care-spot-failed', 'care-spot-retry']
 
 // ── THE SHELL ENTRY (today-shell-v2.mjs over tests/harness/todayshell.*) ───────────────────────────────────
 // The platform half of §9.1: what only the real TopChrome, the BottomNav band and the real page-scroll manager
@@ -332,13 +420,35 @@ export const SHELL = [
 ]
 
 // ── MUTANT KILLER FAMILIES (§9.1) and the trigger TABLE that replaced the trigger-predicate mutants ──────
-export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore', 'jump-focus']
+export const KILLER_FAMILIES = ['section-open-set', 'collapsed-mounted', 'visibility', 'header-text', 'first-screen', 'sticky', 'jump-landing', 'verdict-truncation', 'chip-census', 'prefs-instrument', 'region-headcount', 'visual-census', 'back-restore', 'jump-focus',
+  // S4g: MF3's failure round trip, §5.5's focus after it, §5.6's status region (its words, and once per change),
+  // §2.5's emptied header and §5.5's focus when a section empties.
+  'spot-retry', 'retry-focus', 'announce', 'announce-once', 'caught-up', 'empty-focus',
+  // S6: a section (or the glance) opened from the default render is at least its recorded height.
+  'owner-floors',
+  // Integration 2: no card inside a card (plan-v2 Visual, D8).
+  'card-nesting']
 
 // §13 Simplify 3: the trigger-predicate mutants (ignoreRemembered, rememberedBeatsUrgent, staleAutoOpens,
 // chillOpensEveryNight, headsupAlwaysOpen, householdAlwaysOpen, glanceOpenByDefault) are no longer real-Chrome
 // mutants: each is a cell of a table-driven unit test of src/lib/todayV2/triggers.js (S5 writes the module and
 // the test that reads this table). openAll / openNone stay as real-Chrome canaries (todayMutantsV2.mjs).
 // Each cell: inputs → the open set it must produce. `killedMutant` names the mutant the cell replaces.
+// ── FILTER × ACTION CELLS (review 4160.2 IMPORTANT-4; the orchestrator's call, 2026-09-29: pinned AS THEY BEHAVE,
+// no change). No gate state reaches either cell. Each predicate is pinned by the page test titled with its `cell` in
+// src/__tests__/TodayV2NeedsCare.test.jsx (real TodayV2, Dave's 09-24 plan); changing either is a design change,
+// made here and there in one commit.
+export const FILTER_ACTION_CELLS = [
+  {
+    cell: 'spot filter × group Water all',
+    predicate: 'Under a spot filter the group Water all counts only the spots the filter shows ("Water all 48 outside" under Trough + In-Ground). Its result is ONE group line, "Outside · watered N" with one Undo, that replaces the group button for the rest of the visit, filter cleared or not; every other spot of the group keeps its own Water all.',
+  },
+  {
+    cell: 'task filter × Not today',
+    predicate: 'Not today on a spot skips only the rows of the tasks the filter shows (plan §2.5): under Water, the spot\'s feed and check rows stay due, and the spot comes back live with them once the filter is cleared.',
+  },
+]
+
 export const TRIGGER_CELLS = [
   { cell: 'frost night opens Protect', plan: { lowRaw: 41.8, frostTonight: true, coldLevels: ['protect'] }, ack: null, expectOpen: ['protect'], killedMutant: 'openNone' },
   { cell: 'chill first seen opens Protect', plan: { lowRaw: 47, coldLevels: ['protect'] }, seen: 'unset', ack: null, expectOpen: ['protect'], killedMutant: 'openNone' },

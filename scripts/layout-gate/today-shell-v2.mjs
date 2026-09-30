@@ -171,6 +171,14 @@ const JUMP = (key) => `(async () => {
   const key = ${JSON.stringify(key)}
   window.scrollTo(0, 0); await settle()
   const chip = bar.querySelector('[data-chip="' + key + '"]')
+  // S5 + S6 (one implementation since integration 2): with Protect's and Harvest's chips the bar outgrows the column
+  // (mockup A: the last chip cut at the right edge). A chip past the strip's edge is reached the way a thumb reaches
+  // it (plan §6.9: a sideways swipe that starts inside the strip), so the strip is scrolled — instantly, whatever its
+  // scroll-behavior — until the chip is wholly in view, and the page settles, BEFORE the hit test; a chip covered by
+  // anything else still fails it, and with the strip overflow:visible (chipRowNoScroll) the chip stays off the page.
+  const sr = bar.getBoundingClientRect(), c0 = chip.getBoundingClientRect()
+  const dx = c0.left < sr.left ? c0.left - sr.left : c0.right > sr.right ? c0.right - sr.right : 0
+  if (dx) { bar.scrollTo({ left: bar.scrollLeft + dx, behavior: 'instant' }); await settle() }
   const cr = chip.getBoundingClientRect()
   const hit = document.elementFromPoint(cr.left + cr.width / 2, cr.top + cr.height / 2)
   if (!hit || !(hit === chip || chip.contains(hit))) return { key, covered: true }

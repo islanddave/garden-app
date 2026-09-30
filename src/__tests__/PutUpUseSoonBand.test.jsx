@@ -45,6 +45,17 @@ describe('PutUpUseSoonBand — Today "use soon" ambient card (L10)', () => {
     expect(screen.getByText('past date')).toBeTruthy()
   })
 
+  // A label-only jar (the ferment release: a name, no crop) leads with its label, not the fallback.
+  it('a label-only row shows its label as the title', async () => {
+    useSoon([
+      { id: 'k', label: 'Napa kimchi', crop_display_name: null, crop_type_slug: null, quantity_value: 2, quantity_unit: 'jars', method: 'ferment', storage_label: 'Pantry', use_by_status: 'use_soon' },
+    ])
+    render(<PutUpUseSoonBand />)
+    const title = await screen.findByText('Napa kimchi')
+    expect(title.parentElement.firstChild).toBe(title)
+    expect(screen.getAllByText('From your stores')).toHaveLength(1)
+  })
+
   it('is hidden entirely when there is nothing to use soon', async () => {
     useSoon([])
     const { container } = render(<PutUpUseSoonBand />)

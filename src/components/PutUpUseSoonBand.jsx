@@ -41,9 +41,9 @@ const METHOD_LABELS = {
   other: 'put up',
 }
 
+// Label first: a ferment jar can carry a name and no crop (projectRow returns `label`; null on every row today).
 function itemTitle(it) {
-  const crop = it.crop_display_name || it.crop_type_slug || 'From your stores'
-  return crop
+  return it.label || it.crop_display_name || it.crop_type_slug || 'From your stores'
 }
 function itemDetail(it) {
   const parts = []
@@ -59,37 +59,64 @@ function itemDetail(it) {
   return parts.join(' · ')
 }
 
-export default function PutUpUseSoonBand() {
+// V5-TODAYREDESIGN-001 S6 — THE DATA HOOK, split out of the band: the redesigned Today fetches at the PAGE (its
+// Put-Up section's presence and header summary are read while the section's body — this band — is unmounted)
+// and hands the result in as `data`. Without `data` the band calls it itself.
+export function usePutUpUseSoonFeed() {
+  return useAmbientBandFetch('/api/preservation/use-soon', normalize)
+}
+
+// The band's own slice — the jars it lists and how many it leaves to "+N more" — exported so a header summary
+// names exactly those jars, in that order (plan-v2 §8 S6), and the words each row leads with.
+export function putUpSoonSlice(items) {
+  const list = Array.isArray(items) ? items : []
+  const shown = list.slice(0, 5)
+  return { shown, more: list.length - shown.length }
+}
+export const putUpSoonTitle = (it) => itemTitle(it)
+
+// `data` = usePutUpUseSoonFeed()'s result, fetched by the caller; `bare` = no card, no eyebrow / title, no
+// landmark name — the section holding it is the heading (Today V2's Put-Up). With neither, as it always was.
+export default function PutUpUseSoonBand({ data, bare = false }) {
+  return data ? <UseSoonBand feed={data} bare={bare} /> : <OwnUseSoonBand bare={bare} />
+}
+
+function OwnUseSoonBand({ bare }) {
+  return <UseSoonBand feed={usePutUpUseSoonFeed()} bare={bare} />
+}
+
+function UseSoonBand({ feed, bare }) {
   const overlayNavigate = useOverlayNavigate()
-  const { data: items, failed, reload } = useAmbientBandFetch('/api/preservation/use-soon', normalize)
+  const { data: items, failed, reload } = feed
 
   // BUG-READYBANDFETCH-001 — "could not ask" is not "nothing to use soon". See useAmbientBandFetch.
-  if (failed && !items) return <AmbientBandNotice eyebrow="Put up" onRetry={reload} />
+  if (failed && !items) return <AmbientBandNotice eyebrow="Put up" onRetry={reload} bare={bare} />
 
   // Hidden entirely when empty (or before the first load resolves).
   if (!items || items.length === 0) return null
 
-  const shown = items.slice(0, 5)
-  const more = items.length - shown.length
+  const { shown, more } = putUpSoonSlice(items)
 
   // data-testid: a region anchor for the Today layout gate (scripts/layout-gate/today-shape.mjs). It
   // adds no node, no style and no behaviour.
   return (
     <section
       data-testid="putup-use-soon"
-      aria-label="From your stores — cook these next"
-      style={{
+      aria-label={bare ? undefined : 'From your stores — cook these next'}
+      style={bare ? undefined : {
         backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 12,
         padding: '14px 16px', marginTop: 16,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: bare ? 'flex-end' : 'space-between', gap: 10, marginBottom: 10 }}>
+        {!bare && (
         <div>
           <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: P.light }}>
             From your stores
           </div>
           <div style={{ fontSize: '1rem', fontWeight: 700, color: P.dark }}>Cook these next</div>
         </div>
+        )}
         <button
           type="button"
           onClick={() => overlayNavigate('/put-up?view=pantry&filter=use-soon')}

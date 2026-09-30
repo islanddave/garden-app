@@ -312,12 +312,23 @@ window.fetch = async (input, init = {}) => {
   else if (p === '/api/inventory-items/sow-candidates') body = EMPTY ? [] : (SOWCAND ?? [])
   // V2 only (S4): a logged event answers with an id, as the events Lambda does, so a V2 Undo has something to
   // DELETE (gate:today-shape:v2 group-water-all runs the MF3 round trip). DELETE /api/events/:id answers 200.
-  else if (V2 && p === '/api/events' && (init.method || 'GET').toUpperCase() === 'POST') body = { id: 'hv2-' + (++v2EventSeq) }
+  // S4g: the gate can make the next N of these POSTs fail (__h.failPosts), as a dropped write in the garden
+  // does — MF3's "Not logged · Retry" has no other way to appear on a stubbed wire. The count is consumed in
+  // CALL order, so which rows of a run fail is fixed by the run's own order.
+  else if (V2 && p === '/api/events' && (init.method || 'GET').toUpperCase() === 'POST') {
+    if (v2FailPosts > 0) {
+      v2FailPosts--
+      await new Promise(r => setTimeout(r, ms))
+      return new Response(JSON.stringify({ error: 'harness: injected write failure' }), { status: 503, headers: { 'Content-Type': 'application/json' } })
+    }
+    body = { id: 'hv2-' + (++v2EventSeq) }
+  }
   await new Promise(r => setTimeout(r, ms))
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
 
 var v2EventSeq = 0
+var v2FailPosts = 0
 let firstError = null
 window.addEventListener('error', e => { firstError ??= e.message })
 window.addEventListener('unhandledrejection', e => { firstError ??= String(e.reason?.message ?? e.reason) })
@@ -600,6 +611,9 @@ window.__h = {
     return this.ready()
   },
   expanded: (target) => { try { return document.querySelector(selectorFor(target))?.getAttribute('aria-expanded') ?? null } catch { return null } },
+  // S4g: the next `n` POST /api/events answer 503 (0 clears). Returns how many of the LAST request were still
+  // unconsumed, so the gate can tell a run that posted fewer writes than it injected failures for.
+  failPosts(n) { const left = v2FailPosts; v2FailPosts = Math.max(0, Math.floor(Number(n) || 0)); return left },
   // (c) The interaction driver. A tap is hit-tested at its target's centre first (covered = VOID: a sticky
   // bar over a chip is a defect, not something to click through), then clicked; its `flip` target (the tap
   // target itself by default) must change aria-expanded — aria-pressed for a `task-filter:` chip (v2wire
@@ -633,6 +647,11 @@ window.__h = {
     out.before = flipState(flip)
     el.click()
     await frames(3); await new Promise(res => setTimeout(res, 50))
+    // S6: a tap that scrolls the page (a jump chip — smooth, the gate emulates no reduced motion) is judged once the
+    // scroll has SETTLED, so the next step hit-tests where the page came to rest, never mid-animation. Measured: on a
+    // v2-frost page ~40px longer than S6's, the Water jump was still gliding when the next step hit-tested Bag Area,
+    // and found the jump bar over it. The shell gate's settle rule (10 still frames, bounded).
+    for (let i = 0, last = -1, same = 0; i < 240 && same < 10; i++) { await frames(1); const y = window.scrollY; if (Math.abs(y - last) < 0.5) same++; else same = 0; last = y }
     out.after = flipState(flip)
     if (out.before == null || out.after == null || out.before === out.after) out.void = `${flipAttr(flip)} on '${flip}' did not flip (${out.before} → ${out.after}) — the step did nothing measurable, so the run is VOID`
     else out.ok = true

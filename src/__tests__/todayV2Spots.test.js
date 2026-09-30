@@ -10,7 +10,8 @@ import { resolve } from 'node:path'
 import { buildCareNeeded } from '../lib/careNeeded.js'
 import {
   OUTSIDE, SMALL_VESSEL_TYPES, locationIndex, enrichRows, takeOrder, buildModel, exceptionKeys, exceptionReason,
-  sortCohort, cohortLine, cohortCapNote, productGroups, careSummary, waterCandidates,
+  sortCohort, cohortLine, cohortCapNote, productGroups, careSummary, waterCandidates, filterResult, filterAnnouncement,
+  loggedTodayCount, caughtUpSummary, CAUGHT_UP_TITLE,
 } from '../lib/todayV2/spots.js'
 import { careReasons, careTrigger, careOpens } from '../lib/todayV2/triggers.js'
 import { applyGrafts } from '../../tests/harness/_todaymeasure/v2wire.js'
@@ -80,6 +81,22 @@ describe('groups and spots on the busy plan (SF5, D7)', () => {
     const partial = { groups: held.groups, spots: { ...held.spots, [OUTSIDE]: held.spots[OUTSIDE].slice(2) } }
     const n = buildModel(rows, { held: partial })
     expect(n.groups[0].spots.map((s) => s.name).slice(-2)).toEqual(['Bag Area', 'Trough'])
+  })
+  // S4g (MF3): rows whose write failed this visit are out of every bulk — spot and group — and only their Retry
+  // re-posts them; they still count (they are still due), so chip == header == Σ spots holds.
+  it('`exclude` keeps failed rows out of Water all (spot and group) and in the counts', () => {
+    const bag = rows.filter((r) => r.spotName === 'Bag Area' && r.task === 'water').slice(0, 2).map((r) => r.key)
+    const ds = rows.filter((r) => r.spotName === 'Drive-Shade').map((r) => r.key)
+    const x = buildModel(rows, { held, exclude: new Set([...bag, ...ds]) })
+    expect(spotByName(x, 'Bag Area').candidates.size).toBe(95)
+    expect(bag.some((k) => spotByName(x, 'Bag Area').candidates.has(k))).toBe(false)
+    expect(spotByName(x, 'Drive-Shade').candidates.size).toBe(0)
+    expect(x.groups[0].candidates.size).toBe(147)
+    expect(x.groups[0].spotsWithWater).toBe(5)
+    expect(spotByName(x, 'Bag Area').counts).toEqual(spotByName(m, 'Bag Area').counts)
+    expect(x.groups.flatMap((g) => g.spots).reduce((n, s) => n + s.counts.water, 0)).toBe(168)
+    expect(waterCandidates(spotByName(m, 'Drive-Shade').rows, OUTSIDE, false, new Set(ds.slice(0, 1))).keys.size).toBe(4)
+    expect(waterCandidates(spotByName(m, 'Drive-Shade').rows, OUTSIDE, false).keys.size).toBe(5)
   })
 })
 
@@ -221,5 +238,55 @@ describe('degrades when /api/locations is unreadable', () => {
   it('an unplaced planting lands in Outside, spot "Unplaced"', () => {
     const idx = locationIndex(LOCS)
     expect(idx.spotOf(undefined)).toEqual({ key: '_unplaced', name: 'Unplaced', parentPath: null, group: OUTSIDE })
+  })
+})
+
+// S4g — §2.6 / §5.6: the one sentence a filter change says, from NeedsCare's own selection rules.
+describe('filter result announcement (§2.6, §5.6)', () => {
+  const { rows } = state()
+  const key = (name) => rows.find((r) => r.spotName === name).spotKey
+  const say = (sel) => filterAnnouncement(filterResult(rows, sel))
+  it('the plan\'s own example: the Water filter is 168 in 8 spots', () => {
+    expect(say({ tasks: ['water'] })).toBe('Needs care: Water, 168 in 8 spots.')
+  })
+  it('tasks OR together; no filter is everything', () => {
+    expect(say({ tasks: ['water', 'feed'] })).toBe('Needs care: Water and Feed, 226 in 9 spots.')
+    expect(say({ tasks: ['water', 'feed', 'check'] })).toBe('Needs care: Water, Feed and Check, 233 in 9 spots.')
+    expect(say({})).toBe('Needs care: everything, 233 in 9 spots.')
+    expect(say({ tasks: ['check'] })).toBe('Needs care: Check, 7 in 2 spots.')
+  })
+  it('the Feed filter alone shows products (D12), so it counts products', () => {
+    expect(say({ tasks: ['feed'] })).toBe(`Needs care: Feed, 58 in ${productGroups(rows).length} products.`)
+    expect(productGroups(rows).length).toBe(3)
+  })
+  it('spots name themselves; a spot and a task read "Water in Bag Area"', () => {
+    expect(say({ spots: [key('Bag Area')] })).toBe('Needs care: Bag Area, 141 in 1 spot.')
+    expect(say({ spots: [key('Bag Area'), key('Trough')] })).toBe('Needs care: Bag Area and Trough, 175 in 2 spots.')
+    expect(say({ tasks: ['water'], spots: [key('Bag Area')] })).toBe('Needs care: Water in Bag Area, 97 in 1 spot.')
+  })
+  it('a spot with nothing of the chosen tasks drops out, as the filter row drops it; nothing left says so', () => {
+    expect(say({ tasks: ['water'], spots: [key('Yard - Stable')] })).toBe('Needs care: Water, 168 in 8 spots.')
+    expect(filterAnnouncement(filterResult([], {}))).toBe('Needs care: everything, nothing due.')
+  })
+})
+
+// S4g — §2.5: the emptied Needs care header. Logged = the plan's done care items ∪ this tab's store, by key.
+describe('the emptied Needs care header (§2.5)', () => {
+  const { plan } = state()
+  const done = (n) => ({ ...plan, water_due: plan.water_due.map((it, i) => (i < n ? { ...it, done: true } : it)) })
+  const k = (i) => plan.water_due[i].id + ':water_due'
+  it('logged = done items ∪ the store, each key once, care needs only', () => {
+    expect(loggedTodayCount(plan, [])).toBe(0)
+    expect(loggedTodayCount(done(3), [])).toBe(3)
+    // k(0) is both done and stored (logged here, then the refetch annotated it): once. A cold key is Protect's.
+    expect(loggedTodayCount(done(3), [k(0), k(5), k(6), plan.cold[0].id + ':cold', 'junk'])).toBe(5)
+    expect(loggedTodayCount(null, [k(1)])).toBe(1)
+  })
+  it('the plan\'s one wording; nothing to report is no summary (the title already says it)', () => {
+    expect(CAUGHT_UP_TITLE).toBe('Needs care · all caught up')
+    expect(caughtUpSummary({ logged: 95, rain: 70 })).toBe('95 logged today, 70 covered by rain')
+    expect(caughtUpSummary({ logged: 5, rain: 0 })).toBe('5 logged today')
+    expect(caughtUpSummary({ logged: 0, rain: 70 })).toBe('70 covered by rain')
+    expect(caughtUpSummary({ logged: 0, rain: 0 })).toBe(null)
   })
 })

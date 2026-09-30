@@ -5,7 +5,7 @@ import FilterChipRow from '../../forms/FilterChipRow.jsx'
 import Icon from '../../Icon.jsx'
 import { skipMany, unskipMany } from '../careStore.js'
 import { FeedSuppressedList } from '../CareNeeded.jsx'
-import { buildModel, productGroups, TASKS, TASK_LABEL, TASK_ETYPE, OUTSIDE } from '../../../lib/todayV2/spots.js'
+import { buildModel, productGroups, filterResult, filterAnnouncement, TASKS, TASK_LABEL, TASK_ETYPE, OUTSIDE } from '../../../lib/todayV2/spots.js'
 import { MOISTURE_CHECK_EVENT } from '../../../lib/careNeeded.js'
 import SpotRow, { SpotDoneLine, tinted } from './SpotRow.jsx'
 import SpotBody from './SpotBody.jsx'
@@ -30,8 +30,11 @@ const KIND_OF = { watering: 'watered', fertilizing: 'fed', observation: 'checked
 
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
+// §5.6 "Redbor Kale, Beets and 1 more": two names, then the rest counted.
+const nameList = (names) => (names.length <= 2 ? names.join(' and ') : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`)
+const css = (s) => String(s).replace(/"/g, '\\"')
 
-export default function NeedsCare({ care, record, update, announce, planDate, userId, filterIntent }) {
+export default function NeedsCare({ care, record, update, announce, planDate, userId, filterIntent, writesHeld = false }) {
   const c = record?.care || null
   const { actions } = care
   const setCare = useCallback((fn) => update((r) => ({ ...r, care: fn(r.care || {}) })), [update])
@@ -40,6 +43,12 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   const fKey = filtersKey(userId)
   const [filters, setFilters] = useState(() => readFilters(fKey, planDate))
   const setAndSave = useCallback((next) => { setFilters(next); writeFilters(fKey, planDate, next) }, [fKey, planDate])
+  // §2.6 / §5.6 (S4g): a filter change — a chip, a Clear, a jump chip's pre-select — says its result ONCE through the
+  // page's one status region ("Needs care: Water, 168 in 8 spots."), from the change itself, never from a render.
+  const changeFilters = useCallback((next) => {
+    setAndSave(next)
+    announce(filterAnnouncement(filterResult(care.rows, next)))
+  }, [setAndSave, announce, care.rows])
   // S3's jump bar writes the chip's task into the visit record (record.filter.care = { tasks: [task], n }, n
   // counting the visit's chip taps); each NEW n REPLACES the task row once. The last n applied is kept on the
   // visit record (care.intentN), not in a ref: a chip tap on a CLOSED Needs care mounts this body with the
@@ -51,8 +60,8 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     if (!intentN || intentN === appliedN) return
     setCare((cc) => ({ ...cc, intentN }))
     const t = Array.isArray(filterIntent?.tasks) ? filterIntent.tasks[0] : filterIntent?.task
-    if (TASKS.includes(t)) setAndSave({ ...filters, tasks: [t] })
-  }, [intentN, appliedN, filterIntent, filters, setAndSave, setCare])
+    if (TASKS.includes(t)) changeFilters({ ...filters, tasks: [t] })
+  }, [intentN, appliedN, filterIntent, filters, changeFilters, setCare])
 
   const presentTasks = TASKS.filter((t) => care.rows.some((r) => r.task === t))
   const tasks = filters.tasks.filter((t) => presentTasks.includes(t))
@@ -66,7 +75,10 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // The visit's held group + spot order (taken at the ready point): every render — the model and the done
   // lines alike — follows it, so a log never re-ranks the spots under Dave's thumb (BD-036).
   const heldOrder = c?.order
-  const model = useMemo(() => buildModel(care.rows, { held: heldOrder, tasks, spots: spotSel, bedWait: care.bedWait }), [care.rows, heldOrder, tasks, spotSel, care.bedWait])
+  // A failed row is retried only by a Retry (MF3), never folded into a fresh Water all: out of every bulk count.
+  const failedMap = c?.failed
+  const failedKeys = useMemo(() => new Set(Object.keys(failedMap || {})), [failedMap])
+  const model = useMemo(() => buildModel(care.rows, { held: heldOrder, tasks, spots: spotSel, bedWait: care.bedWait, exclude: failedKeys }), [care.rows, heldOrder, tasks, spotSel, care.bedWait, failedKeys])
   const feedOnly = tasks.length === 1 && tasks[0] === 'feed'
 
   // ── run bookkeeping ─────────────────────────────────────────────────────────────────────────────────────
@@ -74,25 +86,55 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   const [undoing, setUndoing] = useState(null) // batch id or row key
   const [focusId, setFocusId] = useState(null)
   const rootRef = useRef(null)
+  // A focus target by data-focus-id, or (§5.5) "first-retry:<group>" — the first spot Retry in that group after
+  // a run with failures — or "row-retry:<rowKey>" — the Retry a failed one-tap write leaves on its row in place
+  // of the control that had focus (a removed focused node must never drop focus to BODY).
+  // §5.5 (S4g): an action that EMPTIES Needs care sends focus to the section's header instead — it now reads
+  // "Needs care · all caught up" and what was logged. Only an action here moves focus: a refetch that empties the
+  // list sets no focusId, so it never pulls focus from wherever Dave is reading.
+  const emptied = care.rows.length === 0
   useEffect(() => {
     if (!focusId || !rootRef.current) return
-    const el = rootRef.current.querySelector(`[data-focus-id="${focusId.replace(/"/g, '\\"')}"]`)
+    const [kind, ...rest] = focusId.split(':')
+    const arg = css(rest.join(':'))
+    const header = emptied ? rootRef.current.closest('[data-section="care"]')?.querySelector('[aria-expanded]') : null
+    const el = header || (kind === 'first-retry' ? rootRef.current.querySelector(`[data-testid="care-group"][data-group="${arg}"] [data-focus-id^="retry:"]`)
+      : kind === 'row-retry' ? rootRef.current.querySelector(`[data-key="${arg}"] button[aria-label^="Retry"]`)
+        : rootRef.current.querySelector(`[data-focus-id="${css(focusId)}"]`))
     if (el) el.focus({ preventScroll: true })
     setFocusId(null)
-  }, [focusId, record])
+  }, [focusId, record, emptied])
 
   const batches = c?.batches || {}
   const rowsDone = c?.rowsDone || {}
+  // A write that failed stays on the list as "Not logged" with a Retry (§6.6; MF3 "per spot"). Each failed key
+  // records WHAT failed — { bid, etype, body }: the run it belonged to (none for a one-tap row) and the types it
+  // posted — so a Retry re-runs exactly that. Truthy either way, so every `failed[k]` reader is unchanged.
   const failed = c?.failed || {}
   const spotBatches = (key) => Object.entries(batches).filter(([, b]) => b.spots?.includes(key))
+  const spotOfKey = useMemo(() => new Map(care.allEnriched.map((r) => [r.key, r.spotKey])), [care.allEnriched])
+  const spotsOfCreated = (created) => [...new Set(created.map((x) => spotOfKey.get(x.key)).filter(Boolean))]
 
-  const markFailed = (keys, on) => setCare((cc) => {
+  // Lands a run on the visit record: its created ids in batch `bid` — a Retry ADDS to the batch it completes, so
+  // the run's done line counts them and its ONE Undo deletes them — each id that failed marked with what failed,
+  // and every id that landed cleared of an older failure. A batch's spots follow its created ids.
+  const settle = (bid, fresh, res, what) => setCare((cc) => {
+    const prev = cc.batches?.[bid]
+    const created = [...(prev ? prev.created : []), ...res.created]
+    const b = { ...(prev || fresh), created }
+    b.spots = b.scope === 'spot' ? [b.target] : b.scope === 'group' ? spotsOfCreated(created) : []
     const f = { ...(cc.failed || {}) }
-    for (const k of keys) { if (on) f[k] = true; else delete f[k] }
-    return { ...cc, failed: f }
+    for (const x of res.created) delete f[x.key]
+    for (const k of res.failed) f[k] = { bid, ...what }
+    return { ...cc, batches: { ...(cc.batches || {}), [bid]: b }, failed: f }
   })
+  const rowNames = (keys) => keys.map((k) => care.allEnriched.find((r) => r.key === k)?.name).filter(Boolean)
+  const notLoggedText = (keys, name) => `${keys.length} not logged in ${name}: ${nameList(rowNames(keys))}. Retry is on each.`
 
-  const run = useCallback(async ({ scope, key, name, etype, keys, bodyEventType, spotsOf }) => {
+  // Review 4160.2 IMPORTANT-2: while the page holds its writes (a seeded Back remount still revalidating, TodayV2
+  // writesHeld), every write path below returns before it posts or skips anything — the controls are aria-disabled too.
+  const run = async ({ scope, key, name, etype, keys, bodyEventType }) => {
+    if (writesHeld) return null
     const total = keys.size
     if (!total) return null
     const bid = newId()
@@ -109,24 +151,59 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     setBusy(null)
     addLogged(care.logKey, res.created.map((x) => x.key))
     const kind = KIND_OF[bodyEventType || etype] || 'logged'
-    setCare((cc) => ({
-      ...cc,
-      batches: { ...(cc.batches || {}), [bid]: { scope, target: key, name, kind, created: res.created, spots: spotsOf(res.created), at: Date.now() } },
-      failed: { ...(cc.failed || {}), ...Object.fromEntries(res.failed.map((k) => [k, true])) },
-    }))
+    settle(bid, { scope, target: key, name, kind, at: Date.now() }, res, { etype, body: bodyEventType || null })
     const fails = res.failed.length
-    announce(`${kind === 'watered' ? 'Watered' : 'Logged'} ${res.created.length} in ${name}.` + (fails ? ` ${fails} not logged — Retry is on each.` : ''))
-    setFocusId(fails ? null : (scope === 'group' ? 'group:' + key : 'spot:' + key))
+    announce(`${kind === 'watered' ? 'Watered' : 'Logged'} ${res.created.length} in ${name}.` + (fails ? ' ' + notLoggedText(res.failed, name) : ''))
+    // §5.5: a partial failure puts focus on the first Retry (the spot's own, or the group's first failed spot's).
+    setFocusId(fails ? (scope === 'group' ? 'first-retry:' + key : scope === 'spot' ? 'retry:' + key : null) : (scope === 'group' ? 'group:' + key : 'spot:' + key))
     return res
-  }, [actions, announce, care.logKey, setCare])
+  }
 
-  const spotsOfCreated = (created) => [...new Set(created.map((x) => care.allEnriched.find((r) => r.key === x.key)?.spotKey).filter(Boolean))]
+  const waterSpot = (spot) => run({ scope: 'spot', key: spot.key, name: spot.name, etype: 'watering', keys: spot.candidates })
+  const waterGroup = (group) => run({ scope: 'group', key: group.key, name: group.key.toLowerCase(), etype: 'watering', keys: group.candidates })
+  const feedProduct = (pg) => run({ scope: 'product', key: pg.key, name: pg.product, etype: 'fertilizing', keys: new Set(pg.rows.map((r) => r.key)) })
 
-  const waterSpot = (spot) => run({ scope: 'spot', key: spot.key, name: spot.name, etype: 'watering', keys: spot.candidates, spotsOf: () => [spot.key] })
-  const waterGroup = (group) => run({ scope: 'group', key: group.key, name: group.key.toLowerCase(), etype: 'watering', keys: group.candidates, spotsOf: spotsOfCreated })
-  const feedProduct = (pg) => run({ scope: 'product', key: pg.key, name: pg.product, etype: 'fertilizing', keys: new Set(pg.rows.map((r) => r.key)), spotsOf: () => [] })
+  // MF3: the spot row's Retry — every failed row of the spot in view, re-run as it failed. A run's failures
+  // complete THEIR run (same batch: the spot's, or the group's, whose one line and one Undo then cover them); a
+  // one-tap row's failure re-runs that row with its own type, leaving the done line the tap would have left.
+  // Focus lands once, after: on the Retry while anything still fails, else the done line the spot shrank to,
+  // else the spot row itself (other tasks' rows remain).
+  const retrySpot = async (spot) => {
+    if (writesHeld) return
+    const runs = new Map()
+    const singles = []
+    for (const r of spot.rows) {
+      const f = failed[r.key]
+      if (!f) continue
+      if (f.bid && batches[f.bid]) {
+        if (!runs.has(f.bid)) runs.set(f.bid, { etype: f.etype || r.eventType, body: f.body || undefined, keys: new Set() })
+        runs.get(f.bid).keys.add(r.key)
+      } else singles.push([r, f])
+    }
+    const landed = new Set()
+    let still = 0
+    for (const [bid, g] of runs) {
+      const total = g.keys.size
+      setBusy({ scope: 'spot', key: spot.key, done: 0, total, retry: true })
+      announce(`Retrying ${total} in ${spot.name}…`)
+      const res = await actions.runBulk(g.etype, g.keys, { ...RUN, bodyEventType: g.body, onProgress: (p) => setBusy({ scope: 'spot', key: spot.key, done: p.done, total: p.total, retry: true }) })
+      setBusy(null)
+      addLogged(care.logKey, res.created.map((x) => x.key))
+      const kind = KIND_OF[g.body || g.etype] || 'logged'
+      settle(bid, { scope: 'spot', target: spot.key, name: spot.name, kind, at: Date.now() }, res, { etype: g.etype, body: g.body || null })
+      for (const x of res.created) landed.add(x.key)
+      still += res.failed.length
+      announce(`${kind === 'watered' ? 'Watered' : 'Logged'} ${res.created.length} in ${spot.name}.` + (res.failed.length ? ' ' + notLoggedText(res.failed, spot.name) : ''))
+    }
+    for (const [r, f] of singles) {
+      const ok = await plantRun(r, f.body || undefined, { focus: false })
+      if (ok) landed.add(r.key); else still++
+    }
+    setFocusId(still ? 'retry:' + spot.key : spot.rows.every((r) => landed.has(r.key)) ? 'spot:' + spot.key : 'spotrow:' + spot.key)
+  }
 
   const notToday = (spot) => {
+    if (writesHeld) return
     const keys = spot.rows.map((r) => r.key)
     if (!keys.length) return
     skipMany(keys, care.getToken)
@@ -151,7 +228,10 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
         const n = { ...(cc.batches || {}) }
         if (stuck.length) n[bid] = { ...b, created: stuck, undoFailed: stuck.length }
         else delete n[bid]
-        return { ...cc, batches: n }
+        // An undone run leaves nothing to retry: its rows are simply due again, not "Not logged".
+        const f = { ...(cc.failed || {}) }
+        if (!stuck.length) for (const [k, v] of Object.entries(f)) if (v && v.bid === bid) delete f[k]
+        return { ...cc, batches: n, failed: f }
       })
       announce(`Undone: ${undone.length} ${b.kind === 'watered' ? 'waterings' : 'logs'} in ${b.name}.` + (stuck.length ? ` ${stuck.length} could not be undone — those logs are still saved.` : ''))
     }
@@ -159,7 +239,9 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   }
 
   // ── per-plant actions (D11): the one-tap chip, Moist, Skip — each leaves a done line in place ──────────────
-  const plantRun = async (row, bodyEventType) => {
+  // A failure stays on the row as "Not logged" + Retry, recording the type it posted; returns whether it landed.
+  const plantRun = async (row, bodyEventType, { focus = true } = {}) => {
+    if (writesHeld) return false
     const res = await actions.runBulk(row.eventType, new Set([row.key]), { concurrency: 1, excludeInFlight: true, bodyEventType })
     if (res.created.length) {
       addLogged(care.logKey, [row.key])
@@ -169,17 +251,23 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
         return { ...cc, failed: f, rowsDone: { ...(cc.rowsDone || {}), [row.key]: { kind, created: res.created[0], spot: row.spotKey } } }
       })
       announce(`${row.name}: ${kind}.`)
-      setFocusId('row:' + row.key)
-    } else if (res.failed.length) {
-      markFailed([row.key], true)
-      announce(`${row.name} not logged. Retry is on the row.`)
+      if (focus) setFocusId('row:' + row.key)
+      return true
     }
+    if (res.failed.length) {
+      setCare((cc) => ({ ...cc, failed: { ...(cc.failed || {}), [row.key]: { etype: row.eventType, body: bodyEventType || null } } }))
+      announce(`${row.name} not logged. Retry is on the row.`)
+      if (focus) setFocusId('row-retry:' + row.key)
+    }
+    return false
   }
   const rowProps = {
     onLog: (row) => plantRun(row, undefined),
     onMoist: (row) => plantRun(row, MOISTURE_CHECK_EVENT),
-    onRetry: (row) => plantRun(row, undefined),
+    // The row's Retry re-posts what failed — a failed Moist retries as Moist, never as the row's watering.
+    onRetry: (row) => plantRun(row, failed[row.key]?.body || undefined),
     onSkip: (row) => {
+      if (writesHeld) return
       skipMany([row.key], care.getToken)
       setCare((cc) => ({ ...cc, rowsDone: { ...(cc.rowsDone || {}), [row.key]: { kind: 'skipped', spot: row.spotKey } } }))
       announce(`Skipped ${row.name} for today.`)
@@ -200,6 +288,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
       announce(`Undone: ${row.name}.`)
     },
     undoBusy: false,
+    writesHeld,
   }
 
   const toggleIn = (field, key) => setCare((cc) => {
@@ -216,9 +305,14 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   }, [care.allEnriched])
   const groupBusy = busy && busy.scope === 'group' ? busy.key : null
 
-  const doneText = (bs) => {
+  // A spot's done text counts ITS share of a group run (MF3: each touched spot shrinks to its own done line —
+  // "Bag Area · watered 97", not the group's 154).
+  const doneText = (bs, spotKey) => {
     const counts = {}
-    for (const [, b] of bs) counts[b.kind] = (counts[b.kind] || 0) + (b.kind === 'not-today' ? 0 : b.created.length)
+    for (const [, b] of bs) {
+      const n = b.kind === 'not-today' ? 0 : (spotKey && b.scope === 'group' ? b.created.filter((x) => spotOfKey.get(x.key) === spotKey).length : b.created.length)
+      counts[b.kind] = (counts[b.kind] || 0) + n
+    }
     const parts = []
     for (const k of ['watered', 'fed', 'checked']) if (counts[k]) parts.push(`${k} ${counts[k]}`)
     if ('not-today' in counts) parts.push('not today')
@@ -230,16 +324,22 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     return [n.moist ? `${n.moist} moist` : null, n.skipped ? `${n.skipped} skipped` : null].filter(Boolean).join(' · ')
   }
 
+  // A batch an Undo can act on: a Not today, or a run that created something (a run whose every write failed
+  // leaves an empty batch for its Retry to complete — there is nothing in it to undo).
+  const undoable = ([, b]) => (b.scope === 'spot' || b.scope === 'nottoday') && (b.kind === 'not-today' || b.created.length > 0)
+
   const renderSpot = (spot) => {
     const bs = spotBatches(spot.key)
-    const own = bs.filter(([, b]) => b.scope === 'spot' || b.scope === 'nottoday')
+    const own = bs.filter(undoable)
     const handled = Object.values(rowsDone).some((d) => d.spot === spot.key)
-    const partial = bs.length && spot.rows.length ? doneText(bs) : null
+    const partial = bs.length && spot.rows.length ? doneText(bs, spot.key) : null
     const open = (c?.open || []).includes(spot.key)
+    const failedN = spot.rows.filter((r) => failed[r.key]).length
     return (
       <SpotRow key={spot.key} spot={spot} open={open} onToggle={() => toggleIn('open', spot.key)}
         busy={busy && busy.scope === 'spot' && busy.key === spot.key ? busy : null} groupBusy={groupBusy === spot.group ? groupBusy : null}
         handled={handled} partial={partial ? partial.replace(/^./, (x) => x.toUpperCase()) : null}
+        failedN={failedN} onRetry={() => retrySpot(spot)} writesHeld={writesHeld}
         onNotToday={() => notToday(spot)} onWater={() => waterSpot(spot)}>
         <SpotBody spot={spot} spotAll={spotAllByKey.get(spot.key) || []} exceptions={c?.exceptions?.[spot.key] ?? null}
           done={rowsDone} failed={failed} pendingKeys={actions.pendingKeys}
@@ -248,7 +348,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
           onShowAll={() => setCare((cc) => ({ ...cc, shown: { ...(cc.shown || {}), [spot.key]: 'all' } }))}
           rowProps={{ ...rowProps, undoBusy: !!undoing }}
           waterOther={spot.candidates.size > 0 && (
-            <button type="button" onClick={() => waterSpot(spot)} style={filledCommit} aria-label={`Water the other ${spot.candidates.size} in ${spot.name}`}>
+            <button type="button" onClick={writesHeld ? undefined : () => waterSpot(spot)} aria-disabled={writesHeld ? 'true' : undefined} style={filledCommit} aria-label={`Water the other ${spot.candidates.size} in ${spot.name}`}>
               {`Water the other ${spot.candidates.size}`}
             </button>
           )} />
@@ -265,11 +365,11 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     const bs = spotBatches(key)
     if (!bs.length) return null
     const name = bs[bs.length - 1][1].name && bs[bs.length - 1][1].scope !== 'group' ? bs[bs.length - 1][1].name : (spotAllByKey.get(key)?.[0]?.spotName || 'Spot')
-    const own = bs.filter(([, b]) => b.scope === 'spot' || b.scope === 'nottoday')
+    const own = bs.filter(undoable)
     const last = own[own.length - 1]
     const stuck = last && last[1].undoFailed
     return (
-      <SpotDoneLine key={key} spotKey={key} name={name} text={doneText(bs)} note={[rowNotes(key), stuck ? `${stuck} could not be undone` : null].filter(Boolean).join(' · ')}
+      <SpotDoneLine key={key} spotKey={key} name={name} text={doneText(bs, key)} note={[rowNotes(key), stuck ? `${stuck} could not be undone` : null].filter(Boolean).join(' · ')}
         onUndo={last ? () => undoBatch(last[0]) : null} undoBusy={undoing === (last && last[0])}
         undoLabel={last ? `Undo: ${name} ${last[1].kind === 'not-today' ? 'not today' : doneText([last])}` : undefined} />
     )
@@ -312,14 +412,14 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
         <FilterChipRow aria-label="Show tasks" data-testid="care-filter-tasks"
           options={presentTasks.map((t) => ({ value: t, label: TASK_LABEL[t] }))}
           selected={new Set(tasks)}
-          onToggle={(v) => { const n = new Set(tasks); if (n.has(v)) n.delete(v); else n.add(v); setAndSave({ ...filters, tasks: [...n] }) }}
-          onClear={tasks.length ? () => setAndSave({ ...filters, tasks: [] }) : undefined} />
+          onToggle={(v) => { const n = new Set(tasks); if (n.has(v)) n.delete(v); else n.add(v); changeFilters({ ...filters, tasks: [...n] }) }}
+          onClear={tasks.length ? () => changeFilters({ ...filters, tasks: [] }) : undefined} />
       )}
       {spotsPresent.length > 1 && !feedOnly && (
         <FilterChipRow aria-label="Show spots" data-testid="care-filter-spots"
           options={spotsPresent} selected={new Set(spotSel)} pinned={(c?.pinned || []).filter((k) => spotsPresent.some((s) => s.value === k))}
-          onToggle={(v) => { const n = new Set(spotSel); if (n.has(v)) n.delete(v); else n.add(v); setAndSave({ ...filters, spots: [...n] }) }}
-          onClear={spotSel.length ? () => setAndSave({ ...filters, spots: [] }) : undefined} />
+          onToggle={(v) => { const n = new Set(spotSel); if (n.has(v)) n.delete(v); else n.add(v); changeFilters({ ...filters, spots: [...n] }) }}
+          onClear={spotSel.length ? () => changeFilters({ ...filters, spots: [] }) : undefined} />
       )}
       {feedOnly && care.substrate && (
         <div data-testid="today-substrate-note" style={substrateNote}>
@@ -341,7 +441,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
                     <span style={{ display: 'block', fontSize: T.type.xs, color: P.mid }}>{[pg.method ? pg.method[0].toUpperCase() + pg.method.slice(1) : null, plural(n, 'plant', 'plants')].filter(Boolean).join(' · ')}</span>
                   </button>
                   <div style={{ display: 'flex', alignItems: 'center', paddingRight: 6 }}>
-                    <button type="button" onClick={b ? undefined : () => feedProduct(pg)} aria-disabled={b ? 'true' : undefined} aria-label={b ? `Feeding ${b.done} of ${b.total}…` : `${n === 1 ? 'Feed 1' : 'Feed all ' + n} with ${pg.product}`} style={tinted}>
+                    <button type="button" onClick={b || writesHeld ? undefined : () => feedProduct(pg)} aria-disabled={b || writesHeld ? 'true' : undefined} aria-label={b ? `Feeding ${b.done} of ${b.total}…` : `${n === 1 ? 'Feed 1' : 'Feed all ' + n} with ${pg.product}`} style={tinted}>
                       {b ? `Feeding ${b.done} of ${b.total}…` : (n === 1 ? 'Feed 1' : `Feed all ${n}`)}
                     </button>
                   </div>
@@ -368,7 +468,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
                 <h3 style={groupLabel}>{gk}</h3>
                 {g.spotsWithWater >= 2 && g.candidates.size > 0 && (
                   <button type="button" data-testid="care-group-bulk" data-group={gk}
-                    onClick={gBusy ? undefined : () => waterGroup(g)} aria-disabled={gBusy ? 'true' : undefined}
+                    onClick={gBusy || writesHeld ? undefined : () => waterGroup(g)} aria-disabled={gBusy || writesHeld ? 'true' : undefined}
                     aria-label={gBusy ? `Watering ${gBusy.done} of ${gBusy.total}…` : `Water all ${g.candidates.size} ${gk === OUTSIDE ? 'outside' : 'in ' + gk}`}
                     style={{ ...tinted, marginLeft: 'auto' }}>
                     {gBusy ? `Watering ${gBusy.done} of ${gBusy.total}…` : `Water all ${g.candidates.size}`}

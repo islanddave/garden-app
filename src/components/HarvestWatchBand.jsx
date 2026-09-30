@@ -90,7 +90,34 @@ function Chevron({ open }) {
 // Module-level so the hook's load callback stays referentially stable across renders.
 const normalize = (d) => (d && Array.isArray(d.candidates) ? d : { candidates: [], snoozed: [] })
 
-export default function HarvestWatchBand() {
+// V5-TODAYREDESIGN-001 S6 — THE DATA HOOK, split out of the band. The redesigned Today fetches at the PAGE: its
+// Harvest section's presence and header summary are read while the section's body (this band) is unmounted, so
+// the page calls this and hands the result in as `data`. Without `data` the band calls it itself — the fetch,
+// the retry and the refresh-on-return are this one call either way (useAmbientBandFetch).
+export function useHarvestWatchFeed() {
+  return useAmbientBandFetch('/api/harvests/watch?limit=200', normalize)
+}
+
+// The band's OWN selection, exported so a header summary names exactly the rows the band lists (plan-v2 §8 S6):
+// the ranked candidates, the snoozed rows, and panel Q2's slot allocation.
+export function watchSelection(data) {
+  const all = rankWatchCandidates(data?.candidates)
+  const snoozed = Array.isArray(data?.snoozed) ? data.snoozed.filter(s => s && s.plant_id != null) : []
+  return { all, snoozed, ...selectWatchDisplay(all) }
+}
+
+// `data` = useHarvestWatchFeed()'s result, fetched by the caller; `bare` = the band's rows only — no eyebrow,
+// title, card or outer margin — for a surface that is itself the band's heading (Today V2's Harvest section).
+// With neither, the render is the band as it always was.
+export default function HarvestWatchBand({ data, bare = false }) {
+  return data ? <WatchBand feed={data} bare={bare} /> : <OwnWatchBand bare={bare} />
+}
+
+function OwnWatchBand({ bare }) {
+  return <WatchBand feed={useHarvestWatchFeed()} bare={bare} />
+}
+
+function WatchBand({ feed, bare }) {
   const { fetch, getToken } = useApiFetch()
   const overlayNavigate = useOverlayNavigate()
   // V4-HANDEDNESSCONTROLS-001. The local read is synchronous, so the controls are in their final
@@ -116,7 +143,8 @@ export default function HarvestWatchBand() {
 
   // limit=200: the tail expands in place, so the band needs the whole queue in one response
   // (panel Q4 contract change — the server's default limit stays 5 for any client that forgets).
-  const { data, failed, reload: load } = useAmbientBandFetch('/api/harvests/watch?limit=200', normalize)
+  // The fetch itself is useHarvestWatchFeed() (above), run by the caller or by OwnWatchBand.
+  const { data, failed, reload: load } = feed
 
   // Fire the lazy chunk only when at least one row could actually use it.
   const needsWindows = Array.isArray(data?.candidates) && data.candidates.some(c => c?.variety_ref)
@@ -222,20 +250,18 @@ export default function HarvestWatchBand() {
       .catch(() => setSnoozeUi(u => ({ ...u, [id]: { busy: false, error: 'Could not save — try again.' } })))
   }, [fetch, load])
 
-  const all = rankWatchCandidates(data?.candidates)
-  const snoozed = Array.isArray(data?.snoozed) ? data.snoozed.filter(s => s && s.plant_id != null) : []
+  // PANEL Q2: slot allocation — 5 slots, any one project capped at 2 of them (watchSelection →
+  // selectWatchDisplay). A display device, not grouping; the capped-out rows are first in the tail.
+  const { all, snoozed, visible, overflow } = watchSelection(data)
 
   // BUG-READYBANDFETCH-001 — before the empty check: "could not ask" is not "nothing is coming".
-  if (failed && !data) return <AmbientBandNotice eyebrow="Looking ahead" onRetry={load} />
+  if (failed && !data) return <AmbientBandNotice eyebrow="Looking ahead" onRetry={load} bare={bare} />
 
   // Hidden entirely when there is nothing to show (or before the first load resolves). A non-empty
   // snoozed list keeps the band alive: R6 — the list must still be knowably complete while rows are
   // suppressed.
   if (all.length === 0 && snoozed.length === 0) return null
 
-  // PANEL Q2: slot allocation — 5 slots, any one project capped at 2 of them. A display device,
-  // not grouping; the capped-out rows are first in the tail.
-  const { visible, overflow } = selectWatchDisplay(all)
   const shownOverflow = overflow.slice(0, revealed)
   const hidden = overflow.length - shownOverflow.length
   const expanded = revealed > 0
@@ -392,18 +418,21 @@ export default function HarvestWatchBand() {
 
   const groups = groupWatchOverflow(shownOverflow)
 
+  // `bare` (V5-TODAYREDESIGN-001 S6): no card, no eyebrow / title / subtitle and no aria-label — the section
+  // that holds it is the heading and the landmark (an unnamed <section> is not a region). Rows unchanged.
   return (
     <section
-      aria-label="Worth checking soon"
+      aria-label={bare ? undefined : 'Worth checking soon'}
       // V5-TODAYSHAPE-001 — the Today layout gate's region anchor. Its ordered census identifies
       // this band by testid, not by heading text, so renaming the copy cannot silently drop it from
       // the census (a text-anchored census goes vacuous on a rename; this one goes red).
       data-testid="today-watch-band"
-      style={{
+      style={bare ? undefined : {
         backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 12,
         padding: '14px 16px', marginTop: 16,
       }}
     >
+      {!bare && (
       <div style={{ marginBottom: 8 }}>
         <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: P.light }}>
           Looking ahead
@@ -417,6 +446,7 @@ export default function HarvestWatchBand() {
           The start of a stream, not tonight&rsquo;s dinner.
         </div>
       </div>
+      )}
 
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column' }}>
         {visible.map(renderRow)}

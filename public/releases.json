@@ -18,6 +18,15 @@
     ]
   },
   {
+    "version": "4.162.1",
+    "date": "2026-09-29",
+    "highlights": [
+      "Today preview: Protect tonight and a Heads-up line, plus Harvest, Put-Up, Resting and household sections — all still inside the early preview switch; the current Today is unchanged",
+      "Today preview fixes: a Water or Feed tap can no longer log plants you didn't water after going Back or when the plant list fails to load",
+      "Sign-out now also resets the household view on this phone"
+    ]
+  },
+  {
     "version": "4.162.0",
     "date": "2026-09-29",
     "highlights": [

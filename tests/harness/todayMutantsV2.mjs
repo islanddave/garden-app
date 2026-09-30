@@ -49,15 +49,16 @@ export const MUTANTS_V2 = {
     killers: ['visibility', 'region-headcount', 'floors'],
     defect: 'an open body height:0; overflow:hidden (ancestor clip)',
   },
-  // At S2 there is no trigger predicate yet (S5), so the canary forces the one place every open state resolves:
-  // the visit's effective-open. S5 re-points it at triggers.js when the predicate exists.
+  // At S2 there was no trigger predicate, so the canary forced the visit's effective-open. S5 re-pointed it, as S2
+  // asked, at the predicate itself: the one evaluation at the ready point (triggers.js openAtStart) opens every
+  // section on the page — a trigger for everything, so what Dave last left closed, and what nothing urgent holds, opens.
   openAll: {
-    armedAt: 'S2', kind: 'chrome',
-    file: 'src/hooks/useTodayVisit.js',
-    find: "  if (!record) return false\n  const o = record.overlay?.[key]",
-    replace: "  if (!record || record) return true\n  const o = record.overlay?.[key]",
-    killers: ['section-open-set', 'first-screen', 'floors'],
-    defect: 'real-Chrome canary (Simplify 3): every section forced open — v2-remembered-conflict\'s closed care opens, the scroll ceiling trips',
+    armedAt: ['S2', 'S5'], kind: 'chrome',
+    file: 'src/lib/todayV2/triggers.js',
+    find: '  const overlay = {}, fired = {}\n  for (const key of TRIGGER_SECTIONS) {',
+    replace: "  const overlay = Object.fromEntries((present || []).map((k) => [k, 'open'])), fired = {}\n  for (const key of TRIGGER_SECTIONS) {",
+    killers: ['section-open-set', 'floors'],
+    defect: 'real-Chrome canary (Simplify 3): the trigger predicate forced open for every section on the page — the busy-seen / closed-today / conflict / routine / stale / past closes open, the ceilings trip',
   },
   // "Never reads": the provider's boot read never settles, so data-prefs-loaded stays false (it never lies at
   // S2 — nothing else sets it), the GET is never observed, and the server's remembered open never applies.
@@ -177,21 +178,75 @@ export const MUTANTS_V2 = {
   groupUndoPartial: { armedAt: "S4", kind: 'chrome', file: "src/components/today/v2/NeedsCare.jsx", find: "      const { undone, failed: stuck } = await actions.undoMany(b.created, { concurrency: 4 })\n", replace: "      const { undone, failed: stuck } = await actions.undoMany(b.created.slice(1), { concurrency: 4 })\n", killers: ["group-water-all", "header-text"], defect: "MF3: the group Undo does not delete exactly the created ids (one is left logged)" },
   dropNotToday: { armedAt: "S4", kind: 'chrome', file: "src/components/today/v2/SpotRow.jsx", find: "          <button type=\"button\" onClick={disabled || busy ? undefined : onNotToday} aria-disabled={disabled || busy ? 'true' : undefined} aria-label={'Not today: ' + spot.name} style={outlineBtn}>Not today</button>\n", replace: "", killers: ["header-text", "floors"], defect: "the spot Not today control is missing" },
   doneLineVanishes: { armedAt: "S4", kind: 'chrome', file: "src/components/today/v2/SpotRow.jsx", find: "export function SpotDoneLine({ spotKey, name, text, onUndo, undoBusy, undoLabel, note }) {\n  return (", replace: "export function SpotDoneLine({ spotKey, name, text, onUndo, undoBusy, undoLabel, note }) {\n  return null && (", killers: ["group-water-all", "back-restore"], defect: "the done line is not held for the visit (a logged spot vanishes). The second killer is the shell gate's back-restore, which this matrix does not run" },
-  // Re-scheduled S3+S4 → S5+S6 (orchestrator, 2026-09-29): plan §9.1(l) caps the page at 4 design surfaces (glance
-  // card, bar, band, row card) and the merged S3 + S4 page carries 3, so one extra card is still a LEGAL page there
-  // and neither killer can fire (the mutant SURVIVED the S3 + S4 matrix, twice). maxFingerprints stays 4 on purpose:
-  // lowering it to the measured 3 would be a frozen count S5/S6 must bump.
-  extraCardFingerprint: { armedAt: ["S5", "S6"], kind: 'chrome', file: "src/components/today/v2/NeedsCare.jsx", find: "<div key={gk} data-testid=\"care-group\" data-group={gk} style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs }}>", replace: "<div key={gk} data-testid=\"care-group\" data-group={gk} style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs, border: '1px solid #d4c9be', borderRadius: 12, background: '#ffffff' }}>", killers: ["visual-census", "region-headcount"], defect: "a fifth (r12) card treatment is added. Re-scheduled to S5+S6: baseline 3 of 4 design surfaces at S3+S4 (measured on v2-frost, 2026-09-29); re-arm when the page carries all 4, and if it never does, replace the count with an identity check against the 4 design fingerprints" },
+  // Re-scheduled S3+S4 → S5+S6 (orchestrator, 2026-09-29): plan §9.1(l) capped the page at 4 fingerprints, but the
+  // glance card and the row card are one material, so the merged page carries 3 and one extra card was still a LEGAL
+  // page (the mutant SURVIVED the S3 + S4 matrix, twice). Armed at integration 2 against the two families that can
+  // see a card treatment: visual-census, now an IDENTITY check (every fingerprint is one of the pinned design
+  // surfaces), and card-nesting (plan-v2 "card-in-card → none") — the r12 group card holds the spot row cards.
+  // region-headcount, its old second killer, counts elements and cannot see a style.
+  extraCardFingerprint: { armedAt: ["S5", "S6"], kind: 'chrome', file: "src/components/today/v2/NeedsCare.jsx", find: "<div key={gk} data-testid=\"care-group\" data-group={gk} style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs }}>", replace: "<div key={gk} data-testid=\"care-group\" data-group={gk} style={{ display: 'flex', flexDirection: 'column', gap: T.space.xs, border: '1px solid #d4c9be', borderRadius: 12, background: '#ffffff' }}>", killers: ["visual-census", "card-nesting"], defect: "an extra (r12) card treatment around each Needs care group: a fingerprint that is none of the design surfaces, and a card holding cards" },
 
-  // ── S5: protect tonight + heads-up
-  openNone: P('S5', ['section-open-set', 'first-screen'], 'real-Chrome canary (Simplify 3): the trigger predicate forced false — nothing auto-opens'),
-  coldRowsInNeedsCare: P('S5', ['region-headcount', 'header-text'], 'cold rows render in two homes'),
-  pickLinkMissing: P('S5', ['region-headcount', 'first-screen'], 'the "Pick what\'s ripe first" link is gone'),
+  // ── S4g: Needs care follow-ups (wave 4). Exact source text; each killed by v2-busy's spot-retry run (MF3).
+  dropSpotRetry: { armedAt: 'S4g', kind: 'chrome', file: 'src/components/today/v2/SpotRow.jsx', find: '      {failing && (\n', replace: '      {false && (\n', killers: ['header-text', 'spot-retry', 'retry-focus'], defect: 'MF3: a spot holding failed writes shows no "N not logged" line and no Retry — the failure is visible only inside the opened spot' },
+  retryNewBatch: { armedAt: 'S4g', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: "      settle(bid, { scope: 'spot', target: spot.key, name: spot.name, kind, at: Date.now() }, res, { etype: g.etype, body: g.body || null })\n", replace: "      settle(newId(), { scope: 'spot', target: spot.key, name: spot.name, kind, at: Date.now() }, res, { etype: g.etype, body: g.body || null })\n", killers: ['spot-retry', 'header-text'], defect: 'MF3: a Retry lands in a batch of its own instead of completing the run it failed in — the run\'s one Undo leaves the retried writes logged' },
+  spotShareIsGroupTotal: { armedAt: 'S4g', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: "const n = b.kind === 'not-today' ? 0 : (spotKey && b.scope === 'group' ?", replace: "const n = b.kind === 'not-today' ? 0 : (false && b.scope === 'group' ?", killers: ['group-water-all', 'header-text'], defect: 'MF3: after a group Water all every touched spot reads the GROUP\'s total ("Trough · watered 152") instead of its own share' },
+  noFilterAnnouncement: { armedAt: ['S3', 'S4g'], kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '    announce(filterAnnouncement(filterResult(care.rows, next)))\n', replace: '', killers: ['announce', 'announce-once'], defect: '§2.6: a filter change says nothing through the status region (S4\'s state)' },
+  emptiedTitleStays: { armedAt: 'S4g', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: "      title: care.length ? 'Needs care' : needs.caughtUp.title,\n", replace: "      title: 'Needs care',\n", killers: ['header-text', 'empty-focus'], defect: '§2.5: an emptied Needs care keeps the title "Needs care" (S4\'s state) — the header the emptying action focuses does not say it is caught up' },
+  dropCaughtUpSummary: { armedAt: 'S4g', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '        : needs.caughtUp.summary,\n', replace: '        : null,\n', killers: ['caught-up', 'empty-focus'], defect: '§2.5: the emptied header loses its "N logged today, M covered by rain" line' },
+  announceEveryRender: { armedAt: ['S3', 'S4g'], kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: "  const feedOnly = tasks.length === 1 && tasks[0] === 'feed'\n", replace: "  const feedOnly = tasks.length === 1 && tasks[0] === 'feed'\n  useEffect(() => { announce(filterAnnouncement(filterResult(care.rows, filters))) })\n", killers: ['announce-once', 'announce'], defect: '§2.6: the filter result is said from a render effect — every render repeats it and talks over the run results (a bulk\'s "Watered N…")' },
 
-  // ── S6: harvest, put-up, resting, household, sow link; a moved region deleted inside its owner, ×10
-  ...Object.fromEntries(['watchBand', 'compose', 'putUp', 'dormant', 'dryList', 'feedSuppressed', 'rainNote', 'basisStamp', 'droughtLine', 'leafLine']
-    .map((r) => [`dropRegionInOwner_${r}`, P('S6', ['region-headcount', 'first-screen'], `the moved region '${r}' is deleted inside its V2 owner`)])),
-  sowLinesDuringFreeze: P('S6', ['header-text', 'region-headcount'], 'dated sow lines render during the 2027 freeze'),
+  // ── S5: protect tonight + heads-up (patterns filled by S5, 2026-09-29; exact source text — the plugin throws on a
+  // miss). The trigger-predicate mutants are cells of the triggers.js unit table (below, §13 Simplify 3); these three
+  // and openAll (S2 block, re-pointed) are the real-Chrome half. reorderSections (S4 block) arms with S5 too.
+  openNone: {
+    armedAt: 'S5', kind: 'chrome',
+    file: 'src/lib/todayV2/triggers.js',
+    find: '    if (!reopens(t, resolve ? resolve(key) : null, planDate)) continue\n',
+    replace: '    continue\n',
+    killers: ['section-open-set', 'first-screen'],
+    defect: 'real-Chrome canary (Simplify 3): the trigger predicate forced false — nothing auto-opens (frost, chill first seen, the storage window, small pots)',
+  },
+  coldRowsInNeedsCare: {
+    armedAt: 'S5', kind: 'chrome',
+    file: 'src/components/today/v2/useNeedsCare.js',
+    find: "const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'overwintering'])",
+    replace: "const CARE_NEEDS = new Set(['water_due', 'no_history', 'fertilize', 'pest', 'overwintering', 'cold'])",
+    // S5: the rows a second home adds carry no task, so no spot renders them — they show as a header count that no
+    // longer matches its spots (S0 predicted region-headcount; the count families are the ones that can see it).
+    killers: ['header-text', 'count-invariant'],
+    defect: 'cold rows join Needs care as well as Protect (two homes): its header counts 238 over spots that sum to 233',
+  },
+  pickLinkMissing: {
+    armedAt: 'S5', kind: 'chrome',
+    file: 'src/components/today/v2/ProtectTonight.jsx',
+    find: '      {protect.pick && (\n',
+    replace: '      {false && protect.pick && (\n',
+    killers: ['region-headcount', 'first-screen'],
+    defect: 'the "Pick what\'s ripe first" link is gone from a frost / freeze night',
+  },
+
+  // ── S6: harvest, put-up, resting, household, sow link (patterns filled by S6, 2026-09-29; exact source text — the
+  // plugin throws on a miss). dropRegionInOwner ×10: a region the redesign MOVED into an owner (§9.1 REGIONS) deleted
+  // inside that owner. Killers: region-headcount (the owner opened, the region counted) and owner-floors (S6's
+  // family: the owner opened is shorter than its recorded floor). S0 predicted first-screen, which cannot see them —
+  // every one of these owners is closed on the first screen, and the glance's regions sit behind its tap (D1).
+  // Four of the ten live in S3's / S4's files (GlanceCard.jsx; NeedsCare.jsx, S4g's this wave): a line they rewrite
+  // re-points its pattern here.
+  dropRegionInOwner_watchBand: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<HarvestWatchBand data={bands.watch} bare />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'watchBand' (today-watch-band) is deleted inside Harvest" },
+  dropRegionInOwner_compose: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<ComposeHarvestBand data={bands.compose} bare />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'compose' (compose-harvest-band) is deleted inside Harvest" },
+  dropRegionInOwner_putUp: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<PutUpUseSoonBand data={bands.soon} bare />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'putUp' (putup-use-soon) is deleted inside From your Put-Up" },
+  dropRegionInOwner_dormant: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: '<DormantList plan={plan} bare resumed={resumedSet} onResumed={markResumed} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'dormant' (care-dormant) is deleted inside Resting" },
+  dropRegionInOwner_dryList: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<DroughtList plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'dryList' (care-drought-list) is deleted inside the glance details" },
+  dropRegionInOwner_feedSuppressed: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/NeedsCare.jsx', find: '<FeedSuppressedList plan={care.plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'feedSuppressed' (care-feed-suppressed) is deleted at the foot of Needs care" },
+  dropRegionInOwner_rainNote: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<RainNote plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'rainNote' (care-rain-note) is deleted inside the glance details" },
+  dropRegionInOwner_basisStamp: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '{basis && <p data-testid="today-basis-stamp"', replace: '{false && basis && <p data-testid="today-basis-stamp"', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'basisStamp' (today-basis-stamp) is deleted inside the glance details" },
+  dropRegionInOwner_droughtLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<DroughtLine plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'droughtLine' (drought-line) is deleted inside the glance details" },
+  dropRegionInOwner_leafLine: { armedAt: 'S6', kind: 'chrome', file: 'src/components/today/v2/GlanceCard.jsx', find: '<LeafWetnessLine plan={plan} />', replace: '<></>', killers: ['region-headcount', 'owner-floors'], defect: "the moved region 'leafLine' (leaf-wetness-line) is deleted inside the glance details" },
+  // The freeze switched off at its one consumer: the page asks for sow lines and the Sow link row prints the engine's
+  // "Sow X by …" lines above its door. Killers: header-text (the row's exact words, v2-busy / v2-frost, whose 09-24
+  // engine run has two such lines) and floors (the row is the page's last block, so the lines push the last ink and
+  // the document past their 2% ceilings). S0 predicted region-headcount, which counts presence and cannot see ADDED lines.
+  sowLinesDuringFreeze: { armedAt: 'S6', kind: 'chrome', file: 'src/pages/TodayV2.jsx', find: 'sowLines: !SOW_DATED_LINES_FROZEN', replace: 'sowLines: true', killers: ['header-text', 'floors'], defect: 'dated sow lines render during the 2027 freeze' },
 
   // ── §13 Simplify 3: trigger-predicate mutants → cells of the triggers.js unit table (S5 writes the test)
   ignoreRemembered: U('S5', 'Layer 1 dropped — a same-day ack no longer holds'),

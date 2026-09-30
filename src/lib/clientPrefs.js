@@ -18,6 +18,8 @@
 // readLastHarvestUnit) — clearing only the global key would leave the value that is actually read,
 // producing a fix that looks done and is not. The two are one preference under two spellings, so
 // they are cleared together.
+import { SHOW_OTHERS_KEY } from './householdView.js'
+
 export const CLIENT_PREF_KEYS = [
   'croprank.v1',        // cropLogLedger.js — crop-chip band ordering
   'logone.lastPlant',   // EventNew.jsx — last single-log planting
@@ -58,6 +60,14 @@ export const CLIENT_PREF_KEYS = [
   // A device choice, but a PERSON's choice on a shared phone: left behind, the next person to sign in
   // lands on the previous person's preview page. Plan-v2 §6.10.
   'garden.todayV2',
+  // V5-TODAYREDESIGN-001 (integration 2, 2026-09-29; the orchestrator's call on S6's decision 2) — the household view
+  // switch, SHOW_OTHERS_KEY (lib/householdView.js): per-DEVICE and never scrubbed before, so on a shared
+  // phone the next person to sign in inherited the last person's choice and could be shown the other's care — V1's
+  // pill sets it and the redesigned Today reads the same switch (SF6). Cleared like garden.todayV2, consistent with
+  // SF11: after a sign-out the household view starts OFF, on V1 and V2 alike. By import, not a literal:
+  // householdView.js is the one file that spells the key (householdView.test.js pins that) and imports nothing,
+  // so there is no cycle.
+  SHOW_OTHERS_KEY,
 ]
 
 export const CLIENT_PREF_KEY_PREFIXES = [

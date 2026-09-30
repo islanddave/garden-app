@@ -59,8 +59,13 @@ export function locationIndex(payload) {
 // The care rows, joined to what the page needs to arrange them: spot + group from /api/plants location_id,
 // container type, the planting's thumbnail (V1's photo shape, BUG-TIERLESSPHOTOS-001), and the plan item's
 // days_since / rain_note (buildCareNeeded does not carry them). `rows` = buildCareNeeded rows.
+// Location spots need BOTH reads: the locations tree AND /api/plants, whose location_id places each row. Without
+// the plant list (a failed /api/plants — its caller passes null) every row would land in one "Unplaced" spot whose
+// Water all covers the whole garden (review 4160.2 IMPORTANT-3), so it falls back to project spots exactly as a
+// failed /api/locations does.
 export function enrichRows(rows, { plan, plants, locations }) {
   const idx = locationIndex(locations)
+  const placed = idx.ok && Array.isArray(plants)
   const plantById = new Map((Array.isArray(plants) ? plants : []).map((p) => [p.id, p]))
   const itemBy = new Map()
   for (const need of ['water_due', 'no_history', 'fertilize', 'pest', 'overwintering']) {
@@ -69,7 +74,7 @@ export function enrichRows(rows, { plan, plants, locations }) {
   return rows.map((r) => {
     const pl = plantById.get(r.plantingId)
     const it = itemBy.get(r.key) || {}
-    const spot = idx.ok
+    const spot = placed
       ? idx.spotOf(pl && pl.location_id)
       : { key: 'project:' + (r.projectId || 'none'), name: r.project || 'Other', parentPath: null, group: null }
     return {
@@ -186,22 +191,26 @@ export function taskCounts(rows) {
 
 // Bulk candidates for one spot's rows (§2.4 candidateKeys, careNeeded.js's predicate): watering rows, minus
 // in-ground beds while bed-wait is on — Outside only (D7). `bedsWaiting` = the beds that rule held back.
-export function waterCandidates(rows, group, bedWait) {
+// `exclude` (S4g, MF3): keys a bulk never takes — rows whose write failed this visit, which only their Retry
+// re-posts (so a fresh Water all cannot split one run's failures into a second batch). Absent = none.
+export function waterCandidates(rows, group, bedWait, exclude) {
   const wait = !!bedWait && (group == null || group === OUTSIDE)
   const keys = new Set()
   let bedsWaiting = 0
   for (const r of rows) {
     if (r.eventType !== 'watering') continue
     if (wait && r.inGround) { bedsWaiting++; continue }
+    if (exclude && exclude.has(r.key)) continue
     keys.add(r.key)
   }
   return { keys, bedsWaiting }
 }
 
 // The page's model for one render. `rows` = the enriched rows ON THE LIST (logged and skipped removed);
-// `held` = the visit's order ({groups, spots}); `tasks` / `spots` = the filter selections (empty = all).
-// Filters hide, never re-sort (§2.6). New spots (a refetch) are appended to their group in held order's tail.
-export function buildModel(rows, { held, tasks = [], spots = [], bedWait = false } = {}) {
+// `held` = the visit's order ({groups, spots}); `tasks` / `spots` = the filter selections (empty = all);
+// `exclude` = keys no bulk takes (waterCandidates). Filters hide, never re-sort (§2.6). New spots (a refetch)
+// are appended to their group in held order's tail.
+export function buildModel(rows, { held, tasks = [], spots = [], bedWait = false, exclude } = {}) {
   const taskSet = new Set(tasks), spotSet = new Set(spots)
   const inTask = (r) => !taskSet.size || taskSet.has(r.task)
   const bySpot = new Map()
@@ -222,7 +231,7 @@ export function buildModel(rows, { held, tasks = [], spots = [], bedWait = false
       const s = bySpot.get(k)
       if (spotSet.size && !spotSet.has(k)) continue
       const view = s.all.filter(inTask)
-      const cand = waterCandidates(view, s.group, bedWait)
+      const cand = waterCandidates(view, s.group, bedWait, exclude)
       list.push({
         ...s, rows: view, counts: taskCounts(view), allCounts: taskCounts(s.all),
         dryFastest: view.filter((r) => isWater(r) && SMALL_VESSEL_TYPES.has(r.containerType)).length,
@@ -247,6 +256,46 @@ export function productGroups(rows) {
     map.get(k).rows.push(r)
   }
   return [...map.values()].sort((a, b) => (b.rows.length - a.rows.length) || a.product.localeCompare(b.product))
+}
+
+// §2.6 / §5.6 (S4g): what a filter selection leaves in view — by NeedsCare's own rules: a task with no rows drops
+// out, a spot with no rows of the chosen tasks drops out, and the Feed filter alone shows products (D12), not
+// spots — and the one sentence the status region says about it: "Needs care: Water, 168 in 8 spots."
+export function filterResult(rows, { tasks = [], spots = [] } = {}) {
+  const present = TASKS.filter((t) => rows.some((r) => r.task === t))
+  const ts = tasks.filter((t) => present.includes(t))
+  const inTask = rows.filter((r) => r.task && (!ts.length || ts.includes(r.task)))
+  const names = new Map()
+  for (const r of inTask) if (!names.has(r.spotKey)) names.set(r.spotKey, r.spotName)
+  const ss = spots.filter((k) => names.has(k))
+  const view = inTask.filter((r) => !ss.length || ss.includes(r.spotKey))
+  const feedOnly = ts.length === 1 && ts[0] === 'feed'
+  return { tasks: ts, spots: ss.map((k) => names.get(k)), n: view.length, spotCount: new Set(view.map((r) => r.spotKey)).size, products: feedOnly ? productGroups(view).length : null }
+}
+const andList = (xs) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`)
+export function filterAnnouncement({ tasks, spots, n, spotCount, products }) {
+  const t = tasks.length ? andList(tasks.map((x) => TASK_LABEL[x])) : null
+  const s = spots.length ? andList(spots) : null
+  const label = t && s ? `${t} in ${s}` : (t || s || 'everything')
+  if (!n) return `Needs care: ${label}, nothing due.`
+  const where = products != null ? `${products} product${products === 1 ? '' : 's'}` : `${spotCount} spot${spotCount === 1 ? '' : 's'}`
+  return `Needs care: ${label}, ${n} in ${where}.`
+}
+
+// §2.5 (S4g): an emptied Needs care keeps its header, which reads "Needs care · all caught up" over "95 logged
+// today, 70 covered by rain". LOGGED = the plan's care items the read path marks `done` today (logged anywhere:
+// another device, V1, a rain event on a listed item — lambda/daily-plan-read/doneEvents.js) ∪ this tab's
+// today-logged store (logged here, not yet in a plan read), by key, care needs only (a Protect key is not Needs
+// care's). RAIN = the plan's rain_skipped. Neither → no summary (the title already says it).
+export const CAUGHT_UP_TITLE = 'Needs care · all caught up'
+export function loggedTodayCount(plan, storeKeys = []) {
+  const keys = new Set()
+  for (const need of Object.keys(TASK_OF_NEED)) for (const it of (plan && Array.isArray(plan[need]) ? plan[need] : [])) if (it && it.done && it.id) keys.add(it.id + ':' + need)
+  for (const k of storeKeys) if (Object.hasOwn(TASK_OF_NEED, String(k).split(':')[1])) keys.add(k)
+  return keys.size
+}
+export function caughtUpSummary({ logged, rain }) {
+  return [logged ? `${logged} logged today` : null, rain ? `${rain} covered by rain` : null].filter(Boolean).join(', ') || null
 }
 
 // SF8: the Needs care summary carries REASONS and spots, never counts (the counts live on the chips and the

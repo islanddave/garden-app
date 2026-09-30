@@ -21,11 +21,11 @@ const SKIP_W = 48
 const SKIP_GAP = 8
 const SR_ONLY = { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' }
 
-function CareChipButton({ row, pending, onLog }) {
+function CareChipButton({ row, pending, onLog, held }) {
   const s = SEVERITY_STYLES[row.tier] || SEVERITY_STYLES.gold
   return (
     <button
-      type="button" onClick={() => onLog(row)} disabled={pending}
+      type="button" onClick={held ? undefined : () => onLog(row)} disabled={pending} aria-disabled={held ? 'true' : undefined}
       aria-label={'Log ' + NEED_LABEL[row.need] + ' for ' + row.name}
       style={{
         flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
@@ -39,10 +39,10 @@ function CareChipButton({ row, pending, onLog }) {
   )
 }
 
-function MoistureButton({ row, pending, onMoist }) {
+function MoistureButton({ row, pending, onMoist, held }) {
   return (
     <button
-      type="button" onClick={() => onMoist(row)} disabled={pending} data-testid="care-moist"
+      type="button" onClick={held ? undefined : () => onMoist(row)} disabled={pending} aria-disabled={held ? 'true' : undefined} data-testid="care-moist"
       aria-label={'Checked ' + row.name + ' — still moist'}
       style={{
         flexShrink: 0, width: 48, minHeight: ROW_TAP_MIN, border: 'none',
@@ -58,7 +58,9 @@ function MoistureButton({ row, pending, onMoist }) {
 
 const DONE_WORD = { watered: 'watered', moist: 'moist', fed: 'fed', checked: 'checked', skipped: 'skipped', 'not-today': 'not today' }
 
-export default function PlantCareRow({ row, testid = 'care-row', reason, pending, failed, done, onLog, onMoist, onSkip, onUndo, onRetry, undoBusy }) {
+// writesHeld (review 4160.2 IMPORTANT-2): the page holds its writes — Skip, Moist, the care chip and Retry are inert
+// (aria-disabled, no handler) until it lets go; Undo stays live.
+export default function PlantCareRow({ row, testid = 'care-row', reason, pending, failed, done, onLog, onMoist, onSkip, onUndo, onRetry, undoBusy, writesHeld = false }) {
   if (done) {
     return (
       <div data-testid="care-row-done" data-key={row.key} role="listitem" style={doneRow}>
@@ -90,15 +92,15 @@ export default function PlantCareRow({ row, testid = 'care-row', reason, pending
         </span>
       </Link>
       {failed ? (
-        <button type="button" onClick={() => onRetry(row)} disabled={pending} aria-label={'Retry: ' + row.name} style={{ ...outlineBtn, margin: '2px 4px', minHeight: 44 }}>Retry</button>
+        <button type="button" onClick={writesHeld ? undefined : () => onRetry(row)} disabled={pending} aria-disabled={writesHeld ? 'true' : undefined} aria-label={'Retry: ' + row.name} style={{ ...outlineBtn, margin: '2px 4px', minHeight: 44 }}>Retry</button>
       ) : (
         <>
-          <button type="button" onClick={() => onSkip(row)} aria-label={'Skip ' + row.name + ' today'}
+          <button type="button" onClick={writesHeld ? undefined : () => onSkip(row)} aria-disabled={writesHeld ? 'true' : undefined} aria-label={'Skip ' + row.name + ' today'}
             style={{ flexShrink: 0, width: SKIP_W, marginRight: SKIP_GAP, minHeight: ROW_TAP_MIN, border: 'none', borderLeft: '1px solid ' + P.border, background: 'none', color: P.mid, cursor: 'pointer', fontSize: '0.7rem' }}>
             Skip
           </button>
-          {canMoistureCheck(row) && <MoistureButton row={row} pending={pending} onMoist={onMoist} />}
-          <CareChipButton row={row} pending={pending} onLog={onLog} />
+          {canMoistureCheck(row) && <MoistureButton row={row} pending={pending} onMoist={onMoist} held={writesHeld} />}
+          <CareChipButton row={row} pending={pending} onLog={onLog} held={writesHeld} />
         </>
       )}
     </div>

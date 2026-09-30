@@ -1,5 +1,5 @@
 // useDailyPlan — fetch hook for GET /api/daily-plan (DRG-TODAY-002 read model).
-// Contract: { data, loading, refreshing, error, reload, refresh }
+// Contract: { data, loading, refreshing, seedPending, error, reload, refresh }
 //   data: { schema_version, plan_date, generated_at, has_plan, plan } | null
 //     plan (when has_plan): { weather, hydrology, substrate, counts,
 //                             water_due[], no_history[], fertilize[], pest[], cold[], dormant[] }
@@ -63,6 +63,11 @@
 // never flips on, a failure keeps the seeded plan). So Back to the redesigned Today paints the page it
 // left, under the page-scroll manager's restore, instead of a "Loading…" frame. Another user never reads
 // it (keyed by id), yesterday's plan is never painted as today's, and a successful fetch replaces it.
+//
+// `seedPending` (review 4160.2 IMPORTANT-2, V5-TODAYREDESIGN-001 integration 2): true from a SEEDED mount until its
+// first fetch settles. A seed is the plan as read BEFORE the page was left, so a watering logged elsewhere meanwhile
+// (a planting's own Water, then Back) is still due in it; a caller holds its write controls over that window. False
+// on every unseeded mount, so the existing callers never see it change.
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { useApiFetch } from '../lib/api.js'
 import { todayLocalISO } from '../lib/dateLocal.js'
@@ -91,6 +96,7 @@ export function useDailyPlan({ includeHousehold = false, seed } = {}) {
   const [data, setData] = useState(seeded)
   const [loading, setLoading] = useState(!seeded)
   const [refreshing, setRefreshing] = useState(false)
+  const [seedPending, setSeedPending] = useState(!!seeded)
   const [error, setError] = useState(null)
   const loadCounterRef = useRef(0)
   const inflightRef = useRef(false)
@@ -132,7 +138,7 @@ export function useDailyPlan({ includeHousehold = false, seed } = {}) {
       // error. A failed revalidation over a good plan is silent by design (see header).
       if (!isRefresh || !hasDataRef.current) setError(err?.message ?? 'Failed to load your plan')
     } finally {
-      if (loadCounterRef.current === my) { setLoading(false); setRefreshing(false) }
+      if (loadCounterRef.current === my) { setLoading(false); setRefreshing(false); setSeedPending(false) }
       lastSettledAtRef.current = Date.now()
       inflightRef.current = false
       // BUG-TODAYHOUSEHOLDRELOADDROP-001 — the question changed while this request was open. ONE trailing
@@ -177,5 +183,5 @@ export function useDailyPlan({ includeHousehold = false, seed } = {}) {
     }
   }, [refresh])
 
-  return { data, loading, refreshing, error, reload, refresh }
+  return { data, loading, refreshing, seedPending, error, reload, refresh }
 }

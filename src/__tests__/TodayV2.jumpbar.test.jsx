@@ -5,21 +5,31 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-const { planState, prefsState, auth, fetchMock, kb } = vi.hoisted(() => ({
-  planState: { current: null },
-  prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
-  auth: { user: { id: 'u' } },
-  fetchMock: vi.fn(async () => ({ ok: true })),
-  kb: { up: false },
-}))
+const { planState, prefsState, auth, fetchMock, api, kb } = vi.hoisted(() => {
+  const fetchMock = vi.fn(async () => ({ ok: true }))
+  return {
+    planState: { current: null },
+    prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
+    auth: { user: { id: 'u' } },
+    fetchMock,
+    // ONE api object for the file, as the real useApiFetch memoises its own (integration 2, seam 5).
+    api: { fetch: fetchMock },
+    kb: { up: false },
+  }
+})
 vi.mock('../hooks/useDailyPlan.js', () => ({ useDailyPlan: () => planState.current }))
 vi.mock('../context/PrefsContext.jsx', () => ({ usePrefs: () => prefsState.current }))
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => auth }))
-vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => ({ fetch: fetchMock }) }))
+vi.mock('../lib/api.js', async (orig) => ({ ...(await orig()), useApiFetch: () => api }))
 vi.mock('../lib/keyboardChrome.js', async (orig) => ({ ...(await orig()), useKeyboardChromeSuppressed: () => kb.up }))
 // S4 (merged with S3): the ready point waits for Needs care's /api/plants + /api/locations (useCachedFetch) —
 // answered here as S2's TodayV2.test.jsx answers them, so the bar paints on the first mount of the file too.
 vi.mock('../hooks/useCachedFetch.js', () => ({ useCachedFetch: (path) => ({ data: path === '/api/plants' ? [] : { locations: [] }, loading: false, error: null }) }))
+// S6: the plan-independent bands (Harvest, Put-Up, the Sow row's lines) are fetched at the page and the ready point
+// waits for them (useTodayBands); this file is not about them, so they answer at once, settled and empty.
+vi.mock('../components/today/v2/useTodayBands.js', () => ({
+  useTodayBands: () => ({ settled: true, watch: { data: null, failed: false, reload() {} }, compose: { data: null, settled: true, reload() {} }, soon: { data: null, failed: false, reload() {} }, sow: { items: null, settled: true }, harvest: { present: false, summary: null }, putup: { present: false, summary: null } }),
+}))
 
 import TodayV2 from '../pages/TodayV2.jsx'
 import { PageScrollProvider } from '../hooks/usePageScrollManager.js'

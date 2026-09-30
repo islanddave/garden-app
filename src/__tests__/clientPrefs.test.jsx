@@ -97,7 +97,7 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     }
   })
 
-  it('the enumerated list is exactly the nine keys plus the three prefixes', () => {
+  it('the enumerated list is exactly these keys and prefixes', () => {
     // Pins the SCOPE, not the behaviour: widening this set is a deliberate decision, not a drive-by.
     // Widened by V4-USERPREFS-001 (2026-08-17), deliberately: the three keys added there are
     // per-device CACHES of per-user server state, read synchronously to seed first render. That
@@ -112,11 +112,13 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     // Widened by V5-TODAYREDESIGN-001 S2 (2026-09-28): 'garden.todayV2' (the per-device preview switch — a
     // person's choice on a shared phone) and the redesigned Today's two localStorage families,
     // 'today-sections:' (the remembered open/closed mirror) and 'today-seen:' (chill first-seen, S5).
+    // Widened by V5-TODAYREDESIGN-001 integration 2 (2026-09-29): 'garden.today.showOthers', the household view
+    // switch both Today pages read — a person's choice on a shared phone, like 'garden.todayV2'.
     expect(CLIENT_PREF_KEYS).toEqual([
       'croprank.v1', 'logone.lastPlant', 'lastHarvestUnit',
       'quicklog.defaultAllSelected', 'garden.releasesSeenVersion', 'ui.handedness',
       'nav.barLayout.v1', 'nav.morePins.v1', 'nav.morePins.pending.v1',
-      'garden.todayV2',
+      'garden.todayV2', 'garden.today.showOthers',
     ])
     expect(CLIENT_PREF_KEY_PREFIXES).toEqual(['lastHarvestUnit:', 'today-skipped:', 'today-unskipped:', 'today-sections:', 'today-seen:'])
   })
@@ -167,6 +169,21 @@ describe('clearClientPrefs — removes exactly the enumerated keys', () => {
     for (const f of families) expect([...CLIENT_PREF_KEY_PREFIXES, ...CLIENT_SESSION_KEY_PREFIXES]).toContain(f)
     expect(src).toContain("'garden.todayV2'")
     expect(CLIENT_PREF_KEYS).toContain('garden.todayV2')
+  })
+
+  // V5-TODAYREDESIGN-001 integration 2 — the household view switch is scrubbed at sign-out, so the next person on a
+  // shared phone starts with it OFF (V1's pill and the redesigned Today read the same switch). Read through
+  // householdView's own constant and reader, so a renamed key that survived sign-out would red here.
+  it('clears the household view switch, by householdView\'s own key', async () => {
+    const { SHOW_OTHERS_KEY, readShowOthers, writeShowOthers } = await import('../lib/householdView.js')
+    expect(CLIENT_PREF_KEYS).toContain(SHOW_OTHERS_KEY)
+    writeShowOthers(true)
+    localStorage.setItem('mode', 'field')
+    expect(readShowOthers()).toBe(true)
+    clearClientPrefs()
+    expect(localStorage.getItem(SHOW_OTHERS_KEY)).toBeNull()
+    expect(readShowOthers()).toBe(false)
+    expect(localStorage.getItem('mode')).toBe('field')
   })
 
   // The list above holds literals (an import would close an AuthContext cycle), so this is what

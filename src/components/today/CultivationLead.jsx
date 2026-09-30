@@ -48,6 +48,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
+import { T } from '../forms/formStyles.js'
 import { bucketize } from '../../lib/sowEngine.js'
 import { seedsHref } from '../../lib/seedsRoutes.js'
 import Icon from '../Icon.jsx'
@@ -90,20 +91,60 @@ export function cultivationLines(items, todayISO, cap = CULTIVATION_LEAD_CAP) {
   })
 }
 
-export default function CultivationLead({ todayISO = null }) {
+// V5-TODAYREDESIGN-001 S6 — THE DATA HOOK, split out of the band so the redesigned Today can run it at the page
+// and hand the result in as `data`. `enabled: false` asks nothing: while the 2027 sowing freeze holds the
+// redesigned Today shows no dated line, so it does not fetch the candidates at all (featureFlags
+// SOW_DATED_LINES_FROZEN). `settled` = the first request answered or failed (or nothing was asked); nothing here
+// renders it — the V2 ready point waits on it (§6.4).
+export function useCultivationFeed({ enabled = true } = {}) {
   const { fetch } = useApiFetch()
   const [items, setItems] = useState(null)
+  const [settled, setSettled] = useState(!enabled)
 
   useEffect(() => {
+    if (!enabled) return undefined
     let alive = true
     fetch('/api/inventory-items/sow-candidates')
       .then(d => { if (alive) setItems(Array.isArray(d?.items) ? d.items : []) })
       .catch(() => { /* ambient lead line — never surface a fetch error onto Today */ })
+      .finally(() => { if (alive) setSettled(true) })
     return () => { alive = false }
-  }, [fetch])
+  }, [fetch, enabled])
 
+  return { items, settled }
+}
+
+// `data` = useCultivationFeed()'s result, fetched by the caller; `bare` = the redesigned Today's Sow link row
+// (plan-v2 §4 "Sow link row": sprout + "All sow windows ›", a link, not a section, no card) — the dated lines,
+// when there are any, above that door. With neither prop, the band as it always was.
+export default function CultivationLead({ todayISO = null, data, bare = false }) {
+  return data
+    ? <Lead feed={data} todayISO={todayISO} bare={bare} />
+    : <OwnLead todayISO={todayISO} bare={bare} />
+}
+
+function OwnLead({ todayISO, bare }) {
+  return <Lead feed={useCultivationFeed()} todayISO={todayISO} bare={bare} />
+}
+
+function Lead({ feed, todayISO, bare }) {
+  const items = feed.items
   const day = todayISO ?? todayLocalISO()
   const lines = useMemo(() => cultivationLines(items, day), [items, day])
+
+  if (bare) {
+    return (
+      <Link to={seedsHref('sow')} data-testid="cultivation-lead" style={bareRow}>
+        <Icon name="lifecycle.sprout" size={20} decorative style={{ flexShrink: 0 }} />
+        {lines.length ? (
+          <span style={{ flex: 1, minWidth: 0 }}>
+            {lines.map((l, i) => <span key={i} style={bareLine}>{l}</span>)}
+            <span style={{ display: 'block' }}>All sow windows ›</span>
+          </span>
+        ) : <span>All sow windows ›</span>}
+      </Link>
+    )
+  }
 
   // The whole region is the tap target, lines included — tapping an urgency line goes to the packet
   // it is about (well, to the page listing it), which is what a line saying "Sow X by Aug 18" makes
@@ -153,3 +194,11 @@ export default function CultivationLead({ todayISO = null }) {
     </Link>
   )
 }
+
+// The bare row (plan-v2 §4): a text-link row, minHeight T.tapMinHeight, P.green 600 T.type.sm — an explicit ink,
+// which BUG-LINKICONBLUE-001 (above) requires on any <Link> holding an <Icon>.
+const bareRow = {
+  display: 'flex', alignItems: 'center', gap: T.space.sm, minHeight: T.tapMinHeight, textDecoration: 'none',
+  color: P.green, fontWeight: 600, fontSize: T.type.sm,
+}
+const bareLine = { display: 'block', fontSize: T.type.base, fontWeight: 600, color: P.dark, lineHeight: 1.4 }
