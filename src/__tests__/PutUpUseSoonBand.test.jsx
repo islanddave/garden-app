@@ -32,7 +32,7 @@ describe('PutUpUseSoonBand — Today "use soon" ambient card (L10)', () => {
     await screen.findByText('Cook these next')
     expect(screen.getByText('Tomato')).toBeTruthy()
     // Neutral: no loss-aversion or countdown language anywhere in the card.
-    const card = screen.getByRole('region', { name: /From your stores/i })
+    const card = screen.getByRole('region', { name: /From the Pantry/i })
     expect(card.textContent).not.toMatch(/days left|don't let|rot|exp'?ing|hurry/i)
   })
 
@@ -53,7 +53,7 @@ describe('PutUpUseSoonBand — Today "use soon" ambient card (L10)', () => {
     render(<PutUpUseSoonBand />)
     const title = await screen.findByText('Napa kimchi')
     expect(title.parentElement.firstChild).toBe(title)
-    expect(screen.getAllByText('From your stores')).toHaveLength(1)
+    expect(screen.getAllByText('From the Pantry')).toHaveLength(1)
   })
 
   it('is hidden entirely when there is nothing to use soon', async () => {

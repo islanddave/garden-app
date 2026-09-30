@@ -952,7 +952,7 @@ describe('PutUp — the bare-open default lands on "Going now" when something is
     wirePage()
     renderPage()
     await waitFor(() => expect(segments().map(r => r.textContent))
-      .toEqual(['Going now', 'Log a put-up', "What's put up"]))
+      .toEqual(['Going now', 'Log a put-up', 'Pantry']))
   })
 
   it('promotes a bare open to Going now with ONE open batch', async () => {
@@ -968,11 +968,13 @@ describe('PutUp — the bare-open default lands on "Going now" when something is
     await waitFor(() => expect(activeSegment()).toBe('Going now'))
   })
 
-  it('falls back to "What\'s put up" when nothing is open', async () => {
+  // B′ release 2: "What's put up" is the Pantry, and its body is the Pantry list (the shipped
+  // "Log a put-up" CTA it used to carry is the page-level Put something up door now).
+  it('falls back to the Pantry when nothing is open', async () => {
     wirePage({ batches: [] })
     renderPage()
-    await waitFor(() => expect(screen.getByTestId('putup-primary-cta')).toBeTruthy())
-    expect(activeSegment()).toBe("What's put up")
+    await waitFor(() => expect(screen.getByTestId('pantry-view')).toBeTruthy())
+    expect(activeSegment()).toBe('Pantry')
   })
 
   it('leaves the landing EXACTLY as it is today when the route is unavailable', async () => {
@@ -980,8 +982,8 @@ describe('PutUp — the bare-open default lands on "Going now" when something is
     // A failed read is not an empty list and must not move anything.
     wirePage({ batchesFail: true })
     renderPage()
-    await waitFor(() => expect(screen.getByTestId('putup-primary-cta')).toBeTruthy())
-    expect(activeSegment()).toBe("What's put up")
+    await waitFor(() => expect(screen.getByTestId('pantry-view')).toBeTruthy())
+    expect(activeSegment()).toBe('Pantry')
   })
 
   it('never overrides a segment the user picked while the fetch was in flight', async () => {
@@ -1011,7 +1013,7 @@ describe('PutUp — the bare-open default lands on "Going now" when something is
   it('a manual tap reaches Going now from either other segment', async () => {
     wirePage({ batches: [] })
     renderPage()
-    await waitFor(() => expect(activeSegment()).toBe("What's put up"))
+    await waitFor(() => expect(activeSegment()).toBe('Pantry'))
     fireEvent.click(screen.getByRole('radio', { name: 'Going now' }))
     expect(within(screen.getByTestId('going-now-view')).getByTestId('going-empty')).toBeTruthy()
   })

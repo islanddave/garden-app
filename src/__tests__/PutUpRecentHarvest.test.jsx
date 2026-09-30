@@ -98,20 +98,21 @@ beforeEach(() => {
   clearReloadBlocks()
 })
 
-describe('primary CTA — the "start something new" slot the landing page lacked', () => {
-  it('renders on the read view and opens the form', async () => {
+// B′ release 2 (V4 §2.2, §10.1): the read view's full-width "Log a put-up" CTA is retired — the page
+// header's Put something up door is the one "start something new" slot now, on every segment. The
+// shipped form stays reachable on its own segment, which is what these two now pin.
+describe('the start-something-new slot is the page-level door', () => {
+  it('the Pantry carries the door, and no second CTA', async () => {
     renderPage()
-    const cta = await screen.findByTestId('putup-primary-cta')
-    fireEvent.click(cta)
-    await screen.findByRole('combobox', { name: 'Crop' })
+    await screen.findByTestId('putup-door')
+    expect(screen.queryByTestId('putup-primary-cta')).toBeNull()
   })
 
-  it('is NOT rendered on the form view, where it would do nothing', async () => {
+  it('the shipped form is still one tap away on its own segment', async () => {
     renderPage()
-    await screen.findByTestId('putup-primary-cta')
+    await screen.findByTestId('putup-door')
     openLogForm()
     await screen.findByRole('combobox', { name: 'Crop' })
-    expect(screen.queryByTestId('putup-primary-cta')).toBeNull()
   })
 })
 
