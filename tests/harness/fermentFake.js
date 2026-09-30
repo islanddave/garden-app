@@ -192,10 +192,22 @@ function makeLine(batchId, body) {
   if (l.shu_rating_low != null && l.shu_rating_high == null) l.shu_rating_high = l.shu_rating_low
   return l
 }
+// The date and its word, written the way the route writes them (kitchenRoutes.js addStage, createBatch):
+// a note is stamped now, 'exact'; a row sent WITH a precision carries exactly the date it was sent (NULL
+// for 'unknown'); a row sent WITHOUT one takes the pre-1b path — its date or now, and a NULL precision.
+// This stand-in used to stamp 'exact' on that last shape, which is how the walks hid an Undo that 400'd
+// on every legacy-shaped check-in and move (review I-N1).
+function stageDate(body) {
+  if (body.stage_kind === 'noted') return { entered_at: nowIso(), entered_precision: 'exact' }
+  const precision = body.entered_precision ?? null
+  return precision != null
+    ? { entered_at: body.entered_at ?? null, entered_precision: precision }
+    : { entered_at: body.entered_at ?? nowIso(), entered_precision: null }
+}
 function makeStage(b, body, extra = {}) {
   const row = {
     id: uuid(), batch_id: b.id, stage_kind: body.stage_kind, label: body.label ?? null, cue_observed: body.cue_observed ?? null,
-    entered_at: body.entered_at ?? nowIso(), entered_precision: body.entered_precision ?? 'exact', ph_read_at: body.ph_read_at ?? null,
+    ...stageDate(body), ph_read_at: body.ph_read_at ?? null,
     voids_id: body.voids_id ?? null, acts: body.acts ? [...new Set(body.acts)] : null, edited_at: null,
     storage_location_id: body.storage_location_id ?? null, photo_id: null, note: body.note ?? null, created_by: 'harness_user', created_at: nowIso(),
     amount: stored('amount', body.amount), amount_unit: body.amount_unit ?? null, ph_reading: stored('ph_reading', body.ph_reading),
@@ -241,7 +253,7 @@ function route(method, path, query, body) {
       shu_est_low: null, shu_est_high: null, shu_est_basis: null, recipe_ref: null,
     }
     state.batches.push(b)
-    makeStage(b, { stage_kind: 'started', entered_at: b.started_at, entered_precision: b.start_precision === 'unknown' ? 'unknown' : (b.start_precision ?? 'exact') })
+    makeStage(b, { stage_kind: 'started', entered_at: b.started_at, entered_precision: b.start_precision ?? null })
     return ok(viewRow(b), 201)
   }
   const m = path.match(/^\/api\/kitchen-batches\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?(?:\/([^/]+))?$/)

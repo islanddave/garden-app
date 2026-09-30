@@ -99,10 +99,16 @@ export function stagePatch(stored, next, { nowIso }) {
   }
   // The date travels as a pair (the route refuses one alone) and is compared as an instant, so the same
   // moment in another spelling is not a change.
+  // THE UNDO NAMES A PRECISION EVEN WHEN THE ROW HAS NONE (review I-N1). Every 1a-era row, and every
+  // check-in or move written without one, stores entered_precision NULL — and the PATCH refuses a date
+  // without its precision, so "Saved · Undo" sent back {entered_at, null} and got a 400 on exactly those
+  // rows. A stored date with no word was stamped when it was written: 'exact'. No date is 'unknown'
+  // (chk_ksl_entered_pairing: entered_at IS NULL ⇔ precision 'unknown'), so both branches are legal.
   if (keys.includes('entered_at') && ('entered_at' in next || 'entered_precision' in next)) {
     if (instant(stored.entered_at) !== instant(next.entered_at) || (stored.entered_precision ?? null) !== (next.entered_precision ?? null)) {
       patch.entered_at = next.entered_at ?? null; patch.entered_precision = next.entered_precision ?? null
-      undo.entered_at = stored.entered_at ?? null; undo.entered_precision = stored.entered_precision ?? null
+      undo.entered_at = stored.entered_at ?? null
+      undo.entered_precision = stored.entered_precision ?? (stored.entered_at != null ? 'exact' : 'unknown')
     }
   }
   // amount + amount_unit edit together (tended, started); a put-up's Made is always grams, no unit.

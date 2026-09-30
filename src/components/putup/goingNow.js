@@ -549,6 +549,14 @@ export function checkInBody({ batch, ph = '', submersion = null, conditioning = 
   if (text) body.note = text
   const observed = !!place || !!answer || typed != null || !!text || did.length > 0
   if (!observed) return { error: CHECK_IN_EMPTY }
+  // Every row this writes carries its date AND its word (review I-N1): the instant of the visit, 'exact'.
+  // Without a precision the route takes the pre-1b path and stores it NULL — a legacy-shaped row, and the
+  // shape "Saved · Undo" of a date edit tripped on. The route writes exactly what it is given here.
+  if (atIso != null && !Number.isNaN(new Date(atIso).getTime())) {
+    const stamp = { entered_at: atIso, entered_precision: 'exact' }
+    Object.assign(body, stamp)
+    if (move) Object.assign(move, stamp)
+  }
   return move ? { body, move } : { body }
 }
 

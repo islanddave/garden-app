@@ -47,6 +47,10 @@ import { readMarker } from '../lib/backNav.js'
 const NOW = new Date('2026-09-04T09:00:00').getTime()
 const local = (s) => new Date(s).toISOString()
 const AT = new Date(NOW).toISOString()
+// Review I-N1 (amended with the change): every row a check-in writes carries its date AND its word — the
+// visit's instant, 'exact' — so none is stored in the pre-1b NULL-precision shape. MUTATION: drop the
+// stamp from checkInBody -> every body literal below reds.
+const STAMP = { entered_at: AT, entered_precision: 'exact' }
 
 const BASE = {
   user_id: 'user_dave', kind_other: null, started_at: local('2026-09-01T09:00:00'), start_precision: 'day',
@@ -102,7 +106,7 @@ afterEach(() => { clearReloadBlocks() })
 describe('checkInBody — ONE row per check-in', () => {
   it('writes a tended row carrying every observation the kind allows', () => {
     expect(checkInBody({ batch: FERMENT, ph: ' 3.80 ', submersion: 'all_under', note: ' weight back on ', atIso: AT }))
-      .toEqual({ body: { stage_kind: 'tended', cue_observed: 'All under', ph_reading: '3.80', ph_read_at: AT, note: 'weight back on' } })
+      .toEqual({ body: { stage_kind: 'tended', cue_observed: 'All under', ph_reading: '3.80', ph_read_at: AT, note: 'weight back on', ...STAMP } })
   })
 
   // MUTATION: write the move as a SECOND row (or drop storage_location_id) -> this literal reds.
@@ -110,13 +114,13 @@ describe('checkInBody — ONE row per check-in', () => {
     expect(checkInBody({ batch: FERMENT, submersion: 'poking_out', place: PLACES[0], note: 'into the fridge', atIso: AT }))
       .toEqual({ body: {
         stage_kind: 'moved', storage_location_id: 'loc-fridge', label: 'Moved to Fridge',
-        cue_observed: 'Something poking out', note: 'into the fridge',
+        cue_observed: 'Something poking out', note: 'into the fridge', ...STAMP,
       } })
   })
 
   it('Dry gets the conditioning pair; Candy, whatever it is handed, does not', () => {
     expect(checkInBody({ batch: DRY, conditioning: 'back_in_dryer', atIso: AT }))
-      .toEqual({ body: { stage_kind: 'tended', cue_observed: 'Condensation → back in the dryer' } })
+      .toEqual({ body: { stage_kind: 'tended', cue_observed: 'Condensation → back in the dryer', ...STAMP } })
     expect(checkInBody({ batch: CANDY, conditioning: 'jars', atIso: AT })).toEqual({ error: CHECK_IN_EMPTY })
     // Release F: `acts` (what you did) is a Ferment field, like the brine question (amended in the same commit).
     expect(checkInFields(CANDY)).toEqual({ ph: false, submersion: false, conditioning: false, acts: false })
@@ -201,7 +205,7 @@ describe('Check on it — the Save', () => {
     expect(stagesPosts()).toHaveLength(1)
     expect(stagesPosts()[0][0]).toBe('/api/kitchen-batches/kb-ferment/stages')
     expect(bodyOf(stagesPosts()[0])).toEqual({
-      stage_kind: 'tended', cue_observed: 'All under', ph_reading: '3.80', ph_read_at: AT, note: 'weight back on',
+      stage_kind: 'tended', cue_observed: 'All under', ph_reading: '3.80', ph_read_at: AT, note: 'weight back on', ...STAMP,
     })
     expect(sheet()).toBeNull()
   })
@@ -213,7 +217,7 @@ describe('Check on it — the Save', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('checkin-save')) })
     await waitFor(() => expect(stagesPosts()).toHaveLength(1))
     expect(bodyOf(stagesPosts()[0])).toEqual({
-      stage_kind: 'moved', storage_location_id: 'loc-cf1', label: 'Moved to Chest Freezer 1',
+      stage_kind: 'moved', storage_location_id: 'loc-cf1', label: 'Moved to Chest Freezer 1', ...STAMP,
     })
   })
 

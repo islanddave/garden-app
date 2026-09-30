@@ -423,11 +423,13 @@ describe('Check on it — recording a reading', () => {
     fireEvent.click(screen.getByTestId('checkin-save'))
     await waitFor(() => expect(stagesPosts()).toHaveLength(1))
     // The whole call as one literal — path, method and body. ph_read_at is the view's INJECTED `now`,
-    // which is what makes this assertion stable under the blocking TZ re-run.
+    // which is what makes this assertion stable under the blocking TZ re-run. Review I-N1 (amended with
+    // the change): the row carries its date and its word too — the same instant, 'exact'.
     expect(stagesPosts()[0]).toEqual(['/api/kitchen-batches/kb-ferment/stages', {
       method: 'POST',
       body: JSON.stringify({
         stage_kind: 'tended', ph_reading: '4.60', ph_read_at: new Date(NOW).toISOString(),
+        entered_at: new Date(NOW).toISOString(), entered_precision: 'exact',
       }),
     }])
   })
