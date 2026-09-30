@@ -8,6 +8,10 @@
 // Required at open: 1 — the place (V4 §6.3). When starts at Today; Earlier… offers the §3.6 windows.
 // <Sheet armsBack>, busy while writing; a failed write keeps the choice and says why in the server's
 // words (describeRefusal). No draft: two taps is the whole of it.
+//
+// B′ release 2 (the Pantry row sheet): a bought item moves too, by a PATCH of its storage_location_id
+// that has no When. `onSubmit({place, when})` replaces the jar's move POST when a host passes it (the
+// same chips, the same refusal handling), and `whenless` leaves the When rows and the move-rule line out.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
@@ -23,12 +27,12 @@ export const MOVE_RULE_TEXT = 'A discard date you set by hand stays. A worked-ou
 
 const MOVE_WHEN = [{ id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' }, { id: 'earlier', label: 'Earlier…' }]
 
-export default function MoveJarSheet({ open, jar, onClose, onMoved, now }) {
+export default function MoveJarSheet({ open, jar, onClose, onMoved, now, onSubmit = null, whenless = false }) {
   if (!open || !jar) return null
-  return <MoveOpen key={jar.id} jar={jar} onClose={onClose} onMoved={onMoved} now={now} />
+  return <MoveOpen key={jar.id} jar={jar} onClose={onClose} onMoved={onMoved} now={now} onSubmit={onSubmit} whenless={whenless} />
 }
 
-function MoveOpen({ jar, onClose, onMoved, now }) {
+function MoveOpen({ jar, onClose, onMoved, now, onSubmit, whenless }) {
   const { fetch } = useApiFetch()
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
   const [places, setPlaces] = useState(null)
@@ -60,7 +64,8 @@ function MoveOpen({ jar, onClose, onMoved, now }) {
     writingRef.current = true
     setSaving(true); setErr(null)
     try {
-      await fetch(`/api/preservation/${jar.id}/move`, { method: 'POST', body: JSON.stringify({
+      if (onSubmit) await onSubmit({ place, when: w.when })
+      else await fetch(`/api/preservation/${jar.id}/move`, { method: 'POST', body: JSON.stringify({
         place: place.id ? { id: place.id } : { kind: place.kind, label: place.label }, when: w.when,
       }) })
       writingRef.current = false
@@ -71,7 +76,7 @@ function MoveOpen({ jar, onClose, onMoved, now }) {
       setSaving(false)
       setErr(describeRefusal(e)?.text ?? "Couldn't move it — try again.")
     }
-  }, [chip, estimate, fetch, jar.id, nowDate, onMoved, pickedDate, place])
+  }, [chip, estimate, fetch, jar.id, nowDate, onMoved, onSubmit, pickedDate, place])
 
   const name = jar.label || 'this'
   return (
@@ -87,6 +92,7 @@ function MoveOpen({ jar, onClose, onMoved, now }) {
               onClick={() => { setPlace(c); setErr(null) }}>{c.label}</SelectChip>
           ))}
         </div>
+        {!whenless && <>
         <span style={labelChrome} aria-hidden="true">When?</span>
         <div role="radiogroup" aria-label="When did it move?" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
           {MOVE_WHEN.map(c => (
@@ -109,6 +115,7 @@ function MoveOpen({ jar, onClose, onMoved, now }) {
             onChange={e => { setPickedDate(e.target.value); setErr(null) }} style={{ ...inputChrome(false), maxWidth: 220, marginBottom: 8 }} />
         )}
         <p role="status" data-testid="move-rule" style={{ margin: `${T.space.sm}px 0`, color: P.mid, fontSize: '0.78rem' }}>{MOVE_RULE_TEXT}</p>
+        </>}
         {err && <div role="alert" data-testid="move-error" style={{ marginBottom: T.space.sm, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{err}</div>}
       </div>
       <div style={{ position: 'sticky', bottom: 0, background: P.white, padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>

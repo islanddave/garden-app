@@ -94,7 +94,7 @@ describe('PutUpFromPlanting', () => {
     const link = await screen.findByRole('link', { name: /Log a put-up from this planting/i })
     expect(link.getAttribute('href')).toBe('/put-up')
     // The prefill travels in router state, not the href — assert the rendered intent is present.
-    expect(screen.getByText(/Nothing from this planting is in the stores yet/)).toBeTruthy()
+    expect(screen.getByText(/Nothing from this planting is in the Pantry yet/)).toBeTruthy()
   })
 
   it('degrades to a quiet message when the read fails — never blanks the page', async () => {
@@ -105,7 +105,7 @@ describe('PutUpFromPlanting', () => {
 
   it('handles a group payload with no records array', async () => {
     renderSection(() => Promise.resolve({ groups: [{ group_key: 'x', label: 'X' }] }))
-    expect(await screen.findByText(/Nothing from this planting is in the stores yet/)).toBeTruthy()
+    expect(await screen.findByText(/Nothing from this planting is in the Pantry yet/)).toBeTruthy()
   })
 })
 
@@ -159,14 +159,14 @@ describe('PutUpFromPlanting — consumed put-ups are fate, not stock', () => {
     allGone.groups[0].records = allGone.groups[0].records.filter(r => r.id === 'gone')
     renderSection(() => Promise.resolve(allGone))
     // NOT the "nothing put up yet" empty state — that would erase a real record.
-    expect(await screen.findByText('Nothing left in the stores')).toBeTruthy()
-    expect(screen.queryByText(/Nothing from this planting is in the stores yet/)).toBeNull()
+    expect(await screen.findByText('Nothing left in the Pantry')).toBeTruthy()
+    expect(screen.queryByText(/Nothing from this planting is in the Pantry yet/)).toBeNull()
     expect(screen.getByText(/all used/)).toBeTruthy()
   })
 
   // NULL means the count was never tracked, not that the jar is gone. The endpoint's own default
   // filter reads it the same way, so a row it WOULD have returned must not be dimmed out here.
-  it('treats a NULL remaining_count as still in the stores, not as used up', async () => {
+  it('treats a NULL remaining_count as still in the Pantry, not as used up', async () => {
     const untracked = one()
     untracked.groups[0].records = [{
       id: 'untracked', plant_id: 'pl-w2', quantity_value: 3, quantity_unit: 'quarts',

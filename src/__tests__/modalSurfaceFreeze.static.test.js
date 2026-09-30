@@ -234,6 +234,11 @@ const SHEET_SITES = [
   // `busy` refusing Back and the backdrop mid-write, the draft kept by kitchen/sheetDraft.js — so the
   // registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed.
   'components/recipes/RecipeSheet.jsx',
+  // Put-Up B′ release 2 (V4 §2.2, §2.5) — DELIBERATE additions, each the shared <Sheet armsBack> with
+  // `busy` refusing Back and the backdrop mid-write: Put something up (the page door) and the Pantry
+  // row sheet (Went bad · Gave it away · Move it · Edit · Next time…).
+  'components/pantry/PutSomethingUpSheet.jsx',
+  'components/pantry/PantryRowSheet.jsx',
   // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
   // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
   // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's

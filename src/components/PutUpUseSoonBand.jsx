@@ -5,7 +5,9 @@
 // BUG-READYBANDFETCH-001: swallowing still holds, but a failed fetch no longer renders identically to
 // an empty shelf — useAmbientBandFetch retries once, then this renders one muted ambient line.
 //
-// NEUTRAL framing (Reward-UX + Notification rules): "cook these next" / "from your stores" — NO
+// Put-Up B′ release 2 (V4 §2.5 rename bridge): "stores" swept to "the Pantry" — words only; the fetch,
+// the props and the default export are unchanged (Today V2 mounts this band).
+// NEUTRAL framing (Reward-UX + Notification rules): "cook these next" / "from the Pantry" — NO
 // loss-aversion ("don't let it rot"), NO "X days left" countdown (streak-psychology through the back
 // door), NO push. `past_use_by` rows render as a distinct CALM state (a quiet "past date" tag), not an
 // alarm. The whole card is hidden when there is nothing to surface. Reads /api/preservation/use-soon,
@@ -43,7 +45,7 @@ const METHOD_LABELS = {
 
 // Label first: a ferment jar can carry a name and no crop (projectRow returns `label`; null on every row today).
 function itemTitle(it) {
-  return it.label || it.crop_display_name || it.crop_type_slug || 'From your stores'
+  return it.label || it.crop_display_name || it.crop_type_slug || 'From the Pantry'
 }
 function itemDetail(it) {
   const parts = []
@@ -51,7 +53,7 @@ function itemDetail(it) {
   const m = METHOD_LABELS[it.method]
   if (m) parts.push(m)
   if (it.storage_label) parts.push(`in ${it.storage_label}`)
-  // V4-PUTUPPROV-001. Provenance where the stores are actually browsed, not only on the form.
+  // V4-PUTUPPROV-001. Provenance where the Pantry is actually browsed, not only on the form.
   // own_garden and NULL append nothing, so every existing row's detail line is byte-identical.
   if (it.source_kind && it.source_kind !== 'own_garden') {
     parts.push(`from ${it.source_label || PUTUP_SOURCE_LABELS[it.source_kind] || it.source_kind}`)
@@ -102,7 +104,7 @@ function UseSoonBand({ feed, bare }) {
   return (
     <section
       data-testid="putup-use-soon"
-      aria-label={bare ? undefined : 'From your stores — cook these next'}
+      aria-label={bare ? undefined : 'From the Pantry — cook these next'}
       style={bare ? undefined : {
         backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: 12,
         padding: '14px 16px', marginTop: 16,
@@ -112,7 +114,7 @@ function UseSoonBand({ feed, bare }) {
         {!bare && (
         <div>
           <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: P.light }}>
-            From your stores
+            From the Pantry
           </div>
           <div style={{ fontSize: '1rem', fontWeight: 700, color: P.dark }}>Cook these next</div>
         </div>
@@ -154,7 +156,7 @@ function UseSoonBand({ feed, bare }) {
 
       {more > 0 && (
         <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 8 }}>
-          +{more} more in your stores
+          +{more} more in the Pantry
         </div>
       )}
     </section>

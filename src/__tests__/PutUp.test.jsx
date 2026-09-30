@@ -35,6 +35,7 @@ vi.mock('../hooks/useCropTypes.js', () => ({
 }))
 
 import PutUp from '../pages/PutUp.jsx'
+import { rowFromRecord } from './helpers/pantryFake.js'
 
 const STORES_FIXTURE = {
   group_by: 'storage',
@@ -67,12 +68,15 @@ const PLANTS_FIXTURE = [
     succession_order: null, variety_ref: { id: 'var-cp', name: 'Cherokee Purple', crop_type_slug: 'tomato' } },
 ]
 
-function wire({ stores = STORES_FIXTURE, plants = PLANTS_FIXTURE } = {}) {
+// B′ release 2: the list is GET /api/pantry (the pinned contract's rows) and a jar's sheet reads the jar
+// by id; `record` is that jar.
+function wire({ plants = PLANTS_FIXTURE, record = STORES_FIXTURE.groups[0].records[0] } = {}) {
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
     if (path.startsWith('/api/plants?') && method === 'GET') return Promise.resolve(plants)
-    if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(stores)
+    if (path.startsWith('/api/pantry?')) return Promise.resolve({ rows: [rowFromRecord(record, { id: 'loc-1', label: 'Garage freezer', kind: 'deep_freezer' })] })
+    if (path === `/api/preservation/${record.id}` && method === 'GET') return Promise.resolve(record)
     if (path === '/api/preservation' && method === 'POST') return Promise.resolve({ id: 'new-1' })
     if (path.startsWith('/api/preservation/') && method === 'PUT') return Promise.resolve({ id: 'rec-1' })
     return Promise.resolve(null)
@@ -288,50 +292,40 @@ describe('PutUp — photo capture', () => {
   })
 })
 
-describe('PutUp — "what\'s put up" read surface', () => {
-  it('defaults to grouping by storage and regroups by crop on one tap', async () => {
+// AMENDED for B′ release 2 (V4 §2.5, §10.1): "What's put up" is the Pantry — ONE list over GET
+// /api/pantry, grouped By place (default) or By what it is (By planting is dropped), with ONE inline
+// action per row; the jar's words the list used to carry (size, put-up date, provenance, planting) are
+// said in its row sheet, which reads the jar once. The editor and the use route are unchanged, so their
+// wire literals are too. Retired with the old surface: the per-group "N containers · units" headline.
+describe('PutUp — the Pantry read surface', () => {
+  const ROW_ID = 'put_up:rec-1'
+  const REC = STORES_FIXTURE.groups[0].records[0]
+  const openSheet = async () => {
+    fireEvent.click(await screen.findByTestId(`pantry-row-open-${ROW_ID}`))
+    return screen.findByTestId('row-sheet')
+  }
+
+  it('defaults to grouping by place and regroups by what it is on one tap', async () => {
     renderPutUp()
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/preservation/whats-put-up?group=storage'))
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('radio', { name: 'By crop' }))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/preservation/whats-put-up?group=crop'))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pantry?group=place'))
+    await screen.findByRole('heading', { name: 'Garage freezer' })
+    fireEvent.click(screen.getByRole('radio', { name: 'By what it is' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pantry?group=kind'))
+    expect(screen.queryByRole('radio', { name: 'By planting' })).toBeNull()
   })
 
-  it('regroups by planting so successions read separately', async () => {
+  it('the row sheet says which planting a jar came from when the link exists', async () => {
+    wire({ record: { ...REC, plant_id: 'pl-w2', planting_name: 'Dark Green Zucchini', planting_succession_order: 2 } })
     renderPutUp()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('radio', { name: 'By planting' }))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/preservation/whats-put-up?group=planting'))
+    await openSheet()
+    expect(await screen.findByText(/from Dark Green Zucchini · wave 2/)).toBeTruthy()
   })
 
-  it('shows which planting a record came from when the link exists', async () => {
-    renderPutUp({}) // stores view
-    wire({ stores: { group_by: 'planting', groups: [{
-      group_key: 'pl-w2', label: 'Dark Green Zucchini — wave 2, sown May 12',
-      total_packages: 2, units: ['bags'], use_soon_count: 0,
-      records: [{ ...STORES_FIXTURE.groups[0].records[0], id: 'rec-2', plant_id: 'pl-w2',
-        planting_name: 'Dark Green Zucchini', planting_succession_order: 2, planting_sown_at: '2026-05-12' }],
-    }] } })
+  // Amended for release F, and again for B′: the one-tap use is ONE use on POST /api/pantry/uses and no
+  // PUT at all. Three left → the row offers "Used one".
+  it('"Used one" is one use on the use route, and sends no PUT', async () => {
     renderPutUp()
-    expect(await screen.findByText(/from Dark Green Zucchini/)).toBeTruthy()
-  })
-
-  it('numbers-first headline shows package count + the distinct units (never a cross-unit sum)', async () => {
-    renderPutUp()
-    await screen.findByText('Garage freezer')
-    // Headline: "3 containers · bags" (packages counted, units listed — never a cross-unit sum).
-    expect(screen.getAllByText(/3 containers/).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/bags/).length).toBeGreaterThan(0)
-  })
-
-  // Amended for release F in the same commit as the change (06 §1.3; V4 §8.3): "Mark used" is ONE use
-  // on POST /api/pantry/uses and no PUT at all — so the one-tap path can no longer rewrite anything on
-  // the row. The provenance carriage this test was written for moves to the count edit below, the one
-  // remaining full-replace PUT.
-  it('"Mark used" is one use on the use route, and sends no PUT', async () => {
-    renderPutUp()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Used one — / }))
     const uses = () => fetchMock.mock.calls.filter(([p, o]) => p === '/api/pantry/uses' && o?.method === 'POST')
     await waitFor(() => expect(uses().length).toBe(1))
     const use = JSON.parse(uses()[0][1].body)
@@ -341,13 +335,12 @@ describe('PutUp — "what\'s put up" read surface', () => {
   })
 
   // Release F (amended again in the same commit as the change): an Edit is ONE PATCH carrying only what
-  // changed — so nothing on the row (provenance, date, place) is echoed at all, and the class of bug
-  // the full-replace carriage guarded (a stale bundle's echo rewriting a field) has no write to ride.
+  // changed — so nothing on the row (provenance, date, place) is echoed at all.
   it('a count edit is one PATCH of the count alone — nothing else on the row is sent', async () => {
     renderPutUp()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '4' } })
+    await openSheet()
+    fireEvent.click(screen.getByTestId('row-edit'))
+    fireEvent.change(await screen.findByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '4' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     const patches = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PATCH')
     await waitFor(() => expect(patches().length).toBe(1))
@@ -356,60 +349,53 @@ describe('PutUp — "what\'s put up" read surface', () => {
     expect(putCalls().length).toBe(0)
   })
 
-  it('renders provenance on a bought row, and nothing at all on a garden row', async () => {
+  it('the row sheet says where a bought jar came from, and nothing for a garden jar', async () => {
     renderPutUp()
-    await screen.findByText('Garage freezer')
-    expect(screen.queryByText(/from Warner Farms/)).toBeTruthy()
+    await openSheet()
+    expect(await screen.findByText(/from Warner Farms/)).toBeTruthy()
   })
 
-  it('renders NO provenance line for an own-garden row (existing rows look unchanged)', async () => {
-    const gardenFixture = { ...STORES_FIXTURE, groups: [{ ...STORES_FIXTURE.groups[0],
-      records: [{ ...STORES_FIXTURE.groups[0].records[0], source_kind: 'own_garden', source_label: null }] }] }
-    wire({ stores: gardenFixture })
-    renderPutUp()
-    await screen.findByText('Garage freezer')
-    expect(screen.queryByText(/^from /)).toBeNull()
-  })
-
-  it('renders NO provenance line when source_kind is NULL (unrecorded, pre-migration rows)', async () => {
-    const legacyFixture = { ...STORES_FIXTURE, groups: [{ ...STORES_FIXTURE.groups[0],
-      records: [{ ...STORES_FIXTURE.groups[0].records[0], source_kind: null, source_label: null }] }] }
-    wire({ stores: legacyFixture })
-    renderPutUp()
-    await screen.findByText('Garage freezer')
-    expect(screen.queryByText(/^from /)).toBeNull()
+  it('says NO provenance for an own-garden jar (or a NULL, pre-migration one)', async () => {
+    for (const source_kind of ['own_garden', null]) {
+      wire({ record: { ...REC, source_kind, source_label: null } })
+      const view = renderPutUp()
+      await openSheet()
+      await screen.findByTestId('row-sheet-record')
+      expect(screen.getByTestId('row-sheet-record').textContent).not.toMatch(/from /)
+      view.unmount()
+    }
   })
 })
 
 // V4-PUTUPSESSION-001 slice 1. The read half of the slice: a stored estimate has to read back as an
-// estimate. The write half (the walk) is covered in PutUpWalk.test.jsx.
+// estimate. B′: said in the jar's row sheet (the Pantry row carries no date).
 describe('PutUp — an estimated date does not read as a date you picked', () => {
-  const withApprox = (v) => ({ ...STORES_FIXTURE, groups: [{ ...STORES_FIXTURE.groups[0],
-    records: [{ ...STORES_FIXTURE.groups[0].records[0], preserved_at_approx: v }] }] })
+  const REC = STORES_FIXTURE.groups[0].records[0]
+  const sheetWords = async () => {
+    fireEvent.click(await screen.findByTestId('pantry-row-open-put_up:rec-1'))
+    return (await screen.findByTestId('row-sheet-record')).textContent
+  }
 
   it('marks a TRUE row', async () => {
-    wire({ stores: withApprox(true) })
+    wire({ record: { ...REC, preserved_at_approx: true } })
     renderPutUp()
-    await screen.findByText('Garage freezer')
-    expect(screen.getByText(/put up around Jul 1, 2026/)).toBeTruthy()
+    expect(await sheetWords()).toContain('put up around Jul 1')
   })
 
   it('leaves a FALSE row plain', async () => {
-    wire({ stores: withApprox(false) })
+    wire({ record: { ...REC, preserved_at_approx: false } })
     renderPutUp()
-    await screen.findByText('Garage freezer')
-    expect(screen.getByText(/put up Jul 1, 2026/)).toBeTruthy()
-    expect(screen.queryByText(/around/)).toBeNull()
+    const w = await sheetWords()
+    expect(w).toContain('put up Jul 1')
+    expect(w).not.toContain('around')
   })
 
   it('leaves a NULL row plain — unrecorded is not a claim that the date is approximate', async () => {
-    // Every row written before the column existed carries NULL, including the freezer-walk rows
-    // already in prod from v4.87.0. They must look exactly as they look today.
-    wire({ stores: withApprox(null) })
+    wire({ record: { ...REC, preserved_at_approx: null } })
     renderPutUp()
-    await screen.findByText('Garage freezer')
-    expect(screen.getByText(/put up Jul 1, 2026/)).toBeTruthy()
-    expect(screen.queryByText(/around/)).toBeNull()
+    const w = await sheetWords()
+    expect(w).toContain('put up Jul 1')
+    expect(w).not.toContain('around')
   })
 
   it('the ordinary form records FALSE rather than leaving it unrecorded', async () => {
@@ -425,16 +411,12 @@ describe('PutUp — an estimated date does not read as a date you picked', () =>
     expect(lastPost().preserved_at_approx).toBe(false)
   })
 
-  // Release F: neither the one-tap decrement nor an Edit sends the full-replace PUT any more (see above),
-  // so the estimated-date flag cannot be re-defaulted by a write from this bundle. The two tests that
-  // pinned its carriage through the PUT are retired with that write; buildFullPayload's own carriage of
-  // it is still pinned below by the parity test and putUpDateEcho.tz.test.js.
   it('an Edit of a row with an estimated date does not send the date or the flag', async () => {
-    wire({ stores: withApprox(true) })
+    wire({ record: { ...REC, preserved_at_approx: true } })
     renderPutUp()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '4' } })
+    await sheetWords()
+    fireEvent.click(screen.getByTestId('row-edit'))
+    fireEvent.change(await screen.findByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '4' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     const patches = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PATCH')
     await waitFor(() => expect(patches().length).toBe(1))

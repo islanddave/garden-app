@@ -117,7 +117,7 @@ export default function PutUpFromPlanting({ planting, fetch, onRows, renderExtra
     return (
       <div>
         <div style={{ fontSize: '0.875rem', color: P.mid, marginBottom: 10 }}>
-          Nothing from this planting is in the stores yet.
+          Nothing from this planting is in the Pantry yet.
         </div>
         <Link to="/put-up" state={{ prefill }}
           style={{ color: P.green, fontSize: '0.85rem', fontWeight: 600, textDecoration: 'underline' }}>
@@ -151,7 +151,7 @@ export default function PutUpFromPlanting({ planting, fetch, onRows, renderExtra
         <div style={{ fontSize: '0.875rem', color: P.mid }}>
           <strong style={{ color: P.dark }}>
             {inStores.length === 0
-              ? 'Nothing left in the stores'
+              ? 'Nothing left in the Pantry'
               : `${totalPackages} ${totalPackages === 1 ? 'container' : 'containers'}`}
           </strong>
           {units.length ? ` · ${units.join(', ')}` : ''}

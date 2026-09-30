@@ -29,6 +29,8 @@ vi.mock('../context/AuthContext.jsx', async (importActual) => ({
   useAuthOptional: () => ({ user: viewer.id ? { id: viewer.id } : null, profile: null, loading: false, identity: viewer.id ? 'signed-in' : 'signed-out' }),
 }))
 
+// B′ release 2: the put-up list segment is renamed "Pantry" (V4 §2.5, §6.1) — the landing rule is
+// unchanged; only the segment's name in these assertions moved with it.
 import PutUp from '../pages/PutUp.jsx'
 
 const batch = (id, user_id, over = {}) => ({
@@ -77,7 +79,7 @@ describe('a bare open lands on Going now only for the viewer’s own batch', () 
     wire([DAVES, DAVES_2])
     renderAs('user_jen')
     await settled()
-    expect(activeSegment()).toBe("What's put up")
+    expect(activeSegment()).toBe('Pantry')
   })
 
   it('Jen, with one of her own among Dave’s → Going now', async () => {
@@ -96,28 +98,28 @@ describe('a bare open lands on Going now only for the viewer’s own batch', () 
     wire([JENS])
     renderAs('user_dave')
     await settled()
-    expect(activeSegment()).toBe("What's put up")
+    expect(activeSegment()).toBe('Pantry')
   })
 
   it('an unknown viewer owns nothing → the put-up list (even a row that has lost its owner)', async () => {
     wire([DAVES, JENS, { ...DAVES_2, user_id: null }])
     renderAs(null)
     await settled()
-    expect(activeSegment()).toBe("What's put up")
+    expect(activeSegment()).toBe('Pantry')
   })
 
   it('ownership is user_id and nothing else — a row with no user_id is nobody’s', async () => {
     wire([{ ...DAVES, user_id: undefined, created_by: 'user_jen' }])
     renderAs('user_jen')
     await settled()
-    expect(activeSegment()).toBe("What's put up")
+    expect(activeSegment()).toBe('Pantry')
   })
 
   it('the band’s destination still wins over the viewer’s own batch', async () => {
     wire([JENS])
     renderAs('user_jen', '/put-up?view=pantry&filter=use-soon')
     await settled()
-    expect(activeSegment()).toBe("What's put up")
+    expect(activeSegment()).toBe('Pantry')
   })
 
   it('a harvest-prefilled open still lands on the form', async () => {

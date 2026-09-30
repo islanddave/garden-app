@@ -36,6 +36,7 @@ vi.mock('../hooks/useCropTypes.js', () => ({
 }))
 
 import PutUp from '../pages/PutUp.jsx'
+import { rowFromRecord } from './helpers/pantryFake.js'
 
 // The claim, spelled out. Duplicated from PutUp.jsx deliberately: a constant imported from the file
 // under test would assert only that a string equals itself, and this string is the mitigation the
@@ -44,7 +45,10 @@ const CLAIM =
   'There’s no published guidance on how long candied fruit keeps, so this use-by is ours rather than ' +
   'a tested one — the automatic date comes from our own candying guide.'
 const FORM_NOTE = `No published shelf life for this one. ${CLAIM} Set Use by below to Pick a date if you know the real one.`
-const ROW_NOTE = `${CLAIM} Tap Edit to set the real date.`
+// B′ release 2: the Pantry row's chip carries the basis words and its sheet the detail line, both
+// stated once in V4 §3.2 ("house estimate"; "No published figure exists for candied fruit. This date is
+// a house estimate, not a tested one. Set your own.").
+const SHEET_NOTE = 'No published figure exists for candied fruit. This date is a house estimate, not a tested one. Set your own.'
 
 // A candied batch that HAS a use-by, because the use-by is what the ruling is about. `method` and
 // `use_by_target` are the two fields every assertion below turns on; the rest mirrors the shape the
@@ -66,11 +70,14 @@ function storesFixture({ method = 'candy', use_by_target = '2026-10-01' } = {}) 
 }
 
 function wire(stores) {
+  const rec = stores.groups[0].records[0]
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
     if (path.startsWith('/api/plants?') && method === 'GET') return Promise.resolve([])
-    if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(stores)
+    // B′ release 2: the list is the Pantry; a jar's sheet reads it by id.
+    if (path.startsWith('/api/pantry?')) return Promise.resolve({ rows: [rowFromRecord(rec, { id: 'loc-1', label: 'Pantry shelf', kind: 'pantry' })] })
+    if (path === `/api/preservation/${rec.id}` && method === 'GET') return Promise.resolve(rec)
     if (path === '/api/preservation' && method === 'POST') return Promise.resolve({ id: 'new-1' })
     if (path.startsWith('/api/preservation/') && method === 'PUT') return Promise.resolve({ id: 'rec-candy' })
     return Promise.resolve(null)
@@ -151,20 +158,29 @@ describe('the log form says where the number came from', () => {
   })
 })
 
+// AMENDED for B′ release 2: the list is the Pantry. The row's discard chip names the house estimate in
+// its basis words — also for a jar written before 1b stored a basis — and the row sheet carries V4
+// §3.2's detail line; Edit (the same editor) is reached through the sheet.
 describe('the saved row carries the provenance beside its date', () => {
-  it('labels a candy row that has a use-by, verbatim', async () => {
+  const openSheet = async () => {
+    fireEvent.click(await screen.findByTestId('pantry-row-open-put_up:rec-candy'))
+    return screen.findByTestId('row-sheet')
+  }
+
+  it('labels a candy row that has a date: "house estimate" on the chip, the detail line in its sheet, verbatim', async () => {
     renderPutUp()
-    await screen.findByText('Pantry shelf')
-    expect(screen.getByText(/use by Oct 1, 2026/)).toBeTruthy()
-    expect(screen.getByRole('note').textContent).toBe(ROW_NOTE)
+    expect(await screen.findByText(/discard by Oct 1 · house estimate/)).toBeTruthy()
+    await openSheet()
+    expect(screen.getByTestId('row-sheet-house').textContent).toBe(SHEET_NOTE)
   })
 
-  it('leaves a row with a published shelf life exactly as it renders today', async () => {
+  it('leaves a row with a published figure without the house words', async () => {
     wire(storesFixture({ method: 'jam_preserve' }))
     renderPutUp()
-    await screen.findByText('Pantry shelf')
-    expect(screen.getByText(/use by Oct 1, 2026/)).toBeTruthy()
-    expect(screen.queryByRole('note')).toBeNull()
+    expect(await screen.findByText(/discard by Oct 1/)).toBeTruthy()
+    expect(screen.queryByText(/house estimate/)).toBeNull()
+    await openSheet()
+    expect(screen.queryByTestId('row-sheet-house')).toBeNull()
   })
 
   it('says nothing when there is no date on screen to attribute', async () => {
@@ -172,27 +188,30 @@ describe('the saved row carries the provenance beside its date', () => {
     // provenance line to qualify — and an unprompted disclaimer over nothing is just noise.
     wire(storesFixture({ use_by_target: null }))
     renderPutUp()
-    await screen.findByText('Pantry shelf')
-    expect(screen.queryByRole('note')).toBeNull()
+    await openSheet()
+    expect(screen.queryByTestId('row-sheet-house')).toBeNull()
+    expect(screen.queryByText(/house estimate/)).toBeNull()
   })
 })
 
 describe('and the cook can set the real date', () => {
+  const openEditor = async () => {
+    fireEvent.click(await screen.findByTestId('pantry-row-open-put_up:rec-candy'))
+    fireEvent.click(await screen.findByTestId('row-edit'))
+    await screen.findByRole('button', { name: 'Save' })
+  }
+
   it('offers a use-by control on a candy row and sends what was typed', async () => {
-    // Without this the provenance line's "tap Edit to set the real date" is a dead instruction:
-    // use_by_target has always been per-row and overridable at CREATE time, but this editor never
-    // exposed it, so an existing row could not be corrected at all.
+    // Without this the provenance line's "Set your own" is a dead instruction.
     renderPutUp()
-    await screen.findByText('Pantry shelf')
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    await openEditor()
 
     // getByLabelText, not getByRole: an <input type="date"> has no implicit ARIA role to query by.
     const input = screen.getByLabelText('Use-by date')
     expect(input.value, 'the control must open on the stored date, not empty').toBe('2026-10-01')
     expect(screen.getByText(CLAIM), 'the claim follows the number into the editor').toBeTruthy()
 
-    // Release 1b (V4 §5.4, §8.3): the date goes through the PATCH as `discard_by` (the legacy PUT
-    // refuses a differing date as client_stale); the unchanged method is not sent at all.
+    // Release 1b (V4 §5.4, §8.3): the date goes through the PATCH as `discard_by`.
     fireEvent.change(input, { target: { value: '2026-09-18' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(lastPatch()).not.toBeNull())
@@ -201,13 +220,9 @@ describe('and the cook can set the real date', () => {
   })
 
   it('leaves the editor untouched for every other method, and round-trips the stored date', async () => {
-    // The regression this change could have caused: RowEditor now sends use_by_target on EVERY save.
-    // Seeded from the same expression buildFullPayload uses, so a row whose control never appeared
-    // must send back exactly what it was given.
     wire(storesFixture({ method: 'jam_preserve' }))
     renderPutUp()
-    await screen.findByText('Pantry shelf')
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    await openEditor()
     expect(screen.queryByLabelText('Use-by date')).toBeNull()
 
     // Release 1b: an untouched Save sends nothing at all, so the stored date cannot move.
@@ -217,13 +232,9 @@ describe('and the cook can set the real date', () => {
     expect(lastPatch()).toBeNull()
   })
 
-  // Amended for release F (06 §1.3; the ferment Lambda's PATCH): neither the one-tap decrement nor an Edit
-  // sends the full-replace PUT, so no write from this bundle can clear the candy date by omission. A
-  // count edit is one PATCH of the count alone.
   it('a count edit on a candy row is one PATCH of the count, and never touches its use-by', async () => {
     renderPutUp()
-    await screen.findByText('Pantry shelf')
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    await openEditor()
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Number of containers' }), { target: { value: '3' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(lastPatch()).not.toBeNull())
@@ -231,10 +242,9 @@ describe('and the cook can set the real date', () => {
     expect(lastPut()).toBeNull()
   })
 
-  it('a Mark-used tap on a candy row sends no PUT at all', async () => {
+  it('a Used-one tap on a candy row sends no PUT at all', async () => {
     renderPutUp()
-    await screen.findByText('Pantry shelf')
-    fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Used one — / }))
     await waitFor(() => expect(fetchMock.mock.calls.some(([p]) => p === '/api/pantry/uses')).toBe(true))
     expect(lastPut()).toBeNull()
   })

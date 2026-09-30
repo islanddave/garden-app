@@ -173,7 +173,7 @@ const REGIONS = [
   // own instant. Measured in the `storage` state only, which moves the clock into the sweet-potato
   // check window and serves real stored jars with their window status forced (storage-grafts.json).
   { id: 'storage-deadline-alert', label: 'StorageDeadlineAlert (a storage crop\'s lift deadline)' },
-  { id: 'putup-use-soon', label: 'PutUpUseSoonBand ("From your stores — cook these next")' },
+  { id: 'putup-use-soon', label: 'PutUpUseSoonBand ("From the Pantry — cook these next")' },
   { id: 'care-heading', label: 'the "Needs care today" heading' },
   // The disclosure that rows are being WITHHELD (V5-TODAYCAP-001). Without it the list silently
   // under-reports the garden; it is one 20px line and no coarse measure here can see it go.

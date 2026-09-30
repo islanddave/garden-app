@@ -8,9 +8,14 @@
 // The bar is the addendum's: no crash, no "null" / "undefined" / "NaN" anywhere a person can read or
 // hear it (text AND the attributes a screen reader speaks), and every row still opens (Edit). The rows
 // are shaped the way the Lambda projects them: every column of the row, plus the whats-put-up joins.
+//
+// AMENDED for B′ release 2: the list is the Pantry (GET /api/pantry, the contract's rows — here each
+// record's row, plus a bought item with every optional field empty and no place), and a row opens its
+// sheet, which reads the jar by id and says its record words before Edit opens the same editor. The
+// photo case is retired with the old row (the Pantry row carries no photo).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const fetchMock = vi.fn()
@@ -26,6 +31,7 @@ vi.mock('../hooks/useCropTypes.js', () => ({
 }))
 
 import PutUp from '../pages/PutUp.jsx'
+import { rowFromRecord, itemRow } from './helpers/pantryFake.js'
 
 // The columns 1a has no code for, on every B row (V4 §4.2 1b adds; remaining_amount is release 3).
 const B_KEYS = {
@@ -68,13 +74,20 @@ const GROUPS = [
     total_packages: 10, units: ['fl oz', 'quarts', 'g'], use_soon_count: 1, records: [NO_SIZE, LABEL_ONLY, DATED, WEIGHED] },
 ]
 
+const RECORDS = GROUPS[0].records
+const CF1 = { id: 'loc-1', label: 'Chest Freezer 1', kind: 'deep_freezer' }
+const BARE_ITEM = itemRow({ stock_id: 'b-item', name: 'Sourdough', place: null, group_key: 'none', group_label: 'No place',
+  acquired_at: null, discard: { date: null, basis: null, status: null }, created_by: null, updated_at: null })
+const ROWS = [...RECORDS.map(r => rowFromRecord({ ...r, stock_mode: r === WEIGHED ? 'weighed' : 'counted' }, CF1)), BARE_ITEM]
+
 function wire() {
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
-    if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve({ group_by: 'storage', groups: GROUPS })
+    if (path.startsWith('/api/pantry?')) return Promise.resolve({ rows: ROWS })
+    const rec = RECORDS.find(r => path === `/api/preservation/${r.id}`)
+    if (rec && method === 'GET') return Promise.resolve(rec)
     if (path.startsWith('/api/kitchen-batches')) return Promise.resolve({ state: 'going', batches: [] })
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
-    if (path.startsWith('/api/photos/view-url/')) return Promise.resolve({ view_url: 'https://example.invalid/ph-1.jpg' })
     return Promise.resolve(null)
   })
 }
@@ -97,32 +110,35 @@ function leaks(root) {
 beforeEach(() => { fetchMock.mockReset(); wire(); sessionStorage.clear() })
 
 describe('the put-up list reads release 1b–4 rows without breaking', () => {
-  it('renders every B-shaped row with no null / undefined / NaN anywhere', async () => {
-    const { container } = render(<MemoryRouter initialEntries={['/put-up']}><PutUp /></MemoryRouter>)
-    await screen.findByText('Chest Freezer 1')
-    // Every row is on screen — one Edit per row.
-    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(4)
+  const opens = () => screen.getAllByTestId(/^pantry-row-open-/)
+  it('renders every B-shaped row (and an empty bought item) with no null / undefined / NaN anywhere', async () => {
+    const { container } = render(<MemoryRouter initialEntries={['/put-up?view=pantry']}><PutUp /></MemoryRouter>)
+    await screen.findByRole('heading', { name: 'Chest Freezer 1' })
+    expect(opens()).toHaveLength(5)
     await waitFor(() => expect(leaks(container)).toEqual([]))
   })
 
-  it('the no-size row’s photo is on screen, so its spoken name is checked too (not a vacuous pass)', async () => {
-    const { container } = render(<MemoryRouter initialEntries={['/put-up']}><PutUp /></MemoryRouter>)
-    await screen.findByText('Chest Freezer 1')
-    await waitFor(() => expect(container.querySelector('img')).not.toBeNull())
-    expect(leaks(container)).toEqual([])
+  // Rows render in the order the server lists them: no size, label only, dated, weighed.
+  it.each([
+    ['no size', 'b-nosize'], ['label only', 'b-label'], ['dated neighbour', 'b-dated'], ['weighed stock', 'b-weighed'],
+  ])('the %s row still opens, and its sheet and editor show no null / undefined / NaN', async (_name, id) => {
+    const { container } = render(<MemoryRouter initialEntries={['/put-up?view=pantry']}><PutUp /></MemoryRouter>)
+    fireEvent.click(await screen.findByTestId(`pantry-row-open-put_up:${id}`))
+    await screen.findByTestId('row-sheet-record')
+    expect(leaks(container.ownerDocument.body)).toEqual([])
+    fireEvent.click(screen.getByTestId('row-edit'))
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeTruthy()
+    expect(leaks(container.ownerDocument.body)).toEqual([])
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByTestId('row-edit')).toBeTruthy()
   })
 
-  // Rows render in the order the group lists them: no size, label only, dated, weighed.
-  it.each([
-    ['no size', 0], ['label only', 1], ['dated neighbour', 2], ['weighed stock', 3],
-  ])('the %s row still opens, and its editor shows no null / undefined / NaN', async (_name, index) => {
-    const { container } = render(<MemoryRouter initialEntries={['/put-up']}><PutUp /></MemoryRouter>)
-    await screen.findByText('Chest Freezer 1')
-    fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[index])
-    expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
-    expect(leaks(container)).toEqual([])
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(4)
+  it('the bare bought item opens too, with nothing unreadable in its sheet or its editor', async () => {
+    const { container } = render(<MemoryRouter initialEntries={['/put-up?view=pantry']}><PutUp /></MemoryRouter>)
+    fireEvent.click(await screen.findByTestId('pantry-row-open-pantry_item:b-item'))
+    fireEvent.click(await screen.findByTestId('row-edit'))
+    await screen.findByTestId('item-edit-panel')
+    expect(leaks(container.ownerDocument.body)).toEqual([])
   })
 
   it('INSTRUMENT: the leak check does catch each word, in text and in an attribute', () => {

@@ -1144,7 +1144,7 @@ export default function PlantingDetail() {
       </>)}
 
       {/* ── Put up (V4-PUTUPLINK-001) — the far end of the spine: what this planting yielded that is
-          still in the stores. Renders unconditionally FOR HARVEST-TRACKED CROPS (unlike
+          still in the Pantry. Renders unconditionally FOR HARVEST-TRACKED CROPS (unlike
           Growth/Photos, which hide when empty): the empty state carries the "log a put-up from this
           planting" affordance, which is exactly the moment worth prompting — you are looking at the
           planting you just picked from.

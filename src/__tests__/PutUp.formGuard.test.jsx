@@ -61,6 +61,7 @@ vi.mock('../context/OverlayContext.jsx', async (importActual) => {
 })
 
 import PutUp from '../pages/PutUp.jsx'
+import { rowFromRecord } from './helpers/pantryFake.js'
 import { OverlayHost } from '../App.jsx'
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
 import { registerServiceWorker } from '../lib/registerSW.js'
@@ -440,31 +441,35 @@ const ROW = {
 const OTHER_ROW = { ...ROW, method: 'other', method_other_text: 'Vinegar dill pickles' }
 const CANDY_ROW = { ...ROW, method: 'candy', use_by_target: '2027-01-01' }
 
+// B′ release 2: the editor is reached through the Pantry row's sheet (row → Edit), which reads the full
+// jar (GET /api/preservation/:id) before it opens the SAME editor; the list is GET /api/pantry.
 function wireRow({ rec = ROW, onPut } = {}) {
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
     // Put-Up release 1b: the editor writes through the PUT (size, count) or the PATCH (name, method,
     // notes, discard-by); both are "the write" these tests hold the gate around.
     if (path.startsWith('/api/preservation/') && (method === 'PUT' || method === 'PATCH')) return onPut ? onPut(path, options) : Promise.resolve({ id: rec.id })
-    if (path.startsWith('/api/preservation/whats-put-up')) {
-      return Promise.resolve({ group_by: 'storage', groups: [{ group_key: 'loc-1', label: 'Garage freezer', total_packages: 3, units: ['bags'], use_soon_count: 0, records: [rec] }] })
-    }
+    if (path.startsWith('/api/pantry?')) return Promise.resolve({ rows: [rowFromRecord(rec)] })
+    if (path === `/api/preservation/${rec.id}` && method === 'GET') return Promise.resolve(rec)
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
     if (path.startsWith('/api/plants')) return Promise.resolve([])
     return Promise.resolve(null)
   })
 }
+async function openEditorFromRow() {
+  fireEvent.click(await screen.findByTestId('pantry-row-open-put_up:rec-1'))
+  fireEvent.click(await screen.findByTestId('row-edit'))
+  await screen.findByRole('button', { name: 'Save' })
+}
 async function openRowEditor() {
   const view = renderFullPage()
-  await screen.findByText('Garage freezer')
-  fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-  await screen.findByRole('button', { name: 'Save' })
+  await openEditorFromRow()
   return view
 }
 const typeNotes = (v) => fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: v } })
 const putCount = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'PUT' || o?.method === 'PATCH').length
 
-describe('RecordRow editor — holds the reload gate while dirty or saving (Put-Up 1a)', () => {
+describe('the jar editor (Pantry row → Edit) — holds the reload gate while dirty or saving (Put-Up 1a)', () => {
   it('opening the editor holds nothing; an edit holds; putting it back releases', async () => {
     wireRow()
     await openRowEditor()
@@ -505,7 +510,7 @@ describe('RecordRow editor — holds the reload gate while dirty or saving (Put-
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).toBeNull())
     expect(putCount()).toBe(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    fireEvent.click(screen.getByTestId('row-edit'))
     await screen.findByRole('button', { name: 'Save' })
     typeNotes('two went to Jen')
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -540,7 +545,7 @@ describe('RecordRow editor — holds the reload gate while dirty or saving (Put-
   })
 })
 
-describe('RecordRow editor ↔ registerSW end to end', () => {
+describe('the jar editor (Pantry row → Edit) ↔ registerSW end to end', () => {
   it('an edit in progress DEFERS the SW reload; Cancel lets it fire exactly once', async () => {
     wireRow()
     const env = makeSwEnv()

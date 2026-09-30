@@ -378,18 +378,26 @@ describe('a place that already exists (create selects it; rename says so and kee
   })
 })
 
-describe('a place that already exists — the freezer walk lists it once', () => {
+// B′ release 2 (V4 §2.2, Appendix B): the freezer walk is Walk a place. Its "＋ Somewhere else" is the
+// Appendix B creator (a name + a kind), made by find-or-create when the walk starts — so an answer that
+// names a place already there must select THAT place and list it once.
+describe('a place that already exists — the walk lists it once', () => {
   it('a walk create answered with an existing place selects its chip and adds no second chip', async () => {
     wire({ onPost: () => Promise.resolve({ ...PROD_THREE[1], existing: true }) })
     render(<MemoryRouter initialEntries={['/put-up?session=putup']}><PutUp /></MemoryRouter>)
-    fireEvent.click(await screen.findByRole('button', { name: '＋ Somewhere else' }))
-    fireEvent.click(await screen.findByRole('button', { name: /New location/i }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'New location name' }), { target: { value: 'Chest Freezer 2' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
-    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'New location name' })).toBeNull())
-    const chips = screen.getAllByTestId('putup-walk-freezer')
+    fireEvent.click(await screen.findByTestId('putup-walk-place-new'))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name of the place' }), { target: { value: 'Chest Freezer 2' } })
+    fireEvent.click(screen.getByTestId('putup-walk-place-new-kind-deep_freezer'))
+    fireEvent.click(screen.getByTestId('putup-walk-place-new-use'))
+    fireEvent.click(screen.getByTestId('putup-walk-when-this_month'))
+    fireEvent.click(screen.getByTestId('putup-walk-start'))
+    await screen.findByTestId('putup-walk-band')
+    expect(writeCalls('POST').filter(([p]) => p === '/api/storage-locations')).toHaveLength(1)
+    fireEvent.click(screen.getByTestId('putup-walk-change'))
+    const chips = within(await screen.findByRole('radiogroup', { name: 'Which place are you at?' })).getAllByRole('radio')
     expect(chips.filter(c => c.textContent === 'Chest Freezer 2')).toHaveLength(1)
-    expect(chips.map(c => c.textContent)).toEqual(['Chest Freezer 1', 'Chest Freezer 2', 'Garage freezr'])
+    expect(chips.find(c => c.getAttribute('aria-checked') === 'true')?.textContent).toBe('Chest Freezer 2')
+    expect(chips.map(c => c.textContent)).toEqual(['Chest Freezer 1', 'Chest Freezer 2', 'Garage freezr', 'Fridge', 'Pantry shelf', 'Counter'])
   })
 })
 
@@ -409,13 +417,14 @@ describe('a two-user household', () => {
   })
 })
 
-describe('the freezer walk keeps the creator and does NOT get the manage door', () => {
-  it('offers "＋ New location" under "Somewhere else" with no editing affordance', async () => {
+describe('the walk keeps the creator and does NOT get the manage door', () => {
+  it('offers "＋ Somewhere else" (a name + a kind) with no editing affordance', async () => {
     render(<MemoryRouter initialEntries={['/put-up?session=putup']}><PutUp /></MemoryRouter>)
     // Renaming vocabulary is a deliberate, desk-posture act. The walk is a hands-wet sitting whose
     // job is one item at a time, and a Delete button beside a freezer chip there is a hazard.
     fireEvent.click(await screen.findByRole('button', { name: '＋ Somewhere else' }))
-    expect(await screen.findByRole('button', { name: /New location/i })).toBeTruthy()
+    expect(await screen.findByRole('textbox', { name: 'Name of the place' })).toBeTruthy()
+    expect(screen.getByRole('radiogroup', { name: 'What kind of place?' })).toBeTruthy()
     expect(screen.queryByTestId('pu-manage-locations')).toBeNull()
     expect(screen.queryByTestId('pu-location-editor')).toBeNull()
   })
