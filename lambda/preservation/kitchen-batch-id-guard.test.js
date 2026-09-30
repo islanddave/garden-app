@@ -37,6 +37,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PRESERVATION_EDITABLE_COLUMNS } from './provenance.js';
+import { JAR_PATCH_KEYS } from './jarRoutes.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '../..');
@@ -63,9 +64,9 @@ describe('preservation_log.batch_id is not client-writable, and that is delibera
 
   it('is ABSENT from PRESERVATION_EDITABLE_COLUMNS', () => {
     // Mutation: add 'batch_id' to PRESERVATION_EDITABLE_COLUMNS in provenance.js. This reds — and so
-    // does src/__tests__/preservationColumnParity.test.js, which would then demand batch_id in all
-    // four hand-lists including buildFullPayload. Two independent guards, on purpose: the parity test
-    // would push an editor TOWARDS adding it everywhere, and this one says stop.
+    // does src/__tests__/preservationColumnParity.test.js, which would then demand batch_id in the
+    // Lambda's hand-lists. Two independent guards, on purpose: the parity test would push an editor
+    // TOWARDS adding it everywhere, and this one says stop.
     expect(PRESERVATION_EDITABLE_COLUMNS).not.toContain('batch_id');
   });
 
@@ -116,14 +117,20 @@ describe('preservation_log.batch_id is not client-writable, and that is delibera
     expect(updateBlock).not.toMatch(/\bbatch_id\b/);
   });
 
-  it('never appears in buildFullPayload, the copy of the list that ships to the browser', () => {
+  it('never appears in the jar PATCH — the route\'s allowlist, or the editor that ships to the browser', () => {
     // THIS is the surface that makes the omission load-bearing rather than tidy. A service-worker
-    // cached bundle is a client the server cannot upgrade, and buildFullPayload is what it sends.
-    const block = PUTUP.slice(
-      PUTUP.indexOf('function buildFullPayload(rec, overrides = {}) {'),
-      PUTUP.indexOf('...overrides,'));
+    // cached bundle is a client the server cannot upgrade. Through release 1b that bundle's
+    // buildFullPayload was the copy of the list it sent; release F retired it (Mark used is POST
+    // /api/pantry/uses, an Edit is ONE PATCH of what changed), so the copy that ships now is the
+    // editor's PATCH, and the PATCH refuses any key outside JAR_PATCH_KEYS.
+    // Mutation: add 'batch_id' to JAR_PATCH_KEYS, or `patch.batch_id = …` to RowEditor.save -> reds.
+    expect(JAR_PATCH_KEYS).not.toContain('batch_id');
+    const at = PUTUP.indexOf('function RowEditor(');
+    const block = PUTUP.slice(at, PUTUP.indexOf('\n  return (', at));
     expect(block.length).toBeGreaterThan(200);
+    expect(block).toMatch(/\bpatch\.\w+\s*=/);          // anchored to the real save, not an empty slice
     expect(block).not.toMatch(/\bbatch_id\b/);
+    expect(PUTUP).not.toMatch(/function buildFullPayload\s*\(/);
   });
 
   it('the migration says so too, so the reason survives without this file', () => {

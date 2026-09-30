@@ -1,8 +1,9 @@
 // Put-Up release 1a — the DATE ECHO exit proof (V4's legacy-PUT section, "From 1a"; lead condition 6).
 //
-// THE QUESTION. RecordRow's Edit and its one-tap Mark used both send buildFullPayload(rec): a full
-// replace that echoes the row's own preserved_at and use_by_target back to the PUT, which writes them
-// verbatim. If the echo is not byte-for-byte the stored calendar day, every tap moves the jar's dates.
+// THE QUESTION. The shipped RecordRow's Edit and its one-tap Mark used both send buildFullPayload(rec):
+// a full replace that echoes the row's own preserved_at and use_by_target back to the PUT, which writes
+// them verbatim. If the echo is not byte-for-byte the stored calendar day, every tap moves the jar's
+// dates. (Release F's bundle sends no echo at all — see shippedEcho below for why this still runs.)
 //
 // THE WIRE, established rather than assumed. The Lambda's driver (@neondatabase/serverless 0.10.4, the
 // version lambda/preservation/package-lock.json ships) registers a parser for DATE (oid 1082) that
@@ -22,11 +23,40 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { stubState, resetStubs } from '../../lambda/_test-stubs/state.js'
-import { buildFullPayload, ymd, prettyDate } from '../pages/PutUp.jsx'
+import { ymd, prettyDate } from '../pages/PutUp.jsx'
 import { preservedOn } from '../components/putup/JarPicker.jsx'
 import PutUpFromPlanting from '../components/planting/PutUpFromPlanting.jsx'
 
 const { handler } = await import('../../lambda/preservation/index.js')
+
+// THE SHIPPED ECHO, FROZEN. Release F retired buildFullPayload from PutUp.jsx — no write from the F
+// bundle echoes a row back (Mark used is POST /api/pantry/uses, an Edit is one PATCH of what changed) —
+// but the bundles already on phones send exactly this full-replace body, built with the page's own
+// ymd(), and the Lambda's PUT keeps answering it. Copied verbatim from the shipped PutUp.jsx
+// (origin/main 22e7db7cbc787129706126dbe5bfdb93ab8d63e7), so this proof still covers the phones that
+// send it. Retire it with the legacy PUT.
+const shippedEcho = (rec, overrides = {}) => ({
+  crop_type_slug: rec.crop_type_slug ?? null,
+  variety_id: rec.variety_id ?? null,
+  plant_id: rec.plant_id ?? null,
+  harvest_log_id: rec.harvest_log_id ?? null,
+  preserved_at: ymd(rec.preserved_at),
+  preserved_at_approx: rec.preserved_at_approx ?? null,
+  method: rec.method,
+  method_other_text: rec.method_other_text ?? null,
+  quantity_value: rec.quantity_value,
+  quantity_unit: rec.quantity_unit,
+  package_count: rec.package_count ?? 1,
+  storage_location_id: rec.storage_location_id ?? null,
+  use_by_target: rec.use_by_target ? ymd(rec.use_by_target) : null,
+  remaining_count: rec.remaining_count ?? null,
+  consumed_at: rec.consumed_at ?? null,
+  notes: rec.notes ?? null,
+  photo_id: rec.photo_id ?? null,
+  source_kind: rec.source_kind ?? null,
+  source_label: rec.source_label ?? null,
+  ...overrides,
+})
 
 const LAMBDA_TZ = 'UTC'
 const PHONE_TZ = 'America/New_York'
@@ -107,9 +137,9 @@ describe('the zones this proof depends on are really in force', () => {
 })
 
 describe('an untouched echo leaves the stored dates unchanged (the 1a exit proof)', () => {
-  it('GET → buildFullPayload sends back the calendar days that are stored', async () => {
+  it('GET → the shipped echo sends back the calendar days that are stored', async () => {
     const rec = await getAsThePhoneSeesIt()
-    const payload = buildFullPayload(rec)
+    const payload = shippedEcho(rec)
     expect(payload.preserved_at).toBe(STORED.preserved_at)
     expect(payload.use_by_target).toBe(STORED.use_by_target)
   })
@@ -129,7 +159,7 @@ describe('an untouched echo leaves the stored dates unchanged (the 1a exit proof
 
   it('…and the PUT that echo drives binds those same days, so Mark used moves no date', async () => {
     const rec = await getAsThePhoneSeesIt()
-    const payload = buildFullPayload(rec, { remaining_count: 2 })   // exactly what markUsed sends
+    const payload = shippedEcho(rec, { remaining_count: 2 })   // exactly what the shipped markUsed sends
     await inZone(LAMBDA_TZ, async () => {
       stubState.sqlCalls = []
       stubState.sqlHandler = (text) => {

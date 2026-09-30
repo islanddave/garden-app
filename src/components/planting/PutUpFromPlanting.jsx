@@ -32,6 +32,11 @@ import PutUpPhotoThumb from '../PutUpPhotoThumb.jsx'
 // the second reader of preserved_at (PutUp's RecordRow is the first) and would otherwise present a
 // freezer-walk estimate as a date the user picked, which is the defect the slice exists to close.
 import { describeApprox } from '../../lib/putUpSession.js'
+// Put-Up release F: the jar's words come from the one module every put-up surface says them in. A jar
+// may have NO size (the quantity pair is NULL from 1b — Put it up's "no size" rows, F's bottlings), and
+// its quantity is the row's TOTAL (contract-F A3). Printed raw, that read "null null" and "Photo of null
+// put up" here.
+import { sizeWords } from '../putup/jarWords.js'
 
 // V4-PUTUPPROV-001 — NO PROVENANCE LINE HERE, AND THAT IS DELIBERATE. This component fetches
 // whats-put-up?plant_id=<id>, so every row it can render has a non-null plant_id; the provenance
@@ -164,15 +169,18 @@ export default function PutUpFromPlanting({ planting, fetch }) {
         {[...inStores, ...usedUp].map(r => {
           const used = isUsedUp(r)
           const remaining = r.remaining_count ?? r.package_count ?? 0
+          // The same headline the put-up list gives the row: its name and its size, either or neither.
+          const head = [r.label, sizeWords(r)].filter(Boolean).join(' · ')
+          const method = METHOD_LABELS[r.method] || r.method
           return (
             <li key={r.id} style={{ padding: '10px 0', borderTop: `1px solid ${P.cream}`, display: 'flex', gap: 10, opacity: used ? 0.62 : 1 }}>
               <PutUpPhotoThumb photoId={r.photo_id} fetch={fetch} size={36}
-                alt={`Photo of ${r.quantity_unit} put up`} />
+                alt={`Photo of ${head || String(method ?? 'this put-up').toLowerCase()}`} />
               <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '0.9rem', color: P.dark, fontWeight: 600 }}>
-                {r.quantity_value} {r.quantity_unit}
+              <div data-testid="putup-from-planting-head" style={{ fontSize: '0.9rem', color: P.dark, fontWeight: 600 }}>
+                {head}
                 <span style={{ color: P.mid, fontWeight: 400 }}>
-                  {' · '}{METHOD_LABELS[r.method] || r.method}
+                  {head ? ' · ' : ''}{method}
                   {r.method === 'other' && r.method_other_text ? ` (${r.method_other_text})` : ''}
                 </span>
               </div>

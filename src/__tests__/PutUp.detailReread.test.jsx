@@ -1,9 +1,12 @@
 // Put-Up release F — the batch page's re-read after a write keeps the batch on screen (found by the
-// ferment walks, tests/harness/putupferment.jsx). "Opening that batch…" is for a batch not on screen
-// yet; on the re-read that follows every write it swapped the whole body out and back, remounting
-// everything under it, so the write's own answer — "Saved · Undo", "Taken out · Undo", a half-typed
-// salt step — was gone by the time the re-read landed.
-// MUTATION: PutUp.jsx passes `loading={detailLoading}` again -> both arms red.
+// ferment walks, tests/harness/putupferment.jsx). "Opening that batch…" and "Couldn't open that batch."
+// are for a batch not on screen yet. On the re-read that follows every write the first swapped the
+// whole body out and back, remounting everything under it, so the write's own answer — "Saved · Undo",
+// "Taken out · Undo", a half-typed salt step — was gone by the time the re-read landed; and a re-read
+// that FAILED replaced a batch already on screen with the error. Now a failed re-read keeps the batch
+// and says so in one quiet line, with Try again.
+// MUTATION: PutUp.jsx passes `loading={detailLoading}` again -> the in-flight arms red; passes
+// `error={detailError}` again -> the failed re-read arms red.
 // CI LANE: `npm test` + TZ re-run. No jest-dom (L-182).
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -40,19 +43,23 @@ const LINE = { id: 'kbi-1', batch_id: 'kb-1', input_kind: 'other', label: 'garli
   put_up_stage_id: null, output_id: null, ordinal: 1, from_garden: false, count_drawn: null, note: null, edited_at: null }
 const STARTED = { id: 'ksl-start', batch_id: 'kb-1', stage_kind: 'started', entered_at: '2026-09-25T13:00:00.000Z', entered_precision: 'day' }
 
+// The detail GETs, scripted: the FIRST answers as `first` says; every later one takes the next entry
+// of `then` — 'ok', 'fail', or 'hold' (answered by heldReread(), so the page can be looked at in flight).
 let detailGets = 0
 let heldReread = null
-function wire() {
+function wire({ first = 'ok', then = ['hold'] } = {}) {
   detailGets = 0
   heldReread = null
+  const script = [...then]
   fetchMock.mockImplementation((path, o = {}) => {
     const method = o.method ?? 'GET'
     if (path === '/api/kitchen-batches/kb-1' && method === 'GET') {
       detailGets += 1
       const body = { ...BATCH, inputs: [{ ...LINE, ...(detailGets > 1 ? { note: 'from the bed', edited_at: 'x' } : {}) }], stages: [STARTED], outputs: [] }
-      // The first read answers at once; the re-read is HELD, so the test can look at the page while it is in flight.
-      if (detailGets === 1) return Promise.resolve(body)
-      return new Promise(res => { heldReread = () => res(body) })
+      const how = detailGets === 1 ? first : (script.shift() ?? 'ok')
+      if (how === 'fail') return Promise.reject(Object.assign(new Error('502'), { status: 502 }))
+      if (how === 'hold') return new Promise(res => { heldReread = () => res(body) })
+      return Promise.resolve(body)
     }
     if (path.startsWith('/api/kitchen-batches?state=')) return Promise.resolve({ state: 'going', batches: [BATCH] })
     if (path === '/api/kitchen-batches/kb-1/inputs/kbi-1' && method === 'PATCH') return Promise.resolve({ input: { ...LINE, note: 'from the bed' } })
@@ -67,6 +74,12 @@ function renderPage() {
     </MemoryRouter>,
   )
 }
+async function editTheLine() {
+  await waitFor(() => expect(screen.getByTestId('line-row-kbi-1')).toBeTruthy())
+  fireEvent.click(screen.getByTestId('line-row-kbi-1'))
+  fireEvent.change(screen.getByTestId('line-sheet-note'), { target: { value: 'from the bed' } })
+  await act(async () => { fireEvent.click(screen.getByTestId('line-sheet-save')) })
+}
 
 beforeEach(() => { fetchMock.mockReset(); wire(); localStorage.clear(); clearReloadBlocks() })
 
@@ -74,11 +87,7 @@ describe('the batch page re-reads under the batch, never over it', () => {
   it('first load says it is opening; the re-read after a write keeps the body, and the write\'s "Saved · Undo"', async () => {
     renderPage()
     expect(screen.getByTestId('batch-detail-loading')).toBeTruthy()
-    await waitFor(() => expect(screen.getByTestId('line-row-kbi-1')).toBeTruthy())
-
-    fireEvent.click(screen.getByTestId('line-row-kbi-1'))
-    fireEvent.change(screen.getByTestId('line-sheet-note'), { target: { value: 'from the bed' } })
-    await act(async () => { fireEvent.click(screen.getByTestId('line-sheet-save')) })
+    await editTheLine()
     await waitFor(() => expect(heldReread).toBeTypeOf('function'))
 
     // In flight: the batch is still on screen and so is the answer to the write.
@@ -89,5 +98,39 @@ describe('the batch page re-reads under the batch, never over it', () => {
     expect(detailGets).toBe(2)
     expect(screen.getByTestId('line-row-kbi-1').textContent).toContain('edited')
     expect(screen.getByTestId('line-saved').textContent).toBe('SavedUndo')
+    expect(screen.queryByTestId('batch-detail-refresh-failed')).toBeNull()
+  })
+
+  it('a re-read that fails keeps the batch and its "Saved · Undo", and says so in one quiet line', async () => {
+    wire({ then: ['fail', 'hold'] })
+    renderPage()
+    await editTheLine()
+    await waitFor(() => expect(screen.getByTestId('batch-detail-refresh-failed')).toBeTruthy())
+    expect(screen.queryByTestId('batch-detail-error')).toBeNull()                  // never "Couldn't open that batch."
+    expect(screen.getByTestId('batch-detail-title').textContent).toBe('Petri Dish')
+    expect(screen.getByTestId('line-row-kbi-1')).toBeTruthy()
+    expect(screen.getByTestId('line-saved').textContent).toBe('SavedUndo')
+    const line = screen.getByTestId('batch-detail-refresh-failed')
+    expect(line.getAttribute('role')).toBe('status')
+    expect(line.textContent).toBe('Couldn’t refresh this batch —Try again')
+    expect(line.getAttribute('data-alarm-ink-exempt')).toBeNull()                 // quiet ink: nothing was lost
+
+    // Try again re-reads; while it is out the button says so; when it lands the line goes.
+    fireEvent.click(screen.getByTestId('batch-detail-refresh-retry'))
+    await waitFor(() => expect(heldReread).toBeTypeOf('function'))
+    expect(screen.getByTestId('batch-detail-refresh-retry').disabled).toBe(true)
+    expect(screen.getByTestId('batch-detail-refresh-retry').textContent).toBe('Trying again…')
+    await act(async () => { heldReread() })
+    expect(detailGets).toBe(3)
+    expect(screen.queryByTestId('batch-detail-refresh-failed')).toBeNull()
+    expect(screen.getByTestId('line-row-kbi-1').textContent).toContain('edited')
+  })
+
+  it('a batch that never opened still says so — the quiet line is only for a batch on screen', async () => {
+    wire({ first: 'fail' })
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('batch-detail-error')).toBeTruthy())
+    expect(screen.getByTestId('batch-detail-error').textContent).toBe('Couldn’t open that batch.')
+    expect(screen.queryByTestId('batch-detail-refresh-failed')).toBeNull()
   })
 })

@@ -523,3 +523,69 @@ describe('"what haven\'t I put up?" — one collapsed line that cannot become a 
     expect(within(panel).queryByText('Blueberries')).toBeNull()
   })
 })
+
+// Contract-F A3 in the walk. quantity_value is the row's TOTAL; the walk asks "How big is each?" (the
+// fact at hand at a freezer), so it stores each × how many, worked out in decimal and said before it
+// saves and after. MUTATION: send Number(qtyValue) again -> the 2.49 arm reads 0.83; multiply as floats
+// (Number(each) * count) -> it reads 2.4899999999999998; drop the readback's size -> the band arm reds.
+describe('the walk stores the TOTAL — each × how many (A3)', () => {
+  const unit = (u) => fireEvent.change(screen.getByRole('combobox', { name: 'Unit' }), { target: { value: u } })
+  const lastBody = () => [...fetchMock.mock.calls].reverse().find(([, o]) => o?.method === 'POST')[1].body
+
+  it('3 bags of 0.83 quarts is ONE row of 2.49 quarts, said before it saves and after', async () => {
+    renderWalk()
+    await answerSetup()
+    pickCrop('blueberry')
+    expect(screen.getByText(/How big is each\?/)).toBeTruthy()          // the walk's own question is kept
+    fireEvent.change(bagsField(), { target: { value: '3' } })
+    typeQty('0.83')
+    unit('quarts')
+    expect(screen.getByTestId('pu-walk-total').textContent).toBe('3 × 0.83 quarts = 2.49 quarts in all')
+    await saveItem()
+    expect(lastPost()).toMatchObject({ package_count: 3, quantity_value: 2.49, quantity_unit: 'quarts' })
+    expect(lastBody()).toContain('"quantity_value":2.49,')               // on the wire, not 2.4899999999999998
+    expect(screen.getByTestId('putup-walk-last').textContent).toContain('3 × Blueberries · 2.49 quarts in all')
+  })
+
+  it('2 bags of 1 lb is 2 lb — and the readback says what the server stored', async () => {
+    wire()
+    fetchMock.mockImplementation(((base) => (path, options = {}) => (path === '/api/preservation' && options.method === 'POST'
+      ? Promise.resolve({ id: 'new-2', source_kind: 'own_garden', crop_type_slug: 'blueberry', quantity_value: '2.00', quantity_unit: 'lbs', package_count: 2 })
+      : base(path, options)))(fetchMock.getMockImplementation()))
+    renderWalk()
+    await answerSetup()
+    pickCrop('blueberry')
+    fireEvent.change(bagsField(), { target: { value: '2' } })
+    typeQty('1')
+    unit('lbs')
+    expect(screen.getByTestId('pu-walk-total').textContent).toBe('2 × 1 lbs = 2 lbs in all')
+    await saveItem()
+    expect(lastPost()).toMatchObject({ package_count: 2, quantity_value: 2, quantity_unit: 'lbs' })
+    // The driver's numeric(10,2) "2.00" is said "2".
+    expect(screen.getByTestId('putup-walk-last').textContent).toContain('2 × Blueberries · 2 lbs in all')
+  })
+
+  it('one bag stores its own size, and there is no sum to show', async () => {
+    renderWalk()
+    await answerSetup()
+    pickCrop('blueberry')
+    fireEvent.change(bagsField(), { target: { value: '1' } })
+    typeQty('0.83')
+    expect(screen.queryByTestId('pu-walk-total')).toBeNull()
+    await saveItem()
+    expect(lastPost()).toMatchObject({ package_count: 1, quantity_value: 0.83 })
+  })
+
+  it('refuses a size it cannot multiply out exactly, and writes nothing', async () => {
+    renderWalk()
+    await answerSetup()
+    pickCrop('blueberry')
+    fireEvent.change(bagsField(), { target: { value: '3' } })
+    typeQty('1e3')
+    const posts = () => fetchMock.mock.calls.filter(([, o]) => o?.method === 'POST').length
+    const before = posts()
+    fireEvent.click(screen.getByRole('button', { name: 'Save & next' }))
+    expect(await screen.findByText(/Enter how big each one is/)).toBeTruthy()
+    expect(posts()).toBe(before)
+  })
+})

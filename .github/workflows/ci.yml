@@ -716,6 +716,41 @@ jobs:
           GATE_CHROME_FLAGS: --no-sandbox
         run: npm run gate:putup
 
+      - name: Put-Up ferment walks, Start to finish and after (release F, 06-ferment-path §5 L3)
+        # Five walks through the REAL /put-up page in real Chrome, at Dave's 426x836 and with the keyboard
+        # up at 426x492: Petri Dish and Settlers of Cayenne (hot-ones-2026/recipes-v3.md), a kraut, a kimchi
+        # (a rinsed soak and a paste salt, gochugaru's heat) and 06 §5.3's Appendix C. Each taps what a cook
+        # taps — Start a batch, the line search (plantings, a pick, weighed and counted draws, typed lines,
+        # Water), the Salt block, Jar & heat and Work it out, Check on it, Put it up and finish — then edits
+        # Made g and a line after finishing (the kimchi also moves its check-in's date). The far side of the
+        # wire is tests/harness/fermentFake.js: stateful, and judging every body with the Lambda's own
+        # validators and planners (validateBatchCreate/Update, validateStage, linesError, linePatchError,
+        # stagePatchError, drawPlan, validatePutUp + planPutUp, validateJarPatch, shuEstimate), so a body
+        # the Lambda would refuse fails the walk. It proves nothing about SQL; that is the integration lane.
+        #
+        # Asserts, besides getting through: every tap lands on its control (nothing painted over its
+        # centre); every focused field sits inside the viewport and clear of a pinned footer or bar; no
+        # sideways scroll; every visible control at least T.tapMinHeight (min of width and height for a
+        # button); an open sheet's primary action on screen at its first AND last scroll position; with the
+        # salt % focused, the %, the live line and "I put in" on screen together; and 06 §5.3's golden
+        # values in the DOM and in what was written ("aimed 3.5% · put in 13.5 g = 3.0% of 448 g", "est.
+        # 950–3.0k SHU", "est. 16–23k SHU", 20.0 g, 18.7 g, the 200 g soak, the 800 g base, "about 92 g left
+        # after"). Text is laid out in Roboto (tests/harness/robotoPin.js), the face Dave's Android renders,
+        # and a run whose pin did not load is refused.
+        #
+        # Verified non-vacuous: `npm run gate:putup-ferment:probe-nothing` points every selector at a testid
+        # nothing renders and exits 1 on all 10 walk/viewport pairs ("the walk did almost nothing (taps 0 <
+        # 20, ...)"). Before the fixes that landed with it the gate was red on four real defects: the re-read
+        # remount that wiped "Saved · Undo", "I put in" under the keyboard at 426x492, Put it up's ~676px
+        # scroll-anchoring jump that put pH under a sticky header, and a 39px-wide Save. Each fix reverted
+        # reds it again (W1-W3), as do a changed salt card (W4) and a refusal drawn as a figure (W5).
+        #
+        # ~81 s locally, measured: ten page loads behind one Vite boot; each walk takes 4-10 s.
+        # NO continue-on-error, per the policy note above.
+        env:
+          GATE_CHROME_FLAGS: --no-sandbox
+        run: npm run gate:putup-ferment
+
       - name: Icon wiring slice 4 — five rewired surfaces (V4-ICON-001)
         # Real Chrome at 390x844 across overwinter / inventory-type / water-depth / life-story /
         # notify. Asserts ZERO pictographic characters survive inside the rewired subtree, and that

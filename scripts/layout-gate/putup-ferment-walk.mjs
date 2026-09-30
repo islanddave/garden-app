@@ -99,16 +99,19 @@ async function attach(wsUrl) {
   ws.onmessage = e => {
     const m = JSON.parse(e.data)
     if (m.id != null && pending.has(m.id)) {
-      const { res, rej } = pending.get(m.id); pending.delete(m.id)
+      const { res, rej, timer } = pending.get(m.id); pending.delete(m.id)
+      clearTimeout(timer)
       m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result)
     }
   }
   // A walk runs for tens of seconds inside one evaluate: the timeout is the walk's, not a CDP round trip's.
+  // Each timer is CLEARED when its answer arrives: a left-over 240 s timer kept this process alive for
+  // four minutes after the last walk had passed (measured: 312 s for 75 s of walking).
   const send = (method, params = {}, sessionId, ms = 90000) => new Promise((res, rej) => {
     const mid = ++id
-    pending.set(mid, { res, rej })
+    const timer = setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, ms)
+    pending.set(mid, { res, rej, timer })
     ws.send(JSON.stringify({ id: mid, method, params, ...(sessionId ? { sessionId } : {}) }))
-    setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, ms)
   })
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
@@ -137,21 +140,27 @@ async function evalSettled(cdp, expr, ms) {
 
 let harness, chrome, cdp
 const udd = mkdtempSync(join(tmpdir(), 'gate-putupferment-'))
+const t0 = Date.now()
+const secs = (t) => `${((Date.now() - t) / 1000).toFixed(1)} s`
 try {
   harness = await startHarness()
   chrome = await startChrome(udd)
   cdp = await attach(chrome.version.webSocketDebuggerUrl)
+  console.log(`[ferment] Vite + Chrome up in ${secs(t0)}`)
   if (PROBE_NOTHING) console.log('[ferment] --probe-nothing: every selector points at a testid nothing renders. This run MUST fail.')
   for (const walk of WALKS) {
     for (const [vw, vh] of VIEWPORTS) {
       const at = `${walk}@${vw}x${vh}`
+      const tLoad = Date.now()
       await cdp.send('Emulation.setDeviceMetricsOverride', { width: vw, height: vh, deviceScaleFactor: 3, mobile: true }, cdp.sessionId)
       const url = `http://localhost:${PORT}/tests/harness/putupferment.html?walk=${walk}${PROBE_NOTHING ? '&probe=1' : ''}${TRACE ? '&trace=1' : ''}`
       const nav = await cdp.send('Page.navigate', { url }, cdp.sessionId)
       if (nav.errorText) throw new Error(`navigation to ${url} failed: ${nav.errorText}`)
       await sleep(200)
-      await evalSettled(cdp, `(async()=>{for(let i=0;i<200;i++){if(window.__walk&&window.__walk.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('the harness never reached ready() for ${walk}')})()`)
+      await evalSettled(cdp, `(async()=>{for(let i=0;i<600;i++){if(window.__walk&&window.__walk.ready())return 1;await new Promise(r=>setTimeout(r,100))}throw new Error('the harness never reached ready() for ${walk}')})()`)
+      const loaded = secs(tLoad)
       const r = await evalSettled(cdp, 'window.__walk.run()', 240000)
+      console.log(`[ferment] ${at}: page ready in ${loaded}`)
       // ── INSTRUMENT CHECK, before the verdict.
       if (r.vw !== vw || r.vh !== vh) { fail(`${at}: the page self-reports ${r.vw}x${r.vh} — emulation did not take`); continue }
       if (!r.font || !(r.font.faces > 0) || r.font.failed > 0) {
@@ -185,4 +194,4 @@ if (PROBE_NOTHING) {
   console.error('\n[ferment] FAIL — and this one is the real defect: every selector pointed at nothing and no walk complained.')
   process.exit(1)
 }
-console.log('[ferment] PASS')
+console.log(`[ferment] PASS in ${secs(t0)}`)

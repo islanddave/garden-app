@@ -129,6 +129,25 @@ describe('JarPicker — identity only, and the use-by chip is not part of identi
     expect(preservedOn('2026-13-01')).toBeNull()
   })
 
+  // Release F review M6: a jar's own name wins over its crop group's label. A named jar with no crop
+  // lands in "Unattributed" and read "Unattributed · …". MUTATION: go back to crop_label first -> the
+  // "Megatron plain" arms red.
+  it('says a jar by its own name when it has one — never "Unattributed" beside a name on the lid', async () => {
+    expect(jarIdentity({ label: 'Megatron plain', crop_label: 'Unattributed', quantity_value: null, quantity_unit: null, preserved_at: '2026-10-08' }))
+      .toBe('Megatron plain · Oct 8')
+    expect(jarIdentity({ label: 'Settlers', crop_label: 'Peppers', quantity_value: '8', quantity_unit: 'fl oz', preserved_at: '2026-10-08' }))
+      .toBe('Settlers · 8 fl oz · Oct 8')
+    // No name (or a blank one): the crop group's label, as before.
+    expect(jarIdentity({ label: '  ', crop_label: 'Peppers', quantity_value: '3', quantity_unit: 'pint', preserved_at: '2026-08-12' }))
+      .toBe('Peppers · 3 pint · Aug 12')
+    fetchMock.mockResolvedValue({ group_by: 'crop', groups: [{ group_key: null, label: 'Unattributed',
+      records: [jar({ id: 'jar-named', crop_type_slug: null, label: 'Megatron plain', quantity_value: null, quantity_unit: null, preserved_at: '2026-10-08' })] }] })
+    render(<JarPicker batchId="kb-mine" selected={new Set()} onToggle={vi.fn()} />)
+    await screen.findByTestId('jar-picker-list')
+    expect(screen.getByTestId('jar-picker-identity').textContent).toBe('Megatron plain · Oct 8')
+    expect(screen.getByTestId('jar-picker').textContent).not.toContain('Unattributed')
+  })
+
   it('drops a segment it has no value for rather than rendering a blank or a zero', () => {
     expect(jarIdentity({ crop_label: 'Peppers', quantity_value: null, quantity_unit: 'pint', preserved_at: null }))
       .toBe('Peppers')

@@ -63,7 +63,7 @@ import { describeRefusal, existingPlaceId, REFRESH_NOW_LABEL } from '../lib/putU
 import { useAppUpdate } from '../hooks/useAppUpdate.js'
 // Put-Up release 1b — a jar's name, its no-size form, its date at its precision and its discard words
 // come from one module shared with Put it up and batch detail; a move is its own write (V4 §3.4).
-import { putUpDateWords, discardWords, sizeWords, ESTIMATED_PRECISIONS } from '../components/putup/jarWords.js'
+import { putUpDateWords, discardWords, sizeWords, qtyText, totalOfEach, ESTIMATED_PRECISIONS } from '../components/putup/jarWords.js'
 import MoveJarSheet from '../components/putup/MoveJarSheet.jsx'
 import { mintKey } from '../components/kitchen/idempotencyKey.js'
 
@@ -387,6 +387,9 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
       .finally(() => setDetailLoading(false))
   }, [pageFetch, batchId])
   useEffect(() => { loadDetail() }, [loadDetail])
+  // The batch this page is showing IS the one the URL names (a switch to another batch shows the new
+  // one's opening state, never the old one's body).
+  const detailOnScreen = !!detail && String(detail.id) === String(batchId)
 
   // BOTH, always. A write from the detail surface changes the row the LIST renders too (a pause moves
   // a card into the Paused group, a close removes it entirely), and a retry after a dropped response
@@ -605,15 +608,18 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
 
         {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
             only invalidation path and it re-reads BOTH this row and the list.
-            "Opening that batch…" is for a batch not on screen yet — never for the re-read after a write
-            (release F, found by the ferment walks): that swapped the whole body for the placeholder and
-            back, remounting everything under it, so each write's own answer — "Saved · Undo", "Taken
-            out · Undo", a salt step half typed — was gone by the time the re-read landed. */}
+            "Opening that batch…" and "Couldn't open that batch." are for a batch not on screen yet —
+            never for the re-read after a write (release F, found by the ferment walks): that swapped the
+            whole body out and back, remounting everything under it, so each write's own answer — "Saved ·
+            Undo", "Taken out · Undo", a salt step half typed — was gone by the time the re-read landed,
+            and a re-read that FAILED replaced a batch that was already on screen with an error. A failed
+            re-read keeps the batch and says so in one quiet line, with Try again. */}
         {batchId && (
           <div data-testid="putup-batch-mode">
             <BatchDetailView
               batch={detail} inputs={detail?.inputs ?? []} stages={detail?.stages ?? []}
-              outputs={detail?.outputs ?? []} loading={detailLoading && String(detail?.id ?? '') !== String(batchId)} error={detailError}
+              outputs={detail?.outputs ?? []} loading={detailLoading && !detailOnScreen} error={detailError && !detailOnScreen}
+              refreshFailed={detailError && detailOnScreen} refreshing={detailLoading} onRetry={loadDetail}
               nowMs={detailNowMs} onChanged={onBatchChanged}
               onRemoved={() => { loadGoing(); leaveMode() }} />
           </div>
@@ -1495,11 +1501,21 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
   // the on-screen half of design §4.4 rule 4.
   const autoResolvedPlanting = session && soleForCrop && plantId === soleForCrop.id ? soleForCrop : null
 
+  // Contract-F A3 in the walk. quantity_value is the row's TOTAL, and the walk asks the size of EACH
+  // bag ("How big is each?"), so what it stores is each × how many — 3 bags of 0.83 qt is ONE row of
+  // 2.49 qt — worked out in decimal (jarWords.totalOfEach), never as floats. Outside the walk the form
+  // asks "How much in all" and the typed figure is the total already.
+  const bagCount = packageCount === '' ? 1 : Number(packageCount)
+  const walkTotal = session ? totalOfEach(qtyValue, bagCount) : null
+
   function validate() {
     // A planting is sufficient attribution on its own — the server derives crop + variety from it.
     if (!cropSlug && !effectiveVarietyId && !plantId) return 'Pick a crop, a variety, or a planting so this put-up is attributed.'
     const q = Number(qtyValue)
     if (qtyValue === '' || !Number.isFinite(q) || q <= 0) return 'Enter how much you put up (greater than zero).'
+    // The walk asks "How big is each?" and stores each × how many (walkTotal): a size it cannot
+    // multiply out exactly (1e3) is refused here, never written as something else.
+    if (session && walkTotal == null) return 'Enter how big each one is, as a plain number (greater than zero).'
     if (!qtyUnit) return 'Pick a unit.'
     if (method === 'other' && !methodOther.trim()) return 'Describe the method when you choose "Other".'
     if (!preservedAt) return 'When did you put this up?'
@@ -1529,9 +1545,9 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
       // ordinary path and leave it NULL — "nobody was asked" — when we did in fact ask.
       preserved_at_approx: dateApprox,
       method,
-      quantity_value: Number(qtyValue),
+      quantity_value: session ? Number(walkTotal) : Number(qtyValue),
       quantity_unit: qtyUnit,
-      package_count: packageCount === '' ? 1 : Number(packageCount),
+      package_count: bagCount,
       // In the BASE literal, deliberately — source_kind always has a value, and routing it through
       // the `if (x) body.x = ...` chain below would make "not set" and "empty" indistinguishable on
       // the wire for a column whose whole point is recording what is known.
@@ -1587,7 +1603,11 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
       // its Undo — so the form stays put and clears for the next bag rather than swapping itself
       // for a success screen he then has to tap past sixty times.
       if (session && onSaved) {
-        onSaved(row, `${body.package_count} × ${cropLabel}`)
+        // The readback says the TOTAL that was stored — from the saved row, the server's word for it,
+        // falling back to what was sent: "3 × Zucchini · 2.49 qt in all".
+        const stored = row?.quantity_value != null && row?.quantity_unit ? row : body
+        const size = sizeWords({ quantity_value: stored.quantity_value, quantity_unit: stored.quantity_unit, package_count: body.package_count })
+        onSaved(row, `${body.package_count} × ${cropLabel}${size ? ` · ${size}` : ''}`)
         resetForNext()
       } else {
         setSuccess({ text, row })
@@ -1724,11 +1744,12 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
   )
 
   const qtyRow = (
-    <div style={{ display: 'flex', gap: T.space.sm, marginTop: 14 }}>
+    <div style={{ marginTop: 14 }}>
+    <div style={{ display: 'flex', gap: T.space.sm }}>
       <div style={{ flex: 2 }}>
-        {/* Contract-F A3: quantity_value is the TOTAL of the row (count × size), so the log form asks
-            for the total. The walk's own wording is unchanged and is reported, not decided, here: it
-            asks the size of EACH bag and stores that number in the same total column. */}
+        {/* Contract-F A3: quantity_value is the TOTAL of the row (count × size). The log form asks for
+            the total; the walk keeps asking the size of EACH bag — the fact at hand at a freezer — and
+            stores each × how many (walkTotal), saying that total under the field before it saves. */}
         <Field label={session ? 'How big is each? *' : 'How much in all *'} htmlFor="pu-qty">
           <Input
             id="pu-qty"
@@ -1752,6 +1773,14 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
           </Select>
         </Field>
       </div>
+    </div>
+    {/* The total the walk will store, said before it saves (A3): "3 × 0.83 qt = 2.49 qt in all". One
+        bag needs no sum — its size is its total. */}
+    {session && walkTotal != null && bagCount > 1 && (
+      <div role="status" data-testid="pu-walk-total" style={{ marginTop: 4, color: P.mid, fontSize: T.type.sm }}>
+        {bagCount} × {qtyText(qtyValue.trim())} {qtyUnit} = {walkTotal} {qtyUnit} in all
+      </div>
+    )}
     </div>
   )
 
@@ -2540,51 +2569,11 @@ function GroupCard({ group, onChanged, fetch }) {
   )
 }
 
-// Build the FULL replace payload the PUT contract expects, applying overrides (decrement / edit).
-//
-// ⚠ RELEASE F: NOTHING IN THIS BUNDLE CALLS IT. Mark used / Used up are POST /api/pantry/uses and every
-// Edit is one PATCH (RecordRow). It stays, exported and pinned by preservationColumnParity.test.js and
-// putUpDateEcho.tz.test.js, because it IS the legacy wire shape the 1a bundles still on phones send —
-// the shape the Lambda's PUT keeps answering (and, from F, refuses for a drawn jar). Retire it with
-// those two tests once no 1a bundle is left to reason about.
-function buildFullPayload(rec, overrides = {}) {
-  return {
-    crop_type_slug: rec.crop_type_slug ?? null,
-    variety_id: rec.variety_id ?? null,
-    plant_id: rec.plant_id ?? null,
-    harvest_log_id: rec.harvest_log_id ?? null,
-    preserved_at: ymd(rec.preserved_at),
-    // V4-PUTUPSESSION-001 slice 1. `?? null` and never `?? false`: null is what the Lambda's
-    // COALESCE reads as "unchanged", so a row whose flag was never recorded keeps its NULL instead
-    // of being rewritten as "the user chose this date" by a Mark-used tap that knows nothing about
-    // it. The same reasoning as source_kind below, one line up because it belongs beside its date.
-    preserved_at_approx: rec.preserved_at_approx ?? null,
-    method: rec.method,
-    method_other_text: rec.method_other_text ?? null,
-    quantity_value: rec.quantity_value,
-    quantity_unit: rec.quantity_unit,
-    package_count: rec.package_count ?? 1,
-    storage_location_id: rec.storage_location_id ?? null,
-    use_by_target: rec.use_by_target ? ymd(rec.use_by_target) : null,
-    // remaining_count and consumed_at are DELIBERATELY ABSENT (release F, 06 §1.3 item 3): uses go
-    // through POST /api/pantry/uses, and an absent key is "unchanged" to the 1b PUT. From F the PUT
-    // refuses a remaining_count on a jar a batch has drawn from (client_stale), so sending the key —
-    // even as an untouched echo — would make every Edit of a drawn jar fail.
-    notes: rec.notes ?? null,
-    photo_id: rec.photo_id ?? null,
-    // V4-PUTUPPROV-001 — THE HIGHEST-RISK LINE IN THIS CHANGE. This function is the single choke
-    // point for the one-tap "Mark used" decrement AND, via the overrides spread below, for
-    // RowEditor. Omitting a
-    // column here means every decrement tap sends a payload without it. Before the Lambda's
-    // COALESCE-preserve fix that silently rewrote a farm-stand put-up as own-garden with the vendor
-    // erased, returned 200, and looked like a render glitch. Both guards ship; keep both.
-    // src/__tests__/preservationColumnParity.test.js asserts this object's key set against
-    // PRESERVATION_EDITABLE_COLUMNS so the NEXT column cannot be half-added either.
-    source_kind: rec.source_kind ?? null,
-    source_label: rec.source_label ?? null,
-    ...overrides,
-  }
-}
+// Release F retired buildFullPayload, the full-replace echo every 1a/1b Edit and Mark used sent: Mark
+// used / Used up are POST /api/pantry/uses and every Edit is ONE PATCH of what changed (RowEditor), so
+// no write from this bundle echoes a row back. The 1a bundles still cached on phones do send that echo;
+// the Lambda's PUT keeps answering it, and putUpDateEcho.tz.test.js keeps a frozen copy of its shape to
+// prove it moves no date. preservationColumnParity.test.js now pins the PATCH this editor sends instead.
 
 function RecordRow({ rec, onChanged, fetch }) {
   const [busy, setBusy] = useState(false)
@@ -2808,7 +2797,7 @@ function RowAction({ onClick, disabled, tone, children }) {
   )
 }
 
-// Minimal per-row editor — the fields worth changing after the fact. Sends a FULL replace payload.
+// Minimal per-row editor — the fields worth changing after the fact. Sends ONE PATCH of what changed.
 function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
   // against it, one expression per field, so the seed and the comparison cannot drift apart.
@@ -2831,7 +2820,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   const [method, setMethod] = useState(seed.method)
   // PRE-EXISTING BUG, fixed under V4-PUTUPPROV-001. This editor offered 'other' in the method list
   // but had no method_other_text input, so switching a row TO 'other' sent method:'other' with
-  // method_other_text:null (buildFullPayload supplies the row's existing value, which is null for a
+  // method_other_text:null (the 1a full echo supplied the row's existing value, which is null for a
   // row that was not already 'other'), tripping validateUpdate's required-text rule. The 400 was
   // then swallowed by put()'s generic catch, so it read as "Couldn't update — try again." forever.
   // THE INVARIANT THIS RESTORES: a field that is CONDITIONALLY REQUIRED BY ANOTHER FIELD must be
@@ -2841,8 +2830,8 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // V5-PUTUPCANDY-001. The other half of FOODSAFETY-RULING-V101 §8.2: "let the cook set the real
   // date". use_by_target has always been per-row and user-overridable at CREATE time, but this
   // editor never exposed it, so the provenance line's "tap Edit to set the real date" would have
-  // been a dead instruction on an existing row. Seeded exactly as buildFullPayload seeds it, so an
-  // untouched save round-trips the stored value byte-for-byte.
+  // been a dead instruction on an existing row. Seeded through ymd(), so an untouched field is
+  // byte-for-byte the stored day and is never sent (release F: only what changed is).
   const [useByTarget, setUseByTarget] = useState(seed.useByTarget)
   const [notes, setNotes] = useState(seed.notes)
 
@@ -2865,9 +2854,8 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     return () => setReloadBlocked(reloadGateKey, false)
   }, [reloadGateKey, holdReload])
 
-  // Put-Up release 1b: ONLY what changed is sent, each to its one writer (RecordRow.saveEdit) — the
-  // size and count through the legacy PUT, the name, method, notes and discard-by through the PATCH.
-  // An untouched field is an absent key, which both routes read as "unchanged" (V4 §5.4 "From 1b").
+  // ONLY what changed is sent, in ONE PATCH (RecordRow.saveEdit; release F moved the size and count onto
+  // it too). An untouched field is an absent key, which the route reads as "unchanged" (V4 §5.4).
   function save() {
     // ONLY what changed, each key once, all in the one PATCH (see RecordRow.saveEdit).
     const patch = {}
@@ -2993,4 +2981,4 @@ function friendlyError(err) {
   }
   return "Couldn't save — try again."
 }
-export { buildFullPayload, ymd, prettyDate }
+export { ymd, prettyDate }
