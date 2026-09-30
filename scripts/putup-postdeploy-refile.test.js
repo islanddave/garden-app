@@ -246,7 +246,14 @@ describe('main — writes only through the handler, only with --i-mean-it, as ea
   it('fails (exit 3) when the handler refuses, when the stored row differs from the plan, or when the audit is wrong', async () => {
     capture();
     expect(await main(['--jar', J1, '--i-mean-it'], ENV, harness([jar()], { status: 409 }).deps)).toBe(3);
-    const drifted = harness([jar()], { stored: () => ({ method: 'pesto', use_by_target: '2027-06-19', use_by_basis: 'table', updated_at: 'u1' }) });
+    // A 200 whose stored row is not the plan: the method did not land, or the date is not the rule's. Each case is
+    // otherwise clean (no watched column moved, or its audit row is the owner's), so only the plan check can fail it.
+    const unmoved = harness([jar()], { stored: () => ({ method: 'passata', use_by_target: '2027-08-19', use_by_basis: 'table', updated_at: 'u1' }) });
+    expect(await main(['--jar', J1, '--i-mean-it'], ENV, unmoved.deps)).toBe(3);
+    const drifted = harness([jar()], {
+      stored: () => ({ method: 'pesto', use_by_target: '2027-06-19', use_by_basis: 'table', updated_at: 'u1' }),
+      audits: () => [{ id: 'a0', action: 'UPDATE', actor_clerk_sub: 'user_dave', ts: new Date(), before_jsonb: {}, after_jsonb: { updated_at: 'u1' } }],
+    });
     expect(await main(['--jar', J1, '--i-mean-it'], ENV, drifted.deps)).toBe(3);
     // A watched column moved (use_by_target) and the trigger wrote nothing.
     const unaudited = harness([jar({ storage_kind: 'fridge_freezer' })], { stored: () => ({ method: 'pesto', use_by_target: '2026-12-19', use_by_basis: 'table', updated_at: 'u1' }) });
