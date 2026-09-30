@@ -10,6 +10,8 @@
 // The server sorts by group then name and classifies discard status; this module never re-decides
 // either (the same rule StoresView held for use_by_status: "the server classifies, this only selects").
 import { discardWords, parseYmd } from '../putup/jarWords.js'
+// The engine's own list, imported (as putItUp.js imports the engine), so there is no copy to drift.
+import { HOUSE_SOURCED_SHELF_LIFE } from '../../../lambda/preservation/shelfLife.js'
 
 export const PUT_UP = 'put_up'
 export const PANTRY_ITEM = 'pantry_item'
@@ -105,9 +107,9 @@ export function inlineAction(row) {
 const STATUS_WORDS = { soon: 'use_soon', past: 'past_use_by' }
 
 // FOODSAFETY-RULING-V101 §8.2: a house-sourced date is distinguishable on the surface. The methods whose
-// figure is the house's (the client half of shelfLife.js HOUSE_SOURCED_SHELF_LIFE); a jar of one written
-// before 1b stored a basis has none on the wire, and still says "house estimate", never nothing.
-export const HOUSE_METHODS = new Set(['candy'])
+// figure is the house's (shelfLife.js HOUSE_SOURCED_SHELF_LIFE); a jar of one written before 1b stored a
+// basis has none on the wire, and still says "house estimate", never nothing.
+export const HOUSE_METHODS = new Set(HOUSE_SOURCED_SHELF_LIFE)
 export function effectiveBasis(row) {
   const d = row?.discard
   if (!d) return null

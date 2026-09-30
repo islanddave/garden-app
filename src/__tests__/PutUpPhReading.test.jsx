@@ -585,6 +585,16 @@ const LANE_SOURCES = [
   ['src/components/putup/JarHeatRow.jsx', 'export function jarHeatSummary'],
   ['src/components/putup/ShuSheet.jsx', 'export function refusalWords'],
   ['src/components/putup/RecipeRefRow.jsx', 'TESTED_RECIPE_NOTE'],
+  // Put-Up B′ release 2, the Pantry (V4 §8.4 — every lane adds its files): the doors that write a jar's
+  // date and discard-by (Put something up, Walk a place), the list and sheet that render them.
+  ['src/components/pantry/putSomethingUp.js', 'export function previewLine'],
+  ['src/components/pantry/PutSomethingUpSheet.jsx', 'function DoorOpen'],
+  ['src/components/pantry/WalkPlace.jsx', 'function WalkGroup'],
+  ['src/components/pantry/pantryRows.js', 'export function discardChip'],
+  ['src/components/pantry/PantryView.jsx', 'export function PantryRow'],
+  ['src/components/pantry/PantryRowSheet.jsx', 'export function jarRecordWords'],
+  ['src/components/pantry/DoorParts.jsx', 'export function DiscardChoice'],
+  ['src/lib/pantryApi.js', 'export async function useJar'],
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the
