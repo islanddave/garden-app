@@ -201,3 +201,72 @@ describe('unattributed rows -> Other bucket', () => {
     expect(body.aggregates.crops).toEqual([]);
   });
 });
+
+// BUG-HARVESTSNOPROJECTPICKS-001. event_log.project_id is nullable (care-rekey-001), and a pick on a
+// project-less planting is a plant-only event. The INNER JOIN to plant_projects dropped those picks
+// from the Log and from every total (6 of 1,761 grow-year-2026 picks on prod 2026-09-29, all counted
+// by Season stats). Own users, so these rows never meet the `every(project_id === projX)` assertions
+// above. The selection is MIXED (one project pick, one project-less) so a read that returned nothing
+// cannot pass, and a foreign project-less pick proves the logger arm does not widen scope.
+describe('project-less picks (BUG-HARVESTSNOPROJECTPICKS-001)', () => {
+  const USER_D = `user_int_harv_projless_${RUN}`;
+  const USER_E = `user_int_harv_projless_foreign_${RUN}`;
+  let projD, projlessPick, projectPick, foreignPick;
+
+  const mkLoosePlant = async (user, tag) => (await directSql`
+    INSERT INTO plants (project_id, name, status, created_by)
+    VALUES (NULL, ${'int-harv-projless-' + tag + '-' + RUN}, 'vegetative', ${user}) RETURNING id`)[0].id;
+  const mkWeighedPick = async (user, projectId, plantId, grams) => {
+    const ev = await directSql`
+      INSERT INTO event_log (project_id, plant_id, event_type, event_date, is_public, logged_by, created_by)
+      VALUES (${projectId}, ${plantId}, 'harvest', '2026-08-10T16:00:00Z'::timestamptz, true, ${user}, ${user})
+      RETURNING id`;
+    await directSql`
+      INSERT INTO harvest_log (event_id, project_id, quantity, unit, weight_grams, weight_estimated, weight_basis, created_by)
+      VALUES (${ev[0].id}, ${projectId}, 2, 'count', ${grams}::numeric, false, 'measured', ${user})`;
+    return ev[0].id;
+  };
+
+  beforeAll(async () => {
+    projD = await mkProject(USER_D, 'projless-d');
+    projectPick = await mkWeighedPick(USER_D, projD, null, 100);
+    projlessPick = await mkWeighedPick(USER_D, null, await mkLoosePlant(USER_D, 'd'), 250);
+    foreignPick = await mkWeighedPick(USER_E, null, await mkLoosePlant(USER_E, 'e'), 999);
+  });
+
+  afterAll(async () => {
+    await directSql`DELETE FROM harvest_log WHERE created_by IN (${USER_D}, ${USER_E})`;
+    await directSql`DELETE FROM event_log   WHERE created_by IN (${USER_D}, ${USER_E})`;
+    await directSql`DELETE FROM plants      WHERE created_by IN (${USER_D}, ${USER_E})`;
+    await directSql`DELETE FROM plant_projects WHERE created_by IN (${USER_D}, ${USER_E})`;
+  });
+
+  it('the Log lists the project-less pick beside the project one, and never the foreign one', async () => {
+    delete process.env[ENV_KEY];
+    setTestUserId(USER_D);
+    const { status, body } = await callHandler(handler, { method: 'GET', path: '/api/harvests?timeframe=all&include=entries' });
+    expect(status).toBe(200);
+    const ids = body.entries.map((e) => e.event_id);
+    expect(ids).toContain(projectPick);
+    expect(ids).toContain(projlessPick);
+    expect(ids).not.toContain(foreignPick);
+    const row = body.entries.find((e) => e.event_id === projlessPick);
+    expect(row.project_id).toBeNull();
+    expect(row.project_name).toBeNull();
+  });
+
+  it('the totals carry the project-less pick\'s weight, and only the household\'s', async () => {
+    delete process.env[ENV_KEY];
+    setTestUserId(USER_D);
+    const { body } = await callHandler(handler, { method: 'GET', path: '/api/harvests?timeframe=all&include=aggregates' });
+    expect(body.aggregates.weight.measured_grams).toBe(350);
+    expect(body.aggregates.weight.measured).toBe(2);
+  });
+
+  it('the foreign logger sees only their own project-less pick', async () => {
+    delete process.env[ENV_KEY];
+    setTestUserId(USER_E);
+    const { body } = await callHandler(handler, { method: 'GET', path: '/api/harvests?timeframe=all&include=entries' });
+    expect(body.entries.map((e) => e.event_id)).toEqual([foreignPick]);
+  });
+});

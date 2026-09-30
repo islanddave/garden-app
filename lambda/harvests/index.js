@@ -7,8 +7,16 @@
 // -> crop_types, and household scope via the project owner). Per-dir household.js copy (B2).
 //
 // CORRECTNESS INVARIANTS (live-Neon verified 2026-07-22 + coordinator schema correction 2026-07-23):
-//   * Household scope anchors on event_log.project_id (NOT NULL) -> plant_projects.created_by. NEVER
-//     on the nullable event_log.plant_id join (that would leak/partition on unattributed rows).
+//   * Household scope anchors on event_log.project_id -> plant_projects.created_by. NEVER on the
+//     nullable event_log.plant_id join (that would leak/partition on unattributed rows).
+//     BUG-HARVESTSNOPROJECTPICKS-001: project_id has been nullable since care-rekey-001 (plant-only
+//     events on project-less plantings), and the old INNER JOIN silently dropped those picks — 6 of
+//     1,761 grow-year-2026 picks on prod 2026-09-29, which Season stats (stat_pick) did count. So the
+//     join is LEFT and scope is the house two-arm predicate (watch-route.js, lambda/plants): through
+//     the project when there is one, through the event's own created_by when there is none. The
+//     second arm is gated on `e.project_id IS NULL`, not a bare COALESCE, so a project_id that
+//     points at a missing row can never fall through to the logger's id. Soft-deleted projects are
+//     unchanged: pj still joins and still scopes by its owner, as it always did.
 //   * Entry set = event_log rows with event_type IN ('harvest','first_harvest'), deleted_at IS NULL.
 //   * LEFT JOIN harvest_log/garden_node/cultivar/crop_types with EVERY soft-delete predicate in the
 //     JOIN ON clause, never WHERE — a WHERE placement re-inner-joins and silently drops the
@@ -254,7 +262,7 @@ export const handler = async (event) => {
           h.weight_grams, h.weight_estimated, h.weight_basis,
           COALESCE(ph.photos, '[]'::json) AS photos
         FROM event_log e
-        JOIN plant_projects pj ON pj.id = e.project_id
+        LEFT JOIN plant_projects pj ON pj.id = e.project_id
         LEFT JOIN garden_node gn ON gn.id = e.plant_id AND gn.deleted_at IS NULL
         LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
         LEFT JOIN crop_types ct ON ct.slug = cv.crop_type_slug AND ct.deleted_at IS NULL
@@ -265,7 +273,8 @@ export const handler = async (event) => {
         ) ph ON true
         WHERE e.event_type IN ('harvest', 'first_harvest')
           AND e.deleted_at IS NULL
-          AND pj.created_by = ANY(${householdIds})
+          AND (pj.created_by = ANY(${householdIds})
+               OR (e.project_id IS NULL AND e.created_by = ANY(${householdIds})))
           AND (
             CASE ${tf.kind}
               WHEN 'all'   THEN true
@@ -333,14 +342,15 @@ export const handler = async (event) => {
           -- the other is the shape that makes a total silently disagree with the rows under it.
           h.weight_grams, h.weight_estimated, h.weight_basis
         FROM event_log e
-        JOIN plant_projects pj ON pj.id = e.project_id
+        LEFT JOIN plant_projects pj ON pj.id = e.project_id
         LEFT JOIN garden_node gn ON gn.id = e.plant_id AND gn.deleted_at IS NULL
         LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
         LEFT JOIN crop_types ct ON ct.slug = cv.crop_type_slug AND ct.deleted_at IS NULL
         LEFT JOIN harvest_log h ON h.event_id = e.id AND h.deleted_at IS NULL
         WHERE e.event_type IN ('harvest', 'first_harvest')
           AND e.deleted_at IS NULL
-          AND pj.created_by = ANY(${householdIds})
+          AND (pj.created_by = ANY(${householdIds})
+               OR (e.project_id IS NULL AND e.created_by = ANY(${householdIds})))
           AND (
             CASE ${tf.kind}
               WHEN 'all'   THEN true
@@ -418,13 +428,14 @@ export const handler = async (event) => {
           COUNT(*) FILTER (
             WHERE h.weight_grams IS NULL OR h.weight_grams <= 0)::int AS unweighed_count
         FROM event_log e
-        JOIN plant_projects pj ON pj.id = e.project_id
+        LEFT JOIN plant_projects pj ON pj.id = e.project_id
         LEFT JOIN garden_node gn ON gn.id = e.plant_id AND gn.deleted_at IS NULL
         LEFT JOIN cultivar cv ON cv.id = gn.cultivar_id AND cv.deleted_at IS NULL
         LEFT JOIN harvest_log h ON h.event_id = e.id AND h.deleted_at IS NULL
         WHERE e.event_type IN ('harvest', 'first_harvest')
           AND e.deleted_at IS NULL
-          AND pj.created_by = ANY(${householdIds})
+          AND (pj.created_by = ANY(${householdIds})
+               OR (e.project_id IS NULL AND e.created_by = ANY(${householdIds})))
           AND (
             CASE ${tf.kind}
               WHEN 'all'   THEN true
