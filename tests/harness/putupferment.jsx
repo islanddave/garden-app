@@ -497,6 +497,20 @@ async function editStageDate(rowText, chip) {
   await settle()
   await find('stage-saved')
 }
+// …and its "Saved · Undo": the PATCH back must be one the Lambda takes (the stand-in judges it with the
+// real stagePatchError), and the entry must read its old date again. A stored row with no precision (the
+// pre-1b shape) comes back with its date and the word 'exact' — review I-N1.
+async function undoStageDate(stage, before) {
+  await tap('stage-saved-undo')
+  await waitFor(() => new Date(stage.entered_at).getTime() === new Date(before.entered_at).getTime(), 'the entry to read its old date again')
+  await settle()
+  expect(!document.querySelector(sel('stage-saved')), '"Saved · Undo" is still showing after the Undo')
+  const want = before.entered_precision ?? 'exact'
+  expect(stage.entered_precision === want, `Undo restored the precision as ${stage.entered_precision}, not ${want}`)
+}
+// A row a 1a-era client wrote: the same check-in, stored with NO precision — the shape every pre-1b
+// row has, and the shape the route still writes for a body that sends none.
+function legacyShaped(stage) { stage.entered_precision = null; return stage }
 function gardenAmbient(names) {
   const el = document.querySelector(sel('what-went-in-garden'))
   const text = el ? norm(el.textContent) : ''
@@ -599,12 +613,18 @@ const WALKS = {
     await expectText('jar-heat-words', 'about 2 qt')
     // Nothing with a listed heat: the refusal, never a 0.
     await workItOut('jar-heat-work-it-out', { refusal: 'Nothing with a listed heat — type it.' })
-    await checkOnIt({ acts: ['skimmed'], note: 'Flat white film, skimmed' })
+    // Stored with NO precision, as a 1a-era client writes it: its date edit must still undo (review I-N1).
+    const skimmed = legacyShaped(await checkOnIt({ acts: ['skimmed'], note: 'Flat white film, skimmed' }))
     await putItUp({ method: 'ferment', rows: [{ count: 2, container: 'quart', place: 'Fridge' }], made: 980 })
     const jar = jarsOfBatch()[0]
     expect(jar.package_count === 2 && jar.container_label === 'quart', `kraut jar ${JSON.stringify(jar)}`)
     await editMade(990)
     await editLine('Green cabbage', { note: 'Savoy next time' })
+    // The legacy-shaped check-in, re-dated and then undone: the Undo's PATCH must be one the Lambda takes.
+    const was = { entered_at: skimmed.entered_at, entered_precision: skimmed.entered_precision }
+    await editStageDate('Skimmed the top', 'yesterday')
+    expect(skimmed.entered_precision === 'day', `the legacy check-in's date wrote ${skimmed.entered_at} / ${skimmed.entered_precision}`)
+    await undoStageDate(skimmed, was)
     await checkPage('Kraut — finished and edited')
     noRefusals('Kraut')
   },
@@ -642,11 +662,15 @@ const WALKS = {
     await editLine('Gochugaru', { qty: 45 })
     await expectText('jar-heat-stale', 'worked out before later changes')
     // Dave: stage dates are editable — the top-up was yesterday, not today (after finishing, too).
-    await editStageDate('Topped up brine', 'yesterday')
     const tended = state.stages.find(s => s.batch_id === theBatch().id && s.stage_kind === 'tended')
+    // The check-in was written with its date and its word (review I-N1), not in the pre-1b shape.
+    expect(tended?.entered_precision === 'exact' && tended.entered_at, `the check-in was stored as ${tended?.entered_at} / ${tended?.entered_precision}`)
+    const before = { entered_at: tended.entered_at, entered_precision: tended.entered_precision }
+    await editStageDate('Topped up brine', 'yesterday')
     const midnight = new Date(); midnight.setHours(0, 0, 0, 0); midnight.setDate(midnight.getDate() - 1)
     expect(tended?.entered_precision === 'day' && new Date(tended.entered_at).getTime() === midnight.getTime() && tended.edited_at,
       `the check-in's date wrote ${tended?.entered_at} / ${tended?.entered_precision}`)
+    await undoStageDate(tended, before)
     await checkPage('Kimchi — finished and edited')
     noRefusals('Kimchi')
   },

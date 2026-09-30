@@ -21,6 +21,8 @@ import BatchDetailView, { stageRowDetail } from '../components/putup/BatchDetail
 import { stagePatch, editableKeys, whenSeed } from '../components/putup/StageEditSheet.jsx'
 import { TESTED_RECIPE_LINK, TESTED_RECIPE_NOTE } from '../components/putup/RecipeRefRow.jsx'
 import { clearReloadBlocks } from '../lib/reloadGate.js'
+// The Lambda's own PATCH rule, imported, never mocked: the Undo body must be one the route takes.
+import { stagePatchError } from '../../lambda/preservation/kitchenLines.js'
 
 const NOW = new Date('2026-10-12T15:00:00').getTime()
 const local = (s) => new Date(s).toISOString()
@@ -211,8 +213,43 @@ describe('"Check on it" at the head of the Log (UX-I1)', () => {
     fireEvent.click(screen.getByTestId('checkin-act-pushed_under'))
     await act(async () => { fireEvent.click(screen.getByTestId('checkin-save')) })
     await waitFor(() => expect(writes()).toHaveLength(1))
-    expect(writes()[0]).toEqual(['POST', '/api/kitchen-batches/kb-1/stages', { stage_kind: 'tended', acts: ['pushed_under'] }])
+    // Review I-N1 (amended with the change): the row carries its date and its word. The date is the
+    // instant it was SAVED — never this surface's display instant, NOW (Oct 12), taken when the batch
+    // opened. MUTATION: hand the sheet `now={nowMs}` again -> the instant arm reds by days.
+    const [method, path, body] = writes()[0]
+    expect([method, path]).toEqual(['POST', '/api/kitchen-batches/kb-1/stages'])
+    expect(body).toEqual({ stage_kind: 'tended', acts: ['pushed_under'], entered_at: expect.any(String), entered_precision: 'exact' })
+    expect(Math.abs(new Date(body.entered_at).getTime() - Date.now())).toBeLessThan(60_000)
     await waitFor(() => expect(screen.getByTestId('going-checkin-saved').textContent).toBe('SavedUndo'))
+  })
+})
+
+// Review I-N1. Every 1a-era row, and every check-in or move written without a precision, stores
+// entered_precision NULL; the stage PATCH refuses a date without its word. So "Saved · Undo" of a date
+// edit on those rows sent {entered_at, null} and got a 400. Each PATCH here is judged by the Lambda's
+// REAL stagePatchError, not a copy. MUTATION: send `stored.entered_precision ?? null` again -> both
+// Undo arms red ("entered_precision is required with entered_at").
+describe('Undo of a date edit on a row stored with NO precision is one the Lambda takes', () => {
+  const LEGACY_TENDED = { ...TENDED, id: 'ksl-lt', entered_precision: null }
+  const LEGACY_MOVED = ST({ id: 'ksl-lm', stage_kind: 'moved', entered_at: local('2026-10-05T18:00:00'), entered_precision: null,
+    storage_location_id: 'loc-fridge' })
+  it.each([['a check-in', LEGACY_TENDED], ['a move', LEGACY_MOVED]])('%s: Yesterday, then Undo — both PATCHes pass stagePatchError', async (_what, row) => {
+    renderDetail({ stages: [row] })
+    fireEvent.click(screen.getAllByTestId('batch-detail-stage-edit').pop())
+    fireEvent.click(screen.getByTestId('stage-edit-when-yesterday'))
+    await act(async () => { fireEvent.click(screen.getByTestId('stage-edit-save')) })
+    await act(async () => { fireEvent.click(screen.getByTestId('stage-saved-undo')) })
+    const [forward, back] = writes().map(([, , b]) => b)
+    expect(forward).toEqual({ entered_at: local('2026-10-11T00:00:00'), entered_precision: 'day' })
+    expect(back).toEqual({ entered_at: row.entered_at, entered_precision: 'exact' })     // a stored date with no word was stamped: exact
+    for (const b of [forward, back]) expect(stagePatchError(b, { stage_kind: row.stage_kind, voided: false })).toBeNull()
+    expect(screen.queryByTestId('stage-saved')).toBeNull()                                 // the Undo landed
+  })
+  it('a row with no date undoes to "not sure" — the only legal undated word (chk_ksl_entered_pairing)', () => {
+    const r = stagePatch({ ...TENDED, entered_at: null, entered_precision: null },
+      { entered_at: local('2026-10-11T00:00:00'), entered_precision: 'day' }, { nowIso: 'x' })
+    expect(r.undo).toEqual({ entered_at: null, entered_precision: 'unknown' })
+    expect(stagePatchError(r.undo, { stage_kind: 'tended', voided: false })).toBeNull()
   })
 })
 

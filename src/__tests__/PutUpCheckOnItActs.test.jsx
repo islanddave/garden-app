@@ -24,6 +24,10 @@ import { clearReloadBlocks } from '../lib/reloadGate.js'
 
 const NOW = new Date('2026-10-05T09:00:00').getTime()
 const AT = new Date(NOW).toISOString()
+// Review I-N1 (amended with the change): every row a check-in writes — the tended row AND the moved row —
+// carries its date and its word, never the pre-1b NULL-precision shape. MUTATION: drop the stamp from
+// the moved row -> the split literal reds.
+const STAMP = { entered_at: AT, entered_precision: 'exact' }
 const local = (s) => new Date(s).toISOString()
 const BASE = {
   user_id: 'user_dave', kind_other: null, started_at: local('2026-10-01T09:00:00'), start_precision: 'day',
@@ -62,28 +66,28 @@ describe('checkInBody — what you did rides on the tended row', () => {
   it('the three words, in their order, de-duplicated, with the top-up amount beneath Topped up', () => {
     expect(CHECK_IN_ACTS.map(a => a.label)).toEqual(['Topped up brine', 'Pushed it back under', 'Skimmed the top'])
     expect(checkInBody({ batch: FERMENT, acts: ['skimmed', 'topped_up', 'skimmed'], topUp: '250', atIso: AT }))
-      .toEqual({ body: { stage_kind: 'tended', acts: ['topped_up', 'skimmed'], amount: '250', amount_unit: 'ml' } })
+      .toEqual({ body: { stage_kind: 'tended', acts: ['topped_up', 'skimmed'], amount: '250', amount_unit: 'ml', ...STAMP } })
   })
   it('an act alone is an observation — the note is not required with it', () => {
-    expect(checkInBody({ batch: FERMENT, acts: ['pushed_under'], atIso: AT }).body).toEqual({ stage_kind: 'tended', acts: ['pushed_under'] })
+    expect(checkInBody({ batch: FERMENT, acts: ['pushed_under'], atIso: AT }).body).toEqual({ stage_kind: 'tended', acts: ['pushed_under'], ...STAMP })
   })
   // MUTATION: keep the amount when Topped up is not pressed -> the first literal gains an amount.
   it('a top-up amount means nothing without Topped up, and a bad one is refused in words', () => {
-    expect(checkInBody({ batch: FERMENT, acts: ['skimmed'], topUp: '250', atIso: AT }).body).toEqual({ stage_kind: 'tended', acts: ['skimmed'] })
+    expect(checkInBody({ batch: FERMENT, acts: ['skimmed'], topUp: '250', atIso: AT }).body).toEqual({ stage_kind: 'tended', acts: ['skimmed'], ...STAMP })
     expect(checkInBody({ batch: FERMENT, acts: ['topped_up'], topUp: 'lots', atIso: AT })).toEqual({ error: TOP_UP_HINT })
   })
   // chk_ksl_acts_on_tended: acts ride only on a tended row. MUTATION: put the acts on the moved row ->
   // the database refuses it; this literal reds first.
   it('did something AND moved it → the tended row, then the moved row', () => {
     expect(checkInBody({ batch: FERMENT, acts: ['skimmed'], place: FRIDGE, note: 'film', atIso: AT })).toEqual({
-      body: { stage_kind: 'tended', acts: ['skimmed'], note: 'film' },
-      move: { stage_kind: 'moved', storage_location_id: 'loc-fridge', label: 'Moved to Fridge' },
+      body: { stage_kind: 'tended', acts: ['skimmed'], note: 'film', ...STAMP },
+      move: { stage_kind: 'moved', storage_location_id: 'loc-fridge', label: 'Moved to Fridge', ...STAMP },
     })
     // A move with nothing done stays ONE moved row, exactly as before.
-    expect(checkInBody({ batch: FERMENT, place: FRIDGE, atIso: AT })).toEqual({ body: { stage_kind: 'moved', storage_location_id: 'loc-fridge', label: 'Moved to Fridge' } })
+    expect(checkInBody({ batch: FERMENT, place: FRIDGE, atIso: AT })).toEqual({ body: { stage_kind: 'moved', storage_location_id: 'loc-fridge', label: 'Moved to Fridge', ...STAMP } })
   })
   it('never on a batch that is not a ferment', () => {
-    expect(checkInBody({ batch: DRY, acts: ['skimmed'], note: 'x', atIso: AT }).body).toEqual({ stage_kind: 'tended', note: 'x' })
+    expect(checkInBody({ batch: DRY, acts: ['skimmed'], note: 'x', atIso: AT }).body).toEqual({ stage_kind: 'tended', note: 'x', ...STAMP })
   })
 })
 
@@ -138,7 +142,7 @@ describe('Check on it — the "What you did" row', () => {
     fireEvent.change(screen.getByTestId('checkin-topup-amount'), { target: { value: '250' } })
     await act(async () => { fireEvent.click(screen.getByTestId('checkin-save')) })
     await waitFor(() => expect(stagePosts()).toHaveLength(1))
-    expect(stagePosts()[0]).toEqual({ stage_kind: 'tended', acts: ['topped_up'], amount: '250', amount_unit: 'ml' })
+    expect(stagePosts()[0]).toEqual({ stage_kind: 'tended', acts: ['topped_up'], amount: '250', amount_unit: 'ml', ...STAMP })
   })
 
   it('a check-in that did something AND moved it writes two rows; a failed move keeps only the move to retry', async () => {

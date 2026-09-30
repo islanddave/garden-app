@@ -720,7 +720,9 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
 
       <StageEditSheet open={!!editing} batch={batch} stage={editing} now={nowMs} onClose={() => setEditing(null)}
         onSaved={({ stage: st, undo }) => { setEditing(null); setStageSaved({ stageId: st.id, undo }); onChanged?.() }} />
-      <CheckOnItSheet open={checking} batch={batch} now={nowMs} onClose={() => setChecking(false)}
+      {/* No `now`: nowMs is this surface's display instant, taken once when the batch opened, and the
+          sheet stamps the check-in (entered_at, and a pH's read time) with the instant it is SAVED. */}
+      <CheckOnItSheet open={checking} batch={batch} onClose={() => setChecking(false)}
         onSaved={(body, answer) => { setChecking(false); setCheckSaved(answer?.stage?.id ?? null); onChanged?.() }} />
     </div>
   )
