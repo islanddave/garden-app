@@ -1,8 +1,9 @@
 {
-  "version": "4.162.0",
+  "version": "4.162.1",
   "date": "2026-09-29",
   "highlights": [
-    "Season stats: a new page under More showing how this season went — the season at a glance, where your plants came from, heat clocks, the pepper heat ladder, your tomato keep list, the longest-giving plants, September's smaller tomatoes and your saved seed with where it came from.",
-    "Sources: add a website, Instagram, Facebook and address to any source, and edit a source from Season stats."
+    "Today preview: Protect tonight and a Heads-up line, plus Harvest, Put-Up, Resting and household sections — all still inside the early preview switch; the current Today is unchanged",
+    "Today preview fixes: a Water or Feed tap can no longer log plants you didn't water after going Back or when the plant list fails to load",
+    "Sign-out now also resets the household view on this phone"
   ]
 }
