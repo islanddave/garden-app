@@ -1638,8 +1638,19 @@ async function undoPutUp(sql, batchId, stageId, userId, householdIds) {
         WHERE i.batch_id = ${batchId}::uuid
           AND i.put_up_stage_id = ${stageId}::uuid
           AND i.deleted_at IS NULL
+          AND i.harvest_log_id IS NULL
           AND EXISTS (SELECT 1 FROM voids v WHERE v.voids_id = ${stageId}::uuid)
         RETURNING i.id, i.preservation_log_id, i.qty, i.qty_unit
+      ), gone_picks AS (
+        -- B′ release 3, BUG-ARCHIVESOFTDELBATCH-001: a pick added at this sitting is HARD-deleted, as
+        -- take-out and "Remove this batch" do (06 §3.11-§3.12) — a soft-deleted pick line would pin its
+        -- harvest_log row under the RESTRICT FK and turn a planting archive into a bare 23503.
+        DELETE FROM kitchen_batch_input i
+        WHERE i.batch_id = ${batchId}::uuid
+          AND i.put_up_stage_id = ${stageId}::uuid
+          AND i.harvest_log_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM voids v WHERE v.voids_id = ${stageId}::uuid)
+        RETURNING i.id
       ), mass AS (
         SELECT m.unit, m.factor FROM unnest(${MASS_UNITS}::text[], ${MASS_FACTORS}::numeric[]) AS m(unit, factor)
       ), fwd AS (
