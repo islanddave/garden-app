@@ -19,10 +19,16 @@
 // sheet's "Edit tab bar" header button is the everyday door; Debug & smoke → App configuration stays
 // as the second one.
 //
-// A TAB THAT LEAVES THE BAR LANDS IN MORE. "In bar" is offered on the three movable tabs only; Today
-// and ＋ always stay (Today is where the app opens, ＋ is the only door to the create sheet and, in
-// field mode, to Field capture). Unticked tabs keep their place in the order, so ticking one back puts
-// it where it was. The enforcement is resolveBarLayout and the Lambda validator, not this UI.
+// A TAB THAT LEAVES THE BAR LANDS IN MORE. Today and ＋ always stay (Today is where the app opens, ＋ is
+// the only door to the create sheet and, in field mode, to Field capture). The enforcement is
+// resolveBarLayout and the Lambda validator, not this UI.
+//
+// ANY PAGE CAN TAKE A SLOT (V5-NAVANYSLOT-001, Dave 2026-09-30: "Make every More menu item + existing
+// 5 options available to add there"). The editor is two lists: "In your bar" (left to right, reorder
+// or remove) and "Add to your bar" — the three movable tabs plus every More row this build draws. The
+// bar holds at most BAR_MAX_SLOTS, so Add is refused in words once it is full. A page on the bar
+// leaves More; a movable tab taken off it goes back to the top of "Your garden". Saving writes
+// {order: <the bar>, hidden: []} — `hidden` is only read now, for layouts saved before this change.
 //
 // THE STALE-SEED BUG, FIXED. V5-ADMINCENTER-001 seeded the editor once, from whatever config was on
 // hand — the shipped default when the read was slow — so a Save could wipe the stored layout with a
@@ -43,8 +49,16 @@ import Icon from '../components/Icon.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { usePrefs } from '../context/PrefsContext.jsx'
 import { useNavLayout, servedFromCache } from '../context/NavPrefsContext.jsx'
-import { DEFAULT_NAV_TABS, MOVABLE_TAB_KEYS, TAB_REGISTRY, resolveBarLayout } from '../lib/navConfig.js'
+import {
+  BAR_MAX_SLOTS, BAR_REQUIRED_KEYS, DEFAULT_NAV_TABS, MOVABLE_TAB_KEYS, TAB_REGISTRY, resolveBarLayout,
+} from '../lib/navConfig.js'
+import { MORE_ROWS, MORE_SECTIONS, barSlotRows, rowEnabled } from '../lib/moreRegistry.js'
 import { saveBarLayout } from '../lib/notificationPrefsClient.js'
+
+const sectionHead = {
+  fontSize: '0.78rem', fontWeight: 700, color: P.light, letterSpacing: '0.05em',
+  textTransform: 'uppercase', margin: '20px 0 8px',
+}
 
 const card = {
   background: P.white, border: `1px solid ${P.border}`, borderRadius: 10,
@@ -76,6 +90,35 @@ function MoveButton({ label, glyph, onClick, disabled }) {
   )
 }
 
+// The ids of the bar this build actually draws, in order: an id it cannot draw (a newer bundle's row,
+// a flag-off row) is left out, so it can neither show as dirty nor be offered for a slot it would not fill.
+const drawnIds = (ids) => barSlotRows(ids).map(r => r.key)
+
+// Everything that can take a slot, grouped the way the More sheet groups it: the three movable tabs at
+// the top of "Your garden" (where More puts them when they are off the bar), then every More row this
+// build draws, in sheet order. Full labels here; the bar's shorter name is shown beside it.
+function slotCandidates() {
+  const tabs = MOVABLE_TAB_KEYS.map(k => ({ id: k, label: TAB_REGISTRY[k].label, iconName: TAB_REGISTRY[k].iconName, section: 'garden' }))
+  const rows = MORE_ROWS.filter(rowEnabled).map(r => ({ id: r.id, label: r.label, barLabel: r.barLabel, iconName: r.iconName, section: r.section }))
+  return [...tabs, ...rows]
+}
+
+function AddButton({ label, onClick, disabled }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Add ${label} to the bar`}
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        minWidth: 64, minHeight: 44, borderRadius: 8, border: `1px solid ${P.border}`,
+        background: disabled ? P.cream : P.white, color: disabled ? P.light : P.green,
+        fontSize: '0.84rem', fontWeight: 600, fontFamily: 'inherit', cursor: disabled ? 'default' : 'pointer',
+      }}
+    >Add</button>
+  )
+}
+
 // A picture of the bar the draft would give THIS person, More last — the thing they are deciding.
 function BarPreview({ bar }) {
   return (
@@ -85,8 +128,8 @@ function BarPreview({ bar }) {
       role="img"
       style={{ display: 'flex', border: `1px solid ${P.border}`, borderRadius: 10, overflow: 'hidden', background: P.white }}
     >
-      {[...bar, 'more'].map(key => {
-        const tab = key === 'more' ? { label: 'More', iconName: 'nav.more' } : TAB_REGISTRY[key]
+      {[...barSlotRows(bar), { key: 'more', label: 'More', iconName: 'nav.more' }].map(tab => {
+        const key = tab.key
         return (
           <div
             key={key}
@@ -95,7 +138,7 @@ function BarPreview({ bar }) {
             style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '6px 0', minWidth: 0 }}
           >
             <Icon name={tab.iconName} variant={tab.highlight || key === 'more' ? undefined : 'filled'} size={20} decorative />
-            <span style={{ fontSize: '0.62rem', color: P.mid, whiteSpace: 'nowrap' }}>{tab.label}</span>
+            <span style={{ fontSize: '0.62rem', color: P.mid, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{tab.label}</span>
           </div>
         )
       })}
@@ -103,8 +146,7 @@ function BarPreview({ bar }) {
   )
 }
 
-const sameLayout = (a, b) =>
-  a.order.join(',') === b.order.join(',') && [...a.hidden].sort().join(',') === [...b.hidden].sort().join(',')
+const sameBar = (a, b) => a.join(',') === b.join(',')
 
 export default function AdminConfig() {
   const { getToken } = useApiFetch()
@@ -128,31 +170,35 @@ export default function AdminConfig() {
   // What the editor SHOWS: the server's value, else the last copy, else the bar this device draws.
   const base = savedLayout ?? bodyLayout ?? current
   // null until the person edits: an untouched editor follows the server value as it arrives.
+  // The draft is the BAR, left to right (slot ids). `null` until the person edits.
   const [draft, setDraft] = useState(null)
-  const shown = draft ?? { order: base.order, hidden: base.hidden }
-  const preview = resolveBarLayout(shown)
+  const baseBar = drawnIds(base.bar)
+  const shown = draft ?? baseBar
+  const preview = resolveBarLayout({ order: shown, hidden: [] })
+  const full = shown.length >= BAR_MAX_SLOTS
   const [status, setStatus] = useState(null)   // null | 'saving' | {ok, detail}
 
   const edit = useCallback((fn) => {
-    setDraft(prev => fn(prev ?? { order: [...base.order], hidden: [...base.hidden] }))
+    setDraft(prev => fn(prev ?? [...baseBar]))
     setStatus(null)
-  }, [base])
+  }, [baseBar.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const move = useCallback((from, to) => edit(d => {
-    if (to < 0 || to >= d.order.length) return d
-    const order = [...d.order]
-    const [key] = order.splice(from, 1)
-    order.splice(to, 0, key)
-    return { ...d, order }
+    if (to < 0 || to >= d.length) return d
+    const bar = [...d]
+    const [key] = bar.splice(from, 1)
+    bar.splice(to, 0, key)
+    return bar
   }), [edit])
 
-  const setInBar = useCallback((key, inBar) => edit(d => ({
-    ...d,
-    hidden: inBar ? d.hidden.filter(k => k !== key) : (d.hidden.includes(key) ? d.hidden : [...d.hidden, key]),
-  })), [edit])
+  // Added slots go just before More, i.e. at the right-hand end of the bar. The Add button is already
+  // disabled on a full bar and gone once its page is on it; these two checks cover a double tap that
+  // lands before the re-render, which would otherwise save a repeat or a sixth slot (both a 400).
+  const add = useCallback((id) => edit(d => (d.includes(id) || d.length >= BAR_MAX_SLOTS ? d : [...d, id])), [edit])
+  const remove = useCallback((id) => edit(d => (BAR_REQUIRED_KEYS.includes(id) ? d : d.filter(k => k !== id))), [edit])
 
   const readFailed = prefsLoaded && !prefs && !savedLayout
-  const dirty = serverLayout ? !sameLayout(shown, serverLayout) : draft != null
+  const dirty = serverLayout ? !sameBar(shown, drawnIds(serverLayout.bar)) : draft != null
   const canSave = !!serverLayout && dirty && status !== 'saving'
 
   // Re-read ONCE per visit when the editor opens on a body it cannot save from — missing or served from
@@ -168,7 +214,7 @@ export default function AdminConfig() {
 
   const onSave = useCallback(async () => {
     setStatus('saving')
-    const layout = { order: [...shown.order], hidden: [...shown.hidden] }
+    const layout = { order: [...shown], hidden: [] }
     const res = await saveBarLayout({ getToken, layout })
     if (res.ok) {
       applyLayout(layout)
@@ -193,15 +239,15 @@ export default function AdminConfig() {
     <div style={{ padding: 16, paddingBottom: 40, maxWidth: 640, margin: '0 auto' }}>
       <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>Your tab bar</h1>
       <p style={{ fontSize: '0.84rem', color: P.light, marginTop: 0, marginBottom: 16 }}>
-        This changes your tab bar only — nobody else’s. A tab you take out of the bar moves to the top
-        of “Your garden” in More.
+        This changes your tab bar only — nobody else’s. Anything in More can go in the bar, up to{' '}
+        {BAR_MAX_SLOTS} plus More. Whatever you take out of the bar goes back into More.
       </p>
 
+      <h2 style={sectionHead}>In your bar · {shown.length} of {BAR_MAX_SLOTS}</h2>
       <div style={card} data-testid="nav-order-editor">
-        {shown.order.map((key, i) => {
-          const tab = TAB_REGISTRY[key]
-          const movable = MOVABLE_TAB_KEYS.includes(key)
-          const inBar = !shown.hidden.includes(key)
+        {barSlotRows(shown).map((tab, i) => {
+          const key = tab.key
+          const fixed = BAR_REQUIRED_KEYS.includes(key)
           return (
             <div
               key={key}
@@ -213,38 +259,66 @@ export default function AdminConfig() {
               }}
             >
               <Icon name={tab.iconName} size={22} decorative style={{ flexShrink: 0, color: P.dark }} />
-              <span style={{ flex: 1, minWidth: 0, fontSize: '0.95rem', fontWeight: 600, color: inBar ? P.dark : P.light }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: '0.95rem', fontWeight: 600, color: P.dark }}>
                 {tab.label}
               </span>
-              {movable ? (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, minHeight: 44, fontSize: '0.84rem', color: P.dark, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={inBar}
-                    onChange={e => setInBar(key, e.target.checked)}
-                    aria-label={`${tab.label} in bar`}
-                    style={{ width: 20, height: 20, margin: 0, accentColor: P.green }}
-                  />
-                  In bar
-                </label>
-              ) : (
+              {fixed ? (
                 <span data-testid="nav-order-fixed" style={{ fontSize: '0.78rem', color: P.light }}>Always in bar</span>
+              ) : (
+                <MoveButton label={`Remove ${tab.label} from the bar`} glyph="✕" onClick={() => remove(key)} />
               )}
               <MoveButton label={`Move ${tab.label} up`} glyph="↑" disabled={i === 0} onClick={() => move(i, i - 1)} />
-              <MoveButton label={`Move ${tab.label} down`} glyph="↓" disabled={i === shown.order.length - 1} onClick={() => move(i, i + 1)} />
+              <MoveButton label={`Move ${tab.label} down`} glyph="↓" disabled={i === shown.length - 1} onClick={() => move(i, i + 1)} />
             </div>
           )
         })}
       </div>
 
-      <h2 style={{ fontSize: '0.78rem', fontWeight: 700, color: P.light, letterSpacing: '0.05em', textTransform: 'uppercase', margin: '20px 0 8px' }}>
-        Your bar after saving
-      </h2>
+      <h2 style={sectionHead}>Add to your bar</h2>
+      {full && (
+        <p data-testid="bar-full" style={{ fontSize: '0.84rem', color: P.mid, margin: '0 0 8px' }}>
+          Your bar is full ({BAR_MAX_SLOTS} plus More). Remove one to add another.
+        </p>
+      )}
+      <div style={card} data-testid="nav-add-list">
+        {MORE_SECTIONS.map(sec => {
+          const rows = slotCandidates().filter(c => c.section === sec.key && !shown.includes(c.id))
+          if (rows.length === 0) return null
+          return (
+            <div key={sec.key}>
+              {sec.label && (
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: P.light, letterSpacing: '0.04em', textTransform: 'uppercase', padding: '8px 0 2px' }}>
+                  {sec.label}
+                </div>
+              )}
+              {rows.map(c => (
+                <div
+                  key={c.id}
+                  data-testid="nav-add-row"
+                  data-slot-id={c.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, minHeight: 52, borderTop: `1px solid ${P.border}`, padding: '4px 0' }}
+                >
+                  <Icon name={c.iconName} size={22} decorative style={{ flexShrink: 0, color: P.dark }} />
+                  <span style={{ flex: 1, minWidth: 0, fontSize: '0.95rem', color: P.dark }}>
+                    {c.label}
+                    {c.barLabel && (
+                      <span style={{ display: 'block', fontSize: '0.74rem', color: P.light }}>Shows as “{c.barLabel}” in the bar</span>
+                    )}
+                  </span>
+                  <AddButton label={c.label} disabled={full} onClick={() => add(c.id)} />
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+
+      <h2 style={sectionHead}>Your bar after saving</h2>
       <BarPreview bar={preview.bar} />
       <p style={{ fontSize: '0.78rem', color: P.light, lineHeight: 1.4, marginTop: 8 }}>
         {preview.moved.length
           ? `In More, at the top of “Your garden”: ${preview.moved.map(k => TAB_REGISTRY[k].label).join(', ')}.`
-          : 'Every tab is in the bar.'} “More” always sits last.
+          : 'Garden, Harvests and Put-Up are all in the bar.'} “More” always sits last.
       </p>
 
       {readFailed && (
@@ -275,7 +349,7 @@ export default function AdminConfig() {
         </button>
         <button
           type="button"
-          onClick={() => { setDraft({ order: [...DEFAULT_NAV_TABS], hidden: [] }); setStatus(null) }}
+          onClick={() => { setDraft([...DEFAULT_NAV_TABS]); setStatus(null) }}
           style={{
             minHeight: 44, padding: '0 16px', borderRadius: 8, border: `1px solid ${P.border}`,
             background: P.white, color: P.dark, fontSize: '0.95rem', fontWeight: 600,

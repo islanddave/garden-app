@@ -7,7 +7,10 @@
 // Start with VITE_API_CRITTERS set to any base (e.g. https://critter.invalid) so the prefs client has
 // a URL to call; the stub below answers it.
 //
-// Query string: ?layout=default|putup|garden|two  &pins=0|2|4|5  &edit=0|1
+// Query string: ?layout=default|putup|garden|two|anyslot|longlabels|short  &pins=0|2|4|5  &edit=0|1
+//               &page=bar|editor
+// V5-NAVANYSLOT-001 added the last three layouts (More rows in bar slots, the longest bar labels, the
+// smallest bar) and page=editor, which mounts the real "Your tab bar" editor above the bar.
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
@@ -16,6 +19,7 @@ import { ModeProvider } from '../../src/context/ModeContext.jsx'
 import { PrefsProvider } from '../../src/context/PrefsContext.jsx'
 import { NavPrefsProvider } from '../../src/context/NavPrefsContext.jsx'
 import BottomNav from '../../src/components/BottomNav.jsx'
+import AdminConfig from '../../src/pages/AdminConfig.jsx'
 
 const q = new URLSearchParams(location.search)
 const ORDER = ['today', 'garden', 'create', 'harvests', 'put-up']
@@ -24,6 +28,14 @@ const LAYOUTS = {
   putup: { order: ORDER, hidden: ['put-up'] },
   garden: { order: ORDER, hidden: ['garden'] },
   two: { order: ORDER, hidden: ['garden', 'put-up'] },
+  anyslot: { order: ['today', 'seeds', 'create', 'put-up', 'photos'], hidden: [] },
+  longlabels: { order: ['today', 'season-end', 'create', 'season-stats', 'achievements'], hidden: [] },
+  short: { order: ['today', 'create', 'put-up'], hidden: [] },
+  // Label-fit sweeps: every More row's bar label, three to a bar (Today and ＋ take the other two).
+  fit1: { order: ['today', 'dashboard', 'create', 'inventory', 'season-end'], hidden: [] },
+  fit2: { order: ['today', 'locations', 'create', 'catch-up', 'collection'], hidden: [] },
+  fit3: { order: ['today', 'settings-controls', 'create', 'releases', 'findings'], hidden: [] },
+  fit4: { order: ['today', 'helper', 'create', 'about', 'admin'], hidden: [] },
 }
 const PINS = { 0: null, 2: ['photos', 'seeds'], 4: ['photos', 'seeds', 'put-up', 'settings'], 5: ['photos', 'seeds', 'inventory', 'dashboard', 'helper'] }
 const layout = LAYOUTS[q.get('layout') ?? 'putup'] ?? null
@@ -63,7 +75,7 @@ createRoot(document.getElementById('root')).render(
       <MemoryRouter initialEntries={['/today']}>
         <PrefsProvider>
           <NavPrefsProvider>
-            <Page />
+            {q.get('page') === 'editor' ? <div style={{ paddingBottom: 120 }}><AdminConfig /></div> : <Page />}
             <BottomNav />
           </NavPrefsProvider>
         </PrefsProvider>

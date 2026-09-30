@@ -18,6 +18,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
+  BAR_MAX_SLOTS, BAR_REQUIRED_KEYS, BAR_SLOT_ID_RE,
   DEFAULT_NAV_TABS, MOVABLE_TAB_KEYS, TAB_REGISTRY, resolveBarLayout, resolveNavTabs,
 } from '../lib/navConfig.js'
 
@@ -125,25 +126,35 @@ describe('resolveBarLayout — the order guards, one killing input each', () => 
     expect(layout({ 0: 'today' }).order).toEqual(DEFAULT_NAV_TABS)
   })
 
-  // GUARD O2a — the typeof half. Object.hasOwn COERCES its key, so ['today'] (an array whose string
-  // form is 'today') passes hasOwn; five distinct values of length five pass the other two guards.
+  // GUARD O2a — the typeof half. BAR_SLOT_ID_RE.test COERCES its argument, so ['today'] (an array whose
+  // string form is 'today') passes the regex; with Today and ＋ elsewhere it passes every other guard.
   // KILLING MUTATION: drop `typeof k === 'string' &&` from validOrder.
-  // RESULT: RED — the order is accepted and the bar is asked to render TAB_REGISTRY[['today']].
+  // RESULT: RED — the order is accepted with an array in a slot.
   it('O2a — an array-wrapped key is not a key, even though its string form is one', () => {
-    expect(layout([['today'], 'garden', 'create', 'harvests', 'put-up']).order).toEqual(DEFAULT_NAV_TABS)
+    expect(layout([['today'], 'garden', 'create', 'harvests', 'today']).order).toEqual(DEFAULT_NAV_TABS)
+    expect(layout(['today', 'create', ['seeds']]).order).toEqual(DEFAULT_NAV_TABS)
   })
 
-  // GUARD O2b — an unknown key. Five entries, no duplicates, so nothing else here catches it.
-  // KILLING MUTATION: drop `Object.hasOwn(TAB_REGISTRY, k)`. RESULT: RED — 'nope' renders undefined.
-  it('O2b — an unknown key renders the shipped order', () => {
-    expect(layout(['today', 'garden', 'create', 'harvests', 'nope']).order).toEqual(DEFAULT_NAV_TABS)
+  // GUARD O2b — form. V5-NAVANYSLOT-001: an entry need not be a TAB key any more (a More row id may take
+  // a slot), so the vocabulary check became a FORM check, like more_pins'. Malformed ids fail it.
+  // KILLING MUTATION: drop `BAR_SLOT_ID_RE.test(k)`. RESULT: RED — each of these is accepted.
+  it('O2b — a malformed id renders the shipped order', () => {
+    // 'toString' and '__proto__' fail on form. 'constructor' is well-formed and passes here — it is
+    // harmless because barSlotRow reads own properties only and draws nothing for it (moreRegistry.test.js).
+    for (const bad of ['Seeds', '1seeds', '', 'seeds x', 'a'.repeat(41), 'toString', '__proto__']) {
+      expect(layout(['today', 'create', bad]).order, bad).toEqual(DEFAULT_NAV_TABS)
+    }
   })
 
-  // Same guard, the prototype arm. KILLING MUTATION: `Object.hasOwn(TAB_REGISTRY, k)` → `k in
-  // TAB_REGISTRY`. RESULT: RED — 'toString' is inherited, so `in` accepts it.
-  it('O2b — a prototype-chain property is not a tab key', () => {
-    expect(layout(['toString', 'garden', 'create', 'harvests', 'put-up']).order).toEqual(DEFAULT_NAV_TABS)
-    expect(layout(['constructor', 'garden', 'create', 'harvests', 'put-up']).order).toEqual(DEFAULT_NAV_TABS)
+  // INVERTED by V5-NAVANYSLOT-001 (Dave 2026-09-30): a well-formed id this module does not know — a More
+  // row, or a newer bundle's row — is accepted here. Whether it can be DRAWN is barSlotRow's call
+  // (moreRegistry.test.js), which skips it rather than knocking the whole bar back to the default.
+  it('O2b — a well-formed More row id is accepted as a slot', () => {
+    const r = layout(['today', 'seeds', 'create', 'put-up', 'photos'])
+    expect(r.applied.order).toBe(true)
+    expect(r.bar).toEqual(['today', 'seeds', 'create', 'put-up', 'photos'])
+    expect(r.moved).toEqual(['garden', 'harvests'])
+    expect(layout(['today', 'create', 'future-row']).bar).toEqual(['today', 'create', 'future-row'])
   })
 
   // GUARD O3 — a duplicate. Five known entries, so only uniqueness rejects it.
@@ -152,22 +163,31 @@ describe('resolveBarLayout — the order guards, one killing input each', () => 
     expect(layout(['today', 'today', 'garden', 'create', 'harvests']).order).toEqual(DEFAULT_NAV_TABS)
   })
 
-  // GUARD O4 — arity. A SHORT order is not a way to hide a tab (that is `hidden`'s job, and `hidden`
-  // is what routes the tab into More). A short order would drop the tab with no door at all.
-  // KILLING MUTATION: delete `order.length === DEFAULT_NAV_TABS.length`.
-  // RESULT: RED — the four-key order is accepted and Put-Up is on neither the bar nor in More.
-  it('O4 — an order missing a key renders the shipped order, so no tab can vanish through `order`', () => {
-    expect(layout(['today', 'garden', 'create', 'harvests']).order).toEqual(DEFAULT_NAV_TABS)
+  // GUARD O4 — Today and ＋ are required. V5-NAVANYSLOT-001 made a SHORT order legal (it is the bar),
+  // so what keeps a tab from vanishing is now two things: a movable tab left out comes back as `moved`
+  // (a More row), and Today and ＋ — which have no More row — must be in the order.
+  // KILLING MUTATION: delete the BAR_REQUIRED_KEYS check. RESULT: RED — ＋ or Today leaves the bar.
+  it('O4 — an order without Today or ＋ renders the shipped order', () => {
+    expect(layout(['today', 'garden', 'harvests', 'put-up']).order).toEqual(DEFAULT_NAV_TABS)
+    expect(layout(['create', 'garden', 'harvests', 'put-up']).order).toEqual(DEFAULT_NAV_TABS)
     expect(layout([]).order).toEqual(DEFAULT_NAV_TABS)
   })
 
-  // THE CAP, and an honest note about which guard holds it. A longer order cannot be built out of
-  // five known keys without repeating one or inventing one, so today this is killed by O2b/O3, NOT by
-  // O4 — deleting O4 alone leaves it green. The registry/default agreement test at the bottom is what
-  // will flag the day an optional key makes O4's "too long" arm testable on its own.
-  it('an order that ADDS a slot renders the shipped order — the bar cannot grow', () => {
-    expect(layout(['today', 'garden', 'create', 'harvests', 'put-up', 'today']).order).toEqual(DEFAULT_NAV_TABS)
-    expect(layout(['today', 'garden', 'create', 'harvests', 'put-up', 'compost']).order).toEqual(DEFAULT_NAV_TABS)
+  // A short order that keeps Today and ＋ is the bar, and every movable tab it leaves out is moved.
+  // KILLING MUTATION: compute `moved` from `hidden` alone. RESULT: RED — Harvests and Put-Up vanish.
+  it('O4 — a short order is honoured, and the movable tabs it leaves out go to More', () => {
+    const r = layout(['today', 'garden', 'create'])
+    expect(r.applied.order).toBe(true)
+    expect(r.bar).toEqual(['today', 'garden', 'create'])
+    expect(r.moved).toEqual(['harvests', 'put-up'])
+  })
+
+  // GUARD O5 — THE CAP. Six well-formed, distinct ids holding Today and ＋ pass every guard but this one.
+  // KILLING MUTATION: delete `order.length <= BAR_MAX_SLOTS`. RESULT: RED — a sixth slot, More seventh.
+  it('O5 — an order longer than the cap renders the shipped order — the bar cannot grow', () => {
+    expect(BAR_MAX_SLOTS).toBe(5)
+    expect(layout(['today', 'garden', 'create', 'harvests', 'put-up', 'seeds']).order).toEqual(DEFAULT_NAV_TABS)
+    expect(layout(['today', 'garden', 'create', 'harvests', 'put-up']).applied.order).toBe(true)
   })
 })
 
@@ -218,6 +238,10 @@ describe('resolveBarLayout — invariants over every input', () => {
     { order: [...DEFAULT_NAV_TABS], hidden: [...DEFAULT_NAV_TABS] },
     { order: [...DEFAULT_NAV_TABS], hidden: ['today', 'create'] },
     { hidden: ['garden', 'harvests', 'put-up'] },
+    // V5-NAVANYSLOT-001 shapes: a More-row bar, a short bar, and one over the cap.
+    { order: ['today', 'seeds', 'create', 'photos'], hidden: [] },
+    { order: ['today', 'create'], hidden: [] },
+    { order: ['today', 'create', 'seeds', 'photos', 'dashboard', 'put-up'], hidden: [] },
   ]
 
   // The invariants the whole file is really about, asserted directly so a refactor cannot keep every
@@ -227,11 +251,13 @@ describe('resolveBarLayout — invariants over every input', () => {
     for (const input of hostile) {
       const label = JSON.stringify(input)
       const r = resolveBarLayout(input)
-      expect([...r.order].sort(), label).toEqual([...DEFAULT_NAV_TABS].sort())
       expect(r.bar, label).toContain('today')
       expect(r.bar, label).toContain('create')
-      expect(r.bar.length + r.moved.length, label).toBe(DEFAULT_NAV_TABS.length)
-      expect(r.bar.filter(k => r.moved.includes(k)), label).toEqual([])
+      expect(r.bar.length, label).toBeLessThanOrEqual(BAR_MAX_SLOTS)
+      // Every movable tab is on the bar or in More, never both and never neither.
+      for (const k of MOVABLE_TAB_KEYS) {
+        expect(Number(r.bar.includes(k)) + Number(r.moved.includes(k)), `${label} ${k}`).toBe(1)
+      }
       for (const k of r.moved) expect(MOVABLE_TAB_KEYS, label).toContain(k)
     }
   })
@@ -261,8 +287,9 @@ describe('resolveBarLayout — invariants over every input', () => {
   // parity test runs the same property against lambda/critter/validators.js.
   it('every output is a layout the contract accepts', () => {
     const accepts = ({ order, hidden }) =>
-      Array.isArray(order) && order.length === 5 && new Set(order).size === 5 &&
-      order.every(k => DEFAULT_NAV_TABS.includes(k)) &&
+      Array.isArray(order) && order.length <= BAR_MAX_SLOTS && new Set(order).size === order.length &&
+      order.every(k => typeof k === 'string' && BAR_SLOT_ID_RE.test(k)) &&
+      BAR_REQUIRED_KEYS.every(k => order.includes(k)) &&
       Array.isArray(hidden) && new Set(hidden).size === hidden.length &&
       hidden.every(k => MOVABLE_TAB_KEYS.includes(k))
     for (const input of hostile) {
@@ -286,6 +313,22 @@ describe('resolveBarLayout — invariants over every input', () => {
     resolveBarLayout(null).order.reverse()
     resolveBarLayout(null).bar.reverse()
     expect(DEFAULT_NAV_TABS).toEqual(before)
+  })
+})
+
+describe('BAR_REQUIRED_KEYS / BAR_MAX_SLOTS / BAR_SLOT_ID_RE — the V5-NAVANYSLOT-001 constants', () => {
+  // The Lambda's copies must equal these (lambda/critter/navcustom.parity.test.js).
+  it('Today and ＋ are required, and they are the two tabs that are not movable', () => {
+    expect(BAR_REQUIRED_KEYS).toEqual(['today', 'create'])
+    expect([...BAR_REQUIRED_KEYS, ...MOVABLE_TAB_KEYS].sort()).toEqual([...DEFAULT_NAV_TABS].sort())
+  })
+
+  it('the cap is the shipped bar\'s width, so the shipped bar is legal and More is never past slot 6', () => {
+    expect(BAR_MAX_SLOTS).toBe(DEFAULT_NAV_TABS.length)
+  })
+
+  it('every tab key has the slot-id form', () => {
+    for (const k of DEFAULT_NAV_TABS) expect(BAR_SLOT_ID_RE.test(k), k).toBe(true)
   })
 })
 
@@ -350,10 +393,9 @@ describe('resolveNavTabs (retired global path) — still reorder-only, for the d
 })
 
 describe('the registry and the default agree', () => {
-  // DEFAULT_NAV_TABS and TAB_REGISTRY are two declarations of one fact, and the permutation rule in
-  // both resolvers is only equivalent to "is a reorder" while they hold the same keys. If a later row
-  // adds an OPTIONAL tab to the registry without adding it to the default, this reds — which is the
-  // moment to decide where that tab lives, rather than to discover it as a rendering bug.
+  // DEFAULT_NAV_TABS and TAB_REGISTRY are two declarations of one fact. The retired resolveNavTabs'
+  // permutation rule is only equivalent to "is a reorder" while they hold the same keys. An optional
+  // page belongs in MORE_ROWS (it can take a slot since V5-NAVANYSLOT-001), not in TAB_REGISTRY.
   it('every default key exists in the registry and vice versa', () => {
     expect([...DEFAULT_NAV_TABS].sort()).toEqual(Object.keys(TAB_REGISTRY).sort())
   })

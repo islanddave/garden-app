@@ -16,6 +16,7 @@ import { resolve } from 'node:path'
 import {
   MORE_ROWS, MORE_SECTIONS, RETIRED_MORE_IDS, MORE_ID_ALIASES, MORE_PIN_ID_RE, MORE_PINS_MAX_STORED,
   MORE_PINS_MAX_SHOWN, MOVED_SUB, resolvePins, layoutMoreSheet, drawnPinIds, drawableMoreRows, movedTabRow,
+  barSlotRow, barSlotRows,
 } from '../lib/moreRegistry.js'
 import { TAB_REGISTRY, MOVABLE_TAB_KEYS } from '../lib/navConfig.js'
 import { getIcon, NEUTRAL_ICON } from '../lib/iconRegistry.js'
@@ -134,8 +135,73 @@ describe('the rows — every door leads somewhere real', () => {
     expect(ids.indexOf('season-stats')).toBe(ids.indexOf('season-end') + 1)
     expect(MORE_ROWS.find(r => r.id === 'season-stats')).toEqual({
       id: 'season-stats', to: '/season-stats', label: 'Season stats', iconName: 'nav.harvests', section: 'garden',
-      sub: 'How this season went',
+      sub: 'How this season went', barLabel: 'Stats',
     })
+  })
+})
+
+// V5-NAVANYSLOT-001 — any More row may take a tab-bar slot (Dave 2026-09-30).
+describe('barSlotRow / barSlotRows — a slot id becomes the row the bar draws', () => {
+  // KILLING MUTATION: read MORE_ROWS only (drop the TAB_REGISTRY arm). RESULT: RED — Today draws nothing.
+  it('a tab key draws its tab, FAB flag and all', () => {
+    expect(barSlotRow('today')).toEqual({ ...TAB_REGISTRY.today, key: 'today' })
+    expect(barSlotRow('create').highlight).toBe(true)
+  })
+
+  it('a More row id draws that row, wearing its bar label when it has one', () => {
+    expect(barSlotRow('photos')).toEqual({ key: 'photos', to: '/photos', label: 'Photos', iconName: 'media.camera' })
+    expect(barSlotRow('season-stats')).toMatchObject({ key: 'season-stats', to: '/season-stats', label: 'Stats' })
+  })
+
+  // KILLING MUTATION: drop the alias lookup. RESULT: RED — a slot stored as 'sow' draws nothing.
+  it('an aliased id draws the live row it merged into', () => {
+    expect(barSlotRow('sow')).toMatchObject({ key: 'seeds', label: 'Seeds' })
+  })
+
+  // KILLING MUTATION: drop rowEnabled. RESULT: RED — a flag-off row takes a slot to a dead page.
+  it('an unknown id, a flag-off row, a prototype name and a non-string draw nothing', () => {
+    const rows = [{ id: 'off', to: '/off', label: 'Off', iconName: 'nav.more', section: 'garden', enabled: false }]
+    expect(barSlotRow('off', { rows })).toBeNull()
+    for (const id of ['future-row', 'constructor', 'toString', '__proto__', null, 7, ['photos']]) {
+      expect(barSlotRow(id), String(id)).toBeNull()
+    }
+  })
+
+  // KILLING MUTATION: drop the repeat check in barSlotRows. RESULT: RED — Seeds drawn twice.
+  it('barSlotRows skips what it cannot draw and draws each page once', () => {
+    expect(barSlotRows(['today', 'future-row', 'seeds', 'sow', 'create']).map(r => r.key))
+      .toEqual(['today', 'seeds', 'create'])
+  })
+
+  // Every row that can take a slot has a label that fits a ~53px slot at 0.62rem: 10 characters or
+  // fewer, the width "Inventory" and "Dashboard" already prove. A longer label needs a barLabel.
+  it('every drawable slot label is short enough for the bar', () => {
+    for (const id of [...Object.keys(TAB_REGISTRY), ...MORE_ROWS.map(r => r.id)]) {
+      const row = barSlotRow(id)
+      if (!row) continue
+      expect(row.label.length, id).toBeLessThanOrEqual(10)
+    }
+  })
+})
+
+describe('a page on the bar leaves the More sheet (V5-NAVANYSLOT-001)', () => {
+  // KILLING MUTATION: ignore `onBar` in drawableMoreRows. RESULT: RED — Photos on the bar AND in More.
+  it('its row is not drawn in any section, and its pin sleeps', () => {
+    const view = layoutMoreSheet({ pins: ['photos', 'seeds'], onBar: ['today', 'create', 'photos'] })
+    const ids = [...view.pinned, ...view.sections.flatMap(sec => sec.rows)].map(r => r.id)
+    expect(ids).not.toContain('photos')
+    expect(view.pinned.map(r => r.id)).toEqual(['seeds'])
+    expect(drawnPinIds(['photos', 'seeds'], { onBar: ['photos'] })).toEqual(['seeds'])
+  })
+
+  it('a bar slot stored under an alias takes the live row out too', () => {
+    expect(drawableMoreRows({ onBar: ['sow'] }).map(r => r.id)).not.toContain('seeds')
+  })
+
+  // The other direction still holds: a movable tab off the bar is a More row.
+  it('a moved tab is still drawn at the top of Your garden', () => {
+    const view = layoutMoreSheet({ moved: ['harvests'], onBar: ['today', 'create', 'put-up'] })
+    expect(view.sections[0].rows[0]).toMatchObject({ id: 'harvests', moved: true })
   })
 })
 

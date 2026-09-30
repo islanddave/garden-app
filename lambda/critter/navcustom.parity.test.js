@@ -16,9 +16,11 @@
 import { describe, it, expect } from 'vitest'
 import {
   validatePrefsPatchBody, NAV_TAB_KEYS, MOVABLE_TAB_KEYS, MORE_PIN_ID_RE, MORE_PINS_MAX,
+  BAR_REQUIRED_KEYS, BAR_MAX_SLOTS,
 } from './validators.js'
 import {
   DEFAULT_NAV_TABS, MOVABLE_TAB_KEYS as CLIENT_MOVABLE_TAB_KEYS, resolveBarLayout,
+  BAR_REQUIRED_KEYS as CLIENT_BAR_REQUIRED_KEYS, BAR_MAX_SLOTS as CLIENT_BAR_MAX_SLOTS, BAR_SLOT_ID_RE,
 } from '../../src/lib/navConfig.js'
 import {
   MORE_PIN_ID_RE as CLIENT_MORE_PIN_ID_RE, MORE_PINS_MAX_STORED, MORE_ID_ALIASES, resolvePins,
@@ -58,6 +60,14 @@ describe('shared constants — Lambda and client agree', () => {
     expect(MORE_PIN_ID_RE.flags).toBe(CLIENT_MORE_PIN_ID_RE.flags)
   })
 
+  // V5-NAVANYSLOT-001 — the rules that keep Today and ＋ on a bar any page can join.
+  it('the required tabs, the slot cap and the slot-id form are identical', () => {
+    expect(BAR_REQUIRED_KEYS).toEqual(CLIENT_BAR_REQUIRED_KEYS)
+    expect(BAR_MAX_SLOTS).toBe(CLIENT_BAR_MAX_SLOTS)
+    expect(MORE_PIN_ID_RE.source).toBe(BAR_SLOT_ID_RE.source)
+    expect(MORE_PIN_ID_RE.flags).toBe(BAR_SLOT_ID_RE.flags)
+  })
+
   it('the stored pin cap is identical', () => {
     expect(MORE_PINS_MAX).toBe(MORE_PINS_MAX_STORED)
     expect(MORE_PINS_MAX).toBeGreaterThan(0)
@@ -82,9 +92,13 @@ describe('bar_layout invariant 1 — whatever the Lambda stores, the client appl
         expect(r.hidden).toEqual(hidden)
       }
     }
-    // 120 permutations × 2 hidden lists. Anti-vacuity: a validator that refused everything would pass
-    // the loop above with zero assertions.
-    expect(accepted).toBe(240)
+    // V5-NAVANYSLOT-001: every distinct bar of at most 5 that holds Today and ＋ (not only the 120
+    // permutations), × 2 hidden lists. Counted independently of both sides. Anti-vacuity: a validator
+    // that refused everything would pass the loop above with zero assertions.
+    const legal = sequences(ORDER_ALPHABET, 6).filter(o =>
+      new Set(o).size === o.length && o.includes('today') && o.includes('create') && o.length <= 5)
+    expect(legal.length).toBeGreaterThan(120)
+    expect(accepted).toBe(legal.length * 2)
   })
 
   it('over every hidden list of length 0..4 (with two orders)', () => {

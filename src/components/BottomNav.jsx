@@ -333,7 +333,10 @@ export default function BottomNav() {
   // back to the shipped five with no provider mounted, which is what every isolated component test
   // renders against. `moved` are those tabs; the More sheet draws them. `canEditBar` is the server's
   // can_edit_bar (D3 — Dave only today), never a client list.
-  const { bar: tabs, moved, canEditBar } = useNavLayout()
+  // V5-NAVANYSLOT-001 — `layout.bar` is the slot ids, so a More row this person put on the bar leaves
+  // the sheet (one door per page).
+  const { bar: tabs, moved, canEditBar, layout } = useNavLayout()
+  const onBar = layout.bar
   const { pins, togglePin } = useMorePins()
   const [showMore, setShowMore]             = useState(false)
   const [showCreate, setShowCreate]         = useState(false)
@@ -358,7 +361,7 @@ export default function BottomNav() {
 
   function toggleMore() {
     closeCreate()
-    if (!showMore) setSheet(layoutMoreSheet({ pins, moved }))
+    if (!showMore) setSheet(layoutMoreSheet({ pins, moved, onBar }))
     setShowMore(!showMore)
   }
 
@@ -376,7 +379,7 @@ export default function BottomNav() {
   }
 
   // The snapshot is set on open; the fallback only covers a render before the first open.
-  const view = sheet ?? layoutMoreSheet({ pins, moved })
+  const view = sheet ?? layoutMoreSheet({ pins, moved, onBar })
   const renderRow = (row) => (
     <MoreRow
       key={row.id}
@@ -612,7 +615,7 @@ export default function BottomNav() {
           )}
           return (
             <Link key={tab.to} to={tab.to} aria-current={active ? 'page' : undefined}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
+              style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', gap: 2, color: active ? P.green : P.light, minHeight: 44, position: 'relative' }}>
               {/* V4-ICONCOLOR-001 tab-bar pass (Dave 2026-08-28). `filled` is the colour variant;
                   the four browse tabs are the ONLY consumer that asks for it, which is what keeps
                   nav.garden mono where iconEvents.js:78 reuses it for potting_up on the timeline.
@@ -626,7 +629,9 @@ export default function BottomNav() {
                   V4-NAVACTIVESTATE-001 — by the indicator TabGlyph draws behind the glyph, which is
                   the one channel of the three that does not need 9.9px text or hue to be read. */}
               <TabGlyph iconName={tab.iconName} variant="filled" active={active} />
-              <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400 }}>{tab.label}</span>
+              {/* V5-NAVANYSLOT-001 — any page can take a slot now, so a label that still runs long
+                  is clipped with an ellipsis inside its own slot rather than shouldering the next. */}
+              <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 2px', boxSizing: 'border-box' }}>{tab.label}</span>
             </Link>
           )
         })}

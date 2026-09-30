@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   validatePrefsPatchBody, validateSpeciesPrefsPatchBody,
   validateMarkViewedPatchBody, MAX_MARK_VIEWED_BATCH, UUID_RE,
-  GARDEN_EXPANDED_MAX, NAV_TAB_KEYS, MOVABLE_TAB_KEYS, MORE_PIN_ID_RE, MORE_PINS_MAX,
+  GARDEN_EXPANDED_MAX, NAV_TAB_KEYS, MOVABLE_TAB_KEYS, MORE_PIN_ID_RE, MORE_PINS_MAX, BAR_REQUIRED_KEYS, BAR_MAX_SLOTS,
   GARDEN_GROUP_BY_VALUES,
 } from './validators.js'
 
@@ -266,6 +266,8 @@ describe('validatePrefsPatchBody — V5-NAVCUSTOM-001 more_pins + bar_layout', (
       expect(MORE_PIN_ID_RE.source).toBe('^[a-z][a-z0-9-]{0,39}$')
       expect(MORE_PIN_ID_RE.flags).toBe('')
       expect(MORE_PINS_MAX).toBe(32)
+      expect(BAR_REQUIRED_KEYS).toEqual(['today', 'create'])
+      expect(BAR_MAX_SLOTS).toBe(5)
     })
 
     it('Today and ＋ are never movable, and every movable key is a real tab', () => {
@@ -327,7 +329,9 @@ describe('validatePrefsPatchBody — V5-NAVCUSTOM-001 more_pins + bar_layout', (
   })
 
   describe('bar_layout', () => {
-    const ORDER_ENTRY_ERROR = 'bar_layout.order entries must be one of: today, garden, create, harvests, put-up'
+    const ORDER_ENTRY_ERROR = 'bar_layout.order entries must be tab keys or More row ids: a lowercase letter, then up to 39 of a-z, 0-9 or -'
+    const REQUIRED_ERROR = 'bar_layout.order must include today and create'
+    const CAP_ERROR = 'bar_layout.order may hold at most 5 tabs'
     const HIDDEN_ENTRY_ERROR = 'bar_layout.hidden entries must be one of: garden, harvests, put-up'
 
     it('accepts every order x every hidden list — all 120 permutations x all 16 ordered movable sets', () => {
@@ -344,16 +348,30 @@ describe('validatePrefsPatchBody — V5-NAVCUSTOM-001 more_pins + bar_layout', (
       expect(refused).toEqual([])
     })
 
-    it('accepts an order IF AND ONLY IF it is a permutation of the five tabs (55,987 sequences)', () => {
-      // Every sequence of length 0..6 over the five keys plus one unknown. Deleting the vocabulary, the
-      // repeat or the arity guard admits some non-permutation here; a guard that refuses a real
-      // permutation turns the other direction red.
-      const perms = new Set(arrangements(DEFAULT_ORDER, 5).map((p) => JSON.stringify(p)))
+    // V5-NAVANYSLOT-001 (Dave 2026-09-30): the order IS the bar, and any More row id may take a slot.
+    it('accepts an order IF AND ONLY IF it is distinct, holds Today and ＋, and fits 5 (55,987 sequences)', () => {
+      // Every sequence of length 0..6 over the five keys plus 'moon' (a well-formed id this validator
+      // cannot tell from a More row). The predicate is restated here rather than shared, so deleting the
+      // repeat, required or cap guard admits a sequence it refuses, and an over-strict guard refuses one
+      // it admits.
+      const legal = (s) => new Set(s).size === s.length && s.includes('today') && s.includes('create') && s.length <= 5
       const all = sequences([...DEFAULT_ORDER, 'moon'], 6)
       expect(all).toHaveLength(55987)
-      const wrong = all.filter((s) => (validatePrefsPatchBody(layout(s, [])) === null) !== perms.has(JSON.stringify(s)))
+      const wrong = all.filter((s) => (validatePrefsPatchBody(layout(s, [])) === null) !== legal(s))
       expect(wrong.slice(0, 5)).toEqual([])
-      expect(all.filter((s) => validatePrefsPatchBody(layout(s, [])) === null)).toHaveLength(120)
+      // Anti-vacuity: the 120 permutations of the five are not the only bars any more — every shorter
+      // or 'moon'-bearing bar that keeps Today and ＋ is one too.
+      const accepted = all.filter((s) => validatePrefsPatchBody(layout(s, [])) === null)
+      expect(accepted.length).toBe(all.filter(legal).length)
+      expect(accepted.length).toBeGreaterThan(120)
+      expect(accepted).toContainEqual(['today', 'create'])
+      expect(accepted).toContainEqual(['today', 'moon', 'create'])
+    })
+
+    it('accepts the bars Dave asked for — Harvests off, Put-Up on, More rows in slots', () => {
+      ok(layout(['today', 'garden', 'create', 'put-up'], []))
+      ok(layout(['today', 'seeds', 'create', 'put-up', 'photos'], []))
+      ok(layout(['today', 'create'], []))
     })
 
     it('accepts a hidden list IF AND ONLY IF it is distinct movable tabs (1,555 sequences)', () => {
@@ -386,13 +404,15 @@ describe('validatePrefsPatchBody — V5-NAVCUSTOM-001 more_pins + bar_layout', (
       }
     })
 
-    it('refuses an unknown or non-string tab in order — mutation: delete the order vocabulary guard', () => {
+    it('refuses a malformed or non-string entry in order — mutation: delete the order form guard', () => {
       for (const o of [
-        ['today', 'garden', 'create', 'harvests', 'moon'],
-        ['today', 'garden', 'create', 'harvests', 'more'],   // More is always last and is not a tab key
-        ['today', 'garden', 'create', 'harvests', 1],
-        ['today', 'garden', 'create', 'harvests', null],
-        ['today', 'garden', 'create', 'harvests', ['put-up']],
+        ['today', 'create', 'Seeds'],
+        ['today', 'create', '1seeds'],
+        ['today', 'create', ''],
+        ['today', 'create', 'a'.repeat(41)],
+        ['today', 'create', 1],
+        ['today', 'create', null],
+        ['today', 'create', ['put-up']],   // the typeof half: test() would coerce it to 'put-up'
       ]) refuses(layout(o, []), ORDER_ENTRY_ERROR)
     })
 
@@ -400,12 +420,16 @@ describe('validatePrefsPatchBody — V5-NAVCUSTOM-001 more_pins + bar_layout', (
       refuses(layout(['today', 'today', 'create', 'harvests', 'put-up'], []), 'bar_layout.order must not repeat a tab')
     })
 
-    it('refuses an order that leaves a tab out — mutation: delete the order arity guard', () => {
-      // A tab leaves the bar through `hidden`, never by being dropped from `order`. An order LONGER
-      // than five cannot reach this guard (a sixth entry is a repeat or an unknown key), the same honest
-      // limit the app-config nav_tabs validator carries.
-      refuses(layout([], []), 'bar_layout.order must list all 5 tabs')
-      refuses(layout(['today', 'garden', 'create', 'harvests'], []), 'bar_layout.order must list all 5 tabs')
+    it('refuses an order without Today or ＋ — mutation: delete the required-keys guard', () => {
+      // Today and ＋ have no More row, so leaving them out of the bar would leave them with no door.
+      refuses(layout([], []), REQUIRED_ERROR)
+      refuses(layout(['today', 'garden', 'harvests', 'put-up'], []), REQUIRED_ERROR)
+      refuses(layout(['garden', 'create', 'harvests', 'put-up'], []), REQUIRED_ERROR)
+    })
+
+    it('refuses an order longer than 5 — mutation: delete the cap guard', () => {
+      // Six distinct well-formed ids holding Today and ＋: only the cap refuses it.
+      refuses(layout(['today', 'garden', 'create', 'harvests', 'put-up', 'seeds'], []), CAP_ERROR)
     })
 
     it('refuses a missing or non-array hidden — mutation: delete the hidden Array.isArray guard (then THROWS)', () => {

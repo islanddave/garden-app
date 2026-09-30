@@ -40,7 +40,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 //
 // The shipped tab vocabulary, in the shipped order. Byte-identical to DEFAULT_NAV_TABS in
 // src/lib/navConfig.js, the client's copy and the renderer's authority; appConfig.parity.test.js
-// asserts the two agree. bar_layout.order must be a permutation of it.
+// asserts the two agree. It is also the reset value and the slot cap (BAR_MAX_SLOTS).
 export const NAV_TAB_KEYS = ['today', 'garden', 'create', 'harvests', 'put-up']
 // The tabs a person may move off the bar into More. Today (where the app lands) and ＋ (the only door
 // to the create sheet and, in field mode, to Field capture) never move; More is not a tab key.
@@ -51,6 +51,14 @@ export const MORE_PIN_ID_RE = /^[a-z][a-z0-9-]{0,39}$/
 // The stored cap, equal to chk_unp_more_pins_shape's. The sheet shows at most 4 pins; the headroom
 // keeps pins that are asleep (a flag-off or unknown row) through a save.
 export const MORE_PINS_MAX = 32
+// V5-NAVANYSLOT-001 (Dave 2026-09-30: any More row may take a tab-bar slot). bar_layout.order is the
+// bar itself, left to right: distinct ids of the MORE_PIN_ID_RE form (a tab key or a More row id —
+// the same id a page carries as a pin), holding Today and ＋, at most BAR_MAX_SLOTS long. Checked for
+// FORM like more_pins, for the same reason: the Lambda does not know the client's More rows, and the
+// client skips an id it cannot draw. A pre-change {order: [the five], hidden: [...]} still passes.
+// Byte-identical to navConfig.js BAR_REQUIRED_KEYS / BAR_MAX_SLOTS (navcustom.parity.test.js).
+export const BAR_REQUIRED_KEYS = ['today', 'create']
+export const BAR_MAX_SLOTS = NAV_TAB_KEYS.length
 
 export function validatePrefsPatchBody(body) {
   if (!body || typeof body !== 'object') return { status: 400, error: 'body required' }
@@ -150,13 +158,18 @@ export function validatePrefsPatchBody(body) {
     if (unknown.length > 0) return { status: 400, error: `bar_layout has unknown key: ${unknown.join(', ')}` }
     const { order, hidden } = layout
     if (!Array.isArray(order)) return { status: 400, error: 'bar_layout.order must be an array of tab keys' }
-    // Membership also refuses non-strings, nulls and nested arrays (includes() does not coerce).
-    if (order.some(k => !NAV_TAB_KEYS.includes(k))) {
-      return { status: 400, error: `bar_layout.order entries must be one of: ${NAV_TAB_KEYS.join(', ')}` }
+    // Form. The typeof half refuses non-strings, nulls and nested arrays (test() would coerce ['today']).
+    if (order.some(k => !(typeof k === 'string' && MORE_PIN_ID_RE.test(k)))) {
+      return { status: 400, error: 'bar_layout.order entries must be tab keys or More row ids: a lowercase letter, then up to 39 of a-z, 0-9 or -' }
     }
     if (new Set(order).size !== order.length) return { status: 400, error: 'bar_layout.order must not repeat a tab' }
-    if (order.length !== NAV_TAB_KEYS.length) {
-      return { status: 400, error: `bar_layout.order must list all ${NAV_TAB_KEYS.length} tabs` }
+    // Today and ＋ each stay: each is the only door to something (design §2).
+    const missing = BAR_REQUIRED_KEYS.filter(k => !order.includes(k))
+    if (missing.length > 0) {
+      return { status: 400, error: `bar_layout.order must include ${BAR_REQUIRED_KEYS.join(' and ')}` }
+    }
+    if (order.length > BAR_MAX_SLOTS) {
+      return { status: 400, error: `bar_layout.order may hold at most ${BAR_MAX_SLOTS} tabs` }
     }
     if (!Array.isArray(hidden)) return { status: 400, error: 'bar_layout.hidden must be an array of tab keys' }
     // Today and ＋ are refused here: each is the only door to something (design §2).

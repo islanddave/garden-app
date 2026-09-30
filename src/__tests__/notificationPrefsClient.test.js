@@ -704,11 +704,14 @@ describe('notificationPrefsClient — saveMorePins / saveBarLayout (reported)', 
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
-  it('refuses, without a request, layouts the contract rejects — hiding ＋ or Today, a short order', async () => {
+  // V5-NAVANYSLOT-001: a short order that keeps Today and ＋ is a legal bar now; one without them,
+  // or one past the 5-slot cap, is still refused locally.
+  it('refuses, without a request, layouts the contract rejects — hiding ＋ or Today, dropping them, too long', async () => {
     const mod = await loadModule(BASE)
     const refused = { ok: false, status: 400, local: true }
     const bad = [
-      null, {}, { order: ['today', 'garden', 'create', 'harvests'], hidden: [] },
+      null, {}, { order: ['today', 'garden', 'harvests', 'put-up'], hidden: [] },
+      { order: ['today', 'garden', 'create', 'harvests', 'put-up', 'seeds'], hidden: [] },
       { order: ['today', 'garden', 'create', 'harvests', 'put-up'], hidden: ['create'] },
       { order: ['today', 'garden', 'create', 'harvests', 'put-up'], hidden: ['today'] },
       { order: ['today', 'garden', 'create', 'harvests', 'put-up'] },

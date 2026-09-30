@@ -140,8 +140,10 @@ describe('I2 — never an empty bar, never a bar with only More', () => {
     }
   })
 
-  it('an empty or short order renders the full bar', async () => {
-    for (const order of [[], ['today'], ['today', 'garden', 'create', 'harvests']]) {
+  // An order that drops Today or ＋ is refused whole. V5-NAVANYSLOT-001 made a SHORT order that keeps
+  // them legal (it is the bar), so the short case lives in "any page can take a slot" below.
+  it('an empty order, or one without Today or ＋, renders the full bar', async () => {
+    for (const order of [[], ['today'], ['today', 'garden', 'harvests', 'put-up'], ['create', 'garden']]) {
       await renderWithLayout(layout(order)).then(v => { expect(labels(), JSON.stringify(order)).toEqual(SHIPPED); v.unmount() })
     }
   })
@@ -153,10 +155,34 @@ describe('I2 — never an empty bar, never a bar with only More', () => {
     expect(labels()).toEqual(SHIPPED)
   })
 
-  it('an unknown key renders the full bar rather than a blank slot', async () => {
+  // V5-NAVANYSLOT-001: an id this build cannot draw (a newer bundle's row, a flag-off row) is SKIPPED —
+  // never a blank slot, and never a reason to throw the person's whole bar away.
+  it('an unknown id is skipped rather than drawn as a blank slot', async () => {
     await renderWithLayout(layout(['today', 'garden', 'create', 'harvests', 'sprockets']))
-    expect(labels()).toEqual(SHIPPED)
+    expect(labels()).toEqual(['Today', 'Garden', 'Create', 'Harvests', 'More'])
     expect(labels().some(l => l === '' || l == null)).toBe(false)
+  })
+})
+
+describe('V5-NAVANYSLOT-001 — any page can take a slot (Dave 2026-09-30)', () => {
+  // The bar Dave named: Harvests into More, Put-Up on the bar, a More row in a slot.
+  // KILLING MUTATION: rowsOf reads TAB_REGISTRY only. RESULT: RED — Seeds draws nothing.
+  it('a More row on the bar draws as a slot that links to its page, with its bar label', async () => {
+    await renderWithLayout(layout(['today', 'seeds', 'create', 'put-up', 'season-stats']))
+    expect(labels()).toEqual(['Today', 'Seeds', 'Create', 'Put-Up', 'Stats', 'More'])
+    const nav = screen.getByLabelText('Main navigation')
+    expect(nav.querySelector('a[href="/seeds"]')).not.toBeNull()
+    expect(nav.querySelector('a[href="/season-stats"]')).not.toBeNull()
+  })
+
+  it('a short bar is honoured: Today · ＋ · Put-Up · More', async () => {
+    await renderWithLayout(layout(['today', 'create', 'put-up']))
+    expect(labels()).toEqual(['Today', 'Create', 'Put-Up', 'More'])
+  })
+
+  it('six slots stay the most the bar ever draws, More included', async () => {
+    await renderWithLayout(layout(['today', 'seeds', 'create', 'photos', 'put-up']))
+    expect(screen.getByLabelText('Main navigation').children.length).toBe(6)
   })
 })
 

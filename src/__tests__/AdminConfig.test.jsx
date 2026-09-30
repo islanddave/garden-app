@@ -12,7 +12,9 @@
  * Properties, in descending order of how much they matter:
  *   1. SAVE NEVER WRITES A VALUE NOBODY CHOSE. Disabled until the server's value is read; the editor
  *      follows that value until the person edits; a failed read keeps Save off and says so.
- *   2. TODAY AND ＋ CANNOT LEAVE THE BAR. "In bar" exists on Garden, Harvests and Put-Up only.
+ *   2. TODAY AND ＋ CANNOT LEAVE THE BAR. Remove exists on every row but theirs.
+ *   2b. ANY PAGE CAN TAKE A SLOT (V5-NAVANYSLOT-001, Dave 2026-09-30): every movable tab and every More
+ *      row is offered under "Add to your bar", up to 5 slots plus More.
  *   3. THE PREVIEW IS THE BAR THEY WILL GET, More last, and names what moves into More.
  *   4. WHO SEES IT IS THE SERVER'S CALL (can_edit_bar). There is no client admin list.
  *   5. THE SAVE TELLS THE TRUTH: a rejection, an outage and a success read differently.
@@ -46,12 +48,16 @@ import AdminConfig from '../pages/AdminConfig.jsx'
 import { PrefsProvider } from '../context/PrefsContext.jsx'
 import { NavPrefsProvider, BAR_LAYOUT_CACHE_KEY, useNavLayout } from '../context/NavPrefsContext.jsx'
 import { DEFAULT_NAV_TABS } from '../lib/navConfig.js'
+import { MORE_ROWS } from '../lib/moreRegistry.js'
 
 const rows = () => screen.getAllByTestId('nav-order-row').map(r => r.getAttribute('data-tab-key'))
 const preview = () => screen.getAllByTestId('bar-preview-slot').map(s => s.getAttribute('data-tab-key'))
 const moveDown = (label) => fireEvent.click(screen.getByLabelText(`Move ${label} down`))
 const moveUp = (label) => fireEvent.click(screen.getByLabelText(`Move ${label} up`))
-const inBar = (label) => screen.getByLabelText(`${label} in bar`)
+// V5-NAVANYSLOT-001 — the editor is the bar itself: on it or not, with Remove / Add.
+const removeFromBar = (label) => fireEvent.click(screen.getByLabelText(`Remove ${label} from the bar`))
+const addToBar = (label) => fireEvent.click(screen.getByLabelText(`Add ${label} to the bar`))
+const offered = () => screen.queryAllByTestId('nav-add-row').map(r => r.getAttribute('data-slot-id'))
 const saveButton = () => screen.getByText('Save')
 
 const prefs = (barLayout, canEdit = true) => ({ bar_layout: barLayout, more_pins: null, can_edit_bar: canEdit })
@@ -99,11 +105,19 @@ describe('who sees the editor — the server’s can_edit_bar, nothing else', ()
 })
 
 describe('the editor opens on what the server holds', () => {
+  // A layout saved before V5-NAVANYSLOT-001 ({order: the five, hidden: [...]}) opens as the bar it draws.
   it('opens on the stored order and the stored moves', async () => {
     await open(prefs({ order: ['harvests', 'today', 'create', 'garden', 'put-up'], hidden: ['put-up'] }))
-    expect(rows()).toEqual(['harvests', 'today', 'create', 'garden', 'put-up'])
-    expect(inBar('Put-Up').checked).toBe(false)
-    expect(inBar('Garden').checked).toBe(true)
+    expect(rows()).toEqual(['harvests', 'today', 'create', 'garden'])
+    expect(offered()).toContain('put-up')
+    expect(offered()).not.toContain('garden')
+  })
+
+  it('opens on a bar that holds More rows', async () => {
+    await open(prefs({ order: ['today', 'seeds', 'create', 'put-up'], hidden: [] }))
+    expect(rows()).toEqual(['today', 'seeds', 'create', 'put-up'])
+    expect(offered()).not.toContain('seeds')
+    expect(offered()).toEqual(expect.arrayContaining(['garden', 'harvests', 'photos']))
   })
 
   // Seeded through resolveBarLayout, not the raw column: a value the BAR ignores is not presented
@@ -111,7 +125,7 @@ describe('the editor opens on what the server holds', () => {
   it('opens on the shipped layout when the stored value is one the bar rejects', async () => {
     await open(prefs({ order: ['today', 'today', 'garden', 'create', 'harvests'], hidden: ['create'] }))
     expect(rows()).toEqual(DEFAULT_NAV_TABS)
-    expect(inBar('Put-Up').checked).toBe(true)
+    expect(offered()).not.toContain('put-up')
   })
 })
 
@@ -139,8 +153,7 @@ describe('THE STALE-SEED FIX — Save never writes a value nobody chose', () => 
     await act(async () => { render(tree()) })
     expect(rows()).toEqual(DEFAULT_NAV_TABS)
     await act(async () => { answer(prefs({ order: ['garden', 'today', 'create', 'harvests', 'put-up'], hidden: ['harvests'] })) })
-    expect(rows()).toEqual(['garden', 'today', 'create', 'harvests', 'put-up'])
-    expect(inBar('Harvests').checked).toBe(false)
+    expect(rows()).toEqual(['garden', 'today', 'create', 'put-up'])
     expect(saveButton().disabled).toBe(true)   // nothing changed yet
   })
 
@@ -164,21 +177,22 @@ describe('THE STALE-SEED FIX — Save never writes a value nobody chose', () => 
 })
 
 describe('moving tabs — Today and ＋ never leave the bar', () => {
-  // KILLING MUTATION: render the checkbox on every row. RESULT: RED.
-  it('offers "In bar" on Garden, Harvests and Put-Up only', async () => {
+  // KILLING MUTATION: render Remove on every row. RESULT: RED.
+  it('offers Remove on every row but Today and ＋', async () => {
     const { container } = await open()
-    const boxes = [...container.querySelectorAll('input[type="checkbox"]')].map(b => b.getAttribute('aria-label'))
-    expect(boxes).toEqual(['Garden in bar', 'Harvests in bar', 'Put-Up in bar'])
+    const removes = [...container.querySelectorAll('button[aria-label^="Remove "]')].map(b => b.getAttribute('aria-label'))
+    expect(removes).toEqual(['Remove Garden from the bar', 'Remove Harvests from the bar', 'Remove Put-Up from the bar'])
     const fixed = screen.getAllByTestId('nav-order-fixed').map(f => f.closest('[data-testid="nav-order-row"]').getAttribute('data-tab-key'))
     expect(fixed).toEqual(['today', 'create'])
   })
 
-  it('unticking a tab moves it out of the preview and names where it goes', async () => {
+  it('removing a tab takes it out of the preview, names where it goes, and offers it back', async () => {
     await open()
-    fireEvent.click(inBar('Put-Up'))
+    removeFromBar('Put-Up')
     expect(preview()).toEqual(['today', 'garden', 'create', 'harvests', 'more'])
     expect(document.body.textContent).toMatch(/In More, at the top of “Your garden”: Put-Up\./)
-    fireEvent.click(inBar('Put-Up'))
+    expect(offered()).toContain('put-up')
+    addToBar('Put-Up')
     expect(preview()).toEqual(['today', 'garden', 'create', 'harvests', 'put-up', 'more'])
   })
 
@@ -186,7 +200,7 @@ describe('moving tabs — Today and ＋ never leave the bar', () => {
   it('the preview follows the edited order and always ends in More', async () => {
     await open()
     moveDown('Today')
-    fireEvent.click(inBar('Harvests'))
+    removeFromBar('Harvests')
     expect(preview()).toEqual(['garden', 'today', 'create', 'put-up', 'more'])
   })
 
@@ -200,30 +214,72 @@ describe('moving tabs — Today and ＋ never leave the bar', () => {
     expect(screen.getByLabelText('Move Put-Up down').disabled).toBe(true)
   })
 
-  // An unticked tab keeps its place, so ticking it back puts it where it was.
-  it('a moved tab keeps its place in the order', async () => {
-    await open()
-    fireEvent.click(inBar('Garden'))
-    expect(rows()).toEqual(DEFAULT_NAV_TABS)
-  })
-
   it('Reset restores the shipped order with nothing moved', async () => {
     await open(prefs({ order: ['harvests', 'today', 'create', 'garden', 'put-up'], hidden: ['put-up', 'garden'] }))
     fireEvent.click(screen.getByText('Reset'))
     expect(rows()).toEqual(DEFAULT_NAV_TABS)
-    for (const l of ['Garden', 'Harvests', 'Put-Up']) expect(inBar(l).checked).toBe(true)
+    for (const k of ['garden', 'harvests', 'put-up']) expect(offered()).not.toContain(k)
     expect(saveButton().disabled).toBe(false)
   })
 })
 
+// V5-NAVANYSLOT-001 — Dave 2026-09-30: "Harvest will eventually be deprioritized to the More menu while
+// PutUp comes to the nav bar. Make every More menu item + existing 5 options available to add there."
+describe('any page can take a slot', () => {
+  // KILLING MUTATION: offer MOVABLE_TAB_KEYS only. RESULT: RED — no More row is offered.
+  it('offers every More row this build draws, and every movable tab not on the bar', async () => {
+    await open(prefs({ order: ['today', 'create'], hidden: [] }))
+    const want = ['garden', 'harvests', 'put-up', ...MORE_ROWS.filter(r => r.enabled !== false).map(r => r.id)]
+    expect([...offered()].sort()).toEqual([...want].sort())
+  })
+
+  it('adding a More row puts it at the right-hand end, before More, and takes it out of the list', async () => {
+    await open()
+    removeFromBar('Harvests')
+    addToBar('Seeds')
+    expect(rows()).toEqual(['today', 'garden', 'create', 'put-up', 'seeds'])
+    expect(preview()).toEqual(['today', 'garden', 'create', 'put-up', 'seeds', 'more'])
+    expect(offered()).not.toContain('seeds')
+    expect(offered()).toContain('harvests')
+  })
+
+  // A long name wears its bar label in the preview, and the list says so.
+  it('a long name shows its bar label', async () => {
+    await open(prefs({ order: ['today', 'create'], hidden: [] }))
+    expect(screen.getByText('Shows as “Stats” in the bar')).toBeTruthy()
+    addToBar('Season stats')
+    const slot = screen.getAllByTestId('bar-preview-slot').find(el => el.getAttribute('data-tab-key') === 'season-stats')
+    expect(slot.textContent).toBe('Stats')
+  })
+
+  // KILLING MUTATION: drop the BAR_MAX_SLOTS check in `add`/`full`. RESULT: RED — a sixth slot.
+  it('a full bar refuses Add, in words, until one is removed', async () => {
+    await open()
+    expect(screen.getByTestId('bar-full').textContent).toMatch(/Your bar is full \(5 plus More\)/)
+    expect(screen.getByLabelText('Add Seeds to the bar').disabled).toBe(true)
+    removeFromBar('Garden')
+    expect(screen.queryByTestId('bar-full')).toBeNull()
+    expect(screen.getByLabelText('Add Seeds to the bar').disabled).toBe(false)
+  })
+
+  it('Dave’s bar: Harvests to More, Seeds in — saved as the bar itself', async () => {
+    await open()
+    removeFromBar('Harvests')
+    addToBar('Seeds')
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(saveSpy.mock.calls[0][0].layout).toEqual({ order: ['today', 'garden', 'create', 'put-up', 'seeds'], hidden: [] })
+  })
+})
+
 describe('the write', () => {
-  it('sends exactly the edited order and moves', async () => {
+  // V5-NAVANYSLOT-001: the order IS the bar; `hidden` is written empty (it is only read, for old rows).
+  it('sends exactly the edited bar', async () => {
     await open()
     moveDown('Today')
-    fireEvent.click(inBar('Put-Up'))
+    removeFromBar('Put-Up')
     await act(async () => { fireEvent.click(saveButton()) })
     expect(saveSpy).toHaveBeenCalledTimes(1)
-    expect(saveSpy.mock.calls[0][0].layout).toEqual({ order: ['garden', 'today', 'create', 'harvests', 'put-up'], hidden: ['put-up'] })
+    expect(saveSpy.mock.calls[0][0].layout).toEqual({ order: ['garden', 'today', 'create', 'harvests'], hidden: [] })
   })
 
   // KILLING MUTATION: drop applyLayout from the success path. RESULT: RED — the bar (read here through
@@ -236,14 +292,14 @@ describe('the write', () => {
     fetchPrefsSpy.mockResolvedValue(prefs(null))
     await act(async () => { render(<PrefsProvider><NavPrefsProvider><AdminConfig /><BarProbe /></NavPrefsProvider></PrefsProvider>) })
     expect(screen.getByTestId('live-bar').textContent).toBe(DEFAULT_NAV_TABS.join(','))
-    fireEvent.click(inBar('Garden'))
-    fetchPrefsSpy.mockResolvedValue(prefs({ order: [...DEFAULT_NAV_TABS], hidden: ['garden'] }))
+    removeFromBar('Garden')
+    fetchPrefsSpy.mockResolvedValue(prefs({ order: ['today', 'create', 'harvests', 'put-up'], hidden: [] }))
     await act(async () => { fireEvent.click(saveButton()) })
     expect(screen.getByTestId('live-bar').textContent).toBe('today,create,harvests,put-up')
-    expect(JSON.parse(localStorage.getItem(BAR_LAYOUT_CACHE_KEY)).layout).toEqual({ order: [...DEFAULT_NAV_TABS], hidden: ['garden'] })
+    expect(JSON.parse(localStorage.getItem(BAR_LAYOUT_CACHE_KEY)).layout).toEqual({ order: ['today', 'create', 'harvests', 'put-up'], hidden: [] })
     expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
     expect(screen.getByRole('status').textContent).toBe('Saved. Your tab bar has changed.')
-    expect(inBar('Garden').checked).toBe(false)
+    expect(rows()).not.toContain('garden')
     expect(saveButton().disabled).toBe(true)
   })
 
@@ -275,23 +331,23 @@ describe('the write', () => {
 describe('after a successful Save, the re-read cannot take the saved bar away', () => {
   it('a FAILED re-read: no "could not be read", the saved bar stays, and Save still works', async () => {
     await open()
-    fireEvent.click(inBar('Garden'))
+    removeFromBar('Garden')
     fetchPrefsSpy.mockResolvedValue(null)                 // the re-read fails
     await act(async () => { fireEvent.click(saveButton()) })
     expect(screen.getByRole('status').textContent).toBe('Saved. Your tab bar has changed.')
     expect(screen.queryByTestId('bar-read-failed')).toBeNull()
-    expect(inBar('Garden').checked).toBe(false)
+    expect(rows()).not.toContain('garden')
     expect(saveButton().disabled).toBe(true)             // nothing changed since the save…
-    fireEvent.click(inBar('Harvests'))
+    removeFromBar('Harvests')
     expect(saveButton().disabled).toBe(false)            // …and Save did not die
   })
 
   it('an OLDER re-read (a GET that left before the Save) does not roll the editor back', async () => {
     await open()
-    fireEvent.click(inBar('Garden'))
+    removeFromBar('Garden')
     fetchPrefsSpy.mockResolvedValue(prefs(null))          // the pre-save row
     await act(async () => { fireEvent.click(saveButton()) })
-    expect(inBar('Garden').checked).toBe(false)
+    expect(rows()).not.toContain('garden')
     expect(saveButton().disabled).toBe(true)
     expect(preview()).toEqual(['today', 'create', 'harvests', 'put-up', 'more'])
   })
@@ -312,7 +368,7 @@ describe('a body served from the SW cache is this phone’s last copy, not the s
   it('shows it, says what it is, and keeps Save off even after an edit', async () => {
     await open(marked(prefs(HARVESTS_MOVED)))                 // the re-read answers the same copy
     await settle()
-    expect(inBar('Harvests').checked).toBe(false)            // shown…
+    expect(rows()).not.toContain('harvests')                 // shown…
     expect(screen.getByTestId('bar-last-copy').textContent).toMatch(/last copy of your tab bar saved on this phone/)
     expect(screen.queryByTestId('bar-read-failed')).toBeNull()
     moveDown('Today')
@@ -328,9 +384,9 @@ describe('a body served from the SW cache is this phone’s last copy, not the s
     await settle()
     expect(fetchPrefsSpy).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('bar-last-copy')).toBeNull()
-    expect(inBar('Garden').checked).toBe(false)              // the fresh value, not the copy
-    expect(inBar('Harvests').checked).toBe(true)
-    fireEvent.click(inBar('Garden'))
+    expect(rows()).not.toContain('garden')                   // the fresh value, not the copy
+    expect(rows()).toContain('harvests')
+    removeFromBar('Harvests')
     expect(saveButton().disabled).toBe(false)
   })
 

@@ -42,7 +42,8 @@ import { fetchNotificationPrefs, __resetPrefsFlight } from '../lib/notificationP
 import { DEFAULT_NAV_TABS } from '../lib/navConfig.js'
 
 const PRE_SAVE = { bar_layout: null, more_pins: null, can_edit_bar: true }
-const SAVED = { order: [...DEFAULT_NAV_TABS], hidden: ['garden'] }
+// V5-NAVANYSLOT-001: the editor saves the bar itself, so removing Garden writes the four it keeps.
+const SAVED = { order: DEFAULT_NAV_TABS.filter(k => k !== 'garden'), hidden: [] }
 
 // The far side of the wire, with STATE: a PATCH changes the stored row, and a GET answers with the row
 // as it stood when that GET was ISSUED — which is what makes a GET that left before the Save a
@@ -104,7 +105,7 @@ describe('M5 — the editor’s re-read joins a GET that left before the Save', 
     const release = hold()
     let other
     act(() => { other = fetchNotificationPrefs({ getToken: async () => 'token' }) })
-    fireEvent.click(screen.getByLabelText('Garden in bar'))
+    fireEvent.click(screen.getByLabelText('Remove Garden from the bar'))
     // The Save handler awaits its re-read, which is now parked on the held GET.
     act(() => { fireEvent.click(screen.getByText('Save')) })
     await act(async () => { await Promise.resolve() })
@@ -116,8 +117,8 @@ describe('M5 — the editor’s re-read joins a GET that left before the Save', 
     expect(screen.getByTestId('live-bar').textContent).toBe('today,create,harvests,put-up')
     expect(cachedLayout()).toEqual(SAVED)
     // …and the editor (QA MINOR-1's guard) still shows what was saved, not the joined pre-save row.
-    // KILLING MUTATION: drop AdminConfig's savedLayout override. RESULT: RED — Garden re-ticked.
-    expect(screen.getByLabelText('Garden in bar').checked).toBe(false)
+    // KILLING MUTATION: drop AdminConfig's savedLayout override. RESULT: RED — Garden back on the bar.
+    expect(screen.getAllByTestId('nav-order-row').map(r => r.getAttribute('data-tab-key'))).not.toContain('garden')
     expect(screen.getByRole('status').textContent).toBe('Saved. Your tab bar has changed.')
   })
 
@@ -126,7 +127,7 @@ describe('M5 — the editor’s re-read joins a GET that left before the Save', 
   // the case above is red for the join and not for some other reason.
   it('control: with no read in flight the re-read is a fresh GET, and the saved bar is cached', async () => {
     await renderEditor()
-    fireEvent.click(screen.getByLabelText('Garden in bar'))
+    fireEvent.click(screen.getByLabelText('Remove Garden from the bar'))
     await act(async () => { fireEvent.click(screen.getByText('Save')) })
     await act(async () => { await new Promise(r => setTimeout(r, 0)) })
     expect(gets).toBe(2)

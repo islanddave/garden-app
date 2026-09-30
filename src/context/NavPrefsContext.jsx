@@ -3,8 +3,8 @@ import { useAuth } from './AuthContext.jsx'
 import { useApiFetch } from '../lib/api.js'
 import { usePrefs } from './PrefsContext.jsx'
 import { saveMorePins } from '../lib/notificationPrefsClient.js'
-import { TAB_REGISTRY, resolveBarLayout } from '../lib/navConfig.js'
-import { MORE_PINS_MAX_SHOWN, MORE_PINS_MAX_STORED, MORE_PIN_ID_RE, drawnPinIds, resolvePins } from '../lib/moreRegistry.js'
+import { resolveBarLayout } from '../lib/navConfig.js'
+import { MORE_PINS_MAX_SHOWN, MORE_PINS_MAX_STORED, MORE_PIN_ID_RE, barSlotRows, drawnPinIds, resolvePins } from '../lib/moreRegistry.js'
 import { onReconnect } from '../lib/reconnect.js'
 
 // NavPrefsContext — V5-NAVCUSTOM-001. A person's tab bar and More-menu pins.
@@ -136,7 +136,8 @@ function readLaunch(userId) {
   }
 }
 
-const rowsOf = (keys) => keys.map(key => ({ ...TAB_REGISTRY[key], key }))
+// V5-NAVANYSLOT-001 — a slot may be a tab or a More row; an id this build cannot draw is skipped.
+const rowsOf = (keys) => barSlotRows(keys)
 
 // No provider (isolated component tests, public pages): the shipped bar, no pins, no editor. The same
 // answer a first launch gives before prefs land.
@@ -287,8 +288,8 @@ export function NavPrefsProvider({ children }) {
     if (!cur.pinsKnown) { learnPins(); return 'not-loaded' }
     const wasPinned = cur.pins.includes(id)
     if (!wasPinned) {
-      const moved = resolveBarLayout(cur.barRaw).moved
-      if (drawnPinIds(cur.pins, { moved }).length >= MORE_PINS_MAX_SHOWN) return 'full'
+      const { moved, bar: onBar } = resolveBarLayout(cur.barRaw)
+      if (drawnPinIds(cur.pins, { moved, onBar }).length >= MORE_PINS_MAX_SHOWN) return 'full'
       if (cur.pins.length >= MORE_PINS_MAX_STORED) return 'full'
     }
     const next = wasPinned ? cur.pins.filter(p => p !== id) : [...cur.pins, id]

@@ -19,7 +19,7 @@
 // subtitle (ambient — Reward UX V102 forbids a badge or count here), the What's-New dot on Release Notes.
 import { CATCH_UP_EDITOR_SHIPPED, SPACE_PHOTOS_ENABLED } from './featureFlags.js'
 import { SEEDS_PATH } from './seedsRoutes.js'
-import { TAB_REGISTRY } from './navConfig.js'
+import { TAB_REGISTRY, BAR_SLOT_ID_RE } from './navConfig.js'
 
 // Sections in sheet order. 'debug' carries no label: Debug & smoke sits directly under Help & account,
 // as it always has (OPS-DEBUGMENU-001 — the least-used row, last by design).
@@ -31,7 +31,9 @@ export const MORE_SECTIONS = [
 ]
 
 // Fields: id, to, label, sub?, iconName, section, enabled? (a BUILD flag — a flag-off row is not
-// drawn and its pin sleeps), pinnable? (default true), adornment? ('whatsNew'), testId?.
+// drawn and its pin sleeps), pinnable? (default true), adornment? ('whatsNew'), testId?, barLabel?
+// (V5-NAVANYSLOT-001 — the shorter name the row wears if a person puts it on the tab bar, whose slots
+// are ~53px wide at 320px; rows without one use `label`, which fits).
 export const MORE_ROWS = [
   { id: 'dashboard',  to: '/dashboard',  label: 'Dashboard', iconName: 'nav.dashboard',  section: 'garden' },
   // V4-NAVHARVEST-001 — DrG demoted here from the tab bar. /findings keeps its route and its icon.
@@ -47,7 +49,8 @@ export const MORE_ROWS = [
   // The subtitle keeps both old names in the menu; the testid is pinned by BottomNav.test.jsx.
   { id: 'seeds',      to: SEEDS_PATH,    label: 'Seeds',     iconName: 'lifecycle.sprout', section: 'garden',
     sub: 'My seeds · Saved seeds · Sow now', testId: 'more-seeds' },
-  { id: 'achievements', to: '/achievements', label: 'Achievements', iconName: 'nav.achievements', section: 'garden' },
+  { id: 'achievements', to: '/achievements', label: 'Achievements', iconName: 'nav.achievements', section: 'garden',
+    barLabel: 'Awards' },
   // V5-PLANTSTARTDATES-001 — a plain link row now (it was a CatchUpBadge component row, so it was
   // unpinnable). NO count: a count nudging you to fill data is a badge Reward UX V102 forbids here.
   { id: 'catch-up',   to: '/plants/catch-up', label: 'Catch up', iconName: 'care.plantedOut', section: 'garden',
@@ -55,24 +58,25 @@ export const MORE_ROWS = [
   // End of season — the ONLY door to /season-end. Last in Your garden so no existing row moves within
   // its section; the icon is the Ended status glyph, the status this page sets.
   { id: 'season-end', to: '/season-end', label: 'End of season', iconName: 'status.ended', section: 'garden',
-    sub: 'Close out finished plantings' },
+    sub: 'Close out finished plantings', barLabel: 'Season end' },
   // Season stats (lane stats-l2-statspage-20260929) — right after End of season. The id is permanent:
   // a pin on it lives in the nav customizer.
   { id: 'season-stats', to: '/season-stats', label: 'Season stats', iconName: 'nav.harvests', section: 'garden',
-    sub: 'How this season went' },
+    sub: 'How this season went', barLabel: 'Stats' },
   { id: 'collection', to: '/collection', label: 'Critters',  iconName: 'nav.critters',   section: 'rewards',
     sub: "Who's been visiting" },
-  { id: 'helper',     to: '/helper',     label: 'Garden Helper', iconName: 'nav.helper',  section: 'help' },
+  { id: 'helper',     to: '/helper',     label: 'Garden Helper', iconName: 'nav.helper',  section: 'help', barLabel: 'Helper' },
   { id: 'settings',   to: '/settings',   label: 'Settings',  iconName: 'action.settings', section: 'help' },
   // V4-HANDEDNESSCONTROLS-001 — its own row; /settings is still the notifications redirect.
   { id: 'settings-controls', to: '/settings/controls', label: 'Controls', iconName: 'action.settings', section: 'help' },
   { id: 'about',      to: '/about',      label: 'About',     iconName: 'action.info',    section: 'help' },
-  { id: 'releases',   to: '/releases',   label: 'Release Notes', iconName: 'nav.notes',  section: 'help', adornment: 'whatsNew' },
+  { id: 'releases',   to: '/releases',   label: 'Release Notes', iconName: 'nav.notes',  section: 'help', adornment: 'whatsNew',
+    barLabel: 'Releases' },
   // OPS-DEBUGMENU-001 — the ONLY nav door to every /admin/* page (DebugMenu.reachability.test.jsx):
   // an installed PWA has no address bar. Last by design (least used). NOT client-gated — the app's
   // convention is server-side ADMIN_CLERK_SUBS with no client admin list; hiding a row is
   // discoverability, not authorisation (Dave 2026-08-27: "this is still only me using it right now").
-  { id: 'admin',      to: '/admin',      label: 'Debug & smoke', iconName: 'mode.desk',  section: 'debug' },
+  { id: 'admin',      to: '/admin',      label: 'Debug & smoke', iconName: 'mode.desk',  section: 'debug', barLabel: 'Debug' },
 ]
 
 // Removed rows. An id here is never reused; a stored pin carrying it is dropped at read time, and the
@@ -87,8 +91,9 @@ export const MORE_ID_ALIASES = {
   'saved-seeds': 'seeds',
 }
 
-// CONTRACT §4 — shared with the Lambda validator (parity-tested at integration).
-export const MORE_PIN_ID_RE = /^[a-z][a-z0-9-]{0,39}$/
+// CONTRACT §4 — shared with the Lambda validator (parity-tested at integration). The SAME pattern as
+// a tab-bar slot (navConfig.BAR_SLOT_ID_RE): a page has one id whether it is pinned, moved or on the bar.
+export const MORE_PIN_ID_RE = BAR_SLOT_ID_RE
 export const MORE_PINS_MAX_STORED = 32
 // Client only: the Pinned block's cap (the house glance-surface cap). A 5th pin is refused inline.
 export const MORE_PINS_MAX_SHOWN = 4
@@ -135,17 +140,44 @@ export function movedTabRow(key) {
   }
 }
 
+// barSlotRow — V5-NAVANYSLOT-001. One tab-bar slot id in, the row BottomNav draws out, or null when
+// this build cannot draw it (unknown id, a flag-off row). A tab key reads TAB_REGISTRY; anything else
+// reads MORE_ROWS through MORE_ID_ALIASES, so a slot stored as 'sow' still draws Seeds. The bar slot
+// carries `key` = the resolved id (the React key and the dedupe key) and wears barLabel when it has one.
+export function barSlotRow(id, { rows = MORE_ROWS, aliases = MORE_ID_ALIASES } = {}) {
+  if (typeof id !== 'string') return null
+  if (Object.hasOwn(TAB_REGISTRY, id)) return { ...TAB_REGISTRY[id], key: id }
+  const live = Object.hasOwn(aliases, id) ? aliases[id] : id
+  const row = rows.find(r => r.id === live && rowEnabled(r))
+  if (!row) return null
+  return { key: row.id, to: row.to, label: row.barLabel ?? row.label, iconName: row.iconName }
+}
+
+// The drawable bar, left to right: every id barSlotRow can draw, each page at most once (an alias and
+// its live id collapse into the first). Ids it cannot draw are skipped, never replaced.
+export function barSlotRows(ids, opts) {
+  const out = []
+  for (const id of ids) {
+    const row = barSlotRow(id, opts)
+    if (row && !out.some(r => r.key === row.key)) out.push(row)
+  }
+  return out
+}
+
 // Every row the sheet can draw right now: moved tabs FIRST (in bar order), then the registry rows
-// whose build flag is on.
-export function drawableMoreRows({ moved = [], rows = MORE_ROWS } = {}) {
-  return [...moved.map(movedTabRow), ...rows.filter(rowEnabled)]
+// whose build flag is on — minus any the person has put ON the bar (V5-NAVANYSLOT-001: one door per
+// page, the same rule a moved tab already follows in the other direction). `onBar` is slot ids;
+// aliases are resolved so a bar slot stored as 'sow' still takes Seeds out of the sheet.
+export function drawableMoreRows({ moved = [], rows = MORE_ROWS, onBar = [] } = {}) {
+  const barIds = onBar.map(id => (Object.hasOwn(MORE_ID_ALIASES, id) ? MORE_ID_ALIASES[id] : id))
+  return [...moved.map(movedTabRow), ...rows.filter(rowEnabled).filter(r => !barIds.includes(r.id))]
 }
 
 // The ids that count toward MORE_PINS_MAX_SHOWN: pins that would actually be DRAWN. A sleeping pin (an
-// unknown id, a flag-off row, a tab that is back on the bar) is kept but does not take a slot — a
-// person who can see three pins must be able to add a fourth.
-export function drawnPinIds(pins, { moved = [], rows = MORE_ROWS } = {}) {
-  const drawable = drawableMoreRows({ moved, rows }).filter(rowPinnable).map(r => r.id)
+// unknown id, a flag-off row, a tab that is back on the bar, a row now on the bar) is kept but does
+// not take a slot — a person who can see three pins must be able to add a fourth.
+export function drawnPinIds(pins, { moved = [], rows = MORE_ROWS, onBar = [] } = {}) {
+  const drawable = drawableMoreRows({ moved, rows, onBar }).filter(rowPinnable).map(r => r.id)
   return pins.filter(id => drawable.includes(id)).slice(0, MORE_PINS_MAX_SHOWN)
 }
 
@@ -153,9 +185,9 @@ export function drawnPinIds(pins, { moved = [], rows = MORE_ROWS } = {}) {
 // result; see I11 there). Every drawable row appears EXACTLY ONCE: in Pinned when it is one of the
 // first MORE_PINS_MAX_SHOWN drawn pins, otherwise at home in its section. Pinned follows pin order.
 //   out: { pinned: [row], sections: [{ key, label, rows: [row] }] }
-export function layoutMoreSheet({ pins = [], moved = [], rows = MORE_ROWS } = {}) {
-  const drawable = drawableMoreRows({ moved, rows })
-  const pinnedIds = drawnPinIds(pins, { moved, rows })
+export function layoutMoreSheet({ pins = [], moved = [], rows = MORE_ROWS, onBar = [] } = {}) {
+  const drawable = drawableMoreRows({ moved, rows, onBar })
+  const pinnedIds = drawnPinIds(pins, { moved, rows, onBar })
   const pinned = pinnedIds.map(id => drawable.find(r => r.id === id))
   const home = drawable.filter(r => !pinnedIds.includes(r.id))
   return {

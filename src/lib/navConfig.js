@@ -29,6 +29,22 @@
 //
 // NULL MEANS SHIPPED DEFAULT. No prefs row, a NULL column, a failed GET, an offline boot and a
 // first launch all arrive here as null/undefined and render today's exact bar.
+//
+// ANY PAGE CAN TAKE A SLOT (V5-NAVANYSLOT-001, Dave 2026-09-30: "Make every More menu item + existing
+// 5 options available to add there" — Harvests will drop into More and Put-Up keeps a slot). `order`
+// is no longer a permutation of the five tab keys: it is the bar itself, left to right, and an entry
+// may be a tab key OR a More row id (src/lib/moreRegistry.js MORE_ROWS). The rules that keep every
+// door open are unchanged in spirit:
+//   * Today and ＋ must be in it (BAR_REQUIRED_KEYS), so neither can leave the bar;
+//   * at most BAR_MAX_SLOTS entries, so More is always the 6th slot at most — the geometry the
+//     320px bar was built for;
+//   * a movable tab that is not on the bar is `moved` and drawn at the top of More, exactly as before.
+// This module validates an entry by FORM (BAR_SLOT_ID_RE), the way the Lambda validates more_pins,
+// because it cannot import MORE_ROWS (moreRegistry imports this file). Whether an id can be DRAWN is
+// decided where ids become rows (moreRegistry.barSlotRow): an id this build does not know — a newer
+// bundle's row, a row whose build flag is off — sleeps rather than knocking the whole bar back to the
+// default. Stored {order: [the five], hidden: [...]} layouts from before this change read exactly as
+// they always did: bar = order minus hidden.
 
 export const TAB_REGISTRY = {
   today:      { to: '/today',    label: 'Today',    iconName: 'nav.today' },
@@ -50,14 +66,25 @@ export const DEFAULT_NAV_TABS = ['today', 'garden', 'create', 'harvests', 'put-u
 // is More, which is not a key. The Lambda's MOVABLE_TAB_KEYS must equal this (CONTRACT §4).
 export const MOVABLE_TAB_KEYS = ['garden', 'harvests', 'put-up']
 
+// V5-NAVANYSLOT-001 — the two tabs every bar must hold (see the header), and the slot cap. The Lambda's
+// BAR_REQUIRED_KEYS / BAR_MAX_SLOTS must equal these (lambda/critter/navcustom.parity.test.js).
+export const BAR_REQUIRED_KEYS = ['today', 'create']
+export const BAR_MAX_SLOTS = DEFAULT_NAV_TABS.length
+
+// The form every bar entry must have: a tab key or a More row id. Identical to moreRegistry's
+// MORE_PIN_ID_RE (which re-exports this one) and to the Lambda's, so a page has one id everywhere.
+export const BAR_SLOT_ID_RE = /^[a-z][a-z0-9-]{0,39}$/
+
 // resolveBarLayout — a stored bar_layout in, a renderable layout out. NEVER throws.
 //
 //   in:  anything (the jsonb column, the launch cache, undefined)
 //   out: { order, hidden, bar, moved, applied: { order, hidden } }
-//        order  — all five keys; the stored order when valid, else DEFAULT_NAV_TABS
+//        order  — the stored order when valid, else DEFAULT_NAV_TABS: tab keys and More row ids
 //        hidden — movable keys moved into More; the stored list when valid, else []
-//        bar    — order minus hidden: the slots BottomNav draws before More
-//        moved  — the hidden keys in bar order: the rows More draws at the top of "Your garden"
+//        bar    — order minus hidden: the slot ids BottomNav draws before More (an id this build
+//                 cannot draw is skipped there, never here — see the header)
+//        moved  — the movable tabs NOT on the bar: those in `order` in order position, then any the
+//                 order leaves out, in shipped order. The rows More draws at the top of "Your garden".
 //        applied — per field, whether the stored value was used rather than the fallback. Stated
 //                  explicitly so a parity test reads a flag instead of comparing array identity.
 //
@@ -67,26 +94,31 @@ export const MOVABLE_TAB_KEYS = ['garden', 'harvests', 'put-up']
 export function resolveBarLayout(raw) {
   const order = validOrder(raw?.order) ? [...raw.order] : [...DEFAULT_NAV_TABS]
   const hidden = validHidden(raw?.hidden) ? [...raw.hidden] : []
+  const bar = order.filter(k => !hidden.includes(k))
   return {
     order,
     hidden,
-    bar: order.filter(k => !hidden.includes(k)),
-    moved: order.filter(k => hidden.includes(k)),
+    bar,
+    moved: [
+      ...order.filter(k => hidden.includes(k)),
+      ...MOVABLE_TAB_KEYS.filter(k => !order.includes(k)),
+    ],
     applied: { order: validOrder(raw?.order), hidden: validHidden(raw?.hidden) },
   }
 }
 
-// `order` must be a PERMUTATION of the five keys. The array check comes first so that deleting it
-// surfaces as a failure rather than being masked by the arity check below it.
+// `order` is the bar: distinct, well-formed ids, holding Today and ＋, at most BAR_MAX_SLOTS long.
+// The array check comes first so that deleting it surfaces as a failure rather than a throw.
 function validOrder(order) {
   if (!Array.isArray(order)) return false
-  // Known key. BOTH halves are load-bearing: `typeof` is the only thing that rejects ['today'] —
-  // an array whose string form IS a key, which Object.hasOwn would accept by coercion — and
-  // Object.hasOwn (not `in`) is what rejects 'toString' and 'constructor'.
-  if (order.some(k => !(typeof k === 'string' && Object.hasOwn(TAB_REGISTRY, k)))) return false
+  // Form. `typeof` is what rejects ['today'] — an array whose string form IS an id, which the regex
+  // would accept by coercion. A well-formed prototype name ('constructor') passes here and is drawn as
+  // nothing: barSlotRow reads own properties only.
+  if (order.some(k => !(typeof k === 'string' && BAR_SLOT_ID_RE.test(k)))) return false
   if (new Set(order).size !== order.length) return false
-  // Arity: all five, every time. A short order is not a way to hide a tab — `hidden` is.
-  return order.length === DEFAULT_NAV_TABS.length
+  // Today and ＋ are required: an order without them is not a way to remove them.
+  if (BAR_REQUIRED_KEYS.some(k => !order.includes(k))) return false
+  return order.length <= BAR_MAX_SLOTS
 }
 
 // `hidden` must be distinct movable keys. `includes` compares strictly, so it already rejects every
