@@ -303,3 +303,34 @@ export function defaultUseByTarget(method, kind, preservedAt) {
   if (months == null || !preservedAt) return null;
   return addMonths(preservedAt, months);
 }
+
+// ── Put-Up release 4 — the RECIPE basis (V4 §3.1, §3.2, §3.4) ────────────────────────────────────
+// The one discard-by rule's second rung: typed > RECIPE > table > none. A recipe's keeps line (n · day /
+// week / month · storage kind) gives a jar a date ONLY when the jar's storage kind is the recipe's keeps
+// storage kind — "Fridge 7 days" says nothing about a jar in the freezer, which then falls through to the
+// table. The basis is 'recipe', worded "from the recipe: <recipe name>" with no duration (the recipe is
+// mutable; the jar's date is not). A jar with no known put-up date (precision 'unknown') gets no recipe
+// date either: there is nothing to count from. Nothing here reads the recipe's notes.
+export const RECIPE_KEEPS_UNITS = ['day', 'week', 'month'];
+
+// date (YYYY-MM-DD string, ISO string, or Date) + n days → YYYY-MM-DD, in the civil calendar (UTC arithmetic
+// on the date part only, the addMonths convention).
+export function addDays(dateInput, days) {
+  const src = dateInput instanceof Date ? dateInput.toISOString() : String(dateInput);
+  const [y, mo, d] = src.slice(0, 10).split('-').map(Number);
+  const t = new Date(Date.UTC(y, mo - 1, d + days));
+  return t.toISOString().slice(0, 10);
+}
+
+// recipe: { keeps_n, keeps_unit, keeps_storage_kind } (a recipe row, or null). Returns the stored pair, or
+// null for "the recipe does not decide this jar" (the caller falls through to the engine).
+export function recipeUseBy(recipe, kind, anchorDay, { precision = null } = {}) {
+  if (!recipe || recipe.keeps_n == null || recipe.keeps_unit == null || recipe.keeps_storage_kind == null) return null;
+  if (kind == null || kind !== recipe.keeps_storage_kind) return null;
+  if (!anchorDay || precision === 'unknown') return null;
+  const n = Number(recipe.keeps_n);
+  if (!Number.isInteger(n) || n < 1 || !RECIPE_KEEPS_UNITS.includes(recipe.keeps_unit)) return null;
+  const date = recipe.keeps_unit === 'month' ? addMonths(anchorDay, n)
+    : addDays(anchorDay, recipe.keeps_unit === 'week' ? n * 7 : n);
+  return { use_by_target: date, use_by_basis: 'recipe' };
+}

@@ -27,7 +27,7 @@ import {
   jarLabelError, jarQuantityError, jarPhError,
 } from './jarRules.js';
 import { lineError as fLineError, lineColumns } from './kitchenLines.js';
-import { resolveJarUseBy } from './shelfLife.js';
+import { resolveJarUseBy, recipeUseBy } from './shelfLife.js';
 import { etDay } from './useBy.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -178,7 +178,8 @@ export function putUpPlaceIds(body) {
 
 // ── the plan ────────────────────────────────────────────────────────────────────────────────────
 // ctx: { batchLabel, notSureDay (YYYY-MM-DD, required when when.precision is 'unknown'),
-//        placeKinds: {id → kind}, newId: () => uuid }
+//        placeKinds: {id → kind}, newId: () => uuid,
+//        recipe (release 4): the batch's recipe keeps line {keeps_n, keeps_unit, keeps_storage_kind} | null }
 export function planPutUp(body, ctx) {
   const notSure = body.when.precision === 'unknown';
   const whenIso = notSure ? null
@@ -220,9 +221,11 @@ export function planPutUp(body, ctx) {
     const kind = place == null ? null : (place.id != null ? (ctx.placeKinds[place.id] ?? null) : place.kind);
     const count = Number(row.count);
     const hasSize = row.size_value != null;
+    // Release 4 (V4 §3.1): typed > recipe (only when this jar's storage kind is the recipe's keeps storage
+    // kind; ctx.recipe is the batch's recipe, household-loaded by the route) > the engine > none.
     const useBy = row.discard_by === 'none' ? { use_by_target: null, use_by_basis: 'typed' }
       : row.discard_by != null ? { use_by_target: row.discard_by, use_by_basis: 'typed' }
-        : resolveJarUseBy({
+        : recipeUseBy(ctx.recipe ?? null, kind, jarDay, { precision: jarPrecision }) ?? resolveJarUseBy({
           method: body.method, kind, isRaw: row.is_raw ?? null, inOil: row.in_oil ?? null,
           texture: row.texture ?? null, precision: jarPrecision,
         }, jarDay);
