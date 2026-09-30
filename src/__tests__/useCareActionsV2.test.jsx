@@ -178,6 +178,35 @@ describe('runBulk with V2 opts', () => {
     expect(hook.result.current.rows.length).toBe(97)
   })
 
+  // Review 4162.1 IMPORTANT-A: the caller persists the claim (the today-logged store), so it must hear it BEFORE any
+  // POST — every target, the not-yet-sent included — and hear each failure released, and nothing else.
+  it('onClaim hears every target once, before the first POST; onRelease hears exactly the failed keys', async () => {
+    const s = server({ failAt: new Set([1, 5]) })
+    const { hook } = mount(plan(7), { fetch: s.fetch })
+    const events = []
+    const keys = new Set(hook.result.current.rows.map(r => r.key))
+    let res
+    await act(async () => {
+      res = await hook.result.current.runBulk('watering', keys, {
+        concurrency: 4, excludeInFlight: true,
+        onClaim: (ks) => events.push(['claim', [...ks].sort(), s.posts.length]),
+        onRelease: (ks) => events.push(['release', ks]),
+      })
+    })
+    expect(events[0]).toEqual(['claim', [...keys].sort(), 0])
+    expect(events.filter(e => e[0] === 'claim').length).toBe(1)
+    expect(events.filter(e => e[0] === 'release').map(e => e[1]).flat().sort()).toEqual([...res.failed].sort())
+    expect(res.failed.length).toBe(2)
+  })
+
+  it('a run with nothing to post claims nothing', async () => {
+    const s = server()
+    const { hook } = mount(plan(2), { fetch: s.fetch })
+    const onClaim = vi.fn()
+    await act(async () => { await hook.result.current.runBulk('fertilizing', new Set(hook.result.current.rows.map(r => r.key)), { concurrency: 4, onClaim }) })
+    expect(onClaim).not.toHaveBeenCalled()
+  })
+
   it('undoMany: a failed delete keeps its row hidden; a 404 is gone; an id-less write is never re-surfaced', async () => {
     const s = server({ noId: new Set([2]) })
     const { hook } = mount(plan(3), { fetch: s.fetch })

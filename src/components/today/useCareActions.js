@@ -317,6 +317,9 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
   //     region (§11.1 C2). The result is returned — created {id,key,on}, failed keys, excluded keys.
   //   · each row fades as its own post lands, dated by its write (the new-day rule above), so a run cut
   //     short leaves exactly the landed rows faded. Nothing is persisted: the plan read re-derives done-ness.
+  //   · `onClaim(keys)` runs once, with the run's targets, before the first POST; `onRelease(keys)` with each key
+  //     whose POST failed (review 4162.1 IMPORTANT-A). writeInFlightRef is this mounted list's own, so a run that
+  //     outlives it (keepalive, the page left) is invisible to the next mount — the caller persists the claim.
   const runBulkV2 = useCallback(async (etype, keys, opts) => {
     const conc = Math.max(1, Math.floor(Number(opts.concurrency) || 1))
     const want = keys instanceof Set ? keys : new Set(keys)
@@ -330,6 +333,8 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
     if (!targets.length) return { created, failed, excluded, total: 0 }
     for (const r of targets) writeInFlightRef.current.add(r.key)
     setPendingKeys(prev => { const n = new Set(prev); for (const r of targets) n.add(r.key); return n })
+    if (typeof opts.onClaim === 'function') opts.onClaim(targets.map(r => r.key))
+    const onRelease = typeof opts.onRelease === 'function' ? opts.onRelease : NOOP
     const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : NOOP
     let next = 0, settled = 0
     const worker = async () => {
@@ -341,7 +346,7 @@ export function useCareActions({ allRows, bedWait, planDate, fetch, getToken, to
           const made = { id: (res && res.id) || null, key: row.key, on: body.event_date }
           created.push(made)
           fade([[made.key, made.on]])
-        } catch { failed.push(row.key) }
+        } catch { failed.push(row.key); onRelease([row.key]) }
         writeInFlightRef.current.delete(row.key)
         setPending(row.key, false)
         onProgress({ done: ++settled, total: targets.length })
