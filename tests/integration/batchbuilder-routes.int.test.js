@@ -34,9 +34,12 @@ async function seedItem(owner, { name = 'bb onions', plantId = null, notes = nul
     VALUES (${owner}, ${name}, ${place}, ${plantId}, ${CROP}, ${notes}) RETURNING id`
   return r.id
 }
+// Write order. The one statement steps created_at 1 µs per row (batchBuilder.planFromJarsStages), except that
+// put_up and finished share one instant, as Put it up writes them (Undo that put-up finds "the finished row
+// this sitting wrote" by that equality) — so that one tie is broken by kind, put_up first.
 const stagesOf = (b) => directSql`
   SELECT stage_kind, entered_at, entered_precision, note FROM kitchen_stage_log WHERE batch_id = ${b}
-  ORDER BY created_at, id`
+  ORDER BY created_at, (stage_kind = 'finished'), id`
 
 describe('the fork carries release 2 and 3', () => {
   it('pantry_item and kitchen_batch_input.pantry_item_id exist, and 5.0.0-batchbuilder-001 is stamped', async () => {
@@ -94,6 +97,19 @@ describe('POST /api/kitchen-batches/from-jars — How it was made →', () => {
     expect(await readJar(jar)).toMatchObject({ package_count: 6, remaining_count: 1 })
     const [s] = await stagesOf(res.body.id)
     expect(s).toMatchObject({ stage_kind: 'started', entered_at: null, entered_precision: 'unknown' })
+  })
+
+  it('a start on the jars\' own day: the batch reads finished (the view\'s current stage), and two Next time lines keep their order', async () => {
+    const jar = await seedJar(DAVE, { count: 2, notes: 'Next time: less garlic' })
+    const [{ day }] = await directSql`SELECT to_char(preserved_at, 'YYYY-MM-DD') AS day FROM preservation_log WHERE id = ${jar}`
+    const res = await call(DAVE, 'POST', FROM, { idempotency_key: key(), label: 'Same day', started: { date: day, precision: 'day' }, jar_ids: [jar], next_time: 'more heat' })
+    expect(res.status, JSON.stringify(res.body)).toBe(201)
+    // started, put_up and finished all carry that day; only the write order can say which is current.
+    const [v] = await directSql`SELECT current_stage_kind FROM v_kitchen_batch_current WHERE id = ${res.body.id}`
+    expect(v.current_stage_kind).toBe('finished')
+    const notes = await directSql`
+      SELECT note FROM kitchen_stage_log WHERE batch_id = ${res.body.id} AND stage_kind = 'noted' ORDER BY created_at, id`
+    expect(notes.map((n) => n.note)).toEqual(['Next time: less garlic', 'more heat'])
   })
 
   it('JEN from DAVE\'s jar: allowed, recorded as JEN', async () => {

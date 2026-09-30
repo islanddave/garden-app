@@ -105,6 +105,12 @@ describe('the jars\' date as stage rows (V4 §3.6: one vocabulary, two words dif
       ['finished', '2026-09-08T16:00:00.000Z', 'day', null],
       ['noted', null, 'exact', 'a'], ['noted', null, 'exact', 'b'],
     ]);
+    // The write order: one statement writes them all, so created_at is now() + tick µs. put_up and finished
+    // share one instant (Undo that put-up's "finished row this sitting wrote"); started is before them and
+    // each noted row after, in order — the view's current stage is finished on a same-day start, and the
+    // Next time lines read back as copied. (A mock driver cannot see Postgres's ordering; the integration
+    // lane's stagesOf reads it back.)
+    expect(rows.map((r) => r.tick)).toEqual([0, 1, 1, 2, 3]);
   });
 
   it('a bare day is 16:00Z (the same calendar day in ET all year)', () => {
@@ -197,6 +203,10 @@ describe('POST /api/kitchen-batches/from-jars', () => {
     expect(w.values).toContainEqual(['started', 'put_up', 'finished', 'noted', 'noted']);
     expect(w.values).toContainEqual([null, null, null, 'Oct 8 · Next time: more carrot', 'less salt']);
     expect(w.values).toContainEqual(['2026-09-01T16:00:00.000Z', '2026-09-08T16:00:00.000Z', '2026-09-08T16:00:00.000Z', null, null]);
+    // created_at carries the write order (a bare DEFAULT now() would tie all five rows).
+    expect(s).toContain("INSERT INTO kitchen_stage_log (id, batch_id, stage_kind, entered_at, entered_precision, note, created_by, created_at)");
+    expect(s).toContain("now() + s.tick::float8 * interval '1 microsecond'");
+    expect(w.values).toContainEqual([0, 1, 1, 2, 3]);
     expect(w.values).toContain(K);
     expect(w.values).toContain(DAVE);
   });

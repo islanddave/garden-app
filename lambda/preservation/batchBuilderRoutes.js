@@ -35,7 +35,8 @@ const uuids = (xs) => [...new Set(xs.filter((v) => v != null))].filter((v) => KI
 //             concurrent link cannot slip between the check and the link;
 //   b         the batch, CLOSED as put_up, keyed — inserted only when EVERY chosen jar is locked, and
 //             every other CTE hangs off it, so a partial answer writes nothing at all;
-//   st        started (the sheet's start) · put_up · finished (the jars' date) · noted (each "Next time…");
+//   st        started (the sheet's start) · put_up · finished (the jars' date) · noted (each "Next time…"),
+//             created_at stepped 1 µs per plan tick so the write order survives the one statement;
 //   ins/draws/moved/uses   the lines and their draws, exactly as the keyed line POST writes them;
 //   linked    the jars get batch_id — and NOT put_up_stage_id: these jars existed before this batch,
 //             and a sitting's jars are what "Undo that put-up" soft-deletes (see the README);
@@ -121,15 +122,17 @@ export async function fromJars(sql, body, userId, householdIds, readDetail) {
         WHERE (SELECT count(*) FROM locked) = ${jarIds.length}::int
         RETURNING id
       ), st AS (
-        INSERT INTO kitchen_stage_log (id, batch_id, stage_kind, entered_at, entered_precision, note, created_by)
+        INSERT INTO kitchen_stage_log (id, batch_id, stage_kind, entered_at, entered_precision, note, created_by, created_at)
         SELECT s.id, b.id, s.kind,
                CASE WHEN s.kind = 'noted' THEN now() ELSE s.at END,
-               s.precision, s.note, ${userId}::text
+               s.precision, s.note, ${userId}::text,
+               -- The write order, which one statement's shared now() cannot carry (planFromJarsStages).
+               now() + s.tick::float8 * interval '1 microsecond'
         FROM b CROSS JOIN unnest(
           ${stages.map((s) => s.id)}::uuid[], ${stages.map((s) => s.kind)}::text[],
           ${stages.map((s) => s.at)}::timestamptz[], ${stages.map((s) => s.precision)}::text[],
-          ${stages.map((s) => s.note)}::text[]
-        ) AS s(id, kind, at, precision, note)
+          ${stages.map((s) => s.note)}::text[], ${stages.map((s) => s.tick)}::int[]
+        ) AS s(id, kind, at, precision, note, tick)
         RETURNING id
       ), ins AS (
         INSERT INTO kitchen_batch_input (

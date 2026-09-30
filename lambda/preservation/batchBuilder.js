@@ -132,13 +132,20 @@ export function madeCountError(jar, madeCount) {
 // The stage rows the write inserts, in order: started (the sheet's start, mirroring the batch), put_up
 // and finished (the jars' date), then one noted row per "Next time…" line (now, exact — a note's own
 // time, V4 Appendix A). ids are the caller's.
+//
+// tick — the row's created_at is the statement's now() + tick µs. ONE statement writes every row, so a
+// bare DEFAULT now() gives them all one created_at and every reader's write-order tiebreak (entered_at,
+// created_at, id) falls to a random uuid: the view's current stage could read "started" on this closed
+// batch whenever the start and the jars share a day (or are both unknown), and two "Next time…" lines
+// could swap. put_up and finished keep ONE instant, as Put it up writes them: "the finished row this
+// sitting wrote" is the finished row with the put_up row's created_at (kitchenRoutes.js undoPutUp).
 export function planFromJarsStages({ startedAt, startPrecision, jarDate, notes, newId }) {
   const rows = [
-    { id: newId(), kind: 'started', at: startedAt, precision: startPrecision, note: null },
-    { id: newId(), kind: 'put_up', at: jarDate.entered_at, precision: jarDate.entered_precision, note: null },
-    { id: newId(), kind: 'finished', at: jarDate.entered_at, precision: jarDate.entered_precision, note: null },
+    { id: newId(), kind: 'started', at: startedAt, precision: startPrecision, note: null, tick: 0 },
+    { id: newId(), kind: 'put_up', at: jarDate.entered_at, precision: jarDate.entered_precision, note: null, tick: 1 },
+    { id: newId(), kind: 'finished', at: jarDate.entered_at, precision: jarDate.entered_precision, note: null, tick: 1 },
   ];
-  for (const n of notes) rows.push({ id: newId(), kind: 'noted', at: null, precision: 'exact', note: n });
+  for (const [i, n] of notes.entries()) rows.push({ id: newId(), kind: 'noted', at: null, precision: 'exact', note: n, tick: 2 + i });
   return rows;
 }
 
