@@ -1,0 +1,362 @@
+# gates.yml
+# V5-RECIPES-001 — Put-Up release 4 (recipes), the database half. Two files:
+#
+#   0a-additive-ddl.sql   the schema, stamp '5.0.0-recipes-001'. Before it: `pre`, IMMEDIATELY before each
+#                         apply (staging, prod, and the Neon branch of prod). There is no sweep: every CHECK
+#                         is over a new column or a new table, so none can meet existing data.
+#   0r-rollback.sql       guarded; valid only while release 4's code is off dev.
+#
+# ── SELF-ARMING (the 1b/F convention, restated) ────────────────────────────────────────────────────
+# `continuous:` defaults to true, and gate-invariants.yml runs `--all --phase post --continuous-only`
+# against live prod AND staging — including before B′'s sitting, when neither database has this DDL. So:
+#   * a post gate that is FALSE today is armed on this migration's own stamp
+#     (`EXISTS (... version = '5.0.0-recipes-001')`): vacuous before, permanent after;
+#   * a post gate that is TRUE today is NOT armed (arming it would delete a real assertion); each says so;
+#   * catalog joins only, never `::regclass`; a gate that reads a table this file creates reads it through
+#     the catalog or `to_jsonb(row)`, so every gate is vacuous, never ERROR, on a database without 0a.
+#
+# ── THE GATE CENSUS: gates elsewhere this migration must keep green ──────────────────────────────
+#   v5-fermentpath-001    post_view_f_columns_in_order (positions 31-40 unchanged; recipe_id is 41).
+#   v5-putupmake-001      post_view_columns_in_order (positions 1-31 unchanged);
+#                         post_view_skips_voids_and_removed_lines (F's body kept verbatim);
+#                         post_ownership_trigger_names_real_columns_kitchen_batch (kitchen_batch's
+#                         triggers untouched; recipe_id is a plain column).
+#   v5-phrecord-001       post_view_original_columns_present (the 30 names still present).
+#   v4-cascadesweep-001   post_no_cascade_onto_a_soft_deletable_table: all three new FKs are NO ACTION
+#                         (recipe_ingredient → recipe, recipe → recipe_type, kitchen_batch → recipe).
+#   v4-evtanchordel-001   no CHECK here names a SET NULL FK column (there is none).
+#   v5-kbownertrigger-001 prevent_kitchen_batch_ownership_transfer() reused unchanged on recipe and
+#                         recipe_type (both own through user_id); prevent_ownership_transfer() untouched.
+# Proven, not asserted: every post gate below was run on a local replica of the kitchen family's post-F
+# shape before 0a (vacuous), after 0a (PASS), after 0r (vacuous again) — README.md.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_fermentpath_applied
+    sql: |
+      SELECT count(*) FROM public.schema_version WHERE version = '5.0.0-fermentpath-001'
+    expect: scalar_eq
+    value: 1
+
+  # 0a replaces the view wholesale; its guard accepts F's definition or its own.
+  - name: pre_view_is_f_definition
+    sql: |
+      SELECT md5(pg_get_viewdef(c.oid, true))
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'v_kitchen_batch_current' AND c.relkind = 'v'
+    expect: scalar_eq
+    value: 'b70ac2f238dfc9d09e8db2017c0e7474'
+
+  # Half-applied or hand-applied state: none of 0a's relations, nor kitchen_batch.recipe_id, may exist yet.
+  - name: pre_no_recipe_relation_yet
+    sql: |
+      SELECT c.relname
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname IN ('recipe','recipe_ingredient','recipe_type')
+      UNION ALL
+      SELECT 'kitchen_batch.recipe_id'
+        FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'kitchen_batch' AND column_name = 'recipe_id'
+    expect: rowcount_eq
+    value: 0
+
+  # 0a names these in CREATE TRIGGER; a missing one fails mid-transaction.
+  - name: pre_trigger_functions_exist
+    sql: |
+      SELECT count(DISTINCT p.proname)
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('set_updated_at','prevent_kitchen_batch_ownership_transfer')
+    expect: scalar_eq
+    value: 2
+
+post:
+  # ── The apply receipt, armed on the DDL rather than on the stamp it checks ─────────────────────
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relname = 'recipe' AND c.relkind = 'r')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── Columns: every column 0a creates, of its type and nullability ─────────────────────────────
+  - name: post_recipe_columns_present
+    sql: |
+      SELECT v.tbl, v.col
+        FROM (VALUES
+               ('recipe_type','id','uuid','NO'), ('recipe_type','user_id','text','YES'),
+               ('recipe_type','label','text','NO'), ('recipe_type','sort_order','integer','NO'),
+               ('recipe_type','deleted_at','timestamp with time zone','YES'),
+               ('recipe','id','uuid','NO'), ('recipe','user_id','text','NO'), ('recipe','name','text','NO'),
+               ('recipe','kind','text','YES'), ('recipe','recipe_type_id','uuid','YES'),
+               ('recipe','link_url','text','YES'), ('recipe','notes','text','YES'),
+               ('recipe','keeps_n','integer','YES'), ('recipe','keeps_unit','text','YES'),
+               ('recipe','keeps_storage_kind','text','YES'), ('recipe','vessel_label','text','YES'),
+               ('recipe','vessel_size','numeric','YES'), ('recipe','vessel_unit','text','YES'),
+               ('recipe','vessel_count','smallint','YES'), ('recipe','no_salt','boolean','YES'),
+               ('recipe','mash_in_g','numeric','YES'), ('recipe','made_g','numeric','YES'),
+               ('recipe','idempotency_key','uuid','YES'), ('recipe','updated_at','timestamp with time zone','NO'),
+               ('recipe','deleted_at','timestamp with time zone','YES'),
+               ('recipe_ingredient','id','uuid','NO'), ('recipe_ingredient','recipe_id','uuid','NO'),
+               ('recipe_ingredient','ordinal','integer','NO'), ('recipe_ingredient','name','text','NO'),
+               ('recipe_ingredient','amount_text','text','YES'), ('recipe_ingredient','qty','numeric','YES'),
+               ('recipe_ingredient','qty_unit','text','YES'), ('recipe_ingredient','at_the_end','boolean','NO'),
+               ('recipe_ingredient','form','text','YES'), ('recipe_ingredient','brand','text','YES'),
+               ('recipe_ingredient','role','text','YES'), ('recipe_ingredient','note','text','YES'),
+               ('recipe_ingredient','shu_rating_low','integer','YES'),
+               ('recipe_ingredient','shu_rating_high','integer','YES'),
+               ('recipe_ingredient','salt_pct','numeric','YES'), ('recipe_ingredient','salt_base','text','YES'),
+               ('recipe_ingredient','base_g','numeric','YES'), ('recipe_ingredient','salt_method','text','YES'),
+               ('recipe_ingredient','base_from','text','YES'),
+               ('recipe_ingredient','deleted_at','timestamp with time zone','YES'),
+               ('kitchen_batch','recipe_id','uuid','YES')) AS v(tbl, col, typ, nullable)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = v.tbl AND c.column_name = v.col
+                            AND c.data_type = v.typ AND c.is_nullable = v.nullable)
+    expect: rowcount_eq
+    value: 0
+
+  # at_the_end is the one column with a default (false); kitchen_batch.recipe_id has none (F-writer safe).
+  - name: post_recipe_defaults
+    sql: |
+      SELECT v.tbl, v.col
+        FROM (VALUES ('recipe_ingredient','at_the_end','false'), ('kitchen_batch','recipe_id',NULL)) AS v(tbl, col, def)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = v.tbl AND c.column_name = v.col
+                            AND c.column_default IS NOT DISTINCT FROM v.def)
+    expect: rowcount_eq
+    value: 0
+
+  # ── CHECKs: present and VALIDATED ──────────────────────────────────────────────────────────────
+  - name: post_recipe_checks_present_and_validated
+    sql: |
+      SELECT v.tbl, v.con
+        FROM (VALUES
+               ('recipe_type','chk_recipe_type_label_nonblank'),
+               ('recipe','chk_recipe_name_nonblank'), ('recipe','chk_recipe_kind'), ('recipe','chk_recipe_link_url'),
+               ('recipe','chk_recipe_notes_nonblank'), ('recipe','chk_recipe_keeps_whole'),
+               ('recipe','chk_recipe_keeps_n'), ('recipe','chk_recipe_keeps_unit'),
+               ('recipe','chk_recipe_keeps_storage_kind'), ('recipe','chk_recipe_vessel_label_nonblank'),
+               ('recipe','chk_recipe_vessel_pairing'), ('recipe','chk_recipe_vessel_unit'),
+               ('recipe','chk_recipe_vessel_count'), ('recipe','chk_recipe_no_salt_true'),
+               ('recipe','chk_recipe_mash_in_g'), ('recipe','chk_recipe_made_g'),
+               ('recipe_ingredient','chk_ri_name_nonblank'), ('recipe_ingredient','chk_ri_amount_text_nonblank'),
+               ('recipe_ingredient','chk_ri_qty_pairing'), ('recipe_ingredient','chk_ri_qty_unit'),
+               ('recipe_ingredient','chk_ri_form'), ('recipe_ingredient','chk_ri_role'),
+               ('recipe_ingredient','chk_ri_form_not_on_role'), ('recipe_ingredient','chk_ri_brand_nonblank'),
+               ('recipe_ingredient','chk_ri_shu_rating_range'), ('recipe_ingredient','chk_ri_shu_rating_not_on_role'),
+               ('recipe_ingredient','chk_ri_salt_base'), ('recipe_ingredient','chk_ri_salt_facts_on_salt_line'),
+               ('recipe_ingredient','chk_ri_salt_facts_pairing'), ('recipe_ingredient','chk_ri_salt_facts_grams'),
+               ('recipe_ingredient','chk_ri_salt_pct_range'), ('recipe_ingredient','chk_ri_base_g_positive'),
+               ('recipe_ingredient','chk_ri_salt_method'), ('recipe_ingredient','chk_ri_salt_method_on_salt_line'),
+               ('recipe_ingredient','chk_ri_base_from'), ('recipe_ingredient','chk_ri_base_from_needs_base')) AS v(tbl, con)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND c.conname = v.con
+                            AND c.contype = 'c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # link_url stays http/https only: the CHECK's definition still carries the scheme pattern.
+  - name: post_recipe_link_url_scheme_pinned
+    sql: |
+      SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+         AND n.nspname = 'public' AND t.relname = 'recipe' AND c.conname = 'chk_recipe_link_url'
+         AND strpos(pg_get_constraintdef(c.oid), '^https?://') = 0
+    expect: rowcount_eq
+    value: 0
+
+  # ── Foreign keys: present, VALIDATED, NO ACTION (v4-cascadesweep-001: no CASCADE onto a soft-deletable
+  #    table; a recipe and a type are soft-deleted, never hard-deleted by the app) ──────────────────
+  - name: post_recipe_foreign_keys_no_action
+    sql: |
+      SELECT v.tbl, v.con
+        FROM (VALUES
+               ('recipe_ingredient','recipe_ingredient_recipe_id_fkey','recipe'),
+               ('recipe','recipe_recipe_type_id_fkey','recipe_type'),
+               ('kitchen_batch','kitchen_batch_recipe_id_fkey','recipe')) AS v(tbl, con, ref)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_class r ON r.oid = c.confrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND c.conname = v.con
+                            AND r.relname = v.ref AND c.contype = 'f' AND c.confdeltype = 'a'
+                            AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Uniques the routes depend on (replay; find-or-create's race backstop) ───────────────────────
+  - name: post_recipe_uniques_present
+    sql: |
+      SELECT v.idx
+        FROM (VALUES
+               ('recipe','uq_recipe_idempotency_key','idempotency_key'),
+               ('recipe_type','uq_recipe_type_builtin_label','lower(btrim(label))'),
+               ('recipe_type','uq_recipe_type_user_label','lower(btrim(label))')) AS v(tbl, idx, key)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+         AND NOT EXISTS (SELECT 1 FROM pg_index x
+                           JOIN pg_class i ON i.oid = x.indexrelid
+                           JOIN pg_class t ON t.oid = x.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND i.relname = v.idx
+                            AND x.indisunique AND x.indisvalid
+                            AND strpos(pg_get_indexdef(x.indexrelid), v.key) > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Triggers: present, ENABLED, right function, BEFORE UPDATE FOR EACH ROW (tgtype 19) ──────────
+  - name: post_recipe_triggers_present_and_enabled
+    sql: |
+      SELECT v.tbl, v.tg
+        FROM (VALUES
+               ('recipe','set_updated_at','set_updated_at'),
+               ('recipe','prevent_recipe_ownership_transfer','prevent_kitchen_batch_ownership_transfer'),
+               ('recipe_type','set_updated_at','set_updated_at'),
+               ('recipe_type','prevent_recipe_type_ownership_transfer','prevent_kitchen_batch_ownership_transfer'),
+               ('recipe_ingredient','trg_recipe_ingredient_identity','prevent_recipe_ingredient_identity_change'))
+             AS v(tbl, tg, fn)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_trigger g
+                           JOIN pg_class t ON t.oid = g.tgrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                           JOIN pg_proc p ON p.oid = g.tgfoid
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl
+                            AND g.tgname = v.tg AND NOT g.tgisinternal AND g.tgenabled = 'O'
+                            AND p.proname = v.fn AND g.tgtype = 19)
+    expect: rowcount_eq
+    value: 0
+
+  # ── The ownership-trigger class (05 §6 "All B releases"; BUG-KBOWNERTRIGGER-001): every trigger
+  #    function on the three new tables names only that table's own columns. The "no ownership
+  #    trigger" arm is armed on the stamp; the column arms are NOT armed (true today: no such tables). ──
+  - name: post_recipe_trigger_functions_name_real_columns
+    sql: |
+      WITH trg AS (
+        SELECT t.relname AS tbl, g.tgname, p.proname, p.prosrc
+          FROM pg_trigger g
+          JOIN pg_class t ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          JOIN pg_proc p ON p.oid = g.tgfoid
+         WHERE n.nspname = 'public' AND NOT g.tgisinternal
+           AND t.relname IN ('recipe','recipe_type','recipe_ingredient')
+      ), ref AS (
+        SELECT trg.tbl, trg.tgname,
+               lower((regexp_matches(trg.prosrc, '(?:OLD|NEW)\.([a-z_][a-z0-9_]*)', 'gi'))[1]) AS col
+          FROM trg
+      )
+      SELECT 'no ownership trigger' AS problem, v.tbl AS col
+        FROM (VALUES ('recipe'), ('recipe_type')) AS v(tbl)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+         AND NOT EXISTS (SELECT 1 FROM trg WHERE trg.tbl = v.tbl AND trg.proname LIKE 'prevent%ownership_transfer')
+      UNION ALL
+      SELECT 'names a column the table lacks', ref.tbl || '.' || ref.col FROM ref
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = ref.tbl
+                            AND c.column_name = ref.col)
+    expect: rowcount_eq
+    value: 0
+
+  # ── No pH verdict, ever (V4 §3.8: "No target_ph or tested column, ever"). His target pH is text in
+  #    recipe.notes. NOT ARMED: true today (the tables do not exist, so no row can match). ───────────
+  - name: post_no_ph_column_on_recipe_tables
+    sql: |
+      SELECT table_name, column_name
+        FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name IN ('recipe','recipe_ingredient','recipe_type')
+         AND (column_name ~ '(^|_)ph(_|$)'
+              OR column_name IN ('target_ph','tested','ph_tested','is_tested','tested_recipe','ph_target',
+                                 'shelf_stable','is_safe','safety_status','acidified','is_acidified'))
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_no_ph_check_on_recipe_tables
+    sql: |
+      SELECT t.relname, c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+       WHERE n.nspname = 'public' AND t.relname IN ('recipe','recipe_ingredient','recipe_type')
+         AND c.contype = 'c'
+         AND pg_get_constraintdef(c.oid) ~ '(^|[^a-z_])ph(_|[^a-z_]|$)'
+    expect: rowcount_eq
+    value: 0
+
+  # ── The fifteen built-in types (Dave 2026-09-30), live, with their fixed ids, labels and order ──
+  - name: post_builtin_recipe_types_present
+    sql: |
+      SELECT v.id, v.label
+        FROM (VALUES
+               ('7ec1be00-0000-4000-8000-000000000001', 'Hot sauce',                 10),
+               ('7ec1be00-0000-4000-8000-000000000002', 'Chili paste',               20),
+               ('7ec1be00-0000-4000-8000-000000000003', 'Salsa & chutney',           30),
+               ('7ec1be00-0000-4000-8000-000000000004', 'Chili crisp & oil',         40),
+               ('7ec1be00-0000-4000-8000-000000000005', 'Glaze & wing sauce',        50),
+               ('7ec1be00-0000-4000-8000-000000000006', 'Pesto',                     60),
+               ('7ec1be00-0000-4000-8000-000000000007', 'Jam & preserve',            70),
+               ('7ec1be00-0000-4000-8000-000000000008', 'Pickle',                    80),
+               ('7ec1be00-0000-4000-8000-000000000009', 'Canned vegetables',         90),
+               ('7ec1be00-0000-4000-8000-000000000010', 'Canned fruit',             100),
+               ('7ec1be00-0000-4000-8000-000000000011', 'Fruit leather & snacks',   110),
+               ('7ec1be00-0000-4000-8000-000000000012', 'Candy',                    120),
+               ('7ec1be00-0000-4000-8000-000000000013', 'Spice & powder',           130),
+               ('7ec1be00-0000-4000-8000-000000000014', 'Ferment (kraut, kimchi…)', 140),
+               ('7ec1be00-0000-4000-8000-000000000015', 'Other',                    150)) AS v(id, label, sort_order)
+       -- recipe_type is read through query_to_xml inside a CASE, so the relation is named only once the
+       -- stamp says it exists: vacuous, never 42P01, on a database without 0a (the self-arming rule).
+       WHERE CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+                  THEN (xpath('count(/table/row)', query_to_xml(format(
+                         'SELECT 1 FROM public.recipe_type t WHERE t.id = %L::uuid AND t.user_id IS NULL '
+                         'AND t.label = %L AND t.sort_order = %s AND t.deleted_at IS NULL',
+                         v.id, v.label, v.sort_order), false, false, ''))
+                       )[1]::text::numeric = 0
+                  ELSE false END
+    expect: rowcount_eq
+    value: 0
+
+  # ── v_kitchen_batch_current: F's 40, then recipe_id at 41 (05 §6 "4:") ─────────────────────────
+  - name: post_view_recipe_id_at_41
+    sql: |
+      SELECT v.pos, v.col
+        FROM (VALUES (40,'recipe_ref'), (41,'recipe_id')) AS v(pos, col)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_attribute a
+                           JOIN pg_class c ON c.oid = a.attrelid
+                           JOIN pg_namespace n ON n.oid = c.relnamespace
+                          WHERE n.nspname = 'public' AND c.relname = 'v_kitchen_batch_current'
+                            AND a.attnum = v.pos AND a.attname = v.col AND NOT a.attisdropped)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Apply-window receipt ──────────────────────────────────────────────────────────────────────
+  # Right after 0a, and until release 4's code writes: no recipe, no recipe line, no household type, no
+  # batch naming a recipe — 0a wrote only the fifteen built-ins, and 0r's window is open. The first write
+  # ends the window, so this is continuous: false. to_jsonb on kitchen_batch so a runbook run on an
+  # unapplied database reports 0, not 42703; the recipe tables are not read (naming a relation that may
+  # not exist would ERROR) — 0r's guard counts them.
+  - name: post_no_recipe_shaped_row_yet
+    continuous: false
+    sql: |
+      SELECT 'batch' AS what, b.id FROM public.kitchen_batch b
+       WHERE (to_jsonb(b) ->> 'recipe_id') IS NOT NULL
+    expect: rowcount_eq
+    value: 0
