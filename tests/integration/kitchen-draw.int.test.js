@@ -208,10 +208,21 @@ describe('_cleanup.js — the kitchen/pantry STEPS sweep a real draw to 0 rows, 
                 + (SELECT count(*) FROM preservation_log WHERE id = ANY(${b.jars}::uuid[]))
                 + (SELECT count(*) FROM pantry_use WHERE preservation_log_id = ANY(${b.jars}::uuid[])))::int AS n) t`
 
+  // The steps match the WHOLE namespace, and other files write kitchen rows in parallel. Under READ COMMITTED each
+  // DELETE sees rows committed since the one before, so a sibling's line committed between the kitchen_batch_input
+  // step and the kitchen_batch step 23503'd this proof (integration 36659135098 on d956f04; 36655506153 on 1fb6434,
+  // same test code, was green). SHARE blocks sibling writes to the family until this transaction rolls back (ms);
+  // parent-first so a writer that already holds a parent is waited for before we hold any child.
+  const freezeFamily = () => [
+    directSql`SET LOCAL lock_timeout = '15s'`,
+    directSql`LOCK TABLE kitchen_batch, kitchen_stage_log, preservation_log, preservation_source,
+                         kitchen_batch_input, pantry_use IN SHARE MODE`,
+  ]
+
   it('the steps, in _cleanup.js order, remove every row of a draw + reversal + sitting + void (then roll back)', async () => {
     const order = STEP_SQL.map(([t]) => t).filter((t) => KITCHEN_STEPS.includes(t))
     expect(order, 'STEPS must carry the kitchen family in FK order').toEqual(KITCHEN_STEPS)
-    const e = await errOf(() => directSql.transaction([...order.map((t) => directSql(stmt(t))), residueCheck(ids)]))
+    const e = await errOf(() => directSql.transaction([...freezeFamily(), ...order.map((t) => directSql(stmt(t))), residueCheck(ids)]))
     expect(e?.code, `22012 = swept clean; 22P02 = rows survived; anything else = a step failed: ${e?.message}`).toBe('22012')
     const [{ n }] = await directSql`SELECT count(*)::int AS n FROM kitchen_batch WHERE id = ${ids.batch}`
     expect(n, 'the proof transaction rolled back — nothing was really deleted').toBe(1)
