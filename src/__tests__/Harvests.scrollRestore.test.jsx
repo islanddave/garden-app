@@ -200,6 +200,54 @@ describe('Harvests — back-nav restore', () => {
     expect(window.scrollTo).toHaveBeenCalledWith(0, 800)
   })
 
+  // BUG-HARVESTSDEPTHWALKFOLD-001 (the ProjectDetail race, OPS-PROJECTDETAILSCROLLFLAKE-001). A walk's
+  // setLoadingMore(true) is rendered by a React Scheduler task while its fetch resolves at once, so the
+  // continuation that dedupes the page away (or swallows the failure) and calls setLoadingMore(false)
+  // is a microtask. When the slice that started the walk runs past the Scheduler's 5 ms budget, the
+  // Scheduler yields, the microtask wins, and the flag's rise and fall fold into one commit that
+  // changes none of the walk's other deps. The walk used to stop there with the restore held back for
+  // the life of the mount; now it re-runs when each request settles. The endless suite above cannot
+  // see this: every page it serves grows `entries`, which re-runs the walk on its own.
+  //
+  // Forced by skewing performance.now() inside each walk request, so the slice that issued it reads
+  // 100 ms long and the Scheduler yields every time. The "Earlier this season" button is disabled on
+  // any commit that shows a walk in flight, so a disabled flip means the fold did NOT happen and the
+  // run proved nothing: that is the non-vacuity check.
+  // MUTATION: drop depthWalksSettled from the walk's deps -> RED, "not yet restored".
+  it.each([
+    ['a page the dedupe empties', () => Promise.resolve({ entries: entries(1, 2), aggregates: { crops: [], other: [] }, cursor: 'c1' })],
+    ['a walk request that fails', () => Promise.reject(new Error('network down'))],
+  ])('restores when a walk settles before its in-flight flag ever commits: %s', async (_, walkAnswer) => {
+    const realNow = performance.now.bind(performance)
+    let skew = 0
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => realNow() + skew)
+    const disabledFlips = []
+    const observer = new MutationObserver((records) => { disabledFlips.push(...records) })
+    try {
+      wire({ pages: { '': { entries: entries(1, 2), cursor: 'c1' } } })
+      const prev = fetchSpy.getMockImplementation()
+      fetchSpy.mockImplementation((url) => {
+        const u = String(url)
+        if (!isLogCall(u) || !u.includes('cursor=')) return prev(url)
+        skew += 100
+        return walkAnswer()
+      })
+      __seedScrollRestoreEntry('harvests', 800, { ...SAVED_LOG, n: 6 })
+      maxScroll = 4000
+      const { container } = render(<Harvests />)
+      observer.observe(container, { subtree: true, attributes: true, attributeFilter: ['disabled'] })
+      await pumpFramesUntil(() => window.scrollTo.mock.calls.length > 0)
+      expect(window.scrollTo).toHaveBeenCalledWith(0, 800)
+      expect(cursorCalls()).toHaveLength(2)
+      disabledFlips.push(...observer.takeRecords())
+      const moreFlips = disabledFlips.filter((r) => /Earlier this season|Loading…/.test(r.target.textContent ?? ''))
+      expect(moreFlips.length, 'a walk\'s in-flight state reached the DOM, so this run never folded the flag').toBe(0)
+    } finally {
+      observer.disconnect()
+      nowSpy.mockRestore()
+    }
+  })
+
   // THE FILTER CLAIM. A filtered Log is a different, shorter list; restoring the offset without the
   // filter aims at a document that is not the one the number came from.
   it('restores the filter the Log was scoped by, and re-requests with it', async () => {

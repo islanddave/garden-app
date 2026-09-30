@@ -184,6 +184,15 @@ export default function Harvests() {
   const restoredDepth = view === 'log' && Number.isFinite(restored?.n) ? restored.n : 0
   const [depthRestored, setDepthRestored] = useState(false)
   const depthWalks = useRef(0)
+  // Bumped when each walk request SETTLES, and a dep of the walk below for that reason alone
+  // (BUG-HARVESTSDEPTHWALKFOLD-001, the ProjectDetail fix OPS-PROJECTDETAILSCROLLFLAKE-001 applied
+  // here). A page the append dedupe empties (BUG-HARVCURSORDUPE-001) or a request that fails changes
+  // nothing but loadingMore, and that flag's rise and fall can land in ONE commit: setLoadingMore(true)
+  // is rendered by a Scheduler task, a fetch that has already resolved continues in a microtask, and a
+  // slice past React's 5 ms budget yields between the two. The next commit then carries exactly the
+  // deps the walk last ran with, React never runs it again, depthRestored never flips, and Back never
+  // restores the Log. useHarvests' loadMore catches its own failures, so the promise always settles.
+  const [depthWalksSettled, setDepthWalksSettled] = useState(0)
   useEffect(() => {
     if (depthRestored || loading || loadingMore) return
     if (entries.length >= restoredDepth || !hasMore || depthWalks.current >= MAX_RESTORE_PAGES) {
@@ -191,8 +200,8 @@ export default function Harvests() {
       return
     }
     depthWalks.current += 1
-    loadMore()
-  }, [depthRestored, loading, loadingMore, hasMore, entries.length, restoredDepth]) // eslint-disable-line react-hooks/exhaustive-deps
+    loadMore().then(() => setDepthWalksSettled((n) => n + 1))
+  }, [depthRestored, loading, loadingMore, hasMore, entries.length, restoredDepth, depthWalksSettled]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The hook's `ready` is fed through state rather than passed inline, because the value it gates on
   // (`loading`, from useHarvests) is only available BELOW the hook call — and the hook has to be
