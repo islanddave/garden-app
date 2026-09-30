@@ -134,14 +134,18 @@ describe('POST /api/kitchen-batches/from-jars — How it was made →', () => {
 
   it('all or nothing: an over-draw aborts the whole write — no batch, no link', async () => {
     const jar = await seedJar(DAVE, { count: 1 })
-    const drawn = await seedJar(DAVE, { count: 1 })
+    // A COUNTED jar: two made. seedJar logs a jar in lb, and one container in a mass unit is WEIGHED (06 §1.4,
+    // kitchenLines.jarIsWeighed) — a count_drawn on it is the 400 "say how many g", never an over-draw.
+    const drawn = await seedJar(DAVE, { count: 2 })
     const k = key()
     const res = await call(DAVE, 'POST', FROM, {
       idempotency_key: k, label: 'Too much', started: { date: '2026-09-01', precision: 'day' }, jar_ids: [jar],
       inputs: [{ input_kind: 'put_up', preservation_log_id: drawn, count_drawn: 3 }],
     })
-    expect(res.status).toBe(409)
-    expect(res.body.code).toBe('only_n_left')
+    expect(res.status, JSON.stringify(res.body)).toBe(409)
+    expect(res.body).toMatchObject({ code: 'only_n_left', n: 2 })
+    expect(await usesOf(drawn)).toHaveLength(0)
+    expect((await readJar(drawn)).remaining_count).toBeNull()
     expect(await directSql`SELECT id FROM kitchen_batch WHERE idempotency_key = ${k}`).toHaveLength(0)
     expect((await directSql`SELECT batch_id FROM preservation_log WHERE id = ${jar}`)[0].batch_id).toBeNull()
   })
