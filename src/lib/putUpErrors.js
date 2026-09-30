@@ -52,6 +52,8 @@ export const REFUSAL_CODES = Object.freeze({
   USE_IS_REVERSAL: 'use_is_reversal',
   COUNT_CHANGED: 'count_changed',
   ITEM_REMOVED: 'item_removed',
+  // B′ release 3: Undo that put-up on How it was made →'s sitting, which wrote no jars of its own.
+  NOTHING_PUT_UP_HERE: 'nothing_put_up_here',
 })
 
 export const REFRESH_NOW_LABEL = 'Refresh now'
@@ -69,6 +71,8 @@ export const HAS_SALT_LINE_TEXT = 'Take the salt line out first.'
 export const ALREADY_IN_TEXT = 'That pick is already in this batch.'
 export const HAS_JARS_TEXT = 'This batch still has jars. Undo its put-ups first — nothing was changed.'
 export const PUT_UP_IN_USE_TEXT = 'Some jars from this put-up were already used, so it can’t be undone — nothing was changed.'
+export const NOTHING_PUT_UP_HERE_TEXT =
+  'This batch was pieced together from jars you’d already logged — there’s nothing to undo here. Remove the batch instead.'
 export const KEY_CONFLICT_TEXT = 'That didn’t go through — nothing was changed. Try again.'
 export const SHU_CANNOT_COMPUTE_TEXT = 'Can’t work out the heat yet — nothing was saved.'
 export const ONLY_SOME_G_LEFT_TEXT = 'Not that much is left in that one — nothing was changed.'
@@ -176,6 +180,8 @@ export function describeRefusal(err) {
     // the fallback when the server sent none.
     case REFUSAL_CODES.PUT_UP_IN_USE:
       return { code, text: serverText(body) ?? PUT_UP_IN_USE_TEXT, refresh: false }
+    case REFUSAL_CODES.NOTHING_PUT_UP_HERE:
+      return { code, text: NOTHING_PUT_UP_HERE_TEXT, refresh: false }
     case REFUSAL_CODES.KEY_CONFLICT:
       return { code, text: KEY_CONFLICT_TEXT, refresh: false }
     case REFUSAL_CODES.SHU_CANNOT_COMPUTE:

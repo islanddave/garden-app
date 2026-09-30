@@ -227,7 +227,9 @@ describe('GET /api/kitchen-batches/:id', () => {
     const sql = mockSql([OWNED, VIEW_ROW, [], [], [{ id: JAR }]]);
     const res = await handleKitchenRoute({ sql, ...call({ rawPath: `/api/kitchen-batches/${BATCH}` }) });
     expect(res.body.outputs).toEqual([{ id: JAR }]);
-    const out = sql.calls.find((c) => c.norm.includes('FROM preservation_log'));
+    // B′: the stages read now carries has_own_jars (an EXISTS over preservation_log), so the outputs read
+    // is found as the statement that STARTS by selecting from it rather than the first that names it.
+    const out = sql.calls.find((c) => c.norm.includes('FROM preservation_log WHERE batch_id'));
     expect(out.norm).toContain('WHERE batch_id = ? ::uuid AND deleted_at IS NULL');
     expect(out.norm).toContain('ORDER BY preserved_at DESC, id DESC');
     expect(out.values).toContain(BATCH);
@@ -882,8 +884,9 @@ describe('POST /api/kitchen-batches/:id/close', () => {
     expect(SRC).not.toMatch(/DELETE FROM\s+preservation_log/);
     // The reads, each named: getBatch's outputs, shu-estimate's jar, delete's live-jar gate and its
     // count, unlink's snapshot, readSitting's jars, undo's sitting_jars — and (B′) undo's owned, the
-    // jars the sitting ever wrote, which refuses How it was made →'s jarless put_up row.
-    expect((SRC.match(/FROM preservation_log\b/g) ?? [])).toHaveLength(8);
+    // jars the sitting ever wrote, which refuses How it was made →'s jarless put_up row — and getBatch's
+    // has_own_jars on each put_up stage row (the same question, so What came out hides that Undo).
+    expect((SRC.match(/FROM preservation_log\b/g) ?? [])).toHaveLength(9);
   });
 
   it('every preservation_log write rides the actor GUC (trg_audit_preservation_log_upd, 1b)', async () => {

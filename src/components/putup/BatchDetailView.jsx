@@ -432,7 +432,10 @@ function Sitting({ batchId, stage, jars, lines, onChanged, nowMs, gardenNames, o
           </button>
         )
       )}
-      {done ? (
+      {/* B′: no Undo on a sitting that wrote no jars of its own — How it was made →'s, whose jars were
+          logged before the batch (the server says so with has_own_jars, and refuses nothing_put_up_here).
+          An older server sends no flag: the Undo stays, as it always was. */}
+      {stage.has_own_jars === false ? null : done ? (
         <div role="status" style={{ color: P.mid, fontSize: '0.78rem' }}>{UNDONE_TEXT}</div>
       ) : (
         <button type="button" data-testid="batch-detail-undo-putup" disabled={busy} onClick={undo}

@@ -305,10 +305,17 @@ async function getBatch(sql, batchId, householdIds) {
   // history: one dated line per row, in the order they were logged, with no count, streak, run or
   // any other aggregate over them — a batch that never acidified produces an unbroken sequence of
   // rows, so a summary of them would turn absent failure signs into apparent success.
+  // B′: has_own_jars (put_up rows only; NULL on every other kind) — whether the sitting ever wrote a jar,
+  // removed ones included. How it was made →'s put_up row wrote none (its jars pre-existed the batch), so
+  // What came out offers no Undo on it and the undo route refuses it (nothing_put_up_here).
   const stages = await sql`
     SELECT id, batch_id, stage_kind, label, amount, amount_unit, cue_observed, entered_at, entered_precision,
            ph_reading, ph_read_at, voids_id, acts, mash_in_g, edited_at,
-           storage_location_id, photo_id, note, created_by, created_at
+           storage_location_id, photo_id, note, created_by, created_at,
+           CASE WHEN stage_kind = 'put_up'
+                THEN EXISTS (SELECT 1 FROM preservation_log oj
+                              WHERE oj.put_up_stage_id = kitchen_stage_log.id AND oj.batch_id = kitchen_stage_log.batch_id)
+           END AS has_own_jars
     FROM kitchen_stage_log
     WHERE batch_id = ${batchId}::uuid
     ORDER BY entered_at DESC NULLS LAST, created_at DESC, id DESC

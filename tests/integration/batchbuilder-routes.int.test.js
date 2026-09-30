@@ -181,6 +181,9 @@ describe('POST /api/kitchen-batches/from-jars — How it was made →', () => {
       expect(u.body.code).toBe('nothing_put_up_here')
     }
     expect((await call(STRANGER, 'POST', path, {})).status).toBe(404)
+    // Batch detail flags it, so What came out offers no Undo there.
+    const detail = await call(DAVE, 'GET', `/api/kitchen-batches/${b}`)
+    expect(detail.body.stages.find((s) => s.id === pu.id).has_own_jars).toBe(false)
     expect(await directSql`SELECT id FROM kitchen_stage_log WHERE batch_id = ${b} AND stage_kind = 'void'`).toHaveLength(0)
     expect((await readBatchRow(b)).closed_at).not.toBeNull()
     expect((await directSql`SELECT batch_id, deleted_at FROM preservation_log WHERE id = ${jar}`)[0]).toMatchObject({ batch_id: b, deleted_at: null })
