@@ -23,9 +23,19 @@ site (HTTPS). It never touches a database and never writes anything.
                    `--f-deployed --only lambdas` is the executable form of 1b's manual gate
                    mid_backfill_b_lambda_is_live: run it before ANY 0p backfill (0p under the 1a Lambda turns a
                    date clear into a 23514).
-  --floor          B2, before the dev push: scripts/revert-floors.json (validated by revert_floors.py) has an
-                   entry whose `since` is the 1b version (--since vX.Y.Z), so no revert can put 1a code back over
-                   F data.
+  --floor          B2 (review-F-prepromote-final), before the dev push: no revert can put 1a code back over F data.
+                   The landing adds {floor: v<F>, since: v<F>, undo_instead: null} (a floor may not sit above its
+                   own since, so the planned {floor: v<F>, since: v<1b>} is refused by revert_floors.py itself):
+                     file               scripts/revert-floors.json loads through revert_floors.load (an
+                                        unparseable or invalid file is a FAIL, never "no floor")
+                     governing          revert_floors.governing_entry(entries, v<F>) exists, its floor IS v<F>
+                                        and its undo_instead is null
+                     pre-f-refused      revert-to.py's own require_target_above_floor, asked "prod runs v<F>,
+                                        revert to v<pre-F>?", refuses (default v4.162.0, the pre-F prod version)
+                     f-allowed          the same function allows v<F> itself (so the refusal is the floor's)
+                   revert-to.py is imported (it needs boto3 and requests installed) but reads nothing: the prod
+                   version it would fetch from GitHub is supplied as v<F>, the state the floor exists for.
+                   Add the floor entry at mint time; before that this mode FAILs by design.
   --self-test      every check above against in-memory fixtures (passing and failing ones); no network.
 
 Every check prints one line, `PASS [<mode>:<check>] …` or `FAIL [<mode>:<check>] …`. A check that cannot be
@@ -36,7 +46,7 @@ Usage:
   python3 scripts/putup-sitting-check.py --precondition --promoted-after 2026-09-30T02:15:00Z
   python3 scripts/putup-sitting-check.py --f-deployed --prev-cache-version v4.161.0-421a1f9
   python3 scripts/putup-sitting-check.py --f-deployed --only lambdas          # mid_backfill_b_lambda_is_live
-  python3 scripts/putup-sitting-check.py --floor --since v4.163.0
+  python3 scripts/putup-sitting-check.py --floor --f-version v4.164.0 [--pre-f-version v4.162.0]
   python3 scripts/putup-sitting-check.py --self-test
 
 Auth: `gh` uses its own login (no token is read here); boto3 uses the ambient AWS credentials and --region.
@@ -368,21 +378,75 @@ def check_f_deployed(src, *, site=DEFAULT_SITE, prev_cache_version=None, only=("
     return out
 
 
-def check_floor(*, since, floors_file=None):
+PRE_F_VERSION = "v4.162.0"
+_REVERT_TO = None
+
+
+def _revert_to_module():
+    """scripts/revert-to.py, loaded once under a private name. The refusal below is ITS function, never a copy:
+    a copy would keep passing after revert-to's rule changed. It imports boto3 and requests at module level."""
+    global _REVERT_TO
+    if _REVERT_TO is None:
+        import importlib.util  # noqa: PLC0415
+        spec = importlib.util.spec_from_file_location("_putup_sitting_revert_to", os.path.join(HERE, "revert-to.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _REVERT_TO = mod
+    return _REVERT_TO
+
+
+def revert_to_verdict(target, prod, floors_path):
+    """Ask revert-to.py's require_target_above_floor whether prod running `prod` may be reverted to `target`,
+    judged on `floors_path`. Returns (refused, words). Only the prod version is supplied from here: the function
+    reads it from GitHub (current_prod_version), and the question is the hypothetical "once prod runs F"."""
+    import contextlib  # noqa: PLC0415
+    import types  # noqa: PLC0415
+    mod = _revert_to_module()
+    real = mod.current_prod_version
+    mod.current_prod_version = lambda cfg: prod
+    said = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(said):
+            mod.require_target_above_floor(types.SimpleNamespace(rehearsal=False, target_version=target), floors_path)
+        return False, said.getvalue().strip()
+    except mod.RevertError as e:
+        return True, str(e)
+    finally:
+        mod.current_prod_version = real
+
+
+def check_floor(*, f_version, pre_f_version=PRE_F_VERSION, floors_file=None, verdict=None):
     mode = "floor"
     path = floors_file or revert_floors.FLOORS
+    verdict = verdict or revert_to_verdict
+    keys = ("file", "governing", "pre-f-refused", "f-allowed")
     try:
         entries = revert_floors.load(path)
-        want = revert_floors.version_key(since)
     except revert_floors.FloorError as e:
-        return [Result(mode, "since", False, f"{path}: {e}")]
-    hits = [e for e in entries if revert_floors.version_key(e["since"]) == want]
-    if not hits:
-        have = ", ".join(e["since"] for e in entries)
-        return [Result(mode, "since", False, f"no entry with since {since} in {os.path.basename(path)} (have: {have})")]
-    e = hits[0]
-    return [Result(mode, "since", True, f"entry since {e['since']} → floor {e['floor']} ({e['ledger']}); "
-                                         f"undo_instead {json.dumps(e['undo_instead'])}")]
+        return [Result(mode, "file", False, f"{path}: {e}")] + \
+               [Result(mode, k, False, "not judged: the floors file does not load") for k in keys[1:]]
+    out = [Result(mode, "file", True, f"{os.path.basename(path)}: {len(entries)} valid entr{'y' if len(entries) == 1 else 'ies'}")]
+    gov = revert_floors.governing_entry(entries, f_version)
+    if gov is None:
+        out.append(Result(mode, "governing", False, f"no entry is in force while prod runs {f_version}"))
+    else:
+        shown = f"{{floor: {gov['floor']}, since: {gov['since']}, ledger: {gov['ledger']}, undo_instead: {json.dumps(gov['undo_instead'])}}}"
+        wrong = []
+        if revert_floors.version_key(gov["floor"]) != revert_floors.version_key(f_version):
+            wrong.append(f"its floor is {gov['floor']}, not {f_version}")
+        if gov["undo_instead"] is not None:
+            wrong.append("it names an undo_instead switch; F has none, so it must be null")
+        out.append(Result(mode, "governing", not wrong,
+                          f"governing entry at {f_version}: {shown}" + (f" — {'; '.join(wrong)}" if wrong else "")))
+    for key, target, want_refused in (("pre-f-refused", pre_f_version, True), ("f-allowed", f_version, False)):
+        try:
+            refused, words = verdict(target, f_version, path)
+            ok = refused == want_refused and (not refused or "is below the revert floor" in words)
+            out.append(Result(mode, key, ok, f"revert-to.py, prod {f_version} → target {target}: "
+                                             f"{'REFUSED' if refused else 'allowed'} ({words[:220]})"))
+        except Exception as e:  # revert-to.py not importable (boto3/requests), or its signature moved
+            out.append(Result(mode, key, False, f"could not ask revert-to.py: {type(e).__name__}: {e}"))
+    return out
 
 
 # ── self-test ───────────────────────────────────────────────────────────────────────────────────────────
@@ -530,33 +594,46 @@ def _scenarios():
 
 
 def _floor_scenarios(tmp):
-    # floor and since differ here on purpose, so a check that matched `floor` instead of `since` would go red.
-    good = {"floor": "v4.162.0", "since": "v4.163.0", "reason": "one line", "ledger": "V5-PUTUPMAKE-001",
-            "undo_instead": None}
-    other = {**good, "floor": "v4.160.0", "since": "v4.160.0"}
+    """The refusal questions go to revert-to.py's real require_target_above_floor (only the prod version is fed)."""
+    F, PRE = "v4.164.0", PRE_F_VERSION
+    base = [  # the tip's three floors, same shape
+        {"floor": "v4.160.0", "since": "v4.160.0", "reason": "tokens", "ledger": "V5-LOSSTOKEN-001", "undo_instead": None},
+        {"floor": "v4.156.0", "since": "v4.156.0", "reason": "scroll", "ledger": "BUG-DETAILPAGESCARRYSCROLL-001",
+         "undo_instead": {"flag": "SCROLL_MANAGER_ENABLED", "file": "src/lib/featureFlags.js"}},
+        {"floor": "v4.135.0", "since": "v4.135.0", "reason": "schedule", "ledger": "OPS-PLANHOURLY-001", "undo_instead": None},
+    ]
+    f_entry = {"floor": F, "since": F, "reason": "1a code over F data", "ledger": "V5-PUTUPMAKETRUE-001", "undo_instead": None}
+    one_b = {**f_entry, "floor": "v4.163.0", "since": "v4.163.0"}
 
     def write(name, obj):
         path = os.path.join(tmp, name)
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write(obj if isinstance(obj, str) else json.dumps(obj))
+            fh.write(obj if isinstance(obj, str) else json.dumps({"floors": obj}))
         return path
 
-    with_entry = write("with.json", {"floors": [good, other]})
-    without = write("without.json", {"floors": [other]})
-    broken = write("broken.json", "{not json")
-    bad_entry = write("bad.json", {"floors": [{**good, "floor": "v4.164.0"}]})
+    ALL = ("floor:file", "floor:governing", "floor:pre-f-refused", "floor:f-allowed")
+    want = lambda *fails: {k: k not in fails for k in ALL}  # noqa: E731
+    run = lambda path, **kw: (lambda: check_floor(f_version=F, floors_file=path, **kw))  # noqa: E731
     return [
-        ("floor: an entry since the 1b version", lambda: check_floor(since="v4.163.0", floors_file=with_entry),
-         {"floor:since": True}),
-        ("floor: the same version without the v", lambda: check_floor(since="4.163.0", floors_file=with_entry),
-         {"floor:since": True}),
-        ("floor: no such entry", lambda: check_floor(since="v4.163.0", floors_file=without), {"floor:since": False}),
-        ("floor: unreadable JSON is a FAIL, never 'no floor'",
-         lambda: check_floor(since="v4.163.0", floors_file=broken), {"floor:since": False}),
-        ("floor: an entry revert_floors refuses (floor above since)",
-         lambda: check_floor(since="v4.163.0", floors_file=bad_entry), {"floor:since": False}),
-        ("floor: a missing file", lambda: check_floor(since="v4.163.0", floors_file=os.path.join(tmp, "nope.json")),
-         {"floor:since": False}),
+        ("floor: the F entry governs at v<F>; v4.162.0 refused, v<F> allowed", run(write("f.json", base + [f_entry])), want()),
+        ("floor: the F entry plus the optional 1b entry", run(write("f1b.json", base + [one_b, f_entry])), want()),
+        ("floor: no F entry yet (the tip before landing)", run(write("tip.json", base)),
+         want("floor:governing", "floor:pre-f-refused")),
+        ("floor: MUTANT the entry's floor is v4.162.0 (valid, useless)",
+         run(write("useless.json", base + [{**f_entry, "floor": PRE}])), want("floor:governing", "floor:pre-f-refused")),
+        ("floor: only the 1b entry (it refuses v4.162.0 but is not the F floor)", run(write("only1b.json", base + [one_b])),
+         want("floor:governing")),
+        ("floor: the F entry names an undo_instead switch",
+         run(write("undo.json", base + [{**f_entry, "undo_instead": {"flag": "PUTUP_F", "file": "src/lib/featureFlags.js"}}])),
+         want("floor:governing")),
+        ("floor: an F entry not yet in force at v<F> (since above it)",
+         run(write("later.json", base + [{**f_entry, "since": "v4.165.0"}])), want("floor:governing", "floor:pre-f-refused")),
+        ("floor: the planned {floor: v<F>, since: v<1b>} — revert_floors refuses the whole file",
+         run(write("planned.json", base + [{**f_entry, "since": "v4.163.0"}])), want(*ALL)),
+        ("floor: MUTANT an unparseable file", run(write("broken.json", "{not json")), want(*ALL)),
+        ("floor: a missing file", run(os.path.join(tmp, "nope.json")), want(*ALL)),
+        ("floor: v<pre-F> is judged, not assumed (a pre-F target AT the floor is allowed)",
+         run(write("f2.json", base + [f_entry]), pre_f_version=F), want("floor:pre-f-refused")),
     ]
 
 
@@ -606,7 +683,7 @@ def build_parser():
     m = p.add_mutually_exclusive_group(required=True)
     m.add_argument("--precondition", action="store_true", help="B3: 1a is the live writer (before any 1b/F DDL)")
     m.add_argument("--f-deployed", action="store_true", help="I5: F is what serves (after the promote)")
-    m.add_argument("--floor", action="store_true", help="B2: revert-floors.json has the 1b entry (before the dev push)")
+    m.add_argument("--floor", action="store_true", help="B2: the v<F> revert floor governs and refuses v<pre-F> (before the dev push)")
     m.add_argument("--self-test", action="store_true", help="every check against fixtures; no network")
     p.add_argument("--promoted-after", help="--precondition: the promote-gate deploy time (ISO-8601 with a zone)")
     p.add_argument("--main-contains", default=ONE_A_DEV_SHA, help="--precondition: the sha main must contain")
@@ -619,7 +696,9 @@ def build_parser():
     p.add_argument("--site", default=DEFAULT_SITE, help="--f-deployed: the site whose bundle and sw.js are read")
     p.add_argument("--prev-cache-version", help="--f-deployed: sw.js CACHE_VERSION before the promote")
     p.add_argument("--only", default="bundle,lambdas,sw", help="--f-deployed: any of bundle,lambdas,sw")
-    p.add_argument("--since", help="--floor: the 1b version (vX.Y.Z)")
+    p.add_argument("--f-version", help="--floor: the version F is minted as (vX.Y.Z)")
+    p.add_argument("--pre-f-version", default=PRE_F_VERSION, help="--floor: the prod version before F (default %(default)s)")
+    p.add_argument("--since", help=argparse.SUPPRESS)  # the old --floor question (the 1b version); refused below
     p.add_argument("--floors-file", help="--floor: default scripts/revert-floors.json of this tree")
     return p
 
@@ -648,9 +727,18 @@ def main(argv=None, sources=None):
                                        preservation_fn=a.preservation_fn, plants_fn=a.plants_fn,
                                        storage_fn=a.storage_fn)
         else:
-            if not a.since or not RELEASE_RE.match(a.since):
-                p.error("--floor needs --since vX.Y.Z (the 1b version)")
-            results = check_floor(since=a.since, floors_file=a.floors_file)
+            if a.since is not None:
+                # Not kept as an alias: --since named the 1b version, and a v<1b> floor would answer the new
+                # question with a false PASS whenever the optional 1b entry is present.
+                p.error("--since is gone: --floor now asks about the F version (--f-version vX.Y.Z); "
+                        "see review-F-prepromote-final B2")
+            if not a.f_version or not RELEASE_RE.match(a.f_version):
+                p.error("--floor needs --f-version vX.Y.Z (the version F is minted as)")
+            if not RELEASE_RE.match(a.pre_f_version):
+                p.error("--pre-f-version must be vX.Y.Z")
+            if revert_floors.version_key(a.pre_f_version) >= revert_floors.version_key(a.f_version):
+                p.error("--pre-f-version must be below --f-version")
+            results = check_floor(f_version=a.f_version, pre_f_version=a.pre_f_version, floors_file=a.floors_file)
     except ValueError as e:
         p.error(str(e))
     for r in results:
