@@ -178,6 +178,20 @@ describe('validateRecipeCreate / validateRecipePatch', () => {
       vessel_unit: 'qt', vessel_count: 1, no_salt: true, mash_in_g: 180, made_g: '256.0', lines: [{ name: 'x' }] }))).toBeNull();
   });
 
+  it('the final container (Dave 2026-09-30): bottle label, size + unit together, cooked; the yield as written', () => {
+    expect(validateRecipeCreate(body({ bottle_label: '4 oz woozy', bottle_size: 4, bottle_unit: 'fl oz',
+      bottle_cooked: true, made_text: '228 g, one 8 oz woozy bottle' }))).toBeNull();
+    expect(validateRecipeCreate(body({ bottle_size: 4 }))).toMatch(/sent together/);
+    expect(validateRecipeCreate(body({ bottle_size: 4, bottle_unit: 'woozy' }))).toMatch(/bottle_unit/);
+    expect(validateRecipeCreate(body({ bottle_size: 0, bottle_unit: 'fl oz' }))).toMatch(/greater than 0/);
+    expect(validateRecipeCreate(body({ bottle_cooked: 'yes' }))).toMatch(/true or false/);
+    expect(validateRecipeCreate(body({ bottle_label: ' ' }))).toMatch(/blank/);
+    expect(validateRecipeCreate(body({ made_text: 'x'.repeat(501) }))).toMatch(/at most 500/);
+    const plan = recipePatchPlan({ bottle_size: '4.0', bottle_unit: 'fl oz', bottle_cooked: false });
+    expect(plan.present).toMatchObject({ bottle_size: true, bottle_cooked: true, bottle_label: false });
+    expect(plan.value).toMatchObject({ bottle_size: '4.0', bottle_unit: 'fl oz', bottle_cooked: false });
+  });
+
   it('the kind vocabulary is the batch-kind vocabulary', () => {
     for (const k of KITCHEN_BATCH_KINDS) expect(validateRecipeCreate(body({ kind: k }))).toBeNull();
   });
@@ -433,6 +447,11 @@ describe('POST /api/recipes/from-batch/:batchId — "Save as recipe" (F §1.5)',
     expect(w.norm).toMatch(/i\.deleted_at IS NULL/);
     // "at the end" is sitting membership.
     expect(w.norm).toMatch(/\(i\.put_up_stage_id IS NOT NULL\)/);
+    // The final container: the first live bottling's first row — container, size of EACH, cooked.
+    for (const col of ['p.container_label', 'p.quantity_value / p.package_count', 'p.cooked', 'p.put_up_stage_id']) {
+      expect(w.norm, col).toContain(col);
+    }
+    expect(w.norm).toMatch(/bottle_label, bottle_size, bottle_unit, bottle_cooked/);
     // No reading comes across, and no stage note but "Next time…".
     expect(w.norm).not.toMatch(/ph_reading|ph_read_at|last_ph/);
     expect(w.norm).toMatch(/stage_kind = 'noted'/);
@@ -466,12 +485,12 @@ describe('POST /api/recipes/from-batch/:batchId — "Save as recipe" (F §1.5)',
 
 // ── types ────────────────────────────────────────────────────────────────────────────────────────
 describe('/api/recipes/types — built-ins, then the household\'s; find-or-create; soft delete', () => {
-  it('the fifteen built-ins mirror the migration exactly (ids, labels, order)', () => {
+  it('the sixteen built-ins mirror the migration exactly (ids, labels, order)', () => {
     const ddl = readFileSync(resolve(here, '../../migrations/v5-recipes-001/0a-additive-ddl.sql'), 'utf8');
     const rows = [...ddl.matchAll(/\('(7ec1be00-[0-9a-f-]+)', '([^']+)',\s+(\d+)\)/g)].map((m) => ({ id: m[1], label: m[2], sort_order: Number(m[3]) }));
     expect(rows).toEqual(RECIPE_BUILTIN_TYPES.map((t) => ({ ...t })));
     expect(RECIPE_BUILTIN_TYPES.map((t) => t.label)).toEqual([
-      'Hot sauce', 'Chili paste', 'Salsa & chutney', 'Chili crisp & oil', 'Glaze & wing sauce', 'Pesto',
+      'Hot sauce', 'Chili paste', 'Sambal & chili relish', 'Salsa & chutney', 'Chili crisp & oil', 'Glaze & wing sauce', 'Pesto',
       'Jam & preserve', 'Pickle', 'Canned vegetables', 'Canned fruit', 'Fruit leather & snacks', 'Candy',
       'Spice & powder', 'Ferment (kraut, kimchi…)', 'Other',
     ]);

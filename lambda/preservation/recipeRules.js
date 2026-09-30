@@ -35,24 +35,25 @@ export const RECIPE_TYPE_LABEL_MAX = 60;
 // may write it (the same rule F's line POST keeps).
 export const RECIPE_SALT_BASES = ['produce', 'water', 'all'];
 
-// The fifteen built-in types, in Dave's order (2026-09-30), with the fixed ids 0a inserts. A parity test binds
+// The sixteen built-in types, in Dave's order (2026-09-30; "Sambal & chili relish" added the same day), with the fixed ids 0a inserts. A parity test binds
 // this list to the migration.
 export const RECIPE_BUILTIN_TYPES = Object.freeze([
   ['7ec1be00-0000-4000-8000-000000000001', 'Hot sauce', 10],
   ['7ec1be00-0000-4000-8000-000000000002', 'Chili paste', 20],
-  ['7ec1be00-0000-4000-8000-000000000003', 'Salsa & chutney', 30],
-  ['7ec1be00-0000-4000-8000-000000000004', 'Chili crisp & oil', 40],
-  ['7ec1be00-0000-4000-8000-000000000005', 'Glaze & wing sauce', 50],
-  ['7ec1be00-0000-4000-8000-000000000006', 'Pesto', 60],
-  ['7ec1be00-0000-4000-8000-000000000007', 'Jam & preserve', 70],
-  ['7ec1be00-0000-4000-8000-000000000008', 'Pickle', 80],
-  ['7ec1be00-0000-4000-8000-000000000009', 'Canned vegetables', 90],
-  ['7ec1be00-0000-4000-8000-000000000010', 'Canned fruit', 100],
-  ['7ec1be00-0000-4000-8000-000000000011', 'Fruit leather & snacks', 110],
-  ['7ec1be00-0000-4000-8000-000000000012', 'Candy', 120],
-  ['7ec1be00-0000-4000-8000-000000000013', 'Spice & powder', 130],
-  ['7ec1be00-0000-4000-8000-000000000014', 'Ferment (kraut, kimchi…)', 140],
-  ['7ec1be00-0000-4000-8000-000000000015', 'Other', 150],
+  ['7ec1be00-0000-4000-8000-000000000003', 'Sambal & chili relish', 30],
+  ['7ec1be00-0000-4000-8000-000000000004', 'Salsa & chutney', 40],
+  ['7ec1be00-0000-4000-8000-000000000005', 'Chili crisp & oil', 50],
+  ['7ec1be00-0000-4000-8000-000000000006', 'Glaze & wing sauce', 60],
+  ['7ec1be00-0000-4000-8000-000000000007', 'Pesto', 70],
+  ['7ec1be00-0000-4000-8000-000000000008', 'Jam & preserve', 80],
+  ['7ec1be00-0000-4000-8000-000000000009', 'Pickle', 90],
+  ['7ec1be00-0000-4000-8000-000000000010', 'Canned vegetables', 100],
+  ['7ec1be00-0000-4000-8000-000000000011', 'Canned fruit', 110],
+  ['7ec1be00-0000-4000-8000-000000000012', 'Fruit leather & snacks', 120],
+  ['7ec1be00-0000-4000-8000-000000000013', 'Candy', 130],
+  ['7ec1be00-0000-4000-8000-000000000014', 'Spice & powder', 140],
+  ['7ec1be00-0000-4000-8000-000000000015', 'Ferment (kraut, kimchi…)', 150],
+  ['7ec1be00-0000-4000-8000-000000000016', 'Other', 160],
 ].map(([id, label, sort_order]) => Object.freeze({ id, label, sort_order })));
 
 // ── routing ──────────────────────────────────────────────────────────────────────────────────────
@@ -138,7 +139,30 @@ function vesselError(body) {
     }
   }
   if (has(body, 'no_salt') && body.no_salt != null && typeof body.no_salt !== 'boolean') return 'no_salt must be true or false';
-  return positiveNumberError(body.mash_in_g, 'mash_in_g') ?? positiveNumberError(body.made_g, 'made_g');
+  return positiveNumberError(body.mash_in_g, 'mash_in_g') ?? positiveNumberError(body.made_g, 'made_g')
+    ?? textError(body.made_text, 'what it makes', RECIPE_AMOUNT_TEXT_MAX)
+    ?? bottleError(body);
+}
+
+// The FINAL container (Dave 2026-09-30): the Put it up rows' default container and cooked flag. A make can be
+// multi-vessel — the vessel_* above is the process jar, this is what it is bottled in.
+function bottleError(body) {
+  if (has(body, 'bottle_label')) {
+    const e = textError(body.bottle_label, 'the bottle name', 120);
+    if (e) return e;
+  }
+  if (has(body, 'bottle_size') !== has(body, 'bottle_unit')) return 'bottle_size and bottle_unit are sent together';
+  if (has(body, 'bottle_size')) {
+    const unit = normalizeText(body.bottle_unit);
+    if ((body.bottle_size == null) !== (unit == null)) return 'a bottle size needs its unit, and a unit needs its size';
+    const e = positiveNumberError(body.bottle_size, 'bottle_size');
+    if (e) return e;
+    if (unit != null && !KITCHEN_UNITS.includes(unit)) return `bottle_unit must be one of: ${KITCHEN_UNITS.join(', ')}`;
+  }
+  if (has(body, 'bottle_cooked') && body.bottle_cooked != null && typeof body.bottle_cooked !== 'boolean') {
+    return 'bottle_cooked must be true or false';
+  }
+  return null;
 }
 
 // ── lines ────────────────────────────────────────────────────────────────────────────────────────
@@ -251,7 +275,8 @@ export function recipeLineColumns(lines) {
 // The columns a body may set (never user_id, idempotency_key after create, created_at, updated_at, deleted_at).
 export const RECIPE_BODY_KEYS = [
   'name', 'kind', 'recipe_type_id', 'link_url', 'notes', 'keeps', 'vessel_label', 'vessel_size', 'vessel_unit',
-  'vessel_count', 'no_salt', 'mash_in_g', 'made_g', 'lines',
+  'vessel_count', 'no_salt', 'mash_in_g', 'made_g', 'made_text', 'bottle_label', 'bottle_size', 'bottle_unit',
+  'bottle_cooked', 'lines',
 ];
 export const RECIPE_SERVER_OWNED = ['id', 'user_id', 'created_at', 'updated_at', 'deleted_at'];
 
@@ -306,7 +331,8 @@ export function recipePatchPlan(body) {
       name: p('name'), kind: p('kind'), recipe_type_id: p('recipe_type_id'), link_url: p('link_url'),
       notes: p('notes'), keeps: p('keeps'), vessel_label: p('vessel_label'), vessel_size: p('vessel_size'),
       vessel_count: p('vessel_count'), no_salt: p('no_salt'), mash_in_g: p('mash_in_g'), made_g: p('made_g'),
-      lines: p('lines'),
+      made_text: p('made_text'), bottle_label: p('bottle_label'), bottle_size: p('bottle_size'),
+      bottle_cooked: p('bottle_cooked'), lines: p('lines'),
     },
     value: {
       name: p('name') ? body.name.trim() : null,
@@ -324,6 +350,11 @@ export function recipePatchPlan(body) {
       no_salt: body.no_salt === true ? true : null,
       mash_in_g: body.mash_in_g == null ? null : String(body.mash_in_g),
       made_g: body.made_g == null ? null : String(body.made_g),
+      made_text: normalizeText(body.made_text),
+      bottle_label: normalizeText(body.bottle_label),
+      bottle_size: body.bottle_size == null ? null : String(body.bottle_size),
+      bottle_unit: normalizeText(body.bottle_unit),
+      bottle_cooked: typeof body.bottle_cooked === 'boolean' ? body.bottle_cooked : null,
     },
     lines: recipeLineColumns(body.lines ?? []),
   };

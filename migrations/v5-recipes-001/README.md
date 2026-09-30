@@ -15,10 +15,10 @@ The stamp is fixed at first apply anywhere and never edited: every standing gate
 
 ## What 0a adds
 
-* **recipe_type** — what a recipe makes. Fifteen built-ins in Dave's order (Hot sauce · Chili paste · Salsa &
-  chutney · Chili crisp & oil · Glaze & wing sauce · Pesto · Jam & preserve · Pickle · Canned vegetables · Canned
+* **recipe_type** — what a recipe makes. Sixteen built-ins in Dave's order (Hot sauce · Chili paste · Sambal &
+  chili relish · Salsa & chutney · Chili crisp & oil · Glaze & wing sauce · Pesto · Jam & preserve · Pickle · Canned vegetables · Canned
   fruit · Fruit leather & snacks · Candy · Spice & powder · Ferment (kraut, kimchi…) · Other) with fixed ids
-  `7ec1be00-0000-4000-8000-0000000000NN` and `user_id` NULL, plus types the household creates from the picker
+  `7ec1be00-0000-4000-8000-0000000000NN` (01–16) and `user_id` NULL, plus types the household creates from the picker
   (`user_id` = who made it). Find-or-create on `lower(btrim(label))` (built-ins first, then the household's; a
   soft-deleted own type is restored), soft delete. `uq_recipe_type_builtin_label` / `uq_recipe_type_user_label` are
   the race backstop. **Precedent copied:** `crop_types` (`lambda/varieties` POST `/api/varieties/crop-types`,
@@ -27,7 +27,11 @@ The stamp is fixed at first apply anywhere and never edited: every standing gate
 * **recipe** — name, `kind` (the batch-kind process word, nullable), `recipe_type_id` (FK NO ACTION), `link_url`
   (http/https only, CHECKed), `notes` (his text verbatim — ratio rules, day gates, serve notes and **his target pH
   live here and only here**), the keeps line (`keeps_n` · `keeps_unit` day/week/month · `keeps_storage_kind`, all
-  three or none), and F §1.5's carried facts: `vessel_label/size/unit/count`, `no_salt`, `mash_in_g`, `made_g`.
+  three or none), and F §1.5's carried facts: `vessel_label/size/unit/count` (the PROCESS jar), `no_salt`,
+  `mash_in_g`, `made_g`. Dave 2026-09-30 (a make is multi-vessel — ferment in a jar → blend → cook → bottle): the
+  FINAL container `bottle_label` / `bottle_size` / `bottle_unit` (both-or-neither, KITCHEN_UNITS; the Put it up
+  rows' default container) and `bottle_cooked` (cooked after blending; the rows' default), plus `made_text` (the
+  yield as written). Straining and the rest of the method stay in `notes`.
   `idempotency_key` (global unique partial — a 23505 on `uq_recipe_idempotency_key` is a replay). `set_updated_at`,
   `prevent_recipe_ownership_transfer` (executes the user_id variant
   `prevent_kitchen_batch_ownership_transfer()`, reused unchanged as 1b did for preservation_log), soft delete.
@@ -87,9 +91,9 @@ agrees with the one F pinned. Then:
 | `pre` before 0a | 5/5 PASS |
 | `post --continuous-only` before 0a | 13 PASS + 1 apply-window-only, 0 ERROR (vacuous) |
 | 0a | exit 0; view md5 `c5e32311816088488bcbb315e8703ae0`; recipe_id at 41, recipe_ref still 40 |
-| 0a × 2 more | exit 0, nothing changed (15 built-ins, same md5) |
+| 0a × 2 more | exit 0, nothing changed (16 built-ins, same md5) |
 | `post` after 0a | 14/14 PASS |
-| planted cases | refused as expected: `javascript:` and `ftp:` links (`chk_recipe_link_url`); a keeps line with n only (`chk_recipe_keeps_whole`); a blank name; kind `sauce`; salt facts on a role-less line; form on a water line; a line moved to another recipe (P0001 from the identity trigger); a recipe re-owned (P0001, the user_id variant); an unknown recipe from a line or a batch (FK); a duplicate household type differing only in case and spaces (`uq_recipe_type_user_label`) and a duplicate built-in (`uq_recipe_type_builtin_label`). Accepted: an https link with a query string, a full keeps line, a salt line with all three facts in g, a household type whose name matches a built-in (the route finds the built-in first) |
+| planted cases | refused as expected: a bottle size with no unit (`chk_recipe_bottle_pairing`); `javascript:` and `ftp:` links (`chk_recipe_link_url`); a keeps line with n only (`chk_recipe_keeps_whole`); a blank name; kind `sauce`; salt facts on a role-less line; form on a water line; a line moved to another recipe (P0001 from the identity trigger); a recipe re-owned (P0001, the user_id variant); an unknown recipe from a line or a batch (FK); a duplicate household type differing only in case and spaces (`uq_recipe_type_user_label`) and a duplicate built-in (`uq_recipe_type_builtin_label`). Accepted: a full bottle (4 fl oz woozy, cooked) with a yield as written, an https link with a query string, a full keeps line, a salt line with all three facts in g, a household type whose name matches a built-in (the route finds the built-in first) |
 | gate mutation | a built-in relabelled → `post_builtin_recipe_types_present` FAIL (1 row) |
 | 0r with a recipe row | refused ("1 recipe rows"), nothing changed |
 | 0r on an unused apply | exit 0; view md5 back to F's `b70ac2f…`, its ACL (`=r` PUBLIC) carried across; no recipe relation; stamp gone |

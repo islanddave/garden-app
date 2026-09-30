@@ -104,6 +104,9 @@ post:
                ('recipe','vessel_size','numeric','YES'), ('recipe','vessel_unit','text','YES'),
                ('recipe','vessel_count','smallint','YES'), ('recipe','no_salt','boolean','YES'),
                ('recipe','mash_in_g','numeric','YES'), ('recipe','made_g','numeric','YES'),
+               ('recipe','made_text','text','YES'), ('recipe','bottle_label','text','YES'),
+               ('recipe','bottle_size','numeric','YES'), ('recipe','bottle_unit','text','YES'),
+               ('recipe','bottle_cooked','boolean','YES'),
                ('recipe','idempotency_key','uuid','YES'), ('recipe','updated_at','timestamp with time zone','NO'),
                ('recipe','deleted_at','timestamp with time zone','YES'),
                ('recipe_ingredient','id','uuid','NO'), ('recipe_ingredient','recipe_id','uuid','NO'),
@@ -151,6 +154,8 @@ post:
                ('recipe','chk_recipe_vessel_pairing'), ('recipe','chk_recipe_vessel_unit'),
                ('recipe','chk_recipe_vessel_count'), ('recipe','chk_recipe_no_salt_true'),
                ('recipe','chk_recipe_mash_in_g'), ('recipe','chk_recipe_made_g'),
+               ('recipe','chk_recipe_made_text_nonblank'), ('recipe','chk_recipe_bottle_label_nonblank'),
+               ('recipe','chk_recipe_bottle_pairing'), ('recipe','chk_recipe_bottle_unit'),
                ('recipe_ingredient','chk_ri_name_nonblank'), ('recipe_ingredient','chk_ri_amount_text_nonblank'),
                ('recipe_ingredient','chk_ri_qty_pairing'), ('recipe_ingredient','chk_ri_qty_unit'),
                ('recipe_ingredient','chk_ri_form'), ('recipe_ingredient','chk_ri_role'),
@@ -300,26 +305,27 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # ── The fifteen built-in types (Dave 2026-09-30), live, with their fixed ids, labels and order ──
+  # ── The sixteen built-in types (Dave 2026-09-30), live, with their fixed ids, labels and order ──
   - name: post_builtin_recipe_types_present
     sql: |
       SELECT v.id, v.label
         FROM (VALUES
                ('7ec1be00-0000-4000-8000-000000000001', 'Hot sauce',                 10),
                ('7ec1be00-0000-4000-8000-000000000002', 'Chili paste',               20),
-               ('7ec1be00-0000-4000-8000-000000000003', 'Salsa & chutney',           30),
-               ('7ec1be00-0000-4000-8000-000000000004', 'Chili crisp & oil',         40),
-               ('7ec1be00-0000-4000-8000-000000000005', 'Glaze & wing sauce',        50),
-               ('7ec1be00-0000-4000-8000-000000000006', 'Pesto',                     60),
-               ('7ec1be00-0000-4000-8000-000000000007', 'Jam & preserve',            70),
-               ('7ec1be00-0000-4000-8000-000000000008', 'Pickle',                    80),
-               ('7ec1be00-0000-4000-8000-000000000009', 'Canned vegetables',         90),
-               ('7ec1be00-0000-4000-8000-000000000010', 'Canned fruit',             100),
-               ('7ec1be00-0000-4000-8000-000000000011', 'Fruit leather & snacks',   110),
-               ('7ec1be00-0000-4000-8000-000000000012', 'Candy',                    120),
-               ('7ec1be00-0000-4000-8000-000000000013', 'Spice & powder',           130),
-               ('7ec1be00-0000-4000-8000-000000000014', 'Ferment (kraut, kimchi…)', 140),
-               ('7ec1be00-0000-4000-8000-000000000015', 'Other',                    150)) AS v(id, label, sort_order)
+               ('7ec1be00-0000-4000-8000-000000000003', 'Sambal & chili relish',     30),
+               ('7ec1be00-0000-4000-8000-000000000004', 'Salsa & chutney',           40),
+               ('7ec1be00-0000-4000-8000-000000000005', 'Chili crisp & oil',         50),
+               ('7ec1be00-0000-4000-8000-000000000006', 'Glaze & wing sauce',        60),
+               ('7ec1be00-0000-4000-8000-000000000007', 'Pesto',                     70),
+               ('7ec1be00-0000-4000-8000-000000000008', 'Jam & preserve',            80),
+               ('7ec1be00-0000-4000-8000-000000000009', 'Pickle',                    90),
+               ('7ec1be00-0000-4000-8000-000000000010', 'Canned vegetables',        100),
+               ('7ec1be00-0000-4000-8000-000000000011', 'Canned fruit',             110),
+               ('7ec1be00-0000-4000-8000-000000000012', 'Fruit leather & snacks',   120),
+               ('7ec1be00-0000-4000-8000-000000000013', 'Candy',                    130),
+               ('7ec1be00-0000-4000-8000-000000000014', 'Spice & powder',           140),
+               ('7ec1be00-0000-4000-8000-000000000015', 'Ferment (kraut, kimchi…)', 150),
+               ('7ec1be00-0000-4000-8000-000000000016', 'Other',                    160)) AS v(id, label, sort_order)
        -- recipe_type is read through query_to_xml inside a CASE, so the relation is named only once the
        -- stamp says it exists: vacuous, never 42P01, on a database without 0a (the self-arming rule).
        WHERE CASE WHEN EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-recipes-001')
@@ -349,7 +355,7 @@ post:
 
   # ── Apply-window receipt ──────────────────────────────────────────────────────────────────────
   # Right after 0a, and until release 4's code writes: no recipe, no recipe line, no household type, no
-  # batch naming a recipe — 0a wrote only the fifteen built-ins, and 0r's window is open. The first write
+  # batch naming a recipe — 0a wrote only the sixteen built-ins, and 0r's window is open. The first write
   # ends the window, so this is continuous: false. to_jsonb on kitchen_batch so a runbook run on an
   # unapplied database reports 0, not 42703; the recipe tables are not read (naming a relation that may
   # not exist would ERROR) — 0r's guard counts them.

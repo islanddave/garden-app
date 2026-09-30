@@ -33,9 +33,10 @@ const DDL = decomment(readFileSync(resolve(__dirname, '../../migrations/v5-recip
 // L-081 KEYED contract — what the handlers NAME.
 const AUDIT_COLUMNS = {
   recipe: [
-    'created_at', 'deleted_at', 'id', 'idempotency_key', 'keeps_n', 'keeps_storage_kind', 'keeps_unit', 'kind',
-    'link_url', 'made_g', 'mash_in_g', 'name', 'no_salt', 'notes', 'recipe_type_id', 'updated_at', 'user_id',
-    'vessel_count', 'vessel_label', 'vessel_size', 'vessel_unit',
+    'bottle_cooked', 'bottle_label', 'bottle_size', 'bottle_unit', 'created_at', 'deleted_at', 'id',
+    'idempotency_key', 'keeps_n', 'keeps_storage_kind', 'keeps_unit', 'kind', 'link_url', 'made_g', 'made_text',
+    'mash_in_g', 'name', 'no_salt', 'notes', 'recipe_type_id', 'updated_at', 'user_id', 'vessel_count',
+    'vessel_label', 'vessel_size', 'vessel_unit',
   ],
   recipe_ingredient: [
     'amount_text', 'at_the_end', 'base_from', 'base_g', 'brand', 'deleted_at', 'form', 'id', 'name', 'note',
@@ -44,7 +45,21 @@ const AUDIT_COLUMNS = {
   ],
   recipe_type: ['created_at', 'deleted_at', 'id', 'label', 'sort_order', 'user_id'],
   kitchen_batch: ['id', 'recipe_id', 'recipe_ref'],
-  v_kitchen_batch_current: ['recipe_id'],
+  v_kitchen_batch_current: [
+    'brine_note', 'closed_at', 'current_stage_kind', 'deleted_at', 'first_recorded_at', 'id', 'kind', 'label',
+    'no_salt', 'notes', 'outcome', 'output_count', 'recipe_id', 'recipe_ref', 'start_precision', 'started_at',
+    'suspended_at', 'user_id', 'vessel_count', 'vessel_label', 'vessel_size', 'vessel_unit',
+  ],
+  kitchen_batch_input: [
+    'added_at', 'base_from', 'base_g', 'batch_id', 'brand', 'deleted_at', 'form', 'id', 'label', 'note', 'ordinal',
+    'put_up_stage_id', 'qty', 'qty_unit', 'role', 'salt_base', 'salt_method', 'salt_pct', 'shu_rating_high',
+    'shu_rating_low', 'source_label',
+  ],
+  kitchen_stage_log: ['amount', 'amount_unit', 'batch_id', 'created_at', 'entered_at', 'id', 'mash_in_g', 'note', 'stage_kind', 'voids_id'],
+  preservation_log: [
+    'batch_id', 'container_label', 'cooked', 'created_at', 'deleted_at', 'id', 'package_count', 'put_up_stage_id',
+    'quantity_unit', 'quantity_value',
+  ],
 };
 
 function createTableColumns(table) {
@@ -56,7 +71,7 @@ function createTableColumns(table) {
 
 describe('recipe column contract — v5-recipes-001 is the authority', () => {
   it('parses the migration, so the assertions below are against something real', () => {
-    expect(createTableColumns('recipe')).toHaveLength(21);
+    expect(createTableColumns('recipe')).toHaveLength(26);
     expect(createTableColumns('recipe_ingredient')).toHaveLength(21);
     expect(createTableColumns('recipe_type')).toHaveLength(7);
   });

@@ -21,7 +21,10 @@
 --     (http/https only), notes (his text, verbatim: ratio rules, day gates, serve notes and his own
 --     target pH live HERE and nowhere else), the keeps line (n · day/week/month · storage kind — all
 --     three or none), and what F §1.5 says a batch hands a recipe without retyping: the vessel
---     (label/size/unit/count), "No salt", mash_in_g and Made (made_g). idempotency_key (global unique
+--     (label/size/unit/count), "No salt", mash_in_g and Made (made_g). Dave 2026-09-30 (a make is
+--     multi-vessel): the PROCESS jar is the vessel_* columns; the FINAL container is bottle_label /
+--     bottle_size / bottle_unit (the Put it up rows' default container) with bottle_cooked (cooked after
+--     blending, the rows' default); made_text is the yield as written. idempotency_key (global unique
 --     partial: a 23505 on uq_recipe_idempotency_key is a replay). set_updated_at, the user_id ownership
 --     trigger, soft delete.
 --   * recipe_ingredient — the lines (name + amount as written + the "at the end" flag), with every F
@@ -29,7 +32,7 @@
 --     the listed heat (shu_rating_low/high) and the salt facts (salt_pct, salt_base, base_g,
 --     salt_method, base_from). recipe_id FK NO ACTION (no CASCADE onto a soft-deletable table,
 --     v4-cascadesweep-001); an identity trigger keeps a line on its recipe. Soft delete.
---   * recipe_type — what a recipe makes (Hot sauce, Salsa & chutney, Pesto, Jam & preserve …): fifteen
+--   * recipe_type — what a recipe makes (Hot sauce, Salsa & chutney, Pesto, Jam & preserve …): sixteen
 --     built-ins plus types the household creates from the picker (find-or-create by lower(btrim(label)),
 --     soft delete), and recipe.recipe_type_id (FK NO ACTION, household-loaded by the route). Dave,
 --     2026-09-30. recipe.kind stays the batch PROCESS word, nullable.
@@ -129,7 +132,7 @@ CREATE TRIGGER prevent_recipe_type_ownership_transfer
   BEFORE UPDATE ON public.recipe_type
   FOR EACH ROW EXECUTE FUNCTION public.prevent_kitchen_batch_ownership_transfer();
 
--- The fifteen built-ins, in Dave's order (2026-09-30). Fixed ids so every environment names them alike
+-- The sixteen built-ins, in Dave's order (2026-09-30). Fixed ids so every environment names them alike
 -- (lambda/preservation/recipeRules.js RECIPE_BUILTIN_TYPES mirrors this list; a parity test binds it).
 -- Idempotent: a built-in already present (live, by id) is left exactly as it is.
 INSERT INTO public.recipe_type (id, user_id, label, sort_order)
@@ -137,19 +140,20 @@ SELECT v.id::uuid, NULL, v.label, v.sort_order
   FROM (VALUES
          ('7ec1be00-0000-4000-8000-000000000001', 'Hot sauce',                 10),
          ('7ec1be00-0000-4000-8000-000000000002', 'Chili paste',               20),
-         ('7ec1be00-0000-4000-8000-000000000003', 'Salsa & chutney',           30),
-         ('7ec1be00-0000-4000-8000-000000000004', 'Chili crisp & oil',         40),
-         ('7ec1be00-0000-4000-8000-000000000005', 'Glaze & wing sauce',        50),
-         ('7ec1be00-0000-4000-8000-000000000006', 'Pesto',                     60),
-         ('7ec1be00-0000-4000-8000-000000000007', 'Jam & preserve',            70),
-         ('7ec1be00-0000-4000-8000-000000000008', 'Pickle',                    80),
-         ('7ec1be00-0000-4000-8000-000000000009', 'Canned vegetables',         90),
-         ('7ec1be00-0000-4000-8000-000000000010', 'Canned fruit',             100),
-         ('7ec1be00-0000-4000-8000-000000000011', 'Fruit leather & snacks',   110),
-         ('7ec1be00-0000-4000-8000-000000000012', 'Candy',                    120),
-         ('7ec1be00-0000-4000-8000-000000000013', 'Spice & powder',           130),
-         ('7ec1be00-0000-4000-8000-000000000014', 'Ferment (kraut, kimchi…)', 140),
-         ('7ec1be00-0000-4000-8000-000000000015', 'Other',                    150)) AS v(id, label, sort_order)
+         ('7ec1be00-0000-4000-8000-000000000003', 'Sambal & chili relish',     30),
+         ('7ec1be00-0000-4000-8000-000000000004', 'Salsa & chutney',           40),
+         ('7ec1be00-0000-4000-8000-000000000005', 'Chili crisp & oil',         50),
+         ('7ec1be00-0000-4000-8000-000000000006', 'Glaze & wing sauce',        60),
+         ('7ec1be00-0000-4000-8000-000000000007', 'Pesto',                     70),
+         ('7ec1be00-0000-4000-8000-000000000008', 'Jam & preserve',            80),
+         ('7ec1be00-0000-4000-8000-000000000009', 'Pickle',                    90),
+         ('7ec1be00-0000-4000-8000-000000000010', 'Canned vegetables',        100),
+         ('7ec1be00-0000-4000-8000-000000000011', 'Canned fruit',             110),
+         ('7ec1be00-0000-4000-8000-000000000012', 'Fruit leather & snacks',   120),
+         ('7ec1be00-0000-4000-8000-000000000013', 'Candy',                    130),
+         ('7ec1be00-0000-4000-8000-000000000014', 'Spice & powder',           140),
+         ('7ec1be00-0000-4000-8000-000000000015', 'Ferment (kraut, kimchi…)', 150),
+         ('7ec1be00-0000-4000-8000-000000000016', 'Other',                    160)) AS v(id, label, sort_order)
  WHERE NOT EXISTS (SELECT 1 FROM public.recipe_type t WHERE t.id = v.id::uuid);
 
 -- ── 2. recipe ────────────────────────────────────────────────────────────────────────────────────
@@ -171,6 +175,11 @@ CREATE TABLE IF NOT EXISTS public.recipe (
   no_salt            boolean,
   mash_in_g          numeric,
   made_g             numeric,
+  made_text          text,
+  bottle_label       text,
+  bottle_size        numeric,
+  bottle_unit        text,
+  bottle_cooked      boolean,
   idempotency_key    uuid,
   created_at         timestamptz DEFAULT now() NOT NULL,
   updated_at         timestamptz DEFAULT now() NOT NULL,
@@ -234,7 +243,25 @@ ALTER TABLE public.recipe
     CHECK (mash_in_g IS NULL OR mash_in_g > 0),
   DROP CONSTRAINT IF EXISTS chk_recipe_made_g,
   ADD CONSTRAINT chk_recipe_made_g
-    CHECK (made_g IS NULL OR made_g > 0);
+    CHECK (made_g IS NULL OR made_g > 0),
+  -- The yield as written ("228 g, one 8 oz woozy bottle").
+  DROP CONSTRAINT IF EXISTS chk_recipe_made_text_nonblank,
+  ADD CONSTRAINT chk_recipe_made_text_nonblank
+    CHECK (made_text IS NULL OR (btrim(made_text) <> '' AND char_length(made_text) <= 500)),
+  -- The FINAL container (Dave 2026-09-30: a make is multi-vessel — ferment in a jar, blend, cook, bottle):
+  -- the default container of the Put it up rows, and whether the finished product is cooked after blending
+  -- (preservation_log.cooked's default). The process jar is the vessel_* columns above.
+  DROP CONSTRAINT IF EXISTS chk_recipe_bottle_label_nonblank,
+  ADD CONSTRAINT chk_recipe_bottle_label_nonblank
+    CHECK (bottle_label IS NULL OR (btrim(bottle_label) <> '' AND char_length(bottle_label) <= 120)),
+  DROP CONSTRAINT IF EXISTS chk_recipe_bottle_pairing,
+  ADD CONSTRAINT chk_recipe_bottle_pairing
+    CHECK ((bottle_size IS NULL) = (bottle_unit IS NULL) AND (bottle_size IS NULL OR bottle_size > 0)),
+  DROP CONSTRAINT IF EXISTS chk_recipe_bottle_unit,
+  ADD CONSTRAINT chk_recipe_bottle_unit
+    CHECK (bottle_unit IS NULL OR bottle_unit IN (
+      'g','kg','oz','lb','ml','l','tsp','tbsp','fl oz','cup','pint','qt','gal',
+      'count','clove','head','bunch','pinch','peck','bushel','half-bushel','flat','jar','bag','other'));
 
 -- What the recipe makes. NO ACTION: a type is soft-deleted, never hard-deleted by the app.
 ALTER TABLE public.recipe
@@ -470,9 +497,9 @@ CREATE OR REPLACE VIEW public.v_kitchen_batch_current AS
 -- ── 6. The stamp, in the same transaction as everything above. ──────────────────────────────────
 INSERT INTO public.schema_version (version, description)
 VALUES ('5.0.0-recipes-001',
-        'V5-RECIPES-001 (Put-Up release 4, recipes): new recipe_type (15 built-ins + household-created, '
+        'V5-RECIPES-001 (Put-Up release 4, recipes): new recipe_type (16 built-ins + household-created, '
         'find-or-create by lower(btrim(label)), soft delete); new recipe (name, kind, recipe_type_id, link_url http/https, notes, '
-        'the keeps line, vessel, no_salt, mash_in_g, made_g, idempotency_key; set_updated_at and the user_id '
+        'the keeps line, vessel, bottle, no_salt, mash_in_g, made_g, made_text, idempotency_key; set_updated_at and the user_id '
         'ownership trigger) and recipe_ingredient (lines with amount as written, at_the_end, qty/unit, form, '
         'brand, role, note, listed heat, salt facts; FK NO ACTION; identity trigger); kitchen_batch gains '
         'recipe_id (FK NO ACTION); v_kitchen_batch_current appends recipe_id at 41. No pH column.')

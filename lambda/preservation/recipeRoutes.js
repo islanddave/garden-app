@@ -33,7 +33,7 @@ import {
   parseRecipeRoute, validateRecipeCreate, validateRecipePatch, recipePatchPlan, recipeCreateValues,
   validateFromBatch, validateTypeCreate, typeLabelOf,
 } from './recipeRules.js';
-import { KITCHEN_UUID_RE } from './kitchenBatch.js';
+import { KITCHEN_UUID_RE, KITCHEN_UNITS } from './kitchenBatch.js';
 
 const notFound = { status: 404, body: { error: 'Not found', code: 'not_found' } };
 const notAllowed = { status: 405, body: { error: 'Method not allowed' } };
@@ -68,13 +68,14 @@ export async function loadOwnedRecipeType(sql, typeId, householdIds) {
 }
 
 // The batch surface's view of its recipe (getBatch's `recipe` key, and Put it up's preview): the name, the keeps
-// line and the lines as reference text. NOT the notes — his target pH is in them, and it renders only on recipe
+// line, the process jar and the final container (Put it up's row defaults), and the lines as reference text. NOT the notes — his target pH is in them, and it renders only on recipe
 // detail (V4 §3.8). A soft-deleted recipe answers null (the batch keeps its recipe_id; the surface stops naming it).
 export async function readRecipeForBatch(sql, recipeId, householdIds) {
   if (!isUuid(recipeId)) return null;
   const rows = await sql`
     SELECT r.id, r.name, r.kind, r.recipe_type_id, t.label AS type_label, r.link_url,
-           r.keeps_n, r.keeps_unit, r.keeps_storage_kind,
+           r.keeps_n, r.keeps_unit, r.keeps_storage_kind, r.vessel_label, r.vessel_size, r.vessel_unit,
+           r.vessel_count, r.bottle_label, r.bottle_size, r.bottle_unit, r.bottle_cooked, r.made_text,
            COALESCE((SELECT json_agg(json_build_object(
                       'id', i.id, 'ordinal', i.ordinal, 'name', i.name, 'amount_text', i.amount_text,
                       'qty', i.qty, 'qty_unit', i.qty_unit, 'at_the_end', i.at_the_end, 'form', i.form,
@@ -159,7 +160,8 @@ async function readRecipe(sql, recipeId, householdIds) {
   const rows = await sql`
     SELECT r.id, r.user_id, r.name, r.kind, r.recipe_type_id, t.label AS type_label, r.link_url, r.notes,
            r.keeps_n, r.keeps_unit, r.keeps_storage_kind, r.vessel_label, r.vessel_size, r.vessel_unit,
-           r.vessel_count, r.no_salt, r.mash_in_g, r.made_g, r.created_at, r.updated_at
+           r.vessel_count, r.no_salt, r.mash_in_g, r.made_g, r.made_text, r.bottle_label, r.bottle_size,
+           r.bottle_unit, r.bottle_cooked, r.created_at, r.updated_at
     FROM recipe r
     LEFT JOIN recipe_type t ON t.id = r.recipe_type_id
     WHERE r.id = ${recipeId}::uuid
@@ -219,12 +221,15 @@ async function createRecipe(sql, body, userId, householdIds) {
       WITH r AS (
         INSERT INTO recipe (
           user_id, name, kind, recipe_type_id, link_url, notes, keeps_n, keeps_unit, keeps_storage_kind,
-          vessel_label, vessel_size, vessel_unit, vessel_count, no_salt, mash_in_g, made_g, idempotency_key
+          vessel_label, vessel_size, vessel_unit, vessel_count, no_salt, mash_in_g, made_g, made_text,
+          bottle_label, bottle_size, bottle_unit, bottle_cooked, idempotency_key
         ) VALUES (
           ${userId}::text, ${v.name}::text, ${v.kind}::text, ${v.recipe_type_id}::uuid, ${v.link_url}::text,
           ${v.notes}::text, ${v.keeps_n}::int, ${v.keeps_unit}::text, ${v.keeps_storage_kind}::text,
           ${v.vessel_label}::text, ${v.vessel_size}::numeric, ${v.vessel_unit}::text, ${v.vessel_count}::smallint,
-          ${v.no_salt}::boolean, ${v.mash_in_g}::numeric, ${v.made_g}::numeric, ${body.idempotency_key}::uuid
+          ${v.no_salt}::boolean, ${v.mash_in_g}::numeric, ${v.made_g}::numeric, ${v.made_text}::text,
+          ${v.bottle_label}::text, ${v.bottle_size}::numeric, ${v.bottle_unit}::text, ${v.bottle_cooked}::boolean,
+          ${body.idempotency_key}::uuid
         ) RETURNING id
       ), l AS (
         INSERT INTO recipe_ingredient (
@@ -284,7 +289,12 @@ async function patchRecipe(sql, recipeId, body, householdIds) {
         vessel_count       = CASE WHEN ${p.vessel_count}::boolean THEN ${v.vessel_count}::smallint ELSE vessel_count END,
         no_salt            = CASE WHEN ${p.no_salt}::boolean THEN ${v.no_salt}::boolean ELSE no_salt END,
         mash_in_g          = CASE WHEN ${p.mash_in_g}::boolean THEN ${v.mash_in_g}::numeric ELSE mash_in_g END,
-        made_g             = CASE WHEN ${p.made_g}::boolean THEN ${v.made_g}::numeric ELSE made_g END
+        made_g             = CASE WHEN ${p.made_g}::boolean THEN ${v.made_g}::numeric ELSE made_g END,
+        made_text          = CASE WHEN ${p.made_text}::boolean THEN ${v.made_text}::text ELSE made_text END,
+        bottle_label       = CASE WHEN ${p.bottle_label}::boolean THEN ${v.bottle_label}::text ELSE bottle_label END,
+        bottle_size        = CASE WHEN ${p.bottle_size}::boolean THEN ${v.bottle_size}::numeric ELSE bottle_size END,
+        bottle_unit        = CASE WHEN ${p.bottle_size}::boolean THEN ${v.bottle_unit}::text ELSE bottle_unit END,
+        bottle_cooked      = CASE WHEN ${p.bottle_cooked}::boolean THEN ${v.bottle_cooked}::boolean ELSE bottle_cooked END
       WHERE id = ${recipeId}::uuid
         AND user_id = ANY(${householdIds})
         AND deleted_at IS NULL
@@ -347,8 +357,9 @@ async function deleteRecipe(sql, recipeId, householdIds) {
 // name, amount (qty + unit, and the same written as text), form, brand, listed heat, note, order, sitting
 // membership (a line added at a bottling = "at the end") and salt facts (role, salt_pct, salt_base, base_g,
 // salt_method, base_from); and from the live (un-voided) bottlings, Made (the put_up rows' amount in g) and
-// mash_in_g, summed across sittings so ratio scaling can be derived. Method, day gates, scale rules, targets and
-// serve notes come across ONLY as notes: the batch's notes verbatim, its brine note, "Following: <recipe_ref>"
+// mash_in_g, summed across sittings so ratio scaling can be derived; and (Dave 2026-09-30) the final
+// container — the first bottling's first row's container, size of each and "cooked after blending" — as
+// bottle_*. Method, day gates, scale rules, targets and serve notes come across ONLY as notes: the batch's notes verbatim, its brine note, "Following: <recipe_ref>"
 // and its "Next time…" rows. No stage note, no reading, no pH (V4 §3.8). The batch is linked to the new recipe
 // when it follows none yet (it was made this way).
 async function fromBatch(sql, batchId, body, userId, householdIds) {
@@ -381,10 +392,29 @@ async function fromBatch(sql, batchId, body, userId, householdIds) {
         JOIN b ON sl.batch_id = b.id
         WHERE sl.stage_kind = 'noted' AND btrim(COALESCE(sl.note, '')) <> ''
           AND NOT EXISTS (SELECT 1 FROM kitchen_stage_log x WHERE x.voids_id = sl.id)
+      ), jar AS (
+        -- The final container (Dave 2026-09-30): the FIRST row of the first live bottling — its container name,
+        -- the size of EACH (quantity_value is the total, so ÷ package_count) when its unit is one a recipe can
+        -- hold, and "cooked after blending".
+        SELECT f.bottle_label, f.each_size AS bottle_size,
+               CASE WHEN f.each_size IS NOT NULL THEN f.quantity_unit END AS bottle_unit, f.bottle_cooked
+        FROM (
+          SELECT NULLIF(btrim(p.container_label), '') AS bottle_label, p.quantity_unit, p.cooked AS bottle_cooked,
+                 NULLIF(CASE WHEN p.quantity_unit = ANY(${KITCHEN_UNITS}::text[]) AND p.quantity_value > 0
+                                  AND p.package_count > 0
+                             THEN trim_scale(round(p.quantity_value / p.package_count, 2)) END, 0) AS each_size
+          FROM preservation_log p
+          JOIN kitchen_stage_log sl ON sl.id = p.put_up_stage_id
+          JOIN b ON p.batch_id = b.id
+          WHERE p.deleted_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM kitchen_stage_log x WHERE x.voids_id = sl.id)
+          ORDER BY sl.entered_at NULLS LAST, sl.created_at, p.created_at, p.id
+          LIMIT 1
+        ) f
       ), r AS (
         INSERT INTO recipe (
           user_id, name, kind, recipe_type_id, notes, vessel_label, vessel_size, vessel_unit, vessel_count, no_salt,
-          mash_in_g, made_g, idempotency_key
+          mash_in_g, made_g, bottle_label, bottle_size, bottle_unit, bottle_cooked, idempotency_key
         )
         SELECT ${userId}::text, COALESCE(${name}::text, left(btrim(b.label), 120)), b.kind, ${body.recipe_type_id ?? null}::uuid,
                NULLIF(left(concat_ws(E'\n\n',
@@ -393,8 +423,9 @@ async function fromBatch(sql, batchId, body, userId, householdIds) {
                  'Following: ' || NULLIF(btrim(b.recipe_ref), ''),
                  'Next time: ' || nx.next_time), 20000), ''),
                b.vessel_label, b.vessel_size, b.vessel_unit, b.vessel_count, b.no_salt,
-               sit.mash_in_g, sit.made_g, ${body.idempotency_key}::uuid
-        FROM b, sit, nx
+               sit.mash_in_g, sit.made_g, jar.bottle_label, jar.bottle_size, jar.bottle_unit, jar.bottle_cooked,
+               ${body.idempotency_key}::uuid
+        FROM b CROSS JOIN sit CROSS JOIN nx LEFT JOIN jar ON true
         RETURNING id
       ), l AS (
         INSERT INTO recipe_ingredient (
