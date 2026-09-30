@@ -108,6 +108,8 @@ export default function LineAdder({
   // The search: debounced, sequence-guarded (a late answer for an older query never paints).
   useEffect(() => {
     const q = query.trim()
+    // The resolved crop belongs to the text it was resolved for: any edit drops it until the next answer.
+    setTypedCrop(null)
     if (draft.source || draft.role || q.length < MIN_QUERY) { setHits(null); setSearchErr(null); return undefined }
     const seq = ++seqRef.current
     const t = setTimeout(() => {
