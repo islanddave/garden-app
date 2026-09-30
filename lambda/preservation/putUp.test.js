@@ -203,6 +203,22 @@ describe('POST /:id/put-up — what it sends', () => {
     expect(w.slice(0, w.indexOf('), places_in AS'))).not.toContain('ON CONFLICT');
   });
 
+  it('the jars are written 1 µs apart in the rows\' order, and readSitting returns them in that order', async () => {
+    // One statement's DEFAULT now() tied every jar, so readSitting's ORDER BY created_at, id handed them back in
+    // uuid order — and completionStub reads jars[0] as the FIRST row's label hint. (A mock driver cannot see
+    // Postgres's ordering; recipes-basis.int.test.js reads a three-row sitting back by position.)
+    const sql = mockSql([OPEN, META, [], [], OK, ...READ]);
+    await handleKitchenRoute({ sql, ...post(sitting()) });
+    const w = sql.calls[4].norm;
+    const jars = w.slice(w.indexOf('), jars AS ('), w.indexOf('), lines AS ('));
+    expect(jars).toContain('shu_est_basis, cooked, created_at )');
+    expect(jars).toContain("now() + (r.ord - 1)::float8 * interval '1 microsecond' FROM stage st CROSS JOIN unnest(");
+    expect(jars).toContain(') WITH ORDINALITY AS r(id, label,');
+    expect(jars).toContain('shu_est_basis, cooked, ord)');
+    const read = sql.calls.find((c) => c.norm.includes('WHERE p.put_up_stage_id = ? ::uuid'));
+    expect(read.norm).toContain('ORDER BY p.created_at, p.id');
+  });
+
   it('the place is found household-first on the trimmed name, else created under the caller', async () => {
     const sql = mockSql([OPEN, META, [], [], OK, ...READ]);
     await handleKitchenRoute({ sql, ...post(sitting()) });

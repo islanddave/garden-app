@@ -1449,7 +1449,7 @@ async function putUp(sql, batchId, body, userId, householdIds) {
           preserved_at, preserved_at_approx, preserved_at_precision,
           quantity_value, quantity_unit, package_count, remaining_count, remaining_amount, storage_location_id,
           use_by_target, use_by_basis, is_raw, in_oil, texture, ph_reading, ph_read_at,
-          shu_est_low, shu_est_high, shu_est_basis, cooked
+          shu_est_low, shu_est_high, shu_est_basis, cooked, created_at
         )
         SELECT r.id, ${userId}::text, st.batch_id, st.id, r.label, r.container_label, ${body.method}::text,
                ${plan.jar_day}::date, ${plan.approx}::boolean, ${plan.jar_precision}::text,
@@ -1459,7 +1459,11 @@ async function putUp(sql, batchId, body, userId, householdIds) {
                COALESCE(r.place_id, (SELECT pl.id FROM places pl
                                       WHERE pl.kind = r.place_kind AND pl.lkey = lower(r.place_label) LIMIT 1)),
                r.use_by_target, r.use_by_basis, r.is_raw, r.in_oil, r.texture, r.ph_reading, r.ph_read_at,
-               r.shu_est_low, r.shu_est_high, r.shu_est_basis, r.cooked
+               r.shu_est_low, r.shu_est_high, r.shu_est_basis, r.cooked,
+               -- B′: the rows' own order, 1 µs apart. One statement's DEFAULT now() tied every jar, so
+               -- readSitting's ORDER BY created_at, id returned them in uuid order — and the completion
+               -- stub reads jars[0] as the FIRST row's label hint (putItUp.js completionStub).
+               now() + (r.ord - 1)::float8 * interval '1 microsecond'
         FROM stage st
         CROSS JOIN unnest(
           ${c.jar.id}::uuid[], ${c.jar.label}::text[], ${c.jar.container_label}::text[],
@@ -1470,9 +1474,9 @@ async function putUp(sql, batchId, body, userId, householdIds) {
           ${c.jar.ph_reading}::numeric[], ${c.jar.ph_read_at}::timestamptz[],
           ${c.jar.shu_est_low}::int[], ${c.jar.shu_est_high}::int[], ${c.jar.shu_est_basis}::text[],
           ${c.jar.cooked}::boolean[]
-        ) AS r(id, label, container_label, quantity_value, quantity_unit, package_count,
+        ) WITH ORDINALITY AS r(id, label, container_label, quantity_value, quantity_unit, package_count,
                place_id, place_kind, place_label, use_by_target, use_by_basis,
-               is_raw, in_oil, texture, ph_reading, ph_read_at, shu_est_low, shu_est_high, shu_est_basis, cooked)
+               is_raw, in_oil, texture, ph_reading, ph_read_at, shu_est_low, shu_est_high, shu_est_basis, cooked, ord)
         RETURNING id
       ), lines AS (
         INSERT INTO kitchen_batch_input (

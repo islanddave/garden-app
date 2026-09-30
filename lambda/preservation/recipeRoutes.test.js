@@ -694,6 +694,28 @@ describe('the Put it up route reads the batch\'s recipe keeps line, household-sc
     expect(meta.norm).toMatch(/LEFT JOIN recipe rc ON rc\.id = b\.recipe_id AND rc\.user_id = ANY\(\?\) AND rc\.deleted_at IS NULL/);
     expect(meta.norm).toMatch(/rc\.keeps_n, rc\.keeps_unit, rc\.keeps_storage_kind/);
   });
+
+  it('the keeps line meta reads reaches the statement: fridge row recipe, freezer row table, typed row typed — in row order', async () => {
+    // The integration lane's fridge/freezer/typed sitting, end to end through the route: meta's recipe columns
+    // become ctx.recipe, and the jars bind in the rows' order (the jars CTE stamps created_at by that order, so
+    // readSitting returns jars[0] as the first row — putUp.test.js pins the SQL).
+    const OPEN = [{ id: BATCH, closed_at: null, suspended_at: null, started_at: '2026-10-01T16:00:00Z' }];
+    const META = [{ label: 'Mojo', recipe_name: 'Roll for Initiative', keeps_n: 7, keeps_unit: 'day', keeps_storage_kind: 'fridge', not_sure_day: '2026-10-01' }];
+    const sql = mockSql([OPEN, META, [], [], err('stop', null)]);
+    await handleKitchenRoute({ sql, rawPath: `/api/kitchen-batches/${BATCH}/put-up`, method: 'POST', query: {}, userId: DAVE,
+      householdIds: HOUSEHOLD, rawBody: JSON.stringify({ idempotency_key: K1, when: { date: '2026-10-09', precision: 'day' },
+        method: 'hot_sauce', finish: false, rows: [
+          { count: 1, container_label: '8 oz woozy', size_value: 8, size_unit: 'fl oz', place: { kind: 'fridge', label: 'rcpb fridge' } },
+          { count: 1, place: { kind: 'deep_freezer', label: 'rcpb freezer' } },
+          { count: 1, place: { kind: 'fridge', label: 'rcpb fridge' }, discard_by: '2026-10-12' },
+        ] }) }).catch(() => {});
+    const w = sql.calls.find((c) => c.norm.includes('jars AS ('));
+    expect(w).toBeTruthy();
+    expect(w.values).toContainEqual(['recipe', 'table', 'typed']);
+    const dates = w.values.find((v) => Array.isArray(v) && v.length === 3 && v[0] === '2026-10-16');
+    expect(dates).toBeTruthy();
+    expect(dates[2]).toBe('2026-10-12');
+  });
 });
 
 describe('after it is written (V4 §3.4): a Move nulls a recipe date unless the storage kind still matches', () => {
