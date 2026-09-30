@@ -92,13 +92,16 @@ LANDING_ENTRY = {"floor": F_VERSION, "since": F_VERSION, "reason": "1a code over
 
 
 def _floors_copy(tmp_path, *extra, raw=None):
-    """This tree's revert-floors.json with `extra` entries appended (or `raw` text), in tmp_path — never the tree's."""
+    """This tree's revert-floors.json as it stood BEFORE the landing (any entry at F_VERSION removed) with `extra`
+    entries appended (or `raw` text), in tmp_path — never the tree's. Removing the landed entry keeps every mutant
+    case judging the mutant, not the real floor the landing commit added."""
     path = tmp_path / "revert-floors.json"
     if raw is not None:
         path.write_text(raw, encoding="utf-8")
     else:
         with open(psc.revert_floors.FLOORS, encoding="utf-8") as fh:
             data = json.load(fh)
+        data["floors"] = [e for e in data["floors"] if F_VERSION not in (e.get("floor"), e.get("since"))]
         data["floors"] += list(extra)
         path.write_text(json.dumps(data), encoding="utf-8")
     return str(path)
@@ -109,8 +112,16 @@ def _floor(argv_tail, capsys):
     return code, capsys.readouterr().out
 
 
-def test_floor_this_tree_has_no_f_floor_yet(capsys):
+def test_floor_this_tree_carries_the_landing_floor(capsys):
+    """Landed with 4.164.0: the committed floors file itself must pass all four (review-F-prepromote-final B2)."""
     code, out = _floor([], capsys)
+    assert code == 0, out
+    for k in ("file", "governing", "pre-f-refused", "f-allowed"):
+        assert f"PASS [floor:{k}]" in out
+
+
+def test_floor_the_tree_without_the_landing_entry_fails(tmp_path, capsys):
+    code, out = _floor(["--floors-file", _floors_copy(tmp_path)], capsys)
     assert code == 1
     assert "PASS [floor:file]" in out
     assert "FAIL [floor:governing]" in out and "FAIL [floor:pre-f-refused]" in out

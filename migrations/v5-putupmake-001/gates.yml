@@ -251,8 +251,9 @@ sweep:
     manual: true
     note: >
       NOT EXECUTABLE FROM POSTGRES, so it is a runbook step the runner counts as MANUAL, never as a
-      pass. Before 0p: verify-deploy for B's promote run shows the preservation Lambda's CodeSha256 is
-      the promoted build (05-release-train §3 step 11). While release 1a's Lambda is live, a basis on a
+      pass. Before 0p: `python3 scripts/putup-sitting-check.py --f-deployed --only lambdas` must PASS
+      (the deployed preservation, plants and storage-location zips carry the promoted build's files;
+      scripts/verify-deploy.py reads run conclusions only, not CodeSha256). While release 1a's Lambda is live, a basis on a
       row lets 1a's date Edit raise 23514; after 0p, 0r is closed and recovery is forward-fix only.
 
 post:

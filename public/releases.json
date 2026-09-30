@@ -1,5 +1,23 @@
 [
   {
+    "version": "4.164.0",
+    "date": "2026-09-29",
+    "highlights": [
+      "Ferments: list what went in — from a planting (no pick needed), a pick, an earlier put-up (it comes off that jar or bag) or just a name — with grams, brand, fresh, frozen or dried, and a note; what came from your garden is marked.",
+      "Salt: dry, brine or salted then rinsed, as a percent of the veg, the veg and water, or the water, with the grams worked out; more than one salt step for kimchi.",
+      "Jar or crock and its size, roughly how much went in, an estimated heat (est. SHU) for the batch and each bottle, check-ins with Topped up brine, Pushed it back under and Skimmed the top, and every step editable afterwards, including after bottling."
+    ]
+  },
+  {
+    "version": "4.163.0",
+    "date": "2026-09-29",
+    "highlights": [
+      "Put-Up: bottle a batch with Put it up — how many, what size, where each group goes, anything added at the end, pH and a discard-by date with its reason; Undo takes a whole bottling back.",
+      "Jars show their own name and plain date words, move and edit in one save, and a finished batch keeps its history (paused, resumed, reopened).",
+      "The freezer walk now saves the total (3 × 0.83 qt is 2.49 qt), amounts read 2.5 instead of 2.50, and a new jar on a counter, or freezer food kept on a shelf, no longer gets a borrowed discard date."
+    ]
+  },
+  {
     "version": "4.162.0",
     "date": "2026-09-29",
     "highlights": [
