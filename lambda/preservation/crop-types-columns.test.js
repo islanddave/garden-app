@@ -103,7 +103,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation crop_types column cont
     // contract rather than inherit it. Update this number in the same commit that adds one.
     // Release F: +1 — the line search's put-up arm matches a jar by its crop's display name.
     // B′ release 3: +1 — the line search's crop arm (V4 §2.5a corpus), columns unchanged.
-    expect(STATEMENTS).toHaveLength(6);
+    // B′ (release 2): +2 — GET /api/pantry's put-up and pantry-item reads name the crop for group=kind.
+    expect(STATEMENTS).toHaveLength(8);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['ct']);
   });

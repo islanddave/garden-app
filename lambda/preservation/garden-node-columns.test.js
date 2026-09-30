@@ -114,7 +114,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation garden_node column con
     // B′ release 3: +2 — the line search's variety arm (a household planting grows it) and the planting
     // read's ownership gate. The line search's planting arm now also reads status / archived_at (ended
     // plantings rank after live ones) and the stage dates + created_at (ties by most recent), V4 §2.5a.
-    expect(STATEMENTS).toHaveLength(13);
+    // B′ (release 2): +2 — GET /api/pantry's put-up and pantry-item reads (the planting a row came from).
+    expect(STATEMENTS).toHaveLength(15);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['gn']);
   });

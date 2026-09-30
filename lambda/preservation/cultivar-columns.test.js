@@ -108,7 +108,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation cultivar column contra
     // Release F: +4 — readLines (a line's variety rating, through its planting or its drawn jar), the planting loader, the line search and the household pepper names. scoville_min/max join the contract: the heat estimate's variety rating.
     // B′ release 3: +1 — the line search's variety arm (V4 §2.5a), which reads created_by: a variety is
     // offered when a household member made it or a household planting grows it.
-    expect(STATEMENTS).toHaveLength(11);
+    // B′ (release 2): +1 — GET /api/pantry's put-up read names a jar by its variety.
+    expect(STATEMENTS).toHaveLength(12);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['cv']);
   });

@@ -70,6 +70,10 @@ export const SURFACES = Object.freeze([
   //     taken-out line comes back through restore, and it must come back on the winner. The FK is SET
   //     NULL, so leaving it would strand the line on a soft-deleted planting.
   { table: 'kitchen_batch_input',     column: 'plant_id',       action: 'repoint' },
+  //   pantry_item.plant_id — Put-Up release 2 (B′, v5-pantry-001): a "Fresh, as picked" Pantry item keeps
+  //     its planting (V4 §4.3). FK SET NULL, so leaving it would strand the item on a soft-deleted
+  //     planting; NO deleted_at filter, the kbi reasoning (a removed item is still a record).
+  { table: 'pantry_item',             column: 'plant_id',       action: 'repoint' },
   //   preservation_source.plant_id — one ingredient of a multi-source put-up; the sibling of
   //     preservation_log.plant_id, repointed for the same reason.
   { table: 'preservation_source',     column: 'plant_id',       action: 'repoint' },
@@ -489,6 +493,8 @@ export async function mergeCore(sql, {
     await sql`SELECT id, plant_id AS old_value FROM harvest_watch_dismissal WHERE plant_id = ANY(${loserIds})`)
   push('kitchen_batch_input', 'plant_id',
     await sql`SELECT id, plant_id AS old_value FROM kitchen_batch_input WHERE plant_id = ANY(${loserIds})`)
+  push('pantry_item', 'plant_id',
+    await sql`SELECT id, plant_id AS old_value FROM pantry_item WHERE plant_id = ANY(${loserIds})`)
   push('preservation_source', 'plant_id',
     await sql`SELECT id, plant_id AS old_value FROM preservation_source WHERE plant_id = ANY(${loserIds})`)
   push('inventory_items', 'source_plant_id',
@@ -605,6 +611,8 @@ export async function mergeCore(sql, {
     sql`UPDATE harvest_watch_dismissal SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     // Put-Up train §6a. kitchen_batch_input is audited from release F; the GUC is element 0 above.
     sql`UPDATE kitchen_batch_input SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
+    // Put-Up release 2 (B′). pantry_item is unaudited (V4 §5.5); it rides the same transaction.
+    sql`UPDATE pantry_item SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE preservation_source SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,
     sql`UPDATE inventory_items SET source_plant_id = ${winnerId} WHERE source_plant_id = ANY(${loserIds})`,
     sql`UPDATE ready_impression SET plant_id = ${winnerId} WHERE plant_id = ANY(${loserIds})`,

@@ -503,7 +503,9 @@ describe('POST /api/pantry/uses', () => {
     [{ idempotency_key: K1, preservation_log_id: JAR }, /one of them/],
     [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, all_remaining: true }, /one of them/],
     [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 0 }, /1 or more/],
-    [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'discarded' }, /eaten/],
+    // B′ amends F's "only eaten": discarded is admitted, but only as Went bad = all that is left (V4 §2.5);
+    // 'batch' stays the line routes' own.
+    [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'discarded' }, /Went bad/],
     [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'batch' }, /eaten/],
   ])('%o → 400', async (body, want) => {
     expect(validateUse(body)).toMatch(want);
@@ -521,7 +523,8 @@ describe('POST /api/pantry/uses', () => {
     expect(s).toContain('delta_at = now()');
     // F2: a weighed jar reaching 0 left also reads 0 g
     expect(s).toContain('remaining_amount = CASE WHEN p.package_count = 1 AND p.quantity_unit = ANY( ? ::text[]) AND COALESCE(p.remaining_count, p.package_count) - w.n = 0 THEN 0');
-    expect(s).toContain('INSERT INTO pantry_use (created_by, preservation_log_id, count_used, idempotency_key) SELECT ? ::text, jar.id, jar.used, ? ::uuid FROM jar');
+    // B′: the use row carries the tap's fate (NULL = eaten) — the only change to F's statement.
+    expect(s).toContain('INSERT INTO pantry_use (created_by, preservation_log_id, count_used, fate, idempotency_key) SELECT ? ::text, jar.id, jar.used, ? ::text, ? ::uuid FROM jar');
     expect(sql.batches[0][1].values).toContainEqual(HOUSEHOLD);
   });
 

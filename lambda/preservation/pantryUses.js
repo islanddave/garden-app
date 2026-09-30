@@ -3,8 +3,9 @@
 // WHY IT SHIPS IN F. A draw from a jar stamps delta_at, and from F the legacy PUT refuses a
 // remaining_count on a jar whose delta_at is set (the stale-bundle refusal). The F client therefore
 // stops sending remaining_count in its PUT and posts here instead — otherwise every drawn jar would 409
-// forever. Only `fate` NULL (eaten) is accepted; 'batch' is written only by the line routes, and
-// discarded / given_away wait for B′'s UI. There is no undo route in F (nothing in F's UI calls one).
+// forever. F accepted only `fate` NULL (eaten); B′ adds 'discarded' (Went bad = all_remaining) and
+// 'given_away' (Gave it away = a count, or all of it). 'batch' is written only by the line routes. The undo
+// route is B′'s, in pantryRoutes.js (POST /api/pantry/uses/:id/undo).
 //
 // ONE STATEMENT. `pre` reads and LOCKS the jar (household-scoped, live), `want` fixes how many this tap
 // uses (all_remaining = what is left right now), the UPDATE moves the count only if that many are left
@@ -23,6 +24,10 @@ const bad = (error) => ({ status: 400, body: { error } });
 const isUuid = (v) => typeof v === 'string' && KITCHEN_UUID_RE.test(v);
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
+// Release B′ widens the fates this route writes (V4 §2.5 "Went bad" / "Gave it away"). NULL = eaten.
+// F's chk_pantry_use_fate already admits both; v5-pantry-001 gates.yml pins that it still does.
+export const USE_FATES = ['discarded', 'given_away'];
+
 export function isPantryUsesPath(rawPath) {
   return rawPath === '/api/pantry/uses' || rawPath === '/api/pantry/uses/';
 }
@@ -34,10 +39,15 @@ export function validateUse(body) {
   if (unknown.length) return `unknown field(s): ${unknown.join(', ')}`;
   if (!isUuid(body.idempotency_key ?? null)) return 'idempotency_key must be a uuid';
   if (!isUuid(body.preservation_log_id ?? null)) return 'preservation_log_id must be a uuid';
-  if (has(body, 'fate') && body.fate != null) return 'only "eaten" (no fate) is recorded here for now';
+  // B′ (V4 §2.5): the row sheet's two fates. 'batch' stays the line routes' alone.
+  if (has(body, 'fate') && body.fate != null && !USE_FATES.includes(body.fate)) {
+    return `fate must be one of: ${USE_FATES.join(', ')} (or absent, for eaten)`;
+  }
   const all = body.all_remaining === true;
   if (has(body, 'all_remaining') && typeof body.all_remaining !== 'boolean') return 'all_remaining must be true or false';
   if (all === (body.count_used != null)) return 'send count_used or all_remaining: true, one of them';
+  // "Went bad" is a use of what is LEFT (V4 §2.5), never of a count.
+  if (body.fate === 'discarded' && !all) return 'Went bad is all that is left — send all_remaining: true';
   if (!all && (!Number.isInteger(Number(body.count_used)) || Number(body.count_used) < 1)) {
     return 'count_used must be a whole number, 1 or more';
   }
@@ -86,8 +96,8 @@ export async function handlePantryUses({ sql, rawPath, method, rawBody, userId, 
           AND COALESCE(p.remaining_count, p.package_count) >= w.n
         RETURNING p.id, p.remaining_count, p.consumed_at, p.remaining_amount, w.n AS used
       ), use AS (
-        INSERT INTO pantry_use (created_by, preservation_log_id, count_used, idempotency_key)
-        SELECT ${userId}::text, jar.id, jar.used, ${body.idempotency_key}::uuid FROM jar
+        INSERT INTO pantry_use (created_by, preservation_log_id, count_used, fate, idempotency_key)
+        SELECT ${userId}::text, jar.id, jar.used, ${body.fate ?? null}::text, ${body.idempotency_key}::uuid FROM jar
         RETURNING id, created_by, preservation_log_id, count_used, fate, kitchen_batch_input_id,
                   reverses_use_id, idempotency_key, used_at, note, created_at
       )

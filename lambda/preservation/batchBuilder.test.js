@@ -283,7 +283,9 @@ describe('POST /api/kitchen-batches/from-jars', () => {
     const sql = mockSql([[], [jarRow()], [{ id: ITEM, name: 'Onions', crop_type_slug: 'onion', plant_id: null }], [], [{ created: 1 }], ...DETAIL]);
     expect((await handleKitchenRoute({ sql, ...route(FROM, 'POST', body({ inputs: [line] })) })).status).toBe(201);
     const load = sql.calls[2];
-    expect(load.norm).toContain('FROM pantry_item pit WHERE pit.id = ANY( ? ::uuid[]) AND pit.user_id = ANY( ? ) AND pit.deleted_at IS NULL');
+    // The loader is pantryItems.js's (the pantry-server lane): it returns removed items too, and
+    // prepareLines refuses one with 409 item_removed.
+    expect(load.norm).toContain('FROM pantry_item i WHERE i.id = ANY( ? ::uuid[]) AND i.user_id = ANY( ? )');
     expect(bound(load, HOUSEHOLD)).toBe(true);
     const w = sql.batches[0][1];
     expect(w.values).toContainEqual([ITEM]);
@@ -306,7 +308,7 @@ describe('POST /:id/inputs — a pantry line', () => {
     const sql = mockSql([[{ id: BATCH, closed_at: null }], [], []]);
     const res = await handleKitchenRoute({ sql, ...route(P, 'POST', { inputs: [{ input_kind: 'pantry', pantry_item_id: ITEM, idempotency_key: K2 }] }) });
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/does not match something in your pantry/);
+    expect(res.body.error).toMatch(/does not match one you can use/);
     expect(sql.batches).toHaveLength(0);
   });
 
@@ -320,7 +322,7 @@ describe('POST /:id/inputs — a pantry line', () => {
     expect(w.values).toContainEqual([ITEM]);
     // readLines reads it back, and a "Fresh, as picked" item counts as from the garden.
     const read = sql.calls[sql.calls.length - 1].norm;
-    expect(read).toContain("OR (i.input_kind = 'pantry' AND pit.plant_id IS NOT NULL)");
+    expect(read).toContain("OR (i.input_kind = 'pantry' AND COALESCE(i.plant_id, pit.plant_id) IS NOT NULL)");
     expect(read).toContain('LEFT JOIN pantry_item pit ON pit.id = i.pantry_item_id');
   });
 

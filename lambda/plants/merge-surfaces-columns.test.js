@@ -55,6 +55,8 @@ const AUDIT_COLUMNS = {
   preservation_source: ['id', 'plant_id'],
   ready_impression: ['id', 'plant_id', 'user_id', 'shown_on', 'region'],
   watch_exclusion: ['id', 'plant_id', 'user_id', 'evaluated_on', 'reason'],
+  // Put-Up release 2 (B′): v5-pantry-001/0a creates pantry_item (id, plant_id among its columns).
+  pantry_item: ['id', 'plant_id'],
 };
 
 const TABLES = Object.keys(AUDIT_COLUMNS);
@@ -112,6 +114,7 @@ const EXPECTED = {
   preservation_source: { statements: 1, aliases: [] },
   ready_impression: { statements: 2, aliases: ['l', 'o', 'w'] },
   watch_exclusion: { statements: 2, aliases: ['l', 'o', 'w'] },
+  pantry_item: { statements: 1, aliases: [] },
 };
 
 describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants merge-surface column contract', () => {
@@ -165,6 +168,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/plants merge-surface column contrac
       preservation_source: ['created_by', 'source_plant_id'],
       ready_impression: ['evaluated_on', 'reason', 'deleted_at'],
       watch_exclusion: ['shown_on', 'region', 'deleted_at'],
+      // pantry_item's owner column is user_id (not created_by); the merge names only id and plant_id.
+      pantry_item: ['created_by', 'source_plant_id'],
     };
     expect(Object.keys(NOT_ON_TABLE)).toEqual(TABLES);
     for (const table of TABLES) {

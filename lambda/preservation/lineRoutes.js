@@ -29,6 +29,8 @@ import { MASS_G, KITCHEN_UUID_RE, normalizeText } from './kitchenBatch.js';
 import {
   linesError, inputsForm, drawPlan, jarIsWeighed, linePatchError, LINE_PATCH_KEYS, lineColumns,
 } from './kitchenLines.js';
+// B′ (release 2): a line may name a pantry item; its household loader lives with the item rules.
+import { loadPantryItems } from './pantryItems.js';
 
 export { LINE_COLUMNS, lineColumns } from './kitchenLines.js';
 
@@ -53,7 +55,7 @@ export async function readLines(sql, batchId, { ids = null, includeDeleted = fal
            i.brand, i.form, i.shu_rating_low, i.shu_rating_high, i.salt_method, i.base_from, i.edited_at,
            i.pantry_item_id,
            (i.input_kind IN ('garden', 'harvest')
-             OR (i.input_kind = 'pantry' AND pit.plant_id IS NOT NULL)
+             OR (i.input_kind = 'pantry' AND COALESCE(i.plant_id, pit.plant_id) IS NOT NULL)
              OR (i.input_kind = 'put_up'
                  AND (jar.source_kind = 'own_garden'
                       OR EXISTS (SELECT 1 FROM preservation_source ps
@@ -145,19 +147,6 @@ export async function loadJars(sql, ids, householdIds) {
   `;
 }
 
-// B′ release 3: a bought item from the Pantry (V4 §5.3 — pantry_item_id is body-settable, so it has a
-// household loader). A removed item is refused; a used-up one may still go in (the last of it).
-export async function loadPantryItems(sql, ids, householdIds) {
-  if (!ids.length) return [];
-  return sql`
-    SELECT pit.id, pit.name, pit.crop_type_slug, pit.plant_id
-    FROM pantry_item pit
-    WHERE pit.id = ANY(${ids}::uuid[])
-      AND pit.user_id = ANY(${householdIds})
-      AND pit.deleted_at IS NULL
-  `;
-}
-
 // Live put_up rows of THIS batch (not voided), with their live jars.
 async function loadSittings(sql, batchId, ids) {
   if (!ids.length) return [];
@@ -181,16 +170,16 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
   const plantings = await loadPlantings(sql, uuids(bodies.filter((l) => l.input_kind === 'garden').map((l) => l.plant_id)), householdIds);
   const picks = await loadPicks(sql, uuids(bodies.map((l) => l.harvest_log_id)), householdIds);
   const jars = await loadJars(sql, uuids(bodies.map((l) => l.preservation_log_id)), householdIds);
-  const pantryIds = uuids(bodies.map((l) => l.pantry_item_id));
-  const pantryItems = pantryIds.length ? await loadPantryItems(sql, pantryIds, householdIds) : [];
   const sittingIds = uuids(bodies.map((l) => l.put_up_stage_id));
   const sittings = opts.sittingFixed ? [] : await loadSittings(sql, batchId, sittingIds);
+  const pantryIds = uuids(bodies.filter((l) => l.input_kind === 'pantry').map((l) => l.pantry_item_id));
+  const items = pantryIds.length ? await loadPantryItems(sql, pantryIds, householdIds) : [];
   const byId = (rows) => new Map(rows.map((r) => [r.id, r]));
   const P = byId(plantings);
   const H = byId(picks);
   const J = byId(jars);
   const S = byId(sittings);
-  const I = byId(pantryItems);
+  const I = byId(items);
   const rows = [];
   for (const [i, l] of bodies.entries()) {
     const where = `line ${i + 1}`;
@@ -208,6 +197,19 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
       plantId = h.plant_id ?? null;
       label = label ?? h.display_name ?? 'Pick';
     }
+    // B′: a pantry item — household-loaded; moves no stock (a bought item has no counts). A "Fresh, as
+    // picked" item's planting and crop come with it, server-set, so the planting page finds the batch.
+    let pantryItemId = null;
+    let itemCrop = null;
+    if (l.input_kind === 'pantry' && l.pantry_item_id != null) {
+      const it = I.get(l.pantry_item_id);
+      if (!it) return { refusal: bad(`${where}: that pantry item does not match one you can use`) };
+      if (it.deleted_at != null) return { refusal: refuse(409, 'item_removed', 'That was removed from the Pantry.') };
+      pantryItemId = it.id;
+      plantId = it.plant_id ?? null;
+      itemCrop = it.crop_type_slug ?? null;
+      label = label ?? it.name;
+    }
     let draw = { count: null, weighed: false };
     if (l.input_kind === 'put_up') {
       const j = J.get(l.preservation_log_id);
@@ -216,13 +218,6 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
       if (plan.error) return { refusal: plan.status === 400 ? bad(`${where}: ${plan.error}`) : refuse(plan.status, plan.code, plan.error) };
       draw = plan;
       label = label ?? j.label ?? j.crop_type_slug ?? 'Put-up';
-    }
-    let pantryCrop = null;
-    if (l.input_kind === 'pantry') {
-      const it = I.get(l.pantry_item_id);
-      if (!it) return { refusal: bad(`${where}: that item does not match something in your pantry`) };
-      label = label ?? it.name;
-      pantryCrop = it.crop_type_slug ?? null;
     }
     if (!opts.sittingFixed && l.put_up_stage_id != null) {
       const s = S.get(l.put_up_stage_id);
@@ -237,7 +232,7 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
       harvest_log_id: l.harvest_log_id ?? null,
       plant_id: plantId,
       preservation_log_id: l.preservation_log_id ?? null,
-      crop_type_slug: normalizeText(l.crop_type_slug) ?? P.get(l.plant_id)?.crop_type_slug ?? pantryCrop ?? null,
+      crop_type_slug: normalizeText(l.crop_type_slug) ?? P.get(l.plant_id)?.crop_type_slug ?? itemCrop ?? null,
       label,
       source_label: normalizeText(l.source_label),
       qty: l.qty == null ? null : String(l.qty),
@@ -259,7 +254,7 @@ export async function prepareLines(sql, batchId, bodies, householdIds, opts = {}
       idempotency_key: l.idempotency_key ?? null,
       draw_count: draw.count,
       draw_weighed: draw.weighed === true,
-      pantry_item_id: l.input_kind === 'pantry' ? l.pantry_item_id : null,
+      pantry_item_id: pantryItemId,
     });
   }
   return { rows };
@@ -298,7 +293,7 @@ export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
   const inputs = body.inputs;
   const form = inputsForm(inputs);
   if (form === 'mixed') return bad('send every line with an idempotency_key, or none of them');
-  const verr = linesError(inputs, { keyed: true });
+  const verr = linesError(inputs, { keyed: true, pantry: true });
   if (verr) return bad(verr);
   // A REPLAY is decided before anything is checked against the jars: a retried draw that took the
   // last jar would otherwise meet jar_used_up instead of its own success.
@@ -334,7 +329,8 @@ export async function addKeyedLines(sql, batchId, body, userId, householdIds) {
           ${c.brand}::text[], ${c.note}::text[], ${c.shu_rating_low}::int[], ${c.shu_rating_high}::int[],
           ${c.role}::text[], ${c.salt_pct}::numeric[], ${c.salt_base}::text[], ${c.base_g}::numeric[],
           ${c.salt_method}::text[], ${c.base_from}::text[], ${c.put_up_stage_id}::uuid[],
-          ${c.output_id}::uuid[], ${c.ordinal}::int[], ${c.idempotency_key}::uuid[], ${c.pantry_item_id}::uuid[]
+          ${c.output_id}::uuid[], ${c.ordinal}::int[], ${c.idempotency_key}::uuid[],
+          ${c.pantry_item_id}::uuid[]
         ) WITH ORDINALITY AS u(id, input_kind, harvest_log_id, plant_id, preservation_log_id, crop_type_slug,
                                label, source_label, qty, qty_unit, form, brand, note, shu_rating_low,
                                shu_rating_high, role, salt_pct, salt_base, base_g, salt_method, base_from,

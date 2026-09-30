@@ -39,8 +39,12 @@ const PINNED = {
 const decomment = (s) => s.split('\n')
   .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1').replace(/(^|\s)--(\s.*)?$/, '$1'))
   .join('\n');
+// Scoped to release 3's own modules: the pantry-server lane's pantryItems.js / pantryRoutes.js read
+// pantry_item under their own contract (pantry-columns.test.js), and its `i` alias is shared with
+// kitchen_batch_input elsewhere, so a directory-wide scan would credit those reads here.
+const OWN = ['batchBuilder.js', 'batchBuilderRoutes.js', 'lineRoutes.js', 'lineSearch.js'];
 const SQL = readdirSync(__dirname)
-  .filter((f) => f.endsWith('.js') && !/\.(test|spec)\.js$/.test(f))
+  .filter((f) => OWN.includes(f))
   .map((f) => decomment(readFileSync(resolve(__dirname, f), 'utf8')))
   .flatMap((src) => [...src.matchAll(/sql`([\s\S]*?)`/g)].map((m) => m[1]))
   .join('\n');
