@@ -66,7 +66,7 @@ describe('the Pantry segment (V4 §2.5, §6.1)', () => {
   it('is named Pantry, lands a bare open, and reads GET /api/pantry grouped By place', async () => {
     renderPantry(['/put-up'])
     const seg = screen.getByRole('radiogroup', { name: 'Put-Up view' })
-    expect(within(seg).getAllByRole('radio').map(r => r.textContent)).toEqual(['Going now', 'Log a put-up', 'Pantry'])
+    expect(within(seg).getAllByRole('radio').map(r => r.textContent)).toEqual(['Going now', 'Log a put-up', 'Pantry', 'Recipes'])
     expect(within(seg).getByRole('radio', { name: 'Pantry' }).getAttribute('aria-checked')).toBe('true')
     await screen.findByRole('heading', { name: 'Kitchen fridge' })
     expect(fake.calls('GET').some(c => c.path === '/api/pantry?group=place')).toBe(true)
