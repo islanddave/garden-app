@@ -96,6 +96,9 @@ const PREFIX_TO_LAMBDA = {
   // Put-Up release F (06 §1.3 item 2) — a THIRD prefix on the preservation Lambda, for the use route
   // (POST /api/pantry/uses, lambda/preservation/pantryUses.js), for the same reason as the one above.
   '/api/pantry': 'preservation',
+  // Put-Up release 4 — a FOURTH prefix on the preservation Lambda: the recipe library
+  // (lambda/preservation/recipeRules.js parseRecipeRoute; recipeRoutes.js), for the same reason.
+  '/api/recipes': 'preservation',
   '/api/harvests': 'harvests',
   '/api/share/facebook': 'facebook-share',
   // Same Lambda, same Function URL — the handler routes on rawPath (V4-IGSHARE-001).

@@ -361,14 +361,23 @@ export function validateBatchCreate(body) {
   const rejected = KITCHEN_BATCH_SERVER_OWNED_COLUMNS.filter((c) => has(body, c));
   if (rejected.length) return `these fields are set by the server, not the client: ${rejected.join(', ')}`;
   // Put-Up release 1b (V4 API table, row "POST /api/kitchen-batches"): the key lives on the batch row
-  // (uq_kitchen_batch_idempotency_key), and a recipe cannot be named before recipes exist (release 4).
-  if (body.recipe_id != null) return 'recipes arrive in a later release — send no recipe_id';
+  // (uq_kitchen_batch_idempotency_key). Release 4 lifts 1b's recipe_id refusal: a batch may name the recipe
+  // it follows (the route loads it household-scoped) and F's free-text recipe_ref rides the create too.
   return kindError(body, { requirePair: false })
+    ?? uuidFieldError(body, 'recipe_id')
+    ?? recipeRefError(body)
     ?? startPairingError(body, { requirePair: false })
     ?? anchorError(body)
     ?? expectedDaysError(body, { requirePair: false })
     ?? uuidFieldError(body, 'cover_photo_id')
     ?? uuidFieldError(body, 'idempotency_key');
+}
+
+function recipeRefError(body) {
+  if (body.recipe_ref == null) return null;
+  const t = normalizeText(body.recipe_ref);
+  if (t == null) return 'the recipe reference cannot be blank';
+  return t.length > 500 ? 'the recipe reference can be at most 500 characters' : null;
 }
 
 function uuidFieldError(body, field) {

@@ -1,0 +1,36 @@
+[
+  {
+    "ordinal": 1,
+    "name": "Roll for Initiative",
+    "kind": "other",
+    "type": "Hot sauce",
+    "link_url": null,
+    "notes": "Mojo Verde · Canary Islands\n\n**Steps**\n1. Blend the garlic, salt, cumin and vinegar. Let it stand 30 min.\n2. Add the peppers and half the herbs.\n\n**Finish**\n- Fridge 7 days",
+    "keeps": { "n": 7, "unit": "day", "storage_kind": "fridge" },
+    "vessel": null,
+    "bottle": "one 8 oz woozy bottle",
+    "keeps_source_quote": "Fridge 7 days",
+    "flags": [],
+    "lines": [
+      { "ordinal": 1, "name": "jalapeño", "amount_text": "170 g fresh jalapeño (garden)", "qty": 170, "qty_unit": "g", "form": "fresh", "brand": null, "at_the_end": false, "role": null, "note": "(garden)", "shu_listed": null },
+      { "ordinal": 2, "name": "salt", "amount_text": "5 g salt", "qty": 5, "qty_unit": "g", "form": null, "brand": null, "at_the_end": false, "role": "salt", "note": null, "shu_listed": null },
+      { "ordinal": 3, "name": "cumin", "amount_text": "pinch of cumin", "qty": null, "qty_unit": null, "form": null, "brand": null, "at_the_end": false, "role": null, "note": null, "shu_listed": null }
+    ]
+  },
+  {
+    "ordinal": 2,
+    "name": "Petri Dish Pioneer",
+    "kind": "ferment",
+    "type": "Wing glaze",
+    "link_url": "https://example.com/petri-dish",
+    "notes": "Ferment 12 days in the jar, then blend.\n\n**Finish**\n- Fridge 2 months",
+    "keeps": { "n": 2, "unit": "month", "storage_kind": "fridge" },
+    "vessel": "16 oz jar",
+    "bottle": "4 oz woozy bottles",
+    "lines": [
+      { "ordinal": 1, "name": "gochugaru", "amount_text": "10 g gochugaru", "qty": 10, "qty_unit": "g", "form": "dried", "brand": "Taekyung", "at_the_end": false, "role": null, "note": null, "shu_listed": "4,000–8,000" },
+      { "ordinal": 2, "name": "water", "amount_text": "250 g water", "qty": 250, "qty_unit": "g", "form": null, "brand": null, "at_the_end": false, "role": "water", "note": null, "shu_listed": null },
+      { "ordinal": 3, "name": "onion", "amount_text": "20 g onion", "qty": 20, "qty_unit": "g", "form": "fresh", "brand": null, "at_the_end": true, "role": null, "note": null, "shu_listed": null }
+    ]
+  }
+]

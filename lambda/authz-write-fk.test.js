@@ -482,7 +482,10 @@ const NOT_IN_SITES = [
   //     of the target row `WHERE t.id = <body> AND t.batch_id = <the route's owned batch> AND t.stage_kind
   //     IN (tended, moved, noted)`, so a foreign or cross-batch id writes nothing; the composite FK
   //     (batch_id, voids_id) is the backstop. Asserted by executing it in putUp.test.js.
-  //   recipe_id — REFUSED, never written: validateBatchCreate 400s a non-null recipe_id until release 4.
+  //   recipe_id — Put-Up release 4: BODY-SETTABLE on POST /api/kitchen-batches and GATED by
+  //     recipeRoutes.js loadOwnedRecipe (`id = <body> AND user_id = ANY(householdIds) AND deleted_at IS
+  //     NULL`, a 400 otherwise) before the INSERT; "Save as recipe" writes it only as the id its own
+  //     statement just inserted. Asserted by execution in lambda/preservation/recipeRoutes.test.js.
   // Release F amends two of those: the keyed line POST (lineRoutes.js) DOES take put_up_stage_id and
   // output_id from the body — a final-step addition to an existing bottling — and gates both in
   // prepareLines through loadSittings, whose predicate is `batch_id = <the route's owned batch> AND
@@ -497,6 +500,11 @@ const NOT_IN_SITES = [
   //     uq_pantry_use_reverses_use_id and pantry_use_reverses_same_jar_fkey are the backstop.
   'preservation::put_up_stage_id', 'preservation::output_id', 'preservation::voids_id',
   'preservation::recipe_id', 'preservation::kitchen_batch_input_id', 'preservation::reverses_use_id',
+  // recipe_type_id — Put-Up release 4 (recipeRoutes.js), BODY-SETTABLE on POST / PATCH /api/recipes and
+  // POST /api/recipes/from-batch/:batchId, and GATED on all three by loadOwnedRecipeType (a live built-in
+  // with user_id NULL, or a live type whose user_id = ANY(householdIds); a 400 otherwise) before the
+  // write. Asserted by execution (STRANGER's type → 400) in lambda/preservation/recipeRoutes.test.js.
+  'preservation::recipe_type_id',
   // preservation_log_id — Release F amends this: a DRAW line (lineRoutes.js prepareLines, and a
   // put-up's added lines) takes it from the body and gates it through loadJars, `id = ANY(<body ids>)
   // AND user_id = ANY(householdIds)` — a foreign id is a 400, never written; pantry_use's comes from

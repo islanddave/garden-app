@@ -40,6 +40,8 @@ import { estimateShu, isStale } from './shuEstimate.js';
 // B′ release 3 — How it was made → and the planting read (batchBuilderRoutes.js).
 import { fromJars, plantingBatches } from './batchBuilderRoutes.js';
 import { closeWhenOf } from './batchBuilder.js';
+// Put-Up release 4 — a batch names the recipe it follows (household-loaded), and reads it back.
+import { loadOwnedRecipe, readRecipeForBatch } from './recipeRoutes.js';
 
 const notFound = { status: 404, body: { error: 'Not found' } };
 const notAllowed = { status: 405, body: { error: 'Method not allowed' } };
@@ -340,6 +342,9 @@ async function getBatch(sql, batchId, householdIds) {
   // lines included, in the lines' own order. A reward surface — ambient, never a count or a sum.
   const garden_names = [...new Set(inputs.filter((l) => l.from_garden && l.label).map((l) => l.label))];
   const out = { ...row, garden_names, inputs, stages, outputs };
+  // Release 4: the recipe it follows — name, keeps line and lines as reference text (never its notes, which
+  // carry his target pH and render only on recipe detail). The key is present only when the batch names one.
+  if (row.recipe_id) out.recipe = await readRecipeForBatch(sql, row.recipe_id, householdIds);
   // A stored COMPUTED estimate is never silently recomputed (06 §2.6.4): it is flagged when today's
   // recompute differs. 'typed' is never flagged. The key is present only when true.
   if (row.shu_est_basis === 'computed') {
@@ -472,6 +477,10 @@ async function createBatch(sql, body, userId, householdIds) {
   }
   const anchorErr = await gateStartAnchor(sql, body, householdIds);
   if (anchorErr) return bad(anchorErr);
+  // Release 4: "Following a recipe?" — a recipe_id must be a live recipe of the household (V4 §5.3).
+  if (body.recipe_id != null && !(await loadOwnedRecipe(sql, body.recipe_id, householdIds))) {
+    return bad('recipe_id does not match a recipe you can use');
+  }
   const kind = normalizeText(body.kind);
   // Put-Up release 1b — the started row MIRRORS the batch's start (V4 Appendix A): with a precision the
   // row carries the same date and word, and "Not sure" ('unknown') stores NO date rather than stamping
@@ -486,7 +495,7 @@ async function createBatch(sql, body, userId, householdIds) {
         INSERT INTO kitchen_batch (
           user_id, label, kind, kind_other, started_at, start_precision,
           start_anchor_kind, start_anchor_id, expected_days_min, expected_days_max,
-          brine_note, cover_photo_id, notes, idempotency_key
+          brine_note, cover_photo_id, notes, idempotency_key, recipe_id, recipe_ref
         ) VALUES (
           ${userId}::text, ${normalizeText(body.label)}::text, ${kind}::text,
           ${kind === 'other' ? normalizeText(body.kind_other) : null}::text,
@@ -494,7 +503,8 @@ async function createBatch(sql, body, userId, householdIds) {
           ${normalizeText(body.start_anchor_kind)}::text, ${body.start_anchor_id ?? null}::uuid,
           ${body.expected_days_min ?? null}::integer, ${body.expected_days_max ?? null}::integer,
           ${normalizeText(body.brine_note)}::text, ${body.cover_photo_id ?? null}::uuid,
-          ${normalizeText(body.notes)}::text, ${key}::uuid
+          ${normalizeText(body.notes)}::text, ${key}::uuid,
+          ${body.recipe_id ?? null}::uuid, ${normalizeText(body.recipe_ref)}::text
         ) RETURNING id
       ), s AS (
         INSERT INTO kitchen_stage_log (batch_id, stage_kind, entered_at, entered_precision, photo_id, created_by)
@@ -1348,13 +1358,15 @@ async function putUp(sql, batchId, body, userId, householdIds) {
   // "Not sure" (V4 "Put it up"): the batch's latest dated event, never before its start. With no dated
   // event at all a coarse chip is required instead.
   const meta = await sql`
-    SELECT b.label,
+    SELECT b.label, rc.name AS recipe_name, rc.keeps_n, rc.keeps_unit, rc.keeps_storage_kind,
            to_char((GREATEST(
              (SELECT max(sl.entered_at) FROM kitchen_stage_log sl
                WHERE sl.batch_id = b.id AND sl.entered_at IS NOT NULL AND sl.stage_kind <> 'void'
                  AND NOT EXISTS (SELECT 1 FROM kitchen_stage_log v WHERE v.voids_id = sl.id)),
              b.started_at) AT TIME ZONE ${ET_TZ}::text)::date, 'YYYY-MM-DD') AS not_sure_day
     FROM v_kitchen_batch_current b
+    -- Release 4: the batch's recipe keeps line (V4 §3.1's second rung), the household's and live only.
+    LEFT JOIN recipe rc ON rc.id = b.recipe_id AND rc.user_id = ANY(${householdIds}) AND rc.deleted_at IS NULL
     WHERE b.id = ${batchId}::uuid AND b.user_id = ANY(${householdIds}) AND b.deleted_at IS NULL
   `;
   if (!meta.length) return notFound;
@@ -1372,6 +1384,10 @@ async function putUp(sql, batchId, body, userId, householdIds) {
   const plan = planPutUp(body, {
     batchLabel: meta[0].label, notSureDay: meta[0].not_sure_day, placeKinds, newId: randomUUID,
     prepared: prep.rows,
+    recipe: meta[0].keeps_n == null ? null : {
+      name: meta[0].recipe_name, keeps_n: meta[0].keeps_n, keeps_unit: meta[0].keeps_unit,
+      keeps_storage_kind: meta[0].keeps_storage_kind,
+    },
   });
   const c = putUpColumns(plan);
   const drawnJars = [...new Set(plan.lines.map((l) => l.preservation_log_id).filter((v) => v != null))];

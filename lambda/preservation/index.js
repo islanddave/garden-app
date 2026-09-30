@@ -42,6 +42,8 @@ import { handlePantryUses } from './pantryUses.js';
 // Release B′ (V4 §5.1 rows "2") — GET /api/pantry, /api/pantry/items[/:id], /api/pantry/uses/:id/undo, and
 // Remove on a put-up (removeJar), importable for the same reason.
 import { handlePantryRoute, removeJar } from './pantryRoutes.js';
+// Put-Up release 4 — /api/recipes (the recipe library), importable for the same reason.
+import { handleRecipeRoute } from './recipeRoutes.js';
 import { MASS_UNITS, MASS_FACTORS } from './lineRoutes.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -240,6 +242,12 @@ export const handler = async (event) => {
       householdIds,
     });
     if (kitchen) return resp(kitchen.status, kitchen.body);
+
+    // ── /api/recipes/** (Put-Up release 4), delegated whole; null for every path that is not its own.
+    const recipes = await handleRecipeRoute({
+      sql, rawPath, method, rawBody: event.body, query: event.queryStringParameters ?? {}, userId, householdIds,
+    });
+    if (recipes) return resp(recipes.status, recipes.body);
 
     // ── /api/preservation/:id/sources (V5-PUTUPMULTISOURCE-001), delegated whole. ──
     // Placed HERE, above the literal sub-routes, and it is safe there because parseSourceRoute

@@ -410,9 +410,13 @@ describe('POST /:id/stages — the 1b kinds', () => {
 describe('POST /api/kitchen-batches — 1b', () => {
   const create = (body) => route('/api/kitchen-batches', 'POST', body);
 
-  it('validation: the key is a uuid; a recipe cannot be named before release 4', () => {
+  // AMENDED in release 4 (recipes): 1b refused any recipe_id "until release 4"; release 4 lifts that refusal
+  // (V4 §5.1 row 4, "batch create accepts recipe_id"). A recipe_id is now a uuid the route household-loads
+  // (recipeRoutes.test.js proves the loader); a malformed one is still a 400.
+  it('validation: the key is a uuid; recipe_id (release 4) must be a uuid', () => {
     expect(validateBatchCreate({ label: 'x', idempotency_key: 'nope' })).toMatch(/idempotency_key must be a uuid/);
-    expect(validateBatchCreate({ label: 'x', recipe_id: KEY })).toMatch(/later release/);
+    expect(validateBatchCreate({ label: 'x', recipe_id: KEY })).toBeNull();
+    expect(validateBatchCreate({ label: 'x', recipe_id: 'nope' })).toMatch(/recipe_id must be a uuid/);
     expect(validateBatchCreate({ label: 'x', started_at: '2026-07-01T16:00:00Z', start_precision: 'season' })).toBeNull();
   });
 
