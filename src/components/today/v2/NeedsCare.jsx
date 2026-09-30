@@ -10,7 +10,7 @@ import { MOISTURE_CHECK_EVENT } from '../../../lib/careNeeded.js'
 import SpotRow, { SpotDoneLine, tinted } from './SpotRow.jsx'
 import SpotBody from './SpotBody.jsx'
 import PlantCareRow, { outlineBtn } from './PlantCareRow.jsx'
-import { addLogged, removeLogged, filtersKey, readFilters, writeFilters } from './needsCareStore.js'
+import { addLogged, removeLogged, readLogged, filtersKey, readFilters, writeFilters } from './needsCareStore.js'
 
 // NeedsCare — the body of the redesigned Today's Needs care section (V5-TODAYREDESIGN-001 S4). Dave's
 // D3 (a spot is logged whole, then its exceptions), D6 (spot Not today), D7 (Outside, Stable and House are
@@ -27,6 +27,12 @@ import { addLogged, removeLogged, filtersKey, readFilters, writeFilters } from '
 // results speak through the page's one status region (§5.6) and sit on the done lines.
 const RUN = { concurrency: 4, excludeInFlight: true }
 const KIND_OF = { watering: 'watered', fertilizing: 'fed', observation: 'checked', moisture_check: 'moist' }
+const GOING = { watered: 'watering', fed: 'feeding', checked: 'checking' }
+// Review 4162.1 IMPORTANT-A: the runs a Needs care body started and has not yet settled — at module scope, so they
+// outlive the body. A run still going when V2 unmounts (a planting link, BottomNav, then Back) keeps posting
+// (keepalive); its keys were claimed in the today-logged store before their POSTs, so the remount leaves them out,
+// and its batch reached the visit record when it started, so the remount can say what became of it.
+const RUNNING = new Set()
 
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
@@ -105,7 +111,20 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     setFocusId(null)
   }, [focusId, record, emptied])
 
-  const batches = c?.batches || {}
+  // Every write claims its keys in the today-logged store before it posts, and releases each that fails (IMPORTANT-A);
+  // an Undo un-writes what it deleted, as before.
+  const claim = { onClaim: (ks) => addLogged(care.logKey, ks), onRelease: (ks) => removeLogged(care.logKey, ks) }
+  // A run of THIS body's, still going, speaks through its button ("Watering 2 of 5…"): its batch — on the record since
+  // it started — stays out of view until it settles. A running batch this body did not start is a run cut off by an
+  // unmount: it shows as its done line (doneText), with no Undo, since its created ids never reach this record.
+  const mine = useRef(new Set())
+  const batches = Object.fromEntries(Object.entries(c?.batches || {}).filter(([bid, b]) => !(b.running && mine.current.has(bid))))
+  const stored = Object.values(batches).some((b) => b.running) ? readLogged(care.logKey) : null
+  // Still going: what it claimed ("watering 5…"). Ended: what landed — the claims a failure did not release.
+  const cutOff = (bid, b, spotKey) => {
+    const ks = Object.entries(b.spotOf || {}).filter(([, s]) => !spotKey || b.scope !== 'group' || s === spotKey).map(([k]) => k)
+    return RUNNING.has(bid) ? { going: ks.length } : { n: ks.filter((k) => stored.has(k)).length }
+  }
   const rowsDone = c?.rowsDone || {}
   // A write that failed stays on the list as "Not logged" with a Retry (§6.6; MF3 "per spot"). Each failed key
   // records WHAT failed — { bid, etype, body }: the run it belonged to (none for a one-tap row) and the types it
@@ -122,7 +141,8 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     const prev = cc.batches?.[bid]
     const created = [...(prev ? prev.created : []), ...res.created]
     const b = { ...(prev || fresh), created }
-    b.spots = b.scope === 'spot' ? [b.target] : b.scope === 'group' ? spotsOfCreated(created) : []
+    delete b.running
+    b.spots =b.scope === 'spot' ? [b.target] : b.scope === 'group' ? spotsOfCreated(created) : []
     const f = { ...(cc.failed || {}) }
     for (const x of res.created) delete f[x.key]
     for (const k of res.failed) f[k] = { bid, ...what }
@@ -138,20 +158,33 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     const total = keys.size
     if (!total) return null
     const bid = newId()
+    const kind = KIND_OF[bodyEventType || etype] || 'logged'
+    const fresh = { scope, target: key, name, kind, at: Date.now() }
     setBusy({ scope, key, done: 0, total })
     announce(`${etype === 'watering' ? 'Watering' : 'Logging'} ${total} in ${name}…`)
     let lastSpoken = Date.now()
     const res = await actions.runBulk(etype, keys, {
-      ...RUN, bodyEventType,
+      ...RUN, bodyEventType, ...claim,
+      // IMPORTANT-A: the batch reaches the visit record as the run starts, with what it claimed and where (spotOf, the
+      // spot names) — a remount's rows no longer hold those keys, so the record is where its done lines read them.
+      onClaim: (ks) => {
+        claim.onClaim(ks)
+        mine.current.add(bid); RUNNING.add(bid)
+        const spotOf = Object.fromEntries(ks.map((k) => [k, spotOfKey.get(k) || null]))
+        const spots = scope === 'spot' ? [key] : scope === 'group' ? [...new Set(Object.values(spotOf).filter(Boolean))] : []
+        const names = Object.fromEntries(spots.map((s) => [s, spotAllByKey.get(s)?.[0]?.spotName || null]))
+        setCare((cc) => ({ ...cc, batches: { ...(cc.batches || {}), [bid]: { ...fresh, created: [], running: true, spotOf, spots, names } } }))
+      },
       onProgress: (p) => {
         setBusy({ scope, key, done: p.done, total: p.total })
         if (Date.now() - lastSpoken >= 5000) { lastSpoken = Date.now(); announce(`${p.done} of ${p.total} logged in ${name}.`) }
       },
     })
+    RUNNING.delete(bid)
     setBusy(null)
     addLogged(care.logKey, res.created.map((x) => x.key))
-    const kind = KIND_OF[bodyEventType || etype] || 'logged'
-    settle(bid, { scope, target: key, name, kind, at: Date.now() }, res, { etype, body: bodyEventType || null })
+    settle(bid, fresh, res, { etype, body: bodyEventType || null })
+    mine.current.delete(bid)
     const fails = res.failed.length
     announce(`${kind === 'watered' ? 'Watered' : 'Logged'} ${res.created.length} in ${name}.` + (fails ? ' ' + notLoggedText(res.failed, name) : ''))
     // §5.5: a partial failure puts focus on the first Retry (the spot's own, or the group's first failed spot's).
@@ -186,7 +219,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
       const total = g.keys.size
       setBusy({ scope: 'spot', key: spot.key, done: 0, total, retry: true })
       announce(`Retrying ${total} in ${spot.name}…`)
-      const res = await actions.runBulk(g.etype, g.keys, { ...RUN, bodyEventType: g.body, onProgress: (p) => setBusy({ scope: 'spot', key: spot.key, done: p.done, total: p.total, retry: true }) })
+      const res = await actions.runBulk(g.etype, g.keys, { ...RUN, ...claim, bodyEventType: g.body, onProgress: (p) => setBusy({ scope: 'spot', key: spot.key, done: p.done, total: p.total, retry: true }) })
       setBusy(null)
       addLogged(care.logKey, res.created.map((x) => x.key))
       const kind = KIND_OF[g.body || g.etype] || 'logged'
@@ -242,7 +275,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // A failure stays on the row as "Not logged" + Retry, recording the type it posted; returns whether it landed.
   const plantRun = async (row, bodyEventType, { focus = true } = {}) => {
     if (writesHeld) return false
-    const res = await actions.runBulk(row.eventType, new Set([row.key]), { concurrency: 1, excludeInFlight: true, bodyEventType })
+    const res = await actions.runBulk(row.eventType, new Set([row.key]), { concurrency: 1, excludeInFlight: true, bodyEventType, ...claim })
     if (res.created.length) {
       addLogged(care.logKey, [row.key])
       const kind = KIND_OF[bodyEventType || row.eventType] || 'logged'
@@ -309,12 +342,21 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   // "Bag Area · watered 97", not the group's 154).
   const doneText = (bs, spotKey) => {
     const counts = {}
-    for (const [, b] of bs) {
-      const n = b.kind === 'not-today' ? 0 : (spotKey && b.scope === 'group' ? b.created.filter((x) => spotOfKey.get(x.key) === spotKey).length : b.created.length)
+    const going = {}
+    for (const [bid, b] of bs) {
+      if (b.running) {
+        const o = cutOff(bid, b, spotKey)
+        if (o.going != null) going[b.kind] = (going[b.kind] || 0) + o.going
+        else counts[b.kind] = (counts[b.kind] || 0) + o.n
+        continue
+      }
+      // A key the remount's rows no longer hold (the today-logged guard dropped it) is placed by the record's spotOf.
+      const n = b.kind === 'not-today' ? 0 : (spotKey && b.scope === 'group' ? b.created.filter((x) => (spotOfKey.get(x.key) || b.spotOf?.[x.key]) === spotKey).length : b.created.length)
       counts[b.kind] = (counts[b.kind] || 0) + n
     }
     const parts = []
     for (const k of ['watered', 'fed', 'checked']) if (counts[k]) parts.push(`${k} ${counts[k]}`)
+    for (const k of ['watered', 'fed', 'checked']) if (going[k]) parts.push(`${GOING[k]} ${going[k]}…`)
     if ('not-today' in counts) parts.push('not today')
     return parts.join(' · ')
   }
@@ -326,7 +368,7 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
 
   // A batch an Undo can act on: a Not today, or a run that created something (a run whose every write failed
   // leaves an empty batch for its Retry to complete — there is nothing in it to undo).
-  const undoable = ([, b]) => (b.scope === 'spot' || b.scope === 'nottoday') && (b.kind === 'not-today' || b.created.length > 0)
+  const undoable = ([, b]) => !b.running && (b.scope === 'spot' || b.scope === 'nottoday') && (b.kind === 'not-today' || b.created.length > 0)
 
   const renderSpot = (spot) => {
     const bs = spotBatches(spot.key)
@@ -364,7 +406,8 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
   const renderDoneSpot = (key, groupKey) => {
     const bs = spotBatches(key)
     if (!bs.length) return null
-    const name = bs[bs.length - 1][1].name && bs[bs.length - 1][1].scope !== 'group' ? bs[bs.length - 1][1].name : (spotAllByKey.get(key)?.[0]?.spotName || 'Spot')
+    const lastB = bs[bs.length - 1][1]
+    const name = lastB.name && lastB.scope !== 'group' ? lastB.name : (spotAllByKey.get(key)?.[0]?.spotName || lastB.names?.[key] || 'Spot')
     const own = bs.filter(undoable)
     const last = own[own.length - 1]
     const stuck = last && last[1].undoFailed
@@ -379,14 +422,15 @@ export default function NeedsCare({ care, record, update, announce, planDate, us
     const gb = Object.entries(batches).filter(([, b]) => b.scope === 'group' && b.target === g.key)
     if (!gb.length) return null
     const [bid, b] = gb[gb.length - 1]
+    const cut = b.running ? cutOff(bid, b, null) : null
     return (
       <div data-testid="care-group-done" data-group={g.key} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 48 }}>
         <Icon name="action.check" size={16} decorative style={{ color: P.green }} />
         <span tabIndex={-1} data-focus-id={'group:' + g.key} style={{ flex: 1, fontSize: T.type.sm, outline: 'none' }}>
           <span style={{ fontWeight: 600, color: P.dark }}>{g.key}</span>
-          <span style={{ color: P.mid }}>{` · watered ${b.created.length}`}{b.undoFailed ? ` · ${b.undoFailed} could not be undone` : ''}</span>
+          <span style={{ color: P.mid }}>{cut ? (cut.going != null ? ` · watering ${cut.going}…` : ` · watered ${cut.n}`) : ` · watered ${b.created.length}`}{b.undoFailed ? ` · ${b.undoFailed} could not be undone` : ''}</span>
         </span>
-        <button type="button" onClick={() => undoBatch(bid)} disabled={undoing === bid} aria-label={`Undo: ${g.key} watered ${b.created.length}`} style={outlineBtn}>Undo</button>
+        {!cut && <button type="button" onClick={() => undoBatch(bid)} disabled={undoing === bid} aria-label={`Undo: ${g.key} watered ${b.created.length}`} style={outlineBtn}>Undo</button>}
       </div>
     )
   }

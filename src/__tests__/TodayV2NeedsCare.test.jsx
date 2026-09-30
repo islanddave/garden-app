@@ -13,7 +13,7 @@ import { resolve } from 'node:path'
 
 const F = (f) => JSON.parse(readFileSync(resolve(process.cwd(), 'tests/harness/_todaymeasure', f), 'utf8'))
 const { planState, prefsState, auth, wire, api } = vi.hoisted(() => {
-  const wire = { posts: [], deletes: [], failPlant: null, failPlants: new Set(), seq: 0, plants: null, locations: null, cf: {} }
+  const wire = { posts: [], deletes: [], failPlant: null, failPlants: new Set(), seq: 0, plants: null, locations: null, cf: {}, hold: false, held: [] }
   return {
     planState: { current: null },
     prefsState: { current: { prefs: null, prefsLoaded: true, refreshPrefs: async () => null } },
@@ -27,6 +27,13 @@ const { planState, prefsState, auth, wire, api } = vi.hoisted(() => {
         if (init.method === 'DELETE') { wire.deletes.push(path); return {} }
         if (init.method === 'POST') {
           const body = JSON.parse(init.body)
+          // wire.hold: the POST is SENT (counted) but answers only when the test releases it — weak signal.
+          if (wire.hold) {
+            wire.posts.push(body)
+            const fail = await new Promise((r) => wire.held.push(r))
+            if (fail) throw new Error('offline')
+            return { id: 'ev' + (++wire.seq) }
+          }
           if (body.plant_id === wire.failPlant || wire.failPlants.has(body.plant_id)) throw new Error('offline')
           wire.posts.push(body)
           return { id: 'ev' + (++wire.seq) }
@@ -73,7 +80,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(TODAY + 'T14:30:00.000Z'))
   planState.current = { data: PAYLOAD, loading: false, error: null, reload: vi.fn() }
-  wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.failPlants = new Set(); wire.seq = 0; wire.plants = PLANTS; wire.locations = LOCS; wire.cf = {}
+  wire.posts = []; wire.deletes = []; wire.failPlant = null; wire.failPlants = new Set(); wire.seq = 0; wire.plants = PLANTS; wire.locations = LOCS; wire.cf = {}; wire.hold = false; wire.held = []
 })
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
@@ -498,6 +505,74 @@ describe('§6.3: a row logged before a Back never comes back live on the remount
     fireEvent.click(groupBulk('Outside'))
     await settle()
     expect(wire.posts.slice(1).filter((b) => b.plant_id === row.plantingId)).toEqual([])
+  })
+})
+
+// Review 4162.1 IMPORTANT-A (QA-T1): a Water all still going when V2 unmounts keeps posting (keepalive). Its keys are
+// claimed in the today-logged store BEFORE their POSTs and its batch reaches the visit record when it starts, so the
+// Back remount — painting the same plan, which cannot yet see the in-flight writes — neither offers those plants again
+// nor calls the run finished. The POSTs are held open (weak signal) across the unmount, the Back and a second tap.
+describe('a run still in flight at unmount is never offered again on the Back remount (review 4162.1 IMPORTANT-A)', () => {
+  const back = async () => {
+    render(<MemoryRouter><PageScrollProvider value={{ api: null, isReturn: true }}><TodayV2 /></PageScrollProvider></MemoryRouter>)
+    await settle()
+  }
+  const release = async (failIds = new Set()) => {
+    for (let i = 0; i < 20 && wire.held.length; i++) {
+      const batch = wire.held.splice(0)
+      const ids = wire.posts.slice(-batch.length).map((b) => b.plant_id)
+      batch.forEach((r, j) => r(failIds.has(ids[j])))
+      await settle()
+    }
+  }
+  const perPlant = (ids) => ids.map((id) => wire.posts.filter((b) => b.plant_id === id).length)
+  const liveFor = (spotName) => [...document.querySelectorAll('button')].filter((b) => new RegExp(`^Water (all \\d+|\\d+|the other \\d+) in ${spotName}$`).test(b.getAttribute('aria-label') || ''))
+  const stored = () => JSON.parse(sessionStorage.getItem('today-logged:u:' + TODAY) || '[]')
+
+  it('QA-T1: hold the POSTs, Water all 5, unmount mid-run, Back, tap again, release — each plant POSTed exactly once, and the spot is not live on the remount', async () => {
+    const ds = waterIn('Drive-Shade')
+    const five = ds.map((r) => r.plantingId)
+    wire.hold = true
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    fireEvent.click(within(spot('Drive-Shade')).getByRole('button', { name: 'Water all 5 in Drive-Shade' }))
+    await settle()
+    expect(wire.posts.length).toBe(4) // concurrency 4: four sent, none answered, the fifth not yet sent
+    // Claimed before the POSTs: all five, the not-yet-sent one included.
+    expect(stored().sort()).toEqual(ds.map((r) => r.key).sort())
+    first.unmount()
+    await back()
+    const liveAtRemount = liveFor('Drive-Shade').length > 0 || !!spot('Drive-Shade')
+    // The batch reached the visit record when the run started: the remount shows the run, still going, with no Undo.
+    expect(doneLine('Drive-Shade').textContent).toContain('Drive-Shade · watering 5…')
+    expect(within(doneLine('Drive-Shade')).queryByRole('button')).toBeNull()
+    expect(document.querySelector('[data-testid="care-group-bulk"][data-group="Outside"]').getAttribute('aria-label')).toBe('Water all 149 outside')
+    // Tap again — whatever is live: the spot's own Water all if it came back, then the group's.
+    wire.hold = false
+    for (const b of liveFor('Drive-Shade')) { fireEvent.click(b); await settle() }
+    fireEvent.click(document.querySelector('[data-testid="care-group-bulk"][data-group="Outside"]'))
+    await settle()
+    await release()
+    expect(perPlant(five)).toEqual([1, 1, 1, 1, 1])
+    expect(liveAtRemount).toBe(false)
+    expect(stored().filter((k) => k.endsWith(':water_due') || k.endsWith(':no_history')).length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('a claim is released on failure: a POST that fails after the unmount leaves the store, so the next Back offers that plant (once), and the ended run reads "watered 4"', async () => {
+    const ds = waterIn('Drive-Shade')
+    wire.hold = true
+    const first = render(<MemoryRouter><TodayV2 /></MemoryRouter>); await settle()
+    fireEvent.click(within(spot('Drive-Shade')).getByRole('button', { name: 'Water all 5 in Drive-Shade' }))
+    await settle()
+    first.unmount()
+    await release(new Set([ds[0].plantingId]))
+    expect(wire.posts.length).toBe(5)
+    expect(stored().sort()).toEqual(ds.slice(1).map((r) => r.key).sort())
+    await back()
+    wire.hold = false
+    expect(liveFor('Drive-Shade').map((b) => b.getAttribute('aria-label'))).toEqual(['Water 1 in Drive-Shade'])
+    expect(spot('Drive-Shade').querySelector('[aria-expanded]').textContent).toContain('Watered 4')
+    fireEvent.click(liveFor('Drive-Shade')[0]); await settle()
+    expect(perPlant(ds.map((r) => r.plantingId))).toEqual([2, 1, 1, 1, 1]) // the failed one: its failure, then its one landing
   })
 })
 
