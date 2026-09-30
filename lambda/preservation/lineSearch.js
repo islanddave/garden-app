@@ -159,15 +159,15 @@ export async function lineSearch(sql, query, householdIds) {
     LIMIT ${LINE_SEARCH_LIMIT}
   `,
     sql`
-    SELECT pi.id AS pantry_item_id, pi.name AS label, pi.crop_type_slug, pi.plant_id,
-           s.label AS place_label, COALESCE(pi.acquired_at::timestamptz, pi.created_at) AS recent_at
-    FROM pantry_item pi
-    LEFT JOIN storage_location s ON s.id = pi.storage_location_id
-    WHERE pi.user_id = ANY(${householdIds})
-      AND pi.deleted_at IS NULL
-      AND pi.used_up_at IS NULL
-      AND pi.name ILIKE ${pat}
-    ORDER BY pi.created_at DESC, pi.id DESC
+    SELECT pit.id AS pantry_item_id, pit.name AS label, pit.crop_type_slug, pit.plant_id,
+           s.label AS place_label, COALESCE(pit.acquired_at::timestamptz, pit.created_at) AS recent_at
+    FROM pantry_item pit
+    LEFT JOIN storage_location s ON s.id = pit.storage_location_id
+    WHERE pit.user_id = ANY(${householdIds})
+      AND pit.deleted_at IS NULL
+      AND pit.used_up_at IS NULL
+      AND pit.name ILIKE ${pat}
+    ORDER BY pit.created_at DESC, pit.id DESC
     LIMIT ${LINE_SEARCH_LIMIT}
   `,
     sql`

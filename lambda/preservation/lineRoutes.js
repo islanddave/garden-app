@@ -53,7 +53,7 @@ export async function readLines(sql, batchId, { ids = null, includeDeleted = fal
            i.brand, i.form, i.shu_rating_low, i.shu_rating_high, i.salt_method, i.base_from, i.edited_at,
            i.pantry_item_id,
            (i.input_kind IN ('garden', 'harvest')
-             OR (i.input_kind = 'pantry' AND pi.plant_id IS NOT NULL)
+             OR (i.input_kind = 'pantry' AND pit.plant_id IS NOT NULL)
              OR (i.input_kind = 'put_up'
                  AND (jar.source_kind = 'own_garden'
                       OR EXISTS (SELECT 1 FROM preservation_source ps
@@ -70,7 +70,7 @@ export async function readLines(sql, batchId, { ids = null, includeDeleted = fal
            jar.package_count AS _jar_package_count
     FROM kitchen_batch_input i
     LEFT JOIN preservation_log jar ON jar.id = i.preservation_log_id
-    LEFT JOIN pantry_item pi ON pi.id = i.pantry_item_id
+    LEFT JOIN pantry_item pit ON pit.id = i.pantry_item_id
     LEFT JOIN garden_node gn ON gn.id = i.plant_id
     LEFT JOIN cultivar cv ON cv.id = COALESCE(gn.cultivar_id, jar.variety_id) AND cv.deleted_at IS NULL
     WHERE i.batch_id = ${batchId}::uuid
@@ -150,11 +150,11 @@ export async function loadJars(sql, ids, householdIds) {
 export async function loadPantryItems(sql, ids, householdIds) {
   if (!ids.length) return [];
   return sql`
-    SELECT pi.id, pi.name, pi.crop_type_slug, pi.plant_id
-    FROM pantry_item pi
-    WHERE pi.id = ANY(${ids}::uuid[])
-      AND pi.user_id = ANY(${householdIds})
-      AND pi.deleted_at IS NULL
+    SELECT pit.id, pit.name, pit.crop_type_slug, pit.plant_id
+    FROM pantry_item pit
+    WHERE pit.id = ANY(${ids}::uuid[])
+      AND pit.user_id = ANY(${householdIds})
+      AND pit.deleted_at IS NULL
   `;
 }
 

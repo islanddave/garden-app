@@ -297,13 +297,13 @@ export async function plantingBatches(sql, plantId, householdIds) {
     ORDER BY v.started_at DESC NULLS LAST, v.first_recorded_at DESC, v.id DESC
   `;
   const fresh = await sql`
-    SELECT pi.id, pi.name, s.label AS place_label, pi.acquired_at, pi.acquired_precision, pi.used_up_at, pi.notes
-    FROM pantry_item pi
-    LEFT JOIN storage_location s ON s.id = pi.storage_location_id
-    WHERE pi.plant_id = ${plantId}::uuid
-      AND pi.user_id = ANY(${householdIds})
-      AND pi.deleted_at IS NULL
-    ORDER BY pi.used_up_at IS NOT NULL, pi.acquired_at DESC NULLS LAST, pi.created_at DESC, pi.id DESC
+    SELECT pit.id, pit.name, s.label AS place_label, pit.acquired_at, pit.acquired_precision, pit.used_up_at, pit.notes
+    FROM pantry_item pit
+    LEFT JOIN storage_location s ON s.id = pit.storage_location_id
+    WHERE pit.plant_id = ${plantId}::uuid
+      AND pit.user_id = ANY(${householdIds})
+      AND pit.deleted_at IS NULL
+    ORDER BY pit.used_up_at IS NOT NULL, pit.acquired_at DESC NULLS LAST, pit.created_at DESC, pit.id DESC
   `;
   return {
     status: 200,
