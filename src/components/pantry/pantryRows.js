@@ -55,8 +55,15 @@ export function nameMatches(name, q) {
   return !!n && String(name ?? '').toLowerCase().includes(n)
 }
 
-// Hits: rows first (in list order), then the extra items. An extra item is `{ key, name, kindLabel?,
-// onOpen }` — the host decides what opening one means (a recipe opens recipe detail).
+// Hits: rows first (in list order), then the extra items. An extra item is the recipes lane's
+// `{ kind: 'recipe', id, name, type_label?, keeps? }` (or `{ key, name, kindLabel? }`), with an optional
+// `onOpen` — the host decides what opening one means (a recipe opens recipe detail).
+export function extraKey(it) {
+  return `extra:${it.kind ? `${it.kind}:` : ''}${it.id ?? it.key ?? it.name}`
+}
+export function extraLabel(it) {
+  return it.kindLabel ?? it.type_label ?? it.kind ?? null
+}
 export function searchHits(rows, extraItems, q) {
   if (!normalizeQuery(q)) return []
   const hits = []
@@ -64,7 +71,7 @@ export function searchHits(rows, extraItems, q) {
     if (nameMatches(r?.name, q)) hits.push({ key: rowKey(r), name: r.name, row: r })
   }
   for (const it of extraItems ?? []) {
-    if (it && nameMatches(it.name, q)) hits.push({ key: `extra:${it.key ?? it.name}`, name: it.name, extra: it })
+    if (it && nameMatches(it.name, q)) hits.push({ key: extraKey(it), name: it.name, extra: it })
   }
   return hits
 }
@@ -116,7 +123,7 @@ export function discardChip(row, now = new Date()) {
   if (isItem(row) && !(d.basis === 'typed' && d.date)) return null
   return discardWords({
     date: d.date ?? null, basis: effectiveBasis(row), method: row.method ?? null, kind: row.place?.kind ?? null,
-    status: STATUS_WORDS[d.status] ?? null, now,
+    status: STATUS_WORDS[d.status] ?? null, recipeName: d.recipe_name ?? row.recipe_name ?? null, now,
   })
 }
 

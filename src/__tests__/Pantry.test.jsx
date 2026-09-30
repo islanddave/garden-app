@@ -235,6 +235,18 @@ describe('the page search (V4 §2.5)', () => {
   })
 })
 
+describe('the recipes lane\'s items in the page search', () => {
+  it('a recipe item ({kind, id, name, type_label}) with no onOpen opens recipe detail (?recipe=), search dropped', async () => {
+    renderPantry(['/put-up?view=pantry'], { extraSearchItems: [{ kind: 'recipe', id: 'rc-4', name: 'Reaper sauce #4', type_label: 'Hot sauce', keeps: null }] })
+    await rowEl('put_up:jar-reaper')
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search the pantry' }), { target: { value: 'sauce #' } })
+    const hit = await screen.findByTestId('pantry-search-hit-extra:recipe:rc-4')
+    expect(hit.textContent).toBe('Reaper sauce #4 · Hot sauce')
+    fireEvent.click(hit)
+    await waitFor(() => expect(screen.getByTestId('probe-loc').textContent).toBe('/put-up?view=pantry&recipe=rc-4'))
+  })
+})
+
 describe('Put something up — one door, routed by the method chip (V4 §2.1, §2.2)', () => {
   async function openDoor() {
     renderPantry()

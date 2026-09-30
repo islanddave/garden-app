@@ -22,6 +22,7 @@ export const PUT_UP_URL_PARAMS = Object.freeze({
   session: "'putup' — the walk (Walk a place). The shipped key, kept (V4 §6.2; a phone mid-walk at deploy lands back in it).",
   place: '<storage_location id> — the walk\'s place. B′ release 2.',
   [FIND_PARAM]: 'free text — the page search; its first keystroke pushes a history entry so Back clears it. B′ release 2.',
+  recipe: '<recipe id> — recipe detail (release 4, the recipes lane; V4 §6.2). A recipe search hit opens it.',
 })
 
 // ── Storage keys ──────────────────────────────────────────────────────────────────────────────────

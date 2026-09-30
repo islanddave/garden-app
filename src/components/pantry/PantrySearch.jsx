@@ -10,7 +10,7 @@ import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { inputChrome } from '../forms/formStyles.js'
 import PantryRowSheet from './PantryRowSheet.jsx'
-import { searchHits, leftWords } from './pantryRows.js'
+import { searchHits, leftWords, extraLabel } from './pantryRows.js'
 
 export const SEARCH_LABEL = 'Search the pantry'
 
@@ -31,7 +31,7 @@ export function PantrySearchBox({ value, onChange, onClear }) {
 }
 
 export default function PantrySearchResults({
-  query, rows, loading, extraSearchItems = [], fetch, onPutUp, onUsed, onChanged, JarEditor = null, onHowItWasMade = null,
+  query, rows, loading, extraSearchItems = [], onOpenExtra = null, fetch, onPutUp, onUsed, onChanged, JarEditor = null, onHowItWasMade = null,
   canHowItWasMade = null, now,
 }) {
   const [openRow, setOpenRow] = useState(null)
@@ -46,14 +46,18 @@ export default function PantrySearchResults({
           {hits.map(h => (
             <li key={h.key} style={{ borderTop: `1px solid ${P.cream}` }}>
               <button type="button" data-testid={`pantry-search-hit-${h.key}`}
-                onClick={() => (h.row ? setOpenRow(h.row) : h.extra?.onOpen?.())}
+                onClick={() => {
+                  if (h.row) setOpenRow(h.row)
+                  else if (typeof h.extra?.onOpen === 'function') h.extra.onOpen(h.extra)
+                  else onOpenExtra?.(h.extra)
+                }}
                 style={{ display: 'block', width: '100%', minHeight: 48, textAlign: 'left', padding: '8px 14px', background: 'none',
                   border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.dark }}>
                 <span style={{ fontWeight: 600 }}>{h.name}</span>
                 <span style={{ color: P.mid, fontSize: T.type.sm }}>
                   {h.row
                     ? [h.row.place?.label, leftWords(h.row)].filter(Boolean).map(x => ` · ${x}`).join('')
-                    : (h.extra?.kindLabel ? ` · ${h.extra.kindLabel}` : '')}
+                    : (extraLabel(h.extra) ? ` · ${extraLabel(h.extra)}` : '')}
                 </span>
               </button>
             </li>

@@ -57,6 +57,17 @@ describe('what a row says', () => {
       .toBe('discard date passed Sep 1 · house estimate')
     expect(discardChip(jarRow({ discard: { date: null, basis: 'none', status: null } }), NOW)).toBe('no date — check it before using')
   })
+  it('a recipe date names its recipe when the row carries it, else the generic words', () => {
+    expect(discardChip(jarRow({ discard: { date: '2026-12-01', basis: 'recipe', status: 'ok', recipe_name: 'Reaper sauce #4' } }), NOW))
+      .toBe('discard by Dec 1 · from the recipe: Reaper sauce #4')
+    expect(discardChip(jarRow({ recipe_name: 'Kimchi', discard: { date: '2026-12-01', basis: 'recipe', status: 'ok' } }), NOW))
+      .toBe('discard by Dec 1 · from the recipe: Kimchi')
+    expect(discardChip(jarRow({ discard: { date: '2026-12-01', basis: 'recipe', status: 'ok' } }), NOW)).toBe('discard by Dec 1 · from the recipe')
+  })
+  it('a candy jar written before 1b stored a basis still says "house estimate" (FOODSAFETY-RULING-V101 §8.2)', () => {
+    expect(discardChip(jarRow({ method: 'candy', discard: { date: '2026-12-01', basis: null, status: 'ok' } }), NOW))
+      .toBe('discard by Dec 1 · house estimate')
+  })
   it('a bought item shows a discard date ONLY if one was typed', () => {
     expect(discardChip(itemRow({ discard: { date: '2026-10-10', basis: 'typed', status: 'ok' } }), NOW)).toBe('discard by Oct 10 · set by hand')
     expect(discardChip(itemRow({ discard: { date: null, basis: 'none', status: null } }), NOW)).toBeNull()

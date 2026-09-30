@@ -320,14 +320,6 @@ const NO_EXTRA_SEARCH_ITEMS = []
 
 // `StartBatchSheet` is a prop only so a test can hand the page a stand-in for a file this branch does
 // not have yet; App renders the route with no props, so production always takes the default.
-// The page's segments (V4 §6.1: Going now · the Pantry · Recipes from release 4). "Log a put-up" (the
-// shipped form) is kept in B′ beside the new Put something up door — see PutUpForm.
-export const PUT_UP_SEGMENTS = [
-  { value: 'going',  label: 'Going now' },
-  { value: 'log',    label: 'Log a put-up' },
-  { value: 'pantry', label: 'Pantry' },
-]
-
 // `howItWasMade` and `extraSearchItems` are the B′ seams (see above and the page search below);
 // App renders the route with no props, so production takes the defaults.
 export default function PutUp({
@@ -557,7 +549,8 @@ export default function PutUp({
   const onHowItWasMade = typeof how?.open === 'function' ? how.open : null
   const canHowItWasMade = useMemo(() => howRowCheck(howItWasMade), [howItWasMade])
   // The page search's extra corpus: the recipes lane hands its loaded recipes in through
-  // `setExtraSearchItems` (or the `extraSearchItems` prop): `{ key, name, kindLabel?, onOpen }`.
+  // `setExtraSearchItems` (or the `extraSearchItems` prop): `{ kind, id, name, type_label?, onOpen? }`
+  // (a `key` and `kindLabel` are read too).
   const [extraSearchState, setExtraSearchItems] = useState(NO_EXTRA_SEARCH_ITEMS)
   const extraSearchItems = useMemo(() => [...extraSearchItemsProp, ...extraSearchState], [extraSearchItemsProp, extraSearchState])
   // The rename bridge (V4 §2.5): counted once per page visit, per viewer.
@@ -571,6 +564,17 @@ export default function PutUp({
     setSearchParams(next, { replace: searchParams.has(FIND_PARAM), state: location.state })
   }, [searchParams, setSearchParams, location.state])
   const clearFind = useCallback(() => setFind(''), [setFind])
+  // A search hit from the extra corpus opens through its own `onOpen` when it has one; a recipe item
+  // ({kind:'recipe', id, name, …}, the recipes lane's shape) otherwise opens recipe detail, `?recipe=`
+  // (V4 §6.2) — a push, with the search dropped, so Back returns to the list.
+  const openSearchItem = useCallback((item) => {
+    if (typeof item?.onOpen === 'function') { item.onOpen(item); return }
+    if (item?.kind === 'recipe' && item.id != null) {
+      const next = new URLSearchParams(searchParams)
+      next.delete(FIND_PARAM); next.set('recipe', String(item.id))
+      setSearchParams(next, { state: location.state })
+    }
+  }, [searchParams, setSearchParams, location.state])
 
   const openDoor = useCallback((name = '') => { setDoorName(name); setDoorOpen(true) }, [])
   const onDoorSaved = useCallback(({ route, saved, place }) => {
@@ -640,22 +644,29 @@ export default function PutUp({
           </div>
         )}
 
-        {/* LIFECYCLE ORDER, left to right: going → logged → kept. The segment list is this lane's
-            (B′ shared-seam rule): another segment joins with ONE entry in PUT_UP_SEGMENTS and one body
-            line below (the recipes lane's Recipes). ≤ 4, the page's own ceiling. */}
+        {/* LIFECYCLE ORDER, left to right: going → logged → kept. The grammar was already
+            inconsistent (a VERB beside a QUESTION) and a third label had to join it; "Going now"
+            names the OBJECT's state, which is what the other two labels are really doing too.
+            B′ release 2: "What's put up" is the Pantry (V4 §6.1); "Log a put-up" (the shipped form) is
+            kept beside the Put something up door. ≤ 4, the page's own ceiling. */}
         {!modeActive && !searching && (
           <div style={{ marginBottom: 18 }}>
             <SegmentedControl
               ariaLabel="Put-Up view"
               value={view}
               onChange={chooseView}
-              options={PUT_UP_SEGMENTS}
+              options={[
+                { value: 'going',  label: 'Going now' },
+                { value: 'log',    label: 'Log a put-up' },
+                { value: 'pantry', label: 'Pantry' },
+              ]}
             />
           </div>
         )}
 
         {searching && (
           <PantrySearchResults query={findText} rows={pantry.rows} loading={pantry.loading} extraSearchItems={extraSearchItems}
+            onOpenExtra={openSearchItem}
             fetch={pageFetch} onPutUp={(text) => openDoor(text)} JarEditor={RowEditor}
             onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
             onUsed={(entry) => { setPantryRecent(prev => ({ ...prev, [`${entry.row.stock_kind}:${entry.row.stock_id}`]: { ...entry, undone: false, err: null, undoKey: null } })); pantry.reload() }}
