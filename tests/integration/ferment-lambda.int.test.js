@@ -137,6 +137,12 @@ describe('the jar PATCH (A3) and the use route', () => {
   it('line-search is a literal: 200 for a query, never read as a batch id', async () => {
     const r = await call(DAVE, 'GET', '/api/kitchen-batches/line-search?q=zzz-no-such-thing')
     expect(r.status).toBe(200)
-    expect(r.body).toEqual({ plantings: [], put_ups: [] })
+    // Put-Up B′ release 3 (the whole name search, V4 §2.5a) adds pantry_items, crops, varieties, the ranked
+    // hits and resolved_crop beside F's two arms. The literal still answers a SEARCH — every arm empty for a
+    // name nothing has, no batch id, no 404 — so the shape is pinned whole, F's keys and the new ones.
+    expect(r.body).toEqual({
+      plantings: [], put_ups: [],
+      pantry_items: [], crops: [], varieties: [], hits: [], resolved_crop: null,
+    })
   })
 })
