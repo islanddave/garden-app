@@ -41,9 +41,9 @@ const METHOD_LABELS = {
   other: 'put up',
 }
 
+// Label first: a ferment jar can carry a name and no crop (projectRow returns `label`; null on every row today).
 function itemTitle(it) {
-  const crop = it.crop_display_name || it.crop_type_slug || 'From your stores'
-  return crop
+  return it.label || it.crop_display_name || it.crop_type_slug || 'From your stores'
 }
 function itemDetail(it) {
   const parts = []
