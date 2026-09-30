@@ -111,7 +111,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation garden_node column con
     // reach a harvest's planting and, through it, its cultivar. It reaches for gn.id / gn.deleted_at /
     // gn.cultivar_id only, all three already in the contract below, so the column list is unchanged.
     // Release F: +5 — readLines, the planting and pick loaders, the line search and the household pepper names.
-    expect(STATEMENTS).toHaveLength(11);
+    // B′ (release 2): +2 — GET /api/pantry's put-up and pantry-item reads (the planting a row came from).
+    expect(STATEMENTS).toHaveLength(13);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['gn']);
   });

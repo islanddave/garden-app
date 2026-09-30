@@ -102,7 +102,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation crop_types column cont
     // Exact count, not a floor: a new statement against this table should be reviewed against the
     // contract rather than inherit it. Update this number in the same commit that adds one.
     // Release F: +1 — the line search's put-up arm matches a jar by its crop's display name.
-    expect(STATEMENTS).toHaveLength(5);
+    // B′ (release 2): +2 — GET /api/pantry's put-up and pantry-item reads name the crop for group=kind.
+    expect(STATEMENTS).toHaveLength(7);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['ct']);
   });

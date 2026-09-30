@@ -106,7 +106,8 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation cultivar column contra
     // resolve `crop_type_slug` for a harvest window. It reaches for cv.id / cv.deleted_at /
     // cv.crop_type_slug only, all three already in the contract below, so the column list is unchanged.
     // Release F: +4 — readLines (a line's variety rating, through its planting or its drawn jar), the planting loader, the line search and the household pepper names. scoville_min/max join the contract: the heat estimate's variety rating.
-    expect(STATEMENTS).toHaveLength(10);
+    // B′ (release 2): +1 — GET /api/pantry's put-up read names a jar by its variety.
+    expect(STATEMENTS).toHaveLength(11);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['cv']);
   });

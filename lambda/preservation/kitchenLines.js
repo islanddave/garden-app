@@ -20,6 +20,8 @@ export const LINE_BODY_KEYS = [
   'shu_rating_low', 'shu_rating_high', 'role', 'salt_pct', 'salt_base', 'base_g', 'salt_method', 'base_from',
   'ordinal', 'crop_type_slug', 'plant_id', 'harvest_log_id', 'preservation_log_id', 'count_drawn',
   'put_up_stage_id', 'output_id',
+  // B′ (release 2): a line that names a pantry item — accepted by the keyed line POST only ({ pantry }).
+  'pantry_item_id',
 ];
 
 // The line PATCH allowlist (06 §3.7; contract-F §2.2). Identity (kind, the pick, the jar, the sitting)
@@ -99,13 +101,21 @@ function roleFormError(l) {
   return null;
 }
 
-// One line of a keyed POST or a put-up sitting. { keyed } requires the idempotency_key.
-export function lineError(line, { keyed = true, where = 'line' } = {}) {
+// One line of a keyed POST or a put-up sitting. { keyed } requires the idempotency_key. { pantry } (B′,
+// the keyed line POST only) also admits input_kind 'pantry' with its pantry_item_id: a bought or kept
+// thing from the Pantry, which moves no stock. A put-up sitting does not pass it, so a sitting line of
+// kind 'pantry' keeps F's refusal (its INSERT binds no pantry_item_id).
+export function lineError(line, { keyed = true, where = 'line', pantry = false } = {}) {
   if (!isObj(line)) return `${where}: each line must be an object`;
   const unknown = Object.keys(line).filter((k) => !LINE_BODY_KEYS.includes(k));
   if (unknown.length) return `${where}: unknown field(s): ${unknown.join(', ')}`;
   const kind = line.input_kind;
-  if (!KITCHEN_LINE_KINDS.includes(kind)) return `${where}: input_kind must be one of: ${KITCHEN_LINE_KINDS.join(', ')}`;
+  const kinds = pantry ? [...KITCHEN_LINE_KINDS, 'pantry'] : KITCHEN_LINE_KINDS;
+  if (!kinds.includes(kind)) return `${where}: input_kind must be one of: ${kinds.join(', ')}`;
+  if (line.pantry_item_id != null && !isUuid(line.pantry_item_id)) return `${where}: pantry_item_id must be a uuid`;
+  if ((kind === 'pantry') !== (line.pantry_item_id != null)) {
+    return kind === 'pantry' ? `${where}: a pantry line names its item (pantry_item_id)` : `${where}: only a pantry line carries pantry_item_id`;
+  }
   if (keyed && !isUuid(line.idempotency_key ?? null)) return `${where}: idempotency_key must be a uuid`;
   if (!keyed && line.idempotency_key != null && !isUuid(line.idempotency_key)) return `${where}: idempotency_key must be a uuid`;
   for (const k of ['plant_id', 'harvest_log_id', 'preservation_log_id', 'put_up_stage_id', 'output_id']) {
@@ -126,7 +136,9 @@ export function lineError(line, { keyed = true, where = 'line' } = {}) {
     if (kind !== 'put_up') return `${where}: count_drawn goes only on a draw`;
     if (!isInt(line.count_drawn) || Number(line.count_drawn) < 1) return `${where}: count_drawn must be a whole number, 1 or more`;
   }
-  if (line.role != null && kind !== 'purchased' && kind !== 'other') return `${where}: salt and water are typed lines`;
+  if (line.role != null && kind !== 'purchased' && kind !== 'other' && kind !== 'pantry') {
+    return `${where}: salt and water are typed (or pantry) lines`;
+  }
   if (line.output_id != null && line.put_up_stage_id == null) return `${where}: output_id needs its put_up_stage_id`;
   if (line.ordinal != null && !isInt(line.ordinal)) return `${where}: ordinal must be a whole number`;
   const e = textError(line.label, 'label') ?? textError(line.brand, 'brand', 120)
@@ -140,10 +152,10 @@ export function lineError(line, { keyed = true, where = 'line' } = {}) {
 
 // Many lines at once: each valid, and ONE draw per jar per request (API-I3) — the statement aggregates
 // per jar anyway (boss F1), but a repeated jar in one POST is a client bug.
-export function linesError(lines, { keyed = true } = {}) {
+export function linesError(lines, { keyed = true, pantry = false } = {}) {
   if (!Array.isArray(lines) || lines.length === 0) return 'inputs must be a non-empty array';
   for (const [i, l] of lines.entries()) {
-    const e = lineError(l, { keyed, where: `line ${i + 1}` });
+    const e = lineError(l, { keyed, pantry, where: `line ${i + 1}` });
     if (e) return e;
   }
   const jars = lines.map((l) => l.preservation_log_id).filter((v) => v != null);

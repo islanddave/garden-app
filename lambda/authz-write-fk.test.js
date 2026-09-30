@@ -517,6 +517,16 @@ const NOT_IN_SITES = [
   // reach — that the INSERT copies user_id from the PARENT row rather than from the caller, so one
   // household member editing another's jar cannot re-own its sources.
   'preservation::preservation_log_id',
+  // pantry_item_id — Put-Up release 2 (B′, v5-pantry-001). BODY-SETTABLE AND GATED: the keyed line POST
+  // (lineRoutes.js prepareLines) takes it from a 'pantry' line and resolves it through loadPantryItems
+  // (pantryItems.js), `id = ANY(<body ids>) AND user_id = ANY(householdIds)` — a foreign or malformed id
+  // is a 400, never written; a removed item is 409 item_removed. Here for the same MECHANICAL reason as
+  // the kitchenRoutes.js columns above (a non-index handler file keys as `preservation::`). Asserted by
+  // EXECUTION in lambda/preservation/pantryRoutes.test.js (the household array bound on the loader, a
+  // STRANGER item refused). pantry_item's own storage_location_id / plant_id (pantryRoutes.js) are the
+  // `preservation::storage_location_id` / `preservation::plant_id` pairs already listed, gated by
+  // loadPlace and lineRoutes.js loadPlantings, and asserted by execution in the same file.
+  'preservation::pantry_item_id',
   // ── The id being READ, not written: a `WHERE id = ${...}` inside the SET-clause slice, or the
   //    handler's own row id / route param. Nothing crosses a household boundary. ──
   // photos::photo_id is NO LONGER read-only as of W-DEL: photoDelete.js NULLs plant_varieties.photo_id
