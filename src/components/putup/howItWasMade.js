@@ -16,6 +16,19 @@ export const HOW_IT_WAS_MADE_LABEL = 'How it was made →'
 export const canSayHowItWasMade = (jar) => !!jar && jar.id != null && jar.batch_id == null && jar.harvest_log_id == null
   && jar.deleted_at == null
 
+// The Pantry list's row (GET /api/pantry, the pinned cross-lane Row) → the jar shape this sheet reads. A
+// shipped jar record passes through unchanged. Only a put-up can say how it was made; a bought item cannot.
+export function jarOf(row) {
+  if (!row) return null
+  if (row.stock_kind == null) return row
+  if (row.stock_kind !== 'put_up') return null
+  return {
+    id: row.stock_id, label: row.name ?? null, batch_id: row.batch_id ?? null, harvest_log_id: null,
+    storage_location_id: row.place?.id ?? null, stock_mode: row.stock_mode === 'weighed' ? 'weighed' : 'counted',
+    crop_type_slug: row.crop_type_slug ?? null,
+  }
+}
+
 // The name the sheet opens with: the jar's own name, else what it is.
 export function jarName(jar) {
   const label = String(jar?.label ?? '').trim()

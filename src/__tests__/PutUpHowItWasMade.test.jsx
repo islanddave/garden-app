@@ -15,7 +15,7 @@ vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => ({ user: {
 
 import HowItWasMadeSheet, { useHowItWasMade } from '../components/putup/HowItWasMadeSheet.jsx'
 import {
-  canSayHowItWasMade, jarStart, candidateJars, asksMadeCount, fromJarsBody, nextTimeLines, startedOf, jarName, FROM_JARS_ERRORS,
+  canSayHowItWasMade, jarOf, jarStart, candidateJars, asksMadeCount, fromJarsBody, nextTimeLines, startedOf, jarName, FROM_JARS_ERRORS,
 } from '../components/putup/howItWasMade.js'
 import { likeLine, likeDraft, likeChoices } from '../components/putup/likeBatch.js'
 import { closeWhenBody } from '../components/putup/batchCloseWhen.js'
@@ -206,6 +206,22 @@ describe('HowItWasMadeSheet — the retrospective posture', () => {
     const b = posted()[0]
     expect(b.kind).toBe('ferment')
     expect(b.inputs.map(l => l.label)).toEqual(['Serranos', 'Reaper bag', 'Salt'])
+  })
+
+  it('a Pantry row (stock_kind put_up) opens it and reads its date from the put-up list; a bought item does not', async () => {
+    wire()
+    expect(jarOf({ stock_kind: 'pantry_item', stock_id: 'i-1' })).toBeNull()
+    const row = { stock_kind: 'put_up', stock_id: 'j-1', name: 'Megatron plain', batch_id: null, place: { id: PLACE }, stock_mode: 'counted' }
+    expect(jarOf(row)).toMatchObject({ id: 'j-1', storage_location_id: PLACE, label: 'Megatron plain' })
+    let api
+    function Host() { api = useHowItWasMade(); return <><button data-testid="door" onClick={() => api.open(row)} />{api.sheet}</> }
+    render(<DismissRegistryProvider><Host /></DismissRegistryProvider>)
+    fireEvent.click(screen.getByTestId('door'))
+    await waitFor(() => expect(screen.getByTestId('how-jar-j-2')).toBeTruthy())
+    expect(screen.getByTestId('how-start-words').textContent).not.toBe('Not sure')
+    fireEvent.click(screen.getByTestId('how-submit'))
+    await waitFor(() => expect(posted()).toHaveLength(1))
+    expect(posted()[0]).toMatchObject({ jar_ids: ['j-1'], started: { date: '2026-09-08', precision: 'day' } })
   })
 
   it('useHowItWasMade: open(jar) mounts the sheet; a batch jar does not open it', () => {

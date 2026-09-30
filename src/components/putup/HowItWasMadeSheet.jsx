@@ -36,7 +36,7 @@ import LikeBatchPicker from './LikeBatchPicker.jsx'
 import { lineWords } from './lines.js'
 import { putUpDateWords } from './jarWords.js'
 import {
-  FROM_JARS_PATH, canSayHowItWasMade, jarName, jarStart, candidateJars, asksMadeCount, nextTimeLines,
+  FROM_JARS_PATH, canSayHowItWasMade, jarOf, jarName, jarStart, candidateJars, asksMadeCount, nextTimeLines,
   startedOf, fromJarsBody, fromJarsRefusal,
 } from './howItWasMade.js'
 
@@ -62,7 +62,11 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const { fetch } = useApiFetch()
   const [key] = useState(() => mintKey())
   const [label, setLabel] = useState(() => jarName(jar))
-  const fixedStart = useMemo(() => jarStart(jar), [jar])
+  const [rows, setRows] = useState(null)
+  // The jar's full record from the put-up list once it loads (a Pantry row carries no date words of its
+  // own); until then, what the door handed in.
+  const full = useMemo(() => (rows ?? []).find(r => r.id === jar.id) ?? jar, [rows, jar])
+  const fixedStart = useMemo(() => jarStart(full), [full])
   const [changingStart, setChangingStart] = useState(false)
   const [chip, setChip] = useState('earlier')
   const [earlier, setEarlier] = useState(null)
@@ -72,7 +76,6 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const [kindOpen, setKindOpen] = useState(false)
   const [lines, setLines] = useState([])
   const [like, setLike] = useState(null)
-  const [rows, setRows] = useState(null)
   const [chosen, setChosen] = useState(() => new Set([jar.id]))
   const [made, setMade] = useState('')
   const [nextTime, setNextTime] = useState('')
@@ -92,7 +95,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     return () => { alive = false }
   }, [fetch])
 
-  const candidates = useMemo(() => candidateJars(rows ?? [], jar), [rows, jar])
+  const candidates = useMemo(() => candidateJars(rows ?? [], full), [rows, full])
   const chosenJars = candidates.filter(j => chosen.has(j.id))
   const copied = useMemo(() => {
     const out = []
@@ -249,11 +252,12 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   )
 }
 
-// The seam: `const how = useHowItWasMade({ onSaved })`; call `how.open(jar)` from a row's
-// "How it was made →" and render `how.sheet` once, anywhere under the row.
+// The seam: `const how = useHowItWasMade({ onSaved })`; call `how.open(rowOrJar)` from a row's
+// "How it was made →" and render `how.sheet` once, anywhere under the row. `open` takes a shipped jar
+// record or a Pantry Row (stock_kind 'put_up'; a bought item is ignored).
 export function useHowItWasMade({ onSaved } = {}) {
   const [jar, setJar] = useState(null)
-  const open = useCallback((j) => { if (canSayHowItWasMade(j)) setJar(j) }, [])
+  const open = useCallback((j) => { const x = jarOf(j); if (canSayHowItWasMade(x)) setJar(x) }, [])
   const close = useCallback(() => setJar(null), [])
   const sheet = <HowItWasMadeSheet jar={jar} open={!!jar} onClose={close} onSaved={onSaved} />
   return { open, close, sheet, jar }
