@@ -85,7 +85,7 @@ describe('recipe column contract — v5-recipes-001 is the authority', () => {
     expect(DDL).toMatch(/b\.recipe_ref,\s+b\.recipe_id\s+FROM public\.kitchen_batch b/);
   });
 
-  it('no pH column is created or declared, ever (V4 §3.8)', () => {
+  it('no pH column is created or declared, ever (V4 "pH")', () => {
     for (const table of ['recipe', 'recipe_ingredient', 'recipe_type']) {
       expect(createTableColumns(table).filter((c) => /(^|_)ph(_|$)|tested/.test(c)), table).toEqual([]);
     }

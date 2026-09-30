@@ -280,7 +280,7 @@ post:
     expect: rowcount_eq
     value: 0
 
-  # ── No pH verdict, ever (V4 §3.8: "No target_ph or tested column, ever"). His target pH is text in
+  # ── No pH verdict, ever (V4 "pH": "No target_ph or tested column, ever"). His target pH is text in
   #    recipe.notes. NOT ARMED: true today (the tables do not exist, so no row can match). ───────────
   - name: post_no_ph_column_on_recipe_tables
     sql: |

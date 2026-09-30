@@ -38,6 +38,7 @@ import WhatWentIn, { FromGarden } from './WhatWentIn.jsx'
 import SaltBlock from './SaltBlock.jsx'
 import JarHeatRow from './JarHeatRow.jsx'
 import RecipeRefRow from './RecipeRefRow.jsx'
+import BatchRecipeRow from '../recipes/BatchRecipeRow.jsx'
 import StageEditSheet from './StageEditSheet.jsx'
 import ShuSheet from './ShuSheet.jsx'
 import KindQuestion from './KindQuestion.jsx'
@@ -623,6 +624,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
         <SetStartDate batch={batch} fetch={fetch} onChanged={onChanged} />
       )}
       <RecipeRefRow batch={batch} onChanged={onChanged} />
+      <BatchRecipeRow batch={batch} inputs={inputRows} onChanged={onChanged} />
 
       <Section title="What went in" testId="batch-detail-inputs">
         {/* Release F: What went in is WhatWentIn (the reworked field) with the Salt block inside it,

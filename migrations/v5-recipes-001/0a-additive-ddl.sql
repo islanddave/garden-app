@@ -3,7 +3,7 @@
 --
 -- V5-RECIPES-001 — Put-Up release 4 (recipes), the database half. One file, one transaction, the stamp
 --   written inside it. Plan: project-state/_crucible-pantry-20260928/04-design-final.md (V4) §2.6, §3.1,
---   §3.8 and §4.5, as amended by 05-release-train.md §6 ("All B releases", "4:") and 06-ferment-path.md
+--   "pH" and §4.5, as amended by 05-release-train.md §6 ("All B releases", "4:") and 06-ferment-path.md
 --   §1.5 (what a recipe carries from a batch). The line above is machine-read by the train step in
 --   .github/workflows/integration-test.yml; keep it the second line and keep it equal to the INSERT at
 --   the bottom.
@@ -40,7 +40,7 @@
 --     F's free-text recipe_ref stays beside it).
 --   * v_kitchen_batch_current — F's 40 columns kept in order, recipe_id appended at 41 (05 §6 "4:").
 --
--- NO target_ph, NO tested COLUMN, EVER (V4 §3.8). His target pH is text inside recipe.notes; no column,
+-- NO target_ph, NO tested COLUMN, EVER (V4 "pH"). His target pH is text inside recipe.notes; no column,
 --   CHECK or trigger here names a pH. gates.yml asserts the absence.
 --
 -- WHY THE DEPLOYED WRITER (F's) IS UNAFFECTED (the house rule). Every change is one of: two new tables

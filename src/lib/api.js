@@ -30,6 +30,7 @@
 //   /api/preservation       → VITE_API_PRESERVATION  Put-Up log CRUD + whats-put-up/use-soon reads (V4-HARVESTCENTER-001)
 //   /api/kitchen-batches    → VITE_API_PRESERVATION  in-flight kitchen batches (V5-INFLIGHTBATCH-001)
 //   /api/pantry             → VITE_API_PRESERVATION  Mark used / Used up — POST /api/pantry/uses (Put-Up release F)
+//   /api/recipes            → VITE_API_PRESERVATION  the recipe library + types + Save as recipe (Put-Up release 4)
 //   /api/harvests           → VITE_API_HARVESTS     Harvests page read model — Log + Totals (V4-HARVESTVIEW-001)
 //   /api/share/facebook     → VITE_API_FACEBOOK_SHARE  post photos to the Gardens at Matthews FB Page (V4-FBSHARE-001)
 
@@ -71,6 +72,8 @@ export const FUNCTION_URLS = {
   // Put-Up release F (06 §1.3 item 2): the use route lives on the preservation Lambda, which matches
   // '/api/pantry/uses' as a literal on rawPath — so no new Function URL and no infra change.
   '/api/pantry':            import.meta.env.VITE_API_PRESERVATION   ?? '',
+  // Put-Up release 4: /api/recipes/** rides the preservation Lambda too (recipeRoutes.js, matched on rawPath).
+  '/api/recipes':           import.meta.env.VITE_API_PRESERVATION   ?? '',
   '/api/harvests':          import.meta.env.VITE_API_HARVESTS       ?? '',
   '/api/share/facebook':    import.meta.env.VITE_API_FACEBOOK_SHARE ?? '',
   // Instagram is served by the SAME Lambda and the SAME Function URL as Facebook — the handler

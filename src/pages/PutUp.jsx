@@ -52,6 +52,7 @@ import NumberPad from '../components/NumberPad.jsx'
 import GoingNowView from '../components/putup/GoingNowView.jsx'
 import BatchDetailView from '../components/putup/BatchDetailView.jsx'
 import ClosedBatchesView from '../components/putup/ClosedBatchesView.jsx'
+import RecipesView from '../components/recipes/RecipesView.jsx'
 import { useSuppressBottomNav } from '../hooks/useSuppressBottomNav.js'
 import {
   WALK_PARAM, coarseDate, exactDate, describeDate, describeApprox, solePlanting, unrecordedCrops,
@@ -571,6 +572,7 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
                 { value: 'going',  label: 'Going now' },
                 { value: 'log',    label: 'Log a put-up' },
                 { value: 'stores', label: "What's put up" },
+                { value: 'recipes', label: 'Recipes' },
               ]}
             />
           </div>
@@ -605,6 +607,7 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
         )}
         {seg === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('stores')} />}
         {seg === 'stores' && <StoresView useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} />}
+        {seg === 'recipes' && <RecipesView onBatchStarted={onBatchStarted} />}
 
         {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
             only invalidation path and it re-reads BOTH this row and the list.

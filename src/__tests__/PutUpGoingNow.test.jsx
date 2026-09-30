@@ -948,11 +948,13 @@ function activeSegment() {
 }
 
 describe('PutUp — the bare-open default lands on "Going now" when something is going', () => {
-  it('shows the three segments in lifecycle order', async () => {
+  // AMENDED in Put-Up release 4: the Recipes segment joins the list, last (V4 §2.6 "The Recipes segment
+  // appears from release 4"); the lifecycle three keep their order ahead of it.
+  it('shows the lifecycle segments in order, then Recipes', async () => {
     wirePage()
     renderPage()
     await waitFor(() => expect(segments().map(r => r.textContent))
-      .toEqual(['Going now', 'Log a put-up', "What's put up"]))
+      .toEqual(['Going now', 'Log a put-up', "What's put up", 'Recipes']))
   })
 
   it('promotes a bare open to Going now with ONE open batch', async () => {

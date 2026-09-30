@@ -6,7 +6,7 @@
 // Every rule mirrors a CHECK in migrations/v5-recipes-001/0a-additive-ddl.sql, the belt-and-suspenders the
 // kitchen modules use: a raw 23514 is not something a cook at a counter can act on.
 //
-// ⚠ NO pH HERE, EVER (V4 §3.8). His target pH is text inside `notes`, stored verbatim and rendered only on
+// ⚠ NO pH HERE, EVER (V4 "pH"). His target pH is text inside `notes`, stored verbatim and rendered only on
 // recipe detail. Nothing in this module reads, parses or validates a number out of the notes.
 import {
   KITCHEN_UUID_RE, KITCHEN_UNITS, KITCHEN_FORMS, KITCHEN_ROLES, KITCHEN_SALT_METHODS, KITCHEN_BASE_FROM,

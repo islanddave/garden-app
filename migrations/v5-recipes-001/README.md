@@ -1,6 +1,6 @@
 # v5-recipes-001 — Put-Up release 4 (recipes), the database half
 
-Plan: `project-state/_crucible-pantry-20260928/04-design-final.md` (V4) §2.6, §3.1–§3.2, §3.8 and §4.5, as amended
+Plan: `project-state/_crucible-pantry-20260928/04-design-final.md` (V4) §2.6, §3.1–§3.2, "pH" and §4.5, as amended
 by `05-release-train.md` §6 ("All B releases", "4:") and `06-ferment-path.md` §1.5 (what a recipe carries from a
 batch). Recipe **types** (what a recipe makes) are Dave's decision of 2026-09-30, folded in here. Release 4 ships in
 promote **B′** with releases 2 and 3, after F.
@@ -45,7 +45,7 @@ The stamp is fixed at first apply anywhere and never edited: every standing gate
 * **v_kitchen_batch_current** — F's 40 columns in order, `recipe_id` appended at 41 (05 §6 "4:"); md5
   `c5e32311816088488bcbb315e8703ae0` (the guard also accepts F's `b70ac2f238dfc9d09e8db2017c0e7474`).
 
-**No target_ph, no tested column, ever** (V4 §3.8): `post_no_ph_column_on_recipe_tables` and
+**No target_ph, no tested column, ever** (V4 "pH"): `post_no_ph_column_on_recipe_tables` and
 `post_no_ph_check_on_recipe_tables` assert it.
 
 ## Apply order (B′'s sitting — 05-release-train §3, releases 2 → 3 → 4)

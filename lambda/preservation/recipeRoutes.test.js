@@ -187,9 +187,9 @@ describe('validateRecipeCreate / validateRecipePatch', () => {
     expect(validateRecipeCreate(body({ bottle_cooked: 'yes' }))).toMatch(/true or false/);
     expect(validateRecipeCreate(body({ bottle_label: ' ' }))).toMatch(/blank/);
     expect(validateRecipeCreate(body({ made_text: 'x'.repeat(501) }))).toMatch(/at most 500/);
-    const plan = recipePatchPlan({ bottle_size: '4.0', bottle_unit: 'fl oz', bottle_cooked: false });
+    const plan = recipePatchPlan({ bottle_size: '4.50', bottle_unit: 'fl oz', bottle_cooked: false });
     expect(plan.present).toMatchObject({ bottle_size: true, bottle_cooked: true, bottle_label: false });
-    expect(plan.value).toMatchObject({ bottle_size: '4.0', bottle_unit: 'fl oz', bottle_cooked: false });
+    expect(plan.value).toMatchObject({ bottle_size: '4.50', bottle_unit: 'fl oz', bottle_cooked: false });
   });
 
   it('the kind vocabulary is the batch-kind vocabulary', () => {

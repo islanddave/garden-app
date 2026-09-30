@@ -22,7 +22,7 @@
 // from their recipe. Every body-settable FK has a household loader: recipe_type_id (loadOwnedRecipeType) here,
 // and a batch's recipe_id (loadOwnedRecipe, exported for kitchenRoutes.js's create).
 //
-// ⚠ pH (V4 §3.8). His target pH lives in `notes` and is returned ONLY by GET /api/recipes/:id (recipe detail).
+// ⚠ pH (V4 "pH"). His target pH lives in `notes` and is returned ONLY by GET /api/recipes/:id (recipe detail).
 // The list omits notes; the batch-facing read (readRecipeForBatch) omits notes; the detail's batch list is an
 // explicit column list with no pH column. No route here parses the notes.
 //
@@ -69,7 +69,7 @@ export async function loadOwnedRecipeType(sql, typeId, householdIds) {
 
 // The batch surface's view of its recipe (getBatch's `recipe` key, and Put it up's preview): the name, the keeps
 // line, the process jar and the final container (Put it up's row defaults), and the lines as reference text. NOT the notes — his target pH is in them, and it renders only on recipe
-// detail (V4 §3.8). A soft-deleted recipe answers null (the batch keeps its recipe_id; the surface stops naming it).
+// detail (V4 "pH"). A soft-deleted recipe answers null (the batch keeps its recipe_id; the surface stops naming it).
 export async function readRecipeForBatch(sql, recipeId, householdIds) {
   if (!isUuid(recipeId)) return null;
   const rows = await sql`
@@ -155,7 +155,7 @@ async function listRecipes(sql, q, householdIds) {
 
 // One recipe. Notes verbatim; lines in order; the dated batches made from it, newest first, with their endings
 // (the client words them). The batch list is an EXPLICIT column list: no last_ph_reading, no outcome_note —
-// "recipe detail's batch list never shows a pH" (V4 §3.8) is decided here, not left to the client.
+// "recipe detail's batch list never shows a pH" (V4 "pH") is decided here, not left to the client.
 async function readRecipe(sql, recipeId, householdIds) {
   const rows = await sql`
     SELECT r.id, r.user_id, r.name, r.kind, r.recipe_type_id, t.label AS type_label, r.link_url, r.notes,
@@ -360,7 +360,7 @@ async function deleteRecipe(sql, recipeId, householdIds) {
 // mash_in_g, summed across sittings so ratio scaling can be derived; and (Dave 2026-09-30) the final
 // container — the first bottling's first row's container, size of each and "cooked after blending" — as
 // bottle_*. Method, day gates, scale rules, targets and serve notes come across ONLY as notes: the batch's notes verbatim, its brine note, "Following: <recipe_ref>"
-// and its "Next time…" rows. No stage note, no reading, no pH (V4 §3.8). The batch is linked to the new recipe
+// and its "Next time…" rows. No stage note, no reading, no pH (V4 "pH"). The batch is linked to the new recipe
 // when it follows none yet (it was made this way).
 async function fromBatch(sql, batchId, body, userId, householdIds) {
   const verr = validateFromBatch(body);
