@@ -225,6 +225,10 @@ const SHEET_SITES = [
   'components/putup/LineSheet.jsx',
   'components/putup/ShuSheet.jsx',
   'components/putup/StageEditSheet.jsx',
+  // Put-Up release 4 — a DELIBERATE addition: the recipe create/edit sheet. The shared <Sheet armsBack>,
+  // `busy` refusing Back and the backdrop mid-write, the draft kept by kitchen/sheetDraft.js — so the
+  // registered role="dialog" surface is Sheet's and no DIALOG_SURFACES entry is owed.
+  'components/recipes/RecipeSheet.jsx',
   // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
   // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
   // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's
