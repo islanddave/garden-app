@@ -72,6 +72,12 @@ import { USE_SOON_FILTER } from '../components/pantry/pantryRows.js'
 import { DOOR_CTA, completionWords } from '../components/pantry/putSomethingUp.js'
 import { noteBridgeVisit, dismissBridge } from '../components/pantry/pantryBridge.js'
 import { FIND_PARAM } from '../lib/putUpClientState.js'
+// Put-Up UX pass R1 — every door into a mode goes through ONE opener on this page, and a mode's Back says
+// where it lands. The pure halves are not written here: origin.js (the state a push rides on, the one-mode-key
+// URL) and the foot of goingNow.js (pop or push, the Back's words, the segments).
+import { withFrom, modeSearch } from '../components/putup/origin.js'
+import { PUT_UP_SEGMENTS, leaveSegment, segmentLabel, leavesByPop, backWords } from '../components/putup/goingNow.js'
+import { readMarker } from '../lib/backNav.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -355,12 +361,13 @@ export default function PutUp({
 
   // `?filter=use-soon` — the list narrowed to what the band showed, behind a removable "Use soon ×"
   // chip. Clearing REPLACES the entry, so Back still returns to where the band was tapped (Today), and
-  // carries location.state so an overlay's background survives (V4 §6.2).
+  // carries the entry's state so an overlay's background survives (V4 §6.2) — through withFrom, like every
+  // write on this page (R1): the background and every other key ride along, an origin does not.
   const useSoonOnly = searchParams.get('filter') === USE_SOON_FILTER
   const clearUseSoon = useCallback(() => {
     const next = new URLSearchParams(searchParams)
     next.delete('filter')
-    setSearchParams(next, { replace: true, state: location.state })
+    setSearchParams(next, { replace: true, state: withFrom(location.state, null) })
   }, [searchParams, setSearchParams, location.state])
 
   // ── V5-INFLIGHTBATCH-001 — open batches, fetched at the PAGE and passed down ───────────────────
@@ -398,10 +405,16 @@ export default function PutUp({
   // remounting onto 'stores', the onChanged -> loadGoing invalidation contract keeps working, and
   // App.routes.test.jsx's 58-route freeze does not move.
   //
-  // `batch` wins over `state`: opening a batch FROM the closed list must show that batch.
+  // Put-Up UX pass R1 (PLAN-V3 D11) — `?recipe=<id>` is a third mode flag, for the same reason the other two
+  // are flags: recipe detail is a full mode, with the page's own Back and no search row, button or segments.
+  //
+  // `batch` wins over `recipe`, and `recipe` over `state`. That order only ever decides a hand-typed or
+  // deep-link URL: every door on this page writes exactly ONE mode key (openMode below), so a batch's
+  // recipe link opens the recipe and a closed row opens its batch without either being outranked.
   const batchId = searchParams.get('batch')
-  const closedMode = !batchId && searchParams.get('state') === 'closed'
-  const modeActive = !!batchId || closedMode
+  const recipeId = batchId ? null : (searchParams.get('recipe') || null)
+  const closedMode = !batchId && !recipeId && searchParams.get('state') === 'closed'
+  const modeActive = !!batchId || !!recipeId || closedMode
 
   // ONE instant for the detail surface, collapsed once per opened batch — GoingNowView.jsx:221-225's
   // rule applied at the page. PutUp is a route element that App renders with no props, so it cannot
@@ -453,29 +466,72 @@ export default function PutUp({
   // at is the one that goes stale. Both, for the same reason onBatchChanged does both.
   const onClosedChanged = useCallback(() => { loadClosed(); loadGoing() }, [loadClosed, loadGoing])
 
-  // Leaving a mode drops only the mode keys, so ?session= and anything a future door adds survive.
+  // ── Put-Up UX pass R1 (PLAN-V3 section 3, "What the page does") — THE ONE OPENER ─────────────────
+  // Every door into a mode comes through here: the Going-now card and its closed-list door, a closed row,
+  // a Pantry row sheet (from the list or from the search), a batch's recipe link, a recipe's batches, a
+  // search hit and a batch just started. So there is one answer to each of three questions:
+  //   · THE URL carries exactly ONE mode key (origin.js modeSearch), with the page search dropped and
+  //     every other param kept. A mode that names nothing (a start that answered with no id) opens nothing.
+  //   · THE STATE is withFrom(location.state, origin): the overlay's background and every other key ride
+  //     along, the sender's origin is set — or REMOVED when the sender names none, so the next mode's
+  //     Back can never read the last one's.
+  //   · IT IS A PUSH, so Back (the system's and the page's) returns to the sender. A sender inside an
+  //     armed sheet lands first (kitchen/sheetLanding.js). The one exception is the net for a sender that did
+  //     not: while a sheet's Back marker is still the current entry, a push would strand it mid-stack as
+  //     a Back press that does nothing, so the mode REPLACES it and one Back still lands on the sender.
+  const openMode = useCallback((mode, origin) => {
+    const next = modeSearch(searchParams, mode)
+    if (!next.has('batch') && !next.has('recipe') && !next.has('state')) return
+    const overMarker = typeof window !== 'undefined' && !!readMarker(window.history?.state)
+    setSearchParams(next, { state: withFrom(location.state, origin ?? null), replace: overMarker })
+  }, [searchParams, setSearchParams, location.state])
+  const openBatch = useCallback((id, origin) => openMode({ batch: id }, origin), [openMode])
+  const openRecipe = useCallback((id, origin) => openMode({ recipe: id }, origin), [openMode])
+  const openClosed = useCallback(() => openMode({ state: 'closed' }), [openMode])
+
+  // THE WAY BACK OUT. It POPS when this entry names where it was opened from and an app entry is under it
+  // (leavesByPop): the sender is one Back away, on this route or another, with its own state — and a
+  // system Back after it does not walk back INTO the mode. Otherwise it is the push it has always been —
+  // the URL with the mode keys removed (anything else, ?session= included, survives) — so a cold deep
+  // link, a restored session and a card that named no origin all have an exit that never leaves the page
+  // by surprise and never does nothing. That push lands on the segment the page is holding, except a
+  // recipe, which is left onto Recipes; the Back's words (backWords, below) name that same landing.
   const leaveMode = useCallback(() => {
-    const next = new URLSearchParams(searchParams)
-    next.delete('batch'); next.delete('state')
-    setSearchParams(next)
-  }, [searchParams, setSearchParams])
+    if (leavesByPop(location.state, typeof window === 'undefined' ? undefined : window.history?.state?.idx)) {
+      navigate(-1)
+      return
+    }
+    chooseView(leaveSegment(view, { recipe: !!recipeId }))
+    setSearchParams(modeSearch(searchParams, null), { state: withFrom(location.state, null) })
+  }, [location.state, navigate, chooseView, view, recipeId, searchParams, setSearchParams])
+
+  // RecipesView's `onOpen(id | null)`: an id opens that recipe (no origin — it is left onto Recipes); null,
+  // which a removed recipe sends, is the same act as the page's own Back.
+  const onRecipeOpen = useCallback((id) => {
+    if (id == null || id === '') { if (recipeId) leaveMode() } else openRecipe(id)
+  }, [recipeId, leaveMode, openRecipe])
 
   // Put-Up release 1a — Start a batch opens the shared sheet here instead of leaving for /capture, and
   // a started batch opens straight into the shipped `?batch=` mode: a PUSH, so Back returns to the list
-  // it was started from, with the list re-read because it has a new card. location.state rides along
-  // so an overlay keeps its background (V4 §6.2). The keys are handled the way GoingNowView's openBatch
-  // handles them — drop `state`, set `batch`, keep everything else.
+  // it was started from, with the list re-read because it has a new card. R1: through the one opener,
+  // and with the origin a sender names — a recipe's Make this and its "Made from this" rows hand theirs
+  // in as the second argument, so the batch's Back returns to that recipe.
+  //
+  // `startLabel` is the name Start opens WITH — the one the Put something up door carried over when its
+  // escape line was tapped (PLAN-V3 D6, D10) — and '' from every other door. Anything that is not text (a
+  // click event from a host that wired the callback straight to onClick) is no name.
   const [startOpen, setStartOpen] = useState(false)
-  const openStartSheet = useCallback(() => setStartOpen(true), [])
+  const [startLabel, setStartLabel] = useState('')
+  const openStartSheet = useCallback((label) => {
+    setStartLabel(typeof label === 'string' ? label : '')
+    setStartOpen(true)
+  }, [])
   const closeStartSheet = useCallback(() => setStartOpen(false), [])
-  const onBatchStarted = useCallback((batch) => {
+  const onBatchStarted = useCallback((batch, origin) => {
     setStartOpen(false)
     loadGoing()
-    if (batch?.id == null || batch.id === '') return
-    const next = new URLSearchParams(searchParams)
-    next.delete('state'); next.set('batch', String(batch.id))
-    setSearchParams(next, { state: location.state })
-  }, [loadGoing, searchParams, setSearchParams, location.state])
+    openBatch(batch?.id, origin)
+  }, [loadGoing, openBatch])
 
   // THE BARE-OPEN DEFAULT. A bare Put-Up open landing on "what have I got" is correct today and
   // wrong the moment batches exist, because the answer to "what is going on right now" would then be
@@ -563,22 +619,28 @@ export default function PutUp({
   const setFind = useCallback((text) => {
     const next = new URLSearchParams(searchParams)
     if (text) next.set(FIND_PARAM, text); else next.delete(FIND_PARAM)
-    setSearchParams(next, { replace: searchParams.has(FIND_PARAM), state: location.state })
+    setSearchParams(next, { replace: searchParams.has(FIND_PARAM), state: withFrom(location.state, null) })
   }, [searchParams, setSearchParams, location.state])
   const clearFind = useCallback(() => setFind(''), [setFind])
   // A search hit from the extra corpus opens through its own `onOpen` when it has one; a recipe item
   // ({kind:'recipe', id, name, …}, the recipes lane's shape) otherwise opens recipe detail, `?recipe=`
-  // (V4 §6.2) — a push, with the search dropped, so Back returns to the list.
+  // (V4 §6.2) — through the one opener, with no origin: a push, with the search dropped, so the system
+  // Back returns to the results and the page's Back leaves onto Recipes.
   const openSearchItem = useCallback((item) => {
     if (typeof item?.onOpen === 'function') { item.onOpen(item); return }
-    if (item?.kind === 'recipe' && item.id != null) {
-      const next = new URLSearchParams(searchParams)
-      next.delete(FIND_PARAM); next.set('recipe', String(item.id))
-      setSearchParams(next, { state: location.state })
-    }
-  }, [searchParams, setSearchParams, location.state])
+    if (item?.kind === 'recipe') openRecipe(item.id)
+  }, [openRecipe])
 
-  const openDoor = useCallback((name = '') => { setDoorName(name); setDoorOpen(true) }, [])
+  // `name` is the text a door is opened WITH (the search's "Put something up: <text> →", the empty
+  // Pantry's button). Anything that is not text — a click event from a host that wired the callback
+  // straight to onClick — opens the door empty, never with an object for a name.
+  const openDoor = useCallback((name) => { setDoorName(typeof name === 'string' ? name : ''); setDoorOpen(true) }, [])
+  // The walk's door, on the header row and on the empty Pantry.
+  const openWalk = useCallback(() => navigate(`/put-up?session=${WALK_PARAM}`), [navigate])
+  // The door's escape, "Still going (a ferment)? Start a batch instead →": the door closes and Start opens
+  // with the name it carried. One armed sheet handing over to another in one handler reuses the Back
+  // marker, so there is nothing to land and nothing navigates.
+  const onStartBatchInstead = useCallback((name) => { setDoorOpen(false); openStartSheet(name) }, [openStartSheet])
   const onDoorSaved = useCallback(({ route, saved, place }) => {
     setDoorOpen(false)
     setCompletion({ route, saved, place, text: completionWords({ route, saved, place }) })
@@ -600,6 +662,11 @@ export default function PutUp({
   // flag: leaving the mode restores the segment the user was on instead of remounting the page onto the
   // Pantry behind a network round trip.
   const seg = modeActive || searching ? null : view
+  // The Back's words name where the press lands (see leaveMode): the sender when it will pop to it,
+  // otherwise the segment the push shows. Read at render — every navigation re-renders this page, and
+  // a sheet's Back marker copies the router's index, so the two cannot disagree between renders.
+  const back = backWords(location.state, typeof window === 'undefined' ? undefined : window.history?.state?.idx,
+    segmentLabel(leaveSegment(view, { recipe: !!recipeId })))
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
@@ -609,13 +676,16 @@ export default function PutUp({
         {/* THE WAY BACK, in the page rather than in the browser chrome. An installed PWA has no
             address bar and no visible Back control (App.jsx records exactly this hazard for /admin/*),
             so a mode with no in-page exit is a mode a user can be stuck in. History Back also works
-            and lands in the same place, because the mode is a search param on this same route. */}
+            and lands in the same place, because the mode is a search param on this same route.
+            R1 (PLAN-V3 D11): ONE line. The name shortens with an ellipsis; " (recipe)" / " (batch)", which
+            is what tells a recipe from the batch named after it, stays whole. */}
         {modeActive && (
           <button type="button" onClick={leaveMode} data-testid="putup-mode-back"
-            style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
-              background: 'none', border: 'none', padding: '2px 8px 2px 0', margin: '2px 0 8px',
+            style={{ display: 'inline-flex', alignItems: 'center', maxWidth: '100%', minHeight: T.buttonMinHeight,
+              background: 'none', border: 'none', padding: '2px 8px 2px 0', margin: '2px 0 8px', whiteSpace: 'nowrap',
               cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
-            ← Going now
+            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>← {back.name}</span>
+            {back.suffix && <span style={{ flexShrink: 0, whiteSpace: 'pre' }}>{back.suffix}</span>}
           </button>
         )}
 
@@ -638,7 +708,7 @@ export default function PutUp({
                 {DOOR_CTA}
               </button>
             </div>
-            <button type="button" onClick={() => navigate(`/put-up?session=${WALK_PARAM}`)} data-testid="putup-walk-door"
+            <button type="button" onClick={openWalk} data-testid="putup-walk-door"
               style={{ minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 2px', color: P.green,
                 fontSize: T.type.sm, fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>
               {WALK_TITLE}
@@ -657,19 +727,14 @@ export default function PutUp({
               ariaLabel="Put-Up view"
               value={view}
               onChange={chooseView}
-              options={[
-                { value: 'going',  label: 'Going now' },
-                { value: 'log',    label: 'Log a put-up' },
-                { value: 'pantry', label: 'Pantry' },
-                { value: 'recipes', label: 'Recipes' },
-              ]}
+              options={PUT_UP_SEGMENTS}
             />
           </div>
         )}
 
         {searching && (
           <PantrySearchResults query={findText} rows={pantry.rows} loading={pantry.loading} extraSearchItems={extraSearchItems}
-            onOpenExtra={openSearchItem}
+            onOpenExtra={openSearchItem} onOpenBatch={openBatch}
             fetch={pageFetch} onPutUp={(text) => openDoor(text)} JarEditor={RowEditor}
             onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
             onUsed={(entry) => { setPantryRecent(prev => ({ ...prev, [`${entry.row.stock_kind}:${entry.row.stock_id}`]: { ...entry, undone: false, err: null, undoKey: null } })); pantry.reload() }}
@@ -701,7 +766,7 @@ export default function PutUp({
 
         {seg === 'going' && (
           <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing}
-            onStartBatch={StartBatchSheet ? openStartSheet : undefined} />
+            onStartBatch={StartBatchSheet ? openStartSheet : undefined} onOpenBatch={openBatch} onOpenClosed={openClosed} />
         )}
         {seg === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('pantry')} />}
         {seg === 'pantry' && (
@@ -710,9 +775,15 @@ export default function PutUp({
             useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} JarEditor={RowEditor}
             onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
             completion={completion} onCompletionDone={() => setCompletion(null)}
-            showBridge={bridgeShown} onDismissBridge={onDismissBridge} />
+            showBridge={bridgeShown} onDismissBridge={onDismissBridge}
+            onOpenBatch={openBatch} onPutSomethingUp={openDoor} onWalkPlace={openWalk} />
         )}
-        {seg === 'recipes' && <RecipesView onBatchStarted={onBatchStarted} />}
+        {/* ONE element for the Recipes list and for recipe detail (R1, PLAN-V3 D11): the same instance stays
+            mounted across opening and closing a recipe, so its two list reads and its type filter are not
+            thrown away on every tap. With `onOpen` it is controlled by the URL: `openId` is `?recipe=`. */}
+        {(seg === 'recipes' || recipeId) && (
+          <RecipesView onBatchStarted={onBatchStarted} openId={recipeId} onOpen={onRecipeOpen} />
+        )}
 
         {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
             only invalidation path and it re-reads BOTH this row and the list.
@@ -728,7 +799,7 @@ export default function PutUp({
               batch={detail} inputs={detail?.inputs ?? []} stages={detail?.stages ?? []}
               outputs={detail?.outputs ?? []} loading={detailLoading && !detailOnScreen} error={detailError && !detailOnScreen}
               refreshFailed={detailError && detailOnScreen} refreshing={detailLoading} onRetry={loadDetail}
-              nowMs={detailNowMs} onChanged={onBatchChanged}
+              nowMs={detailNowMs} onChanged={onBatchChanged} onOpenRecipe={openRecipe}
               onRemoved={() => { loadGoing(); leaveMode() }} />
           </div>
         )}
@@ -736,7 +807,7 @@ export default function PutUp({
         {closedMode && (
           <div data-testid="putup-closed-mode">
             <ClosedBatchesView batches={closed} loading={closedLoading} error={closedError}
-              onReload={onClosedChanged} now={detailNowMs} />
+              onReload={onClosedChanged} now={detailNowMs} onOpenBatch={openBatch} />
           </div>
         )}
 
@@ -745,11 +816,11 @@ export default function PutUp({
             it means the sheet's hooks (its draft read, anything identity-scoped) run only when someone
             asked for it, and can never take down an ordinary visit to this page. */}
         {StartBatchSheet && startOpen && (
-          <StartBatchSheet open onClose={closeStartSheet} onStarted={onBatchStarted} />
+          <StartBatchSheet open onClose={closeStartSheet} onStarted={onBatchStarted} initialLabel={startLabel} />
         )}
         {doorOpen && (
           <PutSomethingUpSheet open initialName={doorName} stockRows={pantry.rows} onClose={() => setDoorOpen(false)}
-            onSaved={onDoorSaved} />
+            onSaved={onDoorSaved} onStartBatchInstead={StartBatchSheet ? onStartBatchInstead : undefined} />
         )}
         {how?.sheet ?? null}
       </div>

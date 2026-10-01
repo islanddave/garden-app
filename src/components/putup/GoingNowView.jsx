@@ -22,7 +22,7 @@
 // never scored, never coloured, never compared to anything, never counted, and never gates anything.
 // The reasoning, and the reversal's audit trail, are at the top of ./goingNow.js and ./PhReadingField.jsx.
 import React, { useState, useMemo, useCallback } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -38,6 +38,7 @@ import PutUpStub from './PutUpStub.jsx'
 import CheckInSaved from './CheckInSaved.jsx'
 import { PUT_IT_UP_CTA } from './putItUp.js'
 import KindQuestion from './KindQuestion.jsx'
+import { withFrom, modeSearch } from './origin.js'
 
 // A question on the card is ONE TARGET that opens Check on it (V4 §2.3: "the ruled pH prompt's link
 // opens Check on it", the IA seat's F14 — the question is the door, not a second control beside it).
@@ -211,7 +212,7 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
 // and hands this view the callback that opens it. Absent — a host that has not wired the seam — the
 // door keeps its shipped behaviour and goes to /capture, whose "Something in the kitchen" card opens
 // the same sheet, so a missed wiring degrades to one extra step rather than a dead button.
-export default function GoingNowView({ batches, loading, error, onReload, now, onStartBatch }) {
+export default function GoingNowView({ batches, loading, error, onReload, now, onStartBatch, onOpenBatch, onOpenClosed }) {
   const navigate = useNavigate()
   const { fetch } = useApiFetch()
   const nowMs = now ?? Date.now()
@@ -226,17 +227,23 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
   // opened as a flyover. A param leaves the route match alone: the page never unmounts, the segment
   // survives, and Back pops the param. The other keys are preserved rather than replaced so ?session=
   // and anything a future door adds ride through untouched.
+  //
+  // Put-Up UX pass R1: the PAGE does the push. `onOpenBatch(id)` and `onOpenClosed()` are its one opener
+  // (PutUp.jsx openMode), which every other door into a mode also uses. A host that passes neither still
+  // gets a working door — the same one-mode-key URL (origin.js modeSearch), and the entry's router state
+  // carried along (withFrom): these two used to push with no state at all, which dropped an overlay's
+  // background and turned a flyover into a page. The card names no origin, so a batch opened from here is
+  // left by the page's own push, onto this segment.
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const openBatch = useCallback((id) => {
-    const next = new URLSearchParams(searchParams)
-    next.delete('state'); next.set('batch', id)
-    setSearchParams(next)
-  }, [searchParams, setSearchParams])
+    if (onOpenBatch) { onOpenBatch(id); return }
+    setSearchParams(modeSearch(searchParams, { batch: id }), { state: withFrom(location.state, null) })
+  }, [onOpenBatch, searchParams, setSearchParams, location.state])
   const openClosed = useCallback(() => {
-    const next = new URLSearchParams(searchParams)
-    next.delete('batch'); next.set('state', 'closed')
-    setSearchParams(next)
-  }, [searchParams, setSearchParams])
+    if (onOpenClosed) { onOpenClosed(); return }
+    setSearchParams(modeSearch(searchParams, { state: 'closed' }), { state: withFrom(location.state, null) })
+  }, [onOpenClosed, searchParams, setSearchParams, location.state])
 
   // CHECK ON IT — one sheet for the whole view, holding the id of the batch being checked. The row
   // itself is read from the CURRENT list on every render, so a re-read that lands while the sheet is
