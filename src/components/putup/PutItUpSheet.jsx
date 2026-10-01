@@ -8,7 +8,7 @@
 //     pass R1, D12) and any other answer is one tap. The resolved date is shown in words before Save.
 //   · What it is now — one method tap from the kind's chips (Appendix B) + More….
 //   · Rows — "2 × 8 oz woozy · Fridge": count (48 px − / +), container, place. Row 1's place is the
-//     third required answer; rows 2..N copy container and place from the row above, shown in words.
+//     other required answer; rows 2..N copy container and place from the row above, shown in words.
 //     Behind one disclosure per row: name, added at the end, Raw · In oil, texture, pH, discard by.
 //   · Once per sitting, behind More: added at the end to every jar, "Made ___ g in all", Next time….
 // Every row's discard-by is previewed (role=status) grouped by date and words, from the same engine
