@@ -265,6 +265,9 @@ describe('project-less picks (BUG-HARVESTSNOPROJECTPICKS-001)', () => {
     const { body } = await callHandler(handler, { method: 'GET', path: '/api/harvests?timeframe=all&include=aggregates' });
     expect(body.aggregates.weight.measured_grams).toBe(350);
     expect(body.aggregates.weight.measured).toBe(2);
+    // The third read model (aggRows -> computeAggregates). The loose plant has no cultivar, so its pick
+    // has no crop and lands in `other`, whose bucket key is the event's project_id — null for this one.
+    expect(body.aggregates.other.some((o) => o.project_id === null)).toBe(true);
   });
 
   it('the foreign logger sees only their own project-less pick', async () => {
