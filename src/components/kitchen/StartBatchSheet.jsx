@@ -39,7 +39,7 @@ import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import { useUploadPhoto } from '../../hooks/useUploadPhoto.js'
 import { setReloadBlocked } from '../../lib/reloadGate.js'
-import { readMarker } from '../../lib/backNav.js'
+import { landAfterClose } from './sheetLanding.js'
 import Sheet from '../forms/Sheet.jsx'
 import Button from '../forms/Button.jsx'
 import Field from '../forms/Field.jsx'
@@ -61,9 +61,9 @@ export const START_SHEET = 'start'
 export const START_SHEET_TITLE = 'Start a batch'
 export const START_CTA = 'Start it'
 export const START_LABEL_PLACEHOLDER = 'e.g. Pepper mash'
-// How long to wait for the sheet's own Back entry to be consumed before landing anyway. The popstate
-// normally arrives within a frame or two; the ceiling only matters if nothing consumes the entry.
-export const LAND_FALLBACK_MS = 1000
+// How long the landing waits for the sheet's own Back entry before going anyway. It lives with the
+// landing now (sheetLanding.js) and is still exported from here, where it has always been found.
+export { LAND_FALLBACK_MS } from './sheetLanding.js'
 const FOOTER_PX = 76
 
 const EMPTY = { label: '', chip: 'today', earlier: null, pickedDate: '', kind: null, kindOther: '', key: '', recipeId: null, recipeRef: '' }
@@ -196,22 +196,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
 
   // THE LANDING: close first, let the sheet's own Back entry be consumed, then hand the batch over.
   const land = useCallback((batch) => {
-    const armed = typeof window !== 'undefined' && !!readMarker(window.history?.state)
-    let done = false
-    let timer = null
-    const finish = () => {
-      if (done) return
-      done = true
-      window.removeEventListener('popstate', finish)
-      if (timer) clearTimeout(timer)
-      onStarted?.(batch)
-    }
-    if (armed) {
-      window.addEventListener('popstate', finish)
-      timer = setTimeout(finish, LAND_FALLBACK_MS)
-    }
-    onClose?.()
-    if (!armed) finish()
+    landAfterClose(onClose, () => onStarted?.(batch))
   }, [onClose, onStarted])
 
   const start = useCallback(async () => {
