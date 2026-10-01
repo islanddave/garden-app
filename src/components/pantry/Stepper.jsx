@@ -1,8 +1,9 @@
 // src/components/pantry/Stepper.jsx
-// V4 §6.6 "Count": a numeric input (min-height 44, inputmode numeric) between 48×48 − / + buttons at
-// least 8 px away, named with the row ("One more — Megatron reaper"); at 1, − is aria-disabled and stays
-// 48 px; no press-and-hold repeat. `min` is 1 unless the host says otherwise; `max` caps + (Gave it away
-// cannot give more than are left).
+// V4 §6.6 "Count": a numeric input (inputmode numeric; 48 px tall from the Put-Up UX pass R1, the tap
+// floor of every Put-Up surface) between 48×48 − / + buttons at least 8 px away, named with the row
+// ("One more — Megatron reaper"); at 1, − is aria-disabled and stays 48 px; no press-and-hold repeat.
+// `min` is 1 unless the host says otherwise; `max` caps + (Gave it away cannot give more than are left;
+// Went bad starts AT what is left, where + is already disabled).
 import React from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -25,7 +26,7 @@ export default function Stepper({ value, onChange, name, idPrefix, disabled = fa
         data-testid={`${idPrefix}-minus`} onClick={() => { if (canDown) onChange(String(count - 1)) }} style={btn(canDown)}>−</button>
       <input type="text" inputMode="numeric" aria-label={`${label} — ${name}`} data-testid={`${idPrefix}-count`} value={value}
         disabled={disabled} onChange={e => onChange(e.target.value.replace(/[^0-9]/g, ''))}
-        style={{ ...inputChrome(false), width: 64, minHeight: 44, textAlign: 'center' }} />
+        style={{ ...inputChrome(false), width: 64, minHeight: T.buttonMinHeight, textAlign: 'center' }} />
       <button type="button" aria-label={`One more — ${name}`} aria-disabled={canUp ? undefined : true} disabled={disabled}
         data-testid={`${idPrefix}-plus`} onClick={() => { if (canUp) onChange(String(count + 1)) }} style={btn(canUp)}>+</button>
     </div>

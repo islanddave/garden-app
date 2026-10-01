@@ -38,6 +38,7 @@ import { labelChrome, inputChrome } from '../forms/formStyles.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import { landAfterClose } from '../kitchen/sheetLanding.js'
 import MoveJarSheet from '../putup/MoveJarSheet.jsx'
+import { nextTimeWords } from '../putup/howItWasMade.js'
 import { toYmd, parseYmd, putUpDateWords, sizeWords } from '../putup/jarWords.js'
 import { PUTUP_SOURCE_LABELS } from '../../lib/dropdownRegistry.js'
 import Stepper, { stepperCount } from './Stepper.jsx'
@@ -79,6 +80,14 @@ export function jarRecordWords(rec, now = new Date()) {
   return parts.join(' · ')
 }
 
+
+// A jar's notes AS THEY ARE READ: a "Next time…" line is stored with its day in brackets ("Next time
+// (2026-09-02): less basil" — the shape the server and the batch builder find these lines by), and reads
+// "Next time: less basil · Sep 2" (howItWasMade.nextTimeWords). Line by line; every other line, and the
+// stored note itself, is untouched.
+export function notesAsRead(notes, now = new Date()) {
+  return String(notes ?? '').split(/\r?\n/).map(line => nextTimeWords(line, now)).join('\n')
+}
 
 // `onHowItWasMade(row)` is the batch-builder lane's door (useHowItWasMade().open); `canHowItWasMade(row)`
 // says whether this row may offer it (a put-up with no batch). Neither handed in → no door.
@@ -171,7 +180,7 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
         {detail && <p style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{detail}</p>}
         {recWords && <p data-testid="row-sheet-record" style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{recWords}</p>}
         {(rec?.notes || (!jar && row.notes)) && (
-          <p data-testid="row-sheet-notes" style={{ margin: 0, color: P.mid, fontSize: T.type.sm, whiteSpace: 'pre-wrap' }}>{rec?.notes || row.notes}</p>
+          <p data-testid="row-sheet-notes" style={{ margin: 0, color: P.mid, fontSize: T.type.sm, whiteSpace: 'pre-wrap' }}>{notesAsRead(rec?.notes || row.notes, nowDate)}</p>
         )}
         {chip && <p style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{chip}</p>}
         {jar && effectiveBasis(row) === 'house' && row.discard?.date && (
@@ -430,7 +439,7 @@ function ItemEditPanel({ row, fetch, onCancel, onSaved, onRemoved }) {
       setErr(refusalOf(e, "Couldn't remove — try again."))
     }
   }
-  const field = { ...inputChrome(false), width: '100%', minHeight: 44 }
+  const field = { ...inputChrome(false), width: '100%', minHeight: T.buttonMinHeight }
   return (
     <div data-testid="item-edit-panel" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div>

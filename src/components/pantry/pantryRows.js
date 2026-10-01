@@ -97,7 +97,15 @@ export function leftWords(row) {
 // batch the host cannot name says nothing about it — never "from undefined".
 export function detailWords(row, { now = new Date(), batchName = null } = {}) {
   const batch = typeof batchName === 'string' && batchName.trim() ? `from ${batchName.trim()}` : null
-  return [row?.place?.label, row?.where_from, batch, leftWords(row), ageWords(row, now)].filter(Boolean).join(' · ')
+  return [inPlaceGroup(row) ? null : row?.place?.label, row?.where_from, batch, leftWords(row), ageWords(row, now)].filter(Boolean).join(' · ')
+}
+
+// Is this row sitting under a heading that IS its place? Grouped By place the server's group_key is the
+// place's id, so the row's own place would only repeat the heading above it; grouped By what it is the key
+// is the crop, and the place is news. Read off the row itself, so a list that is being regrouped (the new
+// grouping asked for, the old rows still on screen) never drops or doubles the place for a moment.
+export function inPlaceGroup(row) {
+  return row?.place?.id != null && String(row.group_key ?? '') === String(row.place.id)
 }
 
 // SEVERAL LEFT: a counted put-up with more than one left. The ONE test two things hang on, so they cannot

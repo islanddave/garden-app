@@ -84,16 +84,21 @@ describe('the Pantry segment (V4 §2.5, §6.1)', () => {
     await waitFor(() => expect(fake.calls('GET').some(c => c.path === '/api/pantry?group=kind')).toBe(true))
   })
 
-  it('a row says name · place · where from · what is left · the discard chip · From the garden', async () => {
+  // AMENDED (Put-Up UX pass R1, F22): grouped By place a row sits under its place's heading and does not
+  // repeat it. The detail line is asserted from the name's end, so nothing may stand before "where from".
+  it('a row says name · where from · what is left · the discard chip · From the garden — its place is the heading above it', async () => {
     renderPantry()
     const open = await screen.findByTestId('pantry-row-open-put_up:jar-reaper')
     expect(open.textContent).toContain('Megatron reaper')
-    expect(open.textContent).toContain('Kitchen fridge · Petri Dish · 4 left')
+    expect(open.textContent).toContain('Megatron reaper' + 'Petri Dish · 4 left')
+    expect(open.textContent).not.toContain('Kitchen fridge')
+    expect(within(screen.getByRole('region', { name: 'Kitchen fridge' })).getByTestId('pantry-row-open-put_up:jar-reaper')).toBe(open)
     expect(open.textContent).toContain('discard by Feb 1, 2027 · general figure: hot sauce, fridge')
     expect(open.textContent).toContain('From the garden')
     expect((await screen.findByTestId('pantry-row-open-put_up:jar-bag')).textContent).toContain('about 92 g left')
     const milk = screen.getByTestId('pantry-row-open-pantry_item:item-milk').textContent
-    expect(milk).toContain('Kitchen fridge · Aldi · had it')
+    expect(milk).toContain('Oat milk' + 'Aldi · had it')
+    expect(milk).not.toContain('Kitchen fridge')
     expect(milk).toContain('the barista one')
     expect(milk).not.toMatch(/left|discard/)
     expect(screen.getByTestId('pantry-row-open-put_up:jar-last').textContent).toContain('discard by Oct 3 · set by hand · soon')

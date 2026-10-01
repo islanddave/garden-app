@@ -172,7 +172,7 @@ describe('on the Pantry list', () => {
     for (let i = 0; i < 3; i += 1) await act(async () => { host.setRows([{ ...REAPER, batch_id: 'kb-gone' }, MILK]) })
     await settle()
     expect(namesGets()).toHaveLength(1)
-    expect(rowText('jar-reaper')).toBe('Megatron reaper' + 'Kitchen fridge · 4 left' + 'discard by Jul 1, 2027 · general figure: hot sauce, fridge')
+    expect(rowText('jar-reaper')).toBe('Megatron reaper' + '4 left' + 'discard by Jul 1, 2027 · general figure: hot sauce, fridge')
   })
 
   it.each([

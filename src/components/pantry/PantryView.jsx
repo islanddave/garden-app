@@ -14,6 +14,12 @@
 // used-up row the server no longer lists stays on screen for its Undo (at full opacity, words in P.mid).
 // A MOVE made from a row here is said in one line at the top — where it went, and what the server
 // answered about its discard date (pantryRows.movedWords) — until it is closed or the next move.
+//
+// Put-Up UX pass R1, on the list: grouped By place a row does not repeat the place its heading names
+// (pantryRows.inPlaceGroup); a row whose discard date is soon or past sets its discard line on the soon
+// tint (putup/soonTint.js — the sentence is unchanged, the tint and the weight are two more channels
+// beside its words); and an EMPTY Pantry offers the two ways to fill it, as secondary buttons, when the
+// page hands them in (`onPutSomethingUp`, `onWalkPlace`) — neither handed in, it is the one line it was.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -21,11 +27,15 @@ import { listPantry, listBatchNames, undoUse, patchPantryItem, useJar, deletePan
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import SegmentedControl from '../forms/SegmentedControl.jsx'
 import ErrorBanner from '../forms/ErrorBanner.jsx'
+import Button from '../forms/Button.jsx'
+import { SOON_CHIP_STYLE } from '../putup/soonTint.js'
+import { DOOR_CTA } from './putSomethingUp.js'
+import { WALK_TITLE } from './WalkPlace.jsx'
 import PantryRowSheet from './PantryRowSheet.jsx'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
 import {
   groupRows, rowKey, isItem, detailWords, discardChip, inlineAction, ACTION_LABELS, USED_ONE, USED_UP,
-  afterUseWords, finishedByUse, movedWords, onlyUseSoon,
+  afterUseWords, finishedByUse, movedWords, onlyUseSoon, isUseSoon,
 } from './pantryRows.js'
 import { BRIDGE_TEXT } from './pantryBridge.js'
 
@@ -104,7 +114,7 @@ export function mergeRecent(rows, recent) {
 export default function PantryView({
   fetch, group, onGroupChange, rows, loading, error, onReload, recent, onRecent,
   useSoonOnly = false, onClearUseSoon, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, completion = null, onCompletionDone,
-  showBridge = false, onDismissBridge, onOpenBatch = null, now,
+  showBridge = false, onDismissBridge, onOpenBatch = null, onPutSomethingUp = null, onWalkPlace = null, now,
 }) {
   const [openRow, setOpenRow] = useState(null)
   // The last move made from this list, said in place at the top (the place it went and what the server
@@ -172,16 +182,30 @@ export default function PantryView({
       {error && rows == null && (
         <ErrorBanner>
           Couldn&rsquo;t load the pantry.{' '}
-          <button type="button" onClick={onReload} style={{ minHeight: 44, background: 'none', border: 'none', color: 'inherit',
+          <button type="button" onClick={onReload} style={{ minHeight: T.buttonMinHeight, background: 'none', border: 'none', color: 'inherit',
             textDecoration: 'underline', fontFamily: 'inherit', cursor: 'pointer' }}>Try again</button>
         </ErrorBanner>
       )}
       {rows != null && shown.length === 0 && (() => {
         const soonEmpty = useSoonOnly && (rows ?? []).length > 0
+        // The two ways to fill an empty Pantry, when the page hands them in — SECONDARY buttons: the
+        // screen's one filled button is the page header's.
+        const canPutUp = !soonEmpty && typeof onPutSomethingUp === 'function'
+        const canWalk = !soonEmpty && typeof onWalkPlace === 'function'
         return (
           <div data-testid={soonEmpty ? 'putup-use-soon-empty' : 'pantry-empty'} style={{ padding: '28px 18px', textAlign: 'center',
             color: P.mid, background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
             {soonEmpty ? 'Nothing to use soon right now.' : 'Nothing in the pantry yet.'}
+            {(canPutUp || canWalk) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: T.space.md }}>
+                {canPutUp && (
+                  <Button variant="secondary" data-testid="pantry-empty-putup" onClick={() => onPutSomethingUp()}>{DOOR_CTA}</Button>
+                )}
+                {canWalk && (
+                  <Button variant="secondary" data-testid="pantry-empty-walk" onClick={() => onWalkPlace()}>{WALK_TITLE}</Button>
+                )}
+              </div>
+            )}
           </div>
         )
       })()}
@@ -219,6 +243,7 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
   const key = rowKey(row)
   const action = inlineAction(row)
   const chip = discardChip(row, now)
+  const soon = isUseSoon(row)
   const detail = detailWords(row, { now, batchName })
 
   async function act() {
@@ -276,7 +301,15 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
             cursor: 'pointer', fontFamily: 'inherit', color: P.dark }}>
           <span style={{ display: 'block', fontWeight: 600, fontSize: '0.92rem' }}>{row.name}</span>
           {detail && <span style={{ display: 'block', fontSize: T.type.sm, color: P.mid }}>{detail}</span>}
-          {chip && <span data-testid={`pantry-row-chip-${key}`} style={{ display: 'block', fontSize: T.type.sm, color: P.mid, overflowWrap: 'anywhere' }}>{chip}</span>}
+          {chip && !soon && <span data-testid={`pantry-row-chip-${key}`} style={{ display: 'block', fontSize: T.type.sm, color: P.mid, overflowWrap: 'anywhere' }}>{chip}</span>}
+          {/* Soon or past: the same sentence, on the soon tint. The tint hugs the words (an inline box in
+              its own line), so a long sentence wraps inside it. */}
+          {chip && soon && (
+            <span style={{ display: 'block', margin: '2px 0' }}>
+              <span data-testid={`pantry-row-chip-${key}`} data-soon="true"
+                style={{ ...SOON_CHIP_STYLE, display: 'inline-block', fontSize: T.type.sm, overflowWrap: 'anywhere' }}>{chip}</span>
+            </span>
+          )}
           {isItem(row) && typeof row.notes === 'string' && row.notes.trim() && (
             <span style={{ display: 'block', fontSize: T.type.sm, color: P.mid, overflowWrap: 'anywhere' }}>{row.notes.trim()}</span>
           )}

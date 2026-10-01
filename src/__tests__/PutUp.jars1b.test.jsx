@@ -74,7 +74,10 @@ describe('the Pantry row says its name, its place, what is left and its discard 
     await renderList()
     const row = await rowOpen()
     expect(row.textContent).toContain('Megatron reaper')
-    expect(row.textContent).toContain('Fridge · 2 left')
+    // AMENDED (Put-Up UX pass R1, F22): grouped By place the row sits under its place's heading and does
+    // not repeat it — the place is said once, by the heading; what is left is the row's.
+    expect(screen.getByRole('heading', { name: 'Fridge' })).toBeTruthy()
+    expect(row.textContent).toContain('Megatron reaper' + '2 left')
     expect(document.body.textContent).not.toMatch(/\bnull\b|undefined|NaN/)
   })
 
