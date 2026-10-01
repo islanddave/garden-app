@@ -326,3 +326,85 @@ describe('words — no banned word on the page shell or on Going now (PLAN-V3 se
     expect(screen.getByTestId('going-now-view').textContent).not.toMatch(BANNED)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// PLAN-V3 D16 — recipes join the page search. The page reads GET /api/recipes the first time the search
+// holds text, and never before: this page's own rule is that a bare open issues no GET nobody asked for.
+// MUTATION (Spare 1): read the recipes at mount -> "a bare open reads no recipes" reds here, and so does
+// PutUp.recipesSegment.test.jsx "is one more option; a bare open reads no recipes".
+describe('the page search finds recipes (PLAN-V3 D16)', () => {
+  const type = (value) => fireEvent.change(screen.getByRole('searchbox'), { target: { value } })
+  const hits = () => [...screen.getByTestId('pantry-search-results').querySelectorAll('[data-testid^="pantry-search-hit-"]')]
+    .map(b => b.textContent)
+
+  it('a bare open reads no recipes — on Going now and on the Pantry alike', async () => {
+    renderPage()
+    await onSegment('Going now')
+    pick('Pantry')
+    await screen.findByTestId('pantry-view')
+    pick('Going now')
+    await screen.findByTestId('going-now-view')
+    expect(gets('/api/recipes')).toBe(0)
+    // Green control: the page IS reading, so the zero above is about the recipes and nothing else.
+    expect(gets('/api/kitchen-batches?state=going')).toBe(1)
+  })
+
+  it('five keystrokes are ONE read', async () => {
+    renderPage()
+    await onSegment('Pantry')
+    for (const text of ['r', 'ro', 'rol', 'roll', 'roll ']) type(text)
+    await waitFor(() => expect(hits()).toEqual(['Roll for Initiative · Hot sauce']))
+    expect(gets('/api/recipes')).toBe(1)
+  })
+
+  it('a recipe hit says what it makes — or that it is a recipe — and a second search does not read again', async () => {
+    renderPage()
+    await onSegment('Pantry')
+    type('m')
+    await waitFor(() => expect(hits()).toEqual(['Mystery mash · recipe']))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear the search' }))
+    await screen.findByTestId('pantry-view')
+    type('init')
+    await waitFor(() => expect(hits()).toEqual(['Roll for Initiative · Hot sauce']))
+    expect(gets('/api/recipes')).toBe(1)
+  })
+
+  it('a tap opens that recipe (?recipe=), the search dropped, and names no origin', async () => {
+    renderPage('/put-up?view=pantry')
+    await screen.findByTestId('pantry-view')
+    type('roll')
+    fireEvent.click(await screen.findByTestId('pantry-search-hit-extra:recipe:r1'))
+    await waitFor(() => expect(screen.getByTestId('probe-loc').textContent).toBe('/put-up?view=pantry&recipe=r1'))
+    expect(JSON.parse(screen.getByTestId('probe-state').textContent)).toBeNull()
+    expect(screen.getByTestId('putup-mode-back').textContent).toBe('← Recipes')
+  })
+
+  it('a failed read leaves the search working over the Pantry, and the next search asks again', async () => {
+    let fail = true
+    const base = fetchMock.getMockImplementation()
+    fetchMock.mockImplementation((path, options) => (path === '/api/recipes' && fail
+      ? Promise.reject(new Error('502')) : base(path, options)))
+    renderPage()
+    await onSegment('Pantry')
+    type('roll')
+    await waitFor(() => expect(gets('/api/recipes')).toBe(1))
+    // The Pantry's own "no hit" door is there: the search itself did not fail.
+    expect((await screen.findByTestId('pantry-search-putup')).textContent).toBe('Put something up: roll →')
+    type('rolls')
+    await waitFor(() => expect(screen.getByTestId('pantry-search-putup').textContent).toBe('Put something up: rolls →'))
+    expect(gets('/api/recipes')).toBe(1)                          // not once per keystroke after a failure, either
+    fail = false
+    fireEvent.click(screen.getByRole('button', { name: 'Clear the search' }))
+    await screen.findByTestId('pantry-view')
+    type('roll')
+    await waitFor(() => expect(hits()).toEqual(['Roll for Initiative · Hot sauce']))
+    expect(gets('/api/recipes')).toBe(2)
+  })
+
+  it('a search param under a mode is not a search: nothing is read', async () => {
+    renderPage('/put-up?batch=kb-1&find=roll')
+    await screen.findByTestId('putup-batch-mode')
+    await waitFor(() => expect(gets('/api/kitchen-batches/kb-1')).toBe(1))
+    expect(gets('/api/recipes')).toBe(0)
+  })
+})

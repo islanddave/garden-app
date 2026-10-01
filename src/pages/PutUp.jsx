@@ -77,7 +77,7 @@ import { FIND_PARAM } from '../lib/putUpClientState.js'
 // URL) and the foot of goingNow.js (pop or push, the Back's words, the segments).
 import { withFrom, modeSearch } from '../components/putup/origin.js'
 import {
-  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, leavesByPop, backWords,
+  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, leavesByPop, backWords, recipeSearchItems,
 } from '../components/putup/goingNow.js'
 import { readMarker } from '../lib/backNav.js'
 
@@ -608,11 +608,21 @@ export default function PutUp({
   const how = useHow({ onSaved: () => { pantry.reload(); loadGoing() } })
   const onHowItWasMade = typeof how?.open === 'function' ? how.open : null
   const canHowItWasMade = useMemo(() => howRowCheck(howItWasMade), [howItWasMade])
-  // The page search's extra corpus: the recipes lane hands its loaded recipes in through
-  // `setExtraSearchItems` (or the `extraSearchItems` prop): `{ kind, id, name, type_label?, onOpen? }`
-  // (a `key` and `kindLabel` are read too).
+  // The page search's extra corpus: `{ kind, id, name, type_label?, onOpen? }` items (a `key` and
+  // `kindLabel` are read too), from the `extraSearchItems` prop and — R1, PLAN-V3 D16 — the household's
+  // recipes. Their list is read ONCE, the first time the search holds text: never at a bare open (this
+  // page already refuses a GET nobody asked for), and not once per keystroke. A failed read leaves the
+  // search exactly as it was, over the Pantry alone, and the next search asks again.
   const [extraSearchState, setExtraSearchItems] = useState(NO_EXTRA_SEARCH_ITEMS)
   const extraSearchItems = useMemo(() => [...extraSearchItemsProp, ...extraSearchState], [extraSearchItemsProp, extraSearchState])
+  const recipesAskedRef = useRef(false)
+  useEffect(() => {
+    if (!searching || recipesAskedRef.current) return
+    recipesAskedRef.current = true
+    pageFetch('/api/recipes')
+      .then(r => setExtraSearchItems(recipeSearchItems(r)))
+      .catch(() => { recipesAskedRef.current = false })
+  }, [searching, pageFetch])
   // The rename bridge (V4 §2.5): counted once per page visit, per viewer.
   const [bridgeShown, setBridgeShown] = useState(() => noteBridgeVisit(viewerId))
   const onDismissBridge = useCallback(() => { dismissBridge(viewerId); setBridgeShown(false) }, [viewerId])
