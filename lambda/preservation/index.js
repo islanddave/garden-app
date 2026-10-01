@@ -39,6 +39,11 @@ import { handleSourceRoute, sourceErrorMessage } from './sourceRoutes.js';
 import { handleJarRoute } from './jarRoutes.js';
 // Release F — POST /api/pantry/uses (Mark used / Used up), importable for the same reason.
 import { handlePantryUses } from './pantryUses.js';
+// Release B′ (V4 §5.1 rows "2") — GET /api/pantry, /api/pantry/items[/:id], /api/pantry/uses/:id/undo, and
+// Remove on a put-up (removeJar), importable for the same reason.
+import { handlePantryRoute, removeJar } from './pantryRoutes.js';
+// Put-Up release 4 — /api/recipes (the recipe library), importable for the same reason.
+import { handleRecipeRoute } from './recipeRoutes.js';
 import { MASS_UNITS, MASS_FACTORS } from './lineRoutes.js';
 
 const sm = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'us-east-1' });
@@ -221,6 +226,11 @@ export const handler = async (event) => {
     //    Lambda by prefix (src/lib/api.js), so no infra change is needed; nothing else here claims it.
     const use = await handlePantryUses({ sql, rawPath, method, rawBody: event.body, userId, householdIds });
     if (use) return resp(use.status, use.body);
+    // ── /api/pantry, /api/pantry/items[/:id], /api/pantry/uses/:id/undo (B′). Null for every other path.
+    const pantry = await handlePantryRoute({
+      sql, rawPath, method, rawBody: event.body, query: event.queryStringParameters ?? {}, userId, householdIds,
+    });
+    if (pantry) return resp(pantry.status, pantry.body);
 
     const kitchen = await handleKitchenRoute({
       sql,
@@ -232,6 +242,12 @@ export const handler = async (event) => {
       householdIds,
     });
     if (kitchen) return resp(kitchen.status, kitchen.body);
+
+    // ── /api/recipes/** (Put-Up release 4), delegated whole; null for every path that is not its own.
+    const recipes = await handleRecipeRoute({
+      sql, rawPath, method, rawBody: event.body, query: event.queryStringParameters ?? {}, userId, householdIds,
+    });
+    if (recipes) return resp(recipes.status, recipes.body);
 
     // ── /api/preservation/:id/sources (V5-PUTUPMULTISOURCE-001), delegated whole. ──
     // Placed HERE, above the literal sub-routes, and it is safe there because parseSourceRoute
@@ -636,21 +652,11 @@ export const handler = async (event) => {
       }
 
       if (method === 'DELETE') {
-        // Put-Up release 1b: deleted_at is a watched column of trg_audit_preservation_log_upd, so the
-        // actor GUC rides in the same transaction (V4 "Audit"; lambda/audit-actor-guc.test.js).
-        const [, rows] = await sql.transaction([
-          sql`SELECT set_config('app.actor_clerk_sub', ${userId}, true)`,
-          sql`
-          UPDATE preservation_log
-          SET deleted_at = NOW()
-          WHERE id = ${rowId}
-            AND user_id = ANY(${householdIds})
-            AND deleted_at IS NULL
-          RETURNING id
-        `,
-        ]);
-        if (!rows.length) return resp(404, { error: 'Not found' });
-        return resp(200, { ok: true });
+        // Release B′ (V4 §2.5 "Remove"): refused on a jar that was used or that a live batch line draws
+        // from, with the reason and a path; otherwise the 1b soft delete, in the actor transaction.
+        // pantryRoutes.js removeJar (executed by pantryRoutes.test.js).
+        const removed = await removeJar(sql, rowId, userId, householdIds);
+        return resp(removed.status, removed.body);
       }
 
       return resp(405, { error: 'Method not allowed' });

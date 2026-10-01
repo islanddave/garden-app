@@ -118,8 +118,9 @@ export const KITCHEN_ACTS = ['topped_up', 'pushed_under', 'skimmed'];
 export const KITCHEN_ROLES = ['salt', 'water'];
 // chk_kbi_salt_base admits 'peppers' for a 1b-era row; no F writer writes it (06 §3.1).
 export const KITCHEN_SALT_BASES = ['produce', 'water', 'all'];
-// The kinds an F line POST writes (contract-F §2.2). 'pantry' is reserved for B′.
-export const KITCHEN_LINE_KINDS = ['garden', 'harvest', 'put_up', 'purchased', 'other'];
+// The kinds a line POST writes (contract-F §2.2). B′ release 3 adds 'pantry': a bought item from the
+// Pantry, named by pantry_item_id (chk_kbi_pantry_item_kind, v5-pantry-001).
+export const KITCHEN_LINE_KINDS = ['garden', 'harvest', 'put_up', 'purchased', 'other', 'pantry'];
 export const KITCHEN_SHU_BASES = ['computed', 'typed'];
 // chk_kitchen_batch_vessel_count.
 export const KITCHEN_VESSEL_COUNT_MAX = 50;
@@ -235,6 +236,8 @@ export function parseKitchenRoute(rawPath) {
   // Release F: the line search is a LITERAL, matched BEFORE any :id capture, so 'line-search' can never
   // be read as a batch id (API-I1).
   if (path === '/api/kitchen-batches/line-search') return { kind: 'line_search' };
+  // B′ release 3: How it was made → — a literal too, for the same reason.
+  if (path === '/api/kitchen-batches/from-jars') return { kind: 'from_jars' };
   const m = path.match(/^\/api\/kitchen-batches\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?(?:\/([^/]+))?$/);
   if (!m) return null;
   const [, id, sub, tail, fourth] = m;
@@ -358,14 +361,23 @@ export function validateBatchCreate(body) {
   const rejected = KITCHEN_BATCH_SERVER_OWNED_COLUMNS.filter((c) => has(body, c));
   if (rejected.length) return `these fields are set by the server, not the client: ${rejected.join(', ')}`;
   // Put-Up release 1b (V4 API table, row "POST /api/kitchen-batches"): the key lives on the batch row
-  // (uq_kitchen_batch_idempotency_key), and a recipe cannot be named before recipes exist (release 4).
-  if (body.recipe_id != null) return 'recipes arrive in a later release — send no recipe_id';
+  // (uq_kitchen_batch_idempotency_key). Release 4 lifts 1b's recipe_id refusal: a batch may name the recipe
+  // it follows (the route loads it household-scoped) and F's free-text recipe_ref rides the create too.
   return kindError(body, { requirePair: false })
+    ?? uuidFieldError(body, 'recipe_id')
+    ?? recipeRefError(body)
     ?? startPairingError(body, { requirePair: false })
     ?? anchorError(body)
     ?? expectedDaysError(body, { requirePair: false })
     ?? uuidFieldError(body, 'cover_photo_id')
     ?? uuidFieldError(body, 'idempotency_key');
+}
+
+function recipeRefError(body) {
+  if (body.recipe_ref == null) return null;
+  const t = normalizeText(body.recipe_ref);
+  if (t == null) return 'the recipe reference cannot be blank';
+  return t.length > 500 ? 'the recipe reference can be at most 500 characters' : null;
 }
 
 function uuidFieldError(body, field) {

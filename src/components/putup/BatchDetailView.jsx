@@ -38,6 +38,7 @@ import WhatWentIn, { FromGarden } from './WhatWentIn.jsx'
 import SaltBlock from './SaltBlock.jsx'
 import JarHeatRow from './JarHeatRow.jsx'
 import RecipeRefRow from './RecipeRefRow.jsx'
+import BatchRecipeRow from '../recipes/BatchRecipeRow.jsx'
 import StageEditSheet from './StageEditSheet.jsx'
 import ShuSheet from './ShuSheet.jsx'
 import KindQuestion from './KindQuestion.jsx'
@@ -431,7 +432,10 @@ function Sitting({ batchId, stage, jars, lines, onChanged, nowMs, gardenNames, o
           </button>
         )
       )}
-      {done ? (
+      {/* B′: no Undo on a sitting that wrote no jars of its own — How it was made →'s, whose jars were
+          logged before the batch (the server says so with has_own_jars, and refuses nothing_put_up_here).
+          An older server sends no flag: the Undo stays, as it always was. */}
+      {stage.has_own_jars === false ? null : done ? (
         <div role="status" style={{ color: P.mid, fontSize: '0.78rem' }}>{UNDONE_TEXT}</div>
       ) : (
         <button type="button" data-testid="batch-detail-undo-putup" disabled={busy} onClick={undo}
@@ -623,6 +627,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
         <SetStartDate batch={batch} fetch={fetch} onChanged={onChanged} />
       )}
       <RecipeRefRow batch={batch} onChanged={onChanged} />
+      <BatchRecipeRow batch={batch} inputs={inputRows} onChanged={onChanged} />
 
       <Section title="What went in" testId="batch-detail-inputs">
         {/* Release F: What went in is WhatWentIn (the reworked field) with the Salt block inside it,

@@ -64,7 +64,8 @@ const after = (call, needle) => {
 describe('kitchenLines — the line body rules (contract-F §2.2)', () => {
   const ok = (over) => ({ input_kind: 'other', idempotency_key: K1, label: 'onion', ...over });
   it.each([
-    [{ input_kind: 'pantry' }, /input_kind must be one of/],
+    // B′ release 3 amends this arm: 'pantry' is now a line kind, and it must name its item.
+    [{ input_kind: 'pantry' }, /a pantry line names its item/],
     [{ idempotency_key: 'x' }, /idempotency_key must be a uuid/],
     [{ input_kind: 'garden', label: null }, /names its planting/],
     [{ input_kind: 'harvest', label: null }, /names its pick/],
@@ -467,7 +468,7 @@ describe('Remove this batch — F1', () => {
 
 describe('Undo that put-up — the widened refusal and the one jar UPDATE', () => {
   it('refused when a use not from the sitting\'s own lines, or ANY live line, touches a sitting jar', async () => {
-    const sql = mockSql([OPEN, [], [{ found_count: 1, used_jar_ids: [JAR] }]]);
+    const sql = mockSql([OPEN, [], [{ found_count: 1, own_jar_count: 1, used_jar_ids: [JAR] }]]);
     const res = await handleKitchenRoute({ sql, ...route(`${B}/put-up/${STAGE}/undo`, 'POST', {}) });
     expect(res.body.code).toBe('put_up_in_use');
     const s = sql.batches[0][1].norm;
@@ -475,7 +476,7 @@ describe('Undo that put-up — the widened refusal and the one jar UPDATE', () =
     expect(s).toContain('SELECT k.preservation_log_id FROM kitchen_batch_input k WHERE k.deleted_at IS NULL AND k.preservation_log_id IN (SELECT id FROM sitting_jars)');
   });
   it('removes the jars and gives back the lines\' draws in ONE UPDATE of preservation_log (F1)', async () => {
-    const sql = mockSql([OPEN, [], [{ found_count: 1, used_jar_ids: null, reopened_count: 0 }], VIEW]);
+    const sql = mockSql([OPEN, [], [{ found_count: 1, own_jar_count: 1, used_jar_ids: null, reopened_count: 0 }], VIEW]);
     await handleKitchenRoute({ sql, ...route(`${B}/put-up/${STAGE}/undo`, 'POST', {}) });
     const s = sql.batches[0][1].norm;
     expect((s.match(/UPDATE preservation_log/g) ?? [])).toHaveLength(1);
@@ -502,7 +503,9 @@ describe('POST /api/pantry/uses', () => {
     [{ idempotency_key: K1, preservation_log_id: JAR }, /one of them/],
     [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, all_remaining: true }, /one of them/],
     [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 0 }, /1 or more/],
-    [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'discarded' }, /eaten/],
+    // B′ amends F's "only eaten": discarded is admitted, but only as Went bad = all that is left (V4 §2.5);
+    // 'batch' stays the line routes' own.
+    [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'discarded' }, /Went bad/],
     [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'batch' }, /eaten/],
   ])('%o → 400', async (body, want) => {
     expect(validateUse(body)).toMatch(want);
@@ -520,7 +523,8 @@ describe('POST /api/pantry/uses', () => {
     expect(s).toContain('delta_at = now()');
     // F2: a weighed jar reaching 0 left also reads 0 g
     expect(s).toContain('remaining_amount = CASE WHEN p.package_count = 1 AND p.quantity_unit = ANY( ? ::text[]) AND COALESCE(p.remaining_count, p.package_count) - w.n = 0 THEN 0');
-    expect(s).toContain('INSERT INTO pantry_use (created_by, preservation_log_id, count_used, idempotency_key) SELECT ? ::text, jar.id, jar.used, ? ::uuid FROM jar');
+    // B′: the use row carries the tap's fate (NULL = eaten) — the only change to F's statement.
+    expect(s).toContain('INSERT INTO pantry_use (created_by, preservation_log_id, count_used, fate, idempotency_key) SELECT ? ::text, jar.id, jar.used, ? ::text, ? ::uuid FROM jar');
     expect(sql.batches[0][1].values).toContainEqual(HOUSEHOLD);
   });
 
@@ -556,15 +560,17 @@ describe('POST /api/pantry/uses', () => {
 // ── the line search ───────────────────────────────────────────────────────────────────────────────
 describe('GET /api/kitchen-batches/line-search', () => {
   it('is a literal matched before any :id — no ownership gate reads "line-search" as a batch', async () => {
-    const sql = mockSql([[], []]);
+    // B′ release 3 amends this: five arms now (plantings, put-ups, pantry items, crops, varieties), and the
+    // body gains the ranked `hits` and `resolved_crop` beside F's two unchanged keys.
+    const sql = mockSql([[], [], [], [], []]);
     const res = await handleKitchenRoute({ sql, ...route('/api/kitchen-batches/line-search', 'GET', null, HOUSEHOLD, { q: 'reaper' }) });
-    expect(res).toEqual({ status: 200, body: { plantings: [], put_ups: [] } });
+    expect(res).toEqual({ status: 200, body: { plantings: [], put_ups: [], pantry_items: [], crops: [], varieties: [], hits: [], resolved_crop: null } });
     expect(sql.calls[0].norm).toContain('FROM garden_node gn');
     expect(sql.calls[0].norm).not.toContain('v_kitchen_batch_current');
   });
 
   it('household-scoped on both arms; used-up and removed jars are not offered (F2)', async () => {
-    const sql = mockSql([[], [{ preservation_log_id: JAR, method: 'dehydrate', storage_kind: 'pantry', stock_mode: 'weighed' }]]);
+    const sql = mockSql([[], [{ preservation_log_id: JAR, method: 'dehydrate', storage_kind: 'pantry', stock_mode: 'weighed' }], [], [], []]);
     const res = await handleKitchenRoute({ sql, ...route('/api/kitchen-batches/line-search', 'GET', null, STRANGER, { q: 'rea' }) });
     expect(sql.calls[0].values).toContainEqual(STRANGER);
     expect(sql.calls[1].values).toContainEqual(STRANGER);

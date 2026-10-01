@@ -124,6 +124,10 @@ const STEPS = [
   ['pantry_use (reversing)',      `DELETE FROM pantry_use WHERE reverses_use_id IS NOT NULL AND (${PANTRY_USE_PRED})`],
   ['pantry_use',                  `DELETE FROM pantry_use WHERE ${PANTRY_USE_PRED}`],
   ['kitchen_batch_input',         `DELETE FROM kitchen_batch_input WHERE id IN (${NS_KBI})`],
+  // Put-Up release 2 (B′, v5-pantry-001). A line names its pantry item (NO ACTION), so items go after the
+  // lines; an item names its place (NO ACTION), its planting (SET NULL) and its crop (NO ACTION), so it goes
+  // before storage_location, plants and crop_types below. Skipped on a fork without the table.
+  ['pantry_item',                 `DELETE FROM pantry_item WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR storage_location_id IN (SELECT id FROM storage_location WHERE user_id LIKE ${NS})`],
   // BUG-PUTUPSRCCASCADE-001: preservation_source.preservation_log_id is ON DELETE RESTRICT (it
   // carries deleted_at, so cascade-sweep's class guard forbids a CASCADE into it), which means a
   // source row must go before its parent put-up or this DELETE 23503s. Same shape, same reason, as
@@ -132,6 +136,12 @@ const STEPS = [
   ['preservation_log',            `DELETE FROM preservation_log WHERE user_id LIKE ${NS} OR crop_type_slug LIKE ${NS} OR plant_id IN (${NS_PLANTS}) OR variety_id IN (${NS_VARIETIES}) OR harvest_log_id IN (${NS_HARVEST})`],
   ['kitchen_stage_log',           `DELETE FROM kitchen_stage_log WHERE created_by LIKE ${NS} OR batch_id IN (${NS_KBATCH})`],
   ['kitchen_batch',               `DELETE FROM kitchen_batch WHERE user_id LIKE ${NS}`],
+  // Put-Up release 4 (v5-recipes-001). Every FK is NO ACTION: a batch names its recipe (kitchen_batch.recipe_id),
+  // a line its recipe, a recipe its type — so batches (above) → lines → recipes → types. A namespaced household's
+  // batch may name ANOTHER namespaced recipe; both are gone by the recipe step.
+  ['recipe_ingredient',           `DELETE FROM recipe_ingredient WHERE recipe_id IN (SELECT id FROM recipe WHERE user_id LIKE ${NS})`],
+  ['recipe',                      `DELETE FROM recipe WHERE user_id LIKE ${NS}`],
+  ['recipe_type',                 `DELETE FROM recipe_type WHERE user_id LIKE ${NS}`],
   // V4-CASCADESWEEP-001: share_log.photo_id is ON DELETE RESTRICT (it is a LEDGER pointer — a post
   // to an external page cannot be retracted by deleting our record of it, per photoDelete.js DD4),
   // so any share row must go before its photo. There was no share_log step here at all.
@@ -306,6 +316,9 @@ export async function countFixtureResidue(sql) {
     ['kitchen_batch_input', `created_by LIKE ${NS}`],
     ['kitchen_stage_log', `created_by LIKE ${NS}`],
     ['kitchen_batch', `user_id LIKE ${NS}`],
+    ['pantry_item', `user_id LIKE ${NS}`],
+    ['recipe', `user_id LIKE ${NS}`],
+    ['recipe_type', `user_id LIKE ${NS}`],
   ]
   const out = {}
   let total = 0

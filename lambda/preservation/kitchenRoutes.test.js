@@ -227,7 +227,9 @@ describe('GET /api/kitchen-batches/:id', () => {
     const sql = mockSql([OWNED, VIEW_ROW, [], [], [{ id: JAR }]]);
     const res = await handleKitchenRoute({ sql, ...call({ rawPath: `/api/kitchen-batches/${BATCH}` }) });
     expect(res.body.outputs).toEqual([{ id: JAR }]);
-    const out = sql.calls.find((c) => c.norm.includes('FROM preservation_log'));
+    // B′: the stages read now carries has_own_jars (an EXISTS over preservation_log), so the outputs read
+    // is found as the statement that STARTS by selecting from it rather than the first that names it.
+    const out = sql.calls.find((c) => c.norm.includes('FROM preservation_log WHERE batch_id'));
     expect(out.norm).toContain('WHERE batch_id = ? ::uuid AND deleted_at IS NULL');
     expect(out.norm).toContain('ORDER BY preserved_at DESC, id DESC');
     expect(out.values).toContain(BATCH);
@@ -477,8 +479,37 @@ describe('DELETE /api/kitchen-batches/:id', () => {
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('has_jars');
     const gate = sql.calls[2].norm;
-    expect(gate.slice(0, gate.indexOf('RETURNING id'))).toContain(
-      'AND NOT EXISTS (SELECT 1 FROM preservation_log p WHERE p.batch_id = ? ::uuid AND p.deleted_at IS NULL)');
+    // B′ amends: the live jar that refuses is one a sitting made, or ANY live jar unless the batch is
+    // pieced (How it was made →'s) — see the next test.
+    const g = gate.slice(gate.indexOf('gone AS ('));
+    expect(g.slice(0, g.indexOf('RETURNING id'))).toContain(
+      'AND NOT EXISTS (SELECT 1 FROM preservation_log p WHERE p.batch_id = ? ::uuid AND p.deleted_at IS NULL '
+      + 'AND (p.put_up_stage_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM pieced)))');
+  });
+
+  // B′ release 3: How it was made →'s batch ("pieced": a put_up row that wrote no jar of its own) links
+  // jars logged before it. Remove unlinks them in the same statement — in the ONE jar UPDATE that also
+  // gives back the lines' draws (a jar can be both) — and is still refused while a sitting's jar is live.
+  // Mutation: drop `unlinked` from the aggregate → the jars stay linked under a removed batch and this reds.
+  it('a pieced batch: its pre-existing jars are unlinked in the one jar UPDATE, gated on the removal', async () => {
+    const sql = mockSql([OWNED, [], [{ deleted_count: 1, live_jar_count: 0, jars_unlinked: 2 }]]);
+    const res = await handleKitchenRoute({ sql, ...remove() });
+    expect(res).toEqual({ status: 200, body: { ok: true } });
+    const stmt = sql.calls[2].norm;
+    const pieced = stmt.slice(stmt.indexOf('pieced AS ('), stmt.indexOf('), gone AS ('));
+    expect(pieced).toContain("WHERE s.batch_id = ? ::uuid AND s.stage_kind = 'put_up' AND NOT EXISTS (SELECT 1 FROM preservation_log oj WHERE oj.put_up_stage_id = s.id)");
+    expect(stmt).toContain('SELECT p.id FROM preservation_log p JOIN gone g ON p.batch_id = g.id WHERE p.deleted_at IS NULL AND p.put_up_stage_id IS NULL )');
+    expect((stmt.match(/UPDATE preservation_log/g) ?? [])).toHaveLength(1);
+    expect(stmt).toContain('batch_id = CASE WHEN a.unlink THEN NULL ELSE p.batch_id END');
+    expect(stmt).toContain('bool_or(x.unlink) AS unlink, sum(x.n) AS n, sum(x.g) AS g');
+    expect(stmt).toContain('SELECT u.id, true, NULL::int, NULL::numeric FROM unlinked u');
+  });
+
+  it('a pieced batch with a later sitting\'s live jar is still refused — 409 has_jars', async () => {
+    const sql = mockSql([OWNED, [], [{ deleted_count: 0, live_jar_count: 1, jars_unlinked: 0 }]]);
+    const res = await handleKitchenRoute({ sql, ...remove() });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('has_jars');
   });
 
   // The archive decision (05 §6a, settled as 06 §3.12): pick lines are HARD-deleted with the batch, so
@@ -881,8 +912,11 @@ describe('POST /api/kitchen-batches/:id/close', () => {
     expect(SRC).toMatch(/deleted_at\s+= CASE WHEN a\.remove THEN now\(\) ELSE p\.deleted_at END/);
     expect(SRC).not.toMatch(/DELETE FROM\s+preservation_log/);
     // The reads, each named: getBatch's outputs, shu-estimate's jar, delete's live-jar gate and its
-    // count, unlink's snapshot, readSitting's jars, undo's sitting_jars.
-    expect((SRC.match(/FROM preservation_log\b/g) ?? [])).toHaveLength(7);
+    // count, unlink's snapshot, readSitting's jars, undo's sitting_jars — and (B′) undo's owned, the
+    // jars the sitting ever wrote, which refuses How it was made →'s jarless put_up row — and getBatch's
+    // has_own_jars on each put_up stage row (the same question, so What came out hides that Undo) — and
+    // Remove this batch's `pieced` and `unlinked` (How it was made →'s batch unlinks its jars).
+    expect((SRC.match(/FROM preservation_log\b/g) ?? [])).toHaveLength(11);
   });
 
   it('every preservation_log write rides the actor GUC (trg_audit_preservation_log_upd, 1b)', async () => {

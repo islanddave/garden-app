@@ -67,7 +67,11 @@ function prettyDate(v) {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export default function PutUpFromPlanting({ planting, fetch }) {
+// B′ release 3 (V4 §2.5 "Planting page") — two OPTIONAL props, both absent = exactly the shipped render:
+//   onRows(rows)    the rows it shows, once loaded (PlantingKitchen uses the ids to decide which batch
+//                   reads "from <batch> →" on a jar row instead of as a row of its own);
+//   renderExtra(r)  extra lines under a jar row ("from <batch> →", its "Next time…" lines).
+export default function PutUpFromPlanting({ planting, fetch, onRows, renderExtra }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
@@ -86,6 +90,7 @@ export default function PutUpFromPlanting({ planting, fetch }) {
         flat.sort((a, b) => String(b.preserved_at ?? '').localeCompare(String(a.preserved_at ?? '')))
         setRows(flat)
         setLoading(false)
+        onRows?.(flat)
       })
       .catch(() => { if (!cancelled) { setFailed(true); setLoading(false) } })
     return () => { cancelled = true }
@@ -112,7 +117,7 @@ export default function PutUpFromPlanting({ planting, fetch }) {
     return (
       <div>
         <div style={{ fontSize: '0.875rem', color: P.mid, marginBottom: 10 }}>
-          Nothing from this planting is in the stores yet.
+          Nothing from this planting is in the Pantry yet.
         </div>
         <Link to="/put-up" state={{ prefill }}
           style={{ color: P.green, fontSize: '0.85rem', fontWeight: 600, textDecoration: 'underline' }}>
@@ -146,7 +151,7 @@ export default function PutUpFromPlanting({ planting, fetch }) {
         <div style={{ fontSize: '0.875rem', color: P.mid }}>
           <strong style={{ color: P.dark }}>
             {inStores.length === 0
-              ? 'Nothing left in the stores'
+              ? 'Nothing left in the Pantry'
               : `${totalPackages} ${totalPackages === 1 ? 'container' : 'containers'}`}
           </strong>
           {units.length ? ` · ${units.join(', ')}` : ''}
@@ -190,6 +195,7 @@ export default function PutUpFromPlanting({ planting, fetch }) {
                 {used ? ' · all used' : (remaining !== r.package_count ? ` · ${remaining} left` : '')}
                 {!used && r.use_by_target ? ` · use by ${prettyDate(r.use_by_target)}` : ''}
               </div>
+              {renderExtra?.(r)}
               </div>
             </li>
           )

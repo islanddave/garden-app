@@ -17,6 +17,9 @@
 //     what the live CHECK can store in 1a (see StartChips.jsx SHEET_START_CHIPS).
 //   · Photo — optional; Snap hands its photo in, Going now can add one.
 //   · "What kind of batch?" — collapsed, optional (KindChips). "Other" still asks its short name in 1a.
+//   · "Like a past batch, except…" — B′ release 3 (V4 §2.2), optional: copies that batch's lines and
+//     kind in (putup/likeBatch.js); the copied lines are posted, keyed, to POST /:id/inputs right after
+//     the create, and are then ordinary lines of the new batch to edit or take out.
 // The salt/brine note Snap used to ask at pack time is NOT here: the plan puts Salt with What went in
 // in release 3 (V4 §2.2) — recorded in the lane report as a disclosed change.
 //
@@ -48,6 +51,11 @@ import { useSheetDraftKey } from './useSheetDraftKey.js'
 import { useFieldsClearOfFooter } from './sheetScroll.js'
 import { readCaptureMeta } from '../../lib/imagePipeline.js'
 import { mintKey } from './idempotencyKey.js'
+import LikeBatchPicker from '../putup/LikeBatchPicker.jsx'
+// Put-Up release 4 — "Following a recipe?" (pick one of the household's recipes → recipe_id, or F's free text),
+// and Make this's prefill (a recipe's name, kind and process jar).
+import FollowingRecipe, { followingBody } from '../recipes/FollowingRecipe.jsx'
+import { startPrefill, vesselPatch } from '../recipes/recipes.js'
 
 export const START_SHEET = 'start'
 export const START_SHEET_TITLE = 'Start a batch'
@@ -58,7 +66,7 @@ export const START_LABEL_PLACEHOLDER = 'e.g. Pepper mash'
 export const LAND_FALLBACK_MS = 1000
 const FOOTER_PX = 76
 
-const EMPTY = { label: '', chip: 'today', earlier: null, pickedDate: '', kind: null, kindOther: '', key: '' }
+const EMPTY = { label: '', chip: 'today', earlier: null, pickedDate: '', kind: null, kindOther: '', key: '', recipeId: null, recipeRef: '' }
 
 // `key` (release 1b, V4 §5.2/§6.5) is optional on read: a 1a draft has none and gets one when it is
 // next written, which is before any POST can carry it.
@@ -69,6 +77,8 @@ export function isStartDraft(d) {
     && (d.earlier === null || EARLIER_CHIPS.some(c => c.id === d.earlier))
     && (d.kind === null || KIND_CHIPS.some(c => c.value === d.kind))
     && (d.key === undefined || typeof d.key === 'string')
+    && (d.recipeId == null || typeof d.recipeId === 'string')
+    && (d.recipeRef === undefined || typeof d.recipeRef === 'string')
 }
 
 // Put-Up release 1b (train §6a "Snap's start date"): Snap's photo carries the day it was taken, and
@@ -88,19 +98,22 @@ export function photoDayChoice(takenAt, now = new Date()) {
 
 // `photoTakenAt` (optional): a host that already knows when Snap's photo was taken. Absent, the sheet
 // reads it off the photo itself (readCaptureMeta, the upload pipeline's own EXIF read).
-export default function StartBatchSheet({ open, onClose, onStarted, photo = null, photoPreview = null, photoTakenAt, now }) {
+// `recipe` (release 4, optional): Make this — the recipe the batch is made from (its detail). The sheet opens
+// prefilled with its name, kind and recipe, under its own draft key so a half-typed plain start is untouched.
+export default function StartBatchSheet({ open, onClose, onStarted, photo = null, photoPreview = null, photoTakenAt, now, recipe = null }) {
   if (!open) return null
   return <StartBatchOpen onClose={onClose} onStarted={onStarted} photo={photo} photoPreview={photoPreview}
-    photoTakenAt={photoTakenAt} now={now} />
+    photoTakenAt={photoTakenAt} now={now} recipe={recipe} />
 }
 
-function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt, now }) {
+function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt, now, recipe }) {
   const { fetch } = useApiFetch()
   const uploader = useUploadPhoto({ errorMode: 'surface' })
-  const draftKey = useSheetDraftKey(START_SHEET, 'new')
+  const draftKey = useSheetDraftKey(START_SHEET, recipe?.id ? `recipe-${recipe.id}` : 'new')
   // Read ONCE, at open — see CheckOnItSheet for why the first commit must already hold it.
   const [restored] = useState(() => readSheetDraft(draftKey, START_SHEET, isStartDraft))
-  const initial = restored ?? EMPTY
+  const pre = recipe ? startPrefill(recipe) : null
+  const initial = restored ?? (pre ? { ...EMPTY, label: pre.label, kind: pre.kind, recipeId: pre.recipeId } : EMPTY)
   const [key, setKey] = useState(initial.key ?? '')
   const [label, setLabel] = useState(initial.label)
   const [chip, setChip] = useState(initial.chip)
@@ -109,6 +122,9 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
   const [kind, setKind] = useState(initial.kind)
   const [kindOther, setKindOther] = useState(initial.kindOther)
   const [kindOpen, setKindOpen] = useState(initial.kind != null)
+  // B′ release 3: "Like <batch>, except…" — { from, lines, kind } or null. Held for this open only.
+  const [like, setLike] = useState(null)
+  const [following, setFollowing] = useState({ recipeId: initial.recipeId ?? null, recipeRef: initial.recipeRef ?? '' })
   // A photo added HERE (the Going-now door). Snap's arrives as `photo` and is the host's to keep.
   const [ownFile, setOwnFile] = useState(null)
   const [ownPreview, setOwnPreview] = useState(null)
@@ -142,14 +158,18 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
 
   const dirty = label.trim() !== '' || chip !== 'today' || earlier != null || pickedDate !== ''
     || kind != null || kindOther.trim() !== '' || !!ownFile
+    || following.recipeId != null || following.recipeRef.trim() !== ''
 
   useEffect(() => {
     if (!draftKey) return
     // The draft carries what can be serialised; a picked File cannot, and is not pretended to.
     const text = label.trim() !== '' || chip !== 'today' || earlier != null || pickedDate !== '' || kind != null || kindOther.trim() !== ''
-    if (text) writeSheetDraft(draftKey, START_SHEET, { label, chip, earlier, pickedDate, kind, kindOther, key })
+      || following.recipeId != null || following.recipeRef.trim() !== ''
+    // The recipe pair rides only when answered, so a plain start's draft keeps its 1b shape exactly.
+    const recipePart = following.recipeId != null || following.recipeRef !== '' ? following : {}
+    if (text) writeSheetDraft(draftKey, START_SHEET, { label, chip, earlier, pickedDate, kind, kindOther, key, ...recipePart })
     else clearSheetDraft(draftKey)
-  }, [draftKey, label, chip, earlier, pickedDate, kind, kindOther, key])
+  }, [draftKey, label, chip, earlier, pickedDate, kind, kindOther, key, following])
 
   // The create's idempotency key (release 1b, V4 §6.5): minted the first time the sheet is dirty, kept
   // in the draft, reused on every retry — a Start it whose answer was lost is a replay, not a twin.
@@ -218,7 +238,19 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
       }
       const batch = await fetch('/api/kitchen-batches', { method: 'POST', body: JSON.stringify({
         label: text, ...when.start, ...kindPart, ...(coverId ? { cover_photo_id: coverId } : {}), idempotency_key: useKey,
+        ...followingBody(following),
       }) })
+      // The copied lines, keyed (a retry replays them). A refusal here leaves a batch with fewer lines,
+      // never a lost batch: its detail page adds or edits lines as usual.
+      if (like?.lines?.length && batch?.id) {
+        await Promise.resolve(fetch(`/api/kitchen-batches/${batch.id}/inputs`, {
+          method: 'POST', body: JSON.stringify({ inputs: like.lines }),
+        })).catch(() => {})
+      }
+      // Make this (release 4): the recipe's process jar, through the merge PUT. Best effort — the batch is
+      // already started, and its Jar & heat row can set the jar if this does not land.
+      const vp = recipe && batch?.id && following.recipeId === recipe.id ? vesselPatch(recipe) : null
+      if (vp) await fetch(`/api/kitchen-batches/${batch.id}`, { method: 'PUT', body: JSON.stringify(vp) }).catch(() => {})
       clearSheetDraft(draftKey)
       land(batch)
     } catch (e) {
@@ -228,7 +260,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
         ? "Couldn't save the photo — try again, or remove it."
         : "Couldn't start it — try again. What you typed is still here.")
     }
-  }, [chip, draftKey, earlier, fetch, file, key, kind, kindOther, label, labelId, land, now, pickedDate, uploader])
+  }, [chip, draftKey, earlier, fetch, file, following, key, kind, kindOther, label, labelId, land, like, now, pickedDate, recipe, uploader])
 
   return (
     <Sheet open onClose={onClose} title={START_SHEET_TITLE} size="full" busy={saving} armsBack>
@@ -280,6 +312,12 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
         </div>
 
         <div style={{ marginBottom: T.space.sm }}>
+          <LikeBatchPicker idPrefix="start-like" picked={like} disabled={saving}
+            onPick={d => { setLike(d); if (d.kind && kind == null) { setKind(d.kind); setKindOpen(true) } }}
+            onClear={() => setLike(null)} />
+        </div>
+
+        <div style={{ marginBottom: T.space.sm }}>
           <button type="button" data-testid="start-kind-toggle" aria-expanded={kindOpen}
             onClick={() => setKindOpen(o => !o)} disabled={saving}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: T.tapMinHeight,
@@ -296,6 +334,9 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
             </div>
           )}
         </div>
+
+        <FollowingRecipe value={following} onChange={v => { setFollowing(v); setErr(null) }} fetch={fetch} disabled={saving}
+          locked={recipe && following.recipeId === recipe.id ? recipe : null} />
 
         {err && (
           <div role="alert" data-testid="start-error"

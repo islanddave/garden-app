@@ -183,6 +183,6 @@ export const MUTANTS = {
     'src/pages/Today.jsx',
     '<PutUpUseSoonBand />',
     '<></>',
-    'the "From your stores — cook these next" band is unmounted, and jars reaching their use-by date stop surfacing on Today.',
+    'the "From the Pantry — cook these next" band is unmounted, and jars reaching their use-by date stop surfacing on Today.',
   ],
 }

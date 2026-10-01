@@ -8,7 +8,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleKitchenRoute } from './kitchenRoutes.js';
 import { parseKitchenRoute, validateStage, validateBatchCreate } from './kitchenBatch.js';
-import { validatePutUp, planPutUp, putUpColumns, putUpInUse, BATCH_CLOSED } from './putUp.js';
+import { validatePutUp, planPutUp, putUpColumns, putUpInUse, BATCH_CLOSED, NOTHING_PUT_UP_HERE } from './putUp.js';
 
 const HOUSEHOLD = ['user_dave', 'user_jen'];
 const DAVE = 'user_dave';
@@ -84,7 +84,9 @@ describe('validatePutUp', () => {
     [{ rows: [{ count: 1, ph: '15' }] }, /pH scale/],
     [{ rows: [{ count: 1, discard_by: 'soon' }] }, /discard_by must be/],
     [{ rows: [{ count: 1, added_lines: [{ qty: 5, qty_unit: 'g' }] }] }, /name what went in/],
-    [{ rows: [{ count: 1, added_lines: [{ label: 'x', input_kind: 'pantry' }] }] }, /input_kind must be one of/],
+    // B′ release 3 amends this arm: 'pantry' became a line kind (What went in names a bought item by
+    // pantry_item_id), and a bottling still refuses it — with the words that say where it goes instead.
+    [{ rows: [{ count: 1, added_lines: [{ label: 'x', input_kind: 'pantry' }] }] }, /a bought item goes in What went in/],
     [{ rows: [{ count: 1, added_lines: [{ label: 'x', input_kind: 'put_up' }] }] }, /a draw names its jar/],
     [{ rows: [{ count: 1, added_lines: [{ label: 'x', output_id: KEY, put_up_stage_id: KEY }] }] }, /belongs to this bottling/],
     [{ rows: [{ count: 1, added_lines: [{ label: 'salt', role: 'salt', qty: 5, qty_unit: 'g', salt_pct: 2, salt_base: 'produce', base_g: 250 }] }] }, /salt facts go on a line in What went in/],
@@ -168,8 +170,9 @@ describe('planPutUp — what one sitting writes', () => {
     const lens = [...Object.values(c.jar), ...Object.values(c.line)].map((a) => a.length);
     expect(new Set(Object.values(c.jar).map((a) => a.length))).toEqual(new Set([2]));
     expect(new Set(Object.values(c.line).map((a) => a.length))).toEqual(new Set([2]));
-    // 20 jar columns (16 from 1b + F's shu_est_low/high/basis and cooked) + the 27 F line columns.
-    expect(lens.length).toBe(47);
+    // 20 jar columns (16 from 1b + F's shu_est_low/high/basis and cooked) + the 28 line columns (F's 27 +
+    // B′ release 3's pantry_item_id, which a bottling never sets — the arrays still bind in step).
+    expect(lens.length).toBe(48);
   });
 });
 
@@ -198,6 +201,22 @@ describe('POST /:id/put-up — what it sends', () => {
     // The key is on the put_up row, with NO ON CONFLICT on it.
     expect(sql.calls[4].values).toContain(KEY);
     expect(w.slice(0, w.indexOf('), places_in AS'))).not.toContain('ON CONFLICT');
+  });
+
+  it('the jars are written 1 µs apart in the rows\' order, and readSitting returns them in that order', async () => {
+    // One statement's DEFAULT now() tied every jar, so readSitting's ORDER BY created_at, id handed them back in
+    // uuid order — and completionStub reads jars[0] as the FIRST row's label hint. (A mock driver cannot see
+    // Postgres's ordering; recipes-basis.int.test.js reads a three-row sitting back by position.)
+    const sql = mockSql([OPEN, META, [], [], OK, ...READ]);
+    await handleKitchenRoute({ sql, ...post(sitting()) });
+    const w = sql.calls[4].norm;
+    const jars = w.slice(w.indexOf('), jars AS ('), w.indexOf('), lines AS ('));
+    expect(jars).toContain('shu_est_basis, cooked, created_at )');
+    expect(jars).toContain("now() + (r.ord - 1)::float8 * interval '1 microsecond' FROM stage st CROSS JOIN unnest(");
+    expect(jars).toContain(') WITH ORDINALITY AS r(id, label,');
+    expect(jars).toContain('shu_est_basis, cooked, ord)');
+    const read = sql.calls.find((c) => c.norm.includes('WHERE p.put_up_stage_id = ? ::uuid'));
+    expect(read.norm).toContain('ORDER BY p.created_at, p.id');
   });
 
   it('the place is found household-first on the trimmed name, else created under the caller', async () => {
@@ -280,7 +299,7 @@ describe('POST /:id/put-up — what it sends', () => {
 
 describe('POST /:id/put-up/:stageId/undo — what it sends', () => {
   const undo = () => route(`/api/kitchen-batches/${BATCH}/put-up/${STAGE}/undo`, 'POST', {});
-  const DONE = [{ found_count: 1, used_jar_ids: null, voided_count: 2, jars_removed: 2, lines_removed: 1, reopened_count: 1 }];
+  const DONE = [{ found_count: 1, own_jar_count: 2, used_jar_ids: null, voided_count: 2, jars_removed: 2, lines_removed: 1, reopened_count: 1 }];
 
   it('ONE statement in the actor transaction; voids, jar and line removal and the reopen all gated on the void', async () => {
     const sql = mockSql([CLOSED, [], DONE, VIEW]);
@@ -296,13 +315,42 @@ describe('POST /:id/put-up/:stageId/undo — what it sends', () => {
   });
 
   it('refused while a jar of the sitting was used: fewer left than made, or marked used up', async () => {
-    const sql = mockSql([OPEN, [], [{ found_count: 1, used_jar_ids: ['j1'], voided_count: 0, jars_removed: 0, lines_removed: 0, reopened_count: 0 }]]);
+    const sql = mockSql([OPEN, [], [{ found_count: 1, own_jar_count: 1, used_jar_ids: ['j1'], voided_count: 0, jars_removed: 0, lines_removed: 0, reopened_count: 0 }]]);
     const res = await handleKitchenRoute({ sql, ...undo() });
     expect(res).toEqual({ status: 409, body: putUpInUse(['j1']) });
     const w = sql.calls[2].norm;
     expect(w).toContain('WHERE COALESCE(j.remaining_count, j.package_count) < j.package_count OR j.consumed_at IS NOT NULL');
     // The voids read `go`, and `go` is empty while `used` is not — nothing is written.
-    expect(w).toContain('go AS ( SELECT t.id FROM target t WHERE NOT EXISTS (SELECT 1 FROM used) )');
+    // B′ amends: `go` is also gated on the sitting owning a jar (the nothing_put_up_here refusal below).
+    expect(w).toContain('go AS ( SELECT t.id FROM target t WHERE NOT EXISTS (SELECT 1 FROM used) AND EXISTS (SELECT 1 FROM owned) )');
+  });
+
+  // B′: How it was made → writes a put_up row that owns no jars (its jars pre-existed the batch and are
+  // linked by batch_id only). Undoing it would void the put_up + finished rows and reopen the batch with
+  // those jars still linked — so it is refused, and nothing is written.
+  it('refused (409 nothing_put_up_here) when the put_up row owns no jar, live or removed — nothing written', async () => {
+    const sql = mockSql([CLOSED, [], [{ found_count: 1, own_jar_count: 0, used_jar_ids: null, voided_count: 0, jars_removed: 0, lines_removed: 0, reopened_count: 0 }]]);
+    const res = await handleKitchenRoute({ sql, ...undo() });
+    expect(res).toEqual({ status: 409, body: NOTHING_PUT_UP_HERE });
+    expect(res.body.code).toBe('nothing_put_up_here');
+    expect(res.body.error).toMatch(/Remove the batch instead/);
+    const w = sql.calls[2].norm;
+    // owned counts REMOVED jars too (no deleted_at filter), scoped to this sitting and batch.
+    const owned = w.slice(w.indexOf('owned AS ('), w.indexOf('), used AS ('));
+    expect(owned).toContain('WHERE p.put_up_stage_id = ? ::uuid AND p.batch_id = ? ::uuid');
+    expect(owned).not.toContain('deleted_at');
+    expect(w).toContain('AND EXISTS (SELECT 1 FROM owned)');
+  });
+
+  it('keeps Put it up\'s Undo: every sitting it writes owns a jar, even one whose jars were all removed since', async () => {
+    // Put it up cannot write a jarless sitting: rows are required and each makes at least one jar
+    // ("Finished — none kept" writes a finished row, never a put_up row).
+    expect(validatePutUp({ ...sitting(), rows: [] })).toMatch(/rows must be a non-empty array/);
+    expect(validatePutUp({ ...sitting(), rows: [{ ...sitting().rows[0], count: 0 }] })).toMatch(/count must be a whole number, 1 or more/);
+    // A sitting whose only jar was removed on its own still owns it → the shipped Undo runs.
+    const sql = mockSql([CLOSED, [], [{ found_count: 1, own_jar_count: 1, used_jar_ids: null, voided_count: 2, jars_removed: 0, lines_removed: 0, reopened_count: 1 }], VIEW]);
+    const res = await handleKitchenRoute({ sql, ...undo() });
+    expect(res).toEqual({ status: 200, body: { ok: true, reopened: true, batch: VIEW[0] } });
   });
 
   it('reopens ONLY if this sitting closed it (its finished row) and no lifecycle row came after', async () => {
@@ -407,9 +455,13 @@ describe('POST /:id/stages — the 1b kinds', () => {
 describe('POST /api/kitchen-batches — 1b', () => {
   const create = (body) => route('/api/kitchen-batches', 'POST', body);
 
-  it('validation: the key is a uuid; a recipe cannot be named before release 4', () => {
+  // AMENDED in release 4 (recipes): 1b refused any recipe_id "until release 4"; release 4 lifts that refusal
+  // (V4 §5.1 row 4, "batch create accepts recipe_id"). A recipe_id is now a uuid the route household-loads
+  // (recipeRoutes.test.js proves the loader); a malformed one is still a 400.
+  it('validation: the key is a uuid; recipe_id (release 4) must be a uuid', () => {
     expect(validateBatchCreate({ label: 'x', idempotency_key: 'nope' })).toMatch(/idempotency_key must be a uuid/);
-    expect(validateBatchCreate({ label: 'x', recipe_id: KEY })).toMatch(/later release/);
+    expect(validateBatchCreate({ label: 'x', recipe_id: KEY })).toBeNull();
+    expect(validateBatchCreate({ label: 'x', recipe_id: 'nope' })).toMatch(/recipe_id must be a uuid/);
     expect(validateBatchCreate({ label: 'x', started_at: '2026-07-01T16:00:00Z', start_precision: 'season' })).toBeNull();
   });
 

@@ -51,8 +51,8 @@ const HANDLERS = readdirSync(__dirname)
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
   garden_node: [
-    'container_id', 'created_by', 'cultivar_id', 'deleted_at', 'display_name', 'id', 'sown_at',
-    'succession_group_id', 'succession_order'
+    'archived_at', 'container_id', 'created_at', 'created_by', 'cultivar_id', 'deleted_at', 'display_name',
+    'id', 'planted_out_at', 'sown_at', 'status', 'succession_group_id', 'succession_order', 'transplanted_at'
   ],
 };
 
@@ -111,7 +111,11 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation garden_node column con
     // reach a harvest's planting and, through it, its cultivar. It reaches for gn.id / gn.deleted_at /
     // gn.cultivar_id only, all three already in the contract below, so the column list is unchanged.
     // Release F: +5 — readLines, the planting and pick loaders, the line search and the household pepper names.
-    expect(STATEMENTS).toHaveLength(11);
+    // B′ release 3: +2 — the line search's variety arm (a household planting grows it) and the planting
+    // read's ownership gate. The line search's planting arm now also reads status / archived_at (ended
+    // plantings rank after live ones) and the stage dates + created_at (ties by most recent), V4 §2.5a.
+    // B′ (release 2): +2 — GET /api/pantry's put-up and pantry-item reads (the planting a row came from).
+    expect(STATEMENTS).toHaveLength(15);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['gn']);
   });

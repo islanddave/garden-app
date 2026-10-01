@@ -36,7 +36,9 @@ describe('putUpErrors — release F codes', () => {
     // Answered by the server's own words on purpose (unknown-code arm) — each is a sentence the server
     // lane writes to be shown as it is, or a code no F surface reaches.
     const SERVER_WORDED = new Set(['not_found', 'place_exists', 'put_up_jar', 'remaining_above_count',
-      'not_paused_able', 'not_resumed_able', 'not_reopened_able'])
+      'not_paused_able', 'not_resumed_able', 'not_reopened_able',
+      // B′ (release 2): a batch line naming a removed pantry item; the server's sentence is shown as is.
+      'item_removed'])
     const known = new Set(Object.values(REFUSAL_CODES))
     expect(sent.size).toBeGreaterThan(8)
     expect([...sent].filter((c) => !known.has(c) && !SERVER_WORDED.has(c))).toEqual([])

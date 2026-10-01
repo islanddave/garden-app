@@ -43,6 +43,17 @@ export const REFUSAL_CODES = Object.freeze({
   PUT_UP_IN_USE: 'put_up_in_use',
   KEY_CONFLICT: 'key_conflict',
   SHU_CANNOT_COMPUTE: 'shu_cannot_compute',
+  // B′ release 2 (the pantry-server lane's Pantry routes). Remove on a put-up that was used or drawn
+  // into a batch; a use's Undo refused; a bought item removed under the person.
+  JAR_WAS_USED: 'jar_was_used',
+  JAR_IN_BATCH: 'jar_in_batch',
+  ALREADY_UNDONE: 'already_undone',
+  USE_IS_BATCH_LINE: 'use_is_batch_line',
+  USE_IS_REVERSAL: 'use_is_reversal',
+  COUNT_CHANGED: 'count_changed',
+  ITEM_REMOVED: 'item_removed',
+  // B′ release 3: Undo that put-up on How it was made →'s sitting, which wrote no jars of its own.
+  NOTHING_PUT_UP_HERE: 'nothing_put_up_here',
 })
 
 export const REFRESH_NOW_LABEL = 'Refresh now'
@@ -60,9 +71,24 @@ export const HAS_SALT_LINE_TEXT = 'Take the salt line out first.'
 export const ALREADY_IN_TEXT = 'That pick is already in this batch.'
 export const HAS_JARS_TEXT = 'This batch still has jars. Undo its put-ups first — nothing was changed.'
 export const PUT_UP_IN_USE_TEXT = 'Some jars from this put-up were already used, so it can’t be undone — nothing was changed.'
+export const NOTHING_PUT_UP_HERE_TEXT =
+  'This batch was pieced together from jars you’d already logged — there’s nothing to undo here. Remove the batch instead.'
 export const KEY_CONFLICT_TEXT = 'That didn’t go through — nothing was changed. Try again.'
 export const SHU_CANNOT_COMPUTE_TEXT = 'Can’t work out the heat yet — nothing was saved.'
 export const ONLY_SOME_G_LEFT_TEXT = 'Not that much is left in that one — nothing was changed.'
+
+// B′ release 2's words (V4 §2.5: Remove is "logged by mistake"; refused on a jar with uses or live lines,
+// with the reason and a path). Plain, one line.
+export const JAR_WAS_USED_SOME_TEXT = 'Some were used — mark the rest Went bad, or undo that use.'
+export function jarWasUsedText(n) {
+  return `${n} was used — mark the rest Went bad, or undo that use.`
+}
+export const JAR_IN_BATCH_TEXT = 'Some of it went into a batch — take that line out first.'
+export const ALREADY_UNDONE_TEXT = 'That was already undone — nothing was changed.'
+export const USE_IS_BATCH_LINE_TEXT = 'That went into a batch — take the line out there to put it back.'
+export const USE_IS_REVERSAL_TEXT = 'That was already an undo — nothing was changed.'
+export const COUNT_CHANGED_TEXT = 'The count on that jar changed since — nothing was changed.'
+export const ITEM_REMOVED_TEXT = 'That was removed from the Pantry — nothing was changed.'
 
 // "Only about {g} g left in that one." — the number from the server, never from the row on screen.
 export function onlyGLeftText(g) {
@@ -154,10 +180,30 @@ export function describeRefusal(err) {
     // the fallback when the server sent none.
     case REFUSAL_CODES.PUT_UP_IN_USE:
       return { code, text: serverText(body) ?? PUT_UP_IN_USE_TEXT, refresh: false }
+    case REFUSAL_CODES.NOTHING_PUT_UP_HERE:
+      return { code, text: NOTHING_PUT_UP_HERE_TEXT, refresh: false }
     case REFUSAL_CODES.KEY_CONFLICT:
       return { code, text: KEY_CONFLICT_TEXT, refresh: false }
     case REFUSAL_CODES.SHU_CANNOT_COMPUTE:
       return { code, text: SHU_CANNOT_COMPUTE_TEXT, refresh: false }
+    // B′ release 2. jar_was_used counts from the server's `n`; jar_in_batch keeps the server's words (they
+    // name the batch), with this module's sentence when it sent none.
+    case REFUSAL_CODES.JAR_WAS_USED: {
+      const n = leftCount(body)
+      return { code, text: n != null && n > 0 ? jarWasUsedText(n) : JAR_WAS_USED_SOME_TEXT, refresh: false }
+    }
+    case REFUSAL_CODES.JAR_IN_BATCH:
+      return { code, text: serverText(body) ?? JAR_IN_BATCH_TEXT, refresh: false }
+    case REFUSAL_CODES.ALREADY_UNDONE:
+      return { code, text: ALREADY_UNDONE_TEXT, refresh: false }
+    case REFUSAL_CODES.USE_IS_BATCH_LINE:
+      return { code, text: USE_IS_BATCH_LINE_TEXT, refresh: false }
+    case REFUSAL_CODES.USE_IS_REVERSAL:
+      return { code, text: USE_IS_REVERSAL_TEXT, refresh: false }
+    case REFUSAL_CODES.COUNT_CHANGED:
+      return { code, text: COUNT_CHANGED_TEXT, refresh: false }
+    case REFUSAL_CODES.ITEM_REMOVED:
+      return { code, text: ITEM_REMOVED_TEXT, refresh: false }
     default: {
       const said = serverText(body)
       return said ? { code, text: said, refresh: false } : null

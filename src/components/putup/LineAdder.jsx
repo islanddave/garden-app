@@ -16,6 +16,12 @@
 // The Add button is PINNED (sticky, above the keyboard) only while the name or amount field has focus;
 // otherwise it sits in the flow. One button either way, so it is never on screen twice.
 //
+// B′ release 3 (V4 §2.5a): the search answers ONE ranked list (`hits`) over plantings (live, then
+// ended), what we have (put-ups and pantry items) and crops/varieties; a pantry item becomes a 'pantry'
+// line, a crop or variety a named line carrying its crop, and a typed name carries the resolved crop.
+// `pantryHits` false leaves bought items out (a bottling's additions cannot name one). An older server
+// answering only { plantings, put_ups } still renders as before.
+//
 // The host owns the write: `onAdd(body)` resolves true when it landed. The draft's idempotency key is
 // minted with the draft and reused on every retry, so a retried Add after a lost answer is a replay.
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -27,7 +33,7 @@ import { labelChrome, optionalMarkChrome, inputChrome } from '../forms/formStyle
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import {
   lineSearchUrl, QUICK_UNITS, defaultUnit, emptyDraft, lineBody, jarHitWords, plantingHitWords, pickWords,
-  gramsLeftAfter, hitKey, offerListedHeat, DRIED_NOTE,
+  gramsLeftAfter, hitKey, offerListedHeat, DRIED_NOTE, rankedHitWords, sourceOfHit, pantryHitWords, catalogHitWords,
 } from './lines.js'
 import { KITCHEN_FORMS, FORM_LABELS } from './fermentMath.js'
 
@@ -69,6 +75,7 @@ function Stepper({ value, onChange, disabled, name, idPrefix }) {
 export default function LineAdder({
   lines = [], onAdd, idPrefix = 'line-add', disabled = false, forms = KITCHEN_FORMS, preset = null,
   presetSeq = 0, label = 'What went in?', addLabel = 'Add', onStarted, pinnable = true, excludeJarIds = [],
+  pantryHits = true,
 }) {
   const { fetch } = useApiFetch()
   const unit0 = useMemo(() => defaultUnit(lines), [lines])
@@ -80,6 +87,8 @@ export default function LineAdder({
   const [focused, setFocused] = useState(null)       // 'name' | 'qty' | null — pins the Add button
   const [err, setErr] = useState(null)
   const [busy, setBusy] = useState(false)
+  // The crop the last search resolved for the typed text (V4 §2.5a) — sent only on a typed line.
+  const [typedCrop, setTypedCrop] = useState(null)
   const writingRef = useRef(false)
   const seqRef = useRef(0)
   const nameRef = useRef(null)
@@ -99,6 +108,8 @@ export default function LineAdder({
   // The search: debounced, sequence-guarded (a late answer for an older query never paints).
   useEffect(() => {
     const q = query.trim()
+    // The resolved crop belongs to the text it was resolved for: any edit drops it until the next answer.
+    setTypedCrop(null)
     if (draft.source || draft.role || q.length < MIN_QUERY) { setHits(null); setSearchErr(null); return undefined }
     const seq = ++seqRef.current
     const t = setTimeout(() => {
@@ -106,7 +117,11 @@ export default function LineAdder({
         .then(() => fetch(lineSearchUrl(q)))
         .then(r => {
           if (seq !== seqRef.current) return
-          setHits({ plantings: Array.isArray(r?.plantings) ? r.plantings : [], put_ups: Array.isArray(r?.put_ups) ? r.put_ups : [] })
+          setHits({
+            plantings: Array.isArray(r?.plantings) ? r.plantings : [], put_ups: Array.isArray(r?.put_ups) ? r.put_ups : [],
+            ranked: Array.isArray(r?.hits) ? r.hits : null, resolvedCrop: r?.resolved_crop ?? null,
+          })
+          setTypedCrop(r?.resolved_crop ?? null)
           setSearchErr(null)
         })
         .catch(() => { if (seq === seqRef.current) { setHits(null); setSearchErr("Couldn't search just now — you can still add it by name.") } })
@@ -132,7 +147,7 @@ export default function LineAdder({
 
   const add = useCallback(async () => {
     if (writingRef.current) return
-    const res = lineBody({ ...draft, label: draft.source ? draft.label : query }, { ordinal: null })
+    const res = lineBody({ ...draft, label: draft.source ? draft.label : query }, { ordinal: null, crop: draft.source ? null : typedCrop })
     if (res.error) {
       setErr(res.error)
       if (res.field === 'name') nameRef.current?.focus()
@@ -150,7 +165,7 @@ export default function LineAdder({
       setDraft(emptyDraft(mintKey(), { unit: draft.role ? unit0 : (draft.unit || unit0) }))
       setQuery(''); setHits(null); setMoreOpen(false)
     }
-  }, [draft, onAdd, query, unit0])
+  }, [draft, onAdd, query, typedCrop, unit0])
 
   const src = draft.source
   const jar = src?.kind === 'jar' ? src.hit : null
@@ -160,9 +175,16 @@ export default function LineAdder({
   const after = weighed ? gramsLeftAfter(jar, draft.qty, draft.unit) : null
   const pinned = pinnable && (focused === 'name' || focused === 'qty')
   const jarHits = hits ? hits.put_ups.filter(h => !excludeJarIds.includes(h.preservation_log_id)) : []
+  const ranked = hits?.ranked
+    ? hits.ranked.filter(h => !(h.kind === 'put_up' && excludeJarIds.includes(h.preservation_log_id))
+      && (pantryHits || h.kind !== 'pantry_item'))
+    : null
+  const pantry = src?.kind === 'pantry' ? src.hit : null
+  const catalog = src?.kind === 'catalog' ? src.hit : null
   const rating = offerListedHeat(draft) || String(draft.rating ?? '').trim() !== ''
   const q = query.trim()
-  const exactHit = hits && [...hits.plantings, ...(hits.put_ups ?? [])].some(h => String(h.label ?? '').trim().toLowerCase() === q.toLowerCase())
+  const exactHit = hits && (ranked ? ranked.some(h => h.tier === 'exact')
+    : [...hits.plantings, ...(hits.put_ups ?? [])].some(h => String(h.label ?? '').trim().toLowerCase() === q.toLowerCase()))
 
   return (
     <div data-testid={idPrefix} style={{ marginTop: T.space.sm }}>
@@ -187,7 +209,18 @@ export default function LineAdder({
       {hits && !src && (
         <ul id={listId} data-testid={`${idPrefix}-hits`} aria-label="Matches" style={{ listStyle: 'none', margin: '4px 0 0', padding: 0,
           border: `1px solid ${P.border}`, borderRadius: T.radiusButton, overflow: 'hidden' }}>
-          {hits.plantings.map(h => (
+          {ranked && ranked.map(h => {
+            const w = rankedHitWords(h)
+            return (
+              <li key={hitKey(h)}>
+                <button type="button" style={hitBtn} data-testid={`${idPrefix}-hit-${hitKey(h)}`}
+                  onClick={() => pick(sourceOfHit(h))}>
+                  {w.text} <span style={{ color: P.light }}>· {w.tail}</span>
+                </button>
+              </li>
+            )
+          })}
+          {!ranked && hits.plantings.map(h => (
             <li key={hitKey(h)}>
               <button type="button" style={hitBtn} data-testid={`${idPrefix}-hit-${hitKey(h)}`}
                 onClick={() => pick({ kind: 'planting', hit: h, pickId: null })}>
@@ -195,7 +228,7 @@ export default function LineAdder({
               </button>
             </li>
           ))}
-          {jarHits.map(h => (
+          {!ranked && jarHits.map(h => (
             <li key={hitKey(h)}>
               <button type="button" style={hitBtn} data-testid={`${idPrefix}-hit-${hitKey(h)}`}
                 onClick={() => pick({ kind: 'jar', hit: h })}>
@@ -216,7 +249,9 @@ export default function LineAdder({
 
       {src && (
         <div data-testid={`${idPrefix}-source`} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, color: P.mid, fontSize: '0.82rem' }}>
-          <span>{planting ? `${plantingHitWords(planting)} · from the garden` : jarHitWords(jar)}</span>
+          <span>{planting ? `${plantingHitWords(planting)} · from the garden`
+            : pantry ? `${pantryHitWords(pantry)} · in the pantry`
+              : catalog ? catalogHitWords(catalog) : jarHitWords(jar)}</span>
           <button type="button" style={{ ...link, fontWeight: 400 }} data-testid={`${idPrefix}-source-clear`} disabled={busy}
             onClick={() => { clearSource(); nameRef.current?.focus() }}>Change</button>
         </div>

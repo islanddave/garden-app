@@ -35,6 +35,9 @@ import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, optionalMarkChrome, requiredMarkChrome, inputChrome, textareaChrome } from '../forms/formStyles.js'
 import PhReadingField from './PhReadingField.jsx'
 import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/sheetDraft.js'
+// Put-Up release 4: a batch made from a recipe puts up into the recipe's final container by default, and its
+// discard-by preview takes the recipe rung (typed > recipe on its storage kind > the engine).
+import { recipeFirstRow, recipePreview } from '../recipes/recipes.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
@@ -155,7 +158,7 @@ function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, ex
       )}
       {open ? (
         <LineAdder lines={batchLines} idPrefix={`${idPrefix}-add`} disabled={disabled} forms={['fresh', 'cooked']}
-          label="What was added?" addLabel="Add it" pinnable={false} excludeJarIds={excludeJarIds}
+          label="What was added?" addLabel="Add it" pinnable={false} excludeJarIds={excludeJarIds} pantryHits={false}
           onAdd={async (body) => { onChange([...lines, body]); setOpen(false); return true }} />
       ) : (
         <button type="button" disabled={disabled} data-testid={`${idPrefix}-open`} onClick={() => setOpen(true)}
@@ -355,7 +358,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   const draftKey = useSheetDraftKey(PUT_IT_UP_SHEET, batch.id)
   const preChip = preselectWhen(batch, nowDate)
   const [initial] = useState(() => readSheetDraft(draftKey, PUT_IT_UP_SHEET, isPutItUpDraft) ?? {
-    key: '', chip: preChip, estimate: null, pickedDate: '', method: null, rows: [newRow()], sitting: EMPTY_SITTING,
+    key: '', chip: preChip, estimate: null, pickedDate: '', method: null, rows: [recipeFirstRow(batch.recipe)], sitting: EMPTY_SITTING,
   })
   const [key, setKey] = useState(initial.key)
   const [chip, setChip] = useState(initial.chip)
@@ -401,7 +404,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   const containers = useMemo(() => containerChoices(pastContainers), [pastContainers])
 
   const dirty = chip !== preChip || estimate != null || pickedDate !== '' || method != null
-    || rows.length > 1 || JSON.stringify(rows[0]) !== JSON.stringify(newRow())
+    || rows.length > 1 || JSON.stringify(rows[0]) !== JSON.stringify(recipeFirstRow(batch.recipe))
     || sitting.lines.length > 0 || sitting.madeG !== '' || (sitting.mashG ?? '') !== '' || sitting.nextTime !== ''
 
   // The key is minted when the sheet first becomes dirty and never changes afterwards (V4 §6.5).
@@ -424,7 +427,8 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   // The preview counts from the day the server will store (Not sure's anchor), never from the wire value.
   const when = whenRes?.anchor ?? whenRes?.when ?? null
   const shownRows = effectiveRows(rows)
-  const previews = shownRows.map(r => previewDiscard({ row: r, method, when, now: nowDate }))
+  const previews = shownRows.map(r => (method ? recipePreview({ row: r, when, recipe: batch.recipe, now: nowDate }) : null)
+    ?? previewDiscard({ row: r, method, when, now: nowDate }))
   const previewGroups = groupPreviews(previews)
   const { chips: methodChips, more: hasMore } = methodChipsForKind(batch.kind)
   const shownMethods = moreMethods ? ALL_PUT_UP_METHODS : methodChips

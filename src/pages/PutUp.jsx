@@ -31,7 +31,6 @@ import { T } from '../lib/tokens.js'
 import { Field, Input, Select, Textarea, Button, ErrorBanner, SegmentedControl } from '../components/forms'
 import VarietyPicker from '../components/VarietyPicker.jsx'
 import PlantingSelect, { plantingWaveLabel } from '../components/forms/PlantingSelect.jsx'
-import PutUpPhotoThumb from '../components/PutUpPhotoThumb.jsx'
 import { useUploadPhoto } from '../hooks/useUploadPhoto.js'
 import { PUTUP_SOURCE_OPTIONS, PUTUP_SOURCE_LABELS } from '../lib/dropdownRegistry.js'
 // V4-RELOADGATEWIRE-001 — the same three-part form-guard EventNew/LogMany carry: a versioned
@@ -52,10 +51,9 @@ import NumberPad from '../components/NumberPad.jsx'
 import GoingNowView from '../components/putup/GoingNowView.jsx'
 import BatchDetailView from '../components/putup/BatchDetailView.jsx'
 import ClosedBatchesView from '../components/putup/ClosedBatchesView.jsx'
-import { useSuppressBottomNav } from '../hooks/useSuppressBottomNav.js'
+import RecipesView from '../components/recipes/RecipesView.jsx'
 import {
-  WALK_PARAM, coarseDate, exactDate, describeDate, describeApprox, solePlanting, unrecordedCrops,
-  readWalk, writeWalk, clearWalk, readDismissed, dismissCrop,
+  WALK_PARAM, describeDate, solePlanting,
 } from '../lib/putUpSession.js'
 // Put-Up release 1a (V4 §6.5) — every write on this page reads the server's `code` and says why it
 // was refused; client_stale is answered with a user-tapped "Refresh now", never a reload by itself.
@@ -63,9 +61,17 @@ import { describeRefusal, existingPlaceId, REFRESH_NOW_LABEL } from '../lib/putU
 import { useAppUpdate } from '../hooks/useAppUpdate.js'
 // Put-Up release 1b — a jar's name, its no-size form, its date at its precision and its discard words
 // come from one module shared with Put it up and batch detail; a move is its own write (V4 §3.4).
-import { putUpDateWords, discardWords, sizeWords, qtyText, totalOfEach, ESTIMATED_PRECISIONS } from '../components/putup/jarWords.js'
-import MoveJarSheet from '../components/putup/MoveJarSheet.jsx'
-import { mintKey } from '../components/kitchen/idempotencyKey.js'
+import { sizeWords, qtyText, totalOfEach } from '../components/putup/jarWords.js'
+// Put-Up B′ release 2 (V4 §2.2, §2.5, §6.1) — the Pantry, its page search, the Put something up door,
+// the generalised walk and the rename bridge live in components/pantry/, each its own module.
+import PantryView, { usePantryList } from '../components/pantry/PantryView.jsx'
+import PantrySearchResults, { PantrySearchBox } from '../components/pantry/PantrySearch.jsx'
+import PutSomethingUpSheet from '../components/pantry/PutSomethingUpSheet.jsx'
+import WalkPlace, { WALK_TITLE } from '../components/pantry/WalkPlace.jsx'
+import { USE_SOON_FILTER } from '../components/pantry/pantryRows.js'
+import { DOOR_CTA, completionWords } from '../components/pantry/putSomethingUp.js'
+import { noteBridgeVisit, dismissBridge } from '../components/pantry/pantryBridge.js'
+import { FIND_PARAM } from '../lib/putUpClientState.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -287,9 +293,39 @@ export function pickStartBatchSheet(modules) {
 }
 export const StartBatchSheetImpl = pickStartBatchSheet(START_BATCH_SHEET_MODULES)
 
+// Put-Up B′ — "How it was made →" (V4 §2.2, release 3) is the batch-builder lane's sheet, and its seam is
+// `useHowItWasMade({ onSaved })` → `{ open(rowOrJar), sheet }` (+ `canSayHowItWasMade(jar)`), exported from
+// components/putup/HowItWasMadeSheet.jsx. Globbed exactly like the Start sheet above, so this page builds
+// with or without that file: without it there is no seam and no "How it was made →" anywhere; with it,
+// the Pantry row sheet and the Put something up completion offer the door for a batchless put-up. The
+// module is chosen once per build, so the hook below is always the same hook (rules of hooks hold).
+// `howItWasMade` is also a PutUp prop so a test can hand in a stand-in.
+const HOW_IT_WAS_MADE_MODULES = import.meta.glob('../components/putup/HowItWasMadeSheet.jsx', { eager: true })
+export function pickHowItWasMade(modules) {
+  for (const m of Object.values(modules ?? {})) {
+    if (typeof m?.useHowItWasMade === 'function') {
+      return { useHowItWasMade: m.useHowItWasMade, canSay: typeof m.canSayHowItWasMade === 'function' ? m.canSayHowItWasMade : null }
+    }
+  }
+  return null
+}
+export const HowItWasMadeImpl = pickHowItWasMade(HOW_IT_WAS_MADE_MODULES)
+const NO_HOW = { open: null, sheet: null }
+function useNoHowItWasMade() { return NO_HOW }
+// A Pantry row can say how it was made when it is a put-up with no batch yet (and the seam agrees).
+function howRowCheck(seam) {
+  return (row) => !!row && row.stock_kind === 'put_up' && row.batch_id == null
+    && (!seam?.canSay || seam.canSay({ id: row.stock_id, batch_id: null, harvest_log_id: null, deleted_at: null }))
+}
+const NO_EXTRA_SEARCH_ITEMS = []
+
 // `StartBatchSheet` is a prop only so a test can hand the page a stand-in for a file this branch does
 // not have yet; App renders the route with no props, so production always takes the default.
-export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
+// `howItWasMade` and `extraSearchItems` are the B′ seams (see above and the page search below);
+// App renders the route with no props, so production takes the defaults.
+export default function PutUp({
+  StartBatchSheet = StartBatchSheetImpl, howItWasMade = HowItWasMadeImpl, extraSearchItems: extraSearchItemsProp = NO_EXTRA_SEARCH_ITEMS,
+} = {}) {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -306,11 +342,11 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
   // Adaptive default: a harvest-triggered open lands on the form; a bare "Put-Up" tap lands on the
   // inventory ("what have I got?") — the more common intent from the More menu. V5-INFLIGHTBATCH-001
   // promotes a bare open to 'going' the moment there is anything to check; see autoDefaultedRef.
-  const [view, setView] = useState(hasPrefill ? 'log' : 'stores')
+  const [view, setView] = useState(hasPrefill ? 'log' : 'pantry')
   // Put-Up release 1a (V4 §6.1, §10.2) — a door that NAMES its destination. `?view=pantry` is the
-  // put-up list segment ('stores'; it is renamed "Pantry" only in release 2, so nothing on screen
-  // changes now); Today's use-soon band links here with it. It counts as a choice already made, so
-  // the bare-open promote below never moves someone who was sent to the list.
+  // Pantry segment (B′ release 2 renamed it from "What's put up"); Today's use-soon band links here
+  // with it. It counts as a choice already made, so the bare-open promote below never moves someone who
+  // was sent to the list.
   const viewNamed = searchParams.get('view') === 'pantry'
   // Set the moment the user picks a view themselves. The auto-default below is a DEFAULT, not a
   // preference — it may never move someone off a segment they chose or off a form they are typing in.
@@ -450,7 +486,7 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
   // Decided ONCE, on the first load that produces an answer, and never revisited: a late-arriving
   // fetch may not yank someone off a form (the prefill path lands on 'log', and clearPrefill leaves
   // them there with hasPrefill false) or off a segment they chose. Hence both guards plus the
-  // view === 'stores' check, which is the state this flip is defined to replace.
+  // view === 'pantry' check, which is the state this flip is defined to replace.
   //
   // Put-Up release 1a (V4 §6.1 "Jen's landing") — and only when a listed batch is the VIEWER's own.
   // Batches are household-visible, so Jen opening Put-Up while Dave has a ferment going used to land
@@ -462,7 +498,7 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
   useEffect(() => {
     if (autoDefaultedRef.current || !Array.isArray(going)) return
     autoDefaultedRef.current = true
-    if (viewTouchedRef.current || view !== 'stores') return
+    if (viewTouchedRef.current || view !== 'pantry') return
     if (viewerId == null || !going.some(b => b?.user_id === viewerId)) return
     setView('going')
   }, [going, view, viewerId])
@@ -495,32 +531,80 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
     navigate(location.pathname, { state: null, replace: true })
   }, [navigate, location.pathname])
 
-  // Declared AFTER every hook above, so the walk branch cannot reorder them.
-  if (inWalk) return <PutUpWalk />
+  // ── Put-Up B′ release 2 — the Pantry, the page search, the door, the bridge ───────────────────────
+  // The Pantry list is read at the PAGE: the segment, the page search and the door's name search all
+  // read the same rows, and a write from any of them re-reads once.
+  const [pantryGroup, setPantryGroup] = useState('place')
+  const findText = searchParams.get(FIND_PARAM) ?? ''
+  const searching = !modeActive && findText.trim() !== ''
+  const [doorOpen, setDoorOpen] = useState(false)
+  const [doorName, setDoorName] = useState('')
+  const pantry = usePantryList({ fetch: pageFetch, group: pantryGroup,
+    enabled: !inWalk && ((!modeActive && view === 'pantry') || searching || doorOpen) })
+  // What the person did on a row this visit — "3 left · used one · Undo" until their next visit (V4 §2.5).
+  const [pantryRecent, setPantryRecent] = useState({})
+  // The door's completion, shown in place on the Pantry with Undo (V4 §2.2).
+  const [completion, setCompletion] = useState(null)
+  // How it was made → (the batch-builder seam; absent → no door anywhere).
+  const useHow = howItWasMade?.useHowItWasMade ?? useNoHowItWasMade
+  const how = useHow({ onSaved: () => { pantry.reload(); loadGoing() } })
+  const onHowItWasMade = typeof how?.open === 'function' ? how.open : null
+  const canHowItWasMade = useMemo(() => howRowCheck(howItWasMade), [howItWasMade])
+  // The page search's extra corpus: the recipes lane hands its loaded recipes in through
+  // `setExtraSearchItems` (or the `extraSearchItems` prop): `{ kind, id, name, type_label?, onOpen? }`
+  // (a `key` and `kindLabel` are read too).
+  const [extraSearchState, setExtraSearchItems] = useState(NO_EXTRA_SEARCH_ITEMS)
+  const extraSearchItems = useMemo(() => [...extraSearchItemsProp, ...extraSearchState], [extraSearchItemsProp, extraSearchState])
+  // The rename bridge (V4 §2.5): counted once per page visit, per viewer.
+  const [bridgeShown, setBridgeShown] = useState(() => noteBridgeVisit(viewerId))
+  const onDismissBridge = useCallback(() => { dismissBridge(viewerId); setBridgeShown(false) }, [viewerId])
 
-  // The segment bodies stand down while a mode is open. `view` itself is untouched, which is the
-  // whole point of the mode flag: leaving the mode restores the segment the user was on instead of
-  // remounting the page onto 'stores' behind a network round trip.
-  const seg = modeActive ? null : view
+  // The search text lives in `?find=`: the first keystroke PUSHES (so Back clears it), the rest replace.
+  const setFind = useCallback((text) => {
+    const next = new URLSearchParams(searchParams)
+    if (text) next.set(FIND_PARAM, text); else next.delete(FIND_PARAM)
+    setSearchParams(next, { replace: searchParams.has(FIND_PARAM), state: location.state })
+  }, [searchParams, setSearchParams, location.state])
+  const clearFind = useCallback(() => setFind(''), [setFind])
+  // A search hit from the extra corpus opens through its own `onOpen` when it has one; a recipe item
+  // ({kind:'recipe', id, name, …}, the recipes lane's shape) otherwise opens recipe detail, `?recipe=`
+  // (V4 §6.2) — a push, with the search dropped, so Back returns to the list.
+  const openSearchItem = useCallback((item) => {
+    if (typeof item?.onOpen === 'function') { item.onOpen(item); return }
+    if (item?.kind === 'recipe' && item.id != null) {
+      const next = new URLSearchParams(searchParams)
+      next.delete(FIND_PARAM); next.set('recipe', String(item.id))
+      setSearchParams(next, { state: location.state })
+    }
+  }, [searchParams, setSearchParams, location.state])
+
+  const openDoor = useCallback((name = '') => { setDoorName(name); setDoorOpen(true) }, [])
+  const onDoorSaved = useCallback(({ route, saved, place }) => {
+    setDoorOpen(false)
+    setCompletion({ route, saved, place, text: completionWords({ route, saved, place }) })
+    if (findText) clearFind()
+    chooseView('pantry')
+    pantry.reload()
+  }, [chooseView, clearFind, findText, pantry])
+
+  // Declared AFTER every hook above, so the walk branch cannot reorder them.
+  if (inWalk) {
+    return (<>
+      <WalkPlace JarEditor={RowEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} />
+      {how?.sheet ?? null}
+    </>)
+  }
+
+  // The segment bodies stand down while a mode is open, and while the page search holds text (its
+  // results replace the body, V4 §2.5). `view` itself is untouched, which is the whole point of the mode
+  // flag: leaving the mode restores the segment the user was on instead of remounting the page onto the
+  // Pantry behind a network round trip.
+  const seg = modeActive || searching ? null : view
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
       <div style={{ maxWidth: 620, margin: '0 auto', padding: '24px 18px 80px' }}>
-        {/* V4-PUTUPSESSION-001 — the walk's door, on the title line and DELIBERATELY NOT a
-            full-width filled primary CTA. That shape is what V4-WEIGHINCTA-001 shipped for the
-            weigh-in and it was reversed; this copies the reversal, not the original. */}
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: T.space.sm, margin: '0 0 4px' }}>
-          <h1 style={{ margin: 0, flex: 1, color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Put-Up</h1>
-          {!modeActive && (
-            <button type="button" onClick={() => navigate(`/put-up?session=${WALK_PARAM}`)}
-              data-testid="putup-walk-door"
-              style={{ background: 'none', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
-                color: P.green, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit',
-                padding: '6px 12px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
-              🧊 Freezer walk
-            </button>
-          )}
-        </div>
+        <h1 style={{ margin: '0 0 4px', color: P.green, fontSize: '1.3rem', fontWeight: 700 }}>Put-Up</h1>
 
         {/* THE WAY BACK, in the page rather than in the browser chrome. An installed PWA has no
             address bar and no visible Back control (App.jsx records exactly this hazard for /admin/*),
@@ -536,32 +620,38 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
         )}
 
         {!modeActive && (
-          <p style={{ margin: '0 0 16px', fontSize: '0.84rem', color: P.light }}>
-            What you&rsquo;ve preserved — your freezer, pantry and stores.
+          <p style={{ margin: '0 0 12px', fontSize: '0.84rem', color: P.light }}>
+            What you&rsquo;ve put up, what&rsquo;s on the go, and what you&rsquo;ve bought.
           </p>
         )}
 
-        {/* The "start something new" slot every other landing page has and this one did not:
-            /harvests carries a full-width filled Weigh-in-session CTA above its view controls
-            (V4-WEIGHINCTA-001 — "a doorway you have to already know about cannot buy that"). The
-            segmented control below switches VIEWS; this starts the primary ACTION. Only rendered on
-            the read view — on the form it would be a button that does nothing. */}
-        {seg === 'stores' && (
-          <button type="button" onClick={() => chooseView('log')} data-testid="putup-primary-cta"
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              width: '100%', minHeight: T.buttonMinHeight, marginBottom: 14, backgroundColor: P.green, color: P.white,
-              border: 'none', borderRadius: T.radiusCard, fontSize: T.type.md, fontWeight: 700,
-              fontFamily: 'inherit', cursor: 'pointer' }}>
-            <span aria-hidden="true">🫙</span><span>Log a put-up</span>
-          </button>
+        {/* B′ release 2 (V4 §6.1) — the page header row: search + Put something up, hidden while a mode
+            is open; a quiet "Walk a place" beneath it (the shipped freezer walk's door, generalised —
+            still on this line's posture: not a full-width filled CTA, V4-WEIGHINCTA-001's reversal). */}
+        {!modeActive && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
+              <PantrySearchBox value={findText} onChange={setFind} onClear={clearFind} />
+              <button type="button" onClick={() => openDoor('')} data-testid="putup-door"
+                style={{ flexShrink: 0, minHeight: T.buttonMinHeight, padding: '0 14px', backgroundColor: P.green, color: P.white,
+                  border: 'none', borderRadius: T.radiusButton, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}>
+                {DOOR_CTA}
+              </button>
+            </div>
+            <button type="button" onClick={() => navigate(`/put-up?session=${WALK_PARAM}`)} data-testid="putup-walk-door"
+              style={{ minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 2px', color: P.green,
+                fontSize: T.type.sm, fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>
+              {WALK_TITLE}
+            </button>
+          </div>
         )}
 
-        {/* LIFECYCLE ORDER, left to right: going → logged → stored. That is time order, which is
-            the one arrangement a user can predict without reading. The grammar was already
+        {/* LIFECYCLE ORDER, left to right: going → logged → kept. The grammar was already
             inconsistent (a VERB beside a QUESTION) and a third label had to join it; "Going now"
             names the OBJECT's state, which is what the other two labels are really doing too.
-            Three options is still inside the ≤4 the page holds itself to. */}
-        {!modeActive && (
+            B′ release 2: "What's put up" is the Pantry (V4 §6.1); "Log a put-up" (the shipped form) is
+            kept beside the Put something up door. ≤ 4, the page's own ceiling. */}
+        {!modeActive && !searching && (
           <div style={{ marginBottom: 18 }}>
             <SegmentedControl
               ariaLabel="Put-Up view"
@@ -570,10 +660,20 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
               options={[
                 { value: 'going',  label: 'Going now' },
                 { value: 'log',    label: 'Log a put-up' },
-                { value: 'stores', label: "What's put up" },
+                { value: 'pantry', label: 'Pantry' },
+                { value: 'recipes', label: 'Recipes' },
               ]}
             />
           </div>
+        )}
+
+        {searching && (
+          <PantrySearchResults query={findText} rows={pantry.rows} loading={pantry.loading} extraSearchItems={extraSearchItems}
+            onOpenExtra={openSearchItem}
+            fetch={pageFetch} onPutUp={(text) => openDoor(text)} JarEditor={RowEditor}
+            onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
+            onUsed={(entry) => { setPantryRecent(prev => ({ ...prev, [`${entry.row.stock_kind}:${entry.row.stock_id}`]: { ...entry, undone: false, err: null, undoKey: null } })); pantry.reload() }}
+            onChanged={() => pantry.reload()} />
         )}
 
         {seg === 'log' && !hasPrefill && <RecentHarvestPicker onPick={pickHarvest} />}
@@ -603,8 +703,16 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
           <GoingNowView batches={going} loading={goingLoading} error={goingError} onReload={loadGoing}
             onStartBatch={StartBatchSheet ? openStartSheet : undefined} />
         )}
-        {seg === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('stores')} />}
-        {seg === 'stores' && <StoresView useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} />}
+        {seg === 'log' && <PutUpForm key={prefillKey} prefill={prefill} onLogged={() => chooseView('pantry')} />}
+        {seg === 'pantry' && (
+          <PantryView fetch={pageFetch} group={pantryGroup} onGroupChange={setPantryGroup} rows={pantry.rows}
+            loading={pantry.loading} error={pantry.error} onReload={pantry.reload} recent={pantryRecent} onRecent={setPantryRecent}
+            useSoonOnly={useSoonOnly} onClearUseSoon={clearUseSoon} JarEditor={RowEditor}
+            onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
+            completion={completion} onCompletionDone={() => setCompletion(null)}
+            showBridge={bridgeShown} onDismissBridge={onDismissBridge} />
+        )}
+        {seg === 'recipes' && <RecipesView onBatchStarted={onBatchStarted} />}
 
         {/* The batch's own surface. Controlled — it issues no GET of its own, so `onChanged` is the
             only invalidation path and it re-reads BOTH this row and the list.
@@ -639,450 +747,12 @@ export default function PutUp({ StartBatchSheet = StartBatchSheetImpl } = {}) {
         {StartBatchSheet && startOpen && (
           <StartBatchSheet open onClose={closeStartSheet} onStarted={onBatchStarted} />
         )}
+        {doorOpen && (
+          <PutSomethingUpSheet open initialName={doorName} stockRows={pantry.rows} onClose={() => setDoorOpen(false)}
+            onSaved={onDoorSaved} />
+        )}
+        {how?.sheet ?? null}
       </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// V4-PUTUPSESSION-001 slice 0 — the freezer walk
-// ─────────────────────────────────────────────────────────────────────────────
-// THE PROBLEM, in Dave's words (2026-08-25): "I still put up a ton (all of the blueberries have
-// been put up, but not recorded in the app) — I just don't have a ton of time in the middle of
-// harvest season to do it." Capture friction is NOT the complaint; TIMING is. The measured cost:
-// 48 blueberry harvests, 37.2 lb, exactly ONE planting, and zero put-up rows.
-//
-// So this is a RETROSPECTIVE surface. It asks the two questions a freezer walk can answer once —
-// which freezer, roughly when — applies both to every save in the sitting, and then asks per item
-// only for the thing he can actually observe standing there: HOW MANY BAGS. It never proposes a
-// quantity from harvest weight (the app knows 37.2 lb and must not offer it — a number the app
-// invented is indistinguishable from one he counted the moment it is stored).
-//
-// Modelled on the weigh-in and DELIBERATELY NOT EDITING IT. Copied: the mode-flag predicate, the
-// BottomNav suppression, the sticky answers across the sitting, one write per item, an exit control
-// built in from the start (the weigh-in needed one added retroactively — V4-WEIGHSESSIONCLOSE-001).
-// NOT copied: the fixed 3-track 100dvh grid (that geometry was measured for two number pads and a
-// ledger, not for this form) and the 56px pad keys (V4-PADTARGETSIZE-001, unshipped, measured to
-// push a pad row under a sticky band). Not built at all: a worklist with ticks, a denominator or
-// auto-advance — Dave had exactly that deleted from the weigh-in (V4-WEIGHQUEUEKILL-001).
-const WALK_BAND_FALLBACK_PX = 96   // jsdom and pre-measure paints only; the live value is measured
-
-function PutUpWalk() {
-  const navigate = useNavigate()
-  const { fetch } = useApiFetch()
-  useSuppressBottomNav(true)
-
-  // The stash is read ONCE, lazily, so a re-render can never resurrect a walk that was just exited.
-  const [walk, setWalk] = useState(() => readWalk())
-  const [resumed] = useState(() => !!readWalk())
-  const [editingSetup, setEditingSetup] = useState(() => !readWalk())
-  const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false)
-  const [storageLocations, setStorageLocations] = useState([])
-  // { id, text, undone, error } — the LAST item saved in this sitting. Deliberately not restored
-  // from the stash: an "Undo" offered for something saved yesterday evening is not what undo means.
-  const [lastSaved, setLastSaved] = useState(null)
-  const [bandH, setBandH] = useState(WALK_BAND_FALLBACK_PX)
-  const bandRef = useRef(null)
-
-  // The offline PRE-FLIGHT (design §5.1.6). Put-Up refuses to save anything offline
-  // (handleSubmit's first branch), so without this the worst failure mode is thirty minutes of
-  // walking followed by twenty items identified and none saved. Checking BEFORE the walk turns that
-  // into a five-second one. navigator.onLine === false means the OS reports no network at all, so
-  // it is trustworthy in the blocking direction (its unreliability is the other way — online:true
-  // with no real connectivity), which is why this gate is safe to make hard.
-  useEffect(() => {
-    if (typeof window === 'undefined') return undefined
-    const on = () => setOnline(true)
-    const off = () => setOnline(false)
-    window.addEventListener('online', on)
-    window.addEventListener('offline', off)
-    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
-  }, [])
-
-  useEffect(() => {
-    let live = true
-    fetch('/api/storage-locations')
-      .then(rows => { if (live) setStorageLocations(Array.isArray(rows) ? rows : []) })
-      .catch(() => { /* non-fatal — the walk still runs with Unassigned */ })
-    return () => { live = false }
-  }, [fetch])
-
-  // The band's height is MEASURED, not assumed. It grows the moment the first item lands (a saved
-  // line + Undo appear), and the scroller's bottom padding is what guarantees every control below
-  // it — including the number pad's last row — can be scrolled clear of it. Assuming a constant is
-  // exactly how the weight pad ended up 15px inside the weigh-in's band (BUG-WEIGHPADSAVEBAND-001).
-  useEffect(() => {
-    const el = bandRef.current
-    if (!el) return undefined
-    const measure = () => setBandH(Math.round(el.getBoundingClientRect().height) || WALK_BAND_FALLBACK_PX)
-    measure()
-    if (typeof ResizeObserver === 'undefined') return undefined
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [editingSetup, lastSaved])
-
-  const exitWalk = useCallback(() => {
-    clearWalk()
-    navigate('/put-up', { replace: true })
-  }, [navigate])
-
-  const startWalk = useCallback((answers) => {
-    const next = { ...answers, savedCount: walk?.savedCount ?? 0, cropSlug: walk?.cropSlug ?? '' }
-    writeWalk(next)
-    setWalk(next)
-    setEditingSetup(false)
-  }, [walk])
-
-  // One item saved. The row is already durable in the database — this only advances the PLACE the
-  // stash remembers, so a walk torn down by the launcher comes back on the same freezer, the same
-  // date and the same crop.
-  const onSaved = useCallback((row, text) => {
-    setLastSaved({ id: row?.id ?? null, text, undone: false, error: null })
-    setWalk(w => {
-      const next = { ...w, savedCount: (w?.savedCount ?? 0) + 1, cropSlug: row?.crop_type_slug ?? w?.cropSlug ?? '' }
-      writeWalk(next)
-      return next
-    })
-  }, [])
-
-  // Undo = the sanctioned soft-delete, the same DELETE the inventory's per-row delete uses. An
-  // undone item stays on screen struck through rather than vanishing: the band is an honest record
-  // of what happened, not a mutable cart.
-  const undoLast = useCallback(async () => {
-    if (!lastSaved?.id || lastSaved.undone) return
-    try {
-      await fetch(`/api/preservation/${lastSaved.id}`, { method: 'DELETE' })
-      setLastSaved(s => (s ? { ...s, undone: true, error: null } : s))
-      setWalk(w => {
-        const next = { ...w, savedCount: Math.max(0, (w?.savedCount ?? 1) - 1) }
-        writeWalk(next)
-        return next
-      })
-    } catch (e) {
-      setLastSaved(s => (s ? { ...s, error: describeRefusal(e) ?? "Couldn't undo — try again." } : s))
-    }
-  }, [fetch, lastSaved])
-
-  const walkStorageId = walk?.storageId ?? ''
-  const walkDate = walk?.date ?? ''
-  const walkApprox = !!walk?.dateApprox
-  const walkCrop = walk?.cropSlug ?? ''
-  const session = useMemo(
-    () => (walkDate ? { storageId: walkStorageId, date: walkDate, dateApprox: walkApprox, cropSlug: walkCrop } : null),
-    [walkStorageId, walkDate, walkApprox, walkCrop],
-  )
-  const storageLabel = storageLocations.find(s => String(s.id) === String(walkStorageId))?.label
-    || (walkStorageId ? 'this freezer' : 'Unassigned')
-
-  return (
-    <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
-      <div style={{ maxWidth: 620, margin: '0 auto', padding: `16px 18px ${bandH + 28}px` }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: T.space.sm, marginBottom: 4 }}>
-          <h1 style={{ margin: 0, flex: 1, color: P.green, fontSize: '1.2rem', fontWeight: 700 }}>
-            🧊 Freezer walk
-          </h1>
-          {editingSetup && (
-            <button type="button" onClick={exitWalk} data-testid="putup-walk-setup-exit"
-              style={{ background: 'none', border: 'none', color: P.mid, fontSize: T.type.sm,
-                fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline',
-                padding: '4px 0', minHeight: 32, cursor: 'pointer' }}>
-              Not now
-            </button>
-          )}
-        </div>
-
-        {editingSetup ? (
-          <WalkSetup
-            online={online}
-            initial={walk}
-            resumed={resumed}
-            storageLocations={storageLocations}
-            onStart={startWalk}
-            fetch={fetch}
-            onCreated={(row) => setStorageLocations(list => upsertPlace(list, row))}
-          />
-        ) : (
-          <>
-            {resumed && (
-              <div data-testid="putup-walk-resumed" role="status"
-                style={{ marginBottom: 14, padding: '9px 12px', fontSize: T.type.sm, color: P.green,
-                  backgroundColor: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton }}>
-                Picked up where you left off{walk?.savedCount ? ` — ${walk.savedCount} logged so far` : ''}.
-              </div>
-            )}
-            <UnrecordedLine fetch={fetch} />
-            <PutUpForm
-              prefill={{}}
-              session={session}
-              onSaved={onSaved}
-              onLogged={exitWalk}
-            />
-          </>
-        )}
-      </div>
-
-      {/* The band. Fixed to the bottom because BottomNav is suppressed, so `bottom: 0` is the real
-          bottom of the device rather than 56px above it. Everything above scrolls past it. */}
-      {!editingSetup && (
-        <div ref={bandRef} data-testid="putup-walk-band"
-          style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 30,
-            backgroundColor: P.white, borderTop: `1px solid ${P.border}`,
-            padding: '10px 18px calc(10px + env(safe-area-inset-bottom))' }}>
-          {lastSaved && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, marginBottom: 6 }}>
-              <span data-testid="putup-walk-last"
-                style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: lastSaved.undone ? P.light : P.dark,
-                  textDecoration: lastSaved.undone ? 'line-through' : 'none',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {lastSaved.undone ? 'Undone' : '✓'} {lastSaved.text}
-              </span>
-              {!lastSaved.undone && lastSaved.id && (
-                <button type="button" onClick={undoLast} data-testid="putup-walk-undo"
-                  style={{ background: 'none', border: 'none', color: P.terra, fontSize: T.type.sm,
-                    fontWeight: 700, fontFamily: 'inherit', textDecoration: 'underline',
-                    padding: '4px 2px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
-                  Undo
-                </button>
-              )}
-            </div>
-          )}
-          <WriteError err={lastSaved?.error} style={{ marginBottom: 6 }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
-            <span style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', color: P.light,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {storageLabel} · {describeDate(walkDate, walkApprox)}
-            </span>
-            <button type="button" onClick={() => setEditingSetup(true)} data-testid="putup-walk-change"
-              style={{ background: 'none', border: 'none', color: P.green, fontSize: '0.78rem',
-                fontWeight: 700, fontFamily: 'inherit', textDecoration: 'underline',
-                padding: '4px 2px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
-              Change
-            </button>
-            <button type="button" onClick={exitWalk} data-testid="putup-walk-exit"
-              style={{ background: 'none', border: `1px solid ${P.border}`, borderRadius: T.radiusButton,
-                color: P.mid, fontSize: '0.78rem', fontWeight: 700, fontFamily: 'inherit',
-                padding: '6px 12px', minHeight: 36, cursor: 'pointer', flexShrink: 0 }}>
-              Done
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// The two questions, asked ONCE (design §3.3). A freezer walk has strong locality — that is the
-// lever that makes this cheap. The freezer is the field most likely to be right for a whole sitting
-// at once, and the date is the field retrospection cannot supply truthfully.
-//
-// The words "project" and "container" appear nowhere here. Dave has no concept of a Project, and
-// "container" is already spent on a package elsewhere in this file: the labels are freezer and bag.
-function WalkSetup({ online, initial, resumed, storageLocations, onStart, onCreated, fetch }) {
-  const today = todayYMD()
-  const [storageId, setStorageId] = useState(initial?.storageId ?? '')
-  const [storagePicked, setStoragePicked] = useState(!!initial)
-  const [elsewhere, setElsewhere] = useState(false)
-  const [dateChoice, setDateChoice] = useState(initial?.dateChoice ?? '')
-  const [exactYmd, setExactYmd] = useState(initial && !initial.dateApprox ? initial.date : '')
-
-  const summer = coarseDate('summer', today)
-  const earlier = coarseDate('earlier', today)
-  const resolved = dateChoice === 'exact'
-    ? exactDate(exactYmd)
-    : dateChoice === 'summer' ? summer : dateChoice === 'earlier' ? earlier : null
-
-  const canStart = online && storagePicked && !!resolved
-
-  function pickFreezer(id) { setStorageId(id); setStoragePicked(true); setElsewhere(false) }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
-      {!online && (
-        <div role="alert" data-testid="putup-walk-offline"
-          style={{ padding: '12px 14px', fontSize: T.type.sm, lineHeight: 1.45, color: P.bannerInk,
-            backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: T.radiusButton }}>
-          <strong>You&rsquo;re offline — nothing you log here will save.</strong> Put-ups need a
-          connection. Better to find out now than after a walk round the freezers. This clears itself
-          the moment you&rsquo;re back on.
-        </div>
-      )}
-
-      <Card>
-        <div style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 10 }}>
-          Which freezer are you at?
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: T.space.sm }}>
-          {storageLocations.map(l => (
-            <WalkChip key={l.id} selected={storagePicked && String(storageId) === String(l.id)}
-              testId="putup-walk-freezer" onClick={() => pickFreezer(String(l.id))}>
-              {l.label}
-            </WalkChip>
-          ))}
-          <WalkChip selected={elsewhere} testId="putup-walk-freezer-else"
-            onClick={() => { setElsewhere(true); setStoragePicked(true); setStorageId('') }}>
-            ＋ Somewhere else
-          </WalkChip>
-        </div>
-        {elsewhere && (
-          <div style={{ marginTop: 14 }}>
-            {/* The shipped storage field, reused whole rather than re-implemented — it already owns
-                the "＋ New location" creator and its BUG-PUTUPLOC-001 retry. */}
-            <StorageField
-              value={storageId}
-              onChange={setStorageId}
-              locations={storageLocations}
-              onCreated={(row) => { onCreated(row); setStorageId(String(row.id)) }}
-              fetch={fetch}
-            />
-          </div>
-        )}
-      </Card>
-
-      <Card>
-        <div style={{ fontSize: '0.95rem', fontWeight: 700, color: P.dark, marginBottom: 4 }}>
-          Roughly when did you put this up?
-        </div>
-        <div style={{ fontSize: '0.8rem', color: P.light, marginBottom: 10 }}>
-          A rough answer is a real answer — you can change it on any single item.
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: T.space.sm }}>
-          {summer && (
-            <WalkChip selected={dateChoice === 'summer'} testId="putup-walk-date"
-              onClick={() => setDateChoice('summer')}>This summer</WalkChip>
-          )}
-          {earlier && (
-            <WalkChip selected={dateChoice === 'earlier'} testId="putup-walk-date"
-              onClick={() => setDateChoice('earlier')}>Earlier this year</WalkChip>
-          )}
-          <WalkChip selected={dateChoice === 'exact'} testId="putup-walk-date"
-            onClick={() => setDateChoice('exact')}>Pick a date</WalkChip>
-        </div>
-        {dateChoice === 'exact' && (
-          <div style={{ marginTop: 12 }}>
-            <Field label="Put-up date" htmlFor="pu-walk-date">
-              <Input id="pu-walk-date" type="date" value={exactYmd} max={today}
-                onChange={e => setExactYmd(e.target.value)} aria-label="Put-up date" />
-            </Field>
-          </div>
-        )}
-        {/* The resolved date is SHOWN, never hidden. A coarse button that silently writes a date
-            nobody looked at is the "a wrong default launders a wrong decision" failure; a default
-            he is shown before he starts is a fact he can catch. Slice 0 has no column for the
-            approximate flag yet, so this sentence is the only thing carrying it — say it plainly. */}
-        {resolved && (
-          <div data-testid="putup-walk-date-resolved"
-            style={{ marginTop: 12, fontSize: T.type.sm, color: P.mid }}>
-            Everything in this walk gets recorded as <strong>{describeDate(resolved.date, resolved.approx)}</strong>
-            {resolved.approx ? ' — an estimate, not a date you picked.' : '.'}
-          </div>
-        )}
-      </Card>
-
-      <Button type="button" variant="primary" disabled={!canStart}
-        data-testid="putup-walk-start"
-        onClick={() => onStart({
-          storageId,
-          date: resolved.date,
-          dateApprox: resolved.approx,
-          dateChoice,
-        })}>
-        {resumed ? 'Back to the walk' : 'Start the walk'}
-      </Button>
-    </div>
-  )
-}
-
-function WalkChip({ selected, onClick, children, testId }) {
-  return (
-    <button type="button" onClick={onClick} aria-pressed={selected} data-testid={testId}
-      style={{ minHeight: T.tapMinHeight, padding: '10px 14px', borderRadius: T.radiusButton,
-        border: `1px solid ${selected ? P.green : P.border}`,
-        backgroundColor: selected ? P.greenPale : P.white,
-        color: selected ? P.green : P.dark, fontWeight: selected ? 700 : 600,
-        fontSize: '0.9rem', fontFamily: 'inherit', cursor: 'pointer' }}>
-      {children}
-    </button>
-  )
-}
-
-// "What haven't I put up?" (design §6 Q4) — ONE collapsed line, no ticks, no denominator, no
-// ordering, no auto-advance. Dave asked for it with a constraint in his own words: "it cannot be a
-// forever nag — i pick watermelons for example but mostly eat them fresh, not freezing."
-//
-// Two things answer that constraint:
-//   1. COLLAPSED IT MAKES NO ACCUSATION. The line carries no count until he opens it, so the walk
-//      never greets him with a number of things he has "failed" to record. It is also why the
-//      season-wide aggregates scan is deferred to the tap rather than run on entry.
-//   2. EVERY CROP IS DISMISSIBLE, AND THE DISMISSAL STICKS. "Not one I put up" is the label —
-//      not "done" — because watermelon is not an outstanding task, it is a crop that will never
-//      belong on this list. localStorage, per crop, no schema.
-function UnrecordedLine({ fetch }) {
-  const [open, setOpen] = useState(false)
-  // `wanted` only ever goes false -> true, and that is the whole point. Keying the fetch on `open`
-  // (which flips back) or on `state.loading` (which this effect sets itself) makes the effect
-  // cancel its OWN in-flight request through its cleanup and then decline to retry — the panel sits
-  // on "Checking…" forever. Caught by the test below, which is why it is a monotone latch.
-  const [wanted, setWanted] = useState(false)
-  const [state, setState] = useState({ loading: false, failed: false, crops: null })
-  const [dismissed, setDismissed] = useState(() => readDismissed())
-
-  useEffect(() => {
-    if (!wanted) return undefined
-    let live = true
-    setState({ loading: true, failed: false, crops: null })
-    Promise.all([
-      fetch('/api/harvests?include=aggregates'),
-      fetch('/api/preservation/whats-put-up?group=crop'),
-    ])
-      .then(([h, p]) => {
-        if (!live) return
-        const putUp = (p?.groups ?? []).flatMap(g => [
-          g.group_key,
-          ...(g.records ?? []).map(r => r.crop_type_slug),
-        ].filter(Boolean))
-        setState({ loading: false, failed: false, crops: h?.aggregates?.crops ?? [], putUp })
-      })
-      .catch(() => { if (live) setState({ loading: false, failed: true, crops: null }) })
-    return () => { live = false }
-  }, [wanted, fetch])
-
-  const rows = useMemo(
-    () => unrecordedCrops({ harvestCrops: state.crops, putUpSlugs: state.putUp, dismissed }),
-    [state.crops, state.putUp, dismissed],
-  )
-
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <button type="button" onClick={() => { setOpen(o => !o); setWanted(true) }} aria-expanded={open}
-        data-testid="putup-walk-unrecorded-toggle"
-        style={{ background: 'none', border: 'none', padding: '6px 0', cursor: 'pointer',
-          color: P.mid, fontSize: T.type.sm, fontWeight: 600, fontFamily: 'inherit',
-          display: 'flex', alignItems: 'center', gap: 6, minHeight: 36 }}>
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
-        <span>What haven&rsquo;t I put up?</span>
-      </button>
-      {open && (
-        <div data-testid="putup-walk-unrecorded" style={{ paddingLeft: 18 }}>
-          {state.loading && <div style={{ fontSize: T.type.sm, color: P.light }}>Checking&hellip;</div>}
-          {state.failed && <div style={{ fontSize: T.type.sm, color: P.light }}>Couldn&rsquo;t check just now.</div>}
-          {!state.loading && !state.failed && state.crops && rows.length === 0 && (
-            <div style={{ fontSize: T.type.sm, color: P.light }}>Nothing outstanding.</div>
-          )}
-          {rows.map(c => (
-            <div key={c.slug} style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, padding: '4px 0' }}>
-              <span style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: P.dark }}>{c.name}</span>
-              <button type="button" onClick={() => setDismissed(dismissCrop(c.slug))}
-                data-testid="putup-walk-not-mine"
-                style={{ background: 'none', border: 'none', color: P.light, fontSize: '0.76rem',
-                  fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline',
-                  padding: '4px 2px', minHeight: 32, cursor: 'pointer', flexShrink: 0 }}>
-                Not one I put up
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -1585,7 +1255,7 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
       }
       const row = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(body) })
       // L10 cold-start competence payoff — reflect it straight back into the inventory, no celebration.
-      const storeLabel = storageLocations.find(s => String(s.id) === String(storageId))?.label || 'your stores'
+      const storeLabel = storageLocations.find(s => String(s.id) === String(storageId))?.label || 'the pantry'
       const cropLabel = cropTypes.find(c => c.slug === cropSlug)?.display_name || variety?.name || 'harvest'
       // V4-PUTUPPROV-001. Echo provenance back on save. This is what makes a below-the-fold default
       // HONEST: a pre-selected control the user never looks at is an assumption, but one they are
@@ -1685,7 +1355,7 @@ function PutUpForm({ prefill, onLogged, session = null, onSaved = null }) {
         )}
         <div style={{ display: 'flex', gap: T.space.sm, flexWrap: 'wrap' }}>
           <Button type="button" variant="primary" onClick={resetForNext}>Log another</Button>
-          <Button type="button" variant="secondary" onClick={onLogged}>See what&rsquo;s put up</Button>
+          <Button type="button" variant="secondary" onClick={onLogged}>See the Pantry</Button>
         </div>
       </div>
     )
@@ -2439,322 +2109,11 @@ function StorageLocationEditor({ locations, fetch, classify, selectedId, onClear
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// "What's put up" read surface
+// Put-Up B′ release 2 — "What's put up" is the Pantry (components/pantry/PantryView.jsx). The read
+// surface that lived here (StoresView / GroupCard / RecordRow over GET whats-put-up) is replaced by the
+// one Pantry list over GET /api/pantry; its row actions moved to the Pantry row and its row sheet
+// (V4 §10.1). RowEditor below stays: it is the jar's Edit, handed to the row sheet as `JarEditor`.
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Put-Up release 1a — "Use soon", the only filter name (V4 §3.2). The SAME membership as Today's band
-// (/api/preservation/use-soon) and as each group's "N use soon" pill: the server's use_by_status,
-// 'use_soon' or 'past_use_by'. The server classifies (classifyUseBy); this only selects, and never
-// decides what counts as soon.
-const USE_SOON_FILTER = 'use-soon'
-const USE_SOON_STATUSES = new Set(['use_soon', 'past_use_by'])
-
-// The groups narrowed to their use-soon rows. A group left with none is dropped, and a kept group's
-// headline is re-counted from the rows it still shows: the server's total_packages and units describe
-// the WHOLE group, and "5 containers" over one visible jar would be a number about rows nobody can see.
-export function onlyUseSoon(groups) {
-  return (groups ?? []).flatMap(g => {
-    const records = (g.records ?? []).filter(r => USE_SOON_STATUSES.has(r.use_by_status))
-    if (!records.length) return []
-    return [{
-      ...g,
-      records,
-      total_packages: records.reduce((n, r) => n + (Number(r.package_count) || 0), 0),
-      units: [...new Set(records.map(r => r.quantity_unit).filter(Boolean))],
-      use_soon_count: records.length,
-    }]
-  })
-}
-
-function StoresView({ useSoonOnly = false, onClearUseSoon }) {
-  const { fetch } = useApiFetch()
-  const [group, setGroup] = useState('storage') // 'storage' | 'crop'
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-
-  const load = useCallback((g) => {
-    setLoading(true); setError(null)
-    fetch(`/api/preservation/whats-put-up?group=${g}`)
-      .then(d => setData(d ?? { groups: [] }))
-      .catch(() => setError("Couldn't load your stores — try again."))
-      .finally(() => setLoading(false))
-  }, [fetch])
-
-  useEffect(() => { load(group) }, [load, group])
-
-  const allGroups = data?.groups ?? []
-  const groups = useSoonOnly ? onlyUseSoon(allGroups) : allGroups
-
-  return (
-    <div>
-      <div style={{ marginBottom: T.space.md }}>
-        <SegmentedControl
-          ariaLabel="Group by"
-          small
-          value={group}
-          onChange={setGroup}
-          options={[
-            { value: 'storage',  label: 'By storage' },
-            { value: 'crop',     label: 'By crop' },
-            { value: 'planting', label: 'By planting' },
-          ]}
-        />
-      </div>
-
-      {/* The filter says it is on, and one tap takes it off (the page drops ?filter= with it). The
-          name starts with the visible words; the × is decoration. */}
-      {useSoonOnly && (
-        <div style={{ marginBottom: T.space.md }}>
-          <button type="button" onClick={onClearUseSoon} data-testid="putup-use-soon-chip"
-            aria-label="Use soon — remove this filter"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: T.buttonMinHeight,
-              padding: '6px 16px', borderRadius: 999, border: `1px solid ${P.greenLight}`,
-              backgroundColor: P.greenPale, color: P.green, fontSize: T.type.sm, fontWeight: 700,
-              fontFamily: 'inherit', cursor: 'pointer' }}>
-            Use soon <span aria-hidden="true">×</span>
-          </button>
-        </div>
-      )}
-
-      {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
-      {error && <ErrorBanner>{error}</ErrorBanner>}
-
-      {!loading && !error && groups.length === 0 && (useSoonOnly && allGroups.length > 0 ? (
-        <div data-testid="putup-use-soon-empty" style={{ padding: '28px 18px', textAlign: 'center', color: P.mid,
-          background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
-          Nothing to use soon right now.
-        </div>
-      ) : (
-        <div style={{ padding: '28px 18px', textAlign: 'center', color: P.mid,
-          background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
-          <div style={{ fontWeight: 700, color: P.dark, marginBottom: 6 }}>Nothing put up yet.</div>
-          <div style={{ fontSize: '0.85rem', color: P.light }}>
-            Log your first put-up and it&rsquo;ll show up here, grouped by where it&rsquo;s stored.
-          </div>
-        </div>
-      ))}
-
-      {!loading && !error && groups.map(g => (
-        <GroupCard key={g.group_key} group={g} onChanged={() => load(group)} fetch={fetch} />
-      ))}
-    </div>
-  )
-}
-
-function GroupCard({ group, onChanged, fetch }) {
-  const units = (group.units ?? []).join(', ')
-  return (
-    <div style={{ marginBottom: T.space.md, backgroundColor: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge, overflow: 'hidden' }}>
-      <div style={{ padding: '14px 16px', borderBottom: `1px solid ${P.border}` }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: T.space.sm }}>
-          <div style={{ fontWeight: 700, color: P.dark, fontSize: '1rem' }}>{group.label}</div>
-          {group.use_soon_count > 0 && (
-            <span style={{ fontSize: T.type.xs, fontWeight: 700, color: P.gold,
-              backgroundColor: P.warn, border: `1px solid ${P.warnBorder}`, borderRadius: 999, padding: '2px 8px' }}>
-              {group.use_soon_count} use soon
-            </span>
-          )}
-        </div>
-        {/* Numbers-first headline — package COUNT + the distinct units present. Never a cross-unit sum (L5). */}
-        <div style={{ fontSize: '0.85rem', color: P.mid, marginTop: 4 }}>
-          {group.total_packages} {group.total_packages === 1 ? 'container' : 'containers'}
-          {units ? ` · ${units}` : ''}
-        </div>
-      </div>
-      <div>
-        {group.records.map(rec => <RecordRow key={rec.id} rec={rec} onChanged={onChanged} fetch={fetch} />)}
-      </div>
-    </div>
-  )
-}
-
-// Release F retired buildFullPayload, the full-replace echo every 1a/1b Edit and Mark used sent: Mark
-// used / Used up are POST /api/pantry/uses and every Edit is ONE PATCH of what changed (RowEditor), so
-// no write from this bundle echoes a row back. The 1a bundles still cached on phones do send that echo;
-// the Lambda's PUT keeps answering it, and putUpDateEcho.tz.test.js keeps a frozen copy of its shape to
-// prove it moves no date. preservationColumnParity.test.js now pins the PATCH this editor sends instead.
-
-function RecordRow({ rec, onChanged, fetch }) {
-  const [busy, setBusy] = useState(false)
-  const [editing, setEditing] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-  const [moving, setMoving] = useState(false)
-  // A string (this row's own copy) or a refusal from describeRefusal — see WriteError.
-  const [err, setErr] = useState(null)
-
-  const remaining = rec.remaining_count ?? rec.package_count ?? 0
-  // A synchronous guard: two taps inside one frame both read `busy` false, and each use carries its
-  // own key, so both would land.
-  const usingRef = useRef(false)
-  // Weighed stock (06 §1.4, boss F2): "about N g left" only while the jar is weighed, has grams on
-  // record, and is not used up.
-  const gramsLeft = rec.stock_mode === 'weighed' && rec.remaining_amount != null && remaining > 0
-    ? Math.round(Number(rec.remaining_amount)) : null
-
-  // Every write below resolves true only when it landed. The editor closes on THAT, never on the
-  // attempt: a refused save used to close it anyway, so the typed values vanished and the only record
-  // of them was a message about why they had not been saved (V4 §6.5 "keep the edit").
-  // Release F (contract-F §2.6, the ferment Lambda): every Edit is ONE PATCH /api/preservation/:id
-  // carrying only what changed — the count (with the legacy PUT's delta rule, server-side), the size as
-  // a pair, the name, the method (with its 'other' words), the notes and the discard-by. The legacy
-  // full-replace PUT is no longer sent by this bundle at all: an untouched field is an absent key, so
-  // an edit can never echo a stale place, date or count over someone else's change.
-  async function saveEdit(patch) {
-    if (!patch) return true
-    setBusy(true); setErr(null)
-    try {
-      await fetch(`/api/preservation/${rec.id}`, { method: 'PATCH', body: JSON.stringify(patch) })
-      onChanged()
-      return true
-    } catch (e) {
-      setErr(describeRefusal(e) ?? "Couldn't update — try again."); setBusy(false)
-      return false
-    }
-  }
-
-  // Release F (06 §1.3; contract-F §2.6): Mark used and Used up are USES, posted to their own route —
-  // never a remaining_count in the legacy PUT. A draw into a batch stamps the jar's delta_at, and from
-  // F the PUT refuses a remaining_count on such a jar (client_stale), so the PUT path would strand
-  // every drawn jar. Each tap mints its own key: a retried tap after a lost answer is a replay, and a
-  // second deliberate tap is a second use.
-  async function use(body) {
-    if (usingRef.current) return false
-    usingRef.current = true
-    setBusy(true); setErr(null)
-    try {
-      await fetch('/api/pantry/uses', { method: 'POST', body: JSON.stringify({
-        idempotency_key: mintKey(), preservation_log_id: rec.id, ...body,
-      }) })
-      onChanged()
-      return true
-    } catch (e) {
-      setErr(describeRefusal(e) ?? "Couldn't update — try again."); setBusy(false)
-      return false
-    } finally {
-      usingRef.current = false
-    }
-  }
-  async function markUsed() { await use({ count_used: 1 }) }
-  async function usedUp() { await use({ all_remaining: true }) }
-
-  async function doDelete() {
-    setBusy(true); setErr(null)
-    try {
-      await fetch(`/api/preservation/${rec.id}`, { method: 'DELETE' })
-      onChanged()
-    } catch (e) { setErr(describeRefusal(e) ?? "Couldn't remove — try again."); setBusy(false) }
-  }
-
-  if (editing) {
-    return <RowEditor rec={rec} onCancel={() => setEditing(false)}
-      onSave={async (change) => { if (await saveEdit(change)) setEditing(false) }} busy={busy} err={err} />
-  }
-
-  const status = rec.use_by_status
-  const statusChip = status === 'past_use_by'
-    ? { text: 'Past use-by', bg: P.warn, border: P.warnBorder, color: P.bannerInk }
-    : status === 'use_soon'
-      ? { text: 'Use soon', bg: P.warn, border: P.warnBorder, color: P.gold }
-      : null
-
-  return (
-    <div style={{ padding: '12px 16px', borderTop: `1px solid ${P.cream}`, display: 'flex', gap: 12 }}>
-      {/* V4-PUTUPPHOTO-001 — renders nothing when there is no photo (or it fails to resolve), so
-          rows without one keep their original full-width layout. */}
-      {/* Put-Up release 1a — from 1b a jar can have no size at all (the quantity pair is NULL), and
-          this name is what a screen reader says: "Photo of null put up" was the stale reader's answer.
-          No unit falls back to the thumb's own default name. */}
-      <PutUpPhotoThumb photoId={rec.photo_id} fetch={fetch}
-        alt={rec.quantity_unit ? `Photo of ${rec.quantity_unit} put up` : undefined} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: T.space.sm, alignItems: 'baseline' }}>
-        <div data-testid="putup-row-headline" style={{ fontWeight: 600, color: P.dark, fontSize: '0.92rem' }}>
-          {/* Put-Up release 1b: the jar's NAME leads when it has one, then its size — and a jar with
-              no size at all (1b's NULL quantity pair) says its container or nothing, never "null". */}
-          {[rec.label, sizeWords(rec)].filter(Boolean).join(' · ')}
-          <span style={{ color: P.mid, fontWeight: 400 }}>{rec.label || sizeWords(rec) ? ' · ' : ''}{METHOD_LABELS[rec.method] || rec.method}{rec.method === 'other' && rec.method_other_text ? ` (${rec.method_other_text})` : ''}</span>
-        </div>
-        {statusChip && (
-          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: statusChip.color,
-            backgroundColor: statusChip.bg, border: `1px solid ${statusChip.border}`, borderRadius: 999, padding: '2px 8px', flexShrink: 0 }}>
-            {statusChip.text}
-          </span>
-        )}
-      </div>
-      <div style={{ fontSize: '0.78rem', color: P.light, marginTop: 3 }}>
-        {rec.package_count} {rec.package_count === 1 ? 'container' : 'containers'}
-        {remaining !== rec.package_count ? ` · ${remaining} left` : ''}
-        {gramsLeft != null && Number.isFinite(gramsLeft) ? ` · about ${gramsLeft} g left` : ''}
-        {/* V4-PUTUPSESSION-001 slice 1 — THE LINE THE SLICE EXISTS FOR. Through describeApprox, not
-            a local "around " prefix, so the walk's band and the saved record are guaranteed to say
-            the same words about the same date. `=== true` and not truthiness: the column is
-            three-valued and NULL (nobody was asked) must render exactly as it does today, plain. */}
-        {' · put up '}{rec.preserved_at_precision
-          ? putUpDateWords(rec.preserved_at, rec.preserved_at_precision)
-          : describeApprox(prettyDate(rec.preserved_at), rec.preserved_at_approx === true)}
-        {/* A row with a stored basis (1b) says its discard-by in the §3.2 words; a pre-1b row keeps
-            today's "use by". */}
-        {rec.use_by_basis
-          ? ((w) => (w ? ` · ${w}` : ''))(discardWords({
-            date: rec.use_by_target ? ymd(rec.use_by_target) : null, basis: rec.use_by_basis, method: rec.method,
-            kind: rec.storage_kind ?? null, status: rec.use_by_status,
-            estimated: ESTIMATED_PRECISIONS.has(rec.preserved_at_precision),
-          }))
-          : (rec.use_by_target ? ` · use by ${prettyDate(rec.use_by_target)}` : '')}
-      </div>
-      {/* V5-PUTUPCANDY-001 / FOODSAFETY-RULING-V101 §8.2 — THE LINE THE RULING IS ABOUT. The date one
-          line up and the chip above it are computed server-side and shipped to every viewer, and for
-          a house-sourced method that is an assessment nothing published backs. The ruling's terms are
-          exact: distinguishable on the surface, or `default: null`. A migration header is read by
-          nobody using the app, and the second person in the household has no way to learn one exists.
-          Gated on use_by_target because with no date on screen there is no claim to attribute; gated
-          on the method set rather than on 'candy' so the next house-sourced entry inherits it. */}
-      {HOUSE_SOURCED_SHELF_LIFE.has(rec.method) && rec.use_by_target && (
-        <div role="note" style={{ fontSize: '0.76rem', color: P.mid, marginTop: 3, lineHeight: 1.4 }}>
-          {HOUSE_ESTIMATE_CLAIM} Tap <strong>Edit</strong> to set the real date.
-        </div>
-      )}
-      {/* Planting provenance — which wave this jar actually came from. Only rendered when the link
-          exists; a put-up spanning several plantings legitimately has none. */}
-      {rec.planting_name && (
-        <div style={{ fontSize: '0.76rem', color: P.mid, marginTop: 3 }}>
-          from {rec.planting_name}
-          {rec.planting_succession_order != null ? ` · wave ${rec.planting_succession_order}` : ''}
-          {rec.planting_sown_at ? ` · sown ${prettyDate(rec.planting_sown_at)}` : ''}
-        </div>
-      )}
-      {/* V4-PUTUPPROV-001. Gated exactly like the planting-provenance block above: own_garden and
-          NULL render NOTHING, so every row that exists today looks identical to today. Reuses that
-          block's style object rather than minting a new one. */}
-      {rec.source_kind && rec.source_kind !== 'own_garden' && (
-        <div style={{ fontSize: '0.76rem', color: P.mid, marginTop: 3 }}>
-          from {rec.source_label || PUTUP_SOURCE_LABELS[rec.source_kind] || rec.source_kind}
-        </div>
-      )}
-      {rec.notes && <div style={{ fontSize: '0.8rem', color: P.mid, marginTop: 4 }}>{rec.notes}</div>}
-      <WriteError err={err} style={{ marginTop: 6 }} />
-
-      <div style={{ display: 'flex', gap: 14, marginTop: 8, flexWrap: 'wrap' }}>
-        <RowAction onClick={markUsed} disabled={busy || remaining <= 0}>Mark used</RowAction>
-        <RowAction onClick={usedUp} disabled={busy || remaining <= 0}>Used up</RowAction>
-        <RowAction onClick={() => setEditing(true)} disabled={busy}>Edit</RowAction>
-        <RowAction onClick={() => setMoving(true)} disabled={busy}>Move</RowAction>
-        {!confirmDelete ? (
-          <RowAction onClick={() => setConfirmDelete(true)} disabled={busy} tone="terra">Remove</RowAction>
-        ) : (
-          <>
-            <RowAction onClick={doDelete} disabled={busy} tone="terra">Confirm remove</RowAction>
-            <RowAction onClick={() => setConfirmDelete(false)} disabled={busy}>Cancel</RowAction>
-          </>
-        )}
-      </div>
-      <MoveJarSheet open={moving} jar={rec} onClose={() => setMoving(false)}
-        onMoved={() => { setMoving(false); onChanged() }} />
-      </div>
-    </div>
-  )
-}
 
 // The line a failed write leaves on screen. `err` is the caller's own copy (a string: offline, a
 // timeout, an uncoded 400 — unchanged from before) or a refusal from describeRefusal, which carries
@@ -2782,17 +2141,6 @@ function RefreshNowButton() {
         padding: '6px 14px', background: 'none', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton,
         color: P.green, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}>
       {REFRESH_NOW_LABEL}
-    </button>
-  )
-}
-
-function RowAction({ onClick, disabled, tone, children }) {
-  return (
-    <button type="button" onClick={onClick} disabled={disabled}
-      style={{ background: 'none', border: 'none', padding: '4px 0', cursor: disabled ? 'default' : 'pointer',
-        color: disabled ? P.light : (tone === 'terra' ? P.terra : P.green), fontSize: T.type.sm, fontWeight: 600,
-        fontFamily: 'inherit', textDecoration: 'underline', opacity: disabled ? 0.5 : 1, minHeight: 32 }}>
-      {children}
     </button>
   )
 }

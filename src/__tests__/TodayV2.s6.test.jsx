@@ -169,7 +169,7 @@ describe('From your Put-Up', () => {
     await settle()
     const band = within(sec('putup')).getByTestId('putup-use-soon')
     expect(band.getAttribute('style')).toBeNull()
-    expect(band.textContent).not.toMatch(/From your stores|Cook these next/)
+    expect(band.textContent).not.toMatch(/From the Pantry|Cook these next/)
     expect(within(band).getByRole('button', { name: 'Open Put-Up' })).toBeTruthy()
   })
   it('an empty shelf renders no section (a section with nothing in it renders nothing)', async () => {

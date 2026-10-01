@@ -73,7 +73,14 @@ concurrency:
 jobs:
   invariants:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # JOB BUDGET (raised 10 -> 25 on 2026-09-30). The two legs run back to back in this one job, so the
+    # budget has to cover BOTH plus setup. At v4.164.0 (1054 gates) the PROD leg alone takes ~6.5-7 min,
+    # and the old 10-minute cap cancelled STAGING mid-run with no result — run 36737462039 (attempts 1
+    # and 2) and dev run 36641017110 — while the gates themselves were green. A cancelled leg is not a
+    # finding and not a pass; it is a hole in the signal. ~2 x 7 min + setup is ~15 min; 25 leaves
+    # room for corpus growth and a slow Neon wake. If a clean run approaches 20 min, split PROD and
+    # STAGING into separate jobs rather than raising this again.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 

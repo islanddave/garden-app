@@ -40,6 +40,7 @@ const { applySpy } = vi.hoisted(() => ({ applySpy: vi.fn() }))
 vi.mock('../hooks/useAppUpdate.js', () => ({ useAppUpdate: () => ({ update: null, apply: applySpy }) }))
 
 import PutUp from '../pages/PutUp.jsx'
+import { rowFromRecord } from './helpers/pantryFake.js'
 import {
   describeRefusal, existingPlaceId, REFUSAL_CODES, REFRESH_NOW_LABEL, CLIENT_STALE_TEXT, BATCH_CLOSED_TEXT,
   COUNT_BELOW_USED_TEXT, ONLY_SOME_LEFT_TEXT, onlyNLeftText,
@@ -82,6 +83,9 @@ function wire({ writes } = {}) {
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([])
     if (path.startsWith('/api/plants') && method === 'GET') return Promise.resolve([])
     if (path.startsWith('/api/harvests')) return Promise.resolve({ aggregates: { crops: [] } })
+    // B′ release 2: the list is the Pantry (GET /api/pantry); a jar's sheet reads it by id.
+    if (path.startsWith('/api/pantry?')) return Promise.resolve({ rows: [rowFromRecord(REC, { id: 'loc-1', label: 'Garage freezer', kind: 'deep_freezer' })] })
+    if (path === '/api/preservation/rec-1' && method === 'GET') return Promise.resolve(REC)
     if (path.startsWith('/api/preservation/whats-put-up')) return Promise.resolve(STORES)
     if (path === '/api/preservation' && method === 'POST') return Promise.resolve({ id: 'new-1', source_kind: 'own_garden' })
     if (path.startsWith('/api/preservation/') && method === 'PUT') return Promise.resolve({ id: 'rec-1' })
@@ -192,24 +196,38 @@ describe('the wire — api.js hands over the body the Lambda sent', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe('RecordRow — a refused write says why, and the edit stays', () => {
-  async function openEditor() {
+// AMENDED for B′ release 2: the retired RecordRow's writes live on the Pantry row (Used one / Used it up)
+// and its sheet (Edit, with Remove inside, two-step). Same routes, same refusal words, same Refresh now.
+describe('the Pantry row and its sheet — a refused write says why, and the edit stays', () => {
+  const USED_ONE = /^Used one — /
+  const openSheet = async () => {
     renderPage()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
-    return screen.getByRole('button', { name: 'Save' })
+    fireEvent.click(await screen.findByTestId('pantry-row-open-put_up:rec-1'))
+    return screen.findByTestId('row-sheet')
+  }
+  async function openEditor() {
+    await openSheet()
+    fireEvent.click(screen.getByTestId('row-edit'))
+    return screen.findByRole('button', { name: 'Save' })
+  }
+  async function removeTwoStep() {
+    await openSheet()
+    fireEvent.click(screen.getByTestId('row-edit'))
+    fireEvent.click(await screen.findByTestId('jar-edit-remove'))
+    fireEvent.click(screen.getByTestId('jar-edit-remove-confirm'))
   }
 
-  it('Mark used → client_stale: the reason, and a Refresh now that has not run', async () => {
+  it('Used one → client_stale: the reason, and a Refresh now that has not run', async () => {
     refuseWritesWith(await serverSays({ error: 'stale', code: 'client_stale' }))
     renderPage()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
+    fireEvent.click(await screen.findByRole('button', { name: USED_ONE }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(CLIENT_STALE_TEXT))
     expect(screen.getByRole('button', { name: REFRESH_NOW_LABEL })).toBeTruthy()
     expect(applySpy).not.toHaveBeenCalled()
-    // The row's own actions are usable again: the refusal is not a lock.
-    expect(screen.getByRole('button', { name: 'Mark used' }).disabled).toBe(false)
+    // The row's own action is usable again: the refusal is not a lock.
+    expect(screen.getByRole('button', { name: USED_ONE }).disabled).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: REFRESH_NOW_LABEL }))
+    expect(applySpy).toHaveBeenCalledTimes(1)
   })
 
   it('a refused Edit keeps the editor open with everything typed (count_below_used)', async () => {
@@ -219,8 +237,7 @@ describe('RecordRow — a refused write says why, and the edit stays', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'two went to Jen' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(COUNT_BELOW_USED_TEXT))
-    // Release F: the Edit is ONE PATCH (the count rides it with the same delta rule), no PUT — amended
-    // in the same commit as the change.
+    // Release F: the Edit is ONE PATCH (the count rides it with the same delta rule), no PUT.
     expect(writeCalls('PATCH').length).toBe(1)
     expect(writeCalls('PUT').length).toBe(0)
     // Still the editor, still his values.
@@ -254,8 +271,7 @@ describe('RecordRow — a refused write says why, and the edit stays', () => {
     // The row reads 3 left. The server knows the other person used two since this page loaded.
     refuseWritesWith(await serverSays({ error: 'x', code: 'only_n_left', n: 1 }))
     renderPage()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
+    fireEvent.click(await screen.findByRole('button', { name: USED_ONE }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(onlyNLeftText(1)))
     expect(screen.getByRole('alert').textContent).not.toMatch(/\b3\b/)
   })
@@ -263,28 +279,23 @@ describe('RecordRow — a refused write says why, and the edit stays', () => {
   it('batch_closed says so', async () => {
     refuseWritesWith(await serverSays({ error: 'x', code: 'batch_closed' }))
     renderPage()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Used up' }))
+    fireEvent.click(await screen.findByRole('button', { name: USED_ONE }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(BATCH_CLOSED_TEXT))
   })
 
   it('Remove refused with a code this bundle does not know: the server’s own words', async () => {
     refuseWritesWith(await serverSays({ error: '1 was used — mark the rest Went bad, or undo that use', code: 'jar_has_uses' }, { method: 'DELETE' }))
-    renderPage()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm remove' }))
+    await removeTwoStep()
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('1 was used — mark the rest Went bad, or undo that use'))
   })
 
   it('an uncoded failure keeps today’s copy exactly (update and remove)', async () => {
     refuseWritesWith(await serverSays({ error: 'Internal server error' }, { status: 500 }))
-    renderPage()
-    await screen.findByText('Garage freezer')
-    fireEvent.click(screen.getByRole('button', { name: 'Mark used' }))
+    const view = renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: USED_ONE }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe("Couldn't update — try again."))
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm remove' }))
+    view.unmount()
+    await removeTwoStep()
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe("Couldn't remove — try again."))
     expect(screen.queryByRole('button', { name: REFRESH_NOW_LABEL })).toBeNull()
   })
@@ -313,7 +324,8 @@ describe('every other write on the page reads the code too', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe("Couldn't save — quantity_value must be > 0"))
   })
 
-  it('the freezer walk’s Undo: a coded refusal is shown in the band in the server’s words', async () => {
+  // B′ release 2: the freezer walk is Walk a place — same band, same Undo, same refusal words.
+  it('the walk’s Undo: a coded refusal is shown in the band in the server’s words', async () => {
     const undoRefusal = await serverSays({ error: 'That one was already used', code: 'jar_has_uses' }, { method: 'DELETE' })
     wire({
       writes: (_path, options) => (options.method === 'POST'
@@ -326,12 +338,12 @@ describe('every other write on the page reads the code too', () => {
       path === '/api/storage-locations' && (options.method || 'GET') === 'GET' ? Promise.resolve(locations) : base(path, options)
     ))
     renderPage('/put-up?session=putup')
-    fireEvent.click(await screen.findByRole('button', { name: 'Chest Freezer 1' }))
-    fireEvent.click(screen.getByRole('button', { name: 'This summer' }))
+    fireEvent.click(await screen.findByRole('radio', { name: 'Chest Freezer 1' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'This month' }))
     fireEvent.click(screen.getByTestId('putup-walk-start'))
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Crop' }), { target: { value: 'blueberry' } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Quantity' }), { target: { value: '1' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save & next' }))
+    fireEvent.change(await screen.findByTestId('walk-what-name'), { target: { value: 'Blueberries' } })
+    fireEvent.click(screen.getByTestId('walk-method-whole_freeze'))
+    fireEvent.click(screen.getByTestId('walk-save'))
     const band = screen.getByTestId('putup-walk-band')
     fireEvent.click(await within(band).findByTestId('putup-walk-undo'))
     await waitFor(() => expect(within(band).getByRole('alert').textContent).toBe('That one was already used'))

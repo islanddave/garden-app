@@ -294,15 +294,19 @@ describe.skipIf(!landed('draws', 'keyedLines', 'pantryUses', 'legacyDeltaRef', '
   })
 })
 
-describe('DELETE /api/preservation/:id (PutUp.jsx:739, :2601) on (a) and (b) → 200 soft delete; lines and uses untouched', () => {
+// B′ AMENDS (a) (V4 §2.5 "Remove": refused on a jar with uses or live lines, with the reason and a path).
+// Through F the drawn jar soft-deleted with its line and use left pointing at it; from B′ the shipped
+// row remove (:2601) on it answers 409 jar_in_batch and nothing moves. (b), an undrawn bag, is unchanged.
+describe('DELETE /api/preservation/:id (PutUp.jsx:739, :2601) on (a) → 409 jar_in_batch (B′), on (b) → 200 soft delete; lines and uses untouched', () => {
   it('(a) the drawn jar', async () => {
     const b = (await seedBatch(DAVE)).id
     const jar = await seedJar(DAVE, { count: 3, remaining: 2, deltaAt: true })
     const line = await seedLine(DAVE, b, { kind: 'put_up', jarId: jar })
     await directSql`INSERT INTO pantry_use (created_by, preservation_log_id, count_used, fate, kitchen_batch_input_id) VALUES (${DAVE}, ${jar}, 1, 'batch', ${line})`
     const r = await call(DAVE, 'DELETE', `/api/preservation/${jar}`)
-    expect(r.status).toBe(200)
-    expect((await snap(jar)).deleted_at).not.toBeNull()
+    expect(r.status).toBe(409)
+    expect(r.body.code).toBe('jar_in_batch')
+    expect((await snap(jar)).deleted_at).toBeNull()
     const [l] = await directSql`SELECT deleted_at FROM kitchen_batch_input WHERE id = ${line}`
     expect(l.deleted_at).toBeNull()
     expect(await usesOf(jar)).toHaveLength(1)

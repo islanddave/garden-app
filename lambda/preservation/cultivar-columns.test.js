@@ -48,7 +48,7 @@ const HANDLERS = readdirSync(__dirname)
 // table select-columns.test.js in this directory declares — that cross-product is what made joined
 // relations unauditable in the first place.
 const AUDIT_COLUMNS = {
-  cultivar: ['crop_type_slug', 'deleted_at', 'display_name', 'id', 'scoville_max', 'scoville_min'],
+  cultivar: ['created_by', 'crop_type_slug', 'deleted_at', 'display_name', 'id', 'scoville_max', 'scoville_min'],
 };
 
 const CULTIVAR_COLUMNS = AUDIT_COLUMNS.cultivar;
@@ -106,7 +106,10 @@ describe('OPS-SCHEMAAUDITJOIN-001 — lambda/preservation cultivar column contra
     // resolve `crop_type_slug` for a harvest window. It reaches for cv.id / cv.deleted_at /
     // cv.crop_type_slug only, all three already in the contract below, so the column list is unchanged.
     // Release F: +4 — readLines (a line's variety rating, through its planting or its drawn jar), the planting loader, the line search and the household pepper names. scoville_min/max join the contract: the heat estimate's variety rating.
-    expect(STATEMENTS).toHaveLength(10);
+    // B′ release 3: +1 — the line search's variety arm (V4 §2.5a), which reads created_by: a variety is
+    // offered when a household member made it or a household planting grows it.
+    // B′ (release 2): +1 — GET /api/pantry's put-up read names a jar by its variety.
+    expect(STATEMENTS).toHaveLength(12);
     expect([...new Set(STATEMENTS.flatMap((s) => aliasesOf(s.sql)))].sort())
       .toEqual(['cv']);
   });

@@ -1,0 +1,311 @@
+# gates.yml
+# V5-PANTRY-001 — Put-Up release 2 (the Pantry), as carried by B′. One DDL file:
+#
+#   0a-additive-ddl.sql   stamp '5.0.0-pantry-001'. Before it: `pre`, IMMEDIATELY before each apply
+#                         (staging, prod, and the Neon branch of prod).
+#   0r-rollback.sql       guarded; valid only while B′'s code is off dev.
+#
+# There is no `sweep` phase: 0a adds no CHECK over an existing column. chk_kbi_pantry_item_kind reads the
+# new kitchen_batch_input.pantry_item_id, which is NULL on every existing row, so it cannot meet data.
+#
+# ── SELF-ARMING (the 1b / F convention, restated) ──────────────────────────────────────────────────
+# `continuous:` defaults to true, and gate-invariants.yml runs `--all --phase post --continuous-only`
+# against live prod AND staging on every migrations/** push to dev, on the Tuesday cron and on dispatch —
+# including before B′'s sitting, when neither database has this DDL. So:
+#   * a post gate that is FALSE today is armed on this migration's own stamp
+#     (`EXISTS (... version = '5.0.0-pantry-001')`): vacuous before, permanent after;
+#   * a post gate that is TRUE today is NOT armed; each says so;
+#   * catalog joins only, never `::regclass`; the one data gate reads `to_jsonb(row) ->> 'col'`, so every
+#     gate is vacuous, never ERROR, on a database without this DDL (and pantry_item itself is only ever
+#     named through pg_class / information_schema, never in a FROM);
+#   * only rowcount_eq / scalar_eq; every count-shaped gate returns one row per violator.
+#
+# ── THE GATE CENSUS: gates elsewhere this migration must keep green ──────────────────────────────
+#   v4-cascadesweep-001   post_no_cascade_onto_a_soft_deletable_table: pantry_item carries deleted_at and
+#                         no FK onto it (kitchen_batch_input.pantry_item_id) CASCADEs; none of its own
+#                         FKs CASCADE either (NO ACTION, SET NULL, NO ACTION).
+#   v4-evtanchordel-001   post_no_setnull_fk_inside_an_anchor_check: pantry_item.plant_id is the one new
+#                         SET NULL column and no CHECK names it; chk_kbi_pantry_item_kind names a NO ACTION
+#                         column and has no `IS NOT NULL) OR` arm. post_no_new_triggers_on_touched_tables:
+#                         the plants FK adds only internal RI triggers (tgisinternal), which it ignores.
+#   v4-harvestaudit-001   no audit trigger is added anywhere (pantry_item is unaudited, V4 §5.5).
+#   v5-kbownertrigger-001 prevent_kitchen_batch_ownership_transfer() is reused unchanged (now on
+#                         kitchen_batch, preservation_log and pantry_item); prevent_ownership_transfer()
+#                         untouched, so post_shared_function_unchanged holds.
+#   v5-putupmake-001      post_1b_triggers_present_and_enabled / post_ownership_trigger_names_real_columns_*
+#                         read preservation_log and kitchen_batch only — untouched.
+#   v5-fermentpath-001    post_identity_fn_kbi_names_its_columns (prevent_kbi_identity_change is not
+#                         re-created: pantry_item_id is written only by the line INSERT);
+#                         post_kbi_audit_watches_exactly_its_sixteen (the kbi audit trigger is not
+#                         re-created); post_no_f_check_names_kind (`input_kind` is not the word `kind`);
+#                         post_f_checks_present_and_validated (chk_pantry_use_fate is not touched — see
+#                         post_pantry_use_fate_admits_went_bad_and_gave_away below).
+#   v5-phrecord-001       post_view_gained_exactly_two: kitchen_batch gains nothing, the view is untouched.
+
+pre:
+  - name: pre_not_already_applied
+    sql: |
+      SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001'
+    expect: rowcount_eq
+    value: 0
+
+  - name: pre_f_applied
+    sql: |
+      SELECT count(*) FROM public.schema_version WHERE version = '5.0.0-fermentpath-001'
+    expect: scalar_eq
+    value: 1
+
+  # Half-applied or hand-applied state: neither the table nor the line column may exist yet.
+  - name: pre_no_pantry_shape_yet
+    sql: |
+      SELECT 'pantry_item' AS what
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relname = 'pantry_item'
+      UNION ALL
+      SELECT 'kitchen_batch_input.pantry_item_id'
+        FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'kitchen_batch_input' AND column_name = 'pantry_item_id'
+    expect: rowcount_eq
+    value: 0
+
+  # 0a names both in CREATE TRIGGER; a missing one fails mid-transaction.
+  - name: pre_trigger_functions_exist
+    sql: |
+      SELECT count(DISTINCT p.proname)
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public'
+         AND p.proname IN ('set_updated_at', 'prevent_kitchen_batch_ownership_transfer')
+    expect: scalar_eq
+    value: 2
+
+  # The reason 0a has NO fate DDL: F's CHECK already admits both B′ fates. One row per missing word.
+  - name: pre_pantry_use_fate_admits_went_bad_and_gave_away
+    sql: |
+      SELECT v.word
+        FROM unnest(ARRAY['discarded','given_away','batch']) AS v(word)
+       WHERE NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'pantry_use'
+                            AND c.conname = 'chk_pantry_use_fate' AND c.convalidated
+                            AND strpos(pg_get_constraintdef(c.oid), '''' || v.word || '''') > 0)
+    expect: rowcount_eq
+    value: 0
+
+post:
+  # ── The apply receipt, armed on the DDL rather than on the stamp it checks ─────────────────────
+  - name: post_schema_version_recorded
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                      WHERE n.nspname = 'public' AND c.relname = 'pantry_item' AND c.relkind = 'r')
+         AND NOT EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001')
+    expect: rowcount_eq
+    value: 0
+
+  # ── pantry_item: every column present, of its type, nullability and default ───────────────────────
+  # Named columns only (the 1a "these named columns are present" ruling): a later release may add a
+  # column here without re-pinning a count.
+  - name: post_pantry_item_columns
+    sql: |
+      SELECT v.col
+        FROM (VALUES ('id','uuid','NO',true), ('user_id','text','NO',false), ('name','text','NO',false),
+                     ('storage_location_id','uuid','NO',false), ('acquired_at','date','YES',false),
+                     ('acquired_precision','text','YES',false), ('use_by_target','date','YES',false),
+                     ('plant_id','uuid','YES',false), ('crop_type_slug','text','YES',false),
+                     ('used_up_at','timestamp with time zone','YES',false), ('notes','text','YES',false),
+                     ('idempotency_key','uuid','YES',false),
+                     ('created_at','timestamp with time zone','NO',true),
+                     ('updated_at','timestamp with time zone','NO',true),
+                     ('deleted_at','timestamp with time zone','YES',false)) AS v(col, typ, nul, has_default)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'pantry_item'
+                            AND c.column_name = v.col AND c.data_type = v.typ AND c.is_nullable = v.nul
+                            AND (c.column_default IS NOT NULL) = v.has_default)
+    expect: rowcount_eq
+    value: 0
+
+  - name: post_kbi_pantry_item_id_nullable_no_default
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'kitchen_batch_input'
+                            AND c.column_name = 'pantry_item_id' AND c.data_type = 'uuid'
+                            AND c.is_nullable = 'YES' AND c.column_default IS NULL)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Every CHECK the routes rely on: present by name, on its table, VALIDATED ────────────────────
+  - name: post_pantry_checks_present_and_validated
+    sql: |
+      SELECT v.tbl, v.con
+        FROM (VALUES
+               ('pantry_item','chk_pantry_item_name_nonblank'),
+               ('pantry_item','chk_pantry_item_acquired_precision'),
+               ('pantry_item','chk_pantry_item_acquired_pairing'),
+               ('kitchen_batch_input','chk_kbi_pantry_item_kind')) AS v(tbl, con)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND c.conname = v.con
+                            AND c.contype = 'c' AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Every new FK with the ON DELETE it states (05 §6). confdeltype a = NO ACTION, n = SET NULL. ──
+  - name: post_pantry_foreign_keys_present_with_their_actions
+    sql: |
+      SELECT v.con
+        FROM (VALUES
+               ('pantry_item','pantry_item_storage_location_id_fkey','storage_location','a'),
+               ('pantry_item','pantry_item_plant_id_fkey','plants','n'),
+               ('pantry_item','pantry_item_crop_type_slug_fkey','crop_types','a'),
+               ('kitchen_batch_input','kitchen_batch_input_pantry_item_id_fkey','pantry_item','a'))
+             AS v(tbl, con, target, action)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                           JOIN pg_class f ON f.oid = c.confrelid
+                          WHERE n.nspname = 'public' AND t.relname = v.tbl AND c.conname = v.con
+                            AND c.contype = 'f' AND f.relname = v.target
+                            AND c.confdeltype = v.action AND c.convalidated)
+    expect: rowcount_eq
+    value: 0
+
+  # No FK onto pantry_item may CASCADE (it is soft-deleted; a hard delete must never take lines with it).
+  # NOT ARMED: true today (no such table, no such FK). The cascade-sweep gate covers FKs FROM soft-deletable
+  # tables; this covers the ones INTO this one.
+  - name: post_no_cascade_into_pantry_item
+    sql: |
+      SELECT t.relname, c.conname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_class f ON f.oid = c.confrelid
+        JOIN pg_namespace n ON n.oid = f.relnamespace
+       WHERE n.nspname = 'public' AND f.relname = 'pantry_item' AND c.contype = 'f'
+         AND c.confdeltype = 'c'
+    expect: rowcount_eq
+    value: 0
+
+  # The replay contract is "a 23505 on THIS name" (V4 §5.2).
+  - name: post_pantry_item_idempotency_unique
+    sql: |
+      SELECT 1
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_index x
+                           JOIN pg_class i ON i.oid = x.indexrelid
+                           JOIN pg_class t ON t.oid = x.indrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'pantry_item'
+                            AND i.relname = 'uq_pantry_item_idempotency_key'
+                            AND x.indisunique AND x.indisvalid
+                            AND strpos(pg_get_indexdef(x.indexrelid),
+                                       '(idempotency_key) WHERE (idempotency_key IS NOT NULL)') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Triggers: present, ENABLED, the right function, BEFORE UPDATE FOR EACH ROW (tgtype 19) ───────
+  - name: post_pantry_item_triggers_present_and_enabled
+    sql: |
+      SELECT v.tg
+        FROM (VALUES
+               ('set_updated_at', 'set_updated_at'),
+               ('prevent_pantry_item_ownership_transfer', 'prevent_kitchen_batch_ownership_transfer'))
+             AS v(tg, fn)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_trigger g
+                           JOIN pg_class t ON t.oid = g.tgrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                           JOIN pg_proc p ON p.oid = g.tgfoid
+                          WHERE n.nspname = 'public' AND t.relname = 'pantry_item'
+                            AND g.tgname = v.tg AND NOT g.tgisinternal AND g.tgenabled = 'O'
+                            AND p.proname = v.fn AND g.tgtype = 19)
+    expect: rowcount_eq
+    value: 0
+
+  # 05 §6: the ownership-trigger function, named per new table, names only real columns of THIS table
+  # (BUG-KBOWNERTRIGGER-001's class — the created_by variant here would raise 42703 on every UPDATE).
+  # Continuous. The "no ownership trigger" leg is armed on the stamp; the other two are vacuous until a
+  # trigger exists, and permanent after.
+  - name: post_pantry_item_ownership_trigger_names_real_columns
+    sql: |
+      WITH own AS (
+        SELECT g.tgname, p.prosrc
+          FROM pg_trigger g
+          JOIN pg_class t ON t.oid = g.tgrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          JOIN pg_proc p ON p.oid = g.tgfoid
+         WHERE n.nspname = 'public' AND t.relname = 'pantry_item' AND NOT g.tgisinternal
+           AND p.proname LIKE 'prevent%ownership_transfer'
+      ), ref AS (
+        SELECT own.tgname, lower((regexp_matches(own.prosrc, '(?:OLD|NEW)\.([a-z_][a-z0-9_]*)', 'gi'))[1]) AS col
+          FROM own
+      )
+      SELECT 'no ownership trigger' AS problem, NULL::text AS col
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001')
+         AND NOT EXISTS (SELECT 1 FROM own)
+      UNION ALL
+      SELECT 'names no column', own.tgname FROM own
+       WHERE NOT EXISTS (SELECT 1 FROM ref WHERE ref.tgname = own.tgname)
+      UNION ALL
+      SELECT 'names a column the table lacks', ref.col FROM ref
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                          WHERE c.table_schema = 'public' AND c.table_name = 'pantry_item'
+                            AND c.column_name = ref.col)
+    expect: rowcount_eq
+    value: 0
+
+  # V4 §5.5: pantry_item stays unaudited (typed-only dates, no counts). An audit trigger added later is a
+  # decision, not drift — this reds so it is taken on purpose. NOT ARMED: true today.
+  - name: post_pantry_item_not_audited
+    sql: |
+      SELECT g.tgname
+        FROM pg_trigger g
+        JOIN pg_class t ON t.oid = g.tgrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_proc p ON p.oid = g.tgfoid
+       WHERE n.nspname = 'public' AND t.relname = 'pantry_item' AND NOT g.tgisinternal
+         AND p.proname LIKE 'audit%'
+    expect: rowcount_eq
+    value: 0
+
+  # "Went bad" (discarded) and "Gave it away" (given_away) are written through F's CHECK. Armed on this
+  # stamp: the day someone narrows it, the Pantry's two row-sheet actions start answering 23514.
+  - name: post_pantry_use_fate_admits_went_bad_and_gave_away
+    sql: |
+      SELECT v.word
+        FROM unnest(ARRAY['discarded','given_away']) AS v(word)
+       WHERE EXISTS (SELECT 1 FROM public.schema_version WHERE version = '5.0.0-pantry-001')
+         AND NOT EXISTS (SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON t.oid = c.conrelid
+                           JOIN pg_namespace n ON n.oid = t.relnamespace
+                          WHERE n.nspname = 'public' AND t.relname = 'pantry_use'
+                            AND c.conname = 'chk_pantry_use_fate' AND c.convalidated
+                            AND strpos(pg_get_constraintdef(c.oid), '''' || v.word || '''') > 0)
+    expect: rowcount_eq
+    value: 0
+
+  # ── Apply-window receipt ──────────────────────────────────────────────────────────────────────
+  # Right after 0a, and until B′'s code writes: no line names a pantry item — 0a wrote no data and 0r's
+  # window is open. B′'s first pantry line ends the window, so this is continuous: false. to_jsonb so a
+  # runbook run on an unapplied database reports 0, not 42703. pantry_item is not read here (naming a
+  # relation that may not exist would ERROR); 0r's guard counts it.
+  - name: post_no_pantry_line_yet
+    continuous: false
+    sql: |
+      SELECT i.id
+        FROM public.kitchen_batch_input i
+       WHERE (to_jsonb(i) ->> 'pantry_item_id') IS NOT NULL
+    expect: rowcount_eq
+    value: 0

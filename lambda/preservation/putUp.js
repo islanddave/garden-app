@@ -27,7 +27,7 @@ import {
   jarLabelError, jarQuantityError, jarPhError,
 } from './jarRules.js';
 import { lineError as fLineError, lineColumns } from './kitchenLines.js';
-import { resolveJarUseBy } from './shelfLife.js';
+import { resolveJarUseBy, recipeUseBy } from './shelfLife.js';
 import { etDay } from './useBy.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -55,6 +55,11 @@ function lineError(line, where) {
   // Salt steps belong to What went in (the helper); a bottling adds ingredients only.
   if (isObj(line) && ['salt_pct', 'salt_base', 'base_g', 'salt_method', 'base_from'].some((k) => line[k] != null)) {
     return `${where}: salt facts go on a line in What went in, not on a bottling`;
+  }
+  // B′ release 3: a bought item from the Pantry is a What went in line; a bottling's INSERT carries no
+  // pantry_item_id, so it is refused here rather than stored as a nameless 'pantry' line.
+  if (isObj(line) && (line.input_kind === 'pantry' || line.pantry_item_id != null)) {
+    return `${where}: a bought item goes in What went in, not on a bottling`;
   }
   return fLineError(withKind(line), { keyed: false, where });
 }
@@ -178,7 +183,8 @@ export function putUpPlaceIds(body) {
 
 // ── the plan ────────────────────────────────────────────────────────────────────────────────────
 // ctx: { batchLabel, notSureDay (YYYY-MM-DD, required when when.precision is 'unknown'),
-//        placeKinds: {id → kind}, newId: () => uuid }
+//        placeKinds: {id → kind}, newId: () => uuid,
+//        recipe (release 4): the batch's recipe keeps line {keeps_n, keeps_unit, keeps_storage_kind} | null }
 export function planPutUp(body, ctx) {
   const notSure = body.when.precision === 'unknown';
   const whenIso = notSure ? null
@@ -220,9 +226,11 @@ export function planPutUp(body, ctx) {
     const kind = place == null ? null : (place.id != null ? (ctx.placeKinds[place.id] ?? null) : place.kind);
     const count = Number(row.count);
     const hasSize = row.size_value != null;
+    // Release 4 (V4 §3.1): typed > recipe (only when this jar's storage kind is the recipe's keeps storage
+    // kind; ctx.recipe is the batch's recipe, household-loaded by the route) > the engine > none.
     const useBy = row.discard_by === 'none' ? { use_by_target: null, use_by_basis: 'typed' }
       : row.discard_by != null ? { use_by_target: row.discard_by, use_by_basis: 'typed' }
-        : resolveJarUseBy({
+        : recipeUseBy(ctx.recipe ?? null, kind, jarDay, { precision: jarPrecision }) ?? resolveJarUseBy({
           method: body.method, kind, isRaw: row.is_raw ?? null, inOil: row.in_oil ?? null,
           texture: row.texture ?? null, precision: jarPrecision,
         }, jarDay);
@@ -308,6 +316,16 @@ export function putUpInUse(jarIds) {
     jar_ids: jarIds,
   };
 }
+
+// The refusal Undo gives a put_up row that wrote no jars of its own — How it was made →'s sitting
+// (batchBuilderRoutes.js fromJars links jars that existed before the batch by batch_id only, never
+// put_up_stage_id). Voiding it would reopen the batch with those jars still linked. Every sitting Put it up
+// writes has at least one jar (validatePutUp: rows non-empty, count ≥ 1; "Finished — none kept" writes no
+// put_up row), so this refuses nothing Put it up can produce.
+export const NOTHING_PUT_UP_HERE = {
+  error: "This batch was pieced together from jars you'd already logged — there's nothing to undo here. Remove the batch instead.",
+  code: 'nothing_put_up_here',
+};
 
 export const BATCH_CLOSED = {
   error: 'This batch is finished. Reopen it to bottle more →',

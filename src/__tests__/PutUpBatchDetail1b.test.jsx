@@ -16,7 +16,7 @@ vi.mock('../lib/api.js', () => ({
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => ({ user: { id: 'user_dave' } }) }))
 
 import BatchDetailView, { liveStages, outputSittings } from '../components/putup/BatchDetailView.jsx'
-import { HAS_JARS_TEXT } from '../lib/putUpErrors.js'
+import { HAS_JARS_TEXT, NOTHING_PUT_UP_HERE_TEXT } from '../lib/putUpErrors.js'
 
 const NOW = new Date('2026-10-20T09:00:00').getTime()
 const local = (s) => new Date(s).toISOString()
@@ -100,6 +100,36 @@ describe('Undo that put-up, on the sitting', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('batch-detail-undo-putup')) })
     await waitFor(() => expect(screen.getByTestId('batch-detail-undo-error').textContent).toBe('One of those jars was already used.'))
     expect(screen.getByTestId('batch-detail-undo-putup')).toBeTruthy()
+  })
+
+  // B′: How it was made → writes a put_up row that owns no jars (they were logged before the batch and are
+  // linked by batch_id only). The server flags it has_own_jars: false and refuses its undo.
+  // MUTATION: drop the has_own_jars guard -> the first literal reds.
+  it('offers no Undo on How it was made →\'s sitting (has_own_jars: false); its jars still show', () => {
+    const stages = [
+      ST({ id: 'ksl-fin', stage_kind: 'finished', entered_at: local('2026-09-02T00:00:00') }),
+      ST({ id: 'ksl-hw', stage_kind: 'put_up', entered_at: local('2026-09-02T00:00:00'), has_own_jars: false }),
+      ST({ id: 'ksl-start', stage_kind: 'started', entered_at: local('2026-09-01T09:00:00'), has_own_jars: null }),
+    ]
+    const outputs = [JAR({ id: 'pl-before', label: 'Logged first', put_up_stage_id: null })]
+    renderDetail({ stages, outputs, batch: { closed_at: local('2026-09-02T00:00:00'), outcome: 'put_up' } })
+    expect(screen.queryByTestId('batch-detail-undo-putup')).toBeNull()
+    expect(screen.getAllByTestId('batch-detail-output-text').map(e => e.textContent)).toEqual(['Logged first · 2 × 8 oz woozy · put up Oct 12'])
+  })
+
+  // Keeps F: a sitting whose jars were each removed since still owns them, so its Undo stays.
+  it('keeps Undo on a sitting that owns jars even when none is live (has_own_jars: true)', () => {
+    renderDetail({ outputs: [], stages: [ST({ id: 'ksl-put9', stage_kind: 'put_up', entered_at: local('2026-10-12T09:00:00'), has_own_jars: true })] })
+    expect(screen.getAllByTestId('batch-detail-undo-putup')).toHaveLength(1)
+  })
+
+  it('nothing_put_up_here reads in this bundle\'s words', async () => {
+    fetchMock.mockImplementation(() => Promise.reject(Object.assign(new Error('409'), { status: 409,
+      body: { code: 'nothing_put_up_here', error: 'server words' } })))
+    renderDetail()
+    await act(async () => { fireEvent.click(screen.getByTestId('batch-detail-undo-putup')) })
+    await waitFor(() => expect(screen.getByTestId('batch-detail-undo-error').textContent).toBe(NOTHING_PUT_UP_HERE_TEXT))
+    expect(NOTHING_PUT_UP_HERE_TEXT).toMatch(/nothing to undo here\. Remove the batch instead\.$/)
   })
 })
 
