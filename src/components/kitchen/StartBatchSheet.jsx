@@ -169,6 +169,11 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
   // What each Start-from pick PUT into the name and the kind, so undoing the pick takes back exactly that
   // — and never a name typed, or a kind chosen, since.
   const filledRef = useRef({ recipe: null, batch: null })
+  // The row's two buttons. A list closes when a row in it is picked, and the picked line goes when it is
+  // undone — either way the control that had focus is gone, so focus returns to the button it came from
+  // rather than falling to the top of the page (a button, so no keyboard comes up on a phone).
+  const fromRecipeRef = useRef(null)
+  const fromBatchRef = useRef(null)
   // A photo added HERE (the Going-now door). Snap's arrives as `photo` and is the host's to keep.
   const [ownFile, setOwnFile] = useState(null)
   const [ownPreview, setOwnPreview] = useState(null)
@@ -337,24 +342,24 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
           <div role="group" aria-label={START_FROM_LABEL} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <span aria-hidden="true" style={{ fontSize: T.type.sm, fontWeight: 600, color: P.mid }}>{START_FROM_LABEL}</span>
             {!lockedRecipe && (
-              <button type="button" data-testid="start-from-recipe" aria-expanded={fromOpen === 'recipe'} disabled={saving}
+              <button type="button" ref={fromRecipeRef} data-testid="start-from-recipe" aria-expanded={fromOpen === 'recipe'} disabled={saving}
                 onClick={() => setFromOpen(o => (o === 'recipe' ? null : 'recipe'))} style={fromButton(fromOpen === 'recipe')}>
                 {START_FROM_RECIPE}
               </button>
             )}
-            <button type="button" data-testid="start-from-batch" aria-expanded={fromOpen === 'batch'} disabled={saving}
+            <button type="button" ref={fromBatchRef} data-testid="start-from-batch" aria-expanded={fromOpen === 'batch'} disabled={saving}
               onClick={() => setFromOpen(o => (o === 'batch' ? null : 'batch'))} style={fromButton(fromOpen === 'batch')}>
               {START_FROM_BATCH}
             </button>
           </div>
           <RecipePick value={following} fetch={fetch} open={fromOpen === 'recipe'} locked={lockedRecipe} disabled={saving}
             onChange={v => { setFollowing(v); setErr(null) }}
-            onPick={r => { const p = startPrefill(r); fillFrom('recipe', p.label, p.kind); setFromOpen(null) }}
-            onClear={() => unfill('recipe')} />
+            onPick={r => { const p = startPrefill(r); fillFrom('recipe', p.label, p.kind); setFromOpen(null); fromRecipeRef.current?.focus() }}
+            onClear={() => { unfill('recipe'); fromRecipeRef.current?.focus() }} />
           <LikeBatchPicker idPrefix="start-like" picked={like} disabled={saving}
-            open={fromOpen === 'batch'} onOpenChange={o => setFromOpen(o ? 'batch' : null)}
+            open={fromOpen === 'batch'} onOpenChange={o => { setFromOpen(o ? 'batch' : null); if (!o) fromBatchRef.current?.focus() }}
             onPick={d => { setLike(d); fillFrom('batch', d.from?.label, d.kind) }}
-            onClear={() => { setLike(null); unfill('batch') }} />
+            onClear={() => { setLike(null); unfill('batch'); fromBatchRef.current?.focus() }} />
         </div>
 
         <div style={{ marginBottom: T.space.md }}>

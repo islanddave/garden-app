@@ -313,6 +313,34 @@ describe('"a recipe" — the household\'s recipes as rows, grouped by what they 
   })
 })
 
+describe('focus does not fall off the row when a list closes or a pick is undone', () => {
+  // The row that was tapped unmounts with its list, and the undo link goes with its line: without a place
+  // to return to, focus drops to the top of the document and a keyboard or switch user loses their place.
+  // It returns to the button the list came from — a button, so no keyboard comes up on a phone.
+  it('after a recipe pick, and after undoing it, focus is on "a recipe"', async () => {
+    render(<Host />)
+    await openRecipes()
+    row('r1').focus()
+    fireEvent.click(row('r1'))
+    expect(document.activeElement).toBe(screen.getByTestId('start-from-recipe'))
+    screen.getByTestId('start-from-recipe-clear').focus()
+    tap('start-from-recipe-clear')
+    expect(document.activeElement).toBe(screen.getByTestId('start-from-recipe'))
+  })
+
+  it('after a past-batch pick, and after "Don\'t copy", focus is on "a past batch"', async () => {
+    render(<Host />)
+    await openBatches()
+    screen.getByTestId('start-like-batch-kb-past').focus()
+    await act(async () => { tap('start-like-batch-kb-past') })
+    await screen.findByTestId('start-like-picked')
+    expect(document.activeElement).toBe(screen.getByTestId('start-from-batch'))
+    screen.getByTestId('start-like-clear').focus()
+    tap('start-like-clear')
+    expect(document.activeElement).toBe(screen.getByTestId('start-from-batch'))
+  })
+})
+
 describe('"a past batch" — the shipped Like-a-past-batch picker, with this row as its door', () => {
   it('draws no door of its own: the list is under the row\'s button', async () => {
     render(<Host />)
