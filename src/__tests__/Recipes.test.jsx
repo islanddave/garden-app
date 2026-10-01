@@ -264,15 +264,22 @@ describe('the create sheet and its type picker', () => {
 })
 
 describe('Following a recipe? on the Start sheet', () => {
+  // ⚠ AMENDED by Put-Up UX pass R1, lane A (PLAN-V3 D10), in the same commit as the change. The household's
+  // recipes are no longer a native <select> inside this row: they are rows under "Start from · a recipe"
+  // (start-from-recipe-row). The ruled row keeps its collapsed words, its free-text reference and its
+  // caution; the pick still sends recipe_id, the reference still sends recipe_ref, and no jar is set.
   it('collapsed it reads "Following a recipe? · tested recipes →"; open: pick one → recipe_id, type one → recipe_ref, the caution in full', async () => {
     render(<StartBatchSheet open onClose={() => {}} onStarted={() => {}} now={NOW} />)
     expect(screen.getByTestId('following-recipe').textContent).toContain('Following a recipe?')
     expect(screen.getByTestId('following-recipe-tested-link').textContent).toContain('tested recipes →')
     tap('following-recipe-toggle')
-    await waitFor(() => expect(screen.getByTestId('following-recipe-select').disabled).toBe(false))
+    expect(screen.queryByTestId('following-recipe-select')).toBeNull()
+    expect(document.querySelectorAll('select')).toHaveLength(0)
     expect(screen.getByTestId('following-recipe-note').textContent).toContain(TESTED_RECIPE_NOTE)
     type(screen.getByTestId('start-label'), 'Mash')
-    fireEvent.change(screen.getByTestId('following-recipe-select'), { target: { value: 'r2' } })
+    tap('start-from-recipe')
+    await waitFor(() => expect(screen.getAllByTestId('start-from-recipe-row').map(r => r.dataset.recipeId).sort()).toEqual(['r1', 'r2', 'r3']))
+    fireEvent.click(screen.getAllByTestId('start-from-recipe-row').find(r => r.dataset.recipeId === 'r2'))
     type(screen.getByTestId('following-recipe-ref'), 'the card in the drawer')
     await act(async () => { tap('start-submit') })
     await waitFor(() => expect(calls('POST', '/api/kitchen-batches')).toHaveLength(1))

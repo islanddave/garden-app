@@ -21,7 +21,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -624,54 +624,82 @@ describe('GoingNowView — no readiness affordance anywhere', () => {
 // precedent; the plan overrules it on the adhd seat's evidence — with several batches going, a door
 // at the bottom falls below the fold and moves as the list grows, at the one moment the cook is
 // trying to start. It is still quiet: not filled, not floating, not in the header row.
-describe('GoingNowView — Start a batch is a quiet door at the TOP', () => {
-  // Both claims, so neither can rot into the other: first child of the view, AND ahead of every card.
-  // MUTATION: render the door after the list again -> both assertions red.
-  it('is the first element of the view, above every card', () => {
-    renderView([CANDY, PAUSED])
+//
+// ⚠ AMENDED AGAIN by Put-Up UX pass R1 (PLAN-V3 D10), in the same commit as the move. Dave's own report
+// reverses the "quiet, not in the header row" half: on Going now the page header's ONE filled button IS
+// "Start a batch" (data-testid start-a-batch; PutUp.laneA.header.test.jsx holds it), so the quiet link at
+// the top of this view went away. What this view still carries is the empty card's own door, SECONDARY
+// (going-empty-start) — and five claims stand in for the five this block held:
+//   placement  first child of the view, above every card      -> no Start door in the view while cards show
+//   text       'Start a batch →'                               -> 'Start a batch' (no arrow), on the card
+//   height     quiet, not filled, 44px                         -> secondary (outlined, not filled), 48px
+//   the seam   onStartBatch, navigates nowhere                 -> the same, from the card's button
+//   fallback   navigate('/capture') with no seam               -> RETIRED: no seam, no control, no navigation
+describe('GoingNowView — Start a batch: the header owns it, and the empty card offers it', () => {
+  const onStartBatch = () => vi.fn()
+
+  // MUTATION: put the quiet link back at the top of the view -> the first three assertions red.
+  it('holds no Start door of its own while batches are going: the first element is the first card', () => {
+    renderView([CANDY, PAUSED], { onStartBatch: onStartBatch() })
     const view = screen.getByTestId('going-now-view')
-    const btn = screen.getByTestId('start-a-batch')
-    expect(view.firstElementChild).toBe(btn)
+    expect(within(view).queryByTestId('start-a-batch')).toBeNull()
+    expect(within(view).queryByTestId('going-empty-start')).toBeNull()
+    expect(within(view).queryByRole('button', { name: /^Start a batch/ })).toBeNull()
     const cards = screen.getAllByTestId('going-batch')
-    expect(cards).toHaveLength(2)   // instrument check: the loop below is not over an empty set
-    for (const card of cards) {
-      expect(`${card.getAttribute('data-batch-id')} follows the button: `
-        + `${!!(btn.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING)}`)
-        .toBe(`${card.getAttribute('data-batch-id')} follows the button: true`)
-    }
-    expect(btn.textContent).toBe('Start a batch →')
+    expect(cards).toHaveLength(2)   // instrument check: the view under test is one with cards in it
+    expect(view.firstElementChild).toBe(cards[0])
   })
 
-  it('is a quiet text button — not floating, not a filled CTA — at the 44px floor', () => {
-    renderView([CANDY])
-    const btn = screen.getByTestId('start-a-batch')
+  // MUTATION: render it with variant="primary" -> the fill assertion reds; drop minHeight -> the height reds.
+  it('the empty card\'s door is a SECONDARY button — outlined, not filled, not floating — at 48px', () => {
+    renderView([], { onStartBatch: onStartBatch() })
+    const btn = screen.getByTestId('going-empty-start')
+    expect(btn.textContent).toBe('Start a batch')
     expect(btn.style.position).not.toBe('fixed')
     expect(btn.style.position).not.toBe('absolute')
-    expect(btn.style.background).toBe('none')
-    expect(btn.style.minHeight).toBe('44px')
+    expect(btn.style.backgroundColor).toBe('transparent')
+    expect(btn.style.borderStyle).toBe('solid')
+    expect(btn.style.minHeight).toBe('48px')
+    // One filled button per screen: nothing in this view is painted the page's CTA green.
+    const filled = [...screen.getByTestId('going-now-view').querySelectorAll('button')]
+      .filter(b => b.style.backgroundColor === toRgb(P.green))
+    expect(filled).toHaveLength(0)
   })
 
-  it('is present on an empty list too, above the empty state', () => {
-    renderView([])
-    const btn = screen.getByTestId('start-a-batch')
-    expect(screen.getByTestId('going-now-view').firstElementChild).toBe(btn)
-    expect(!!(btn.compareDocumentPosition(screen.getByTestId('going-empty')) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+  it('sits INSIDE the empty state, after its words and before the door to closed batches', () => {
+    renderView([], { onStartBatch: onStartBatch() })
+    const empty = screen.getByTestId('going-empty')
+    const btn = within(empty).getByTestId('going-empty-start')
+    const closed = within(empty).getByTestId('going-closed-door')
+    expect(!!(btn.compareDocumentPosition(closed) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    expect(empty.textContent.indexOf('Nothing going right now.')).toBeLessThan(empty.textContent.indexOf('Start a batch'))
+    // …and it is the only "Start a batch" in the view.
+    expect(screen.getAllByRole('button', { name: 'Start a batch' })).toHaveLength(1)
   })
 
   // THE SEAM with the page lane: PutUp.jsx mounts the shared StartBatchSheet and passes onStartBatch.
-  // MUTATION: leave the shipped navigate('/capture') as the only branch -> the first call reds.
+  // MUTATION: wire the button to anything but onStartBatch -> the first call reds.
   it('opens the shared Start sheet through onStartBatch, and navigates nowhere', () => {
-    const onStartBatch = vi.fn()
-    renderView([CANDY], { onStartBatch })
-    fireEvent.click(screen.getByTestId('start-a-batch'))
-    expect(onStartBatch).toHaveBeenCalledTimes(1)
+    const seam = onStartBatch()
+    renderView([], { onStartBatch: seam })
+    fireEvent.click(screen.getByTestId('going-empty-start'))
+    expect(seam).toHaveBeenCalledTimes(1)
+    // Called with NO argument: the page's opener takes a name, and a click event is not one.
+    expect(seam.mock.calls[0]).toEqual([])
     expect(navigateMock).not.toHaveBeenCalled()
   })
 
-  it('falls back to the capture flow (which opens the same sheet) when a host has not wired the seam', () => {
-    renderView([CANDY])
-    fireEvent.click(screen.getByTestId('start-a-batch'))
-    expect(navigateMock).toHaveBeenCalledWith('/capture')
+  // The /capture fallback is RETIRED, and with it the possibility of a dead or second-rate control: a
+  // host that has not wired the seam is offered no Start button here at all (the page header's button
+  // opens Put something up in that case), and nothing in this view navigates.
+  it('offers no Start control, and goes nowhere, when a host has not wired the seam', () => {
+    renderView([])
+    expect(screen.getByTestId('going-empty')).toBeTruthy()       // green control: the empty card is on screen
+    expect(screen.queryByTestId('going-empty-start')).toBeNull()
+    expect(screen.queryByTestId('start-a-batch')).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Start a batch/ })).toBeNull()
+    for (const b of screen.getAllByRole('button')) fireEvent.click(b)
+    expect(navigateMock).not.toHaveBeenCalled()
   })
 })
 
@@ -810,8 +838,13 @@ describe('GoingNowView — the one explicit door, and a card that stays inert', 
     expect(doors).toHaveLength(2)
     expect(doors.map(d => d.textContent)).toEqual([OPEN_BATCH_CTA, OPEN_BATCH_CTA])
     expect(OPEN_BATCH_CTA).toBe('Open this batch →')
-    // Same tap floor as the two inline expanders it is a sibling of.
-    expect(doors[0].style.minHeight).toBe('44px')
+    // Same tap height as the two quiet actions it is a sibling of. AMENDED by Put-Up UX pass R1 (F16), in
+    // the same commit as the change: the card's quiet actions went from the 44px floor to 48px, height
+    // only — and all three are asserted, so the card cannot end up mixed.
+    const card = screen.getAllByTestId('going-batch')[0]
+    expect(['going-check', 'going-put-up', 'going-open-batch'].map(id => [id, within(card).getByTestId(id).style.minHeight]))
+      .toEqual([['going-check', '48px'], ['going-put-up', '48px'], ['going-open-batch', '48px']])
+    expect(doors[0].style.minHeight).toBe('48px')
   })
 
   it('hands the door the id of the card it sits on, in a two-user list', () => {
@@ -826,6 +859,56 @@ describe('GoingNowView — the one explicit door, and a card that stays inert', 
       opened.push(card.getAttribute('data-batch-id'))
     }
     expect(opened).toEqual(['kb-jen', 'kb-candy'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Put-Up UX pass R1 (PLAN-V3 section 3 point 2, rule 5) — the card's two doors. The PAGE does the push now: it
+// hands this view its one opener as `onOpenBatch(id)` / `onOpenClosed()`. A host that passes neither still
+// gets working doors, and those no longer drop router state (they used to push with none, which threw
+// away an overlay's background and turned a flyover into a page).
+describe('GoingNowView — its two doors go through the page, and never drop router state', () => {
+  const BG = { pathname: '/today', search: '', hash: '', key: 'bg' }
+  function LocProbe() {
+    const loc = useLocation()
+    return (
+      <>
+        <div data-testid="gn-loc">{loc.pathname + loc.search}</div>
+        <div data-testid="gn-state">{JSON.stringify(loc.state ?? null)}</div>
+      </>
+    )
+  }
+  const renderAt = (entry, extra = {}) => render(
+    <MemoryRouter initialEntries={[entry]}>
+      <LocProbe />
+      <GoingNowView batches={[CANDY]} loading={false} error={false} onReload={vi.fn()} now={NOW} {...extra} />
+    </MemoryRouter>,
+  )
+  const where = () => [screen.getByTestId('gn-loc').textContent, JSON.parse(screen.getByTestId('gn-state').textContent)]
+
+  // MUTATION: call the fallback even when the host passed an opener -> the location moves and this reds.
+  it('with the page\'s opener: the card hands it the batch id, the closed door hands it nothing, and the view pushes nothing itself', () => {
+    const onOpenBatch = vi.fn(); const onOpenClosed = vi.fn()
+    renderAt({ pathname: '/put-up', search: '?view=pantry', state: { background: BG } }, { onOpenBatch, onOpenClosed })
+    fireEvent.click(screen.getByTestId('going-open-batch'))
+    fireEvent.click(screen.getByTestId('going-closed-door'))
+    expect(onOpenBatch.mock.calls).toEqual([['kb-candy']])        // the id alone: this sender names no origin
+    expect(onOpenClosed.mock.calls).toEqual([[]])
+    expect(where()).toEqual(['/put-up?view=pantry', { background: BG }])
+  })
+
+  // MUTATION: push with no state, as at the base -> the state reads null and both arms red.
+  it('with no opener, the card\'s door still opens the batch — one mode key — and carries the router state', async () => {
+    renderAt({ pathname: '/put-up', search: '?view=pantry&state=closed&find=mash', state: { background: BG, from: { label: 'Pantry' } } })
+    fireEvent.click(screen.getByTestId('going-open-batch'))
+    // `state=closed` and the page search are gone, `view` is kept; the background rides, a stale origin does not.
+    await waitFor(() => expect(where()).toEqual(['/put-up?view=pantry&batch=kb-candy', { background: BG }]))
+  })
+
+  it('with no opener, the closed-batches door does the same', async () => {
+    renderAt({ pathname: '/put-up', search: '?batch=kb-old', state: { background: BG } })
+    fireEvent.click(screen.getByTestId('going-closed-door'))
+    await waitFor(() => expect(where()).toEqual(['/put-up?state=closed', { background: BG }]))
   })
 })
 

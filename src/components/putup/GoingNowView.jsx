@@ -22,15 +22,15 @@
 // never scored, never coloured, never compared to anything, never counted, and never gates anything.
 // The reasoning, and the reversal's audit trail, are at the top of ./goingNow.js and ./PhReadingField.jsx.
 import React, { useState, useMemo, useCallback } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { useApiFetch } from '../../lib/api.js'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
-import { ErrorBanner } from '../forms'
+import { ErrorBanner, Button } from '../forms'
 import {
   partitionGoing, describeAge, describeStage, describeExpectedWindow,
   FERMENT_STALL_NOTE, describeLastPhReading,
-  OPEN_BATCH_CTA, CLOSED_DOOR_CTA, CHECK_ON_IT_CTA, cardQuestion,
+  OPEN_BATCH_CTA, CLOSED_DOOR_CTA, CHECK_ON_IT_CTA, cardQuestion, START_BATCH_CTA, TRY_AGAIN_CTA,
 } from './goingNow.js'
 import CheckOnItSheet from './CheckOnItSheet.jsx'
 import PutItUpSheet from './PutItUpSheet.jsx'
@@ -38,12 +38,14 @@ import PutUpStub from './PutUpStub.jsx'
 import CheckInSaved from './CheckInSaved.jsx'
 import { PUT_IT_UP_CTA } from './putItUp.js'
 import KindQuestion from './KindQuestion.jsx'
+import { withFrom, modeSearch } from './origin.js'
 
 // A question on the card is ONE TARGET that opens Check on it (V4 §2.3: "the ruled pH prompt's link
 // opens Check on it", the IA seat's F14 — the question is the door, not a second control beside it).
 // It keeps the question's own ordinary ink; only the arrow wears the link colour.
+// 48px tall, like every quiet action on this view (Put-Up UX pass R1, F16: height only).
 const questionLink = {
-  display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: T.tapMinHeight, padding: '2px 0',
+  display: 'inline-flex', alignItems: 'center', gap: 4, minHeight: T.buttonMinHeight, padding: '2px 0',
   background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
   fontSize: '0.82rem', color: P.mid,
 }
@@ -171,14 +173,14 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
           and the inline pH recorder moved INTO Check on it — the pH button moves into Check on it. */}
       <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: T.space.md }}>
         <button type="button" data-testid="going-check" onClick={() => onCheck?.(batch.id)}
-          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight,
             background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
             fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
           {CHECK_ON_IT_CTA} →
         </button>
         {/* Put-Up release 1b: Put it up sits between Check on it and Open, and moves nothing else. */}
         <button type="button" data-testid="going-put-up" onClick={() => onPutUp?.(batch.id)}
-          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight,
             background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
             fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
           {PUT_IT_UP_CTA} →
@@ -192,7 +194,7 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
             card's action slot, a SIBLING of the inline expanders rather than their ancestor — the
             shipped "Set parent plant →" pattern, same ink, same type size, same tap floor. */}
         <button type="button" data-testid="going-open-batch" onClick={() => onOpen?.(batch.id)}
-          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight,
             background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
             fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
           {OPEN_BATCH_CTA}
@@ -208,11 +210,12 @@ function BatchCard({ batch, nowMs, fetch, onChanged, onOpen, onCheck, onPutUp, s
 // America/New_York and failed under UTC by four hours, which is precisely the class the blocking TZ
 // re-run exists to catch and which millisecond-offset fixtures are structurally unable to expose.
 // `onStartBatch` (Put-Up 1a, the seam with the page lane): the page mounts the shared StartBatchSheet
-// and hands this view the callback that opens it. Absent — a host that has not wired the seam — the
-// door keeps its shipped behaviour and goes to /capture, whose "Something in the kitchen" card opens
-// the same sheet, so a missed wiring degrades to one extra step rather than a dead button.
-export default function GoingNowView({ batches, loading, error, onReload, now, onStartBatch }) {
-  const navigate = useNavigate()
+// and hands this view the callback that opens it. From Put-Up UX pass R1 the Start door is the page
+// header's filled button, and this view carries one only inside its empty card. Absent — a host that has
+// not wired the seam — the empty card offers no Start control at all: the /capture fallback this used to
+// take is retired, because a second, differently-routed "Start a batch" beside the header's is exactly the
+// control nobody could explain. Nothing here navigates.
+export default function GoingNowView({ batches, loading, error, onReload, now, onStartBatch, onOpenBatch, onOpenClosed }) {
   const { fetch } = useApiFetch()
   const nowMs = now ?? Date.now()
   const { active, paused } = useMemo(() => partitionGoing(batches), [batches])
@@ -226,17 +229,23 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
   // opened as a flyover. A param leaves the route match alone: the page never unmounts, the segment
   // survives, and Back pops the param. The other keys are preserved rather than replaced so ?session=
   // and anything a future door adds ride through untouched.
+  //
+  // Put-Up UX pass R1: the PAGE does the push. `onOpenBatch(id)` and `onOpenClosed()` are its one opener
+  // (PutUp.jsx openMode), which every other door into a mode also uses. A host that passes neither still
+  // gets a working door — the same one-mode-key URL (origin.js modeSearch), and the entry's router state
+  // carried along (withFrom): these two used to push with no state at all, which dropped an overlay's
+  // background and turned a flyover into a page. The card names no origin, so a batch opened from here is
+  // left by the page's own push, onto this segment.
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const openBatch = useCallback((id) => {
-    const next = new URLSearchParams(searchParams)
-    next.delete('state'); next.set('batch', id)
-    setSearchParams(next)
-  }, [searchParams, setSearchParams])
+    if (onOpenBatch) { onOpenBatch(id); return }
+    setSearchParams(modeSearch(searchParams, { batch: id }), { state: withFrom(location.state, null) })
+  }, [onOpenBatch, searchParams, setSearchParams, location.state])
   const openClosed = useCallback(() => {
-    const next = new URLSearchParams(searchParams)
-    next.delete('batch'); next.set('state', 'closed')
-    setSearchParams(next)
-  }, [searchParams, setSearchParams])
+    if (onOpenClosed) { onOpenClosed(); return }
+    setSearchParams(modeSearch(searchParams, { state: 'closed' }), { state: withFrom(location.state, null) })
+  }, [onOpenClosed, searchParams, setSearchParams, location.state])
 
   // CHECK ON IT — one sheet for the whole view, holding the id of the batch being checked. The row
   // itself is read from the CURRENT list on every render, so a re-read that lands while the sheet is
@@ -300,34 +309,36 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
   // CLOSED batches under that word would exclude batches the user would read as finished.
   const closedDoor = (
     <button type="button" data-testid="going-closed-door" onClick={openClosed}
-      style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+      style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight,
         background: 'none', border: 'none', padding: '2px 8px 2px 0', marginTop: T.space.sm,
         cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
       {CLOSED_DOOR_CTA}
     </button>
   )
 
-  // START A BATCH — Put-Up 1a (V4 §2.2, the adhd seat's "the door moves" finding): a QUIET TEXT
-  // button at the TOP of Going now. At the bottom, with the several ferments Dave keeps going, the
-  // door fell below the fold and moved as the list grew — a start cue the cook has to hunt for at the
-  // one moment of starting. Still quiet (not a filled CTA, not floating, not in the header row, not in
-  // the ＋ sheet with its hard 4-cap): the page's job on a normal visit is still "what needs checking".
-  // It opens the shared Start sheet through the page (onStartBatch) — the same sheet Snap opens.
-  const startBatch = useCallback(() => {
-    if (onStartBatch) onStartBatch()
-    else navigate('/capture')
-  }, [navigate, onStartBatch])
+  // START A BATCH. Put-Up 1a put a quiet text door at the TOP of this view (the adhd seat's "the door
+  // moves" finding: at the bottom it fell below the fold as the list grew). Put-Up UX pass R1 (PLAN-V3 D10)
+  // moves it OUT of the view: on Going now the page header's one filled button IS "Start a batch", in a
+  // place that does not move at all, so the quiet link here went away. What stays is the empty card's own
+  // door — the moment someone lands on "Nothing going right now." is the moment the page should offer to
+  // start one where they are reading. SECONDARY, never filled: the header's button is on the same screen,
+  // and a screen carries one filled button. It opens the same sheet through the same seam (onStartBatch).
 
   return (
     <div data-testid="going-now-view">
-      <button type="button" data-testid="start-a-batch" onClick={startBatch}
-        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
-          background: 'none', border: 'none', padding: '2px 8px 2px 0', marginBottom: T.space.sm,
-          cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 700 }}>
-        Start a batch →
-      </button>
       {loading && <div style={{ padding: 24, textAlign: 'center', color: P.light }}>Loading&hellip;</div>}
-      {error && <ErrorBanner>Couldn&rsquo;t load what&rsquo;s going right now — try again.</ErrorBanner>}
+      {/* R1 (F25): the load error offers the reload itself. The banner used to say "try again" with nothing
+          to press, on a segment whose only reload was leaving the page and coming back. */}
+      {error && (
+        <ErrorBanner data-testid="going-error">
+          Couldn&rsquo;t load what&rsquo;s going right now.{' '}
+          <button type="button" data-testid="going-retry" onClick={() => onReload?.()} disabled={loading}
+            style={{ minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 2px', color: 'inherit',
+              textDecoration: 'underline', fontFamily: 'inherit', fontSize: 'inherit', cursor: loading ? 'default' : 'pointer' }}>
+            {TRY_AGAIN_CTA}
+          </button>
+        </ErrorBanner>
+      )}
 
       {empty && (
         <div data-testid="going-empty" style={{ padding: '28px 18px', textAlign: 'center', color: P.mid,
@@ -336,6 +347,13 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
           <div style={{ fontSize: '0.85rem', color: P.light }}>
             A ferment, a dehydrator run, a pot of syrup — start one and it&rsquo;ll wait for you here.
           </div>
+          {onStartBatch && (
+            <div style={{ marginTop: T.space.md }}>
+              <Button variant="secondary" data-testid="going-empty-start" onClick={() => onStartBatch()}>
+                {START_BATCH_CTA}
+              </Button>
+            </div>
+          )}
           {closedDoor}
         </div>
       )}

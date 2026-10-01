@@ -154,6 +154,16 @@ const CASES = [
   { name: 'start',        viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 8, scope: 'going-now-view', primary: 'start-submit', panel: { footer: 'start-footer', focus: 'start-label' } } },
   { name: 'start-full',   viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, kindChips: 6, sheet: true, band: false, minControls: 16, scope: 'going-now-view', primary: 'start-submit', panel: { footer: 'start-footer', focus: 'start-kind-other-text' } } },
   // lane A additions go directly under this line
+  // Put-Up UX pass R1 (PLAN-V3 D10): the Start sheet's "Start from" row, at both heights. Each case opens the
+  // row through its real buttons and focuses the name, the field directly above it. `startFrom` is EXACT,
+  // like the fixture counts above: the harness stubs answer 8 recipes in 3 groups and 6 past batches, and a
+  // case that measured a list that never opened (or a pick that never landed) must fail, not pass.
+  //   start-from-recipe  the recipe rows open        start-from-batch  the past batches open
+  //   start-from-picked  a recipe AND a past batch picked, lists closed: the two picked lines, their undo
+  //                      links, and the kind row the recipe pick opened
+  { name: 'start-from-recipe', viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 20, scope: 'going-now-view', primary: 'start-submit', panel: { footer: 'start-footer', focus: 'start-label' }, startFrom: { recipes: 8, groups: 3, batches: 0, picked: 0 } } },
+  { name: 'start-from-batch',  viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 18, scope: 'going-now-view', primary: 'start-submit', panel: { footer: 'start-footer', focus: 'start-label' }, startFrom: { recipes: 0, groups: 0, batches: 6, picked: 0 } } },
+  { name: 'start-from-picked', viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, kindChips: 6, sheet: true, band: false, minControls: 20, scope: 'going-now-view', primary: 'start-submit', panel: { footer: 'start-footer', focus: 'start-label' }, startFrom: { recipes: 0, groups: 0, batches: 0, picked: 2 } } },
   // lane B additions go directly under this line
   // lane E additions go directly under this line
   // Put-Up release 1b (V4 §6.7): Put it up with two rows, the first one's disclosure open and its pH
@@ -387,6 +397,11 @@ const MEASURE = (c) => `(() => {
               goingCards: d.querySelectorAll('${tid('going-batch')}').length,
               kindChips: d.querySelectorAll('${tid('going-kind-chips')} [role="group"] button, ${tid('start-kind-chips')} [role="group"] button').length },
     taps, links, rowMetrics, sheet, action, outOfScope,
+    // lane A (R1): the Start sheet's "Start from" row — its recipe rows and their groups, its past-batch chips, its picked lines.
+    startFrom: { recipes: d.querySelectorAll('${tid('start-from-recipe-row')}').length,
+                 groups: d.querySelectorAll('${tid('start-from-recipe-group')}').length,
+                 batches: d.querySelectorAll('${tidPrefix('start-like-batch-')}').length,
+                 picked: d.querySelectorAll('${tid('start-from-recipe-picked')}, ${tid('start-like-picked')}').length },
   }
 })()`
 
@@ -513,6 +528,7 @@ try {
       if (e.goingCards != null && m.counts.goingCards !== e.goingCards) mismatch.push(`Going-now cards ${m.counts.goingCards} != ${e.goingCards}`)
       if (e.kindChips != null && m.counts.kindChips !== e.kindChips) mismatch.push(`kind chips ${m.counts.kindChips} != ${e.kindChips} — the kind row this case exists to measure did not open`)
       if (e.keptChips != null && m.counts.keptChips !== e.keptChips) mismatch.push(`kept chips ${m.counts.keptChips} != ${e.keptChips}`)
+      for (const [what, want] of Object.entries(e.startFrom ?? {})) if (m.startFrom[what] !== want) mismatch.push(`Start-from ${what} ${m.startFrom[what]} != ${want} — the Start-from row this case exists to measure is not in the state it names`)
       if (m.counts.controls < e.minControls) mismatch.push(`${m.counts.controls} interactive controls, expected >=${e.minControls}`)
       if (m.closedEmpty !== e.closedEmpty) mismatch.push(`closed empty state ${m.closedEmpty}, expected ${e.closedEmpty}`)
       if (m.detail !== e.detail) mismatch.push(`batch detail surface ${m.detail}, expected ${e.detail}`)
