@@ -1500,6 +1500,11 @@ fi
 # pass vacuously. The second read-back also checks the pins survived a bar_layout-only PATCH (an absent
 # key leaves the stored value alone).
 #
+# BOTH test layouts are the shape V5-NAVANYSLOT-001 introduced: a More row id (seeds) in a slot, one
+# of them a short order. A critter Lambda from before that change refuses each with 400, so a stale
+# deploy reds M2 here; the old five-key shape passes old and new alike and would not. The old shape
+# is still written and read back once per run, by the restore in M3.
+#
 # RESTORE: more_pins [] and the shipped default bar_layout, NOT NULL. A PATCH cannot write NULL back
 # (null means "unchanged": the route merges with COALESCE), and [] and the default object mean exactly
 # what NULL means to every reader (no pins; the shipped bar). The restore runs whether or not the asserts
@@ -1537,8 +1542,8 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_CRITTER
 
   NAVP_PIN_ID="smoke-$(echo "$TEST_RUN_ID" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-8)"
   NAVP_PINS=$(jq -c -n --arg id "$NAVP_PIN_ID" '["seeds", "photos", $id]')
-  NAVP_LAYOUT_A='{"order":["today","garden","create","harvests","put-up"],"hidden":["put-up"]}'
-  NAVP_LAYOUT_B='{"order":["today","harvests","create","garden","put-up"],"hidden":["garden"]}'
+  NAVP_LAYOUT_A='{"order":["today","garden","create","harvests","seeds"],"hidden":[]}'
+  NAVP_LAYOUT_B='{"order":["today","create","put-up","seeds"],"hidden":[]}'
   if [[ "$(echo "$NAVP_BEFORE" | jq -S -c '.bar_layout' 2>/dev/null)" == "$(echo "$NAVP_LAYOUT_A" | jq -S -c .)" ]]; then
     NAVP_LAYOUT="$NAVP_LAYOUT_B"
   else

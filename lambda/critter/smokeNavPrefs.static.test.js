@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { validatePrefsPatchBody, NAV_TAB_KEYS, MORE_PIN_ID_RE } from './validators.js'
+import { MORE_ROWS } from '../../src/lib/moreRegistry.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SMOKE = readFileSync(resolve(HERE, '../../tests/smoke/run-smoke.sh'), 'utf8')
@@ -27,6 +28,12 @@ const shellJson = (name) => {
   return JSON.parse(m[1])
 }
 
+// V5-NAVANYSLOT-001. Before it, this Lambda took an order only when it was the five tab keys, each
+// once. A layout of that form passes a stale critter Lambda and a current one alike, so a smoke that
+// writes only that form stays green on a Lambda that refuses every bar the editor can now save.
+const isOldShape = (layout) =>
+  layout.order.length === NAV_TAB_KEYS.length && layout.order.every(k => NAV_TAB_KEYS.includes(k))
+
 describe('smoke block M — the bodies it sends are ones this Lambda accepts', () => {
   it('SELF-TEST: block M and cleanup() were found, block M after Phase 2 and gated on the critter URL', () => {
     expect(blockStart).toBeGreaterThan(SMOKE.indexOf('# ── Phase 2: Authenticated CRUD'))
@@ -37,8 +44,8 @@ describe('smoke block M — the bodies it sends are ones this Lambda accepts', (
   })
 
   it('both test layouts and the restore layout pass the validator, and the two test layouts differ', () => {
-    // Mutation: hide ＋ or Today in either test layout, drop a tab from an order, or make B equal A (then
-    // a leftover A from a dead run makes the read-back pass without the write having happened).
+    // Mutation: drop ＋ or Today from either test order, repeat an id, or make B equal A (then a
+    // leftover A from a dead run makes the read-back pass without the write having happened).
     const a = shellJson('NAVP_LAYOUT_A')
     const b = shellJson('NAVP_LAYOUT_B')
     const restore = shellJson('NAVP_DEFAULT_LAYOUT')
@@ -46,6 +53,26 @@ describe('smoke block M — the bodies it sends are ones this Lambda accepts', (
     expect(a).not.toEqual(b)
     // The restore is the SHIPPED bar, which every reader treats exactly as NULL.
     expect(restore).toEqual({ order: NAV_TAB_KEYS, hidden: [] })
+  })
+
+  it('whichever test layout M2 writes is one a pre-V5-NAVANYSLOT-001 Lambda refuses', () => {
+    // Mutation: put the five tab keys back in either test layout, or point NAVP_LAYOUT at the restore
+    // layout. Either way a stale critter Lambda answers 200 to everything block M sends.
+    expect(isOldShape(shellJson('NAVP_DEFAULT_LAYOUT'))).toBe(true) // the predicate can say yes
+    const rowIds = MORE_ROWS.map(r => r.id)
+    for (const name of ['NAVP_LAYOUT_A', 'NAVP_LAYOUT_B']) {
+      const layout = shellJson(name)
+      expect(isOldShape(layout), `${name} is old-shape`).toBe(false)
+      // What the editor saves: a real More row in a slot, nothing in hidden.
+      const slotted = layout.order.filter(k => !NAV_TAB_KEYS.includes(k))
+      expect(slotted.length, `${name} carries a More row id`).toBeGreaterThan(0)
+      for (const id of slotted) expect(rowIds, `${name}: ${id} is a More row`).toContain(id)
+      expect(layout.hidden).toEqual([])
+    }
+    // M2 sends NAVP_LAYOUT, and NAVP_LAYOUT is only ever one of those two.
+    expect(BLOCK).toContain('navp_patch "{\\"bar_layout\\": $NAVP_LAYOUT}"')
+    expect(BLOCK.match(/^\s*NAVP_LAYOUT=.*$/gm).map(l => l.trim()).sort())
+      .toEqual(['NAVP_LAYOUT="$NAVP_LAYOUT_A"', 'NAVP_LAYOUT="$NAVP_LAYOUT_B"'])
   })
 
   it('the pin list is seeds, photos and a run-unique smoke id the pattern accepts', () => {
