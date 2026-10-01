@@ -478,7 +478,14 @@ describe('the page\'s Back: it says where it lands, and lands there', () => {
     await screen.findByTestId('putup-batch-mode')
     const from = pops
     const button = backBtn()
-    act(() => { button.click(); button.click() })
+    // jsdom drops a traversal that is still queued when the next one is asked for, so two back() calls in
+    // one tick show as ONE popstate here; a phone's browser does both. The count of traversals ASKED FOR
+    // is what tells the guard from its absence (found at the train: the mutant survived on `pops` alone).
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      act(() => { button.click(); button.click() })
+      expect(go.mock.calls).toEqual([[-1]])
+    } finally { go.mockRestore() }
     await settle(from)
     await act(async () => { await new Promise((r) => setTimeout(r, 80)) })   // room for a second pop to land, if one was made
     expect(pops).toBe(from + 1)

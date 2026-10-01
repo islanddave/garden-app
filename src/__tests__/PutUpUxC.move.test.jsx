@@ -286,14 +286,26 @@ describe('after the move — one line at the top of the Pantry, from the row the
     const seen = []
     const had = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView')
     Element.prototype.scrollIntoView = function scrollIntoView(arg) { seen.push([this.getAttribute('data-testid'), arg]) }
+    // WHEN it scrolls: inside an animation frame, never in the commit that shows the line (the row sheet has
+    // just closed, and a browser restoring the page's scroll as the sheet's Back entry is popped must be
+    // finished first). MUTATION: scroll in the effect itself -> `inFrame` is [false] and this reds.
+    expect(typeof requestAnimationFrame).toBe('function')
+    const realFrame = requestAnimationFrame
+    let inside = false
+    const inFrame = []
+    const scrolled = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function scrollIntoView(arg) { inFrame.push(inside); return scrolled.call(this, arg) }
+    vi.stubGlobal('requestAnimationFrame', (cb) => realFrame((t) => { inside = true; try { cb(t) } finally { inside = false } }))
     try {
       const { line } = await moveOnPantry(TYPED, 'id:loc-1')
       await waitFor(() => expect(seen).toEqual([['pantry-moved', { block: 'center' }]]))   // a frame after it appears
+      expect(inFrame).toEqual([true])
       fireEvent.click(screen.getByTestId('pantry-row-open-put_up:jar-t'))      // any re-render of the list
       await new Promise(r => setTimeout(r, 50))
       expect(seen).toHaveLength(1)
       expect(line.isConnected).toBe(true)
     } finally {
+      vi.unstubAllGlobals()
       if (had) Object.defineProperty(Element.prototype, 'scrollIntoView', had)
       else delete Element.prototype.scrollIntoView
     }
