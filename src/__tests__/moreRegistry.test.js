@@ -16,7 +16,7 @@ import { resolve } from 'node:path'
 import {
   MORE_ROWS, MORE_SECTIONS, RETIRED_MORE_IDS, MORE_ID_ALIASES, MORE_PIN_ID_RE, MORE_PINS_MAX_STORED,
   MORE_PINS_MAX_SHOWN, MOVED_SUB, resolvePins, layoutMoreSheet, drawnPinIds, drawableMoreRows, movedTabRow,
-  barSlotRow, barSlotRows,
+  barSlotRow, barSlotRows, ADORNMENT_IN_MORE, moreButtonAdornments,
 } from '../lib/moreRegistry.js'
 import { TAB_REGISTRY, MOVABLE_TAB_KEYS } from '../lib/navConfig.js'
 import { getIcon, NEUTRAL_ICON } from '../lib/iconRegistry.js'
@@ -181,6 +181,45 @@ describe('barSlotRow / barSlotRows — a slot id becomes the row the bar draws',
       if (!row) continue
       expect(row.label.length, id).toBeLessThanOrEqual(10)
     }
+  })
+})
+
+// V5-NAVSLOTADORN-001 — a page's dot follows it onto the tab bar (Dave 2026-10-01). The render half
+// is BottomNav.slotAdornment.test.jsx.
+describe('adornments — a row’s dot goes where the row goes', () => {
+  // KILLING MUTATION: barSlotRow returns the four slot fields only (the v4.168.0 shape). RESULT: RED.
+  it('a slotted row keeps its adornment, and a row without one gains no key', () => {
+    expect(barSlotRow('releases')).toEqual({ key: 'releases', to: '/releases', label: 'Releases', iconName: 'nav.notes', adornment: 'whatsNew' })
+    expect(barSlotRow('collection').adornment).toBe('critterVisitor')
+    expect(barSlotRow('photos')).not.toHaveProperty('adornment')
+    for (const key of Object.keys(TAB_REGISTRY)) expect(barSlotRow(key), key).not.toHaveProperty('adornment')
+  })
+
+  // KILLING MUTATION: declare an adornment ADORNMENT_IN_MORE does not list. RESULT: RED — it would be
+  // drawn nowhere while its row is in More, with no error.
+  it('every declared adornment says where it is drawn inside More', () => {
+    expect(ADORNMENT_IN_MORE).toEqual({ whatsNew: 'row', critterVisitor: 'more' })
+    const declared = MORE_ROWS.filter(r => r.adornment)
+    expect(declared.map(r => r.id)).toEqual(['collection', 'releases'])
+    for (const r of declared) expect(['row', 'more'], r.id).toContain(ADORNMENT_IN_MORE[r.adornment])
+  })
+
+  // KILLING MUTATION: moreButtonAdornments ignores `onBar` (reads every enabled row). RESULT: RED —
+  // More keeps a dot for a page that is on the bar.
+  it('the More button wears a dot only for a page still INSIDE More', () => {
+    expect(moreButtonAdornments()).toEqual(['critterVisitor'])
+    expect(moreButtonAdornments({ moved: ['garden'], onBar: ['today', 'create', 'put-up'] })).toEqual(['critterVisitor'])
+    expect(moreButtonAdornments({ onBar: ['today', 'create', 'collection'] })).toEqual([])
+    // A 'row' dot never reaches the button, whether its page is in More or on the bar.
+    expect(moreButtonAdornments({ onBar: ['today', 'create', 'releases'] })).toEqual(['critterVisitor'])
+    const row = (id, extra) => ({ id, to: `/${id}`, label: id, iconName: 'nav.more', section: 'garden', adornment: 'critterVisitor', ...extra })
+    // A flag-off row is not in the sheet, so it does not dot the button.
+    expect(moreButtonAdornments({ rows: [row('off', { enabled: false })] })).toEqual([])
+    // Two rows naming one dot: once, and it stays until the LAST of them leaves More.
+    const two = [row('a'), row('b')]
+    expect(moreButtonAdornments({ rows: two })).toEqual(['critterVisitor'])
+    expect(moreButtonAdornments({ rows: two, onBar: ['a'] })).toEqual(['critterVisitor'])
+    expect(moreButtonAdornments({ rows: two, onBar: ['a', 'b'] })).toEqual([])
   })
 })
 

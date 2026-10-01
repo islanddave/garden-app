@@ -16,7 +16,7 @@ import { useKeyboardChromeSuppressed } from '../lib/keyboardChrome.js'
 import Sheet from './forms/Sheet.jsx'
 import Icon from './Icon.jsx'
 import { useNavLayout, useMorePins } from '../context/NavPrefsContext.jsx'
-import { layoutMoreSheet, rowPinnable } from '../lib/moreRegistry.js'
+import { layoutMoreSheet, rowPinnable, ADORNMENT_IN_MORE, moreButtonAdornments } from '../lib/moreRegistry.js'
 
 // BottomNav — V200 / V4-THEME-001 nav: Today·Garden·＋·Harvests·Put-Up·More (V4-PUTUPENGINE-001,
 // 2026-08-21; was Today·Garden·＋·Harvests·More per V4-NAVHARVEST-001, 2026-08-10, which itself
@@ -200,8 +200,28 @@ function PinButton({ row, pinned, onToggle }) {
   )
 }
 
+// V5-NAVSLOTADORN-001 — A PAGE'S DOT FOLLOWS THE PAGE (Dave 2026-10-01). A row names its dot in the
+// registry (`adornment`); this is the ONE place a name becomes a component, for all three places a dot
+// is drawn: beside a More row's label, on the More button, and on the page's own bar slot. They are
+// the existing dots, unchanged — same size, colour, motion and aria-hidden — so this adds no reward
+// surface: no count, no banner, nothing to dismiss (Reward UX V102). What clears each is unchanged
+// and does not depend on where it is drawn: Release Notes marks the newest release seen when it loads
+// (whatsNew.js SEEN_EVENT), by whichever door; Garden marks visitors viewed when it is left, and
+// BottomNavDot re-reads on mount, on return to the foreground and each minute.
+//
+// `onBar` (a slot, or the More button): OUT OF THE FLOW, anchored where the More button's dot has
+// always been, so a dot costs its slot no width — six slots are 53px each at 320px. BottomNavDot
+// positions itself; the 9px What's-New dot takes the same centre as that 7px one.
+const barDotStyle = { position: 'absolute', top: 3, right: 'calc(50% - 15px)', marginLeft: 0 }
+
+function AdornmentDot({ name, onBar = false, getToken }) {
+  if (name === 'whatsNew') return <WhatsNewDot variant="inline" style={onBar ? barDotStyle : undefined} />
+  if (name === 'critterVisitor') return <BottomNavDot getToken={getToken} />
+  return null
+}
+
 function RowContent({ row }) {
-  const dot = row.adornment === 'whatsNew' ? <WhatsNewDot variant="inline" /> : null
+  const dot = ADORNMENT_IN_MORE[row.adornment] === 'row' ? <AdornmentDot name={row.adornment} /> : null
   if (!row.sub) {
     return <><Icon name={row.iconName} variant={row.iconVariant} size={22} decorative />{row.label}{dot}</>
   }
@@ -643,6 +663,9 @@ export default function BottomNav() {
               {/* V5-NAVANYSLOT-001 — any page can take a slot now, so a label that still runs long
                   is clipped with an ellipsis inside its own slot rather than shouldering the next. */}
               <span style={{ fontSize: '0.62rem', fontWeight: active ? 700 : 400, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 2px', boxSizing: 'border-box' }}>{tab.label}</span>
+              {/* V5-NAVSLOTADORN-001 — a More row on the bar wears its own dot here. Last in the slot,
+                  so it paints over the active indicator, as the More button's does. */}
+              {tab.adornment && <AdornmentDot name={tab.adornment} onBar getToken={getToken} />}
             </Link>
           )
         })}
@@ -656,8 +679,11 @@ export default function BottomNav() {
           }}>
           <TabGlyph iconName="nav.more" active={showMore} />
           <span style={{ fontSize: '0.62rem', fontWeight: showMore ? 700 : 400 }}>More</span>
-          {/* Critter "new visitor" dot lives on More now that Critters is in the menu. */}
-          <BottomNavDot getToken={getToken} />
+          {/* The dots of the pages still INSIDE More that show from the bar — today the critter
+              "new visitor" dot. A page put on the bar takes its dot with it (V5-NAVSLOTADORN-001). */}
+          {moreButtonAdornments({ moved, onBar }).map(name => (
+            <AdornmentDot key={name} name={name} onBar getToken={getToken} />
+          ))}
         </button>
       </nav>
     </>

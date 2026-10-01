@@ -16,7 +16,8 @@
 //
 // Rows appear here in today's sheet order, section by section. Row extras that a generic renderer
 // could silently drop are fields, not JSX: the Seeds subtitle and its `more-seeds` testid, the Critters
-// subtitle (ambient — Reward UX V102 forbids a badge or count here), the What's-New dot on Release Notes.
+// subtitle (ambient — Reward UX V102 forbids a badge or count here), and each row's ambient dot
+// (`adornment`, see ADORNMENT_IN_MORE below).
 import { CATCH_UP_EDITOR_SHIPPED, SPACE_PHOTOS_ENABLED } from './featureFlags.js'
 import { SEEDS_PATH } from './seedsRoutes.js'
 import { TAB_REGISTRY, BAR_SLOT_ID_RE } from './navConfig.js'
@@ -30,10 +31,22 @@ export const MORE_SECTIONS = [
   { key: 'debug',   label: null },
 ]
 
+// ADORNMENT_IN_MORE — V5-NAVSLOTADORN-001 (Dave 2026-10-01: "the dot follows the page … and the More
+// button stops showing a dot for a page that is no longer inside More"). A row names its ambient dot;
+// this says where that dot is drawn while the row is INSIDE the sheet: 'row' = beside the row's label
+// (the What's-New dot, seen once the sheet is open), 'more' = on the More button (the critter
+// new-visitor dot, seen from the bar). With the row ON the bar the dot is on its own slot either way
+// (barSlotRow carries it) and the More button drops it (moreButtonAdornments). BottomNav owns which
+// component each name draws. A dot only: never a count, a banner or a sound (Reward UX V102).
+export const ADORNMENT_IN_MORE = {
+  whatsNew: 'row',
+  critterVisitor: 'more',
+}
+
 // Fields: id, to, label, sub?, iconName, section, enabled? (a BUILD flag — a flag-off row is not
-// drawn and its pin sleeps), pinnable? (default true), adornment? ('whatsNew'), testId?, barLabel?
-// (V5-NAVANYSLOT-001 — the shorter name the row wears if a person puts it on the tab bar, whose slots
-// are ~53px wide at 320px; rows without one use `label`, which fits).
+// drawn and its pin sleeps), pinnable? (default true), adornment? (a key of ADORNMENT_IN_MORE),
+// testId?, barLabel? (V5-NAVANYSLOT-001 — the shorter name the row wears if a person puts it on the
+// tab bar, whose slots are ~53px wide at 320px; rows without one use `label`, which fits).
 export const MORE_ROWS = [
   { id: 'dashboard',  to: '/dashboard',  label: 'Dashboard', iconName: 'nav.dashboard',  section: 'garden' },
   // V4-NAVHARVEST-001 — DrG demoted here from the tab bar. /findings keeps its route and its icon.
@@ -64,7 +77,7 @@ export const MORE_ROWS = [
   { id: 'season-stats', to: '/season-stats', label: 'Season stats', iconName: 'nav.harvests', section: 'garden',
     sub: 'How this season went', barLabel: 'Stats' },
   { id: 'collection', to: '/collection', label: 'Critters',  iconName: 'nav.critters',   section: 'rewards',
-    sub: "Who's been visiting" },
+    sub: "Who's been visiting", adornment: 'critterVisitor' },
   { id: 'helper',     to: '/helper',     label: 'Garden Helper', iconName: 'nav.helper',  section: 'help', barLabel: 'Helper' },
   { id: 'settings',   to: '/settings',   label: 'Settings',  iconName: 'action.settings', section: 'help' },
   // V4-HANDEDNESSCONTROLS-001 — its own row; /settings is still the notifications redirect.
@@ -144,13 +157,15 @@ export function movedTabRow(key) {
 // this build cannot draw it (unknown id, a flag-off row). A tab key reads TAB_REGISTRY; anything else
 // reads MORE_ROWS through MORE_ID_ALIASES, so a slot stored as 'sow' still draws Seeds. The bar slot
 // carries `key` = the resolved id (the React key and the dedupe key) and wears barLabel when it has one.
+// V5-NAVSLOTADORN-001 — and it keeps the row's `adornment`, so the page's dot is drawn on its slot.
 export function barSlotRow(id, { rows = MORE_ROWS, aliases = MORE_ID_ALIASES } = {}) {
   if (typeof id !== 'string') return null
   if (Object.hasOwn(TAB_REGISTRY, id)) return { ...TAB_REGISTRY[id], key: id }
   const live = Object.hasOwn(aliases, id) ? aliases[id] : id
   const row = rows.find(r => r.id === live && rowEnabled(r))
   if (!row) return null
-  return { key: row.id, to: row.to, label: row.barLabel ?? row.label, iconName: row.iconName }
+  const slot = { key: row.id, to: row.to, label: row.barLabel ?? row.label, iconName: row.iconName }
+  return row.adornment ? { ...slot, adornment: row.adornment } : slot
 }
 
 // The drawable bar, left to right: every id barSlotRow can draw, each page at most once (an alias and
@@ -171,6 +186,15 @@ export function barSlotRows(ids, opts) {
 export function drawableMoreRows({ moved = [], rows = MORE_ROWS, onBar = [] } = {}) {
   const barIds = onBar.map(id => (Object.hasOwn(MORE_ID_ALIASES, id) ? MORE_ID_ALIASES[id] : id))
   return [...moved.map(movedTabRow), ...rows.filter(rowEnabled).filter(r => !barIds.includes(r.id))]
+}
+
+// moreButtonAdornments — V5-NAVSLOTADORN-001. The dots the More button wears: the 'more' adornments of
+// the rows the sheet would draw right now, each once. Read through drawableMoreRows on purpose, so "is
+// this page inside More?" has ONE answer for the sheet and for the button: a row on the bar (under any
+// alias) or behind an off flag is in neither. Takes the same arguments as drawableMoreRows.
+export function moreButtonAdornments(opts) {
+  const names = drawableMoreRows(opts).map(r => r.adornment).filter(a => ADORNMENT_IN_MORE[a] === 'more')
+  return [...new Set(names)]
 }
 
 // The ids that count toward MORE_PINS_MAX_SHOWN: pins that would actually be DRAWN. A sleeping pin (an
