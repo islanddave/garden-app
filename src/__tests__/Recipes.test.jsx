@@ -131,7 +131,7 @@ describe('recipe detail — notes verbatim, lines, link, and the batches made fr
 
   it('lines as written (at-the-end apart), the link (new tab, no opener), keeps, the jar and the bottle', async () => {
     await open()
-    expect(screen.getAllByTestId('recipe-detail-line').map(l => l.textContent)).toEqual(['170 g fresh jalapeño', 'pinch'])
+    expect(screen.getAllByTestId('recipe-detail-line').map(l => l.textContent)).toEqual(['170 g fresh jalapeño', 'cumin — pinch'])
     expect(screen.getAllByTestId('recipe-detail-line-end').map(l => l.textContent)).toEqual(['20 g onion'])
     const a = screen.getByTestId('recipe-detail-link')
     expect([a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel')]).toEqual(['https://example.com/mojo', '_blank', 'noopener noreferrer'])
@@ -312,7 +312,7 @@ describe('batch detail — Save as recipe and Made it as written', () => {
     const { rerender } = render(<BatchRecipeRow batch={batch} inputs={[]} onChanged={changed} />)
     expect(screen.getByTestId('batch-recipe-from').textContent).toContain('From the recipe: Roll for Initiative')
     tap('batch-recipe-lines-toggle')
-    expect(screen.getAllByTestId('batch-recipe-line').map(l => l.textContent)).toEqual(['170 g fresh jalapeño', 'pinch'])
+    expect(screen.getAllByTestId('batch-recipe-line').map(l => l.textContent)).toEqual(['170 g fresh jalapeño', 'cumin — pinch'])
     await act(async () => { tap('batch-recipe-as-written') })
     await waitFor(() => expect(calls('POST', '/api/kitchen-batches/kb1/inputs')).toHaveLength(1))
     const lines = bodyOf('POST', '/api/kitchen-batches/kb1/inputs').inputs

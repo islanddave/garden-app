@@ -77,7 +77,12 @@ export function bottleWords(r) {
 export function recipeLineWords(l) {
   if (!l) return ''
   const written = l.amount_text && String(l.amount_text).trim()
-  const base = written || [l.qty != null && l.qty_unit ? `${num(l.qty)} ${l.qty_unit}` : null, l.name].filter(Boolean).join(' ')
+  const name = l.name && String(l.name).trim()
+  // The amount as written carries the ingredient's name for seeded lines ("150 g Megatron jalapeño") but not for
+  // one typed on the recipe sheet ("4 cloves", name "Garlic") — so the name leads unless the amount already says it.
+  const base = written
+    ? (name && !written.toLowerCase().includes(name.toLowerCase()) ? `${name} — ${written}` : written)
+    : [l.qty != null && l.qty_unit ? `${num(l.qty)} ${l.qty_unit}` : null, l.name].filter(Boolean).join(' ')
   const extra = [l.brand, l.note && !written ? l.note : null].filter(Boolean)
   return extra.length ? `${base} (${extra.join(', ')})` : base
 }

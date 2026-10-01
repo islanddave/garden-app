@@ -55,7 +55,10 @@ describe('words', () => {
   it('a line as reference text: the amount AS WRITTEN first', () => {
     expect(recipeLineWords(RECIPE.lines[0])).toBe('170 g fresh jalapeño')
     expect(recipeLineWords({ name: 'garlic', qty: '8', qty_unit: 'g' })).toBe('8 g garlic')
-    expect(recipeLineWords({ name: 'gochugaru', amount_text: '10 g', brand: 'Taekyung' })).toBe('10 g (Taekyung)')
+    // UX pass F3: an amount written without the ingredient keeps the ingredient's name in front of it.
+    expect(recipeLineWords({ name: 'gochugaru', amount_text: '10 g', brand: 'Taekyung' })).toBe('gochugaru — 10 g (Taekyung)')
+    expect(recipeLineWords({ name: 'Garlic', amount_text: '4 cloves' })).toBe('Garlic — 4 cloves')
+    expect(recipeLineWords({ name: 'garlic', amount_text: '4 cloves garlic' })).toBe('4 cloves garlic')
   })
 
   it('a batch made from it: its date and its ending in words — never a reading', () => {
