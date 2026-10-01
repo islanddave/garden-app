@@ -211,7 +211,12 @@ describe('unattributed rows -> Other bucket', () => {
 describe('project-less picks (BUG-HARVESTSNOPROJECTPICKS-001)', () => {
   const USER_D = `user_int_harv_projless_${RUN}`;
   const USER_E = `user_int_harv_projless_foreign_${RUN}`;
+  // The two-member household case below. Own users again: F and G are the household, H is outside it.
+  const USER_F = `user_int_harv_hh_a_${RUN}`;   // member A — owns the loose planting
+  const USER_G = `user_int_harv_hh_b_${RUN}`;   // member B — logs the pick on A's planting
+  const USER_H = `user_int_harv_hh_out_${RUN}`; // not a member
   let projD, projlessPick, projectPick, foreignPick;
+  let plantOfA, householdPick, outsiderPick;
 
   const mkLoosePlant = async (user, tag) => (await directSql`
     INSERT INTO plants (project_id, name, status, created_by)
@@ -232,17 +237,22 @@ describe('project-less picks (BUG-HARVESTSNOPROJECTPICKS-001)', () => {
     projectPick = await mkWeighedPick(USER_D, projD, null, 100);
     projlessPick = await mkWeighedPick(USER_D, null, await mkLoosePlant(USER_D, 'd'), 250);
     foreignPick = await mkWeighedPick(USER_E, null, await mkLoosePlant(USER_E, 'e'), 999);
+    plantOfA = await mkLoosePlant(USER_F, 'hh-a');
+    householdPick = await mkWeighedPick(USER_G, null, plantOfA, 400);
+    outsiderPick = await mkWeighedPick(USER_H, null, await mkLoosePlant(USER_H, 'hh-out'), 777);
   });
 
   afterAll(async () => {
-    await directSql`DELETE FROM harvest_log WHERE created_by IN (${USER_D}, ${USER_E})`;
-    await directSql`DELETE FROM event_log   WHERE created_by IN (${USER_D}, ${USER_E})`;
+    // One pass over ALL five users, table by table, so the order holds across owners too: member B's
+    // event points at member A's plant, and every event is gone before any plant is.
+    await directSql`DELETE FROM harvest_log WHERE created_by IN (${USER_D}, ${USER_E}, ${USER_F}, ${USER_G}, ${USER_H})`;
+    await directSql`DELETE FROM event_log   WHERE created_by IN (${USER_D}, ${USER_E}, ${USER_F}, ${USER_G}, ${USER_H})`;
     // A plants INSERT also writes an `entity` row (entity_planting_ref_id_fkey, no ON DELETE action), and
     // logging against a planting can leave entity_memory rows; both go before the plants, as in _kitchenF.js.
-    await directSql`DELETE FROM entity WHERE planting_ref_id IN (SELECT id FROM plants WHERE created_by IN (${USER_D}, ${USER_E}))`;
-    await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER_D}, ${USER_E}))`;
-    await directSql`DELETE FROM plants      WHERE created_by IN (${USER_D}, ${USER_E})`;
-    await directSql`DELETE FROM plant_projects WHERE created_by IN (${USER_D}, ${USER_E})`;
+    await directSql`DELETE FROM entity WHERE planting_ref_id IN (SELECT id FROM plants WHERE created_by IN (${USER_D}, ${USER_E}, ${USER_F}, ${USER_G}, ${USER_H}))`;
+    await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER_D}, ${USER_E}, ${USER_F}, ${USER_G}, ${USER_H}))`;
+    await directSql`DELETE FROM plants      WHERE created_by IN (${USER_D}, ${USER_E}, ${USER_F}, ${USER_G}, ${USER_H})`;
+    await directSql`DELETE FROM plant_projects WHERE created_by IN (${USER_D}, ${USER_E}, ${USER_F}, ${USER_G}, ${USER_H})`;
   });
 
   it('the Log lists the project-less pick beside the project one, and never the foreign one', async () => {
@@ -275,5 +285,49 @@ describe('project-less picks (BUG-HARVESTSNOPROJECTPICKS-001)', () => {
     setTestUserId(USER_E);
     const { body } = await callHandler(handler, { method: 'GET', path: '/api/harvests?timeframe=all&include=entries' });
     expect(body.entries.map((e) => e.event_id)).toEqual([foreignPick]);
+  });
+
+  // TWO-MEMBER HOUSEHOLD. Every case above is single-user, so the logger arm
+  // (`e.project_id IS NULL AND e.created_by = ANY(householdIds)`) had only ever been run with ONE id.
+  // Here member B logs a project-less pick on a loose planting member A owns. The arm scopes through
+  // the event's LOGGER, so A sees it only because B is in A's household — the CONTROL proves that it
+  // is the household, and not A owning the planting, that admits it.
+  describe('a two-member household', () => {
+    const read = async (user, include, household) => {
+      if (household) process.env[ENV_KEY] = `${USER_F},${USER_G}`; else delete process.env[ENV_KEY];
+      try {
+        setTestUserId(user);
+        const { status, body } = await callHandler(handler, { method: 'GET', path: `/api/harvests?timeframe=all&include=${include}` });
+        expect(status).toBe(200);
+        return body;
+      } finally {
+        delete process.env[ENV_KEY];
+      }
+    };
+
+    it('both members see the pick B logged on A\'s loose planting, in the Log and in the totals', async () => {
+      for (const member of [USER_F, USER_G]) {
+        const { entries } = await read(member, 'entries', true);
+        expect(entries.map((e) => e.event_id), member).toEqual([householdPick]);
+        expect(entries[0]).toMatchObject({ project_id: null, plant_id: plantOfA, created_by: USER_G });
+        const { aggregates } = await read(member, 'aggregates', true);
+        expect(aggregates.weight.measured_grams, member).toBe(400);
+        expect(aggregates.weight.measured, member).toBe(1);
+      }
+    });
+
+    it('a user outside the household sees it in neither: only their own pick and their own weight', async () => {
+      const { entries } = await read(USER_H, 'entries', true);
+      expect(entries.map((e) => e.event_id)).toEqual([outsiderPick]);
+      const { aggregates } = await read(USER_H, 'aggregates', true);
+      expect(aggregates.weight.measured_grams).toBe(777);
+      expect(aggregates.weight.measured).toBe(1);
+    });
+
+    it('CONTROL: with no household set, the logger still sees it and the planting\'s owner does not', async () => {
+      expect((await read(USER_G, 'entries', false)).entries.map((e) => e.event_id)).toEqual([householdPick]);
+      expect((await read(USER_F, 'entries', false)).entries).toEqual([]);
+      expect((await read(USER_F, 'aggregates', false)).aggregates.weight.measured_grams).toBe(0);
+    });
   });
 });
