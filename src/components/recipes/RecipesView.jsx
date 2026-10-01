@@ -1,12 +1,14 @@
 // src/components/recipes/RecipesView.jsx
 // Put-Up release 4 (V4 §2.6) — the Recipes segment of the Put-Up page: the household's recipes grouped by
 // what they make (filterable by type), a recipe's detail, the create/edit sheet, and the three doors from a
-// recipe into the kitchen — Make this (the Start sheet prefilled), and I made this (a make with nothing kept,
-// every line as written, recorded as eaten). Plain markup on the existing primitives; no visual design.
+// recipe into the kitchen — Make this (the Start sheet prefilled), and Made it, ate it all (a make with nothing
+// kept, every line as written, recorded as eaten). Plain markup on the existing primitives; no visual design.
 //
-// ⚠ RECIPE DETAIL IS THE ONLY SURFACE THAT RENDERS THE NOTES (V4 "pH") — his target pH lives there, verbatim.
-// Its list of batches made from the recipe shows a date and the ending in words, at equal weight, and never a
-// reading (the server does not send one: recipeRoutes.js readRecipe's batch list is an explicit column list).
+// ⚠ RECIPE DETAIL IS THE ONLY SURFACE THAT RENDERS THE NOTES (V4 "pH") — his target pH lives there, as he
+// wrote it: paired marks show as bold or italic (recipes.js notesSegments, built as elements) and no other
+// character moves. Its list of batches made from the recipe shows a date and the ending in words, at equal
+// weight, and never a reading (the server does not send one: recipeRoutes.js readRecipe's batch list is an
+// explicit column list).
 //
 // CONTROLLED BY ITS OWN FETCHES (the segment is self-contained): GET /api/recipes and /api/recipes/types on
 // mount, GET /api/recipes/:id on open. `onBatchStarted(batch)` is the page's own landing (PutUp.jsx), so a
@@ -17,17 +19,19 @@ import { useApiFetch } from '../../lib/api.js'
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import StartBatchSheet from '../kitchen/StartBatchSheet.jsx'
+import { kindLabel } from '../kitchen/KindChips.jsx'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import RecipeSheet from './RecipeSheet.jsx'
 import {
   groupByType, keepsWords, vesselWords, bottleWords, recipeLineWords, madeBatchWords, startPrefill, vesselPatch,
-  asWrittenLines, NEW_RECIPE_CTA, MAKE_THIS_CTA, I_MADE_THIS_CTA, NOTHING_KEPT_OUTCOME, RECIPE_KIND_OPTIONS,
+  asWrittenLines, notesSegments, NEW_RECIPE_CTA, MAKE_THIS_CTA, I_MADE_THIS_CTA, MADE_CONFIRM_TEXT, MADE_CONFIRM_CTA,
+  KEPT_SOME_CTA, NOTHING_KEPT_OUTCOME,
 } from './recipes.js'
 
-const link = { display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, padding: '2px 8px 2px 0', background: 'none',
+// The quiet text action, 48 px tall on Put-Up surfaces (UX pass R1).
+const link = { display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, padding: '2px 8px 2px 0', background: 'none',
   border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600 }
 const isHttp = (u) => /^https?:\/\//i.test(String(u ?? ''))
-const kindWord = (k) => RECIPE_KIND_OPTIONS.find(o => o.value === k)?.label ?? null
 
 export default function RecipesView({ onBatchStarted, now }) {
   const { fetch } = useApiFetch()
@@ -78,9 +82,9 @@ export default function RecipesView({ onBatchStarted, now }) {
       {usedTypes.length > 0 && (
         <div role="group" aria-label="Show recipes that make" data-testid="recipes-type-filter"
           style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: T.space.md }}>
-          <SelectChip small active={typeFilter == null} onClick={() => setTypeFilter(null)} data-testid="recipes-filter-all">All</SelectChip>
+          <SelectChip small touch active={typeFilter == null} onClick={() => setTypeFilter(null)} data-testid="recipes-filter-all">All</SelectChip>
           {usedTypes.map(t => (
-            <SelectChip key={t.id} small active={typeFilter === t.id} data-testid="recipes-filter-chip"
+            <SelectChip key={t.id} small touch active={typeFilter === t.id} data-testid="recipes-filter-chip"
               onClick={() => setTypeFilter(typeFilter === t.id ? null : t.id)}>{t.label}</SelectChip>
           ))}
         </div>
@@ -127,7 +131,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
   const [removing, setRemoving] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
-  const madePlan = useRef(null)                      // one key set per "I made this" confirm, reused on retry
+  const madePlan = useRef(null)                      // one key set per "Made it, ate it all" confirm, reused on retry
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
 
   const load = useCallback(() => {
@@ -187,7 +191,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
 
   const pot = (recipe.lines ?? []).filter(l => !l.at_the_end)
   const end = (recipe.lines ?? []).filter(l => l.at_the_end)
-  const facts = [recipe.type_label, kindWord(recipe.kind), keepsWords(recipe)].filter(Boolean)
+  const facts = [recipe.type_label, kindLabel(recipe.kind), keepsWords(recipe)].filter(Boolean)
   const containers = [
     vesselWords(recipe) ? ['Made in', vesselWords(recipe)] : null,
     bottleWords(recipe) ? ['Put up in', bottleWords(recipe)] : null,
@@ -204,20 +208,25 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
           style={{ ...link, textDecoration: 'underline', wordBreak: 'break-all' }}>{recipe.link_url}</a>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: `${T.space.sm}px 0` }}>
-        <Button variant="primary" data-testid="recipe-make-this" onClick={() => setStarting(true)}>{MAKE_THIS_CTA}</Button>
-        <Button variant="secondary" data-testid="recipe-i-made-this" onClick={() => { setMadeOpen(o => !o); setErr(null) }}>{I_MADE_THIS_CTA}</Button>
-        <Button variant="secondary" data-testid="recipe-edit" onClick={() => onEdit?.(recipe)}>Edit</Button>
+      {/* ONE filled button per state: Make this — until the confirm below is open, when its own is the one. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, margin: `${T.space.sm}px 0` }}>
+        <Button variant={madeOpen ? 'secondary' : 'primary'} data-testid="recipe-make-this" onClick={() => setStarting(true)}>{MAKE_THIS_CTA}</Button>
+        <Button variant="secondary" data-testid="recipe-i-made-this" aria-expanded={madeOpen}
+          onClick={() => { setMadeOpen(o => !o); setErr(null) }}>{I_MADE_THIS_CTA}</Button>
+        <button type="button" style={link} data-testid="recipe-edit" onClick={() => onEdit?.(recipe)}>Edit</button>
       </div>
 
       {madeOpen && (
         <div data-testid="recipe-made-confirm" style={{ padding: '8px 0', borderTop: `1px solid ${P.cream}`, borderBottom: `1px solid ${P.cream}`, marginBottom: T.space.sm }}>
-          <p style={{ margin: '0 0 6px', color: P.mid, fontSize: T.type.sm }}>
-            Record a make of this today, with every line as written, and nothing kept (eaten).
-          </p>
-          <Button variant="primary" data-testid="recipe-made-confirm-save" loading={busy} loadingLabel="Recording…" onClick={iMadeThis}>Record it</Button>
-          <button type="button" style={{ ...link, marginLeft: 8 }} data-testid="recipe-made-cancel" disabled={busy}
-            onClick={() => { setMadeOpen(false); madePlan.current = null }}>Cancel</button>
+          <p style={{ margin: '0 0 6px', color: P.mid, fontSize: T.type.sm }}>{MADE_CONFIRM_TEXT}</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+            <Button variant="primary" data-testid="recipe-made-confirm-save" loading={busy} loadingLabel="Recording…" onClick={iMadeThis}>{MADE_CONFIRM_CTA}</Button>
+            <button type="button" style={link} data-testid="recipe-made-cancel" disabled={busy}
+              onClick={() => { setMadeOpen(false); madePlan.current = null }}>Cancel</button>
+          </div>
+          {/* Kept some of it: that is a batch, so this is Make this (there is no batch yet to put up). */}
+          <button type="button" style={link} data-testid="recipe-made-kept-some" disabled={busy}
+            onClick={() => { setMadeOpen(false); madePlan.current = null; setErr(null); setStarting(true) }}>{KEPT_SOME_CTA}</button>
         </div>
       )}
 
@@ -247,8 +256,16 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
       {recipe.notes && (
         <section data-testid="recipe-detail-notes-section" style={{ marginBottom: T.space.md }}>
           <h3 style={{ margin: '0 0 4px', fontSize: T.type.sm, color: P.dark }}>Notes</h3>
-          {/* VERBATIM: his text as he wrote it (V4 §2.6), whitespace kept. The only surface that renders it. */}
-          <div data-testid="recipe-detail-notes" style={{ whiteSpace: 'pre-wrap', fontSize: T.type.sm, color: P.dark, lineHeight: 1.5 }}>{recipe.notes}</div>
+          {/* His text as he wrote it (V4 §2.6), whitespace kept; a pair of marks shows as bold or italic and
+              nothing else moves. Built as ELEMENTS from text runs — never as markup. The only surface that
+              renders it. */}
+          <div data-testid="recipe-detail-notes" style={{ whiteSpace: 'pre-wrap', fontSize: T.type.sm, color: P.dark, lineHeight: 1.5 }}>
+            {notesSegments(recipe.notes).map((s, i) => (
+              s.kind === 'bold' ? <strong key={i}>{s.text}</strong>
+                : s.kind === 'italic' ? <em key={i}>{s.text}</em>
+                  : <React.Fragment key={i}>{s.text}</React.Fragment>
+            ))}
+          </div>
         </section>
       )}
 

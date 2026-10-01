@@ -122,10 +122,13 @@ describe('recipe detail — notes verbatim, lines, link, and the batches made fr
     await waitFor(() => expect(screen.getByTestId('recipe-detail-name').textContent).toBe('Roll for Initiative'))
   }
 
-  it('renders the notes exactly as written, whitespace kept', async () => {
+  it('renders the notes as written, whitespace kept — a pair of marks shows as bold, never as asterisks', async () => {
     await open()
     const notes = screen.getByTestId('recipe-detail-notes')
-    expect(notes.textContent).toBe(NOTES)
+    // UX pass R1 (D8), display only: every character but the paired marks is there, in order, and each
+    // marked run is an element built from text. (On the wire and in the sheet the notes stay verbatim.)
+    expect(notes.textContent).toBe('Mojo Verde\n\nSteps\n1. Blend.\n   Keep the spacing.\n\nFinish\n- Fridge 7 days')
+    expect([...notes.querySelectorAll('strong')].map(e => e.textContent)).toEqual(['Steps', 'Finish'])
     expect(notes.style.whiteSpace).toBe('pre-wrap')
   })
 
