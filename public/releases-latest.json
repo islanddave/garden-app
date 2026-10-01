@@ -1,9 +1,9 @@
 {
-  "version": "4.164.0",
-  "date": "2026-09-29",
+  "version": "4.167.0",
+  "date": "2026-09-30",
   "highlights": [
-    "Ferments: list what went in — from a planting (no pick needed), a pick, an earlier put-up (it comes off that jar or bag) or just a name — with grams, brand, fresh, frozen or dried, and a note; what came from your garden is marked.",
-    "Salt: dry, brine or salted then rinsed, as a percent of the veg, the veg and water, or the water, with the grams worked out; more than one salt step for kimchi.",
-    "Jar or crock and its size, roughly how much went in, an estimated heat (est. SHU) for the batch and each bottle, check-ins with Topped up brine, Pushed it back under and Skimmed the top, and every step editable afterwards, including after bottling."
+    "Recipes: keep a recipe with a link or your own notes, what goes in, the ferment jar and the bottle, and how long it lasts and where.",
+    "Give recipes a type — sauces, salsas, pestos, jams and more — or make your own.",
+    "Save any batch as a recipe, start one with Make this, or log I made this; a jar put up from a recipe gets the recipe's discard date when it's stored where the recipe says."
   ]
 }

@@ -1,5 +1,33 @@
 [
   {
+    "version": "4.167.0",
+    "date": "2026-09-30",
+    "highlights": [
+      "Recipes: keep a recipe with a link or your own notes, what goes in, the ferment jar and the bottle, and how long it lasts and where.",
+      "Give recipes a type — sauces, salsas, pestos, jams and more — or make your own.",
+      "Save any batch as a recipe, start one with Make this, or log I made this; a jar put up from a recipe gets the recipe's discard date when it's stored where the recipe says."
+    ]
+  },
+  {
+    "version": "4.166.0",
+    "date": "2026-09-30",
+    "highlights": [
+      "Tell a jar how it was made: pick what went in and which jars came out, and its Next time notes come along.",
+      "Start a batch like a past one, and record a make you kept nothing from with the day it happened.",
+      "Bought items, crops and ended plantings show up in What went in; a planting lists every batch that used it.",
+      "Archiving a planting no longer fails because of a removed batch."
+    ]
+  },
+  {
+    "version": "4.165.0",
+    "date": "2026-09-30",
+    "highlights": [
+      "What's put up is now the Pantry: your jars and the things you buy, in one list you can search.",
+      "Use one or mark something used up in one tap, and undo it; mark a jar went bad or given away.",
+      "Log anything new with Put something up, and walk any shelf, fridge or freezer — not just the freezers."
+    ]
+  },
+  {
     "version": "4.164.0",
     "date": "2026-09-29",
     "highlights": [

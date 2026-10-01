@@ -1,9 +1,16 @@
 {
   "floors": [
     {
+      "floor": "v4.167.0",
+      "since": "v4.167.0",
+      "reason": "Put-Up B\u2032 schema and writers (v5-pantry-001, v5-batchbuilder-001, v5-recipes-001): once prod holds pantry items, pantry lines, recipes or recipe-linked batches, older code over that data misreads it \u2014 v4.164.0 has no route for /api/pantry or /api/recipes, drops pantry lines from What went in and the planting reads, ignores kitchen_batch.recipe_id and the recipe discard basis, and its put-up Remove hard-ignores the jar_was_used / jar_in_batch refusals. Forward-fix only (05-release-train \u00a74).",
+      "ledger": "V5-PUTUPMAKETRUE-001",
+      "undo_instead": null
+    },
+    {
       "floor": "v4.164.0",
       "since": "v4.164.0",
-      "reason": "put-up + ferment schema and writers (v5-putupmake-001, v5-fermentpath-001): older code over this data refuses nothing it should — the legacy PUT has no delta_at refusal and silently overwrites counts that ferment draws moved, getBatch returns taken-out lines, a hard DELETE of a drawn line 23503s on pantry_use, cached 4.164.0 bundles' PATCH /api/preservation/:id and POST /api/pantry/uses hit no route, and after 0p a 1a date edit raises 23514. Forward-fix only.",
+      "reason": "put-up + ferment schema and writers (v5-putupmake-001, v5-fermentpath-001): older code over this data refuses nothing it should \u2014 the legacy PUT has no delta_at refusal and silently overwrites counts that ferment draws moved, getBatch returns taken-out lines, a hard DELETE of a drawn line 23503s on pantry_use, cached 4.164.0 bundles' PATCH /api/preservation/:id and POST /api/pantry/uses hit no route, and after 0p a 1a date edit raises 23514. Forward-fix only.",
       "ledger": "V5-PUTUPMAKETRUE-001",
       "undo_instead": null
     },
