@@ -67,17 +67,11 @@ export function estimateChips(now = new Date()) {
   return chips
 }
 
-function isSameLocalDay(iso, now) {
-  if (!iso) return false
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return false
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
-}
-
-// "Nothing is preselected unless the batch was started or last checked today" (§2.4).
-export function preselectWhen(batch, now = new Date()) {
-  if (!batch) return null
-  return isSameLocalDay(batch.started_at, now) || isSameLocalDay(batch.current_stage_entered_at, now) ? 'today' : null
+// When starts on Today, on every batch (Put-Up UX pass R1, D12; before it, only a batch started or last
+// checked today did). The chips stay on screen, so any other answer is one tap; an untouched sheet stores
+// today as the put-up day.
+export function preselectWhen() {
+  return 'today'
 }
 
 // The date "Not sure" resolves to: the batch's latest dated event, never before its start. Returned

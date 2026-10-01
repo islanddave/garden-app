@@ -39,13 +39,15 @@ describe('When — the estimate chips are windows from today (§3.6)', () => {
 })
 
 describe('When — preselect and resolve (§2.4)', () => {
-  it('preselects Today only when the batch was started or last checked today', () => {
+  // Put-Up UX pass R1, D12. MUTATION (M8a): answer Today only for a batch started or checked today -> the
+  // third and fourth arms red.
+  it('preselects Today on every batch, whenever it was started or last checked', () => {
     expect(preselectWhen({ started_at: new Date(2026, 8, 29, 8).toISOString() }, NOW)).toBe('today')
     expect(preselectWhen({ started_at: new Date(2026, 8, 20).toISOString(),
       current_stage_entered_at: new Date(2026, 8, 29, 7).toISOString() }, NOW)).toBe('today')
     expect(preselectWhen({ started_at: new Date(2026, 8, 20).toISOString(),
-      current_stage_entered_at: new Date(2026, 8, 28, 23).toISOString() }, NOW)).toBeNull()
-    expect(preselectWhen({ started_at: null }, NOW)).toBeNull()
+      current_stage_entered_at: new Date(2026, 8, 28, 23).toISOString() }, NOW)).toBe('today')
+    expect(preselectWhen({ started_at: null }, NOW)).toBe('today')
   })
 
   it('Today and Yesterday are days; an estimate stores its window start', () => {

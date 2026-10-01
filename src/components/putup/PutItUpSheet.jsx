@@ -3,9 +3,9 @@
 // One sheet, one atomic keyed write, repeatable ("More to put up later") or final ("Put it up and
 // finish", the default and the primary).
 //
-// WHAT IT ASKS (the Jen rule, V4 §6.3 — required at open: 3, fewer when When is preselected):
-//   · When — Today · Yesterday · Earlier… · Not sure. Nothing is preselected unless the batch was
-//     started or last checked today. The resolved date is shown in words before Save.
+// WHAT IT ASKS (the Jen rule, V4 §6.3 — required at open: 2, what it is now and row 1's place):
+//   · When — Today · Yesterday · Earlier… · Not sure. Today is chosen at open on every batch (Put-Up UX
+//     pass R1, D12) and any other answer is one tap. The resolved date is shown in words before Save.
 //   · What it is now — one method tap from the kind's chips (Appendix B) + More….
 //   · Rows — "2 × 8 oz woozy · Fridge": count (48 px − / +), container, place. Row 1's place is the
 //     third required answer; rows 2..N copy container and place from the row above, shown in words.
@@ -361,7 +361,9 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
     key: '', chip: preChip, estimate: null, pickedDate: '', method: null, rows: [recipeFirstRow(batch.recipe)], sitting: EMPTY_SITTING,
   })
   const [key, setKey] = useState(initial.key)
-  const [chip, setChip] = useState(initial.chip)
+  // A draft stored before When started on Today can hold `chip: null` (nothing chosen yet). It restores to
+  // Today like any other open — never to a When nobody asked for and Save then refuses.
+  const [chip, setChip] = useState(initial.chip ?? preChip)
   const [estimate, setEstimate] = useState(initial.estimate)
   const [pickedDate, setPickedDate] = useState(initial.pickedDate)
   const [method, setMethod] = useState(initial.method)
@@ -504,7 +506,8 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
         style={{ padding: '0 18px', scrollPaddingTop: 32, scrollPaddingBottom: FOOTER_PX, overflowAnchor: 'none' }}>
         <p data-testid="putup-batch" style={{ margin: '0 0 10px', color: P.mid, fontSize: '0.86rem', fontWeight: 600 }}>{batch.label}</p>
 
-        <RadioChips label="When?" name="When was it put up?" required={!preChip}
+        {/* The required mark follows the LIVE chip, not what the open preselected. */}
+        <RadioChips label="When?" name="When was it put up?" required={!chip}
           options={WHEN_CHIPS.map(c => ({ value: c.id, label: c.label }))} value={chip} disabled={saving}
           idPrefix="putup-when" onChange={v => { setChip(v); if (v !== 'earlier') { setEstimate(null); setPickedDate('') } setErr(null) }} />
         {chip === 'earlier' && (
