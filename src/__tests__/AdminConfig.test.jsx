@@ -262,6 +262,36 @@ describe('any page can take a slot', () => {
     expect(screen.getByLabelText('Add Seeds to the bar').disabled).toBe(false)
   })
 
+  // QA M3 — the guards inside add(). The Add button is gone (or disabled) by the next render, so the
+  // only way to reach them is a second tap that lands BEFORE that render: both clicks inside one act().
+  // The rows list cannot show a repeat (barSlotRows draws a page once), so the count and the saved
+  // payload are what is read.
+  // KILLING MUTATION: drop `d.includes(id)` from add(). RESULT: RED — "5 of 5" and Seeds saved twice.
+  it('a double tap on Add adds the page once', async () => {
+    await open()
+    removeFromBar('Harvests')
+    removeFromBar('Put-Up')
+    const addSeeds = screen.getByLabelText('Add Seeds to the bar')
+    act(() => { fireEvent.click(addSeeds); fireEvent.click(addSeeds) })
+    expect(rows()).toEqual(['today', 'garden', 'create', 'seeds'])
+    expect(screen.getByRole('heading', { level: 2, name: /In your bar/ }).textContent).toBe('In your bar · 4 of 5')
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(saveSpy.mock.calls[0][0].layout).toEqual({ order: ['today', 'garden', 'create', 'seeds'], hidden: [] })
+  })
+
+  // KILLING MUTATION: drop `d.length >= BAR_MAX_SLOTS` from add(). RESULT: RED — a sixth slot is saved.
+  it('two different Adds in one tap-burst cannot take the bar past five', async () => {
+    await open()
+    removeFromBar('Put-Up')
+    const addSeeds = screen.getByLabelText('Add Seeds to the bar')
+    const addPhotos = screen.getByLabelText('Add Photos to the bar')
+    act(() => { fireEvent.click(addSeeds); fireEvent.click(addPhotos) })
+    expect(rows()).toEqual(['today', 'garden', 'create', 'harvests', 'seeds'])
+    expect(screen.getByRole('heading', { level: 2, name: /In your bar/ }).textContent).toBe('In your bar · 5 of 5')
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(saveSpy.mock.calls[0][0].layout.order).toEqual(['today', 'garden', 'create', 'harvests', 'seeds'])
+  })
+
   it('Dave’s bar: Harvests to More, Seeds in — saved as the bar itself', async () => {
     await open()
     removeFromBar('Harvests')

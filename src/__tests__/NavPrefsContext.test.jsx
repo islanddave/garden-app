@@ -276,6 +276,23 @@ describe('pins — optimistic, durable, and rolled back only on a refusal', () =
     expect(outcome).toBe('pinned')
   })
 
+  // QA M7 — a pinned row this person has put ON THE BAR is not drawn in More, so it sleeps like any
+  // other pin that is not drawn and must not take one of the four. Four stored pins, one of them on the
+  // bar: three are drawn, and a fourth can be added.
+  // KILLING MUTATION: drop `onBar` from togglePin's drawnPinIds call. RESULT: RED — 'full'.
+  it('a pin whose row is on the bar does not count toward the four', async () => {
+    fetchPrefsSpy.mockResolvedValue({
+      bar_layout: { order: ['today', 'seeds', 'create', 'put-up'], hidden: [] },
+      more_pins: ['seeds', 'photos', 'admin', 'about'], can_edit_bar: false,
+    })
+    await boot()
+    expect(text('bar')).toBe('today,seeds,create,put-up')
+    let outcome
+    await act(async () => { outcome = await api.current.togglePin('helper') })
+    expect(outcome).toBe('pinned')
+    expect(saveSpy.mock.calls[0][0].ids).toEqual(['seeds', 'photos', 'admin', 'about', 'helper'])
+  })
+
   // The launch re-send does not wait for prefs: a slow or failed GET must not strand the pin.
   // KILLING MUTATION: drop the [s.epoch] launch effect (leaving only the on-landing re-send).
   // RESULT: RED — with prefs never answering, nothing is sent.
