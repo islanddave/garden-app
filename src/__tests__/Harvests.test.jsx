@@ -114,7 +114,8 @@ describe('Harvests page', () => {
     fetchSpy.mockResolvedValue({
       entries: [
         { event_id: 'e7', day_key: D1, event_date: `${D1}T12:00:00Z`, plant_id: 'p7', project_id: null, crop_name: 'Tomato', variety_name: 'Sungold', quantity: 4, unit: 'count', quality_rating: null, harvest_log_id: 'h7', photos: [] },
-        // A removed planting stays non-navigable with or without a project; its event is still editable.
+        // A removed planting stays non-navigable, and with no project its event has no Edit door either:
+        // the events Lambda owns a project-less event through its LIVE planting, so the page would 404.
         { event_id: 'e8', day_key: D2, event_date: `${D2}T12:00:00Z`, plant_id: 'p8', project_id: null, planting_removed: true, crop_name: 'Basil', variety_name: 'Genovese', quantity: 2, unit: 'bunch', quality_rating: null, harvest_log_id: 'h8', photos: [] },
       ],
       aggregates: { crops: [], other: [] },
@@ -126,7 +127,7 @@ describe('Harvests page', () => {
     expect(screen.getByText('Sungold').closest('a').getAttribute('href')).toBe('/plantings/p7')
     expect(screen.getByText('Genovese').closest('a')).toBeNull()
     const edits = screen.getAllByRole('link', { name: 'Open this harvest event' }).map((a) => a.getAttribute('href'))
-    expect(edits).toEqual(['/events/e7', '/events/e8'])
+    expect(edits).toEqual(['/events/e7'])
   })
 
   it('surfaces a retryable error state', async () => {

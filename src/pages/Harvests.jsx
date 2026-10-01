@@ -583,7 +583,9 @@ function HarvestEntry({ entry: e }) {
     // V4-PROJHIDE-001: an unassigned (plantless) harvest has no planting to open; don't fall back to
     // the hidden project page. Flag OFF keeps the project link.
     : (unassigned && !PROJECTS_HIDDEN && e.project_id ? `/projects/${e.project_id}` : null)
-  const editTo = e.event_id
+  // A project-less event is owned through its LIVE planting (lambda/events eventOwnership): with the
+  // planting removed, or no planting at all, GET/PUT/DELETE answer 404 — so no Edit door is drawn.
+  const editTo = e.event_id && (e.project_id || (!removed && e.plant_id))
     ? (e.project_id ? `/projects/${e.project_id}/events/${e.event_id}` : `/events/${e.event_id}`)
     : null
 

@@ -83,7 +83,7 @@ describe('Harvests — PROJHIDE', () => {
     expect(screen.getByText('Sungold').closest('a').getAttribute('href')).toBe('/plantings/p7')
     expect(screen.getByText('Basil').closest('a')).toBeNull()
     const edits = screen.getAllByRole('link', { name: 'Open this harvest event' }).map((a) => a.getAttribute('href'))
-    expect(edits).toEqual(['/events/e7', '/events/e8'])
+    expect(edits).toEqual(['/events/e7'])
   })
 
   // ── V4-HARVDEFAULT-001 arrival pins, duplicated in the FLAG-ON arm (design §2a / §6-S4) ─────────
