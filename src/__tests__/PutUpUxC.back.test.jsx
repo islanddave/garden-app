@@ -185,15 +185,21 @@ describe('Back in a panel returns to the action list; Back again closes the shee
     expect(atPage()).toBe(true)
   })
 
-  it('a move that SAVES closes the sheet and leaves the page\'s entry current', async () => {
-    const onMoved = vi.fn()
-    await openSheet(JAR, { onMoved })
+  // The host is told of the move only once the sheet's Back entry is consumed: it brings its line into
+  // view, and a scroll made while that entry is still being popped is undone by the pop.
+  it('a move that SAVES closes the sheet, leaves the page\'s entry current, and only THEN tells the host', async () => {
+    const seen = []
+    const onMoved = vi.fn((m) => seen.push({ place: m.place.label, sheetOpen: !!screen.queryByRole('dialog'), atPage: atPage() }))
+    const onChanged = vi.fn()
+    await openSheet(JAR, { onMoved, onChanged })
     fireEvent.click(screen.getByTestId('row-move'))
     fireEvent.click(await screen.findByTestId('move-place-id:loc-1'))
     const from = pops
     fireEvent.click(screen.getByTestId('move-save'))
-    await waitFor(() => expect(onMoved).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith('moved'))
     await settle(from)
+    await waitFor(() => expect(onMoved).toHaveBeenCalledTimes(1))
+    expect(seen).toEqual([{ place: 'Chest Freezer 1', sheetOpen: false, atPage: true }])
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(atPage()).toBe(true)
     expect(url()).toBe(PAGE_URL)

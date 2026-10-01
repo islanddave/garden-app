@@ -279,6 +279,26 @@ describe('after the move — one line at the top of the Pantry, from the row the
     expect(words(line)).toBe('Pesto cubes — moved to Chest Freezer 1 · discard by Mar 1, 2031 · set by hand')
   })
 
+  // The row that moved may be a screen or more down the list, and it leaves its place when the list is
+  // re-read: a line at the top that nobody is looking at says nothing. (Found on the 426×836 render: the
+  // line was 900 px above the picture.)
+  it('the line is brought into view when it appears, and not again for a re-render', async () => {
+    const seen = []
+    const had = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollIntoView')
+    Element.prototype.scrollIntoView = function scrollIntoView(arg) { seen.push([this.getAttribute('data-testid'), arg]) }
+    try {
+      const { line } = await moveOnPantry(TYPED, 'id:loc-1')
+      await waitFor(() => expect(seen).toEqual([['pantry-moved', { block: 'center' }]]))   // a frame after it appears
+      fireEvent.click(screen.getByTestId('pantry-row-open-put_up:jar-t'))      // any re-render of the list
+      await new Promise(r => setTimeout(r, 50))
+      expect(seen).toHaveLength(1)
+      expect(line.isConnected).toBe(true)
+    } finally {
+      if (had) Object.defineProperty(Element.prototype, 'scrollIntoView', had)
+      else delete Element.prototype.scrollIntoView
+    }
+  })
+
   it('a move within one kind keeps the date and its basis words', async () => {
     const { line } = await moveOnPantry(FROZEN, 'id:loc-2')
     expect(words(line)).toBe('Blueberries — moved to Chest Freezer 2 · discard by Jul 1, 2031 · general figure: whole freeze, deep freezer')

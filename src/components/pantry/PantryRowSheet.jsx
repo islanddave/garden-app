@@ -220,7 +220,9 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
 
         {/* Move it — a panel, like the others (it rides this sheet's one Back entry). The rule line reads
             the row's STORED basis and date and the kind of place it is in now. A bought item moves by a
-            PATCH of its place, with no When. What the write answered goes to the host through `onMoved`. */}
+            PATCH of its place, with no When. What the write answered goes to the host through `onMoved` —
+            AFTER the sheet has closed and its Back entry is consumed (landAfterClose): the host brings its
+            line into view, and a scroll made while that entry is still being popped is undone by the pop. */}
         {panel === 'move' && (
           <MoveJarSheet open now={now} whenless={!jar} onBusyChange={setPanelBusy}
             jar={{ id: row.stock_id, label: row.name, storage_location_id: row.place?.id ?? null, storage_kind: row.place?.kind ?? null,
@@ -231,7 +233,10 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
               return r?.item ?? r
             }}
             onClose={closePanel}
-            onMoved={({ saved, place }) => { onMoved?.({ row, place, saved }); onChanged?.('moved'); onClose?.() }} />
+            onMoved={({ saved, place }) => {
+              onChanged?.('moved')
+              landAfterClose(onClose, () => onMoved?.({ row, place, saved }))
+            }} />
         )}
         {panel === 'give' && (
           <CountPanel row={row} busy={busy} idPrefix="give" start="one" question="How many did you give away?"

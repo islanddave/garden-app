@@ -118,8 +118,23 @@ export default function PantryView({
 }) {
   const [openRow, setOpenRow] = useState(null)
   // The last move made from this list, said in place at the top (the place it went and what the server
-  // answered about its date) until it is closed or the next move replaces it.
+  // answered about its date) until it is closed or the next move replaces it. The row that moved may sit
+  // a screen or more down the list — and it leaves its place there the moment the list is re-read — so
+  // the line is brought into view when it appears: it is the only place the move's result is said.
+  // (A frame later, not in the commit: the row sheet has just closed, and a browser that restores the
+  // page's scroll as the sheet's Back entry is popped must have finished doing so.)
   const [moved, setMoved] = useState(null)
+  const movedRef = useRef(null)
+  useEffect(() => {
+    if (!moved) return undefined
+    const show = () => {
+      const el = movedRef.current
+      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' })
+    }
+    if (typeof requestAnimationFrame !== 'function') { show(); return undefined }
+    const frame = requestAnimationFrame(show)
+    return () => cancelAnimationFrame(frame)
+  }, [moved])
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
   const batches = useBatchNames({ fetch, rows })
 
@@ -153,7 +168,7 @@ export default function PantryView({
       )}
 
       {moved && (
-        <div role="status" data-testid="pantry-moved" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: T.space.md,
+        <div role="status" data-testid="pantry-moved" ref={movedRef} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: T.space.md,
           padding: '4px 4px 4px 12px', background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton }}>
           <span style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: P.green, overflowWrap: 'anywhere' }}>{moved}</span>
           <button type="button" data-testid="pantry-moved-close" aria-label="Close — the moved line" onClick={() => setMoved(null)}
