@@ -81,6 +81,9 @@ export default function RecipesView({ onBatchStarted, now, openId: pageOpenId = 
     return [...seen.values()].sort((a, b) => (a.sort ?? 1e9) - (b.sort ?? 1e9) || String(a.label).localeCompare(String(b.label)))
   }, [recipes])
 
+  // The types in use lead the sheet's type chips (TypePicker); the rest wait behind "More types…".
+  const usedTypeIds = useMemo(() => usedTypes.map(t => t.id), [usedTypes])
+
   const onTypeCreated = useCallback((t) => setTypes(ts => (ts.some(x => x.id === t.id) ? ts : [...ts, t])), [])
 
   // Controlled: the page closed the recipe (its Back, or a Remove it was told of), so the list is stale.
@@ -102,7 +105,7 @@ export default function RecipesView({ onBatchStarted, now, openId: pageOpenId = 
         <RecipeDetail id={openId} fetch={fetch} now={now} ownBack={!controlled} onBack={leaveRecipe}
           onEdit={(detail) => setSheet({ recipe: detail })} onBatchStarted={handBatch}
           onRemoved={leaveRecipe} key={`${openId}:${sheet ? 'e' : 'v'}`} />
-        <RecipeSheet open={!!sheet} recipe={sheet?.recipe ?? null} types={types} fetch={fetch} onTypeCreated={onTypeCreated}
+        <RecipeSheet open={!!sheet} recipe={sheet?.recipe ?? null} types={types} usedTypeIds={usedTypeIds} fetch={fetch} onTypeCreated={onTypeCreated}
           onClose={() => setSheet(null)} onSaved={() => { setSheet(null); loadList() }} />
       </>
     )
@@ -162,7 +165,7 @@ export default function RecipesView({ onBatchStarted, now, openId: pageOpenId = 
         </section>
       ))}
 
-      <RecipeSheet open={!!sheet} recipe={null} types={types} fetch={fetch} onTypeCreated={onTypeCreated}
+      <RecipeSheet open={!!sheet} recipe={null} types={types} usedTypeIds={usedTypeIds} fetch={fetch} onTypeCreated={onTypeCreated}
         onClose={() => setSheet(null)} onSaved={onNewSaved} />
     </div>
   )

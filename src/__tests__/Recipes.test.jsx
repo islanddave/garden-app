@@ -252,6 +252,7 @@ describe('the create sheet and its type picker', () => {
     renderView()
     await waitFor(() => expect(screen.getAllByTestId('recipes-row')).toHaveLength(3))
     tap('recipes-new')
+    tap('recipe-type-more')          // UX pass R1 (D7): the types not yet in use, and "New type…", sit behind "More types…"
     tap('recipe-type-new')
     type(screen.getByTestId('recipe-type-new-input'), 'Shrub')
     await act(async () => { tap('recipe-type-new-save') })

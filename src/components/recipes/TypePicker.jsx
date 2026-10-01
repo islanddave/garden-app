@@ -3,18 +3,37 @@
 // then "New type…" which opens one inline field and find-or-creates the type (POST /api/recipes/types — an
 // existing name, any case or spacing, comes back as the existing type; the crop-type precedent). Optional:
 // tapping the chosen chip again clears it. Plain markup (functionality first; design pass later).
-import React, { useId, useState } from 'react'
+//
+// Put-Up UX pass R1: sixteen built-in chips at 48 px pushed the rest of the sheet off the first screen, so the
+// row opens SHORT — the type the picker opened on, then the types this household's recipes already use
+// (`usedIds`) — and "More types…" brings the rest, with "New type…" at their end. Every type is still one
+// more tap away at most. The order is fixed when the picker opens (recipes.js typeChips), so a chip never
+// moves under a finger; a chosen chip is never off screen.
+import React, { useEffect, useId, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import SelectChip from '../forms/SelectChip.jsx'
-import { sortTypes, NEW_TYPE_CTA, RECIPE_TYPE_LABEL_MAX } from './recipes.js'
+import { typeChips, NEW_TYPE_CTA, MORE_TYPES_CTA, TYPE_LABEL, RECIPE_TYPE_LABEL_MAX } from './recipes.js'
 
-export default function TypePicker({ types, value, onChange, onCreated, fetch, disabled = false }) {
+export default function TypePicker({ types, value, onChange, onCreated, fetch, usedIds = [], disabled = false }) {
   const [adding, setAdding] = useState(false)
   const [label, setLabel] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [pinned] = useState(value ?? null)            // the type it opened on: it leads, and stays put
   const inputId = `recipe-type-new-${useId()}`
-  const list = sortTypes(types)
+  const groupRef = useRef(null)
+  const focusRevealed = useRef(false)
+  const { front, rest } = typeChips({ types, pinned, usedIds })
+  const chosenBehind = !moreOpen && rest.find(t => t.id === value)
+  const shown = moreOpen ? [...front, ...rest] : (chosenBehind ? [...front, chosenBehind] : front)
+
+  // "More types…" leaves the row when it is tapped; focus goes to the first chip it revealed.
+  useEffect(() => {
+    if (!focusRevealed.current) return
+    focusRevealed.current = false
+    groupRef.current?.querySelector('[data-revealed="first"]')?.focus()
+  })
 
   const create = async () => {
     const text = label.trim()
@@ -36,16 +55,24 @@ export default function TypePicker({ types, value, onChange, onCreated, fetch, d
 
   return (
     <div data-testid="recipe-type-picker">
-      <div role="group" aria-label="What it makes" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {list.map(t => (
-          <SelectChip key={t.id} small active={value === t.id} disabled={disabled}
-            data-testid="recipe-type-chip" data-type-id={t.id}
+      <div ref={groupRef} role="group" aria-label={TYPE_LABEL} style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {shown.map(t => (
+          <SelectChip key={t.id} small touch active={value === t.id} disabled={disabled}
+            data-testid="recipe-type-chip" data-type-id={t.id} data-revealed={moreOpen && rest[0]?.id === t.id ? 'first' : undefined}
             onClick={() => onChange?.(value === t.id ? null : t.id)}>
             {t.label}
           </SelectChip>
         ))}
-        {!adding && (
-          <SelectChip small active={false} disabled={disabled} data-testid="recipe-type-new"
+        {!moreOpen && (
+          <SelectChip small touch active={false} disabled={disabled} data-testid="recipe-type-more"
+            aria-pressed={undefined} aria-expanded="false"
+            onClick={() => { focusRevealed.current = true; setMoreOpen(true) }}>
+            {MORE_TYPES_CTA}
+          </SelectChip>
+        )}
+        {moreOpen && !adding && (
+          <SelectChip small touch active={false} disabled={disabled} data-testid="recipe-type-new"
+            data-revealed={rest.length === 0 ? 'first' : undefined}
             onClick={() => { setAdding(true); setErr(null) }}>
             {NEW_TYPE_CTA}
           </SelectChip>
@@ -59,11 +86,11 @@ export default function TypePicker({ types, value, onChange, onCreated, fetch, d
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); create() } }}
             style={{ minHeight: T.tapMinHeight, padding: '6px 10px', border: `1px solid ${P.border}`, borderRadius: T.radiusButton, fontFamily: 'inherit', fontSize: T.type.sm }} />
           <button type="button" data-testid="recipe-type-new-save" disabled={busy} onClick={create}
-            style={{ minHeight: T.tapMinHeight, padding: '6px 12px', background: 'none', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton, color: P.green, fontFamily: 'inherit', fontWeight: 600, cursor: 'pointer' }}>
+            style={{ minHeight: T.buttonMinHeight, padding: '6px 12px', background: 'none', border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton, color: P.green, fontFamily: 'inherit', fontWeight: 600, cursor: 'pointer' }}>
             {busy ? 'Adding…' : 'Add'}
           </button>
           <button type="button" data-testid="recipe-type-new-cancel" disabled={busy} onClick={() => { setAdding(false); setLabel(''); setErr(null) }}
-            style={{ minHeight: T.tapMinHeight, padding: '6px 8px', background: 'none', border: 'none', color: P.light, fontFamily: 'inherit', cursor: 'pointer' }}>
+            style={{ minHeight: T.buttonMinHeight, padding: '6px 8px', background: 'none', border: 'none', color: P.light, fontFamily: 'inherit', cursor: 'pointer' }}>
             Cancel
           </button>
         </div>
