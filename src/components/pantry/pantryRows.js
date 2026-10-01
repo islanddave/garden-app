@@ -181,6 +181,33 @@ export function afterUseWords({ action, jar, use }) {
   return 'used it up'
 }
 
+// The in-place line after a move: "<name> — moved to <place> · <the discard words of the row the server
+// answered>" (PLAN-V3 D4). The date, its basis and its status are the ANSWER's, never worked out here: a
+// put-up's move answers the jar (use_by_target, use_by_basis, use_by_status); a bought item's answers the
+// item, whose date a move never touches. `place` is the chip that was tapped. An answer that is not a row
+// (nothing came back) leaves the line at the name and the place.
+const ANSWER_STATUS = { ok: 'ok', use_soon: 'soon', past_use_by: 'past' }
+export function movedWords({ row, place, saved, now = new Date() }) {
+  const name = String(row?.name ?? '').trim() || 'It'
+  const to = String(place?.label ?? '').trim()
+  const head = to ? `${name} — moved to ${to}` : `${name} — moved`
+  if (!row || !saved || typeof saved !== 'object') return head
+  let discard
+  if (isItem(row)) {
+    const date = 'use_by_target' in saved ? (saved.use_by_target ?? null) : (row.discard?.date ?? null)
+    discard = { date, basis: date ? 'typed' : null, status: date && date === row.discard?.date ? (row.discard?.status ?? null) : null }
+  } else {
+    if (!('use_by_target' in saved) && !('use_by_basis' in saved)) return head
+    discard = { ...(row.discard ?? {}), date: saved.use_by_target ?? null, basis: saved.use_by_basis ?? null,
+      status: ANSWER_STATUS[saved.use_by_status] ?? null }
+  }
+  const words = discardChip({
+    ...row, method: saved.method ?? row.method ?? null, discard,
+    place: { id: saved.storage_location_id ?? place?.id ?? null, label: to || null, kind: place?.kind ?? null },
+  }, now)
+  return words ? `${head} · ${words}` : head
+}
+
 // Did that use FINISH the row? A row that is still live after a use (Used one, some given away, some gone
 // bad) keeps its inline action beside the Undo; one the use finished (used up, all of it gone bad, nothing
 // left) shows only its Undo. Went bad is finished unless the server says some are left — the answer that

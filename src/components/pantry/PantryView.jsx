@@ -11,6 +11,8 @@
 // the row reads "3 left · used one · Undo" until their next visit — no timer. The record of what they did
 // lives in the PAGE (`recent`, handed in), so switching segments inside one visit keeps it, and a
 // used-up row the server no longer lists stays on screen for its Undo (at full opacity, words in P.mid).
+// A MOVE made from a row here is said in one line at the top — where it went, and what the server
+// answered about its discard date (pantryRows.movedWords) — until it is closed or the next move.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -22,7 +24,7 @@ import PantryRowSheet from './PantryRowSheet.jsx'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
 import {
   groupRows, rowKey, isItem, leftWords, discardChip, ageWords, inlineAction, ACTION_LABELS, USED_ONE, USED_UP,
-  afterUseWords, finishedByUse, onlyUseSoon,
+  afterUseWords, finishedByUse, movedWords, onlyUseSoon,
 } from './pantryRows.js'
 import { BRIDGE_TEXT } from './pantryBridge.js'
 
@@ -72,6 +74,9 @@ export default function PantryView({
   showBridge = false, onDismissBridge, now,
 }) {
   const [openRow, setOpenRow] = useState(null)
+  // The last move made from this list, said in place at the top (the place it went and what the server
+  // answered about its date) until it is closed or the next move replaces it.
+  const [moved, setMoved] = useState(null)
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
 
   const shown = useMemo(() => {
@@ -101,6 +106,17 @@ export default function PantryView({
       {completion && (
         <CompletionLine completion={completion} fetch={fetch} onDone={onCompletionDone} onChanged={onReload}
           onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} />
+      )}
+
+      {moved && (
+        <div role="status" data-testid="pantry-moved" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: T.space.md,
+          padding: '4px 4px 4px 12px', background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: P.green, overflowWrap: 'anywhere' }}>{moved}</span>
+          <button type="button" data-testid="pantry-moved-close" aria-label="Close — the moved line" onClick={() => setMoved(null)}
+            style={{ minWidth: 48, minHeight: T.buttonMinHeight, background: 'none', border: 'none', color: P.mid, fontSize: '1.1rem', cursor: 'pointer' }}>
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
       )}
 
       <div style={{ marginBottom: T.space.md }}>
@@ -153,7 +169,7 @@ export default function PantryView({
 
       <PantryRowSheet row={openRow} fetch={fetch} onClose={() => setOpenRow(null)} now={now}
         JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
-        onUsed={record} onChanged={() => onReload?.()} />
+        onUsed={record} onChanged={() => onReload?.()} onMoved={(m) => setMoved(movedWords({ ...m, now: nowDate }))} />
     </div>
   )
 }

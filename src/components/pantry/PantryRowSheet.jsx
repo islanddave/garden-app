@@ -80,15 +80,18 @@ export function jarRecordWords(rec, now = new Date()) {
 
 // `onHowItWasMade(row)` is the batch-builder lane's door (useHowItWasMade().open); `canHowItWasMade(row)`
 // says whether this row may offer it (a put-up with no batch). Neither handed in → no door.
-export default function PantryRowSheet({ row, fetch, onClose, onUsed, onChanged, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, now }) {
+// `onMoved({ row, place, saved })`: a move landed — the place tapped and the row the server answered (a
+// put-up's jar, a bought item's item), for the host's in-place line. `onChanged('moved')` still follows.
+export default function PantryRowSheet({ row, fetch, onClose, onUsed, onChanged, onMoved = null, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, now }) {
   if (!row) return null
   return <RowSheetOpen key={`${row.stock_kind}:${row.stock_id}`} row={row} fetch={fetch} onClose={onClose} onUsed={onUsed}
-    onChanged={onChanged} JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} now={now} />
+    onChanged={onChanged} onMoved={onMoved} JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} now={now} />
 }
 
-function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHowItWasMade, canHowItWasMade, now }) {
+function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEditor, onHowItWasMade, canHowItWasMade, now }) {
   const [panel, setPanel] = useState(null)      // null | 'move' | 'next' | 'give' | 'went-bad' | 'edit'
   const [busy, setBusy] = useState(false)
+  const [panelBusy, setPanelBusy] = useState(false)   // the Move panel's write, in flight
   const [err, setErr] = useState(null)
   const writingRef = useRef(false)
   // The one-tap Went bad's key: minted at the first tap and kept, so a retry after a lost answer is the
@@ -148,20 +151,8 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHow
   const chip = discardChip(row, nowDate)
   const recWords = rec ? jarRecordWords(rec, nowDate) : null
 
-  if (panel === 'move') {
-    return (
-      <MoveJarSheet open jar={{ id: row.stock_id, label: row.name, storage_location_id: row.place?.id ?? null }} now={now}
-        whenless={!jar}
-        onSubmit={jar ? null : async ({ place }) => {
-          const id = await ensurePlaceId(fetch, place)
-          await patchPantryItem(fetch, row.stock_id, { storage_location_id: id })
-        }}
-        onClose={() => setPanel(null)} onMoved={() => { onChanged?.('moved'); onClose?.() }} />
-    )
-  }
-
   return (
-    <Sheet open onClose={onClose} title={row.name || 'In the pantry'} size="full" busy={busy} armsBack
+    <Sheet open onClose={onClose} title={row.name || 'In the pantry'} size="full" busy={busy || panelBusy} armsBack
       backIntercept={panel ? () => { closePanel(); return true } : null}>
       <div data-testid="row-sheet" data-row-key={`${row.stock_kind}:${row.stock_id}`} style={{ padding: '0 18px 18px', display: 'flex', flexDirection: 'column', gap: T.space.sm }}>
         {detail && <p style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{detail}</p>}
@@ -199,6 +190,21 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHow
           </div>
         )}
 
+        {/* Move it — a panel, like the others (it rides this sheet's one Back entry). The rule line reads
+            the row's STORED basis and date and the kind of place it is in now. A bought item moves by a
+            PATCH of its place, with no When. What the write answered goes to the host through `onMoved`. */}
+        {panel === 'move' && (
+          <MoveJarSheet open now={now} whenless={!jar} onBusyChange={setPanelBusy}
+            jar={{ id: row.stock_id, label: row.name, storage_location_id: row.place?.id ?? null, storage_kind: row.place?.kind ?? null,
+              use_by_target: row.discard?.date ?? null, use_by_basis: row.discard?.basis ?? null }}
+            onSubmit={jar ? null : async ({ place }) => {
+              const id = await ensurePlaceId(fetch, place)
+              const r = await patchPantryItem(fetch, row.stock_id, { storage_location_id: id })
+              return r?.item ?? r
+            }}
+            onClose={closePanel}
+            onMoved={({ saved, place }) => { onMoved?.({ row, place, saved }); onChanged?.('moved'); onClose?.() }} />
+        )}
         {panel === 'give' && (
           <CountPanel row={row} busy={busy} idPrefix="give" start="one" question="How many did you give away?"
             label="How many given away" cta="Gave it away" onCancel={closePanel}

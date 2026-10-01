@@ -244,16 +244,21 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
       })
     })
 
-    it('MoveJarSheet, Earlier… → Pick a date open, is clean (with nested-interactive)', async () => {
+    // Put-Up UX pass R1: Move it is a PANEL inside the Pantry row sheet (a named group, not a dialog of its
+    // own). Fullest state: a place tapped so the rule line is said, Earlier… → Pick a date open.
+    it('the Move panel (MoveJarSheet), a place tapped and Earlier… → Pick a date open, is clean (with nested-interactive)', async () => {
       fetchSpy.mockImplementation((path) => Promise.resolve(path === '/api/storage-locations' ? PLACES : null))
-      const { container } = render(<MoveJarSheet open jar={{ id: 'pl-1', label: 'Megatron reaper', storage_location_id: 'loc-1' }}
+      const { container } = render(<MoveJarSheet open jar={{ id: 'pl-1', label: 'Megatron reaper', storage_location_id: 'loc-1',
+        storage_kind: 'fridge', use_by_target: '2027-02-01', use_by_basis: 'table' }}
         onClose={() => {}} onMoved={() => {}} />)
-      await screen.findByTestId('move-place-id:loc-2')
+      fireEvent.click(await screen.findByTestId('move-place-id:loc-2'))
+      expect(screen.getByTestId('move-rule').textContent).not.toBe('')
       screen.getByTestId('move-when-earlier').click()
       await screen.findByTestId('move-when-pickdate')
       screen.getByTestId('move-when-pickdate').click()
       await screen.findByTestId('move-when-date')
-      expect(screen.getByRole('dialog', { name: 'Move it' })).toBeTruthy()
+      expect(screen.getByRole('group', { name: 'Move it' })).toBeTruthy()
+      expect(screen.queryByRole('dialog')).toBeNull()
       await expectNoA11yViolations(container, { label: 'MoveJarSheet', rules: NEW_RULES })
     })
   })

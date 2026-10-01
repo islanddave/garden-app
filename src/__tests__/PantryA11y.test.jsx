@@ -83,6 +83,25 @@ describe('Put-Up B′ — the Pantry components are clean (with nested-interacti
     await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PantryRowSheet item edit', rules: NEW_RULES })
   })
 
+  // Put-Up UX pass R1: the two panels the pass adds to the row sheet, each in its fullest state.
+  it('the row sheet — Went bad\'s count panel, and the Move panel with a place tapped and its rule line said', async () => {
+    wire()
+    let r = render(<PantryRowSheet row={ROWS[0]} fetch={stableFetch.fn} onClose={() => {}} />)
+    fireEvent.click(screen.getByTestId('row-went-bad'))
+    await screen.findByTestId('went-bad-panel')
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PantryRowSheet went bad', rules: NEW_RULES })
+    cleanup()
+    r = render(<PantryRowSheet row={ROWS[0]} fetch={stableFetch.fn} onClose={() => {}} />)
+    fireEvent.click(screen.getByTestId('row-move'))
+    fireEvent.click(await screen.findByTestId('move-place-id:loc-1'))
+    fireEvent.click(screen.getByTestId('move-when-earlier'))
+    fireEvent.click(await screen.findByTestId('move-when-pickdate'))
+    await screen.findByTestId('move-when-date')
+    expect(screen.getByTestId('move-rule').textContent).not.toBe('')
+    expect(screen.getByRole('group', { name: 'Move it' })).toBeTruthy()
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PantryRowSheet move', rules: NEW_RULES })
+  })
+
   it('Put something up — a planting chosen, a place, a method, More open', async () => {
     wire()
     const r = render(<PutSomethingUpSheet open onClose={() => {}} onSaved={() => {}} stockRows={ROWS} />)

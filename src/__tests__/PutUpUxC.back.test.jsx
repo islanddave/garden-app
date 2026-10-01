@@ -108,6 +108,7 @@ describe('Back on the action list closes the sheet', () => {
 
 // [the action tapped, what shows that its panel is open]
 const JAR_PANELS = [
+  ['row-move', 'move-panel'],
   ['row-next', 'next-panel'],
   ['row-give', 'give-panel'],
   ['row-went-bad', 'went-bad-panel'],
@@ -145,6 +146,53 @@ describe('Back in a panel returns to the action list; Back again closes the shee
     expect(screen.getByRole('dialog', { name: 'Oat milk' })).toBeTruthy()
     expect(armed()).toBe(true)
     await back()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(atPage()).toBe(true)
+    expect(url()).toBe(PAGE_URL)
+  })
+
+  // M9's test, in the plan's words. As a sheet of its own (the base) Move it took the row sheet's Back entry
+  // with it: the first Back closed Move, the row sheet came back UNARMED, and the second Back left the page.
+  it('Move it, Back → the action list with the sheet still open; Back → sheet closed, URL unchanged', async () => {
+    await openSheet(JAR)
+    fireEvent.click(screen.getByTestId('row-move'))
+    fireEvent.click(await screen.findByTestId('move-place-id:loc-1'))     // a place tapped, nothing saved
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)                 // one sheet, one Back entry
+    await back()
+    expect(screen.queryByTestId('move-panel')).toBeNull()
+    expect(screen.getByTestId('row-move')).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Megatron reaper' })).toBeTruthy()
+    expect(armed()).toBe(true)
+    expect(url()).toBe(PAGE_URL)
+    await back()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(atPage()).toBe(true)
+    expect(url()).toBe(PAGE_URL)
+    expect(fake.calls('POST')).toEqual([])
+  })
+
+  it('a bought item — row-move: the same two steps', async () => {
+    await openSheet(ITEM)
+    fireEvent.click(screen.getByTestId('row-move'))
+    expect(await screen.findByTestId('move-panel')).toBeTruthy()
+    await back()
+    expect(screen.queryByTestId('move-panel')).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Oat milk' })).toBeTruthy()
+    expect(armed()).toBe(true)
+    await back()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(atPage()).toBe(true)
+  })
+
+  it('a move that SAVES closes the sheet and leaves the page\'s entry current', async () => {
+    const onMoved = vi.fn()
+    await openSheet(JAR, { onMoved })
+    fireEvent.click(screen.getByTestId('row-move'))
+    fireEvent.click(await screen.findByTestId('move-place-id:loc-1'))
+    const from = pops
+    fireEvent.click(screen.getByTestId('move-save'))
+    await waitFor(() => expect(onMoved).toHaveBeenCalledTimes(1))
+    await settle(from)
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(atPage()).toBe(true)
     expect(url()).toBe(PAGE_URL)

@@ -166,7 +166,9 @@ describe('Move it (V4 §2.5, §3.4)', () => {
     fireEvent.click(await screen.findByTestId('row-move'))
     await screen.findByTestId('move-place-id:loc-cf1')
     expect(screen.queryByTestId('move-place-id:loc-fridge')).toBeNull()        // where it already is
-    const req = [...screen.getByTestId('move-sheet').querySelectorAll('[aria-required="true"]')]
+    // Put-Up UX pass R1: Move it is a panel inside the row sheet; the same one-item list is read there.
+    expect(screen.getByTestId('row-sheet').contains(screen.getByTestId('move-panel'))).toBe(true)
+    const req = [...screen.getByTestId('move-panel').querySelectorAll('[aria-required="true"]')]
     expect(req.map(e => e.getAttribute('aria-label'))).toEqual(['Where is Megatron reaper going?'])
     await act(async () => { fireEvent.click(screen.getByTestId('move-save')) })
     expect(screen.getByTestId('move-error').textContent).toBe('Where is it going? Pick a place.')
@@ -177,7 +179,8 @@ describe('Move it (V4 §2.5, §3.4)', () => {
     expect([method, path]).toEqual(['POST', '/api/preservation/rec-1b/move'])
     expect(body.place).toEqual({ id: 'loc-cf1' })
     expect(body.when.precision).toBe('day')
-    await waitFor(() => expect(screen.queryByTestId('move-sheet')).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('move-panel')).toBeNull())
+    expect(screen.queryByTestId('row-sheet')).toBeNull()                       // the row sheet closes with the move
   })
 })
 
