@@ -108,8 +108,9 @@ export function recipeLineWords(l) {
   return extra.length ? `${base} (${extra.join(', ')})` : base
 }
 
-// How many put-ups a batch made, in the closed list's own words ("put-up", never "jar": most methods make no
-// jar). output_count is an uncast count and arrives as a STRING, so Number() first. null when there are none.
+// How many put-ups a batch made, in the closed list's own words ("put-up", never "jar": seven of the nineteen
+// put-up methods make no jar). output_count is an uncast count and arrives as a STRING, so Number() first.
+// null when there are none.
 function putUpCountWords(b) {
   const n = Number(b?.output_count)
   if (!Number.isFinite(n) || n <= 0) return null
@@ -137,8 +138,10 @@ export function madeBatchWords(b, now = new Date()) {
 // pass through here. A pair of marks around a run of words on ONE line shows as bold (two asterisks each
 // side) or italic (one each side) with the marks hidden; every other asterisk prints exactly as typed.
 // The rule for a pair is narrow on purpose, so arithmetic and bullets are never read as marks:
-//   · the opening mark starts the line or follows a space or punctuation, and a word follows it at once;
-//   · the closing mark follows a word at once, and ends the line or is followed by a space or punctuation;
+//   · the opening mark starts the line or follows a space or punctuation (never a letter, a digit or
+//     another asterisk), and what follows it at once is not a space;
+//   · the closing mark comes straight after something that is not a space, and ends the line or is followed
+//     by a space or punctuation;
 //   · both sit on the same line, with at least one character between them.
 // So "2 * 3 cups", "2*3*4", a "* " bullet, a lone mark and a pair split by a line break all stay as typed.
 // Marks do not nest: inside a bold run a single asterisk is text.
