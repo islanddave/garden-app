@@ -498,8 +498,12 @@ export default function PutUp({
   // link, a restored session and a card that named no origin all have an exit that never leaves the page
   // by surprise and never does nothing. That push lands on the segment the page is holding, except a
   // recipe, which is left onto Recipes; the Back's words (backWords, below) name that same landing.
+  // The router's own history index (react-router writes it into history.state as `idx`; EventNew's Close
+  // reads the same counter): 0 on the first app entry of a session, undefined under a router that keeps
+  // no browser history.
+  const routerIndex = () => (typeof window === 'undefined' ? undefined : window.history?.state?.idx)
   const leaveMode = useCallback(() => {
-    if (leavesByPop(location.state, typeof window === 'undefined' ? undefined : window.history?.state?.idx)) {
+    if (leavesByPop(location.state, routerIndex())) {
       navigate(-1)
       return
     }
@@ -677,8 +681,7 @@ export default function PutUp({
   // The Back's words name where the press lands (see leaveMode): the sender when it will pop to it,
   // otherwise the segment the push shows. Read at render — every navigation re-renders this page, and
   // a sheet's Back marker copies the router's index, so the two cannot disagree between renders.
-  const back = backWords(location.state, typeof window === 'undefined' ? undefined : window.history?.state?.idx,
-    segmentLabel(leaveSegment(view, { recipe: !!recipeId })))
+  const back = backWords(location.state, routerIndex(), segmentLabel(leaveSegment(view, { recipe: !!recipeId })))
   // Going now, and not under search results: the one state in which the header's filled button starts a batch.
   const onGoing = view === 'going' && !searching
   // ONE min-width for the filled button, wide enough for the longer of its two labels, so the search box
