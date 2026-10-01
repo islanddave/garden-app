@@ -152,6 +152,32 @@ describe('the Start sheet — what it asks', () => {
     expect(screen.getByRole('dialog', { name: 'Start a batch' })).toBeTruthy()
   })
 
+  // Put-Up UX pass R1 (PLAN-V3 D10), ADDED beside the two tests it must not disturb: the field is "Name it",
+  // and the new "Start from" row — on screen at open — adds nothing to what the sheet requires.
+  it('the one required thing is the textbox named "Name it"', () => {
+    render(<Host />)
+    // Field appends a screen-reader "(required)" to a required field's label; the words are "Name it".
+    const named = screen.getByRole('textbox', { name: (n) => n.replace(/\s*\(required\)\s*$/, '').trim() === 'Name it' })
+    expect(named).toBe(screen.getByTestId('start-label'))
+    expect(named.getAttribute('aria-required')).toBe('true')
+  })
+
+  it('with the Start-from row at open, the required list is still [start-label] and there is still no radiogroup', () => {
+    render(<Host />)
+    expect(screen.getByRole('group', { name: 'Start from' })).toBeTruthy()   // green control: the row IS at open
+    const required = [...screen.getByTestId('start-sheet').querySelectorAll('[aria-required="true"]')]
+    expect(required.map(e => e.getAttribute('data-testid'))).toEqual(['start-label'])
+    expect(screen.queryByRole('radiogroup')).toBeNull()
+    // …and with each of its doors open.
+    tap('start-from-recipe')
+    expect([...screen.getByTestId('start-sheet').querySelectorAll('[aria-required="true"]')].map(e => e.getAttribute('data-testid')))
+      .toEqual(['start-label'])
+    tap('start-from-batch')
+    expect([...screen.getByTestId('start-sheet').querySelectorAll('[aria-required="true"]')].map(e => e.getAttribute('data-testid')))
+      .toEqual(['start-label'])
+    expect(screen.queryByRole('radiogroup')).toBeNull()
+  })
+
   it('starts on Today, as an optional group of 48px chips', () => {
     render(<Host />)
     const group = screen.getByRole('group', { name: 'When did it start?' })

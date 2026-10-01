@@ -12,14 +12,23 @@
 //     (flags off, no provider) it fires at once.
 //
 // FIELDS (the Jen rule, V4 §6.3 — required at open: 1):
-//   · What is it? — the label, the ONLY required field.
+//   · Name it — the label, the ONLY required field. ("What is it?" until Put-Up UX pass R1: Dave could not
+//     tell that this is where a ferment's name goes.)
+//   · Start from — R1 (PLAN-V3 D10), optional, directly under the name: two 48px buttons, "a recipe" and
+//     "a past batch". Not a radiogroup and nothing required: each opens a list, and a pick fills an EMPTY
+//     name (never a typed one) and an unpicked kind, shows what was picked, and can be undone.
+//       a recipe     — the household's recipes as rows grouped by what they make (recipes/FollowingRecipe.jsx
+//                      RecipePick); the pick is recipe_id on the create.
+//       a past batch — B′ release 3's "Like a past batch, except…" (putup/LikeBatchPicker.jsx, here with
+//                      this row as its door): copies that batch's lines and kind in (putup/likeBatch.js);
+//                      the copied lines are posted, keyed, to POST /:id/inputs right after the create, and
+//                      are then ordinary lines of the new batch to edit or take out.
 //   · When did it start? — Today (preselected) · Yesterday · Earlier… · Not sure; Earlier… offers only
 //     what the live CHECK can store in 1a (see StartChips.jsx SHEET_START_CHIPS).
 //   · Photo — optional; Snap hands its photo in, Going now can add one.
 //   · "What kind of batch?" — collapsed, optional (KindChips). "Other" still asks its short name in 1a.
-//   · "Like a past batch, except…" — B′ release 3 (V4 §2.2), optional: copies that batch's lines and
-//     kind in (putup/likeBatch.js); the copied lines are posted, keyed, to POST /:id/inputs right after
-//     the create, and are then ordinary lines of the new batch to edit or take out.
+//   · "Following a recipe? · tested recipes →" — the ruled row, unchanged: a free-text reference and the
+//     tested-recipe caution behind its toggle.
 // The salt/brine note Snap used to ask at pack time is NOT here: the plan puts Salt with What went in
 // in release 3 (V4 §2.2) — recorded in the lane report as a disclosed change.
 //
@@ -54,13 +63,20 @@ import { mintKey } from './idempotencyKey.js'
 import LikeBatchPicker from '../putup/LikeBatchPicker.jsx'
 // Put-Up release 4 — "Following a recipe?" (pick one of the household's recipes → recipe_id, or F's free text),
 // and Make this's prefill (a recipe's name, kind and process jar).
-import FollowingRecipe, { followingBody } from '../recipes/FollowingRecipe.jsx'
+import FollowingRecipe, { RecipePick, followingBody } from '../recipes/FollowingRecipe.jsx'
 import { startPrefill, vesselPatch } from '../recipes/recipes.js'
 
 export const START_SHEET = 'start'
 export const START_SHEET_TITLE = 'Start a batch'
 export const START_CTA = 'Start it'
-export const START_LABEL_PLACEHOLDER = 'e.g. Pepper mash'
+// Put-Up UX pass R1 (PLAN-V3 D10) — the field's words. The placeholder is one of his own batch names, so
+// the field reads as "the name you will look for it under", not as a description to fill in.
+export const START_LABEL_TEXT = 'Name it'
+export const START_LABEL_PLACEHOLDER = 'e.g. Megatron mash'
+export const START_LABEL_MAX = 120
+export const START_FROM_LABEL = 'Start from'
+export const START_FROM_RECIPE = 'a recipe'
+export const START_FROM_BATCH = 'a past batch'
 // How long the landing waits for the sheet's own Back entry before going anyway. It lives with the
 // landing now (sheetLanding.js) and is still exported from here, where it has always been found.
 export { LAND_FALLBACK_MS } from './sheetLanding.js'
@@ -68,8 +84,19 @@ const FOOTER_PX = 76
 
 const EMPTY = { label: '', chip: 'today', earlier: null, pickedDate: '', kind: null, kindOther: '', key: '', recipeId: null, recipeRef: '' }
 
+// The Start-from row's two buttons: outlined, 48px, never filled — the sheet's one filled button is Start it.
+const fromButton = (open) => ({
+  minHeight: T.buttonMinHeight, padding: '6px 14px', cursor: 'pointer', fontFamily: 'inherit', fontSize: T.type.sm, fontWeight: 600,
+  borderRadius: T.radiusButton, border: `1px solid ${open ? P.green : P.border}`, background: open ? P.greenPale : 'none',
+  color: open ? P.green : P.mid,
+})
+
 // `key` (release 1b, V4 §5.2/§6.5) is optional on read: a 1a draft has none and gets one when it is
 // next written, which is before any POST can carry it.
+// `recipe` (R1) is optional on read the same way: it is the picked recipe's `{ id, name, kind }`, stored
+// beside `recipeId` so the sheet can say what was picked without a read. A draft a release-4 client stored
+// has `recipeId` alone and still restores (the Start-from row names it from the list); one whose `recipe`
+// is not that shape is dropped whole, like any other draft that would half-restore.
 export function isStartDraft(d) {
   return !!d && typeof d === 'object' && !Array.isArray(d)
     && typeof d.label === 'string' && typeof d.pickedDate === 'string' && typeof d.kindOther === 'string'
@@ -79,6 +106,8 @@ export function isStartDraft(d) {
     && (d.key === undefined || typeof d.key === 'string')
     && (d.recipeId == null || typeof d.recipeId === 'string')
     && (d.recipeRef === undefined || typeof d.recipeRef === 'string')
+    && (d.recipe == null || (typeof d.recipe === 'object' && !Array.isArray(d.recipe)
+      && typeof d.recipe.id === 'string' && typeof d.recipe.name === 'string' && d.recipe.id === d.recipeId))
 }
 
 // Put-Up release 1b (train §6a "Snap's start date"): Snap's photo carries the day it was taken, and
@@ -100,20 +129,30 @@ export function photoDayChoice(takenAt, now = new Date()) {
 // reads it off the photo itself (readCaptureMeta, the upload pipeline's own EXIF read).
 // `recipe` (release 4, optional): Make this — the recipe the batch is made from (its detail). The sheet opens
 // prefilled with its name, kind and recipe, under its own draft key so a half-typed plain start is untouched.
-export default function StartBatchSheet({ open, onClose, onStarted, photo = null, photoPreview = null, photoTakenAt, now, recipe = null }) {
+// `initialLabel` (R1, optional): a name the sheet is opened WITH — the Put something up door's escape,
+// "Still going (a ferment)? Start a batch instead →", carries what was typed there. A non-blank one is a
+// fresh intent and WINS over a stored draft (the door's own "seeded" rule, PutSomethingUpSheet.jsx): the
+// draft is not restored, and the first write replaces it. Read ONCE, at mount: a host that re-renders with
+// another value does not retype the field under the cook.
+export default function StartBatchSheet({ open, onClose, onStarted, photo = null, photoPreview = null, photoTakenAt, now, recipe = null, initialLabel = '' }) {
   if (!open) return null
   return <StartBatchOpen onClose={onClose} onStarted={onStarted} photo={photo} photoPreview={photoPreview}
-    photoTakenAt={photoTakenAt} now={now} recipe={recipe} />
+    photoTakenAt={photoTakenAt} now={now} recipe={recipe} initialLabel={initialLabel} />
 }
 
-function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt, now, recipe }) {
+function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt, now, recipe, initialLabel }) {
   const { fetch } = useApiFetch()
   const uploader = useUploadPhoto({ errorMode: 'surface' })
   const draftKey = useSheetDraftKey(START_SHEET, recipe?.id ? `recipe-${recipe.id}` : 'new')
+  const [seed] = useState(() => (typeof initialLabel === 'string' && initialLabel.trim() !== '' ? initialLabel.slice(0, START_LABEL_MAX) : ''))
   // Read ONCE, at open — see CheckOnItSheet for why the first commit must already hold it.
-  const [restored] = useState(() => readSheetDraft(draftKey, START_SHEET, isStartDraft))
+  const [restored] = useState(() => (seed ? null : readSheetDraft(draftKey, START_SHEET, isStartDraft)))
   const pre = recipe ? startPrefill(recipe) : null
-  const initial = restored ?? (pre ? { ...EMPTY, label: pre.label, kind: pre.kind, recipeId: pre.recipeId } : EMPTY)
+  const initial = restored ?? {
+    ...EMPTY,
+    ...(pre ? { label: pre.label, kind: pre.kind, recipeId: pre.recipeId, recipe: { id: pre.recipeId, name: pre.recipeName, kind: pre.kind } } : null),
+    ...(seed ? { label: seed } : null),
+  }
   const [key, setKey] = useState(initial.key ?? '')
   const [label, setLabel] = useState(initial.label)
   const [chip, setChip] = useState(initial.chip)
@@ -124,7 +163,12 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
   const [kindOpen, setKindOpen] = useState(initial.kind != null)
   // B′ release 3: "Like <batch>, except…" — { from, lines, kind } or null. Held for this open only.
   const [like, setLike] = useState(null)
-  const [following, setFollowing] = useState({ recipeId: initial.recipeId ?? null, recipeRef: initial.recipeRef ?? '' })
+  const [following, setFollowing] = useState({ recipeId: initial.recipeId ?? null, recipeRef: initial.recipeRef ?? '', recipe: initial.recipe ?? null })
+  // R1 — which Start-from list is open: 'recipe' | 'batch' | null. One at a time, so the sheet stays short.
+  const [fromOpen, setFromOpen] = useState(null)
+  // What each Start-from pick PUT into the name and the kind, so undoing the pick takes back exactly that
+  // — and never a name typed, or a kind chosen, since.
+  const filledRef = useRef({ recipe: null, batch: null })
   // A photo added HERE (the Going-now door). Snap's arrives as `photo` and is the host's to keep.
   const [ownFile, setOwnFile] = useState(null)
   const [ownPreview, setOwnPreview] = useState(null)
@@ -165,8 +209,11 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
     // The draft carries what can be serialised; a picked File cannot, and is not pretended to.
     const text = label.trim() !== '' || chip !== 'today' || earlier != null || pickedDate !== '' || kind != null || kindOther.trim() !== ''
       || following.recipeId != null || following.recipeRef.trim() !== ''
-    // The recipe pair rides only when answered, so a plain start's draft keeps its 1b shape exactly.
-    const recipePart = following.recipeId != null || following.recipeRef !== '' ? following : {}
+    // The recipe pair rides only when answered, so a plain start's draft keeps its 1b shape exactly; the
+    // picked recipe's `{ id, name, kind }` rides beside its id (R1, additive).
+    const recipePart = following.recipeId != null || following.recipeRef !== ''
+      ? { recipeId: following.recipeId, recipeRef: following.recipeRef, ...(following.recipe ? { recipe: following.recipe } : null) }
+      : {}
     if (text) writeSheetDraft(draftKey, START_SHEET, { label, chip, earlier, pickedDate, kind, kindOther, key, ...recipePart })
     else clearSheetDraft(draftKey)
   }, [draftKey, label, chip, earlier, pickedDate, kind, kindOther, key, following])
@@ -198,6 +245,26 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
   const land = useCallback((batch) => {
     landAfterClose(onClose, () => onStarted?.(batch))
   }, [onClose, onStarted])
+
+  // START FROM (R1). A pick fills what is EMPTY and only that: a typed name is never replaced, a chosen kind
+  // never overridden — and a kind no chip offers (a legacy `age` batch) is not put in the kind at all, where
+  // it could not be sent. Undoing the pick takes back what THAT pick filled, if it still stands.
+  const fillFrom = (who, name, pickedKind) => {
+    const filled = { label: null, kind: null }
+    const text = String(name ?? '').slice(0, START_LABEL_MAX)
+    if (label.trim() === '' && text.trim() !== '') { setLabel(text); filled.label = text }
+    if (kind == null && KIND_CHIPS.some(c => c.value === pickedKind)) { setKind(pickedKind); setKindOpen(true); filled.kind = pickedKind }
+    filledRef.current[who] = filled
+    setErr(null)
+  }
+  const unfill = (who) => {
+    const filled = filledRef.current[who]
+    filledRef.current[who] = null
+    if (filled?.label != null && label === filled.label) setLabel('')
+    if (filled?.kind != null && kind === filled.kind) setKind(null)
+    setErr(null)
+  }
+  const lockedRecipe = recipe && following.recipeId === recipe.id ? recipe : null
 
   const start = useCallback(async () => {
     if (writingRef.current) return
@@ -250,12 +317,39 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
   return (
     <Sheet open onClose={onClose} title={START_SHEET_TITLE} size="full" busy={saving} armsBack>
       <div data-testid="start-sheet" onFocus={keepClear} style={{ padding: '0 18px' }}>
-        <Field label="What is it?" htmlFor={labelId} required style={{ marginBottom: T.space.md }}>
+        <Field label={START_LABEL_TEXT} htmlFor={labelId} required style={{ marginBottom: T.space.md }}>
           <Input id={labelId} data-testid="start-label" value={label} disabled={saving}
-            placeholder={START_LABEL_PLACEHOLDER} maxLength={120}
+            placeholder={START_LABEL_PLACEHOLDER} maxLength={START_LABEL_MAX}
             onChange={e => { setLabel(e.target.value); setErr(null) }}
             style={{ scrollMarginBottom: FOOTER_PX }} />
         </Field>
+
+        {/* START FROM (R1, PLAN-V3 D10). Two doors, not a choice: a group of buttons that each open a list
+            (aria-expanded), so nothing here reads as required and nothing is preselected. Made from a
+            recipe (Make this) the recipe is already chosen, and only the past batch is offered. */}
+        <div data-testid="start-from" style={{ marginBottom: T.space.md }}>
+          <div role="group" aria-label={START_FROM_LABEL} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <span aria-hidden="true" style={{ fontSize: T.type.sm, fontWeight: 600, color: P.mid }}>{START_FROM_LABEL}</span>
+            {!lockedRecipe && (
+              <button type="button" data-testid="start-from-recipe" aria-expanded={fromOpen === 'recipe'} disabled={saving}
+                onClick={() => setFromOpen(o => (o === 'recipe' ? null : 'recipe'))} style={fromButton(fromOpen === 'recipe')}>
+                {START_FROM_RECIPE}
+              </button>
+            )}
+            <button type="button" data-testid="start-from-batch" aria-expanded={fromOpen === 'batch'} disabled={saving}
+              onClick={() => setFromOpen(o => (o === 'batch' ? null : 'batch'))} style={fromButton(fromOpen === 'batch')}>
+              {START_FROM_BATCH}
+            </button>
+          </div>
+          <RecipePick value={following} fetch={fetch} open={fromOpen === 'recipe'} locked={lockedRecipe} disabled={saving}
+            onChange={v => { setFollowing(v); setErr(null) }}
+            onPick={r => { const p = startPrefill(r); fillFrom('recipe', p.label, p.kind); setFromOpen(null) }}
+            onClear={() => unfill('recipe')} />
+          <LikeBatchPicker idPrefix="start-like" picked={like} disabled={saving}
+            open={fromOpen === 'batch'} onOpenChange={o => setFromOpen(o ? 'batch' : null)}
+            onPick={d => { setLike(d); fillFrom('batch', d.from?.label, d.kind) }}
+            onClear={() => { setLike(null); unfill('batch') }} />
+        </div>
 
         <div style={{ marginBottom: T.space.md }}>
           <SheetStartChips value={chip} disabled={saving}
@@ -278,7 +372,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
                 onChange={pickPhoto} style={{ display: 'none' }} />
               <button type="button" data-testid="start-photo-add" disabled={saving}
                 onClick={() => fileRef.current?.click()}
-                style={{ minHeight: T.tapMinHeight, padding: '6px 12px', background: 'none', cursor: 'pointer',
+                style={{ minHeight: T.buttonMinHeight, padding: '6px 12px', background: 'none', cursor: 'pointer',
                   border: `1px solid ${P.border}`, borderRadius: T.radiusButton, fontFamily: 'inherit',
                   fontSize: T.type.sm, color: P.mid }}>
                 {ownFile ? 'Change photo' : 'Add a photo'}
@@ -286,7 +380,7 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
               {ownFile && (
                 <button type="button" data-testid="start-photo-remove" disabled={saving}
                   onClick={() => { setOwnFile(null); setOwnPreview(null); uploadedRef.current = null }}
-                  style={{ minHeight: T.tapMinHeight, padding: '6px 8px', background: 'none', border: 'none',
+                  style={{ minHeight: T.buttonMinHeight, padding: '6px 8px', background: 'none', border: 'none',
                     cursor: 'pointer', fontFamily: 'inherit', fontSize: T.type.sm, color: P.light }}>
                   Remove
                 </button>
@@ -297,15 +391,9 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
         </div>
 
         <div style={{ marginBottom: T.space.sm }}>
-          <LikeBatchPicker idPrefix="start-like" picked={like} disabled={saving}
-            onPick={d => { setLike(d); if (d.kind && kind == null) { setKind(d.kind); setKindOpen(true) } }}
-            onClear={() => setLike(null)} />
-        </div>
-
-        <div style={{ marginBottom: T.space.sm }}>
           <button type="button" data-testid="start-kind-toggle" aria-expanded={kindOpen}
             onClick={() => setKindOpen(o => !o)} disabled={saving}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: T.tapMinHeight,
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minHeight: T.buttonMinHeight,
               padding: '2px 0', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
               fontSize: T.type.sm, fontWeight: 600, color: P.green }}>
             What kind of batch?
@@ -320,8 +408,8 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
           )}
         </div>
 
-        <FollowingRecipe value={following} onChange={v => { setFollowing(v); setErr(null) }} fetch={fetch} disabled={saving}
-          locked={recipe && following.recipeId === recipe.id ? recipe : null} />
+        <FollowingRecipe value={following} onChange={v => { setFollowing(v); setErr(null) }} disabled={saving}
+          locked={lockedRecipe} />
 
         {err && (
           <div role="alert" data-testid="start-error"
