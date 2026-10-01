@@ -17,10 +17,14 @@
 // V4-PERFTHEMEA-001 — reads /releases-latest.json (releases.json[0] alone, ~1.7 KB) rather than the
 // full 141,722 B history. This hook only ever wanted d[0].version. See useAppUpdate.js for the
 // measurements, the two-files-stay-in-sync contract, and why neither file may become cacheable.
-// MOUNT SITE MATTERS FOR THE BYTE COUNT: the only consumer is WhatsNewDot inside BottomNav's More
-// sheet, and Sheet.jsx:169 returns null when closed — so this fetch does NOT fire on boot, it fires
-// the first time the More menu is opened. Moving this hook to a surface that mounts at boot would
-// re-add a per-load fetch; keep that in view if WhatsNewDot ever grows a second mount point.
+// MOUNT SITE MATTERS FOR THE BYTE COUNT: the only consumer is WhatsNewDot inside BottomNav. On the
+// shipped bar that is the Release Notes row of the More sheet, and Sheet.jsx returns null when closed
+// — so this fetch does NOT fire on boot, it fires the first time the More menu is opened. Moving this
+// hook to a surface that mounts at boot would re-add a per-load fetch; keep that in view if
+// WhatsNewDot ever grows another mount point.
+// V5-NAVSLOTADORN-001 — the one exception, and it is chosen: a person who puts Release Notes ON their
+// tab bar gets the dot on that tab, which is always mounted, so for that person this read does fire at
+// launch (~1.7 KB). Nobody else's boot changes.
 import { useEffect, useState, useCallback } from 'react'
 import { readSeen, writeSeen, isUnseen, cmpVersion, SEEN_EVENT } from '../lib/whatsNew.js'
 import { useApiFetch } from '../lib/api.js'
