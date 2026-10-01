@@ -40,8 +40,9 @@ export function useUndoPutUp({ batchId, stageId, onUndone }) {
   return { undo, busy, err, done }
 }
 
+// The quiet actions are 48 px tall, like the card's other ones (Put-Up UX pass R1, F16): height only.
 const link = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, background: 'none', border: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.78rem',
 }
 
