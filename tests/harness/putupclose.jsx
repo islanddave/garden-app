@@ -253,6 +253,9 @@ window.fetch = (url, ...rest) => {
   // BatchInputsField's add flow self-fetches this. Left to fall through it 404s against the harness
   // server and the section renders its load-failure copy, which would read as a layout finding.
   if (u.includes('/api/harvests')) return json({ aggregates: { crops: [] }, harvests: [] })
+  // lane A additions go directly under this line
+  // lane B additions go directly under this line
+  // lane E additions go directly under this line
   return realFetch(url, ...rest)
 }
 
@@ -333,6 +336,9 @@ async function run() {
     byTid('start-kind-other-text')?.focus()
     await settle()
   }
+  // lane A additions go directly under this line
+  // lane B additions go directly under this line
+  // lane E additions go directly under this line
 
   // Put-Up release 1b (V4 §6.7 "lane entry render": Put it up, 2 rows, one expanded, keyboard up). The
   // sheet is filled through its real chips: Today, Hot sauce, row 1's place and container, a second row
