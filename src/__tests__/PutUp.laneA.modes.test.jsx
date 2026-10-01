@@ -468,6 +468,25 @@ describe('the page\'s Back: it says where it lands, and lands there', () => {
     expect(screen.getByTestId('floor')).toBeTruthy()           // …it leaves, the way it came in
   })
 
+  // A pop is not idempotent the way the push was: an unguarded second press would pop AGAIN, past the
+  // sender and off the page it was meant to return to (here, onto the entry under the app).
+  // MUTATION: leaveMode pops on every press (no "wait") -> the page lands on the floor and this reds.
+  it('two presses before the first one lands return to the sender ONCE — never past it', async () => {
+    renderAt('/put-up?view=pantry')
+    await screen.findByTestId('pantry-view')
+    tap('stub-pantry-batch')
+    await screen.findByTestId('putup-batch-mode')
+    const from = pops
+    const button = backBtn()
+    act(() => { button.click(); button.click() })
+    await settle(from)
+    await act(async () => { await new Promise((r) => setTimeout(r, 80)) })   // room for a second pop to land, if one was made
+    expect(pops).toBe(from + 1)
+    expect(loc()).toBe('/put-up?view=pantry')
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
+    expect(screen.queryByTestId('floor')).toBeNull()
+  })
+
   it('a cold ?batch= deep link: the Back lands on Going now and does not leave the page', async () => {
     renderAt('/put-up?batch=kb-1')
     await screen.findByTestId('putup-batch-mode')

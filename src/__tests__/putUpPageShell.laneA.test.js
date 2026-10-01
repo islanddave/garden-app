@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   START_BATCH_CTA, TRY_AGAIN_CTA, PUT_UP_SEGMENTS, RECIPES_SEGMENT, leaveSegment, segmentLabel, leavesByPop,
-  backWords, recipeSearchItems,
+  backWords, recipeSearchItems, leavePlan, POP_LANDS_WITHIN_MS,
 } from '../components/putup/goingNow.js'
 import { backLabel, withFrom } from '../components/putup/origin.js'
 
@@ -74,6 +74,41 @@ describe('leavesByPop — the Back pops only to a named sender that is really un
       { from: { label: '   ' } }, { from: ['Pantry'] }, { prefill: { crop_type_slug: 'pepper' } }]) {
       expect({ state: JSON.stringify(state), pops: leavesByPop(state, 3) }).toEqual({ state: JSON.stringify(state), pops: false })
     }
+  })
+})
+
+describe('leavePlan — what ONE press of the Back does', () => {
+  const state = withFrom(null, { label: 'Pantry' })
+  const press = (over = {}) => leavePlan({ state, historyIndex: 2, entryKey: 'k-batch', started: null, nowMs: 10_000, ...over })
+
+  it('pops to a sender that is under it, and pushes when there is none to pop to', () => {
+    expect(press()).toBe('pop')
+    expect(press({ historyIndex: 0 })).toBe('push')
+    expect(press({ historyIndex: undefined })).toBe('push')
+    expect(press({ state: null })).toBe('push')
+    expect(press({ state: { background: { pathname: '/today' } } })).toBe('push')
+  })
+
+  // A pop is not idempotent the way the push was: a second one would walk past the sender.
+  it('a second press on the SAME entry while the first pop is still landing waits — it never pops twice', () => {
+    const started = { key: 'k-batch', at: 10_000 }
+    expect(press({ started, nowMs: 10_000 })).toBe('wait')
+    expect(press({ started, nowMs: 10_000 + POP_LANDS_WITHIN_MS - 1 })).toBe('wait')
+  })
+
+  it('a pop that never landed stops being waited for: the next press pushes, so the Back is never dead', () => {
+    const started = { key: 'k-batch', at: 10_000 }
+    expect(press({ started, nowMs: 10_000 + POP_LANDS_WITHIN_MS })).toBe('push')
+    expect(press({ started, nowMs: 99_999 })).toBe('push')
+    expect(POP_LANDS_WITHIN_MS).toBe(1500)
+  })
+
+  it('a pop started from ANOTHER entry is no reason to wait', () => {
+    expect(press({ started: { key: 'k-other', at: 10_000 } })).toBe('pop')
+  })
+
+  it('a wait is only ever about a pop: with nothing to pop to, a recent "started" still pushes', () => {
+    expect(press({ historyIndex: 0, started: { key: 'k-batch', at: 10_000 } })).toBe('push')
   })
 })
 

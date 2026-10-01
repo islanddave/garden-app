@@ -38,6 +38,7 @@ vi.mock('../context/AuthContext.jsx', async (importActual) => ({
 }))
 
 import PutUp from '../pages/PutUp.jsx'
+import CheckInSaved, { SAVED_TEXT, UNDONE_CHECKIN_TEXT } from '../components/putup/CheckInSaved.jsx'
 import { P } from '../lib/constants.js'
 
 const toRgb = (hex) => {
@@ -406,5 +407,40 @@ describe('the page search finds recipes (PLAN-V3 D16)', () => {
     await screen.findByTestId('putup-batch-mode')
     await waitFor(() => expect(gets('/api/kitchen-batches/kb-1')).toBe(1))
     expect(gets('/api/recipes')).toBe(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// F16 (PLAN-V3): every quiet action on Going now is 48px tall — height only. The card's three actions are
+// pinned in PutUpGoingNow.test.jsx; these are the rest of what a card and the view can show.
+describe('Going now\'s quiet actions are 48px (F16)', () => {
+  it('the card\'s question, and the door to closed batches', async () => {
+    // A ferment started months before any clock this can run under, never measured: its card asks its
+    // one question whatever today is (the page takes the wall clock; nothing here asserts the question's words).
+    const LONG_AGO = '2026-01-05T13:00:00.000Z'
+    going = [{ ...MASH, started_at: LONG_AGO, first_recorded_at: LONG_AGO, current_stage_entered_at: LONG_AGO }]
+    renderPage()
+    await onSegment('Going now')
+    await screen.findByTestId('going-batch')
+    const question = screen.getByTestId('going-question-link')
+    expect(question.style.minHeight).toBe('48px')
+    expect(screen.getByTestId('going-closed-door').style.minHeight).toBe('48px')
+    // Height only: the type did not change with it.
+    expect([screen.getByTestId('going-check').style.fontSize, screen.getByTestId('going-closed-door').style.fontSize]).toEqual(['0.78rem', '0.78rem'])
+  })
+
+  it('"Saved · Undo" after a check-in: the Undo is 48px, and its words are plain', async () => {
+    fetchMock.mockImplementation((path, o = {}) => Promise.resolve(o.method === 'POST' ? { ok: true } : null))
+    const onUndone = vi.fn()
+    render(<CheckInSaved batchId="kb-1" stageId="st-1" onUndone={onUndone} />)
+    const line = screen.getByTestId('going-checkin-saved')
+    expect(line.textContent).toBe('Saved' + 'Undo')
+    const undo = screen.getByTestId('going-checkin-undo')
+    expect([undo.style.minHeight, undo.style.minWidth, undo.style.fontSize]).toEqual(['48px', '48px', '0.78rem'])
+    fireEvent.click(undo)
+    await waitFor(() => expect(line.textContent).toBe(UNDONE_CHECKIN_TEXT))
+    expect(onUndone).toHaveBeenCalledTimes(1)
+    const BANNED = /\b(safe|shelf life|shelf-stable|keeps|good|ready|done|expired|table|default|basis)\b/i
+    expect(`${SAVED_TEXT} Undo ${UNDONE_CHECKIN_TEXT}`).not.toMatch(BANNED)
   })
 })

@@ -66,7 +66,10 @@ const draft = () => JSON.parse(localStorage.getItem(DRAFT_KEY))
 
 function wire() {
   fetchMock.mockImplementation((path, options = {}) => {
-    if ((options.method || 'GET') !== 'GET') return Promise.resolve(null)
+    const method = options.method || 'GET'
+    if (method === 'POST' && path === '/api/kitchen-batches') return Promise.resolve({ id: 'kb-new', label: 'Megatron mash' })
+    if (method !== 'GET') return Promise.resolve(null)
+    if (path === '/api/kitchen-batches/kb-new') return Promise.resolve({ id: 'kb-new', label: 'Megatron mash', inputs: [], stages: [], outputs: [] })
     if (path.startsWith('/api/kitchen-batches?state=going')) return Promise.resolve({ state: 'going', batches: [] })
     if (path.startsWith('/api/pantry?')) return Promise.resolve({ rows: [] })
     if (path === '/api/storage-locations') return Promise.resolve([])
@@ -150,6 +153,38 @@ describe('the door\'s escape opens Start with the name it carried', () => {
     expect(screen.queryByTestId('stub-door')).toBeNull()
     expect(window.location.pathname + window.location.search).toBe('/put-up?view=pantry')
     expect(screen.getByTestId('pantry-view')).toBeTruthy()
+    await systemBack()
+    expect(screen.getByTestId('floor')).toBeTruthy()
+  })
+})
+
+// The REAL sheet's landing meeting the REAL page's opener, on a real history stack: the sheet closes, its
+// Back marker is consumed, and only then does the page push the batch. So the stack is [list, batch] — and
+// the escape's name is what was started.
+describe('Start it, after the escape: the landing and the one opener leave no dead Back entry', () => {
+  it('the batch opens by a push; Back returns to the list it was started from; the next Back leaves', async () => {
+    renderPage()
+    await screen.findByTestId('pantry-view')
+    tap('putup-door')
+    await waitFor(() => expect(armed()).toBe(true))
+    tap('stub-door-escape')
+    await screen.findByTestId('start-label')
+    const depth = window.history.state.idx
+    const from = pops
+    await act(async () => { tap('start-submit') })
+    await settle(from)
+    await waitFor(() => expect(window.location.search).toBe('?view=pantry&batch=kb-new'))
+    await screen.findByTestId('putup-batch-mode')
+    expect(armed()).toBe(false)                                  // the sheet's marker is gone, not stranded under the batch
+    expect(window.history.state.idx).toBe(depth + 1)             // one push
+    expect(JSON.parse(fetchMock.mock.calls.find(([p, o]) => p === '/api/kitchen-batches' && o?.method === 'POST')[1].body).label)
+      .toBe('Megatron mash')
+    // The batch names no origin, so its Back says the segment it leaves onto.
+    expect(screen.getByTestId('putup-mode-back').textContent).toBe('← Pantry')
+    await systemBack()
+    expect(window.location.pathname + window.location.search).toBe('/put-up?view=pantry')
+    expect(screen.getByTestId('pantry-view')).toBeTruthy()
+    expect(screen.queryByTestId('start-label')).toBeNull()
     await systemBack()
     expect(screen.getByTestId('floor')).toBeTruthy()
   })

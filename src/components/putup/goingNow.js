@@ -783,6 +783,26 @@ export function leavesByPop(state, historyIndex) {
   return readFrom(state) != null && Number.isInteger(historyIndex) && historyIndex > 0
 }
 
+// How long a started pop may take to land before a second press stops waiting for it. A same-document
+// traversal lands in a frame or two; this only bounds one that never lands (OverlayContext bounds its own
+// close walk the same way, at the same figure).
+export const POP_LANDS_WITHIN_MS = 1500
+
+// What ONE press of a mode's Back does: 'pop' | 'wait' | 'push'.
+//   pop  — the entry names its sender and an app entry is under it (leavesByPop), and no pop is under way.
+//   wait — a pop was already started FROM THIS ENTRY and has not landed. A pop is not idempotent the way
+//          the push was: a second one would walk PAST the sender, off the page the press was meant to
+//          return to. So a second press before the first lands does nothing.
+//   push — everything else, including a pop that was started from this entry and never landed: the Back
+//          is never a press that does nothing for good.
+// `entryKey` is the router's key for the entry being left; `started` is `{ key, at }`, the entry the last
+// pop was started from and when (the page clears it whenever the location changes).
+export function leavePlan({ state, historyIndex, entryKey, started = null, nowMs }) {
+  if (!leavesByPop(state, historyIndex)) return 'push'
+  if (!started || started.key !== entryKey) return 'pop'
+  return nowMs - started.at < POP_LANDS_WITHIN_MS ? 'wait' : 'push'
+}
+
 // The words after the Back's arrow, in two parts so the name can shorten on one line while the kind
 // stays whole: { name, suffix }. They always name where the press LANDS: the origin (origin.js
 // backLabel: "Petri Dish" + " (recipe)") only when the press will pop to it, otherwise `fallback` — the

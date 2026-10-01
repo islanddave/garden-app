@@ -77,7 +77,7 @@ import { FIND_PARAM } from '../lib/putUpClientState.js'
 // URL) and the foot of goingNow.js (pop or push, the Back's words, the segments).
 import { withFrom, modeSearch } from '../components/putup/origin.js'
 import {
-  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, leavesByPop, backWords, recipeSearchItems,
+  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, leavePlan, backWords, recipeSearchItems,
 } from '../components/putup/goingNow.js'
 import { readMarker } from '../lib/backNav.js'
 
@@ -491,25 +491,37 @@ export default function PutUp({
   const openRecipe = useCallback((id, origin) => openMode({ recipe: id }, origin), [openMode])
   const openClosed = useCallback(() => openMode({ state: 'closed' }), [openMode])
 
-  // THE WAY BACK OUT. It POPS when this entry names where it was opened from and an app entry is under it
-  // (leavesByPop): the sender is one Back away, on this route or another, with its own state — and a
-  // system Back after it does not walk back INTO the mode. Otherwise it is the push it has always been —
-  // the URL with the mode keys removed (anything else, ?session= included, survives) — so a cold deep
-  // link, a restored session and a card that named no origin all have an exit that never leaves the page
-  // by surprise and never does nothing. That push lands on the segment the page is holding, except a
-  // recipe, which is left onto Recipes; the Back's words (backWords, below) name that same landing.
+  // THE WAY BACK OUT (goingNow.js leavePlan decides which). It POPS when this entry names where it was
+  // opened from and an app entry is under it: the sender is one Back away, on this route or another, with
+  // its own state — and a system Back after it does not walk back INTO the mode. Otherwise it is the push
+  // it has always been — the URL with the mode keys removed (anything else, ?session= included, survives)
+  // — so a cold deep link, a restored session and a card that named no origin all have an exit that never
+  // leaves the page by surprise and never does nothing. That push lands on the segment the page is
+  // holding, except a recipe, which is left onto Recipes; the Back's words (backWords, below) name that
+  // same landing. A second press while a pop is still landing WAITS: a pop, unlike the push, is not safe
+  // to do twice.
+  //
   // The router's own history index (react-router writes it into history.state as `idx`; EventNew's Close
   // reads the same counter): 0 on the first app entry of a session, undefined under a router that keeps
   // no browser history.
   const routerIndex = () => (typeof window === 'undefined' ? undefined : window.history?.state?.idx)
+  // The entry the last pop was started from, and when — forgotten the moment the location changes, so an
+  // entry re-entered later (the system's Forward) can be left again.
+  const popStartedRef = useRef(null)
+  useEffect(() => { popStartedRef.current = null }, [location.key])
   const leaveMode = useCallback(() => {
-    if (leavesByPop(location.state, routerIndex())) {
+    const plan = leavePlan({ state: location.state, historyIndex: routerIndex(), entryKey: location.key,
+      started: popStartedRef.current, nowMs: Date.now() })
+    if (plan === 'wait') return
+    if (plan === 'pop') {
+      popStartedRef.current = { key: location.key, at: Date.now() }
       navigate(-1)
       return
     }
+    popStartedRef.current = null
     chooseView(leaveSegment(view, { recipe: !!recipeId }))
     setSearchParams(modeSearch(searchParams, null), { state: withFrom(location.state, null) })
-  }, [location.state, navigate, chooseView, view, recipeId, searchParams, setSearchParams])
+  }, [location.state, location.key, navigate, chooseView, view, recipeId, searchParams, setSearchParams])
 
   // RecipesView's `onOpen(id | null)`: an id opens that recipe (no origin — it is left onto Recipes); null,
   // which a removed recipe sends, is the same act as the page's own Back.
@@ -686,7 +698,9 @@ export default function PutUp({
   const onGoing = view === 'going' && !searching
   // ONE min-width for the filled button, wide enough for the longer of its two labels, so the search box
   // beside it keeps its width when the segment — and the label — changes. In em: it follows the text size.
-  const headerButton = { flexShrink: 0, minWidth: '11.5em', minHeight: T.buttonMinHeight, padding: '0 14px', backgroundColor: P.green,
+  // Measured at this type size (0.82rem): "Put something up" is 132.2px wide in Roboto (the phones) and
+  // 142.5px in San Francisco; 11em is 144.3px.
+  const headerButton = { flexShrink: 0, minWidth: '11em', minHeight: T.buttonMinHeight, padding: '0 14px', backgroundColor: P.green,
     color: P.white, border: 'none', borderRadius: T.radiusButton, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit',
     whiteSpace: 'nowrap', cursor: 'pointer' }
   const quietDoor = { minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 2px', color: P.green,
@@ -724,8 +738,8 @@ export default function PutUp({
             still on this line's posture: not a full-width filled CTA, V4-WEIGHINCTA-001's reversal).
             R1 (PLAN-V3 D10): the filled button is the thing that segment is FOR. On Going now it starts a
             batch — he lands there with a ferment going and used to find only "Put something up", which is
-            the wrong door for a ferment. Everywhere else, and over search results (they are pantry
-            results), it is Put something up. Two buttons, each with its own fixed testid and name, never
+            the wrong door for a ferment. Everywhere else, and over search results (what was typed there
+            is something to put up), it is Put something up. Two buttons, each with its own fixed testid and name, never
             one that changes what it does; and on Going now the door stays ONE tap away as a quiet link
             beside the walk's, under the same testid the filled one carries elsewhere. */}
         {!modeActive && (

@@ -21,7 +21,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -859,6 +859,56 @@ describe('GoingNowView — the one explicit door, and a card that stays inert', 
       opened.push(card.getAttribute('data-batch-id'))
     }
     expect(opened).toEqual(['kb-jen', 'kb-candy'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Put-Up UX pass R1 (PLAN-V3 section 3 point 2, rule 5) — the card's two doors. The PAGE does the push now: it
+// hands this view its one opener as `onOpenBatch(id)` / `onOpenClosed()`. A host that passes neither still
+// gets working doors, and those no longer drop router state (they used to push with none, which threw
+// away an overlay's background and turned a flyover into a page).
+describe('GoingNowView — its two doors go through the page, and never drop router state', () => {
+  const BG = { pathname: '/today', search: '', hash: '', key: 'bg' }
+  function LocProbe() {
+    const loc = useLocation()
+    return (
+      <>
+        <div data-testid="gn-loc">{loc.pathname + loc.search}</div>
+        <div data-testid="gn-state">{JSON.stringify(loc.state ?? null)}</div>
+      </>
+    )
+  }
+  const renderAt = (entry, extra = {}) => render(
+    <MemoryRouter initialEntries={[entry]}>
+      <LocProbe />
+      <GoingNowView batches={[CANDY]} loading={false} error={false} onReload={vi.fn()} now={NOW} {...extra} />
+    </MemoryRouter>,
+  )
+  const where = () => [screen.getByTestId('gn-loc').textContent, JSON.parse(screen.getByTestId('gn-state').textContent)]
+
+  // MUTATION: call the fallback even when the host passed an opener -> the location moves and this reds.
+  it('with the page\'s opener: the card hands it the batch id, the closed door hands it nothing, and the view pushes nothing itself', () => {
+    const onOpenBatch = vi.fn(); const onOpenClosed = vi.fn()
+    renderAt({ pathname: '/put-up', search: '?view=pantry', state: { background: BG } }, { onOpenBatch, onOpenClosed })
+    fireEvent.click(screen.getByTestId('going-open-batch'))
+    fireEvent.click(screen.getByTestId('going-closed-door'))
+    expect(onOpenBatch.mock.calls).toEqual([['kb-candy']])        // the id alone: this sender names no origin
+    expect(onOpenClosed.mock.calls).toEqual([[]])
+    expect(where()).toEqual(['/put-up?view=pantry', { background: BG }])
+  })
+
+  // MUTATION: push with no state, as at the base -> the state reads null and both arms red.
+  it('with no opener, the card\'s door still opens the batch — one mode key — and carries the router state', async () => {
+    renderAt({ pathname: '/put-up', search: '?view=pantry&state=closed&find=mash', state: { background: BG, from: { label: 'Pantry' } } })
+    fireEvent.click(screen.getByTestId('going-open-batch'))
+    // `state=closed` and the page search are gone, `view` is kept; the background rides, a stale origin does not.
+    await waitFor(() => expect(where()).toEqual(['/put-up?view=pantry&batch=kb-candy', { background: BG }]))
+  })
+
+  it('with no opener, the closed-batches door does the same', async () => {
+    renderAt({ pathname: '/put-up', search: '?batch=kb-old', state: { background: BG } })
+    fireEvent.click(screen.getByTestId('going-closed-door'))
+    await waitFor(() => expect(where()).toEqual(['/put-up?state=closed', { background: BG }]))
   })
 })
 
