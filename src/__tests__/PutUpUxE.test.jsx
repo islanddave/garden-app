@@ -295,6 +295,15 @@ describe('Put it up — the stub in place', () => {
       ['Undo', '48px', 'none', '0.78rem'],
       ['Open →', '48px', 'none', '0.78rem'],
     ])
+    expect(actions.map(b => b.style.minWidth)).toEqual(['44px', '44px'])     // "Undo" alone was 37 px wide
+  })
+
+  // F16 on the sheet itself (landed at the train, from the 426 px render: five quiet actions measured 44 px).
+  // MUTATION: put the sheet's quietLink back on T.tapMinHeight -> every entry reads '44px'.
+  it('the sheet\'s own quiet actions are 48 px tall', async () => {
+    await openPutUp()
+    const ids = ['putup-method-more', 'putup-row-0-place-new', 'putup-row-0-more', 'putup-row-add', 'putup-sitting-more', 'putup-later']
+    expect(ids.map(id => [id, screen.getByTestId(id).style.minHeight])).toEqual(ids.map(id => [id, '48px']))
   })
 })
 

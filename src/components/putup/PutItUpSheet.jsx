@@ -89,8 +89,9 @@ export function isPutItUpDraft(d) {
     && typeof d.sitting.nextTime === 'string'
 }
 
+// The sheet's quiet actions are 48 px tall (Put-Up UX pass R1, F16): height only.
 const quietLink = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, background: 'none', border: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600,
 }
 
