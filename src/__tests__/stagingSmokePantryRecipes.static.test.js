@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { RECIPE_BUILTIN_TYPES, parseRecipeRoute } from '../../lambda/preservation/recipeRules.js'
 import { parsePantryRoute } from '../../lambda/preservation/pantryRoutes.js'
+import { validateUse } from '../../lambda/preservation/pantryUses.js'
 
 const SMOKE = readFileSync(resolve(process.cwd(), 'tests/smoke/run-smoke.sh'), 'utf8')
 const sliceBlock = (heading) => {
@@ -37,7 +38,9 @@ const BLOCKS = [
     probe: 'pn_req GET "$PN_BASE/api/pantry"', fail: 'pn_fail', uuid: 'PN_UUID_RE',
     outerIf: 'if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" && -n "${STAGING_API_STORAGE_LOCATIONS:-}" ]]; then',
     asserts: ['s1-create-readback', 's2-replay', 's3-listed', 's4-used-up', 's5-unlisted', 's6-delete', 's7-delete-again',
-      's8-used-one', 's8-undo', 'l058-sweep'],
+      's8-used-one', 's8-undo', 'l058-sweep',
+      // Put-Up UX pass R1: Went bad as a count
+      's9-went-bad-part', 's9-listed', 's9-undo'],
     order: [
       'DELETE FROM pantry_use WHERE reverses_use_id IS NOT NULL',
       'DELETE FROM pantry_use WHERE preservation_log_id',
@@ -203,6 +206,56 @@ describe('block S — the pantry route contract it smokes', () => {
 
   it("S3 reads the row back as stock_kind 'pantry_item', stock_mode 'item'", () => {
     expect(S.text).toContain('"pantry_item|item|$PN_NAME|$PN_PLACE"')
+  })
+
+  // Put-Up UX pass R1. S9 is the deployed stack's proof that Went bad may be a COUNT: a Lambda from before the
+  // release answers S9a with 400. What can rot silently: the body turned back into all_remaining (which every Lambda
+  // has always accepted, so the check would pass on an old one), or S9 moved ahead of S8's Undo (the jar would not be
+  // at 3 of 3 and the three literals below would be about some other count).
+  describe('S9 — Went bad as a count, listed with what is left, undone', () => {
+    const at = S.text.indexOf('# ── S9)')
+    const S9 = S.text.slice(at, S.text.indexOf('# The place, through its own route'))
+    const post = S9.split('\n').find((l) => l.includes('pn_req POST "$PN_BASE/api/pantry/uses" ')) ?? ''
+
+    it('runs on S8\'s jar, after S8\'s Undo, before the place is deleted', () => {
+      expect(at).toBeGreaterThan(S.text.indexOf('pn_check "s8-undo"'))
+      expect(S.text.indexOf('# The place, through its own route')).toBeGreaterThan(at)
+      expect(S.text).toContain('"200 3|true -1|$PN_USE"')   // where S8 leaves the jar: 3 of 3
+    })
+
+    it('S9a sends a count with fate discarded, never all_remaining; and it is a body the Lambda\'s own validator accepts', () => {
+      expect(post).toContain('\\"preservation_log_id\\": \\"$PN_JAR\\", \\"count_used\\": 1, \\"fate\\": \\"discarded\\"}')
+      expect(post).toContain('\\"idempotency_key\\": \\"$(pn_uuid)\\"')
+      expect(S9).not.toContain('all_remaining')
+      expect(validateUse({ idempotency_key: id, preservation_log_id: id, count_used: 1, fate: 'discarded' })).toBeNull()
+    })
+
+    it('S9a reads back 2 left and not consumed, and the use row 1|discarded', () => {
+      expect(S9).toContain("SELECT coalesce(remaining_count::text,'null')||'|'||(consumed_at IS NOT NULL)::text FROM preservation_log WHERE id = '$PN_JAR'")
+      expect(S.text).toContain(`pn_use() { pn_id_ok "$1" && pn_row "SELECT count_used||'|'||coalesce(fate,'null') FROM pantry_use WHERE id = '$1'" || echo "bad-id"; }`)
+      expect(S9).toContain('$(pn_use "$PN_BAD")" "201 2|false 1|discarded"')
+    })
+
+    it('S9b reads the jar back from GET /api/pantry?place_id= with count_left 2', () => {
+      const get = S9.indexOf('pn_req GET "$PN_BASE/api/pantry?place_id=$PN_PLACE"')
+      expect(get).toBeGreaterThan(S9.indexOf('pn_check "s9-went-bad-part"'))
+      expect(S9.indexOf('pn_check "s9-listed"')).toBeGreaterThan(get)
+      expect(S9).toContain('"\\(.stock_kind)|\\(.stock_mode)|\\(.count_left)"')
+      expect(S9).toContain('"200 put_up|counted|2"')
+    })
+
+    it('S9c undoes THAT use and reads back 3 left, delta_at moved, and the reversing row −1|discarded|<the use>', () => {
+      expect(S9).toContain('pn_req POST "$PN_BASE/api/pantry/uses/$PN_BAD/undo" "{\\"idempotency_key\\": \\"$(pn_uuid)\\"}"')
+      expect(S9).toContain("SELECT count_used||'|'||coalesce(fate,'null')||'|'||reverses_use_id FROM pantry_use WHERE reverses_use_id = '$PN_BAD'")
+      expect(S9).toContain('"200 3|true -1|discarded|$PN_BAD"')
+    })
+
+    it('its rows hang off the block\'s jar, which pantry_sweep takes with its uses: no sweep change', () => {
+      const sweep = sweepOf(S.text, 'pantry_sweep')
+      expect(sweep).toContain("WHERE notes LIKE 'smoke-test-pantry-%' OR storage_location_id IN (SELECT id FROM pn_s)")
+      expect(sweep).toContain('DELETE FROM pantry_use WHERE preservation_log_id IN (SELECT id FROM pn_j)')
+      expect(S9).not.toMatch(/pn_req POST "\$PN_BASE\/api\/(preservation|pantry\/items)"/)   // S9 creates no stock of its own
+    })
   })
 })
 
