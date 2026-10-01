@@ -44,6 +44,11 @@
 #        refused 400 with nothing changed, then both cleared to null and read back
 #     R) (right after D) GET /api/harvests/season-stats (V5-SEASONSTATS-001): envelope v1, the 8 sections
 #        in page order, block D's planting counted, 400 on an unknown section
+#     S) Pantry (B′ release 2; 05-release-train §5): a keyed pantry item → its replay → listed by place →
+#        Used it up → unlisted → DELETE → 404 on a second DELETE; a Used one on a jar → Undo; REQUIRED whenever the
+#        tree carries migrations/v5-pantry-001; its own FK-ordered hard-delete
+#     T) Recipes (B′ release 4): 16 built-in types incl. "Sambal & chili relish" → a keyed recipe → GET (its line,
+#        no pH field) → DELETE → 404; REQUIRED whenever the tree carries migrations/v5-recipes-001; own hard-delete
 #   then deletes the test data. Skipped only if CLERK_SECRET_KEY_STAGING or
 #   CLERK_TEST_USER_ID are unset.
 #   Per L-108 (ratified 2026-05-25): every write-path surface gets a write→read-back assert.
@@ -91,6 +96,16 @@ cleanup() {
   if [[ "${FERM_DIRTY:-false}" == "true" ]]; then
     ferm_sweep >/dev/null 2>&1 && echo "✅ Cleanup: smoke-test-ferment rows hard-deleted" \
       || echo "WARNING: smoke-test-ferment sweep failed — rows labelled smoke-test-ferment-% may remain on staging"
+  fi
+  # Block S (Pantry, B′ release 2): the run died between its first write and its own pantry_sweep.
+  if [[ "${PANTRY_DIRTY:-false}" == "true" ]]; then
+    pantry_sweep >/dev/null 2>&1 && echo "✅ Cleanup: smoke-test-pantry rows hard-deleted" \
+      || echo "WARNING: smoke-test-pantry sweep failed — rows named smoke-test-pantry-% may remain on staging"
+  fi
+  # Block T (recipes, B′ release 4): the run died between its create and its own recipes_sweep.
+  if [[ "${RECIPES_DIRTY:-false}" == "true" ]]; then
+    recipes_sweep >/dev/null 2>&1 && echo "✅ Cleanup: smoke-test-recipe rows hard-deleted" \
+      || echo "WARNING: smoke-test-recipe sweep failed — recipes named smoke-test-recipe-% may remain on staging"
   fi
   if [[ "$DATA_CREATED" == "true" && -n "$CLERK_JWT" ]]; then
     echo ""
@@ -2276,6 +2291,289 @@ elif [[ -n "${SMOKE_REQUIRE_AUTH:-}" ]]; then
   FAIL=$((FAIL+1))
 else
   echo "⚠️  WARN [write:source-links-readback] STAGING_API_VARIETIES unset or no Clerk session — source link assert NOT run"
+fi
+
+
+# ── S) Pantry (B′ release 2): a bought item kept, replayed, used up, removed; a Used one undone — write → read-back
+#    (04-design-final V4 §2.5, §4.3, §5.1 rows "2"; 05-release-train §5; L-108) — Phase 2, continued ───────────────
+# Block letters: Q and R are STATS's (421a1f9 renamed them off Put-Up's P), so the B′ blocks are S (Pantry) and T
+# (recipes). Each sub-block is a write followed by a read-back:
+#   S1) POST /api/pantry/items (keyed; filed by storage_location_id in this block's own smoke place) → 201; the row
+#       read back through SQL: name|place|acquired_at|used_up_at|deleted_at.
+#   S2) the same POST again under the same key → 200 replayed:true with the same id, and still ONE row on that key.
+#   S3) GET /api/pantry?place_id=<the place> lists it: stock_kind 'pantry_item', stock_mode 'item', its name, its place.
+#   S4) PATCH used_up_at "now" → 200; used_up_at is stamped (SQL).
+#   S5) GET /api/pantry?place_id= no longer lists it (the list excludes used-up items).
+#   S6) DELETE /api/pantry/items/:id → 200 {ok:true}; deleted_at is stamped (SQL). The item's API cleanup.
+#   S7) a second DELETE → 404 not_found (nothing live matches).
+#   S8) 05 §5 "Used one then read back remaining and delta_at, Undo": a jar in the same place → POST /api/pantry/uses
+#       count_used 1 → remaining −1 and delta_at set → POST /api/pantry/uses/:id/undo → 200, remaining back, delta_at
+#       moved past the use, and the reversing row (count −1, reverses_use_id = the use) read back.
+#   then the place is soft-deleted through DELETE /api/storage-locations/:id (API cleanup) and pantry_sweep runs.
+# Stock is read back through SQL (NEON_STAGING_URL + psql), as block P does: used_up_at, deleted_at, delta_at and
+# the reversing pantry_use row are on no list projection.
+# GATED ON B′ BEING DEPLOYED, the way block P is gated on F: the probe is GET /api/pantry (200 with a rows array only
+# from B′'s Lambda). THE REQUIREMENT TRAVELS WITH THE SHA (review-F-prepromote-early I1): a checked-out tree that
+# carries migrations/v5-pantry-001 requires this block — the probe failing, or the block not running at all, is a
+# FAIL there. Only a tree without release 2 keeps the WARN. SMOKE_REQUIRE_PANTRY=1 still forces it by hand.
+# SELF-CONTAINED CLEANUP (L-058): every row this block writes carries 'smoke-test-pantry-<run>' (item name, jar
+# notes, place label) or hangs off a row that does. pantry_sweep hard-deletes them in FK order, in ONE transaction:
+# reversing pantry_use → pantry_use → preservation_source → preservation_log → pantry_item → storage_location.
+# It runs at the end of the block and again from cleanup() if the run dies in between (PANTRY_DIRTY).
+PANTRY_DIRTY=false
+pantry_sweep() {
+  [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1 || return 1
+  psql "$NEON_STAGING_URL" -X -q -1 -v ON_ERROR_STOP=1 <<'SQL'
+CREATE TEMP TABLE pn_s ON COMMIT DROP AS SELECT id FROM storage_location WHERE label LIKE 'smoke-test-pantry-%';
+CREATE TEMP TABLE pn_j ON COMMIT DROP AS SELECT id FROM preservation_log
+  WHERE notes LIKE 'smoke-test-pantry-%' OR storage_location_id IN (SELECT id FROM pn_s);
+DELETE FROM pantry_use WHERE reverses_use_id IS NOT NULL AND preservation_log_id IN (SELECT id FROM pn_j);
+DELETE FROM pantry_use WHERE preservation_log_id IN (SELECT id FROM pn_j);
+DELETE FROM preservation_source WHERE preservation_log_id IN (SELECT id FROM pn_j);
+DELETE FROM preservation_log WHERE id IN (SELECT id FROM pn_j);
+DELETE FROM pantry_item WHERE name LIKE 'smoke-test-pantry-%' OR storage_location_id IN (SELECT id FROM pn_s);
+DELETE FROM storage_location WHERE id IN (SELECT id FROM pn_s);
+SQL
+}
+# I1: from the checked-out tree (this script's own repo root, so the working directory cannot matter).
+PN_TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[[ -d "$PN_TREE/migrations/v5-pantry-001" ]] && SMOKE_REQUIRE_PANTRY=1
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" && -n "${STAGING_API_STORAGE_LOCATIONS:-}" ]]; then
+  PN_BASE="${STAGING_API_PRESERVATION%/}"
+  PN_TAG="smoke-test-pantry-$TEST_RUN_ID"
+  PN_DAY=$(TZ=America/New_York date +%Y-%m-%d)
+  PN_UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  pn_uuid() { local u; u=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid); echo "$u" | tr 'A-Z' 'a-z'; }
+  # pn_req METHOD URL [BODY] → PN_CODE (HTTP status or 000) and PN_OUT (the body, a temp file; pn_req removes the last one)
+  PN_OUT=""
+  pn_req() {
+    [[ -n "$PN_OUT" ]] && rm -f "$PN_OUT"
+    PN_OUT=$(mktemp)
+    if [[ -n "${3:-}" ]]; then
+      PN_CODE=$(curl -s --max-time 30 --connect-timeout 10 -X "$1" -H "Authorization: Bearer $CLERK_JWT" \
+        -H "Content-Type: application/json" -o "$PN_OUT" -w "%{http_code}" "$2" -d "$3") || PN_CODE="000"
+    else
+      PN_CODE=$(curl -s --max-time 30 --connect-timeout 10 -X "$1" -H "Authorization: Bearer $CLERK_JWT" \
+        -H "Content-Type: application/json" -o "$PN_OUT" -w "%{http_code}" "$2") || PN_CODE="000"
+    fi
+  }
+  pn_jq() { jq -rc "$1" "$PN_OUT" 2>/dev/null || echo "unparseable"; }
+  pn_jqx() { jq -rc --arg x "$1" "$2" "$PN_OUT" 2>/dev/null || echo "unparseable"; }   # pn_jqx <value of $x> <filter>
+  pn_pass() { echo "✅ PASS [pantry:$1] $2"; PASS=$((PASS+1)); }
+  pn_fail() { echo "❌ FAIL [pantry:$1] $2"; FAIL=$((FAIL+1)); }
+  pn_check() { if [[ "$2" == "$3" ]]; then pn_pass "$1" "$4 → '$2'"; else pn_fail "$1" "$4 → '$2' (expected '$3')"; fi; }
+  # pn_row <sql> → one row, '|'-separated, or 'sql-error'. Ids reach SQL only after matching PN_UUID_RE.
+  pn_row() { psql "$NEON_STAGING_URL" -X -qAt -v ON_ERROR_STOP=1 -c "$1" 2>/dev/null || echo "sql-error"; }
+  pn_id_ok() { [[ "${1:-}" =~ $PN_UUID_RE ]]; }
+  pn_item() { pn_id_ok "$1" && pn_row "SELECT name||'|'||storage_location_id||'|'||coalesce(acquired_at::text,'null')||'|'||(used_up_at IS NOT NULL)::text||'|'||(deleted_at IS NOT NULL)::text FROM pantry_item WHERE id = '$1'" || echo "bad-id"; }
+  # pn_listed <item id> → GET /api/pantry?place_id=<the place>; 'kind|mode|name|place' of the item's row, or 'absent'
+  pn_listed() {
+    pn_req GET "$PN_BASE/api/pantry?place_id=$PN_PLACE"
+    if [[ "$PN_CODE" != "200" ]]; then echo "HTTP $PN_CODE"; return; fi
+    pn_jqx "$1" '[.rows[] | select(.stock_id == $x)] | if length == 0 then "absent" else (.[0] | "\(.stock_kind)|\(.stock_mode)|\(.name)|\(.place.id)") end'
+  }
+
+  CLERK_JWT=$(mint_session_token)
+  pn_req GET "$PN_BASE/api/pantry"
+  if [[ "$PN_CODE" != "200" || "$(pn_jq '.rows | type')" != "array" ]]; then
+    if [[ "${SMOKE_REQUIRE_PANTRY:-}" == "1" ]]; then
+      pn_fail "deployed" "GET /api/pantry → HTTP $PN_CODE: this tree carries release 2 (or SMOKE_REQUIRE_PANTRY=1), but B′'s Lambda is not answering on staging"
+    else
+      echo "⚠️  WARN [pantry:deployed] GET /api/pantry → HTTP $PN_CODE — this tree has no release 2 (no migrations/v5-pantry-001); block S NOT run"
+    fi
+  elif [[ -z "${NEON_STAGING_URL:-}" ]] || ! command -v psql >/dev/null 2>&1; then
+    pn_fail "readback-sql" "NEON_STAGING_URL unset or psql missing — block S reads stock back through SQL and cleans up through it"
+  else
+    PANTRY_DIRTY=true
+    pn_req POST "${STAGING_API_STORAGE_LOCATIONS%/}/api/storage-locations" "{\"label\": \"$PN_TAG place\", \"kind\": \"pantry\"}"
+    PN_PLACE=$(pn_jq '.id // empty')
+    if ! pn_id_ok "$PN_PLACE"; then
+      pn_fail "place" "POST /storage-locations → HTTP $PN_CODE (no id)"
+    else
+      # ── S1) a keyed create, read back ──
+      CLERK_JWT=$(mint_session_token)
+      PN_KEY=$(pn_uuid)
+      PN_NAME="$PN_TAG capers"
+      PN_BODY="{\"idempotency_key\": \"$PN_KEY\", \"name\": \"$PN_NAME\", \"storage_location_id\": \"$PN_PLACE\", \"acquired_at\": \"$PN_DAY\"}"
+      pn_req POST "$PN_BASE/api/pantry/items" "$PN_BODY"
+      PN_ITEM=$(pn_jq '.item.id // empty')
+      if [[ "$PN_CODE" == "201" ]] && pn_id_ok "$PN_ITEM"; then
+        pn_check "s1-create-readback" "$(pn_item "$PN_ITEM")" "$PN_NAME|$PN_PLACE|$PN_DAY|false|false" "POST /api/pantry/items → HTTP 201; name|place|acquired_at|used up|deleted"
+
+        # ── S2) the same key again → the same item, replayed; one row on the key ──
+        pn_req POST "$PN_BASE/api/pantry/items" "$PN_BODY"
+        pn_check "s2-replay" "$PN_CODE $(pn_jq '.replayed') $(pn_jq '.item.id') $(pn_row "SELECT count(*) FROM pantry_item WHERE idempotency_key = '$PN_KEY'")" "200 true $PN_ITEM 1" "the same POST, same key; replayed, id, rows on the key"
+
+        # ── S3) listed in its place ──
+        pn_check "s3-listed" "$(pn_listed "$PN_ITEM")" "pantry_item|item|$PN_NAME|$PN_PLACE" "GET /api/pantry?place_id=; kind|mode|name|place"
+
+        # ── S4) Used it up ──
+        CLERK_JWT=$(mint_session_token)
+        pn_req PATCH "$PN_BASE/api/pantry/items/$PN_ITEM" '{"used_up_at": "now"}'
+        pn_check "s4-used-up" "$PN_CODE $(pn_jq '.item.used_up_at != null') $(pn_item "$PN_ITEM")" "200 true $PN_NAME|$PN_PLACE|$PN_DAY|true|false" "PATCH used_up_at \"now\"; stamped in the reply, then the row"
+
+        # ── S5) gone from the list ──
+        pn_check "s5-unlisted" "$(pn_listed "$PN_ITEM")" "absent" "GET /api/pantry?place_id= after Used it up"
+
+        # ── S6) Remove (soft) ──
+        pn_req DELETE "$PN_BASE/api/pantry/items/$PN_ITEM"
+        pn_check "s6-delete" "$PN_CODE $(pn_jq '.ok') $(pn_item "$PN_ITEM")" "200 true $PN_NAME|$PN_PLACE|$PN_DAY|true|true" "DELETE /api/pantry/items/:id; ok, then the row"
+
+        # ── S7) a second DELETE matches nothing ──
+        pn_req DELETE "$PN_BASE/api/pantry/items/$PN_ITEM"
+        pn_check "s7-delete-again" "$PN_CODE $(pn_jq '.code // "-"')" "404 not_found" "the same DELETE again"
+      else
+        pn_fail "s1-create-readback" "POST /api/pantry/items → HTTP $PN_CODE: $(head -c 200 "$PN_OUT")"
+      fi
+
+      # ── S8) Used one → remaining and delta_at → Undo → remaining back, delta_at moved, the reversing row ──
+      CLERK_JWT=$(mint_session_token)
+      pn_req POST "$PN_BASE/api/preservation" "{\"crop_type_slug\": \"tomato\", \"method\": \"whole_freeze\", \"quantity_value\": 1, \"quantity_unit\": \"jar\", \"package_count\": 3, \"preserved_at\": \"$PN_DAY\", \"preserved_at_approx\": false, \"source_kind\": \"own_garden\", \"storage_location_id\": \"$PN_PLACE\", \"notes\": \"$PN_TAG\"}"
+      PN_JAR=$(pn_jq '.id // empty')
+      if pn_id_ok "$PN_JAR"; then
+        pn_req POST "$PN_BASE/api/pantry/uses" "{\"idempotency_key\": \"$(pn_uuid)\", \"preservation_log_id\": \"$PN_JAR\", \"count_used\": 1}"
+        PN_USE=$(pn_jq '.use.id // empty')
+        pn_check "s8-used-one" "$PN_CODE $(pn_row "SELECT coalesce(remaining_count::text,'null')||'|'||(delta_at IS NOT NULL)::text FROM preservation_log WHERE id = '$PN_JAR'")" "201 2|true" "Used one of 3 (POST /api/pantry/uses); remaining|delta_at set"
+        if pn_id_ok "$PN_USE"; then
+          pn_req POST "$PN_BASE/api/pantry/uses/$PN_USE/undo" "{\"idempotency_key\": \"$(pn_uuid)\"}"
+          pn_check "s8-undo" "$PN_CODE $(pn_row "SELECT coalesce(p.remaining_count::text,'null')||'|'||(p.delta_at > u.created_at)::text FROM preservation_log p JOIN pantry_use u ON u.id = '$PN_USE' WHERE p.id = '$PN_JAR'") $(pn_row "SELECT count_used||'|'||reverses_use_id FROM pantry_use WHERE reverses_use_id = '$PN_USE'")" "200 3|true -1|$PN_USE" "Undo it (POST /api/pantry/uses/:id/undo); remaining|delta_at moved past the use, then the reversing row"
+        else
+          pn_fail "s8-undo" "no use id from POST /api/pantry/uses (HTTP $PN_CODE)"
+        fi
+      else
+        pn_fail "s8-used-one" "POST /api/preservation → HTTP $PN_CODE (no jar id)"
+      fi
+
+      # The place, through its own route (the API cleanup); pantry_sweep hard-deletes it either way.
+      CLERK_JWT=$(mint_session_token)
+      pn_req DELETE "${STAGING_API_STORAGE_LOCATIONS%/}/api/storage-locations/$PN_PLACE"
+      [[ "$PN_CODE" == "200" ]] || echo "⚠️  WARN [pantry:place-delete] DELETE /api/storage-locations/:id → HTTP $PN_CODE (pantry_sweep removes it)"
+    fi
+    if pantry_sweep; then
+      PANTRY_DIRTY=false
+      PN_LEFT=$(pn_row "SELECT (SELECT count(*) FROM pantry_item WHERE name LIKE 'smoke-test-pantry-%') + (SELECT count(*) FROM preservation_log WHERE notes LIKE 'smoke-test-pantry-%') + (SELECT count(*) FROM storage_location WHERE label LIKE 'smoke-test-pantry-%')")
+      pn_check "l058-sweep" "$PN_LEFT" "0" "hard-delete of every smoke-test-pantry row, FK order, one transaction; residue"
+    else
+      pn_fail "l058-sweep" "pantry_sweep failed — smoke-test-pantry rows may remain on staging (cleanup() retries)"
+    fi
+  fi
+  [[ -n "$PN_OUT" ]] && rm -f "$PN_OUT"
+elif [[ "${SMOKE_REQUIRE_PANTRY:-}" == "1" ]]; then
+  echo "❌ FAIL [pantry:deployed] this tree carries release 2 (or SMOKE_REQUIRE_PANTRY=1), but block S could not run: STAGING_API_PRESERVATION or STAGING_API_STORAGE_LOCATIONS unset, or no JWT"
+  FAIL=$((FAIL+1))
+else
+  echo "⚠️  WARN [pantry] STAGING_API_PRESERVATION or STAGING_API_STORAGE_LOCATIONS unset, or no JWT — block S NOT run"
+fi
+
+
+# ── T) Recipes (B′ release 4): the built-in types; a recipe created, read back, removed — write → read-back
+#    (04-design-final V4 §2.6, §4.5, §5.1 row 4, "pH"; 05-release-train §5 "a recipe create → GET → DELETE"; L-108)
+#    — Phase 2, continued ──────────────────────────────────────────────────────────────────────────────────────
+#   T1) GET /api/recipes/types: 16 built-ins, "Sambal & chili relish" among them (its id is T2's type).
+#   T2) POST /api/recipes (keyed; one line, a keeps line, that built-in type) → 201 with an id.
+#   T3) GET /api/recipes/:id → the line (name|qty|unit), the keeps line, the type; and NO key anywhere in the body
+#       names a pH (V4 "pH": his target pH lives in the notes, never in a field; the batch list has no pH column).
+#   T4) DELETE /api/recipes/:id → 200 {ok:true}; the recipe and its line are soft-deleted in the one statement (SQL).
+#   T5) GET /api/recipes/:id → 404.
+# The smoke has one user, so there is no STRANGER leg here; tests/integration covers household scope.
+# GATED like block S: the probe is GET /api/recipes/types (200 with a types array only from release 4's Lambda), and a
+# checked-out tree that carries migrations/v5-recipes-001 requires the block (SMOKE_REQUIRE_RECIPES=1 by hand).
+# SELF-CONTAINED CLEANUP (L-058): the recipe's name carries 'smoke-test-recipe-<run>'; recipes_sweep hard-deletes its
+# lines, then it, in ONE transaction, at the end of the block and from cleanup() if the run dies (RECIPES_DIRTY).
+# Built-in types are never touched.
+RECIPES_DIRTY=false
+recipes_sweep() {
+  [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1 || return 1
+  psql "$NEON_STAGING_URL" -X -q -1 -v ON_ERROR_STOP=1 <<'SQL'
+CREATE TEMP TABLE rc_r ON COMMIT DROP AS SELECT id FROM recipe WHERE name LIKE 'smoke-test-recipe-%';
+DELETE FROM recipe_ingredient WHERE recipe_id IN (SELECT id FROM rc_r);
+DELETE FROM recipe WHERE id IN (SELECT id FROM rc_r);
+SQL
+}
+# I1: from the checked-out tree (this script's own repo root, so the working directory cannot matter).
+RC_TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[[ -d "$RC_TREE/migrations/v5-recipes-001" ]] && SMOKE_REQUIRE_RECIPES=1
+if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" ]]; then
+  RC_BASE="${STAGING_API_PRESERVATION%/}"
+  RC_TAG="smoke-test-recipe-$TEST_RUN_ID"
+  RC_SAMBAL="Sambal & chili relish"
+  RC_UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  rc_uuid() { local u; u=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid); echo "$u" | tr 'A-Z' 'a-z'; }
+  # rc_req METHOD URL [BODY] → RC_CODE (HTTP status or 000) and RC_OUT (the body, a temp file; rc_req removes the last one)
+  RC_OUT=""
+  rc_req() {
+    [[ -n "$RC_OUT" ]] && rm -f "$RC_OUT"
+    RC_OUT=$(mktemp)
+    if [[ -n "${3:-}" ]]; then
+      RC_CODE=$(curl -s --max-time 30 --connect-timeout 10 -X "$1" -H "Authorization: Bearer $CLERK_JWT" \
+        -H "Content-Type: application/json" -o "$RC_OUT" -w "%{http_code}" "$2" -d "$3") || RC_CODE="000"
+    else
+      RC_CODE=$(curl -s --max-time 30 --connect-timeout 10 -X "$1" -H "Authorization: Bearer $CLERK_JWT" \
+        -H "Content-Type: application/json" -o "$RC_OUT" -w "%{http_code}" "$2") || RC_CODE="000"
+    fi
+  }
+  rc_jq() { jq -rc "$1" "$RC_OUT" 2>/dev/null || echo "unparseable"; }
+  rc_jqx() { jq -rc --arg x "$1" "$2" "$RC_OUT" 2>/dev/null || echo "unparseable"; }   # rc_jqx <value of $x> <filter>
+  rc_pass() { echo "✅ PASS [recipes:$1] $2"; PASS=$((PASS+1)); }
+  rc_fail() { echo "❌ FAIL [recipes:$1] $2"; FAIL=$((FAIL+1)); }
+  rc_check() { if [[ "$2" == "$3" ]]; then rc_pass "$1" "$4 → '$2'"; else rc_fail "$1" "$4 → '$2' (expected '$3')"; fi; }
+  # rc_row <sql> → one row, '|'-separated, or 'sql-error'. Ids reach SQL only after matching RC_UUID_RE.
+  rc_row() { psql "$NEON_STAGING_URL" -X -qAt -v ON_ERROR_STOP=1 -c "$1" 2>/dev/null || echo "sql-error"; }
+  rc_id_ok() { [[ "${1:-}" =~ $RC_UUID_RE ]]; }
+
+  CLERK_JWT=$(mint_session_token)
+  rc_req GET "$RC_BASE/api/recipes/types"
+  if [[ "$RC_CODE" != "200" || "$(rc_jq '.types | type')" != "array" ]]; then
+    if [[ "${SMOKE_REQUIRE_RECIPES:-}" == "1" ]]; then
+      rc_fail "deployed" "GET /api/recipes/types → HTTP $RC_CODE: this tree carries release 4 (or SMOKE_REQUIRE_RECIPES=1), but its Lambda is not answering on staging"
+    else
+      echo "⚠️  WARN [recipes:deployed] GET /api/recipes/types → HTTP $RC_CODE — this tree has no release 4 (no migrations/v5-recipes-001); block T NOT run"
+    fi
+  elif [[ -z "${NEON_STAGING_URL:-}" ]] || ! command -v psql >/dev/null 2>&1; then
+    rc_fail "readback-sql" "NEON_STAGING_URL unset or psql missing — block T reads the soft delete back through SQL and cleans up through it"
+  else
+    # ── T1) the sixteen built-ins, Sambal among them ──
+    rc_check "t1-builtin-types" "$(rc_jqx "$RC_SAMBAL" '"\([.types[] | select(.builtin)] | length)|\(any(.types[]; .builtin and .label == $x))"')" "16|true" "GET /api/recipes/types; built-ins|\"$RC_SAMBAL\" among them"
+    RC_TYPE=$(rc_jqx "$RC_SAMBAL" 'first(.types[] | select(.builtin and .label == $x) | .id) // empty')
+
+    # ── T2) a keyed create: one line, a keeps line, the built-in type ──
+    RECIPES_DIRTY=true
+    CLERK_JWT=$(mint_session_token)
+    RC_NAME="$RC_TAG sambal"
+    rc_req POST "$RC_BASE/api/recipes" "{\"idempotency_key\": \"$(rc_uuid)\", \"name\": \"$RC_NAME\", \"kind\": \"ferment\", \"recipe_type_id\": \"$RC_TYPE\", \"keeps\": {\"n\": 2, \"unit\": \"month\", \"storage_kind\": \"fridge\"}, \"lines\": [{\"name\": \"$RC_TAG fresno\", \"qty\": 500, \"qty_unit\": \"g\"}]}"
+    RC_ID=$(rc_jq '.recipe.id // empty')
+    if [[ "$RC_CODE" == "201" ]] && rc_id_ok "$RC_ID"; then
+      rc_pass "t2-create" "POST /api/recipes → HTTP 201, id $RC_ID"
+
+      # ── T3) read back: the line, the keeps line, the type; no pH field anywhere ──
+      rc_req GET "$RC_BASE/api/recipes/$RC_ID"
+      rc_check "t3-readback" "$RC_CODE $(rc_jq '.recipe | "\(.name)|\(.type_label)|\(.keeps_n)|\(.keeps_unit)|\(.keeps_storage_kind)|\(.lines | length)|\(.lines[0].name)|\((.lines[0].qty | tonumber) + 0)|\(.lines[0].qty_unit)"')" "200 $RC_NAME|$RC_SAMBAL|2|month|fridge|1|$RC_TAG fresno|500|g" "GET /api/recipes/:id; name|type|keeps n|unit|where|lines|line name|qty|unit"
+      rc_check "t3-no-ph-field" "$(rc_jq '[.. | objects | keys[] | select(test("(^|_)ph(_|$)"; "i"))] | unique')" "[]" "keys naming a pH anywhere in the recipe detail"
+
+      # ── T4) Remove (soft): the recipe and its line ──
+      CLERK_JWT=$(mint_session_token)
+      rc_req DELETE "$RC_BASE/api/recipes/$RC_ID"
+      rc_check "t4-delete" "$RC_CODE $(rc_jq '.ok') $(rc_row "SELECT (r.deleted_at IS NOT NULL)::text||'|'||(SELECT count(*) FROM recipe_ingredient i WHERE i.recipe_id = r.id AND i.deleted_at IS NULL) FROM recipe r WHERE r.id = '$RC_ID'")" "200 true true|0" "DELETE /api/recipes/:id; ok, then recipe deleted|live lines"
+
+      # ── T5) gone ──
+      rc_req GET "$RC_BASE/api/recipes/$RC_ID"
+      rc_check "t5-gone" "$RC_CODE $(rc_jq '.code // "-"')" "404 not_found" "GET /api/recipes/:id after the DELETE"
+    else
+      rc_fail "t2-create" "POST /api/recipes → HTTP $RC_CODE (type '$RC_TYPE'): $(head -c 200 "$RC_OUT")"
+    fi
+    if recipes_sweep; then
+      RECIPES_DIRTY=false
+      rc_check "l058-sweep" "$(rc_row "SELECT count(*) FROM recipe WHERE name LIKE 'smoke-test-recipe-%'")" "0" "hard-delete of every smoke-test-recipe row and its lines, one transaction; residue"
+    else
+      rc_fail "l058-sweep" "recipes_sweep failed — smoke-test-recipe rows may remain on staging (cleanup() retries)"
+    fi
+  fi
+  [[ -n "$RC_OUT" ]] && rm -f "$RC_OUT"
+elif [[ "${SMOKE_REQUIRE_RECIPES:-}" == "1" ]]; then
+  echo "❌ FAIL [recipes:deployed] this tree carries release 4 (or SMOKE_REQUIRE_RECIPES=1), but block T could not run: STAGING_API_PRESERVATION unset, or no JWT"
+  FAIL=$((FAIL+1))
+else
+  echo "⚠️  WARN [recipes] STAGING_API_PRESERVATION unset, or no JWT — block T NOT run"
 fi
 
 
