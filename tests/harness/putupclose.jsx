@@ -254,6 +254,31 @@ window.fetch = (url, ...rest) => {
   // server and the section renders its load-failure copy, which would read as a layout finding.
   if (u.includes('/api/harvests')) return json({ aggregates: { crops: [] }, harvests: [] })
   // lane A additions go directly under this line
+  // Put-Up UX pass R1 — the Start sheet's "Start from" lists (cases start-from-*). Both reads are made only
+  // when their door is opened, so no shipped case reaches these two stubs. The rows carry the list reads'
+  // own columns (recipeRoutes.js listRecipes; v_kitchen_batch_current). EIGHT recipes in THREE groups —
+  // the longest built-in type label, and "No type" — and SIX past batches. Two strings are CONSTRUCTED,
+  // not seen in any database: the long recipe name, and LONG_LABEL on a past batch (see its own note).
+  if (u.includes('/api/recipes')) {
+    const recipe = (id, name, kind, type) => ({ id, user_id: 'harness_user', name, kind,
+      recipe_type_id: type ? `t-${type[1]}` : null, type_label: type ? type[0] : null, type_sort: type ? type[1] : null,
+      link_url: null, keeps_n: null, keeps_unit: null, keeps_storage_kind: null, line_count: 3, batch_count: 1 })
+    const HOT = ['Hot sauce', 10]; const FERMENT = ['Ferment (kraut, kimchi…)', 150]
+    return json({ recipes: [
+      recipe('rc-roll', 'Roll for Initiative', 'other', HOT), recipe('rc-petri', 'Petri Dish', 'ferment', HOT),
+      recipe('rc-settlers', 'Settlers of Cayenne', 'ferment', HOT),
+      recipe('rc-long', 'Reaper & Bhut hot sauce, the smoked one with the charred onion', 'ferment', HOT),
+      recipe('rc-kraut', 'Kraut, second crock', 'ferment', FERMENT), recipe('rc-kimchi', 'Napa kimchi', 'ferment', FERMENT),
+      recipe('rc-shrub', 'Blackberry shrub', 'infuse', null), recipe('rc-mystery', 'Mystery mash', null, null),
+    ] })
+  }
+  if (u.includes('/api/kitchen-batches?state=all')) {
+    const past = (id, label, kind) => ({ id, user_id: 'harness_user', label, kind, closed_at: '2026-08-14T12:00:00.000Z' })
+    return json({ state: 'all', batches: [
+      past('kb-p-mash', 'Megatron mash', 'ferment'), past('kb-p-long', LONG_LABEL, 'ferment'), past('kb-p-rings', 'Apple rings', 'dehydrate'),
+      past('kb-p-kraut', 'Kraut, second crock', 'ferment'), past('kb-p-ginger', 'Candied ginger', 'candy'), past('kb-p-shrub', 'Blackberry shrub', 'infuse'),
+    ] })
+  }
   // lane B additions go directly under this line
   // lane E additions go directly under this line
   return realFetch(url, ...rest)
@@ -337,6 +362,19 @@ async function run() {
     await settle()
   }
   // lane A additions go directly under this line
+  // Put-Up UX pass R1 — "Start from", tapped through its real buttons. `start-from-recipe`: the recipe rows
+  // open. `start-from-batch`: the past batches open. `start-from-picked`: a recipe AND a past batch picked,
+  // both lists closed, so the two picked lines and their undo links are what is measured (the past batch
+  // is read through the detail stub, so it is the long-labelled one with three lines). The name is the
+  // focused field in all three: it is the field directly above the row.
+  if (CASE.startsWith('start-from')) {
+    if (CASE !== 'start-from-batch') { click('start-from-recipe'); await settle(); await settle() }
+    if (CASE === 'start-from-picked') { click('start-from-recipe-row'); await settle() }
+    if (CASE !== 'start-from-recipe') { click('start-from-batch'); await settle(); await settle() }
+    if (CASE === 'start-from-picked') { click('start-like-batch-kb-p-long'); await settle(); await settle() }
+    byTid('start-label')?.focus()
+    await settle()
+  }
   // lane B additions go directly under this line
   // lane E additions go directly under this line
 
