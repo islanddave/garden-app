@@ -150,7 +150,12 @@ describe.skipIf(!HAS_STATS)('GET /api/harvests/season-stats (V5-SEASONSTATS-001)
       () => directSql`DELETE FROM inventory_items WHERE created_by = ANY(${users}::text[])`,
       () => directSql`DELETE FROM harvest_log WHERE created_by = ANY(${users}::text[])`,
       () => directSql`DELETE FROM event_log WHERE created_by = ANY(${users}::text[])`,
+      // A plants INSERT also writes an `entity` row (entity_planting_ref_id_fkey), and a plant_varieties
+      // INSERT one of its own (entity_cultivar_ref_id_fkey); both are RESTRICT, so each goes before its
+      // parent. The plantings name their cultivar, source and project, so they go before all three.
+      () => directSql`DELETE FROM entity WHERE planting_ref_id IN (SELECT id FROM plants WHERE created_by = ANY(${users}::text[]))`,
       () => directSql`DELETE FROM plants WHERE created_by = ANY(${users}::text[])`,
+      () => directSql`DELETE FROM entity WHERE cultivar_ref_id IN (SELECT id FROM plant_varieties WHERE created_by = ANY(${users}::text[]))`,
       () => directSql`DELETE FROM plant_varieties WHERE created_by = ANY(${users}::text[])`,
       // weather_daily goes with its space (ON DELETE CASCADE).
       () => directSql`DELETE FROM spaces WHERE created_by = ANY(${users}::text[])`,

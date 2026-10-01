@@ -30,6 +30,11 @@ import { readSeen, writeSeen, isUnseen, cmpVersion, SEEN_EVENT } from '../lib/wh
 import { useApiFetch } from '../lib/api.js'
 import { fetchNotificationPrefs, saveWhatsNewSeen } from '../lib/notificationPrefsClient.js'
 
+// api.js's service-worker offline-cache marker, read through the global Symbol registry — the
+// dependency-free seam NavPrefsContext.jsx and gardenGroupBy.js use.
+const FROM_CACHE = Symbol.for('garden-app.fromCache')
+const servedFromCache = (body) => !!body && typeof body === 'object' && body[FROM_CACHE] === true
+
 export function useWhatsNew() {
   const [latest, setLatest] = useState(null)
   const [unseen, setUnseen] = useState(false)
@@ -59,11 +64,17 @@ export function useWhatsNew() {
       }
 
       if (seen == null || seen === '') {
+        setUnseen(false)
+        // Nothing seen on either side is a first run ONLY when the server said so. A read that failed
+        // (null), or that the service worker answered from its cache, leaves the server's value
+        // unknown — and the route stores COALESCE(new, old), so pushing the newest release over it
+        // would hide a release this person has not read, on every device. Write nothing; the next
+        // read that reaches the server decides.
+        if (!prefs || servedFromCache(prefs)) return
         // First run on this identity anywhere: mark current as seen so there is no cold-start dot,
         // and push it so a second device does not then show one.
         writeSeen(v)
         if (v) saveWhatsNewSeen({ getToken, version: v })
-        setUnseen(false)
       } else {
         setUnseen(isUnseen(v, seen))
         // Local was ahead of the server (dismissed here while offline, or before this shipped) —
