@@ -5,6 +5,9 @@
 // Row = { stock_kind, stock_id, name, group_key, group_label, place: {id,label,kind}|null, where_from,
 // from_garden, plant_id, crop_type_slug, batch_id, stock_mode, count_left, count_made, grams_left,
 // method, discard: {date, basis, status}, acquired_at, created_by, updated_at }.
+import { validateUse } from '../../../lambda/preservation/pantryUses.js'
+
+const USE_ID_STAND_IN = '00000000-0000-4000-8000-000000000000'
 
 export const PLACES = [
   { id: 'loc-1', label: 'Chest Freezer 1', kind: 'deep_freezer' },
@@ -58,6 +61,14 @@ export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSe
     if (method === 'GET' && path.startsWith('/api/kitchen-batches/line-search')) return lineSearch
     if (method === 'GET' && path.startsWith('/api/kitchen-batches')) return { state: 'going', batches: [] }
     if (method === 'POST' && path === '/api/pantry/uses') {
+      // Judged by the Lambda's OWN validator, so a body the server refuses is a 400 here too, with the
+      // server's sentence. ONE stand-in: this fake's stock ids are short words ('jar-1'), not uuids, and
+      // the validator checks that before the rules a client can get wrong — so a named jar is judged as
+      // a well-formed id. Everything else in the body is judged exactly as it was sent.
+      const judged = typeof body?.preservation_log_id === 'string' && body.preservation_log_id !== ''
+        ? { ...body, preservation_log_id: USE_ID_STAND_IN } : body
+      const refused = validateUse(judged)
+      if (refused) throw apiError(400, { error: refused })
       const r = state.rows.find(x => x.stock_id === body.preservation_log_id)
       const left = r?.count_left ?? 1
       const n = body.all_remaining ? left : body.count_used
