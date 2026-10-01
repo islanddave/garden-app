@@ -356,6 +356,29 @@ describe('"a past batch" — the shipped Like-a-past-batch picker, with this row
     expect(body('POST', '/api/kitchen-batches')).not.toHaveProperty('kind')
   })
 
+  // "Empty" is judged when the pick LANDS. The past batch is read from the server before it is handed
+  // over; on a slow connection that is long enough to type a name, and that name is a typed one.
+  // MUTATION: fillFrom reads the name its handler closed over -> red.
+  it('a name typed while the past batch is still being read is not replaced when the pick lands', async () => {
+    let release
+    const base = fetchSpy.getMockImplementation()
+    fetchSpy.mockImplementation((path, o) => (path === '/api/kitchen-batches/kb-past'
+      ? new Promise(r => { release = () => r(PAST_DETAIL['kb-past']) }) : base(path, o)))
+    render(<Host />)
+    await openBatches()
+    tap('start-like-batch-kb-past')                              // the read is in flight…
+    type('start-label', 'Typed while it loaded')                 // …and he types
+    tap('start-kind-toggle'); tap('start-kind-candy')
+    await act(async () => { release() })
+    await screen.findByTestId('start-like-picked')
+    expect(label()).toBe('Typed while it loaded')
+    expect([pressed('start-kind-candy'), pressed('start-kind-ferment')]).toEqual(['true', 'false'])
+    // …and undoing the pick leaves both alone: it filled neither.
+    tap('start-like-clear')
+    expect(label()).toBe('Typed while it loaded')
+    expect(pressed('start-kind-candy')).toBe('true')
+  })
+
   it('a past batch whose kind no chip offers copies in, and Start it still starts', async () => {
     render(<Host />)
     await openBatches()

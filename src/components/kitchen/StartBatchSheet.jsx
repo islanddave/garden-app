@@ -249,19 +249,25 @@ function StartBatchOpen({ onClose, onStarted, photo, photoPreview, photoTakenAt,
   // START FROM (R1). A pick fills what is EMPTY and only that: a typed name is never replaced, a chosen kind
   // never overridden — and a kind no chip offers (a legacy `age` batch) is not put in the kind at all, where
   // it could not be sent. Undoing the pick takes back what THAT pick filled, if it still stands.
+  //
+  // "Empty" is judged WHEN THE PICK LANDS, not when it was tapped: a past batch is read from the server
+  // before it is handed over, and on a slow connection that is long enough to type a name. So both read
+  // the name and the kind as they stand now (these refs), never as the handler that started the read saw them.
+  const labelRef = useRef(label); labelRef.current = label
+  const kindRef = useRef(kind); kindRef.current = kind
   const fillFrom = (who, name, pickedKind) => {
     const filled = { label: null, kind: null }
     const text = String(name ?? '').slice(0, START_LABEL_MAX)
-    if (label.trim() === '' && text.trim() !== '') { setLabel(text); filled.label = text }
-    if (kind == null && KIND_CHIPS.some(c => c.value === pickedKind)) { setKind(pickedKind); setKindOpen(true); filled.kind = pickedKind }
+    if (labelRef.current.trim() === '' && text.trim() !== '') { setLabel(text); filled.label = text }
+    if (kindRef.current == null && KIND_CHIPS.some(c => c.value === pickedKind)) { setKind(pickedKind); setKindOpen(true); filled.kind = pickedKind }
     filledRef.current[who] = filled
     setErr(null)
   }
   const unfill = (who) => {
     const filled = filledRef.current[who]
     filledRef.current[who] = null
-    if (filled?.label != null && label === filled.label) setLabel('')
-    if (filled?.kind != null && kind === filled.kind) setKind(null)
+    if (filled?.label != null && labelRef.current === filled.label) setLabel('')
+    if (filled?.kind != null && kindRef.current === filled.kind) setKind(null)
     setErr(null)
   }
   const lockedRecipe = recipe && following.recipeId === recipe.id ? recipe : null
