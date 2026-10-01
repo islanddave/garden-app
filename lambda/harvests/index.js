@@ -12,8 +12,12 @@
 //     BUG-HARVESTSNOPROJECTPICKS-001: project_id has been nullable since care-rekey-001 (plant-only
 //     events on project-less plantings), and the old INNER JOIN silently dropped those picks — 6 of
 //     1,761 grow-year-2026 picks on prod 2026-09-29, which Season stats (stat_pick) did count. So the
-//     join is LEFT and scope is the house two-arm predicate (watch-route.js, lambda/plants): through
-//     the project when there is one, through the event's own created_by when there is none. The
+//     join is LEFT and scope has two arms: through the project when there is one, through the
+//     event's own created_by (the LOGGER) when there is none. The precedent is stat_pick's owner,
+//     coalesce(pj.created_by, e.created_by) (migrations/v5-seasonstats-001/0a-additive-ddl.sql).
+//     It is NOT the house rule for a project-less row (watch-route.js: gn.container_id IS NULL AND
+//     gn.created_by = ANY(...)), which scopes through the PLANTING's owner; the two can admit
+//     different rows when the logger is not the planting's owner. The
 //     second arm is gated on `e.project_id IS NULL`, not a bare COALESCE, so a project_id that
 //     points at a missing row can never fall through to the logger's id. Soft-deleted projects are
 //     unchanged: pj still joins and still scopes by its owner, as it always did.
