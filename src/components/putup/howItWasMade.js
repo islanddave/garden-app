@@ -7,6 +7,7 @@
 // is left); "Like <batch>, except…". One write: POST /api/kitchen-batches/from-jars.
 //
 // PURE: no React, no fetch, no clock.
+import { shortDay } from './jarWords.js'
 
 export const FROM_JARS_PATH = '/api/kitchen-batches/from-jars'
 export const HOW_IT_WAS_MADE_LABEL = 'How it was made →'
@@ -70,6 +71,22 @@ export function nextTimeLines(notes) {
     if (line && NEXT_TIME_RE.test(line) && !out.includes(line)) out.push(line)
   }
   return out
+}
+
+// One stored line as it is read. The row sheet writes a jar's note as "Next time (2026-09-02): <text>";
+// on a page that is "Next time: <text> · Sep 2" — with ", 2025" after the day only when it is not this
+// year (jarWords.shortDay, the day a lid is labelled with). The day is built from its three parts:
+// `new Date('2026-09-02')` is UTC and lands on the 1st west of Greenwich. Any other string — no date,
+// another shape, a day the calendar does not have — comes back exactly as it was given. `now` is the
+// caller's clock when it holds one (a Date).
+const DATED_NEXT_TIME_RE = /^Next time \((\d{4})-(\d{2})-(\d{2})\):\s+(\S.*)$/
+export function nextTimeWords(line, now = new Date()) {
+  const m = typeof line === 'string' ? DATED_NEXT_TIME_RE.exec(line) : null
+  if (!m) return line
+  const y = Number(m[1]); const mo = Number(m[2]); const d = Number(m[3])
+  const day = new Date(y, mo - 1, d)
+  if (day.getFullYear() !== y || day.getMonth() !== mo - 1 || day.getDate() !== d) return line
+  return `Next time: ${m[4]} · ${shortDay(day, now)}`
 }
 
 // SheetStartChips' answer (resolveSheetStart) → the route's `started` shape.
