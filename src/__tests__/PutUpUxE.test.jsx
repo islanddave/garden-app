@@ -74,6 +74,8 @@ async function openSittingAdder() {
   await tap('putup-sitting-more')
   await tap('putup-sitting-added-open')
 }
+const DRAFT_KEY = 'garden:putup-draft:v1:user_dave:putup:kb-mash'
+const BANNED = /\bsafe\b|shelf.life|shelf.stable|\bkeeps\b|\bgood\b|\bready\b|\bdone\b|\bexpired\b|\btable\b|\bdefault\b|\bbasis\b/i
 const ROW_NAME = 'putup-row-0-added-add-name'
 const ROW_LINE = 'putup-row-0-added-add-first'
 const SIT_NAME = 'putup-sitting-added-add-name'
@@ -93,6 +95,43 @@ beforeEach(() => {
   window.history.replaceState({ __floor: 1 }, '')
 })
 afterEach(() => { clearReloadBlocks() })
+
+describe('Put it up — When starts on Today (D12)', () => {
+  // An untouched When is an answer now, and it is stored: the put-up day is today, and every discard date
+  // counts from it. MUTATION (M8a): preselect nothing on this batch -> the save is refused for a When.
+  it('two taps and the commit: the body carries today as a day', async () => {
+    await openPutUp()
+    expect(screen.getByTestId('putup-when-words').textContent).toBe('Put up today')
+    await fillMinimum()
+    await tap('putup-finish')
+    await waitFor(() => expect(putUps()).toHaveLength(1))
+    expect(bodyOf(putUps()[0]).when).toEqual({ date: '2026-09-29', precision: 'day' })
+  })
+
+  // The group stays on screen with all four answers, and any other one is a single tap.
+  it('When stays visible and changeable in one tap: Yesterday is sent', async () => {
+    await openPutUp()
+    const chips = [...screen.getByRole('radiogroup', { name: 'When was it put up?' }).querySelectorAll('[role="radio"]')]
+    expect(chips.map(c => [c.textContent, c.getAttribute('aria-checked')])).toEqual(
+      [['Today', 'true'], ['Yesterday', 'false'], ['Earlier…', 'false'], ['Not sure', 'false']])
+    await tap('putup-when-yesterday')
+    expect(screen.getByTestId('putup-when-today').getAttribute('aria-checked')).toBe('false')
+    await fillMinimum()
+    await tap('putup-finish')
+    await waitFor(() => expect(putUps()).toHaveLength(1))
+    expect(bodyOf(putUps()[0]).when).toEqual({ date: '2026-09-28', precision: 'day' })
+  })
+
+  // A chosen When other than Today is an edit: it is kept as a draft, with a key.
+  it('changing When makes the sheet dirty and the draft keeps the chosen chip', async () => {
+    await openPutUp()
+    expect(localStorage.getItem(DRAFT_KEY)).toBeNull()
+    await tap('putup-when-unsure')
+    expect(JSON.parse(localStorage.getItem(DRAFT_KEY)).data.chip).toBe('unsure')
+    await tap('putup-when-today')
+    expect(localStorage.getItem(DRAFT_KEY)).toBeNull()
+  })
+})
 
 describe('Put it up — the unadded-line guard (D2)', () => {
   // MUTATION (the guard): let "Put it up and finish" proceed with pending adder text -> a body is posted
@@ -270,6 +309,20 @@ describe('Put it up — words', () => {
     const text = sheet().textContent + screen.getByTestId('putup-footer').textContent
     expect(text).toContain('Add “garlic” first — or clear it.')
     expect(text).toContain('More to put up later')
-    expect(text).not.toMatch(/\bsafe\b|shelf.life|shelf.stable|\bkeeps\b|\bgood\b|\bready\b|\bdone\b|\bexpired\b|\btable\b|\bdefault\b|\bbasis\b/i)
+    expect(text).not.toMatch(BANNED)
+  })
+
+  // The stub had no sweep of its own: what it says after a put-up, and after its Undo.
+  it('no banned word on the stub, before and after Undo', async () => {
+    await openPutUp()
+    await fillMinimum()
+    await tap('putup-later')
+    await waitFor(() => expect(screen.getByTestId('going-putup-undo')).toBeTruthy())
+    const stub = screen.getByTestId('going-putup-stub')
+    expect(stub.textContent).toContain('Megatron mash — put up · 1 container · Fridge')
+    expect(stub.textContent).not.toMatch(BANNED)
+    await tap('going-putup-undo')
+    await waitFor(() => expect(stub.textContent).toContain('Put-up undone'))
+    expect(stub.textContent).not.toMatch(BANNED)
   })
 })
