@@ -243,15 +243,21 @@ describe('Jar & heat — the summary, never opened by itself', () => {
   })
 
   // The walk measured About's Save at 39×44 px. MUTATION: drop the quiet style's minWidth -> red.
-  it('its short Save keeps the 44 px floor across as well as down', () => {
+  // Amended with the Put-Up UX pass R1 (F27, F16) in the same commit as the change: the Save is 48 px
+  // down; across it keeps the 44 px floor it had.
+  it('its short Save keeps the 44 px floor across, and is 48 px down', () => {
     renderDetail({ batch: SAVED, inputs: PETRI })
     fireEvent.click(screen.getByTestId('jar-heat-summary'))
     expect(screen.getByTestId('jar-about-save').style.minWidth).toBe('44px')
-    expect(screen.getByTestId('jar-about-save').style.minHeight).toBe('44px')
+    expect(screen.getByTestId('jar-about-save').style.minHeight).toBe('48px')
   })
 
+  // Amended with the Put-Up UX pass R1 (D2) in the same commit as the change: this batch has lines, so its
+  // add row is behind "+ Add what went in" and is opened FIRST — before Jar & heat — so that what closes
+  // the panel below is still the typing, as it was.
   it('closes again when a line add starts (it is never left open over the add row)', () => {
     renderDetail({ batch: SAVED, inputs: PETRI })
+    fireEvent.click(screen.getByTestId('line-add-open'))
     fireEvent.click(screen.getByTestId('jar-heat-summary'))
     expect(screen.getByTestId('jar-heat-panel')).toBeTruthy()
     fireEvent.change(screen.getByTestId('line-add-name'), { target: { value: 'x' } })

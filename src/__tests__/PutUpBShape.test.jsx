@@ -257,7 +257,9 @@ describe('batch detail reads a B-shaped batch', () => {
   it('reads a closed B batch back through the label table, never the raw outcome', () => {
     renderDetail({ ...CLOSED_B[1], inputs: [], stages: [], outputs: [] })
     // batchClose.js OUTCOME_FALLBACK_LABEL — this surface's shipped word for an outcome it does not know.
-    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('Closed · closed Oct 2')
+    // (Amended with the Put-Up UX pass R1, D3: the line reads date first, as the closed list's row does.
+    // The fallback word itself is unchanged.)
+    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('closed Oct 2 · Closed')
     expectPlainWords(screen.getByTestId('batch-detail-view'), 'closed batch detail')
   })
 })

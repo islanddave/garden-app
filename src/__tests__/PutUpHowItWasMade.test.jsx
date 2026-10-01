@@ -135,12 +135,30 @@ describe('Like <batch>, except… — likeBatch.js', () => {
   })
 })
 
+// ⚠ AMENDED FOR THE PUT-UP UX PASS R1 (D15) in the same commit as the change. These two tests pinned "the
+// start is the date of the jar that opened the sheet". It is now the EARLIEST date among the jars chosen,
+// so the second jar here was put up a week BEFORE the door's (EARLIER, Sep 1 against Sep 8): with the two
+// on one date — as the fixtures above still are — the old rule and the new one cannot be told apart.
+// MUTATION: start from the door's jar again (jarStart(full)) -> both "Sep 1" arms red, and the body
+// still sends Sep 8.
 describe('HowItWasMadeSheet — the retrospective posture', () => {
+  const EARLIER = { ...OTHER, preserved_at: '2026-09-01' }
+  const wireEarlier = () => wire((path) => (String(path).startsWith('/api/preservation/whats-put-up')
+    ? Promise.resolve({ groups: [{ label: 'Fridge', records: [JAR, EARLIER, ELSEWHERE, LINKED] }] }) : null))
+  const startLine = () => screen.getByTestId('how-start').textContent
+  // The date words are read against the wall clock (the year shows once it is not this one), so the
+  // clock is pinned inside the fixtures' year. Only Date is faked: the sheet's own waits still run.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-02T09:00:00')) })
+  afterEach(() => { vi.useRealTimers() })
+
   it('opens with the jar\'s name and date, this jar chosen and fixed, the others at its place offered', async () => {
-    wire()
+    wireEarlier()
     mount()
     expect(screen.getByTestId('how-label').value).toBe('Megatron plain')
-    expect(screen.getByTestId('how-start-words').textContent).not.toBe('Not sure')
+    // The Start sheet's own words for the same field. (Field says a required field's name with "(required)".)
+    expect(screen.getByRole('textbox', { name: 'Name it (required)' })).toBe(screen.getByTestId('how-label'))
+    // One jar: its own date, in the words it always had.
+    expect(startLine()).toBe('When did it start?Sep 8 · the jar’s date Change')
     // What went in is OPEN (the adder is on screen, no disclosure).
     expect(screen.getByTestId('how-add-name')).toBeTruthy()
     await waitFor(() => expect(screen.getByTestId('how-jar-j-2')).toBeTruthy())
@@ -149,10 +167,15 @@ describe('HowItWasMadeSheet — the retrospective posture', () => {
     expect(screen.getByTestId('how-jar-j-1').disabled).toBe(true)
     expect(screen.getByTestId('how-made')).toBeTruthy()
     expect(screen.getByTestId('how-copied-next-time').textContent).toContain('more carrot')
+    // Ticking the earlier jar moves the start to ITS date, and says which; unticking it moves it back.
+    fireEvent.click(screen.getByTestId('how-jar-j-2'))
+    expect(startLine()).toBe('When did it start?Sep 1 · the earliest of these jars Change')
+    fireEvent.click(screen.getByTestId('how-jar-j-2'))
+    expect(startLine()).toBe('When did it start?Sep 8 · the jar’s date Change')
   })
 
-  it('Save sends ONE keyed body: the jar\'s date, the chosen jars, How many; a second jar hides How many', async () => {
-    wire()
+  it('Save sends ONE keyed body: the earliest chosen jar\'s date, the chosen jars in the order held, How many; a second jar hides How many', async () => {
+    wireEarlier()
     const onSaved = vi.fn()
     mount({ onSaved })
     await waitFor(() => screen.getByTestId('how-jar-j-2'))
@@ -162,7 +185,7 @@ describe('HowItWasMadeSheet — the retrospective posture', () => {
     const [b] = posted()
     expect(b.idempotency_key).toMatch(UUID)
     expect(b).toMatchObject({ label: 'Megatron plain', started: { date: '2026-09-08', precision: 'day' }, jar_ids: ['j-1'], made_count: 6 })
-    cleanup(); fetchSpy.mockReset(); wire()
+    cleanup(); fetchSpy.mockReset(); wireEarlier()
     mount()
     await waitFor(() => screen.getByTestId('how-jar-j-2'))
     fireEvent.click(screen.getByTestId('how-jar-j-2'))
@@ -170,6 +193,9 @@ describe('HowItWasMadeSheet — the retrospective posture', () => {
     expect(screen.getByTestId('how-copied-next-time').textContent).toContain('less reaper')
     fireEvent.click(screen.getByTestId('how-submit'))
     await waitFor(() => expect(posted()).toHaveLength(1))
+    // The START is the earlier jar's; the IDS keep the order the sheet holds them in — the door's jar
+    // first — because the server dates the put-up stage from the first id.
+    expect(posted()[0].started).toEqual({ date: '2026-09-01', precision: 'day' })
     expect(posted()[0].jar_ids).toEqual(['j-1', 'j-2'])
     expect(posted()[0].made_count).toBeUndefined()
   })

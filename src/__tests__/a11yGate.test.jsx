@@ -216,6 +216,8 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
         fetchSpy.mockImplementation((path) => Promise.resolve(String(path).includes('line-search') ? HITS : null))
         const { container } = render(<BatchDetailView batch={FB} inputs={LINES} stages={STAGES} outputs={[]} loading={false} error={false}
           nowMs={Date.parse('2026-10-02T13:00:00Z')} onChanged={() => {}} />)
+        // Put-Up UX pass R1 (D2): this batch has lines, so the add row is behind its door — opened first.
+        fireEvent.click(screen.getByTestId('line-add-open'))
         fireEvent.change(screen.getByTestId('line-add-name'), { target: { value: 'ser' } })
         await screen.findByTestId('line-add-hit-planting:p9', {}, { timeout: 2000 })
         screen.getByTestId('line-add-hit-planting:p9').click()
@@ -226,6 +228,23 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
         screen.getByTestId('jar-heat-summary').click()
         await screen.findByTestId('jar-heat-panel')
         await expectNoA11yViolations(container, { label: 'BatchDetailView F', rules: NEW_RULES })
+      })
+
+      // Put-Up UX pass R1 (lane B, F1): a closed row now holds TWO targets — the row that opens its batch
+      // and Reopen — so it joins the set with `nested-interactive`. Imported here, inside lane B's own
+      // block, because the import lines at the top of this file are frozen for the train.
+      it('the closed list, each row opening its batch, is clean (with nested-interactive)', async () => {
+        const { default: ClosedBatchesView } = await import('../components/putup/ClosedBatchesView.jsx')
+        const CLOSED = [
+          { id: 'kb-c1', label: 'Pepper mash', closed_at: '2026-08-28T12:00:00.000Z', outcome: 'put_up', output_count: '2' },
+          { id: 'kb-c2', label: 'Crock of something', closed_at: '2026-08-14T12:00:00.000Z', outcome: 'abandoned', output_count: '0' },
+        ]
+        const { container } = render(<ClosedBatchesView batches={CLOSED} loading={false} error={false} onReload={() => {}}
+          now={Date.parse('2026-09-04T13:00:00Z')} onOpenBatch={() => {}} />)
+        // Positive names, by role: a row that opens, and its own Reopen beside it — not one inside the other.
+        expect(screen.getAllByTestId('closed-batch-open')).toHaveLength(2)
+        expect(screen.getByRole('button', { name: 'Reopen Pepper mash' }).closest('[data-testid="closed-batch-open"]')).toBeNull()
+        await expectNoA11yViolations(container, { label: 'ClosedBatchesView', rules: NEW_RULES })
       })
 
       it('the line sheet, the Log edit sheet and the heat sheet are clean (with nested-interactive)', async () => {

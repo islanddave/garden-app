@@ -14,7 +14,14 @@
 //   · "More about it": form, Listed heat (when a form is set or there is no variety to fall back on),
 //     brand, where from, note.
 // The Add button is PINNED (sticky, above the keyboard) only while the name or amount field has focus;
-// otherwise it sits in the flow. One button either way, so it is never on screen twice.
+// otherwise it sits in the flow. One button either way, so it is never on screen twice. It is FILLED
+// while the adder holds a name or a picked match — with the keyboard up it is that task's commit — and
+// the secondary button when the adder is empty, so an empty adder never competes with its host's own
+// filled button (Put-Up UX pass R1, D2).
+//
+// `onPendingChange(text | null)` (optional): the name this adder holds and has not added, or null. A
+// sheet with its own Save (How it was made, Put it up) reads it so a typed line is never dropped by that
+// Save without a word. Reported on every change, and null again when the adder goes away.
 //
 // B′ release 3 (V4 §2.5a): the search answers ONE ranked list (`hits`) over plantings (live, then
 // ended), what we have (put-ups and pantry items) and crops/varieties; a pantry item becomes a 'pantry'
@@ -29,6 +36,7 @@ import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import SelectChip from '../forms/SelectChip.jsx'
+import Button from '../forms/Button.jsx'
 import { labelChrome, optionalMarkChrome, inputChrome } from '../forms/formStyles.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import {
@@ -37,12 +45,16 @@ import {
 } from './lines.js'
 import { KITCHEN_FORMS, FORM_LABELS } from './fermentMath.js'
 
+// The one line a host's Save says when it stops for an unadded name (`onPendingChange`). Exported so the
+// sheets that guard — How it was made, Put it up — say the same sentence, quotes and dash included.
+export const addFirstWords = (name) => `Add “${name}” first — or clear it.`
+
 const SEARCH_DEBOUNCE_MS = 250
 const MIN_QUERY = 2
 const MASS_CHIPS = ['g', 'oz', 'lb', 'kg']
 
 const link = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none', border: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, minWidth: 44, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600,
 }
 const hitBtn = {
@@ -75,7 +87,7 @@ function Stepper({ value, onChange, disabled, name, idPrefix }) {
 export default function LineAdder({
   lines = [], onAdd, idPrefix = 'line-add', disabled = false, forms = KITCHEN_FORMS, preset = null,
   presetSeq = 0, label = 'What went in?', addLabel = 'Add', onStarted, pinnable = true, excludeJarIds = [],
-  pantryHits = true,
+  pantryHits = true, onPendingChange,
 }) {
   const { fetch } = useApiFetch()
   const unit0 = useMemo(() => defaultUnit(lines), [lines])
@@ -95,6 +107,15 @@ export default function LineAdder({
   const qtyRef = useRef(null)
   const nameId = `${idPrefix}-name-${useId()}`
   const listId = `${idPrefix}-hits-${useId()}`
+
+  // What a host's own Save would drop: the name held here and not added yet (a picked match's, or the
+  // typed text). The callback is read through a ref, so a host handing a new function each render does
+  // not re-fire it; the unmount report is what clears a host whose adder goes away after each Add.
+  const pendingName = String(draft.source ? draft.label ?? '' : query).trim() || null
+  const pendingCb = useRef(onPendingChange)
+  pendingCb.current = onPendingChange
+  useEffect(() => { pendingCb.current?.(pendingName) }, [pendingName])
+  useEffect(() => () => { pendingCb.current?.(null) }, [])
 
   // [Water] (or any host preset): a fresh draft, prefilled, with the amount focused.
   useEffect(() => {
@@ -183,6 +204,8 @@ export default function LineAdder({
   const catalog = src?.kind === 'catalog' ? src.hit : null
   const rating = offerListedHeat(draft) || String(draft.rating ?? '').trim() !== ''
   const q = query.trim()
+  // Something to add: a name or a picked match. Decides the Add button's weight.
+  const holding = q !== '' || !!src
   const exactHit = hits && (ranked ? ranked.some(h => h.tier === 'exact')
     : [...hits.plantings, ...(hits.put_ups ?? [])].some(h => String(h.label ?? '').trim().toLowerCase() === q.toLowerCase()))
 
@@ -292,7 +315,9 @@ export default function LineAdder({
             disabled={disabled || busy} onChange={e => set({ qty: e.target.value })}
             onFocus={() => setFocused('qty')} onBlur={() => setFocused(f => (f === 'qty' ? null : f))}
             style={{ ...inputChrome(false), width: 96, scrollMarginBottom: 72 }} />
-          <div role="radiogroup" aria-label="Unit" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {/* 8 px between the unit chips: a slip to the next one is a silent error (412 g saved as 412 oz).
+              The chip keeps its own size; the gap is this row's. */}
+          <div role="radiogroup" aria-label="Unit" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {unitChoices.map(u => (
               <SelectChip key={u} touch role="radio" aria-checked={draft.unit === u} aria-pressed={undefined} active={draft.unit === u}
                 disabled={busy} data-testid={`${idPrefix}-unit-${u}`} onClick={() => set({ unit: draft.unit === u && !weighed ? null : u })}>
@@ -352,18 +377,16 @@ export default function LineAdder({
 
       {/* ONE Add. Pinned above the keyboard only while the name or amount field has focus (06 §4 item 3),
           so the finger that just typed reaches it; in the flow otherwise. mousedown is prevented so a
-          tap on it does not blur the field first and un-pin it mid-tap. */}
+          tap on it does not blur the field first and un-pin it mid-tap. Filled once there is something
+          to add; the secondary button while the adder is empty. */}
       <div data-testid={`${idPrefix}-bar`} data-pinned={pinned ? 'true' : 'false'}
         style={pinned
           ? { position: 'sticky', bottom: 0, zIndex: 5, background: P.white, borderTop: `1px solid ${P.border}`, padding: `${T.space.sm}px 0`, marginTop: 8 }
           : { marginTop: 8 }}>
-        <button type="button" data-testid={`${idPrefix}-submit`} disabled={disabled || busy}
-          onMouseDown={e => e.preventDefault()} onClick={add}
-          style={{ minHeight: T.buttonMinHeight, width: '100%', padding: '8px 16px', borderRadius: T.radiusButton,
-            cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: T.type.sm2, fontWeight: 700,
-            color: P.white, background: P.green, border: `1px solid ${P.green}`, opacity: busy ? 0.6 : 1 }}>
-          {busy ? 'Adding…' : addLabel}
-        </button>
+        <Button data-testid={`${idPrefix}-submit`} variant={holding ? 'primary' : 'secondary'} disabled={disabled}
+          loading={busy} loadingLabel="Adding…" onMouseDown={e => e.preventDefault()} onClick={add} style={{ width: '100%' }}>
+          {addLabel}
+        </Button>
       </div>
     </div>
   )

@@ -5,9 +5,9 @@
 //     "Quart jar × 2 · about 448 g · heat est. 950–3.0k SHU (worked out)"
 // plus, when a worked-out figure no longer matches what went in (the server's shu_est_stale), in quiet
 // ink: "· worked out before later changes · Work it out again". A typed figure is never flagged.
-// Expanded: the vessel chips and a 48px −/+ count; "About ___ in it" (the started row's amount — a
-// typed value is never overwritten; the placeholder is the weighed sum of what went in); the heat:
-// Work it out (the breakdown sheet) or Type it.
+// Expanded: the vessel chips and a 48px −/+ count; "How much is in it (about)" with its 48px Save (the
+// started row's amount — a typed value is never overwritten; the placeholder is the weighed sum of what
+// went in); the heat: Work it out (the breakdown sheet) or Type it.
 //
 // Every write is one merge PUT of the batch (vessel_*, shu_est_*) or one stage PATCH (the started
 // row's amount), both accepted on a finished batch (06 §3.13). Required at open: 0 (the census).
@@ -32,7 +32,7 @@ export const VESSEL_PRESETS = Object.freeze([
 export const ABOUT_UNITS = Object.freeze(['g', 'kg', 'cup', 'qt'])
 export const BASIS_WORDS = Object.freeze({ computed: 'worked out', typed: 'typed' })
 
-// The live `started` row (the one "About ___ in it" lives on).
+// The live `started` row (the one "How much is in it (about)" lives on).
 export function startedRow(stages) {
   return (Array.isArray(stages) ? stages : []).find(s => s?.stage_kind === 'started') ?? null
 }
@@ -64,7 +64,7 @@ export function jarHeatSummary(batch, started, lines) {
 }
 
 const quiet = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none', border: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, minWidth: 44, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600,
 }
 
@@ -145,12 +145,12 @@ export default function JarHeatRow({ batch, stages, lines, onChanged, open, onTo
           </div>
           {started && (
             <div style={{ marginBottom: 10 }}>
-              <label htmlFor={aboutId} style={labelChrome}>About ___ in it<span style={optionalMarkChrome}>optional</span></label>
+              <label htmlFor={aboutId} style={labelChrome}>How much is in it (about)<span style={optionalMarkChrome}>optional</span></label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <input id={aboutId} data-testid="jar-about" type="text" inputMode="decimal" value={about} disabled={busy}
                   placeholder={placeholder != null ? wholeGrams(placeholder) : ''} onChange={e => { setAbout(e.target.value); setErr(null) }}
                   style={{ ...inputChrome(false), width: 96, scrollMarginBottom: 96 }} />
-                <div role="radiogroup" aria-label="About unit" style={{ display: 'flex', gap: 6 }}>
+                <div role="radiogroup" aria-label="About unit" style={{ display: 'flex', gap: 8 }}>
                   {ABOUT_UNITS.map(u => (
                     <SelectChip key={u} touch role="radio" aria-checked={aboutUnit === u} aria-pressed={undefined} active={aboutUnit === u}
                       disabled={busy} data-testid={`jar-about-unit-${u}`} onClick={() => setAboutUnit(u)}>{u}</SelectChip>

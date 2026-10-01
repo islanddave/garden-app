@@ -14,9 +14,18 @@
 //     "<name> · Taken out · Undo" until navigation (client-held: the server returns only live lines).
 //   · quick chips [Water] [Salt] — Water opens the add row prefilled (role water, ml); Salt hands focus
 //     to the Salt block's % field and NEVER writes a line by itself (UX-I4).
-//   · the add row (LineAdder).
+//   · the add row (LineAdder) — or, on a batch that already has something written down, the door to it.
 // The Salt block is the host's (BatchDetailView), rendered between the chips' row and the add row via
 // `saltSlot`, so it stays "inside What went in" and always reachable.
+//
+// THE ADD ROW COLLAPSES, the chips never do (Put-Up UX pass R1, D2). A batch with nothing written down
+// opens with the add row shown; one that has lines opens with "+ Add what went in" where the add row
+// sits. A tap on that door opens it and focuses the name; a tap on [Water] opens it with the Water preset
+// and focuses the amount. WHICH of the two is read ONCE, when this batch's detail first renders here, and
+// REMEMBERED: once the add row is open it stays open across every Add and the re-read that follows it.
+// Deriving it from the lines on each render would shut the add row under the cook after the first line —
+// the ferment walks add several lines in a row and stop at their second (mutation M4).
+// `asWrittenSlot` is the host's too: a recipe batch's "Made it as written", shown in the empty block.
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -35,7 +44,7 @@ const rowBtn = {
   fontSize: T.type.sm, color: P.dark,
 }
 const quiet = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none', border: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, minWidth: 44, background: 'none', border: 'none',
   padding: '2px 8px', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.78rem', fontWeight: 600,
 }
 const chip = {
@@ -55,7 +64,7 @@ export function FromGarden({ testId }) {
 // A line is a weighed draw when it came from a jar and has no count (the draw moved grams, not a count).
 const isWeighedDraw = (l) => l?.input_kind === 'put_up' && l.count_drawn == null && isMassUnit(l.qty_unit)
 
-export default function WhatWentIn({ batch, lines, gardenNames = [], onChanged, saltSlot = null, onSaltTap, onLineStart, disabled = false }) {
+export default function WhatWentIn({ batch, lines, gardenNames = [], onChanged, saltSlot = null, asWrittenSlot = null, onSaltTap, onLineStart, disabled = false }) {
   const { fetch } = useApiFetch()
   const all = Array.isArray(lines) ? lines : []
   const legacy = all.filter(isLegacyPick)
@@ -69,8 +78,13 @@ export default function WhatWentIn({ batch, lines, gardenNames = [], onChanged, 
   const [rowErr, setRowErr] = useState(null)
   const [preset, setPreset] = useState({ seq: 0, value: null })
   const [newId, setNewId] = useState(null)
+  // The add row, shown or behind its door. The initialiser is the ONE read of the lines (this component
+  // mounts when the batch's detail has loaded, never before); after it the answer only ever goes to open.
+  const [adderOpen, setAdderOpen] = useState(() => shown.length === 0 && legacy.length === 0)
+  const [nameFocus, setNameFocus] = useState(0)        // bumped by the door: focus the name once it is there
   const writingRef = useRef(false)
   const listRef = useRef(null)
+  const adderRef = useRef(null)
 
   // The new line scrolls into view once the re-read carries it (06 §4 item 3).
   useEffect(() => {
@@ -78,6 +92,11 @@ export default function WhatWentIn({ batch, lines, gardenNames = [], onChanged, 
     const el = listRef.current?.querySelector(`[data-line-id="${newId}"]`)
     if (el) { el.scrollIntoView?.({ block: 'nearest' }); setNewId(null) }
   }, [lines, newId])
+
+  // The door's tap lands in the name field (the adder's first input), ready to type.
+  useEffect(() => {
+    if (nameFocus) adderRef.current?.querySelector('input')?.focus()
+  }, [nameFocus])
 
   const add = useCallback(async (body) => {
     setStatus(null); setRowErr(null)
@@ -147,6 +166,7 @@ export default function WhatWentIn({ batch, lines, gardenNames = [], onChanged, 
       {shown.length === 0 && takenOut.length === 0 && legacy.length === 0 && (
         <p data-testid="what-went-in-empty" style={{ margin: 0, color: P.light, fontSize: T.type.sm }}>Nothing written down yet.</p>
       )}
+      {asWrittenSlot}
       <ul ref={listRef} data-testid="what-went-in-list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
         {shown.map(l => (
           <li key={l.id} data-line-id={l.id}>
@@ -180,16 +200,27 @@ export default function WhatWentIn({ batch, lines, gardenNames = [], onChanged, 
       )}
 
       <div style={{ display: 'flex', gap: 8, margin: `${T.space.sm}px 0 0` }}>
+        {/* Water opens the add row when it is behind its door: the adder mounts holding the preset, and
+            its own preset step puts the cursor in the amount. */}
         <button type="button" style={chip} data-testid="what-went-in-water" disabled={disabled}
-          onClick={() => { setPreset(p => ({ seq: p.seq + 1, value: { role: 'water', label: 'Water' } })); onLineStart?.() }}>Water</button>
+          onClick={() => { setPreset(p => ({ seq: p.seq + 1, value: { role: 'water', label: 'Water' } })); setAdderOpen(true); onLineStart?.() }}>Water</button>
         <button type="button" style={chip} data-testid="what-went-in-salt" disabled={disabled}
           onClick={() => onSaltTap?.()}>Salt</button>
       </div>
 
       {saltSlot}
 
-      <LineAdder lines={all} onAdd={add} idPrefix="line-add" disabled={disabled}
-        preset={preset.value} presetSeq={preset.seq} onStarted={() => { setStatus(null); setSaved(null); onLineStart?.() }} />
+      <div ref={adderRef}>
+        {adderOpen ? (
+          <LineAdder lines={all} onAdd={add} idPrefix="line-add" disabled={disabled}
+            preset={preset.value} presetSeq={preset.seq} onStarted={() => { setStatus(null); setSaved(null); onLineStart?.() }} />
+        ) : (
+          <button type="button" style={{ ...quiet, padding: '2px 8px 2px 0', marginTop: T.space.sm }} data-testid="line-add-open" disabled={disabled}
+            onClick={() => { setAdderOpen(true); setNameFocus(n => n + 1); onLineStart?.() }}>
+            + Add what went in
+          </button>
+        )}
+      </div>
 
       {status && <p role="status" data-testid="what-went-in-status" style={{ margin: '6px 0 0', color: P.mid, fontSize: '0.82rem' }}>{status}</p>}
       {rowErr && <p role="alert" data-alarm-ink-exempt="error" data-testid="what-went-in-error" style={{ margin: '6px 0 0', color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{rowErr}</p>}

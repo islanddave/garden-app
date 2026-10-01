@@ -58,10 +58,15 @@ function wire({ post = () => Promise.resolve({ inserted: 1, requested: 1, inputs
     return Promise.resolve(null)
   })
 }
+// The view as an element, so a test can re-render the SAME mounted view the way the page does after a write
+// (`refreshing` while the re-read is out, then the new rows).
+const detailEl = (o = {}, onChanged = vi.fn()) => (
+  <BatchDetailView batch={{ ...BATCH, ...o.batch }} inputs={o.inputs ?? []} stages={o.stages ?? []}
+    outputs={[]} loading={false} error={false} nowMs={NOW} onChanged={onChanged} refreshing={o.refreshing ?? false} />
+)
 function renderDetail(o = {}) {
   const onChanged = o.onChanged ?? vi.fn()
-  const utils = render(<BatchDetailView batch={{ ...BATCH, ...o.batch }} inputs={o.inputs ?? []} stages={o.stages ?? []}
-    outputs={[]} loading={false} error={false} nowMs={NOW} onChanged={onChanged} />)
+  const utils = render(detailEl(o, onChanged))
   return { ...utils, onChanged }
 }
 const name = () => screen.getByTestId('line-add-name')
@@ -283,11 +288,70 @@ describe('"from the garden" is ambient', () => {
   })
 })
 
+// ⚠ AMENDED FOR THE PUT-UP UX PASS R1 (D2) in the same commit as the change. This census pinned ONE required
+// input at open on a batch that already had a line; the add row now sits behind "+ Add what went in" on such
+// a batch, so the pin is the four cases below (and a fifth for the path the ferment walks take). Each is
+// the full list of required inputs, never its length.
+// MUTATION M4: derive the add row's visibility from `lines.length === 0` on every render (no remembered
+// "opened") -> "opened, it … stays open" reds at its first arm (the door does nothing), and "a batch that
+// opened with nothing written down" reds after its first Add — the same stop `gate:putup-ferment` makes at
+// the second line of four of its five walks.
 describe('the census (06 §4, V4 §6.3 — fails on any increase)', () => {
-  it('batch detail requires exactly one input at open: the line\'s name', () => {
+  const required = () => [...screen.getByTestId('batch-detail-view').querySelectorAll('[aria-required="true"]')].map(e => e.getAttribute('data-testid'))
+  it('a batch with NO lines opens with the adder shown: one required input', () => {
+    renderDetail({ inputs: [] })
+    expect(required()).toEqual(['line-add-name'])
+    expect(screen.queryByTestId('line-add-open')).toBeNull()
+  })
+  it('a batch WITH lines opens collapsed: nothing required, one door, the chips still there', () => {
     renderDetail({ inputs: [MEGATRON_LINE] })
-    const required = [...screen.getByTestId('batch-detail-view').querySelectorAll('[aria-required="true"]')]
-    expect(required.map(e => e.getAttribute('data-testid'))).toEqual(['line-add-name'])
+    expect(required()).toEqual([])
+    expect(screen.queryByTestId('line-add-name')).toBeNull()
+    expect(screen.getByTestId('line-add-open').textContent).toBe('+ Add what went in')
+    expect(screen.getByTestId('line-add-open').style.minHeight).toBe('48px')
+    expect(screen.getByTestId('what-went-in-water')).toBeTruthy()
+    expect(screen.getByTestId('what-went-in-salt')).toBeTruthy()
+  })
+  it('opened, it asks exactly one thing, and stays open across an Add and the re-read that follows', async () => {
+    const view = renderDetail({ inputs: [MEGATRON_LINE] })
+    fireEvent.click(screen.getByTestId('line-add-open'))
+    expect(required()).toEqual(['line-add-name'])
+    expect(document.activeElement).toBe(name())                       // the door lands in the name field
+    await search('ser')
+    fireEvent.click(screen.getByTestId('line-add-hit-planting:p-mega'))
+    await add()
+    await waitFor(() => expect(posts(/\/inputs$/)).toHaveLength(1))
+    // The page's re-read, on the same mounted view: mid-read, then with the new line in hand.
+    view.rerender(detailEl({ inputs: [MEGATRON_LINE], refreshing: true }, view.onChanged))
+    expect(required()).toEqual(['line-add-name'])
+    view.rerender(detailEl({ inputs: [MEGATRON_LINE, PICK_LINE] }, view.onChanged))
+    expect(required()).toEqual(['line-add-name'])
+    expect(screen.queryByTestId('line-add-open')).toBeNull()
+    // …and the next line goes in with no door to tap again.
+    fireEvent.change(name(), { target: { value: 'garlic' } })
+    await add()
+    await waitFor(() => expect(posts(/\/inputs$/)).toHaveLength(2))
+  })
+  it('a batch that opened with nothing written down keeps its adder across the first Add and its re-read', async () => {
+    const view = renderDetail({ inputs: [] })
+    fireEvent.change(name(), { target: { value: 'onion' } })
+    await add()
+    await waitFor(() => expect(posts(/\/inputs$/)).toHaveLength(1))
+    view.rerender(detailEl({ inputs: [LINE({ id: 'kbi-new', input_kind: 'other', label: 'onion' })] }, view.onChanged))
+    // INSTRUMENT: the re-read really carried a line — this is no longer a batch with nothing written down.
+    expect(screen.getAllByTestId('line-row-text').map(n => n.textContent)).toEqual(['onion'])
+    expect(required()).toEqual(['line-add-name'])
+    expect(screen.queryByTestId('line-add-open')).toBeNull()
+  })
+  it('Water on a collapsed adder opens it with the Water preset', async () => {
+    renderDetail({ inputs: [MEGATRON_LINE] })
+    await act(async () => { fireEvent.click(screen.getByTestId('what-went-in-water')) })
+    expect(screen.getByTestId('line-add-qty')).toBeTruthy()
+    expect(name().value).toBe('Water')
+    expect(screen.getByTestId('line-add-unit-ml').getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByTestId('line-add-open')).toBeNull()
+    // …and the cursor lands in the amount (the name is already "Water"), as it does on an open adder.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('line-add-qty')))
   })
   it('the line sheet requires nothing', () => {
     renderDetail({ inputs: [MEGATRON_LINE] })

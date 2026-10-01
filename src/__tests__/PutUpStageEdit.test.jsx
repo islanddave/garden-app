@@ -205,7 +205,7 @@ describe('when an entry was — editable on the shared chips, sent only when tou
   })
 })
 
-describe('"Check on it" at the head of the Log (UX-I1)', () => {
+describe('"Check on it" on batch detail — in the action row since the Put-Up UX pass R1 (was: at the head of the Log, UX-I1)', () => {
   it('opens the same sheet, writes the same row kind, and says Saved · Undo', async () => {
     renderDetail()
     await act(async () => { fireEvent.click(screen.getByTestId('batch-detail-check')) })

@@ -9,47 +9,90 @@
 //     facts, the jar, Made and mash in, and the first bottling's container (F §1.5).
 // ⚠ Never the recipe's notes here (his target pH lives in them and renders only on recipe detail, V4 "pH"):
 // the batch read does not carry them.
+//
+// Put-Up UX pass R1 (D15) — TWO components now, because batch detail puts them in two places:
+//   · BatchRecipeRow (default) — the recipe row. With `onOpenRecipe` the name is the way to the recipe:
+//     "From <name> →" calls onOpenRecipe(id, { label: batch.label, kind: 'batch', id: batch.id }), so the
+//     recipe's Back can name the batch it came from. Without the prop it is the words it always was.
+//   · SaveAsRecipe — the Save as recipe door and its one-field form, which batch detail mounts down beside
+//     Pause and the ending. BatchRecipeRow still renders it inside itself unless told `saveAsRecipe={false}`,
+//     so a host that mounts the row alone gets exactly what it got before.
+// "Made it as written" has two doors on batch detail (the row's quiet link, and a button in the empty What
+// went in block), so its write lives in ONE hook, useMadeAsWritten: one key set per recipe, reused on a retry
+// from EITHER door — a second key set would add every line twice.
 import React, { useId, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
+import Button from '../forms/Button.jsx'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import { describeRefusal } from '../../lib/putUpErrors.js'
 import { asWrittenLines, recipeLineWords, MADE_AS_WRITTEN_CTA, SAVE_AS_RECIPE_CTA } from './recipes.js'
 
-const link = { display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, padding: '2px 8px 2px 0',
+const link = { display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, minWidth: 44, padding: '2px 8px 2px 0',
   background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.82rem', fontWeight: 600 }
 
-export default function BatchRecipeRow({ batch, inputs = [], onChanged }) {
+// "Adds the recipe's 6 lines." — what the one tap writes, said before it is tapped.
+export function asWrittenHint(count) {
+  return `Adds the recipe's ${count} ${count === 1 ? 'line' : 'lines'}.`
+}
+
+// `can` — the batch follows a recipe that has pot lines, and has none of its own yet. `run(door)` writes
+// them; `failed` is { text, door } so the door that was tapped is the one that says why.
+export function useMadeAsWritten({ batch, inputs = [], onChanged }) {
   const { fetch } = useApiFetch()
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(null)
+  const keyed = useRef(null)                         // one key set per recipe, reused on a retry
   const recipe = batch?.recipe ?? null
-  const [showLines, setShowLines] = useState(false)
+  const potLines = (recipe?.lines ?? []).filter(l => !l.at_the_end)
+  const ownPotLines = (Array.isArray(inputs) ? inputs : []).filter(i => !i.put_up_stage_id)
+  const can = !!recipe && potLines.length > 0 && ownPotLines.length === 0
+
+  const run = async (door = 'row') => {
+    if (busy || !can) return
+    if (!keyed.current || keyed.current.recipeId !== recipe.id) keyed.current = { recipeId: recipe.id, lines: asWrittenLines(recipe) }
+    setBusy(true); setFailed(null)
+    try {
+      await fetch(`/api/kitchen-batches/${batch.id}/inputs`, { method: 'POST', body: JSON.stringify({ inputs: keyed.current.lines }) })
+      keyed.current = null
+      onChanged?.()
+    } catch (e) {
+      setFailed({ door, text: describeRefusal(e)?.text ?? "Couldn't add the lines — try again (nothing is added twice)." })
+    } finally { setBusy(false) }
+  }
+  return { can, busy, failed, run, count: potLines.length }
+}
+
+// The second door: a 48px secondary button for the empty What went in block, with what it will do.
+export function MadeAsWrittenButton({ asWritten }) {
+  if (!asWritten?.can) return null
+  return (
+    <div data-testid="what-went-in-as-written" style={{ margin: '6px 0' }}>
+      <Button variant="secondary" data-testid="what-went-in-as-written-add" loading={asWritten.busy} loadingLabel="Adding…"
+        onClick={() => asWritten.run('block')}>
+        {MADE_AS_WRITTEN_CTA}
+      </Button>
+      <div data-testid="what-went-in-as-written-hint" style={{ marginTop: 4, color: P.light, fontSize: '0.78rem' }}>
+        {asWrittenHint(asWritten.count)}
+      </div>
+      {asWritten.failed?.door === 'block' && (
+        <div role="alert" data-alarm-ink-exempt="error" data-testid="what-went-in-as-written-error"
+          style={{ color: P.terra, fontSize: T.type.sm }}>{asWritten.failed.text}</div>
+      )}
+    </div>
+  )
+}
+
+export function SaveAsRecipe({ batch, onChanged }) {
+  const { fetch } = useApiFetch()
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
   const [saving, setSaving] = useState(false)       // the Save as recipe field is open
   const [name, setName] = useState('')
   const [saved, setSaved] = useState(null)
-  const asWritten = useRef(null)                     // one key set per recipe, reused on a retry
   const saveKey = useRef(null)
   const nameId = `save-recipe-name-${useId()}`
   if (!batch) return null
-
-  const potLines = (recipe?.lines ?? []).filter(l => !l.at_the_end)
-  const endLines = (recipe?.lines ?? []).filter(l => l.at_the_end)
-  const ownPotLines = (inputs ?? []).filter(i => !i.put_up_stage_id)
-  const canAsWritten = !!recipe && potLines.length > 0 && ownPotLines.length === 0
-
-  const madeAsWritten = async () => {
-    if (busy) return
-    if (!asWritten.current || asWritten.current.recipeId !== recipe.id) asWritten.current = { recipeId: recipe.id, lines: asWrittenLines(recipe) }
-    setBusy(true); setErr(null)
-    try {
-      await fetch(`/api/kitchen-batches/${batch.id}/inputs`, { method: 'POST', body: JSON.stringify({ inputs: asWritten.current.lines }) })
-      asWritten.current = null
-      onChanged?.()
-    } catch (e) {
-      setErr(describeRefusal(e)?.text ?? "Couldn't add the lines — try again (nothing is added twice).")
-    } finally { setBusy(false) }
-  }
 
   const saveAsRecipe = async () => {
     if (busy) return
@@ -69,32 +112,7 @@ export default function BatchRecipeRow({ batch, inputs = [], onChanged }) {
   }
 
   return (
-    <div data-testid="batch-recipe" style={{ marginTop: T.space.sm }}>
-      {recipe && (
-        <div data-testid="batch-recipe-from" style={{ fontSize: T.type.sm, color: P.mid }}>
-          From the recipe: <strong style={{ color: P.dark }}>{recipe.name}</strong>
-          {(recipe.lines ?? []).length > 0 && (
-            <button type="button" style={{ ...link, marginLeft: 6 }} data-testid="batch-recipe-lines-toggle" aria-expanded={showLines}
-              onClick={() => setShowLines(o => !o)}>{showLines ? 'Hide its lines' : 'Its lines'}</button>
-          )}
-        </div>
-      )}
-      {recipe && showLines && (
-        <div data-testid="batch-recipe-lines" style={{ fontSize: T.type.sm, color: P.dark, margin: '2px 0 4px' }}>
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {potLines.map(l => <li key={l.id} data-testid="batch-recipe-line">{recipeLineWords(l)}</li>)}
-          </ul>
-          {endLines.length > 0 && (
-            <div style={{ color: P.mid, marginTop: 2 }}>At the end: {endLines.map(recipeLineWords).join(', ')}</div>
-          )}
-        </div>
-      )}
-      {canAsWritten && (
-        <button type="button" style={link} data-testid="batch-recipe-as-written" disabled={busy} onClick={madeAsWritten}>
-          {busy ? 'Adding…' : `${MADE_AS_WRITTEN_CTA} →`}
-        </button>
-      )}
-
+    <>
       {!saving ? (
         <button type="button" style={{ ...link, display: 'flex' }} data-testid="batch-save-as-recipe"
           onClick={() => { setSaving(true); setName(batch.label ?? ''); setErr(null); setSaved(null) }}>
@@ -111,7 +129,65 @@ export default function BatchRecipeRow({ batch, inputs = [], onChanged }) {
         </div>
       )}
       {saved && <div role="status" data-testid="batch-save-as-recipe-saved" style={{ fontSize: T.type.sm, color: P.mid }}>Saved as a recipe: {saved}</div>}
-      {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="batch-recipe-error" style={{ color: P.terra, fontSize: T.type.sm }}>{err}</div>}
+      {err && <div role="alert" data-alarm-ink-exempt="error" data-testid="batch-save-as-recipe-error" style={{ color: P.terra, fontSize: T.type.sm }}>{err}</div>}
+    </>
+  )
+}
+
+export default function BatchRecipeRow({ batch, inputs = [], onChanged, onOpenRecipe, saveAsRecipe = true, asWritten: hosted }) {
+  const recipe = batch?.recipe ?? null
+  const [showLines, setShowLines] = useState(false)
+  // The host's hook when it shares one with the What went in block; this row's own when it stands alone.
+  const own = useMadeAsWritten({ batch, inputs, onChanged })
+  const asWritten = hosted ?? own
+  if (!batch) return null
+  // Nothing to say: no recipe, and Save as recipe is mounted elsewhere.
+  if (!recipe && !saveAsRecipe) return null
+
+  const potLines = (recipe?.lines ?? []).filter(l => !l.at_the_end)
+  const endLines = (recipe?.lines ?? []).filter(l => l.at_the_end)
+  const opens = !!recipe && typeof onOpenRecipe === 'function'
+
+  return (
+    <div data-testid="batch-recipe" style={{ marginTop: T.space.sm }}>
+      {recipe && (
+        <div data-testid="batch-recipe-from" style={{ fontSize: T.type.sm, color: P.mid }}>
+          {opens ? (
+            // The whole phrase is the target, so the tap is as wide as the words. One inner span keeps the
+            // spaces round the name (a flex container drops them between its own items).
+            <button type="button" style={{ ...link, textAlign: 'left', fontWeight: 400 }} data-testid="batch-recipe-open"
+              onClick={() => onOpenRecipe(recipe.id, { label: batch.label, kind: 'batch', id: batch.id })}>
+              <span>From <strong>{recipe.name}</strong> →</span>
+            </button>
+          ) : (
+            <>From the recipe: <strong style={{ color: P.dark }}>{recipe.name}</strong></>
+          )}
+          {(recipe.lines ?? []).length > 0 && (
+            <button type="button" style={{ ...link, marginLeft: 6 }} data-testid="batch-recipe-lines-toggle" aria-expanded={showLines}
+              onClick={() => setShowLines(o => !o)}>{showLines ? 'Hide its lines' : 'Its lines'}</button>
+          )}
+        </div>
+      )}
+      {recipe && showLines && (
+        <div data-testid="batch-recipe-lines" style={{ fontSize: T.type.sm, color: P.dark, margin: '2px 0 4px' }}>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {potLines.map(l => <li key={l.id} data-testid="batch-recipe-line">{recipeLineWords(l)}</li>)}
+          </ul>
+          {endLines.length > 0 && (
+            <div style={{ color: P.mid, marginTop: 2 }}>At the end: {endLines.map(recipeLineWords).join(', ')}</div>
+          )}
+        </div>
+      )}
+      {asWritten.can && (
+        <button type="button" style={link} data-testid="batch-recipe-as-written" disabled={asWritten.busy} onClick={() => asWritten.run('row')}>
+          {asWritten.busy ? 'Adding…' : `${MADE_AS_WRITTEN_CTA} →`}
+        </button>
+      )}
+      {asWritten.failed?.door === 'row' && (
+        <div role="alert" data-alarm-ink-exempt="error" data-testid="batch-recipe-error" style={{ color: P.terra, fontSize: T.type.sm }}>{asWritten.failed.text}</div>
+      )}
+
+      {saveAsRecipe && <SaveAsRecipe batch={batch} onChanged={onChanged} />}
     </div>
   )
 }

@@ -2,9 +2,9 @@
 // B′ release 3 — "How it was made →" (V4 §2.2), the PURE half. The sheet is HowItWasMadeSheet.jsx.
 //
 // From a jar row: the Start-a-batch sheet in retrospective posture. Label = the jar's name; start = the
-// jar's date; What went in open; "Which jars came from this?" chips of other jars at the same place with
-// no batch (this jar preselected); "How many did you make?" (optional; raises the made count, never what
-// is left); "Like <batch>, except…". One write: POST /api/kitchen-batches/from-jars.
+// earliest date among the jars chosen; What went in open; "Which jars came from this?" chips of other jars
+// at the same place with no batch (this jar preselected); "How many did you make?" (optional; raises the
+// made count, never what is left); "Like <batch>, except…". One write: POST /api/kitchen-batches/from-jars.
 //
 // PURE: no React, no fetch, no clock.
 import { shortDay } from './jarWords.js'
@@ -48,6 +48,22 @@ export function jarStart(jar) {
     return { date: null, precision: 'unknown' }
   }
   return { date: day, precision: p ?? 'day' }
+}
+
+// The batch's start when SEVERAL jars came from it: the earliest date any of them carries (Put-Up UX
+// pass R1, D15 — the sheet used to keep the date of the jar that opened it however many were ticked). A
+// jar with no start anyone knows (jarStart's 'unknown') has no date to offer, so it is passed over; with
+// none dated the start is Not sure. Dates are YYYY-MM-DD, so they order as text; a tie keeps the first
+// jar handed in. The precision is that jar's own — the earliest may be "sometime in September".
+// ⚠ This picks the START only. The ids go to the server in the order the sheet holds them: the route
+// dates the put-up stage from the FIRST id (batchBuilderRoutes.js), so they are never re-ordered here.
+export function earliestStart(jars) {
+  let best = null
+  for (const j of jars ?? []) {
+    const s = jarStart(j)
+    if (s.date && (!best || s.date < best.date)) best = s
+  }
+  return best ?? { date: null, precision: 'unknown' }
 }
 
 // "Which jars came from this?" — the other jars at the same place with no batch, the door's jar first.

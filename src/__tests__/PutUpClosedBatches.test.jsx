@@ -245,11 +245,16 @@ describe('month grouping — an archive is not a flat scroll', () => {
   })
 })
 
+// ⚠ AMENDED FOR THE PUT-UP UX PASS R1 (D3) in the same commit as the change. Where the batch was put up
+// AND a count follows, the count says it and the label "Put it up" is left out ("Put it up · 2 put-ups"
+// read as said twice). Nothing else moved: every other outcome keeps its label (the table below, unedited),
+// and `put_up` with nothing counted still says "Put it up". The four literals D3 pins are asserted
+// together in PutUpUxB.closedList.test.jsx.
 describe('the row — label, provenance date, outcome, output count', () => {
   it('renders the meta line as one full literal, every separator included', () => {
     renderView([CLOSED_PUTUP])
     expect(screen.getByTestId('closed-batch-title').textContent).toBe('Pepper mash')
-    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('closed Aug 28 · Put it up · 2 put-ups')
+    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('closed Aug 28 · 2 put-ups')
   })
 
   it('omits the output count entirely when nothing came off the batch', () => {
@@ -263,15 +268,15 @@ describe('the row — label, provenance date, outcome, output count', () => {
     expect(typeof CLOSED_PUTUP.output_count).toBe('string')
     const ONE = { ...CLOSED_PUTUP, id: 'kb-one', output_count: '1' }
     const { unmount } = renderView([ONE])
-    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('closed Aug 28 · Put it up · 1 put-up')
+    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('closed Aug 28 · 1 put-up')
     unmount()
     renderView([JEN_CLOSED])
-    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('closed Sep 2 · Put it up · 6 put-ups')
+    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('closed Sep 2 · 6 put-ups')
   })
 
   it('renders a batch whose closed_at is unreadable without inventing a date for it', () => {
     renderView([{ ...CLOSED_PUTUP, closed_at: null }])
-    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('Put it up · 2 put-ups')
+    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('2 put-ups')
     // Green control on the same query: a readable date really does produce the `closed …` prefix.
     expect(sortClosed([CLOSED_PUTUP])[0].closed_at).toBe(CLOSED_AUG_28)
   })
@@ -638,6 +643,6 @@ describe('loading, error and empty', () => {
     expect(ids()).toEqual(['kb-closed-putup'])
     expect(screen.getAllByTestId('closed-month-heading')).toHaveLength(1)
     expect(screen.getByTestId('closed-month-heading').textContent).toMatch(/^August( \d{4})?$/)
-    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('closed Aug 28 · Put it up · 2 put-ups')
+    expect(screen.getByTestId('closed-batch-meta').textContent).toBe('closed Aug 28 · 2 put-ups')
   })
 })

@@ -155,7 +155,7 @@ export default function BatchCloseField({ batch, onChanged }) {
   if (!open) {
     return (
       <button type="button" data-testid="batch-close-open" onClick={openSheet}
-        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight,
           background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
           fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
         {CLOSE_ACTION_LABEL} →
@@ -270,7 +270,7 @@ export default function BatchCloseField({ batch, onChanged }) {
               </Button>
               <button type="button" onClick={() => { setStep(STEP_KEPT); setErr(null) }} disabled={saving}
                 data-testid="batch-close-back"
-                style={{ width: '100%', minHeight: T.tapMinHeight, background: 'none', border: 'none',
+                style={{ width: '100%', minHeight: T.buttonMinHeight, background: 'none', border: 'none',
                   color: P.mid, fontFamily: 'inherit', fontSize: '0.84rem', fontWeight: 600,
                   cursor: saving ? 'default' : 'pointer' }}>
                 Back

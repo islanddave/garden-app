@@ -33,15 +33,18 @@ import {
 } from './goingNow.js'
 import { describeOutcome } from './batchClose.js'
 import BatchCloseField from './BatchCloseField.jsx'
+import { closedEnding } from './ClosedBatchesView.jsx'
 import { preservedOn } from './JarPicker.jsx'
 import WhatWentIn, { FromGarden } from './WhatWentIn.jsx'
 import SaltBlock from './SaltBlock.jsx'
 import JarHeatRow from './JarHeatRow.jsx'
 import RecipeRefRow from './RecipeRefRow.jsx'
-import BatchRecipeRow from '../recipes/BatchRecipeRow.jsx'
+import BatchRecipeRow, { SaveAsRecipe, MadeAsWrittenButton, useMadeAsWritten } from '../recipes/BatchRecipeRow.jsx'
 import StageEditSheet from './StageEditSheet.jsx'
 import ShuSheet from './ShuSheet.jsx'
 import KindQuestion from './KindQuestion.jsx'
+import { kindLabel } from '../kitchen/KindChips.jsx'
+import Button from '../forms/Button.jsx'
 import CheckOnItSheet from './CheckOnItSheet.jsx'
 import CheckInSaved from './CheckInSaved.jsx'
 import LineAdder from './LineAdder.jsx'
@@ -204,7 +207,7 @@ function todayYMD() {
 }
 
 const actionLink = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, minWidth: 44, background: 'none',
   border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green,
   fontSize: '0.78rem',
 }
@@ -268,13 +271,13 @@ function SetStartDate({ batch, fetch, onChanged }) {
             fontSize: T.type.sm, border: `1px solid ${P.border}`, borderRadius: T.radiusButton, background: P.white }} />
         <button type="button" disabled={busy || !picked} data-testid="batch-start-pick-save"
           onClick={() => save(pickedDatePatch(picked))}
-          style={{ minHeight: T.tapMinHeight, padding: '6px 12px', cursor: busy || !picked ? 'default' : 'pointer',
+          style={{ minHeight: T.buttonMinHeight, padding: '6px 12px', cursor: busy || !picked ? 'default' : 'pointer',
             background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '0.78rem',
             fontWeight: 700, color: picked ? P.green : P.light }}>
           Use this date
         </button>
         <button type="button" onClick={() => { setOpen(false); setErr(null) }}
-          style={{ minHeight: T.tapMinHeight, padding: '6px 4px', cursor: 'pointer', background: 'none',
+          style={{ minHeight: T.buttonMinHeight, padding: '6px 4px', cursor: 'pointer', background: 'none',
             border: 'none', fontFamily: 'inherit', fontSize: '0.78rem', color: P.light }}>
           Cancel
         </button>
@@ -503,18 +506,26 @@ function Section({ title, testId, children }) {
 // screen. The body stays — it is still the batch, a write earlier — and one quiet line says the refresh
 // did not land, with Try again (`onRetry`, disabled while `refreshing`). `error` is only ever a batch
 // that never opened.
+//
+// Put-Up UX pass R1 (D15) — THE ACTION ROW. The two everyday acts, Check on it and Put it up, sit in one
+// row under the title instead of a screen and a half down in the Log and What came out. On a batch that
+// is going (or paused) Check on it is the page's one filled button and Put it up the secondary beside it;
+// on a finished batch Check on it is the secondary and nothing is filled — a batch that ended in September
+// has no loudest thing. Their testids did not change, and Put it up is still absent on a finished batch.
+// What each one answers with ("Saved · Undo", the put-up's words) shows under the row it was tapped in.
+// `onOpenRecipe(id, origin)` (optional; the page's opener) is handed to the recipe row.
 export default function BatchDetailView({ batch, inputs, stages, outputs, loading, error, nowMs, onChanged, onRemoved,
-  refreshFailed = false, refreshing = false, onRetry }) {
+  refreshFailed = false, refreshing = false, onRetry, onOpenRecipe }) {
   // For the WRITES this surface makes itself (start date, pause, remove). It still issues no GET for its
   // own data — that contract is about reads, and BatchCloseField already writes the same way.
   const { fetch } = useApiFetch()
   // Put it up from the batch's own surface. Completion here is the new sitting in What came out (V4
-  // §2.4); the stub's words (with the label hint) sit above the list until the next visit.
+  // §2.4); the stub's words (with the label hint) sit under the action row until the next visit.
   const [putUpOpen, setPutUpOpen] = useState(false)
   const [stubText, setStubText] = useState(null)
   // Release F: Jar & heat's disclosure (never opened by itself; closed when a line add starts), the
   // [Salt] chip's hand-off to the Salt block, the stage being edited and its "Saved · Undo", and Check
-  // on it from the Log's head.
+  // on it from the action row.
   const [jarOpen, setJarOpen] = useState(false)
   const [saltFocus, setSaltFocus] = useState(0)
   const [editing, setEditing] = useState(null)
@@ -523,6 +534,9 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
   const [checkSaved, setCheckSaved] = useState(null)       // stage id of the check-in just saved
   const [logErr, setLogErr] = useState(null)
   const undoRef = useRef(false)
+  // "Made it as written" has two doors here (the recipe row's link, and a button in the empty What went
+  // in block), so they share one write and one key set. Called before the early returns: a hook.
+  const asWritten = useMadeAsWritten({ batch, inputs, onChanged })
   if (loading) {
     return (
       <div data-testid="batch-detail-view">
@@ -557,12 +571,12 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
       ? (age.approx ? `about ${age.text}` : age.text)
       : (shortDate(age.at) ? `first recorded ${shortDate(age.at)}` : null)
   // ONE joined string, full-literal assertable. A `toContain` on a fragment passes on a value ten
-  // days wrong — this repo shipped exactly that assertion once.
-  const meta = [ageText, stage?.label, stage?.since].filter(Boolean).join(' · ')
+  // days wrong — this repo shipped exactly that assertion once. The kind leads, in its chip's word; a
+  // kind with no chip (the legacy `age`, anything unknown) and no kind at all print nothing.
+  const meta = [kindLabel(batch.kind), ageText, stage?.label, stage?.since].filter(Boolean).join(' · ')
 
   const outcomeText = describeOutcome(batch)
   const closed = !!batch.closed_at
-  const closedOn = shortDate(batch.closed_at)
   const inputRows = Array.isArray(inputs) ? inputs : []
   const stageRows = liveStages(stages)
   const { sittings, linked } = outputSittings(outputs, stages)
@@ -607,14 +621,36 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
       )}
       {outcomeText && (
         // Past fact, never fed to a computation. The label comes from the TOTAL table in
-        // batchClose.js; the raw enum never reaches this DOM.
+        // batchClose.js; the raw enum never reaches this DOM. The SAME string the closed list's row
+        // says for this batch (closedEnding): "closed Sep 11 · 6 put-ups" there cannot open onto
+        // "Put it up · closed Sep 11" here.
         <div data-testid="batch-detail-outcome" style={{ marginTop: 3, color: P.mid, fontSize: T.type.sm }}>
-          {closedOn ? `${outcomeText} · closed ${closedOn}` : outcomeText}
+          {closedEnding(batch, { label: outcomeText })}
         </div>
       )}
       {batch.outcome_note && (
         <div data-testid="batch-detail-outcome-note" style={{ marginTop: 3, color: P.light, fontSize: T.type.sm }}>
           {batch.outcome_note}
+        </div>
+      )}
+      {/* The action row. 12px apart, wrapping onto a second line rather than shrinking under 48px. */}
+      <div data-testid="batch-detail-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: T.space.sm }}>
+        <Button variant={closed ? 'secondary' : 'primary'} data-testid="batch-detail-check" onClick={() => setChecking(true)}>
+          {CHECK_ON_IT_CTA}
+        </Button>
+        {/* A batch gets NEW jars only through a sitting (V4 §2.4). Not on a closed batch: a new sitting
+            there is refused, and Reopen lives with the ending. */}
+        {!closed && (
+          <Button variant="secondary" data-testid="batch-detail-put-up" onClick={() => setPutUpOpen(true)}>
+            {PUT_IT_UP_CTA}
+          </Button>
+        )}
+      </div>
+      {/* In place: each act answers where it was tapped. */}
+      {checkSaved && <CheckInSaved key={checkSaved} batchId={batch.id} stageId={checkSaved} onUndone={onChanged} />}
+      {stubText && (
+        <div role="status" data-testid="batch-detail-putup-stub" style={{ color: P.mid, fontSize: '0.82rem', marginTop: 4 }}>
+          {stubText}
         </div>
       )}
       {/* Release F (06 §3.10): the kind question, inline, on open AND closed batches alike, while the
@@ -627,14 +663,19 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
         <SetStartDate batch={batch} fetch={fetch} onChanged={onChanged} />
       )}
       <RecipeRefRow batch={batch} onChanged={onChanged} />
-      <BatchRecipeRow batch={batch} inputs={inputRows} onChanged={onChanged} />
+      {/* The recipe row alone: Save as recipe is mounted down beside Pause and the ending. */}
+      <BatchRecipeRow batch={batch} inputs={inputRows} onChanged={onChanged} onOpenRecipe={onOpenRecipe}
+        saveAsRecipe={false} asWritten={asWritten} />
 
       <Section title="What went in" testId="batch-detail-inputs">
         {/* Release F: What went in is WhatWentIn (the reworked field) with the Salt block inside it,
             always reachable. `inputs` is handed DOWN rather than re-fetched: the page already holds
-            GET /:id, and a child re-read is how one screen ends up with two copies that disagree. */}
-        <WhatWentIn batch={batch} lines={inputRows} gardenNames={gardenNames} onChanged={onChanged}
+            GET /:id, and a child re-read is how one screen ends up with two copies that disagree.
+            Keyed by the batch: what it holds for the visit (the opened add row, "Saved · Undo", a line
+            taken out) belongs to this batch and to no other. */}
+        <WhatWentIn batch={batch} lines={inputRows} gardenNames={gardenNames} onChanged={onChanged} key={batch.id}
           onSaltTap={() => setSaltFocus(n => n + 1)} onLineStart={() => setJarOpen(false)}
+          asWrittenSlot={<MadeAsWrittenButton asWritten={asWritten} />}
           saltSlot={<SaltBlock batch={batch} lines={inputRows} onChanged={onChanged} focusSeq={saltFocus} />} />
       </Section>
 
@@ -642,12 +683,6 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
         onToggle={() => setJarOpen(o => !o)} />
 
       <Section title="Log" testId="batch-detail-stages">
-        {/* Release F (06 §4 item 6, UX-I1): a quiet "Check on it" at the head of the Log — the same sheet,
-            the same row kind and the same draft as the card's. */}
-        <button type="button" data-testid="batch-detail-check" onClick={() => setChecking(true)} style={actionLink}>
-          {CHECK_ON_IT_CTA} →
-        </button>
-        {checkSaved && <CheckInSaved key={checkSaved} batchId={batch.id} stageId={checkSaved} onUndone={onChanged} />}
         {stageRows.length === 0 ? (
           <div data-testid="batch-detail-stages-empty" style={{ color: P.light, fontSize: T.type.sm }}>
             Nothing logged yet.
@@ -680,11 +715,6 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
       </Section>
 
       <Section title="What came out" testId="batch-detail-outputs">
-        {stubText && (
-          <div role="status" data-testid="batch-detail-putup-stub" style={{ color: P.mid, fontSize: '0.82rem', marginBottom: 4 }}>
-            {stubText}
-          </div>
-        )}
         {sittings.length === 0 && linked.length === 0 ? (
           <div data-testid="batch-detail-outputs-empty" style={{ color: P.light, fontSize: T.type.sm }}>
             No put-ups linked to this batch.
@@ -703,13 +733,7 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
             ))}
           </ul>
         )}
-        {/* A batch gets NEW jars only through a sitting (V4 §2.4). Not on a closed batch: a new sitting
-            there is refused, and Reopen lives with the ending. */}
-        {!closed && (
-          <button type="button" data-testid="batch-detail-put-up" onClick={() => setPutUpOpen(true)} style={actionLink}>
-            {PUT_IT_UP_CTA} →
-          </button>
-        )}
+        {/* Put it up's door is in the action row under the title; the sheet it opens is mounted here. */}
         <PutItUpSheet open={putUpOpen} batch={{ ...batch, outputs }} lines={inputRows} now={nowMs}
           onClose={() => setPutUpOpen(false)} onChanged={onChanged}
           onDone={({ stub }) => { setPutUpOpen(false); setStubText(stub); onChanged?.() }} />
@@ -719,6 +743,11 @@ export default function BatchDetailView({ batch, inputs, stages, outputs, loadin
         {/* Pause sits with the other decision about the batch as a whole, above the terminal one. */}
         {!closed && <PauseToggle batch={batch} fetch={fetch} onChanged={onChanged} />}
         <BatchCloseField batch={batch} onChanged={onChanged} />
+        {/* Save as recipe, with the other things said about the batch as a whole (it used to sit above
+            What went in, between the title and the first line). Its own row. */}
+        <div data-testid="batch-detail-save-as-recipe">
+          <SaveAsRecipe batch={batch} onChanged={onChanged} />
+        </div>
         {/* Last and quietest: removing is for a batch started by mistake, never an ending. */}
         <RemoveBatch batch={batch} fetch={fetch} onRemoved={onRemoved ?? onChanged} />
       </div>
