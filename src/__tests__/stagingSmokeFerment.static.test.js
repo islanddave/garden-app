@@ -239,7 +239,7 @@ describe('P1b — clearing a typed discard date: the engine, then the recipe', (
     expect(putUp).toContain('\\"name\\": \\"$FE_TAG P1b\\"')
   })
 
-  it('its rows are swept: the recipe by block T\'s recipes_sweep (its prefix), the batch and jar by ferm_sweep (this block\'s tag)', () => {
+  it('its rows are swept: the recipe by recipes_sweep (its prefix), the batch and jar by ferm_sweep (this block\'s tag)', () => {
     const rs = SMOKE.indexOf('recipes_sweep() {')
     const recipesSweep = SMOKE.slice(rs, SMOKE.indexOf('\nSQL\n}', rs))
     expect(recipesSweep).toContain("SELECT id FROM recipe WHERE name LIKE 'smoke-test-recipe-%'")
@@ -249,6 +249,14 @@ describe('P1b — clearing a typed discard date: the engine, then the recipe', (
     expect(dirty).toBeGreaterThan(0)
     expect(dirty).toBeLessThan(P1B.indexOf('fe_req POST "$FE_BASE/api/recipes"'))
     expect(SMOKE.indexOf('# ── T) Recipes (B′ release 4)')).toBeGreaterThan(end)
+    // The sweep and its flag are DEFINED before this block begins (they used to sit in block T, below it): bash has
+    // the function by the time P1b raises the flag, so a run that dies anywhere after P1b is swept by cleanup().
+    const def = SMOKE.indexOf('\nrecipes_sweep() {\n')
+    expect(def).toBeGreaterThan(0)
+    expect(def).toBeLessThan(start)
+    expect(SMOKE.indexOf('\nRECIPES_DIRTY=false\n')).toBeLessThan(def)
+    // And the soft delete through the recipe's own route stays, as the belt: after the clear is checked, never before.
+    expect(P1B.indexOf('fe_req DELETE "$FE_BASE/api/recipes/$FE_RCP"')).toBeGreaterThan(P1B.indexOf('fe_check "p1b-clear-recipe"'))
     // cleanup() sweeps ferment (the batch that names the recipe) before recipes: kitchen_batch.recipe_id is NO ACTION.
     const cleanup = SMOKE.slice(SMOKE.indexOf('cleanup() {'), SMOKE.indexOf('trap cleanup'))
     expect(cleanup.indexOf('ferm_sweep >')).toBeGreaterThan(0)

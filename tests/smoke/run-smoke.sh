@@ -105,7 +105,8 @@ cleanup() {
     pantry_sweep >/dev/null 2>&1 && echo "✅ Cleanup: smoke-test-pantry rows hard-deleted" \
       || echo "WARNING: smoke-test-pantry sweep failed — rows named smoke-test-pantry-% may remain on staging"
   fi
-  # Block T (recipes, B′ release 4): the run died between its create and its own recipes_sweep.
+  # Blocks P (P1b) and T (recipes, B′ release 4): the run died between a recipe's create and block T's recipes_sweep.
+  # After ferm_sweep above, on purpose: P1b's batch names its recipe (kitchen_batch.recipe_id, NO ACTION).
   if [[ "${RECIPES_DIRTY:-false}" == "true" ]]; then
     recipes_sweep >/dev/null 2>&1 && echo "✅ Cleanup: smoke-test-recipe rows hard-deleted" \
       || echo "WARNING: smoke-test-recipe sweep failed — recipes named smoke-test-recipe-% may remain on staging"
@@ -1937,6 +1938,26 @@ else
 fi
 
 
+# ── Recipes sweep (L-058): the hard-delete of every smoke-test-recipe-<run> row, shared by blocks P and T ────────
+# Two blocks write a recipe: P1b (the recipe a batch follows, to prove the clear's recipe rung) and block T (create →
+# GET → DELETE). The sweep and its flag are defined HERE, above block P, and not in block T where they began. A
+# function exists only once the script has run past its definition: while these sat in block T, a run that died
+# between P1b and block T left cleanup() calling a sweep that was not there yet, and block T's own initialisation
+# then lowered the flag P1b had raised. From here the trap hard-deletes the recipe wherever the run stops. What it
+# deletes is unchanged: a recipe named with the prefix, its lines first, in ONE transaction; built-in types are never
+# touched. cleanup() runs ferm_sweep before it, the order kitchen_batch.recipe_id (NO ACTION) needs. Block T still
+# runs it at its own end, and lowers the flag only then.
+RECIPES_DIRTY=false
+recipes_sweep() {
+  [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1 || return 1
+  psql "$NEON_STAGING_URL" -X -q -1 -v ON_ERROR_STOP=1 <<'SQL'
+CREATE TEMP TABLE rc_r ON COMMIT DROP AS SELECT id FROM recipe WHERE name LIKE 'smoke-test-recipe-%';
+DELETE FROM recipe_ingredient WHERE recipe_id IN (SELECT id FROM rc_r);
+DELETE FROM recipe WHERE id IN (SELECT id FROM rc_r);
+SQL
+}
+
+
 # ── P) Put-Up 1b + Ferment (F): make, draw, use, take out, undo, remove — write → read-back (06-ferment-path §5.6;
 #    L-108) — Phase 2, continued ─────────────────────────────────────────────────────────────────────────────────
 # Nine sub-blocks, one per §5.6 row, each a write followed by a read-back:
@@ -1970,7 +1991,8 @@ fi
 # without F (dev before F lands) keeps the WARN. SMOKE_REQUIRE_FERMENT=1 still forces the requirement by hand.
 # SELF-CONTAINED CLEANUP (L-058): every row this block writes carries 'smoke-test-ferment-<run>' (batch label, jar
 # notes/label, place label, line labels) or hangs off a row that does — with ONE exception, P1b's recipe, which is
-# named 'smoke-test-recipe-<run>' and is block T's recipes_sweep's to hard-delete. ferm_sweep hard-deletes the rest in FK order,
+# named 'smoke-test-recipe-<run>' and is recipes_sweep's to hard-delete (defined just above this block, so cleanup()
+# can run it when the run dies before block T does). ferm_sweep hard-deletes the rest in FK order,
 # in ONE transaction: reversing pantry_use → pantry_use → kitchen_batch_input → preservation_source →
 # preservation_log → kitchen_stage_log → kitchen_batch → storage_location. kitchen_stage_log goes AFTER
 # preservation_log (a jar names its put_up row, preservation_log.put_up_stage_id, NO ACTION) — 06 §5.6's listed
@@ -2088,12 +2110,13 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       #     (shelfLife.js: ferment, fridge). It runs AFTER P1's legacy-PUT checks, which need the typed date in place.
       #   * a recipe that says "Fridge · 7 days", a batch that follows it, a typed fridge row on that batch → recipe|the
       #     day + 7. A Lambda from before this release answers table here, which is the signal wanted.
-      # The recipe is named smoke-test-recipe-<run> so block T's recipes_sweep owns it: T's end-of-block sweep hard-deletes
-      # every recipe with that prefix, and RECIPES_DIRTY (set before the POST) asks cleanup() for the same sweep. The
-      # batch and its jar carry this block's tag, so ferm_sweep takes them first; cleanup() sweeps ferment before recipes,
-      # the order kitchen_batch.recipe_id (NO ACTION) needs. The recipe is also removed through its own route here (a soft
-      # delete, the API cleanup), so a run that never reaches a sweep leaves nothing the smoke account can see. Expected
-      # dates are Postgres's own date arithmetic, not the Lambda's.
+      # The recipe is named smoke-test-recipe-<run> so recipes_sweep owns it. That sweep and its flag are defined above
+      # this block: block T runs it at its end (every recipe with the prefix), and if the run dies before that, cleanup()
+      # runs it, because the flag is raised here before the POST and nothing lowers it until a sweep has succeeded. The
+      # batch and its jar carry this block's tag, so ferm_sweep takes them first; cleanup() sweeps ferment before
+      # recipes, the order kitchen_batch.recipe_id (NO ACTION) needs. The recipe is also removed through its own route
+      # here (a soft delete, the API cleanup): a belt only, since a soft-deleted row is still a row and it is the sweep
+      # that removes it. Expected dates are Postgres's own date arithmetic, not the Lambda's.
       CLERK_JWT=$(mint_session_token)
       FE_BASIS_SQL="SELECT coalesce(use_by_basis,'null')||'|'||coalesce(use_by_target::text,'null') FROM preservation_log WHERE id ="
       if fe_id_ok "$FE_J1"; then
@@ -2574,16 +2597,8 @@ fi
 # checked-out tree that carries migrations/v5-recipes-001 requires the block (SMOKE_REQUIRE_RECIPES=1 by hand).
 # SELF-CONTAINED CLEANUP (L-058): the recipe's name carries 'smoke-test-recipe-<run>'; recipes_sweep hard-deletes its
 # lines, then it, in ONE transaction, at the end of the block and from cleanup() if the run dies (RECIPES_DIRTY).
-# Built-in types are never touched.
-RECIPES_DIRTY=false
-recipes_sweep() {
-  [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1 || return 1
-  psql "$NEON_STAGING_URL" -X -q -1 -v ON_ERROR_STOP=1 <<'SQL'
-CREATE TEMP TABLE rc_r ON COMMIT DROP AS SELECT id FROM recipe WHERE name LIKE 'smoke-test-recipe-%';
-DELETE FROM recipe_ingredient WHERE recipe_id IN (SELECT id FROM rc_r);
-DELETE FROM recipe WHERE id IN (SELECT id FROM rc_r);
-SQL
-}
+# Built-in types are never touched. The sweep and its flag are defined above block P ("Recipes sweep"), which writes
+# a recipe too (P1b). This block does not initialise the flag: one P1b raised is still up when the run gets here.
 # I1: from the checked-out tree (this script's own repo root, so the working directory cannot matter).
 RC_TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [[ -d "$RC_TREE/migrations/v5-recipes-001" ]] && SMOKE_REQUIRE_RECIPES=1

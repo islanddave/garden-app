@@ -31,9 +31,12 @@ const sweepOf = (block, fn) => {
 }
 const CLEANUP = SMOKE.slice(SMOKE.indexOf('cleanup() {'), SMOKE.indexOf('trap cleanup'))
 
+// sweepIn: the text the block's sweep function is read from. pantry_sweep is defined in block S. recipes_sweep is
+// NOT in block T since Put-Up UX pass R1: block P's P1b writes a smoke-test-recipe row too, so the function and its
+// flag sit above block P and are read from the whole script (the position is pinned under "block T — recipes").
 const BLOCKS = [
   {
-    name: 'S', block: S.text, tag: 'pantry', sweepFn: 'pantry_sweep', dirty: 'PANTRY_DIRTY', prefix: 'smoke-test-pantry-',
+    name: 'S', block: S.text, sweepIn: S.text, tag: 'pantry', sweepFn: 'pantry_sweep', dirty: 'PANTRY_DIRTY', prefix: 'smoke-test-pantry-',
     tagVar: 'PN_TAG="smoke-test-pantry-$TEST_RUN_ID"', req: 'SMOKE_REQUIRE_PANTRY', mig: 'v5-pantry-001', treeVar: 'PN_TREE',
     probe: 'pn_req GET "$PN_BASE/api/pantry"', fail: 'pn_fail', uuid: 'PN_UUID_RE',
     outerIf: 'if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" && -n "${STAGING_API_STORAGE_LOCATIONS:-}" ]]; then',
@@ -51,7 +54,7 @@ const BLOCKS = [
     ],
   },
   {
-    name: 'T', block: T.text, tag: 'recipes', sweepFn: 'recipes_sweep', dirty: 'RECIPES_DIRTY', prefix: 'smoke-test-recipe-',
+    name: 'T', block: T.text, sweepIn: SMOKE, tag: 'recipes', sweepFn: 'recipes_sweep', dirty: 'RECIPES_DIRTY', prefix: 'smoke-test-recipe-',
     tagVar: 'RC_TAG="smoke-test-recipe-$TEST_RUN_ID"', req: 'SMOKE_REQUIRE_RECIPES', mig: 'v5-recipes-001', treeVar: 'RC_TREE',
     probe: 'rc_req GET "$RC_BASE/api/recipes/types"', fail: 'rc_fail', uuid: 'RC_UUID_RE',
     outerIf: 'if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" ]]; then',
@@ -80,7 +83,7 @@ describe('blocks S and T are present, after block Q, before the water recon, eac
 })
 
 describe.each(BLOCKS)('block $name', (b) => {
-  const SWEEP = sweepOf(b.block, b.sweepFn)
+  const SWEEP = sweepOf(b.sweepIn, b.sweepFn)
 
   it.each(b.asserts)('asserts %s', (tag) => {
     expect(b.block).toMatch(new RegExp(`${b.name === 'S' ? 'pn' : 'rc'}_(check|pass|fail) "${tag}"`))
@@ -292,5 +295,43 @@ describe('block T — recipes', () => {
 
   it('T5 reads the deleted recipe back 404', () => {
     expect(T.text).toMatch(/rc_check "t5-gone" "\$RC_CODE \$\(rc_jq '\.code \/\/ "-"'\)" "404 not_found"/)
+  })
+
+  // Put-Up UX pass R1. Block P's P1b writes a smoke-test-recipe row too. While recipes_sweep and its flag were defined
+  // in THIS block, a run that died between P1b and here left cleanup() calling a function bash had not reached yet
+  // (so the recipe stayed on staging), and this block's own initialisation then lowered the flag P1b had raised. Both
+  // now sit above block P. What the sweep deletes is pinned by the block's sweep tests above, unchanged.
+  describe('recipes_sweep and its flag are defined above block P, once; this block does not lower a raised flag', () => {
+    const P_START = SMOKE.indexOf('# ── P) Put-Up 1b + Ferment')
+    const def = SMOKE.indexOf('\nrecipes_sweep() {\n')
+    const init = SMOKE.indexOf('\nRECIPES_DIRTY=false\n')
+    const tSweep = T.start + T.text.indexOf('if recipes_sweep; then')
+
+    it('one definition and one initialisation in the whole script: the flag directly above its sweep, both before block P', () => {
+      expect(P_START).toBeGreaterThan(0)
+      expect(SMOKE.match(/^recipes_sweep\(\) \{$/gm)).toHaveLength(1)
+      expect(SMOKE.match(/^RECIPES_DIRTY=false$/gm)).toHaveLength(1)
+      expect(init).toBeGreaterThan(0)
+      expect(def).toBe(init + '\nRECIPES_DIRTY=false'.length)
+      expect(def).toBeLessThan(P_START)
+    })
+
+    it('block T neither defines the sweep nor initialises the flag: it raises it at T2 and lowers it only after its own sweep', () => {
+      expect(T.text).not.toContain('recipes_sweep() {')
+      const sweepAt = T.text.indexOf('if recipes_sweep; then')
+      expect(sweepAt).toBeGreaterThan(0)
+      expect(T.text.match(/RECIPES_DIRTY=false/g)).toHaveLength(1)
+      expect(T.text.indexOf('RECIPES_DIRTY=false')).toBeGreaterThan(sweepAt)
+      expect(T.text.indexOf('RECIPES_DIRTY=true')).toBeGreaterThan(0)
+      expect(T.text.indexOf('RECIPES_DIRTY=true')).toBeLessThan(sweepAt)
+    })
+
+    it('nothing between P1b raising the flag and block T\'s own sweep lowers it, so cleanup() still sees it raised', () => {
+      const raised = SMOKE.indexOf('RECIPES_DIRTY=true', P_START)
+      expect(raised).toBeGreaterThan(P_START)
+      expect(raised).toBeLessThan(T.start)   // P1b's, not T2's
+      expect(SMOKE.slice(raised, tSweep)).not.toMatch(/RECIPES_DIRTY=false/)
+      expect(CLEANUP).toMatch(/if \[\[ "\$\{RECIPES_DIRTY:-false\}" == "true" \]\]; then\s+recipes_sweep/)
+    })
   })
 })
