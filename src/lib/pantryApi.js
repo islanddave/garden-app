@@ -80,6 +80,29 @@ export async function undoUse(fetch, useId, { idempotencyKey } = {}) {
   })
 }
 
+// ── The batches the Pantry's jars came from ───────────────────────────────────────────────────────
+// GET /api/pantry sends a jar's `batch_id` and nothing else about its batch. The names come from ONE
+// read of every batch the household has, going and closed (a jar's batch is usually closed):
+// GET /api/kitchen-batches?state=all → { state, batches: [{ id, label, … }] }. `batchNames` turns
+// whatever envelope answered into { [batch id]: its name } — the route's `{ state, batches }`, and a
+// bare array too, for the reason pantryRows above reads both. A batch with no id or a blank name is
+// left out, so a jar whose batch is not in the map says nothing about it rather than "from undefined".
+export const BATCH_NAMES_PATH = '/api/kitchen-batches?state=all'
+
+export function batchNames(payload) {
+  const list = Array.isArray(payload) ? payload : (Array.isArray(payload?.batches) ? payload.batches : [])
+  const names = {}
+  for (const b of list) {
+    const label = typeof b?.label === 'string' ? b.label.trim() : ''
+    if (b?.id != null && label) names[String(b.id)] = label
+  }
+  return names
+}
+
+export async function listBatchNames(fetch) {
+  return batchNames(await fetch(BATCH_NAMES_PATH))
+}
+
 // ── Places ───────────────────────────────────────────────────────────────────────────────────────
 // A pantry item's Move is a PATCH of storage_location_id, which takes an id. A template chip ("Fridge"
 // with no place of that kind yet, putItUp.js placeChips) has none, so it is made first through the

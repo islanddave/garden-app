@@ -4,8 +4,9 @@
 // A PUT-UP (jar), in this order: Move it (the shipped move route) · Next time… (a batch jar writes the
 // batch's `noted` stage row; a batchless jar appends a dated line to its notes) · Gave it away (a use of a
 // count, default 1, fate given_away) · Went bad (fate discarded) · Edit (the shipped jar editor, with
-// Remove inside, two-step, refused with the server's reason) · How it was made → (only when the host hands
-// in `onHowItWasMade` — the batch-builder lane wires it).
+// Remove inside, two-step, refused with the server's reason) · then How it was made → (a put-up with no
+// batch, only when the host hands in `onHowItWasMade` — the batch-builder lane wires it) or What went in →
+// (a put-up that came from a batch the host can name, only when the host hands in `onOpenBatch`).
 // A BOUGHT ITEM: Move it (PATCH storage_location_id) · Edit (name, when you got it, a discard date from
 // the label, notes; Remove inside, two-step). Used it up is the row's own inline action.
 //
@@ -35,6 +36,7 @@ import Sheet from '../forms/Sheet.jsx'
 import Button from '../forms/Button.jsx'
 import { labelChrome, inputChrome } from '../forms/formStyles.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
+import { landAfterClose } from '../kitchen/sheetLanding.js'
 import MoveJarSheet from '../putup/MoveJarSheet.jsx'
 import { toYmd, parseYmd, putUpDateWords, sizeWords } from '../putup/jarWords.js'
 import { PUTUP_SOURCE_LABELS } from '../../lib/dropdownRegistry.js'
@@ -82,13 +84,24 @@ export function jarRecordWords(rec, now = new Date()) {
 // says whether this row may offer it (a put-up with no batch). Neither handed in → no door.
 // `onMoved({ row, place, saved })`: a move landed — the place tapped and the row the server answered (a
 // put-up's jar, a bought item's item), for the host's in-place line. `onChanged('moved')` still follows.
-export default function PantryRowSheet({ row, fetch, onClose, onUsed, onChanged, onMoved = null, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, now }) {
+// `onOpenBatch(id, origin)` is the page's opener for batch detail; `canOpenBatch(row)` says whether the
+// host can name this row's batch (a batch it cannot name gets no door). Not handed in → no such action.
+// THE SHEET LANDS FIRST: it closes, its own Back entry is consumed, and only then is the page told to
+// open the batch (sheetLanding.landAfterClose) — a push from inside the armed sheet would strand that
+// entry under the batch and cost a dead Back press. The origin it names is the Pantry.
+export const WHAT_WENT_IN_LABEL = 'What went in →'
+export const PANTRY_ORIGIN_LABEL = 'Pantry'
+export default function PantryRowSheet({
+  row, fetch, onClose, onUsed, onChanged, onMoved = null, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null,
+  onOpenBatch = null, canOpenBatch = null, now,
+}) {
   if (!row) return null
   return <RowSheetOpen key={`${row.stock_kind}:${row.stock_id}`} row={row} fetch={fetch} onClose={onClose} onUsed={onUsed}
-    onChanged={onChanged} onMoved={onMoved} JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} now={now} />
+    onChanged={onChanged} onMoved={onMoved} JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
+    onOpenBatch={onOpenBatch} canOpenBatch={canOpenBatch} now={now} />
 }
 
-function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEditor, onHowItWasMade, canHowItWasMade, now }) {
+function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEditor, onHowItWasMade, canHowItWasMade, onOpenBatch, canOpenBatch, now }) {
   const [panel, setPanel] = useState(null)      // null | 'move' | 'next' | 'give' | 'went-bad' | 'edit'
   const [busy, setBusy] = useState(false)
   const [panelBusy, setPanelBusy] = useState(false)   // the Move panel's write, in flight
@@ -186,6 +199,12 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
             {jar && typeof onHowItWasMade === 'function' && (typeof canHowItWasMade !== 'function' || canHowItWasMade(row)) && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-how"
                 onClick={() => { onHowItWasMade(row); onClose?.() }}>How it was made →</button>
+            )}
+            {jar && row.batch_id != null && typeof onOpenBatch === 'function' && (typeof canOpenBatch !== 'function' || canOpenBatch(row)) && (
+              <button type="button" style={actionBtn} disabled={busy} data-testid="row-what-went-in"
+                onClick={() => landAfterClose(onClose, () => onOpenBatch(row.batch_id, { label: PANTRY_ORIGIN_LABEL }))}>
+                {WHAT_WENT_IN_LABEL}
+              </button>
             )}
           </div>
         )}

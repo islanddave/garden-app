@@ -49,6 +49,7 @@ const url = () => window.location.pathname + window.location.search
 
 const JAR = jarRow({ stock_id: 'jar-1', name: 'Megatron reaper', place: PLACES[2], method: 'hot_sauce', count_left: 3 })
 const ITEM = itemRow({ stock_id: 'item-1', name: 'Oat milk', place: PLACES[2] })
+const BATCH_JAR = jarRow({ stock_id: 'jar-2', name: 'Petri Dish woozy', place: PLACES[2], method: 'hot_sauce', count_left: 2, batch_id: 'kb-7' })
 const JarEditor = ({ rec, onCancel }) => (
   <div data-testid="jar-editor"><span>{rec.label}</span><button type="button" onClick={onCancel}>Cancel</button></div>
 )
@@ -225,5 +226,40 @@ describe('Back in a panel returns to the action list; Back again closes the shee
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(atPage()).toBe(true)
     expect(url()).toBe(PAGE_URL)
+  })
+})
+
+// PLAN-V3 section 3 point 2, rule 4: a caller inside an armed sheet LANDS FIRST. A push made while the
+// sheet's Back entry is current strands that entry under the batch — one Back press that does nothing.
+describe('What went in → lands first', () => {
+  const BATCH_URL = '/put-up?view=pantry&batch=kb-7'
+
+  it('the page is told only after the sheet has closed and its Back entry is consumed — once, with the origin', async () => {
+    const seen = []
+    const onOpenBatch = vi.fn((id, origin) => seen.push({
+      id, origin, sheetOpen: !!screen.queryByRole('dialog'), markerCurrent: armed(), atPage: atPage(), url: url(),
+    }))
+    await openSheet(BATCH_JAR, { onOpenBatch })
+    const from = pops
+    fireEvent.click(screen.getByTestId('row-what-went-in'))
+    expect(onOpenBatch).not.toHaveBeenCalled()                   // not in the tap: the entry is still the sheet's
+    await settle(from)
+    await waitFor(() => expect(onOpenBatch).toHaveBeenCalledTimes(1))
+    expect(seen).toEqual([{ id: 'kb-7', origin: { label: 'Pantry' }, sheetOpen: false, markerCurrent: false, atPage: true, url: PAGE_URL }])
+  })
+
+  it('so the page\'s push sits directly on the Pantry: ONE Back returns there, and there is no dead press', async () => {
+    const onOpenBatch = vi.fn(() => window.history.pushState({ __batch: 1 }, '', BATCH_URL))   // what the page's opener does
+    await openSheet(BATCH_JAR, { onOpenBatch })
+    const from = pops
+    fireEvent.click(screen.getByTestId('row-what-went-in'))
+    await settle(from)
+    await waitFor(() => expect(url()).toBe(BATCH_URL))
+    expect(armed()).toBe(false)
+    await back()
+    expect(url()).toBe(PAGE_URL)
+    expect(atPage()).toBe(true)                                  // the Pantry's own entry, not a stale one of the sheet's
+    await back()
+    expect(url()).toBe('/today')                                 // and the next Back leaves, as it would have
   })
 })

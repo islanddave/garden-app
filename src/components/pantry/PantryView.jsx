@@ -2,8 +2,9 @@
 // Put-Up B′ release 2 (V4 §2.5 The Pantry, §6.1, §6.6) — the Pantry segment's body: ONE list of put-ups
 // and bought items (GET /api/pantry), grouped By place (default) or By what it is.
 //
-// ROW: name · place · where from · how many left ("about N g left" for weighed stock) · the discard-by
-// chip with its basis words (jarWords.discardWords, through pantryRows.discardChip) · "From the garden"
+// ROW: name · place · where from · the batch it came from, by name ("from Petri Dish", plain words — the
+// door to that batch is in the row sheet) · how many left ("about N g left" for weighed stock) · the
+// discard-by chip with its basis words (jarWords.discardWords, through pantryRows.discardChip) · "From the garden"
 // · ONE inline action — Used one (counted, more than one left) or Used it up. The open target and the
 // inline action are SIBLINGS, never nested (V4 §6.6), each at least 48 px tall.
 //
@@ -16,14 +17,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
-import { listPantry, undoUse, patchPantryItem, useJar, deletePantryItem } from '../../lib/pantryApi.js'
+import { listPantry, listBatchNames, undoUse, patchPantryItem, useJar, deletePantryItem } from '../../lib/pantryApi.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import SegmentedControl from '../forms/SegmentedControl.jsx'
 import ErrorBanner from '../forms/ErrorBanner.jsx'
 import PantryRowSheet from './PantryRowSheet.jsx'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
 import {
-  groupRows, rowKey, isItem, leftWords, discardChip, ageWords, inlineAction, ACTION_LABELS, USED_ONE, USED_UP,
+  groupRows, rowKey, isItem, detailWords, discardChip, inlineAction, ACTION_LABELS, USED_ONE, USED_UP,
   afterUseWords, finishedByUse, movedWords, onlyUseSoon,
 } from './pantryRows.js'
 import { BRIDGE_TEXT } from './pantryBridge.js'
@@ -51,6 +52,38 @@ export function usePantryList({ fetch, group = 'place', enabled = true }) {
   return { rows, loading, error, reload: load }
 }
 
+// THE NAMES OF THE BATCHES the listed jars came from: { [batch id]: name } (Put-Up UX pass R1). The list
+// read sends a jar's `batch_id` and nothing else about its batch, so the names are ONE more read — sent
+// only when some row carries a batch_id, never once per row, and again only when a batch_id turns up that
+// no earlier read was sent for (a jar given a batch by "How it was made" in this same visit). FAILURE IS
+// ISOLATED: a read that fails, or a batch it does not list, leaves that jar exactly as it reads without a
+// name — no words about its batch, no door to it. `enabled` false sends nothing.
+const NO_NAMES = Object.freeze({})
+export function useBatchNames({ fetch, rows, enabled = true }) {
+  const [names, setNames] = useState(NO_NAMES)
+  const askedRef = useRef(new Set())
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+  // A string, so the effect below runs when the SET of batch ids changes and not on every re-read.
+  const ids = useMemo(
+    () => [...new Set((rows ?? []).map(r => r?.batch_id).filter(v => v != null && v !== '').map(String))].sort().join('\n'),
+    [rows],
+  )
+  useEffect(() => {
+    if (!enabled || !ids) return
+    const wanted = ids.split('\n')
+    if (wanted.every(id => askedRef.current.has(id))) return
+    for (const id of wanted) askedRef.current.add(id)
+    Promise.resolve().then(() => listBatchNames(fetch))
+      .then(m => { if (mountedRef.current) setNames(prev => ({ ...prev, ...m })) })
+      .catch(() => { /* the rows read as they do without a name */ })
+  }, [enabled, fetch, ids])
+  return names
+}
+export function batchNameOf(names, row) {
+  return row?.batch_id != null ? (names?.[String(row.batch_id)] ?? null) : null
+}
+
 // A used-up row the server no longer lists stays where it was for the person who acted: each recent
 // snapshot missing from `rows` goes back in after the last row of its group (or last, if its group is
 // gone too).
@@ -71,13 +104,14 @@ export function mergeRecent(rows, recent) {
 export default function PantryView({
   fetch, group, onGroupChange, rows, loading, error, onReload, recent, onRecent,
   useSoonOnly = false, onClearUseSoon, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, completion = null, onCompletionDone,
-  showBridge = false, onDismissBridge, now,
+  showBridge = false, onDismissBridge, onOpenBatch = null, now,
 }) {
   const [openRow, setOpenRow] = useState(null)
   // The last move made from this list, said in place at the top (the place it went and what the server
   // answered about its date) until it is closed or the next move replaces it.
   const [moved, setMoved] = useState(null)
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
+  const batches = useBatchNames({ fetch, rows })
 
   const shown = useMemo(() => {
     const merged = mergeRecent(rows ?? [], recent)
@@ -161,7 +195,7 @@ export default function PantryView({
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {g.rows.map(r => (
               <PantryRow key={rowKey(r)} row={r} fetch={fetch} recent={recent?.[rowKey(r)] ?? null} onRecent={onRecent}
-                onRecord={record} onOpen={() => setOpenRow(r)} onReload={onReload} now={nowDate} />
+                onRecord={record} onOpen={() => setOpenRow(r)} onReload={onReload} now={nowDate} batchName={batchNameOf(batches, r)} />
             ))}
           </ul>
         </section>
@@ -169,13 +203,14 @@ export default function PantryView({
 
       <PantryRowSheet row={openRow} fetch={fetch} onClose={() => setOpenRow(null)} now={now}
         JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
+        onOpenBatch={onOpenBatch} canOpenBatch={(r) => batchNameOf(batches, r) != null}
         onUsed={record} onChanged={() => onReload?.()} onMoved={(m) => setMoved(movedWords({ ...m, now: nowDate }))} />
     </div>
   )
 }
 
 // One row. The open target (a button over the words) and the inline action are siblings.
-export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onReload, now }) {
+export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onReload, now, batchName = null }) {
   const [busy, setBusy] = useState(false)
   // A synchronous guard: two taps inside one frame both read `busy` false, and each use carries its own
   // key, so both would land (the shipped RecordRow's usingRef, kept).
@@ -184,7 +219,7 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
   const key = rowKey(row)
   const action = inlineAction(row)
   const chip = discardChip(row, now)
-  const detail = [row.place?.label, row.where_from, leftWords(row), ageWords(row, now)].filter(Boolean).join(' · ')
+  const detail = detailWords(row, { now, batchName })
 
   async function act() {
     if (writingRef.current) return

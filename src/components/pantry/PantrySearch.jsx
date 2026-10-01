@@ -5,11 +5,14 @@
 // `extraSearchItems` (the recipes lane's loaded recipes); NAME/LABEL match only. A tap opens the jar row
 // or item (its row sheet) or the extra item (its own onOpen). No hit → "Put something up: <text> →".
 // Batches are not in it (Going now is their list).
+// `onOpenBatch` (the page's opener, Put-Up UX pass R1): a jar hit's row sheet offers What went in → for a
+// batch this host can name, exactly as the Pantry's does. The names are read only when it is handed in.
 import React, { useMemo, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { inputChrome } from '../forms/formStyles.js'
 import PantryRowSheet from './PantryRowSheet.jsx'
+import { useBatchNames, batchNameOf } from './PantryView.jsx'
 import { searchHits, leftWords, extraLabel } from './pantryRows.js'
 
 export const SEARCH_LABEL = 'Search the pantry'
@@ -32,9 +35,10 @@ export function PantrySearchBox({ value, onChange, onClear }) {
 
 export default function PantrySearchResults({
   query, rows, loading, extraSearchItems = [], onOpenExtra = null, fetch, onPutUp, onUsed, onChanged, JarEditor = null, onHowItWasMade = null,
-  canHowItWasMade = null, now,
+  canHowItWasMade = null, onOpenBatch = null, now,
 }) {
   const [openRow, setOpenRow] = useState(null)
+  const batches = useBatchNames({ fetch, rows, enabled: typeof onOpenBatch === 'function' })
   const hits = useMemo(() => searchHits(rows ?? [], extraSearchItems, query), [rows, extraSearchItems, query])
   const text = String(query ?? '').trim()
   return (
@@ -73,7 +77,8 @@ export default function PantrySearchResults({
         </button>
       )}
       <PantryRowSheet row={openRow} fetch={fetch} onClose={() => setOpenRow(null)} now={now}
-        JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} onUsed={onUsed} onChanged={onChanged} />
+        JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} onUsed={onUsed} onChanged={onChanged}
+        onOpenBatch={onOpenBatch} canOpenBatch={(r) => batchNameOf(batches, r) != null} />
     </div>
   )
 }

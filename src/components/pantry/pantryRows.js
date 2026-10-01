@@ -92,6 +92,14 @@ export function leftWords(row) {
   return `${Number(n)} left`
 }
 
+// The row's detail line: place · where from · the batch it came from · what is left (· how long a bought
+// item has been had). `batchName` is the host's (the names read, pantryApi.listBatchNames): a jar whose
+// batch the host cannot name says nothing about it — never "from undefined".
+export function detailWords(row, { now = new Date(), batchName = null } = {}) {
+  const batch = typeof batchName === 'string' && batchName.trim() ? `from ${batchName.trim()}` : null
+  return [row?.place?.label, row?.where_from, batch, leftWords(row), ageWords(row, now)].filter(Boolean).join(' · ')
+}
+
 // SEVERAL LEFT: a counted put-up with more than one left. The ONE test two things hang on, so they cannot
 // drift: the row's inline action (Used one, not Used it up) and whether the row sheet's Went bad asks how
 // many (Went bad…) or acts at once (Went bad). A weighed bag's count is null on the server's row

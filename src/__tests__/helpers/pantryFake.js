@@ -71,7 +71,10 @@ export function itemRow(o = {}) {
 
 // A fetch fake routing the Pantry contract plus the shipped routes the Pantry calls. `state.rows` is the
 // list; handlers can be overridden per route key. Every call is recorded on `calls`.
-export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSearch = { plantings: [], put_ups: [] } } = {}) {
+// `batches` (optional, [{ id, label, … }]): what GET /api/kitchen-batches?state=all answers — the read the
+// Pantry names its jars' batches from — in the route's own envelope, { state: 'all', batches }. Left out,
+// every kitchen-batches GET answers as it always did.
+export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSearch = { plantings: [], put_ups: [] }, batches = null } = {}) {
   const state = { rows: [...rows], calls: [], seq: 0 }
   const fn = async (path, options = {}) => {
     const method = options.method || 'GET'
@@ -89,6 +92,7 @@ export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSe
     if (method === 'GET' && path === '/api/storage-locations') return places
     if (method === 'POST' && path === '/api/storage-locations') return { id: `loc-new-${++state.seq}`, label: body.label, kind: body.kind }
     if (method === 'GET' && path.startsWith('/api/kitchen-batches/line-search')) return lineSearch
+    if (method === 'GET' && batches && /^\/api\/kitchen-batches\?(.*&)?state=all(&|$)/.test(path)) return { state: 'all', batches }
     if (method === 'GET' && path.startsWith('/api/kitchen-batches')) return { state: 'going', batches: [] }
     if (method === 'POST' && path === '/api/pantry/uses') {
       // Judged by the Lambda's OWN validator, so a body the server refuses is a 400 here too, with the
