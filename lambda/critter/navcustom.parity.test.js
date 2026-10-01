@@ -81,12 +81,19 @@ describe('bar_layout invariant 1 — whatever the Lambda stores, the client appl
 
   it('over every order of length 0..6 (with two hidden lists)', () => {
     let accepted = 0
+    let refused = 0
     for (const order of sequences(ORDER_ALPHABET, 6)) {
       for (const hidden of [[], ['put-up']]) {
         const value = { order, hidden }
-        if (!serverAcceptsLayout(value)) continue
-        accepted++
         const r = resolveBarLayout(value)
+        const accepts = serverAcceptsLayout(value)
+        // BOTH DIRECTIONS over the same input (QA M1): the client applies a layout exactly when the
+        // Lambda would store it. The lines below only ever ran for layouts the Lambda accepts, so a
+        // client that applied MORE than the Lambda stores — a lost slot cap, a lost form guard — passed
+        // this file and was caught only in navConfig.test.js.
+        expect(r.applied.order && r.applied.hidden).toBe(accepts)
+        if (!accepts) { refused++; continue }
+        accepted++
         expect(r.applied).toEqual({ order: true, hidden: true })
         expect(r.order).toEqual(order)
         expect(r.hidden).toEqual(hidden)
@@ -99,6 +106,30 @@ describe('bar_layout invariant 1 — whatever the Lambda stores, the client appl
       new Set(o).size === o.length && o.includes('today') && o.includes('create') && o.length <= 5)
     expect(legal.length).toBeGreaterThan(120)
     expect(accepted).toBe(legal.length * 2)
+    // The refusals are the reverse direction's whole population: six-long distinct orders, repeats,
+    // and orders missing Today or ＋ are all in it.
+    expect(refused).toBe(sequences(ORDER_ALPHABET, 6).length * 2 - accepted)
+    expect(refused).toBeGreaterThan(accepted)
+  })
+
+  // The sweep above uses well-formed ids only, so the FORM guard had no input there that reached it.
+  // Same two-way assertion, over ids that are malformed and would otherwise make a legal bar.
+  // KILLING MUTATION: delete the form guard in navConfig.validOrder. RESULT: RED.
+  it('over orders that hold malformed ids, in both directions', () => {
+    const BAD = ['Seeds', '1seeds', '', 'a'.repeat(41), 'seeds ', 'seeds_x', null, 7, ['seeds'], {}]
+    let checked = 0
+    let accepted = 0
+    for (const order of sequences(['today', 'create', 'seeds', ...BAD], 4)) {
+      const value = { order, hidden: [] }
+      const accepts = serverAcceptsLayout(value)
+      const r = resolveBarLayout(value)
+      expect(r.applied.order && r.applied.hidden).toBe(accepts)
+      checked++
+      if (accepts) accepted++
+    }
+    expect(checked).toBe(1 + 13 + 13 ** 2 + 13 ** 3 + 13 ** 4)
+    // Only the orders made of the three good ids, distinct, holding Today and ＋: 2 + 6 of them.
+    expect(accepted).toBe(8)
   })
 
   it('over every hidden list of length 0..4 (with two orders)', () => {
@@ -107,9 +138,13 @@ describe('bar_layout invariant 1 — whatever the Lambda stores, the client appl
     for (const hidden of sequences(HIDDEN_ALPHABET, 4)) {
       for (const order of orders) {
         const value = { order, hidden }
-        if (!serverAcceptsLayout(value)) continue
-        accepted++
         const r = resolveBarLayout(value)
+        const accepts = serverAcceptsLayout(value)
+        // Both directions here too: the order is valid in every case, so this is `hidden` alone.
+        expect(r.applied.order).toBe(true)
+        expect(r.applied.hidden).toBe(accepts)
+        if (!accepts) continue
+        accepted++
         expect(r.applied).toEqual({ order: true, hidden: true })
         expect(r.order).toEqual(order)
         expect(r.hidden).toEqual(hidden)
