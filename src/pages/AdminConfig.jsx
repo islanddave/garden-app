@@ -74,11 +74,12 @@ function NeutralPlacard() {
   )
 }
 
-function MoveButton({ label, glyph, onClick, disabled }) {
+function MoveButton({ label, glyph, onClick, disabled, control }) {
   return (
     <button
       type="button"
       aria-label={label}
+      data-control={control}
       onClick={onClick}
       disabled={disabled}
       style={{
@@ -103,11 +104,17 @@ function slotCandidates() {
   return [...tabs, ...rows]
 }
 
+// A page's FULL name, for the controls' accessible names. The bar list shows the short name a slot
+// wears ("Season"); a control named from it would call one page two things — "Add End of season to
+// the bar", then "Remove Season from the bar" — and leave "Season" and "Stats" with no full name at all.
+const fullLabel = (id) => TAB_REGISTRY[id]?.label ?? MORE_ROWS.find(r => r.id === id)?.label ?? id
+
 function AddButton({ label, onClick, disabled }) {
   return (
     <button
       type="button"
       aria-label={`Add ${label} to the bar`}
+      data-control="add"
       onClick={onClick}
       disabled={disabled}
       style={{
@@ -183,19 +190,50 @@ export default function AdminConfig() {
     setStatus(null)
   }, [baseBar.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const move = useCallback((from, to) => edit(d => {
-    if (to < 0 || to >= d.length) return d
-    const bar = [...d]
-    const [key] = bar.splice(from, 1)
-    bar.splice(to, 0, key)
-    return bar
-  }), [edit])
+  // FOCUS FOLLOWS THE PAGE (QA M6). Add and Remove each unmount the button that was just pressed, and
+  // focus then falls to the document: a keyboard user starts again from the top and TalkBack loses its
+  // place. So once the lists have re-rendered, focus goes to the control that undoes what was just
+  // done — that page's Remove after an Add, its Add after a Remove — which also says where the page
+  // went. A tap must not scroll the page under the thumb that made it (the add list is long, and the
+  // next tap is usually in it), so only a keyboard activation (click.detail 0) scrolls its target into
+  // view. Entries queue because two taps can land before one render; the newest whose control exists
+  // wins.
+  const editorRef = useRef(null)
+  const focusAfter = useRef([])
+  useEffect(() => {
+    const queue = focusAfter.current
+    if (queue.length === 0) return
+    focusAfter.current = []
+    for (const want of [...queue].reverse()) {
+      const rows = [...(editorRef.current?.querySelectorAll(`[data-testid="${want.list}"]`) ?? [])]
+      const row = rows.find(r => (r.getAttribute('data-tab-key') ?? r.getAttribute('data-slot-id')) === want.id)
+      const el = row?.querySelector(`button[data-control="${want.control}"]:not(:disabled)`)
+      if (el) { el.focus({ preventScroll: want.byPointer }); return }
+    }
+  })
+
+  const move = useCallback((from, to) => {
+    focusAfter.current = []
+    edit(d => {
+      if (to < 0 || to >= d.length) return d
+      const bar = [...d]
+      const [key] = bar.splice(from, 1)
+      bar.splice(to, 0, key)
+      return bar
+    })
+  }, [edit])
 
   // Added slots go just before More, i.e. at the right-hand end of the bar. The Add button is already
   // disabled on a full bar and gone once its page is on it; these two checks cover a double tap that
   // lands before the re-render, which would otherwise save a repeat or a sixth slot (both a 400).
-  const add = useCallback((id) => edit(d => (d.includes(id) || d.length >= BAR_MAX_SLOTS ? d : [...d, id])), [edit])
-  const remove = useCallback((id) => edit(d => (BAR_REQUIRED_KEYS.includes(id) ? d : d.filter(k => k !== id))), [edit])
+  const add = useCallback((id, e) => {
+    focusAfter.current.push({ list: 'nav-order-row', id, control: 'remove', byPointer: (e?.detail ?? 0) > 0 })
+    edit(d => (d.includes(id) || d.length >= BAR_MAX_SLOTS ? d : [...d, id]))
+  }, [edit])
+  const remove = useCallback((id, e) => {
+    focusAfter.current.push({ list: 'nav-add-row', id, control: 'add', byPointer: (e?.detail ?? 0) > 0 })
+    edit(d => (BAR_REQUIRED_KEYS.includes(id) ? d : d.filter(k => k !== id)))
+  }, [edit])
 
   const readFailed = prefsLoaded && !prefs && !savedLayout
   const dirty = serverLayout ? !sameBar(shown, drawnIds(serverLayout.bar)) : draft != null
@@ -236,7 +274,7 @@ export default function AdminConfig() {
   if (canEditBar !== true) return <NeutralPlacard />
 
   return (
-    <div style={{ padding: 16, paddingBottom: 40, maxWidth: 640, margin: '0 auto' }}>
+    <div ref={editorRef} style={{ padding: 16, paddingBottom: 40, maxWidth: 640, margin: '0 auto' }}>
       <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: P.dark, marginBottom: 2 }}>Your tab bar</h1>
       <p style={{ fontSize: '0.84rem', color: P.light, marginTop: 0, marginBottom: 16 }}>
         This changes your tab bar only — nobody else’s. Anything in More can go in the bar, up to{' '}
@@ -248,6 +286,7 @@ export default function AdminConfig() {
         {barSlotRows(shown).map((tab, i) => {
           const key = tab.key
           const fixed = BAR_REQUIRED_KEYS.includes(key)
+          const name = fullLabel(key)
           return (
             <div
               key={key}
@@ -265,21 +304,27 @@ export default function AdminConfig() {
               {fixed ? (
                 <span data-testid="nav-order-fixed" style={{ fontSize: '0.78rem', color: P.light }}>Always in bar</span>
               ) : (
-                <MoveButton label={`Remove ${tab.label} from the bar`} glyph="✕" onClick={() => remove(key)} />
+                <MoveButton label={`Remove ${name} from the bar`} glyph="✕" control="remove" onClick={(e) => remove(key, e)} />
               )}
-              <MoveButton label={`Move ${tab.label} up`} glyph="↑" disabled={i === 0} onClick={() => move(i, i - 1)} />
-              <MoveButton label={`Move ${tab.label} down`} glyph="↓" disabled={i === shown.length - 1} onClick={() => move(i, i + 1)} />
+              <MoveButton label={`Move ${name} up`} glyph="↑" disabled={i === 0} onClick={() => move(i, i - 1)} />
+              <MoveButton label={`Move ${name} down`} glyph="↓" disabled={i === shown.length - 1} onClick={() => move(i, i + 1)} />
             </div>
           )
         })}
       </div>
 
       <h2 style={sectionHead}>Add to your bar</h2>
-      {full && (
-        <p data-testid="bar-full" style={{ fontSize: '0.84rem', color: P.mid, margin: '0 0 8px' }}>
-          Your bar is full ({BAR_MAX_SLOTS} plus More). Remove one to add another.
-        </p>
-      )}
+      {/* A polite live region, mounted whether or not it has anything to say: a region inserted together
+          with its text is not announced. The Add that fills the bar disables every Add button, and this
+          line is the only thing that says why. Text in place — never a toast (Reward UX). No role:
+          the Save result below is the page's one role="status". */}
+      <div aria-live="polite" aria-atomic="true" data-testid="bar-full-live">
+        {full && (
+          <p data-testid="bar-full" style={{ fontSize: '0.84rem', color: P.mid, margin: '0 0 8px' }}>
+            Your bar is full ({BAR_MAX_SLOTS} plus More). Remove one to add another.
+          </p>
+        )}
+      </div>
       <div style={card} data-testid="nav-add-list">
         {MORE_SECTIONS.map(sec => {
           const rows = slotCandidates().filter(c => c.section === sec.key && !shown.includes(c.id))
@@ -305,7 +350,7 @@ export default function AdminConfig() {
                       <span style={{ display: 'block', fontSize: '0.74rem', color: P.light }}>Shows as “{c.barLabel}” in the bar</span>
                     )}
                   </span>
-                  <AddButton label={c.label} disabled={full} onClick={() => add(c.id)} />
+                  <AddButton label={c.label} disabled={full} onClick={(e) => add(c.id, e)} />
                 </div>
               ))}
             </div>
@@ -349,7 +394,7 @@ export default function AdminConfig() {
         </button>
         <button
           type="button"
-          onClick={() => { setDraft([...DEFAULT_NAV_TABS]); setStatus(null) }}
+          onClick={() => { focusAfter.current = []; setDraft([...DEFAULT_NAV_TABS]); setStatus(null) }}
           style={{
             minHeight: 44, padding: '0 16px', borderRadius: 8, border: `1px solid ${P.border}`,
             background: P.white, color: P.dark, fontSize: '0.95rem', fontWeight: 600,

@@ -288,6 +288,8 @@ describe('any page can take a slot', () => {
     act(() => { fireEvent.click(addSeeds); fireEvent.click(addPhotos) })
     expect(rows()).toEqual(['today', 'garden', 'create', 'harvests', 'seeds'])
     expect(screen.getByRole('heading', { level: 2, name: /In your bar/ }).textContent).toBe('In your bar · 5 of 5')
+    // Focus goes to the Add that TOOK (QA M6): the refused one has no control to land on.
+    expect(document.activeElement).toBe(screen.getByLabelText('Remove Seeds from the bar'))
     await act(async () => { fireEvent.click(saveButton()) })
     expect(saveSpy.mock.calls[0][0].layout.order).toEqual(['today', 'garden', 'create', 'harvests', 'seeds'])
   })
@@ -298,6 +300,102 @@ describe('any page can take a slot', () => {
     addToBar('Seeds')
     await act(async () => { fireEvent.click(saveButton()) })
     expect(saveSpy.mock.calls[0][0].layout).toEqual({ order: ['today', 'garden', 'create', 'put-up', 'seeds'], hidden: [] })
+  })
+})
+
+// QA M6 — the editor for a keyboard and a screen reader. Three gaps: the row's controls were named from
+// the slot's SHORT name ("Remove Season from the bar" beside "Add End of season to the bar"); Add and
+// Remove unmounted the button just pressed and let focus fall to the document; and "Your bar is full"
+// — the only explanation for every Add going dead — was not announced.
+describe('the editor for a keyboard and a screen reader (QA M6)', () => {
+  const editor = () => screen.getByTestId('nav-order-editor').parentElement
+  const SEASONS = { order: ['today', 'create', 'season-end', 'season-stats'], hidden: [] }
+
+  // KILLING MUTATION: name the row's controls from tab.label again. RESULT: RED.
+  it('a row’s controls use the page’s full name, the same one Add uses', async () => {
+    await open(prefs(SEASONS))
+    // The bar list still SHOWS the name the slot wears…
+    const shownNames = screen.getAllByTestId('nav-order-row').map(r => r.querySelector('span').textContent)
+    expect(shownNames).toEqual(['Today', 'Create', 'Season', 'Stats'])
+    // …and every control on the row says which page that is.
+    expect(screen.getByLabelText('Remove End of season from the bar')).toBeTruthy()
+    expect(screen.getByLabelText('Remove Season stats from the bar')).toBeTruthy()
+    expect(screen.getByLabelText('Move End of season up')).toBeTruthy()
+    expect(screen.getByLabelText('Move Season stats down')).toBeTruthy()
+    expect(screen.queryByLabelText('Remove Season from the bar')).toBeNull()
+    expect(screen.queryByLabelText('Remove Stats from the bar')).toBeNull()
+    // One name in both directions: take it off and the door back is "Add End of season to the bar".
+    removeFromBar('End of season')
+    expect(screen.getByLabelText('Add End of season to the bar')).toBeTruthy()
+  })
+
+  // KILLING MUTATION: drop the focus effect. RESULT: RED — document.activeElement is <body>.
+  it('after Remove, focus is on that page’s Add button, not on the document', async () => {
+    await open()
+    const remove = screen.getByLabelText('Remove Harvests from the bar')
+    remove.focus()
+    fireEvent.click(remove)
+    expect(document.activeElement).toBe(screen.getByLabelText('Add Harvests to the bar'))
+    expect(editor().contains(document.activeElement)).toBe(true)
+    expect(document.activeElement.disabled).toBe(false)
+  })
+
+  it('after Add, focus is on that page’s Remove button, not on the document', async () => {
+    await open(prefs({ order: ['today', 'create', 'put-up'], hidden: [] }))
+    const add = screen.getByLabelText('Add End of season to the bar')
+    add.focus()
+    fireEvent.click(add)
+    expect(document.activeElement).toBe(screen.getByLabelText('Remove End of season from the bar'))
+    expect(editor().contains(document.activeElement)).toBe(true)
+  })
+
+  // The Add that FILLS the bar disables every Add button, so the neighbouring Add could not take focus.
+  // KILLING MUTATION: drop aria-live from the region, or mount it only when full. RESULT: RED.
+  it('the Add that fills the bar: focus still lands in the editor, and "Your bar is full" is announced politely', async () => {
+    await open(prefs({ order: ['today', 'garden', 'create', 'put-up'], hidden: [] }))
+    // The live region is there BEFORE it has anything to say — a region inserted with its text is silent.
+    const region = screen.getByTestId('bar-full-live')
+    expect(region.getAttribute('aria-live')).toBe('polite')
+    expect(region.textContent).toBe('')
+    addToBar('Seeds')
+    expect(screen.getByTestId('bar-full-live')).toBe(region)
+    expect(region.contains(screen.getByTestId('bar-full'))).toBe(true)
+    expect(region.textContent).toMatch(/^Your bar is full \(5 plus More\)\. Remove one to add another\.$/)
+    expect(screen.getByLabelText('Add Photos to the bar').disabled).toBe(true)
+    expect(document.activeElement).toBe(screen.getByLabelText('Remove Seeds from the bar'))
+    // Text in place, nothing that interrupts (Reward UX): no alert, no dialog, and still one status line at most.
+    expect(document.querySelector('[role="alert"], [role="alertdialog"], [role="dialog"], [aria-live="assertive"]')).toBeNull()
+    expect(screen.queryAllByRole('status')).toHaveLength(0)
+  })
+
+  // A tap must not scroll the page under the thumb that made it; a keyboard activation brings its
+  // target into view. KILLING MUTATION: pass a constant preventScroll. RESULT: RED one way or the other.
+  it('a tap does not scroll the page; a keyboard activation scrolls its target into view', async () => {
+    await open()
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+    try {
+      fireEvent.click(screen.getByLabelText('Remove Harvests from the bar'), { detail: 1 })   // a tap
+      expect(focus).toHaveBeenCalledTimes(1)
+      expect(focus.mock.instances[0]).toBe(screen.getByLabelText('Add Harvests to the bar'))
+      expect(focus.mock.calls[0][0]).toEqual({ preventScroll: true })
+      fireEvent.click(screen.getByLabelText('Add Harvests to the bar'), { detail: 0 })         // Enter / Space
+      expect(focus).toHaveBeenCalledTimes(2)
+      expect(focus.mock.instances[1]).toBe(screen.getByLabelText('Remove Harvests from the bar'))
+      expect(focus.mock.calls[1][0]).toEqual({ preventScroll: false })
+    } finally { focus.mockRestore() }
+  })
+
+  // Moving a row and Reset keep their own button mounted, so they must not move focus anywhere.
+  it('Move and Reset leave focus where it is', async () => {
+    await open()
+    const down = screen.getByLabelText('Move Today down')
+    down.focus()
+    fireEvent.click(down)
+    expect(document.activeElement.getAttribute('aria-label')).toBe('Move Today down')
+    const reset = screen.getByText('Reset')
+    reset.focus()
+    fireEvent.click(reset)
+    expect(document.activeElement).toBe(reset)
   })
 })
 
