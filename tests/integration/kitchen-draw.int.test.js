@@ -610,15 +610,15 @@ describe.skipIf(!landed('pantryUses'))('POST /api/pantry/uses — the minimal us
     expect(again.body).toMatchObject({ code: 'only_n_left', n: 0 })
   })
 
-  it('over-use 3 of 2 → 409 only_n_left {n:2}; a non-null fate → 400; STRANGER → 404; nothing written', async () => {
+  it('over-use 3 of 2 → 409 only_n_left {n:2}; a counted Went bad → 201 (Put-Up UX pass R1; it was a 400); STRANGER → 404; one use written', async () => {
     const jar = await seedJar(DAVE, { count: 2 })
     const over = await useTap(DAVE, { preservation_log_id: jar, count_used: 3 })
     expect(over.status).toBe(409)
     expect(over.body).toMatchObject({ code: 'only_n_left', n: 2 })
-    expect((await useTap(DAVE, { preservation_log_id: jar, count_used: 1, fate: 'discarded' })).status).toBe(400)
+    expect((await useTap(DAVE, { preservation_log_id: jar, count_used: 1, fate: 'discarded' })).status).toBe(201)
     expect((await useTap(STRANGER, { preservation_log_id: jar, count_used: 1 })).status).toBe(404)
-    expect(await usesOf(jar)).toHaveLength(0)
-    expect((await readJar(jar)).remaining_count).toBeNull()
+    expect((await usesOf(jar)).map((u) => [u.count_used, u.fate])).toEqual([[1, 'discarded']])
+    expect((await readJar(jar)).remaining_count).toBe(1)
   })
 
   it('JEN taps DAVE\'s jar (household): 201', async () => {

@@ -35,17 +35,20 @@
 #        through GET, which must also carry a boolean can_edit_bar; then restored to [] and the shipped bar;
 #        then garden_group_by 'crop_type' (Type) and 'bean_use' (a bean facet), each read back, then
 #        restored (BUG-GARDENGROUPBYRESET-001: the two values the Lambda refused before)
-#     P) Put-Up 1b + Ferment (06-ferment-path §5.6): P1 put-up date/basis + legacy-PUT refusal, P2 salt line,
+#     P) Put-Up 1b + Ferment (06-ferment-path §5.6): P1 put-up date/basis + legacy-PUT refusal, P1b clearing a typed
+#        discard date (the engine's date, then the recipe's on a batch that follows one), P2 salt line,
 #        P3 draw → Mark used → RowEditor, P4 weighed draw to 0 g, P5 take out/restore, P6 check-in edit,
-#        P7 SHU save, P8 Undo put-up restores grams, P9 batch removal restores the count; REQUIRED (a FAIL, never a
-#        WARN) whenever the checked-out tree carries migrations/v5-fermentpath-001; its own FK-ordered hard-delete
+#        P7 SHU save, P8 Undo put-up restores grams, P9 batch removal restores the count, P10 Raw at create;
+#        REQUIRED (a FAIL, never a WARN) whenever the checked-out tree carries migrations/v5-fermentpath-001; its own
+#        FK-ordered hard-delete
 #     Q) (after Put-Up's N, independent of the project) one fixed-name source (V5-SOURCECONTACT-001):
 #        Instagram + Facebook links PATCHed and read back by id and in the list, a scheme-less link
 #        refused 400 with nothing changed, then both cleared to null and read back
 #     R) (right after D) GET /api/harvests/season-stats (V5-SEASONSTATS-001): envelope v1, the 8 sections
 #        in page order, block D's planting counted, 400 on an unknown section
 #     S) Pantry (B′ release 2; 05-release-train §5): a keyed pantry item → its replay → listed by place →
-#        Used it up → unlisted → DELETE → 404 on a second DELETE; a Used one on a jar → Undo; REQUIRED whenever the
+#        Used it up → unlisted → DELETE → 404 on a second DELETE; a Used one on a jar → Undo; a part of that jar gone
+#        bad (a count, fate discarded) → still listed with what is left → Undo; REQUIRED whenever the
 #        tree carries migrations/v5-pantry-001; its own FK-ordered hard-delete
 #     T) Recipes (B′ release 4): 16 built-in types incl. "Sambal & chili relish" → a keyed recipe → GET (its line,
 #        no pH field) → DELETE → 404; REQUIRED whenever the tree carries migrations/v5-recipes-001; own hard-delete
@@ -102,7 +105,8 @@ cleanup() {
     pantry_sweep >/dev/null 2>&1 && echo "✅ Cleanup: smoke-test-pantry rows hard-deleted" \
       || echo "WARNING: smoke-test-pantry sweep failed — rows named smoke-test-pantry-% may remain on staging"
   fi
-  # Block T (recipes, B′ release 4): the run died between its create and its own recipes_sweep.
+  # Blocks P (P1b) and T (recipes, B′ release 4): the run died between a recipe's create and block T's recipes_sweep.
+  # After ferm_sweep above, on purpose: P1b's batch names its recipe (kitchen_batch.recipe_id, NO ACTION).
   if [[ "${RECIPES_DIRTY:-false}" == "true" ]]; then
     recipes_sweep >/dev/null 2>&1 && echo "✅ Cleanup: smoke-test-recipe rows hard-deleted" \
       || echo "WARNING: smoke-test-recipe sweep failed — recipes named smoke-test-recipe-% may remain on staging"
@@ -1934,6 +1938,26 @@ else
 fi
 
 
+# ── Recipes sweep (L-058): the hard-delete of every smoke-test-recipe-<run> row, shared by blocks P and T ────────
+# Two blocks write a recipe: P1b (the recipe a batch follows, to prove the clear's recipe rung) and block T (create →
+# GET → DELETE). The sweep and its flag are defined HERE, above block P, and not in block T where they began. A
+# function exists only once the script has run past its definition: while these sat in block T, a run that died
+# between P1b and block T left cleanup() calling a sweep that was not there yet, and block T's own initialisation
+# then lowered the flag P1b had raised. From here the trap hard-deletes the recipe wherever the run stops. What it
+# deletes is unchanged: a recipe named with the prefix, its lines first, in ONE transaction; built-in types are never
+# touched. cleanup() runs ferm_sweep before it, the order kitchen_batch.recipe_id (NO ACTION) needs. Block T still
+# runs it at its own end, and lowers the flag only then.
+RECIPES_DIRTY=false
+recipes_sweep() {
+  [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1 || return 1
+  psql "$NEON_STAGING_URL" -X -q -1 -v ON_ERROR_STOP=1 <<'SQL'
+CREATE TEMP TABLE rc_r ON COMMIT DROP AS SELECT id FROM recipe WHERE name LIKE 'smoke-test-recipe-%';
+DELETE FROM recipe_ingredient WHERE recipe_id IN (SELECT id FROM rc_r);
+DELETE FROM recipe WHERE id IN (SELECT id FROM rc_r);
+SQL
+}
+
+
 # ── P) Put-Up 1b + Ferment (F): make, draw, use, take out, undo, remove — write → read-back (06-ferment-path §5.6;
 #    L-108) — Phase 2, continued ─────────────────────────────────────────────────────────────────────────────────
 # Nine sub-blocks, one per §5.6 row, each a write followed by a read-back:
@@ -1953,6 +1977,10 @@ fi
 #   P8) put-up with a row shu + cooked and a sitting line drawing 8 g from a reaper bag → Undo that put-up → the
 #       bag's grams are back.
 #   P9) a fresh batch draws 1 from jar K → remove the batch → K's count is back (F1).
+# Two more, from Put-Up UX pass R1 (neither is a §5.6 row):
+#   P1b) PATCH /api/preservation/:id {"discard_by": "clear"} on P1's typed jar (no recipe) → basis table, the engine's
+#        date; then on a typed fridge row of a batch that follows a "Fridge · 7 days" recipe → basis recipe, day + 7.
+#   P10) POST /api/preservation with is_raw true at a fridge place → is_raw stored, basis none (the Walk sends it).
 # Stock is read back through SQL (NEON_STAGING_URL + psql, as block D does): remaining_amount and consumed_at are
 # not on every API projection, and the ledger (pantry_use) has no read route in F.
 # GATED ON F BEING DEPLOYED: F's DDL and Lambda reach staging only at F's sitting. The probe is GET
@@ -1962,7 +1990,9 @@ fi
 # migration requires this block: the probe failing, or the block not running at all, is a FAIL there. Only a tree
 # without F (dev before F lands) keeps the WARN. SMOKE_REQUIRE_FERMENT=1 still forces the requirement by hand.
 # SELF-CONTAINED CLEANUP (L-058): every row this block writes carries 'smoke-test-ferment-<run>' (batch label, jar
-# notes/label, place label, line labels) or hangs off a row that does. ferm_sweep hard-deletes them in FK order,
+# notes/label, place label, line labels) or hangs off a row that does — with ONE exception, P1b's recipe, which is
+# named 'smoke-test-recipe-<run>' and is recipes_sweep's to hard-delete (defined just above this block, so cleanup()
+# can run it when the run dies before block T does). ferm_sweep hard-deletes the rest in FK order,
 # in ONE transaction: reversing pantry_use → pantry_use → kitchen_batch_input → preservation_source →
 # preservation_log → kitchen_stage_log → kitchen_batch → storage_location. kitchen_stage_log goes AFTER
 # preservation_log (a jar names its put_up row, preservation_log.put_up_stage_id, NO ACTION) — 06 §5.6's listed
@@ -2072,6 +2102,52 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
         fe_fail "p1-putup-readback" "POST /put-up → HTTP $FE_CODE: $(head -c 200 "$FE_OUT")"
       fi
 
+      # ── P1b) clear a typed discard date: the engine's date with no recipe, the recipe's on a batch that follows one ──
+      # Put-Up UX pass R1. PATCH /api/preservation/:id {"discard_by": "clear"} resolves by the whole discard-by rule: a
+      # moved jar → no date; else the recipe's "how long, and where" when its storage kind is the jar's place kind; else
+      # the engine. Two clears, each read back through SQL as basis|discard-by, before → after:
+      #   * P1's jar (a ferment in a fridge, typed above; its batch follows no recipe) → table|the day + 6 months
+      #     (shelfLife.js: ferment, fridge). It runs AFTER P1's legacy-PUT checks, which need the typed date in place.
+      #   * a recipe that says "Fridge · 7 days", a batch that follows it, a typed fridge row on that batch → recipe|the
+      #     day + 7. A Lambda from before this release answers table here, which is the signal wanted.
+      # The recipe is named smoke-test-recipe-<run> so recipes_sweep owns it. That sweep and its flag are defined above
+      # this block: block T runs it at its end (every recipe with the prefix), and if the run dies before that, cleanup()
+      # runs it, because the flag is raised here before the POST and nothing lowers it until a sweep has succeeded. The
+      # batch and its jar carry this block's tag, so ferm_sweep takes them first; cleanup() sweeps ferment before
+      # recipes, the order kitchen_batch.recipe_id (NO ACTION) needs. The recipe is also removed through its own route
+      # here (a soft delete, the API cleanup): a belt only, since a soft-deleted row is still a row and it is the sweep
+      # that removes it. Expected dates are Postgres's own date arithmetic, not the Lambda's.
+      CLERK_JWT=$(mint_session_token)
+      FE_BASIS_SQL="SELECT coalesce(use_by_basis,'null')||'|'||coalesce(use_by_target::text,'null') FROM preservation_log WHERE id ="
+      if fe_id_ok "$FE_J1"; then
+        FE_WAS=$(fe_row "$FE_BASIS_SQL '$FE_J1'")
+        fe_req PATCH "$FE_BASE/api/preservation/$FE_J1" '{"discard_by": "clear"}'
+        fe_check "p1b-clear-table" "$FE_WAS → $FE_CODE $(fe_row "$FE_BASIS_SQL '$FE_J1'")" "typed|$FE_LATER → 200 table|$(fe_row "SELECT (DATE '$FE_DAY' + INTERVAL '6 months')::date::text")" "clear on P1's typed jar (no recipe); basis|discard-by before → after"
+      else
+        fe_fail "p1b-clear-table" "no jar from P1's put-up to clear"
+      fi
+      RECIPES_DIRTY=true
+      fe_req POST "$FE_BASE/api/recipes" "{\"idempotency_key\": \"$(fe_uuid)\", \"name\": \"smoke-test-recipe-$TEST_RUN_ID clear\", \"keeps\": {\"n\": 7, \"unit\": \"day\", \"storage_kind\": \"fridge\"}}"
+      FE_RCP=$(fe_jq '.recipe.id // empty')
+      FE_J1B=""
+      if [[ "$FE_CODE" == "201" ]] && fe_id_ok "$FE_RCP"; then
+        fe_req POST "$FE_BASE/api/kitchen-batches" "{\"label\": \"$FE_TAG P1b\", \"kind\": \"ferment\", \"recipe_id\": \"$FE_RCP\", \"idempotency_key\": \"$(fe_uuid)\"}"
+        FE_B1B=$(fe_jq '.id // empty')
+        fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B1B/put-up" "{\"idempotency_key\": \"$(fe_uuid)\", \"when\": {\"date\": \"$FE_DAY\", \"precision\": \"day\"}, \"method\": \"ferment\", \"rows\": [{\"count\": 1, \"place\": {\"id\": \"$FE_PLACE\"}, \"name\": \"$FE_TAG P1b\", \"discard_by\": \"$FE_LATER\"}], \"finish\": false}"
+        FE_J1B=$(fe_jq '.jars[0].id // empty')
+      fi
+      if fe_id_ok "$FE_J1B"; then
+        FE_WAS=$(fe_row "$FE_BASIS_SQL '$FE_J1B'")
+        fe_req PATCH "$FE_BASE/api/preservation/$FE_J1B" '{"discard_by": "clear"}'
+        fe_check "p1b-clear-recipe" "$FE_WAS → $FE_CODE $(fe_row "$FE_BASIS_SQL '$FE_J1B'")" "typed|$FE_LATER → 200 recipe|$(fe_row "SELECT (DATE '$FE_DAY' + 7)::text")" "a typed fridge row on a batch that follows a \"Fridge · 7 days\" recipe, then clear; basis|discard-by before → after"
+      else
+        fe_fail "p1b-clear-recipe" "no typed jar on a recipe batch to clear (last request → HTTP $FE_CODE): $(head -c 200 "$FE_OUT")"
+      fi
+      if fe_id_ok "$FE_RCP"; then
+        fe_req DELETE "$FE_BASE/api/recipes/$FE_RCP"
+        [[ "$FE_CODE" == "200" ]] || echo "⚠️  WARN [ferment:p1b-recipe-delete] DELETE /api/recipes/:id → HTTP $FE_CODE (recipes_sweep removes it)"
+      fi
+
       # ── P2) batch → typed line → salt line; the salt facts read back ──
       CLERK_JWT=$(mint_session_token)
       FE_B2=$(fe_batch "P2")
@@ -2174,6 +2250,19 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
       FE_MID=$(fe_jar "$FE_J9")
       fe_req DELETE "$FE_BASE/api/kitchen-batches/$FE_B9"
       fe_check "p9-batch-remove" "$FE_MID → $FE_CODE $(fe_jar "$FE_J9")" "1|null|false → 200 3|null|false" "two draws of 1 from 3 (one jar, F1), then remove the batch"
+
+      # ── P10) Raw at create: POST /api/preservation stores is_raw, and a Raw jar in a fridge gets no date ──
+      # Put-Up UX pass R1: Walk a place starts sending is_raw / in_oil to this endpoint. It ignores a key it does not
+      # know, so a misspelt one would answer 201, store nothing, and the jar would take the general figure. Hot sauce has
+      # a fridge figure (basis table without Raw), so both halves show: is_raw stored true, and the basis none.
+      CLERK_JWT=$(mint_session_token)
+      fe_req POST "$FE_BASE/api/preservation" "{\"crop_type_slug\": \"tomato\", \"method\": \"hot_sauce\", \"quantity_value\": 1, \"quantity_unit\": \"jar\", \"package_count\": 1, \"preserved_at\": \"$FE_DAY\", \"preserved_at_approx\": false, \"source_kind\": \"own_garden\", \"storage_location_id\": \"$FE_PLACE\", \"notes\": \"$FE_TAG\", \"is_raw\": true}"
+      FE_J10=$(fe_jq '.id // empty')
+      if [[ "$FE_CODE" == "201" ]] && fe_id_ok "$FE_J10"; then
+        fe_check "p10-raw-create" "$(fe_row "SELECT coalesce(is_raw::text,'null')||'|'||coalesce(use_by_basis,'null')||'|'||coalesce(use_by_target::text,'null') FROM preservation_log WHERE id = '$FE_J10'")" "true|none|null" "POST /api/preservation with is_raw true at a fridge place → HTTP 201; is_raw|basis|discard-by"
+      else
+        fe_fail "p10-raw-create" "POST /api/preservation → HTTP $FE_CODE: $(head -c 200 "$FE_OUT")"
+      fi
 
       CLERK_JWT=$(mint_session_token)
     fi
@@ -2314,6 +2403,10 @@ fi
 #   S8) 05 §5 "Used one then read back remaining and delta_at, Undo": a jar in the same place → POST /api/pantry/uses
 #       count_used 1 → remaining −1 and delta_at set → POST /api/pantry/uses/:id/undo → 200, remaining back, delta_at
 #       moved past the use, and the reversing row (count −1, reverses_use_id = the use) read back.
+#   S9) Put-Up UX pass R1, Went bad as a COUNT, on S8's jar (3 of 3 again): S9a POST /api/pantry/uses count_used 1,
+#       fate 'discarded' → 201; the jar reads 2 left and not consumed, the use row 1|discarded. S9b GET
+#       /api/pantry?place_id= still lists the jar, with count_left 2. S9c its Undo → 200, 3 left, delta_at moved past
+#       the use, and the reversing row −1|discarded|<the use>.
 #   then the place is soft-deleted through DELETE /api/storage-locations/:id (API cleanup) and pantry_sweep runs.
 # Stock is read back through SQL (NEON_STAGING_URL + psql), as block P does: used_up_at, deleted_at, delta_at and
 # the reversing pantry_use row are on no list projection.
@@ -2371,6 +2464,8 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
   pn_row() { psql "$NEON_STAGING_URL" -X -qAt -v ON_ERROR_STOP=1 -c "$1" 2>/dev/null || echo "sql-error"; }
   pn_id_ok() { [[ "${1:-}" =~ $PN_UUID_RE ]]; }
   pn_item() { pn_id_ok "$1" && pn_row "SELECT name||'|'||storage_location_id||'|'||coalesce(acquired_at::text,'null')||'|'||(used_up_at IS NOT NULL)::text||'|'||(deleted_at IS NOT NULL)::text FROM pantry_item WHERE id = '$1'" || echo "bad-id"; }
+  # pn_use <use id> → the pantry_use row's 'count|fate' (fate 'null' when eaten), or 'bad-id'
+  pn_use() { pn_id_ok "$1" && pn_row "SELECT count_used||'|'||coalesce(fate,'null') FROM pantry_use WHERE id = '$1'" || echo "bad-id"; }
   # pn_listed <item id> → GET /api/pantry?place_id=<the place>; 'kind|mode|name|place' of the item's row, or 'absent'
   pn_listed() {
     pn_req GET "$PN_BASE/api/pantry?place_id=$PN_PLACE"
@@ -2445,6 +2540,23 @@ if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERV
         else
           pn_fail "s8-undo" "no use id from POST /api/pantry/uses (HTTP $PN_CODE)"
         fi
+
+        # ── S9) Went bad as a COUNT: a part of the jar discarded → listed with what is left → undone ──
+        # Put-Up UX pass R1. S8's Undo leaves the jar at 3 of 3. A Lambda from before this release answers S9a with
+        # 400 ("Went bad is all that is left"), which is the signal wanted.
+        CLERK_JWT=$(mint_session_token)
+        pn_req POST "$PN_BASE/api/pantry/uses" "{\"idempotency_key\": \"$(pn_uuid)\", \"preservation_log_id\": \"$PN_JAR\", \"count_used\": 1, \"fate\": \"discarded\"}"
+        PN_BAD=$(pn_jq '.use.id // empty')
+        PN_BAD_HTTP="$PN_CODE"
+        pn_check "s9-went-bad-part" "$PN_CODE $(pn_row "SELECT coalesce(remaining_count::text,'null')||'|'||(consumed_at IS NOT NULL)::text FROM preservation_log WHERE id = '$PN_JAR'") $(pn_use "$PN_BAD")" "201 2|false 1|discarded" "one of 3 went bad (POST /api/pantry/uses, count_used 1, fate discarded); remaining|consumed, then the use row's count|fate"
+        pn_req GET "$PN_BASE/api/pantry?place_id=$PN_PLACE"
+        pn_check "s9-listed" "$PN_CODE $(pn_jqx "$PN_JAR" '[.rows[] | select(.stock_id == $x)] | if length == 0 then "absent" else (.[0] | "\(.stock_kind)|\(.stock_mode)|\(.count_left)") end')" "200 put_up|counted|2" "GET /api/pantry?place_id= after a part went bad; the jar's kind|mode|count_left"
+        if pn_id_ok "$PN_BAD"; then
+          pn_req POST "$PN_BASE/api/pantry/uses/$PN_BAD/undo" "{\"idempotency_key\": \"$(pn_uuid)\"}"
+          pn_check "s9-undo" "$PN_CODE $(pn_row "SELECT coalesce(p.remaining_count::text,'null')||'|'||(p.delta_at > u.created_at)::text FROM preservation_log p JOIN pantry_use u ON u.id = '$PN_BAD' WHERE p.id = '$PN_JAR'") $(pn_row "SELECT count_used||'|'||coalesce(fate,'null')||'|'||reverses_use_id FROM pantry_use WHERE reverses_use_id = '$PN_BAD'")" "200 3|true -1|discarded|$PN_BAD" "Undo it (POST /api/pantry/uses/:id/undo); remaining|delta_at moved past the use, then the reversing row's count|fate|reverses"
+        else
+          pn_fail "s9-undo" "no use id from the Went bad POST (HTTP $PN_BAD_HTTP)"
+        fi
       else
         pn_fail "s8-used-one" "POST /api/preservation → HTTP $PN_CODE (no jar id)"
       fi
@@ -2485,16 +2597,8 @@ fi
 # checked-out tree that carries migrations/v5-recipes-001 requires the block (SMOKE_REQUIRE_RECIPES=1 by hand).
 # SELF-CONTAINED CLEANUP (L-058): the recipe's name carries 'smoke-test-recipe-<run>'; recipes_sweep hard-deletes its
 # lines, then it, in ONE transaction, at the end of the block and from cleanup() if the run dies (RECIPES_DIRTY).
-# Built-in types are never touched.
-RECIPES_DIRTY=false
-recipes_sweep() {
-  [[ -n "${NEON_STAGING_URL:-}" ]] && command -v psql >/dev/null 2>&1 || return 1
-  psql "$NEON_STAGING_URL" -X -q -1 -v ON_ERROR_STOP=1 <<'SQL'
-CREATE TEMP TABLE rc_r ON COMMIT DROP AS SELECT id FROM recipe WHERE name LIKE 'smoke-test-recipe-%';
-DELETE FROM recipe_ingredient WHERE recipe_id IN (SELECT id FROM rc_r);
-DELETE FROM recipe WHERE id IN (SELECT id FROM rc_r);
-SQL
-}
+# Built-in types are never touched. The sweep and its flag are defined above block P ("Recipes sweep"), which writes
+# a recipe too (P1b). This block does not initialise the flag: one P1b raised is still up when the run gets here.
 # I1: from the checked-out tree (this script's own repo root, so the working directory cannot matter).
 RC_TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [[ -d "$RC_TREE/migrations/v5-recipes-001" ]] && SMOKE_REQUIRE_RECIPES=1

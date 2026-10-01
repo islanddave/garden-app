@@ -10,11 +10,14 @@
 // review-F-prepromote-early I1: the requirement is derived from the CHECKED-OUT TREE (deploy-staging runs dev's
 // workflow file, so an env flag set there never reaches step 5); the derivation is executed below, not just read.
 // I2: P3 smokes the stale 1a Mark used on a drawn jar (06 §1.3 item 6 case c).
+// Put-Up UX pass R1 adds P1b (clearing a typed discard date: the engine's date, then the recipe's) and P10 (Raw at
+// create). They are pinned at the bottom of this file, with the two engine figures the smoke's expectations rest on.
 import { describe, it, expect } from 'vitest'
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
+import { resolveJarUseBy, shelfLifeMonths } from '../../lambda/preservation/shelfLife.js'
 
 const SMOKE = readFileSync(resolve(process.cwd(), 'tests/smoke/run-smoke.sh'), 'utf8')
 const start = SMOKE.indexOf('# ── P) Put-Up 1b + Ferment')
@@ -35,7 +38,9 @@ describe('block P is present, after block N, and closed by the next block headin
 
   it.each(['p1-putup-readback', 'p1-legacy-date-refused', 'p1-legacy-echo-noop', 'p2-salt-readback', 'p3-draw',
     'p3-legacy-stale-refused', 'p3-mark-used', 'p3-note-edit', 'p4-weighed-draw', 'p4-draw-to-zero', 'p5-take-out', 'p5-restore',
-    'p6-stage-edit', 'p7-shu-save', 'p8-putup-row', 'p8-undo', 'p9-batch-remove', 'l058-sweep'])('asserts %s', (tag) => {
+    'p6-stage-edit', 'p7-shu-save', 'p8-putup-row', 'p8-undo', 'p9-batch-remove', 'l058-sweep',
+    // Put-Up UX pass R1
+    'p1b-clear-table', 'p1b-clear-recipe', 'p10-raw-create'])('asserts %s', (tag) => {
     expect(BLOCK).toContain(`"${tag}"`)
   })
 })
@@ -187,5 +192,105 @@ describe('gating and read-back discipline', () => {
     expect(p1).toContain(`jq -c --arg d "$FE_OTHER_DAY" '.use_by_target = $d'`)
     expect(p1).not.toContain('.preserved_at = $d')
     expect(p1).toContain('"409 client_stale $FE_LATER"')
+  })
+})
+
+// ── Put-Up UX pass R1 ─────────────────────────────────────────────────────────────────────────────────────────
+// P1b: PATCH /api/preservation/:id {"discard_by": "clear"} resolves by the whole discard-by rule (a moved jar → no
+// date; else the recipe on a matching kind; else the engine). The smoke reads back the engine rung on P1's jar and
+// the recipe rung on a batch that follows a recipe. P10: POST /api/preservation stores is_raw, and Raw in a fridge is
+// no date. What can rot silently: the clear moved ahead of P1's legacy-PUT checks (which need the typed date), the
+// recipe renamed out of recipes_sweep's reach, the row no longer typed (create would already read "recipe" and the
+// clear would prove nothing), or P10's method changed to one with no fridge figure (basis none without Raw).
+describe('P1b — clearing a typed discard date: the engine, then the recipe', () => {
+  const at = BLOCK.indexOf('# ── P1b)')
+  const P1B = BLOCK.slice(at, BLOCK.indexOf('# ── P2)'))
+  const line = (needle) => P1B.split('\n').find((l) => l.includes(needle)) ?? ''
+
+  it('sits after P1\'s legacy-PUT checks (they need the typed date in place) and before P2', () => {
+    expect(at).toBeGreaterThan(BLOCK.indexOf('fe_check "p1-legacy-echo-noop"'))
+    expect(BLOCK.indexOf('# ── P2)')).toBeGreaterThan(at)
+  })
+
+  it('both clears are the PATCH with discard_by "clear", and each is read back as basis|discard-by before → after', () => {
+    expect(P1B).toContain(`fe_req PATCH "$FE_BASE/api/preservation/$FE_J1" '{"discard_by": "clear"}'`)
+    expect(P1B).toContain(`fe_req PATCH "$FE_BASE/api/preservation/$FE_J1B" '{"discard_by": "clear"}'`)
+    expect(P1B).toContain(`FE_BASIS_SQL="SELECT coalesce(use_by_basis,'null')||'|'||coalesce(use_by_target::text,'null') FROM preservation_log WHERE id ="`)
+    expect(line('fe_check "p1b-clear-table"')).toContain(`"$FE_WAS → $FE_CODE $(fe_row "$FE_BASIS_SQL '$FE_J1'")" "typed|$FE_LATER → 200 table|$(fe_row "SELECT (DATE '$FE_DAY' + INTERVAL '6 months')::date::text")"`)
+    expect(line('fe_check "p1b-clear-recipe"')).toContain(`"$FE_WAS → $FE_CODE $(fe_row "$FE_BASIS_SQL '$FE_J1B'")" "typed|$FE_LATER → 200 recipe|$(fe_row "SELECT (DATE '$FE_DAY' + 7)::text")"`)
+  })
+
+  it('the engine figure the first clear expects is the engine\'s: a ferment in a fridge is 6 months, P1\'s method at P1\'s place', () => {
+    expect(shelfLifeMonths('ferment', 'fridge')).toBe(6)
+    const p1 = BLOCK.slice(BLOCK.indexOf('# ── P1)'), at)
+    expect(p1).toContain('\\"method\\": \\"ferment\\"')
+    expect(p1).toContain('\\"place\\": {\\"id\\": \\"$FE_PLACE\\"}')
+    expect(BLOCK).toContain('"{\\"label\\": \\"$FE_TAG place\\", \\"kind\\": \\"fridge\\"}"')
+  })
+
+  it('the recipe says Fridge · 7 days; the batch follows it; the row put up on it is a TYPED row at the fridge place', () => {
+    expect(line('fe_req POST "$FE_BASE/api/recipes"')).toContain('\\"keeps\\": {\\"n\\": 7, \\"unit\\": \\"day\\", \\"storage_kind\\": \\"fridge\\"}')
+    const batch = line('fe_req POST "$FE_BASE/api/kitchen-batches" ')
+    expect(batch).toContain('\\"label\\": \\"$FE_TAG P1b\\"')
+    expect(batch).toContain('\\"recipe_id\\": \\"$FE_RCP\\"')
+    const putUp = line('fe_req POST "$FE_BASE/api/kitchen-batches/$FE_B1B/put-up"')
+    expect(putUp).toContain('\\"place\\": {\\"id\\": \\"$FE_PLACE\\"}')
+    expect(putUp).toContain('\\"discard_by\\": \\"$FE_LATER\\"')
+    expect(putUp).toContain('\\"name\\": \\"$FE_TAG P1b\\"')
+  })
+
+  it('its rows are swept: the recipe by recipes_sweep (its prefix), the batch and jar by ferm_sweep (this block\'s tag)', () => {
+    const rs = SMOKE.indexOf('recipes_sweep() {')
+    const recipesSweep = SMOKE.slice(rs, SMOKE.indexOf('\nSQL\n}', rs))
+    expect(recipesSweep).toContain("SELECT id FROM recipe WHERE name LIKE 'smoke-test-recipe-%'")
+    expect(line('fe_req POST "$FE_BASE/api/recipes"')).toContain('\\"name\\": \\"smoke-test-recipe-$TEST_RUN_ID clear\\"')
+    // The flag is raised before the recipe exists, and block T (whose end-of-block sweep removes it) runs after P.
+    const dirty = P1B.indexOf('RECIPES_DIRTY=true')
+    expect(dirty).toBeGreaterThan(0)
+    expect(dirty).toBeLessThan(P1B.indexOf('fe_req POST "$FE_BASE/api/recipes"'))
+    expect(SMOKE.indexOf('# ── T) Recipes (B′ release 4)')).toBeGreaterThan(end)
+    // The sweep and its flag are DEFINED before this block begins (they used to sit in block T, below it): bash has
+    // the function by the time P1b raises the flag, so a run that dies anywhere after P1b is swept by cleanup().
+    const def = SMOKE.indexOf('\nrecipes_sweep() {\n')
+    expect(def).toBeGreaterThan(0)
+    expect(def).toBeLessThan(start)
+    expect(SMOKE.indexOf('\nRECIPES_DIRTY=false\n')).toBeLessThan(def)
+    // And the soft delete through the recipe's own route stays, as the belt: after the clear is checked, never before.
+    expect(P1B.indexOf('fe_req DELETE "$FE_BASE/api/recipes/$FE_RCP"')).toBeGreaterThan(P1B.indexOf('fe_check "p1b-clear-recipe"'))
+    // cleanup() sweeps ferment (the batch that names the recipe) before recipes: kitchen_batch.recipe_id is NO ACTION.
+    const cleanup = SMOKE.slice(SMOKE.indexOf('cleanup() {'), SMOKE.indexOf('trap cleanup'))
+    expect(cleanup.indexOf('ferm_sweep >')).toBeGreaterThan(0)
+    expect(cleanup.indexOf('ferm_sweep >')).toBeLessThan(cleanup.indexOf('recipes_sweep >'))
+    expect(SWEEP).toContain("WHERE label LIKE 'smoke-test-ferment-%'")
+    expect(SWEEP).toContain('batch_id IN (SELECT id FROM fe_b)')
+  })
+})
+
+describe('P10 — Raw at create', () => {
+  const at = BLOCK.indexOf('# ── P10)')
+  const P10 = BLOCK.slice(at, BLOCK.indexOf('if ferm_sweep; then'))
+  const post = P10.split('\n').find((l) => l.includes('fe_req POST "$FE_BASE/api/preservation"')) ?? ''
+
+  it('sits after P9, before the sweep', () => {
+    expect(at).toBeGreaterThan(BLOCK.indexOf('fe_check "p9-batch-remove"'))
+    expect(BLOCK.indexOf('if ferm_sweep; then')).toBeGreaterThan(at)
+  })
+
+  it('creates a Raw hot sauce at the block\'s fridge place, tagged for ferm_sweep, with no typed date', () => {
+    for (const s of ['\\"is_raw\\": true', '\\"method\\": \\"hot_sauce\\"', '\\"storage_location_id\\": \\"$FE_PLACE\\"', '\\"notes\\": \\"$FE_TAG\\"']) {
+      expect(post).toContain(s)
+    }
+    expect(post).not.toContain('use_by_target')   // a typed date would hide the engine's answer
+  })
+
+  it('reads back BOTH halves: is_raw stored, and the basis none with no date', () => {
+    expect(P10).toContain("SELECT coalesce(is_raw::text,'null')||'|'||coalesce(use_by_basis,'null')||'|'||coalesce(use_by_target::text,'null') FROM preservation_log WHERE id = '$FE_J10'")
+    expect(P10).toContain('"true|none|null"')
+  })
+
+  it('hot sauce HAS a fridge figure, so "none" is Raw\'s doing: an ignored key would read table, and the check would fail', () => {
+    expect(resolveJarUseBy({ method: 'hot_sauce', kind: 'fridge' }, '2026-10-01').use_by_basis).toBe('table')
+    expect(resolveJarUseBy({ method: 'hot_sauce', kind: 'fridge', isRaw: true }, '2026-10-01'))
+      .toEqual({ use_by_target: null, use_by_basis: 'none' })
   })
 })

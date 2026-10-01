@@ -27,15 +27,18 @@ describe('POST /api/pantry/uses — Went bad and Gave it away', () => {
     expect(j.delta_at).not.toBeNull()
   })
 
-  it('Gave it away takes a count; Went bad with a count → 400; STRANGER → 404; nothing written by the refusals', async () => {
+  // Put-Up UX pass R1 amended this test: Went bad with a count was a 400 here ("Went bad is all that is left") and
+  // wrote nothing; it is a 201 now and writes its use. fate 'batch' and STRANGER are still refused and write nothing.
+  it('Gave it away takes a count, and so does Went bad (201); fate batch → 400; STRANGER → 404; the refusals write nothing', async () => {
     const jar = await seedJar(DAVE, { count: 4 })
     const g = await useTap(DAVE, { preservation_log_id: jar, count_used: 2, fate: 'given_away' })
     expect(g.status).toBe(201)
     expect((await readJar(jar)).remaining_count).toBe(2)
-    expect((await useTap(DAVE, { preservation_log_id: jar, count_used: 1, fate: 'discarded' })).status).toBe(400)
+    expect((await useTap(DAVE, { preservation_log_id: jar, count_used: 1, fate: 'discarded' })).status).toBe(201)
     expect((await useTap(DAVE, { preservation_log_id: jar, count_used: 1, fate: 'batch' })).status).toBe(400)
     expect((await useTap(STRANGER, { preservation_log_id: jar, count_used: 1, fate: 'given_away' })).status).toBe(404)
-    expect((await usesOf(jar)).map((u) => [u.count_used, u.fate])).toEqual([[2, 'given_away']])
+    expect((await usesOf(jar)).map((u) => [u.count_used, u.fate])).toEqual([[2, 'given_away'], [1, 'discarded']])
+    expect((await readJar(jar)).remaining_count).toBe(1)
   })
 
   it('over-use of a gift → 409 only_n_left', async () => {
@@ -43,6 +46,198 @@ describe('POST /api/pantry/uses — Went bad and Gave it away', () => {
     const r = await useTap(JEN, { preservation_log_id: jar, count_used: 3, fate: 'given_away' })
     expect(r.status).toBe(409)
     expect(r.body).toMatchObject({ code: 'only_n_left', n: 2 })
+  })
+})
+
+// ── Put-Up UX pass R1: Went bad may be a COUNT, not only all that is left ────────────────────────────────────────
+// QA seat section 5(a), its cases 1 to 12, each on its own jar and each reading the stored rows back. Case 6 (the
+// old client's body, { all_remaining: true, fate: 'discarded' }) is the first test of this file, unedited. The server
+// has no weighed-specific rule: a weighed bag is one container, so a count of 1 is all of it and 2 is only_n_left.
+describe('POST /api/pantry/uses — Went bad as a count (Put-Up UX pass R1)', () => {
+  const discard = (user, jar, body) => useTap(user, { preservation_log_id: jar, fate: 'discarded', ...body })
+  const listed = async (jar) => (await call(DAVE, 'GET', '/api/pantry')).body.rows.find((x) => x.stock_id === jar)
+
+  it('1 · JEN discards one of Dave\'s four: 201, the use is hers, 3 left and not consumed, delta_at stamped, listed with 3', async () => {
+    const jar = await seedJar(DAVE, { count: 4 })
+    const r = await discard(JEN, jar, { count_used: 1 })
+    expect(r.status, JSON.stringify(r.body)).toBe(201)
+    expect(r.body.use).toMatchObject({ count_used: 1, fate: 'discarded', created_by: JEN })
+    expect((await usesOf(jar)).map((u) => [u.count_used, u.fate, u.created_by])).toEqual([[1, 'discarded', JEN]])
+    const j = await readJar(jar)
+    expect(j.remaining_count).toBe(3)
+    expect(j.consumed_at).toBeNull()
+    expect(j.delta_at).not.toBeNull()
+    expect(await listed(jar)).toMatchObject({ stock_mode: 'counted', count_left: 3, count_made: 4 })
+  })
+
+  it('2 · that discard undone: 200, the reversing row (−1, discarded, reverses_use_id), 4 again; a second Undo under a new key → 409 already_undone', async () => {
+    const jar = await seedJar(DAVE, { count: 4 })
+    const u = await discard(JEN, jar, { count_used: 1 })
+    expect(u.status, JSON.stringify(u.body)).toBe(201)
+    const r = await undo(DAVE, u.body.use.id)
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(r.body.use).toMatchObject({ count_used: -1, fate: 'discarded', reverses_use_id: u.body.use.id, created_by: DAVE })
+    expect((await usesOf(jar)).map((x) => [x.count_used, x.fate, x.reverses_use_id]))
+      .toEqual([[1, 'discarded', null], [-1, 'discarded', u.body.use.id]])
+    expect(await readJar(jar)).toMatchObject({ remaining_count: 4, consumed_at: null })
+    const twice = await undo(JEN, u.body.use.id)
+    expect(twice.status).toBe(409)
+    expect(twice.body.code).toBe('already_undone')
+    expect((await readJar(jar)).remaining_count).toBe(4)
+    expect(await usesOf(jar)).toHaveLength(2)
+  })
+
+  it('3 · a count that is all of it: 0 left, consumed, off the Pantry list; undone, it is back on the list with its count', async () => {
+    const jar = await seedJar(DAVE, { count: 2 })
+    const u = await discard(DAVE, jar, { count_used: 2 })
+    expect(u.status, JSON.stringify(u.body)).toBe(201)
+    expect(u.body.use).toMatchObject({ count_used: 2, fate: 'discarded' })
+    let j = await readJar(jar)
+    expect(j.remaining_count).toBe(0)
+    expect(j.consumed_at).not.toBeNull()
+    expect(await listed(jar)).toBeUndefined()
+    const r = await undo(DAVE, u.body.use.id)
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(r.body.use).toMatchObject({ count_used: -2, fate: 'discarded', reverses_use_id: u.body.use.id })
+    j = await readJar(jar)
+    expect(j).toMatchObject({ remaining_count: 2, consumed_at: null })
+    expect(await listed(jar)).toMatchObject({ count_left: 2 })
+  })
+
+  it('4 · a single counted one, either body: count_used 1 and all_remaining each write a use of 1 and leave it consumed', async () => {
+    for (const body of [{ count_used: 1 }, { all_remaining: true }]) {
+      // One container in a COUNT unit. (One container in a mass unit is a weighed bag: case 5.)
+      const jar = await seedJar(DAVE, { count: 1, qty: 1, unit: 'jar' })
+      const r = await discard(DAVE, jar, body)
+      expect(r.status, JSON.stringify(r.body)).toBe(201)
+      expect((await usesOf(jar)).map((u) => [u.count_used, u.fate]), JSON.stringify(body)).toEqual([[1, 'discarded']])
+      const j = await readJar(jar)
+      expect(j.remaining_count, JSON.stringify(body)).toBe(0)
+      expect(j.consumed_at, JSON.stringify(body)).not.toBeNull()
+      expect(j.remaining_amount, 'a counted jar has no grams to zero').toBeNull()
+    }
+  })
+
+  it('5 · a weighed bag: a count of 2 → 409 {n:1}, nothing written; a count of 1 empties it (0 g, consumed); undone, its grams are the bag less its live weighed draws', async () => {
+    const bag = await seedJar(DAVE, { weighed: true })                       // 100 g, one container
+    const b = (await seedBatch(DAVE)).id
+    const d = await call(DAVE, 'POST', `/api/kitchen-batches/${b}/inputs`, { inputs: [{ input_kind: 'put_up', idempotency_key: key(), preservation_log_id: bag, qty: 30, qty_unit: 'g' }] })
+    expect(d.status, JSON.stringify(d.body)).toBe(201)
+    const before = await readJar(bag)
+    expect(Number(before.remaining_amount)).toBe(70)
+    const over = await discard(DAVE, bag, { count_used: 2 })
+    expect(over.status).toBe(409)
+    expect(over.body).toMatchObject({ code: 'only_n_left', n: 1 })
+    expect(await usesOf(bag)).toHaveLength(0)
+    expect(await readJar(bag)).toEqual(before)
+    const u = await discard(DAVE, bag, { count_used: 1 })
+    expect(u.status, JSON.stringify(u.body)).toBe(201)
+    let j = await readJar(bag)
+    expect(j.remaining_count).toBe(0)
+    expect(Number(j.remaining_amount)).toBe(0)
+    expect(j.consumed_at).not.toBeNull()
+    const r = await undo(DAVE, u.body.use.id)
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect(r.body.use).toMatchObject({ count_used: -1, fate: 'discarded' })
+    j = await readJar(bag)
+    expect(Number(j.remaining_amount)).toBe(70)
+    expect(j.remaining_count).toBe(1)
+    expect(j.consumed_at).toBeNull()
+  })
+
+  it('7 · STRANGER sends the new body at Dave\'s jar: 404, no use written, the jar untouched', async () => {
+    const jar = await seedJar(DAVE, { count: 3 })
+    const before = await readJar(jar)
+    const r = await discard(STRANGER, jar, { count_used: 1 })
+    expect(r.status).toBe(404)
+    expect(r.body.code).toBe('not_found')
+    expect(await usesOf(jar)).toHaveLength(0)
+    expect(await readJar(jar)).toEqual(before)
+  })
+
+  it('8 · more than is left (3 of the 2 left): 409 only_n_left {n:2}, nothing written', async () => {
+    const jar = await seedJar(DAVE, { count: 3, remaining: 2 })
+    const before = await readJar(jar)
+    const r = await discard(DAVE, jar, { count_used: 3 })
+    expect(r.status).toBe(409)
+    expect(r.body).toMatchObject({ code: 'only_n_left', n: 2 })
+    expect(await usesOf(jar)).toHaveLength(0)
+    expect(await readJar(jar)).toEqual(before)
+  })
+
+  it('9 · two partial discards, then the FIRST undone: the ledger composes in any order (5 − 1 − 2 + 1 = 3)', async () => {
+    const jar = await seedJar(DAVE, { count: 5 })
+    const a = await discard(DAVE, jar, { count_used: 1 })
+    const b = await discard(JEN, jar, { count_used: 2 })
+    expect([a.status, b.status]).toEqual([201, 201])
+    expect((await readJar(jar)).remaining_count).toBe(2)
+    const r = await undo(DAVE, a.body.use.id)
+    expect(r.status, JSON.stringify(r.body)).toBe(200)
+    expect((await readJar(jar)).remaining_count).toBe(3)
+    expect((await usesOf(jar)).map((u) => [u.count_used, u.fate, u.reverses_use_id])).toEqual([
+      [1, 'discarded', null], [2, 'discarded', null], [-1, 'discarded', a.body.use.id],
+    ])
+    // The second is still its own to undo, and the jar is whole again.
+    expect((await undo(JEN, b.body.use.id)).status).toBe(200)
+    expect(await readJar(jar)).toMatchObject({ remaining_count: 5, consumed_at: null })
+  })
+
+  it('10 · Remove after a partial discard: 409 jar_was_used with the count; both paths its sentence names still work', async () => {
+    const jar = await seedJar(DAVE, { count: 3 })
+    const u = await discard(DAVE, jar, { count_used: 1 })
+    expect(u.status, JSON.stringify(u.body)).toBe(201)
+    const r = await call(JEN, 'DELETE', `/api/preservation/${jar}`)
+    expect(r.status).toBe(409)
+    expect(r.body).toMatchObject({ code: 'jar_was_used', n: 1 })
+    expect(r.body.error).toBe('1 was used — mark the rest Went bad, or undo that use.')
+    expect((await readJar(jar)).deleted_at).toBeNull()
+    // "undo that use": then it removes.
+    expect((await undo(DAVE, u.body.use.id)).status).toBe(200)
+    expect((await call(JEN, 'DELETE', `/api/preservation/${jar}`)).status).toBe(200)
+    expect((await readJar(jar)).deleted_at).not.toBeNull()
+    // "mark the rest Went bad": on a second jar the rest goes in one tap, with the old client's body.
+    const other = await seedJar(DAVE, { count: 3 })
+    expect((await discard(DAVE, other, { count_used: 1 })).status).toBe(201)
+    const rest = await discard(DAVE, other, { all_remaining: true })
+    expect(rest.status, JSON.stringify(rest.body)).toBe(201)
+    expect(rest.body.use).toMatchObject({ count_used: 2, fate: 'discarded' })
+    expect((await readJar(other)).remaining_count).toBe(0)
+  })
+
+  it('11 · the same key twice: 201, then 200 replayed with the same use; one use row, the count moved once', async () => {
+    const jar = await seedJar(DAVE, { count: 3 })
+    const k = key()
+    const first = await discard(DAVE, jar, { idempotency_key: k, count_used: 1 })
+    expect(first.status, JSON.stringify(first.body)).toBe(201)
+    const again = await discard(DAVE, jar, { idempotency_key: k, count_used: 1 })
+    expect(again.status).toBe(200)
+    expect(again.body).toMatchObject({ replayed: true, use: { id: first.body.use.id, count_used: 1, fate: 'discarded' } })
+    const uses = await usesOf(jar)
+    expect(uses).toHaveLength(1)
+    expect(uses[0]).toMatchObject({ count_used: 1, fate: 'discarded', idempotency_key: k })
+    expect((await readJar(jar)).remaining_count).toBe(2)
+  })
+
+  it('12 · a jar a batch line drew from: draw 1 of 3, discard 1 → 1 left; the line taken out → 2; the discard undone → 3, never past what was made', async () => {
+    const jar = await seedJar(DAVE, { count: 3 })
+    const b = (await seedBatch(DAVE)).id
+    const lineKey = key()
+    const d = await call(DAVE, 'POST', `/api/kitchen-batches/${b}/inputs`, { inputs: [{ input_kind: 'put_up', idempotency_key: lineKey, preservation_log_id: jar, count_drawn: 1 }] })
+    expect(d.status, JSON.stringify(d.body)).toBe(201)
+    expect((await readJar(jar)).remaining_count).toBe(2)
+    const u = await discard(JEN, jar, { count_used: 1 })
+    expect(u.status, JSON.stringify(u.body)).toBe(201)
+    expect((await readJar(jar)).remaining_count).toBe(1)
+    const [line] = await directSql`SELECT id FROM kitchen_batch_input WHERE idempotency_key = ${lineKey}::uuid`
+    const out = await call(DAVE, 'DELETE', `/api/kitchen-batches/${b}/inputs/${line.id}`)
+    expect(out.status, JSON.stringify(out.body)).toBe(200)
+    expect((await readJar(jar)).remaining_count).toBe(2)
+    // chk_preservation_log_remaining_within_package never trips: the two ledgers give back exactly what they took.
+    const back = await undo(JEN, u.body.use.id)
+    expect(back.status, JSON.stringify(back.body)).toBe(200)
+    expect(await readJar(jar)).toMatchObject({ package_count: 3, remaining_count: 3, consumed_at: null })
+    expect((await usesOf(jar)).map((x) => [x.count_used, x.fate]))
+      .toEqual([[1, 'batch'], [1, 'discarded'], [-1, 'batch'], [-1, 'discarded']])
   })
 })
 

@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { RECIPE_BUILTIN_TYPES, parseRecipeRoute } from '../../lambda/preservation/recipeRules.js'
 import { parsePantryRoute } from '../../lambda/preservation/pantryRoutes.js'
+import { validateUse } from '../../lambda/preservation/pantryUses.js'
 
 const SMOKE = readFileSync(resolve(process.cwd(), 'tests/smoke/run-smoke.sh'), 'utf8')
 const sliceBlock = (heading) => {
@@ -30,14 +31,19 @@ const sweepOf = (block, fn) => {
 }
 const CLEANUP = SMOKE.slice(SMOKE.indexOf('cleanup() {'), SMOKE.indexOf('trap cleanup'))
 
+// sweepIn: the text the block's sweep function is read from. pantry_sweep is defined in block S. recipes_sweep is
+// NOT in block T since Put-Up UX pass R1: block P's P1b writes a smoke-test-recipe row too, so the function and its
+// flag sit above block P and are read from the whole script (the position is pinned under "block T — recipes").
 const BLOCKS = [
   {
-    name: 'S', block: S.text, tag: 'pantry', sweepFn: 'pantry_sweep', dirty: 'PANTRY_DIRTY', prefix: 'smoke-test-pantry-',
+    name: 'S', block: S.text, sweepIn: S.text, tag: 'pantry', sweepFn: 'pantry_sweep', dirty: 'PANTRY_DIRTY', prefix: 'smoke-test-pantry-',
     tagVar: 'PN_TAG="smoke-test-pantry-$TEST_RUN_ID"', req: 'SMOKE_REQUIRE_PANTRY', mig: 'v5-pantry-001', treeVar: 'PN_TREE',
     probe: 'pn_req GET "$PN_BASE/api/pantry"', fail: 'pn_fail', uuid: 'PN_UUID_RE',
     outerIf: 'if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" && -n "${STAGING_API_STORAGE_LOCATIONS:-}" ]]; then',
     asserts: ['s1-create-readback', 's2-replay', 's3-listed', 's4-used-up', 's5-unlisted', 's6-delete', 's7-delete-again',
-      's8-used-one', 's8-undo', 'l058-sweep'],
+      's8-used-one', 's8-undo', 'l058-sweep',
+      // Put-Up UX pass R1: Went bad as a count
+      's9-went-bad-part', 's9-listed', 's9-undo'],
     order: [
       'DELETE FROM pantry_use WHERE reverses_use_id IS NOT NULL',
       'DELETE FROM pantry_use WHERE preservation_log_id',
@@ -48,7 +54,7 @@ const BLOCKS = [
     ],
   },
   {
-    name: 'T', block: T.text, tag: 'recipes', sweepFn: 'recipes_sweep', dirty: 'RECIPES_DIRTY', prefix: 'smoke-test-recipe-',
+    name: 'T', block: T.text, sweepIn: SMOKE, tag: 'recipes', sweepFn: 'recipes_sweep', dirty: 'RECIPES_DIRTY', prefix: 'smoke-test-recipe-',
     tagVar: 'RC_TAG="smoke-test-recipe-$TEST_RUN_ID"', req: 'SMOKE_REQUIRE_RECIPES', mig: 'v5-recipes-001', treeVar: 'RC_TREE',
     probe: 'rc_req GET "$RC_BASE/api/recipes/types"', fail: 'rc_fail', uuid: 'RC_UUID_RE',
     outerIf: 'if [[ -n "$CLERK_JWT" && -n "${CLERK_SESSION_ID:-}" && -n "${STAGING_API_PRESERVATION:-}" ]]; then',
@@ -77,7 +83,7 @@ describe('blocks S and T are present, after block Q, before the water recon, eac
 })
 
 describe.each(BLOCKS)('block $name', (b) => {
-  const SWEEP = sweepOf(b.block, b.sweepFn)
+  const SWEEP = sweepOf(b.sweepIn, b.sweepFn)
 
   it.each(b.asserts)('asserts %s', (tag) => {
     expect(b.block).toMatch(new RegExp(`${b.name === 'S' ? 'pn' : 'rc'}_(check|pass|fail) "${tag}"`))
@@ -204,6 +210,56 @@ describe('block S — the pantry route contract it smokes', () => {
   it("S3 reads the row back as stock_kind 'pantry_item', stock_mode 'item'", () => {
     expect(S.text).toContain('"pantry_item|item|$PN_NAME|$PN_PLACE"')
   })
+
+  // Put-Up UX pass R1. S9 is the deployed stack's proof that Went bad may be a COUNT: a Lambda from before the
+  // release answers S9a with 400. What can rot silently: the body turned back into all_remaining (which every Lambda
+  // has always accepted, so the check would pass on an old one), or S9 moved ahead of S8's Undo (the jar would not be
+  // at 3 of 3 and the three literals below would be about some other count).
+  describe('S9 — Went bad as a count, listed with what is left, undone', () => {
+    const at = S.text.indexOf('# ── S9)')
+    const S9 = S.text.slice(at, S.text.indexOf('# The place, through its own route'))
+    const post = S9.split('\n').find((l) => l.includes('pn_req POST "$PN_BASE/api/pantry/uses" ')) ?? ''
+
+    it('runs on S8\'s jar, after S8\'s Undo, before the place is deleted', () => {
+      expect(at).toBeGreaterThan(S.text.indexOf('pn_check "s8-undo"'))
+      expect(S.text.indexOf('# The place, through its own route')).toBeGreaterThan(at)
+      expect(S.text).toContain('"200 3|true -1|$PN_USE"')   // where S8 leaves the jar: 3 of 3
+    })
+
+    it('S9a sends a count with fate discarded, never all_remaining; and it is a body the Lambda\'s own validator accepts', () => {
+      expect(post).toContain('\\"preservation_log_id\\": \\"$PN_JAR\\", \\"count_used\\": 1, \\"fate\\": \\"discarded\\"}')
+      expect(post).toContain('\\"idempotency_key\\": \\"$(pn_uuid)\\"')
+      expect(S9).not.toContain('all_remaining')
+      expect(validateUse({ idempotency_key: id, preservation_log_id: id, count_used: 1, fate: 'discarded' })).toBeNull()
+    })
+
+    it('S9a reads back 2 left and not consumed, and the use row 1|discarded', () => {
+      expect(S9).toContain("SELECT coalesce(remaining_count::text,'null')||'|'||(consumed_at IS NOT NULL)::text FROM preservation_log WHERE id = '$PN_JAR'")
+      expect(S.text).toContain(`pn_use() { pn_id_ok "$1" && pn_row "SELECT count_used||'|'||coalesce(fate,'null') FROM pantry_use WHERE id = '$1'" || echo "bad-id"; }`)
+      expect(S9).toContain('$(pn_use "$PN_BAD")" "201 2|false 1|discarded"')
+    })
+
+    it('S9b reads the jar back from GET /api/pantry?place_id= with count_left 2', () => {
+      const get = S9.indexOf('pn_req GET "$PN_BASE/api/pantry?place_id=$PN_PLACE"')
+      expect(get).toBeGreaterThan(S9.indexOf('pn_check "s9-went-bad-part"'))
+      expect(S9.indexOf('pn_check "s9-listed"')).toBeGreaterThan(get)
+      expect(S9).toContain('"\\(.stock_kind)|\\(.stock_mode)|\\(.count_left)"')
+      expect(S9).toContain('"200 put_up|counted|2"')
+    })
+
+    it('S9c undoes THAT use and reads back 3 left, delta_at moved, and the reversing row −1|discarded|<the use>', () => {
+      expect(S9).toContain('pn_req POST "$PN_BASE/api/pantry/uses/$PN_BAD/undo" "{\\"idempotency_key\\": \\"$(pn_uuid)\\"}"')
+      expect(S9).toContain("SELECT count_used||'|'||coalesce(fate,'null')||'|'||reverses_use_id FROM pantry_use WHERE reverses_use_id = '$PN_BAD'")
+      expect(S9).toContain('"200 3|true -1|discarded|$PN_BAD"')
+    })
+
+    it('its rows hang off the block\'s jar, which pantry_sweep takes with its uses: no sweep change', () => {
+      const sweep = sweepOf(S.text, 'pantry_sweep')
+      expect(sweep).toContain("WHERE notes LIKE 'smoke-test-pantry-%' OR storage_location_id IN (SELECT id FROM pn_s)")
+      expect(sweep).toContain('DELETE FROM pantry_use WHERE preservation_log_id IN (SELECT id FROM pn_j)')
+      expect(S9).not.toMatch(/pn_req POST "\$PN_BASE\/api\/(preservation|pantry\/items)"/)   // S9 creates no stock of its own
+    })
+  })
 })
 
 describe('block T — recipes', () => {
@@ -239,5 +295,43 @@ describe('block T — recipes', () => {
 
   it('T5 reads the deleted recipe back 404', () => {
     expect(T.text).toMatch(/rc_check "t5-gone" "\$RC_CODE \$\(rc_jq '\.code \/\/ "-"'\)" "404 not_found"/)
+  })
+
+  // Put-Up UX pass R1. Block P's P1b writes a smoke-test-recipe row too. While recipes_sweep and its flag were defined
+  // in THIS block, a run that died between P1b and here left cleanup() calling a function bash had not reached yet
+  // (so the recipe stayed on staging), and this block's own initialisation then lowered the flag P1b had raised. Both
+  // now sit above block P. What the sweep deletes is pinned by the block's sweep tests above, unchanged.
+  describe('recipes_sweep and its flag are defined above block P, once; this block does not lower a raised flag', () => {
+    const P_START = SMOKE.indexOf('# ── P) Put-Up 1b + Ferment')
+    const def = SMOKE.indexOf('\nrecipes_sweep() {\n')
+    const init = SMOKE.indexOf('\nRECIPES_DIRTY=false\n')
+    const tSweep = T.start + T.text.indexOf('if recipes_sweep; then')
+
+    it('one definition and one initialisation in the whole script: the flag directly above its sweep, both before block P', () => {
+      expect(P_START).toBeGreaterThan(0)
+      expect(SMOKE.match(/^recipes_sweep\(\) \{$/gm)).toHaveLength(1)
+      expect(SMOKE.match(/^RECIPES_DIRTY=false$/gm)).toHaveLength(1)
+      expect(init).toBeGreaterThan(0)
+      expect(def).toBe(init + '\nRECIPES_DIRTY=false'.length)
+      expect(def).toBeLessThan(P_START)
+    })
+
+    it('block T neither defines the sweep nor initialises the flag: it raises it at T2 and lowers it only after its own sweep', () => {
+      expect(T.text).not.toContain('recipes_sweep() {')
+      const sweepAt = T.text.indexOf('if recipes_sweep; then')
+      expect(sweepAt).toBeGreaterThan(0)
+      expect(T.text.match(/RECIPES_DIRTY=false/g)).toHaveLength(1)
+      expect(T.text.indexOf('RECIPES_DIRTY=false')).toBeGreaterThan(sweepAt)
+      expect(T.text.indexOf('RECIPES_DIRTY=true')).toBeGreaterThan(0)
+      expect(T.text.indexOf('RECIPES_DIRTY=true')).toBeLessThan(sweepAt)
+    })
+
+    it('nothing between P1b raising the flag and block T\'s own sweep lowers it, so cleanup() still sees it raised', () => {
+      const raised = SMOKE.indexOf('RECIPES_DIRTY=true', P_START)
+      expect(raised).toBeGreaterThan(P_START)
+      expect(raised).toBeLessThan(T.start)   // P1b's, not T2's
+      expect(SMOKE.slice(raised, tSweep)).not.toMatch(/RECIPES_DIRTY=false/)
+      expect(CLEANUP).toMatch(/if \[\[ "\$\{RECIPES_DIRTY:-false\}" == "true" \]\]; then\s+recipes_sweep/)
+    })
   })
 })
