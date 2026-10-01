@@ -76,7 +76,9 @@ import { FIND_PARAM } from '../lib/putUpClientState.js'
 // where it lands. The pure halves are not written here: origin.js (the state a push rides on, the one-mode-key
 // URL) and the foot of goingNow.js (pop or push, the Back's words, the segments).
 import { withFrom, modeSearch } from '../components/putup/origin.js'
-import { PUT_UP_SEGMENTS, leaveSegment, segmentLabel, leavesByPop, backWords } from '../components/putup/goingNow.js'
+import {
+  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, leavesByPop, backWords,
+} from '../components/putup/goingNow.js'
 import { readMarker } from '../lib/backNav.js'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
@@ -667,6 +669,15 @@ export default function PutUp({
   // a sheet's Back marker copies the router's index, so the two cannot disagree between renders.
   const back = backWords(location.state, typeof window === 'undefined' ? undefined : window.history?.state?.idx,
     segmentLabel(leaveSegment(view, { recipe: !!recipeId })))
+  // Going now, and not under search results: the one state in which the header's filled button starts a batch.
+  const onGoing = view === 'going' && !searching
+  // ONE min-width for the filled button, wide enough for the longer of its two labels, so the search box
+  // beside it keeps its width when the segment — and the label — changes. In em: it follows the text size.
+  const headerButton = { flexShrink: 0, minWidth: '11.5em', minHeight: T.buttonMinHeight, padding: '0 14px', backgroundColor: P.green,
+    color: P.white, border: 'none', borderRadius: T.radiusButton, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit',
+    whiteSpace: 'nowrap', cursor: 'pointer' }
+  const quietDoor = { minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 2px', color: P.green,
+    fontSize: T.type.sm, fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline', cursor: 'pointer' }
 
   return (
     <div style={{ minHeight: 'calc(100dvh - 52px)', backgroundColor: P.cream }}>
@@ -695,24 +706,41 @@ export default function PutUp({
           </p>
         )}
 
-        {/* B′ release 2 (V4 §6.1) — the page header row: search + Put something up, hidden while a mode
+        {/* B′ release 2 (V4 §6.1) — the page header row: search + ONE filled button, hidden while a mode
             is open; a quiet "Walk a place" beneath it (the shipped freezer walk's door, generalised —
-            still on this line's posture: not a full-width filled CTA, V4-WEIGHINCTA-001's reversal). */}
+            still on this line's posture: not a full-width filled CTA, V4-WEIGHINCTA-001's reversal).
+            R1 (PLAN-V3 D10): the filled button is the thing that segment is FOR. On Going now it starts a
+            batch — he lands there with a ferment going and used to find only "Put something up", which is
+            the wrong door for a ferment. Everywhere else, and over search results (they are pantry
+            results), it is Put something up. Two buttons, each with its own fixed testid and name, never
+            one that changes what it does; and on Going now the door stays ONE tap away as a quiet link
+            beside the walk's, under the same testid the filled one carries elsewhere. */}
         {!modeActive && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm }}>
               <PantrySearchBox value={findText} onChange={setFind} onClear={clearFind} />
-              <button type="button" onClick={() => openDoor('')} data-testid="putup-door"
-                style={{ flexShrink: 0, minHeight: T.buttonMinHeight, padding: '0 14px', backgroundColor: P.green, color: P.white,
-                  border: 'none', borderRadius: T.radiusButton, fontSize: T.type.sm, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}>
-                {DOOR_CTA}
-              </button>
+              {onGoing && (
+                <button type="button" onClick={() => (StartBatchSheet ? openStartSheet() : openDoor(''))} data-testid="start-a-batch"
+                  style={headerButton}>
+                  {START_BATCH_CTA}
+                </button>
+              )}
+              {!onGoing && (
+                <button type="button" onClick={() => openDoor('')} data-testid="putup-door" style={headerButton}>
+                  {DOOR_CTA}
+                </button>
+              )}
             </div>
-            <button type="button" onClick={openWalk} data-testid="putup-walk-door"
-              style={{ minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 2px', color: P.green,
-                fontSize: T.type.sm, fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>
-              {WALK_TITLE}
-            </button>
+            <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: T.space.md }}>
+              <button type="button" onClick={openWalk} data-testid="putup-walk-door" style={quietDoor}>
+                {WALK_TITLE}
+              </button>
+              {onGoing && (
+                <button type="button" onClick={() => openDoor('')} data-testid="putup-door" style={quietDoor}>
+                  {DOOR_CTA}
+                </button>
+              )}
+            </div>
           </div>
         )}
 

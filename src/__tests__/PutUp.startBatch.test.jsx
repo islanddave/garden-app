@@ -10,7 +10,7 @@
 // given: its "Start a batch" calls onStartBatch when it has one.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
@@ -101,13 +101,22 @@ const getCount = (p) => fetchMock.mock.calls.filter(([path, o]) => path === p &&
 
 beforeEach(() => { fetchMock.mockReset(); wire(); goingProps.length = 0; sheetRenders.length = 0; sessionStorage.clear() })
 
+// ⚠ AMENDED by Put-Up UX pass R1 (PLAN-V3 D10), in the same commit as the change. On Going now the Start
+// door is now the PAGE HEADER's filled button (data-testid start-a-batch), and Going now's own empty card
+// carries a second control with the same name — so "the button named Start a batch" is two buttons, and
+// every tap below names the header's by its fixed testid. The seam it used to reach through
+// (GoingNowView's onStartBatch) is still held, by the two tests at the foot of this block.
 describe('Start a batch — the shared sheet, opened from Going now', () => {
   it('nothing is mounted until the tap; the tap opens the sheet', async () => {
     renderPage(makeSheet())
     await toGoingNow()
     expect(screen.queryByRole('dialog', { name: 'Start a batch sheet' })).toBeNull()
     expect(sheetRenders).toHaveLength(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Start a batch' }))
+    // The control every tap in this block presses: the header's button, by role, name and testid at once.
+    const door = screen.getByTestId('start-a-batch')
+    expect([door.tagName, door.textContent]).toEqual(['BUTTON', 'Start a batch'])
+    expect(screen.getByTestId('going-now-view').contains(door)).toBe(false)
+    fireEvent.click(screen.getByTestId('start-a-batch'))
     expect(screen.getByRole('dialog', { name: 'Start a batch sheet' })).toBeTruthy()
     expect(sheetRenders.every(r => r.open === true)).toBe(true)
   })
@@ -116,7 +125,7 @@ describe('Start a batch — the shared sheet, opened from Going now', () => {
     renderPage(makeSheet())
     await toGoingNow()
     const listReadsBefore = getCount('/api/kitchen-batches?state=going')
-    fireEvent.click(screen.getByRole('button', { name: 'Start a batch' }))
+    fireEvent.click(screen.getByTestId('start-a-batch'))
     fireEvent.click(screen.getByRole('button', { name: 'Start it' }))
     await waitFor(() => expect(probeLoc()).toBe('/put-up?batch=kb-new'))
     await waitFor(() => expect(getCount('/api/kitchen-batches/kb-new')).toBe(1))
@@ -128,7 +137,7 @@ describe('Start a batch — the shared sheet, opened from Going now', () => {
   it('Back from the new batch returns to the list it was started from', async () => {
     renderPage(makeSheet())
     await toGoingNow()
-    fireEvent.click(screen.getByRole('button', { name: 'Start a batch' }))
+    fireEvent.click(screen.getByTestId('start-a-batch'))
     fireEvent.click(screen.getByRole('button', { name: 'Start it' }))
     await waitFor(() => expect(probeLoc()).toBe('/put-up?batch=kb-new'))
     fireEvent.click(screen.getByRole('button', { name: 'probe-back' }))
@@ -140,7 +149,7 @@ describe('Start a batch — the shared sheet, opened from Going now', () => {
     const background = { pathname: '/today', search: '', hash: '', key: 'bg' }
     renderPage(makeSheet(), { pathname: '/put-up', state: { background } })
     await toGoingNow()
-    fireEvent.click(screen.getByRole('button', { name: 'Start a batch' }))
+    fireEvent.click(screen.getByTestId('start-a-batch'))
     fireEvent.click(screen.getByRole('button', { name: 'Start it' }))
     await waitFor(() => expect(probeLoc()).toBe('/put-up?batch=kb-new'))
     expect(JSON.parse(screen.getByTestId('probe-state').textContent)).toEqual({ background })
@@ -149,7 +158,7 @@ describe('Start a batch — the shared sheet, opened from Going now', () => {
   it('closing the sheet leaves the page exactly where it was', async () => {
     renderPage(makeSheet())
     await toGoingNow()
-    fireEvent.click(screen.getByRole('button', { name: 'Start a batch' }))
+    fireEvent.click(screen.getByTestId('start-a-batch'))
     fireEvent.click(screen.getByRole('button', { name: 'Close sheet' }))
     expect(screen.queryByRole('dialog', { name: 'Start a batch sheet' })).toBeNull()
     expect(probeLoc()).toBe('/put-up')
@@ -159,7 +168,7 @@ describe('Start a batch — the shared sheet, opened from Going now', () => {
   it('a start that reports no id closes the sheet and opens nothing', async () => {
     renderPage(makeSheet({ label: 'no id came back' }))
     await toGoingNow()
-    fireEvent.click(screen.getByRole('button', { name: 'Start a batch' }))
+    fireEvent.click(screen.getByTestId('start-a-batch'))
     fireEvent.click(screen.getByRole('button', { name: 'Start it' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Start a batch sheet' })).toBeNull())
     expect(probeLoc()).toBe('/put-up')
@@ -170,6 +179,15 @@ describe('Start a batch — the shared sheet, opened from Going now', () => {
     await toGoingNow()
     expect(screen.getByTestId('shipped-start-door')).toBeTruthy()
     expect(goingProps.at(-1).onStartBatch).toBeUndefined()
+  })
+
+  // R1: the seam is still how Going now's OWN control (the empty card's button) opens the same sheet.
+  it('Going now\'s own control opens the same sheet through onStartBatch', async () => {
+    renderPage(makeSheet())
+    const view = await toGoingNow()
+    expect(typeof goingProps.at(-1).onStartBatch).toBe('function')
+    fireEvent.click(within(view).getByRole('button', { name: 'Start a batch' }))
+    expect(screen.getByRole('dialog', { name: 'Start a batch sheet' })).toBeTruthy()
   })
 })
 

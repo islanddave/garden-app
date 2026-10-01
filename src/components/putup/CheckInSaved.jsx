@@ -39,7 +39,7 @@ export default function CheckInSaved({ batchId, stageId, onUndone }) {
       {!done && (
         <button type="button" data-testid="going-checkin-undo" disabled={busy} onClick={undo}
           aria-label="Undo that check-in"
-          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 48, marginLeft: 6,
+          style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, minWidth: 48, marginLeft: 6,
             background: 'none', border: 'none', padding: '2px 8px', cursor: busy ? 'default' : 'pointer',
             fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
           Undo
