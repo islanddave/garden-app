@@ -46,7 +46,7 @@ import { lineWords } from './lines.js'
 import {
   PUT_IT_UP_TITLE, FINISH_CTA, LATER_CTA, PUT_IT_UP_SHEET, WHEN_CHIPS, estimateChips, preselectWhen,
   resolveWhen, METHOD_LABELS, ALL_PUT_UP_METHODS, methodChipsForKind, RAW_METHODS, TEXTURE_METHODS,
-  PH_METHODS, TEXTURE_CHIPS, RAW_LABEL, RAW_HINT, IN_OIL_LABEL, containerChoices, placeChips, newRow,
+  PH_METHODS, TEXTURE_CHIPS, RAW_LABEL, RAW_HINT, IN_OIL_LABEL, DISCARD_LABELS, containerChoices, placeChips, newRow,
   rowSummary, rowCount, previewDiscard, groupPreviews, putUpBody, completionStub, effectiveRows, drawnJarIds,
 } from './putItUp.js'
 
@@ -316,8 +316,9 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
               style={{ ...inputChrome(false), width: 180, scrollMarginBottom: FOOTER_PX }} />
             <div style={{ marginTop: 4, color: P.light, fontSize: '0.74rem' }}>Or work it out from the put-up once it is saved.</div>
           </div>
+          {/* The chips' words are the one set every surface that asks this uses (putItUp DISCARD_LABELS). */}
           <ToggleChips label="Discard by" disabled={disabled} idPrefix={`putup-row-${index}-discard`}
-            options={[{ value: 'date', label: 'From the label' }, { value: 'none', label: 'No date' }]}
+            options={[{ value: 'date', label: DISCARD_LABELS.date }, { value: 'none', label: DISCARD_LABELS.none }]}
             value={row.discard.mode === 'auto' ? null : row.discard.mode}
             onChange={v => set({ discard: { mode: v ?? 'auto', date: v === 'date' ? row.discard.date : '' } })} />
           {row.discard.mode === 'date' && (
