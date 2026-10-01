@@ -112,6 +112,32 @@ describe('POST /api/kitchen-batches/from-jars — How it was made →', () => {
     expect(notes.map((n) => n.note)).toEqual(['Next time: less garlic', 'more heat'])
   })
 
+  // Put-Up UX pass R1 (regression seat M-10). How it was made now sends the EARLIEST picked jar's day as the start,
+  // while the put_up row is dated from the first jar id in the body. So with two jars of different days the start is
+  // on the put-up day when the earlier jar is named first, and before it when the later jar is: never after.
+  it('the earliest jar\'s day sent as the start: the batch starts on or before its put_up row, whichever jar the body names first', async () => {
+    for (const first of ['later', 'earlier']) {
+      const earlier = await seedJar(DAVE, { count: 1 })
+      const later = await seedJar(DAVE, { count: 1 })
+      await directSql`UPDATE preservation_log SET preserved_at = '2026-09-01' WHERE id = ${earlier}`
+      await directSql`UPDATE preservation_log SET preserved_at = '2026-09-20' WHERE id = ${later}`
+      const res = await call(DAVE, 'POST', FROM, {
+        idempotency_key: key(), label: `Earliest start, the ${first} jar first`, started: { date: '2026-09-01', precision: 'day' },
+        jar_ids: first === 'later' ? [later, earlier] : [earlier, later],
+      })
+      expect(res.status, JSON.stringify(res.body)).toBe(201)
+      const [row] = await directSql`
+        SELECT (b.started_at <= s.entered_at) AS start_on_or_before_put_up,
+               to_char(b.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS started,
+               to_char(s.entered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS put_up
+        FROM kitchen_batch b JOIN kitchen_stage_log s ON s.batch_id = b.id AND s.stage_kind = 'put_up'
+        WHERE b.id = ${res.body.id}`
+      expect(row, `the ${first} jar first`).toEqual({
+        start_on_or_before_put_up: true, started: '2026-09-01', put_up: first === 'later' ? '2026-09-20' : '2026-09-01',
+      })
+    }
+  })
+
   it('JEN from DAVE\'s jar: allowed, recorded as JEN', async () => {
     const jar = await seedJar(DAVE, { count: 1 })
     const res = await call(JEN, 'POST', FROM, { idempotency_key: key(), label: 'Jen made it', started: { date: '2026-09-01', precision: 'day' }, jar_ids: [jar] })
