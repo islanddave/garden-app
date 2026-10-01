@@ -350,6 +350,8 @@ describe('the census (06 §4, V4 §6.3 — fails on any increase)', () => {
     expect(name().value).toBe('Water')
     expect(screen.getByTestId('line-add-unit-ml').getAttribute('aria-checked')).toBe('true')
     expect(screen.queryByTestId('line-add-open')).toBeNull()
+    // …and the cursor lands in the amount (the name is already "Water"), as it does on an open adder.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('line-add-qty')))
   })
   it('the line sheet requires nothing', () => {
     renderDetail({ inputs: [MEGATRON_LINE] })
