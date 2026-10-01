@@ -493,6 +493,89 @@ describe('POST /api/pantry/uses — Went bad and Gave it away (the fate widening
   });
 });
 
+// ── POST /api/pantry/uses — Went bad as a count (Put-Up UX pass R1) ──────────────────────────────────
+// One rule left validateUse (a discard had to be all that is left); nothing else moved. What still refuses,
+// what a part binds, and that a part answers the way every other count does: over what is left, a stranger,
+// a replay. MUTATION: put the refusal back in pantryUses.js → the accept cases here and above go red.
+describe('POST /api/pantry/uses — Went bad as a count (Put-Up UX pass R1)', () => {
+  const body = (over = {}) => ({ idempotency_key: K1, preservation_log_id: JAR, fate: 'discarded', ...over });
+  const post = (sql, b, householdIds = HOUSEHOLD) => handlePantryUses({
+    sql, rawPath: '/api/pantry/uses', method: 'POST', rawBody: JSON.stringify(b), userId: DAVE, householdIds,
+  });
+
+  it.each([
+    [{ count_used: 1, all_remaining: true }, /one of them/],   // both keys
+    [{}, /one of them/],                                       // neither
+    [{ all_remaining: false }, /one of them/],                 // neither, said out loud
+    [{ count_used: 0 }, /1 or more/],
+    [{ count_used: 1.5 }, /1 or more/],
+    [{ count_used: -1 }, /1 or more/],
+    [{ count_used: 1, fate: 'batch' }, /fate must be one of/],
+  ])('still refused with fate discarded: %o → 400, nothing sent', async (over, want) => {
+    expect(validateUse(body(over))).toMatch(want);
+    const sql = mockSql();
+    expect((await post(sql, body(over))).status).toBe(400);
+    expect(sql.calls).toHaveLength(0);
+  });
+
+  it.each([[1], [2], [3]])('a count of %i is accepted, as all that is left still is', (n) => {
+    expect(validateUse(body({ count_used: n }))).toBeNull();
+    expect(validateUse(body({ all_remaining: true }))).toBeNull();
+  });
+
+  it('a part binds the count sent and the fate; the statement is the one an eaten count sends, to the letter', async () => {
+    const answer = { left_n: 4, use: { id: 'u1', count_used: 2, fate: 'discarded' }, jar: { id: JAR, remaining_count: 2, consumed_at: null } };
+    const part = mockSql([[], [answer]]);
+    expect(await post(part, body({ count_used: 2 }))).toEqual({ status: 201, body: { use: answer.use, jar: answer.jar } });
+    const eaten = mockSql([[], [answer]]);
+    await post(eaten, { idempotency_key: K1, preservation_log_id: JAR, count_used: 2 });
+    const [g, s] = part.batches[0];
+    const e = eaten.batches[0][1];
+    expect(g.norm).toBe(GUC);
+    expect(g.values).toEqual([DAVE]);
+    expect(s.text).toBe(e.text);
+    expect(after(s, 'SELECT pre.id, CASE WHEN')).toBe(false);   // not all that is left
+    expect(after(s, 'THEN pre.left_n ELSE')).toBe(2);           // the count, as sent
+    expect(after(s, 'jar.id, jar.used,')).toBe('discarded');
+    // The fate is the ONE bound value that differs between the two taps.
+    expect(s.values).toHaveLength(e.values.length);
+    const differ = s.values.map((v, i) => [v, e.values[i]]).filter(([a, b]) => JSON.stringify(a) !== JSON.stringify(b));
+    expect(differ).toEqual([['discarded', null]]);
+  });
+
+  it('more than is left → 409 only_n_left with what the jar has; no use comes back', async () => {
+    const sql = mockSql([[], [{ left_n: 2, use: null, jar: null }]]);
+    expect(await post(sql, body({ count_used: 3 })))
+      .toEqual({ status: 409, body: { error: 'Only 2 left in that one.', code: 'only_n_left', n: 2 } });
+    // The refusal is the statement's own: the count is judged in the UPDATE's WHERE, on the row it locks.
+    expect(sql.batches[0][1].norm).toContain('AND w.n >= 1 AND COALESCE(p.remaining_count, p.package_count) >= w.n');
+  });
+
+  it('a stranger → 404 not_found, their own household bound', async () => {
+    const sql = mockSql([[], [{ left_n: null, use: null, jar: null }]]);
+    expect(await post(sql, body({ count_used: 1 }), STRANGER))
+      .toEqual({ status: 404, body: { error: 'Not found', code: 'not_found' } });
+    expect(sql.batches[0][1].values).toContainEqual(STRANGER);
+    expect(sql.batches[0][1].values).not.toContainEqual(HOUSEHOLD);
+  });
+
+  it('a replay moves nothing twice: the key already recorded → 200 replayed, read back household-scoped', async () => {
+    const first = { use: { id: 'u1', count_used: 1, fate: 'discarded' }, jar: { id: JAR, remaining_count: 3 } };
+    let sql = mockSql([[], [{ prior_n: 1, left_n: 3, use: null, jar: null }], [first]]);
+    expect(await post(sql, body({ count_used: 1 }))).toEqual({ status: 200, body: { replayed: true, ...first } });
+    // ONE write statement was sent, and in it nothing moves when the key is already recorded.
+    expect(sql.batches).toHaveLength(1);
+    expect(sql.batches[0][1].norm).toContain('FROM pre WHERE NOT EXISTS (SELECT 1 FROM prior)');
+    expect(sql.calls).toHaveLength(3);
+    expect(sql.calls[2].norm).toMatch(/^SELECT row_to_json\(u\) AS use,/);
+    expect(sql.calls[2].norm).not.toMatch(/\b(UPDATE|INSERT)\b/);
+    expect(sql.calls[2].values).toEqual([K1, HOUSEHOLD]);
+    // Two phones at once: the unique key refuses the second insert, and the answer is the same replay.
+    sql = mockSql([[], err('23505', 'uq_pantry_use_idempotency_key'), [first]]);
+    expect(await post(sql, body({ count_used: 1 }))).toEqual({ status: 200, body: { replayed: true, ...first } });
+  });
+});
+
 // ── POST /api/pantry/uses/:id/undo ───────────────────────────────────────────────────────────────
 describe('POST /api/pantry/uses/:id/undo', () => {
   const path = `/api/pantry/uses/${USE}/undo`;
