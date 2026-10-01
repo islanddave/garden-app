@@ -1,9 +1,10 @@
 {
-  "version": "4.167.0",
-  "date": "2026-09-30",
+  "version": "4.168.0",
+  "date": "2026-10-01",
   "highlights": [
-    "Recipes: keep a recipe with a link or your own notes, what goes in, the ferment jar and the bottle, and how long it lasts and where.",
-    "Give recipes a type — sauces, salsas, pestos, jams and more — or make your own.",
-    "Save any batch as a recipe, start one with Make this, or log I made this; a jar put up from a recipe gets the recipe's discard date when it's stored where the recipe says."
+    "Harvests now counts picks from plantings that aren't in a project, and each one opens its planting",
+    "Back to the Harvests list returns you to the same spot every time",
+    "Tab bar editor: put any More page in your bar, up to five",
+    "A page on your bar opens as a tab, with no Back arrow"
   ]
 }

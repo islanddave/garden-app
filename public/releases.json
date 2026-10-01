@@ -1,5 +1,15 @@
 [
   {
+    "version": "4.168.0",
+    "date": "2026-10-01",
+    "highlights": [
+      "Harvests now counts picks from plantings that aren't in a project, and each one opens its planting",
+      "Back to the Harvests list returns you to the same spot every time",
+      "Tab bar editor: put any More page in your bar, up to five",
+      "A page on your bar opens as a tab, with no Back arrow"
+    ]
+  },
+  {
     "version": "4.167.0",
     "date": "2026-09-30",
     "highlights": [
