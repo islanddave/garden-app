@@ -108,6 +108,94 @@ describe('the correction rule (V4 "What changes a date after it is written")', (
   })
 })
 
+// Put-Up UX pass R1. Until then a clear asked the engine only, so a fridge jar from a "Fridge · 7 days"
+// recipe came back with the general six months. The order is pinned here, rung by rung: moved (no date),
+// then the recipe when its place kind is the jar's, then the engine, then none. MUTATIONS: skip the recipe
+// in the clearing path → "clear at a matching place gives the recipe date" reds; ask the recipe before the
+// moved check → "a moved jar, cleared, has no date" reds.
+describe('clearing a typed date resolves by the whole ladder: moved, then the recipe, then the engine', () => {
+  const next = (over) => ({ method: 'hot_sauce', is_raw: null, in_oil: null, texture: null, ...over })
+  const typed = (over = {}) => stored({ use_by_basis: 'typed', use_by_target: '2026-12-25', ...over })
+  // A recipe's "how long, and where" line, as patchJar's read hands it over.
+  const FRIDGE_7 = { keeps_n: 7, keeps_unit: 'day', keeps_storage_kind: 'fridge' }
+  const clear = (jar, recipe, n = next({})) => correctionUseBy(jar, n, { clearing: true, recipe })
+  const RECIPE_DATE = { use_by_target: '2026-10-15', use_by_basis: 'recipe' }   // put up 2026-10-08, + 7 days
+  const ENGINE_DATE = { use_by_target: '2027-04-08', use_by_basis: 'table' }    // hot sauce, fridge: 6 months
+  const NO_DATE = { use_by_target: null, use_by_basis: 'none' }
+
+  it('clear at a matching place gives the recipe date', () => {
+    expect(clear(typed(), FRIDGE_7)).toEqual(RECIPE_DATE)
+    expect(clear(typed(), { ...FRIDGE_7, keeps_n: 2, keeps_unit: 'week' })).toEqual({ use_by_target: '2026-10-22', use_by_basis: 'recipe' })
+    expect(clear(typed(), { ...FRIDGE_7, keeps_n: 3, keeps_unit: 'month' })).toEqual({ use_by_target: '2027-01-08', use_by_basis: 'recipe' })
+  })
+
+  it('clear where the recipe names another kind of place falls to the engine', () => {
+    expect(clear(typed(), { ...FRIDGE_7, keeps_storage_kind: 'deep_freezer' })).toEqual(ENGINE_DATE)
+    // The jar on a pantry shelf: the fridge recipe says nothing about it, and the engine's shelf figure is 12 months.
+    expect(clear(typed({ storage_kind: 'pantry' }), FRIDGE_7)).toEqual({ use_by_target: '2027-10-08', use_by_basis: 'table' })
+    expect(clear(typed({ storage_kind: null }), FRIDGE_7)).toEqual(ENGINE_DATE)   // no recorded place: the engine's default
+  })
+
+  it('clear with no recipe (a jar with no batch, a batch with none, a removed one) is the engine, as before', () => {
+    expect(clear(typed(), null)).toEqual(ENGINE_DATE)
+    expect(correctionUseBy(typed(), next({}), { clearing: true })).toEqual(ENGINE_DATE)
+    // A recipe that has no "how long, and where" line decides nothing.
+    expect(clear(typed(), { keeps_n: null, keeps_unit: null, keeps_storage_kind: null })).toEqual(ENGINE_DATE)
+  })
+
+  it('clear where the recipe matches and the engine has no figure for the method gives the recipe date', () => {
+    const pesto = typed({ method: 'pesto' })
+    expect(clear(pesto, null, next({ method: 'pesto' }))).toEqual(NO_DATE)   // the engine alone: pesto has no fridge figure
+    expect(clear(pesto, FRIDGE_7, next({ method: 'pesto' }))).toEqual(RECIPE_DATE)
+  })
+
+  it('clear where neither rung answers is no date', () => {
+    expect(clear(typed({ method: 'pesto' }), { ...FRIDGE_7, keeps_storage_kind: 'pantry' }, next({ method: 'pesto' }))).toEqual(NO_DATE)
+  })
+
+  it('a moved jar, cleared, has no date', () => {
+    const moved = typed({ storage_moved_at: '2026-11-01T00:00:00Z' })
+    // The recipe would answer for these very facts (same place kind, a known day); the move outranks it.
+    expect(clear(typed(), FRIDGE_7)).toEqual(RECIPE_DATE)
+    expect(clear(moved, FRIDGE_7)).toEqual(NO_DATE)
+    expect(clear(moved, null)).toEqual(NO_DATE)
+  })
+
+  it('clear on a put-up date that is "not sure" has no recipe date, and no engine date either', () => {
+    expect(clear(typed({ preserved_at_precision: 'unknown' }), FRIDGE_7)).toEqual(NO_DATE)
+  })
+
+  it('clear on a jar the recipe already dated gives the same recipe date', () => {
+    const dated = stored({ use_by_basis: 'recipe', use_by_target: '2026-10-15' })
+    expect(clear(dated, FRIDGE_7)).toEqual(RECIPE_DATE)
+    expect(clear(dated, null)).toEqual(ENGINE_DATE)   // its recipe since removed: the engine
+  })
+
+  it('clear on a general or a house date resolves by the same ladder (the stored basis is not read)', () => {
+    expect(clear(stored(), FRIDGE_7)).toEqual(RECIPE_DATE)
+    const candy = stored({ method: 'candy', use_by_basis: 'house', use_by_target: '2026-11-08' })
+    expect(clear(candy, null, next({ method: 'candy' }))).toEqual({ use_by_target: '2026-11-08', use_by_basis: 'house' })
+    expect(clear(candy, FRIDGE_7, next({ method: 'candy' }))).toEqual(RECIPE_DATE)
+  })
+
+  it('a Raw jar in a fridge on a recipe batch: clear gives the recipe date, as Put it up gives it at create', () => {
+    const raw = typed({ is_raw: true })
+    expect(clear(raw, null, next({ is_raw: true }))).toEqual(NO_DATE)   // the engine alone: Raw outside a freezer
+    expect(clear(raw, FRIDGE_7, next({ is_raw: true }))).toEqual(RECIPE_DATE)
+  })
+
+  it('a correction that is not a clear never consults the recipe', () => {
+    expect(correctionUseBy(stored({ use_by_basis: 'recipe', use_by_target: '2026-10-15' }), next({ is_raw: true }), { recipe: FRIDGE_7 })).toBeNull()
+    expect(correctionUseBy(stored(), next({ method: 'ferment_mash' }), { recipe: FRIDGE_7 })).toEqual(ENGINE_DATE)
+    expect(correctionUseBy(typed(), next({ is_raw: true }), { recipe: FRIDGE_7 })).toBeNull()
+  })
+
+  it('the recipe counts from the stored calendar day when the driver hands the date over as a Date', () => {
+    // The neon driver parses a DATE column into a Date at local midnight; dayOf reads it back with the local getters.
+    expect(clear(typed({ preserved_at: new Date(2026, 9, 8) }), FRIDGE_7)).toEqual(RECIPE_DATE)
+  })
+})
+
 describe('the move rule', () => {
   it('a change of kind nulls a table date and stamps the move', () => {
     expect(moveUseBy(stored(), 'deep_freezer', '2026-11-01')).toEqual({ kindChanged: true, useBy: { use_by_target: null, use_by_basis: 'none' } })
@@ -235,6 +323,100 @@ describe('PATCH — what it sends', () => {
     const sql2 = mockSql([[stored()], [], [stored()]])
     await patch(sql2, { quantity_value: 2.5, quantity_unit: 'quarts' })
     expect(after(sql2.batches[0][1], "quantity_unit     = CASE WHEN ? ::boolean THEN")).toBe('qt')
+  })
+})
+
+// Put-Up UX pass R1: a clear is the one PATCH that reads the recipe the jar's batch follows. Queue order
+// below: the jar, the recipe line, then the transaction (the actor, the write).
+describe('PATCH — discard_by "clear" reads the batch\'s recipe, and no other write does', () => {
+  const typedJar = stored({ use_by_basis: 'typed', use_by_target: '2026-12-25' })
+  const FRIDGE_7 = { keeps_n: 7, keeps_unit: 'day', keeps_storage_kind: 'fridge' }
+  const bound = (w) => [
+    after(w, 'use_by_target     = CASE WHEN ? ::boolean THEN'), after(w, 'use_by_basis      = CASE WHEN ? ::boolean THEN'),
+  ]
+
+  it('the read goes jar → its batch → the batch\'s recipe, the household bound at every hop and every hop live', async () => {
+    const sql = mockSql([[typedJar], [FRIDGE_7], [], [{ ...typedJar, use_by_target: '2026-10-15', use_by_basis: 'recipe' }]])
+    const res = await patch(sql, { discard_by: 'clear' })
+    expect(res.status).toBe(200)
+    expect(sql.calls).toHaveLength(4)
+    expect(sql.calls[1].norm).toBe('SELECT rc.keeps_n, rc.keeps_unit, rc.keeps_storage_kind FROM preservation_log p '
+      + 'JOIN v_kitchen_batch_current b ON b.id = p.batch_id JOIN recipe rc ON rc.id = b.recipe_id '
+      + 'WHERE p.id = ? ::uuid AND p.user_id = ANY( ? ) AND p.deleted_at IS NULL '
+      + 'AND b.user_id = ANY( ? ) AND b.deleted_at IS NULL AND rc.user_id = ANY( ? ) AND rc.deleted_at IS NULL')
+    expect(sql.calls[1].values).toEqual([JAR, HOUSEHOLD, HOUSEHOLD, HOUSEHOLD])
+    // Bare relation names: the schema audit's relation extractor reads FROM / JOIN <name>.
+    expect(sql.calls[1].norm).not.toMatch(/public\./)
+  })
+
+  it('the write is GUARDED on the xmin it read, in the actor transaction, and binds the recipe date and basis', async () => {
+    const sql = mockSql([[typedJar], [FRIDGE_7], [], [typedJar]])
+    await patch(sql, { discard_by: 'clear' })
+    expect(sql.batches).toHaveLength(1)
+    const [g, w] = sql.batches[0]
+    expect(g.norm).toBe("SELECT set_config('app.actor_clerk_sub', ? , true)")
+    expect(after(w, 'AND (NOT')).toBe(true)
+    expect(after(w, 'xmin =')).toBe('4242')
+    expect(after(w, 'use_by_target     = CASE WHEN')).toBe(true)
+    expect(bound(w)).toEqual(['2026-10-15', 'recipe'])
+  })
+
+  it('no recipe row (no batch, no recipe, a removed one, another household\'s): the engine\'s date and basis', async () => {
+    const sql = mockSql([[typedJar], [], [], [typedJar]])
+    expect((await patch(sql, { discard_by: 'clear' })).status).toBe(200)
+    expect(bound(sql.batches[0][1])).toEqual(['2027-04-08', 'table'])
+  })
+
+  it('a moved jar: the recipe is read and the rule still binds no date', async () => {
+    const sql = mockSql([[{ ...typedJar, storage_moved_at: '2026-11-01T00:00:00Z' }], [FRIDGE_7], [], [typedJar]])
+    await patch(sql, { discard_by: 'clear' })
+    expect(bound(sql.batches[0][1])).toEqual([null, 'none'])
+    expect(after(sql.batches[0][1], 'use_by_target     = CASE WHEN')).toBe(true)
+  })
+
+  it('clear sent with a method correction in ONE PATCH: the method is written and the date resolves by the ladder', async () => {
+    // With the recipe: its date (the recipe rung does not read the method).
+    let sql = mockSql([[typedJar], [FRIDGE_7], [], [typedJar]])
+    await patch(sql, { discard_by: 'clear', method: 'quick_pickle' })
+    expect(after(sql.batches[0][1], 'method            = CASE WHEN ? ::boolean THEN')).toBe('quick_pickle')
+    expect(bound(sql.batches[0][1])).toEqual(['2026-10-15', 'recipe'])
+    // Without one: the engine, on the CORRECTED method (a quick pickle in a fridge is 2 months, not hot sauce's 6).
+    sql = mockSql([[typedJar], [], [], [typedJar]])
+    await patch(sql, { discard_by: 'clear', method: 'quick_pickle' })
+    expect(after(sql.batches[0][1], 'method            = CASE WHEN ? ::boolean THEN')).toBe('quick_pickle')
+    expect(bound(sql.batches[0][1])).toEqual(['2026-12-08', 'table'])
+  })
+
+  it('the jar changed between the read and the write → 409 client_stale', async () => {
+    const sql = mockSql([[typedJar], [FRIDGE_7], [], []])
+    const res = await patch(sql, { discard_by: 'clear' })
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('client_stale')
+  })
+
+  it('a stranger → 404 after the one jar read: no recipe read, nothing written', async () => {
+    const sql = mockSql([[]])
+    const res = await patch(sql, { discard_by: 'clear' }, STRANGER)
+    expect(res).toEqual({ status: 404, body: { error: 'Not found', code: 'not_found' } })
+    expect(sql.calls).toHaveLength(1)
+    expect(sql.calls[0].values[1]).toEqual(STRANGER)
+    expect(sql.batches).toHaveLength(0)
+  })
+
+  it.each([
+    [{ discard_by: '2027-01-15' }], [{ discard_by: 'none' }], [{ is_raw: true }], [{ method: 'ferment_mash' }], [{ label: 'x' }],
+  ])('%o reads no recipe: the jar, the actor, the write, and nothing else', async (body) => {
+    const sql = mockSql([[stored()], [], [stored()]])
+    expect((await patch(sql, body)).status).toBe(200)
+    expect(sql.calls).toHaveLength(3)
+    expect(sql.calls.some((c) => /\brecipe\b/.test(c.norm))).toBe(false)
+  })
+
+  it('a Move reads no recipe either', async () => {
+    const sql = mockSql([[stored()], [], [stored()]])
+    expect((await move(sql, { place: { kind: 'deep_freezer', label: 'Chest Freezer 1' } })).status).toBe(200)
+    expect(sql.calls).toHaveLength(3)
+    expect(sql.calls.some((c) => /\brecipe\b/.test(c.norm))).toBe(false)
   })
 })
 

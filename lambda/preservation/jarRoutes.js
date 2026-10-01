@@ -10,7 +10,8 @@
 //
 // THE DATE RULES LIVE IN ONE PLACE PER RULE (V4 "What changes a date after it is written"):
 //   * resolveJarUseBy (shelfLife.js) is the engine answer — never re-derived here.
-//   * correctionUseBy / moveUseBy below decide WHEN the engine is consulted, from the stored basis.
+//   * recipeUseBy (shelfLife.js) is the recipe's answer, the rung above the engine — never re-derived here.
+//   * correctionUseBy / moveUseBy below decide WHEN each is consulted, from the stored basis.
 // A stored basis of NULL is a row written before 1b whose backfill (0p) has not run: its date's
 // provenance is unknown, so it is treated as TYPED — never re-derived, never nulled. Destroying a date
 // someone may have typed is the failure mode; keeping a table date one extra edit is not.
@@ -20,12 +21,13 @@
 // UPDATE of the row, so any write in between (another phone's Mark used, Move, PATCH) makes this one
 // match 0 rows, and the answer is 409 client_stale — the shipped client's Refresh door. A PATCH that
 // touches nothing the date rule reads (a name, a note) carries no guard, so a concurrent Mark used can
-// never make a label edit fail.
+// never make a label edit fail. A clear also reads the batch's recipe line before it writes; that read
+// sits outside the guard (xmin is the jar's), as Put it up's own recipe read sits outside its write.
 //
 // AUDIT. preservation_log carries trg_audit_preservation_log_upd (1b). Every write here runs in
 // sql.transaction([set_config('app.actor_clerk_sub', <sub>, true), <write>]) — the grouping
 // lambda/audit-actor-guc.test.js asserts.
-import { resolveJarUseBy } from './shelfLife.js';
+import { resolveJarUseBy, recipeUseBy } from './shelfLife.js';
 import {
   VALID_METHODS, projectRow, clientStale, countRefusal, normalizeJarText, normalizeJarUnit, isJarDate,
   jarLabelError, jarQuantityError, jarPhError, JAR_TEXTURES, JAR_TEXTURE_METHODS,
@@ -78,6 +80,28 @@ async function loadJar(sql, jarId, householdIds) {
   return rows.length ? rows[0] : null;
 }
 
+// ── the jar's recipe, as a clear reads it (Put-Up UX pass R1) ───────────────────────────────────
+// The "how long, and where" line of the recipe the jar's batch follows, or null: a jar with no batch,
+// a batch with no recipe, a removed batch and a removed recipe all answer null. Put it up's predicate
+// (kitchenRoutes.js putUp): the batch and the recipe are each the household's and live. Read ONLY when
+// a typed date is cleared, so no other PATCH and no Move issues it.
+async function loadJarRecipe(sql, jarId, householdIds) {
+  const rows = await sql`
+    SELECT rc.keeps_n, rc.keeps_unit, rc.keeps_storage_kind
+    FROM preservation_log p
+    JOIN v_kitchen_batch_current b ON b.id = p.batch_id
+    JOIN recipe rc ON rc.id = b.recipe_id
+    WHERE p.id = ${jarId}::uuid
+      AND p.user_id = ANY(${householdIds})
+      AND p.deleted_at IS NULL
+      AND b.user_id = ANY(${householdIds})
+      AND b.deleted_at IS NULL
+      AND rc.user_id = ANY(${householdIds})
+      AND rc.deleted_at IS NULL
+  `;
+  return rows.length ? rows[0] : null;
+}
+
 const dayOf = (v) => {
   if (v == null) return null;
   if (v instanceof Date) {
@@ -96,7 +120,17 @@ const factsOf = (jar, kind) => ({
 // from the jar's stored anchor if the jar has never moved, else nulls. Typed dates (and an explicit
 // 'no date') survive; a recipe date survives while the storage kind still matches. Clearing a typed date
 // ('clear' on the PATCH) resolves the same way." Returns null for "leave the date as it is".
-export function correctionUseBy(stored, next, { clearing = false } = {}) {
+//
+// A CLEAR RESOLVES BY THE WHOLE DISCARD-BY LADDER, in this order (Put-Up UX pass R1):
+//   (a) a jar that has MOVED gets no date. First, and it stays first: recipeUseBy counts from the put-up
+//       day and knows nothing of a move, so a jar that spent time at another kind of place would be
+//       dated as if it had sat at the recipe's place throughout;
+//   (b) the recipe's "how long, and where", when `recipe` (the line of the live household recipe the
+//       jar's batch follows; patchJar loads it) names the kind of place the jar is at. It is what Put it
+//       up gives the same jar at create (putUp.js planPutUp), Raw and In oil included;
+//   (c) the engine; (d) no date.
+// `recipe` is read only while clearing: a correction that is not a clear never consults it.
+export function correctionUseBy(stored, next, { clearing = false, recipe = null } = {}) {
   const basis = stored.use_by_basis ?? null;
   if (!clearing) {
     if (basis == null || basis === 'typed' || basis === 'recipe') return null;
@@ -104,8 +138,10 @@ export function correctionUseBy(stored, next, { clearing = false } = {}) {
   if (stored.storage_moved_at != null) return { use_by_target: null, use_by_basis: 'none' };
   // The anchor is the STORED put-up date and its precision (a correction never changes when it was put
   // up); the facts are the corrected ones.
-  return resolveJarUseBy({ ...factsOf(next, stored.storage_kind), precision: stored.preserved_at_precision ?? null },
-    dayOf(stored.preserved_at));
+  const anchor = dayOf(stored.preserved_at);
+  const precision = stored.preserved_at_precision ?? null;
+  const fromRecipe = clearing ? recipeUseBy(recipe, stored.storage_kind ?? null, anchor, { precision }) : null;
+  return fromRecipe ?? resolveJarUseBy({ ...factsOf(next, stored.storage_kind), precision }, anchor);
 }
 
 // ── V4: "A Move (a change of storage kind, a thaw included) nulls every date that is not typed —
@@ -229,8 +265,10 @@ async function patchJar(sql, jarId, body, userId, householdIds) {
   let useBy = null;
   if (has(body, 'discard_by')) {
     if (body.discard_by === 'none') useBy = { use_by_target: null, use_by_basis: 'typed' };
-    else if (body.discard_by === 'clear') useBy = correctionUseBy(jar, next, { clearing: true });
-    else useBy = { use_by_target: body.discard_by, use_by_basis: 'typed' };
+    else if (body.discard_by === 'clear') {
+      // The one PATCH that reads the batch's recipe; the rule (moved first) is correctionUseBy's.
+      useBy = correctionUseBy(jar, next, { clearing: true, recipe: await loadJarRecipe(sql, jar.id, householdIds) });
+    } else useBy = { use_by_target: body.discard_by, use_by_basis: 'typed' };
   } else if (corrected) {
     useBy = correctionUseBy(jar, next);
   }
