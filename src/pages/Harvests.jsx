@@ -573,12 +573,19 @@ function HarvestEntry({ entry: e }) {
   // one row that is least informative.
   const wt = describeHarvestWeight(e)
 
-  const mainTo = !removed && !unassigned && e.project_id && e.plant_id
-    ? `/projects/${e.project_id}/plantings/${e.plant_id}`
+  // BUG-HARVESTSNOPROJECTPICKS-001: a pick on a planting that is in no project arrives with
+  // project_id null. Both links used to require project_id, so that row drew as an inert card with no
+  // Edit. Without one they take the CANONICAL un-scoped routes (App.jsx /plantings/:plantingId and
+  // /events/:eventId — the same move the snapshot tile made, BUG-SEARCHDEADTAP-001). With one they
+  // keep the scoped form, which App.jsx redirects to the same two pages.
+  const mainTo = !removed && !unassigned && e.plant_id
+    ? (e.project_id ? `/projects/${e.project_id}/plantings/${e.plant_id}` : `/plantings/${e.plant_id}`)
     // V4-PROJHIDE-001: an unassigned (plantless) harvest has no planting to open; don't fall back to
     // the hidden project page. Flag OFF keeps the project link.
     : (unassigned && !PROJECTS_HIDDEN && e.project_id ? `/projects/${e.project_id}` : null)
-  const editTo = e.project_id && e.event_id ? `/projects/${e.project_id}/events/${e.event_id}` : null
+  const editTo = e.event_id
+    ? (e.project_id ? `/projects/${e.project_id}/events/${e.event_id}` : `/events/${e.event_id}`)
+    : null
 
   const body = (
     <>

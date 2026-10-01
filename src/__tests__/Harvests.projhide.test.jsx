@@ -65,6 +65,27 @@ describe('Harvests — PROJHIDE', () => {
     expect(screen.getByText('Tomato').closest('a')).toBeNull()
   })
 
+  // BUG-HARVESTSNOPROJECTPICKS-001, flag-ON arm (prod runs flag-ON). A pick on a planting that is in no
+  // project links to the planting and to its event by the un-scoped routes; a plantless pick with no
+  // project still has no card link, since there is nothing to open.
+  it('a project-less pick links to its planting and its event; a plantless one stays inert', async () => {
+    fetchSpy.mockResolvedValue({
+      entries: [
+        { event_id: 'e7', day_key: '2026-07-20', event_date: '2026-07-20T12:00:00Z', plant_id: 'p7', project_id: null, crop_name: 'Tomato', variety_name: 'Sungold', quantity: 3, unit: 'count', quality_rating: null, harvest_log_id: 'h7', photos: [] },
+        { event_id: 'e8', day_key: '2026-07-19', event_date: '2026-07-19T12:00:00Z', plant_id: null, project_id: null, crop_name: 'Basil', variety_name: null, planting_name: null, quantity: 1, unit: 'bunch', quality_rating: null, harvest_log_id: 'h8', photos: [] },
+      ],
+      aggregates: { crops: [], other: [] },
+      cursor: null,
+    })
+    render(<Harvests />)
+    toLog()
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
+    expect(screen.getByText('Sungold').closest('a').getAttribute('href')).toBe('/plantings/p7')
+    expect(screen.getByText('Basil').closest('a')).toBeNull()
+    const edits = screen.getAllByRole('link', { name: 'Open this harvest event' }).map((a) => a.getAttribute('href'))
+    expect(edits).toEqual(['/events/e7', '/events/e8'])
+  })
+
   // ── V4-HARVDEFAULT-001 arrival pins, duplicated in the FLAG-ON arm (design §2a / §6-S4) ─────────
   // Harvests.test.jsx mocks PROJECTS_HIDDEN:false; prod runs flag-ON, so the arrival default gets
   // pinned in BOTH arms. Same both-halves shape: a Totals-only element PRESENT and a Log-only element

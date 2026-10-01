@@ -106,6 +106,29 @@ describe('Harvests page', () => {
     expect(screen.getByText('Tomato')).toBeTruthy()
   })
 
+  // BUG-HARVESTSNOPROJECTPICKS-001: the Lambda now returns picks on plantings that are in no project
+  // (project_id null). Both links were built from project_id, so such a row was an inert card with no
+  // Edit. They go to the un-scoped canonical routes (App.jsx /plantings/:plantingId, /events/:eventId).
+  // Mutation: put `e.project_id &&` back on either link → the matching href assertion fails.
+  it('a project-less pick links to its planting and to its event', async () => {
+    fetchSpy.mockResolvedValue({
+      entries: [
+        { event_id: 'e7', day_key: D1, event_date: `${D1}T12:00:00Z`, plant_id: 'p7', project_id: null, crop_name: 'Tomato', variety_name: 'Sungold', quantity: 4, unit: 'count', quality_rating: null, harvest_log_id: 'h7', photos: [] },
+        // A removed planting stays non-navigable with or without a project; its event is still editable.
+        { event_id: 'e8', day_key: D2, event_date: `${D2}T12:00:00Z`, plant_id: 'p8', project_id: null, planting_removed: true, crop_name: 'Basil', variety_name: 'Genovese', quantity: 2, unit: 'bunch', quality_rating: null, harvest_log_id: 'h8', photos: [] },
+      ],
+      aggregates: { crops: [], other: [] },
+      cursor: null,
+    })
+    render(<Harvests />)
+    toLog()
+    await waitFor(() => expect(screen.getByText('Sungold')).toBeTruthy())
+    expect(screen.getByText('Sungold').closest('a').getAttribute('href')).toBe('/plantings/p7')
+    expect(screen.getByText('Genovese').closest('a')).toBeNull()
+    const edits = screen.getAllByRole('link', { name: 'Open this harvest event' }).map((a) => a.getAttribute('href'))
+    expect(edits).toEqual(['/events/e7', '/events/e8'])
+  })
+
   it('surfaces a retryable error state', async () => {
     fetchSpy.mockRejectedValueOnce(Object.assign(new Error('down'), { body: { message: 'The harvest service had a problem.' } }))
     render(<Harvests />)
