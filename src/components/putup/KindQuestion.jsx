@@ -64,7 +64,7 @@ export default function KindQuestion({ batch, fetch, onChanged, idPrefix = 'goin
   if (!open) {
     return (
       <button type="button" data-testid={`${idPrefix}-question`} onClick={() => setOpen(true)}
-        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight,
+        style={{ display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight,
           background: 'none', border: 'none', padding: '2px 8px 2px 0', cursor: 'pointer',
           fontFamily: 'inherit', color: P.green, fontSize: '0.78rem' }}>
         {KIND_QUESTION} →
@@ -82,7 +82,7 @@ export default function KindQuestion({ batch, fetch, onChanged, idPrefix = 'goin
         {picked === 'other' && (
           <button type="button" data-testid={`${idPrefix}-save`} disabled={busy}
             onClick={() => save('other', otherText)}
-            style={{ minHeight: T.tapMinHeight, padding: '6px 12px', cursor: busy ? 'default' : 'pointer',
+            style={{ minHeight: T.buttonMinHeight, padding: '6px 12px', cursor: busy ? 'default' : 'pointer',
               background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '0.78rem',
               fontWeight: 700, color: P.green }}>
             Save
@@ -90,7 +90,7 @@ export default function KindQuestion({ batch, fetch, onChanged, idPrefix = 'goin
         )}
         <button type="button" data-testid={`${idPrefix}-cancel`} disabled={busy}
           onClick={() => { setOpen(false); setPicked(null); setOtherText(''); setErr(null) }}
-          style={{ minHeight: T.tapMinHeight, padding: '6px 4px', cursor: 'pointer', background: 'none',
+          style={{ minHeight: T.buttonMinHeight, padding: '6px 4px', cursor: 'pointer', background: 'none',
             border: 'none', fontFamily: 'inherit', fontSize: '0.78rem', color: P.light }}>
           Not now
         </button>

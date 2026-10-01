@@ -19,7 +19,7 @@ export const RECIPE_REF_MAX = 500
 
 const isUrl = (s) => /^https?:\/\/\S+$/i.test(String(s ?? '').trim())
 const link = {
-  display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, minWidth: 44, background: 'none', border: 'none',
+  display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, minWidth: 44, background: 'none', border: 'none',
   padding: '2px 8px 2px 0', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: '0.82rem', fontWeight: 600,
 }
 
@@ -51,7 +51,9 @@ export default function RecipeRefRow({ batch, onChanged, disabled = false }) {
   return (
     <div data-testid="recipe-ref" style={{ marginTop: T.space.sm }}>
       {!open && (
-        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+        // 12px between the two targets: the second one opens a website in a new tab, and at 48px tall a
+        // slip from the first would leave the app. The words are the ruled ones and do not change.
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           {current ? (
             <span data-testid="recipe-ref-current" style={{ color: P.mid, fontSize: '0.82rem' }}>
               Following: {isUrl(current)

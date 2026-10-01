@@ -145,7 +145,7 @@ describe('the card asks "What kind of batch? →" on a NULL kind, and never agai
     expect(q).toHaveLength(1)
     expect(q[0].textContent).toBe('What kind of batch? →')
     expect(KIND_QUESTION).toBe('What kind of batch?')
-    expect(q[0].style.minHeight).toBe('44px')
+    expect(q[0].style.minHeight).toBe('48px')
   })
 
   // MUTATION: kindQuestionVisible -> `batch.kind == null || batch.kind === 'other'` (or any widening)

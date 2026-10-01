@@ -193,10 +193,12 @@ describe('BatchDetailView — the header', () => {
     expect(screen.getByTestId('batch-detail-meta').textContent).toBe('first recorded Sep 3')
   })
 
-  it('leads with elapsed time and the last touch when there IS a start', () => {
+  // AMENDED FOR THE PUT-UP UX PASS R1 (D15) in the same commit as the change: the kind leads the line, in
+  // its chip's word. A batch with no kind (the mash above) reads exactly as it did.
+  it('leads with the kind, then elapsed time and the last touch, when there IS a start', () => {
     renderDetail({ batch: CANDY })
     expect(screen.getByTestId('batch-detail-meta').textContent)
-      .toBe('12 days · Syrup rung 2 · last touched 2 days ago')
+      .toBe('Candy · 12 days · Syrup rung 2 · last touched 2 days ago')
   })
 
   it('renders paused as a different answer, not a worse one', () => {
@@ -205,16 +207,20 @@ describe('BatchDetailView — the header', () => {
     expect(hasNoAlarmInk(screen.getByTestId('batch-detail-paused'))).toBe(true)
   })
 
+  // AMENDED FOR THE PUT-UP UX PASS R1 (D3) in the same commit as the change, here and in the four arms
+  // below it: the outcome line is the SAME string the closed list's row says for the batch — the date
+  // first, then the ending (closedEnding). Every label is unchanged; only "Put it up" is left out, and
+  // only where a count beside it already says so.
   it('reads a closed batch back as a past fact, with its date and its note', () => {
     renderDetail({ batch: CLOSED_SPOILED })
-    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('It spoiled — threw it out · closed Sep 4')
+    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('closed Sep 4 · It spoiled — threw it out')
     expect(screen.getByTestId('batch-detail-outcome-note').textContent).toBe('went furry on top')
   })
 
   it('renders a peer\'s closed batch identically — scoping is the server\'s job', () => {
     renderDetail({ batch: JEN_CLOSED })
     expect(screen.getByTestId('batch-detail-title').textContent).toBe("Jen's plum butter")
-    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('Put it up · closed Sep 4')
+    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('closed Sep 4 · 2 put-ups')
     expect(screen.queryByTestId('batch-detail-outcome-note')).toBeNull()
     // GREEN CONTROL for that absence, one render apart: the note DOES render when there is one.
     renderDetail({ batch: CLOSED_SPOILED })
@@ -229,7 +235,7 @@ describe('BatchDetailView — the header', () => {
 
   it('falls back without echoing an outcome value this bundle has never seen', () => {
     renderDetail({ batch: CLOSED_UNKNOWN_OUTCOME })
-    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('Closed · closed Sep 4')
+    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('closed Sep 4 · Closed')
     expect(screen.getByTestId('batch-detail-view').innerHTML).not.toContain('became_a_second_batch')
   })
 })
@@ -476,7 +482,7 @@ describe('BatchDetailView — the close door', () => {
     renderDetail({ batch: CLOSED_SPOILED })
     expect(CLOSED_SPOILED.current_stage_kind).toBe('finished')
     expect(screen.getAllByTestId('batch-close-open')).toHaveLength(1)
-    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('It spoiled — threw it out · closed Sep 4')
+    expect(screen.getByTestId('batch-detail-outcome').textContent).toBe('closed Sep 4 · It spoiled — threw it out')
   })
 
   it('issues no GET for its OWN data — the surface is controlled', async () => {
@@ -491,6 +497,8 @@ describe('BatchDetailView — the close door', () => {
     expect(screen.getByTestId('line-row-text').textContent).toBe('Kosher salt · 40 g')
     // …and the spy CAN see a call on this very surface (release F: the line search reads for its OWN
     // action once a name is typed), so "none of THAT route" is a measurement and not a dead mock.
+    // (Put-Up UX pass R1: this batch has a line, so the add row is behind its door — opened first.)
+    fireEvent.click(screen.getByTestId('line-add-open'))
     fireEvent.change(screen.getByTestId('line-add-name'), { target: { value: 'megatron' } })
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/kitchen-batches/line-search?q=megatron'))
     expect(batchGets()).toEqual([])
@@ -507,7 +515,8 @@ describe('BatchDetailView — the start-date door lives on the batch\'s own surf
   it('offers it on a going batch nobody was ever asked about', () => {
     renderDetail()
     expect(screen.getByTestId('batch-set-start').textContent).toBe('Set a start date →')
-    expect(screen.getByTestId('batch-set-start').style.minHeight).toBe('44px')
+    // Amended with the Put-Up UX pass R1 (F16): a quiet action is 48px tall on a Put-Up surface.
+    expect(screen.getByTestId('batch-set-start').style.minHeight).toBe('48px')
   })
 
   // The terminal-state ruling, now on this surface: "an unknown one must never prompt again".
