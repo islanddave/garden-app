@@ -237,6 +237,10 @@ describe('project-less picks (BUG-HARVESTSNOPROJECTPICKS-001)', () => {
   afterAll(async () => {
     await directSql`DELETE FROM harvest_log WHERE created_by IN (${USER_D}, ${USER_E})`;
     await directSql`DELETE FROM event_log   WHERE created_by IN (${USER_D}, ${USER_E})`;
+    // A plants INSERT also writes an `entity` row (entity_planting_ref_id_fkey, no ON DELETE action), and
+    // logging against a planting can leave entity_memory rows; both go before the plants, as in _kitchenF.js.
+    await directSql`DELETE FROM entity WHERE planting_ref_id IN (SELECT id FROM plants WHERE created_by IN (${USER_D}, ${USER_E}))`;
+    await directSql`DELETE FROM entity_memory WHERE plant_id IN (SELECT id FROM plants WHERE created_by IN (${USER_D}, ${USER_E}))`;
     await directSql`DELETE FROM plants      WHERE created_by IN (${USER_D}, ${USER_E})`;
     await directSql`DELETE FROM plant_projects WHERE created_by IN (${USER_D}, ${USER_E})`;
   });
