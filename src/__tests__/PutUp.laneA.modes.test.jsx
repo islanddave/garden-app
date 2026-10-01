@@ -736,48 +736,64 @@ describe('the callbacks the other lanes were promised (PLAN-V3 section 3, "Props
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 describe('the Pantry list re-reads once on leaving a mode', () => {
-  it.each([
-    ['a batch, left by the pop', 'stub-pantry-batch'],
-  ])('%s', async (_name, sender) => {
+  const READ = '/api/pantry?group=place'
+  const hit = async () => { await screen.findByTestId('stub-search-hit-rc-1'); return 'stub-search-hit-rc-1' }
+  // "Once" has two halves: it DOES read (the list a write in the mode may have changed), and it reads once,
+  // not once per render.
+  const readsExactly = async (n) => {
+    await waitFor(() => expect(gets(READ)).toBe(n))
+    await flush(); await flush()
+    expect(gets(READ)).toBe(n)
+  }
+
+  it('a batch, left by the page\'s Back (a pop) to the Pantry', async () => {
     renderAt('/put-up?view=pantry')
     await screen.findByTestId('pantry-view')
-    await waitFor(() => expect(gets('/api/pantry?group=place')).toBe(1))
-    tap(sender)
+    await readsExactly(1)
+    tap('stub-pantry-batch')
     await screen.findByTestId('putup-batch-mode')
-    expect(gets('/api/pantry?group=place')).toBe(1)             // the list is not read while a mode is open
+    await flush()
+    expect(gets(READ)).toBe(1)                                  // the list is not read while a mode is open
     tap('putup-mode-back')
     await screen.findByTestId('pantry-view')
-    await waitFor(() => expect(gets('/api/pantry?group=place')).toBe(2))
-    await flush(); await flush()
-    expect(gets('/api/pantry?group=place')).toBe(2)             // once, not once per render
+    await readsExactly(2)
   })
 
-  it('a recipe (a search hit), left by the push onto another segment, then back to the Pantry', async () => {
+  it('a recipe, left by the system Back to the search it was opened from', async () => {
     renderAt('/put-up?view=pantry&find=petri')
-    tap(await (async () => { await screen.findByTestId('stub-search-hit-rc-1'); return 'stub-search-hit-rc-1' })())
+    tap(await hit())
     await screen.findByTestId('recipe-detail')
-    const before = gets('/api/pantry?group=place')
+    await flush()
+    const before = gets(READ)
+    expect(before).toBeGreaterThan(0)                           // instrument: the search did read the Pantry
+    await systemBack()
+    await screen.findByTestId('pantry-search-results')
+    await readsExactly(before + 1)
+  })
+
+  it('a recipe, left by the page\'s Back (the push onto Recipes): nothing is read until the Pantry is chosen', async () => {
+    renderAt('/put-up?view=pantry&find=petri')
+    tap(await hit())
+    await screen.findByTestId('recipe-detail')
+    await flush()
+    const before = gets(READ)
     tap('putup-mode-back')
     await screen.findByTestId('recipes-view')
-    await flush()
-    expect(gets('/api/pantry?group=place')).toBe(before)        // it landed on Recipes: nothing to read yet
+    await flush(); await flush()
+    expect(gets(READ)).toBe(before)                             // it landed on Recipes: nothing to read yet
     pickSegment('Pantry')
     await screen.findByTestId('pantry-view')
-    await waitFor(() => expect(gets('/api/pantry?group=place')).toBe(before + 1))
-    await flush(); await flush()
-    expect(gets('/api/pantry?group=place')).toBe(before + 1)
+    await readsExactly(before + 1)
   })
 
-  it('a cold recipe deep link on the Pantry\'s own URL: one read when the mode is left for the Pantry', async () => {
+  it('a cold ?batch= deep link with nothing going: one read when the Back\'s push lands on the Pantry', async () => {
     going = []
     renderAt('/put-up?view=pantry&batch=kb-1')
     await screen.findByTestId('putup-batch-mode')
     await flush()
-    expect(gets('/api/pantry?group=place')).toBe(0)
+    expect(gets(READ)).toBe(0)
     tap('putup-mode-back')
     await screen.findByTestId('pantry-view')
-    await waitFor(() => expect(gets('/api/pantry?group=place')).toBe(1))
-    await flush(); await flush()
-    expect(gets('/api/pantry?group=place')).toBe(1)
+    await readsExactly(1)
   })
 })
