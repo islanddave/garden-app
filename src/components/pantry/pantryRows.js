@@ -92,6 +92,30 @@ export function leftWords(row) {
   return `${Number(n)} left`
 }
 
+// The row's detail line: place · where from · the batch it came from · what is left (· how long a bought
+// item has been had). `batchName` is the host's (the names read, pantryApi.listBatchNames): a jar whose
+// batch the host cannot name says nothing about it — never "from undefined".
+export function detailWords(row, { now = new Date(), batchName = null } = {}) {
+  const batch = typeof batchName === 'string' && batchName.trim() ? `from ${batchName.trim()}` : null
+  return [inPlaceGroup(row) ? null : row?.place?.label, row?.where_from, batch, leftWords(row), ageWords(row, now)].filter(Boolean).join(' · ')
+}
+
+// Is this row sitting under a heading that IS its place? Grouped By place the server's group_key is the
+// place's id, so the row's own place would only repeat the heading above it; grouped By what it is the key
+// is the crop, and the place is news. Read off the row itself, so a list that is being regrouped (the new
+// grouping asked for, the old rows still on screen) never drops or doubles the place for a moment.
+export function inPlaceGroup(row) {
+  return row?.place?.id != null && String(row.group_key ?? '') === String(row.place.id)
+}
+
+// SEVERAL LEFT: a counted put-up with more than one left. The ONE test two things hang on, so they cannot
+// drift: the row's inline action (Used one, not Used it up) and whether the row sheet's Went bad asks how
+// many (Went bad…) or acts at once (Went bad). A weighed bag's count is null on the server's row
+// (pantryItems.js jarRow), so it is never "several"; neither is a bought item.
+export function severalLeft(row) {
+  return isJar(row) && row.stock_mode === 'counted' && Number(row.count_left) > 1
+}
+
 // The ONE inline action (V4 §2.5): Used one while a counted row has more than one left; Used it up
 // when one is left, when it is uncounted (weighed) and on a bought item.
 export const USED_ONE = 'used_one'
@@ -99,8 +123,7 @@ export const USED_UP = 'used_up'
 export const ACTION_LABELS = Object.freeze({ [USED_ONE]: 'Used one', [USED_UP]: 'Used it up' })
 export function inlineAction(row) {
   if (!row) return null
-  if (isJar(row) && row.stock_mode === 'counted' && Number(row.count_left) > 1) return USED_ONE
-  return USED_UP
+  return severalLeft(row) ? USED_ONE : USED_UP
 }
 
 // The server's discard status in the words jarWords.discardWords reads (use_by_status's values).
@@ -145,18 +168,70 @@ export function ageWords(row, now = new Date()) {
   return `had it ${days} ${days === 1 ? 'day' : 'days'}`
 }
 
+// What the use route says is left, as a number — or null when it did not say.
+function leftAfter(jar) {
+  const left = jar?.remaining_count
+  return left != null && Number.isFinite(Number(left)) ? Number(left) : null
+}
+
 // The in-place line after a use, for the person who acted (V4 §2.5 "3 left · used one · Undo"). `jar`
-// is what the use route answered ({remaining_count, ...}); the count said is the SERVER's, never the
-// row's own arithmetic, because the other person may have used one in between.
-export function afterUseWords({ action, jar }) {
+// is what the use route answered ({remaining_count, ...}) and `use` the use row it wrote ({count_used,
+// ...}); the counts said are the SERVER's, never the row's own arithmetic, because the other person may
+// have used one in between. Went bad that left some says both counts ("4 left · 2 went bad"); Went bad
+// that took all of it keeps "marked gone bad".
+export function afterUseWords({ action, jar, use }) {
   if (action === USED_ONE) {
     const left = jar?.remaining_count
     return left != null ? `${Number(left)} left · used one` : 'used one'
   }
-  if (action === 'went_bad') return 'marked gone bad'
+  if (action === 'went_bad') {
+    const left = leftAfter(jar)
+    if (left == null || left <= 0) return 'marked gone bad'
+    const n = Number(use?.count_used)
+    return Number.isInteger(n) && n > 0 ? `${left} left · ${n} went bad` : `${left} left · some went bad`
+  }
   if (action === 'gave_away') {
     const left = jar?.remaining_count
     return left != null ? `${Number(left)} left · gave some away` : 'gave some away'
   }
   return 'used it up'
+}
+
+// The in-place line after a move: "<name> — moved to <place> · <the discard words of the row the server
+// answered>" (PLAN-V3 D4). The date, its basis and its status are the ANSWER's, never worked out here: a
+// put-up's move answers the jar (use_by_target, use_by_basis, use_by_status); a bought item's answers the
+// item, whose date a move never touches. `place` is the chip that was tapped. An answer that is not a row
+// (nothing came back) leaves the line at the name and the place.
+const ANSWER_STATUS = { ok: 'ok', use_soon: 'soon', past_use_by: 'past' }
+export function movedWords({ row, place, saved, now = new Date() }) {
+  const name = String(row?.name ?? '').trim() || 'It'
+  const to = String(place?.label ?? '').trim()
+  const head = to ? `${name} — moved to ${to}` : `${name} — moved`
+  if (!row || !saved || typeof saved !== 'object') return head
+  let discard
+  if (isItem(row)) {
+    const date = 'use_by_target' in saved ? (saved.use_by_target ?? null) : (row.discard?.date ?? null)
+    discard = { date, basis: date ? 'typed' : null, status: date && date === row.discard?.date ? (row.discard?.status ?? null) : null }
+  } else {
+    if (!('use_by_target' in saved) && !('use_by_basis' in saved)) return head
+    discard = { ...(row.discard ?? {}), date: saved.use_by_target ?? null, basis: saved.use_by_basis ?? null,
+      status: ANSWER_STATUS[saved.use_by_status] ?? null }
+  }
+  const words = discardChip({
+    ...row, method: saved.method ?? row.method ?? null, discard,
+    place: { id: saved.storage_location_id ?? place?.id ?? null, label: to || null, kind: place?.kind ?? null },
+  }, now)
+  return words ? `${head} · ${words}` : head
+}
+
+// Did that use FINISH the row? A row that is still live after a use (Used one, some given away, some gone
+// bad) keeps its inline action beside the Undo; one the use finished (used up, all of it gone bad, nothing
+// left) shows only its Undo. Went bad is finished unless the server says some are left — the answer that
+// keeps today's rule for a discard of everything, whatever the answer carried.
+export function finishedByUse(recent) {
+  if (!recent) return false
+  const left = leftAfter(recent.jar)
+  if (recent.action === USED_ONE || recent.action === 'gave_away') return left != null && left <= 0
+  if (recent.action === 'went_bad') return !(left != null && left > 0)
+  return true
 }

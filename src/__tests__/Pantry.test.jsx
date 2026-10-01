@@ -36,7 +36,7 @@ const REAPER = jarRow({ stock_id: 'jar-reaper', name: 'Megatron reaper', place: 
 const LAST_JAR = jarRow({ stock_id: 'jar-last', name: 'Pesto cubes', place: FRIDGE, group_key: 'loc-3', group_label: 'Kitchen fridge',
   method: 'pesto', count_left: 1, discard: { date: '2026-10-03', basis: 'typed', status: 'soon' } })
 const BAG = jarRow({ stock_id: 'jar-bag', name: 'Reaper, frozen', place: CF1, group_key: 'loc-1', group_label: 'Chest Freezer 1',
-  stock_mode: 'weighed', count_left: 1, grams_left: 92, method: 'whole_freeze' })
+  stock_mode: 'weighed', count_left: null, count_made: null, grams_left: 92, method: 'whole_freeze' })
 const MILK = itemRow({ stock_id: 'item-milk', name: 'Oat milk', place: FRIDGE, group_key: 'loc-3', group_label: 'Kitchen fridge',
   acquired_at: '2026-09-18', acquired_precision: 'day', where_from: 'Aldi', notes: 'the barista one' })
 const ROWS = [BAG, REAPER, LAST_JAR, MILK]
@@ -84,16 +84,21 @@ describe('the Pantry segment (V4 §2.5, §6.1)', () => {
     await waitFor(() => expect(fake.calls('GET').some(c => c.path === '/api/pantry?group=kind')).toBe(true))
   })
 
-  it('a row says name · place · where from · what is left · the discard chip · From the garden', async () => {
+  // AMENDED (Put-Up UX pass R1, F22): grouped By place a row sits under its place's heading and does not
+  // repeat it. The detail line is asserted from the name's end, so nothing may stand before "where from".
+  it('a row says name · where from · what is left · the discard chip · From the garden — its place is the heading above it', async () => {
     renderPantry()
     const open = await screen.findByTestId('pantry-row-open-put_up:jar-reaper')
     expect(open.textContent).toContain('Megatron reaper')
-    expect(open.textContent).toContain('Kitchen fridge · Petri Dish · 4 left')
+    expect(open.textContent).toContain('Megatron reaper' + 'Petri Dish · 4 left')
+    expect(open.textContent).not.toContain('Kitchen fridge')
+    expect(within(screen.getByRole('region', { name: 'Kitchen fridge' })).getByTestId('pantry-row-open-put_up:jar-reaper')).toBe(open)
     expect(open.textContent).toContain('discard by Feb 1, 2027 · general figure: hot sauce, fridge')
     expect(open.textContent).toContain('From the garden')
     expect((await screen.findByTestId('pantry-row-open-put_up:jar-bag')).textContent).toContain('about 92 g left')
     const milk = screen.getByTestId('pantry-row-open-pantry_item:item-milk').textContent
-    expect(milk).toContain('Kitchen fridge · Aldi · had it')
+    expect(milk).toContain('Oat milk' + 'Aldi · had it')
+    expect(milk).not.toContain('Kitchen fridge')
     expect(milk).toContain('the barista one')
     expect(milk).not.toMatch(/left|discard/)
     expect(screen.getByTestId('pantry-row-open-put_up:jar-last').textContent).toContain('discard by Oct 3 · set by hand · soon')

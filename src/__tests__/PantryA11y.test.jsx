@@ -32,7 +32,7 @@ const NEW_RULES = [...A11Y_RULES, 'nested-interactive']
 const FRIDGE = PLACES[2]
 const ROWS = [
   jarRow({ stock_id: 'j1', name: 'Megatron reaper', place: FRIDGE, group_key: 'loc-3', group_label: 'Kitchen fridge', from_garden: true, where_from: 'Petri Dish' }),
-  jarRow({ stock_id: 'j2', name: 'Reaper, frozen', stock_mode: 'weighed', grams_left: 92, count_left: 1 }),
+  jarRow({ stock_id: 'j2', name: 'Reaper, frozen', stock_mode: 'weighed', grams_left: 92, count_left: null, count_made: null }),
   itemRow({ stock_id: 'i1', name: 'Oat milk', place: FRIDGE, group_key: 'loc-3', group_label: 'Kitchen fridge', notes: 'barista' }),
 ]
 function wire() {
@@ -83,6 +83,25 @@ describe('Put-Up B′ — the Pantry components are clean (with nested-interacti
     await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PantryRowSheet item edit', rules: NEW_RULES })
   })
 
+  // Put-Up UX pass R1: the two panels the pass adds to the row sheet, each in its fullest state.
+  it('the row sheet — Went bad\'s count panel, and the Move panel with a place tapped and its rule line said', async () => {
+    wire()
+    let r = render(<PantryRowSheet row={ROWS[0]} fetch={stableFetch.fn} onClose={() => {}} />)
+    fireEvent.click(screen.getByTestId('row-went-bad'))
+    await screen.findByTestId('went-bad-panel')
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PantryRowSheet went bad', rules: NEW_RULES })
+    cleanup()
+    r = render(<PantryRowSheet row={ROWS[0]} fetch={stableFetch.fn} onClose={() => {}} />)
+    fireEvent.click(screen.getByTestId('row-move'))
+    fireEvent.click(await screen.findByTestId('move-place-id:loc-1'))
+    fireEvent.click(screen.getByTestId('move-when-earlier'))
+    fireEvent.click(await screen.findByTestId('move-when-pickdate'))
+    await screen.findByTestId('move-when-date')
+    expect(screen.getByTestId('move-rule').textContent).not.toBe('')
+    expect(screen.getByRole('group', { name: 'Move it' })).toBeTruthy()
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PantryRowSheet move', rules: NEW_RULES })
+  })
+
   it('Put something up — a planting chosen, a place, a method, More open', async () => {
     wire()
     const r = render(<PutSomethingUpSheet open onClose={() => {}} onSaved={() => {}} stockRows={ROWS} />)
@@ -98,6 +117,37 @@ describe('Put-Up B′ — the Pantry components are clean (with nested-interacti
     await screen.findByTestId('door-preview')
     expect(screen.getByRole('dialog', { name: 'Put something up' })).toBeTruthy()
     await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PutSomethingUpSheet', rules: NEW_RULES })
+  })
+
+  // Put-Up UX pass R1: the door's two new targets (the way out to a batch, the preview's Change), with a
+  // bought item chosen and the options open; and the Walk's Raw · In oil beside its discard choice.
+  it('Put something up — the way out to a batch, As is chosen, the preview\'s Change, the options open', async () => {
+    wire()
+    const r = render(<PutSomethingUpSheet open onClose={() => {}} onSaved={() => {}} stockRows={ROWS} onStartBatchInstead={() => {}} />)
+    fireEvent.change(screen.getByTestId('door-what-name'), { target: { value: 'Garlic' } })
+    fireEvent.click(await screen.findByTestId('door-place-id:loc-3'))
+    fireEvent.click(screen.getByTestId('door-method-as_is'))
+    fireEvent.click(screen.getByTestId('door-preview-change'))
+    await screen.findByTestId('door-more-panel')
+    expect(screen.getByTestId('door-start-batch-instead')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Change — the date' })).toBeTruthy()
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PutSomethingUpSheet R1', rules: NEW_RULES })
+  })
+
+  it('Walk a place — a put-up group with Raw · In oil showing beside the discard choice', async () => {
+    wire()
+    localStorage.clear()
+    const r = render(<MemoryRouter initialEntries={['/put-up?session=putup']}><WalkPlace /></MemoryRouter>)
+    fireEvent.click(await screen.findByTestId('putup-walk-place-id:loc-3'))
+    fireEvent.click(screen.getByTestId('putup-walk-when-unsure'))
+    fireEvent.click(screen.getByTestId('putup-walk-start'))
+    await screen.findByTestId('putup-walk-group')
+    fireEvent.change(screen.getByTestId('walk-what-name'), { target: { value: 'Reaper sauce' } })
+    fireEvent.click(screen.getByTestId('walk-method-hot_sauce'))
+    fireEvent.click(screen.getByTestId('walk-more'))
+    fireEvent.click(screen.getByTestId('walk-raw'))
+    expect(screen.getByRole('group', { name: 'Raw or in oil' })).toBeTruthy()
+    await expectNoA11yViolations(r.container, { label: 'WalkPlace Raw · In oil', rules: NEW_RULES })
   })
 
   it('Walk a place — setup, then a group with More open and "Already logged here" open', async () => {

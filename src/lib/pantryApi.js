@@ -64,7 +64,9 @@ export async function deletePantryItem(fetch, id) {
 
 // POST /api/pantry/uses → {use, jar}. `body`: {preservation_log_id, count_used | all_remaining: true,
 // fate?: 'discarded' | 'given_away', idempotency_key?}. Used one = count_used 1; Used it up =
-// all_remaining; Went bad = all_remaining + discarded; Gave it away = count_used n + given_away.
+// all_remaining; Gave it away = count_used n + given_away; Went bad = discarded, as a count or as all
+// that is left — the row sheet sends all_remaining whenever everything left went bad (what is left
+// right now, on a server of any age) and count_used n only for fewer. One of the two, never both.
 export async function useJar(fetch, body = {}) {
   const payload = { ...body, idempotency_key: body.idempotency_key ?? mintKey() }
   return fetch(PANTRY_USES_PATH, { method: 'POST', body: JSON.stringify(payload) })
@@ -76,6 +78,29 @@ export async function undoUse(fetch, useId, { idempotencyKey } = {}) {
   return fetch(`${PANTRY_USES_PATH}/${encodeURIComponent(useId)}/undo`, {
     method: 'POST', body: JSON.stringify({ idempotency_key: idempotencyKey ?? mintKey() }),
   })
+}
+
+// ── The batches the Pantry's jars came from ───────────────────────────────────────────────────────
+// GET /api/pantry sends a jar's `batch_id` and nothing else about its batch. The names come from ONE
+// read of every batch the household has, going and closed (a jar's batch is usually closed):
+// GET /api/kitchen-batches?state=all → { state, batches: [{ id, label, … }] }. `batchNames` turns
+// whatever envelope answered into { [batch id]: its name } — the route's `{ state, batches }`, and a
+// bare array too, for the reason pantryRows above reads both. A batch with no id or a blank name is
+// left out, so a jar whose batch is not in the map says nothing about it rather than "from undefined".
+export const BATCH_NAMES_PATH = '/api/kitchen-batches?state=all'
+
+export function batchNames(payload) {
+  const list = Array.isArray(payload) ? payload : (Array.isArray(payload?.batches) ? payload.batches : [])
+  const names = {}
+  for (const b of list) {
+    const label = typeof b?.label === 'string' ? b.label.trim() : ''
+    if (b?.id != null && label) names[String(b.id)] = label
+  }
+  return names
+}
+
+export async function listBatchNames(fetch) {
+  return batchNames(await fetch(BATCH_NAMES_PATH))
 }
 
 // ── Places ───────────────────────────────────────────────────────────────────────────────────────

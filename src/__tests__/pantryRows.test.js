@@ -6,11 +6,12 @@ import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 import { jarRow, itemRow } from './helpers/pantryFake.js'
 import {
   groupRows, searchHits, leftWords, inlineAction, discardChip, ageWords, afterUseWords, onlyUseSoon, USED_ONE, USED_UP,
+  finishedByUse, severalLeft,
 } from '../components/pantry/pantryRows.js'
 import { noteBridgeVisit, dismissBridge, readBridge, bridgeKey } from '../components/pantry/pantryBridge.js'
 import {
-  methodChoices, routeFor, AS_IS, FRESH_LABEL, AS_IS_LABEL, jarBody, itemBody, previewLine, doorError, walkWhen, saveLabel,
-  METHOD_REQUIRED_TEXT,
+  methodChoices, routeFor, AS_IS, FRESH_LABEL, AS_IS_LABEL, AS_IS_CHIP_LABEL, jarBody, itemBody, previewLine, doorError, walkWhen, saveLabel,
+  METHOD_REQUIRED_TEXT, methodLabel,
 } from '../components/pantry/putSomethingUp.js'
 
 installStoragePolyfill()
@@ -44,7 +45,7 @@ describe('the page search — name/label match only', () => {
 describe('what a row says', () => {
   it('counted: "N left"; weighed: "about N g left" from grams_left; a bought item: nothing', () => {
     expect(leftWords(jarRow({ count_left: 3 }))).toBe('3 left')
-    expect(leftWords(jarRow({ stock_mode: 'weighed', count_left: 1, grams_left: 412.4 }))).toBe('about 412 g left')
+    expect(leftWords(jarRow({ stock_mode: 'weighed', count_left: null, count_made: null, grams_left: 412.4 }))).toBe('about 412 g left')
     expect(leftWords(jarRow({ stock_mode: 'weighed', grams_left: null }))).toBeNull()
     expect(leftWords(itemRow())).toBeNull()
   })
@@ -86,7 +87,7 @@ describe('the ONE inline action', () => {
   it('Used one while a counted row has more than one left; Used it up otherwise', () => {
     expect(inlineAction(jarRow({ count_left: 2 }))).toBe(USED_ONE)
     expect(inlineAction(jarRow({ count_left: 1 }))).toBe(USED_UP)
-    expect(inlineAction(jarRow({ stock_mode: 'weighed', count_left: 1, grams_left: 300 }))).toBe(USED_UP)
+    expect(inlineAction(jarRow({ stock_mode: 'weighed', count_left: null, count_made: null, grams_left: 300 }))).toBe(USED_UP)
     expect(inlineAction(itemRow())).toBe(USED_UP)
   })
   it('the in-place words take the count from the SERVER\'s answer', () => {
@@ -94,6 +95,38 @@ describe('the ONE inline action', () => {
     expect(afterUseWords({ action: USED_UP, jar: { remaining_count: 0 } })).toBe('used it up')
     expect(afterUseWords({ action: 'went_bad' })).toBe('marked gone bad')
     expect(afterUseWords({ action: 'gave_away', jar: { remaining_count: 2 } })).toBe('2 left · gave some away')
+  })
+  // Put-Up UX pass R1 — Went bad may be a part. MUTATION: say 'marked gone bad' for every went_bad -> the
+  // first literal reds; treat every went_bad as finished -> the finishedByUse rows red.
+  it('Went bad that leaves some says both counts, the server\'s; all of it stays "marked gone bad"', () => {
+    expect(afterUseWords({ action: 'went_bad', use: { count_used: 2 }, jar: { remaining_count: 4 } })).toBe('4 left · 2 went bad')
+    expect(afterUseWords({ action: 'went_bad', use: { count_used: 1 }, jar: { remaining_count: '2' } })).toBe('2 left · 1 went bad')
+    expect(afterUseWords({ action: 'went_bad', use: { count_used: 4 }, jar: { remaining_count: 0 } })).toBe('marked gone bad')
+    expect(afterUseWords({ action: 'went_bad', use: { count_used: 1 }, jar: null })).toBe('marked gone bad')
+    expect(afterUseWords({ action: 'went_bad', use: null, jar: { remaining_count: 3 } })).toBe('3 left · some went bad')
+  })
+  it('a row is finished by a use only when nothing is left: a part gone bad keeps its action, like some given away', () => {
+    expect(finishedByUse(null)).toBe(false)
+    expect(finishedByUse({ action: 'went_bad', jar: { remaining_count: 4 } })).toBe(false)
+    expect(finishedByUse({ action: 'went_bad', jar: { remaining_count: 0 } })).toBe(true)
+    expect(finishedByUse({ action: 'went_bad', jar: null })).toBe(true)          // no count answered: today's rule
+    expect(finishedByUse({ action: 'gave_away', jar: { remaining_count: 2 } })).toBe(false)
+    expect(finishedByUse({ action: 'gave_away', jar: { remaining_count: 0 } })).toBe(true)
+    expect(finishedByUse({ action: USED_ONE, jar: { remaining_count: 3 } })).toBe(false)
+    expect(finishedByUse({ action: USED_ONE, jar: null })).toBe(false)
+    expect(finishedByUse({ action: USED_UP, jar: { remaining_count: 0 } })).toBe(true)
+    expect(finishedByUse({ action: USED_UP, jar: null })).toBe(true)
+  })
+  it('several left is ONE test: a counted put-up with more than one — never a weighed bag, a single or a bought item', () => {
+    expect(severalLeft(jarRow({ count_left: 2 }))).toBe(true)
+    expect(severalLeft(jarRow({ count_left: 1 }))).toBe(false)
+    expect(severalLeft(jarRow({ stock_mode: 'weighed', count_left: null, count_made: null, grams_left: 300 }))).toBe(false)
+    expect(severalLeft(itemRow())).toBe(false)
+    expect(severalLeft(null)).toBe(false)
+    // The row's Used one and the sheet's "Went bad…" hang on the same test.
+    for (const r of [jarRow({ count_left: 5 }), jarRow({ count_left: 1 }), itemRow()]) {
+      expect(inlineAction(r) === USED_ONE).toBe(severalLeft(r))
+    }
   })
   it('"Use soon" keeps the server\'s soon and past rows only', () => {
     const rows = [jarRow({ stock_id: 'a', discard: { status: 'soon' } }), jarRow({ stock_id: 'b', discard: { status: 'past' } }),
@@ -147,11 +180,17 @@ describe('Put something up / the Walk — method chips by place, As is, and rout
     expect(c.more).not.toContain('hot_sauce')
     expect(c.more).toContain('whole_freeze')
   })
-  it('As is for a typed name; "Fresh, as picked" for a planting; NONE for a planting at a freezer', () => {
-    expect(methodChoices({ placeKind: 'fridge', what: typed }).asIs).toBe(AS_IS_LABEL)
-    expect(methodChoices({ placeKind: 'deep_freezer', what: typed }).asIs).toBe(AS_IS_LABEL)
+  // AMENDED (Put-Up UX pass R1, D5): only the CHIP's label changed — it says what "as is" covers. The
+  // short words stay everywhere else (the save line, the Walk's band, the "pick one" sentence).
+  it('As is (bought, given, leftovers) for a typed name; "Fresh, as picked" for a planting; NONE for a planting at a freezer', () => {
+    expect(AS_IS_CHIP_LABEL).toBe('As is (bought, given, leftovers)')
+    expect(methodChoices({ placeKind: 'fridge', what: typed }).asIs).toBe(AS_IS_CHIP_LABEL)
+    expect(methodChoices({ placeKind: 'deep_freezer', what: typed }).asIs).toBe(AS_IS_CHIP_LABEL)
     expect(methodChoices({ placeKind: 'fridge', what: planting }).asIs).toBe(FRESH_LABEL)
     expect(methodChoices({ placeKind: 'deep_freezer', what: planting }).asIs).toBeNull()
+    expect(AS_IS_LABEL).toBe('As is')
+    expect(methodLabel(AS_IS, typed)).toBe('As is')
+    expect(methodLabel(AS_IS, planting)).toBe('Fresh, as picked')
   })
   it('a method routes to a put-up, As is to a pantry item', () => {
     expect(routeFor('whole_freeze')).toBe('jar')
@@ -198,7 +237,9 @@ describe('Put something up / the Walk — method chips by place, As is, and rout
       .toBe('put up Sep 30 · no date · set by hand')
     expect(previewLine({ method: 'whole_freeze', place, when: { date: '2026-09-30', precision: 'unknown' }, now: NOW }))
       .toBe('put up: not sure · no date — check it before using')
-    expect(previewLine({ method: AS_IS, place, when: { date: '2026-09-30', precision: 'day' }, now: NOW })).toBe('got it Sep 30')
+    // AMENDED (Put-Up UX pass R1, D5): a bought item's line says both things a save stores — the day, as
+    // "today" when it is today, and that it has no discard date.
+    expect(previewLine({ method: AS_IS, place, when: { date: '2026-09-30', precision: 'day' }, now: NOW })).toBe('got it today · no discard date')
     expect(previewLine({ method: null, place, when: { date: '2026-09-30', precision: 'day' }, now: NOW })).toBeNull()
   })
   it('the Walk\'s dates: an estimate chip stores its window start and word; Not sure stores the walk day, unknown', () => {

@@ -2,8 +2,9 @@
 // Put-Up B′ release 2 (V4 §2.5 The Pantry, §6.1, §6.6) — the Pantry segment's body: ONE list of put-ups
 // and bought items (GET /api/pantry), grouped By place (default) or By what it is.
 //
-// ROW: name · place · where from · how many left ("about N g left" for weighed stock) · the discard-by
-// chip with its basis words (jarWords.discardWords, through pantryRows.discardChip) · "From the garden"
+// ROW: name · place · where from · the batch it came from, by name ("from Petri Dish", plain words — the
+// door to that batch is in the row sheet) · how many left ("about N g left" for weighed stock) · the
+// discard-by chip with its basis words (jarWords.discardWords, through pantryRows.discardChip) · "From the garden"
 // · ONE inline action — Used one (counted, more than one left) or Used it up. The open target and the
 // inline action are SIBLINGS, never nested (V4 §6.6), each at least 48 px tall.
 //
@@ -11,18 +12,30 @@
 // the row reads "3 left · used one · Undo" until their next visit — no timer. The record of what they did
 // lives in the PAGE (`recent`, handed in), so switching segments inside one visit keeps it, and a
 // used-up row the server no longer lists stays on screen for its Undo (at full opacity, words in P.mid).
+// A MOVE made from a row here is said in one line at the top — where it went, and what the server
+// answered about its discard date (pantryRows.movedWords) — until it is closed or the next move.
+//
+// Put-Up UX pass R1, on the list: grouped By place a row does not repeat the place its heading names
+// (pantryRows.inPlaceGroup); a row whose discard date is soon or past sets its discard line on the soon
+// tint (putup/soonTint.js — the sentence is unchanged, the tint and the weight are two more channels
+// beside its words); and an EMPTY Pantry offers the two ways to fill it, as secondary buttons, when the
+// page hands them in (`onPutSomethingUp`, `onWalkPlace`) — neither handed in, it is the one line it was.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
-import { listPantry, undoUse, patchPantryItem, useJar, deletePantryItem } from '../../lib/pantryApi.js'
+import { listPantry, listBatchNames, undoUse, patchPantryItem, useJar, deletePantryItem } from '../../lib/pantryApi.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import SegmentedControl from '../forms/SegmentedControl.jsx'
 import ErrorBanner from '../forms/ErrorBanner.jsx'
+import Button from '../forms/Button.jsx'
+import { SOON_CHIP_STYLE } from '../putup/soonTint.js'
+import { DOOR_CTA } from './putSomethingUp.js'
+import { WALK_TITLE } from './WalkPlace.jsx'
 import PantryRowSheet from './PantryRowSheet.jsx'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
 import {
-  groupRows, rowKey, isItem, leftWords, discardChip, ageWords, inlineAction, ACTION_LABELS, USED_ONE, USED_UP,
-  afterUseWords, onlyUseSoon,
+  groupRows, rowKey, isItem, detailWords, discardChip, inlineAction, ACTION_LABELS, USED_ONE, USED_UP,
+  afterUseWords, finishedByUse, movedWords, onlyUseSoon, isUseSoon,
 } from './pantryRows.js'
 import { BRIDGE_TEXT } from './pantryBridge.js'
 
@@ -49,6 +62,38 @@ export function usePantryList({ fetch, group = 'place', enabled = true }) {
   return { rows, loading, error, reload: load }
 }
 
+// THE NAMES OF THE BATCHES the listed jars came from: { [batch id]: name } (Put-Up UX pass R1). The list
+// read sends a jar's `batch_id` and nothing else about its batch, so the names are ONE more read — sent
+// only when some row carries a batch_id, never once per row, and again only when a batch_id turns up that
+// no earlier read was sent for (a jar given a batch by "How it was made" in this same visit). FAILURE IS
+// ISOLATED: a read that fails, or a batch it does not list, leaves that jar exactly as it reads without a
+// name — no words about its batch, no door to it. `enabled` false sends nothing.
+const NO_NAMES = Object.freeze({})
+export function useBatchNames({ fetch, rows, enabled = true }) {
+  const [names, setNames] = useState(NO_NAMES)
+  const askedRef = useRef(new Set())
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+  // A string, so the effect below runs when the SET of batch ids changes and not on every re-read.
+  const ids = useMemo(
+    () => [...new Set((rows ?? []).map(r => r?.batch_id).filter(v => v != null && v !== '').map(String))].sort().join('\n'),
+    [rows],
+  )
+  useEffect(() => {
+    if (!enabled || !ids) return
+    const wanted = ids.split('\n')
+    if (wanted.every(id => askedRef.current.has(id))) return
+    for (const id of wanted) askedRef.current.add(id)
+    Promise.resolve().then(() => listBatchNames(fetch))
+      .then(m => { if (mountedRef.current) setNames(prev => ({ ...prev, ...m })) })
+      .catch(() => { /* the rows read as they do without a name */ })
+  }, [enabled, fetch, ids])
+  return names
+}
+export function batchNameOf(names, row) {
+  return row?.batch_id != null ? (names?.[String(row.batch_id)] ?? null) : null
+}
+
 // A used-up row the server no longer lists stays where it was for the person who acted: each recent
 // snapshot missing from `rows` goes back in after the last row of its group (or last, if its group is
 // gone too).
@@ -69,10 +114,29 @@ export function mergeRecent(rows, recent) {
 export default function PantryView({
   fetch, group, onGroupChange, rows, loading, error, onReload, recent, onRecent,
   useSoonOnly = false, onClearUseSoon, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, completion = null, onCompletionDone,
-  showBridge = false, onDismissBridge, now,
+  showBridge = false, onDismissBridge, onOpenBatch = null, onPutSomethingUp = null, onWalkPlace = null, now,
 }) {
   const [openRow, setOpenRow] = useState(null)
+  // The last move made from this list, said in place at the top (the place it went and what the server
+  // answered about its date) until it is closed or the next move replaces it. The row that moved may sit
+  // a screen or more down the list — and it leaves its place there the moment the list is re-read — so
+  // the line is brought into view when it appears: it is the only place the move's result is said.
+  // (A frame later, not in the commit: the row sheet has just closed, and a browser that restores the
+  // page's scroll as the sheet's Back entry is popped must have finished doing so.)
+  const [moved, setMoved] = useState(null)
+  const movedRef = useRef(null)
+  useEffect(() => {
+    if (!moved) return undefined
+    const show = () => {
+      const el = movedRef.current
+      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' })
+    }
+    if (typeof requestAnimationFrame !== 'function') { show(); return undefined }
+    const frame = requestAnimationFrame(show)
+    return () => cancelAnimationFrame(frame)
+  }, [moved])
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
+  const batches = useBatchNames({ fetch, rows })
 
   const shown = useMemo(() => {
     const merged = mergeRecent(rows ?? [], recent)
@@ -103,6 +167,17 @@ export default function PantryView({
           onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} />
       )}
 
+      {moved && (
+        <div role="status" data-testid="pantry-moved" ref={movedRef} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: T.space.md,
+          padding: '4px 4px 4px 12px', background: P.greenPale, border: `1px solid ${P.greenLight}`, borderRadius: T.radiusButton }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: P.green, overflowWrap: 'anywhere' }}>{moved}</span>
+          <button type="button" data-testid="pantry-moved-close" aria-label="Close — the moved line" onClick={() => setMoved(null)}
+            style={{ minWidth: 48, minHeight: T.buttonMinHeight, background: 'none', border: 'none', color: P.mid, fontSize: '1.1rem', cursor: 'pointer' }}>
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+      )}
+
       <div style={{ marginBottom: T.space.md }}>
         <SegmentedControl ariaLabel="Group by" small value={group} onChange={onGroupChange} options={GROUP_OPTIONS} />
       </div>
@@ -122,16 +197,30 @@ export default function PantryView({
       {error && rows == null && (
         <ErrorBanner>
           Couldn&rsquo;t load the pantry.{' '}
-          <button type="button" onClick={onReload} style={{ minHeight: 44, background: 'none', border: 'none', color: 'inherit',
+          <button type="button" onClick={onReload} style={{ minHeight: T.buttonMinHeight, background: 'none', border: 'none', color: 'inherit',
             textDecoration: 'underline', fontFamily: 'inherit', cursor: 'pointer' }}>Try again</button>
         </ErrorBanner>
       )}
       {rows != null && shown.length === 0 && (() => {
         const soonEmpty = useSoonOnly && (rows ?? []).length > 0
+        // The two ways to fill an empty Pantry, when the page hands them in — SECONDARY buttons: the
+        // screen's one filled button is the page header's.
+        const canPutUp = !soonEmpty && typeof onPutSomethingUp === 'function'
+        const canWalk = !soonEmpty && typeof onWalkPlace === 'function'
         return (
           <div data-testid={soonEmpty ? 'putup-use-soon-empty' : 'pantry-empty'} style={{ padding: '28px 18px', textAlign: 'center',
             color: P.mid, background: P.white, border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
             {soonEmpty ? 'Nothing to use soon right now.' : 'Nothing in the pantry yet.'}
+            {(canPutUp || canWalk) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: T.space.md }}>
+                {canPutUp && (
+                  <Button variant="secondary" data-testid="pantry-empty-putup" onClick={() => onPutSomethingUp()}>{DOOR_CTA}</Button>
+                )}
+                {canWalk && (
+                  <Button variant="secondary" data-testid="pantry-empty-walk" onClick={() => onWalkPlace()}>{WALK_TITLE}</Button>
+                )}
+              </div>
+            )}
           </div>
         )
       })()}
@@ -145,7 +234,7 @@ export default function PantryView({
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {g.rows.map(r => (
               <PantryRow key={rowKey(r)} row={r} fetch={fetch} recent={recent?.[rowKey(r)] ?? null} onRecent={onRecent}
-                onRecord={record} onOpen={() => setOpenRow(r)} onReload={onReload} now={nowDate} />
+                onRecord={record} onOpen={() => setOpenRow(r)} onReload={onReload} now={nowDate} batchName={batchNameOf(batches, r)} />
             ))}
           </ul>
         </section>
@@ -153,13 +242,14 @@ export default function PantryView({
 
       <PantryRowSheet row={openRow} fetch={fetch} onClose={() => setOpenRow(null)} now={now}
         JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
-        onUsed={record} onChanged={() => onReload?.()} />
+        onOpenBatch={onOpenBatch} canOpenBatch={(r) => batchNameOf(batches, r) != null}
+        onUsed={record} onChanged={() => onReload?.()} onMoved={(m) => setMoved(movedWords({ ...m, now: nowDate }))} />
     </div>
   )
 }
 
 // One row. The open target (a button over the words) and the inline action are siblings.
-export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onReload, now }) {
+export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onReload, now, batchName = null }) {
   const [busy, setBusy] = useState(false)
   // A synchronous guard: two taps inside one frame both read `busy` false, and each use carries its own
   // key, so both would land (the shipped RecordRow's usingRef, kept).
@@ -168,7 +258,8 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
   const key = rowKey(row)
   const action = inlineAction(row)
   const chip = discardChip(row, now)
-  const detail = [row.place?.label, row.where_from, leftWords(row), ageWords(row, now)].filter(Boolean).join(' · ')
+  const soon = isUseSoon(row)
+  const detail = detailWords(row, { now, batchName })
 
   async function act() {
     if (writingRef.current) return
@@ -214,10 +305,9 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
 
   const canUndo = !!recent && (isItem(row) || !!recent.use?.id)
   const label = ACTION_LABELS[action]
-  // A row that is still live after a use (Used one, some given away) keeps its action; one the use
-  // finished (used up, gone bad, nothing left) shows only its Undo.
-  const finished = !!recent && (recent.action !== USED_ONE && recent.action !== 'gave_away'
-    || (recent.jar?.remaining_count != null && Number(recent.jar.remaining_count) <= 0))
+  // A row that is still live after a use (Used one, some given away, some gone bad) keeps its action; one
+  // the use finished (used up, all of it gone bad, nothing left) shows only its Undo.
+  const finished = finishedByUse(recent)
   return (
     <li data-testid={`pantry-row-${key}`} style={{ borderTop: `1px solid ${P.cream}`, padding: '4px 8px' }}>
       <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
@@ -226,7 +316,15 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
             cursor: 'pointer', fontFamily: 'inherit', color: P.dark }}>
           <span style={{ display: 'block', fontWeight: 600, fontSize: '0.92rem' }}>{row.name}</span>
           {detail && <span style={{ display: 'block', fontSize: T.type.sm, color: P.mid }}>{detail}</span>}
-          {chip && <span data-testid={`pantry-row-chip-${key}`} style={{ display: 'block', fontSize: T.type.sm, color: P.mid, overflowWrap: 'anywhere' }}>{chip}</span>}
+          {chip && !soon && <span data-testid={`pantry-row-chip-${key}`} style={{ display: 'block', fontSize: T.type.sm, color: P.mid, overflowWrap: 'anywhere' }}>{chip}</span>}
+          {/* Soon or past: the same sentence, on the soon tint. The tint hugs the words (an inline box in
+              its own line), so a long sentence wraps inside it. */}
+          {chip && soon && (
+            <span style={{ display: 'block', margin: '2px 0' }}>
+              <span data-testid={`pantry-row-chip-${key}`} data-soon="true"
+                style={{ ...SOON_CHIP_STYLE, display: 'inline-block', fontSize: T.type.sm, overflowWrap: 'anywhere' }}>{chip}</span>
+            </span>
+          )}
           {isItem(row) && typeof row.notes === 'string' && row.notes.trim() && (
             <span style={{ display: 'block', fontSize: T.type.sm, color: P.mid, overflowWrap: 'anywhere' }}>{row.notes.trim()}</span>
           )}

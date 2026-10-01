@@ -13,21 +13,38 @@
 // the create route resolves with, so the date shown is the date stored. The completion line afterwards
 // is built from what the server answered, never from this preview.
 import {
-  ALL_PUT_UP_METHODS, METHOD_LABELS, estimateChips, previewDiscard, resolveWhen,
+  ALL_PUT_UP_METHODS, METHOD_LABELS, RAW_METHODS, estimateChips, previewDiscard, resolveWhen,
 } from '../putup/putItUp.js'
 import { putUpDateWords, shortDay, parseYmd, toYmd, discardWords, ESTIMATED_PRECISIONS } from '../putup/jarWords.js'
 
 export const AS_IS = 'as_is'
+// The no-method choice in two lengths. On its CHIP it says what it covers — true for a typed name whatever
+// it is (bought, a gift, leftovers, something foraged): the app does not know where a typed thing came
+// from, so the chip never says "bought". Everywhere else (the save line, the Walk's band) it is "As is".
 export const AS_IS_LABEL = 'As is'
+export const AS_IS_CHIP_LABEL = 'As is (bought, given, leftovers)'
 export const FRESH_LABEL = 'Fresh, as picked'
 export const DOOR_TITLE = 'Put something up'
 export const DOOR_CTA = 'Put something up'
 export const DOOR_SHEET = 'putsomethingup'
 export const METHOD_REQUIRED_TEXT = 'How was it put up? Pick one — or As is.'
+// The two disclosures each say what they hold (there were two controls called "More" 60 px apart): the
+// methods' one, and the options' one — which holds different things on the door and on the Walk.
+export const OTHER_WAYS_LABEL = 'Other ways…'
+export const DOOR_OPTIONS_LABEL = 'Date, discard by, notes'
+export const WALK_OPTIONS_LABEL = 'Raw or in oil, discard by, another date'
+export const DOOR_NOTES_PLACEHOLDER = "Where it's from, or anything to remember"
+// The door is for a thing that is finished. A ferment still going is a batch: this line hands the typed
+// name to the Start sheet.
+export const START_BATCH_INSTEAD_TEXT = 'Still going (a ferment)? Start a batch instead →'
 export const WHAT_REQUIRED_TEXT = 'What is it? Type a name.'
 export const WHERE_REQUIRED_TEXT = 'Where does it live? Pick a place.'
 
 const FREEZER_KINDS = new Set(['deep_freezer', 'fridge_freezer'])
+
+// Before a place is picked there is no kind to rank by: the general four (Put-Up UX pass R1), so the
+// row is never just "As is" and a link. A place then puts ITS four in their place.
+export const GENERAL_METHODS = Object.freeze(['whole_freeze', 'can_water_bath', 'ferment', 'dehydrate'])
 
 // Appendix B "Method chips on Put something up and the Walk, by place kind" — ≤ 4, a fixed seed order.
 export const PLACE_KIND_METHODS = Object.freeze({
@@ -41,15 +58,16 @@ export const PLACE_KIND_METHODS = Object.freeze({
 
 export function isPlantingHit(what) { return what?.source === 'planting' && !!what?.plant_id }
 
-// { chips, more, asIs } for a place kind and a What. `asIs` is the no-method chip's label, or null when
-// it is not offered: at a freezer a planting hit shows methods and More… only (the first chip is Freeze
-// whole), while "As is" stays there for other hits (bought frozen food). For a planting hit anywhere
-// else it reads "Fresh, as picked". No place yet → no seeded chips; everything is under More….
+// { chips, more, asIs } for a place kind and a What. `asIs` is the no-method CHIP's label, or null when
+// it is not offered: at a freezer a planting hit shows methods and Other ways… only (the first chip is
+// Freeze whole), while the as-is chip stays there for other hits (bought frozen food). For a planting hit
+// anywhere else it reads "Fresh, as picked"; for a typed name or any other hit, "As is (bought, given,
+// leftovers)". No place yet → the general four.
 export function methodChoices({ placeKind = null, what = null } = {}) {
-  const chips = PLACE_KIND_METHODS[placeKind] ?? []
+  const chips = PLACE_KIND_METHODS[placeKind] ?? GENERAL_METHODS
   const more = ALL_PUT_UP_METHODS.filter(m => !chips.includes(m))
   const planting = isPlantingHit(what)
-  const asIs = planting && FREEZER_KINDS.has(placeKind) ? null : (planting ? FRESH_LABEL : AS_IS_LABEL)
+  const asIs = planting && FREEZER_KINDS.has(placeKind) ? null : (planting ? FRESH_LABEL : AS_IS_CHIP_LABEL)
   return { chips, more, asIs }
 }
 
@@ -104,18 +122,26 @@ export function walkWhen({ choice, pickedDate = '', now = new Date() } = {}) {
 
 // ── The preview line (§3.1) ──────────────────────────────────────────────────────────────────────
 // `discard`: { mode: 'auto' | 'none' | 'date', date }. A put-up resolves auto through the engine; a
-// bought item has a discard date only if one is typed.
-export function previewLine({ method, place, when, discard = { mode: 'auto', date: '' }, now = new Date() }) {
+// bought item has a discard date only if one is typed — and SAYS SO when none is ("got it today · no
+// discard date"), so the line states both things a save will store.
+// `isRaw` / `inOil` (the Walk's two chips): the engine reads both, so the line changes the moment one is
+// tapped. Raw counts only on a method that allows it (putItUp.RAW_METHODS — previewDiscard's own rule).
+export const NO_DISCARD_DATE_WORDS = 'no discard date'
+export function previewLine({ method, place, when, discard = { mode: 'auto', date: '' }, isRaw = false, inOil = false, now = new Date() }) {
   if (!method || !when) return null
-  const dateWords = when.precision === 'unknown' ? 'put up: not sure' : `${method === AS_IS ? 'got it' : 'put up'} ${putUpDateWords(when.date, when.precision, { now })}`
   if (method === AS_IS) {
+    const today = when.precision === 'day' && when.date === toYmd(new Date(now.getFullYear(), now.getMonth(), now.getDate()))
+    const got = when.precision === 'unknown' ? 'put up: not sure'
+      : `got it ${today ? 'today' : putUpDateWords(when.date, when.precision, { now })}`
     if (discard?.mode === 'date') {
       const d = parseYmd(discard.date)
-      return d ? `${dateWords} · discard by ${shortDay(d, now)} · set by hand` : `${dateWords} · pick the date from the label`
+      return d ? `${got} · discard by ${shortDay(d, now)} · set by hand` : `${got} · pick the date from the label`
     }
-    return dateWords
+    return `${got} · ${NO_DISCARD_DATE_WORDS}`
   }
-  const p = previewDiscard({ row: { place, discard }, method, when: { date: when.date, precision: when.precision }, now })
+  const dateWords = when.precision === 'unknown' ? 'put up: not sure' : `put up ${putUpDateWords(when.date, when.precision, { now })}`
+  const p = previewDiscard({ row: { place, discard, isRaw: isRaw === true, inOil: inOil === true }, method,
+    when: { date: when.date, precision: when.precision }, now })
   return p ? `${dateWords} · ${p.words}` : dateWords
 }
 
@@ -140,8 +166,10 @@ export function doorError({ what, place, method, discard = null }) {
 
 // POST /api/preservation (the 1b create). `storageLocationId` is the place's id (a template chip is made
 // first, pantryApi.ensurePlaceId). An absent use_by_target is the engine's date; null is "no date · set
-// by hand"; a date is his (§3.1, key presence).
-export function jarBody({ key, what, storageLocationId, method, when, count = 1, discard, notes = '' }) {
+// by hand"; a date is his (§3.1, key presence). `is_raw` / `in_oil` are sent ONLY when chosen (true), and
+// Raw only for a method that allows it — an untouched save's body is exactly what it was, and the route
+// ignores a key it does not know, so a misspelt one would store nothing and say nothing.
+export function jarBody({ key, what, storageLocationId, method, when, count = 1, discard, notes = '', isRaw = false, inOil = false }) {
   const n = Number(count)
   const body = {
     idempotency_key: key,
@@ -158,6 +186,8 @@ export function jarBody({ key, what, storageLocationId, method, when, count = 1,
   if (isPlantingHit(what)) { body.plant_id = what.plant_id; body.source_kind = 'own_garden' }
   if (discard?.mode === 'none') body.use_by_target = null
   else if (discard?.mode === 'date' && parseYmd(discard.date)) body.use_by_target = toYmd(parseYmd(discard.date))
+  if (isRaw === true && RAW_METHODS.has(method)) body.is_raw = true
+  if (inOil === true) body.in_oil = true
   const nt = String(notes ?? '').trim()
   if (nt) body.notes = nt
   return body

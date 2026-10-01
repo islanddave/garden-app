@@ -6,8 +6,38 @@
 // from_garden, plant_id, crop_type_slug, batch_id, stock_mode, count_left, count_made, grams_left,
 // method, discard: {date, basis, status}, acquired_at, created_by, updated_at }.
 import { validateUse } from '../../../lambda/preservation/pantryUses.js'
+import { moveUseBy } from '../../../lambda/preservation/jarRoutes.js'
+import { projectRow } from '../../../lambda/preservation/jarRules.js'
 
 const USE_ID_STAND_IN = '00000000-0000-4000-8000-000000000000'
+
+// POST /api/preservation/:id/move answers the MOVED ROW in the server's own shape (jarRules.projectRow),
+// with its date decided by the Lambda's OWN move rule (jarRoutes.moveUseBy) from the listed row's STORED
+// basis and the two place kinds — so a client test reads the answer a real move gives: a worked-out date
+// at another kind of place comes back with no date, a typed date stays, a move within one kind keeps the
+// date, a house estimate is worked out again from the move day. A jar this fake does not list answers
+// `{ id }`, as it always did. `state.rows` is not rewritten (no route here rewrites it).
+function movedJar({ id, body, state, places }) {
+  const r = state.rows.find(x => x.stock_kind === 'put_up' && x.stock_id === id)
+  if (!r) return { id }
+  const dest = body?.place?.id != null
+    ? (places.find(p => String(p.id) === String(body.place.id)) ?? { id: body.place.id, kind: null })
+    : { id: `loc-new-${++state.seq}`, label: body?.place?.label, kind: body?.place?.kind ?? null }
+  const when = typeof body?.when === 'string' ? body.when : body?.when?.date
+  const moveDate = when ?? new Date().toISOString().slice(0, 10)
+  const stored = { method: r.method, storage_kind: r.place?.kind ?? null, use_by_basis: r.discard?.basis ?? null }
+  const { kindChanged, useBy } = moveUseBy(stored, dest.kind, moveDate)
+  return projectRow({
+    id, user_id: r.created_by, label: r.name, method: r.method, crop_type_slug: r.crop_type_slug, plant_id: r.plant_id,
+    batch_id: r.batch_id, package_count: r.count_made ?? 1, remaining_count: r.count_left ?? 1,
+    preserved_at: r.acquired_at ?? null, preserved_at_precision: r.acquired_precision ?? null, notes: r.notes ?? null,
+    storage_location_id: dest.id,
+    use_by_target: useBy ? useBy.use_by_target : (r.discard?.date ?? null),
+    use_by_basis: useBy ? useBy.use_by_basis : (r.discard?.basis ?? null),
+    storage_moved_at: kindChanged ? `${moveDate}T12:00:00.000Z` : null,
+    updated_at: r.updated_at,
+  })
+}
 
 export const PLACES = [
   { id: 'loc-1', label: 'Chest Freezer 1', kind: 'deep_freezer' },
@@ -41,7 +71,10 @@ export function itemRow(o = {}) {
 
 // A fetch fake routing the Pantry contract plus the shipped routes the Pantry calls. `state.rows` is the
 // list; handlers can be overridden per route key. Every call is recorded on `calls`.
-export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSearch = { plantings: [], put_ups: [] } } = {}) {
+// `batches` (optional, [{ id, label, … }]): what GET /api/kitchen-batches?state=all answers — the read the
+// Pantry names its jars' batches from — in the route's own envelope, { state: 'all', batches }. Left out,
+// every kitchen-batches GET answers as it always did.
+export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSearch = { plantings: [], put_ups: [] }, batches = null } = {}) {
   const state = { rows: [...rows], calls: [], seq: 0 }
   const fn = async (path, options = {}) => {
     const method = options.method || 'GET'
@@ -59,6 +92,7 @@ export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSe
     if (method === 'GET' && path === '/api/storage-locations') return places
     if (method === 'POST' && path === '/api/storage-locations') return { id: `loc-new-${++state.seq}`, label: body.label, kind: body.kind }
     if (method === 'GET' && path.startsWith('/api/kitchen-batches/line-search')) return lineSearch
+    if (method === 'GET' && batches && /^\/api\/kitchen-batches\?(.*&)?state=all(&|$)/.test(path)) return { state: 'all', batches }
     if (method === 'GET' && path.startsWith('/api/kitchen-batches')) return { state: 'going', batches: [] }
     if (method === 'POST' && path === '/api/pantry/uses') {
       // Judged by the Lambda's OWN validator, so a body the server refuses is a 400 here too, with the
@@ -91,7 +125,7 @@ export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSe
         quantity_unit: null, notes: null, use_by_target: null, storage_location_id: r?.place?.id ?? null }
     }
     if (method === 'PATCH' && path.startsWith('/api/preservation/')) return { id: path.split('/')[3], ...body }
-    if (method === 'POST' && /^\/api\/preservation\/[^/]+\/move$/.test(path)) return { id: path.split('/')[3] }
+    if (method === 'POST' && /^\/api\/preservation\/[^/]+\/move$/.test(path)) return movedJar({ id: path.split('/')[3], body, state, places })
     if (method === 'DELETE' && path.startsWith('/api/preservation/')) return { ok: true }
     if (method === 'POST' && /^\/api\/kitchen-batches\/[^/]+\/stages$/.test(path)) return { stage: { id: 'st-1', stage_kind: body.stage_kind } }
     if (path.startsWith('/api/harvests')) return { entries: [], aggregates: { crops: [] } }

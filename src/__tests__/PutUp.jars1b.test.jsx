@@ -74,7 +74,10 @@ describe('the Pantry row says its name, its place, what is left and its discard 
     await renderList()
     const row = await rowOpen()
     expect(row.textContent).toContain('Megatron reaper')
-    expect(row.textContent).toContain('Fridge · 2 left')
+    // AMENDED (Put-Up UX pass R1, F22): grouped By place the row sits under its place's heading and does
+    // not repeat it — the place is said once, by the heading; what is left is the row's.
+    expect(screen.getByRole('heading', { name: 'Fridge' })).toBeTruthy()
+    expect(row.textContent).toContain('Megatron reaper' + '2 left')
     expect(document.body.textContent).not.toMatch(/\bnull\b|undefined|NaN/)
   })
 
@@ -166,7 +169,9 @@ describe('Move it (V4 §2.5, §3.4)', () => {
     fireEvent.click(await screen.findByTestId('row-move'))
     await screen.findByTestId('move-place-id:loc-cf1')
     expect(screen.queryByTestId('move-place-id:loc-fridge')).toBeNull()        // where it already is
-    const req = [...screen.getByTestId('move-sheet').querySelectorAll('[aria-required="true"]')]
+    // Put-Up UX pass R1: Move it is a panel inside the row sheet; the same one-item list is read there.
+    expect(screen.getByTestId('row-sheet').contains(screen.getByTestId('move-panel'))).toBe(true)
+    const req = [...screen.getByTestId('move-panel').querySelectorAll('[aria-required="true"]')]
     expect(req.map(e => e.getAttribute('aria-label'))).toEqual(['Where is Megatron reaper going?'])
     await act(async () => { fireEvent.click(screen.getByTestId('move-save')) })
     expect(screen.getByTestId('move-error').textContent).toBe('Where is it going? Pick a place.')
@@ -177,7 +182,8 @@ describe('Move it (V4 §2.5, §3.4)', () => {
     expect([method, path]).toEqual(['POST', '/api/preservation/rec-1b/move'])
     expect(body.place).toEqual({ id: 'loc-cf1' })
     expect(body.when.precision).toBe('day')
-    await waitFor(() => expect(screen.queryByTestId('move-sheet')).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('move-panel')).toBeNull())
+    expect(screen.queryByTestId('row-sheet')).toBeNull()                       // the row sheet closes with the move
   })
 })
 

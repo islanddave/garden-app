@@ -1,13 +1,28 @@
 // src/components/pantry/PantryRowSheet.jsx
 // Put-Up B′ release 2 (V4 §2.5 "Row sheet", §3.2, §6.3) — what opens when a Pantry row is tapped.
 //
-// A PUT-UP (jar): Went bad (a use of what is left, fate discarded) · Gave it away (a use of a count,
-// default 1, fate given_away) · Move it (the shipped move route) · Edit (the shipped jar editor, with
-// Remove inside, two-step, refused with the server's reason) · Next time… (a batch jar writes the batch's
-// `noted` stage row; a batchless jar appends a dated line to its notes) · How it was made → (only when
-// the host hands in `onHowItWasMade` — the batch-builder lane wires it).
+// A PUT-UP (jar), in this order: Move it (the shipped move route) · Next time… (a batch jar writes the
+// batch's `noted` stage row; a batchless jar appends a dated line to its notes) · Gave it away (a use of a
+// count, default 1, fate given_away) · Went bad (fate discarded) · Edit (the shipped jar editor, with
+// Remove inside, two-step, refused with the server's reason) · then How it was made → (a put-up with no
+// batch, only when the host hands in `onHowItWasMade` — the batch-builder lane wires it) or What went in →
+// (a put-up that came from a batch the host can name, only when the host hands in `onOpenBatch`).
 // A BOUGHT ITEM: Move it (PATCH storage_location_id) · Edit (name, when you got it, a discard date from
 // the label, notes; Remove inside, two-step). Used it up is the row's own inline action.
+//
+// WENT BAD (Put-Up UX pass R1). With several of a counted put-up left (pantryRows.severalLeft — the test
+// the row's own Used one hangs on) it reads "Went bad…" and opens the count panel at ALL that is left;
+// otherwise (one left, a weighed bag, an uncounted row) it reads "Went bad" and acts at the tap. THE
+// REQUEST: at the top of the stepper, and at every one tap, `{ all_remaining: true, fate: 'discarded' }`
+// — "what is left right now", which holds on a server of any age and when the other phone has used one
+// since; below the top, `{ count_used: n, fate: 'discarded' }`. Never both keys, and never a fallback to
+// all_remaining after a refusal (that would discard more than was asked). THE KEY is the intent's: minted
+// when the panel opens (or at the one tap), kept for a retry of the same count, replaced when the count
+// changes — a retry after a lost answer is then the server's replay, not a second discard.
+//
+// BACK, one rule for the five panels (Move, Next time, Gave it away, Went bad, Edit): Back in a panel
+// returns to the action list (the sheet's backIntercept, which re-arms the sheet's Back entry); Back on
+// the list closes the sheet.
 //
 // Every one-tap write reports back through `onUsed` so the ROW shows "… · Undo" in place for the person
 // who acted (V4 §2.5); everything else through `onChanged`, and the host re-reads the list.
@@ -20,17 +35,32 @@ import { useJar, patchPantryItem, deletePantryItem, ensurePlaceId } from '../../
 import Sheet from '../forms/Sheet.jsx'
 import Button from '../forms/Button.jsx'
 import { labelChrome, inputChrome } from '../forms/formStyles.js'
+import { mintKey } from '../kitchen/idempotencyKey.js'
+import { landAfterClose } from '../kitchen/sheetLanding.js'
 import MoveJarSheet from '../putup/MoveJarSheet.jsx'
+import { nextTimeWords } from '../putup/howItWasMade.js'
 import { toYmd, parseYmd, putUpDateWords, sizeWords } from '../putup/jarWords.js'
 import { PUTUP_SOURCE_LABELS } from '../../lib/dropdownRegistry.js'
 import Stepper, { stepperCount } from './Stepper.jsx'
-import { isJar, discardChip, leftWords, ageWords, effectiveBasis } from './pantryRows.js'
+import { isJar, discardChip, leftWords, ageWords, effectiveBasis, severalLeft } from './pantryRows.js'
 
 export const HOUSE_DETAIL_TEXT =
   'No published figure exists for candied fruit. This date is a house estimate, not a tested one. Set your own.'
 
+// Went bad: the action's two labels, the panel's question, and what its filled button says — the count it
+// will discard, so a panel that looks like Gave it away's (which starts at 1) cannot be mistaken for it.
+export const WENT_BAD_LABEL = 'Went bad'
+export const WENT_BAD_ASKS_LABEL = 'Went bad…'
+export const WENT_BAD_QUESTION = 'How many went bad?'
+export function wentBadCta(count, all) {
+  return count >= all ? `All ${all} went bad` : `${count} went bad`
+}
+// A part count the server did not take (a server older than this client refuses any count for Went bad,
+// in words written for a developer): nothing was written, the panel and its count stay.
+export const WENT_BAD_PART_REFUSED_TEXT = "That didn't save. Try again in a few minutes."
+
 const actionBtn = {
-  display: 'block', width: '100%', minHeight: 48, textAlign: 'left', padding: '10px 12px', background: P.white,
+  display: 'block', width: '100%', minHeight: T.buttonMinHeight, textAlign: 'left', padding: '10px 12px', background: P.white,
   border: `1px solid ${P.border}`, borderRadius: T.radiusButton, cursor: 'pointer', fontFamily: 'inherit',
   fontSize: T.type.base, fontWeight: 600, color: P.dark,
 }
@@ -51,28 +81,56 @@ export function jarRecordWords(rec, now = new Date()) {
 }
 
 
-// `onHowItWasMade(row)` is the batch-builder lane's door (useHowItWasMade().open); `canHowItWasMade(row)`
-// says whether this row may offer it (a put-up with no batch). Neither handed in → no door.
-export default function PantryRowSheet({ row, fetch, onClose, onUsed, onChanged, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, now }) {
-  if (!row) return null
-  return <RowSheetOpen key={`${row.stock_kind}:${row.stock_id}`} row={row} fetch={fetch} onClose={onClose} onUsed={onUsed}
-    onChanged={onChanged} JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade} now={now} />
+// A jar's notes AS THEY ARE READ: a "Next time…" line is stored with its day in brackets ("Next time
+// (2026-09-02): less basil" — the shape the server and the batch builder find these lines by), and reads
+// "Next time: less basil · Sep 2" (howItWasMade.nextTimeWords). Line by line; every other line, and the
+// stored note itself, is untouched.
+export function notesAsRead(notes, now = new Date()) {
+  return String(notes ?? '').split(/\r?\n/).map(line => nextTimeWords(line, now)).join('\n')
 }
 
-function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHowItWasMade, canHowItWasMade, now }) {
-  const [panel, setPanel] = useState(null)      // null | 'give' | 'move' | 'edit' | 'next'
+// `onHowItWasMade(row)` is the batch-builder lane's door (useHowItWasMade().open); `canHowItWasMade(row)`
+// says whether this row may offer it (a put-up with no batch). Neither handed in → no door.
+// `onMoved({ row, place, saved })`: a move landed — the place tapped and the row the server answered (a
+// put-up's jar, a bought item's item), for the host's in-place line. `onChanged('moved')` still follows.
+// `onOpenBatch(id, origin)` is the page's opener for batch detail; `canOpenBatch(row)` says whether the
+// host can name this row's batch (a batch it cannot name gets no door). Not handed in → no such action.
+// THE SHEET LANDS FIRST: it closes, its own Back entry is consumed, and only then is the page told to
+// open the batch (sheetLanding.landAfterClose) — a push from inside the armed sheet would strand that
+// entry under the batch and cost a dead Back press. The origin it names is the Pantry.
+export const WHAT_WENT_IN_LABEL = 'What went in →'
+export const PANTRY_ORIGIN_LABEL = 'Pantry'
+export default function PantryRowSheet({
+  row, fetch, onClose, onUsed, onChanged, onMoved = null, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null,
+  onOpenBatch = null, canOpenBatch = null, now,
+}) {
+  if (!row) return null
+  return <RowSheetOpen key={`${row.stock_kind}:${row.stock_id}`} row={row} fetch={fetch} onClose={onClose} onUsed={onUsed}
+    onChanged={onChanged} onMoved={onMoved} JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
+    onOpenBatch={onOpenBatch} canOpenBatch={canOpenBatch} now={now} />
+}
+
+function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEditor, onHowItWasMade, canHowItWasMade, onOpenBatch, canOpenBatch, now }) {
+  const [panel, setPanel] = useState(null)      // null | 'move' | 'next' | 'give' | 'went-bad' | 'edit'
   const [busy, setBusy] = useState(false)
+  const [panelBusy, setPanelBusy] = useState(false)   // the Move panel's write, in flight
   const [err, setErr] = useState(null)
   const writingRef = useRef(false)
+  // The one-tap Went bad's key: minted at the first tap and kept, so a retry after a lost answer is the
+  // server's replay of that use rather than a second one.
+  const wentBadKeyRef = useRef(null)
   const jar = isJar(row)
+  const asksHowMany = severalLeft(row)
   const nowDate = new Date(now ?? Date.now())
 
-  async function use(action, body) {
+  // `key`: the intent's own idempotency key, when the caller holds one (else pantryApi mints one per
+  // call). `part`: a Went bad of fewer than all that is left — its uncoded refusal is said in plain words.
+  async function use(action, body, { key = null, part = false } = {}) {
     if (writingRef.current) return
     writingRef.current = true
     setBusy(true); setErr(null)
     try {
-      const r = await useJar(fetch, { preservation_log_id: row.stock_id, ...body })
+      const r = await useJar(fetch, { preservation_log_id: row.stock_id, ...body, ...(key ? { idempotency_key: key } : {}) })
       writingRef.current = false
       setBusy(false)
       onUsed?.({ row, action, use: r?.use ?? null, jar: r?.jar ?? null })
@@ -80,9 +138,22 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHow
     } catch (e) {
       writingRef.current = false
       setBusy(false)
-      setErr(refusalOf(e, "Couldn't update — try again."))
+      setErr(part && e?.status === 400 && !describeRefusal(e)
+        ? WENT_BAD_PART_REFUSED_TEXT : refusalOf(e, "Couldn't update — try again."))
     }
   }
+
+  function wentBadAtOnce() {
+    if (!wentBadKeyRef.current) wentBadKeyRef.current = mintKey()
+    use('went_bad', { all_remaining: true, fate: 'discarded' }, { key: wentBadKeyRef.current })
+  }
+  // The panel's confirm: all that is left is "what is left right now"; fewer is a count.
+  function wentBadCount(n, all, key) {
+    if (n >= all) use('went_bad', { all_remaining: true, fate: 'discarded' }, { key })
+    else use('went_bad', { count_used: n, fate: 'discarded' }, { key, part: true })
+  }
+  const openPanel = (p) => { setErr(null); setPanel(p) }
+  const closePanel = () => { setErr(null); setPanel(null) }
 
   // A jar's full record (GET /api/preservation/:id), read once when the sheet opens: the row carries
   // only what the list shows, and the sheet is where the rest is said — its size, its put-up date at its
@@ -102,25 +173,14 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHow
   const chip = discardChip(row, nowDate)
   const recWords = rec ? jarRecordWords(rec, nowDate) : null
 
-  if (panel === 'move') {
-    return (
-      <MoveJarSheet open jar={{ id: row.stock_id, label: row.name, storage_location_id: row.place?.id ?? null }} now={now}
-        whenless={!jar}
-        onSubmit={jar ? null : async ({ place }) => {
-          const id = await ensurePlaceId(fetch, place)
-          await patchPantryItem(fetch, row.stock_id, { storage_location_id: id })
-        }}
-        onClose={() => setPanel(null)} onMoved={() => { onChanged?.('moved'); onClose?.() }} />
-    )
-  }
-
   return (
-    <Sheet open onClose={onClose} title={row.name || 'In the pantry'} size="full" busy={busy} armsBack>
+    <Sheet open onClose={onClose} title={row.name || 'In the pantry'} size="full" busy={busy || panelBusy} armsBack
+      backIntercept={panel ? () => { closePanel(); return true } : null}>
       <div data-testid="row-sheet" data-row-key={`${row.stock_kind}:${row.stock_id}`} style={{ padding: '0 18px 18px', display: 'flex', flexDirection: 'column', gap: T.space.sm }}>
         {detail && <p style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{detail}</p>}
         {recWords && <p data-testid="row-sheet-record" style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{recWords}</p>}
         {(rec?.notes || (!jar && row.notes)) && (
-          <p data-testid="row-sheet-notes" style={{ margin: 0, color: P.mid, fontSize: T.type.sm, whiteSpace: 'pre-wrap' }}>{rec?.notes || row.notes}</p>
+          <p data-testid="row-sheet-notes" style={{ margin: 0, color: P.mid, fontSize: T.type.sm, whiteSpace: 'pre-wrap' }}>{notesAsRead(rec?.notes || row.notes, nowDate)}</p>
         )}
         {chip && <p style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{chip}</p>}
         {jar && effectiveBasis(row) === 'house' && row.discard?.date && (
@@ -128,41 +188,75 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHow
         )}
         <RefusalLine err={err} testId="row-sheet-error" />
 
+        {/* The order is the thumb's: what is done most and undone easily first, the discard below it. */}
         {panel === null && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button type="button" style={actionBtn} disabled={busy} data-testid="row-move" onClick={() => openPanel('move')}>Move it</button>
+            {jar && (
+              <button type="button" style={actionBtn} disabled={busy} data-testid="row-next" onClick={() => openPanel('next')}>Next time…</button>
+            )}
+            {jar && (
+              <button type="button" style={actionBtn} disabled={busy} data-testid="row-give" onClick={() => openPanel('give')}>Gave it away</button>
+            )}
             {jar && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-went-bad"
-                onClick={() => use('went_bad', { all_remaining: true, fate: 'discarded' })}>Went bad</button>
+                onClick={asksHowMany ? () => openPanel('went-bad') : wentBadAtOnce}>
+                {asksHowMany ? WENT_BAD_ASKS_LABEL : WENT_BAD_LABEL}
+              </button>
             )}
-            {jar && (
-              <button type="button" style={actionBtn} disabled={busy} data-testid="row-give" onClick={() => setPanel('give')}>Gave it away</button>
-            )}
-            <button type="button" style={actionBtn} disabled={busy} data-testid="row-move" onClick={() => setPanel('move')}>Move it</button>
-            <button type="button" style={actionBtn} disabled={busy} data-testid="row-edit" onClick={() => setPanel('edit')}>Edit</button>
-            {jar && (
-              <button type="button" style={actionBtn} disabled={busy} data-testid="row-next" onClick={() => setPanel('next')}>Next time…</button>
-            )}
+            <button type="button" style={actionBtn} disabled={busy} data-testid="row-edit" onClick={() => openPanel('edit')}>Edit</button>
             {jar && typeof onHowItWasMade === 'function' && (typeof canHowItWasMade !== 'function' || canHowItWasMade(row)) && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-how"
                 onClick={() => { onHowItWasMade(row); onClose?.() }}>How it was made →</button>
             )}
+            {jar && row.batch_id != null && typeof onOpenBatch === 'function' && (typeof canOpenBatch !== 'function' || canOpenBatch(row)) && (
+              <button type="button" style={actionBtn} disabled={busy} data-testid="row-what-went-in"
+                onClick={() => landAfterClose(onClose, () => onOpenBatch(row.batch_id, { label: PANTRY_ORIGIN_LABEL }))}>
+                {WHAT_WENT_IN_LABEL}
+              </button>
+            )}
           </div>
         )}
 
+        {/* Move it — a panel, like the others (it rides this sheet's one Back entry). The rule line reads
+            the row's STORED basis and date and the kind of place it is in now. A bought item moves by a
+            PATCH of its place, with no When. What the write answered goes to the host through `onMoved` —
+            AFTER the sheet has closed and its Back entry is consumed (landAfterClose): the host brings its
+            line into view, and a scroll made while that entry is still being popped is undone by the pop. */}
+        {panel === 'move' && (
+          <MoveJarSheet open now={now} whenless={!jar} onBusyChange={setPanelBusy}
+            jar={{ id: row.stock_id, label: row.name, storage_location_id: row.place?.id ?? null, storage_kind: row.place?.kind ?? null,
+              use_by_target: row.discard?.date ?? null, use_by_basis: row.discard?.basis ?? null }}
+            onSubmit={jar ? null : async ({ place }) => {
+              const id = await ensurePlaceId(fetch, place)
+              const r = await patchPantryItem(fetch, row.stock_id, { storage_location_id: id })
+              return r?.item ?? r
+            }}
+            onClose={closePanel}
+            onMoved={({ saved, place }) => {
+              onChanged?.('moved')
+              landAfterClose(onClose, () => onMoved?.({ row, place, saved }))
+            }} />
+        )}
         {panel === 'give' && (
-          <GivePanel row={row} busy={busy} onCancel={() => setPanel(null)}
-            onGive={(n) => use('gave_away', { count_used: n, fate: 'given_away' })} />
+          <CountPanel row={row} busy={busy} idPrefix="give" start="one" question="How many did you give away?"
+            label="How many given away" cta="Gave it away" onCancel={closePanel}
+            onConfirm={(n) => use('gave_away', { count_used: n, fate: 'given_away' })} />
+        )}
+        {panel === 'went-bad' && (
+          <CountPanel row={row} busy={busy} idPrefix="went-bad" start="all" question={WENT_BAD_QUESTION}
+            label="How many went bad" cta={wentBadCta} onCancel={closePanel} onConfirm={wentBadCount} />
         )}
         {panel === 'next' && (
-          <NextTimePanel row={row} fetch={fetch} onCancel={() => setPanel(null)}
+          <NextTimePanel row={row} fetch={fetch} onCancel={closePanel}
             onSaved={() => { onChanged?.('noted'); onClose?.() }} />
         )}
         {panel === 'edit' && jar && (
-          <JarEditPanel row={row} rec={rec} recFailed={recFailed} fetch={fetch} JarEditor={JarEditor} onCancel={() => setPanel(null)}
+          <JarEditPanel row={row} rec={rec} recFailed={recFailed} fetch={fetch} JarEditor={JarEditor} onCancel={closePanel}
             onSaved={() => { onChanged?.('edited'); onClose?.() }} onRemoved={() => { onChanged?.('removed'); onClose?.() }} />
         )}
         {panel === 'edit' && !jar && (
-          <ItemEditPanel row={row} fetch={fetch} onCancel={() => setPanel(null)}
+          <ItemEditPanel row={row} fetch={fetch} onCancel={closePanel}
             onSaved={() => { onChanged?.('edited'); onClose?.() }} onRemoved={() => { onChanged?.('removed'); onClose?.() }} />
         )}
       </div>
@@ -170,16 +264,28 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, JarEditor, onHow
   )
 }
 
-function GivePanel({ row, busy, onCancel, onGive }) {
-  const [n, setN] = useState('1')
+// ONE count panel for the two uses that ask how many. `start`: 'one' (Gave it away) or 'all' (Went bad —
+// all that is left, where + is disabled). `cta` is the filled button's words, or a function of the count
+// and of all that is left. `onConfirm(count, all, key)`: `all` is what the row says is left (null when it
+// carries no count) and `key` the idempotency key of THIS count — minted when the panel opens, kept while
+// the count stands, replaced when it changes, so a retry of one count is one use on the server.
+function CountPanel({ row, busy, idPrefix, start, question, label, cta, onCancel, onConfirm }) {
   const max = row.count_left != null && Number(row.count_left) >= 1 ? Number(row.count_left) : null
+  const [n, setN] = useState(() => (start === 'all' && max != null ? String(max) : '1'))
+  const [key, setKey] = useState(() => mintKey())
+  const countOf = (v) => Math.min(stepperCount(v), max ?? Infinity)
+  const count = countOf(n)
+  const change = (v) => {
+    if (countOf(v) !== count) setKey(mintKey())
+    setN(v)
+  }
   return (
-    <div data-testid="give-panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <span style={labelChrome} aria-hidden="true">How many did you give away?</span>
-      <Stepper value={n} onChange={setN} name={row.name} idPrefix="give" max={max} disabled={busy} label="How many given away" />
+    <div data-testid={`${idPrefix}-panel`} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span style={labelChrome} aria-hidden="true">{question}</span>
+      <Stepper value={n} onChange={change} name={row.name} idPrefix={idPrefix} max={max} disabled={busy} label={label} />
       <div style={{ display: 'flex', gap: 8 }}>
-        <Button variant="primary" data-testid="give-save" loading={busy} loadingLabel="Saving…"
-          onClick={() => onGive(Math.min(stepperCount(n), max ?? Infinity))}>Gave it away</Button>
+        <Button variant="primary" data-testid={`${idPrefix}-save`} loading={busy} loadingLabel="Saving…"
+          onClick={() => onConfirm(count, max, key)}>{typeof cta === 'function' ? cta(count, max) : cta}</Button>
         <Button variant="secondary" onClick={onCancel} disabled={busy}>Cancel</Button>
       </div>
     </div>
@@ -338,7 +444,7 @@ function ItemEditPanel({ row, fetch, onCancel, onSaved, onRemoved }) {
       setErr(refusalOf(e, "Couldn't remove — try again."))
     }
   }
-  const field = { ...inputChrome(false), width: '100%', minHeight: 44 }
+  const field = { ...inputChrome(false), width: '100%', minHeight: T.buttonMinHeight }
   return (
     <div data-testid="item-edit-panel" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div>

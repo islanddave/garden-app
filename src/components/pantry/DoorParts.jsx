@@ -2,12 +2,15 @@
 // Put-Up B′ release 2 — the chip rows Put something up and Walk a place share (V4 §6.4, Appendix B):
 // the place chips, the method row (required: role=radiogroup + aria-required, role=radio chips) and the
 // discard-by choice. Plain SelectChip touch chips (48 px, 8 px gaps); no new visual design.
+// Put-Up UX pass R1: the methods' disclosure reads "Other ways…", a method chosen under other chips
+// stays as one chip, and the discard choice takes its words from putItUp.DISCARD_LABELS.
 import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome, inputChrome } from '../forms/formStyles.js'
-import { AS_IS, methodLabel } from './putSomethingUp.js'
+import { DISCARD_LABELS } from '../putup/putItUp.js'
+import { AS_IS, methodLabel, OTHER_WAYS_LABEL } from './putSomethingUp.js'
 
 const row = { display: 'flex', flexWrap: 'wrap', gap: 8 }
 
@@ -20,7 +23,7 @@ export const NEW_PLACE_KINDS = [
   { kind: 'other', label: 'Counter or other' },
 ]
 const quietLink = {
-  minHeight: 48, background: 'none', border: 'none', padding: '0 4px', color: P.green, fontWeight: 600,
+  minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 4px', color: P.green, fontWeight: 600,
   fontFamily: 'inherit', fontSize: T.type.sm, textDecoration: 'underline', cursor: 'pointer',
 }
 
@@ -49,7 +52,7 @@ export function PlaceChipRow({ chips, value, onChange, idPrefix, label = 'Where 
         <div data-testid={`${idPrefix}-place-new-editor`} style={{ marginTop: 8 }}>
           <input type="text" aria-label="Name of the place" value={newLabel} maxLength={60} disabled={disabled}
             data-testid={`${idPrefix}-place-new-label`} placeholder="e.g. Garage fridge" onChange={e => setNewLabel(e.target.value)}
-            style={{ ...inputChrome(false), marginBottom: 8, minHeight: 44 }} />
+            style={{ ...inputChrome(false), marginBottom: 8, minHeight: T.buttonMinHeight }} />
           <div role="radiogroup" aria-label="What kind of place?" style={row}>
             {NEW_PLACE_KINDS.map(k => (
               <SelectChip key={k.kind} touch active={newKind === k.kind} disabled={disabled} role="radio"
@@ -71,13 +74,15 @@ export function PlaceChipRow({ chips, value, onChange, idPrefix, label = 'Where 
   )
 }
 
-// The method row: ≤ 4 seeded chips + As is (or Fresh, as picked) + More…; nothing preselected. More…
-// reveals every other method inside the same radiogroup. `groupRef` receives the radiogroup so a Save
-// with no method can move focus to its first chip (V4 §2.2; focusFirstRadio).
+// The method row: ≤ 4 seeded chips + the as-is chip (or Fresh, as picked) + Other ways…; nothing
+// preselected. Other ways… reveals every other method inside the same radiogroup. A method chosen
+// before the chips changed under it (a place picked afterwards, whose four do not include it) stays on
+// the row as ONE more chip — the row does not grow to every method because of it. `groupRef` receives
+// the radiogroup so a Save with no method can move focus to its first chip (V4 §2.2; focusFirstRadio).
 export function MethodRow({ choices, value, onChange, what, idPrefix, disabled = false, invalid = false, groupRef = null, label = 'How was it put up?' }) {
   const [moreOpen, setMoreOpen] = useState(false)
-  const showMore = moreOpen || (value && value !== AS_IS && !choices.chips.includes(value))
-  const all = [...choices.chips, ...(showMore ? choices.more : [])]
+  const chosenElsewhere = value && value !== AS_IS && !choices.chips.includes(value) ? [value] : []
+  const all = [...choices.chips, ...(moreOpen ? choices.more : chosenElsewhere)]
   const chip = (m) => (
     <SelectChip key={m} touch active={value === m} disabled={disabled} role="radio" aria-checked={value === m}
       aria-pressed={undefined} data-testid={`${idPrefix}-method-${m}`}
@@ -95,11 +100,10 @@ export function MethodRow({ choices, value, onChange, what, idPrefix, disabled =
             onClick={() => onChange(AS_IS)}>{choices.asIs}</SelectChip>
         )}
       </div>
-      {!showMore && choices.more.length > 0 && (
+      {!moreOpen && choices.more.length > 0 && (
         <button type="button" data-testid={`${idPrefix}-method-more`} disabled={disabled} onClick={() => setMoreOpen(true)}
-          style={{ minHeight: 48, background: 'none', border: 'none', padding: '0 4px', color: P.green, fontWeight: 600,
-            fontFamily: 'inherit', fontSize: T.type.sm, textDecoration: 'underline', cursor: 'pointer' }}>
-          More…
+          style={quietLink}>
+          {OTHER_WAYS_LABEL}
         </button>
       )}
     </div>
@@ -111,18 +115,22 @@ export function focusFirstRadio(groupRef) {
   if (el && typeof el.focus === 'function') el.focus()
 }
 
-// Discard by: worked out (the engine) · a date from the label · no date (V4 §3.1). A bought item offers
-// only the label date (a discard date only if typed, §2.5), so `itemMode` hides the other two.
+// Discard by: worked out (the engine) · a date from the label · no date (V4 §3.1) — in the ONE set of
+// words every surface that asks it uses (putItUp.DISCARD_LABELS): a put-up "Work it out · From the label ·
+// No date"; a bought item "From the label · No date" (a discard date only if typed, §2.5 — `itemMode`
+// leaves Work it out off, and its `auto` chip is the one that means no date, so it is pressed for either
+// of the two modes that store none).
 export function DiscardChoice({ value, onChange, idPrefix, itemMode = false, disabled = false }) {
   const opts = itemMode
-    ? [{ id: 'auto', label: 'No discard date' }, { id: 'date', label: 'A date from the label' }]
-    : [{ id: 'auto', label: 'Work it out' }, { id: 'date', label: 'A date from the label' }, { id: 'none', label: 'No date' }]
+    ? [{ id: 'date', label: DISCARD_LABELS.date }, { id: 'auto', label: DISCARD_LABELS.none }]
+    : [{ id: 'auto', label: DISCARD_LABELS.auto }, { id: 'date', label: DISCARD_LABELS.date }, { id: 'none', label: DISCARD_LABELS.none }]
+  const chosen = (id) => (itemMode && id === 'auto' ? value.mode !== 'date' : value.mode === id)
   return (
     <div>
       <span style={labelChrome} aria-hidden="true">Discard by</span>
       <div role="radiogroup" aria-label="Discard by" style={row}>
         {opts.map(o => (
-          <SelectChip key={o.id} touch active={value.mode === o.id} disabled={disabled} role="radio" aria-checked={value.mode === o.id}
+          <SelectChip key={o.id} touch active={chosen(o.id)} disabled={disabled} role="radio" aria-checked={chosen(o.id)}
             aria-pressed={undefined} data-testid={`${idPrefix}-discard-${o.id}`}
             onClick={() => onChange({ ...value, mode: o.id })}>{o.label}</SelectChip>
         ))}
@@ -130,7 +138,7 @@ export function DiscardChoice({ value, onChange, idPrefix, itemMode = false, dis
       {value.mode === 'date' && (
         <input type="date" aria-label="Discard date from the label" data-testid={`${idPrefix}-discard-date`} value={value.date}
           disabled={disabled} onChange={e => onChange({ ...value, date: e.target.value })}
-          style={{ ...inputChrome(false), maxWidth: 220, marginTop: 8, minHeight: 44 }} />
+          style={{ ...inputChrome(false), maxWidth: 220, marginTop: 8, minHeight: T.buttonMinHeight }} />
       )}
     </div>
   )

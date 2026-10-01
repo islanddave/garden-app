@@ -10,7 +10,9 @@
 //
 // EACH GROUP (required 2): What is it? (the name search; a hit fills crop/variety/planting, a typed name
 // stays a label) · method-or-As is · how many (after a method; a stepper starting at 1) · Save → next.
-// Quiet More: discard by (from the label) and a different date for this group. One preview line per group.
+// A quiet disclosure, "▸ Raw or in oil, discard by, another date": Raw (only on a method that allows it)
+// and In oil for a put-up — sent only when chosen, and the preview line changes the moment either is
+// tapped — the discard choice, and a different date for this group. One preview line per group.
 // A method → a put-up (POST /api/preservation); As is → a pantry item (POST /api/pantry/items).
 //
 // DUPLICATE PREVENTION: a collapsed "Already logged here ▸" (GET /api/pantry?place_id=: names and what's
@@ -30,7 +32,7 @@ import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome } from '../forms/formStyles.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
-import { placeChips } from '../putup/putItUp.js'
+import { placeChips, RAW_METHODS, RAW_LABEL, IN_OIL_LABEL } from '../putup/putItUp.js'
 import NameSearchField from './NameSearchField.jsx'
 import Stepper, { stepperCount } from './Stepper.jsx'
 import { PlaceChipRow, MethodRow, DiscardChoice, focusFirstRadio } from './DoorParts.jsx'
@@ -39,7 +41,7 @@ import RefusalLine, { refusalOf, refusalText } from './RefusalLine.jsx'
 import { leftWords, rowKey } from './pantryRows.js'
 import {
   AS_IS, METHOD_REQUIRED_TEXT, methodChoices, routeFor, walkWhen, walkWhenChips, previewLine, jarBody, itemBody,
-  methodLabel, doorError,
+  methodLabel, doorError, WALK_OPTIONS_LABEL,
 } from './putSomethingUp.js'
 
 export const WALK_TITLE = 'Walk a place'
@@ -303,7 +305,7 @@ function WalkSetup({ online, initial, legacyPlaceId, urlPlaceId, resumed, places
         </div>
         {choice === 'pickdate' && (
           <input type="date" aria-label="The day it went in" data-testid="putup-walk-when-date" value={pickedDate}
-            onChange={e => setPickedDate(e.target.value)} style={{ marginTop: 8, minHeight: 44 }} />
+            onChange={e => setPickedDate(e.target.value)} style={{ marginTop: 8, minHeight: T.buttonMinHeight }} />
         )}
         {w?.when && (
           <div data-testid="putup-walk-date-resolved" role="status" style={{ marginTop: 10, fontSize: T.type.sm, color: P.mid }}>
@@ -371,6 +373,8 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
   const [count, setCount] = useState('1')
   const [moreOpen, setMoreOpen] = useState(false)
   const [discard, setDiscard] = useState({ mode: 'auto', date: '' })
+  const [isRaw, setIsRaw] = useState(false)
+  const [inOil, setInOil] = useState(false)
   const [ownChoice, setOwnChoice] = useState(null)   // a different date for this group
   const [ownPicked, setOwnPicked] = useState('')
   const [key, setKey] = useState(null)
@@ -386,9 +390,9 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
   useEffect(() => { if (method === AS_IS && !choices.asIs) setMethod(null) }, [choices, method])
   const own = ownChoice ? walkWhen({ choice: ownChoice, pickedDate: ownPicked, now }) : null
   const when = own?.when ?? walk.when
-  const preview = method ? previewLine({ method, place, when, discard, now }) : null
+  const preview = method ? previewLine({ method, place, when, discard, isRaw, inOil, now }) : null
 
-  const dirty = !!(String(what?.name ?? '').trim() || method || count !== '1' || discard.mode !== 'auto' || ownChoice)
+  const dirty = !!(String(what?.name ?? '').trim() || method || count !== '1' || discard.mode !== 'auto' || ownChoice || isRaw || inOil)
   useEffect(() => { if (dirty && !key) setKey(mintKey()) }, [dirty, key])
   const gateKey = `walk-group:${useId()}`
   const hold = dirty || saving
@@ -399,6 +403,7 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
 
   function reset() {
     setWhat(null); setMethod(null); setCount('1'); setDiscard({ mode: 'auto', date: '' }); setOwnChoice(null); setOwnPicked('')
+    setIsRaw(false); setInOil(false)
     setMoreOpen(false); setKey(null); setErr(null); setField(null)
   }
 
@@ -419,7 +424,7 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
       let saved
       if (route === 'jar') {
         saved = await fetch('/api/preservation', { method: 'POST', body: JSON.stringify(jarBody({
-          key: useKey, what, storageLocationId: place.id, method, when, count: stepperCount(count), discard,
+          key: useKey, what, storageLocationId: place.id, method, when, count: stepperCount(count), discard, isRaw, inOil,
         })) })
       } else {
         const r = await createPantryItem(fetch, itemBody({ key: useKey, what, place, when, discard }))
@@ -453,12 +458,22 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
         </div>
       )}
       <button type="button" aria-expanded={moreOpen} data-testid="walk-more" onClick={() => setMoreOpen(o => !o)}
-        style={{ alignSelf: 'flex-start', minHeight: 48, background: 'none', border: 'none', padding: 0, color: P.mid,
+        style={{ alignSelf: 'flex-start', minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: 0, color: P.mid,
           fontWeight: 600, fontFamily: 'inherit', fontSize: T.type.sm, cursor: 'pointer' }}>
-        <span aria-hidden="true">{moreOpen ? '▾ ' : '▸ '}</span>More
+        <span aria-hidden="true">{moreOpen ? '▾ ' : '▸ '}</span>{WALK_OPTIONS_LABEL}
       </button>
       {moreOpen && (
         <div data-testid="walk-more-panel" style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
+          {/* Raw · In oil are a put-up's (the engine reads both; a bought item's date is only ever typed).
+              Raw is offered only where the engine allows it; a chip that is not shown is never sent. */}
+          {method !== AS_IS && (
+            <div role="group" aria-label="Raw or in oil" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {RAW_METHODS.has(method) && (
+                <SelectChip touch active={isRaw} disabled={saving} data-testid="walk-raw" onClick={() => setIsRaw(v => !v)}>{RAW_LABEL}</SelectChip>
+              )}
+              <SelectChip touch active={inOil} disabled={saving} data-testid="walk-inoil" onClick={() => setInOil(v => !v)}>{IN_OIL_LABEL}</SelectChip>
+            </div>
+          )}
           <DiscardChoice value={discard} onChange={setDiscard} idPrefix="walk" itemMode={method === AS_IS} disabled={saving} />
           <div>
             <span style={labelChrome} aria-hidden="true">A different date for this one</span>
@@ -471,7 +486,7 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
             </div>
             {ownChoice === 'pickdate' && (
               <input type="date" aria-label="The day this one went in" data-testid="walk-own-date" value={ownPicked}
-                onChange={e => setOwnPicked(e.target.value)} style={{ marginTop: 8, minHeight: 44 }} />
+                onChange={e => setOwnPicked(e.target.value)} style={{ marginTop: 8, minHeight: T.buttonMinHeight }} />
             )}
           </div>
         </div>
@@ -488,9 +503,12 @@ function WalkGroup({ walk, fetch, online, stock, now, bandH = WALK_BAND_FALLBACK
   )
 }
 
-// "What haven't I put up?" (the shipped walk's design §6 Q4, moved here unchanged in behaviour) — ONE
-// collapsed line, no ticks, no denominator. Collapsed it makes no accusation and costs no season scan;
-// every crop is dismissible and the dismissal sticks ("Not one I put up", never "done").
+// "From the garden, not put up yet" (the shipped walk's "What haven't I put up?", design §6 Q4, moved
+// here unchanged in behaviour; reworded in the Put-Up UX pass R1 — a disclosure named for what it holds
+// reads better than one named as a question) — ONE collapsed line, no ticks, no denominator. Collapsed it
+// makes no accusation and costs no season scan; every crop is dismissible and the dismissal sticks ("Not
+// one I put up", never "done").
+export const UNRECORDED_LABEL = 'From the garden, not put up yet'
 function UnrecordedLine({ fetch }) {
   const [open, setOpen] = useState(false)
   const [wanted, setWanted] = useState(false)
@@ -526,7 +544,7 @@ function UnrecordedLine({ fetch }) {
         style={{ background: 'none', border: 'none', padding: '6px 0', cursor: 'pointer', color: P.mid, fontSize: T.type.sm,
           fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 6, minHeight: 48 }}>
         <span aria-hidden="true">{open ? '▾' : '▸'}</span>
-        <span>What haven&rsquo;t I put up?</span>
+        <span>{UNRECORDED_LABEL}</span>
       </button>
       {open && (
         <div data-testid="putup-walk-unrecorded" style={{ paddingLeft: 18 }}>
@@ -540,7 +558,7 @@ function UnrecordedLine({ fetch }) {
               <span style={{ flex: 1, minWidth: 0, fontSize: T.type.sm, color: P.dark }}>{c.name}</span>
               <button type="button" onClick={() => setDismissed(dismissCrop(c.slug))} data-testid="putup-walk-not-mine"
                 style={{ background: 'none', border: 'none', color: P.light, fontSize: '0.76rem', fontWeight: 600, fontFamily: 'inherit',
-                  textDecoration: 'underline', padding: '4px 2px', minHeight: 44, cursor: 'pointer', flexShrink: 0 }}>
+                  textDecoration: 'underline', padding: '4px 2px', minHeight: T.buttonMinHeight, cursor: 'pointer', flexShrink: 0 }}>
                 Not one I put up
               </button>
             </div>

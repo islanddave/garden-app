@@ -217,8 +217,9 @@ const SHEET_SITES = [
   // DIALOG_SURFACES entry is owed; `busy={saving}` refuses Back and the backdrop while the keyed POST
   // (and the Reopen door's POST) is in flight.
   'components/putup/PutItUpSheet.jsx',
-  // Put-Up release 1b (V4 §2.5) — Move it: the shared <Sheet armsBack>; busy refuses Back mid-write.
-  'components/putup/MoveJarSheet.jsx',
+  // Put-Up release 1b (V4 §2.5) — Move it WAS a <Sheet> site here. Put-Up UX pass R1 made it a panel
+  // inside the Pantry row sheet (components/pantry/PantryRowSheet.jsx, below), so it rides that sheet's
+  // one Back entry: components/putup/MoveJarSheet.jsx renders no <Sheet> and is no longer on this list.
   // Put-Up release F — DELIBERATE additions, each the shared <Sheet armsBack> with `busy` refusing Back
   // and the backdrop mid-write: the line sheet (edit / take out a line), the Log's edit sheet, and the
   // heat breakdown ("Work it out").

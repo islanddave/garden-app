@@ -445,7 +445,8 @@ describe('"what haven\'t I put up?" — one collapsed line that cannot become a 
     withHarvests()
     renderWalk()
     await answerSetup()
-    expect(screen.getByTestId('putup-walk-unrecorded-toggle').textContent).toMatch(/What haven.t I put up\?/)
+    // AMENDED (Put-Up UX pass R1, F31): the disclosure is named for what it holds.
+    expect(screen.getByTestId('putup-walk-unrecorded-toggle').textContent).toMatch(/From the garden, not put up yet/)
     expect(fake.calls('GET').some(c => c.path.includes('include=aggregates'))).toBe(false)
   })
 

@@ -3,10 +3,17 @@
 // ONE thing to the Pantry per save.
 //
 // Required at open: 3 — What is it? (the shipped name search) · Where does it live? (place chips) ·
-// How was it put up? (method chips that fit the place + As is + More…; nothing preselected). Save is
-// NEVER disabled: tapped with no method it moves focus to the method row with one line (V4 §2.2).
-// How many (a stepper starting at 1) appears once a method is chosen; the rest sits under More (when,
-// discard by, notes).
+// How was it put up? (method chips + the as-is chip + Other ways…; nothing preselected). Before a place
+// is picked the row offers the general four; a place puts its own four there, and a method already
+// chosen stays as one more chip. Save is NEVER disabled: tapped with no method it moves focus to the
+// method row with one line (V4 §2.2). How many (a stepper starting at 1) appears once a method is chosen;
+// the rest sits under "▸ Date, discard by, notes".
+//
+// Put-Up UX pass R1: the preview line carries "Change", its own target, which opens that disclosure on
+// the When chips (the door's date was only reachable by knowing it was under a control called More).
+// `onStartBatchInstead(name)` — the page's, optional: a line under the name hands the typed name to the
+// Start sheet for a thing that is still going. The door clears its OWN draft first (the name has left
+// it), then calls it and closes. Absent, there is no such line.
 //
 // THE WRITE, by the method chip (V4 §2.1's one table rule): a method → POST /api/preservation (the 1b
 // create; a template place is made first); As is / Fresh, as picked → POST /api/pantry/items (a planting
@@ -36,10 +43,15 @@ import Stepper, { stepperCount } from './Stepper.jsx'
 import { PlaceChipRow, MethodRow, DiscardChoice, focusFirstRadio } from './DoorParts.jsx'
 import {
   AS_IS, DOOR_TITLE, DOOR_SHEET, METHOD_REQUIRED_TEXT, methodChoices, routeFor, saveLabel, doorWhen,
-  previewLine, doorError, jarBody, itemBody,
+  previewLine, doorError, jarBody, itemBody, DOOR_OPTIONS_LABEL, DOOR_NOTES_PLACEHOLDER, START_BATCH_INSTEAD_TEXT,
 } from './putSomethingUp.js'
 
 const WHEN_CHIPS = [{ id: 'today', label: 'Today' }, { id: 'yesterday', label: 'Yesterday' }, { id: 'earlier', label: 'Earlier…' }]
+// The door's quiet text actions (the options disclosure, the preview's Change, the way out to a batch).
+const quietAction = {
+  minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: 0, color: P.green,
+  fontWeight: 600, fontFamily: 'inherit', fontSize: T.type.sm, cursor: 'pointer',
+}
 
 // The draft's shape, checked on read (sheetDraft.js: a record that fails is dropped, never half-restored).
 export function isDoorDraft(d) {
@@ -51,13 +63,15 @@ export function isDoorDraft(d) {
     && (d.place == null || (typeof d.place === 'object' && typeof d.place.key === 'string'))
 }
 
-export default function PutSomethingUpSheet({ open, onClose, onSaved, initialName = '', initialWhat = null, stockRows = null, now }) {
+export default function PutSomethingUpSheet({
+  open, onClose, onSaved, initialName = '', initialWhat = null, stockRows = null, onStartBatchInstead = null, now,
+}) {
   if (!open) return null
   return <DoorOpen onClose={onClose} onSaved={onSaved} initialName={initialName} initialWhat={initialWhat}
-    stockRows={stockRows} now={now} />
+    stockRows={stockRows} onStartBatchInstead={onStartBatchInstead} now={now} />
 }
 
-function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }) {
+function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, onStartBatchInstead, now }) {
   const { fetch } = useApiFetch()
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
   const draftKey = useSheetDraftKey(DOOR_SHEET, 'new')
@@ -90,6 +104,9 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }
   const savedRef = useRef(false)
   const methodRef = useRef(null)
   const whatRef = useRef(null)
+  const whenRef = useRef(null)
+  // Set by the preview's Change: once the options are open, focus goes to the When chips it opened them for.
+  const [toWhen, setToWhen] = useState(false)
   const notesId = `door-notes-${useId()}`
 
   useEffect(() => {
@@ -126,6 +143,24 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }
 
   const w = doorWhen({ chip: whenChip, estimate, pickedDate, now: nowDate })
   const preview = w.when ? previewLine({ method, place, when: w.when, discard, now: nowDate }) : null
+
+  useEffect(() => {
+    if (!toWhen || !moreOpen) return
+    setToWhen(false)
+    const group = whenRef.current
+    const chip = group?.querySelector?.('[role="radio"][aria-checked="true"]') ?? group?.querySelector?.('[role="radio"]')
+    if (chip && typeof chip.focus === 'function') chip.focus()
+    if (group && typeof group.scrollIntoView === 'function') group.scrollIntoView({ block: 'nearest' })
+  }, [moreOpen, toWhen])
+
+  // The way out to a batch: the name leaves this door, so its draft goes first (and nothing may write it
+  // back before the door unmounts — the same latch a landed save sets).
+  const startBatchInstead = useCallback(() => {
+    savedRef.current = true
+    clearSheetDraft(draftKey)
+    onStartBatchInstead?.(String(what?.name ?? '').trim())
+    onClose?.()
+  }, [draftKey, onClose, onStartBatchInstead, what])
 
   const save = useCallback(async () => {
     if (writingRef.current) return
@@ -171,7 +206,13 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }
     <Sheet open onClose={onClose} title={DOOR_TITLE} size="full" busy={saving} armsBack>
       <div data-testid="door-sheet" style={{ padding: '0 18px', display: 'flex', flexDirection: 'column', gap: T.space.md }}>
         <NameSearchField value={what} onChange={v => { setWhat(v); if (field === 'what') { setErr(null); setField(null) } }}
-          fetch={fetch} stockRows={stockRows} idPrefix="door-what" invalid={field === 'what'} inputRef={whatRef} disabled={saving} />
+          fetch={fetch} stockRows={stockRows} idPrefix="door-what" invalid={field === 'what'} inputRef={whatRef} disabled={saving}
+          under={typeof onStartBatchInstead === 'function' ? (
+            <button type="button" data-testid="door-start-batch-instead" disabled={saving} onClick={startBatchInstead}
+              style={{ ...quietAction, display: 'block', textAlign: 'left' }}>
+              {START_BATCH_INSTEAD_TEXT}
+            </button>
+          ) : null} />
         <PlaceChipRow chips={chips} value={place} idPrefix="door" disabled={saving} invalid={field === 'where'}
           onChange={c => { setPlace(c); if (field === 'where') { setErr(null); setField(null) } }} />
         <MethodRow choices={choices} value={method} what={what} idPrefix="door" disabled={saving} invalid={field === 'method'}
@@ -189,15 +230,14 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }
         )}
 
         <button type="button" aria-expanded={moreOpen} data-testid="door-more" onClick={() => setMoreOpen(o => !o)}
-          style={{ alignSelf: 'flex-start', minHeight: 48, background: 'none', border: 'none', padding: 0, color: P.green,
-            fontWeight: 600, fontFamily: 'inherit', fontSize: T.type.sm, cursor: 'pointer' }}>
-          <span aria-hidden="true">{moreOpen ? '▾ ' : '▸ '}</span>More
+          style={{ ...quietAction, alignSelf: 'flex-start' }}>
+          <span aria-hidden="true">{moreOpen ? '▾ ' : '▸ '}</span>{DOOR_OPTIONS_LABEL}
         </button>
         {moreOpen && (
           <div data-testid="door-more-panel" style={{ display: 'flex', flexDirection: 'column', gap: T.space.md }}>
             <div>
               <span style={labelChrome} aria-hidden="true">When?</span>
-              <div role="radiogroup" aria-label="When?" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div role="radiogroup" aria-label="When?" ref={whenRef} style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {WHEN_CHIPS.map(c => (
                   <SelectChip key={c.id} touch active={whenChip === c.id} disabled={saving} role="radio" aria-checked={whenChip === c.id}
                     aria-pressed={undefined} data-testid={`door-when-${c.id}`}
@@ -214,20 +254,29 @@ function DoorOpen({ onClose, onSaved, initialName, initialWhat, stockRows, now }
               )}
               {whenChip === 'earlier' && estimate === 'pickdate' && (
                 <input type="date" aria-label="The day" data-testid="door-when-date" value={pickedDate} disabled={saving}
-                  onChange={e => setPickedDate(e.target.value)} style={{ marginTop: 8, minHeight: 44 }} />
+                  onChange={e => setPickedDate(e.target.value)} style={{ marginTop: 8, minHeight: T.buttonMinHeight }} />
               )}
             </div>
             <DiscardChoice value={discard} onChange={setDiscard} idPrefix="door" itemMode={method === AS_IS} disabled={saving} />
             <div>
               <label htmlFor={notesId} style={labelChrome}>Notes</label>
               <textarea id={notesId} data-testid="door-notes" value={notes} disabled={saving} onChange={e => setNotes(e.target.value)}
+                placeholder={DOOR_NOTES_PLACEHOLDER}
                 style={{ width: '100%', minHeight: 60, fontFamily: 'inherit', fontSize: T.type.base }} />
             </div>
           </div>
         )}
 
+        {/* The line and its Change are SIBLINGS: the status text stays the sentence alone. */}
         {preview && (
-          <p role="status" data-testid="door-preview" style={{ margin: 0, color: P.mid, fontSize: T.type.sm }}>{preview}</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, flexWrap: 'wrap' }}>
+            <p role="status" data-testid="door-preview" style={{ margin: 0, flex: 1, minWidth: 160, color: P.mid, fontSize: T.type.sm }}>{preview}</p>
+            <button type="button" data-testid="door-preview-change" aria-label="Change — the date" disabled={saving}
+              onClick={() => { setMoreOpen(true); setToWhen(true) }}
+              style={{ ...quietAction, minWidth: 48, textDecoration: 'underline' }}>
+              Change
+            </button>
+          </div>
         )}
         {field !== 'method' && <RefusalLine err={err} testId="door-error" />}
       </div>
