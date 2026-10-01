@@ -31,6 +31,11 @@
 // in that sentence still holds — nothing here says anything about acidification, safety or shelf
 // stability, and nothing scores, colours, compares or gates on a reading. Read that block before
 // touching anything named ph*.
+//
+// Put-Up UX pass R1 ADDS the page shell's pure half at the foot of this file (its segments, the words and
+// the direction of a mode's Back, recipes as page-search items) and changes no name above it: batch
+// detail, Check on it, the pH field and the Log's edit sheet all import from here.
+import { readFrom, backLabel } from './origin.js'
 
 // ── start precision ──────────────────────────────────────────────────────────────────────────────
 // chk_kitchen_batch_start_precision's six values, ordered coarsest-last. A row whose precision the
@@ -732,4 +737,77 @@ export function startPatchViolatesPairing(patch) {
   const hasDate = patch.started_at != null
   const hasGrade = patch.start_precision != null && patch.start_precision !== 'unknown'
   return hasDate !== hasGrade
+}
+
+// ── Put-Up UX pass R1 — the page shell: its segments, the way out of a mode, recipes in the search ──
+// The page (PutUp.jsx) takes no new logic in R1: it holds ONE opener and the wiring, and asks here for
+// everything a test can pin without a router. Pure, like the rest of this file: a router state and the
+// router's history index come in as arguments, never off `window`.
+
+// The door that starts a batch — the page header's filled button on Going now, and the empty card's
+// secondary one. One string, so the two controls cannot drift. No arrow: it opens a sheet.
+export const START_BATCH_CTA = 'Start a batch'
+// Going now's load error offers the reload the page already owns.
+export const TRY_AGAIN_CTA = 'Try again'
+
+// The four segments, in the order the control shows them: going → logged → kept, then the recipes. ONE
+// list for the segmented control AND for the Back's words, so a renamed segment cannot leave a Back that
+// still names the old one.
+export const PUT_UP_SEGMENTS = Object.freeze([
+  Object.freeze({ value: 'going', label: 'Going now' }),
+  Object.freeze({ value: 'log', label: 'Log a put-up' }),
+  Object.freeze({ value: 'pantry', label: 'Pantry' }),
+  Object.freeze({ value: 'recipes', label: 'Recipes' }),
+])
+export const RECIPES_SEGMENT = 'recipes'
+
+// The segment a mode's Back lands on when it leaves by its own push (nothing to pop to): the one the
+// page is holding, except that a recipe is left onto Recipes — a recipe opened from a search hit on
+// another segment would otherwise land on a list that has no recipes in it.
+export function leaveSegment(view, { recipe = false } = {}) {
+  return recipe ? RECIPES_SEGMENT : view
+}
+// The segment's own label, or null for a value no segment carries.
+export function segmentLabel(value) {
+  return PUT_UP_SEGMENTS.find(s => s.value === value)?.label ?? null
+}
+
+// POP, OR PUSH. A mode's in-page Back pops ONLY when the entry names where it was opened from AND the
+// router's own history index says an app entry sits under it. Either alone is not enough: an entry with
+// no origin has nowhere it promised to return to, and an origin can outlive what was under it
+// (history.state survives a reload and a deploy, and a restored session can open on the mode at index
+// 0, where history.back() does nothing — a dead press on the only in-page exit an installed PWA has).
+// `historyIndex` is the router's `history.state.idx`; anything that is not a whole number above 0 —
+// a MemoryRouter, a first entry, a foreign state — is a push.
+export function leavesByPop(state, historyIndex) {
+  return readFrom(state) != null && Number.isInteger(historyIndex) && historyIndex > 0
+}
+
+// The words after the Back's arrow, in two parts so the name can shorten on one line while the kind
+// stays whole: { name, suffix }. They always name where the press LANDS: the origin (origin.js
+// backLabel: "Petri Dish" + " (recipe)") only when the press will pop to it, otherwise `fallback` — the
+// label of the segment the push lands on. A Back that reads "Pantry" and lands on Going now would be
+// the page lying about its only exit.
+export function backWords(state, historyIndex, fallback) {
+  if (!leavesByPop(state, historyIndex)) return { name: fallback, suffix: '' }
+  const words = backLabel(state, fallback)
+  const name = readFrom(state).label
+  return words.startsWith(name) ? { name, suffix: words.slice(name.length) } : { name: words, suffix: '' }
+}
+
+// The recipes lane's list (GET /api/recipes answers `{ recipes }`; a bare array is read too, the same
+// two shapes batchRows reads) as page-search items: `{ kind: 'recipe', id, name, type_label? }`, the
+// shape pantryRows.searchHits and extraLabel read. A row with no id or no name is not a hit anyone
+// could open, so it is not offered. Nothing else of the row rides along: the search matches on the name.
+export function recipeSearchItems(payload) {
+  const rows = Array.isArray(payload) ? payload : (Array.isArray(payload?.recipes) ? payload.recipes : [])
+  const items = []
+  for (const r of rows) {
+    const name = typeof r?.name === 'string' ? r.name.trim() : ''
+    if (r?.id == null || r.id === '' || !name) continue
+    const item = { kind: 'recipe', id: String(r.id), name }
+    if (typeof r.type_label === 'string' && r.type_label.trim()) item.type_label = r.type_label
+    items.push(item)
+  }
+  return items
 }
