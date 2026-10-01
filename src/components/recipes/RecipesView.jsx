@@ -13,6 +13,19 @@
 // CONTROLLED BY ITS OWN FETCHES (the segment is self-contained): GET /api/recipes and /api/recipes/types on
 // mount, GET /api/recipes/:id on open. `onBatchStarted(batch)` is the page's own landing (PutUp.jsx), so a
 // batch started here opens exactly as one started from Going now does.
+//
+// RECIPE MODE (Put-Up UX pass R1). The page may own WHICH recipe is open, so that recipe detail is a history
+// entry and Back returns to it: it passes `openId` (its ?recipe= value; null on the list) and
+// `onOpen(id | null)`. CONTROLLED IF AND ONLY IF `onOpen` IS A FUNCTION — never "if openId is set": the page's
+// openId is null on the list, and a view that fell back to its own state there would open a detail the page's
+// Back cannot close. Controlled:
+//   · the view's own open id is never read or written: a row, a saved new recipe, Back and Remove call onOpen;
+//   · the detail renders no Back of its own (the page's is the one Back);
+//   · the list is re-read when openId goes from set to null (uncontrolled, that re-read rides the detail's
+//     own Back and Remove);
+//   · a batch opened from the detail is handed over with where it came from,
+//     onBatchStarted(batch, { label: <recipe name>, kind: 'recipe', id }), so its Back can name the recipe.
+// Without onOpen, everything is as it was — the hand-over included: onBatchStarted(batch) and nothing else.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
@@ -20,6 +33,7 @@ import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import StartBatchSheet from '../kitchen/StartBatchSheet.jsx'
 import { kindLabel } from '../kitchen/KindChips.jsx'
+import { landAfterClose } from '../kitchen/sheetLanding.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import RecipeSheet from './RecipeSheet.jsx'
 import {
@@ -32,15 +46,22 @@ import {
 const link = { display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, padding: '2px 8px 2px 0', background: 'none',
   border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600 }
 const isHttp = (u) => /^https?:\/\//i.test(String(u ?? ''))
+// Where a batch opened from recipe detail came from (putup/origin.js's From: the page's Back reads it).
+const originOf = (recipe) => ({ label: recipe.name, kind: 'recipe', id: recipe.id })
 
-export default function RecipesView({ onBatchStarted, now }) {
+export default function RecipesView({ onBatchStarted, now, openId: pageOpenId = null, onOpen }) {
   const { fetch } = useApiFetch()
   const [recipes, setRecipes] = useState(null)
   const [types, setTypes] = useState([])
   const [error, setError] = useState(false)
   const [typeFilter, setTypeFilter] = useState(null)
-  const [openId, setOpenId] = useState(null)
+  const controlled = typeof onOpen === 'function'
+  const [ownOpenId, setOwnOpenId] = useState(null)    // the uncontrolled view's open recipe; idle when controlled
+  const openId = controlled ? pageOpenId : ownOpenId
   const [sheet, setSheet] = useState(null)            // null | { recipe: null | detail }
+  // The page's latest onOpen, for the one call that is made after a wait (the landing below).
+  const onOpenRef = useRef(onOpen)
+  useEffect(() => { onOpenRef.current = onOpen }, [onOpen])
 
   const loadList = useCallback(() => {
     fetch('/api/recipes')
@@ -62,16 +83,41 @@ export default function RecipesView({ onBatchStarted, now }) {
 
   const onTypeCreated = useCallback((t) => setTypes(ts => (ts.some(x => x.id === t.id) ? ts : [...ts, t])), [])
 
+  // Controlled: the page closed the recipe (its Back, or a Remove it was told of), so the list is stale.
+  const lastOpenId = useRef(openId)
+  useEffect(() => {
+    if (controlled && lastOpenId.current && !openId) loadList()
+    lastOpenId.current = openId
+  }, [controlled, openId, loadList])
+
+  const openRecipe = (id) => { if (controlled) onOpen(id); else setOwnOpenId(id) }
+  // Back and Remove are the same act: leave the recipe.
+  const leaveRecipe = () => { if (controlled) onOpen(null); else { setOwnOpenId(null); loadList() } }
+  // To a page that owns recipe mode a batch arrives with its origin; to any other, as it always did.
+  const handBatch = (batch, origin) => (controlled ? onBatchStarted?.(batch, origin) : onBatchStarted?.(batch))
+
   if (openId) {
     return (
       <>
-        <RecipeDetail id={openId} fetch={fetch} now={now} onBack={() => { setOpenId(null); loadList() }}
-          onEdit={(detail) => setSheet({ recipe: detail })} onBatchStarted={onBatchStarted}
-          onRemoved={() => { setOpenId(null); loadList() }} key={`${openId}:${sheet ? 'e' : 'v'}`} />
+        <RecipeDetail id={openId} fetch={fetch} now={now} ownBack={!controlled} onBack={leaveRecipe}
+          onEdit={(detail) => setSheet({ recipe: detail })} onBatchStarted={handBatch}
+          onRemoved={leaveRecipe} key={`${openId}:${sheet ? 'e' : 'v'}`} />
         <RecipeSheet open={!!sheet} recipe={sheet?.recipe ?? null} types={types} fetch={fetch} onTypeCreated={onTypeCreated}
           onClose={() => setSheet(null)} onSaved={() => { setSheet(null); loadList() }} />
       </>
     )
+  }
+
+  const onNewSaved = (saved) => {
+    if (controlled && saved?.id) {
+      // Opening the saved recipe is the page's push, and this runs inside an armed sheet: land first. Close,
+      // let the sheet's own Back entry be consumed, THEN call on (kitchen/sheetLanding.js) — a push made
+      // straight from here would strand that entry in mid-stack as a Back press that does nothing.
+      loadList()
+      landAfterClose(() => setSheet(null), () => onOpenRef.current?.(saved.id))
+      return
+    }
+    setSheet(null); loadList(); if (saved?.id) setOwnOpenId(saved.id)
   }
 
   return (
@@ -102,7 +148,7 @@ export default function RecipesView({ onBatchStarted, now }) {
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {g.recipes.map(r => (
               <li key={r.id} style={{ borderBottom: `1px solid ${P.cream}` }}>
-                <button type="button" data-testid="recipes-row" data-recipe-id={r.id} onClick={() => setOpenId(r.id)}
+                <button type="button" data-testid="recipes-row" data-recipe-id={r.id} onClick={() => openRecipe(r.id)}
                   style={{ display: 'block', width: '100%', textAlign: 'left', minHeight: T.buttonMinHeight, padding: '6px 0',
                     background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
                   <div style={{ color: P.dark, fontSize: T.type.base, fontWeight: 600 }}>{r.name}</div>
@@ -117,13 +163,15 @@ export default function RecipesView({ onBatchStarted, now }) {
       ))}
 
       <RecipeSheet open={!!sheet} recipe={null} types={types} fetch={fetch} onTypeCreated={onTypeCreated}
-        onClose={() => setSheet(null)} onSaved={(saved) => { setSheet(null); loadList(); if (saved?.id) setOpenId(saved.id) }} />
+        onClose={() => setSheet(null)} onSaved={onNewSaved} />
     </div>
   )
 }
 
 // ── one recipe ───────────────────────────────────────────────────────────────────────────────────
-export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, onRemoved }) {
+// `ownBack` false (a page that owns recipe mode): no Back here — the page's own is the one Back.
+// `onBatchStarted(batch, origin)`: every batch opened from here names this recipe as where it came from.
+export function RecipeDetail({ id, fetch, now, ownBack = true, onBack, onEdit, onBatchStarted, onRemoved }) {
   const [recipe, setRecipe] = useState(null)
   const [error, setError] = useState(false)
   const [starting, setStarting] = useState(false)
@@ -167,7 +215,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
       await fetch(`/api/kitchen-batches/${bid}/close`, { method: 'POST', body: JSON.stringify({ outcome: NOTHING_KEPT_OUTCOME }) })
       madePlan.current = null
       setMadeOpen(false)
-      onBatchStarted?.(plan.batch)
+      onBatchStarted?.(plan.batch, originOf(recipe))
     } catch {
       setErr("Couldn't record it — try again (nothing is recorded twice).")
     } finally { setBusy(false) }
@@ -185,7 +233,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
     }
   }
 
-  const back = <button type="button" style={link} data-testid="recipe-back" onClick={onBack}>← Recipes</button>
+  const back = ownBack ? <button type="button" style={link} data-testid="recipe-back" onClick={onBack}>← Recipes</button> : null
   if (error) return <div data-testid="recipe-detail">{back}<div role="alert" style={{ color: P.terra, fontSize: T.type.sm }}>Couldn’t open that recipe.</div></div>
   if (!recipe) return <div data-testid="recipe-detail">{back}<div style={{ color: P.light, fontSize: T.type.sm }}>Opening that recipe…</div></div>
 
@@ -280,7 +328,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
               return (
                 <li key={b.id} data-testid="recipe-detail-batch" style={{ fontSize: T.type.sm, color: P.dark, padding: '3px 0' }}>
                   <button type="button" style={{ ...link, fontWeight: 400, color: P.dark }} data-testid="recipe-detail-batch-open"
-                    onClick={() => onBatchStarted?.(b)}>
+                    onClick={() => onBatchStarted?.(b, originOf(recipe))}>
                     {b.label} · {w.when} · {w.ending}
                   </button>
                 </li>
@@ -306,7 +354,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
 
       {starting && (
         <StartBatchSheet open recipe={recipe} onClose={() => setStarting(false)}
-          onStarted={(batch) => { setStarting(false); onBatchStarted?.(batch) }} />
+          onStarted={(batch) => { setStarting(false); onBatchStarted?.(batch, originOf(recipe)) }} />
       )}
     </div>
   )
