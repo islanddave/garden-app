@@ -5,9 +5,8 @@
 // that carries the searchbox ROLE (so every test and every screen reader finds it exactly as before), and
 // the component renders exactly one clear control.
 //
-// NOT IN THIS LANE'S COMMITS: the field's new name and placeholder ("Search pantry and recipes"). The name is
-// pinned by role AND name at six places in Pantry.test.jsx, two of them inside lane A's hunk; see the lane
-// report. SEARCH_LABEL is still the one constant the name comes from.
+// THE NAME AND THE PLACEHOLDER ("Search pantry and recipes") landed at the train, after lane A's recipes read
+// made the words true. SEARCH_LABEL is the one constant both come from, so the words shown are the name announced.
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
 import { describe, it, expect, vi } from 'vitest'
@@ -23,6 +22,8 @@ describe('the page search field', () => {
   it('is still a searchbox, found by its role and its name, inside a search landmark', () => {
     render(<Box />)
     const box = screen.getByRole('searchbox', { name: SEARCH_LABEL })
+    expect(SEARCH_LABEL).toBe('Search pantry and recipes')
+    expect(box.getAttribute('placeholder')).toBe(SEARCH_LABEL)              // the words shown are the name announced
     expect(box.getAttribute('data-testid')).toBe('pantry-search')
     expect(screen.getByRole('search').contains(box)).toBe(true)
     expect(parseInt(box.style.minHeight, 10)).toBe(48)

@@ -15,7 +15,7 @@ import PantryRowSheet from './PantryRowSheet.jsx'
 import { useBatchNames, batchNameOf } from './PantryView.jsx'
 import { searchHits, leftWords, extraLabel } from './pantryRows.js'
 
-export const SEARCH_LABEL = 'Search the pantry'
+export const SEARCH_LABEL = 'Search pantry and recipes'
 
 // ONE CLEAR BUTTON (Put-Up UX pass R1). A native `type="search"` field draws its own cancel × in Chrome
 // and Safari, right beside this component's × — two clear buttons side by side on Dave's phone. The field
@@ -26,7 +26,7 @@ export function PantrySearchBox({ value, onChange, onClear }) {
   return (
     <div role="search" style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
       <input type="text" role="searchbox" inputMode="search" enterKeyHint="search" autoComplete="off"
-        aria-label={SEARCH_LABEL} data-testid="pantry-search" value={value} placeholder="Search"
+        aria-label={SEARCH_LABEL} data-testid="pantry-search" value={value} placeholder={SEARCH_LABEL}
         onChange={e => onChange(e.target.value)}
         style={{ ...inputChrome(false), flex: 1, minWidth: 0, minHeight: T.buttonMinHeight }} />
       {value && (

@@ -181,7 +181,7 @@ describe('the page search (V4 §2.5)', () => {
   it('results replace the segment body; name match only; × clears', async () => {
     renderPantry()
     await rowEl('put_up:jar-reaper')
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search the pantry' }), { target: { value: 'reaper' } })
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search pantry and recipes' }), { target: { value: 'reaper' } })
     const results = await screen.findByTestId('pantry-search-results')
     expect(screen.queryByTestId('pantry-view')).toBeNull()
     expect(screen.queryByRole('radiogroup', { name: 'Put-Up view' })).toBeNull()
@@ -195,14 +195,14 @@ describe('the page search (V4 §2.5)', () => {
   it('is a name search: a crop, a place or a method is not a match', async () => {
     renderPantry()
     await rowEl('put_up:jar-reaper')
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search the pantry' }), { target: { value: 'fridge' } })
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search pantry and recipes' }), { target: { value: 'fridge' } })
     expect(await screen.findByTestId('pantry-search-putup')).toBeTruthy()
   })
 
   it('Back clears it: the first keystroke pushed one entry, the rest replaced it', async () => {
     renderPantry(['/today', '/put-up?view=pantry'])
     await rowEl('put_up:jar-reaper')
-    const box = screen.getByRole('searchbox', { name: 'Search the pantry' })
+    const box = screen.getByRole('searchbox', { name: 'Search pantry and recipes' })
     fireEvent.change(box, { target: { value: 'p' } })
     fireEvent.change(box, { target: { value: 'pe' } })
     fireEvent.change(box, { target: { value: 'pes' } })
@@ -215,7 +215,7 @@ describe('the page search (V4 §2.5)', () => {
   it('a tap opens the row\'s sheet; no hit offers "Put something up: <text> →", which opens the door with it', async () => {
     renderPantry()
     await rowEl('put_up:jar-reaper')
-    const box = screen.getByRole('searchbox', { name: 'Search the pantry' })
+    const box = screen.getByRole('searchbox', { name: 'Search pantry and recipes' })
     fireEvent.change(box, { target: { value: 'oat' } })
     fireEvent.click(await screen.findByTestId('pantry-search-hit-pantry_item:item-milk'))
     expect((await screen.findByTestId('row-sheet')).getAttribute('data-row-key')).toBe('pantry_item:item-milk')
@@ -232,7 +232,7 @@ describe('the page search (V4 §2.5)', () => {
     const onOpen = vi.fn()
     renderPantry(['/put-up?view=pantry'], { extraSearchItems: [{ key: 'r1', name: 'Reaper sauce #4', kindLabel: 'recipe', onOpen }] })
     await rowEl('put_up:jar-reaper')
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search the pantry' }), { target: { value: 'sauce' } })
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search pantry and recipes' }), { target: { value: 'sauce' } })
     const hit = await screen.findByTestId('pantry-search-hit-extra:r1')
     expect(hit.textContent).toBe('Reaper sauce #4 · recipe')
     fireEvent.click(hit)
@@ -244,7 +244,7 @@ describe('the recipes lane\'s items in the page search', () => {
   it('a recipe item ({kind, id, name, type_label}) with no onOpen opens recipe detail (?recipe=), search dropped', async () => {
     renderPantry(['/put-up?view=pantry'], { extraSearchItems: [{ kind: 'recipe', id: 'rc-4', name: 'Reaper sauce #4', type_label: 'Hot sauce', keeps: null }] })
     await rowEl('put_up:jar-reaper')
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search the pantry' }), { target: { value: 'sauce #' } })
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search pantry and recipes' }), { target: { value: 'sauce #' } })
     const hit = await screen.findByTestId('pantry-search-hit-extra:recipe:rc-4')
     expect(hit.textContent).toBe('Reaper sauce #4 · Hot sauce')
     fireEvent.click(hit)
