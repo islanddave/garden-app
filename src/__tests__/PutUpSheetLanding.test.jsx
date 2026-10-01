@@ -2,13 +2,15 @@
 // landing, moved into a helper so any armed sheet can hand over to the page the same way: close first, wait
 // for the sheet's own Back entry to be consumed (or the fallback), then call on — ONCE.
 //
-// WHAT THIS FILE HOLDS, each with the mutation that proves it:
+// WHAT THIS FILE HOLDS:
 //   • unarmed (no marker on the current entry): close, then `then`, at once and in that order;
 //   • armed: `then` waits for the popstate, runs once, and no later popstate or timer runs it again;
 //   • armed and nothing consumes the entry: `then` runs once at the fallback, and not before;
 //   • under the REAL <Sheet armsBack> and registry: `then` sees the sheet gone and the marker consumed;
 //   • StartBatchSheet.jsx still exports LAND_FALLBACK_MS, and it is the helper's own.
 // The Start sheet's own landing tests (PutUpStartSheet.test.jsx) run unedited over the same code.
+// MUTATION: land at once even when a Back entry is armed -> "calls then once after a popstate, and not
+// before it" reds here, and so does the Start sheet's own "hands the batch over only after…" there.
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
