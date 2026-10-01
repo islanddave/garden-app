@@ -26,6 +26,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useOverlayLocation, OverlayLink } from '../context/OverlayContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
+import { useNavLayout } from '../context/NavPrefsContext.jsx'
 import { P, APP_NAME } from '../lib/constants.js'
 import { getRouteClass, CAPTURE_TITLES } from '../lib/routeClass.js'
 import { pickBanner } from '../lib/pickBanner.js'
@@ -185,6 +186,7 @@ function HeaderActions() {
 export default function TopChrome() {
   const { user, loading } = useAuth()
   const { pathname } = useOverlayLocation()
+  const { bar } = useNavLayout()
   const navigate = useNavigate()
   const [dayKey, setDayKey] = useState(() => new Date().toDateString())
   const [bannerReady, setBannerReady] = useState(false)
@@ -195,7 +197,10 @@ export default function TopChrome() {
   }, [])
   const banner = useMemo(() => pickBanner(new Date(dayKey), BANNERS), [dayKey])
 
-  const cls = getRouteClass(pathname, { user, loading })
+  // V5-NAVANYSLOT-001 (Dave, 2026-10-01: "follow my bar") — `bar` is the SAME value BottomNav maps
+  // over, from the same context read, so a More page loses its Back arrow in the very commit its tab
+  // is drawn and never otherwise. Do not derive it here by another road (routeClass.js).
+  const cls = getRouteClass(pathname, { user, loading, bar })
   if (cls === 'capture') return <CaptureBar title={CAPTURE_TITLES[pathname] ?? null} />
 
   const saveData = typeof navigator !== 'undefined' && navigator.connection?.saveData
