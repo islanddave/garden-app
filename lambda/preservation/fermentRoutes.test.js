@@ -503,13 +503,25 @@ describe('POST /api/pantry/uses', () => {
     [{ idempotency_key: K1, preservation_log_id: JAR }, /one of them/],
     [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, all_remaining: true }, /one of them/],
     [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 0 }, /1 or more/],
-    // B′ amends F's "only eaten": discarded is admitted, but only as Went bad = all that is left (V4 §2.5);
-    // 'batch' stays the line routes' own.
-    [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'discarded' }, /Went bad/],
+    // B′ amends F's "only eaten": discarded is admitted — a count, or all that is left (the accepted row
+    // under this table); 'batch' stays the line routes' own.
     [{ idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'batch' }, /eaten/],
   ])('%o → 400', async (body, want) => {
     expect(validateUse(body)).toMatch(want);
     expect((await use(body)).status).toBe(400);
+  });
+
+  // Put-Up UX pass R1: this row sat in the table above as a 400 (/Went bad/) until Went bad could be a count.
+  it("{ count_used: 1, fate: 'discarded' } → accepted (201): the count and the fate are what the statement binds", async () => {
+    const body = { idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'discarded' };
+    expect(validateUse(body)).toBeNull();
+    const sql = mockSql([[], [{ left_n: 3, use: { id: 'u1', count_used: 1, fate: 'discarded' }, jar: { id: JAR, remaining_count: 2 } }]]);
+    const res = await call(sql, body);
+    expect(res).toEqual({ status: 201, body: { use: { id: 'u1', count_used: 1, fate: 'discarded' }, jar: { id: JAR, remaining_count: 2 } } });
+    const s = sql.batches[0][1];
+    expect(after(s, 'SELECT pre.id, CASE WHEN')).toBe(false);
+    expect(after(s, 'THEN pre.left_n ELSE')).toBe(1);
+    expect(after(s, 'jar.id, jar.used,')).toBe('discarded');
   });
 
   it('ONE statement in the actor transaction: lock, the guarded decrement, the use from its RETURNING', async () => {

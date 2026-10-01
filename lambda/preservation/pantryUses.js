@@ -3,9 +3,9 @@
 // WHY IT SHIPS IN F. A draw from a jar stamps delta_at, and from F the legacy PUT refuses a
 // remaining_count on a jar whose delta_at is set (the stale-bundle refusal). The F client therefore
 // stops sending remaining_count in its PUT and posts here instead — otherwise every drawn jar would 409
-// forever. F accepted only `fate` NULL (eaten); B′ adds 'discarded' (Went bad = all_remaining) and
-// 'given_away' (Gave it away = a count, or all of it). 'batch' is written only by the line routes. The undo
-// route is B′'s, in pantryRoutes.js (POST /api/pantry/uses/:id/undo).
+// forever. F accepted only `fate` NULL (eaten); B′ adds 'discarded' (Went bad) and 'given_away' (Gave it
+// away) — each a count, or all that is left. 'batch' is written only by the line routes. The undo route
+// is B′'s, in pantryRoutes.js (POST /api/pantry/uses/:id/undo).
 //
 // ONE STATEMENT. `pre` reads and LOCKS the jar (household-scoped, live), `want` fixes how many this tap
 // uses (all_remaining = what is left right now), the UPDATE moves the count only if that many are left
@@ -46,8 +46,7 @@ export function validateUse(body) {
   const all = body.all_remaining === true;
   if (has(body, 'all_remaining') && typeof body.all_remaining !== 'boolean') return 'all_remaining must be true or false';
   if (all === (body.count_used != null)) return 'send count_used or all_remaining: true, one of them';
-  // "Went bad" is a use of what is LEFT (V4 §2.5), never of a count.
-  if (body.fate === 'discarded' && !all) return 'Went bad is all that is left — send all_remaining: true';
+  // "Went bad" may be a count or all that is left, as "Gave it away" may (Put-Up UX pass R1).
   if (!all && (!Number.isInteger(Number(body.count_used)) || Number(body.count_used) < 1)) {
     return 'count_used must be a whole number, 1 or more';
   }

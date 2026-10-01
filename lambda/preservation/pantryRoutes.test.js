@@ -458,8 +458,23 @@ describe('POST /api/pantry/uses — Went bad and Gave it away (the fate widening
     expect((await use({ idempotency_key: K1, preservation_log_id: JAR, all_remaining: true, fate: 'given_away' })).status).toBe(201);
   });
 
+  // Put-Up UX pass R1: Went bad may be a count as well as all that is left. This row was a 400 ("Went bad is
+  // all that is left") until then; it is accepted now, and what reaches the statement is the count.
+  it("{ count_used: 1, fate: 'discarded' } → accepted (201): a count, not all that is left, fate discarded", async () => {
+    const full = { idempotency_key: K1, preservation_log_id: JAR, count_used: 1, fate: 'discarded' };
+    expect(validateUse(full)).toBeNull();
+    expect((await use(full)).status).toBe(201);
+    const sql = mockSql([[], [{ left_n: 3, use: { id: 'u1', fate: 'discarded' }, jar: { id: JAR, remaining_count: 2 } }]]);
+    await handlePantryUses({
+      sql, rawPath: '/api/pantry/uses', method: 'POST', userId: DAVE, householdIds: HOUSEHOLD, rawBody: JSON.stringify(full),
+    });
+    const s = sql.batches[0][1];
+    expect(after(s, 'SELECT pre.id, CASE WHEN')).toBe(false);
+    expect(after(s, 'THEN pre.left_n ELSE')).toBe(1);
+    expect(after(s, 'jar.id, jar.used,')).toBe('discarded');
+  });
+
   it.each([
-    [{ count_used: 1, fate: 'discarded' }, /Went bad is all that is left/],
     [{ count_used: 1, fate: 'batch' }, /fate must be one of/],
     [{ count_used: 1, fate: 'eaten' }, /fate must be one of/],
   ])('%o → 400', async (b, want) => {
