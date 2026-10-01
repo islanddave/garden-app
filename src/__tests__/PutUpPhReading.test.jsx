@@ -610,6 +610,17 @@ const LANE_SOURCES = [
   ['src/components/pantry/PantryRowSheet.jsx', 'export function jarRecordWords'],
   ['src/components/pantry/DoorParts.jsx', 'export function DiscardChoice'],
   ['src/lib/pantryApi.js', 'export async function useJar'],
+  // Put-Up UX pass R1, the prep commit (every lane adds its files): the three new files the lanes build on.
+  // The origin a mode's Back names, the landing a sheet hands over through, and the tint of a discard line.
+  ['src/components/putup/origin.js', 'export function withFrom'],
+  ['src/components/kitchen/sheetLanding.js', 'export function landAfterClose'],
+  ['src/components/putup/soonTint.js', 'SOON_CHIP_STYLE'],
+  // lane A additions go directly under this line
+  // lane B additions go directly under this line
+  // lane C additions go directly under this line
+  // lane D additions go directly under this line
+  // lane E additions go directly under this line
+  // lane S additions go directly under this line
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the
