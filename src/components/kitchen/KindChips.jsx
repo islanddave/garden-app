@@ -45,6 +45,12 @@ export function kindBody(kind, otherText) {
   return KIND_CHIPS.some(c => c.value === kind) ? { kind } : null
 }
 
+// The chip's label for a stored kind, or null for a kind with no chip (the legacy `age`, anything
+// unknown) and for none — so a line that names the kind says nothing rather than a raw column value.
+export function kindLabel(kind) {
+  return KIND_CHIPS.find(c => c.value === kind)?.label ?? null
+}
+
 export default function KindChips({
   value = null, onChange, otherText = '', onOtherTextChange, disabled = false,
   idPrefix = 'kind', ariaLabel = 'What kind of batch?',
