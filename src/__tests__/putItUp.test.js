@@ -39,13 +39,15 @@ describe('When — the estimate chips are windows from today (§3.6)', () => {
 })
 
 describe('When — preselect and resolve (§2.4)', () => {
-  it('preselects Today only when the batch was started or last checked today', () => {
+  // Put-Up UX pass R1, D12. MUTATION (M8a): answer Today only for a batch started or checked today -> the
+  // third and fourth arms red.
+  it('preselects Today on every batch, whenever it was started or last checked', () => {
     expect(preselectWhen({ started_at: new Date(2026, 8, 29, 8).toISOString() }, NOW)).toBe('today')
     expect(preselectWhen({ started_at: new Date(2026, 8, 20).toISOString(),
       current_stage_entered_at: new Date(2026, 8, 29, 7).toISOString() }, NOW)).toBe('today')
     expect(preselectWhen({ started_at: new Date(2026, 8, 20).toISOString(),
-      current_stage_entered_at: new Date(2026, 8, 28, 23).toISOString() }, NOW)).toBeNull()
-    expect(preselectWhen({ started_at: null }, NOW)).toBeNull()
+      current_stage_entered_at: new Date(2026, 8, 28, 23).toISOString() }, NOW)).toBe('today')
+    expect(preselectWhen({ started_at: null }, NOW)).toBe('today')
   })
 
   it('Today and Yesterday are days; an estimate stores its window start', () => {
@@ -231,11 +233,13 @@ describe('completion words (§2.4)', () => {
     expect(labelHint({ ...jar, preserved_at_precision: 'after', use_by_basis: 'recipe' }, NOW))
       .toBe("Write 'Megatron reaper · sometime after Oct 8 · discard around Dec 8' on the label")
   })
-  it('the stub names every row and the first jar\'s label hint', () => {
+  // Put-Up UX pass R1, D12: two rows that read the same are ONE, with their counts added. MUTATION: say
+  // one part per row again -> "2 × 8 oz woozy · Fridge · 1 × 8 oz woozy · Fridge" and the literal reds.
+  it('the stub says identical rows as one, with the first jar\'s label hint', () => {
     const r1 = { ...newRow(), count: '2', container: woozy, place: fridge }
     const stub = completionStub({ batch: { label: 'Megatron mash' }, rows: [r1, newRow(r1)],
       jars: [{ label: 'Megatron mash', preserved_at: '2026-10-08', preserved_at_precision: 'day', use_by_target: '2026-12-08', use_by_basis: 'typed' }], now: NOW })
-    expect(stub).toBe("Megatron mash — put up · 2 × 8 oz woozy · Fridge · 1 × 8 oz woozy · Fridge · Write 'Megatron mash · Oct 8 · discard Dec 8' on the label")
+    expect(stub).toBe("Megatron mash — put up · 3 × 8 oz woozy · Fridge · Write 'Megatron mash · Oct 8 · discard Dec 8' on the label")
   })
 })
 

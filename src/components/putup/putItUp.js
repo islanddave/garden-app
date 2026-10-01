@@ -67,17 +67,11 @@ export function estimateChips(now = new Date()) {
   return chips
 }
 
-function isSameLocalDay(iso, now) {
-  if (!iso) return false
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return false
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
-}
-
-// "Nothing is preselected unless the batch was started or last checked today" (§2.4).
-export function preselectWhen(batch, now = new Date()) {
-  if (!batch) return null
-  return isSameLocalDay(batch.started_at, now) || isSameLocalDay(batch.current_stage_entered_at, now) ? 'today' : null
+// When starts on Today, on every batch (Put-Up UX pass R1, D12; before it, only a batch started or last
+// checked today did). The chips stay on screen, so any other answer is one tap; an untouched sheet stores
+// today as the put-up day.
+export function preselectWhen() {
+  return 'today'
 }
 
 // The date "Not sure" resolves to: the batch's latest dated event, never before its start. Returned
@@ -416,13 +410,24 @@ export function labelHint(jar, now = new Date()) {
   return parts.length ? `Write '${parts.join(' · ')}' on the label` : null
 }
 
-// "<name> — put up · 2 × 8 oz woozy · Fridge · Write '…' on the label". One line per row group; the
-// stub keeps the first row's hint (the one label a cook writes first) and names every row.
+// "<name> — put up · 2 × 8 oz woozy · Fridge · Write '…' on the label". The stub keeps the first row's
+// hint (the one label a cook writes first) and says every row — rows that would read the same (one name,
+// one container, one place) as ONE, with their counts added: "5 × 5 oz woozy · Fridge", never
+// "4 × 5 oz woozy · Fridge · 1 × 5 oz woozy · Fridge". A row is named, "Megatron reaper: 2 × …", only
+// when its name is not the batch's — the same rule the body sends a row's name by.
 export function completionStub({ batch, rows, jars, now = new Date() }) {
-  const name = String(batch?.label ?? '').trim() || 'This batch'
-  const parts = effectiveRows(rows).map(r => rowSummary(r)).filter(Boolean)
+  const label = String(batch?.label ?? '').trim()
+  const groups = []
+  for (const r of effectiveRows(rows)) {
+    const own = String(r?.name ?? '').trim()
+    const named = own && own !== label ? own : ''
+    const key = JSON.stringify([named, r?.container?.label ?? null, r?.place?.label ?? null])
+    const g = groups.find(x => x.key === key)
+    if (g) g.count += rowCount(r); else groups.push({ key, named, row: r, count: rowCount(r) })
+  }
+  const parts = groups.map(g => `${g.named ? `${g.named}: ` : ''}${rowSummary({ ...g.row, count: g.count })}`)
   const hint = labelHint(Array.isArray(jars) ? jars[0] : null, now)
-  return [`${name} — put up`, ...parts, hint].filter(Boolean).join(' · ')
+  return [`${label || 'This batch'} — put up`, ...parts, hint].filter(Boolean).join(' · ')
 }
 
 export function placeWords(kind) { return KIND_WORDS[kind] ?? null }

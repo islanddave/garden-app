@@ -101,11 +101,47 @@ describe('Put it up — what it asks', () => {
     expect(screen.getByTestId('putup-batch').textContent).toBe('Megatron mash')
   })
 
-  // Census (V4 §6.3): fails on ANY increase. MUTATION: mark the container group aria-required -> 4.
-  it('requires three answers at open — when, what it is now, row 1\'s place', async () => {
+  // Census (V4 §6.3; Put-Up UX pass R1, D12): fails on ANY increase, and it is a LIST of labels, not a
+  // count. MASH was last checked two days ago. MUTATION (M8a): preselect Today only on a batch started or
+  // checked today -> Today is not chosen here and When is back on the list. Mark the container group
+  // aria-required -> 3.
+  it('requires TWO answers at open on ANY batch — what it is now, row 1\'s place — because When starts on Today', async () => {
     await openPutUp()
+    expect(screen.getByTestId('putup-when-today').getAttribute('aria-checked')).toBe('true')
     const req = [...sheet().querySelectorAll('[aria-required="true"]')].map(e => e.getAttribute('aria-label'))
-    expect(req).toEqual(['When was it put up?', 'What is it now?', 'Where is row 1 going?'])
+    expect(req).toEqual(['What is it now?', 'Where is row 1 going?'])
+  })
+
+  // MUTATION: keep comparing the live chip with "nothing chosen" -> the preselected Today reads as an edit
+  // and a draft is written before anything was touched.
+  it('an untouched open is not dirty: no draft is written', async () => {
+    await openPutUp()
+    expect(isReloadBlocked()).toBe(false)
+    expect(localStorage.getItem(DRAFT_KEY)).toBeNull()
+  })
+
+  // A draft as the client before D12 stored it for this batch: the method tapped, When not answered yet.
+  // The fixture is written out (not built from newRow), so it stays what was stored. MUTATION (M8b):
+  // restore `chip: null` as it is -> nothing is chosen, and the Save below is refused for a When.
+  it('a stored v1 draft with no When restores to Today, never to an unasked, un-required When', async () => {
+    const stored = {
+      key: '11111111-2222-4333-8444-555555555555', chip: null, estimate: null, pickedDate: '', method: 'hot_sauce',
+      rows: [{ count: '1', inherit: false, container: null, place: null, name: '', lines: [], isRaw: false, inOil: false,
+        texture: null, ph: '', discard: { mode: 'auto', date: '' }, cooked: false, heat: '' }],
+      sitting: { lines: [], madeG: '', mashG: '', nextTime: '' },
+    }
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ v: 1, sheet: 'putup', savedAt: Date.now(), data: stored }))
+    await openPutUp()
+    // The draft came back (its method), and When is Today.
+    expect(screen.getByTestId('putup-method-hot_sauce').getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByTestId('putup-when-today').getAttribute('aria-checked')).toBe('true')
+    const req = [...sheet().querySelectorAll('[aria-required="true"]')].map(e => e.getAttribute('aria-label'))
+    expect(req).toEqual(['What is it now?', 'Where is row 1 going?'])
+    await tap('putup-row-0-place-id:loc-fridge')
+    await tap('putup-finish')
+    await waitFor(() => expect(putUps()).toHaveLength(1))
+    expect(bodyOf(putUps()[0]).when).toEqual({ date: '2026-09-29', precision: 'day' })
+    expect(bodyOf(putUps()[0]).idempotency_key).toBe(stored.key)
   })
 
   // MUTATION: drop the preselect -> the When group is required again and this counts 3.
@@ -141,12 +177,17 @@ describe('Put it up — what it asks', () => {
     expect(!!screen.queryByTestId('putup-row-0-texture-bends')).toBe(true)
   })
 
-  it('"More to put up later" is quieter and sits below the primary', async () => {
+  // Put-Up UX pass R1, D12: one pinned row. Both are commits, so both stay in the footer. MUTATION: move
+  // `putup-later` out of `putup-footer` -> the list reds.
+  it('"More to put up later" is quieter and sits beside the primary, 12 px away, in the one pinned row', async () => {
     await openPutUp()
     const footer = screen.getByTestId('putup-footer')
     const buttons = [...footer.querySelectorAll('button')].map(b => b.textContent)
     expect(buttons).toEqual([FINISH_CTA, LATER_CTA])
-    expect(screen.getByTestId('putup-later').style.marginTop).toBe('12px')
+    expect([footer.style.display, footer.style.flexWrap, footer.style.gap]).toEqual(['flex', 'wrap', '12px'])
+    const later = screen.getByTestId('putup-later')
+    expect([later.style.marginTop, later.style.width]).toEqual(['', ''])
+    expect([later.style.minHeight, later.style.fontWeight, later.style.background]).toEqual(['48px', '400', 'none'])
   })
 
   it('shows the resolved date and each row\'s discard-by before Save', async () => {
