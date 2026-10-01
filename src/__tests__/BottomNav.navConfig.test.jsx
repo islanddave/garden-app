@@ -184,6 +184,31 @@ describe('V5-NAVANYSLOT-001 — any page can take a slot (Dave 2026-09-30)', () 
     await renderWithLayout(layout(['today', 'seeds', 'create', 'photos', 'put-up']))
     expect(screen.getByLabelText('Main navigation').children.length).toBe(6)
   })
+
+  // QA I4 — "a page on the bar leaves More", as WIRING. moreRegistry.test.js proves layoutMoreSheet
+  // drops a row it is told is on the bar; only a render proves BottomNav tells it.
+  // KILLING MUTATION: layoutMoreSheet({ pins, moved }) at BottomNav's call sites (drop `onBar`).
+  // RESULT: RED — Seeds is a tab and a More row at once.
+  it('a More row on the bar is not also a row in the More sheet', async () => {
+    const openSheet = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'More navigation options' }))
+      return screen.getByRole('dialog', { name: 'More navigation options' })
+    }
+    const slotted = await renderWithLayout(layout(['today', 'seeds', 'create', 'put-up']))
+    expect(screen.getByLabelText('Main navigation').querySelector('a[href="/seeds"]')).not.toBeNull()
+    let sheet = openSheet()
+    expect(sheet.querySelector('[data-testid="more-seeds"]')).toBeNull()
+    expect(sheet.querySelector('[data-more-row="seeds"]')).toBeNull()
+    expect(sheet.querySelector('a[href="/seeds"]')).toBeNull()
+    // The sheet is open and drawing: a row that is NOT on the bar is there.
+    expect(sheet.querySelector('[data-more-row="photos"]')).not.toBeNull()
+    slotted.unmount()
+    // Non-vacuity: the same selectors find Seeds in the sheet when it is not on the bar.
+    await renderWithLayout(undefined)
+    sheet = openSheet()
+    expect(sheet.querySelector('[data-testid="more-seeds"]')).not.toBeNull()
+    expect(sheet.querySelector('[data-more-row="seeds"]')).not.toBeNull()
+  })
 })
 
 describe('I3 — ＋ survives every layout, in both modes', () => {
