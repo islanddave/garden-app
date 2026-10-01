@@ -17,15 +17,21 @@ import { searchHits, leftWords, extraLabel } from './pantryRows.js'
 
 export const SEARCH_LABEL = 'Search the pantry'
 
+// ONE CLEAR BUTTON (Put-Up UX pass R1). A native `type="search"` field draws its own cancel × in Chrome
+// and Safari, right beside this component's × — two clear buttons side by side on Dave's phone. The field
+// is a text input that SAYS it is a searchbox (the same role a native one has, so it is found and announced
+// the same way), asks for the search keyboard and its Search key, and leaves the one × below as the only
+// clear control.
 export function PantrySearchBox({ value, onChange, onClear }) {
   return (
     <div role="search" style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
-      <input type="search" aria-label={SEARCH_LABEL} data-testid="pantry-search" value={value} placeholder="Search"
+      <input type="text" role="searchbox" inputMode="search" enterKeyHint="search" autoComplete="off"
+        aria-label={SEARCH_LABEL} data-testid="pantry-search" value={value} placeholder="Search"
         onChange={e => onChange(e.target.value)}
-        style={{ ...inputChrome(false), flex: 1, minWidth: 0, minHeight: 48 }} />
+        style={{ ...inputChrome(false), flex: 1, minWidth: 0, minHeight: T.buttonMinHeight }} />
       {value && (
         <button type="button" onClick={onClear} data-testid="pantry-search-clear" aria-label="Clear the search"
-          style={{ minWidth: 48, minHeight: 48, background: 'none', border: 'none', color: P.mid, fontSize: '1.2rem', cursor: 'pointer' }}>
+          style={{ minWidth: 48, minHeight: T.buttonMinHeight, background: 'none', border: 'none', color: P.mid, fontSize: '1.2rem', cursor: 'pointer' }}>
           <span aria-hidden="true">×</span>
         </button>
       )}
