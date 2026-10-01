@@ -149,28 +149,59 @@ function outputText(row) {
   return n === 1 ? '1 put-up' : `${n} put-ups`
 }
 
+// THE ENDING, said ONE way (Put-Up UX pass R1, D3): on this list's row and on the batch that row opens
+// (BatchDetailView's outcome line calls this too, so the two cannot drift).
+//   "closed Aug 28 · 2 put-ups"                     put up, and a count follows: the count says it
+//   "closed Aug 28 · Put it up"                     put up, nothing counted: the label stands
+//   "closed Aug 28 · Gave it away · 1 put-up"       every other ending keeps its label…
+//   "closed Aug 28 · Put it up — but not what I set out to make · 12 put-ups"   …this one included
+// No new vocabulary: the labels are batchClose.js's, untouched. Only the plain "Put it up" is left out,
+// and only where the count beside it already says so — beside "2 put-ups" it read as said twice.
+// `label` is the caller's word for the outcome: each surface keeps its own fallback for a value this
+// bundle has never seen.
+export function closedEnding(row, { label = outcomeLabel(row?.outcome) } = {}) {
+  const closed = shortDate(row?.closed_at)
+  const count = outputText(row)
+  return [closed ? `closed ${closed}` : null, row?.outcome === 'put_up' && count ? null : label, count]
+    .filter(Boolean).join(' · ')
+}
+
 // ── one closed batch ─────────────────────────────────────────────────────────────────────────────
 // The meta line is ONE joined string on purpose, the same reason GoingNowView gives: it is the thing
 // a test can assert as a full literal with every separator, which is the standard this repo adopted
 // after shipping an assertion that passed on a value ten days wrong.
-function ClosedBatchRow({ batch, busy, onReopen }) {
-  const closed = shortDate(batch.closed_at)
-  const meta = [closed ? `closed ${closed}` : null, outcomeLabel(batch.outcome), outputText(batch)]
-    .filter(Boolean).join(' · ')
+//
+// With `onOpen` the title column IS the way into the batch: one button holding the label and its meta
+// line, and Reopen stays its own button beside it — two siblings, never one inside the other. It is the
+// row's FIRST child either way, which is what the layout gate measures against Reopen. Without `onOpen`
+// the column is the plain text it always was.
+function ClosedBatchRow({ batch, busy, onReopen, onOpen }) {
+  const meta = closedEnding(batch)
+  const words = (
+    <>
+      <div data-testid="closed-batch-title"
+        style={{ fontWeight: 700, color: P.dark, fontSize: T.type.md }}>{batch.label}</div>
+      {meta && (
+        <div data-testid="closed-batch-meta"
+          style={{ marginTop: 3, color: P.mid, fontSize: '0.82rem' }}>{meta}</div>
+      )}
+    </>
+  )
 
   return (
     <div data-testid="closed-batch" data-batch-id={batch.id}
       style={{ display: 'flex', alignItems: 'center', gap: T.space.sm, flexWrap: 'wrap',
         marginBottom: T.space.sm, padding: '12px 14px', backgroundColor: P.white,
         border: `1px solid ${P.border}`, borderRadius: T.radiusBadge }}>
-      <div style={{ minWidth: 0, flex: '1 1 60%' }}>
-        <div data-testid="closed-batch-title"
-          style={{ fontWeight: 700, color: P.dark, fontSize: T.type.md }}>{batch.label}</div>
-        {meta && (
-          <div data-testid="closed-batch-meta"
-            style={{ marginTop: 3, color: P.mid, fontSize: '0.82rem' }}>{meta}</div>
-        )}
-      </div>
+      {onOpen ? (
+        <button type="button" data-testid="closed-batch-open" onClick={() => onOpen(batch)}
+          style={{ minWidth: 0, flex: '1 1 60%', minHeight: T.buttonMinHeight, padding: 0, textAlign: 'left',
+            background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+          {words}
+        </button>
+      ) : (
+        <div style={{ minWidth: 0, flex: '1 1 60%' }}>{words}</div>
+      )}
       {/* The reversal, following the shipped Restore idiom (RecentlyDeleted.jsx:80-87): the safe
           action is allowed to be the easy one, it carries the row's name in its aria-label so a
           screen-reader user hears WHICH batch it acts on, and it wraps to its own line rather than
@@ -188,13 +219,20 @@ function ClosedBatchRow({ batch, busy, onReopen }) {
   )
 }
 
-export default function ClosedBatchesView({ batches, loading, error, onReload, now }) {
+// Where a batch opened from this list says it came from: the page's Back reads this label ("← Closed
+// batches") and returns here. A sender with no origin would send Back to Going now instead (mutation M3).
+export const CLOSED_ORIGIN = Object.freeze({ label: 'Closed batches' })
+
+// `onOpenBatch(id, origin)` (optional; the page's opener): given it, each row opens its batch. Absent,
+// the row is not a link and renders exactly as it did.
+export default function ClosedBatchesView({ batches, loading, error, onReload, now, onOpenBatch }) {
   const { fetch } = useApiFetch()
   const nowMs = now ?? Date.now()
   const [reopeningId, setReopeningId] = useState(null)
   const [reopenError, setReopenError] = useState(null)
   const groups = useMemo(() => groupClosedByMonth(batches, nowMs), [batches, nowMs])
   const empty = !loading && !error && groups.length === 0
+  const open = typeof onOpenBatch === 'function' ? (batch) => onOpenBatch(batch.id, { ...CLOSED_ORIGIN }) : null
 
   // One reopen at a time, and a second tap while one is in flight is a no-op rather than a second
   // POST — the shipped restore guard (RecentlyDeleted.jsx:176). On success the PAGE refetches:
@@ -249,7 +287,7 @@ export default function ClosedBatchesView({ batches, loading, error, onReload, n
             {g.label}
           </h2>
           {g.batches.map(b => (
-            <ClosedBatchRow key={b.id} batch={b} busy={reopeningId === b.id} onReopen={reopen} />
+            <ClosedBatchRow key={b.id} batch={b} busy={reopeningId === b.id} onReopen={reopen} onOpen={open} />
           ))}
         </React.Fragment>
       ))}
