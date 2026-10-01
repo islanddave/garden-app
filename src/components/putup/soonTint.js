@@ -7,7 +7,7 @@
 // TOKENS ONLY (P, src/lib/constants.js): no colour is spelled in this file. The padding and the radius are
 // the ones the nearest tinted chip already uses — the "N use soon" pill on the planting page
 // (planting/PutUpFromPlanting.jsx). The ink-on-background contrast is measured in
-// src/__tests__/putUpSoonTint.test.js, against the AA floor and against the gold that pill used.
+// src/__tests__/putUpSoonTint.test.jsx, against the AA floor and against the gold that pill used.
 import { P } from '../../lib/tokens.js'
 
 export const SOON_CHIP_STYLE = Object.freeze({
