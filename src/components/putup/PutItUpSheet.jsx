@@ -39,9 +39,9 @@ import { readSheetDraft, writeSheetDraft, clearSheetDraft } from '../kitchen/she
 // discard-by preview takes the recipe rung (typed > recipe on its storage kind > the engine).
 import { recipeFirstRow, recipePreview } from '../recipes/recipes.js'
 import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
-import { useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
+import { useFieldsClearOfFooter, scrollClearOfFooter } from '../kitchen/sheetScroll.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
-import LineAdder from './LineAdder.jsx'
+import LineAdder, { addFirstWords } from './LineAdder.jsx'
 import { lineWords } from './lines.js'
 import {
   PUT_IT_UP_TITLE, FINISH_CTA, LATER_CTA, PUT_IT_UP_SHEET, WHEN_CHIPS, estimateChips, preselectWhen,
@@ -137,10 +137,29 @@ function ToggleChips({ label, options, value, onChange, disabled, idPrefix, hint
 // same line search as What went in (06 §3.6, HS-I3: a pick, a planting, a draw such as "8 g from the
 // frozen reaper bag", or typed), taking form (fresh or cooked, per Dave), brand, note and listed heat.
 // Each is a whole keyed line body; the sheet sends them with the sitting in its one write.
-function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, excludeJarIds }) {
+//
+// `guard` (Put-Up UX pass R1, D2 — the unadded-line guard): { pending, stop, onPending, footerRef }. A name
+// typed into the adder and not added is not a line, and neither commit would send it. The adder reports
+// that name (`onPending`); a commit that stopped for it bumps `stop`, which puts the cursor back in the
+// adder's name field under one line saying why.
+function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, excludeJarIds, guard }) {
   const [open, setOpen] = useState(false)
+  const boxRef = useRef(null)
+  const stopLineRef = useRef(null)
+  const { pending = null, stop = 0, onPending, footerRef } = guard ?? {}
+  // The stop, made visible. It runs once the line above the adder is on the page: the cursor goes to the
+  // adder's name field (the first input here), the line is brought into view when the field landed at the
+  // very top, and the field is kept clear of the pinned footer when it landed at the bottom.
+  useEffect(() => {
+    if (!stop) return
+    const name = boxRef.current?.querySelector('input')
+    if (!name) return
+    name.focus()
+    stopLineRef.current?.scrollIntoView?.({ block: 'nearest' })
+    scrollClearOfFooter(name, footerRef?.current)
+  }, [stop, footerRef])
   return (
-    <div data-testid={`${idPrefix}-lines`} style={{ marginBottom: T.space.sm }}>
+    <div ref={boxRef} data-testid={`${idPrefix}-lines`} style={{ marginBottom: T.space.sm }}>
       <span style={labelChrome} aria-hidden="true">{label}<span style={optionalMarkChrome}>optional</span></span>
       {lines.length > 0 && (
         <ul style={{ listStyle: 'none', margin: '0 0 6px', padding: 0 }}>
@@ -157,9 +176,20 @@ function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, ex
         </ul>
       )}
       {open ? (
-        <LineAdder lines={batchLines} idPrefix={`${idPrefix}-add`} disabled={disabled} forms={['fresh', 'cooked']}
-          label="What was added?" addLabel="Add it" pinnable={false} excludeJarIds={excludeJarIds} pantryHits={false}
-          onAdd={async (body) => { onChange([...lines, body]); setOpen(false); return true }} />
+        <>
+          {/* Said directly above the field the cursor was just put in: under the adder it would be off
+              screen with the keyboard up, and the sheet's own error line is a screen below. */}
+          {stop > 0 && pending && (
+            <div ref={stopLineRef} role="alert" data-testid={`${idPrefix}-add-first`}
+              style={{ margin: '0 0 6px', color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>
+              {addFirstWords(pending)}
+            </div>
+          )}
+          <LineAdder lines={batchLines} idPrefix={`${idPrefix}-add`} disabled={disabled} forms={['fresh', 'cooked']}
+            label="What was added?" addLabel="Add it" pinnable={false} excludeJarIds={excludeJarIds} pantryHits={false}
+            onPendingChange={onPending}
+            onAdd={async (body) => { onChange([...lines, body]); setOpen(false); return true }} />
+        </>
       ) : (
         <button type="button" disabled={disabled} data-testid={`${idPrefix}-open`} onClick={() => setOpen(true)}
           style={{ ...quietLink, minHeight: 48 }}>+ Add something</button>
@@ -210,7 +240,7 @@ function PlacePicker({ chips, value, onChange, disabled, idPrefix, required, row
 
 // `row` is the row as stored (it may inherit); `shown` is the same row with the inherited container
 // and place resolved, which is what every word on screen describes.
-function RowEditorBlock({ row, shown, index, rows, method, batch, places, containers, open, onToggle, onChange, onRemove, onKeepDrying, disabled, previews, batchLines, excludeJarIds }) {
+function RowEditorBlock({ row, shown, index, rows, method, batch, places, containers, open, onToggle, onChange, onRemove, onKeepDrying, disabled, previews, batchLines, excludeJarIds, guard }) {
   const n = index + 1
   const name = row.name.trim() || batch.label
   const rowName = `row ${n}`
@@ -276,7 +306,7 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
             placeholder={batch.label} maxLength={120} disabled={disabled} onChange={e => set({ name: e.target.value })}
             style={{ ...inputChrome(false), marginBottom: T.space.sm, scrollMarginBottom: FOOTER_PX }} />
           <AddedLines label="Added at the end" lines={row.lines} disabled={disabled} idPrefix={`putup-row-${index}-added`}
-            batchLines={batchLines} excludeJarIds={excludeJarIds} onChange={lines => set({ lines })} />
+            batchLines={batchLines} excludeJarIds={excludeJarIds} guard={guard} onChange={lines => set({ lines })} />
           {/* Release F (06 §3.6): cooked after blending is a RECORD — no date reads it. */}
           <div role="group" aria-label="Cooked after blending" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: T.space.sm }}>
             <SelectChip touch active={row.cooked === true} disabled={disabled} data-testid={`putup-row-${index}-cooked`}
@@ -381,6 +411,11 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   // (`reopen: true`), never a bare 409. The door reopens through the shipped route; the draft and its
   // key are untouched, so the next Save is the same sitting.
   const [reopenDoor, setReopenDoor] = useState(false)
+  // The unadded-line guard (D2). `pendings`: the name each embedded adder holds and has not added, by adder
+  // (`putup-row-N-added`, `putup-sitting-added`). `stop`: the adder a commit last stopped for, and how many
+  // times (a count, so a second tap puts the cursor back there again).
+  const [pendings, setPendings] = useState({})
+  const [stop, setStop] = useState(null)
   const writingRef = useRef(false)
   const footerRef = useRef(null)
   const keepClear = useFieldsClearOfFooter(footerRef)
@@ -440,8 +475,28 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
 
   const updateRow = (i, next) => setRows(rs => rs.map((r, j) => (j === i ? next : r)))
 
+  // An adder reports null when its name is cleared, when its Add landed, and when it goes away (Put it
+  // up's adder unmounts after each Add, and with its row's disclosure): the stop it caused ends with it.
+  const reportPending = useCallback((id, text) => {
+    setPendings(p => {
+      if ((p[id] ?? null) === (text ?? null)) return p
+      const next = { ...p }
+      if (text) next[id] = text; else delete next[id]
+      return next
+    })
+    if (!text) setStop(s => (s?.id === id ? null : s))
+  }, [])
+  const adderGuard = (id) => ({
+    pending: pendings[id] ?? null, stop: stop?.id === id ? stop.n : 0, onPending: (text) => reportPending(id, text), footerRef,
+  })
+  // The first adder, top to bottom, still holding a name: the rows in order, then the sitting's.
+  const heldAdder = [...rows.map((_, i) => `putup-row-${i}-added`), 'putup-sitting-added'].find(id => pendings[id]) ?? null
+
   const save = useCallback(async (finish) => {
     if (writingRef.current) return
+    // A name still sitting in an adder is not a line yet, and this body would leave it out. Both commits
+    // stop before anything is sent; the adder takes the cursor back, under the line that says why.
+    if (heldAdder) { setStop(s => ({ id: heldAdder, n: (s?.n ?? 0) + 1 })); setErr(null); return }
     const w = chip ? resolveWhen({ chip, estimate, pickedDate, batch, now: nowDate }) : null
     if (!w || w.error) { setErr(w?.error ?? 'When was it put up? Pick one — or Not sure.'); return }
     const useKey = key || mintKey()
@@ -476,7 +531,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
       const r = describeRefusal(e)
       setErr(r ? r.text : "Couldn't put it up — try again. Everything you entered is still here.")
     }
-  }, [batch, chip, draftKey, estimate, fetch, key, method, nowDate, onClose, onDone, openRow, pickedDate, rows, sitting])
+  }, [batch, chip, draftKey, estimate, fetch, heldAdder, key, method, nowDate, onClose, onDone, openRow, pickedDate, rows, sitting])
 
   const estimates = estimateChips(nowDate)
 
@@ -543,7 +598,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
         {rows.map((r, i) => (
           <RowEditorBlock key={i} row={r} shown={shownRows[i]} index={i} rows={rows} method={method} batch={batch} places={chips}
             containers={containers} open={openRow === i} disabled={saving} previews={previews}
-            batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)}
+            batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)} guard={adderGuard(`putup-row-${i}-added`)}
             onToggle={() => setOpenRow(o => (o === i ? null : i))}
             onChange={next => { updateRow(i, next); setErr(null) }}
             onRemove={() => { setRows(rs => rs.filter((_, j) => j !== i)); setOpenRow(null) }}
@@ -562,7 +617,7 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
           {sittingOpen && (
             <div data-testid="putup-sitting" style={{ marginTop: 6 }}>
               <AddedLines label="Added at the end to every jar" lines={sitting.lines} disabled={saving} idPrefix="putup-sitting-added"
-                batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)}
+                batchLines={batchLines} excludeJarIds={drawnJarIds(rows, sitting.lines)} guard={adderGuard('putup-sitting-added')}
                 onChange={lines => setSitting(s => ({ ...s, lines }))} />
               {/* "Mash in ___ g" beside "Made ___ g in all" (Ferment; 06 §4 item 7). */}
               <div style={{ display: 'flex', gap: T.space.md, flexWrap: 'wrap' }}>
