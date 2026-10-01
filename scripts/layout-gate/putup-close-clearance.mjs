@@ -140,7 +140,7 @@ const NONE = { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, 
 const KEYBOARD_UP = [426, 492]
 const CASES = [
   { name: 'closed-empty', viewports: [[390, 844]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, jarRows: 0, minControls: 1, closedEmpty: true, detail: false, door: false, sheet: false, band: true } },
-  { name: 'closed',       viewports: [[390, 844]], expect: { closedRows: 9, monthHeadings: 4, reopenBtns: 9, outcomeChips: 0, jarRows: 0, minControls: 10, closedEmpty: false, detail: false, door: false, sheet: false, band: true } },
+  { name: 'closed',       viewports: [[390, 844], [426, 836]], expect: { closedRows: 9, monthHeadings: 4, reopenBtns: 9, outcomeChips: 0, jarRows: 0, minControls: 10, closedEmpty: false, detail: false, door: false, sheet: false, band: true } },
   { name: 'detail',       viewports: [[390, 844], [426, 836]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, jarRows: 0, minControls: 2, closedEmpty: false, detail: true,  door: true,  sheet: false, band: true } },
   { name: 'close-kept',   viewports: [[390, 844]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 0, jarRows: 0, minControls: 3, closedEmpty: false, detail: true,  door: false, sheet: true, band: false, keptChips: 2 } },
   { name: 'close-yes',    viewports: [[390, 844], [390, 667]], expect: { closedRows: 0, monthHeadings: 0, reopenBtns: 0, outcomeChips: 2, jarRows: 4, minControls: 8, closedEmpty: false, detail: true, door: false, sheet: true, band: false, primary: 'batch-close-submit' } },
