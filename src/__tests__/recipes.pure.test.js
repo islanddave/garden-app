@@ -64,6 +64,17 @@ describe('words', () => {
   it('a batch made from it: its date and its ending in words — never a reading', () => {
     expect(madeBatchWords({ started_at: '2026-09-20T16:00:00Z', closed_at: '2026-10-02T00:00:00Z', outcome: 'put_up' }, NOW))
       .toEqual({ when: expect.any(String), ending: 'Put it up' })
+    // UX pass R1 (D3): the count follows the ending, and "Put it up" is left out ONLY where it is the plain
+    // put_up outcome AND a count above zero says it. The four cells, as literals (output_count is a string
+    // on the wire; a number reads the same).
+    const closed = (outcome, output_count) => madeBatchWords({ started_at: '2026-08-20T16:00:00Z', closed_at: '2026-08-28T16:00:00Z', outcome, output_count }, NOW)
+    expect(closed('put_up', '2')).toEqual({ when: 'Aug 20', ending: '2 put-ups' })
+    expect(closed('put_up', '0')).toEqual({ when: 'Aug 20', ending: 'Put it up' })
+    expect(closed('given_away', '1')).toEqual({ when: 'Aug 20', ending: 'Gave it away · 1 put-up' })
+    expect(closed('put_up_different', '12')).toEqual({ when: 'Aug 20', ending: 'Put it up — but not what I set out to make · 12 put-ups' })
+    expect(closed('put_up', 1).ending).toBe('1 put-up')
+    expect(closed('put_up', null).ending).toBe('Put it up')
+    expect(closed('consumed', '0').ending).toBe('Ate it')
     expect(madeBatchWords({ started_at: null, first_recorded_at: '2026-09-20T16:00:00Z' }, NOW).ending).toBe('still going')
     expect(madeBatchWords({ suspended_at: '2026-09-21T00:00:00Z' }, NOW).ending).toBe('paused')
     expect(madeBatchWords({ closed_at: 'x', outcome: 'discarded_spoiled' }, NOW).ending).toBe('It spoiled — threw it out')

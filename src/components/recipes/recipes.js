@@ -31,13 +31,34 @@ export { RECIPE_STORAGE_KINDS, RECIPE_NAME_MAX, RECIPE_TYPE_LABEL_MAX, KITCHEN_U
 export const RECIPES_SEGMENT_LABEL = 'Recipes'
 export const NEW_RECIPE_CTA = 'New recipe'
 export const MAKE_THIS_CTA = 'Make this'
-export const I_MADE_THIS_CTA = 'I made this'
+// Put-Up UX pass R1: the button says what it will do, and its confirm says where nothing goes. "Kept some?"
+// starts a batch the way Make this does — there is no batch yet to put up.
+export const I_MADE_THIS_CTA = 'Made it, ate it all'
+export const MADE_CONFIRM_TEXT = 'Logs a make of this for today, every line as written. Nothing goes into the Pantry.'
+export const MADE_CONFIRM_CTA = 'Log this make'
+export const KEPT_SOME_CTA = 'Kept some? Start a batch instead →'
 export const MADE_AS_WRITTEN_CTA = 'Made it as written'
 export const SAVE_AS_RECIPE_CTA = 'Save as recipe'
 export const FOLLOWING_QUESTION = 'Following a recipe?'
 export const NEW_TYPE_CTA = 'New type…'
-// "I made this" is a make with nothing kept (V4 §2.2): recorded as eaten ('consumed', "Ate it").
+// "Made it, ate it all" is a make with nothing kept (V4 §2.2): recorded as eaten ('consumed', "Ate it").
 export const NOTHING_KEPT_OUTCOME = 'consumed'
+
+// The recipe sheet's words (UX pass R1). Two pickers, each saying what it is for; a line asks for its name
+// and the amount as he would write it, and keeps the exact number behind one tap.
+export const TYPE_LABEL = 'What it makes'
+export const TYPE_HELP = 'Groups it in your recipe list.'
+export const MORE_TYPES_CTA = 'More types…'
+export const KIND_LABEL = "How it's made"
+export const KIND_HELP = 'The kind of batch Make this starts.'
+export const LINE_NAME_LABEL = 'Name'
+export const LINE_AMOUNT_LABEL = "Amount as you'd write it"
+export const AT_THE_END_LABEL = 'at the end'
+export const EXACT_AMOUNT_CTA = '▸ exact amount'
+export const KEEPS_LABEL = 'How long, and where'
+export const KEEPS_N_LABEL = 'How many'
+export const MORE_PLACES_CTA = 'More…'
+export const COOKED_LABEL = 'Cooked after blending'
 
 export const STORAGE_KIND_WORDS = Object.freeze({
   deep_freezer: 'Deep freezer', fridge_freezer: 'Fridge freezer', fridge: 'Fridge', pantry: 'Pantry shelf',
@@ -87,16 +108,72 @@ export function recipeLineWords(l) {
   return extra.length ? `${base} (${extra.join(', ')})` : base
 }
 
+// How many put-ups a batch made, in the closed list's own words ("put-up", never "jar": most methods make no
+// jar). output_count is an uncast count and arrives as a STRING, so Number() first. null when there are none.
+function putUpCountWords(b) {
+  const n = Number(b?.output_count)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return n === 1 ? '1 put-up' : `${n} put-ups`
+}
+
 // A batch made from the recipe, dated, with its ending in plain words at equal weight — never a reading.
-// Returns { when, ending } strings.
+// Returns { when, ending } strings. The ending is batchClose.js's own label with the count after it; the one
+// label the count already says ("Put it up", when put-ups follow) is left out, so the row reads
+// "Mojo Oct · Oct 2 · 6 put-ups" and not an instruction (UX pass R1; the closed list drops it the same way).
 export function madeBatchWords(b, now = new Date()) {
   const at = b?.started_at ?? b?.first_recorded_at ?? null
   const when = at ? shortDay(at, now) : 'date not recorded'
   let ending
-  if (b?.closed_at || b?.outcome) ending = describeOutcome(b) ?? 'finished'
-  else if (b?.suspended_at) ending = 'paused'
+  if (b?.closed_at || b?.outcome) {
+    const count = putUpCountWords(b)
+    ending = b.outcome === 'put_up' && count ? count : [describeOutcome(b) ?? 'finished', count].filter(Boolean).join(' · ')
+  } else if (b?.suspended_at) ending = 'paused'
   else ending = 'still going'
   return { when, ending }
+}
+
+// ── the notes, as recipe detail SHOWS them ───────────────────────────────────────────────────────
+// DISPLAY ONLY. The stored text, the sheet's textarea and the save body are his text verbatim and never
+// pass through here. A pair of marks around a run of words on ONE line shows as bold (two asterisks each
+// side) or italic (one each side) with the marks hidden; every other asterisk prints exactly as typed.
+// The rule for a pair is narrow on purpose, so arithmetic and bullets are never read as marks:
+//   · the opening mark starts the line or follows a space or punctuation, and a word follows it at once;
+//   · the closing mark follows a word at once, and ends the line or is followed by a space or punctuation;
+//   · both sit on the same line, with at least one character between them.
+// So "2 * 3 cups", "2*3*4", a "* " bullet, a lone mark and a pair split by a line break all stay as typed.
+// Marks do not nest: inside a bold run a single asterisk is text.
+// Returns [{ kind: 'plain' | 'bold' | 'italic', text }], in order; putting the marks back round each bold
+// and italic run and joining gives the input again, character for character.
+const WORD_CHAR = /[\p{L}\p{N}]/u
+const atEdge = (c) => c === undefined || (c !== '*' && !WORD_CHAR.test(c))
+const startsRun = (c) => c !== undefined && c !== '*' && !/\s/.test(c)
+const MARKS = [['**', 'bold'], ['*', 'italic']]
+function markedRunAt(line, i) {
+  if (line[i] !== '*' || !atEdge(line[i - 1])) return null
+  for (const [mark, kind] of MARKS) {
+    const w = mark.length
+    if (!line.startsWith(mark, i) || !startsRun(line[i + w])) continue
+    for (let j = line.indexOf(mark, i + w + 1); j !== -1; j = line.indexOf(mark, j + 1)) {
+      if (startsRun(line[j - 1]) && atEdge(line[j + w])) return { kind, text: line.slice(i + w, j), end: j + w }
+    }
+  }
+  return null
+}
+export function notesSegments(notes) {
+  const out = []
+  let plain = ''
+  const flush = () => { if (plain) { out.push({ kind: 'plain', text: plain }); plain = '' } }
+  const lines = (notes == null ? '' : String(notes)).split('\n')
+  lines.forEach((line, n) => {
+    let i = 0
+    while (i < line.length) {
+      const run = markedRunAt(line, i)
+      if (run) { flush(); out.push({ kind: run.kind, text: run.text }); i = run.end } else { plain += line[i]; i += 1 }
+    }
+    if (n < lines.length - 1) plain += '\n'
+  })
+  flush()
+  return out
 }
 
 // The kind vocabulary a recipe takes is the batch-kind vocabulary (chk_recipe_kind).
@@ -108,6 +185,17 @@ export const RECIPE_KIND_OPTIONS = KIND_CHIPS
 export function sortTypes(types) {
   return [...(types ?? [])].sort((a, b) => (b.builtin === true) - (a.builtin === true)
     || (a.builtin ? (a.sort_order ?? 0) - (b.sort_order ?? 0) : String(a.label).localeCompare(String(b.label))))
+}
+
+// The type chips of the recipe sheet (UX pass R1): { front, rest }. `front` is what shows at open — the type
+// the picker opened on (`pinned`), then the types this household's recipes already use (`usedIds`); `rest`
+// is every other type, behind "More types…". Both keep sortTypes' order, and `pinned` is the value at OPEN,
+// not the live one, so a chip never moves under a finger when another is tapped.
+export function typeChips({ types, pinned = null, usedIds = [] } = {}) {
+  const list = sortTypes(types)
+  const used = new Set(usedIds ?? [])
+  const front = [...list.filter(t => t.id === pinned), ...list.filter(t => t.id !== pinned && used.has(t.id))]
+  return { front, rest: list.filter(t => t.id !== pinned && !used.has(t.id)) }
 }
 
 // The list grouped by type: [{ key, label, recipes }], types in built-in order then by name, "No type" last.
@@ -153,6 +241,27 @@ export function draftFromRecipe(r) {
 }
 
 const t = (v) => String(v ?? '').trim()
+
+// "▸ exact amount" (a line's number and unit) opens by itself when the amount as written starts with a
+// digit, and stays open while the line holds a number or a unit — what Save will send is never off screen.
+// The amount is not parsed: "Made it as written" weighs a line only from the number and unit typed here.
+export function exactAmountOpens(line) {
+  return /^\s*\d/.test(String(line?.amount ?? '')) || t(line?.qty) !== '' || t(line?.unit) !== ''
+}
+
+// The place chips of "How long, and where": { chips, more }. The three most recipes name come first; a
+// kind the recipe already holds (`stored`) or the sheet has chosen (`value`) is ALWAYS among the chips, so
+// a recipe kept in a cellar never opens with nothing chosen; the others sit behind "More…" until it is
+// opened. All six of the Lambda's kinds are reachable, and none is merged into another: the recipe's date
+// applies to a jar only at a place of exactly this kind.
+export const KEEPS_COMMON_KINDS = Object.freeze(['fridge', 'deep_freezer', 'pantry'])
+export function keepsKindChips({ value = '', stored = '', moreOpen = false } = {}) {
+  const chips = [...KEEPS_COMMON_KINDS]
+  for (const k of [stored, value]) if (RECIPE_STORAGE_KINDS.includes(k) && !chips.includes(k)) chips.push(k)
+  const more = RECIPE_STORAGE_KINDS.filter(k => !chips.includes(k))
+  return moreOpen ? { chips: [...chips, ...more], more: [] } : { chips, more }
+}
+
 // The facts a sheet line does not edit (form, brand, role, heat, salt facts) ride through untouched when the
 // line came from the recipe and its name and amounts were not changed; otherwise the line is what was typed.
 function lineBody(l, i) {
