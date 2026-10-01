@@ -165,6 +165,9 @@ export const TEXTURE_CHIPS = Object.freeze([
 export const RAW_LABEL = 'Raw'
 export const RAW_HINT = 'Fresh — not cooked, pickled or fermented'
 export const IN_OIL_LABEL = 'In oil'
+// The discard choice's words, keyed by a row's `discard.mode` — ONE set for every surface that asks it
+// (Put it up, the Pantry door, the Walk), so one choice never reads two ways.
+export const DISCARD_LABELS = Object.freeze({ auto: 'Work it out', date: 'From the label', none: 'No date' })
 
 // ── Containers (Appendix B, §4.7): presets carry explicit units; never a bare "oz" ────────────────
 export const CONTAINER_PRESETS = Object.freeze([
