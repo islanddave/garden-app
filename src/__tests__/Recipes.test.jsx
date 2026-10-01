@@ -49,7 +49,7 @@ const DETAIL = {
     { id: 'l3', ordinal: 3, name: 'onion', amount_text: '20 g onion', qty: '20', qty_unit: 'g', at_the_end: true },
   ],
   batches: [
-    { id: 'b1', user_id: 'user_jen', label: 'Mojo Oct', started_at: '2026-10-01T16:00:00Z', closed_at: '2026-10-03T16:00:00Z', outcome: 'put_up', current_stage_kind: 'finished', output_count: 1 },
+    { id: 'b1', user_id: 'user_jen', label: 'Mojo Oct', started_at: '2026-10-02T16:00:00Z', closed_at: '2026-10-03T16:00:00Z', outcome: 'put_up', current_stage_kind: 'finished', output_count: '6' },
     { id: 'b2', user_id: 'user_dave', label: 'Mojo again', started_at: '2026-10-08T16:00:00Z', closed_at: null, outcome: null },
   ],
 }
@@ -122,10 +122,13 @@ describe('recipe detail — notes verbatim, lines, link, and the batches made fr
     await waitFor(() => expect(screen.getByTestId('recipe-detail-name').textContent).toBe('Roll for Initiative'))
   }
 
-  it('renders the notes exactly as written, whitespace kept', async () => {
+  it('renders the notes as written, whitespace kept — a pair of marks shows as bold, never as asterisks', async () => {
     await open()
     const notes = screen.getByTestId('recipe-detail-notes')
-    expect(notes.textContent).toBe(NOTES)
+    // UX pass R1 (D8), display only: every character but the paired marks is there, in order, and each
+    // marked run is an element built from text. (On the wire and in the sheet the notes stay verbatim.)
+    expect(notes.textContent).toBe('Mojo Verde\n\nSteps\n1. Blend.\n   Keep the spacing.\n\nFinish\n- Fridge 7 days')
+    expect([...notes.querySelectorAll('strong')].map(e => e.textContent)).toEqual(['Steps', 'Finish'])
     expect(notes.style.whiteSpace).toBe('pre-wrap')
   })
 
@@ -146,7 +149,8 @@ describe('recipe detail — notes verbatim, lines, link, and the batches made fr
     wire({ 'GET /api/recipes/r1': () => ({ recipe: { ...DETAIL, batches: DETAIL.batches.map(b => ({ ...b, last_ph_reading: '3.10', last_ph_read_at: '2026-10-02T00:00:00Z' })) } }) })
     await open()
     const rows = screen.getAllByTestId('recipe-detail-batch').map(r => r.textContent)
-    expect(rows[0]).toMatch(/^Mojo Oct · .+ · Put it up$/)
+    // UX pass R1 (D3): a put_up ending with put-ups behind it says the count, not "Put it up" a second time.
+    expect(rows[0]).toBe('Mojo Oct · Oct 2 · 6 put-ups')
     expect(rows[1]).toMatch(/^Mojo again · .+ · still going$/)
     const section = screen.getByTestId('recipe-detail-batches').textContent
     expect(section).not.toMatch(/pH|3\.10/)
@@ -248,6 +252,7 @@ describe('the create sheet and its type picker', () => {
     renderView()
     await waitFor(() => expect(screen.getAllByTestId('recipes-row')).toHaveLength(3))
     tap('recipes-new')
+    tap('recipe-type-more')          // UX pass R1 (D7): the types not yet in use, and "New type…", sit behind "More types…"
     tap('recipe-type-new')
     type(screen.getByTestId('recipe-type-new-input'), 'Shrub')
     await act(async () => { tap('recipe-type-new-save') })

@@ -1,42 +1,67 @@
 // src/components/recipes/RecipesView.jsx
 // Put-Up release 4 (V4 §2.6) — the Recipes segment of the Put-Up page: the household's recipes grouped by
 // what they make (filterable by type), a recipe's detail, the create/edit sheet, and the three doors from a
-// recipe into the kitchen — Make this (the Start sheet prefilled), and I made this (a make with nothing kept,
-// every line as written, recorded as eaten). Plain markup on the existing primitives; no visual design.
+// recipe into the kitchen — Make this (the Start sheet prefilled), and Made it, ate it all (a make with nothing
+// kept, every line as written, recorded as eaten). Plain markup on the existing primitives; no visual design.
 //
-// ⚠ RECIPE DETAIL IS THE ONLY SURFACE THAT RENDERS THE NOTES (V4 "pH") — his target pH lives there, verbatim.
-// Its list of batches made from the recipe shows a date and the ending in words, at equal weight, and never a
-// reading (the server does not send one: recipeRoutes.js readRecipe's batch list is an explicit column list).
+// ⚠ RECIPE DETAIL IS THE ONLY SURFACE THAT RENDERS THE NOTES (V4 "pH") — his target pH lives there, as he
+// wrote it: paired marks show as bold or italic (recipes.js notesSegments, built as elements) and no other
+// character moves. Its list of batches made from the recipe shows a date and the ending in words, at equal
+// weight, and never a reading (the server does not send one: recipeRoutes.js readRecipe's batch list is an
+// explicit column list).
 //
 // CONTROLLED BY ITS OWN FETCHES (the segment is self-contained): GET /api/recipes and /api/recipes/types on
 // mount, GET /api/recipes/:id on open. `onBatchStarted(batch)` is the page's own landing (PutUp.jsx), so a
 // batch started here opens exactly as one started from Going now does.
+//
+// RECIPE MODE (Put-Up UX pass R1). The page may own WHICH recipe is open, so that recipe detail is a history
+// entry and Back returns to it: it passes `openId` (its ?recipe= value; null on the list) and
+// `onOpen(id | null)`. CONTROLLED IF AND ONLY IF `onOpen` IS A FUNCTION — never "if openId is set": the page's
+// openId is null on the list, and a view that fell back to its own state there would open a detail the page's
+// Back cannot close. Controlled:
+//   · the view's own open id is never read or written: a row, a saved new recipe, Back and Remove call onOpen;
+//   · the detail renders no Back of its own (the page's is the one Back);
+//   · the list is re-read when openId goes from set to null (uncontrolled, that re-read rides the detail's
+//     own Back and Remove);
+//   · a batch opened from the detail is handed over with where it came from,
+//     onBatchStarted(batch, { label: <recipe name>, kind: 'recipe', id }), so its Back can name the recipe.
+// Without onOpen, everything is as it was — the hand-over included: onBatchStarted(batch) and nothing else.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { useApiFetch } from '../../lib/api.js'
 import Button from '../forms/Button.jsx'
 import SelectChip from '../forms/SelectChip.jsx'
 import StartBatchSheet from '../kitchen/StartBatchSheet.jsx'
+import { kindLabel } from '../kitchen/KindChips.jsx'
+import { landAfterClose } from '../kitchen/sheetLanding.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import RecipeSheet from './RecipeSheet.jsx'
 import {
   groupByType, keepsWords, vesselWords, bottleWords, recipeLineWords, madeBatchWords, startPrefill, vesselPatch,
-  asWrittenLines, NEW_RECIPE_CTA, MAKE_THIS_CTA, I_MADE_THIS_CTA, NOTHING_KEPT_OUTCOME, RECIPE_KIND_OPTIONS,
+  asWrittenLines, notesSegments, NEW_RECIPE_CTA, MAKE_THIS_CTA, I_MADE_THIS_CTA, MADE_CONFIRM_TEXT, MADE_CONFIRM_CTA,
+  KEPT_SOME_CTA, NOTHING_KEPT_OUTCOME,
 } from './recipes.js'
 
-const link = { display: 'inline-flex', alignItems: 'center', minHeight: T.tapMinHeight, padding: '2px 8px 2px 0', background: 'none',
+// The quiet text action, 48 px tall on Put-Up surfaces (UX pass R1).
+const link = { display: 'inline-flex', alignItems: 'center', minHeight: T.buttonMinHeight, padding: '2px 8px 2px 0', background: 'none',
   border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: P.green, fontSize: T.type.sm, fontWeight: 600 }
 const isHttp = (u) => /^https?:\/\//i.test(String(u ?? ''))
-const kindWord = (k) => RECIPE_KIND_OPTIONS.find(o => o.value === k)?.label ?? null
+// Where a batch opened from recipe detail came from (putup/origin.js's From: the page's Back reads it).
+const originOf = (recipe) => ({ label: recipe.name, kind: 'recipe', id: recipe.id })
 
-export default function RecipesView({ onBatchStarted, now }) {
+export default function RecipesView({ onBatchStarted, now, openId: pageOpenId = null, onOpen }) {
   const { fetch } = useApiFetch()
   const [recipes, setRecipes] = useState(null)
   const [types, setTypes] = useState([])
   const [error, setError] = useState(false)
   const [typeFilter, setTypeFilter] = useState(null)
-  const [openId, setOpenId] = useState(null)
+  const controlled = typeof onOpen === 'function'
+  const [ownOpenId, setOwnOpenId] = useState(null)    // the uncontrolled view's open recipe; idle when controlled
+  const openId = controlled ? pageOpenId : ownOpenId
   const [sheet, setSheet] = useState(null)            // null | { recipe: null | detail }
+  // The page's latest onOpen, for the one call that is made after a wait (the landing below).
+  const onOpenRef = useRef(onOpen)
+  useEffect(() => { onOpenRef.current = onOpen }, [onOpen])
 
   const loadList = useCallback(() => {
     fetch('/api/recipes')
@@ -56,18 +81,46 @@ export default function RecipesView({ onBatchStarted, now }) {
     return [...seen.values()].sort((a, b) => (a.sort ?? 1e9) - (b.sort ?? 1e9) || String(a.label).localeCompare(String(b.label)))
   }, [recipes])
 
+  // The types in use lead the sheet's type chips (TypePicker); the rest wait behind "More types…".
+  const usedTypeIds = useMemo(() => usedTypes.map(t => t.id), [usedTypes])
+
   const onTypeCreated = useCallback((t) => setTypes(ts => (ts.some(x => x.id === t.id) ? ts : [...ts, t])), [])
+
+  // Controlled: the page closed the recipe (its Back, or a Remove it was told of), so the list is stale.
+  const lastOpenId = useRef(openId)
+  useEffect(() => {
+    if (controlled && lastOpenId.current && !openId) loadList()
+    lastOpenId.current = openId
+  }, [controlled, openId, loadList])
+
+  const openRecipe = (id) => { if (controlled) onOpen(id); else setOwnOpenId(id) }
+  // Back and Remove are the same act: leave the recipe.
+  const leaveRecipe = () => { if (controlled) onOpen(null); else { setOwnOpenId(null); loadList() } }
+  // To a page that owns recipe mode a batch arrives with its origin; to any other, as it always did.
+  const handBatch = (batch, origin) => (controlled ? onBatchStarted?.(batch, origin) : onBatchStarted?.(batch))
 
   if (openId) {
     return (
       <>
-        <RecipeDetail id={openId} fetch={fetch} now={now} onBack={() => { setOpenId(null); loadList() }}
-          onEdit={(detail) => setSheet({ recipe: detail })} onBatchStarted={onBatchStarted}
-          onRemoved={() => { setOpenId(null); loadList() }} key={`${openId}:${sheet ? 'e' : 'v'}`} />
-        <RecipeSheet open={!!sheet} recipe={sheet?.recipe ?? null} types={types} fetch={fetch} onTypeCreated={onTypeCreated}
+        <RecipeDetail id={openId} fetch={fetch} now={now} ownBack={!controlled} onBack={leaveRecipe}
+          onEdit={(detail) => setSheet({ recipe: detail })} onBatchStarted={handBatch}
+          onRemoved={leaveRecipe} key={`${openId}:${sheet ? 'e' : 'v'}`} />
+        <RecipeSheet open={!!sheet} recipe={sheet?.recipe ?? null} types={types} usedTypeIds={usedTypeIds} fetch={fetch} onTypeCreated={onTypeCreated}
           onClose={() => setSheet(null)} onSaved={() => { setSheet(null); loadList() }} />
       </>
     )
+  }
+
+  const onNewSaved = (saved) => {
+    if (controlled && saved?.id) {
+      // Opening the saved recipe is the page's push, and this runs inside an armed sheet: land first. Close,
+      // let the sheet's own Back entry be consumed, THEN call on (kitchen/sheetLanding.js) — a push made
+      // straight from here would strand that entry in mid-stack as a Back press that does nothing.
+      loadList()
+      landAfterClose(() => setSheet(null), () => onOpenRef.current?.(saved.id))
+      return
+    }
+    setSheet(null); loadList(); if (saved?.id) setOwnOpenId(saved.id)
   }
 
   return (
@@ -78,9 +131,9 @@ export default function RecipesView({ onBatchStarted, now }) {
       {usedTypes.length > 0 && (
         <div role="group" aria-label="Show recipes that make" data-testid="recipes-type-filter"
           style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: T.space.md }}>
-          <SelectChip small active={typeFilter == null} onClick={() => setTypeFilter(null)} data-testid="recipes-filter-all">All</SelectChip>
+          <SelectChip small touch active={typeFilter == null} onClick={() => setTypeFilter(null)} data-testid="recipes-filter-all">All</SelectChip>
           {usedTypes.map(t => (
-            <SelectChip key={t.id} small active={typeFilter === t.id} data-testid="recipes-filter-chip"
+            <SelectChip key={t.id} small touch active={typeFilter === t.id} data-testid="recipes-filter-chip"
               onClick={() => setTypeFilter(typeFilter === t.id ? null : t.id)}>{t.label}</SelectChip>
           ))}
         </div>
@@ -98,7 +151,7 @@ export default function RecipesView({ onBatchStarted, now }) {
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {g.recipes.map(r => (
               <li key={r.id} style={{ borderBottom: `1px solid ${P.cream}` }}>
-                <button type="button" data-testid="recipes-row" data-recipe-id={r.id} onClick={() => setOpenId(r.id)}
+                <button type="button" data-testid="recipes-row" data-recipe-id={r.id} onClick={() => openRecipe(r.id)}
                   style={{ display: 'block', width: '100%', textAlign: 'left', minHeight: T.buttonMinHeight, padding: '6px 0',
                     background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
                   <div style={{ color: P.dark, fontSize: T.type.base, fontWeight: 600 }}>{r.name}</div>
@@ -112,14 +165,16 @@ export default function RecipesView({ onBatchStarted, now }) {
         </section>
       ))}
 
-      <RecipeSheet open={!!sheet} recipe={null} types={types} fetch={fetch} onTypeCreated={onTypeCreated}
-        onClose={() => setSheet(null)} onSaved={(saved) => { setSheet(null); loadList(); if (saved?.id) setOpenId(saved.id) }} />
+      <RecipeSheet open={!!sheet} recipe={null} types={types} usedTypeIds={usedTypeIds} fetch={fetch} onTypeCreated={onTypeCreated}
+        onClose={() => setSheet(null)} onSaved={onNewSaved} />
     </div>
   )
 }
 
 // ── one recipe ───────────────────────────────────────────────────────────────────────────────────
-export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, onRemoved }) {
+// `ownBack` false (a page that owns recipe mode): no Back here — the page's own is the one Back.
+// `onBatchStarted(batch, origin)`: every batch opened from here names this recipe as where it came from.
+export function RecipeDetail({ id, fetch, now, ownBack = true, onBack, onEdit, onBatchStarted, onRemoved }) {
   const [recipe, setRecipe] = useState(null)
   const [error, setError] = useState(false)
   const [starting, setStarting] = useState(false)
@@ -127,7 +182,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
   const [removing, setRemoving] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
-  const madePlan = useRef(null)                      // one key set per "I made this" confirm, reused on retry
+  const madePlan = useRef(null)                      // one key set per "Made it, ate it all" confirm, reused on retry
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
 
   const load = useCallback(() => {
@@ -163,7 +218,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
       await fetch(`/api/kitchen-batches/${bid}/close`, { method: 'POST', body: JSON.stringify({ outcome: NOTHING_KEPT_OUTCOME }) })
       madePlan.current = null
       setMadeOpen(false)
-      onBatchStarted?.(plan.batch)
+      onBatchStarted?.(plan.batch, originOf(recipe))
     } catch {
       setErr("Couldn't record it — try again (nothing is recorded twice).")
     } finally { setBusy(false) }
@@ -181,13 +236,13 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
     }
   }
 
-  const back = <button type="button" style={link} data-testid="recipe-back" onClick={onBack}>← Recipes</button>
+  const back = ownBack ? <button type="button" style={link} data-testid="recipe-back" onClick={onBack}>← Recipes</button> : null
   if (error) return <div data-testid="recipe-detail">{back}<div role="alert" style={{ color: P.terra, fontSize: T.type.sm }}>Couldn’t open that recipe.</div></div>
   if (!recipe) return <div data-testid="recipe-detail">{back}<div style={{ color: P.light, fontSize: T.type.sm }}>Opening that recipe…</div></div>
 
   const pot = (recipe.lines ?? []).filter(l => !l.at_the_end)
   const end = (recipe.lines ?? []).filter(l => l.at_the_end)
-  const facts = [recipe.type_label, kindWord(recipe.kind), keepsWords(recipe)].filter(Boolean)
+  const facts = [recipe.type_label, kindLabel(recipe.kind), keepsWords(recipe)].filter(Boolean)
   const containers = [
     vesselWords(recipe) ? ['Made in', vesselWords(recipe)] : null,
     bottleWords(recipe) ? ['Put up in', bottleWords(recipe)] : null,
@@ -204,20 +259,27 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
           style={{ ...link, textDecoration: 'underline', wordBreak: 'break-all' }}>{recipe.link_url}</a>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: `${T.space.sm}px 0` }}>
-        <Button variant="primary" data-testid="recipe-make-this" onClick={() => setStarting(true)}>{MAKE_THIS_CTA}</Button>
-        <Button variant="secondary" data-testid="recipe-i-made-this" onClick={() => { setMadeOpen(o => !o); setErr(null) }}>{I_MADE_THIS_CTA}</Button>
-        <Button variant="secondary" data-testid="recipe-edit" onClick={() => onEdit?.(recipe)}>Edit</Button>
+      {/* ONE filled button per state: Make this — until the confirm below is open, when its own is the one. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, margin: `${T.space.sm}px 0` }}>
+        <Button variant={madeOpen ? 'secondary' : 'primary'} data-testid="recipe-make-this" onClick={() => setStarting(true)}>{MAKE_THIS_CTA}</Button>
+        <Button variant="secondary" data-testid="recipe-i-made-this" aria-expanded={madeOpen}
+          onClick={() => { setMadeOpen(o => !o); setErr(null) }}>{I_MADE_THIS_CTA}</Button>
+        {/* Quiet, and a full target both ways: four letters alone would be 30 px wide. */}
+        <button type="button" style={{ ...link, minWidth: T.buttonMinHeight, padding: '2px 8px', justifyContent: 'center' }}
+          data-testid="recipe-edit" onClick={() => onEdit?.(recipe)}>Edit</button>
       </div>
 
       {madeOpen && (
         <div data-testid="recipe-made-confirm" style={{ padding: '8px 0', borderTop: `1px solid ${P.cream}`, borderBottom: `1px solid ${P.cream}`, marginBottom: T.space.sm }}>
-          <p style={{ margin: '0 0 6px', color: P.mid, fontSize: T.type.sm }}>
-            Record a make of this today, with every line as written, and nothing kept (eaten).
-          </p>
-          <Button variant="primary" data-testid="recipe-made-confirm-save" loading={busy} loadingLabel="Recording…" onClick={iMadeThis}>Record it</Button>
-          <button type="button" style={{ ...link, marginLeft: 8 }} data-testid="recipe-made-cancel" disabled={busy}
-            onClick={() => { setMadeOpen(false); madePlan.current = null }}>Cancel</button>
+          <p style={{ margin: '0 0 6px', color: P.mid, fontSize: T.type.sm }}>{MADE_CONFIRM_TEXT}</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+            <Button variant="primary" data-testid="recipe-made-confirm-save" loading={busy} loadingLabel="Recording…" onClick={iMadeThis}>{MADE_CONFIRM_CTA}</Button>
+            <button type="button" style={link} data-testid="recipe-made-cancel" disabled={busy}
+              onClick={() => { setMadeOpen(false); madePlan.current = null }}>Cancel</button>
+          </div>
+          {/* Kept some of it: that is a batch, so this is Make this (there is no batch yet to put up). */}
+          <button type="button" style={link} data-testid="recipe-made-kept-some" disabled={busy}
+            onClick={() => { setMadeOpen(false); madePlan.current = null; setErr(null); setStarting(true) }}>{KEPT_SOME_CTA}</button>
         </div>
       )}
 
@@ -247,8 +309,16 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
       {recipe.notes && (
         <section data-testid="recipe-detail-notes-section" style={{ marginBottom: T.space.md }}>
           <h3 style={{ margin: '0 0 4px', fontSize: T.type.sm, color: P.dark }}>Notes</h3>
-          {/* VERBATIM: his text as he wrote it (V4 §2.6), whitespace kept. The only surface that renders it. */}
-          <div data-testid="recipe-detail-notes" style={{ whiteSpace: 'pre-wrap', fontSize: T.type.sm, color: P.dark, lineHeight: 1.5 }}>{recipe.notes}</div>
+          {/* His text as he wrote it (V4 §2.6), whitespace kept; a pair of marks shows as bold or italic and
+              nothing else moves. Built as ELEMENTS from text runs — never as markup. The only surface that
+              renders it. */}
+          <div data-testid="recipe-detail-notes" style={{ whiteSpace: 'pre-wrap', fontSize: T.type.sm, color: P.dark, lineHeight: 1.5 }}>
+            {notesSegments(recipe.notes).map((s, i) => (
+              s.kind === 'bold' ? <strong key={i}>{s.text}</strong>
+                : s.kind === 'italic' ? <em key={i}>{s.text}</em>
+                  : <React.Fragment key={i}>{s.text}</React.Fragment>
+            ))}
+          </div>
         </section>
       )}
 
@@ -263,7 +333,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
               return (
                 <li key={b.id} data-testid="recipe-detail-batch" style={{ fontSize: T.type.sm, color: P.dark, padding: '3px 0' }}>
                   <button type="button" style={{ ...link, fontWeight: 400, color: P.dark }} data-testid="recipe-detail-batch-open"
-                    onClick={() => onBatchStarted?.(b)}>
+                    onClick={() => onBatchStarted?.(b, originOf(recipe))}>
                     {b.label} · {w.when} · {w.ending}
                   </button>
                 </li>
@@ -289,7 +359,7 @@ export function RecipeDetail({ id, fetch, now, onBack, onEdit, onBatchStarted, o
 
       {starting && (
         <StartBatchSheet open recipe={recipe} onClose={() => setStarting(false)}
-          onStarted={(batch) => { setStarting(false); onBatchStarted?.(batch) }} />
+          onStarted={(batch) => { setStarting(false); onBatchStarted?.(batch, originOf(recipe)) }} />
       )}
     </div>
   )

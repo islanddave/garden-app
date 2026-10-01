@@ -224,12 +224,18 @@ describe('every reader of these fields shows the stored calendar day (the census
     })
     const fetch = () => Promise.resolve(body)
     // createElement, not JSX: this file is .js, which the transform does not treat as JSX.
+    // `now` is pinned: the date sentence says a year only when it is not this one.
     render(React.createElement(MemoryRouter, null,
-      React.createElement(PutUpFromPlanting, { planting: { id: PLANTING }, fetch })))
+      React.createElement(PutUpFromPlanting, { planting: { id: PLANTING }, fetch, now: new Date(2026, 9, 1, 12, 0, 0) })))
     await waitFor(() => expect(screen.getByText(/Chest Freezer 1/)).toBeTruthy())
     const text = document.body.textContent
     expect(text).toContain('put up Sep 28, 2026')
-    expect(text).toContain('use by Sep 28, 2027')
+    // Put-Up UX pass R1: the row's date sentence is the Pantry's (jarWords.discardWords) — "discard by", read
+    // from the day's own three parts. A frozen jar is not cured or cellared produce, so it never says "use by".
+    expect(text).toContain('discard by Sep 28, 2027')
+    expect(text).not.toContain('use by')
+    // THE OFF-BY-ONE, for both days this row prints: neither is read a day early west of Greenwich.
     expect(text).not.toContain('Sep 27, 2026')
+    expect(text).not.toContain('Sep 27')
   })
 })

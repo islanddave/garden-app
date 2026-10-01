@@ -7,10 +7,25 @@
 //     reads as a link on THOSE jar rows, not as a second row of its own;
 //   · every other batch that used the planting (a garden line, or stock drawn from it) is listed once;
 //   · each carries its "Next time…" lines (batch: its noted rows; a jar or an item: its notes' lines).
+//
+// Put-Up UX pass R1 — the put-up rows say what the Pantry says about the same jar: how many are left, and
+// the discard-date sentence from the one module every surface says it in (putup/jarWords.js discardWords),
+// so cured and cellared produce keep "use by" and everything else says "discard by". The words below read
+// the planting's own read (whats-put-up's record, jarRules.js projectRow), not the Pantry's row.
 // PURE.
+import { discardWords } from '../putup/jarWords.js'
+import { gramsOf } from '../putup/fermentMath.js'
+import { withFrom } from '../putup/origin.js'
+// The engine's own list, imported (as pantry/pantryRows.js imports it), so there is no copy to drift.
+import { HOUSE_SOURCED_SHELF_LIFE } from '../../../lambda/preservation/shelfLife.js'
 
 export const plantingBatchesPath = (plantId) => `/api/kitchen-batches?plant_id=${encodeURIComponent(plantId)}`
 export const batchHref = (id) => `/put-up?batch=${encodeURIComponent(id)}`
+
+// The router state a link from the planting page to a batch carries: where it came from, so the batch's
+// Back can say "← <planting name>" and go back there (putup/origin.js). Built from nothing — this page
+// never spreads its own route state into /put-up. null when the planting has no name to say.
+export const batchLinkState = (planting) => withFrom(null, { label: planting?.name })
 
 // jar id → the single-planting batch it came from.
 export function batchByJar(batches) {
@@ -36,3 +51,39 @@ export function usedWords(b) {
   if (b?.used_via === 'both') return 'used it fresh and from what was put up'
   return 'used it fresh'
 }
+
+// ── a put-up row's words ─────────────────────────────────────────────────────────────────────────
+// A row is USED UP only on an explicit zero. NULL remaining_count means the count was never tracked, not
+// that the jar is gone — the same reading the endpoint's own default filter uses
+// (`remaining_count IS NULL OR remaining_count > 0`), so the two cannot disagree about which rows the
+// un-flagged call would have returned.
+export const isUsedUp = (r) => r?.remaining_count != null && Number(r.remaining_count) <= 0
+
+// How many are left, on EVERY row still in the Pantry: "3 left" for counted stock, "about 412 g left" for a
+// weighed bag (one container in a mass unit; its grams are what was last weighed, else what it held). The
+// Pantry row's words. null when nothing can be said.
+export function leftWords(r) {
+  if (!r) return null
+  if (r.stock_mode === 'weighed') {
+    const g = r.remaining_amount != null ? Number(r.remaining_amount) : gramsOf(r.quantity_value, r.quantity_unit)
+    if (g != null && Number.isFinite(g)) return `about ${Math.round(g)} g left`
+  }
+  const n = r.remaining_count ?? r.package_count
+  if (n == null || !Number.isFinite(Number(n))) return null
+  return `${Number(n)} left`
+}
+
+// A jar of a house-sourced method written before a basis was stored has none on the wire, and still says
+// "house estimate", never nothing (FOODSAFETY-RULING-V101: a house date is told apart on the surface).
+const HOUSE_METHODS = new Set(HOUSE_SOURCED_SHELF_LIFE)
+// The discard-date sentence, stated once, in jarWords' words. null when there is nothing to say (no date
+// and no basis), and always null for a used-up row: a finished jar is never asked to be used soon.
+export function plantingDiscardWords(r, now = new Date()) {
+  if (!r || isUsedUp(r)) return null
+  const date = r.use_by_target ?? null
+  const basis = r.use_by_basis ?? (date && HOUSE_METHODS.has(r.method) ? 'house' : null)
+  return discardWords({ date, basis, method: r.method ?? null, kind: r.storage_kind ?? null, status: r.use_by_status ?? null, now })
+}
+
+// The server's classification, read and never re-decided: inside the use-soon window, or past the date.
+export const isSoonOrPast = (r) => !isUsedUp(r) && (r?.use_by_status === 'use_soon' || r?.use_by_status === 'past_use_by')

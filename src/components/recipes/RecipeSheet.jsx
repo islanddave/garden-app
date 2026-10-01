@@ -5,8 +5,20 @@
 // name is required. <Sheet armsBack>; the draft survives a dismiss (kitchen/sheetDraft.js, sheet 'recipe',
 // id 'new' or the recipe's id); the create is keyed (one key per draft, reused on every retry).
 //
-// ⚠ Notes are his text VERBATIM (including his own target pH): sent exactly as typed, never trimmed inside.
+// ⚠ Notes are his text VERBATIM (including his own target pH): sent exactly as typed, never trimmed inside,
+// and shown here exactly as stored — the bold and italic of recipe detail are that surface's alone.
 // Plain markup, existing primitives, no visual design (functionality first).
+//
+// Put-Up UX pass R1 — the sheet reads top to bottom, and both pickers say what they are for:
+//   Name → What it makes (it groups the list) → Notes → Link → What goes in → How long, and where →
+//   How it's made (the kind of batch Make this starts), directly above Made in → Put up in.
+// A line is its name and the amount as he would write it; the exact number and unit sit behind
+// "▸ exact amount", which opens by itself when the amount starts with a digit and is always open on a
+// line that holds a number (recipes.js exactAmountOpens). "How long, and where" is a number, three unit
+// chips and place chips built from the Lambda's six kinds — the stored one always among them
+// (recipes.js keepsKindChips). Every chip is 48 px tall; there is no native checkbox.
+// THE DRAFT'S SHAPE IS UNCHANGED: nothing that only opens or closes a part of the sheet is stored, so a
+// draft written before this pass restores as it was written.
 import React, { useEffect, useId, useRef, useState } from 'react'
 import { P, T } from '../../lib/tokens.js'
 import { setReloadBlocked } from '../../lib/reloadGate.js'
@@ -21,8 +33,9 @@ import { useSheetDraftKey } from '../kitchen/useSheetDraftKey.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import TypePicker from './TypePicker.jsx'
 import {
-  emptyDraft, draftFromRecipe, recipeBody, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS, KEEPS_UNIT_WORDS,
-  RECIPE_STORAGE_KINDS, KITCHEN_UNITS, EMPTY_LINE,
+  emptyDraft, draftFromRecipe, recipeBody, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
+  KEEPS_UNIT_WORDS, KITCHEN_UNITS, EMPTY_LINE, TYPE_LABEL, TYPE_HELP, KIND_LABEL, KIND_HELP, LINE_NAME_LABEL,
+  LINE_AMOUNT_LABEL, AT_THE_END_LABEL, EXACT_AMOUNT_CTA, KEEPS_LABEL, KEEPS_N_LABEL, MORE_PLACES_CTA, COOKED_LABEL,
 } from './recipes.js'
 
 export const RECIPE_SHEET = 'recipe'
@@ -33,24 +46,38 @@ export function isRecipeDraft(d) {
     && typeof d.notes === 'string' && Array.isArray(d.lines) && (d.key === undefined || typeof d.key === 'string')
 }
 
-const small = { minHeight: T.tapMinHeight, padding: '4px 8px', background: 'none', border: 'none', color: P.green,
+// The quiet text action, 48 px tall on Put-Up surfaces (UX pass R1).
+const small = { minHeight: T.buttonMinHeight, padding: '4px 8px', background: 'none', border: 'none', color: P.green,
   fontFamily: 'inherit', fontSize: T.type.sm, fontWeight: 600, cursor: 'pointer' }
+const heading = { fontSize: T.type.sm, fontWeight: 600, color: P.dark }
+const optional = { color: P.light, fontWeight: 400 }
+const helper = { fontSize: T.type.xs, color: P.light, margin: '2px 0 6px' }
+const chipRow = { display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }
 
 export default function RecipeSheet({ open, ...rest }) {
   if (!open) return null
   return <RecipeSheetOpen {...rest} />
 }
 
-function RecipeSheetOpen({ recipe = null, types = [], fetch, onClose, onSaved, onTypeCreated }) {
+// `usedTypeIds` (optional): the types this household's recipes already use — they lead the type chips.
+function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, onClose, onSaved, onTypeCreated }) {
   const editing = !!recipe?.id
   const draftKey = useSheetDraftKey(RECIPE_SHEET, editing ? recipe.id : 'new')
   const [initial] = useState(() => readSheetDraft(draftKey, RECIPE_SHEET, isRecipeDraft) ?? (editing ? draftFromRecipe(recipe) : emptyDraft()))
   const [d, setD] = useState(initial)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
+  // What is open on the sheet is the sheet's own, never the draft's: a line's exact amount once asked for
+  // (one flag per line, kept in step with the lines), and the other place kinds.
+  const [exactAsked, setExactAsked] = useState([])
+  const [placesOpen, setPlacesOpen] = useState(false)
+  const [unitPicked, setUnitPicked] = useState(false)
   const writingRef = useRef(false)
   const base = useRef(JSON.stringify(editing ? draftFromRecipe(recipe) : emptyDraft()))
-  const ids = { name: `recipe-name-${useId()}`, link: `recipe-link-${useId()}`, notes: `recipe-notes-${useId()}` }
+  const linesRef = useRef(null)
+  const placesRef = useRef(null)
+  const focusNext = useRef(null)                       // { qty: line index } | { place: true } — after a part opens
+  const ids = { name: `recipe-name-${useId()}`, link: `recipe-link-${useId()}`, notes: `recipe-notes-${useId()}`, keepsN: `recipe-keeps-n-${useId()}` }
 
   const set = (patch) => { setD(x => ({ ...x, ...patch })); setErr(null) }
   const setLine = (i, patch) => set({ lines: d.lines.map((l, j) => (j === i ? { ...l, ...patch, _keep: undefined } : l)) })
@@ -70,6 +97,30 @@ function RecipeSheetOpen({ recipe = null, types = [], fetch, onClose, onSaved, o
     setReloadBlocked(gateKey, holdReload)
     return () => setReloadBlocked(gateKey, false)
   }, [gateKey, holdReload])
+
+  // A control that opens a part of the sheet leaves the screen when tapped; focus goes to what it opened.
+  useEffect(() => {
+    const next = focusNext.current
+    if (!next) return
+    focusNext.current = null
+    if (next.qty != null) linesRef.current?.querySelectorAll('[data-testid="recipe-line"]')[next.qty]?.querySelector('[data-testid="recipe-line-qty"]')?.focus()
+    else placesRef.current?.querySelector('[data-revealed="first"]')?.focus()
+  })
+
+  const askExact = (i) => {
+    focusNext.current = { qty: i }
+    setExactAsked(a => Array.from({ length: Math.max(a.length, i + 1) }, (_, j) => j === i || a[j] === true))
+  }
+  const removeLine = (i) => {
+    setExactAsked(a => a.filter((_, j) => j !== i))
+    set({ lines: d.lines.filter((_, j) => j !== i) })
+  }
+  const places = keepsKindChips({ value: d.keepsKind, stored: editing ? (recipe.keeps_storage_kind ?? '') : '', moreOpen: placesOpen })
+  const firstRevealed = keepsKindChips({ value: d.keepsKind, stored: editing ? (recipe.keeps_storage_kind ?? '') : '' }).more[0]
+  // The draft always holds a unit (days, until another is picked). On a line with nothing in it a lit unit
+  // would read as an answer nobody gave, so the unit shows as chosen once the line has a number or a place,
+  // or once a unit was tapped. What is stored and sent is the draft's, unchanged either way.
+  const unitShown = unitPicked || String(d.keepsN ?? '').trim() !== '' || String(d.keepsKind ?? '') !== '' || d.keepsUnit !== emptyDraft().keepsUnit
 
   const save = async () => {
     if (writingRef.current) return
@@ -98,89 +149,108 @@ function RecipeSheetOpen({ recipe = null, types = [], fetch, onClose, onSaved, o
             onChange={e => set({ name: e.target.value })} />
         </Field>
 
-        <div style={{ marginBottom: T.space.md }}>
-          <div style={{ fontSize: T.type.sm, fontWeight: 600, color: P.dark, marginBottom: 6 }}>What it makes <span style={{ color: P.light, fontWeight: 400 }}>optional</span></div>
-          <TypePicker types={types} value={d.typeId} onChange={v => set({ typeId: v })} onCreated={onTypeCreated} fetch={fetch} disabled={saving} />
+        <div data-testid="recipe-type" style={{ marginBottom: T.space.md }}>
+          <div style={heading}>{TYPE_LABEL} <span style={optional}>optional</span></div>
+          <div data-testid="recipe-type-help" style={helper}>{TYPE_HELP}</div>
+          <TypePicker types={types} usedIds={usedTypeIds} value={d.typeId} onChange={v => set({ typeId: v })} onCreated={onTypeCreated} fetch={fetch} disabled={saving} />
         </div>
-
-        <div style={{ marginBottom: T.space.md }}>
-          <div style={{ fontSize: T.type.sm, fontWeight: 600, color: P.dark, marginBottom: 6 }}>How it is made <span style={{ color: P.light, fontWeight: 400 }}>optional</span></div>
-          <div role="group" aria-label="How it is made" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {RECIPE_KIND_OPTIONS.map(k => (
-              <SelectChip key={k.value} small active={d.kind === k.value} disabled={saving} data-testid="recipe-kind-chip"
-                onClick={() => set({ kind: d.kind === k.value ? null : k.value })}>{k.label}</SelectChip>
-            ))}
-          </div>
-        </div>
-
-        <Field label="Link" htmlFor={ids.link} optional help="A web page with the recipe (http:// or https://)." style={{ marginBottom: T.space.md }}>
-          <Input id={ids.link} data-testid="recipe-link" type="url" inputMode="url" value={d.link} disabled={saving}
-            onChange={e => set({ link: e.target.value })} />
-        </Field>
 
         <Field label="Notes" htmlFor={ids.notes} optional help="Steps, ratios, what to aim for — kept exactly as you write them." style={{ marginBottom: T.space.md }}>
           <Textarea id={ids.notes} data-testid="recipe-notes" rows={8} value={d.notes} disabled={saving}
             onChange={e => set({ notes: e.target.value })} />
         </Field>
 
-        <fieldset data-testid="recipe-lines" style={{ border: 'none', padding: 0, margin: `0 0 ${T.space.md}px` }}>
-          <legend style={{ fontSize: T.type.sm, fontWeight: 600, color: P.dark, marginBottom: 6 }}>What goes in <span style={{ color: P.light, fontWeight: 400 }}>optional</span></legend>
-          {d.lines.map((l, i) => (
-            <div key={i} data-testid="recipe-line" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${P.cream}` }}>
-              <input aria-label={`Line ${i + 1}: what`} data-testid="recipe-line-name" placeholder="what (garlic)" value={l.name} disabled={saving}
-                onChange={e => setLine(i, { name: e.target.value })} style={cell(10)} />
-              <input aria-label={`Line ${i + 1}: amount as written`} data-testid="recipe-line-amount" placeholder="as written (8 g, 2 cloves)" value={l.amount} disabled={saving}
-                onChange={e => setLine(i, { amount: e.target.value })} style={cell(12)} />
-              <input aria-label={`Line ${i + 1}: number`} data-testid="recipe-line-qty" inputMode="decimal" placeholder="8" value={l.qty} disabled={saving}
-                onChange={e => setLine(i, { qty: e.target.value })} style={cell(4)} />
-              <select aria-label={`Line ${i + 1}: unit`} data-testid="recipe-line-unit" value={l.unit} disabled={saving}
-                onChange={e => setLine(i, { unit: e.target.value })} style={cell(5)}>
-                <option value="">unit</option>
-                {UNIT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: T.type.sm, color: P.mid, minHeight: T.tapMinHeight }}>
-                <input type="checkbox" data-testid="recipe-line-end" checked={l.atTheEnd} disabled={saving}
-                  onChange={e => setLine(i, { atTheEnd: e.target.checked })} />
-                at the end
-              </label>
-              <button type="button" style={small} data-testid="recipe-line-remove" disabled={saving}
-                onClick={() => set({ lines: d.lines.filter((_, j) => j !== i) })}>Remove</button>
-            </div>
-          ))}
+        <Field label="Link" htmlFor={ids.link} optional help="A web page with the recipe (http:// or https://)." style={{ marginBottom: T.space.md }}>
+          <Input id={ids.link} data-testid="recipe-link" type="url" inputMode="url" value={d.link} disabled={saving}
+            onChange={e => set({ link: e.target.value })} />
+        </Field>
+
+        <fieldset ref={linesRef} data-testid="recipe-lines" style={{ border: 'none', padding: 0, margin: `0 0 ${T.space.md}px` }}>
+          <legend style={{ ...heading, marginBottom: 6 }}>What goes in <span style={optional}>optional</span></legend>
+          {d.lines.map((l, i) => {
+            const exact = exactAsked[i] === true || exactAmountOpens(l)
+            return (
+              <div key={i} data-testid="recipe-line" style={{ marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${P.cream}` }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <input aria-label={`Line ${i + 1}: name`} data-testid="recipe-line-name" placeholder={LINE_NAME_LABEL} value={l.name} disabled={saving}
+                    onChange={e => setLine(i, { name: e.target.value })} style={{ ...cell(9), flex: '1 1 9em' }} />
+                  <input aria-label={`Line ${i + 1}: amount as you'd write it`} data-testid="recipe-line-amount" placeholder={LINE_AMOUNT_LABEL} value={l.amount} disabled={saving}
+                    onChange={e => setLine(i, { amount: e.target.value })} style={{ ...cell(13), flex: '1 1 13em' }} />
+                </div>
+                <div style={{ ...chipRow, marginTop: 8 }}>
+                  <SelectChip small touch active={l.atTheEnd === true} disabled={saving} data-testid="recipe-line-end" aria-label={`Line ${i + 1}: ${AT_THE_END_LABEL}`}
+                    onClick={() => setLine(i, { atTheEnd: !l.atTheEnd })}>{AT_THE_END_LABEL}</SelectChip>
+                  {exact ? (
+                    <>
+                      <input aria-label={`Line ${i + 1}: number`} data-testid="recipe-line-qty" inputMode="decimal" placeholder="number" value={l.qty} disabled={saving}
+                        onChange={e => setLine(i, { qty: e.target.value })} style={cell(5)} />
+                      <select aria-label={`Line ${i + 1}: unit`} data-testid="recipe-line-unit" value={l.unit} disabled={saving}
+                        onChange={e => setLine(i, { unit: e.target.value })} style={cell(5)}>
+                        <option value="">unit</option>
+                        {UNIT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </>
+                  ) : (
+                    <button type="button" style={small} data-testid="recipe-line-exact" aria-expanded="false" disabled={saving}
+                      onClick={() => askExact(i)}>{EXACT_AMOUNT_CTA}</button>
+                  )}
+                  <button type="button" style={{ ...small, marginLeft: 'auto' }} data-testid="recipe-line-remove" disabled={saving}
+                    onClick={() => removeLine(i)}>Remove</button>
+                </div>
+              </div>
+            )
+          })}
           <button type="button" style={small} data-testid="recipe-line-add" disabled={saving}
             onClick={() => set({ lines: [...d.lines, { ...EMPTY_LINE }] })}>+ Add a line</button>
         </fieldset>
 
         <fieldset data-testid="recipe-keeps" style={{ border: 'none', padding: 0, margin: `0 0 ${T.space.md}px` }}>
-          <legend style={{ fontSize: T.type.sm, fontWeight: 600, color: P.dark, marginBottom: 6 }}>How long, and where <span style={{ color: P.light, fontWeight: 400 }}>optional</span></legend>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input aria-label="How many" data-testid="recipe-keeps-n" inputMode="numeric" placeholder="7" value={d.keepsN} disabled={saving}
+          <legend style={{ ...heading, marginBottom: 6 }}>{KEEPS_LABEL} <span style={optional}>optional</span></legend>
+          <div style={{ ...chipRow, marginBottom: 8 }}>
+            <label htmlFor={ids.keepsN} style={{ fontSize: T.type.sm, color: P.mid }}>{KEEPS_N_LABEL}</label>
+            <input id={ids.keepsN} data-testid="recipe-keeps-n" inputMode="numeric" value={d.keepsN} disabled={saving}
               onChange={e => set({ keepsN: e.target.value })} style={cell(4)} />
-            <select aria-label="Days, weeks or months" data-testid="recipe-keeps-unit" value={d.keepsUnit} disabled={saving}
-              onChange={e => set({ keepsUnit: e.target.value })} style={cell(6)}>
-              {Object.entries(KEEPS_UNIT_WORDS).map(([v, w]) => <option key={v} value={v}>{w[1]}</option>)}
-            </select>
-            <select aria-label="Where" data-testid="recipe-keeps-kind" value={d.keepsKind} disabled={saving}
-              onChange={e => set({ keepsKind: e.target.value })} style={cell(8)}>
-              <option value="">where</option>
-              {RECIPE_STORAGE_KINDS.map(k => <option key={k} value={k}>{STORAGE_KIND_WORDS[k]}</option>)}
-            </select>
+            <div role="radiogroup" aria-label="Days, weeks or months" data-testid="recipe-keeps-unit" style={chipRow}>
+              {Object.entries(KEEPS_UNIT_WORDS).map(([v, w]) => (
+                <SelectChip key={v} small touch active={unitShown && d.keepsUnit === v} disabled={saving} role="radio" aria-checked={unitShown && d.keepsUnit === v}
+                  aria-pressed={undefined} data-testid={`recipe-keeps-unit-${v}`} onClick={() => { setUnitPicked(true); set({ keepsUnit: v }) }}>{w[1]}</SelectChip>
+              ))}
+            </div>
+          </div>
+          <div ref={placesRef} role="group" aria-label="Where" data-testid="recipe-keeps-kind" style={chipRow}>
+            {places.chips.map(k => (
+              <SelectChip key={k} small touch active={d.keepsKind === k} disabled={saving} data-testid={`recipe-keeps-kind-${k}`}
+                data-revealed={placesOpen && k === firstRevealed ? 'first' : undefined}
+                onClick={() => set({ keepsKind: d.keepsKind === k ? '' : k })}>{STORAGE_KIND_WORDS[k]}</SelectChip>
+            ))}
+            {places.more.length > 0 && (
+              <button type="button" style={small} data-testid="recipe-keeps-kind-more" aria-expanded="false" disabled={saving}
+                onClick={() => { focusNext.current = { place: true }; setPlacesOpen(true) }}>{MORE_PLACES_CTA}</button>
+            )}
           </div>
         </fieldset>
 
+        <div data-testid="recipe-kind" style={{ marginBottom: T.space.md }}>
+          <div style={heading}>{KIND_LABEL} <span style={optional}>optional</span></div>
+          <div data-testid="recipe-kind-help" style={helper}>{KIND_HELP}</div>
+          <div role="group" aria-label={KIND_LABEL} style={chipRow}>
+            {RECIPE_KIND_OPTIONS.map(k => (
+              <SelectChip key={k.value} small touch active={d.kind === k.value} disabled={saving} data-testid="recipe-kind-chip"
+                onClick={() => set({ kind: d.kind === k.value ? null : k.value })}>{k.label}</SelectChip>
+            ))}
+          </div>
+        </div>
+
         <fieldset data-testid="recipe-vessel" style={{ border: 'none', padding: 0, margin: `0 0 ${T.space.md}px` }}>
-          <legend style={{ fontSize: T.type.sm, fontWeight: 600, color: P.dark, marginBottom: 6 }}>Made in <span style={{ color: P.light, fontWeight: 400 }}>optional — the jar or pot it goes in</span></legend>
+          <legend style={{ ...heading, marginBottom: 6 }}>Made in <span style={optional}>optional — the jar or pot it goes in</span></legend>
           <Containers prefix="vessel" d={d} set={set} saving={saving} count />
         </fieldset>
 
         <fieldset data-testid="recipe-bottle" style={{ border: 'none', padding: 0, margin: `0 0 ${T.space.md}px` }}>
-          <legend style={{ fontSize: T.type.sm, fontWeight: 600, color: P.dark, marginBottom: 6 }}>Put up in <span style={{ color: P.light, fontWeight: 400 }}>optional — the bottles or jars it ends in</span></legend>
+          <legend style={{ ...heading, marginBottom: 6 }}>Put up in <span style={optional}>optional — the bottles or jars it ends in</span></legend>
           <Containers prefix="bottle" d={d} set={set} saving={saving} />
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: T.type.sm, color: P.mid, minHeight: T.tapMinHeight }}>
-            <input type="checkbox" data-testid="recipe-bottle-cooked" checked={d.bottleCooked} disabled={saving}
-              onChange={e => set({ bottleCooked: e.target.checked })} />
-            Cooked after blending
-          </label>
+          <SelectChip small touch active={d.bottleCooked === true} disabled={saving} data-testid="recipe-bottle-cooked"
+            onClick={() => set({ bottleCooked: !d.bottleCooked })}>{COOKED_LABEL}</SelectChip>
           <div style={{ marginTop: 6 }}>
             <input aria-label="What it makes, as written" data-testid="recipe-made-text" placeholder="makes (as written) — e.g. 228 g, one bottle" value={d.madeText}
               disabled={saving} maxLength={500} onChange={e => set({ madeText: e.target.value })} style={cell(20)} />
@@ -219,7 +289,7 @@ function Containers({ prefix, d, set, saving, count = false }) {
       </select>
       {count && (
         <input aria-label="How many jars" data-testid="recipe-vessel-count" inputMode="numeric" placeholder="how many" value={d.vesselCount}
-          disabled={saving} onChange={e => set({ vesselCount: e.target.value })} style={cell(5)} />
+          disabled={saving} onChange={e => set({ vesselCount: e.target.value })} style={cell(7)} />
       )}
     </div>
   )
