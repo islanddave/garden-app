@@ -349,8 +349,19 @@ export default function BottomNav() {
   const moreOpen = useRef(false)
   moreOpen.current = showMore
 
+  // A slot is active on its own page and on the pages under it (/harvests/2026 is still Harvests).
+  // V5-NAVANYSLOT-001 — More rows can nest where tab keys never did: Settings is /settings and
+  // Controls is /settings/controls, and with both on the bar the prefix test alone lit both, with two
+  // aria-current="page". So among the slots whose path matches, the LONGEST owns the page. A bar with
+  // no nested destinations has at most one match, so nothing changes there. The ＋ slot never shows an
+  // active state, so it does not compete.
+  const under = (path) => location.pathname === path || location.pathname.startsWith(path + '/')
+  const activeTo = tabs.reduce(
+    (best, t) => (!t.highlight && under(t.to) && (best == null || t.to.length > best.length) ? t.to : best),
+    null,
+  )
   function isActive(path) {
-    return location.pathname === path || location.pathname.startsWith(path + '/')
+    return path === activeTo
   }
 
   function closeMore() {

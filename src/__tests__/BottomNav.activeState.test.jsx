@@ -166,6 +166,70 @@ describe('V4-NAVACTIVESTATE-001 — the glyph carries the active state, under ev
     expect(indicatorsIn(slotOf('Garden'))).toHaveLength(0)
   })
 
+  // QA M5 (V5-NAVANYSLOT-001). No tab key ever had a path nested under another's; More rows do:
+  // Settings is /settings and Controls is /settings/controls. With both on the bar the prefix rule lit
+  // both on /settings/controls, with two aria-current="page". The slot owning the LONGEST matching
+  // path is the page's tab; the other is not.
+  // KILLING MUTATION: restore the plain prefix test in isActive. RESULT: RED — two lit slots.
+  describe('nested destinations — one slot owns a page', () => {
+    const lit = () => renderedTabs().filter(t => indicatorsIn(t.slot).length === 1).map(t => t.label)
+    const current = () => renderedTabs().filter(t => t.slot.getAttribute('aria-current') === 'page').map(t => t.label)
+    const BOTH = { order: ['today', 'create', 'settings', 'settings-controls'], hidden: [] }
+
+    it('Settings and Controls both on the bar: on /settings/controls only Controls is active', async () => {
+      locationRef.pathname = '/settings/controls'
+      await renderLayout(BOTH)
+      expect(renderedTabs().map(t => t.label)).toEqual(['Today', 'Settings', 'Controls'])
+      expect(lit()).toEqual(['Controls'])
+      expect(current()).toEqual(['Controls'])
+    })
+
+    it('…and on the page Settings itself opens, only Settings is active', async () => {
+      for (const path of ['/settings', '/settings/notifications']) {
+        locationRef.pathname = path
+        const view = await renderLayout(BOTH)
+        expect(lit(), path).toEqual(['Settings'])
+        expect(current(), path).toEqual(['Settings'])
+        view.unmount()
+      }
+    })
+
+    // Unchanged: with no slot for Controls, its page is still under the Settings tab.
+    it('Settings alone on the bar still lights on /settings/controls', async () => {
+      locationRef.pathname = '/settings/controls'
+      await renderLayout({ order: ['today', 'create', 'settings'], hidden: [] })
+      expect(lit()).toEqual(['Settings'])
+      expect(current()).toEqual(['Settings'])
+    })
+
+    // The rule may not move anything on a bar with no nested destinations: there the lit slots are
+    // exactly the ones the plain prefix test names, on a tab's own page and on pages under it.
+    it('a bar with no nested destinations lights exactly what the prefix rule lights', async () => {
+      const layouts = [
+        null,
+        { order: ['today', 'seeds', 'create', 'photos', 'inventory'], hidden: [] },
+        { order: ['settings-controls', 'create', 'today', 'season-end', 'season-stats'], hidden: [] },
+        { order: ['today', 'create', 'settings', 'admin', 'put-up'], hidden: [] },
+      ]
+      const paths = ['/today', '/seeds', '/inventory/abc', '/photos', '/dashboard', '/settings/controls',
+        '/settings/notifications', '/season-end', '/season-stats', '/admin/config', '/harvests/2026', '/log']
+      let checked = 0
+      for (const layout of layouts) {
+        for (const path of paths) {
+          locationRef.pathname = path
+          const view = await renderLayout(layout)
+          const byPrefix = renderedTabs().filter(t => path === t.path || path.startsWith(t.path + '/')).map(t => t.label)
+          expect(byPrefix.length, `${path} under ${JSON.stringify(layout)}`).toBeLessThanOrEqual(1)
+          expect(lit(), `${path} under ${JSON.stringify(layout)}`).toEqual(byPrefix)
+          expect(current(), `${path} under ${JSON.stringify(layout)}`).toEqual(byPrefix)
+          checked += byPrefix.length
+          view.unmount()
+        }
+      }
+      expect(checked).toBeGreaterThanOrEqual(12)   // non-vacuous: many of those pages DO light a slot
+    })
+  })
+
   // More takes the same two label channels from `showMore` that the destinations take from
   // `active`, so it takes the third one too. A tab that goes green-and-bold with no indicator
   // reads as a bug rather than as a rule.
