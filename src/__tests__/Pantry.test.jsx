@@ -36,7 +36,7 @@ const REAPER = jarRow({ stock_id: 'jar-reaper', name: 'Megatron reaper', place: 
 const LAST_JAR = jarRow({ stock_id: 'jar-last', name: 'Pesto cubes', place: FRIDGE, group_key: 'loc-3', group_label: 'Kitchen fridge',
   method: 'pesto', count_left: 1, discard: { date: '2026-10-03', basis: 'typed', status: 'soon' } })
 const BAG = jarRow({ stock_id: 'jar-bag', name: 'Reaper, frozen', place: CF1, group_key: 'loc-1', group_label: 'Chest Freezer 1',
-  stock_mode: 'weighed', count_left: 1, grams_left: 92, method: 'whole_freeze' })
+  stock_mode: 'weighed', count_left: null, count_made: null, grams_left: 92, method: 'whole_freeze' })
 const MILK = itemRow({ stock_id: 'item-milk', name: 'Oat milk', place: FRIDGE, group_key: 'loc-3', group_label: 'Kitchen fridge',
   acquired_at: '2026-09-18', acquired_precision: 'day', where_from: 'Aldi', notes: 'the barista one' })
 const ROWS = [BAG, REAPER, LAST_JAR, MILK]

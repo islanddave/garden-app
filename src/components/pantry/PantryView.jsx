@@ -22,7 +22,7 @@ import PantryRowSheet from './PantryRowSheet.jsx'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
 import {
   groupRows, rowKey, isItem, leftWords, discardChip, ageWords, inlineAction, ACTION_LABELS, USED_ONE, USED_UP,
-  afterUseWords, onlyUseSoon,
+  afterUseWords, finishedByUse, onlyUseSoon,
 } from './pantryRows.js'
 import { BRIDGE_TEXT } from './pantryBridge.js'
 
@@ -214,10 +214,9 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
 
   const canUndo = !!recent && (isItem(row) || !!recent.use?.id)
   const label = ACTION_LABELS[action]
-  // A row that is still live after a use (Used one, some given away) keeps its action; one the use
-  // finished (used up, gone bad, nothing left) shows only its Undo.
-  const finished = !!recent && (recent.action !== USED_ONE && recent.action !== 'gave_away'
-    || (recent.jar?.remaining_count != null && Number(recent.jar.remaining_count) <= 0))
+  // A row that is still live after a use (Used one, some given away, some gone bad) keeps its action; one
+  // the use finished (used up, all of it gone bad, nothing left) shows only its Undo.
+  const finished = finishedByUse(recent)
   return (
     <li data-testid={`pantry-row-${key}`} style={{ borderTop: `1px solid ${P.cream}`, padding: '4px 8px' }}>
       <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>

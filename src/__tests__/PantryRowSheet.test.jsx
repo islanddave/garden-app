@@ -2,6 +2,12 @@
 // Went bad · Gave it away · Move it (jar route / item PATCH) · Edit (Remove inside, two-step, the
 // server's refusal shown) · Next time… (batch noted row / batchless notes_append) · How it was made →
 // (only when handed in). Rendered directly against the contract-shaped fake.
+//
+// AMENDED for the Put-Up UX pass R1, in the same commits as the changes: the action ORDER is pinned as a
+// list; Went bad is one tap only where there is nothing to ask (one left, a weighed bag) and asks how many
+// where there are several, with the request shape of contract 9 (all that is left → all_remaining, fewer →
+// count_used) checked against the Lambda's own validateUse. Gave it away, Edit, Next time… and the wire
+// literals of Move are unchanged.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -19,13 +25,18 @@ vi.mock('../lib/api.js', () => {
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => ({ user: null }) }))
 
 import PantryRowSheet, { HOUSE_DETAIL_TEXT } from '../components/pantry/PantryRowSheet.jsx'
+import { validateUse } from '../../lambda/preservation/pantryUses.js'
 
 const JAR = jarRow({ stock_id: 'jar-1', name: 'Megatron reaper', place: PLACES[2], method: 'hot_sauce', count_left: 3, batch_id: null })
 const BATCH_JAR = jarRow({ stock_id: 'jar-2', name: 'Petri Dish sauce', place: PLACES[2], method: 'hot_sauce', count_left: 2, batch_id: 'kb-7' })
 const ITEM = itemRow({ stock_id: 'item-1', name: 'Oat milk', place: PLACES[2] })
+const ONE = jarRow({ stock_id: 'jar-one', name: 'Pesto cubes', place: PLACES[2], method: 'pesto', count_left: 1, count_made: 4 })
+// The SERVER's weighed shape (lambda/preservation/pantryItems.js jarRow): no count at all.
+const BAG = jarRow({ stock_id: 'jar-bag', name: 'Reaper, frozen', stock_mode: 'weighed', count_left: null, count_made: null, grams_left: 92 })
+const UUID_A = '11111111-1111-4111-8111-111111111111'
 
 function wire(opts = {}) {
-  fake = pantryFetch({ rows: [JAR, BATCH_JAR, ITEM], ...opts })
+  fake = pantryFetch({ rows: [JAR, BATCH_JAR, ITEM, ONE, BAG], ...opts })
   stableFetch.fn = fake
 }
 const JarEditor = ({ rec, onSave, onCancel, err }) => (
@@ -42,26 +53,67 @@ function renderSheet(row, props = {}) {
   return { ...view, ...handlers }
 }
 const posts = (path) => fake.calls('POST').filter(c => c.path === path)
+// The action list, in the order it is on screen (the sheet's own lines carry `row-sheet-…` ids and are not buttons).
+const actionIds = () => [...screen.getByTestId('row-sheet').querySelectorAll('button[data-testid^="row-"]')].map(b => b.getAttribute('data-testid'))
 
 beforeEach(() => { wire(); localStorage.clear() })
 
 describe('a put-up\'s sheet', () => {
-  it('offers Went bad · Gave it away · Move it · Edit · Next time…, and no How it was made → unless handed in', async () => {
+  // THE ORDER IS PINNED AS A LIST (Put-Up UX pass R1): Went bad is no longer the first thing under a thumb.
+  it('offers Move it · Next time… · Gave it away · Went bad… · Edit, in that order, and no How it was made → unless handed in', async () => {
     renderSheet(JAR)
     expect(screen.getByRole('dialog', { name: 'Megatron reaper' })).toBeTruthy()
-    const actions = ['row-went-bad', 'row-give', 'row-move', 'row-edit', 'row-next']
-    for (const a of actions) expect(screen.getByTestId(a)).toBeTruthy()
+    expect(actionIds()).toEqual(['row-move', 'row-next', 'row-give', 'row-went-bad', 'row-edit'])
     expect(screen.queryByTestId('row-how')).toBeNull()
   })
 
-  it('Went bad is ONE use of what is left, fate discarded, and reports back for the in-place Undo', async () => {
-    const { onUsed, onClose } = renderSheet(JAR)
+  it('the last action is How it was made → when it is handed in', async () => {
+    renderSheet(JAR, { onHowItWasMade: vi.fn() })
+    expect(actionIds()).toEqual(['row-move', 'row-next', 'row-give', 'row-went-bad', 'row-edit', 'row-how'])
+  })
+
+  // One left, or a weighed bag (no count on the server's row): one tap, as it always was.
+  it.each([['a single', ONE], ['a weighed bag', BAG]])('Went bad on %s: ONE tap, a use of what is left, fate discarded, no panel, and it reports back for the in-place Undo', async (_, row) => {
+    const { onUsed, onClose } = renderSheet(row)
+    expect(screen.getByTestId('row-went-bad').textContent).toBe('Went bad')
     fireEvent.click(screen.getByTestId('row-went-bad'))
+    await waitFor(() => expect(onUsed).toHaveBeenCalledTimes(1))
+    expect(posts('/api/pantry/uses').map(c => ({ ...c.body, idempotency_key: 'K' }))).toEqual([
+      { idempotency_key: 'K', preservation_log_id: row.stock_id, all_remaining: true, fate: 'discarded' }])
+    expect(screen.queryByTestId('went-bad-panel')).toBeNull()
+    expect(onUsed.mock.calls[0][0]).toMatchObject({ action: 'went_bad', use: { id: expect.any(String) } })
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('Went bad on several: tap 1 opens the panel at ALL of them and writes nothing; tap 2 writes a use of what is left', async () => {
+    const { onUsed, onClose } = renderSheet(JAR)                           // 3 left
+    expect(screen.getByTestId('row-went-bad').textContent).toBe('Went bad…')
+    fireEvent.click(screen.getByTestId('row-went-bad'))
+    expect(posts('/api/pantry/uses')).toHaveLength(0)
+    expect(screen.getByTestId('went-bad-panel').textContent).toContain('How many went bad?')
+    expect(screen.getByTestId('went-bad-count').value).toBe('3')
+    expect(screen.getByTestId('went-bad-plus').getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByTestId('went-bad-save').textContent).toBe('All 3 went bad')
+    fireEvent.click(screen.getByTestId('went-bad-save'))
     await waitFor(() => expect(onUsed).toHaveBeenCalledTimes(1))
     expect(posts('/api/pantry/uses').map(c => ({ ...c.body, idempotency_key: 'K' }))).toEqual([
       { idempotency_key: 'K', preservation_log_id: 'jar-1', all_remaining: true, fate: 'discarded' }])
     expect(onUsed.mock.calls[0][0]).toMatchObject({ action: 'went_bad', use: { id: expect.any(String) } })
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('a part: minus once sends a count, never all_remaining — and the Lambda\'s own validator takes it', async () => {
+    const { onUsed } = renderSheet(JAR)
+    fireEvent.click(screen.getByTestId('row-went-bad'))
+    fireEvent.click(screen.getByTestId('went-bad-minus'))
+    expect(screen.getByTestId('went-bad-save').textContent).toBe('2 went bad')
+    fireEvent.click(screen.getByTestId('went-bad-save'))
+    await waitFor(() => expect(posts('/api/pantry/uses')).toHaveLength(1))
+    const body = posts('/api/pantry/uses')[0].body
+    expect({ ...body, idempotency_key: 'K' }).toEqual({ idempotency_key: 'K', preservation_log_id: 'jar-1', count_used: 2, fate: 'discarded' })
+    expect(validateUse({ ...body, preservation_log_id: UUID_A })).toBeNull()
+    await waitFor(() => expect(onUsed).toHaveBeenCalledTimes(1))
+    expect(onUsed.mock.calls[0][0]).toMatchObject({ action: 'went_bad', use: { count_used: 2 }, jar: { remaining_count: 1 } })
   })
 
   it('Gave it away: a count starting at 1, capped at what is left, fate given_away', async () => {
@@ -80,11 +132,20 @@ describe('a put-up\'s sheet', () => {
     expect({ ...posts('/api/pantry/uses')[0].body, idempotency_key: 'K' }).toEqual({ idempotency_key: 'K', preservation_log_id: 'jar-1', count_used: 2, fate: 'given_away' })
   })
 
-  it('a refused use says why in the server\'s words and keeps the sheet open', async () => {
+  it('a refused use says why in the server\'s words and keeps the sheet open — at the one tap, and at the panel\'s', async () => {
     wire({ overrides: { 'POST /api/pantry/uses': () => { throw apiError(409, { error: 'None are left in that one.', code: 'only_n_left', n: 0 }) } } })
-    const { onUsed, onClose } = renderSheet(JAR)
+    const one = renderSheet(ONE)
     fireEvent.click(screen.getByTestId('row-went-bad'))
     expect((await screen.findByTestId('row-sheet-error')).textContent).toBe('None are left — nothing was changed.')
+    expect(one.onUsed).not.toHaveBeenCalled()
+    expect(one.onClose).not.toHaveBeenCalled()
+    one.unmount()
+
+    const { onUsed, onClose } = renderSheet(JAR)
+    fireEvent.click(screen.getByTestId('row-went-bad'))
+    fireEvent.click(screen.getByTestId('went-bad-save'))
+    expect((await screen.findByTestId('row-sheet-error')).textContent).toBe('None are left — nothing was changed.')
+    expect(screen.getByTestId('went-bad-panel')).toBeTruthy()
     expect(onUsed).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
   })

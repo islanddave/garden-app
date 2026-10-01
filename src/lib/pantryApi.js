@@ -64,7 +64,9 @@ export async function deletePantryItem(fetch, id) {
 
 // POST /api/pantry/uses → {use, jar}. `body`: {preservation_log_id, count_used | all_remaining: true,
 // fate?: 'discarded' | 'given_away', idempotency_key?}. Used one = count_used 1; Used it up =
-// all_remaining; Went bad = all_remaining + discarded; Gave it away = count_used n + given_away.
+// all_remaining; Gave it away = count_used n + given_away; Went bad = discarded, as a count or as all
+// that is left — the row sheet sends all_remaining whenever everything left went bad (what is left
+// right now, on a server of any age) and count_used n only for fewer. One of the two, never both.
 export async function useJar(fetch, body = {}) {
   const payload = { ...body, idempotency_key: body.idempotency_key ?? mintKey() }
   return fetch(PANTRY_USES_PATH, { method: 'POST', body: JSON.stringify(payload) })

@@ -32,7 +32,7 @@ const NEW_RULES = [...A11Y_RULES, 'nested-interactive']
 const FRIDGE = PLACES[2]
 const ROWS = [
   jarRow({ stock_id: 'j1', name: 'Megatron reaper', place: FRIDGE, group_key: 'loc-3', group_label: 'Kitchen fridge', from_garden: true, where_from: 'Petri Dish' }),
-  jarRow({ stock_id: 'j2', name: 'Reaper, frozen', stock_mode: 'weighed', grams_left: 92, count_left: 1 }),
+  jarRow({ stock_id: 'j2', name: 'Reaper, frozen', stock_mode: 'weighed', grams_left: 92, count_left: null, count_made: null }),
   itemRow({ stock_id: 'i1', name: 'Oat milk', place: FRIDGE, group_key: 'loc-3', group_label: 'Kitchen fridge', notes: 'barista' }),
 ]
 function wire() {
