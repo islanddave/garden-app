@@ -177,12 +177,17 @@ describe('Put it up — what it asks', () => {
     expect(!!screen.queryByTestId('putup-row-0-texture-bends')).toBe(true)
   })
 
-  it('"More to put up later" is quieter and sits below the primary', async () => {
+  // Put-Up UX pass R1, D12: one pinned row. Both are commits, so both stay in the footer. MUTATION: move
+  // `putup-later` out of `putup-footer` -> the list reds.
+  it('"More to put up later" is quieter and sits beside the primary, 12 px away, in the one pinned row', async () => {
     await openPutUp()
     const footer = screen.getByTestId('putup-footer')
     const buttons = [...footer.querySelectorAll('button')].map(b => b.textContent)
     expect(buttons).toEqual([FINISH_CTA, LATER_CTA])
-    expect(screen.getByTestId('putup-later').style.marginTop).toBe('12px')
+    expect([footer.style.display, footer.style.flexWrap, footer.style.gap]).toEqual(['flex', 'wrap', '12px'])
+    const later = screen.getByTestId('putup-later')
+    expect([later.style.marginTop, later.style.width]).toEqual(['', ''])
+    expect([later.style.minHeight, later.style.fontWeight, later.style.background]).toEqual(['48px', '400', 'none'])
   })
 
   it('shows the resolved date and each row\'s discard-by before Save', async () => {

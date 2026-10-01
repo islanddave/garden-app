@@ -608,16 +608,19 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
         )}
       </div>
 
-      {/* Pinned. "More to put up later" is quieter and sits BELOW the primary, 12 px away (V4 §6.6) —
-          never side by side at equal weight. */}
+      {/* Pinned, ONE row (Put-Up UX pass R1, D12): the filled primary, then the quieter "More to put up
+          later" beside it, 12 px apart; it wraps underneath only when the two do not fit. Both are commits
+          (the second saves the rows and leaves the batch going), so both stay in the pinned footer — side
+          by side, never at equal weight (V4 §6.6). */}
       <div ref={footerRef} data-testid="putup-footer" style={{ position: 'sticky', bottom: 0, background: P.white,
-        padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}`, overflowAnchor: 'none' }}>
+        padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}`, overflowAnchor: 'none',
+        display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
         <Button data-testid="putup-finish" variant="primary" loading={saving} loadingLabel="Putting it up…"
-          onClick={() => save(true)} style={{ width: '100%' }}>
+          onClick={() => save(true)} style={{ flex: '1 1 auto' }}>
           {FINISH_CTA}
         </Button>
         <button type="button" data-testid="putup-later" disabled={saving} onClick={() => save(false)}
-          style={{ ...quietLink, display: 'flex', justifyContent: 'center', width: '100%', marginTop: 12, fontWeight: 400 }}>
+          style={{ ...quietLink, flex: '0 0 auto', justifyContent: 'center', minHeight: T.buttonMinHeight, padding: '2px 4px', fontWeight: 400 }}>
           {LATER_CTA}
         </button>
       </div>
