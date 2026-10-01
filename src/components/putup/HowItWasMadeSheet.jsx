@@ -20,7 +20,10 @@
 // Saving is ONE write (all or nothing); the key is minted when the sheet opens and reused on every retry.
 // THE UNADDED LINE (Put-Up UX pass R1, D2). A name typed into the adder and not added was dropped by Save
 // without a word. Now Save stops, puts the cursor back in the adder and says, there:
-// "Add “garlic” first — or clear it." Either act lets the next Save through.
+// "Add “garlic” first — or clear it." Either act lets the next Save through. The line sits directly ABOVE
+// the adder, not under it: with the keyboard up the sheet shows about 400px, the adder is nearly 300px
+// tall, and a line beneath it would be said off screen. The stop then brings the line and the field into
+// view together, the field clear of the pinned Save (sheetScroll.js, as the other sheets keep theirs).
 //
 // THE SEAM FOR OTHER SURFACES: `useHowItWasMade({ onSaved })` returns `{ open(jar), sheet }`. The Pantry
 // row sheet (pantry-ui) passes `open` as its "How it was made →" callback and renders `sheet`; the shipped
@@ -37,6 +40,7 @@ import { labelChrome, optionalMarkChrome, inputChrome } from '../forms/formStyle
 import { SheetStartChips, resolveSheetStart } from '../kitchen/StartChips.jsx'
 import KindChips, { kindBody } from '../kitchen/KindChips.jsx'
 import { mintKey } from '../kitchen/idempotencyKey.js'
+import { scrollClearOfFooter, useFieldsClearOfFooter } from '../kitchen/sheetScroll.js'
 import LineAdder, { addFirstWords } from './LineAdder.jsx'
 import LikeBatchPicker from './LikeBatchPicker.jsx'
 import { lineWords } from './lines.js'
@@ -86,11 +90,16 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const [nextTime, setNextTime] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
-  // The adder's unadded name (LineAdder's onPendingChange), and whether Save has stopped for it.
+  // The adder's unadded name (LineAdder's onPendingChange), and how many times Save has stopped for it
+  // (a count, so a second tap on Save puts the cursor back in the adder again).
   const [pending, setPending] = useState(null)
-  const [stopped, setStopped] = useState(false)
+  const [stops, setStops] = useState(0)
   const writingRef = useRef(false)
   const linesRef = useRef(null)
+  const stopLineRef = useRef(null)
+  // The focused field is kept clear of the pinned Save (see sheetScroll.js).
+  const footerRef = useRef(null)
+  const keepClear = useFieldsClearOfFooter(footerRef)
   const labelId = `how-label-${useId()}`
   const madeId = `how-made-${useId()}`
   const nextId = `how-next-${useId()}`
@@ -134,12 +143,8 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
   const save = useCallback(async () => {
     if (writingRef.current) return
     // A name still sitting in the adder is not a line yet, and this body would leave it out. Stop before
-    // anything is sent: the cursor goes back to the adder and the line beneath it says what to do.
-    if (pending) {
-      setStopped(true); setErr(null)
-      linesRef.current?.querySelector('input')?.focus()
-      return
-    }
+    // anything is sent; the effect below puts the cursor back in the adder, under the line that says why.
+    if (pending) { setStops(n => n + 1); setErr(null); return }
     let started = fixedStart
     if (changingStart) {
       const r = resolveSheetStart({ chip, earlier, pickedDate, now: new Date() })
@@ -172,9 +177,21 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
     }
   }, [changingStart, chip, chosenJars, earlier, fetch, fixedStart, key, kind, kindOther, label, labelId, lines, made, madeId, nextTime, onClose, onSaved, pending, pickedDate])
 
+  // The stop, made visible. It runs once the line above the adder is on the page: the cursor goes to the
+  // adder's name field (its first input), the line is brought into view when the field landed at the very
+  // top, and the field is kept clear of the pinned Save when it landed at the bottom.
+  useEffect(() => {
+    if (!stops) return
+    const name = linesRef.current?.querySelector('input')
+    if (!name) return
+    name.focus()
+    stopLineRef.current?.scrollIntoView?.({ block: 'nearest' })
+    scrollClearOfFooter(name, footerRef.current)
+  }, [stops])
+
   return (
     <Sheet open onClose={onClose} title={HOW_SHEET_TITLE} size="full" busy={saving} armsBack>
-      <div data-testid="how-sheet" style={{ padding: '0 18px' }}>
+      <div data-testid="how-sheet" onFocus={keepClear} style={{ padding: '0 18px' }}>
         <Field label="Name it" htmlFor={labelId} required style={{ marginBottom: T.space.md }}>
           <Input id={labelId} data-testid="how-label" value={label} disabled={saving} maxLength={120}
             onChange={e => { setLabel(e.target.value); setErr(null) }} />
@@ -224,16 +241,17 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
               ))}
             </ul>
           )}
-          <LineAdder idPrefix="how-add" lines={lines} disabled={saving} pinnable={false} label="What went in?"
-            excludeJarIds={[...chosen]}
-            onPendingChange={(text) => { setPending(text); if (!text) setStopped(false) }}
-            onAdd={async (body) => { setLines(ls => [...ls, { ...body, ordinal: ls.length }]); return true }} />
-          {/* Said at the adder, where the cursor was just put — the sheet's own error line is a screen below. */}
-          {stopped && pending && (
-            <div role="alert" data-testid="how-add-first" style={{ marginTop: 6, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>
+          {/* Said at the adder, directly above the field the cursor was just put in — the sheet's own error
+              line is a screen below, and under the adder would be off screen with the keyboard up. */}
+          {stops > 0 && pending && (
+            <div ref={stopLineRef} role="alert" data-testid="how-add-first" style={{ margin: '0 0 6px', color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>
               {addFirstWords(pending)}
             </div>
           )}
+          <LineAdder idPrefix="how-add" lines={lines} disabled={saving} pinnable={false} label="What went in?"
+            excludeJarIds={[...chosen]}
+            onPendingChange={(text) => { setPending(text); if (!text) setStops(0) }}
+            onAdd={async (body) => { setLines(ls => [...ls, { ...body, ordinal: ls.length }]); return true }} />
         </section>
 
         <div style={{ marginBottom: T.space.md }}>
@@ -273,7 +291,7 @@ function HowItWasMadeOpen({ jar, onClose, onSaved }) {
         {err && <div role="alert" data-testid="how-error" style={{ marginBottom: T.space.sm, color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>{err}</div>}
       </div>
 
-      <div data-testid="how-footer" style={{ position: 'sticky', bottom: 0, background: P.white,
+      <div ref={footerRef} data-testid="how-footer" style={{ position: 'sticky', bottom: 0, background: P.white,
         padding: `${T.space.sm}px 18px`, borderTop: `1px solid ${P.border}` }}>
         <Button data-testid="how-submit" variant="primary" loading={saving} loadingLabel="Saving…" onClick={save} style={{ width: '100%' }}>
           Save how it was made

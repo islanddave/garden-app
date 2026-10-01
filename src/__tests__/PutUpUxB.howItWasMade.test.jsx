@@ -78,10 +78,27 @@ describe('the unadded-line guard — a typed line is never dropped without a wor
     expect(line.textContent).toBe('Add “garlic” first — or clear it.')
     expect(line.textContent).toBe(addFirstWords('garlic'))
     expect(line.getAttribute('role')).toBe('alert')
-    // Said AT the adder (inside What went in), not in the sheet's own error line a screen below.
+    // Said AT the adder (inside What went in), not in the sheet's own error line a screen below — and
+    // ABOVE the name field, not under the adder: measured in Chrome at 426×492 (the keyboard up), a line
+    // under the adder sat at y660 of a 492px screen. MUTATION: render it after the adder -> red.
     expect(screen.getByTestId('how-lines').contains(line)).toBe(true)
+    expect(!!(line.compareDocumentPosition(adderName()) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
     expect(screen.queryByTestId('how-error')).toBeNull()
     expect(screen.getByTestId('how-sheet')).toBeTruthy()               // the sheet is still open
+  })
+
+  // The stop is not a one-off: he reads the line, looks away, taps Save again — the cursor comes back.
+  // MUTATION: hold "stopped" as a flag (set true twice = no change, no effect) -> the second arm reds.
+  it('a second tap on Save, the name still there, puts the cursor back in the adder again', async () => {
+    mount()
+    fireEvent.change(adderName(), { target: { value: 'garlic' } })
+    await save()
+    expect(document.activeElement).toBe(adderName())
+    screen.getByTestId('how-next-time').focus()
+    expect(document.activeElement).toBe(screen.getByTestId('how-next-time'))
+    await save()
+    expect(document.activeElement).toBe(adderName())
+    expect(posted()).toEqual([])
   })
 
   it('follows the text: the line names what is in the adder NOW', async () => {
