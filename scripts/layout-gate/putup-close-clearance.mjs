@@ -153,6 +153,9 @@ const CASES = [
   { name: 'checkin-dry',  viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 8, scope: 'going-now-view', primary: 'checkin-save', panel: { footer: 'checkin-footer', focus: 'checkin-note' } } },
   { name: 'start',        viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 8, scope: 'going-now-view', primary: 'start-submit', panel: { footer: 'start-footer', focus: 'start-label' } } },
   { name: 'start-full',   viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, kindChips: 6, sheet: true, band: false, minControls: 16, scope: 'going-now-view', primary: 'start-submit', panel: { footer: 'start-footer', focus: 'start-kind-other-text' } } },
+  // lane A additions go directly under this line
+  // lane B additions go directly under this line
+  // lane E additions go directly under this line
   // Put-Up release 1b (V4 §6.7): Put it up with two rows, the first one's disclosure open and its pH
   // focused; and with the sitting's More open and Next time… focused. Same panel assertions.
   { name: 'putup',         viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 30, scope: 'going-now-view', primary: 'putup-finish', panel: { footer: 'putup-footer', focus: 'putup-row-0-ph-input' } } },
