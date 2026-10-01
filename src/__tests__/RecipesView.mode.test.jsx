@@ -8,7 +8,9 @@
 //   • the saved-recipe open is made from inside an armed sheet, so it LANDS first (kitchen/sheetLanding.js);
 //   • every batch opened from a controlled detail carries its origin, { label, kind: 'recipe', id }, in the
 //     shape putup/origin.js reads back;
-//   • a ten-line host that holds openId in state: open, Back, save-then-open.
+//   • a ten-line host that holds openId in state: open, Back, save-then-open;
+//   • the same host on a REAL router and the real registry (jsdom's own history): after save-then-open ONE
+//     Back press returns to the list and none is left dead.
 // The page that will pass these props (PutUp.jsx) is lane A's and is not on this branch: the host below is this
 // lane's own. The Start sheet is lane A's too and is a stand-in here (see RecipesView.detail.test.jsx).
 // MUTATIONS (each run, each red here):
@@ -21,7 +23,7 @@
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, BrowserRouter, Routes, Route, useSearchParams, useLocation } from 'react-router-dom'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 
 installStoragePolyfill()
@@ -43,7 +45,7 @@ import RecipesView from '../components/recipes/RecipesView.jsx'
 import { clearReloadBlocks } from '../lib/reloadGate.js'
 import { DismissRegistryProvider } from '../context/DismissRegistry.jsx'
 import { readMarker } from '../lib/backNav.js'
-import { readFrom, withFrom, backLabel } from '../components/putup/origin.js'
+import { readFrom, withFrom, backLabel, modeSearch } from '../components/putup/origin.js'
 
 const NOW = new Date(2026, 9, 9, 12, 0, 0).getTime()
 const TYPES = [{ id: 't-hot', label: 'Hot sauce', builtin: true, sort_order: 10, user_id: null }]
@@ -394,5 +396,66 @@ describe('a host that holds openId in state: open, Back, save-then-open', () => 
     await act(async () => { tap('recipe-remove-yes') })
     await listReady()
     expect(screen.getByTestId('host-open-id').textContent).toBe('none')
+  })
+})
+
+// THE HISTORY ITSELF. A stand-in for the page on the real BrowserRouter (jsdom's own window.history) under the
+// real DismissRegistry: openId is the ?recipe= param and onOpen is a PUSH through putup/origin.js, the way the
+// plan has the page do it. The recipe sheet arms a Back entry; the open made after a save must not be pushed
+// on top of it, or the first Back lands on that entry and the next one does nothing.
+describe('on a real router: save-then-open leaves no dead Back press', () => {
+  function Page() {
+    const [params, setParams] = useSearchParams()
+    const location = useLocation()
+    const onOpen = (id) => setParams(modeSearch(params, id == null ? null : { recipe: id }), { state: withFrom(location.state, null) })
+    return (
+      <>
+        <span data-testid="page-url">{location.pathname + location.search}</span>
+        <RecipesView now={NOW} openId={params.get('recipe')} onOpen={onOpen} />
+      </>
+    )
+  }
+  const back = () => act(async () => { window.history.back(); await new Promise(r => setTimeout(r, 80)) })
+  const url = () => screen.getByTestId('page-url').textContent
+
+  it('list → New recipe → Save → its detail; ONE Back is the list again, and the entry it stands on is not a sheet\'s', async () => {
+    window.history.pushState({}, '', '/put-up?view=recipes')
+    await act(async () => {
+      render(<BrowserRouter><DismissRegistryProvider><Routes><Route path="*" element={<Page />} /></Routes></DismissRegistryProvider></BrowserRouter>)
+    })
+    await listReady()
+    const depthAtList = window.history.length
+    await act(async () => { tap('recipes-new') })
+    await waitFor(() => expect(armed()).toBe(true))
+    expect(window.history.length).toBe(depthAtList + 1)           // INSTRUMENT: the sheet's Back entry is a real entry
+    fireEvent.change(screen.getByTestId('recipe-name'), { target: { value: 'Garden marinara' } })
+    await act(async () => { tap('recipe-save') })
+    await settle()
+    await detailReady('Garden marinara')
+    expect(url()).toBe('/put-up?view=recipes&recipe=r-new')
+    expect(armed()).toBe(false)
+    // One press: the list, the address without the recipe, and no sheet entry underfoot.
+    await back()
+    await listReady()
+    expect(url()).toBe('/put-up?view=recipes')
+    expect(screen.queryByTestId('recipe-detail')).toBeNull()
+    expect(screen.queryByTestId('recipe-sheet')).toBeNull()
+    expect(armed()).toBe(false)
+  })
+
+  it('a row → its detail → Back: the same single press, with the list re-read', async () => {
+    window.history.pushState({}, '', '/put-up?view=recipes')
+    await act(async () => {
+      render(<BrowserRouter><DismissRegistryProvider><Routes><Route path="*" element={<Page />} /></Routes></DismissRegistryProvider></BrowserRouter>)
+    })
+    await listReady()
+    const reads = calls('GET', '/api/recipes').length
+    fireEvent.click(row('r1'))
+    await detailReady('Petri Dish')
+    expect(url()).toBe('/put-up?view=recipes&recipe=r1')
+    await back()
+    await listReady()
+    expect(url()).toBe('/put-up?view=recipes')
+    expect(calls('GET', '/api/recipes')).toHaveLength(reads + 1)
   })
 })
