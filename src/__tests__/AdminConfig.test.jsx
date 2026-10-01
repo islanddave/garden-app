@@ -120,6 +120,37 @@ describe('the editor opens on what the server holds', () => {
     expect(offered()).toEqual(expect.arrayContaining(['garden', 'harvests', 'photos']))
   })
 
+  // QA M2 — a stored bar holding a slot THIS build cannot draw (a newer bundle's row, a row whose flag
+  // is off). What the editor does, pinned so it is a decision and not a drift (AdminConfig.jsx header):
+  // the slot is not listed and not counted, the untouched editor is not dirty, and the first Save after
+  // an edit writes the bar WITHOUT it. more_pins does the opposite and keeps unknown ids through a save.
+  // KILLING MUTATIONS: seed the draft from the raw base.bar → RED ("4 of 5"); compare `dirty` against
+  // the raw server bar → RED (Save enabled on an untouched editor).
+  it('a stored slot this build cannot draw: not listed, not counted, not dirty — and dropped by the next Save', async () => {
+    await open(prefs({ order: ['today', 'create', 'future-row', 'put-up'], hidden: [] }))
+    expect(rows()).toEqual(['today', 'create', 'put-up'])
+    expect(screen.getByRole('heading', { level: 2, name: /In your bar/ }).textContent).toBe('In your bar · 3 of 5')
+    expect(preview()).toEqual(['today', 'create', 'put-up', 'more'])
+    expect(offered()).not.toContain('future-row')
+    expect(saveButton().disabled).toBe(true)
+    addToBar('Seeds')
+    expect(saveButton().disabled).toBe(false)
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(saveSpy).toHaveBeenCalledTimes(1)
+    expect(saveSpy.mock.calls[0][0].layout).toEqual({ order: ['today', 'create', 'put-up', 'seeds'], hidden: [] })
+  })
+
+  // The alias half of the same rule: a slot stored as 'sow' opens as Seeds and is written back as 'seeds'.
+  it('a slot stored under an alias opens as its live page and is saved under the live id', async () => {
+    await open(prefs({ order: ['today', 'create', 'sow'], hidden: [] }))
+    expect(rows()).toEqual(['today', 'create', 'seeds'])
+    expect(offered()).not.toContain('seeds')
+    expect(saveButton().disabled).toBe(true)
+    addToBar('Photos')
+    await act(async () => { fireEvent.click(saveButton()) })
+    expect(saveSpy.mock.calls[0][0].layout).toEqual({ order: ['today', 'create', 'seeds', 'photos'], hidden: [] })
+  })
+
   // Seeded through resolveBarLayout, not the raw column: a value the BAR ignores is not presented
   // here as though it were live. KILLING MUTATION: seed from prefs.bar_layout raw. RESULT: RED.
   it('opens on the shipped layout when the stored value is one the bar rejects', async () => {

@@ -30,6 +30,16 @@
 // leaves More; a movable tab taken off it goes back to the top of "Your garden". Saving writes
 // {order: <the bar>, hidden: []} — `hidden` is only read now, for layouts saved before this change.
 //
+// A STORED SLOT THIS BUILD CANNOT DRAW IS DROPPED BY THE NEXT SAVE FROM THIS BUILD. "The bar" above is
+// the DRAWN bar (drawnIds below), and that is what the editor opens on. An id this build does not know
+// — a newer bundle's row, a row whose build flag is off — sleeps on the tab bar itself (navConfig.js),
+// but here it is not listed, does not count toward the five and does not make the editor dirty; the
+// first Save after any edit writes the bar without it, for good. A slot stored under an alias ('sow')
+// is written back as its live id ('seeds'). This is NOT what more_pins does: there an unknown id rides
+// through every save. Reachable only after a rollback or from a second device on another build, and
+// nothing is stranded — the page is still in More. Left as it is and stated here (QA M2, 2026-10-01);
+// AdminConfig.test.jsx pins it, so carrying unknown ids through the draft is a decision, not a drift.
+//
 // THE STALE-SEED BUG, FIXED. V5-ADMINCENTER-001 seeded the editor once, from whatever config was on
 // hand — the shipped default when the read was slow — so a Save could wipe the stored layout with a
 // value nobody chose. Now the editor follows the SERVER's value until the person edits, and Save stays
