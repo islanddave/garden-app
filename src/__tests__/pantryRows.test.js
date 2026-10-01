@@ -10,8 +10,8 @@ import {
 } from '../components/pantry/pantryRows.js'
 import { noteBridgeVisit, dismissBridge, readBridge, bridgeKey } from '../components/pantry/pantryBridge.js'
 import {
-  methodChoices, routeFor, AS_IS, FRESH_LABEL, AS_IS_LABEL, jarBody, itemBody, previewLine, doorError, walkWhen, saveLabel,
-  METHOD_REQUIRED_TEXT,
+  methodChoices, routeFor, AS_IS, FRESH_LABEL, AS_IS_LABEL, AS_IS_CHIP_LABEL, jarBody, itemBody, previewLine, doorError, walkWhen, saveLabel,
+  METHOD_REQUIRED_TEXT, methodLabel,
 } from '../components/pantry/putSomethingUp.js'
 
 installStoragePolyfill()
@@ -180,11 +180,17 @@ describe('Put something up / the Walk — method chips by place, As is, and rout
     expect(c.more).not.toContain('hot_sauce')
     expect(c.more).toContain('whole_freeze')
   })
-  it('As is for a typed name; "Fresh, as picked" for a planting; NONE for a planting at a freezer', () => {
-    expect(methodChoices({ placeKind: 'fridge', what: typed }).asIs).toBe(AS_IS_LABEL)
-    expect(methodChoices({ placeKind: 'deep_freezer', what: typed }).asIs).toBe(AS_IS_LABEL)
+  // AMENDED (Put-Up UX pass R1, D5): only the CHIP's label changed — it says what "as is" covers. The
+  // short words stay everywhere else (the save line, the Walk's band, the "pick one" sentence).
+  it('As is (bought, given, leftovers) for a typed name; "Fresh, as picked" for a planting; NONE for a planting at a freezer', () => {
+    expect(AS_IS_CHIP_LABEL).toBe('As is (bought, given, leftovers)')
+    expect(methodChoices({ placeKind: 'fridge', what: typed }).asIs).toBe(AS_IS_CHIP_LABEL)
+    expect(methodChoices({ placeKind: 'deep_freezer', what: typed }).asIs).toBe(AS_IS_CHIP_LABEL)
     expect(methodChoices({ placeKind: 'fridge', what: planting }).asIs).toBe(FRESH_LABEL)
     expect(methodChoices({ placeKind: 'deep_freezer', what: planting }).asIs).toBeNull()
+    expect(AS_IS_LABEL).toBe('As is')
+    expect(methodLabel(AS_IS, typed)).toBe('As is')
+    expect(methodLabel(AS_IS, planting)).toBe('Fresh, as picked')
   })
   it('a method routes to a put-up, As is to a pantry item', () => {
     expect(routeFor('whole_freeze')).toBe('jar')
@@ -231,7 +237,9 @@ describe('Put something up / the Walk — method chips by place, As is, and rout
       .toBe('put up Sep 30 · no date · set by hand')
     expect(previewLine({ method: 'whole_freeze', place, when: { date: '2026-09-30', precision: 'unknown' }, now: NOW }))
       .toBe('put up: not sure · no date — check it before using')
-    expect(previewLine({ method: AS_IS, place, when: { date: '2026-09-30', precision: 'day' }, now: NOW })).toBe('got it Sep 30')
+    // AMENDED (Put-Up UX pass R1, D5): a bought item's line says both things a save stores — the day, as
+    // "today" when it is today, and that it has no discard date.
+    expect(previewLine({ method: AS_IS, place, when: { date: '2026-09-30', precision: 'day' }, now: NOW })).toBe('got it today · no discard date')
     expect(previewLine({ method: null, place, when: { date: '2026-09-30', precision: 'day' }, now: NOW })).toBeNull()
   })
   it('the Walk\'s dates: an estimate chip stores its window start and word; Not sure stores the walk day, unknown', () => {

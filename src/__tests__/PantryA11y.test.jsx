@@ -119,6 +119,37 @@ describe('Put-Up B′ — the Pantry components are clean (with nested-interacti
     await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PutSomethingUpSheet', rules: NEW_RULES })
   })
 
+  // Put-Up UX pass R1: the door's two new targets (the way out to a batch, the preview's Change), with a
+  // bought item chosen and the options open; and the Walk's Raw · In oil beside its discard choice.
+  it('Put something up — the way out to a batch, As is chosen, the preview\'s Change, the options open', async () => {
+    wire()
+    const r = render(<PutSomethingUpSheet open onClose={() => {}} onSaved={() => {}} stockRows={ROWS} onStartBatchInstead={() => {}} />)
+    fireEvent.change(screen.getByTestId('door-what-name'), { target: { value: 'Garlic' } })
+    fireEvent.click(await screen.findByTestId('door-place-id:loc-3'))
+    fireEvent.click(screen.getByTestId('door-method-as_is'))
+    fireEvent.click(screen.getByTestId('door-preview-change'))
+    await screen.findByTestId('door-more-panel')
+    expect(screen.getByTestId('door-start-batch-instead')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Change — the date' })).toBeTruthy()
+    await expectNoA11yViolations(r.container.ownerDocument.body, { label: 'PutSomethingUpSheet R1', rules: NEW_RULES })
+  })
+
+  it('Walk a place — a put-up group with Raw · In oil showing beside the discard choice', async () => {
+    wire()
+    localStorage.clear()
+    const r = render(<MemoryRouter initialEntries={['/put-up?session=putup']}><WalkPlace /></MemoryRouter>)
+    fireEvent.click(await screen.findByTestId('putup-walk-place-id:loc-3'))
+    fireEvent.click(screen.getByTestId('putup-walk-when-unsure'))
+    fireEvent.click(screen.getByTestId('putup-walk-start'))
+    await screen.findByTestId('putup-walk-group')
+    fireEvent.change(screen.getByTestId('walk-what-name'), { target: { value: 'Reaper sauce' } })
+    fireEvent.click(screen.getByTestId('walk-method-hot_sauce'))
+    fireEvent.click(screen.getByTestId('walk-more'))
+    fireEvent.click(screen.getByTestId('walk-raw'))
+    expect(screen.getByRole('group', { name: 'Raw or in oil' })).toBeTruthy()
+    await expectNoA11yViolations(r.container, { label: 'WalkPlace Raw · In oil', rules: NEW_RULES })
+  })
+
   it('Walk a place — setup, then a group with More open and "Already logged here" open', async () => {
     wire()
     localStorage.clear()

@@ -10,6 +10,10 @@
 // place reads "That's this one → move it here" (V4 §2.2 duplicate prevention).
 //
 // Every hit is ONE button (no nested interactive), 48 px tall, named from its visible words.
+//
+// `under` (optional): what a host puts DIRECTLY under the name, above the match list — so it is still on
+// screen with the keyboard up and the matches showing. Put something up puts its way out to Start a batch
+// there. Absent, the field is as it was.
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -30,7 +34,7 @@ const hitBtn = {
 // `value`: { source, name, plant_id?, crop_type_slug?, variety_id? } | null.
 export default function NameSearchField({
   value, onChange, fetch, stockRows = null, placeId = null, onOpenExisting, onMoveHere,
-  idPrefix = 'what', label = 'What is it?', invalid = false, inputRef = null, disabled = false,
+  idPrefix = 'what', label = 'What is it?', invalid = false, inputRef = null, disabled = false, under = null,
 }) {
   const [hits, setHits] = useState(null)
   const [searchErr, setSearchErr] = useState(null)
@@ -112,8 +116,9 @@ export default function NameSearchField({
         <input id={inputId} ref={inputRef} type="text" value={text} disabled={disabled} data-testid={`${idPrefix}-name`}
           aria-required="true" aria-invalid={invalid || undefined} autoComplete="off"
           onChange={e => type(e.target.value)} placeholder="Type a name"
-          style={{ ...inputChrome(invalid), width: '100%', minHeight: 48 }} />
+          style={{ ...inputChrome(invalid), width: '100%', minHeight: T.buttonMinHeight }} />
       )}
+      {under}
       {searchErr && <div style={{ color: P.mid, fontSize: T.type.sm, marginTop: 4 }}>{searchErr}</div>}
       {showList && (
         <ul aria-label={`Matches for ${text.trim()}`} style={{ listStyle: 'none', margin: '6px 0 0', padding: 0,
