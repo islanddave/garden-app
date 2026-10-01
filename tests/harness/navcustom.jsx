@@ -8,9 +8,12 @@
 // a URL to call; the stub below answers it.
 //
 // Query string: ?layout=default|putup|garden|two|anyslot|longlabels|short  &pins=0|2|4|5  &edit=0|1
-//               &page=bar|editor
+//               &page=bar|editor  &visitor=0|1
 // V5-NAVANYSLOT-001 added the last three layouts (More rows in bar slots, the longest bar labels, the
 // smallest bar) and page=editor, which mounts the real "Your tab bar" editor above the bar.
+// visitor=1 (default 0) answers the critter read with one unviewed visitor whose dot is already due,
+// so the new-visitor dot shows: on the More button, or on the Critters tab where a layout puts that
+// page on the bar (layout=fit2).
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
@@ -41,6 +44,16 @@ const PINS = { 0: null, 2: ['photos', 'seeds'], 4: ['photos', 'seeds', 'put-up',
 const layout = LAYOUTS[q.get('layout') ?? 'putup'] ?? null
 const pins = PINS[q.get('pins') ?? '2'] ?? null
 const canEdit = q.get('edit') !== '0'
+// One row as GET /api/critters/active returns it (lambda/critter/index.js Route 2). BottomNavDot shows
+// when a row has viewed_at null and dot_visible_after in the past.
+const HOUR_AGO = new Date(Date.now() - 3600_000).toISOString()
+const VISITOR = {
+  id: '00000000-0000-4000-8000-0000000000c1', species_id: 3, target_kind: 'plant',
+  target_id: '00000000-0000-4000-8000-0000000000a1', plant_id: '00000000-0000-4000-8000-0000000000a1',
+  source_event_id: '00000000-0000-4000-8000-0000000000e1', earned_at: HOUR_AGO, viewed_at: null, faded_at: null,
+  dot_visible_after: HOUR_AGO, meta: {}, species_user_count: 1, species_household_count: 1,
+}
+const visitors = q.get('visitor') === '1' ? [VISITOR] : []
 
 // A first launch on this device: no launch cache, so the server layout applies at once.
 for (const k of ['nav.barLayout.v1', 'nav.morePins.v1', 'nav.morePins.pending.v1']) localStorage.removeItem(k)
@@ -56,7 +69,8 @@ window.fetch = async (input, init = {}) => {
     if ((init.method ?? 'GET') === 'PATCH') { patches.push(JSON.parse(init.body)); return json({ ...JSON.parse(init.body) }) }
     return json({ critter_visit: 'in_app_only', more_pins: pins, bar_layout: layout, can_edit_bar: canEdit })
   }
-  if (url.includes('/api/critters/active')) return json([])
+  // The route's body is { critters: [...] }; a bare array reads as no visitors (critterClient.js).
+  if (url.includes('/api/critters/active')) return json({ critters: visitors })
   return realFetch(input, init)
 }
 
