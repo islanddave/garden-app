@@ -155,7 +155,7 @@ describe('"Made it, ate it all" (D9) — it says what it will do, and one button
     expect(screen.getByTestId('recipe-make-this').textContent).toBe('Make this')
     expect(screen.getByTestId('recipe-i-made-this').textContent).toBe('Made it, ate it all')
     const edit = screen.getByTestId('recipe-edit')
-    expect([edit.tagName, edit.textContent, edit.style.minHeight]).toEqual(['BUTTON', 'Edit', '48px'])
+    expect([edit.tagName, edit.textContent, edit.style.minHeight, edit.style.minWidth]).toEqual(['BUTTON', 'Edit', '48px', '48px'])
     // Quiet: the text action's own ink on no fill, where Make this and its neighbour are boxed buttons.
     expect(colour(edit.style.backgroundColor)).not.toBe(FILL)
     expect(edit.style.color).toBe(screen.getByTestId('recipe-back').style.color)

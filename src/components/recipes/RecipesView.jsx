@@ -264,7 +264,9 @@ export function RecipeDetail({ id, fetch, now, ownBack = true, onBack, onEdit, o
         <Button variant={madeOpen ? 'secondary' : 'primary'} data-testid="recipe-make-this" onClick={() => setStarting(true)}>{MAKE_THIS_CTA}</Button>
         <Button variant="secondary" data-testid="recipe-i-made-this" aria-expanded={madeOpen}
           onClick={() => { setMadeOpen(o => !o); setErr(null) }}>{I_MADE_THIS_CTA}</Button>
-        <button type="button" style={link} data-testid="recipe-edit" onClick={() => onEdit?.(recipe)}>Edit</button>
+        {/* Quiet, and a full target both ways: four letters alone would be 30 px wide. */}
+        <button type="button" style={{ ...link, minWidth: T.buttonMinHeight, padding: '2px 8px', justifyContent: 'center' }}
+          data-testid="recipe-edit" onClick={() => onEdit?.(recipe)}>Edit</button>
       </div>
 
       {madeOpen && (
