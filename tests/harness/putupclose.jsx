@@ -417,7 +417,16 @@ async function run() {
     click('door-from'); await settle()
     click('door-source-more'); await settle()
     click('door-source-csa'); await settle()
-    byTid(CASE === 'door-options-size' ? 'door-size-value' : 'door-notes')?.focus()
+    // THE FOCUS, as the keyboard leaves it. Chrome centres a field that is off screen when it takes focus, so
+    // a bare .focus() here would park the field mid-panel and no footer could ever be over it. On the phone
+    // the field is tapped where it is and the keyboard then brings it just into view — to the scroller's
+    // bottom edge, which is exactly where the pinned Save sits. So the field is put at that edge first and
+    // focused there (blurred first: the size took focus when its link was tapped, and a field that already
+    // has focus fires no focus event).
+    const target = byTid(CASE === 'door-options-size' ? 'door-size-value' : 'door-notes')
+    document.activeElement?.blur?.()
+    target?.scrollIntoView({ block: 'end' })
+    target?.focus({ preventScroll: true })
     await settle()
   }
   // R2 lane P additions go directly under this line
