@@ -4,14 +4,16 @@
 // discard-by choice. Plain SelectChip touch chips (48 px, 8 px gaps); no new visual design.
 // Put-Up UX pass R1: the methods' disclosure reads "Other ways…", a method chosen under other chips
 // stays as one chip, and the discard choice takes its words from putItUp.DISCARD_LABELS.
+// Put-Up R2a: the three things a method can put directly under its row — Raw · In oil (RawInOilChips, ONE
+// part for both doors), How dry? (HowDry) and the canning reference line (CanningLine).
 import React, { useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import SelectChip from '../forms/SelectChip.jsx'
 import { labelChrome, requiredMarkChrome, inputChrome } from '../forms/formStyles.js'
-import { DISCARD_LABELS } from '../putup/putItUp.js'
+import { DISCARD_LABELS, RAW_METHODS, RAW_LABEL, RAW_HINT, IN_OIL_LABEL, TEXTURE_CHIPS } from '../putup/putItUp.js'
 import { NEW_PLACE_KINDS } from '../putup/placeKinds.js'
-import { AS_IS, methodLabel, OTHER_WAYS_LABEL } from './putSomethingUp.js'
+import { AS_IS, methodLabel, OTHER_WAYS_LABEL, CANNING_LINE, HOW_DRY_LABEL, RAW_OR_IN_OIL_LABEL } from './putSomethingUp.js'
 
 const row = { display: 'flex', flexWrap: 'wrap', gap: 8 }
 
@@ -25,7 +27,10 @@ const quietLink = {
 }
 
 // Required single-select of a place chip ({key, id?, label, kind}).
-export function PlaceChipRow({ chips, value, onChange, idPrefix, label = 'Where does it live?', required = true, disabled = false, invalid = false }) {
+// `groupRef` receives the radiogroup, so a host can move focus to its first chip (focusFirstRadio).
+export function PlaceChipRow({
+  chips, value, onChange, idPrefix, label = 'Where does it live?', required = true, disabled = false, invalid = false, groupRef = null,
+}) {
   const [adding, setAdding] = useState(false)
   const [newLabel, setNewLabel] = useState('')
   const [newKind, setNewKind] = useState(null)
@@ -35,7 +40,7 @@ export function PlaceChipRow({ chips, value, onChange, idPrefix, label = 'Where 
     <div>
       <span style={labelChrome} aria-hidden="true">{label}{required && <span style={requiredMarkChrome}>*</span>}</span>
       <div role="radiogroup" aria-label={label} aria-required={required ? 'true' : undefined} aria-invalid={invalid || undefined}
-        data-testid={`${idPrefix}-places`} style={row}>
+        data-testid={`${idPrefix}-places`} ref={groupRef} style={row}>
         {options.map(c => (
           <SelectChip key={c.key} touch active={value?.key === c.key} disabled={disabled} role="radio"
             aria-checked={value?.key === c.key} aria-pressed={undefined} data-testid={`${idPrefix}-place-${c.key}`}
@@ -137,6 +142,75 @@ export function DiscardChoice({ value, onChange, idPrefix, itemMode = false, dis
           disabled={disabled} onChange={e => onChange({ ...value, date: e.target.value })}
           style={{ ...inputChrome(false), maxWidth: 220, marginTop: 8, minHeight: T.buttonMinHeight }} />
       )}
+    </div>
+  )
+}
+
+// Raw · In oil — a put-up's two facts the date engine reads (a bought item's date is only ever typed, so a
+// host draws neither for As is). ONE part for both doors: `show` is 'both' (the Walk), 'raw' (the door,
+// directly under its method row) or 'oil' (the door, beside When and Discard by). Raw is drawn only on a
+// method that allows it (putItUp.RAW_METHODS); a chip that is not shown is never sent (jarBody's rule).
+// `hint`: the line that says what Raw means here, as Put it up prints it — the word alone misleads a hot-sauce
+// maker both ways (a fermented, uncooked sauce is not Raw in this sense).
+export function RawInOilChips({ method, isRaw, inOil, onRaw, onOil, idPrefix, disabled = false, show = 'both', hint = false }) {
+  const raw = show !== 'oil' && RAW_METHODS.has(method)
+  const oil = show !== 'raw'
+  if (!raw && !oil) return null
+  const name = show === 'raw' ? RAW_LABEL : show === 'oil' ? IN_OIL_LABEL : RAW_OR_IN_OIL_LABEL
+  const chips = (
+    <div role="group" aria-label={name} style={row}>
+      {raw && (
+        <SelectChip touch active={isRaw} disabled={disabled} data-testid={`${idPrefix}-raw`} onClick={onRaw}>{RAW_LABEL}</SelectChip>
+      )}
+      {oil && (
+        <SelectChip touch active={inOil} disabled={disabled} data-testid={`${idPrefix}-inoil`} onClick={onOil}>{IN_OIL_LABEL}</SelectChip>
+      )}
+    </div>
+  )
+  if (!hint || !raw) return chips
+  return (
+    <div>
+      {chips}
+      <div data-testid={`${idPrefix}-raw-hint`} style={{ marginTop: 4, color: P.mid, fontSize: T.type.sm }}>{RAW_LABEL}: {RAW_HINT.toLowerCase()}.</div>
+    </div>
+  )
+}
+
+// How dry? — only on a dried method (the host decides; the server refuses a texture on any other). Nothing
+// preselected, and a second tap un-chooses: an answer that bends or is still soft removes the worked-out date.
+export function HowDry({ value, onChange, idPrefix, disabled = false }) {
+  return (
+    <div>
+      <span style={labelChrome} aria-hidden="true">{HOW_DRY_LABEL}</span>
+      <div role="group" aria-label={HOW_DRY_LABEL} data-testid={`${idPrefix}-texture`} style={row}>
+        {TEXTURE_CHIPS.map(o => (
+          <SelectChip key={o.value} touch active={value === o.value} disabled={disabled} data-testid={`${idPrefix}-texture-${o.value}`}
+            onClick={() => onChange(value === o.value ? null : o.value)}>{o.label}</SelectChip>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// The canning reference line (putSomethingUp.CANNING_LINE): a quoted reference with a link-out, in the
+// preview line's ink and size — no box, no icon, no tint, so it never reads as a verdict on this jar. Each
+// sentence is its own line; the link is its own 48 px row and opens a new tab. Nothing here takes focus by
+// itself and nothing here stops a save.
+// The link's name is its words plus where it goes ("— opens in a new tab"), carried as text a screen reader
+// reads and the eye does not see: an anchor is named from its content, and the arrow is not a word.
+const readOnly = {
+  position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)',
+  whiteSpace: 'nowrap', border: 0,
+}
+export function CanningLine({ idPrefix }) {
+  return (
+    <div role="note" data-testid={`${idPrefix}-canning-line`} style={{ color: P.mid, fontSize: T.type.sm, lineHeight: 1.45 }}>
+      {CANNING_LINE.lines.map(l => <div key={l}>{l}</div>)}
+      <a href={CANNING_LINE.href} target="_blank" rel="noopener noreferrer" data-testid={`${idPrefix}-canning-link`}
+        style={{ display: 'flex', alignItems: 'center', minHeight: T.buttonMinHeight, color: P.green, fontWeight: 600 }}>
+        <span aria-hidden="true">{CANNING_LINE.linkText}</span>
+        <span style={readOnly}>{CANNING_LINE.linkName}</span>
+      </a>
     </div>
   )
 }

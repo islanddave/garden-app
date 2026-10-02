@@ -38,11 +38,11 @@ export const WALK_OPTIONS_LABEL = 'Raw or in oil, discard by, another date'
 // Put-Up R2a — the door has TWO: A holds what changes the date line (When · In oil · Discard by), B what is
 // record only (where it's from · notes). A names In oil only where it is offered (a put-up method); B is
 // "Notes" alone for a planting, which gets no where-from row (its origin is the planting).
-export const DOOR_OPTIONS_LABEL = 'Date, discard by, notes'
+export const DOOR_OPTIONS_LABEL = 'Date, discard by'
 export const DOOR_OPTIONS_LABEL_PUT_UP = 'Date, discard by, in oil'
 export const DOOR_FROM_LABEL = 'Where from, notes'
 export const DOOR_FROM_LABEL_PLANTING = 'Notes'
-export const DOOR_NOTES_PLACEHOLDER = "Where it's from, or anything to remember"
+export const DOOR_NOTES_PLACEHOLDER = 'Anything to remember'
 export const DOOR_NOTES_PLACEHOLDER_PUT_UP = 'Recipe you followed, or anything to remember'
 // One question, two labels: on a put-up it asks what went IN (a gifted jar of jam is not the household's own
 // put-up); on an as-is item, where the thing itself came from.
