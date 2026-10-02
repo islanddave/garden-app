@@ -630,6 +630,8 @@ const LANE_SOURCES = [
   // R2 lane M additions go directly under this line
   // R2 lane S additions go directly under this line
   // R2 lane Dn additions go directly under this line
+  // The name search both doors mount: it now prints a sown date and a wave number beside a planting's name.
+  ['src/components/pantry/NameSearchField.jsx', 'export default function NameSearchField'],
   // R2 lane Df additions go directly under this line
   // R2 lane P additions go directly under this line
   // R2 lane E additions go directly under this line
