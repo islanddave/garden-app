@@ -2,10 +2,20 @@
 // Put-Up R2a (prep) — moved here from PantryView.jsx, unchanged, so a second host (the planting page) can
 // draw the same line the Pantry draws. Props: { completion: { route, saved, place, text }, fetch, onDone,
 // onChanged, onHowItWasMade?, canHowItWasMade? }.
-import React, { useState } from 'react'
+//
+// THE RELOAD HOLD (Put-Up R2a, lane P). The door holds the page's reload while it is dirty and lets go when
+// it closes on Save — the same moment this line appears. A deploy that landed during that save was only
+// waiting for the last hold to clear, so the page reloaded within a frame and the row was in the list with
+// no line and no Undo. The line now holds the reload itself (lib/reloadGate.js, one key per mounted line):
+// while it is on screen and not undone. It lets go when it goes (closed, or its host unmounts), when its
+// Undo lands (nothing is left to lose), and whenever the page is hidden — a line has no timer, so a phone
+// put down with it showing must not park an update for good; back on screen, it holds again. Made HERE,
+// not in a host, so every host that draws the line has it.
+import React, { useEffect, useId, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { deletePantryItem } from '../../lib/pantryApi.js'
+import { setReloadBlocked } from '../../lib/reloadGate.js'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
 
 // The door's completion, in place on the Pantry (V4 §2.2): what was saved, in the server's words, with
@@ -14,6 +24,18 @@ export default function CompletionLine({ completion, fetch, onDone, onChanged, o
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
   const [undone, setUndone] = useState(false)
+  const gateKey = `pantry-completion:${useId()}`
+  useEffect(() => {
+    if (undone) return undefined
+    // Set from the event itself, not through a render: a hidden page may not paint for a long time.
+    const sync = () => setReloadBlocked(gateKey, document.visibilityState !== 'hidden')
+    sync()
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      document.removeEventListener('visibilitychange', sync)
+      setReloadBlocked(gateKey, false)
+    }
+  }, [gateKey, undone])
   const id = completion.saved?.id
   async function undo() {
     if (busy || id == null) return
