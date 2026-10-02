@@ -68,6 +68,7 @@ import LineSheet from '../components/putup/LineSheet.jsx'
 import StageEditSheet from '../components/putup/StageEditSheet.jsx'
 import ShuSheet from '../components/putup/ShuSheet.jsx'
 // R2 lane Dn additions go directly under this line
+import NameSearchField from '../components/pantry/NameSearchField.jsx'
 // R2 lane Df additions go directly under this line
 // R2 lane P additions go directly under this line
 // R2 lane E additions go directly under this line
@@ -287,6 +288,40 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
       await expectNoA11yViolations(container, { label: 'MoveJarSheet', rules: NEW_RULES })
     })
     // R2 lane Dn additions go directly under this line
+    // Put-Up R2a (lane Dn): the name search with the server's ranked answer in its FULLEST list (two same-named
+    // plantings with their wave and sown date, one of them ended, a put-up, a bought item, a crop, a variety,
+    // "More matches…" opened), then picked: the name still a field, its line and "Search again" under it.
+    it('the name search (NameSearchField), every kind of match and then a picked planting, is clean (with nested-interactive)', async () => {
+      const HITS = [
+        { kind: 'planting', key: 'planting:p-w1', plant_id: 'p-w1', label: 'Dark Green Zucchini', crop_type_slug: 'zucchini', variety_id: 'v-z', ended: false, succession_order: 1, sown_at: '2026-04-10' },
+        { kind: 'planting', key: 'planting:p-w2', plant_id: 'p-w2', label: 'Dark Green Zucchini', crop_type_slug: 'zucchini', variety_id: 'v-z', ended: true, succession_order: 2, sown_at: '2026-05-08T00:00:00.000Z' },
+        { kind: 'put_up', key: 'jar:j-1', preservation_log_id: 'j-1', label: 'Zucchini relish', crop_type_slug: 'zucchini', variety_id: null },
+        { kind: 'pantry_item', key: 'pantry:i-1', pantry_item_id: 'i-1', label: 'Zucchini bread', crop_type_slug: null },
+        { kind: 'crop', key: 'crop:zucchini', crop_type_slug: 'zucchini', label: 'Zucchini' },
+        { kind: 'variety', key: 'variety:v-z', variety_id: 'v-z', label: 'Dark Green', crop_type_slug: 'zucchini' },
+        { kind: 'variety', key: 'variety:v-g', variety_id: 'v-g', label: 'Golden zucchini', crop_type_slug: 'zucchini' },
+      ]
+      const search = () => Promise.resolve({ hits: HITS, resolved_crop: null })
+      function Field() {
+        const [what, setWhat] = React.useState(null)
+        return <NameSearchField value={what} onChange={setWhat} fetch={search} idPrefix="a11y-what" />
+      }
+      const { container } = render(<Field />)
+      fireEvent.change(screen.getByTestId('a11y-what-name'), { target: { value: 'zucc' } })
+      fireEvent.click(await screen.findByTestId('a11y-what-more', {}, { timeout: 2000 }))
+      // Positive names, by role: seven rows, each ONE button named by its visible words.
+      const rows = screen.getByRole('list', { name: 'Matches for zucc' }).querySelectorAll('li')
+      expect(rows).toHaveLength(7)
+      expect(screen.getByRole('button', { name: 'Dark Green Zucchini — wave 2, sown May 8 · planting, ended' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Zucchini · crop' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Golden zucchini · variety' })).toBeTruthy()
+      await expectNoA11yViolations(container, { label: 'NameSearchField, matches', rules: NEW_RULES })
+      fireEvent.click(screen.getByTestId('a11y-what-hit-planting:p-w2'))
+      // The name is still the one labelled field, and the line under it is its description.
+      expect(screen.getByRole('textbox', { name: /What is it\?/, description: 'from your planting: Dark Green Zucchini — wave 2, sown May 8' }).value).toBe('Dark Green Zucchini')
+      expect(screen.getByRole('button', { name: 'Search again' })).toBeTruthy()
+      await expectNoA11yViolations(container, { label: 'NameSearchField, picked', rules: NEW_RULES })
+    })
     // R2 lane Df additions go directly under this line
     // R2 lane P additions go directly under this line
     // R2 lane E additions go directly under this line
