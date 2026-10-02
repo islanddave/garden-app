@@ -181,7 +181,7 @@ const CASES = [
   // by the harness before it reports ready (tests/harness/putupclose.jsx, `places-edit`): a case that does
   // not meet them never reaches ready() and fails here. Scoped to the Pantry: the page's own header and its
   // segment row are another lane's and are printed, not asserted.
-  { name: 'places-edit', viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, sheet: true, band: false, minControls: 28, scope: 'pantry-view', primary: 'pu-location-save' } },
+  { name: 'places-edit', viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, sheet: true, band: false, minControls: 27, scope: 'pantry-view', primary: 'pu-location-save' } },
 ]
 
 const failures = []

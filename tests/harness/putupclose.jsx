@@ -404,7 +404,8 @@ async function run() {
   // Put-Up R2a (lane P) — `places-edit`: the Pantry's Places sheet with ONE editor open under its row and the
   // name focused (the field the keyboard is up for). Reached through the real controls: this entry opens on
   // the batch detail, so the page's own Back leaves it, the Pantry segment is tapped, then "Edit places",
-  // then the second place's Edit… (a row with rows above and below it).
+  // then the LAST place's Edit… — the row furthest down the list, whose editor is below the keyboard at
+  // 426×492 unless the sheet itself brings it up (measured: without that scroll its Save sits under the fold).
   //
   // THIS CASE CHECKS ITSELF BEFORE IT REPORTS READY, and says why. The gate's exact fixture counts and its
   // focused-field assertion live in its `panel` block, which requires a pinned footer to measure against —
@@ -428,7 +429,7 @@ async function run() {
     const placeRows = () => [...document.querySelectorAll('[data-testid="pu-location-row"]')]
     await need('the Places sheet never listed its rows', () => placeRows().length > 0)
     await need('the Pantry list never answered (no count is drawn)', () => !!byTid('pu-location-in-use'))
-    click('pu-location-rename', placeRows()[1])
+    click('pu-location-rename', placeRows()[placeRows().length - 1])
     await need('the editor never opened', () => !!byTid('pu-location-name'))
     byTid('pu-location-name').focus()
     await settle(); await settle()
@@ -441,8 +442,8 @@ async function run() {
     const problems = []
     if (placeRows().length !== 4) problems.push(`place rows ${placeRows().length} != 4`)
     if (chips.length !== 6) problems.push(`kind chips ${chips.length} != 6`)
-    if (document.querySelectorAll('[data-testid="pu-location-delete"]').length !== 2) problems.push('Delete… is not on exactly the two empty places')
-    if (document.querySelectorAll('[data-testid="pu-location-in-use"]').length !== 1) problems.push('the in-use line is not on exactly the one other place that holds something')
+    if (document.querySelectorAll('[data-testid="pu-location-delete"]').length !== 1) problems.push('Delete… is not on exactly the one other empty place')
+    if (document.querySelectorAll('[data-testid="pu-location-in-use"]').length !== 2) problems.push('the in-use line is not on exactly the two places that hold something')
     if (document.activeElement !== byTid('pu-location-name')) problems.push('the name is not the focused element')
     for (const [what, el] of [['the name', byTid('pu-location-name')], ['Save', byTid('pu-location-save')], ...chips.map((c) => [`kind chip "${c.textContent}"`, c])]) {
       if (!el || !inPanel(el)) problems.push(`${what} is not painted inside the panel on screen`)
