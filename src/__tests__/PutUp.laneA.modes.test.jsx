@@ -27,6 +27,8 @@
 //   A2-1c   the segment is named even inside a mode                -> "inside a mode there is no segment on
 //                                                                    screen either …"
 //   A2-1d   a fresh page ignores the segment its entry names       -> "a recipe opened from Recipes, restored …"
+//   A2-3    leaveMode pops without asking which entry is current   -> "a remove that answers after the Back was
+//                                                                    pressed …"
 // CI lane: `npm test` plus the TZ re-run. No jest-dom (L-182). Nothing here reads a clock.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -803,6 +805,74 @@ describe('a page that mounts on a mode entry holds the segment its origin names'
     await screen.findByTestId('putup-batch-mode')
     await flush()
     expect(backBtn().textContent).toBe('← Pantry')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Lane A2 (the seat's stale-closure finding). "Remove this batch" and a recipe's Remove wait on the server
+// and then call the function they were handed BEFORE the wait. If the Back was pressed meanwhile, that old
+// function still reads the mode's entry — origin and all — and would pop again, past the sender.
+// The sender sits at index 1 here, so an app entry IS under it for an unguarded pop to walk onto: the floor.
+describe('a stale Back never pops past the sender', () => {
+  const afterAPopCouldHaveLanded = () => act(async () => { await new Promise((r) => setTimeout(r, 80)) })
+
+  it('a remove that answers after the Back was pressed: the old onRemoved does nothing, and the page stays on the sender', async () => {
+    renderAt('/put-up?state=closed', { idx: 1 })
+    await screen.findByTestId('putup-closed-mode')
+    tap('stub-closed-row')
+    await screen.findByTestId('putup-batch-mode')
+    const staleOnRemoved = seen.detail.at(-1).onRemoved          // what the remove was handed before its wait
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up?state=closed'))
+    expect(window.history.state.idx).toBe(1)
+    const from = pops
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      act(() => { staleOnRemoved() })
+      expect(go).not.toHaveBeenCalled()
+    } finally { go.mockRestore() }
+    await afterAPopCouldHaveLanded()
+    expect(pops).toBe(from)
+    expect(loc()).toBe('/put-up?state=closed')
+    expect(screen.getByTestId('putup-closed-mode')).toBeTruthy()
+    expect(screen.queryByTestId('floor')).toBeNull()
+  })
+
+  it('a removed recipe\'s onOpen(null), arriving after the Back was pressed, does nothing either', async () => {
+    renderAt('/put-up?batch=kb-1', { idx: 1 })
+    await screen.findByTestId('putup-batch-mode')
+    tap('stub-batch-recipe')
+    await screen.findByTestId('recipe-detail')
+    const staleOnOpen = seen.recipes.at(-1).onOpen
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up?batch=kb-1'))
+    const from = pops
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      act(() => { staleOnOpen(null) })
+      expect(go).not.toHaveBeenCalled()
+    } finally { go.mockRestore() }
+    await afterAPopCouldHaveLanded()
+    expect(pops).toBe(from)
+    expect(loc()).toBe('/put-up?batch=kb-1')
+    expect(screen.getByTestId('putup-batch-mode')).toBeTruthy()
+    expect(screen.queryByTestId('floor')).toBeNull()
+  })
+
+  // Green control: the SAME function, called while its entry is still the current one, is the Back.
+  it('…and the same call made in time still leaves: the guard asks only whether the entry is current', async () => {
+    renderAt('/put-up?state=closed', { idx: 1 })
+    await screen.findByTestId('putup-closed-mode')
+    tap('stub-closed-row')
+    await screen.findByTestId('putup-batch-mode')
+    const onRemoved = seen.detail.at(-1).onRemoved
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      act(() => { onRemoved() })
+      expect(go.mock.calls).toEqual([[-1]])
+    } finally { go.mockRestore() }
+    await waitFor(() => expect(loc()).toBe('/put-up?state=closed'))
+    expect(window.history.state.idx).toBe(1)
   })
 })
 

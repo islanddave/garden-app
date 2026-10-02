@@ -518,6 +518,9 @@ export default function PutUp({
   // reads the same counter): 0 on the first app entry of a session, undefined under a router that keeps
   // no browser history.
   const routerIndex = () => (typeof window === 'undefined' ? undefined : window.history?.state?.idx)
+  // The router's key on the entry the browser is standing on NOW (it writes one beside `idx` on every entry
+  // it pushes or replaces), against `location.key`, which is the entry a given render was made for.
+  const standingOnKey = () => (typeof window === 'undefined' ? undefined : window.history?.state?.key)
   // The entry the last pop was started from, and when — forgotten the moment the location changes, so an
   // entry re-entered later (the system's Forward) can be left again.
   const popStartedRef = useRef(null)
@@ -527,6 +530,12 @@ export default function PutUp({
       started: popStartedRef.current, nowMs: Date.now() })
     if (plan === 'wait') return
     if (plan === 'pop') {
+      // A STALE CALL NEVER POPS. A removed batch and a removed recipe call this after a wait on the server,
+      // through the function they were handed BEFORE it. If the Back was pressed meanwhile, the browser is
+      // already standing on the sender — while this closure still reads the mode's entry, sees its origin,
+      // finds no pop under way, and would pop a second time: one entry past the sender, possibly out of
+      // Put-Up. The entry this call was made for must still be the current one, or it does nothing.
+      if (standingOnKey() !== location.key) return
       popStartedRef.current = { key: location.key, at: Date.now() }
       navigate(-1)
       return
