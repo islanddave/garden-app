@@ -93,9 +93,10 @@ describe('the jar editor writes only what the jar PATCH takes (the client list s
   it('is anchored to the real save (guards against the slice silently matching nothing)', () => {
     expect(at).toBeGreaterThan(-1)
     expect(block).toContain('function save()')
-    // The eight things the editor offers, each written through one key (method_other_text with method).
+    // The ten keys the editor builds, each written through one key (method_other_text with method; R2a:
+    // source_kind with source_label, always both).
     expect(sent.sort()).toEqual(['discard_by', 'label', 'method', 'method_other_text', 'notes', 'package_count',
-      'quantity_unit', 'quantity_value'])
+      'quantity_unit', 'quantity_value', 'source_kind', 'source_label'])
   })
 
   // MUTATION: add `patch.remaining_count = …` (or any key the route refuses) to RowEditor.save -> reds.

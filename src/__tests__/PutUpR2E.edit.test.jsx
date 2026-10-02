@@ -32,6 +32,8 @@ import { rowFromRecord } from './helpers/pantryFake.js'
 import { METHOD_LABELS, DISCARD_LABELS } from '../components/putup/putItUp.js'
 import { DISCARD_DATE_TEXT } from '../components/pantry/putSomethingUp.js'
 import { HOUSE_DETAIL_TEXT } from '../components/pantry/PantryRowSheet.jsx'
+import { whereFromError, WHERE_EXACTLY_ERROR } from '../components/pantry/WhereFromField.jsx'
+import { PUTUP_SOURCE_LABELS as WHERE_FROM_WORDS } from '../lib/dropdownRegistry.js'
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
 import { validateJarPatch } from '../../lambda/preservation/jarRoutes.js'
 
@@ -425,5 +427,123 @@ describe('48 px targets', () => {
     // The notes box is taller than the floor; the two buttons are the Button primitive's 48.
     expect(parseInt(screen.getByRole('textbox', { name: 'Notes' }).style.height, 10)).toBeGreaterThanOrEqual(48)
     for (const name of ['Save', 'Cancel']) expect(screen.getByRole('button', { name }).style.minHeight).toBe('48px')
+  })
+})
+
+// Contract 4 as amendment C1 and as lane S built it: source_kind and source_label travel as a PAIR, always
+// both; `null, null` un-chooses; the garden carries no name; the server judges the pair against the STORED
+// planting and harvest link, so a row tied to either has no control here.
+describe('where it is from: "Made with produce from", corrected in Edit', () => {
+  const FROM_FARM = { ...JAR, source_kind: 'farm_stand', source_label: 'Warner Farms' }
+  const group = () => screen.queryByRole('radiogroup', { name: 'Made with produce from' })
+  const chip = (kind) => screen.getByTestId(`ed-rec-e-source-${kind}`)
+  const chosen = () => within(group()).getAllByRole('radio').filter(r => r.getAttribute('aria-checked') === 'true').map(r => r.textContent)
+  const nameField = () => screen.queryByTestId('ed-rec-e-source-label')
+
+  // MUTATION E-M3b: hide it on every row -> a row with no planting cannot be corrected.
+  it('a row with no planting has it, seeded from the record', async () => {
+    await openEditor(FROM_FARM)
+    // Seen and said, in one assertion: the heading above the chips and the group's accessible name.
+    expect([group().previousElementSibling.textContent, group().getAttribute('aria-label')])
+      .toEqual(['Made with produce from', 'Made with produce from'])
+    expect(chosen()).toEqual([WHERE_FROM_WORDS.farm_stand])
+    expect(nameField().value).toBe('Warner Farms')
+    // It sits with the notes, as the door's does: after the date, before Notes.
+    const panel = screen.getByTestId('jar-edit-panel')
+    const order = [...panel.querySelectorAll('[role="radiogroup"], textarea')].map(el => el.getAttribute('data-testid') ?? el.id)
+    expect(order).toEqual(['ed-discard-rec-e', 'ed-rec-e-source', 'ed-notes-rec-e'])
+    cleanup()
+    // A row that never recorded one opens with nothing chosen and no name field.
+    await openEditor()
+    expect(chosen()).toEqual([])
+    expect(nameField()).toBeNull()
+  })
+
+  // MUTATION E-M3: show it on a planting-linked row -> any choice but the garden is a 400 from the route.
+  it('a row with a planting has no where-from control', async () => {
+    await openEditor({ ...JAR, plant_id: 'plant-1', source_kind: 'own_garden' })
+    expect(screen.getByRole('radiogroup', { name: 'Discard by' })).toBeTruthy()      // the panel is open
+    expect(group()).toBeNull()
+    expect(screen.queryByTestId('ed-rec-e-source')).toBeNull()
+  })
+
+  // The server judges the pair against the stored harvest link too (lambda/preservation/jarRoutes.js).
+  // MUTATION: key the absence on the planting alone -> a row tied to a pick offers what the route refuses.
+  it('a row tied to a pick has none either', async () => {
+    await openEditor({ ...JAR, harvest_log_id: 'harvest-1', source_kind: 'own_garden' })
+    expect(screen.getByRole('radiogroup', { name: 'Discard by' })).toBeTruthy()
+    expect(group()).toBeNull()
+  })
+
+  // MUTATION E-M4 (first half): send the source when it was not touched -> every Edit rewrites it.
+  // (PutUp.formGuard's "an untouched Save writes nothing" reds on the same mutant, unedited.)
+  it('untouched, neither key is sent', async () => {
+    await openEditor(FROM_FARM)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), { target: { value: 'for the chili' } })
+    await save()
+    expect(writes()).toEqual([['PATCH', { notes: 'for the chili' }]])
+  })
+
+  // MUTATION E-M4 (second half): send the typed name with the garden -> the garden carries a vendor's name.
+  it('garden sends the kind alone', async () => {
+    await openEditor(FROM_FARM)
+    fireEvent.click(chip('own_garden'))
+    expect(nameField()).toBeNull()
+    await save()
+    expect(writes()).toEqual([['PATCH', { source_kind: 'own_garden', source_label: null }]])
+  })
+
+  // MUTATION E-M9's sibling: send one half alone -> validateJarPatch answers "…are edited together" (400).
+  it('the pair travels together', async () => {
+    // Only the NAME changed: the kind it belongs to goes with it.
+    await openEditor(FROM_FARM)
+    fireEvent.change(nameField(), { target: { value: '  Kimball Fruit Farm ' } })
+    await save()
+    expect(writes()).toEqual([['PATCH', { source_kind: 'farm_stand', source_label: 'Kimball Fruit Farm' }]])
+    cleanup(); fetchMock.mockReset()
+    // Only the KIND changed, and no name was typed: the name goes as null, not as a missing key.
+    await openEditor()
+    fireEvent.click(chip('store'))
+    await save()
+    expect(writes()).toEqual([['PATCH', { source_kind: 'store', source_label: null }]])
+    cleanup(); fetchMock.mockReset()
+    // A second tap un-chooses: null, null.
+    await openEditor(FROM_FARM)
+    fireEvent.click(chip('farm_stand'))
+    expect(chosen()).toEqual([])
+    await save()
+    expect(writes()).toEqual([['PATCH', { source_kind: null, source_label: null }]])
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  // MUTATION: send Other with no name -> the route's 400, in words written for a developer.
+  it('Other with no name: the control\'s own sentence, and no PATCH', async () => {
+    await openEditor()
+    fireEvent.click(screen.getByTestId('ed-rec-e-source-more'))
+    fireEvent.click(chip('other'))
+    await save()
+    expect(writes()).toEqual([])
+    expect(screen.getByRole('alert').textContent).toBe(WHERE_EXACTLY_ERROR)
+    expect(whereFromError({ kind: 'other', label: ' ' })).toBe(WHERE_EXACTLY_ERROR)
+    expect(nameField().getAttribute('aria-invalid')).toBe('true')
+    // Typing the name takes the line away, and the save goes.
+    fireEvent.change(nameField(), { target: { value: 'the neighbour' } })
+    expect(screen.queryByRole('alert')).toBeNull()
+    await save()
+    expect(writes()).toEqual([['PATCH', { source_kind: 'other', source_label: 'the neighbour' }]])
+  })
+
+  // MUTATION E-M5: leave the source out of `dirty` -> a deploy's reload takes the correction with it.
+  it('a where-from change alone holds the reload gate; put back, it releases', async () => {
+    await openEditor(FROM_FARM)
+    expect(isReloadBlocked()).toBe(false)
+    fireEvent.change(nameField(), { target: { value: 'Kimball Fruit Farm' } })
+    expect(isReloadBlocked()).toBe(true)
+    fireEvent.change(nameField(), { target: { value: 'Warner Farms' } })
+    expect(isReloadBlocked()).toBe(false)
+    fireEvent.click(chip('gift'))
+    expect(isReloadBlocked()).toBe(true)
+    fireEvent.click(chip('farm_stand'))
+    expect(isReloadBlocked()).toBe(false)
   })
 })

@@ -89,6 +89,7 @@ import { DISCARD_DATE_TEXT } from '../components/pantry/putSomethingUp.js'
 import { HOUSE_DETAIL_TEXT } from '../components/pantry/PantryRowSheet.jsx'
 import SelectChip from '../components/forms/SelectChip.jsx'
 import { labelChrome } from '../components/forms/formStyles.js'
+import WhereFromField, { whereFromError } from '../components/pantry/WhereFromField.jsx'
 
 // ── Vocabulary (mirrors lambda/preservation VALID_METHODS + lambda/storage-location VALID_KINDS) ──
 // Grouped for the picker; the canning SAFETY split (water-bath = high-acid, pressure = low-acid) is
@@ -2372,6 +2373,10 @@ const EDIT_DISCARD_SENDS = Object.freeze({ auto: 'clear', none: 'none' })
 // anything else (a general figure, the recipe, the house estimate, nothing, an older row) was worked out.
 const jarDiscardSeed = (rec) => (rec.use_by_basis === 'typed' ? (rec.use_by_target ? 'date' : 'none') : 'auto')
 
+// WHERE IT'S FROM, corrected in Edit (contract 4): the door's own control under the door's heading for a
+// put-up — what went INTO it, not where the jar came from.
+const EDIT_SOURCE_HEADING = 'Made with produce from'
+
 // Put-Up surfaces take 48 px targets; the shared Input and Select stop at the app-wide 44 px floor.
 const EDIT_FIELD_STYLE = Object.freeze({ minHeight: T.buttonMinHeight })
 
@@ -2390,6 +2395,8 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     methodOther: rec.method_other_text || '',
     useByTarget: rec.use_by_target ? ymd(rec.use_by_target) : '',
     discardMode: jarDiscardSeed(rec),
+    sourceKind: rec.source_kind ?? null,
+    sourceLabel: rec.source_label || '',
     notes: rec.notes || '',
   }))
   const [qtyValue, setQtyValue] = useState(seed.qtyValue)
@@ -2421,6 +2428,15 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   const discardTouched = discardMode !== seed.discardMode || (discardMode === 'date' && useByTarget !== seed.useByTarget)
   // "From the label" saved with no date picked: said in place, in the door's sentence, and nothing is sent.
   const [dateRefused, setDateRefused] = useState(false)
+  // Put-Up R2a (contract 4): where the produce came from, corrected here. A put-up tied to a planting
+  // or to a pick is from the garden and says so by that tie: the server refuses any other source for it
+  // (provenance.js, judged against the STORED planting and harvest link), so such a row has no control.
+  const [sourceKind, setSourceKind] = useState(seed.sourceKind)
+  const [sourceLabel, setSourceLabel] = useState(seed.sourceLabel)
+  const sourceTouched = sourceKind !== seed.sourceKind || sourceLabel !== seed.sourceLabel
+  const sourceOffered = !rec.plant_id && !rec.harvest_log_id
+  // Other with no name: whereFromError's sentence, in place, and nothing is sent.
+  const [sourceRefused, setSourceRefused] = useState(null)
   const [notes, setNotes] = useState(seed.notes)
 
   // Put-Up release 1a (V4 §6.5 "Reload gate"). A deploy's SW reload landing mid-Edit took the typed
@@ -2434,7 +2450,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // deferred reload at the exact moment of the save. The key is per instance (useId) so two open
   // editors can never release each other's hold.
   const dirty = qtyValue !== seed.qtyValue || qtyUnit !== seed.qtyUnit || packageCount !== seed.packageCount || name !== seed.name ||
-    method !== seed.method || methodOther !== seed.methodOther || discardTouched || notes !== seed.notes
+    method !== seed.method || methodOther !== seed.methodOther || discardTouched || sourceTouched || notes !== seed.notes
   const holdReload = dirty || !!busy
   const reloadGateKey = `put-up-row:${useId()}`
   useEffect(() => {
@@ -2466,7 +2482,15 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     // The one thing the date can be refused for here: "From the label" with no date picked.
     const dateMissing = discardTouched && discardMode === 'date' && !useByTarget
     setDateRefused(dateMissing)
-    if (!dateMissing) onSave(Object.keys(patch).length ? patch : null)
+    // Where it's from travels as a PAIR, always both (the route refuses one alone): the garden and
+    // "un-chosen" carry no name, so their name goes as null; untouched, neither key is sent.
+    if (sourceTouched) {
+      patch.source_kind = sourceKind
+      patch.source_label = sourceKind == null || sourceKind === 'own_garden' ? null : (sourceLabel.trim() || null)
+    }
+    const sourceMissing = sourceTouched ? whereFromError({ kind: sourceKind, label: sourceLabel }) : null
+    setSourceRefused(sourceMissing)
+    if (!dateMissing && !sourceMissing) onSave(Object.keys(patch).length ? patch : null)
   }
 
   const useBy = USE_BY_METHODS.has(method)
@@ -2579,6 +2603,17 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
             style={{ margin: `${T.space.xs}px 0 0`, color: P.mid, fontSize: T.type.sm }}>{HOUSE_DETAIL_TEXT}</p>
         )}
       </div>
+      {sourceOffered && (
+        <div style={{ marginTop: T.space.sm }}>
+          <WhereFromField kind={sourceKind} label={sourceLabel} heading={EDIT_SOURCE_HEADING} idPrefix={`ed-${rec.id}`}
+            invalid={!!sourceRefused}
+            onChange={({ kind, label }) => { setSourceKind(kind); setSourceLabel(label); setSourceRefused(null) }} />
+          {sourceRefused && (
+            <div role="alert" data-testid={`ed-source-error-${rec.id}`}
+              style={{ marginTop: T.space.xs, color: P.terra, fontSize: T.type.sm }}>{sourceRefused}</div>
+          )}
+        </div>
+      )}
       <div style={{ marginTop: T.space.sm }}>
         <Field label="Notes" htmlFor={`ed-notes-${rec.id}`} optional>
           <Textarea id={`ed-notes-${rec.id}`} value={notes} onChange={e => setNotes(e.target.value)}
