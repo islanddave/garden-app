@@ -360,10 +360,14 @@ function RowEditorBlock({ row, shown, index, rows, method, batch, places, contai
               style={{ ...inputChrome(false), width: 180, scrollMarginBottom: FOOTER_PX }} />
             <div style={{ marginTop: 4, color: P.light, fontSize: '0.74rem' }}>Or work it out from the put-up once it is saved.</div>
           </div>
-          {/* The chips' words are the one set every surface that asks this uses (putItUp DISCARD_LABELS). */}
+          {/* The chips' words are the one set every surface that asks this uses (putItUp DISCARD_LABELS).
+              THREE chips, as the door and the Walk show (Put-Up R2a, I3): "Work it out" is the answer an
+              untouched row already gives, so it is on screen and pressed at open instead of being the
+              absence of the other two. A pressed chip tapped again lets go, back to "Work it out". The body
+              is unchanged: `auto` sends no date key. */}
           <ToggleChips label="Discard by" disabled={disabled} idPrefix={`putup-row-${index}-discard`}
-            options={[{ value: 'date', label: DISCARD_LABELS.date }, { value: 'none', label: DISCARD_LABELS.none }]}
-            value={row.discard.mode === 'auto' ? null : row.discard.mode}
+            options={['auto', 'date', 'none'].map(mode => ({ value: mode, label: DISCARD_LABELS[mode] }))}
+            value={row.discard.mode}
             onChange={v => set({ discard: { mode: v ?? 'auto', date: v === 'date' ? row.discard.date : '' } })} />
           {row.discard.mode === 'date' && (
             // `-discard-day`, not `-discard-date`: that id is already the "From the label" chip's (ToggleChips
