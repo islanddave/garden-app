@@ -174,6 +174,14 @@ const CASES = [
   // R2 lane F additions go directly under this line
   // R2 lane Df additions go directly under this line
   // R2 lane P additions go directly under this line
+  // Put-Up R2a (lane P): the Pantry's Places sheet with one editor open under its row and the name focused,
+  // at both heights. NO `panel`: that block measures against a pinned footer and this sheet has none (flat,
+  // Save in the editor), so the census, the sheet and the primary are asserted here and the exact fixture
+  // counts (four place rows, six kind chips) and "the name, the kinds and Save are on screen" are asserted
+  // by the harness before it reports ready (tests/harness/putupclose.jsx, `places-edit`): a case that does
+  // not meet them never reaches ready() and fails here. Scoped to the Pantry: the page's own header and its
+  // segment row are another lane's and are printed, not asserted.
+  { name: 'places-edit', viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, sheet: true, band: false, minControls: 28, scope: 'pantry-view', primary: 'pu-location-save' } },
 ]
 
 const failures = []

@@ -284,6 +284,24 @@ window.fetch = (url, ...rest) => {
   // R2 lane F additions go directly under this line
   // R2 lane Df additions go directly under this line
   // R2 lane P additions go directly under this line
+  // Put-Up R2a (lane P) — case `places-edit`: the Pantry list behind the Places sheet. No shipped case reads
+  // the Pantry (none opens that segment), so no shipped case reaches this stub. Rows in the list read's own
+  // shape (GET /api/pantry → { rows }), in the household's places above: FOUR put-ups in Chest Freezer 1 (the
+  // row whose "4 stored here — move them to delete this place." is the longest line the sheet draws), ONE in
+  // Chest Freezer 2 (the singular), and nothing in the other two, so both a row with Delete… and a row
+  // without it are measured. Names and methods are constructed, not seen in any database.
+  if (u.includes('/api/pantry?')) {
+    const put = (id, name, place, o = {}) => ({ stock_kind: 'put_up', stock_id: id, name, group_key: place.id, group_label: place.label,
+      place: { id: place.id, label: place.label, kind: place.kind }, where_from: null, from_garden: false, plant_id: null,
+      crop_type_slug: null, batch_id: null, stock_mode: 'counted', count_left: 3, count_made: 4, grams_left: null, method: 'whole_freeze',
+      discard: { date: '2027-07-01', basis: 'table', status: 'ok' }, acquired_at: null, created_by: 'harness_user',
+      updated_at: '2026-09-01T12:00:00Z', quantity_value: null, quantity_unit: null, source_kind: null, source_label: null, ...o })
+    return json({ rows: [
+      put('pu-berries', 'Blueberries', PLACES[0]), put('pu-corn', 'Sweet corn, cut', PLACES[0]),
+      put('pu-peas', 'Shelling peas', PLACES[0]), put('pu-pesto', 'Pesto cubes', PLACES[0], { method: 'pesto' }),
+      put('pu-stock', 'Roasted tomato sauce, the big batch', PLACES[1], { method: 'sauce' }),
+    ] })
+  }
   return realFetch(url, ...rest)
 }
 
@@ -383,6 +401,54 @@ async function run() {
   // R2 lane F additions go directly under this line
   // R2 lane Df additions go directly under this line
   // R2 lane P additions go directly under this line
+  // Put-Up R2a (lane P) — `places-edit`: the Pantry's Places sheet with ONE editor open under its row and the
+  // name focused (the field the keyboard is up for). Reached through the real controls: this entry opens on
+  // the batch detail, so the page's own Back leaves it, the Pantry segment is tapped, then "Edit places",
+  // then the second place's Edit… (a row with rows above and below it).
+  //
+  // THIS CASE CHECKS ITSELF BEFORE IT REPORTS READY, and says why. The gate's exact fixture counts and its
+  // focused-field assertion live in its `panel` block, which requires a pinned footer to measure against —
+  // and this sheet has none, by design (flat: Save sits in the editor). So the counts the gate would have
+  // asserted are asserted here, on the live document, and a case that does not meet them never reaches
+  // ready(): the gate then fails it ("harness never reached ready()"), it does not pass it. Exact, like the
+  // fixture counts in the gate: FOUR place rows (PLACES above), SIX kind chips; the name is the focused
+  // element; and the name, every kind chip and Save are painted inside the panel's box and the viewport —
+  // which at 426×492 is the whole point of opening the editor at the top of the panel.
+  if (CASE === 'places-edit') {
+    const need = async (what, test) => {
+      for (let i = 0; i < 40 && !test(); i += 1) await settle()
+      if (!test()) throw new Error(`places-edit: ${what}`)
+    }
+    click('putup-mode-back')
+    await need('the page did not leave the batch for a segment', () => !!document.querySelector('[role="radiogroup"][aria-label="Put-Up view"]'))
+    ;[...document.querySelectorAll('[role="radiogroup"][aria-label="Put-Up view"] [role="radio"]')].find((b) => b.textContent.trim() === 'Pantry')?.click()
+    await need('the Pantry never drew the Edit places door', () => !!byTid('pantry-edit-places'))
+    byTid('pantry-edit-places').focus()
+    click('pantry-edit-places')
+    const placeRows = () => [...document.querySelectorAll('[data-testid="pu-location-row"]')]
+    await need('the Places sheet never listed its rows', () => placeRows().length > 0)
+    await need('the Pantry list never answered (no count is drawn)', () => !!byTid('pu-location-in-use'))
+    click('pu-location-rename', placeRows()[1])
+    await need('the editor never opened', () => !!byTid('pu-location-name'))
+    byTid('pu-location-name').focus()
+    await settle(); await settle()
+    const panel = document.querySelector('[role="dialog"]')
+    const inPanel = (el) => {
+      const r = el.getBoundingClientRect(); const pr = panel.getBoundingClientRect()
+      return r.height > 0 && r.top >= pr.top - 0.5 && r.bottom <= Math.min(pr.bottom, window.innerHeight) + 0.5
+    }
+    const chips = [...document.querySelectorAll('[data-testid="pu-location-kinds"] [role="radio"]')]
+    const problems = []
+    if (placeRows().length !== 4) problems.push(`place rows ${placeRows().length} != 4`)
+    if (chips.length !== 6) problems.push(`kind chips ${chips.length} != 6`)
+    if (document.querySelectorAll('[data-testid="pu-location-delete"]').length !== 2) problems.push('Delete… is not on exactly the two empty places')
+    if (document.querySelectorAll('[data-testid="pu-location-in-use"]').length !== 1) problems.push('the in-use line is not on exactly the one other place that holds something')
+    if (document.activeElement !== byTid('pu-location-name')) problems.push('the name is not the focused element')
+    for (const [what, el] of [['the name', byTid('pu-location-name')], ['Save', byTid('pu-location-save')], ...chips.map((c) => [`kind chip "${c.textContent}"`, c])]) {
+      if (!el || !inPanel(el)) problems.push(`${what} is not painted inside the panel on screen`)
+    }
+    if (problems.length) throw new Error(`places-edit: ${problems.join('; ')}`)
+  }
 
   // Put-Up release 1b (V4 §6.7 "lane entry render": Put it up, 2 rows, one expanded, keyboard up). The
   // sheet is filled through its real chips: Today, Hot sauce, row 1's place and container, a second row
