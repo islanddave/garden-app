@@ -27,6 +27,8 @@
 // group, and a mistyped place is usually exactly that. Until that read answers, and if it fails, there is
 // no door. The sheet is handed the UNFILTERED rows, so what it counts as stored in a place is not narrowed
 // by Use soon.
+// `batchNames` (optional): the batch names a host has ALREADY read, { [batch id]: name }. Handed in (an
+// object, an empty one included), the Pantry reads none of its own; left out, it reads them as before.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -127,7 +129,7 @@ export function mergeRecent(rows, recent) {
 export default function PantryView({
   fetch, group, onGroupChange, rows, loading, error, onReload, recent, onRecent,
   useSoonOnly = false, onClearUseSoon, JarEditor = null, onHowItWasMade = null, canHowItWasMade = null, completion = null, onCompletionDone,
-  showBridge = false, onDismissBridge, onOpenBatch = null, onPutSomethingUp = null, onWalkPlace = null, now,
+  showBridge = false, onDismissBridge, onOpenBatch = null, onPutSomethingUp = null, onWalkPlace = null, now, batchNames,
 }) {
   const [openRow, setOpenRow] = useState(null)
   // The last move made from this list, said in place at the top (the place it went and what the server
@@ -152,7 +154,8 @@ export default function PantryView({
     return () => cancelAnimationFrame(frame)
   }, [moved, yieldScroll])
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
-  const batches = useBatchNames({ fetch, rows })
+  const ownNames = useBatchNames({ fetch, rows, enabled: batchNames === undefined })
+  const batches = batchNames ?? ownNames
   // The household's places, for the Edit places door: null until the read answers (and after one that
   // failed). The open sheet reads them again for itself and hands back what it knows.
   const [places, setPlaces] = useState(null)

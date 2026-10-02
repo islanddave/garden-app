@@ -11,7 +11,9 @@
 //     a bare label acts at the tap: the row sheet's action list word for word, Remove… inside Edit, and the
 //     buttons that DO write (the Move panel's own, the count panel's) bare;
 //   • N7 — a put-up's source that is not the garden reads "produce from <name>" in the row sheet;
-//   • the Group-by control's two options are the 48 px tap target (SegmentedControl's `touch`).
+//   • the Group-by control's two options are the 48 px tap target (SegmentedControl's `touch`);
+//   • the optional `batchNames`: handed the names a host already read, the Pantry and the search results read
+//     none of their own; left out, each reads them as it did.
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -31,7 +33,7 @@ vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => ({ user: {
 
 import PantryView from '../components/pantry/PantryView.jsx'
 import PantryRowSheet, { jarRecordWords } from '../components/pantry/PantryRowSheet.jsx'
-import { PantrySearchBox } from '../components/pantry/PantrySearch.jsx'
+import PantrySearchResults, { PantrySearchBox } from '../components/pantry/PantrySearch.jsx'
 import { MOVE_TITLE } from '../components/putup/MoveJarSheet.jsx'
 import { detailWords, leftWords, discardChip } from '../components/pantry/pantryRows.js'
 import { BATCH_NAMES_PATH } from '../lib/pantryApi.js'
@@ -329,5 +331,62 @@ describe('the Group-by control', () => {
     const radios = [...screen.getByRole('radiogroup', { name: 'Group by' }).querySelectorAll('[role="radio"]')]
     expect(radios.map(r => r.textContent)).toEqual(['By place', 'By what it is'])
     expect(radios.map(r => r.style.minHeight)).toEqual(['48px', '48px'])
+  })
+})
+
+// The page reads the batch names twice when a search is opened and cleared (the Pantry unmounts while the
+// results show, and each side asks). The hoist is the page's; these two take what it reads.
+describe('the optional batchNames', () => {
+  const NAMES = { 'kb-1': 'Winter kraut' }                        // NOT what the names read would answer ("Petri Dish")
+  const results = (props) => (
+    <PantrySearchResults query="reaper" rows={ROWS} loading={false} fetch={stableFetch.fn} onPutUp={() => {}} onUsed={() => {}}
+      onChanged={() => {}} now={NOW.getTime()} {...props} />
+  )
+
+  it('the Pantry, handed the names: it reads none of its own and says the handed name', async () => {
+    render(<PantryHost batchNames={NAMES} />)
+    await settle()
+    expect(rowText('jar-reaper')).toContain('from Winter kraut · 4 left')
+    expect(namesGets()).toHaveLength(0)
+    // The door to the batch hangs on the same names.
+    fireEvent.click(screen.getByTestId('pantry-row-open-put_up:jar-reaper'))
+    expect(await screen.findByTestId('row-sheet')).toBeTruthy()
+  })
+
+  it('the Pantry, handed names that do not list a row\'s batch: no words about it, and still no read', async () => {
+    render(<PantryHost batchNames={{}} />)
+    await settle()
+    expect(rowText('jar-reaper')).not.toMatch(/from /)
+    expect(namesGets()).toHaveLength(0)
+  })
+
+  it('the Pantry, handed nothing: it reads the names itself, as it did', async () => {
+    render(<PantryHost />)
+    await waitFor(() => expect(rowText('jar-reaper')).toContain('from Petri Dish · 4 left'))
+    expect(namesGets()).toHaveLength(1)
+  })
+
+  it('the search results, handed the names: no read, and What went in → is offered for a batch the names list', async () => {
+    render(results({ onOpenBatch: vi.fn(), batchNames: NAMES }))
+    await settle()
+    expect(namesGets()).toHaveLength(0)
+    fireEvent.click(screen.getByTestId('pantry-search-hit-put_up:jar-reaper'))
+    expect(await screen.findByTestId('row-what-went-in')).toBeTruthy()
+  })
+
+  it('the search results, handed names that do not list the batch: no read and no door', async () => {
+    render(results({ onOpenBatch: vi.fn(), batchNames: {} }))
+    await settle()
+    expect(namesGets()).toHaveLength(0)
+    fireEvent.click(screen.getByTestId('pantry-search-hit-put_up:jar-reaper'))
+    await screen.findByTestId('row-sheet')
+    expect(screen.queryByTestId('row-what-went-in')).toBeNull()
+  })
+
+  it('the search results, handed nothing: they read the names themselves when a batch can be opened, as they did', async () => {
+    render(results({ onOpenBatch: vi.fn() }))
+    await waitFor(() => expect(namesGets()).toHaveLength(1))
+    fireEvent.click(screen.getByTestId('pantry-search-hit-put_up:jar-reaper'))
+    expect(await screen.findByTestId('row-what-went-in')).toBeTruthy()
   })
 })

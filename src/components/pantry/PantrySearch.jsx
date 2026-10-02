@@ -7,6 +7,8 @@
 // Batches are not in it (Going now is their list).
 // `onOpenBatch` (the page's opener, Put-Up UX pass R1): a jar hit's row sheet offers What went in → for a
 // batch this host can name, exactly as the Pantry's does. The names are read only when it is handed in.
+// `batchNames` (optional, Put-Up R2a): the names a host has ALREADY read, { [batch id]: name }. Handed in
+// (an object, an empty one included), the results read none of their own; left out, they read them as before.
 import React, { useMemo, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
@@ -44,10 +46,11 @@ export function PantrySearchBox({ value, onChange, onClear }) {
 
 export default function PantrySearchResults({
   query, rows, loading, extraSearchItems = [], onOpenExtra = null, fetch, onPutUp, onUsed, onChanged, JarEditor = null, onHowItWasMade = null,
-  canHowItWasMade = null, onOpenBatch = null, now,
+  canHowItWasMade = null, onOpenBatch = null, now, batchNames,
 }) {
   const [openRow, setOpenRow] = useState(null)
-  const batches = useBatchNames({ fetch, rows, enabled: typeof onOpenBatch === 'function' })
+  const ownNames = useBatchNames({ fetch, rows, enabled: batchNames === undefined && typeof onOpenBatch === 'function' })
+  const batches = batchNames ?? ownNames
   const hits = useMemo(() => searchHits(rows ?? [], extraSearchItems, query), [rows, extraSearchItems, query])
   const text = String(query ?? '').trim()
   return (
