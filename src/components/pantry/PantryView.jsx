@@ -70,26 +70,29 @@ export function usePantryList({ fetch, group = 'place', enabled = true }) {
 // no earlier read was sent for (a jar given a batch by "How it was made" in this same visit). FAILURE IS
 // ISOLATED: a read that fails, or a batch it does not list, leaves that jar exactly as it reads without a
 // name — no words about its batch, no door to it. `enabled` false sends nothing.
+// A FAILED READ IS ASKED AGAIN (Put-Up R2a): the ids it was sent for are forgotten, so the next re-read of
+// the list (every write on the Pantry makes one) sends the read once more. A read that ANSWERED and did
+// not list a batch is still never repeated for it.
 const NO_NAMES = Object.freeze({})
 export function useBatchNames({ fetch, rows, enabled = true }) {
   const [names, setNames] = useState(NO_NAMES)
   const askedRef = useRef(new Set())
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
-  // A string, so the effect below runs when the SET of batch ids changes and not on every re-read.
   const ids = useMemo(
     () => [...new Set((rows ?? []).map(r => r?.batch_id).filter(v => v != null && v !== '').map(String))].sort().join('\n'),
     [rows],
   )
+  // Runs at every re-read (`rows`), and sends nothing unless some batch id has no read standing for it.
   useEffect(() => {
     if (!enabled || !ids) return
-    const wanted = ids.split('\n')
-    if (wanted.every(id => askedRef.current.has(id))) return
-    for (const id of wanted) askedRef.current.add(id)
+    const fresh = ids.split('\n').filter(id => !askedRef.current.has(id))
+    if (!fresh.length) return
+    for (const id of fresh) askedRef.current.add(id)
     Promise.resolve().then(() => listBatchNames(fetch))
       .then(m => { if (mountedRef.current) setNames(prev => ({ ...prev, ...m })) })
-      .catch(() => { /* the rows read as they do without a name */ })
-  }, [enabled, fetch, ids])
+      .catch(() => { for (const id of fresh) askedRef.current.delete(id) })
+  }, [enabled, fetch, ids, rows])
   return names
 }
 export function batchNameOf(names, row) {

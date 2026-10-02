@@ -22,12 +22,15 @@ export const SEARCH_LABEL = 'Search pantry and recipes'
 // is a text input that SAYS it is a searchbox (the same role a native one has, so it is found and announced
 // the same way), asks for the search keyboard and its Search key, and leaves the one × below as the only
 // clear control.
+// THE SEARCH KEY (Put-Up R2a): the results are already on screen as each letter is typed, so the key has
+// nothing left to send. It puts the keyboard away — Enter blurs the field — and the text stays.
 export function PantrySearchBox({ value, onChange, onClear }) {
   return (
     <div role="search" style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
       <input type="text" role="searchbox" inputMode="search" enterKeyHint="search" autoComplete="off"
         aria-label={SEARCH_LABEL} data-testid="pantry-search" value={value} placeholder={SEARCH_LABEL}
         onChange={e => onChange(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }}
         style={{ ...inputChrome(false), flex: 1, minWidth: 0, minHeight: T.buttonMinHeight }} />
       {value && (
         <button type="button" onClick={onClear} data-testid="pantry-search-clear" aria-label="Clear the search"
