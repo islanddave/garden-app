@@ -234,8 +234,9 @@ export default function GoingNowView({ batches, loading, error, onReload, now, o
   // (PutUp.jsx openMode), which every other door into a mode also uses. A host that passes neither still
   // gets a working door — the same one-mode-key URL (origin.js modeSearch), and the entry's router state
   // carried along (withFrom): these two used to push with no state at all, which dropped an overlay's
-  // background and turned a flyover into a page. The card names no origin, so a batch opened from here is
-  // left by the page's own push, onto this segment.
+  // background and turned a flyover into a page. The card names no origin; the page names the segment on
+  // screen for it (goingNow.js segmentOrigin), so a batch opened from here is left by a pop back onto this
+  // segment when an app entry is under it, and by the page's own push when none is.
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const openBatch = useCallback((id) => {
