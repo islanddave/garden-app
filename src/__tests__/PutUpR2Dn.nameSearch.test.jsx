@@ -78,19 +78,23 @@ const FREEZER = { id: 'loc-1', label: 'Chest Freezer 1', kind: 'deep_freezer' }
 const sentAsJar = (what) => jarBody({ key: 'K', what, storageLocationId: 'loc-3', method: 'hot_sauce', when: WHEN, count: 1, discard: { mode: 'auto', date: '' } })
 const sentAsItem = (what) => itemBody({ key: 'K', what, place: FRIDGE, when: WHEN, discard: { mode: 'auto', date: '' } })
 
-function Host({ initial, seen, ...props }) {
+// `control.set` is the host's own setter: what a host does to the What without the field asking (the Walk
+// clears it after a save).
+function Host({ initial, seen, control, ...props }) {
   const [what, setWhat] = useState(initial)
+  control.set = setWhat
   return <NameSearchField value={what} onChange={v => { seen.push(v); setWhat(v) }} idPrefix="t" {...props} />
 }
 // `answer`: what the search answers — an object, or (q) => object | Promise.
 function mount({ answer = armsOnly(), initial = null, ...props } = {}) {
   const seen = []
+  const control = {}
   const fetch = vi.fn(async (url) => {
     const q = decodeURIComponent(String(url).split('?q=')[1] ?? '')
     return typeof answer === 'function' ? answer(q) : answer
   })
-  const view = render(<Host initial={initial} seen={seen} fetch={fetch} {...props} />)
-  return { ...view, seen, fetch, what: () => (seen.length ? seen.at(-1) : initial) }
+  const view = render(<Host initial={initial} seen={seen} control={control} fetch={fetch} {...props} />)
+  return { ...view, seen, fetch, control, what: () => (seen.length ? seen.at(-1) : initial) }
 }
 // The debounce, then the answer.
 async function settle() {
@@ -414,7 +418,22 @@ describe('a typed name\'s crop is the one the answer resolved for the text on sc
     fireEvent.change(screen.getByTestId('t-name'), { target: { value: 'R' } })   // too short to search for
     await act(async () => { release(); for (let i = 0; i < 6; i++) await Promise.resolve() })
     expect(what()).toEqual({ source: 'typed', name: 'R' })
-    expect(list()).toBeNull()                                              // nor does it paint its matches
+    expect(list()).toBeNull()                                              // nor does it paint its matches …
+    fireEvent.change(screen.getByTestId('t-name'), { target: { value: 'Ri' } })
+    expect(list()).toBeNull()                                              // … now, or under the next letter typed
+    expect(what()).toEqual({ source: 'typed', name: 'Ri' })
+  })
+
+  it('an answer that lands as the host clears the name (a save, then the next one) does not bring the name back', async () => {
+    let release
+    const held = new Promise(r => { release = r })
+    const { seen, control } = mount({ answer: (q) => held.then(() => answer(q)) })
+    await type('Ristra Cayenne')                                           // asked; the answer is held
+    // The host clears the What and the answer comes in before the field has rendered that.
+    await act(async () => { control.set(null); release(); for (let i = 0; i < 6; i++) await Promise.resolve() })
+    expect(screen.getByTestId('t-name').value).toBe('')
+    expect(seen).toEqual([{ source: 'typed', name: 'Ristra Cayenne' }])    // the keystroke; the answer wrote nothing
+    expect(list()).toBeNull()
   })
 
   it('a slug is never printed: the crop is said under the name only when the answer carried its label', async () => {

@@ -188,8 +188,8 @@ export default function NameSearchField({
   const [showAll, setShowAll] = useState(false)
   // What this field knows about the picked hit beyond the What: { key, label } — the words its line says.
   const [tie, setTie] = useState(null)
-  // The label the last answer carried for the typed text's resolved crop: { slug, label }.
-  const [typedCrop, setTypedCrop] = useState(null)
+  // What the last answer resolved for the text it was asked about: { q, slug, label } (slug and label may be null).
+  const [resolved, setResolved] = useState(null)
   const seqRef = useRef(0)
   const nameEl = useRef(null)
   const listEl = useRef(null)
@@ -198,10 +198,6 @@ export default function NameSearchField({
   const tieId = `${idPrefix}-tie-${useId()}`
   const text = value?.name ?? ''
   const picked = !!(value && value.source && value.source !== 'typed')
-
-  // The answer of a search is applied to the What the host holds THEN, through the callback it holds then.
-  const live = useRef({ value, onChange })
-  live.current = { value, onChange }
 
   // A picked What this field did not pick itself (a restored draft, a door opened from a planting) says its
   // own name, as it stood when it arrived; a What that is no longer picked holds nothing.
@@ -217,11 +213,11 @@ export default function NameSearchField({
 
   useEffect(() => {
     const q = text.trim()
-    // Every change of the text (or of picked) outdates the answer in flight: a late one never paints, and
-    // never puts its crop on a name it was not resolved for.
+    // Every change of the text (or of picked) outdates the answer in flight: a late one is dropped, not kept
+    // to be painted under the next thing typed.
     const seq = ++seqRef.current
     setShowAll(false)
-    setTypedCrop(null)
+    setResolved(null)
     if (picked || q.length < MIN_QUERY) { setHits(null); setSearchErr(null); return undefined }
     const t = setTimeout(() => {
       Promise.resolve()
@@ -233,19 +229,23 @@ export default function NameSearchField({
             ranked: Array.isArray(r?.hits) ? r.hits : null,
           })
           setSearchErr(null)
-          // The typed name's crop is the one THIS answer resolved for the text on screen, or none.
           const slug = typeof r?.resolved_crop === 'string' && r.resolved_crop ? r.resolved_crop : null
-          const cropLabel = slug ? cropLabelIn(r, slug) : null
-          setTypedCrop(slug && cropLabel ? { slug, label: cropLabel } : null)
-          const now = live.current
-          if ((now.value?.crop_type_slug ?? null) !== slug) {
-            now.onChange(slug ? { source: 'typed', name: now.value?.name ?? q, crop_type_slug: slug } : { source: 'typed', name: now.value?.name ?? q })
-          }
+          setResolved({ q, slug, label: slug ? cropLabelIn(r, slug) : null })
         })
         .catch(() => { if (seq === seqRef.current) { setHits(null); setSearchErr("Couldn't search just now — the name you type is kept.") } })
     }, SEARCH_DEBOUNCE_MS)
     return () => clearTimeout(t)
   }, [fetch, picked, text])
+
+  // A typed name's crop is the one the answer resolved for the text ON SCREEN, or none. Put on the What here,
+  // after the render the answer landed in, and only if that render still shows the text it was asked about:
+  // an answer that lands as the host changes the name (a save that clears the field for the next one) is
+  // never written back over it.
+  useEffect(() => {
+    if (!resolved || picked || text.trim() !== resolved.q) return
+    if ((value?.crop_type_slug ?? null) === resolved.slug) return
+    onChange(resolved.slug ? { source: 'typed', name: text, crop_type_slug: resolved.slug } : { source: 'typed', name: text })
+  }, [resolved]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = useMemo(() => {
     const q = text.trim()
@@ -308,7 +308,7 @@ export default function NameSearchField({
 
   const tied = picked
     ? tiedWords(value.source, tie?.key === key ? tie.label : text)
-    : (value?.crop_type_slug && typedCrop?.slug === value.crop_type_slug ? tiedWords('crop', typedCrop.label) : null)
+    : (value?.crop_type_slug && resolved?.slug === value.crop_type_slug && resolved.q === text.trim() ? tiedWords('crop', resolved.label) : null)
   const tieLine = tied && (
     <span id={tieId} data-testid={`${idPrefix}-tie`} style={{ fontSize: T.type.sm, color: P.mid }}>{tied}</span>
   )
