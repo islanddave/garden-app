@@ -51,7 +51,7 @@ const hitBtn = {
   color: P.dark,
 }
 const quietBtn = {
-  minHeight: 48, minWidth: 48, background: 'none', border: 'none', color: P.green, fontWeight: 600,
+  minHeight: 48, minWidth: 48, padding: 0, background: 'none', border: 'none', color: P.green, fontWeight: 600,
   fontFamily: 'inherit', fontSize: T.type.sm, textDecoration: 'underline', cursor: 'pointer',
 }
 
@@ -321,7 +321,7 @@ export default function NameSearchField({
         onChange={e => type(e.target.value)} placeholder="Type a name"
         style={{ ...inputChrome(invalid), width: '100%', minHeight: T.buttonMinHeight }} />
       {picked ? (
-        <div data-testid={`${idPrefix}-picked`} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div data-testid={`${idPrefix}-picked`} style={{ display: 'flex', alignItems: 'center', columnGap: 12, flexWrap: 'wrap', marginTop: 4 }}>
           {tieLine}
           <button type="button" data-testid={`${idPrefix}-change`} disabled={disabled} onClick={searchAgain} style={quietBtn}>
             {SEARCH_AGAIN_TEXT}
