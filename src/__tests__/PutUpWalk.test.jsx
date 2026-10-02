@@ -491,4 +491,61 @@ describe('"what haven\'t I put up?" — one collapsed line that cannot become a 
 })
 
 // R2 lane Dn additions go directly under this line
+// Put-Up R2a (lane Dn): the name search reads the server's RANKED answer (`hits`) when it gets one. Every test
+// above wires an answer with no `hits` and stays on the arms; these are the twins of the two duplicate-prevention
+// tests, on the ranked path, through the same Walk. A ranked put-up or pantry-item hit carries no place, so it
+// must BE the Walk's own Pantry row (same id) for "already here" and "move it here" to hold.
+// MUTATION (run, see the lane report): print the server's hit instead of the host's row -> both red.
+describe('duplicate prevention on the ranked answer — a stock hit is the Pantry row, place and all', () => {
+  const HERE = jarRow({ stock_id: 'jar-here', name: 'Blueberries', place: CF1, group_key: 'loc-1', group_label: 'Chest Freezer 1', count_left: 4 })
+  const THERE = jarRow({ stock_id: 'jar-there', name: 'Blueberry jam', place: CF2, group_key: 'loc-2', group_label: 'Chest Freezer 2', count_left: 2 })
+  const ITEM_THERE = itemRow({ stock_id: 'item-there', name: 'Blue cheese', place: CF2, group_key: 'loc-2', group_label: 'Chest Freezer 2' })
+  // The answer as the Lambda builds it: its own arms, its own ranking (lineSearch.js rankHits).
+  async function rankedAnswer(q) {
+    const { rankHits, resolvedCropOf } = await import('../../lambda/preservation/lineSearch.js')
+    const arms = {
+      plantings: LINE_HITS.plantings,
+      put_ups: [{ preservation_log_id: 'jar-here', label: 'Blueberries', crop_type_slug: 'blueberry', variety_id: null, package_count: 6, remaining_count: 4, stock_mode: 'counted', crop_name: 'Blueberry', recent_at: '2026-08-01T00:00:00.000Z' },
+        { preservation_log_id: 'jar-there', label: 'Blueberry jam', crop_type_slug: 'blueberry', variety_id: null, package_count: 2, remaining_count: 2, stock_mode: 'counted', crop_name: 'Blueberry', recent_at: '2026-07-01T00:00:00.000Z' }],
+      pantry_items: [{ pantry_item_id: 'item-there', label: 'Blue cheese', crop_type_slug: null, plant_id: null, place_label: 'Chest Freezer 2', recent_at: '2026-09-18T00:00:00.000Z' }],
+      crops: [{ crop_type_slug: 'blueberry', label: 'Blueberry' }], varieties: [],
+    }
+    return { ...arms, hits: rankHits(q, arms), resolved_crop: resolvedCropOf(q, arms.varieties) }
+  }
+
+  it('a ranked match here reads "already here" and opens it — nothing is written', async () => {
+    const answer = await rankedAnswer('Blue')
+    expect(answer.hits.map(h => h.key)).toEqual(['planting:p-blue', 'pantry:item-there', 'jar:jar-here', 'jar:jar-there', 'crop:blueberry'])
+    wire({ rows: [HERE, THERE, ITEM_THERE], lineSearch: answer })
+    renderWalk()
+    await answerSetup()
+    typeWhat('Blue')
+    await screen.findByTestId('walk-what-hit-planting:p-blue', {}, { timeout: 2000 })
+    await waitFor(() => expect(screen.getByTestId('walk-what-hit-put_up:jar-here').textContent).toBe('Blueberries · already here · 4 left'))
+    // The server's order, each stock hit under the Pantry row's own key and never twice.
+    const ids = [...screen.getByRole('list', { name: 'Matches for Blue' }).querySelectorAll('button')].map(b => b.getAttribute('data-testid'))
+    expect(ids).toEqual(['walk-what-hit-planting:p-blue', 'walk-what-hit-pantry_item:item-there', 'walk-what-hit-put_up:jar-here',
+      'walk-what-hit-put_up:jar-there', 'walk-what-hit-crop:blueberry'])
+    fireEvent.click(screen.getByTestId('walk-what-hit-put_up:jar-here'))
+    expect((await screen.findByTestId('row-sheet')).getAttribute('data-row-key')).toBe('put_up:jar-here')
+    expect(posts('/api/preservation')).toHaveLength(0)
+  })
+
+  it('a ranked match at another place reads "That\'s this one → move it here", and moves it (a jar by its move route, a bought item by a PATCH)', async () => {
+    wire({ rows: [HERE, THERE, ITEM_THERE], lineSearch: await rankedAnswer('Blue') })
+    renderWalk()
+    await answerSetup()
+    typeWhat('Blue')
+    await screen.findByTestId('walk-what-hit-put_up:jar-there', {}, { timeout: 2000 })
+    await waitFor(() => expect(screen.getByTestId('walk-what-hit-put_up:jar-there').textContent)
+      .toBe("Blueberry jam · in Chest Freezer 2 — That's this one → move it here"))
+    fireEvent.click(screen.getByTestId('walk-what-hit-put_up:jar-there'))
+    await waitFor(() => expect(posts('/api/preservation/jar-there/move')).toHaveLength(1))
+    expect(posts('/api/preservation/jar-there/move')[0].body.place).toEqual({ id: 'loc-1' })
+    fireEvent.click(await screen.findByTestId('walk-what-hit-pantry_item:item-there'))
+    await waitFor(() => expect(fake.calls('PATCH', '/api/pantry/items/item-there')).toHaveLength(1))
+    expect(fake.calls('PATCH', '/api/pantry/items/item-there')[0].body).toEqual({ storage_location_id: 'loc-1' })
+    expect(posts('/api/preservation')).toHaveLength(0)
+  })
+})
 // R2 lane Df additions go directly under this line
