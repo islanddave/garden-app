@@ -68,6 +68,8 @@ describe('LineAdder — `initialName` absent: the adder is what it always was', 
       expect([f, src(f).includes('<LineAdder')]).toEqual([f, true])
       expect([f, src(f).includes('initialName')]).toEqual([f, false])
     }
+    // Put it up is the one caller: its row and sitting adders share one mount.
+    expect(src('PutItUpSheet.jsx').split('initialName=').length - 1).toBe(1)
   })
 })
 
