@@ -26,9 +26,12 @@ vi.mock('../hooks/useUploadPhoto.js', () => ({
   useUploadPhoto: () => ({ upload: vi.fn(), isUploading: false, error: null, photo: null, preview: null, reset: vi.fn() }),
 }))
 vi.mock('../hooks/useCropTypes.js', () => ({ useCropTypes: () => ({ cropTypes: [], loading: false }) }))
+// Refresh now reloads the page (useAppUpdate.apply); the one case that reaches it asserts it has NOT run.
+const { applySpy } = vi.hoisted(() => ({ applySpy: vi.fn() }))
+vi.mock('../hooks/useAppUpdate.js', () => ({ useAppUpdate: () => ({ update: null, apply: applySpy }) }))
 
 import PutUp from '../pages/PutUp.jsx'
-import { rowFromRecord } from './helpers/pantryFake.js'
+import { rowFromRecord, apiError } from './helpers/pantryFake.js'
 import { expectNoA11yViolations, A11Y_RULES } from './helpers/axe.js'
 import { METHOD_LABELS, DISCARD_LABELS } from '../components/putup/putItUp.js'
 import { DISCARD_DATE_TEXT } from '../components/pantry/putSomethingUp.js'
@@ -36,6 +39,7 @@ import { HOUSE_DETAIL_TEXT } from '../components/pantry/PantryRowSheet.jsx'
 import { whereFromError, WHERE_EXACTLY_ERROR } from '../components/pantry/WhereFromField.jsx'
 import { PUTUP_SOURCE_LABELS as WHERE_FROM_WORDS } from '../lib/dropdownRegistry.js'
 import { isReloadBlocked, clearReloadBlocks } from '../lib/reloadGate.js'
+import { CLIENT_STALE_TEXT, REFRESH_NOW_LABEL } from '../lib/putUpErrors.js'
 import { validateJarPatch } from '../../lambda/preservation/jarRoutes.js'
 
 const CF1 = { id: 'loc-cf1', label: 'Chest Freezer 1', kind: 'deep_freezer' }
@@ -50,7 +54,8 @@ const JAR = {
   use_by_status: 'ok', label: 'Zucchini, shredded', source_kind: null, source_label: null, is_raw: null, in_oil: null,
 }
 
-function wire(rec) {
+// `patch`: what the route answers a PATCH its validator took (left out, it answers the row's id).
+function wire(rec, { patch = null } = {}) {
   fetchMock.mockImplementation((path, options = {}) => {
     const method = options.method || 'GET'
     if (path === '/api/storage-locations' && method === 'GET') return Promise.resolve([CF1])
@@ -61,7 +66,7 @@ function wire(rec) {
     if (path === `/api/preservation/${rec.id}` && method === 'PATCH') {
       const refused = validateJarPatch(JSON.parse(options.body))
       if (refused) return Promise.reject(Object.assign(new Error(refused), { status: 400, body: { error: refused } }))
-      return Promise.resolve({ id: rec.id })
+      return patch ? patch() : Promise.resolve({ id: rec.id })
     }
     return Promise.resolve(null)
   })
@@ -71,8 +76,8 @@ const writes = () => fetchMock.mock.calls
   .filter(([p, o]) => p.startsWith('/api/preservation/') && o?.method && o.method !== 'GET')
   .map(([, o]) => [o.method, JSON.parse(o.body)])
 
-async function openEditor(rec = JAR) {
-  wire(rec)
+async function openEditor(rec = JAR, answers = {}) {
+  wire(rec, answers)
   render(<MemoryRouter initialEntries={['/put-up?view=pantry']}><PutUp /></MemoryRouter>)
   fireEvent.click(await screen.findByTestId(`pantry-row-open-put_up:${rec.id}`))
   fireEvent.click(await screen.findByTestId('row-edit'))
@@ -90,6 +95,7 @@ const METHODS = Object.keys(METHOD_LABELS).filter(m => m !== 'purchased_preserve
 
 beforeEach(() => {
   fetchMock.mockReset()
+  applySpy.mockReset()
   clearReloadBlocks()
   sessionStorage.clear(); localStorage.clear()
 })
@@ -532,6 +538,23 @@ describe('where it is from: "Made with produce from", corrected in Edit', () => 
     expect(screen.queryByRole('alert')).toBeNull()
     await save()
     expect(writes()).toEqual([['PATCH', { source_kind: 'other', source_label: 'the neighbour' }]])
+  })
+
+  // Lane S, as built: a where-from that is not the garden was allowed BECAUSE the row the server read had
+  // no planting and no pick, so that write carries the row-version guard, and a row changed since it was
+  // read answers 409 client_stale. The edit stays, the reason is said, and Refresh now runs only on a tap.
+  it('a where-from save refused as stale keeps the choice on screen, says why, and offers Refresh now', async () => {
+    await openEditor(JAR, { patch: () => Promise.reject(apiError(409, { error: 'stale', code: 'client_stale' })) })
+    fireEvent.click(chip('store'))
+    fireEvent.change(nameField(), { target: { value: 'Costco' } })
+    await save()
+    expect(writes()).toEqual([['PATCH', { source_kind: 'store', source_label: 'Costco' }]])
+    expect(screen.getByRole('alert').textContent).toBe(CLIENT_STALE_TEXT)
+    expect(screen.getByRole('button', { name: REFRESH_NOW_LABEL })).toBeTruthy()
+    expect(applySpy).not.toHaveBeenCalled()
+    expect(chosen()).toEqual([WHERE_FROM_WORDS.store])
+    expect(nameField().value).toBe('Costco')
+    expect(isReloadBlocked()).toBe(true)
   })
 
   // MUTATION E-M5: leave the source out of `dirty` -> a deploy's reload takes the correction with it.
