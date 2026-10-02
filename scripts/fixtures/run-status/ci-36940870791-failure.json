@@ -1,0 +1,8 @@
+{"_source":"GET repos/islanddave/garden-app/actions/runs/36940870791 and .../jobs?filter=latest&per_page=100 (one page), recorded 2026-10-02: a ci.yml dev push whose single job failed in both attempts. Trimmed to the fields scripts/run-status.py reads (run: id, name, path, head_sha, head_branch, event, status, conclusion, run_attempt, created_at, run_started_at, updated_at; job: id, name, status, conclusion, created_at, started_at, completed_at, runner_id, runner_name, run_attempt); every kept value is as recorded.",
+"date":"Fri, 02 Oct 2026 15:40:43 GMT",
+"run":{"id":36940870791,"name":"CI \u2014 Build and Unit Tests","path":".github/workflows/ci.yml","head_sha":"734b8f518d4d2d00de8406886d5bb5e5b110462d","head_branch":"dev","event":"push","status":"completed","conclusion":"failure","run_attempt":2,"created_at":"2026-10-01T23:27:05Z","run_started_at":"2026-10-02T00:32:50Z","updated_at":"2026-10-02T01:29:33Z"},
+"job_pages":[
+{"total_count":1,"jobs":[
+{"id":110649839270,"name":"build-and-test","status":"completed","conclusion":"failure","created_at":"2026-10-02T00:32:52Z","started_at":"2026-10-02T00:32:54Z","completed_at":"2026-10-02T01:29:32Z","runner_id":1000029595,"runner_name":"GitHub Actions 1000029595","run_attempt":2}
+]}
+]}

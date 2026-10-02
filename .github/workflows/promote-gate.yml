@@ -199,6 +199,12 @@ jobs:
           if ! printf '%s' "$SNAP" | grep -Eq '^v[0-9]+(\.[0-9]+){0,2}$'; then
             echo "::error::snap_version '$SNAP' fails ^v[0-9]+(\.[0-9]+){0,2}\$"; exit 1
           fi
+          # The preflight enforces integration-tests only on the exact string `true`, so any other value that
+          # got through here would make that gate advisory. Refuse it, the same as the schema gate below.
+          case "$REQINT" in
+            true|false) ;;
+            *) echo "::error::require_integration must be true or false, got '$REQINT'"; exit 1 ;;
+          esac
           case "$REQSCHEMA" in
             true|false) ;;
             *) echo "::error::require_schema_audit must be true or false, got '$REQSCHEMA'"; exit 1 ;;

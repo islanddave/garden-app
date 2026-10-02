@@ -53,6 +53,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 // gate:log-chooser out of CI (OPS-LAYOUTGATESUNWIRED-001), and it is why this instrument could not
 // simply be added to the workflow as it stood.
 import { resolveWebSocket } from './cdp-socket.mjs'
+import { armExitWatchdog } from './exit-watchdog.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PORT = Number(process.env.GATE_HARNESS_PORT || 5316)
@@ -189,15 +190,18 @@ async function attach(wsUrl, onEvent) {
   ws.onmessage = e => {
     const m = JSON.parse(e.data)
     if (m.id != null && pending.has(m.id)) {
-      const { res, rej } = pending.get(m.id); pending.delete(m.id)
+      const { res, rej, timer } = pending.get(m.id); pending.delete(m.id)
+      clearTimeout(timer)
       m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result)
     } else if (m.method) onEvent(m)
   }
+  // Each call's 90s timeout is CLEARED when its answer lands. Left armed, they kept a PASSING run
+  // (which exits naturally rather than through process.exit) idling after PASS until the last fired.
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
     const mid = ++id
-    pending.set(mid, { res, rej })
+    const timer = setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, 90000)
+    pending.set(mid, { res, rej, timer })
     ws.send(JSON.stringify({ id: mid, method, params, ...(sessionId ? { sessionId } : {}) }))
-    setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error(`CDP timeout: ${method}`)) } }, 90000)
   })
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' })
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true })
@@ -319,3 +323,4 @@ if (failures.length) {
   process.exit(1)
 }
 console.log('[phototier-bytes] PASS\n')
+armExitWatchdog()

@@ -308,14 +308,57 @@ auth_request() {
 
 # ── Helper: (re)issue a fresh ~60s Clerk session token ───────────────────────
 # Reuses the session created in Phase 2; emits the bare JWT on stdout (or empty).
+#
+# LOG-ONLY instrumentation (promote-path plan B6a). Each call also writes ONE line to STDERR:
+#   [mint] http=<code> shape=<ok|empty|malformed> caller=<function>:<line>
+# A mint that comes back empty mid-run goes out as `Bearer ` and every request after it reads as an app 401
+# (the 2026-09-29 promote: 66 pass, 5 x 401), and until now nothing recorded why it was empty. http=000 is no
+# HTTP answer at all, 429/5xx is Clerk, 401/404 is the session; shape is `ok` for three non-empty dot-separated
+# parts. The token is never printed, in whole or in part.
+# NOTHING ELSE CHANGES, and scripts/test_smoke_mint_log.py holds it to that against the function as it was:
+# stdout byte for byte, exit status, exactly one request with the same URL, headers and body. No retry, no
+# validation, no new exit path: a caller gets what it got before. A retry or a hard stop is a separate, gated
+# change (B6b), to be decided on what these lines show.
+# How: the pipeline is the old one plus `-w '%{stderr}%{http_code}'`, which makes curl write the status to its
+# own stderr, so the body jq reads is untouched. `2>&3` carries that status around the token capture into the
+# outer one, where it lands first; the unit separator (\037) splits the two. The `x` keeps the pipeline's
+# trailing newlines, which $(...) would strip, so stdout is replayed exactly.
 mint_session_token() {
-  curl -s --max-time 30 --connect-timeout 10 \
-    -X POST \
-    -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
-    -H "Content-Type: application/json" \
-    -d '{}' \
-    "https://api.clerk.com/v1/sessions/${CLERK_SESSION_ID}/tokens" \
-    | jq -r '.jwt // empty' 2>/dev/null || echo ""
+  local mint_sep=$'\037' mint_nl=$'\n' mint_out mint_err mint_code mint_tok mint_seen mint_shape
+  mint_out=$(
+    {
+      mint_tok=$(
+        curl -s --max-time 30 --connect-timeout 10 \
+          -X POST \
+          -H "Authorization: Bearer $CLERK_SECRET_KEY_STAGING" \
+          -H "Content-Type: application/json" \
+          -d '{}' \
+          -w '%{stderr}%{http_code}' \
+          "https://api.clerk.com/v1/sessions/${CLERK_SESSION_ID}/tokens" 2>&3 \
+          | jq -r '.jwt // empty' 2>/dev/null || echo ""
+        printf x
+      )
+      printf '%s%s' "$mint_sep" "$mint_tok"
+    } 3>&1
+  )
+  mint_err=${mint_out%%"$mint_sep"*}  # all of curl's stderr; the status, written last, is its final 3 characters
+  mint_tok=${mint_out#*"$mint_sep"}
+  mint_tok=${mint_tok%x}
+  mint_code=000
+  case "$mint_err" in
+    *[0-9][0-9][0-9]) mint_code=${mint_err: -3}; mint_err=${mint_err%???} ;;
+  esac
+  # curl is silent under -s, so this is normally empty; anything else that reached its stderr goes where it went before
+  if [[ -n "$mint_err" ]]; then printf '%s\n' "${mint_err%"$mint_nl"}" >&2 || true; fi
+  mint_seen=$(printf '%s' "$mint_tok")  # as a caller's $(...) sees it: trailing newlines gone
+  case "$mint_seen" in
+    "") mint_shape=empty ;;
+    *[[:space:]]*|*.*.*.*) mint_shape=malformed ;;
+    ?*.?*.?*) mint_shape=ok ;;
+    *) mint_shape=malformed ;;
+  esac
+  echo "[mint] http=${mint_code} shape=${mint_shape} caller=${FUNCNAME[1]:-main}:${BASH_LINENO[0]:-0}" >&2 || true
+  printf '%s' "$mint_tok"
 }
 
 # ── Helper: a UTC calendar date N days back, on GNU date (the ubuntu runner) and BSD date (macOS) ──

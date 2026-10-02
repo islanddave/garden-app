@@ -8,9 +8,11 @@ diagnostic that cannot be shown to fire is the bug it was written to fix.
 import importlib.util
 import json
 import os
+import re
 import sys
 
 import pytest
+import yaml
 
 spec = importlib.util.spec_from_file_location(
     "gh_api_check", os.path.join(os.path.dirname(__file__), "gh_api_check.py"))
@@ -262,7 +264,68 @@ def test_revert_rehearsal_checks_every_call_it_makes():
     assert checks == calls, "%d calls but %d checks" % (calls, checks)
 
 
-def test_snap_rehearsal_preflights_the_shared_secret():
-    text = _wf("snap-rehearsal.yml")
-    assert "scripts/gh_api_check.py" in text
-    assert "RULESET_READ_PAT" in text
+def test_snap_rehearsal_preflights_its_credential():
+    steps = _rehearse_steps("snap-rehearsal.yml")
+    names = [s.get("name", "") for s in steps]
+    probe = names.index("Preflight - GH_TOKEN can read git refs")
+    assert "scripts/gh_api_check.py" in steps[probe]["run"]
+    assert probe < names.index("Run snap (staging-pointed)")
+
+
+# --- the credential: garden-bot, minted per run ------------------------------
+# Both rehearsals create refs/tags/v0.0.*. Ruleset release-tag-integrity makes
+# that garden-bot only, and the PAT they used to run as is a dead secret anyway.
+
+BOT_TOKEN = "${{ steps.bot.outputs.token }}"
+TALKS_TO_GITHUB = re.compile(r"api\.github\.com|scripts/(snap|revert-to)\.py")
+
+
+def _job(name, job):
+    return yaml.safe_load(_wf(name))["jobs"][job]
+
+
+def _rehearse_steps(name):
+    return _job(name, "rehearse")["steps"]
+
+
+def _mints(steps):
+    return [s for s in steps if "create-github-app-token" in s.get("uses", "")]
+
+
+@pytest.mark.parametrize("name", ["revert-rehearsal.yml", "snap-rehearsal.yml"])
+def test_rehearsal_mints_garden_bot_the_way_promote_gate_does(name):
+    """promote-gate.yml is the reference: same action at the same pinned commit,
+    same two secrets. A pin bump there that skips a rehearsal reds here."""
+    (reference,) = _mints(_job("promote-gate.yml", "promote")["steps"])
+    (mint,) = _mints(_rehearse_steps(name))
+    assert re.fullmatch(r"actions/create-github-app-token@[0-9a-f]{40}", reference["uses"])
+    assert mint["uses"] == reference["uses"]
+    assert mint["with"] == reference["with"] == {
+        "app-id": "${{ secrets.GARDEN_BOT_APP_ID }}",
+        "private-key": "${{ secrets.GARDEN_BOT_PRIVATE_KEY }}",
+    }
+    assert mint["id"] == "bot"
+    # A mint that may fail softly hands every later step an empty token.
+    assert "continue-on-error" not in mint and "if" not in mint
+
+
+@pytest.mark.parametrize("name,talking", [("revert-rehearsal.yml", 3), ("snap-rehearsal.yml", 4)])
+def test_every_rehearsal_step_that_talks_to_github_holds_the_bot_token(name, talking):
+    """One source for GH_TOKEN. A job-level or secret-backed copy is how the
+    dead PAT stayed wired in; a probe on one credential while snap.py runs on
+    another proves nothing."""
+    wf = yaml.safe_load(_wf(name))
+    job = wf["jobs"]["rehearse"]
+    steps = job["steps"]
+    assert "GH_TOKEN" not in (wf.get("env") or {})
+    assert "GH_TOKEN" not in (job.get("env") or {})
+    minted_at = next(i for i, s in enumerate(steps) if s.get("id") == "bot")
+    talkers = [i for i, s in enumerate(steps) if TALKS_TO_GITHUB.search(s.get("run", ""))]
+    holders = [i for i, s in enumerate(steps) if "GH_TOKEN" in (s.get("env") or {})]
+    assert len(talkers) == talking and holders == talkers
+    for i in holders:
+        assert steps[i]["env"]["GH_TOKEN"] == BOT_TOKEN, steps[i].get("name")
+        assert i > minted_at, steps[i].get("name")
+    code = _code(name)
+    assert "RULESET_READ_PAT" not in code
+    assert "github.token" not in code and "secrets.GITHUB_TOKEN" not in code

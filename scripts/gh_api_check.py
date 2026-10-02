@@ -37,8 +37,9 @@ STATUS_HINTS = {
            "404 here does NOT prove the ref is absent",
     "409": "conflict - the ref moved under us, or a protection rule requires a "
            "different write path",
-    "422": "unprocessable - for POST /git/refs this normally means the ref "
-           "already exists",
+    "422": "unprocessable - for POST /git/refs either the ref already exists "
+           "or a repository ruleset refused the write (creating refs/tags/v* is "
+           "garden-bot only); the message before this bracket says which",
 }
 
 

@@ -14,9 +14,16 @@ name: revert rehearsal (staging)
 # role's OIDC trust is scoped to environment:production — that is an OIDC SUBJECT-CLAIM dependency,
 # NOT an approval gate. Corrected 2026-08-05: the parenthetical here used to read "(Dave approves each
 # run there)", which has been false since 2026-06-22 when the production environment's required
-# reviewer was removed; it now carries a branch/tag ref policy only. This workflow is deliberately NOT
+# reviewer was removed; it now carries a branch ref policy only (dev, main). This workflow is deliberately NOT
 # moved to environment:production-destructive — it is staging-only (REHEARSAL_MODE=1 skips every prod
 # leg), so it needs no destructive gate, and moving it would break the OIDC subject match above.
+#
+# AUTH (rewired 2026-10-02): GitHub calls run as the garden-bot App, minted per run exactly as
+# promote-gate.yml mints it. Until then they ran as secrets.RULESET_READ_PAT, a stored copy of a
+# token that no longer exists (see ruleset-watchdog.yml; run 34507891849 died on it). A fresh PAT
+# would not have revived this either: ruleset release-tag-integrity (20140435) restricts creation,
+# update and deletion of refs/tags/v* to garden-bot, and this workflow deletes and recreates
+# TARGET_VERSION, while revert-to.py tags PREREVERT_VERSION.
 #
 # The trigger file selects the run via shell-style lines (all optional, defaults shown):
 #   MODE=dump_path            # dump_path | fast_path | abort
@@ -45,13 +52,20 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Mint garden-bot installation token
+        id: bot
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1
+        with:
+          app-id: ${{ secrets.GARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.GARDEN_BOT_PRIVATE_KEY }}
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: dev
 
       - name: Setup rehearsal refs + tag, parse mode
         env:
-          GH_TOKEN: ${{ secrets.RULESET_READ_PAT }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
         run: |
           set -euo pipefail
           TRG=ops/revert-rehearsal.trigger
@@ -83,6 +97,14 @@ jobs:
             --status "$CODE" --body-file /tmp/gh-body.json --sha-file /tmp/base.sha
           BASE=$(cat /tmp/base.sha)
           echo "base dev HEAD = $BASE"
+          # Exported BEFORE the first write: the tag create below can now end this
+          # step, and teardown (always) can only delete the refs it is told about.
+          {
+            echo "DEVB=$DEVB"
+            echo "MAINB=$MAINB"
+            echo "TV=$TV"
+            echo "PV=$PV"
+          } >> "$GITHUB_ENV"
           for B in "$DEVB" "$MAINB"; do
             CODE=$(ghcurl -X POST -d "{\"ref\":\"refs/heads/$B\",\"sha\":\"$BASE\"}" "$API/git/refs")
             # 201 = created; 422 = already exists on a re-fire (both expected).
@@ -100,21 +122,19 @@ jobs:
                 --status "$CODE" --body-file /tmp/gh-body.json --ok 200
             fi
           done
-          # The tag legs are deliberately tolerant (the tag may be absent, and
-          # release-tag-integrity bypass-restricts refs/tags/v* deletion to the
-          # garden-bot App), so these warn and continue -- as `|| true` did.
+          # The tag DELETE stays tolerant: the tag is normally absent, so it warns
+          # and continues -- as `|| true` did.
           CODE=$(ghcurl -X DELETE "$API/git/refs/tags/$TV")
           $CHK status --endpoint "$API/git/refs/tags/$TV" --method DELETE --status "$CODE" \
             --body-file /tmp/gh-body.json --ok 204 --ok 404 --severity warning
+          # The tag CREATE is not tolerant, and only 201 passes. It used to accept
+          # 422 as "already exists" -- but a 422 is also how a ruleset refusal
+          # arrives, and after the DELETE above a tag that still exists was never
+          # removed and may point anywhere. Either way revert-to.py has no usable
+          # target, so stop HERE with the response body, not later inside it.
           CODE=$(ghcurl -X POST -d "{\"ref\":\"refs/tags/$TV\",\"sha\":\"$TARGET_MAIN_SHA\"}" "$API/git/refs")
           $CHK status --endpoint "$API/git/refs" --method POST --status "$CODE" \
-            --body-file /tmp/gh-body.json --ok 201 --ok 422 --severity warning
-          {
-            echo "DEVB=$DEVB"
-            echo "MAINB=$MAINB"
-            echo "TV=$TV"
-            echo "PV=$PV"
-          } >> "$GITHUB_ENV"
+            --body-file /tmp/gh-body.json --ok 201 --fatal
           case "$MODE" in
             dump_path) echo "FORCE_DUMP_PATH=1" >> "$GITHUB_ENV" ;;
             # abort also forces the dump path so the post-checkpoint failure is injected
@@ -162,7 +182,7 @@ jobs:
 
       - name: Run revert-to (REHEARSAL, staging-pointed)
         env:
-          GH_TOKEN: ${{ secrets.RULESET_READ_PAT }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           REHEARSAL_MODE: "1"
           DEV_BRANCH: ${{ env.DEVB }}
@@ -199,7 +219,7 @@ jobs:
       - name: Teardown rehearsal artifacts
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.RULESET_READ_PAT }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
         run: |
