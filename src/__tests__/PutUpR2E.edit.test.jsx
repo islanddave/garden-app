@@ -29,6 +29,7 @@ vi.mock('../hooks/useCropTypes.js', () => ({ useCropTypes: () => ({ cropTypes: [
 
 import PutUp from '../pages/PutUp.jsx'
 import { rowFromRecord } from './helpers/pantryFake.js'
+import { expectNoA11yViolations, A11Y_RULES } from './helpers/axe.js'
 import { METHOD_LABELS, DISCARD_LABELS } from '../components/putup/putItUp.js'
 import { DISCARD_DATE_TEXT } from '../components/pantry/putSomethingUp.js'
 import { HOUSE_DETAIL_TEXT } from '../components/pantry/PantryRowSheet.jsx'
@@ -545,5 +546,78 @@ describe('where it is from: "Made with produce from", corrected in Edit', () => 
     expect(isReloadBlocked()).toBe(true)
     fireEvent.click(chip('farm_stand'))
     expect(isReloadBlocked()).toBe(false)
+  })
+})
+
+// THE WORDS. The jar's Edit panel had no banned-word sweep (PutUpUxC.words.test.jsx leaves it out by
+// name and sweeps the row sheet around a stand-in editor); the base panel carried "keeps" in its candy
+// note. The list is the one every other sweep uses; what is swept is everything a person can read or have
+// read to them: the text, and every aria-label, placeholder, title, alt and option-group label inside it.
+describe('the Edit panel says none of the eleven words', () => {
+  const BANNED = /\b(safe|shelf life|shelf-stable|keeps|good|ready|done|expired|table|default|basis)\b/i
+  const READ_ATTRS = ['aria-label', 'placeholder', 'title', 'alt', 'label']
+  function wordsOf(root) {
+    const out = [root.textContent]
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      for (const a of READ_ATTRS) if (el.hasAttribute?.(a)) out.push(el.getAttribute(a))
+    }
+    return out.filter(Boolean)
+  }
+  function expectClean(where) {
+    const strings = wordsOf(screen.getByTestId('jar-edit-panel'))
+    // The text, the names of the fields and groups, and the nine option-group labels: 18 as it opens.
+    expect(strings.length, `${where}: too little was swept`).toBeGreaterThanOrEqual(16)
+    for (const s of strings) expect(`${where}: ${s}`).not.toMatch(BANNED)
+    return strings
+  }
+  const radio = (words) => within(screen.getByTestId('jar-edit-panel')).getByRole('radio', { name: words })
+
+  it('INSTRUMENT — the pattern bites on the sentence the base panel carried, and the sweep reads attributes', async () => {
+    expect('There’s no published guidance on how long candied fruit keeps, so this use-by is ours').toMatch(BANNED)
+    for (const w of ['safe', 'shelf life', 'shelf-stable', 'keeps', 'good', 'ready', 'done', 'expired', 'table', 'default', 'basis']) {
+      expect(`Nothing is ${w} here.`).toMatch(BANNED)
+    }
+    await openEditor()
+    const strings = wordsOf(screen.getByTestId('jar-edit-panel'))
+    for (const there of ['How many were put up?', 'Quantity', 'Cook down / can', 'Containers']) expect(strings).toContain(there)
+  })
+
+  // The options of the date showing: each chip in turn, the date field, its refusal; and where-from with
+  // its reveal open, a named kind, and Other's refusal; the method as Other with its own field.
+  it.each([
+    ['a frozen row', { ...JAR }],
+    ['a candied row', { ...JAR, method: 'candy', use_by_basis: 'house', use_by_target: '2027-02-10' }],
+  ])('%s, in every state of its date and its where-from', async (what, rec) => {
+    await openEditor(rec)
+    const seen = [...expectClean(`${what}, as it opens`)]
+    fireEvent.click(radio('From the label'))
+    seen.push(...expectClean(`${what}, From the label`))
+    fireEvent.change(document.getElementById('ed-useby-rec-e'), { target: { value: '' } })
+    fireEvent.click(radio('Farm stand'))
+    seen.push(...expectClean(`${what}, a farm stand`))
+    fireEvent.click(screen.getByTestId('ed-rec-e-source-more'))
+    fireEvent.click(radio('Other…'))
+    fireEvent.change(screen.getByRole('combobox', { name: 'How was it put up?' }), { target: { value: 'other' } })
+    await save()
+    expect(screen.getAllByRole('alert').map(a => a.textContent)).toEqual([DISCARD_DATE_TEXT, WHERE_EXACTLY_ERROR])
+    seen.push(...expectClean(`${what}, both refusals and Other`))
+    fireEvent.click(radio('No date'))
+    seen.push(...expectClean(`${what}, No date`))
+    // The states were really on screen, so the sweep above was of them.
+    for (const there of ['Discard by', 'Work it out', 'From the label', 'No date', 'Discard date from the label', 'Made with produce from',
+      'U-pick / picked it myself', 'Which one?', 'e.g. Warner Farms', 'Where exactly?', 'What method?', 'Describe how you put it up',
+      '3 containers · 1 qt each', DISCARD_DATE_TEXT, WHERE_EXACTLY_ERROR]) {
+      expect(seen.some(s => s.includes(there)), there).toBe(true)
+    }
+    expect(seen.some(s => s.includes(HOUSE_DETAIL_TEXT))).toBe(rec.method === 'candy')
+    expect(writes()).toEqual([])
+  })
+
+  it('axe finds nothing in the panel with everything showing', async () => {
+    await openEditor({ ...JAR, method: 'candy', use_by_basis: 'house', source_kind: 'farm_stand', source_label: 'Warner Farms' })
+    await expectNoA11yViolations(screen.getByTestId('jar-edit-panel'), { label: 'jar Edit, Work it out', rules: [...A11Y_RULES, 'nested-interactive'] })
+    fireEvent.click(radio('From the label'))
+    fireEvent.click(screen.getByTestId('ed-rec-e-source-more'))
+    await expectNoA11yViolations(screen.getByTestId('jar-edit-panel'), { label: 'jar Edit, From the label', rules: [...A11Y_RULES, 'nested-interactive'] })
   })
 })
