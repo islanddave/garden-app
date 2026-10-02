@@ -269,4 +269,71 @@ describe('jarBody and previewLine, pure', () => {
 })
 
 // R2 lane Dn additions go directly under this line
+// Put-Up R2a (lane Dn): the name search on the RANKED answer, in a Walk group and onto the wire. The search is
+// answered per query by the Lambda's own rankHits and resolvedCropOf, so a typed name's crop is the server's.
+// MUTATIONS (run, see the lane report): keep the last resolved crop after the name changes -> "an edit before the
+// save takes the crop off" reds; a variety hit drops variety_id -> "a variety hit" reds.
+describe('the name search on the ranked answer, in a Walk group (R2a lane Dn)', () => {
+  const VARIETIES = [{ variety_id: 'v-rc', label: 'Ristra Cayenne', crop_type_slug: 'pepper' }]
+  async function wireSearch() {
+    const { rankHits, resolvedCropOf } = await import('../../lambda/preservation/lineSearch.js')
+    wire({ overrides: { 'GET /api/kitchen-batches/line-search': ({ path }) => {
+      const q = new URL(path, 'http://x').searchParams.get('q') ?? ''
+      const arms = { plantings: [], put_ups: [], pantry_items: [], crops: [], varieties: VARIETIES.filter(v => v.label.toLowerCase().includes(q.toLowerCase())) }
+      return { ...arms, hits: rankHits(q, arms), resolved_crop: resolvedCropOf(q, arms.varieties) }
+    } } })
+  }
+  const searched = (q) => fake.calls('GET', '/api/kitchen-batches/line-search').filter(c => c.path.endsWith(`?q=${encodeURIComponent(q)}`))
+
+  it('a variety hit: the save sends its variety and crop, and the next group starts with no hit', async () => {
+    await wireSearch()
+    await startWalk('Kitchen fridge')
+    typeWhat('rist')
+    const hit = await screen.findByTestId('walk-what-hit-variety:v-rc', {}, { timeout: 2000 })
+    expect(hit.textContent).toBe('Ristra Cayenne · variety')
+    fireEvent.click(hit)
+    expect(screen.getByTestId('walk-what-name').value).toBe('Ristra Cayenne')
+    expect(screen.getByTestId('walk-what-picked').textContent).toBe('variety: Ristra CayenneSearch again')
+    fireEvent.click(screen.getByTestId('walk-method-hot_sauce'))
+    save()
+    await waitFor(() => expect(posts('/api/preservation')).toHaveLength(1))
+    expect(posts('/api/preservation')[0].body).toMatchObject({ label: 'Ristra Cayenne', variety_id: 'v-rc', crop_type_slug: 'pepper' })
+    // The next group: an empty name, nothing picked, nothing said under it.
+    await waitFor(() => expect(screen.getByTestId('walk-what-name').value).toBe(''))
+    expect(screen.queryByTestId('walk-what-picked')).toBeNull()
+    expect(screen.queryByTestId('walk-what-tie')).toBeNull()
+    typeWhat('Pesto')
+    fireEvent.click(screen.getByTestId('walk-method-pesto'))
+    save()
+    await waitFor(() => expect(posts('/api/preservation')).toHaveLength(2))
+    const next = posts('/api/preservation')[1].body
+    expect('variety_id' in next || 'crop_type_slug' in next).toBe(false)
+  })
+
+  it('a typed name that is exactly a variety\'s: the save sends that variety\'s crop', async () => {
+    await wireSearch()
+    await startWalk('Kitchen fridge')
+    typeWhat('Ristra Cayenne')
+    await screen.findByTestId('walk-what-hit-variety:v-rc', {}, { timeout: 2000 })      // the answer is in
+    fireEvent.click(screen.getByTestId('walk-method-hot_sauce'))
+    save()
+    await waitFor(() => expect(posts('/api/preservation')).toHaveLength(1))
+    const b = posts('/api/preservation')[0].body
+    expect(b).toMatchObject({ label: 'Ristra Cayenne', crop_type_slug: 'pepper' })
+    expect('variety_id' in b).toBe(false)                                  // typed, not picked: the crop and nothing more
+  })
+
+  it('an edit before the save takes the crop off: it was resolved for other text', async () => {
+    await wireSearch()
+    await startWalk('Kitchen fridge')
+    typeWhat('Ristra Cayenne')
+    await screen.findByTestId('walk-what-hit-variety:v-rc', {}, { timeout: 2000 })
+    typeWhat('Ristra Cayenne and garlic')
+    fireEvent.click(screen.getByTestId('walk-method-hot_sauce'))
+    save()                                                                 // at once: before the next answer
+    await waitFor(() => expect(posts('/api/preservation')).toHaveLength(1))
+    expect('crop_type_slug' in posts('/api/preservation')[0].body).toBe(false)
+    expect(searched('Ristra Cayenne and garlic')).toHaveLength(0)          // (the save did not wait for a search)
+  })
+})
 // R2 lane Df additions go directly under this line
