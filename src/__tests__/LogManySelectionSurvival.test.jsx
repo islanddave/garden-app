@@ -51,6 +51,9 @@ const ALL = [
   { id: 'pl-3', name: 'Pepper Row' },
 ]
 const TROUGH_ONLY = [{ id: 'pl-1', name: 'Aji Dulce' }, { id: 'pl-2', name: 'Basil Row' }]
+// What every scope EXCEPT the Trough resolves. `ALL` for every test but one, which widens it — see
+// "an out-of-scope skip is NOT reported…". Reset in beforeEach.
+let everywhereElse = ALL
 
 const STASH_KEY = 'gardenApp.draft.logmany'
 const batchPosts = []
@@ -66,6 +69,7 @@ beforeEach(() => {
   navigate.mockClear()
   batchPosts.length = 0
   dryRuns.length = 0
+  everywhereElse = ALL
   try { sessionStorage.clear(); localStorage.clear() } catch { /* noop */ }
   clearReloadBlocks()
   apiFetch.mockImplementation((path, opts = {}) => {
@@ -78,7 +82,7 @@ beforeEach(() => {
         // The Trough resolves a NARROWER set — Pepper Row is not in it. That is what makes the
         // "widen back and the skip is still there" assertion below a real test of the decisions map
         // rather than of a set that happens never to shrink.
-        const rows = body.scope?.location_id === 'trough' ? TROUGH_ONLY : ALL
+        const rows = body.scope?.location_id === 'trough' ? TROUGH_ONLY : everywhereElse
         return Promise.resolve({ count: rows.length, plantings: rows })
       }
       batchPosts.push(body)
@@ -166,7 +170,20 @@ describe('S0 — the selection survives a re-preview', () => {
   // The intersection is taken at READ time, so an out-of-scope decision must not leak into the wire
   // body or the headline count — the confirm button would otherwise promise a number the server
   // cannot deliver.
+  //
+  // OPS-LOGMANYS0FLAKE-001 — WHY THIS TEST HAS A FOURTH PLANTING. The confirm button and the POST body
+  // are LogMany's, built from the selection ScopeChecklist LIFTS to it in a passive effect — so the
+  // page adopts a new preview one scheduler task AFTER the review card has painted it. With three
+  // plantings the two states were indistinguishable on the button: 3 matched − 1 skipped over the
+  // wide scope and 2 matched − 0 over the Trough both read "Log watered on 2". The card's
+  // "2 plantings" headline was therefore the only wait, it is satisfied a tick before the page
+  // catches up, and a click in that tick posted the previous scope's ['pl-3'] — the three CI reds,
+  // reproduced exactly by stalling the scheduler slice that carries the page's render past its 5ms
+  // budget, which is what a loaded runner does. Dill Bed is in the Bag Area only and is NOT skipped,
+  // so the stale button now reads "on 3" and the adopted one "on 2" — which makes the button itself
+  // the anchor for the state the click depends on, and `findByText` waits for it.
   it('an out-of-scope skip is NOT reported in the count or the POST body', async () => {
+    everywhereElse = [...ALL, { id: 'pl-4', name: 'Dill Bed' }]
     await renderReady()
     await openList()
     skip('Pepper Row')
@@ -175,7 +192,7 @@ describe('S0 — the selection survives a re-preview', () => {
     await waitFor(() => expect(screen.getByText(/(Review|Hide) 2 plantings/)).toBeDefined())
     // 2 matched, none of them skipped → the net-count line is absent and the button says 2.
     expect(screen.queryByTestId('net-count')).toBeNull()
-    fireEvent.click(screen.getByText('Log watered on 2'))
+    fireEvent.click(await screen.findByText('Log watered on 2'))
     await waitFor(() => expect(batchPosts.length).toBe(1))
     expect(batchPosts[0].exclude_plant_ids).toEqual([])
   })
