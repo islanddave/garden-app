@@ -19,6 +19,9 @@
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const flags = { DISMISS_REGISTRY_ENABLED: true, BACKNAV_ENABLED: true }
 vi.mock('../lib/featureFlags.js', async (importOriginal) => ({
@@ -81,6 +84,17 @@ const SENTINEL = { __floor: 1 }
 const BASE = { __base: 1 }
 const armed = () => !!readMarker(window.history.state)
 const atFloor = () => !armed() && window.history.state?.__floor === 1
+const seqNow = () => readMarker(window.history.state)?.seq ?? null
+
+// THE REGISTRY'S OWN SOURCE, for the two things only its text can give a test. (1) How long it waits
+// for a return to land (RETURN_LANDS_WITHIN_MS). It does not export that, and a copy here would go
+// stale silently: a test that must OUTWAIT the window would, after a retune, stop outwaiting it and
+// pass through a different line of the handler. SELF-TEST-5 pins that the read worked. (2) The text
+// of the popstate handler, for the static pin at the foot of this file.
+const REGISTRY_SRC = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../context/DismissRegistry.jsx'), 'utf8')
+const RETURN_LANDS_WITHIN_MS = Number(/^const RETURN_LANDS_WITHIN_MS = (\d+)$/m.exec(REGISTRY_SRC)?.[1])
+const PAST_THE_WINDOW_MS = RETURN_LANDS_WITHIN_MS + 50
 
 // BUG-BACKNAVVACUOUSTEST-001. This used to be a bare `replaceState(SENTINEL, '')`, and that is NOT
 // a floor: replaceState REWRITES the current entry and creates nothing beneath it, so on a fresh
@@ -152,6 +166,15 @@ describe('SELF-TEST — the harness itself, before any behaviour is asserted', (
     await settle(before)
     expect(pops, 'history.go(1) fired no popstate — jsdom did not traverse forward').toBe(before + 1)
     expect(window.history.state?.__fwd, 'history.go(1) did not land on the entry the Back left').toBe(1)
+  })
+
+  it('SELF-TEST-5/the-window-is-readable: the registry\'s return window was read from its source', () => {
+    // Two tests below wait PAST this window in real time (the slow return; the pushState watch that
+    // outlasts the return's timer). If the read came back NaN, setTimeout(NaN) fires at once and both
+    // would "wait" for nothing and pass for the wrong reason.
+    expect(Number.isInteger(RETURN_LANDS_WITHIN_MS), 'RETURN_LANDS_WITHIN_MS was not found in DismissRegistry.jsx').toBe(true)
+    expect(RETURN_LANDS_WITHIN_MS).toBeGreaterThan(0)
+    expect(PAST_THE_WINDOW_MS).toBeGreaterThan(RETURN_LANDS_WITHIN_MS)
   })
 })
 
@@ -299,6 +322,9 @@ describe('busy refuses Back — but boundedly, never a trap', () => {
 
     await back()
     expect(onClose).not.toHaveBeenCalled()
+    // The SECOND refusal holds too (QA M-e). "onClose not called" is also true of a Back that was let
+    // through, so without this line a cap of one would pass everything above.
+    expect(atFloor(), 'the second refusal did not return to the marker').toBe(false)
 
     // Bounded: after MAX_CONSECUTIVE_BLOCKS the gesture is honoured rather than trapping the user
     // behind a `busy` that may never clear.
@@ -345,15 +371,22 @@ describe('backIntercept — the topmost handles its own sub-state first', () => 
 // created? These four pin that none is, and that the marker under the cursor afterwards is the SAME
 // one (same seq), reached again rather than replaced.
 describe('BUG-BACKTWICECLOSESAPP-001 — a Back the registry answers creates NO history entry', () => {
-  const seqNow = () => readMarker(window.history.state)?.seq ?? null
   // One Back, with history.pushState watched from just before the press until the marker has settled.
-  async function watchedBack() {
+  // `popped` is how many popstates the press produced. `lingerMs` keeps the watch up that much longer
+  // and reports what it saw by then: the settle ends a few zero-delay turns after the Back, so a push
+  // made in a LATER task (a timer, an arm held back for the next tap) would otherwise go unseen.
+  async function watchedBack({ lingerMs = 0 } = {}) {
     const before = seqNow()
+    const pops0 = pops
     const spy = vi.spyOn(window.history, 'pushState')
     await back()
     const pushes = spy.mock.calls.length
+    const popped = pops - pops0
+    const after = seqNow()
+    if (lingerMs) await act(async () => { await new Promise((r) => setTimeout(r, lingerMs)) })
+    const lingered = { pushes: spy.mock.calls.length, seq: seqNow() }
     spy.mockRestore()
-    return { pushes, before, after: seqNow() }
+    return { pushes, before, after, popped, lingered }
   }
 
   it('BLOCKED (a write in flight): the refusal pushes nothing and stands on the same marker', async () => {
@@ -368,6 +401,11 @@ describe('BUG-BACKTWICECLOSESAPP-001 — a Back the registry answers creates NO 
     expect(r.before, 'SELF-TEST: the sheet was armed before the Back').not.toBeNull()
     expect(r.pushes, 'a history entry was created inside the Back').toBe(0)
     expect(r.after, 'not standing on the same marker after the Back').toBe(r.before)
+    // THE BACK HAPPENED (QA C2). Every line above is also true if no popstate ever fired: the other
+    // three cases carry their own evidence (the intercept ran, the question is up, the dialog closed),
+    // a refusal leaves none. A refusal is exactly two traversals, the Back and the return; one would be
+    // a Back let through, none would be no Back at all.
+    expect(r.popped, 'a refused Back is two popstates: the Back and the return').toBe(2)
   })
 
   it('CONFIRM (unsaved typing): raising the question pushes nothing and stands on the same marker', async () => {
@@ -393,12 +431,16 @@ describe('BUG-BACKTWICECLOSESAPP-001 — a Back the registry answers creates NO 
         <Sheet open onClose={onClose} title="Row" armsBack backIntercept={intercept}><button>x</button></Sheet>
       </DismissRegistryProvider>
     )
-    const r = await watchedBack()
+    const r = await watchedBack({ lingerMs: PAST_THE_WINDOW_MS })
     expect(intercept).toHaveBeenCalledTimes(1)
     expect(onClose).not.toHaveBeenCalled()
     expect(r.before, 'SELF-TEST: the sheet was armed before the Back').not.toBeNull()
     expect(r.pushes, 'a history entry was created inside the Back').toBe(0)
     expect(r.after, 'not standing on the same marker after the Back').toBe(r.before)
+    // AND NONE LATER (QA M-b). This case alone keeps watching until the return's own timer has come
+    // and gone: still no entry, and the timer has not moved us off the marker the return landed on.
+    expect(r.lingered.pushes, 'a history entry was created after the Back had settled').toBe(0)
+    expect(r.lingered.seq, 'the marker under the cursor changed after the Back had settled').toBe(r.before)
   })
 
   it('STACKED (the top surface closes, one stays open): the close pushes nothing and stands on the same marker', async () => {
@@ -444,7 +486,11 @@ describe('BUG-BACKTWICECLOSESAPP-001 — what happens INSIDE the return\'s windo
       },
     }
   }
-  afterEach(() => { if (goSpy) { goSpy.mockRestore(); goSpy = null } })
+  let pushSpy = null
+  afterEach(() => {
+    if (goSpy) { goSpy.mockRestore(); goSpy = null }
+    if (pushSpy) { pushSpy.mockRestore(); pushSpy = null }
+  })
 
   it('the sheet CLOSES inside the window: the return lands on a marker nobody owns and steps off it — no dead press', async () => {
     let closeIt
@@ -539,6 +585,147 @@ describe('BUG-BACKTWICECLOSESAPP-001 — what happens INSIDE the return\'s windo
     await back()
     expect(onB, 'B\'s Back was taken for the stale return and dismissed nothing').toHaveBeenCalledTimes(1)
   })
+
+  // QA C1 / RIA P-6 item 1 — THE SLOW RETURN. stepBackOn stops believing it is armed when the return
+  // has not landed within RETURN_LANDS_WITHIN_MS (its timer). On a janky phone the return then lands
+  // LATE: on the marker, with the sheet still open, and nobody holding it. The ADOPT half of the orphan
+  // branch is what takes the marker back. Without it the registry steps off, the open sheet is left
+  // with no marker, and the next Back leaves the page (or closes the app when it is the first page).
+  //
+  // The wait is real time on purpose: the registry's timer is real, and the two are ordered (ours is
+  // set later and runs longer, so it cannot fire first, however late the loop is running).
+  // MUTATION: delete `if (hasArmable(entriesRef.current)) { armedRef.current = cur.seq; return }` ->
+  // red at "stepped off the marker under an open sheet".
+  it('a return that lands LATE, after the registry stopped waiting for it, is adopted: the open sheet is armed again and the next Back reaches it', async () => {
+    const onClose = vi.fn()
+    const intercept = vi.fn(() => true)
+    render(
+      <DismissRegistryProvider>
+        <Sheet open onClose={onClose} title="Row" armsBack backIntercept={intercept}><button>x</button></Sheet>
+      </DismissRegistryProvider>
+    )
+    const seq0 = seqNow()
+    expect(seq0, 'SELF-TEST: the sheet was armed before the Back').not.toBeNull()
+    pushSpy = vi.spyOn(window.history, 'pushState')
+    const ret = holdReturn()
+
+    const t0 = Date.now()
+    await back()                                   // the panel steps back; the return is in flight, and held
+    expect(intercept).toHaveBeenCalledTimes(1)
+    expect(ret.held, 'SELF-TEST: the registry asked for exactly one return').toEqual([1])
+    expect(atFloor()).toBe(true)
+
+    await act(async () => { await new Promise((r) => setTimeout(r, PAST_THE_WINDOW_MS)) })
+    expect(Date.now() - t0, 'SELF-TEST: the wait did not outlast the registry\'s window')
+      .toBeGreaterThan(RETURN_LANDS_WITHIN_MS)
+    expect(atFloor()).toBe(true)                   // nothing has landed: still on the page's entry
+
+    await ret.release()                            // the slow return lands, on a marker nobody holds
+    expect(seqNow(), 'stepped off the marker under an open sheet').toBe(seq0)
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(onClose).not.toHaveBeenCalled()
+
+    await back()                                   // ...and the NEXT Back is the sheet's again
+    expect(intercept, 'the next Back did not reach the sheet').toHaveBeenCalledTimes(2)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(seqNow(), 'not standing on the same marker after the next Back').toBe(seq0)
+    expect(pushSpy.mock.calls.length, 'a history entry was created').toBe(0)
+  })
+
+  // RIA P-5 — A KNOWN RESIDUAL, PINNED AS IT IS. NOT A GOAL.
+  //
+  // The "return landed somewhere else" guard unarms and decides nothing: right, because the second
+  // press has already navigated. But when the surface's host stays mounted across that entry change
+  // (page-level state, such as Put-Up's "Put something up" door), the surface is still OPEN and now
+  // holds NO marker. `armable` never went false, so the arm effect does not run again, and nothing
+  // else arms it. From here Back walks the page under an open sheet until the sheet is closed by its
+  // own controls. Before the fix the same two presses closed the app, so this is the better end; it
+  // is still not what anyone wants. A2 (BUG-SHEETARMSWITHOUTTAP-001, arm on the next tap) is what
+  // closes it, and the commit that does must change this test. It exists so that nothing ELSE changes
+  // this state without notice: a dismissal on the second press, or a dead press on the third.
+  it('KNOWN RESIDUAL, not a goal (RIA P-5; A2 = BUG-SHEETARMSWITHOUTTAP-001 closes it): after a second Back lands elsewhere inside the window, a sheet that is still mounted is left OPEN and UNARMED, and the next Back is the page\'s, not a dismissal', async () => {
+    const onClose = vi.fn()
+    const intercept = vi.fn(() => true)
+    render(
+      <DismissRegistryProvider>
+        <Sheet open onClose={onClose} title="Door" armsBack backIntercept={intercept}><button>x</button></Sheet>
+      </DismissRegistryProvider>
+    )
+    expect(armed()).toBe(true)
+    const ret = holdReturn()
+
+    await back()                                   // answered by the sheet; the return is in flight
+    expect(intercept).toHaveBeenCalledTimes(1)
+    expect(ret.held, 'SELF-TEST: the registry asked for exactly one return').toEqual([1])
+
+    let before = pops
+    await back()                                   // the second press, before the return has landed
+    expect(pops, 'SELF-TEST: the second Back really traversed').toBe(before + 1)
+    expect(window.history.state?.__base).toBe(1)   // it landed elsewhere: off the page's entry
+    expect(intercept, 'one press was answered twice').toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(ret.held, 'the second press asked for a return of its own').toEqual([1])
+
+    await ret.release()                            // the late return moves forward again; nobody acts on it
+    // THE STATE, AS IT IS: the sheet is open and no marker is current.
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(armed()).toBe(false)
+    expect(atFloor()).toBe(true)
+
+    before = pops
+    await back()                                   // the next Back is not the sheet's
+    expect(pops, 'SELF-TEST: that Back really traversed').toBe(before + 1)
+    expect(window.history.state?.__base, 'a dead press: the Back went nowhere').toBe(1)
+    expect(intercept, 'the unarmed sheet was handed a Back').toHaveBeenCalledTimes(1)
+    expect(onClose, 'the unarmed sheet was dismissed by a Back').not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeTruthy()
+  })
+})
+
+// RIA P-6 item 2 / M-2 — the orphan step-off is not only a return's safety net. ANY landing on a marker
+// nobody holds is stepped off. The everyday case is the browser's Forward after a sheet was closed by
+// Back: the marker entry is still there, one step forward (no API removes it), so Forward lands on it.
+// Left there it would eat the next Back. Stepped off, Forward visibly does nothing, which is the
+// accepted cost on desktop.
+// MUTATION M5 (delete the step-off) -> red at "Forward was left standing on a stale marker".
+describe('BUG-BACKTWICECLOSESAPP-001 — Forward onto a marker nobody holds', () => {
+  it('a sheet closed by Back, then Forward: the registry steps back off the stale marker and dismisses nothing a second time', async () => {
+    const onClose = vi.fn()
+    function Host() {
+      const [open, setOpen] = useState(true)
+      return (
+        <DismissRegistryProvider>
+          {open && <Sheet open onClose={() => { onClose(); setOpen(false) }} title="Details" armsBack><button>x</button></Sheet>}
+        </DismissRegistryProvider>
+      )
+    }
+    render(<Host />)
+    expect(armed(), 'SELF-TEST: the sheet was armed').toBe(true)
+
+    await back()                                   // Back closes the sheet; its marker stays one step forward
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(atFloor()).toBe(true)
+
+    let before = pops
+    act(() => { window.history.go(1) })            // the browser's Forward
+    await settle(before)
+    expect(armed(), 'Forward was left standing on a stale marker').toBe(false)
+    expect(atFloor(), 'the step-off did not land on the page\'s entry').toBe(true)
+    // Two popstates: Forward landing on the marker, and the registry stepping back off it. One would
+    // mean nothing stepped off; none would mean Forward had nowhere to go and this test saw nothing.
+    expect(pops - before, 'SELF-TEST: Forward landed on the marker and was stepped off').toBe(2)
+    expect(onClose, 'the sheet was dismissed a second time').toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    // NO DEAD PRESS, and the step-off's own popstate was not mistaken for a Back: the next Back
+    // leaves the page.
+    before = pops
+    await back()
+    expect(pops).toBe(before + 1)
+    expect(window.history.state?.__base, 'that Back was eaten by the stale marker').toBe(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('ARM-EFFECT-SCALAR-ONLY — typing must not churn history', () => {
@@ -609,5 +796,29 @@ describe('flag OFF is provably inert', () => {
     expect(atFloor()).toBe(true)
     await back()
     expect(onClose).not.toHaveBeenCalled()
+  })
+})
+
+// QA M-c — NO FIFTH SITE. The four no-push tests above cover the four answers onPop gives today.
+// Nothing stops a fifth being added that pushes, and jsdom would not object: an entry made inside
+// popstate works here and closes the app on the phone. So this reads the handler's own text. A weak
+// instrument (it cannot follow a call into a helper), kept because the strong ones cannot see a branch
+// nobody has written a case for.
+//
+// `arm(` is matched as a CALL (word-bounded): the handler's own comment says "disarm() found no marker
+// under it", and that is not a push.
+describe('STATIC — the popstate handler creates no history entry (BUG-BACKTWICECLOSESAPP-001)', () => {
+  const start = REGISTRY_SRC.indexOf('function onPop() {')
+  const end = REGISTRY_SRC.indexOf("window.addEventListener('popstate', onPop)")
+  const onPopText = REGISTRY_SRC.slice(start, end)
+
+  it('the source text of onPop contains no arm( call and no pushState', () => {
+    expect(start, 'SELF-TEST: onPop was not found in DismissRegistry.jsx').toBeGreaterThan(-1)
+    expect(end, 'SELF-TEST: the end of onPop was not found').toBeGreaterThan(start)
+    // The slice really is the handler: it holds the decision and the returns to the marker.
+    expect(onPopText, 'SELF-TEST: the slice is not the handler').toContain('decideBack(')
+    expect(onPopText, 'SELF-TEST: the slice is not the handler').toContain('stepBackOn(')
+    expect(/\barm\(/.test(onPopText), 'onPop calls arm(): that is a pushState inside popstate').toBe(false)
+    expect(onPopText.includes('pushState'), 'onPop mentions pushState').toBe(false)
   })
 })
