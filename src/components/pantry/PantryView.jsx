@@ -272,7 +272,10 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
   const action = inlineAction(row)
   const chip = discardChip(row, now)
   const soon = isUseSoon(row)
-  const detail = detailWords(row, { now, batchName })
+  // A row that is still live after a use (Used one, some given away, some gone bad) keeps its action; one
+  // the use finished (used up, all of it gone bad, nothing left) shows only its Undo, and no "N left".
+  const finished = finishedByUse(recent)
+  const detail = detailWords(row, { now, batchName, finished })
 
   async function act() {
     if (writingRef.current) return
@@ -320,9 +323,6 @@ export function PantryRow({ row, fetch, recent, onRecent, onRecord, onOpen, onRe
 
   const canUndo = !!recent && (isItem(row) || !!recent.use?.id)
   const label = ACTION_LABELS[action]
-  // A row that is still live after a use (Used one, some given away, some gone bad) keeps its action; one
-  // the use finished (used up, all of it gone bad, nothing left) shows only its Undo.
-  const finished = finishedByUse(recent)
   return (
     <li data-testid={`pantry-row-${key}`} style={{ borderTop: `1px solid ${P.cream}`, padding: '4px 8px' }}>
       <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>

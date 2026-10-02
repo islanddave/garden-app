@@ -95,9 +95,13 @@ export function leftWords(row) {
 // The row's detail line: place · where from · the batch it came from · what is left (· how long a bought
 // item has been had). `batchName` is the host's (the names read, pantryApi.listBatchNames): a jar whose
 // batch the host cannot name says nothing about it — never "from undefined".
-export function detailWords(row, { now = new Date(), batchName = null } = {}) {
+// `finished` (Put-Up R2a): the row is one the person's own use just finished (finishedByUse) and is still
+// on screen for its Undo. What it says is left is the count from BEFORE that use, so it is not said: the
+// line under it ("used it up", "marked gone bad") is what is true now. Decided here, where a row is drawn,
+// and never in leftWords, which the name search and the Walk also print.
+export function detailWords(row, { now = new Date(), batchName = null, finished = false } = {}) {
   const batch = typeof batchName === 'string' && batchName.trim() ? `from ${batchName.trim()}` : null
-  return [inPlaceGroup(row) ? null : row?.place?.label, row?.where_from, batch, leftWords(row), ageWords(row, now)].filter(Boolean).join(' · ')
+  return [inPlaceGroup(row) ? null : row?.place?.label, row?.where_from, batch, finished ? null : leftWords(row), ageWords(row, now)].filter(Boolean).join(' · ')
 }
 
 // Is this row sitting under a heading that IS its place? Grouped By place the server's group_key is the
