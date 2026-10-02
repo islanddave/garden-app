@@ -1,7 +1,7 @@
 {
-  "version": "4.169.1",
+  "version": "4.169.2",
   "date": "2026-10-02",
   "highlights": [
-    "Log Many: after you change the zone, type or date, the Log button now waits for the new count (it reads Counting…) so it always logs exactly what it says"
+    "The phone's Back pressed twice in a row now closes the sheet you're in instead of closing the app: after a panel like Went bad or Move it, after a discard question, and while a save is still going"
   ]
 }

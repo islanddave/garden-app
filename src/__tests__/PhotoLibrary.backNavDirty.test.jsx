@@ -68,7 +68,15 @@ window.addEventListener('popstate', () => { pops += 1 })
 const settle = (from = pops) => act(async () => {
   const deadline = Date.now() + NET_MS
   while (pops === from && Date.now() < deadline) await new Promise((r) => setTimeout(r, 2))
-  await new Promise((r) => setTimeout(r, 0))
+  // BUG-BACKTWICECLOSESAPP-001: a Back the registry refuses or steps (busy, the discard question, a panel, a
+  // stacked close) is answered by a RETURN to the same marker, history.go(1): a second traversal that lands two
+  // jsdom tasks and one popstate later. Wait until a whole round of turns passes with no further popstate, so
+  // the marker is read after it has settled. Equal-delay timers run first-in first-out: ordering, not a sleep.
+  let seen
+  do {
+    seen = pops
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0))
+  } while (pops !== seen && Date.now() < deadline)
 })
 const backGesture = async () => { const from = pops; act(() => { window.history.back() }); await settle(from) }
 const esc = () => act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })

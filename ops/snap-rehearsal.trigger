@@ -1,1 +1,1 @@
-rehearsal run 6 @ 2026-06-03 (owner PAT for tag)
+rehearsal run 7 @ 2026-10-02 (garden-bot token)

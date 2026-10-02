@@ -367,7 +367,19 @@ describe('Check on it — the reload gate (reloadGateWire)', () => {
 // spy call. A floor entry keeps back() off history index 0, where jsdom makes it a silent no-op.
 describe('Check on it — Android Back (popstate)', () => {
   const settle = () => act(async () => { await new Promise(r => setTimeout(r, 60)) })
-  const back = async () => { act(() => { window.history.back() }); await settle() }
+  // BUG-BACKTWICECLOSESAPP-001: a Back the registry refuses is answered by a RETURN to the same marker,
+  // history.go(1): a second traversal that lands two jsdom tasks and one popstate later. After the sleep, wait
+  // until a whole round of turns passes with no further popstate, so the marker is read after it has settled.
+  let pops = 0
+  window.addEventListener('popstate', () => { pops += 1 })
+  const markerSettled = () => act(async () => {
+    let seen
+    do {
+      seen = pops
+      for (let i = 0; i < 3; i++) await new Promise(r => setTimeout(r, 0))
+    } while (pops !== seen)
+  })
+  const back = async () => { act(() => { window.history.back() }); await settle(); await markerSettled() }
   const armed = () => !!readMarker(window.history.state)
 
   function Host({ onSaved }) {
@@ -401,14 +413,21 @@ describe('Check on it — Android Back (popstate)', () => {
     fireEvent.change(screen.getByTestId('checkin-note'), { target: { value: 'x' } })
     await act(async () => { fireEvent.click(screen.getByTestId('checkin-save')) })
     const seq0 = readMarker(window.history.state).seq
+    const pops0 = pops
     await back()
-    // The Back WAS processed and refused: the registry pushes a FRESH marker (a higher seq) on a
-    // BLOCKED Back. Waiting on the new seq — not on `armed()`, which is also true before the
-    // traversal lands — is what makes the assertion below about a refused Back, not an early look.
-    await waitFor(() => expect(readMarker(window.history.state)?.seq).toBeGreaterThan(seq0))
+    // The Back WAS processed and refused: on a BLOCKED Back the registry RETURNS to the marker it stood
+    // on and pushes nothing (BUG-BACKTWICECLOSESAPP-001; it used to push a fresh one, a higher seq, and
+    // that entry is what Android skipped). So a refusal is exactly two traversals, the Back and the
+    // return. Waiting on both popstates — not on `armed()`, which is also true before the traversal
+    // lands — is what makes the assertions below about a refused Back, not an early look.
+    await waitFor(() => expect(pops - pops0).toBe(2))
+    expect(readMarker(window.history.state)?.seq).toBe(seq0)      // the SAME marker, stood on again
     expect(sheet()).toBeTruthy()
     await act(async () => { settleWrite({}) })
     await waitFor(() => expect(sheet()).toBeNull())
+    // The end of the busy story (QA M-d): the save lands, the sheet closes, and the marker the refusal
+    // returned to goes with it. One left under the cursor here is a dead press on the next Back.
+    await waitFor(() => expect(armed()).toBe(false))
   })
 })
 

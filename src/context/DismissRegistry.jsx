@@ -44,6 +44,10 @@ import {
 // function declarations, so each binding is initialised before the other module's body runs.
 import ConfirmSheet from '../components/ConfirmSheet.jsx'
 
+// How long a return to our marker (history.go(1), see stepBackOn) may take to land before we stop
+// believing we are armed. A traversal lands in a frame or two; this only has to outlast a slow one.
+const RETURN_LANDS_WITHIN_MS = 400
+
 // TWO contexts, deliberately. The API context holds register/unregister/update, all of which are
 // useCallback([]) — so its identity is stable FOREVER. The value context holds topmostId, which
 // changes on every push/pop.
@@ -107,7 +111,7 @@ export function DismissRegistryProvider({ children }) {
   //
   // PROVIDER-OWNED, not consumer-owned, for three reasons that are not style: only the arbiter can
   // see the whole stack (the confirm must outrank surfaces the consumer cannot know about); the
-  // re-arm and resolve-once bookkeeping has to sit next to armedRef/blockedRef/selfPopRef; and a
+  // return and resolve-once bookkeeping has to sit next to armedRef/blockedRef/selfPopRef; and a
   // consumer-rendered confirm is just the per-surface window.confirm patch again, once per host.
   //
   // pendingConfirm is BOTH state (to render) and a ref (readable from the popstate listener, which
@@ -205,10 +209,11 @@ export function DismissRegistryProvider({ children }) {
   const markerSeqRef = useRef(0)
   const selfPopRef = useRef(false)   // set while WE call back(), to swallow the resulting popstate
   const blockedRef = useRef(0)       // consecutive BLOCKED refusals (bounded — see MAX_CONSECUTIVE_BLOCKS)
+  const returningRef = useRef(null)  // { seq, at } while a return to our marker is in flight (stepBackOn)
 
   // Scalar, NOT the entries array. Keying the arm effect on the array would push/pop history on
   // every keystroke that flips `dirty` — far worse than a render loop. Depth is handled by the
-  // re-arm inside the popstate handler, not by this effect.
+  // return to the marker inside the popstate handler (stepBackOn), not by this effect.
   const armable = hasArmable(entries)
 
   const arm = useCallback(() => {
@@ -239,6 +244,38 @@ export function DismissRegistryProvider({ children }) {
       selfPopRef.current = true
       window.history.back()
     }
+  }, [])
+
+  // BUG-BACKTWICECLOSESAPP-001 — STAND ON OUR MARKER AGAIN WITHOUT CREATING AN ENTRY.
+  //
+  // WHAT WAS BROKEN. A Back we answer without closing everything (a refusal while busy, the discard
+  // question, a panel stepping back, the top of a stack closing) leaves a surface open, so the next
+  // Back must be ours too. The four branches below used to get that by calling arm() from inside the
+  // popstate handler: a pushState with no tap behind it. Chrome on Android marks an entry made that
+  // way "skip on the Back button", and a Back press itself clears whatever tap came before it, so the
+  // marker we had just pushed was skippable and the SECOND Back, with no touch between, had nowhere
+  // to go and closed the installed app. One touch anywhere cleared it, which is why it hid.
+  //
+  // THE FIX. The entry that Back consumed is still there, one step FORWARD. Go to it. A traversal the
+  // page makes creates nothing, needs no tap and is never skipped. So: NEVER pushState inside onPop.
+  //
+  // The landing is one more popstate, and it needs no flag of its own: armedRef is set to the marker's
+  // seq before we leave, so onPop's "still standing on ours" line swallows it.
+  const stepBackOn = useCallback((seq) => {
+    if (typeof window === 'undefined' || !window.history) return
+    armedRef.current = seq
+    const mine = { seq, at: Date.now() }
+    returningRef.current = mine
+    window.history.go(1)
+    // A return that never lands (a push in the same tick cut the forward entry off) must not leave us
+    // believing we are armed. Compared by identity, not seq: two refusals in a row return to the SAME
+    // seq, and the first one's timer must not close the second one's window.
+    setTimeout(() => {
+      if (returningRef.current !== mine) return
+      returningRef.current = null
+      if (typeof window === 'undefined' || !window.history) return
+      if (readMarker(window.history.state)?.seq !== seq && armedRef.current === seq) armedRef.current = null
+    }, RETURN_LANDS_WITHIN_MS)
   }, [])
 
   // BOOT RECONCILIATION. `location.reload()` PRESERVES history.state, and registerSW's
@@ -276,55 +313,76 @@ export function DismissRegistryProvider({ children }) {
     if (typeof window === 'undefined') return
     function onPop() {
       if (selfPopRef.current) { selfPopRef.current = false; return }
-      if (armedRef.current == null) return          // not ours — the router or the app owns this Back
       const cur = readMarker(window.history.state)
-      if (cur && cur.seq === armedRef.current) return  // still standing on ours: not our gesture
+      if (armedRef.current == null) {
+        if (!cur) return                            // not ours — the router or the app owns this Back
+        // ORPHAN STEP-OFF — boot reconciliation's runtime twin. We are standing on a marker nobody
+        // holds: a return that landed after its sheet had closed in the meantime (disarm() found no
+        // marker under it and popped nothing). Left alone it is a dead press on the next Back. If
+        // something armable is open after all, the marker is exactly what it needs: adopt it.
+        returningRef.current = null
+        if (hasArmable(entriesRef.current)) { armedRef.current = cur.seq; return }
+        selfPopRef.current = true
+        window.history.back()
+        return
+      }
+      // Still standing on ours: not our gesture. This is also where a return LANDS.
+      if (cur && cur.seq === armedRef.current) { returningRef.current = null; return }
+      // A RETURN IN FLIGHT LANDED SOMEWHERE ELSE. We called go(1) and, before it landed, something
+      // else traversed: a second Back racing the return. That press has already navigated; it must
+      // not ALSO dismiss, or two fast presses would close two surfaces (or discard past a refusal).
+      // Unarm and decide nothing. A record for a marker we no longer hold is stale, not a return.
+      const returning = returningRef.current
+      returningRef.current = null
+      if (returning && returning.seq === armedRef.current) { armedRef.current = null; return }
+      const seq = armedRef.current
       armedRef.current = null                       // our marker was just consumed
 
       const d = decideBack(entriesRef.current, { blockOnBusy: true, confirmOnDirty: true })
       if (d.action === 'NONE') return
 
       if (d.action === 'BLOCKED') {
-        // Refuse by re-pushing — the only way to "cancel" a non-cancelable popstate. BOUNDED: after
-        // MAX_CONSECUTIVE_BLOCKS the Back is allowed through undismissed, because a `busy` that
-        // never clears would otherwise make Back stop exiting the app entirely.
-        if (blockedRef.current < MAX_CONSECUTIVE_BLOCKS) { blockedRef.current += 1; arm() }
+        // Refuse by RETURNING to the marker — the only way to "cancel" a non-cancelable popstate
+        // without creating an entry (see stepBackOn). BOUNDED: after MAX_CONSECUTIVE_BLOCKS the Back
+        // is allowed through undismissed, because a `busy` that never clears would otherwise make
+        // Back stop exiting the app entirely.
+        if (blockedRef.current < MAX_CONSECUTIVE_BLOCKS) { blockedRef.current += 1; stepBackOn(seq) }
         else blockedRef.current = 0
         return
       }
       blockedRef.current = 0
 
-      // CONFIRM — the highest-risk three lines in this change, and the re-arm is why.
+      // CONFIRM — the highest-risk three lines in this change, and the return is why.
       //
-      // :226 above already consumed our marker, and the surface is NOT closing, so without arm()
+      // The Back already consumed our marker, and the surface is NOT closing, so without the return
       // here the dirty sheet is left with no marker and the user's SECOND Back exits the installed
       // PWA with a half-filled form still on screen. Same shape as the BLOCKED branch, minus the
       // bound: a confirm is a question the user answers, not a refusal that could loop forever.
-      // Re-arm unconditionally, even in the (unreachable — ConfirmSheet outranks everything) case
+      // Return unconditionally, even in the (unreachable — ConfirmSheet outranks everything) case
       // where a question is already up, so no path can fall through and discard the surface.
       if (d.action === 'CONFIRM') {
         raiseConfirm(d.target)
-        arm()
+        stepBackOn(seq)
         return
       }
 
       if (d.action === 'INTERCEPT') {
-        // Call FIRST, arm only on success. Arming before and un-setting the ref on decline left the
-        // pushed entry stranded on the stack — a dead press on the next Back. The intercept is
-        // synchronous, so there is no window in which we are unarmed while still open.
-        if (d.target.interceptRef?.current?.()) { arm(); return }
+        // Call FIRST, return only on success. Standing on the marker before the call and leaving it
+        // there on decline left a dead press on the next Back. The intercept is synchronous, so
+        // there is no window in which we are unarmed while still open.
+        if (d.target.interceptRef?.current?.()) { stepBackOn(seq); return }
         // Declined — fall through and dismiss.
       }
 
       d.target.cbRef?.current?.()
-      // RE-ARM for the surfaces still open. This is what makes stacked modals work: `armable` never
+      // RETURN for the surfaces still open. This is what makes stacked modals work: `armable` never
       // went false, so the arm effect will not re-run, and without this the SECOND Back would have
       // no marker and would exit the installed PWA with a sheet still open.
-      if (hasArmable(entriesRef.current.filter((e) => e !== d.target))) arm()
+      if (hasArmable(entriesRef.current.filter((e) => e !== d.target))) stepBackOn(seq)
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
-  }, [arm, raiseConfirm])
+  }, [stepBackOn, raiseConfirm])
 
   // Stable for the life of the provider — never re-runs a consumer's registration effect.
   const api = useMemo(

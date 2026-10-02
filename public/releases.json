@@ -1,5 +1,12 @@
 [
   {
+    "version": "4.169.2",
+    "date": "2026-10-02",
+    "highlights": [
+      "The phone's Back pressed twice in a row now closes the sheet you're in instead of closing the app: after a panel like Went bad or Move it, after a discard question, and while a save is still going"
+    ]
+  },
+  {
     "version": "4.169.1",
     "date": "2026-10-02",
     "highlights": [
