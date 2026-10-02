@@ -210,6 +210,159 @@ describe('a batch line that names a pantry item (POST /api/kitchen-batches/:id/i
   })
 })
 
+// ── R2a (V5-PUTUPLOGRETIRE-001, contract 5; migrations/v5-pantryitemamount-001) ─────────────────────────
+// An item's amount (as logged — nothing decrements it) and where it came from, on real Postgres: the six
+// column lists of pantryRoutes.js and the nine CHECKs. The unit mock runs no SQL, so a column missing from
+// the INSERT, a RETURNING or the list SELECT is found HERE or on staging.
+describe('R2a — an item\'s amount and where-from', () => {
+  const FOUR = ['quantity_value', 'quantity_unit', 'source_kind', 'source_label']
+  const four = (o) => FOUR.map((k) => o[k])
+  // The driver hands numeric back as text; the row is read as stored.
+  const storedFour = async (id) => {
+    const row = await readItem(id)
+    return [row.quantity_value == null ? null : String(row.quantity_value), row.quantity_unit, row.source_kind, row.source_label]
+  }
+
+  it('DAVE creates with all four: 201, stored as sent with the amount rounded to two places; the replay returns them', async () => {
+    const place = await seedPlace(DAVE, { kind: 'pantry' })
+    const k = key()
+    const body = { idempotency_key: k, name: `r2a rice ${H.RUN}`, storage_location_id: place, quantity_value: 2.345, quantity_unit: 'lb', source_kind: 'store', source_label: ' Costco ' }
+    const r = await call(DAVE, 'POST', '/api/pantry/items', body)
+    expect(r.status, JSON.stringify(r.body)).toBe(201)
+    expect(four(r.body.item)).toEqual([2.35, 'lb', 'store', 'Costco'])
+    expect(typeof r.body.item.quantity_value).toBe('number')
+    expect(await storedFour(r.body.item.id)).toEqual(['2.35', 'lb', 'store', 'Costco'])
+    const again = await call(DAVE, 'POST', '/api/pantry/items', body)
+    expect(again.status).toBe(200)
+    expect(again.body).toMatchObject({ replayed: true, item: { id: r.body.item.id } })
+    expect(four(again.body.item)).toEqual([2.35, 'lb', 'store', 'Costco'])
+  })
+
+  it('today\'s keys only: all four are stored NULL, and the item answers them as null', async () => {
+    const place = await seedPlace(DAVE, { kind: 'pantry' })
+    const r = await create(JEN, { name: `r2a capers ${H.RUN}`, storage_location_id: place, notes: 'x' })
+    expect(r.status, JSON.stringify(r.body)).toBe(201)
+    expect(four(r.body.item)).toEqual([null, null, null, null])
+    expect(await storedFour(r.body.item.id)).toEqual([null, null, null, null])
+  })
+
+  it('a fresh-as-picked item takes our garden beside its planting and stores no name; a non-garden source on it → 400 in words, nothing written', async () => {
+    const place = await seedPlace(DAVE, { kind: 'cold_storage' })
+    const { plantId } = await seedPlanting(DAVE, { name: 'r2a walla' })
+    const r = await create(DAVE, { name: `r2a fresh ${H.RUN}`, storage_location_id: place, plant_id: plantId, quantity_value: 6, quantity_unit: 'count', source_kind: 'own_garden', source_label: 'never stored' })
+    expect(r.status, JSON.stringify(r.body)).toBe(201)
+    expect(four(r.body.item)).toEqual([6, 'count', 'own_garden', null])
+    const before = (await directSql`SELECT count(*)::int AS n FROM pantry_item WHERE user_id = ${DAVE}`)[0].n
+    const bad = await create(DAVE, { name: `r2a refused ${H.RUN}`, storage_location_id: place, plant_id: plantId, source_kind: 'store' })
+    expect(bad.status).toBe(400)
+    expect(bad.body.error).toMatch(/one of your plantings/)
+    expect((await directSql`SELECT count(*)::int AS n FROM pantry_item WHERE user_id = ${DAVE}`)[0].n).toBe(before)
+  })
+
+  it('PATCH each pair by JEN on Dave\'s item: the amount and its clear; the source, garden clears the name, un-choose; one of a pair alone → 400; STRANGER → 404', async () => {
+    const place = await seedPlace(DAVE, { kind: 'pantry' })
+    const { body } = await create(DAVE, { name: `r2a tahini ${H.RUN}`, storage_location_id: place })
+    const id = body.item.id
+    let p = await call(JEN, 'PATCH', itemPath(id), { quantity_value: 1.5, quantity_unit: 'qt' })
+    expect(p.status, JSON.stringify(p.body)).toBe(200)
+    expect(four(p.body.item)).toEqual([1.5, 'qt', null, null])
+    p = await call(JEN, 'PATCH', itemPath(id), { source_kind: 'farm_stand', source_label: ' Harris ' })
+    expect(four(p.body.item)).toEqual([1.5, 'qt', 'farm_stand', 'Harris'])
+    expect(await storedFour(id)).toEqual(['1.50', 'qt', 'farm_stand', 'Harris'])
+    p = await call(JEN, 'PATCH', itemPath(id), { source_kind: 'own_garden', source_label: 'Harris' })
+    expect(four(p.body.item)).toEqual([1.5, 'qt', 'own_garden', null])
+    p = await call(JEN, 'PATCH', itemPath(id), { name: `r2a tahini, opened ${H.RUN}` })
+    expect(four(p.body.item)).toEqual([1.5, 'qt', 'own_garden', null])   // an edit naming neither pair leaves both
+    p = await call(JEN, 'PATCH', itemPath(id), { quantity_value: null, quantity_unit: null })
+    expect(four(p.body.item)).toEqual([null, null, 'own_garden', null])
+    p = await call(JEN, 'PATCH', itemPath(id), { source_kind: null, source_label: null })
+    expect(four(p.body.item)).toEqual([null, null, null, null])
+    expect(await storedFour(id)).toEqual([null, null, null, null])
+    expect((await call(JEN, 'PATCH', itemPath(id), { quantity_value: 2 })).status).toBe(400)
+    expect((await call(JEN, 'PATCH', itemPath(id), { source_label: 'Costco' })).status).toBe(400)
+    expect((await call(STRANGER, 'PATCH', itemPath(id), { quantity_value: 9, quantity_unit: 'lb' })).status).toBe(404)
+    expect(await storedFour(id)).toEqual([null, null, null, null])
+    expect((await readItem(id)).user_id).toBe(DAVE)
+  })
+
+  it('the planting refusal on a PATCH is the database\'s (chk_pantry_item_source_plant), answered in words; the row is unchanged', async () => {
+    const place = await seedPlace(DAVE, { kind: 'cold_storage' })
+    const { plantId } = await seedPlanting(DAVE, { name: 'r2a patch walla' })
+    const { body } = await create(DAVE, { name: `r2a fresh patch ${H.RUN}`, storage_location_id: place, plant_id: plantId })
+    const id = body.item.id
+    const p = await call(DAVE, 'PATCH', itemPath(id), { source_kind: 'store', source_label: null })
+    expect(p.status, JSON.stringify(p.body)).toBe(400)
+    expect(p.body.error).toMatch(/one of your plantings/)
+    expect(p.body.error).not.toMatch(/chk_|constraint/i)
+    expect(await storedFour(id)).toEqual([null, null, null, null])
+    // our garden, and an amount, are both allowed on it
+    const ok = await call(DAVE, 'PATCH', itemPath(id), { source_kind: 'own_garden', source_label: null, quantity_value: 12, quantity_unit: 'count' })
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200)
+    expect(four(ok.body.item)).toEqual([12, 'count', 'own_garden', null])
+  })
+
+  it('GET /api/pantry carries the four as stored on an item and on a put-up; an amount is never left; where_from and from_garden follow the stored source', async () => {
+    const place = await seedPlace(DAVE, { kind: 'pantry' })
+    const named = (await create(DAVE, { name: `r2a list rice ${H.RUN}`, storage_location_id: place, quantity_value: 2, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco' })).body.item.id
+    const unnamed = (await create(JEN, { name: `r2a list eggs ${H.RUN}`, storage_location_id: place, source_kind: 'farm_stand' })).body.item.id
+    const garden = (await create(JEN, { name: `r2a list squash ${H.RUN}`, storage_location_id: place, source_kind: 'own_garden' })).body.item.id
+    const jar = await seedJar(DAVE, { count: 2 })
+    const rows = await rowsOf(DAVE)
+    expect(rows.find((r) => r.stock_id === named)).toMatchObject({
+      stock_kind: 'pantry_item', stock_mode: 'item', count_left: null, count_made: null, grams_left: null,
+      quantity_value: 2, quantity_unit: 'lb', source_kind: 'store', source_label: 'Costco', where_from: 'Costco', from_garden: false,
+    })
+    expect(rows.find((r) => r.stock_id === unnamed)).toMatchObject({ source_kind: 'farm_stand', source_label: null, where_from: 'Farm stand', from_garden: false })
+    expect(rows.find((r) => r.stock_id === garden)).toMatchObject({ source_kind: 'own_garden', source_label: null, where_from: 'My garden', from_garden: true })
+    const jarRow = rows.find((r) => r.stock_id === jar)
+    expect(jarRow.stock_kind).toBe('put_up')
+    for (const k of FOUR) expect(jarRow, k).toHaveProperty(k)
+    expect(jarRow.quantity_value === null || typeof jarRow.quantity_value === 'number').toBe(true)
+  })
+
+  describe('each CHECK of v5-pantryitemamount-001 refuses by name', () => {
+    let place
+    let plant
+    beforeAll(async () => {
+      place = await seedPlace(DAVE, { kind: 'pantry' })
+      plant = (await seedPlanting(DAVE, { name: 'r2a check walla' })).plantId
+    })
+    const attempt = async ({ withPlant = false, v = null, u = null, k = null, l = null }) => {
+      try {
+        await directSql`
+          INSERT INTO pantry_item (user_id, name, storage_location_id, plant_id, quantity_value, quantity_unit, source_kind, source_label)
+          VALUES (${DAVE}, ${`r2a check ${H.RUN}`}, ${place}, ${withPlant ? plant : null}, ${v}, ${u}, ${k}, ${l})`
+        return null
+      } catch (e) {
+        return { code: e.code ?? e.sourceError?.code, constraint: e.constraint ?? e.sourceError?.constraint }
+      }
+    }
+
+    it.each([
+      ['chk_pantry_item_quantity_pairing', { v: 2 }],
+      ['chk_pantry_item_quantity_pairing', { u: 'lb' }],
+      ['chk_pantry_item_quantity_value', { v: 0, u: 'lb' }],
+      ['chk_pantry_item_quantity_value', { v: 'NaN', u: 'lb' }],
+      ['chk_pantry_item_quantity_unit', { v: 2, u: 'lbs' }],
+      ['chk_pantry_item_source_kind', { k: 'swap' }],
+      ['chk_pantry_item_source_label_len', { k: 'store', l: 'x'.repeat(121) }],
+      ['chk_pantry_item_source_label_nonblank', { k: 'store', l: '  ' }],
+      ['chk_pantry_item_source_label_kind', { l: 'Costco' }],
+      ['chk_pantry_item_source_other', { k: 'other' }],
+      ['chk_pantry_item_source_plant', { withPlant: true, k: 'store' }],
+    ])('%s refuses %o with a 23514', async (constraint, cols) => {
+      expect(await attempt(cols)).toEqual({ code: '23514', constraint })
+    })
+
+    it('the rows the deployed writer makes (all four NULL, with and without a planting) and a full row are accepted', async () => {
+      expect(await attempt({})).toBeNull()
+      expect(await attempt({ withPlant: true })).toBeNull()
+      expect(await attempt({ v: 2, u: 'lb', k: 'farm_stand', l: 'Harris' })).toBeNull()
+      expect(await attempt({ withPlant: true, v: 6, u: 'count', k: 'own_garden' })).toBeNull()
+    })
+  })
+})
+
 describe('the planting merge repoints pantry_item.plant_id (merge.js SURFACES)', () => {
   it('a "Fresh, as picked" item on a loser planting follows the winner, a removed one too; the snapshot records it', async () => {
     const proj = await insertProject({ name: `pantry-merge-${H.RUN}`, createdBy: DAVE })
