@@ -54,6 +54,12 @@ export const REFUSAL_CODES = Object.freeze({
   ITEM_REMOVED: 'item_removed',
   // B′ release 3: Undo that put-up on How it was made →'s sitting, which wrote no jars of its own.
   NOTHING_PUT_UP_HERE: 'nothing_put_up_here',
+  // Put-Up R2a, the storage Lambda's two place refusals: a re-kind while the place holds put-ups whose dates
+  // were worked out for its kind, and a delete while something is stored there. Each 409 carries `n` and the
+  // server's own sentence; neither has words here, so describeRefusal answers them through the unknown-code
+  // arm (the server's sentence), and the Places sheet builds its own lines from the code and `n`.
+  PLACE_HAS_DATED_JARS: 'place_has_dated_jars',
+  PLACE_IN_USE: 'place_in_use',
 })
 
 export const REFRESH_NOW_LABEL = 'Refresh now'
