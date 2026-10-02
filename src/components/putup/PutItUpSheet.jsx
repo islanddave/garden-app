@@ -57,6 +57,22 @@ export { mintKey }
 
 const EMPTY_SITTING = { lines: [], madeG: '', mashG: '', nextTime: '' }
 
+// What the preview says when Raw or In oil is what took the date away (Put-Up R2a, amendment D7; ruling
+// Df-3 = F-3). THE ONE COPY on this surface: the door (pantry/) holds its own and a test binds the two, so
+// nothing here imports across the putup → pantry line. The stored row keeps jarWords' own sentence.
+export const RAW_OIL_NO_DATE_WORDS = 'no date — no general figure for raw or in-oil food. Set your own under Discard by.'
+
+// "Raw or In oil removed the date": the row's worked-out preview has no date, the row is marked Raw or In
+// oil, and the same row with neither marked WOULD have one. Decided from the row's own state and from what
+// previewDiscard answers, nothing else — so every other reason for no date (no general figure for that food
+// in that place, cured produce with an estimated date, a dried food that still bends) keeps its own words,
+// with or without the marks.
+function rawOrOilRemovedDate({ row, preview, method, when, now }) {
+  if (!preview || preview.basis !== 'none' || !(row?.isRaw || row?.inOil)) return false
+  const unmarked = previewDiscard({ row: { ...row, isRaw: false, inOil: false }, method, when, now })
+  return !!unmarked && unmarked.date != null
+}
+
 // The embedded adders, by name: one per row ("Added at the end") and the sitting's ("…to every jar").
 const rowAdder = (i) => `putup-row-${i}-added`
 const SITTING_ADDER = 'putup-sitting-added'
@@ -483,8 +499,13 @@ function PutItUpOpen({ batch, lines: batchLines, onClose, onDone, onChanged, now
   // The preview counts from the day the server will store (Not sure's anchor), never from the wire value.
   const when = whenRes?.anchor ?? whenRes?.when ?? null
   const shownRows = effectiveRows(rows)
-  const previews = shownRows.map(r => (method ? recipePreview({ row: r, when, recipe: batch.recipe, now: nowDate }) : null)
-    ?? previewDiscard({ row: r, method, when, now: nowDate }))
+  const previews = shownRows.map(r => {
+    const fromRecipe = method ? recipePreview({ row: r, when, recipe: batch.recipe, now: nowDate }) : null
+    if (fromRecipe) return fromRecipe
+    const worked = previewDiscard({ row: r, method, when, now: nowDate })
+    // The row's own preview and the grouped one both read `words`, so the sentence is said in both.
+    return rawOrOilRemovedDate({ row: r, preview: worked, method, when, now: nowDate }) ? { ...worked, words: RAW_OIL_NO_DATE_WORDS } : worked
+  })
   const previewGroups = groupPreviews(previews)
   const { chips: methodChips, more: hasMore } = methodChipsForKind(batch.kind)
   const shownMethods = moreMethods ? ALL_PUT_UP_METHODS : methodChips
