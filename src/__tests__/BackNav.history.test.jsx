@@ -531,6 +531,7 @@ describe('BUG-BACKTWICECLOSESAPP-001 — what happens INSIDE the return\'s windo
 
     act(() => { show(null) })                      // A closes inside the window...
     await drain()
+    act(() => { fireEvent.click(document.body) })  // ...the user taps...
     act(() => { show('b') })                       // ...and B opens and arms a marker of its own
     await drain()
     expect(armed()).toBe(true)
