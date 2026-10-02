@@ -8,7 +8,7 @@ step, so from the day ci-next.yml lands until the legs replace the serial job, "
 a GATING test. A lane that adds, edits or removes a CI step changes it in both files in the same commit, or this
 reds the dev push.
 
-Six things are held, each by a function that returns the problems it found (so the mutations at the end can show
+Seven things are held, each by a function that returns the problems it found (so the mutations at the end can show
 every one of them is able to fail):
 
   conservation  every ci.yml step is in exactly one leg as the same WHOLE mapping (name, run, env, uses, with and
@@ -23,7 +23,13 @@ every one of them is able to fail):
                 two artefact chains kept whole (dist/, coverage/coverage-summary.json).
   shape         triggers, the one dispatch input, permissions, and the job graph: no continue-on-error, no `if:` on
                 a leg, no matrix, ubuntu-24.04 and a timeout everywhere, and an aggregator that needs every other
-                job, runs `always()`, and pins the same list in its step.
+                job, runs `always()`, and pins the same list in its step. ci.yml is held ABOVE step level too: one
+                job, and no workflow or job key beyond today's, because whatever the serial job or its workflow
+                gives every step (an env, a default shell, a service) is something no leg has.
+  handoffs      a ci.yml step that hands something on through the runner (an action, a GITHUB_ENV or GITHUB_PATH
+                write, an apt-get / pip / npm -g install) is named in HANDOFFS with the legs that need it. A new
+                one is red until it is repeated where it is consumed and listed. Hand-offs through FILES are not
+                visible here beyond the two chains under `setup`; the shadow's two verdicts are what catch those.
   concurrency   no two workflow files share a concurrency group. Groups are repository-wide: a shadow that shared
                 ci.yml's would cancel it on every push.
 
@@ -64,6 +70,54 @@ DRY_RUN = "npm install --dry-run --package-lock-only"
 NODE_COMMAND = re.compile(r"(?:^|[\s;&|(])(?:npm|npx|node)\s")
 NODE_BY_NAME = {"Dependency audit (blocking on moderate, WS-B M6)"}  # audit-gate.py shells out to `npm audit`
 PIP_PYYAML = re.compile(r"pip install[^\n|&]*\bpyyaml\b")
+NY = "America/New_York"
+WORKFLOW_KEYS = {"name", "on", "permissions", "concurrency", "jobs"}
+SERIAL_JOB_KEYS = {"runs-on", "timeout-minutes", "steps"}
+ABOVE_STEPS = ("anything the serial job or its workflow gives every step (an env, a default shell, a service, a "
+               "container, a second job) is something no ci-next.yml leg has: give it to the legs that need it in "
+               ".github/workflows/ci-next.yml, then widen this pin in scripts/test_ci_next.py")
+# A ci.yml step that hands something to LATER steps through the runner rather than through a file. In the serial job
+# every later step gets it; in ci-next.yml only the leg that holds the step does. Each one is named here (an action
+# by its name without the pin) with the legs that need what it hands on.
+HANDOFF = re.compile(r"GITHUB_ENV|GITHUB_PATH|\bapt-get\b|\bapt\s+install\b|\bpip3?\s+install\b"
+                     r"|\bnpm\s+(?:i|install)\b[^\n;&|]*\s(?:-g|--global)\b")
+HANDOFFS = {
+    "actions/checkout": "the working tree: repeated in every leg",
+    "actions/setup-node": "node 20.19.0 on PATH: repeated in every leg that runs node (all but pytest)",
+    "Python script tests (pytest)": "pip installs pytest, requests, boto3, pyyaml: the pytest leg runs this step; "
+                                    "static, where gate_runner.py needs PyYAML, has its own install step",
+    "Resolve Chrome for the layout gates": "writes CHROME_PATH to GITHUB_ENV: repeated in gates-a, gates-b, gates-c "
+                                           "and gate-probes",
+    "Photo-tier payload budget (BUG-TIERLESSPHOTOS-001)": "pip installs pillow for its own gate only: gates-a",
+}
+NEW_HANDOFF = ("ci.yml step %r hands something to later steps through the runner (it uses an action, writes GITHUB_ENV "
+               "or GITHUB_PATH, or installs with apt-get, pip or npm -g). The serial job gives that to every later "
+               "step; in .github/workflows/ci-next.yml only the leg holding the step has it. A new hand-off must be "
+               "repeated in every leg that consumes it, then added to HANDOFFS in scripts/test_ci_next.py with the "
+               "legs that need it")
+# The three bodies ci-next.yml adds, as written there. Changing one means changing it here in the same commit, which
+# is the point: what they do is executed further down, and this holds that they do nothing else. (It is also the only
+# hold on the sentinel's offset comparison: no real node reports the zone's name and then keeps another zone's
+# offsets, so no fixture reaches that half of its condition.)
+CANARY_RUN = ('echo "::error title=ci-next canary::canary_red_leg=%s: this leg is forced red on request, and '
+              'build-and-test-next must go red with it."\nexit 1\n')
+PYYAML_RUN = ("set -euo pipefail\npython3 -m pip install --quiet pyyaml \\\n"
+              "  || python3 -m pip install --quiet --break-system-packages pyyaml\n")
+SENTINEL_RUN = "\n".join([
+    "set -euo pipefail",
+    "node -e '",
+    "const zone = Intl.DateTimeFormat().resolvedOptions().timeZone",
+    "const jan = new Date(2026, 0, 15, 12).getTimezoneOffset()",
+    "const jul = new Date(2026, 6, 15, 12).getTimezoneOffset()",
+    "console.log(`TZ=${process.env.TZ} resolved as ${zone}; minutes behind UTC: January ${jan}, July ${jul}`)",
+    'if (process.env.TZ !== "America/New_York" || zone !== "America/New_York" || jan !== 300 || jul !== 240) {',
+    '  console.log("::error title=TZ sentinel::America/New_York did not resolve (want zone America/New_York, January '
+    '300, July 240). The suite below would run in another zone and prove nothing about date fragility.")',
+    "  process.exit(1)",
+    "}",
+    "'",
+    "",
+])
 INPUTS_CONTEXT = re.compile(r"\binputs\.|\binputs\[|github\.event\.inputs")
 # Files one step writes and a later step reads. Each chain stays in one leg, in this order.
 CHAINS = {
@@ -85,6 +139,10 @@ def _both():
 
 def _on(workflow):
     return workflow.get("on", workflow.get(True))  # PyYAML reads the bare key `on` as True
+
+
+def _keys(workflow):
+    return {"on" if key is True else key for key in workflow}  # PyYAML reads the bare key `on` as True
 
 
 def _serial(ci):
@@ -158,7 +216,8 @@ def conservation(ci, nxt):
             if not have[key]:
                 out.append("setup step %r is in no leg" % _label(step))
         elif have[key] != 1:
-            out.append("%r is in %d legs, want exactly 1" % (_label(step), have[key]))
+            out.append("ci.yml step %r is in %d legs of ci-next.yml, want exactly 1: add it to the leg it belongs "
+                       "in, written as in ci.yml (or remove the extra copy)" % (_label(step), have[key]))
     out += ["a leg runs %r, which is not a ci.yml %s step as written there (name, run, env, uses, with or another "
             "key differs)" % (_label(json.loads(key)), SERIAL_JOB) for key in have if key not in want]
     return out
@@ -187,6 +246,8 @@ def own_steps(ci, nxt):
             if set(canary) != {"name", "if", "run"} or canary.get("if") != "inputs.canary_red_leg == '%s'" % leg:
                 out.append("%s: its canary is not keyed to this leg alone (if: %r, keys %s)"
                            % (leg, canary.get("if"), sorted(canary)))
+            if canary.get("run") != CANARY_RUN % leg:
+                out.append("%s: its canary's body is not CANARY_RUN as pinned in scripts/test_ci_next.py" % leg)
         for i, step in enumerate(steps):
             if "if" in step and step.get("name") != CANARY:
                 out.append("%s: step %r carries an if:" % (leg, _label(step)))
@@ -196,6 +257,9 @@ def own_steps(ci, nxt):
                     "gate_runner.py" in (s.get("run") or "") for s in steps[i:])):
                 out.append("%s: the PyYAML install wants a name and a run only, and a gate_runner.py step after it"
                            % leg)
+            for name, body in ((PYYAML, PYYAML_RUN), (SENTINEL, SENTINEL_RUN)):
+                if step.get("name") == name and step.get("run") != body:
+                    out.append("%s: the body of %r is not the one pinned in scripts/test_ci_next.py" % (leg, name))
             if step.get("name") == SENTINEL:
                 after = steps[i + 1] if i + 1 < len(steps) else {}
                 zone = (after.get("env") or {}).get("TZ")
@@ -256,6 +320,14 @@ def setup(ci, nxt):
             if "TZ" in (step.get("env") or {}) and step.get("name") != SENTINEL and (
                     i == 0 or steps[i - 1].get("name") != SENTINEL):
                 out.append("%s: %r sets TZ with no sentinel directly before it" % (leg, _label(step)))
+    everything = [s for job in _legs(nxt).values() for s in job["steps"]]
+    for name, steps in ((CI, _serial(ci)), (NEXT, everything)):
+        zones = [s["env"]["TZ"] for s in steps if "TZ" in (s.get("env") or {}) and s.get("name") != SENTINEL]
+        if zones != [NY]:
+            out.append("%s: want exactly one step that sets TZ, and to %s (the app's own zone, and the one the "
+                       "sentinel proves resolved); found %s" % (name, NY, zones))
+    if [(s.get("env") or {}).get("TZ") for s in everything if s.get("name") == SENTINEL] != [NY]:
+        out.append("%s: want exactly one TZ sentinel, with TZ %s" % (NEXT, NY))
     for artefact, links in CHAINS.items():
         if any(sum(1 for s in _serial(ci) if link(s)) != 1 for link in links):
             out.append("the %s chain no longer matches one ci.yml step per link: update CHAINS" % artefact)
@@ -277,9 +349,18 @@ def _pinned_legs(job):
 
 def shape(ci, nxt):
     out = []
-    if set(nxt) != {"name", "on", True, "permissions", "concurrency", "jobs"} - ({True} if "on" in nxt else {"on"}):
-        out.append("workflow keys are %s; an env or defaults block would change what every step runs with"
-                   % sorted(map(str, nxt)))
+    if _keys(ci) != WORKFLOW_KEYS:
+        out.append("ci.yml's workflow keys are %s, pinned as %s: %s"
+                   % (sorted(_keys(ci)), sorted(WORKFLOW_KEYS), ABOVE_STEPS))
+    if list(ci.get("jobs") or {}) != [SERIAL_JOB]:
+        out.append("ci.yml's jobs are %s, pinned as [%s]: %s" % (list(ci.get("jobs") or {}), SERIAL_JOB, ABOVE_STEPS))
+    serial = (ci.get("jobs") or {}).get(SERIAL_JOB) or {}
+    if set(serial) != SERIAL_JOB_KEYS:
+        out.append("ci.yml's %s has keys %s, pinned as %s: %s"
+                   % (SERIAL_JOB, sorted(serial), sorted(SERIAL_JOB_KEYS), ABOVE_STEPS))
+    if _keys(nxt) != WORKFLOW_KEYS:
+        out.append("ci-next.yml's workflow keys are %s; an env or defaults block would change what every step runs "
+                   "with" % sorted(_keys(nxt)))
     on = _on(nxt) or {}
     if set(on) != {"push", "workflow_dispatch"}:
         out.append("triggers are %s, want push and workflow_dispatch only (never pull_request)" % sorted(on))
@@ -333,6 +414,24 @@ def shape(ci, nxt):
     return out
 
 
+# ── hand-offs through the runner ────────────────────────────────────────────────────────────────────────────────
+
+def _handoff_key(step):
+    return (step.get("uses") or "").split("@")[0] or step.get("name")
+
+
+def _hands_on(step):
+    return "uses" in step or bool(HANDOFF.search(step.get("run") or ""))
+
+
+def handoffs(ci, nxt):
+    found = [_handoff_key(s) for s in _serial(ci) if _hands_on(s)]
+    out = [NEW_HANDOFF % key for key in found if key not in HANDOFFS]
+    out += ["HANDOFFS in scripts/test_ci_next.py names %r, which is no longer a hand-off step of ci.yml: rename or "
+            "remove the entry" % key for key in HANDOFFS if key not in found]
+    return out
+
+
 # ── concurrency groups across every workflow file ───────────────────────────────────────────────────────────────
 
 def _all_workflows():
@@ -368,14 +467,17 @@ def concurrency(workflows):
 
 # ── the tree as committed ───────────────────────────────────────────────────────────────────────────────────────
 
-CHECKS = {"conservation": conservation, "order": order, "own_steps": own_steps, "setup": setup, "shape": shape}
+CHECKS = {"conservation": conservation, "order": order, "own_steps": own_steps, "setup": setup, "shape": shape,
+          "handoffs": handoffs}
 
 
 @pytest.mark.parametrize("check", list(CHECKS.values()), ids=list(CHECKS))
 def test_ci_next_holds(check):
     found = check(*_both())
-    assert not found, "ci.yml and ci-next.yml disagree (a CI step changes in BOTH files in one commit):\n  " \
-        + "\n  ".join(found)
+    assert not found, (
+        "ci.yml and .github/workflows/ci-next.yml disagree. ci-next.yml runs ci.yml's %s steps as parallel legs; its "
+        "header says what it mirrors, what it adds and where each hand-off lives. A CI step changes in BOTH files in "
+        "one commit (and scripts/ci-step-manifest.json is regenerated):\n  " % SERIAL_JOB) + "\n  ".join(found)
 
 
 def test_no_two_workflow_files_share_a_concurrency_group():
@@ -388,27 +490,54 @@ def test_no_two_workflow_files_share_a_concurrency_group():
 
 def test_the_comparison_reads_both_files_and_is_not_empty():
     ci, nxt = _both()
-    assert len(_serial(ci)) > 30
-    assert sum(len(_conserved(job)) for job in _legs(nxt).values()) == sum(
-        1 for s in _serial(ci) if _kind(s) not in REPEATABLE) > 30
+    assert len(_serial(ci)) > 30 and sum(len(_conserved(job)) for job in _legs(nxt).values()) > 30
     assert {_kind(s) for s in _serial(ci)} - {None} == set(REPEATABLE)  # every setup kind still names a ci.yml step
     assert all(any(_uses_node(s) for s in job["steps"]) for leg, job in _legs(nxt).items() if leg != "pytest")
 
 
 def test_the_legs_hold_what_their_names_say():
     ci, nxt = _both()
+    if conservation(ci, nxt):
+        pytest.skip("a step is missing, extra or changed; test_ci_next_holds[conservation] says which and how")
     legs = {leg: [_label(s) for s in _conserved(job)] for leg, job in _legs(nxt).items()}
+
+    def named(test, count, what):
+        found = [_label(s) for s in _serial(ci) if test(s)]
+        assert len(found) == count, (
+            "ci.yml has %d step(s) that are %s, and this test expects %d: %s. It finds them by their command, so if "
+            "a command or env changed, update the matcher in test_the_legs_hold_what_their_names_say; if the step was "
+            "removed or one was added, change the count with it." % (len(found), what, count, found))
+        return found
+
+    def holds(leg, want, what):
+        assert legs[leg] == want, (
+            "leg `%s` of .github/workflows/ci-next.yml should hold exactly %s.\n  it holds: %s\n  want:     %s\n"
+            "Move the step that differs to the leg it belongs in (the comment above each leg says what the leg is "
+            "for). If the split itself is meant to change, change this test in the same commit."
+            % (leg, what, legs[leg], want))
+
     gates = [_label(s) for s in _serial(ci) if _chrome_gate(s)]
-    assert len(gates) > 10
-    assert sorted(sum((legs[leg] for leg in GATE_LEGS), [])) == sorted(gates)  # every real-Chrome gate, no other step
-    assert legs["gates-c"] == [_label(s) for s in _serial(ci) if s.get("run") == "npm run gate:page-scroll"]
-    assert len(legs["gates-c"]) == 1                                           # page-scroll runs alone
-    assert legs["gate-probes"] == [_label(s) for s in _serial(ci) if "probe-nothing" in (s.get("run") or "")]
-    assert legs["pytest"] == [_label(s) for s in _serial(ci) if "pytest -q scripts/test_*.py" in (s.get("run") or "")]
-    assert legs["unit-ny"] == [_label(s) for s in _serial(ci) if "TZ" in (s.get("env") or {})]
-    assert legs["unit-utc-cov"] == [_label(s) for s in _serial(ci) if s.get("run") == "npm test"
-                                    or "check-coverage-ratchet.py" in (s.get("run") or "")]
-    assert len(legs["pytest"]) == 1 and len(legs["unit-ny"]) == 1 and len(legs["unit-utc-cov"]) == 3
+    assert len(gates) > 10, (
+        "only %d ci.yml steps carry env GATE_CHROME_FLAGS, which is how this test recognises a real-Chrome gate: "
+        "update _chrome_gate in scripts/test_ci_next.py" % len(gates))
+    in_gate_legs = sum((legs[leg] for leg in GATE_LEGS), [])
+    assert sorted(in_gate_legs) == sorted(gates), (
+        "the four gate legs of .github/workflows/ci-next.yml (%s) should hold every real-Chrome gate of ci.yml and "
+        "no other step.\n  gates in no gate leg: %s\n  in a gate leg, not a gate: %s\nA new gate goes in gates-a or "
+        "gates-b, whichever is shorter (page-scroll stays alone in gates-c; the Today V2 probe steps are "
+        "gate-probes). A step that drives no browser goes in static."
+        % (", ".join(GATE_LEGS), sorted(set(gates) - set(in_gate_legs)), sorted(set(in_gate_legs) - set(gates))))
+    holds("gates-c", named(lambda s: s.get("run") == "npm run gate:page-scroll", 1, "`npm run gate:page-scroll`"),
+          "the page-scroll gate, alone: it is the longest gate and the one that grows")
+    holds("gate-probes", named(lambda s: "probe-nothing" in (s.get("run") or ""), 2, "gates that run a probe-nothing"),
+          "the two Today V2 steps that run their gate and then its probe-nothing proof")
+    holds("pytest", named(lambda s: "pytest -q scripts/test_*.py" in (s.get("run") or ""), 1, "the pytest run"),
+          "the pytest step and nothing else (ci.yml runs it before setup-node and npm ci)")
+    holds("unit-ny", named(lambda s: "TZ" in (s.get("env") or {}), 1, "run with an env TZ"),
+          "the unit suite under TZ, behind its sentinel")
+    holds("unit-utc-cov", named(lambda s: s.get("run") == "npm test" or "check-coverage-ratchet.py" in (
+        s.get("run") or ""), 3, "`npm test` or a check-coverage-ratchet.py call"),
+          "the coverage ratchet, `npm test`, and the measured floor that reads the coverage `npm test` wrote")
 
 
 def test_the_file_is_lf_only_with_no_tabs():
@@ -546,15 +675,6 @@ def test_tz_sentinel_passes_only_when_node_resolved_new_york(tmp_path, zone, wan
         assert "resolved as America/New_York; minutes behind UTC: January 300, July 240" in proc.stdout
 
 
-def test_tz_sentinel_checks_the_offsets_as_well_as_the_name():
-    """The offsets are what a date-fragile test sees. No real node reports the zone's name and then keeps another
-    zone's offsets, so no fixture above can reach that half of the condition; it is held on the text instead."""
-    body = _own(_load(NEXT), "unit-ny", SENTINEL)["run"]
-    for clause in ('process.env.TZ !== "America/New_York"', 'zone !== "America/New_York"', "jan !== 300",
-                   "jul !== 240"):
-        assert clause in body
-
-
 @pytest.mark.parametrize("plain_rc,fallback_rc,want_rc,want_calls", [
     (0, 0, 0, 1),        # the plain form works: one install
     (1, 0, 0, 2),        # a PEP-668 image: the fallback carries it
@@ -619,6 +739,28 @@ def _agg(nxt):
 def _repin(nxt, old, new):
     step = _agg(nxt)["steps"][0]
     step["run"] = step["run"].replace(old, new)
+
+
+def _job(ci):
+    return ci["jobs"][SERIAL_JOB]
+
+
+def _add_to_both(ci, nxt, step, leg="static"):
+    """A new step at the end of ci.yml, mirrored at the end of one leg: what a lane that knows the rule would do."""
+    _serial(ci).append(copy.deepcopy(step))
+    _steps(nxt, leg).append(copy.deepcopy(step))
+
+
+def _edit_own(nxt, leg, name, old, new):
+    step = _own(nxt, leg, name)
+    step["run"] = step["run"].replace(old, new)
+    assert new in step["run"]
+
+
+def _rezone(ci, nxt, zone):
+    for step in _serial(ci) + _steps(nxt, "unit-ny"):
+        if "TZ" in (step.get("env") or {}):
+            step["env"]["TZ"] = zone
 
 
 MUTATIONS = {
@@ -743,6 +885,55 @@ MUTATIONS = {
     "permissions are dropped": ("shape", lambda c, n: n.pop("permissions")),
     "the workflow gains an env": ("shape", lambda c, n: n.update(env={"ADDED_BY_TEST": "1"})),
     "the workflow gains a default shell": ("shape", lambda c, n: n.update(defaults={"run": {"shell": "sh"}})),
+    # shape, ci.yml above step level
+    "ci.yml gains a second job": ("shape", lambda c, n: c["jobs"].update(
+        extra={"runs-on": "ubuntu-latest", "steps": [{"run": "true"}]})),
+    "ci.yml's job is renamed": ("shape", lambda c, n: c["jobs"].update(ci=c["jobs"].pop(SERIAL_JOB))),
+    "ci.yml's job gains an env": ("shape", lambda c, n: _job(c).update(env={"NODE_OPTIONS": "--no-warnings"})),
+    "ci.yml's job gains services": ("shape", lambda c, n: _job(c).update(services={"db": {"image": "postgres:17"}})),
+    "ci.yml's job gains a container": ("shape", lambda c, n: _job(c).update(container="node:20")),
+    "ci.yml's job gains a default shell": ("shape", lambda c, n: _job(c).update(defaults={"run": {"shell": "sh"}})),
+    "ci.yml's job gains an if": ("shape", lambda c, n: _job(c).update({"if": "github.event_name == 'push'"})),
+    "ci.yml's workflow gains an env": ("shape", lambda c, n: c.update(env={"TZ": "America/New_York"})),
+    "ci.yml's workflow gains a default shell": ("shape", lambda c, n: c.update(defaults={"run": {"shell": "sh"}})),
+    # own_steps, the bodies by text
+    "the PyYAML install also writes GITHUB_ENV": ("own_steps", lambda c, n: _edit_own(
+        n, "static", PYYAML, "pyyaml\n", 'pyyaml\necho "PIP_INDEX_URL=https://example.invalid" >> "$GITHUB_ENV"\n')),
+    "a canary exits with another status": ("own_steps", lambda c, n: _edit_own(
+        n, "gates-a", CANARY, "exit 1", "exit 2")),
+    "a canary names another leg in its message": ("own_steps", lambda c, n: _edit_own(
+        n, "gates-a", CANARY, "canary_red_leg=gates-a:", "canary_red_leg=gates-b:")),
+    "the TZ sentinel's January offset changes": ("own_steps", lambda c, n: _edit_own(
+        n, "unit-ny", SENTINEL, "jan !== 300", "jan !== 240")),
+    "the TZ sentinel drops its offset comparison": ("own_steps", lambda c, n: _edit_own(
+        n, "unit-ny", SENTINEL, " || jan !== 300 || jul !== 240", " ")),
+    # setup, the zone itself
+    "the NY suite moves to another zone in both files": ("setup", lambda c, n: _rezone(c, n, "America/Chicago")),
+    "the NY suite loses its zone in both files": ("setup", lambda c, n: [
+        s.pop("env") for s in _serial(c) + _steps(n, "unit-ny") if "TZ" in (s.get("env") or {})
+        and s.get("name") != SENTINEL]),
+    "a second step sets TZ in both files": ("setup", lambda c, n: _add_to_both(
+        c, n, {"name": "added by the test", "env": {"TZ": "UTC"}, "run": "true"})),
+    # handoffs: each of these is mirrored correctly as far as conservation, order and setup can tell
+    "a step that writes GITHUB_ENV is added to both files": ("handoffs", lambda c, n: _add_to_both(
+        c, n, {"name": "More heap", "run": 'echo "NODE_OPTIONS=--max-old-space-size=8192" >> "$GITHUB_ENV"'})),
+    "a step that writes GITHUB_PATH is added to both files": ("handoffs", lambda c, n: _add_to_both(
+        c, n, {"name": "Tool on PATH", "run": 'echo "$HOME/bin" >> "$GITHUB_PATH"'})),
+    "an apt-get install is added to both files": ("handoffs", lambda c, n: _add_to_both(
+        c, n, {"name": "Fonts", "run": "sudo apt-get install -y fonts-roboto"})),
+    "a pip install is added to both files": ("handoffs", lambda c, n: _add_to_both(
+        c, n, {"name": "Deps", "run": "pip install --quiet psycopg"})),
+    "a python3 -m pip install is added to both files": ("handoffs", lambda c, n: _add_to_both(
+        c, n, {"name": "Deps", "run": "python3 -m pip install --quiet psycopg"})),
+    "an npm install -g is added to both files": ("handoffs", lambda c, n: _add_to_both(
+        c, n, {"name": "Global tool", "run": "npm install -g some-cli"})),
+    "an npm i --global is added to both files": ("handoffs", lambda c, n: _add_to_both(
+        c, n, {"name": "Global tool", "run": "npm i some-cli --global"})),
+    "an action is added to both files": ("handoffs", lambda c, n: _add_to_both(
+        c, n, {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12"}})),
+    "a listed hand-off step is renamed in both files": ("handoffs", lambda c, n: [
+        s.update(name="Resolve Chrome") for s in _serial(c) + sum((_steps(n, leg) for leg in GATE_LEGS), [])
+        if _kind(s) == "chrome"]),
 }
 
 
@@ -751,9 +942,23 @@ def test_every_kind_of_drift_is_reported_by_the_check_that_owns_it(name):
     """A check that cannot fail holds nothing: each of these, made in memory, must be reported."""
     check, mutate = MUTATIONS[name]
     ci, nxt = copy.deepcopy(_both())
-    assert CHECKS[check](ci, nxt) == [], "the tree as committed already fails this check"
+    if CHECKS[check](ci, nxt):
+        pytest.skip("the tree as committed fails `%s`; test_ci_next_holds[%s] says how" % (check, check))
     mutate(ci, nxt)
     assert CHECKS[check](ci, nxt) != []
+
+
+def test_an_ordinary_new_check_mirrored_in_one_leg_passes_every_check():
+    """The pins above must not turn "add a check to CI" into a puzzle: a new step that hands nothing on, added to
+    ci.yml and to the leg it belongs in, is green everywhere. (`npm install --dry-run` is the near miss for the
+    hand-off pattern: an install that writes nothing.)"""
+    ci, nxt = copy.deepcopy(_both())
+    if any(check(ci, nxt) for check in CHECKS.values()):
+        pytest.skip("the tree as committed fails a check; test_ci_next_holds says which and how")
+    _add_to_both(ci, nxt, {"name": "A new check",
+                           "run": "npm run check:new && npm install --dry-run --package-lock-only"})
+    _add_to_both(ci, nxt, {"name": "A new script check", "run": "python3 scripts/check-something.py"}, leg="static")
+    assert [found for check in CHECKS.values() for found in check(ci, nxt)] == []
 
 
 CONCURRENCY_MUTATIONS = {

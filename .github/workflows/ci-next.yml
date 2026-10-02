@@ -6,6 +6,11 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 # every dev push so the two verdicts can be compared SHA for SHA before the legs replace the serial job (plan:
 # gardening-docs project-state/_promotepath-20261002/PLAN-V003.md §4 A2.2 shadow, A2.3 switch).
 #
+# READING A RED HERE. This workflow gates nothing and promote-gate.yml reads ci.yml only, so a red leg here turns the
+# commit's rollup red while the gate is green. Do not push to `ci-next-soak` while a promote is running: its 8 legs
+# compete with the promote's 26-leg Lambda matrix for runners. A canary dispatch is read as "red expected", and a
+# typo in `canary_red_leg` gives a normal green run.
+#
 # THE STEPS ARE ci.yml's. Every step of `build-and-test` is in exactly one leg below with the same name, run, env,
 # uses and with. Each leg repeats the setup it needs (checkout, setup-node, npm ci, Chrome, the origin/main fetch).
 # Each step's reasoning is the comment beside the same-named step in ci.yml and is not copied here.
@@ -30,6 +35,10 @@ name: CI Next — parallel shadow of build-and-test (non-gating)
 # Nothing else was found to cross a step boundary: each gate boots its own Vite harness (and Vite pre-bundles the
 # same dependency set whichever gate boots first), no gate reads another's output, and no unit test reads dist/,
 # coverage/ or artifacts/.
+# A NEW hand-off through the runner (an action, a GITHUB_ENV or GITHUB_PATH write, an apt-get, pip or npm -g
+# install) is red in scripts/test_ci_next.py until it is repeated in every leg that consumes it and listed there.
+# Hand-offs of other kinds (a file written by one step and read by another) are caught only by the two verdicts
+# disagreeing during the shadow.
 #
 # NO continue-on-error, no job-level `if:` on a leg, no matrix. A leg that fails under continue-on-error reads
 # `success` in `needs` (measured on the scratch repository, scratch-actions/RESULTS.md E4), so the aggregator would
