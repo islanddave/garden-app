@@ -1,0 +1,3 @@
+{"_source":"Not recorded from a run: the two shapes of non-JSON body api.github.com sends when it is unwell, as text. The 502 page comes with a non-zero gh exit; the 200 page is the one a status check must not mistake for an answer.",
+"html_502_body":"<html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n</body>\n</html>\n",
+"html_200_body":"<html><body>We had issues producing the response to your request.</body></html>\n"}

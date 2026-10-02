@@ -409,7 +409,7 @@ class _GitHubStandIn:
                 self.end_headers()
                 self.wfile.write(body)
 
-            do_POST = do_GET
+            do_POST = do_PATCH = do_DELETE = do_GET
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
@@ -444,10 +444,9 @@ def github():
         stand_in.close()
 
 
-def _run_promote_step(tmp_path, name, api, shell, **env_extra):
-    """One promote-gate step body, run the runner's way with its curl pointed at `api`."""
-    assert REAL_CURL, "no curl on PATH: the promote-gate steps need one"
-    _, step = _step(PROMOTE, "promote", name)
+def _api_env(tmp_path, api):
+    """A step's environment with `curl` shimmed to reach `api` instead of api.github.com, and its /tmp made."""
+    assert REAL_CURL, "no curl on PATH: these step bodies need one"
     bindir = tmp_path / "bin"
     bindir.mkdir()
     (tmp_path / "tmp").mkdir()
@@ -461,8 +460,15 @@ def _run_promote_step(tmp_path, name, api, shell, **env_extra):
         (bindir / shim).write_text("#!/bin/bash\n" + text + "\n")
         (bindir / shim).chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
-    env.update(PATH=f"{bindir}:{os.environ['PATH']}", NO_PROXY="*", GH_TOKEN="test-token", BOT_TOKEN="test-bot-token",
-               REPO="owner/repo", DEV_SHA=DEV_SHA, GITHUB_OUTPUT=str(tmp_path / "output"),
+    env.update(PATH=f"{bindir}:{os.environ['PATH']}", NO_PROXY="*", GH_TOKEN="test-token", REPO="owner/repo")
+    return env
+
+
+def _run_promote_step(tmp_path, name, api, shell, **env_extra):
+    """One promote-gate step body, run the runner's way with its curl pointed at `api`."""
+    _, step = _step(PROMOTE, "promote", name)
+    env = _api_env(tmp_path, api)
+    env.update(BOT_TOKEN="test-bot-token", DEV_SHA=DEV_SHA, GITHUB_OUTPUT=str(tmp_path / "output"),
                GITHUB_STEP_SUMMARY=str(tmp_path / "summary"), **env_extra)
     return _run_as_runner(tmp_path, step["run"].replace("/tmp/", f"{tmp_path}/tmp/"), env, shell)
 
@@ -612,7 +618,131 @@ def test_smoke_step_names_a_dispatch_that_got_no_http_answer(tmp_path, github, s
     assert api.reads(RUNS) == 0
 
 
-# ── promote-gate.yml: the prod schema gate (OPS-PROMOTESCHEMAGATE-001) ──────────────────────────────────────────
+# ── revert-rehearsal.yml: setup stops on a target tag it could not create ───────────────────────────────────────
+# Setup deletes and recreates refs/tags/<TARGET_VERSION>. Ruleset release-tag-integrity lets only garden-bot create a
+# v* tag, and a refusal is one of the ways the create can answer HTTP 422: the status this leg used to accept as
+# "already exists". The step then passed and the run died later inside revert-to.py, the refusal's body long gone.
+# The body runs here the runner's way against the stand-in, with the runner's two ${{ github.* }} substitutions made
+# by hand and the real scripts/gh_api_check.py beside it. The 4xx bodies are stand-ins, not captured from GitHub:
+# what is pinned is that whatever the create answers is carried into the one ::error the step ends on.
+
+REHEARSAL_SETUP = ("revert-rehearsal.yml", "rehearse", "Setup rehearsal refs + tag, parse mode")
+DEV_REF, NEW_REF, OLD_TAG = r"^GET .*/git/refs/heads/dev$", r"^POST .*/git/refs$", r"^DELETE .*/git/refs/tags/v0\.0\.0$"
+BASE_REF = _json({"ref": "refs/heads/dev", "object": {"sha": DEV_SHA, "type": "commit"}})
+CREATED, DELETED = (201, "{}"), (204, "")
+REHEARSAL_NAMES = ["DEVB=revert-rehearsal-dev-99", "MAINB=revert-rehearsal-main-99", "TV=v0.0.0", "PV=v0.0.7"]
+
+
+def _run_rehearsal_step(tmp_path, api, step, **env_extra):
+    env = _api_env(tmp_path, api)
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(os.path.join(HERE, "gh_api_check.py"), tmp_path / "scripts")
+    env.update(env_extra)
+    body = step["run"].replace("/tmp/", f"{tmp_path}/tmp/")
+    body = body.replace("${{ github.run_number }}", "7").replace("${{ github.run_id }}", "99")
+    assert "${{" not in body, "the body holds an expression this harness does not substitute"
+    return _run_as_runner(tmp_path, body, env)
+
+
+def _run_rehearsal_setup(tmp_path, api):
+    """Returns (proc, the lines the step wrote to GITHUB_ENV). No trigger file, so MODE and both versions default."""
+    wf, step = _step(*REHEARSAL_SETUP)
+    exported = tmp_path / "github_env"
+    proc = _run_rehearsal_step(tmp_path, api, step, TARGET_MAIN_SHA=wf["env"]["TARGET_MAIN_SHA"],
+                               GITHUB_ENV=str(exported))
+    return proc, (exported.read_text().splitlines() if exported.exists() else [])
+
+
+@pytest.mark.parametrize("old_tag", [DELETED, _json({"message": "Not Found"}, 404),
+                                     _json({"message": "Reference does not exist"}, 422)],
+                         ids=["tag-deleted", "tag-absent-404", "tag-absent-422"])
+def test_rehearsal_setup_passes_once_the_target_tag_is_created(tmp_path, github, old_tag):
+    api = github({DEV_REF: [BASE_REF], NEW_REF: [CREATED], OLD_TAG: [old_tag]})
+    proc, exported = _run_rehearsal_setup(tmp_path, api)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _errors(proc) == []
+    assert exported == REHEARSAL_NAMES + ["FORCE_DUMP_PATH=1"]
+    assert api.reads(NEW_REF) == 3  # the two rehearsal branches, then the tag
+
+
+@pytest.mark.parametrize("status,said", [(422, "Repository rule violations found"), (422, "Reference already exists"),
+                                         (403, "Resource not accessible by integration"), (401, "Bad credentials")],
+                         ids=["ruleset-refusal", "tag-still-exists", "forbidden", "dead-credential"])
+def test_rehearsal_setup_stops_on_a_target_tag_it_could_not_create(tmp_path, github, status, said):
+    """Only 201 passes. "Already exists" stops too: the DELETE ran first, so a tag still there was never removed and
+    may point anywhere. Teardown (`if: always()`) deletes only the refs GITHUB_ENV names, so the two branches made
+    before the refusal must already be named there."""
+    api = github({DEV_REF: [BASE_REF], NEW_REF: [CREATED, CREATED, _json({"message": said}, status)],
+                  OLD_TAG: [DELETED]})
+    proc, exported = _run_rehearsal_setup(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    errors = _errors(proc)
+    assert len(errors) == 1, errors
+    assert f"POST https://api.github.com/repos/owner/repo/git/refs -> HTTP {status}: {said}" in errors[0]
+    assert exported == REHEARSAL_NAMES
+
+
+def test_rehearsal_setup_that_cannot_read_dev_makes_and_names_nothing(tmp_path, github):
+    api = github({DEV_REF: [_json({"message": "Bad credentials"}, 401)], NEW_REF: [CREATED], OLD_TAG: [DELETED]})
+    proc, exported = _run_rehearsal_setup(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert len(_errors(proc)) == 1 and "-> HTTP 401: Bad credentials" in _errors(proc)[0]
+    assert exported == [] and api.reads(NEW_REF) == api.reads(OLD_TAG) == 0
+
+
+# snap-rehearsal.yml's last step deletes the v0.0.0 tag snap.py made: the same ruleset lets only garden-bot delete a
+# v* tag, so one left behind could not be removed by hand. The step answers for the outcome, not the DELETE's status.
+
+SNAP_TEARDOWN = ("snap-rehearsal.yml", "rehearse", "Teardown - delete the rehearsal tag")
+TAG_LOOKUP = r"^GET .*/git/ref/tags/v0\.0\.0$"
+GONE = _json({"message": "Not Found"}, 404)
+STILL_THERE = _json({"ref": "refs/tags/v0.0.0", "object": {"type": "tag", "sha": "a" * 40}})
+
+
+def _run_snap_teardown(tmp_path, api, **env_extra):
+    wf, step = _step(*SNAP_TEARDOWN)
+    assert step["if"] == "always()"
+    env = dict(SNAP_VERSION=wf["jobs"]["rehearse"]["env"]["SNAP_VERSION"], GITHUB_REPOSITORY="owner/repo")
+    return _run_rehearsal_step(tmp_path, api, step, **{**env, **env_extra})
+
+
+@pytest.mark.parametrize("deleted", [DELETED, _json({"message": "Reference does not exist"}, 422), GONE],
+                         ids=["deleted", "absent-422", "absent-404"])
+def test_snap_teardown_passes_when_the_rehearsal_tag_is_gone(tmp_path, github, deleted):
+    api = github({OLD_TAG: [deleted], TAG_LOOKUP: [GONE]})
+    proc = _run_snap_teardown(tmp_path, api)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _errors(proc) == [] and (api.reads(OLD_TAG), api.reads(TAG_LOOKUP)) == (1, 1)
+
+
+@pytest.mark.parametrize("deleted,lookup", [
+    (_json({"message": "Repository rule violations found"}, 422), STILL_THERE),
+    (DELETED, STILL_THERE),  # a 204 that did not take: the lookup, not the DELETE, is what the step believes
+    (_json({"message": "Bad credentials"}, 401), _json({"message": "Bad credentials"}, 401)),
+], ids=["delete-refused", "delete-did-not-take", "dead-credential"])
+def test_snap_teardown_fails_when_it_cannot_show_the_rehearsal_tag_is_gone(tmp_path, github, deleted, lookup):
+    api = github({OLD_TAG: [deleted], TAG_LOOKUP: [lookup]})
+    proc = _run_snap_teardown(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    errors = _errors(proc)
+    assert len(errors) == 1, errors
+    assert errors[0].startswith(f"::error::rehearsal tag v0.0.0 is not confirmed gone after teardown (lookup answered "
+                                f"HTTP {lookup[0]};")
+    if deleted[0] != 204:  # the refusal's own words are in the log, not thrown away
+        said = json.loads(deleted[1])["message"]
+        assert any(a.startswith("::warning::DELETE ") and said in a for a in _annotations(proc))
+
+
+@pytest.mark.parametrize("version", ["v4.169.0", "v0.1.0", "promote-v0.0.0", ""])
+def test_snap_teardown_refuses_any_tag_that_is_not_a_rehearsal_tag(tmp_path, github, version):
+    api = github({r".": [DELETED]})
+    proc = _run_snap_teardown(tmp_path, api, SNAP_VERSION=version)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert len(_errors(proc)) == 1 and "refusing to delete tag" in _errors(proc)[0]
+    assert api.log == []
+
+
+# ── promote-gate.yml: the prod schema gate (OPS-PROMOTESCHEMAGATE-001)──────────────────────────────────────────
 # The body runs the promoted tree's three DB-free parser self-tests, then dev-main-schema-audit.py --gate, each inside
 # `timeout`. Enforced, ONLY a clean run passes: a failed or hung self-test, any audit exit but 0 (124/137 = timed out),
 # a missing secret and a checkout that is not dev_sha each refuse with exactly one ::error (exit 1), and its text names
@@ -974,6 +1104,15 @@ def test_resolve_refuses_a_schema_gate_value_that_is_not_true_or_false(tmp_path,
     proc, out = _resolve(tmp_path, EVENT="workflow_dispatch", IN_REQSCHEMA=given)
     assert proc.returncode == 1 and out == {}
     assert _errors(proc) == [f"::error::require_schema_audit must be true or false, got '{given}'"]
+
+
+@pytest.mark.parametrize("given", ["True", "TRUE", "yes", "1", "0", " true", "true ", "null"])
+def test_resolve_refuses_an_integration_gate_value_that_is_not_true_or_false(tmp_path, given):
+    """The preflight enforces integration-tests only when the value is exactly `true`, so anything else that
+    resolved would turn the gate advisory without anyone having asked for that."""
+    proc, out = _resolve(tmp_path, EVENT="workflow_dispatch", IN_REQINT=given)
+    assert proc.returncode == 1 and out == {}
+    assert _errors(proc) == [f"::error::require_integration must be true or false, got '{given}'"]
 
 
 # ── every step of every workflow: no exit-status read that errexit has already decided ─────────────────────

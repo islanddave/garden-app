@@ -21,6 +21,9 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # A backstop only: a step that hangs ends the job here rather than at GitHub's 360-minute
+    # default. The job ran 55-64 min when this was set (2026-10-02).
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -268,8 +271,9 @@ jobs:
       #
       # gate:save-band-stability is now WIRED too (below). The note that stood here recorded scope,
       # not a decision — "it is one import and one step away" — so it was a gap, not an answer, and
-      # it has been closed with exactly that one import. It is the slowest step in this job at ~3
-      # minutes because it drives four full harvest entries; that cost is the reason it is last.
+      # it has been closed with exactly that one import. It is last because it was the slowest step
+      # in this job at ~3 minutes when it was wired; ~170 s of that was its uncleared 180 s CDP
+      # timeout idling after PASS, not the four full harvest entries it drives, and it is ~13 s now.
       - name: Resolve Chrome for the layout gates
         # The gates drive REAL Chrome over CDP and honour CHROME_PATH, defaulting to a macOS path
         # that does not exist here. This RESOLVES the runner's browser rather than assuming it: if
@@ -399,15 +403,15 @@ jobs:
         # `status`, which the candidate filter requires, so the picker rendered zero rows and would
         # have measured an empty sheet. NO continue-on-error, per the policy note above.
         #
-        # ~96 s locally: six page loads (four states, two of them at both viewports) behind one Vite
-        # boot. Placed here rather than last because gate:save-band-stability is still the slow one.
+        # ~96 s locally when wired: six page loads (four states, two of them at both viewports) behind
+        # one Vite boot. Placed here rather than last because gate:save-band-stability was the slow one.
         #
         # V5-SEEDSTAB-001 REPOINT (2026-09-18): the harness now mounts the real Seeds page at
         # /seeds?view=saved (Saved seeds `embedded`, with the shell's header, view switch and frame)
         # instead of the standalone page no user sees, and the instrument check refuses any other
-        # surface. Every state also runs at 360x640 — ten page loads, ~99 s measured, of which PASS
-        # prints at ~9 s and the rest is node idling on its armed 90 s CDP timeouts (the same was true
-        # of the six-load run: 1:38). ONE named
+        # surface. Every state also runs at 360x640 — ten page loads, ~9 s measured. It was ~99 s while
+        # PASS at ~9 s was followed by node idling on its armed 90 s CDP timeouts (the same was true
+        # of the six-load run: 1:38); each timeout is cleared on reply now. ONE named
         # tap-floor exemption: the view switch is the frozen SegmentedControl, drawn at 40px, held to
         # that floor and printed on every run (scripts/layout-gate/segmented-control-exemption.mjs).
         # Re-proved non-vacuous: --probe-nothing exits 1 on all ten case/viewport pairs.
@@ -709,7 +713,7 @@ jobs:
         # the shortest control on every one of the six states measures exactly 44px against a 44px
         # floor, so any shrink at all reds it.
         #
-        # ~101 s locally, measured: eight page loads (six states, two at both viewports) behind one Vite
+        # ~44 s locally, measured: eight page loads (six states, two at both viewports) behind one Vite
         # boot, plus a second measurement pass at the end of the scroll on the three non-sheet states.
         # NO continue-on-error, per the policy note above.
         env:
@@ -873,7 +877,8 @@ jobs:
         # to rest FAILS rather than being averaged away, and on the frame arm a travel of 0 is only
         # accepted while the document genuinely cannot scroll.
         #
-        # Last of the layout gates deliberately: it is the slowest at ~3 min locally (measured 184 s).
+        # Last of the layout gates because it was the slowest when wired, at ~3 min locally (measured
+        # 184 s). ~170 s of that was its uncleared 180 s CDP timeout idling after PASS; ~13 s now.
         #
         # Its ONLY blocker was the bare global WebSocket that kept its siblings out — node 20.19.0 has
         # none. Fixed with the same one-line cdp-socket.mjs import, then MEASURED under that condition
