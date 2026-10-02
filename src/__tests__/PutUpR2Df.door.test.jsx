@@ -912,6 +912,40 @@ describe('the pinned Save band', () => {
   })
 })
 
+describe('a focused size is cleared of the pinned Save as a whole block', () => {
+  // jsdom lays nothing out, so the boxes are handed in: what is pinned here is the ARITHMETIC — which box is
+  // cleared, and by how much. That the result is on screen is the door-options-size gate case's to measure.
+  const rect = (top, bottom) => ({ top, bottom, left: 0, right: 426, width: 426, height: bottom - top, x: 0, y: top })
+  async function focusSizeWith({ block, field }) {
+    await openDoor()
+    answer('whole_freeze')
+    tap('door-size-open')
+    const panel = screen.getByRole('dialog')
+    const input = screen.getByTestId('door-size-value')
+    await waitFor(() => expect(document.activeElement).toBe(input))
+    panel.getBoundingClientRect = () => rect(8, 492)
+    screen.getByTestId('door-footer').getBoundingClientRect = () => rect(411, 492)
+    screen.getByTestId('door-size').getBoundingClientRect = () => rect(...block)
+    input.getBoundingClientRect = () => rect(...field)
+    panel.scrollTop = 0
+    fireEvent.focus(input)
+    return panel.scrollTop
+  }
+
+  it('the field AND its unit chips: the panel scrolls by what the BLOCK overhangs the footer, less nothing', async () => {
+    // The field itself is already clear (bottom 300 + 8 < 411); its chips run to 560, under the footer.
+    expect(await focusSizeWith({ block: [230, 560], field: [252, 300] })).toBe(560 + 8 - 411)
+  })
+
+  it('a block taller than the room above the footer is not chased: the field alone is kept clear', async () => {
+    expect(await focusSizeWith({ block: [100, 620], field: [380, 428] })).toBe(428 + 8 - 411)
+  })
+
+  it('a block that is already clear moves nothing', async () => {
+    expect(await focusSizeWith({ block: [60, 380], field: [82, 130] })).toBe(0)
+  })
+})
+
 describe('no banned word on any state this lane added', () => {
   it('A open and B open on a put-up, More units open, the other four sources open, "Which one?" showing', async () => {
     await openDoor()
