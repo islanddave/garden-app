@@ -17,6 +17,10 @@
 //                                button state. `selectionState` is the RESUMABLE form of the
 //                                selection (see the decisions model below) — the parent stashes it
 //                                and hands it back as `initialSelection` after a dismiss/reload.
+//                                `previewFor` rides beside it: the {scope, eventType, eventDate} the
+//                                lifted numbers were resolved for (null until a dry-run has answered).
+//                                A parent that commits must compare it with what it has on screen —
+//                                see the `previewFor` state below.
 //   - initialSelection           OPTIONAL restore payload, shape {decisions:{[id]:bool}, baseline,
 //                                touched}. Read ONCE, in the useState initializers: LogMany only
 //                                mounts this component after its own async draft load has resolved
@@ -152,6 +156,14 @@ export default function ScopeChecklist({
   showDefaultToggle = true,
 }) {
   const [preview, setPreview] = useState(null)       // { count, capped, plantings:[{id,name}] }
+  // BUG-LOGMANYSTALECONFIRM-001 — WHICH QUESTION `preview` IS THE ANSWER TO. The parent
+  // owns scope, event type and date and re-renders with new ones at once; this component catches up
+  // a dry-run later. Until it does, everything lifted below (the count, excludedIds, includedIds)
+  // still describes the PREVIOUS scope, and nothing in the payload said so — LogMany's button stayed
+  // live on the old count and a tap posted the new scope with the old exclusions. The tag is the
+  // props the dry-run was asked with, held by identity, so the parent's compare is the same one
+  // React makes on the preview effect's deps. null = no dry-run has answered yet on this mount.
+  const [previewFor, setPreviewFor] = useState(null)
   // V4-LOGMANYUXREFRESH-001 S0 — THE SELECTION IS NOW DURABLE STATE, not a by-product of the last
   // dry-run. It was `excluded: Set`, reset to empty on line 1 of the preview effect and re-seeded
   // from the default in its .then, so a hand-built selection was destroyed with no warning by ANY
@@ -279,11 +291,15 @@ export default function ScopeChecklist({
   useEffect(() => {
     if (!runDryRun) return
     const ctrl = new AbortController()
+    // Captured per run, so a response can only ever be tagged with the request that produced it.
+    const asked = { scope, eventType, eventDate }
     setPreviewing(true); setPreviewError(null)
     Promise.resolve(runDryRun({ scope, eventType, eventDate, signal: ctrl.signal }))
       .then(r => {
         if (ctrl.signal.aborted) return
-        setPreview(r); setPreviewing(false)
+        // `preview` first, its tag second: were the two ever committed apart, the half-way state
+        // is new numbers under the OLD tag, which the parent reads as "still counting".
+        setPreview(r); setPreviewFor(asked); setPreviewing(false)
         // V4-LOGMANYUXREFRESH-001 S0 — the ONLY selection write left in this effect, and it is
         // conditional. Re-seeding the baseline from the stored preference is the old behaviour and
         // is still right for an UNTOUCHED form (it is how a Jen-defaulted mount starts empty). Once
@@ -294,7 +310,11 @@ export default function ScopeChecklist({
       })
       .catch(err => {
         if (ctrl.signal.aborted || err?.name === 'AbortError') return
-        setPreviewError(err.message); setPreview(null); setPreviewing(false)
+        // A failure is an answer too, and it is tagged the same way: the question on screen was
+        // asked and came back with nothing, so the parent gets a zero count FOR THIS SCOPE (its
+        // button reads "on 0", disabled, beside the error above) rather than a hold it could
+        // never leave.
+        setPreviewError(err.message); setPreview(null); setPreviewFor(asked); setPreviewing(false)
       })
     return () => ctrl.abort()
     // defaultAllSelected intentionally NOT a dep: flipping it re-applies via applyDefaultSel
@@ -699,10 +719,12 @@ export default function ScopeChecklist({
   // `frameOpen` is a SIBLING key, deliberately not part of selectionState: the parent needs it to
   // suppress its own copy of the primary action while the frame is showing one, and it is transient
   // UI position, not selection — stashing it would reopen a full-screen picker on a restore.
+  // `previewFor` is a dep in its own right: a failed dry-run after an empty one moves no other value
+  // here, and without it the parent would never hear that the scope on screen has been answered.
   useEffect(() => {
-    onSelectionChange?.({ committedCount, excludedIds, includedIds, selectionState, frameOpen })
+    onSelectionChange?.({ committedCount, excludedIds, includedIds, selectionState, frameOpen, previewFor })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedCount, excludedIds, includedIds, selectionState, frameOpen])
+  }, [committedCount, excludedIds, includedIds, selectionState, frameOpen, previewFor])
 
   // ── The two filter controls, authored ONCE and rendered on both surfaces ─────────────────────
   // The BULK review list and the S3 PICK frame narrow the same `shown` memo through the same field

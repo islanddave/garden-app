@@ -138,7 +138,7 @@ export default function LogMany() {
   const [notes, setNotes] = useState('')
   const [showNotes, setShowNotes] = useState(false)
   const [scope, setScope]   = useState({ type: 'all' })
-  const [selection, setSelection] = useState(null) // { committedCount, excludedIds, selectionState } from ScopeChecklist
+  const [selection, setSelection] = useState(null) // { committedCount, excludedIds, selectionState, previewFor } from ScopeChecklist
   // The latest selection for a callback that must not be re-created on every toggle (onVoiceLogged).
   const selectionRef = useRef(null)
   selectionRef.current = selection
@@ -432,6 +432,21 @@ export default function LogMany() {
   // V4-EVENTSEL-005: DERIVED, not plain state — see the useState comment above.
   const notesOpen = showNotes || !!notes
   const committedCount = selection?.committedCount ?? 0
+  // BUG-LOGMANYSTALECONFIRM-001 — THE CONFIRM HOLD. `selection` is whatever the
+  // checklist last lifted, and it lifts one dry-run AFTER this page has already moved to a new
+  // scope, type or date. In between, the count and the exclusions are the PREVIOUS scope's: the
+  // review card read "Counting…" while this button stayed live on the old number, and a tap posted
+  // the new scope with the old exclude_plant_ids. For a "start with nothing selected" user that was
+  // an over-write — one planting picked in the Trough, then "All active", logged a second planting
+  // that was never picked and never shown. `previewFor` is what the lifted numbers were resolved
+  // for, so "not what is on screen" is a plain compare against this page's own state and needs no
+  // effect to catch up: the hold begins in the same render as the change, and ends only when the
+  // checklist lifts an answer (a preview, or a failure) for exactly these three values.
+  // A lift with no tag is not held: nothing has answered yet on this mount, its count is zero, and
+  // zero already disables the button — first load still reads "on 0", as it did.
+  const previewFor = selection?.previewFor
+  const counting = !!previewFor
+    && !(previewFor.scope === scope && previewFor.eventType === eventType && previewFor.eventDate === eventDate)
   // S4 — a PICK batch is committed as `{type:'ids'}`, so "in all active plantings" on the result
   // card would name the pool the picks were drawn FROM, not what was logged. The page's `scope`
   // state is still the pool (it drives the dry-run), so the label has to branch on the mode.
@@ -441,7 +456,9 @@ export default function LogMany() {
     : (locations.find(l => l.id === scope.location_id)?.name ?? 'zone')
 
   async function confirm() {
-    if (committedCount === 0 || saving) return
+    // `counting` is on the button's `disabled` too; it is repeated here because this is where the
+    // body is built, and a body may not pair `scope` with a selection resolved for a different one.
+    if (committedCount === 0 || saving || counting) return
     if (!idemRef.current) idemRef.current = genKey()
     // §4: persist the idempotency key immediately (a ref change won't re-run the persist effect). If
     // the POST fails and the user dismisses OR exits, re-opening restores THIS key so the retry is
@@ -662,11 +679,16 @@ export default function LogMany() {
   // whichever surface is showing, rather than authored twice — two copies of a commit button is two
   // places for the disabled rule to drift, and rendering both at once would put the same
   // `Log watered on 3` in the document twice.
+  // The hold wears the same disabled treatment as "nothing selected" and "saving" (native `disabled`,
+  // half opacity, default cursor) and the review card's own word, so the card and the button read
+  // the same thing for the same reason. The button is full-width with a fixed floor, so a shorter
+  // label moves nothing.
+  const confirmOff = saving || counting || committedCount === 0
   const primaryAction = (
-    <button type="button" onClick={confirm} disabled={saving || committedCount === 0}
-      style={{ ...btnPrimary, width: '100%', minHeight: 48, opacity: (saving || committedCount === 0) ? 0.5 : 1,
-        cursor: (saving || committedCount === 0) ? 'default' : 'pointer' }}>
-      {saving ? 'Logging…' : `Log ${verbLabel} on ${committedCount}`}
+    <button type="button" onClick={confirm} disabled={confirmOff}
+      style={{ ...btnPrimary, width: '100%', minHeight: 48, opacity: confirmOff ? 0.5 : 1,
+        cursor: confirmOff ? 'default' : 'pointer' }}>
+      {saving ? 'Logging…' : counting ? 'Counting…' : `Log ${verbLabel} on ${committedCount}`}
     </button>
   )
   return (
