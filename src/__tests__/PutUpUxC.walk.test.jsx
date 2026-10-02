@@ -122,7 +122,7 @@ describe('Raw · In oil, beside the discard choice', () => {
     fireEvent.click(screen.getByTestId('walk-method-hot_sauce'))
     openOptions()
     const dated = /^put up sometime in .+ · discard by around .+ · general figure: hot sauce, fridge$/
-    const none = /^put up sometime in .+ · no date — check it before using$/
+    const none = /^put up sometime in .+ · no date — no general figure for raw or in-oil food\. Set your own under Discard by\.$/
     expect(preview()).toMatch(dated)
     fireEvent.click(screen.getByTestId('walk-raw'))
     expect(screen.getByTestId('walk-raw').getAttribute('aria-pressed')).toBe('true')
@@ -256,7 +256,7 @@ describe('jarBody and previewLine, pure', () => {
 
   it('previewLine passes both to the engine: no worked-out date outside a freezer, the usual one inside', () => {
     const dated = 'put up Oct 1 · discard by Apr 1, 2027 · general figure: hot sauce, fridge'
-    const none = 'put up Oct 1 · no date — check it before using'
+    const none = 'put up Oct 1 · no date — no general figure for raw or in-oil food. Set your own under Discard by.'
     expect(previewLine({ method: 'hot_sauce', place: fridge, when, now: NOW })).toBe(dated)
     expect(previewLine({ method: 'hot_sauce', place: fridge, when, isRaw: false, inOil: false, now: NOW })).toBe(dated)
     expect(previewLine({ method: 'hot_sauce', place: fridge, when, isRaw: true, now: NOW })).toBe(none)
