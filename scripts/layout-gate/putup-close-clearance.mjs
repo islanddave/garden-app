@@ -170,6 +170,9 @@ const CASES = [
   // focused; and with the sitting's More open and Next time… focused. Same panel assertions.
   { name: 'putup',         viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 30, scope: 'going-now-view', primary: 'putup-finish', panel: { footer: 'putup-footer', focus: 'putup-row-0-ph-input' } } },
   { name: 'putup-sitting', viewports: [[426, 836], KEYBOARD_UP], expect: { ...NONE, goingCards: 4, sheet: true, band: false, minControls: 20, scope: 'going-now-view', primary: 'putup-finish', panel: { footer: 'putup-footer', focus: 'putup-nexttime' } } },
+  // R2 lane F additions go directly under this line
+  // R2 lane Df additions go directly under this line
+  // R2 lane P additions go directly under this line
 ]
 
 const failures = []

@@ -621,6 +621,20 @@ const LANE_SOURCES = [
   // lane D additions go directly under this line
   // lane E additions go directly under this line
   // lane S additions go directly under this line
+  // Put-Up R2a, the prep commit (every lane adds its files): the place kinds, the two shared controls the door and
+  // both Edit panels mount, and the completion line moved out of PantryView for its second host.
+  ['src/components/putup/placeKinds.js', 'export function placeKindLabel'],
+  ['src/components/pantry/WhereFromField.jsx', 'export function whereFromError'],
+  ['src/components/pantry/AmountField.jsx', 'export function parseAmount'],
+  ['src/components/pantry/CompletionLine.jsx', 'export default function CompletionLine'],
+  // R2 lane M additions go directly under this line
+  // R2 lane S additions go directly under this line
+  // R2 lane Dn additions go directly under this line
+  // R2 lane Df additions go directly under this line
+  // R2 lane P additions go directly under this line
+  // R2 lane E additions go directly under this line
+  // R2 lane K additions go directly under this line
+  // R2 lane F additions go directly under this line
 ]
 const ACID_LINE_NUMBERS = ['4.60', '4.6', '4.4', '4.2', '4.1', '4.0', '3.8', '3.3', '5.0']
 // Anchored so a dotted version string is not a false positive: `5.0.0-phrecord-20260904` is not the

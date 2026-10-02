@@ -240,6 +240,7 @@ const SHEET_SITES = [
   // row sheet (Went bad · Gave it away · Move it · Edit · Next time…).
   'components/pantry/PutSomethingUpSheet.jsx',
   'components/pantry/PantryRowSheet.jsx',
+  // R2 lane P additions go directly under this line
   // V5-SEEDSTAB-001 slice 2a — a MOVE, not an addition: the Sow sheet that pages/SowNow.jsx rendered
   // inline was extracted here so the seed's detail page opens the same sheet ("Sow this"). Same
   // <Sheet>, same props (armsBack, confirmOnDirty, dirty = the editor's signal, busy = the editor's

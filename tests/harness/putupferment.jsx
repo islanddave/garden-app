@@ -446,6 +446,7 @@ async function putItUp({ method, rows, sittingLines = [], made, mash, nextTime }
     if (mash) await type('putup-mash', String(mash))
     if (nextTime) await type('putup-nexttime', nextTime)
   }
+  // R2 lane F additions go directly under this line
   await checkSheet('putup-finish', 'Put it up')
   await tap('putup-finish')
   await waitFor(() => theBatch()?.closed_at, 'the put-up to finish the batch')

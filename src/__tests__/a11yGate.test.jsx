@@ -67,6 +67,12 @@ import BatchDetailView from '../components/putup/BatchDetailView.jsx'
 import LineSheet from '../components/putup/LineSheet.jsx'
 import StageEditSheet from '../components/putup/StageEditSheet.jsx'
 import ShuSheet from '../components/putup/ShuSheet.jsx'
+// R2 lane Dn additions go directly under this line
+// R2 lane Df additions go directly under this line
+// R2 lane P additions go directly under this line
+// R2 lane E additions go directly under this line
+// R2 lane K additions go directly under this line
+// R2 lane F additions go directly under this line
 
 afterEach(() => cleanup())
 
@@ -280,6 +286,12 @@ describe('a11y gate layer 2 — axe over the rendered smoke set (V4-A11YGATE-001
       expect(screen.queryByRole('dialog')).toBeNull()
       await expectNoA11yViolations(container, { label: 'MoveJarSheet', rules: NEW_RULES })
     })
+    // R2 lane Dn additions go directly under this line
+    // R2 lane Df additions go directly under this line
+    // R2 lane P additions go directly under this line
+    // R2 lane E additions go directly under this line
+    // R2 lane K additions go directly under this line
+    // R2 lane F additions go directly under this line
   })
 
   // axe going quiet proves the label is no longer PROHIBITED. It does not prove the label now

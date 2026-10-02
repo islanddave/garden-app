@@ -267,3 +267,6 @@ describe('jarBody and previewLine, pure', () => {
     expect(previewLine({ method: AS_IS, place: fridge, when, isRaw: true, inOil: true, now: NOW })).toBe('got it today · no discard date')
   })
 })
+
+// R2 lane Dn additions go directly under this line
+// R2 lane Df additions go directly under this line

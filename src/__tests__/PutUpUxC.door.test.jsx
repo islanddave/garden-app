@@ -376,3 +376,6 @@ describe('a draft stored by the client before this pass still restores', () => {
     expect(Object.keys(written).sort()).toEqual(Object.keys(STORED).sort())
   })
 })
+
+// R2 lane Dn additions go directly under this line
+// R2 lane Df additions go directly under this line

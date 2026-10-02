@@ -167,3 +167,6 @@ describe('Put-Up B′ — the Pantry components are clean (with nested-interacti
     await expectNoA11yViolations(r.container, { label: 'WalkPlace group', rules: NEW_RULES })
   })
 })
+
+// R2 lane Df additions go directly under this line
+// R2 lane P additions go directly under this line
