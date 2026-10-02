@@ -7,9 +7,12 @@
 // name, group_key, group_label, place: {id,label,kind}|null, where_from, from_garden, plant_id,
 // crop_type_slug, batch_id, stock_mode: 'counted'|'weighed'|'item', count_left, count_made, grams_left,
 // method, discard: {date, basis, status: 'ok'|'soon'|'past'|null}, acquired_at, created_by, updated_at }.
+// Put-Up R2a: every row also carries, AS STORED, quantity_value (a number or null), quantity_unit,
+// source_kind, source_label — a bought item's amount and where it is from. `where_from` stays the server's
+// derived words (the planting first, else the stored source).
 // The server sorts by group then name and classifies discard status; this module never re-decides
 // either (the same rule StoresView held for use_by_status: "the server classifies, this only selects").
-import { discardWords, parseYmd } from '../putup/jarWords.js'
+import { discardWords, parseYmd, qtyText } from '../putup/jarWords.js'
 // The engine's own list, imported (as putItUp.js imports the engine), so there is no copy to drift.
 import { HOUSE_SOURCED_SHELF_LIFE } from '../../../lambda/preservation/shelfLife.js'
 
@@ -92,16 +95,44 @@ export function leftWords(row) {
   return `${Number(n)} left`
 }
 
-// The row's detail line: place · where from · the batch it came from · what is left (· how long a bought
-// item has been had). `batchName` is the host's (the names read, pantryApi.listBatchNames): a jar whose
-// batch the host cannot name says nothing about it — never "from undefined".
+// ── A bought item's amount (Put-Up R2a) ──────────────────────────────────────────────────────────
+// "2 lb" · "1.5 qt" · "12 count" · "1 bag" · "2 bags" · "2 bunches". AS LOGGED: nothing decrements it, so
+// it is what was got, never what remains — it is never followed by "left", and it is not `leftWords`.
+// A unit written out as a WORD takes its plural when the number is not one; an abbreviation never does
+// (2 lb, 4 fl oz), and neither does "count" (12 count). The units are the server's stored singulars
+// (lambda/preservation/kitchenBatch.js KITCHEN_UNITS); one that is not in this list is said as it is stored.
+export const UNIT_PLURALS = Object.freeze({
+  cup: 'cups', pint: 'pints', clove: 'cloves', head: 'heads', bunch: 'bunches', pinch: 'pinches', peck: 'pecks',
+  bushel: 'bushels', 'half-bushel': 'half-bushels', flat: 'flats', jar: 'jars', bag: 'bags',
+})
+export function unitWords(unit, value) {
+  const u = String(unit ?? '')
+  return Number(value) === 1 ? u : (UNIT_PLURALS[u] ?? u)
+}
+// A bought item's amount as it is said, or null when it has none. A put-up's size is said in its own
+// words (jarWords.sizeWords, in the row sheet), so a put-up row answers null here.
+export function amountWords(row) {
+  if (!isItem(row)) return null
+  const v = row.quantity_value
+  const unit = typeof row.quantity_unit === 'string' ? row.quantity_unit.trim() : ''
+  if (v == null || v === '' || !unit) return null
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return `${qtyText(v)} ${unitWords(unit, n)}`
+}
+
+// The row's detail line: place · where from · the batch it came from · what is left, or a bought item's
+// amount (· how long a bought item has been had). `batchName` is the host's (the names read,
+// pantryApi.listBatchNames): a jar whose batch the host cannot name says nothing about it — never
+// "from undefined".
 // `finished` (Put-Up R2a): the row is one the person's own use just finished (finishedByUse) and is still
 // on screen for its Undo. What it says is left is the count from BEFORE that use, so it is not said: the
 // line under it ("used it up", "marked gone bad") is what is true now. Decided here, where a row is drawn,
 // and never in leftWords, which the name search and the Walk also print.
 export function detailWords(row, { now = new Date(), batchName = null, finished = false } = {}) {
   const batch = typeof batchName === 'string' && batchName.trim() ? `from ${batchName.trim()}` : null
-  return [inPlaceGroup(row) ? null : row?.place?.label, row?.where_from, batch, finished ? null : leftWords(row), ageWords(row, now)].filter(Boolean).join(' · ')
+  return [inPlaceGroup(row) ? null : row?.place?.label, row?.where_from, batch, finished ? null : leftWords(row), amountWords(row),
+    ageWords(row, now)].filter(Boolean).join(' · ')
 }
 
 // Is this row sitting under a heading that IS its place? Grouped By place the server's group_key is the
