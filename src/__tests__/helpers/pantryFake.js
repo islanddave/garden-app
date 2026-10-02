@@ -7,9 +7,42 @@
 // method, discard: {date, basis, status}, acquired_at, created_by, updated_at }.
 import { validateUse } from '../../../lambda/preservation/pantryUses.js'
 import { moveUseBy } from '../../../lambda/preservation/jarRoutes.js'
-import { projectRow } from '../../../lambda/preservation/jarRules.js'
+import { projectRow, validateCreate } from '../../../lambda/preservation/jarRules.js'
+import { validateItemCreate, validateItemPatch } from '../../../lambda/preservation/pantryItems.js'
 
 const USE_ID_STAND_IN = '00000000-0000-4000-8000-000000000000'
+
+// Put-Up R2a (prep) — CREATES ARE JUDGED, as R1 judged a use. POST /api/preservation goes through the Lambda's
+// own validateCreate; POST /api/pantry/items and PATCH /api/pantry/items/:id through validateItemCreate and
+// validateItemPatch. A body the server answers 400 to is a 400 here, with the server's sentence — so the
+// day a validator learns a new key (R2a's item amount and source), this fake takes it with no edit here.
+//
+// JAR_CREATE_COLUMNS: the columns the create writes — the INSERT's own column list in the POST block of
+// lambda/preservation/index.js (:750-757), in its order. validateCreate ALONE lets a misspelt key through
+// (`source_lable`, `is_Raw`): the server never reads it and writes the row without it. So a body key that
+// is not one of these columns is refused here, and a client test cannot be green on a field that is dropped.
+// src/__tests__/pantryFakeCreates.test.js reads that INSERT as text and reds when this list and it differ.
+export const JAR_CREATE_COLUMNS = Object.freeze([
+  'user_id', 'crop_type_slug', 'variety_id', 'plant_id', 'harvest_log_id',
+  'preserved_at', 'preserved_at_approx', 'method', 'method_other_text', 'quantity_value', 'quantity_unit',
+  'package_count', 'storage_location_id', 'use_by_target', 'remaining_count', 'notes', 'photo_id',
+  'source_kind', 'source_label',
+  'label', 'container_label', 'use_by_basis', 'preserved_at_precision', 'is_raw', 'in_oil', 'texture',
+  'ph_reading', 'ph_read_at', 'idempotency_key',
+  'shu_est_low', 'shu_est_high', 'shu_est_basis', 'cooked', 'remaining_amount',
+])
+const isBody = (b) => b != null && typeof b === 'object' && !Array.isArray(b)
+// The ONE stand-in, R1's: an id this fake or a fixture handed out is a short word ('loc-1'), not a uuid, so a
+// named id is judged as a well-formed one. Everything else in the body is judged exactly as it was sent.
+function withIdsStoodIn(body, keys) {
+  if (!isBody(body)) return body
+  const judged = { ...body }
+  for (const k of keys) if (typeof judged[k] === 'string' && judged[k] !== '') judged[k] = USE_ID_STAND_IN
+  return judged
+}
+function refuseIf(sentence) {
+  if (sentence) throw apiError(400, { error: sentence })
+}
 
 // POST /api/preservation/:id/move answers the MOVED ROW in the server's own shape (jarRules.projectRow),
 // with its date decided by the Lambda's OWN move rule (jarRoutes.moveUseBy) from the listed row's STORED
@@ -74,7 +107,13 @@ export function itemRow(o = {}) {
 // `batches` (optional, [{ id, label, … }]): what GET /api/kitchen-batches?state=all answers — the read the
 // Pantry names its jars' batches from — in the route's own envelope, { state: 'all', batches }. Left out,
 // every kitchen-batches GET answers as it always did.
-export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSearch = { plantings: [], put_ups: [] }, batches = null } = {}) {
+// `lineSearch` left out answers every arm of GET /api/kitchen-batches/line-search, each empty (R2a prep); one
+// handed in is answered whole, as it always was.
+export function pantryFetch({
+  rows = [], places = PLACES, overrides = {},
+  lineSearch = { plantings: [], put_ups: [], pantry_items: [], crops: [], varieties: [], hits: [], resolved_crop: null },
+  batches = null,
+} = {}) {
   const state = { rows: [...rows], calls: [], seq: 0 }
   const fn = async (path, options = {}) => {
     const method = options.method || 'GET'
@@ -91,6 +130,15 @@ export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSe
     }
     if (method === 'GET' && path === '/api/storage-locations') return places
     if (method === 'POST' && path === '/api/storage-locations') return { id: `loc-new-${++state.seq}`, label: body.label, kind: body.kind }
+    // R2a prep: a rename or re-kind answers the place with what was sent laid over it (the name trimmed, as
+    // the Lambda trims it); a place this fake does not list answers what was sent, under that id. A delete
+    // answers { ok: true }. Neither rewrites `places`: no route here rewrites what a read answers.
+    if (method === 'PUT' && /^\/api\/storage-locations\/[^/]+$/.test(path)) {
+      const id = decodeURIComponent(path.split('/').pop())
+      const place = places.find(p => String(p.id) === id) ?? { id }
+      return { ...place, ...(body?.label != null ? { label: String(body.label).trim() } : {}), ...(body?.kind != null ? { kind: body.kind } : {}) }
+    }
+    if (method === 'DELETE' && /^\/api\/storage-locations\/[^/]+$/.test(path)) return { ok: true }
     if (method === 'GET' && path.startsWith('/api/kitchen-batches/line-search')) return lineSearch
     if (method === 'GET' && batches && /^\/api\/kitchen-batches\?(.*&)?state=all(&|$)/.test(path)) return { state: 'all', batches }
     if (method === 'GET' && path.startsWith('/api/kitchen-batches')) return { state: 'going', batches: [] }
@@ -112,17 +160,27 @@ export function pantryFetch({ rows = [], places = PLACES, overrides = {}, lineSe
     if (method === 'POST' && /^\/api\/pantry\/uses\/[^/]+\/undo$/.test(path)) {
       return { use: { id: `use-${++state.seq}`, reverses_use_id: path.split('/')[4] }, jar: { id: 'x', remaining_count: 1 } }
     }
-    if (method === 'POST' && path === '/api/pantry/items') return { item: { id: `item-new-${++state.seq}`, ...body } }
-    if (method === 'PATCH' && path.startsWith('/api/pantry/items/')) return { item: { id: path.split('/').pop(), ...body } }
+    if (method === 'POST' && path === '/api/pantry/items') {
+      refuseIf(validateItemCreate(withIdsStoodIn(body, ['storage_location_id', 'plant_id'])))
+      return { item: { id: `item-new-${++state.seq}`, ...body } }
+    }
+    if (method === 'PATCH' && path.startsWith('/api/pantry/items/')) {
+      refuseIf(validateItemPatch(withIdsStoodIn(body, ['storage_location_id'])))
+      return { item: { id: path.split('/').pop(), ...body } }
+    }
     if (method === 'DELETE' && path.startsWith('/api/pantry/items/')) return { ok: true }
     if (method === 'POST' && path === '/api/preservation') {
+      refuseIf(validateCreate(body))
+      const unknown = Object.keys(body).filter(k => !JAR_CREATE_COLUMNS.includes(k))
+      refuseIf(unknown.length ? `unknown field(s): ${unknown.join(', ')}` : null)
       return { id: `jar-new-${++state.seq}`, ...body, use_by_target: '2027-09-30', use_by_basis: 'table' }
     }
     if (method === 'GET' && /^\/api\/preservation\/[^/]+$/.test(path)) {
       const id = path.split('/').pop()
       const r = state.rows.find(x => x.stock_id === id)
       return { id, label: r?.name ?? 'Jar', method: r?.method ?? 'whole_freeze', package_count: r?.count_made ?? 1, quantity_value: null,
-        quantity_unit: null, notes: null, use_by_target: null, storage_location_id: r?.place?.id ?? null }
+        quantity_unit: null, notes: null, use_by_target: null, storage_location_id: r?.place?.id ?? null,
+        plant_id: null, source_kind: null, source_label: null }
     }
     if (method === 'PATCH' && path.startsWith('/api/preservation/')) return { id: path.split('/')[3], ...body }
     if (method === 'POST' && /^\/api\/preservation\/[^/]+\/move$/.test(path)) return movedJar({ id: path.split('/')[3], body, state, places })
