@@ -44,9 +44,18 @@ const FLOOR = { taps: 20, typed: 8, checks: 10, writes: 6 }
 const failures = []
 const fail = m => failures.push(m)
 
+// A port something else is already serving is REFUSED, never measured through (OPS-PUTUPGATEPORTREFUSAL-001):
+// Vite without --strictPort moves to the next free port, and this script would then read whatever the
+// other process serves on the port it asked for — a sibling worktree's harness, or a sibling's Chrome.
+async function assertPortFree(url, what) {
+  try { await fetch(url, { signal: AbortSignal.timeout(1500) }) } catch { return }
+  throw new Error(`${what} port is already serving (${url}) — another harness or Chrome is running there. Set GATE_HARNESS_PORT / GATE_CDP_PORT to free ports; measuring through it would measure that process's page.`)
+}
+
 async function startHarness() {
   const bin = resolve(ROOT, 'node_modules/vite/bin/vite.js')
   if (!existsSync(bin)) throw new Error(`vite not installed at ${bin} — run npm ci --legacy-peer-deps`)
+  await assertPortFree(`http://localhost:${PORT}/`, 'harness')
   // Through vite's own bin, never `npx vite`: killing npx at teardown orphans the real server.
   const proc = spawn(process.execPath, [bin, '--config', 'tests/harness/vite.harness.config.mjs', '--port', String(PORT)], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
@@ -68,6 +77,7 @@ async function startHarness() {
 
 async function startChrome(userDataDir) {
   if (!existsSync(CHROME)) throw new Error(`Chrome not found at ${CHROME} — set CHROME_PATH`)
+  await assertPortFree(`http://127.0.0.1:${CDP_PORT}/json/version`, 'CDP')
   const proc = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${userDataDir}`,
     // Larger than the viewport under test: geometry is imposed by emulation (macOS floors a window at ~500px).
