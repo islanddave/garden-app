@@ -151,6 +151,9 @@ describe('Put it up — the unadded-line guard (D2)', () => {
     expect(line.textContent).toBe('Add “garlic” first — or clear it.')
     expect(line.textContent).toBe(addFirstWords('garlic'))
     expect(line.getAttribute('role')).toBe('alert')
+    // Brought into view with room above it: at the very top of the sheet it sat under the open row's sticky
+    // header (seen on the 426 px render). MUTATION: drop scrollMarginTop -> ''.
+    expect(line.style.scrollMarginTop).toBe('40px')
     expect(document.activeElement).toBe(screen.getByTestId(ROW_NAME))
     // Above the adder, not under it (under it is off screen with the keyboard up).
     expect(line.compareDocumentPosition(screen.getByTestId('putup-row-0-added-add')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()

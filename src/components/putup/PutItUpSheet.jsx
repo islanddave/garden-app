@@ -143,6 +143,10 @@ function ToggleChips({ label, options, value, onChange, disabled, idPrefix, hint
 // typed into the adder and not added is not a line, and neither commit would send it. The adder reports
 // that name (`onPending`); a commit that stopped for it bumps `stop`, which puts the cursor back in the
 // adder's name field under one line saying why.
+// Room kept above the guard's line when it is scrolled into view: an open row has a sticky one-line header
+// at the top of the sheet's scroller, and a line brought to the very top sat under it (seen on the 426 px
+// render at both heights: the one sentence saying why nothing saved was covered).
+const STOP_LINE_CLEAR_PX = 40
 function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, excludeJarIds, guard }) {
   const [open, setOpen] = useState(false)
   const boxRef = useRef(null)
@@ -182,7 +186,7 @@ function AddedLines({ lines, onChange, disabled, idPrefix, label, batchLines, ex
               screen with the keyboard up, and the sheet's own error line is a screen below. */}
           {stop > 0 && pending && (
             <div ref={stopLineRef} role="alert" data-testid={`${idPrefix}-add-first`}
-              style={{ margin: '0 0 6px', color: P.terra, fontSize: T.type.sm, fontWeight: 600 }}>
+              style={{ margin: '0 0 6px', color: P.terra, fontSize: T.type.sm, fontWeight: 600, scrollMarginTop: STOP_LINE_CLEAR_PX }}>
               {addFirstWords(pending)}
             </div>
           )}

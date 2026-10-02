@@ -18,6 +18,18 @@
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// The page's scroll manager, as PantryView sees it: the real module with a yield that is counted. Outside
+// the app's provider the real yield is a no-op, so nothing else in this file changes.
+// (One stable function, as the real hook's useCallback gives: a new one per render would re-run the effect.)
+const { yielded, countYield } = vi.hoisted(() => {
+  const yielded = []
+  return { yielded, countYield: () => { yielded.push('yield') } }
+})
+vi.mock('../hooks/usePageScrollManager.js', async (importActual) => ({
+  ...(await importActual()),
+  usePageScrollYield: () => countYield,
+}))
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { installStoragePolyfill } from './helpers/storagePolyfill.js'
 import { pantryFetch, jarRow, itemRow, PLACES } from './helpers/pantryFake.js'
@@ -294,12 +306,17 @@ describe('after the move — one line at the top of the Pantry, from the row the
     let inside = false
     const inFrame = []
     const scrolled = Element.prototype.scrollIntoView
-    Element.prototype.scrollIntoView = function scrollIntoView(arg) { inFrame.push(inside); return scrolled.call(this, arg) }
+    // …and the scroll manager is told BEFORE the scroll, once (a restore in flight would pull the line away).
+    // MUTATION: drop the yieldScroll() call -> `order` is ['scroll'] and this reds.
+    yielded.length = 0
+    const order = yielded
+    Element.prototype.scrollIntoView = function scrollIntoView(arg) { inFrame.push(inside); order.push('scroll'); return scrolled.call(this, arg) }
     vi.stubGlobal('requestAnimationFrame', (cb) => realFrame((t) => { inside = true; try { cb(t) } finally { inside = false } }))
     try {
       const { line } = await moveOnPantry(TYPED, 'id:loc-1')
       await waitFor(() => expect(seen).toEqual([['pantry-moved', { block: 'center' }]]))   // a frame after it appears
       expect(inFrame).toEqual([true])
+      expect(order).toEqual(['yield', 'scroll'])
       fireEvent.click(screen.getByTestId('pantry-row-open-put_up:jar-t'))      // any re-render of the list
       await new Promise(r => setTimeout(r, 50))
       expect(seen).toHaveLength(1)

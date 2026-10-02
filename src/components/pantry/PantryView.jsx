@@ -25,6 +25,7 @@ import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
 import { listPantry, listBatchNames, undoUse, patchPantryItem, useJar, deletePantryItem } from '../../lib/pantryApi.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
+import { usePageScrollYield } from '../../hooks/usePageScrollManager.js'
 import SegmentedControl from '../forms/SegmentedControl.jsx'
 import ErrorBanner from '../forms/ErrorBanner.jsx'
 import Button from '../forms/Button.jsx'
@@ -123,18 +124,21 @@ export default function PantryView({
   // the line is brought into view when it appears: it is the only place the move's result is said.
   // (A frame later, not in the commit: the row sheet has just closed, and a browser that restores the
   // page's scroll as the sheet's Back entry is popped must have finished doing so.)
+  // The page's scroll manager is told first (usePageScrollYield: a page about to scroll on purpose), so a
+  // restore still pulling toward where the row was stops instead of taking the line back off screen.
   const [moved, setMoved] = useState(null)
   const movedRef = useRef(null)
+  const yieldScroll = usePageScrollYield()
   useEffect(() => {
     if (!moved) return undefined
     const show = () => {
       const el = movedRef.current
-      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' })
+      if (el && typeof el.scrollIntoView === 'function') { yieldScroll(); el.scrollIntoView({ block: 'center' }) }
     }
     if (typeof requestAnimationFrame !== 'function') { show(); return undefined }
     const frame = requestAnimationFrame(show)
     return () => cancelAnimationFrame(frame)
-  }, [moved])
+  }, [moved, yieldScroll])
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
   const batches = useBatchNames({ fetch, rows })
 
