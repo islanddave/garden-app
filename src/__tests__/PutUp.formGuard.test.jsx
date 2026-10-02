@@ -440,6 +440,8 @@ const ROW = {
 // and (R2a) a date set by hand opens on "From the label", which shows the date field.
 const OTHER_ROW = { ...ROW, method: 'other', method_other_text: 'Vinegar dill pickles' }
 const DATED_ROW = { ...ROW, method: 'candy', use_by_target: '2027-01-01', use_by_basis: 'typed' }
+// R2a lane E: a row with no planting whose where-from carries a name, so the name field is on screen.
+const FARM_ROW = { ...ROW, source_kind: 'farm_stand', source_label: 'Warner Farms' }
 
 // B′ release 2: the editor is reached through the Pantry row's sheet (row → Edit), which reads the full
 // jar (GET /api/preservation/:id) before it opens the SAME editor; the list is GET /api/pantry.
@@ -489,6 +491,9 @@ describe('the jar editor (Pantry row → Edit) — holds the reload gate while d
     ['How was it put up?', ROW, () => screen.getByRole('combobox', { name: 'How was it put up?' }), 'dehydrate'],
     ['What method?', OTHER_ROW, () => screen.getByRole('textbox', { name: 'Method description' }), 'Fridge pickles'],
     ['Discard by', DATED_ROW, () => screen.getByLabelText('Discard date from the label'), '2027-02-01'],
+    // R2a lane E: a where-from change alone holds the reload gate (its name field; the chips are taps,
+    // proven in PutUpR2E.edit.test.jsx).
+    ['Made with produce from', FARM_ROW, () => screen.getByRole('textbox', { name: /^Which one\?/ }), 'Kimball Fruit Farm'],
     ['Notes', ROW, () => screen.getByRole('textbox', { name: 'Notes' }), 'two went to Jen'],
   ])('%s', async (_field, rec, control, changed) => {
     wireRow({ rec })
