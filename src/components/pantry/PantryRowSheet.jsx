@@ -1,14 +1,19 @@
 // src/components/pantry/PantryRowSheet.jsx
 // Put-Up B′ release 2 (V4 §2.5 "Row sheet", §3.2, §6.3) — what opens when a Pantry row is tapped.
 //
-// A PUT-UP (jar), in this order: Move it (the shipped move route) · Next time… (a batch jar writes the
-// batch's `noted` stage row; a batchless jar appends a dated line to its notes) · Gave it away (a use of a
-// count, default 1, fate given_away) · Went bad (fate discarded) · Edit (the shipped jar editor, with
-// Remove inside, two-step, refused with the server's reason) · then How it was made → (a put-up with no
+// A PUT-UP (jar), in this order: Move it… (the shipped move route) · Next time… (a batch jar writes the
+// batch's `noted` stage row; a batchless jar appends a dated line to its notes) · Gave it away… (a use of a
+// count, default 1, fate given_away) · Went bad (fate discarded) · Edit… (the shipped jar editor, with
+// Remove… inside, two-step, refused with the server's reason) · then How it was made → (a put-up with no
 // batch, only when the host hands in `onHowItWasMade` — the batch-builder lane wires it) or What went in →
 // (a put-up that came from a batch the host can name, only when the host hands in `onOpenBatch`).
-// A BOUGHT ITEM: Move it (PATCH storage_location_id) · Edit (name, when you got it, a discard date from
-// the label, notes; Remove inside, two-step). Used it up is the row's own inline action.
+// A BOUGHT ITEM: Move it… (PATCH storage_location_id) · Edit… (name, when you got it, a discard date from
+// the label, notes; Remove… inside, two-step). Used it up is the row's own inline action.
+//
+// WHAT A LABEL'S ENDING SAYS (Put-Up R2a, the ellipsis rule): "…" opens a step that asks before anything is
+// written; "→" leaves the sheet; a bare label acts at the tap. So Went bad reads bare only where it acts at
+// once, and the button INSIDE a panel (the Move panel's "Move it", the count panel's "Gave it away") is
+// bare: it is the tap that writes.
 //
 // WENT BAD (Put-Up UX pass R1). With several of a counted put-up left (pantryRows.severalLeft — the test
 // the row's own Used one hangs on) it reads "Went bad…" and opens the count panel at ALL that is left;
@@ -65,8 +70,10 @@ const actionBtn = {
   fontSize: T.type.base, fontWeight: 600, color: P.dark,
 }
 
-// "2 × 8 oz woozy · put up sometime in August · from Warner Farms · from Dark Green Zucchini" — the
-// shipped jar row's words, said once in the sheet from the jar's own record.
+// "2 × 8 oz woozy · put up sometime in August · produce from Warner Farms" — the shipped jar row's words,
+// said once in the sheet from the jar's own record. A put-up's source is where what WENT IN came from, not
+// where the jar came from, so a source that is not the garden reads "produce from <name>" (Put-Up R2a); a
+// planting reads "from <its name>", as it did.
 export function jarRecordWords(rec, now = new Date()) {
   const parts = []
   const size = sizeWords(rec)
@@ -75,7 +82,7 @@ export function jarRecordWords(rec, now = new Date()) {
     ? putUpDateWords(rec.preserved_at, rec.preserved_at_precision, { now })
     : putUpDateWords(rec.preserved_at, null, { approx: rec.preserved_at_approx === true, now })
   if (date) parts.push(date === 'not sure' ? 'put up: not sure' : `put up ${date}`)
-  if (rec.source_kind && rec.source_kind !== 'own_garden') parts.push(`from ${rec.source_label || PUTUP_SOURCE_LABELS[rec.source_kind] || rec.source_kind}`)
+  if (rec.source_kind && rec.source_kind !== 'own_garden') parts.push(`produce from ${rec.source_label || PUTUP_SOURCE_LABELS[rec.source_kind] || rec.source_kind}`)
   if (rec.planting_name) parts.push(`from ${rec.planting_name}${rec.planting_succession_order != null ? ` · wave ${rec.planting_succession_order}` : ''}`)
   return parts.join(' · ')
 }
@@ -191,12 +198,12 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
         {/* The order is the thumb's: what is done most and undone easily first, the discard below it. */}
         {panel === null && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <button type="button" style={actionBtn} disabled={busy} data-testid="row-move" onClick={() => openPanel('move')}>Move it</button>
+            <button type="button" style={actionBtn} disabled={busy} data-testid="row-move" onClick={() => openPanel('move')}>Move it…</button>
             {jar && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-next" onClick={() => openPanel('next')}>Next time…</button>
             )}
             {jar && (
-              <button type="button" style={actionBtn} disabled={busy} data-testid="row-give" onClick={() => openPanel('give')}>Gave it away</button>
+              <button type="button" style={actionBtn} disabled={busy} data-testid="row-give" onClick={() => openPanel('give')}>Gave it away…</button>
             )}
             {jar && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-went-bad"
@@ -204,7 +211,7 @@ function RowSheetOpen({ row, fetch, onClose, onUsed, onChanged, onMoved, JarEdit
                 {asksHowMany ? WENT_BAD_ASKS_LABEL : WENT_BAD_LABEL}
               </button>
             )}
-            <button type="button" style={actionBtn} disabled={busy} data-testid="row-edit" onClick={() => openPanel('edit')}>Edit</button>
+            <button type="button" style={actionBtn} disabled={busy} data-testid="row-edit" onClick={() => openPanel('edit')}>Edit…</button>
             {jar && typeof onHowItWasMade === 'function' && (typeof canHowItWasMade !== 'function' || canHowItWasMade(row)) && (
               <button type="button" style={actionBtn} disabled={busy} data-testid="row-how"
                 onClick={() => { onHowItWasMade(row); onClose?.() }}>How it was made →</button>
@@ -339,7 +346,7 @@ function NextTimePanel({ row, fetch, onCancel, onSaved }) {
 function RemoveTwoStep({ onRemove, busy, testId }) {
   const [confirm, setConfirm] = useState(false)
   if (!confirm) {
-    return <Button variant="secondary" data-testid={`${testId}-remove`} disabled={busy} onClick={() => setConfirm(true)}>Remove</Button>
+    return <Button variant="secondary" data-testid={`${testId}-remove`} disabled={busy} onClick={() => setConfirm(true)}>Remove…</Button>
   }
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>

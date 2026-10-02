@@ -6,7 +6,11 @@
 //     answered is still never repeated;
 //   • M6 — a row its own use FINISHED (used up, all of it gone bad, all of it given away) says no "N left"
 //     above its done line; a row a use left live still says it; and leftWords, which the name search and
-//     the Walk print, is untouched.
+//     the Walk print, is untouched;
+//   • M8, the ellipsis rule — "…" opens a step that asks before anything is written, "→" leaves the sheet,
+//     a bare label acts at the tap: the row sheet's action list word for word, Remove… inside Edit, and the
+//     buttons that DO write (the Move panel's own, the count panel's) bare;
+//   • N7 — a put-up's source that is not the garden reads "produce from <name>" in the row sheet.
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -25,7 +29,9 @@ vi.mock('../lib/api.js', () => {
 vi.mock('../context/AuthContext.jsx', () => ({ useAuthOptional: () => ({ user: { id: 'user_dave' } }) }))
 
 import PantryView from '../components/pantry/PantryView.jsx'
+import PantryRowSheet, { jarRecordWords } from '../components/pantry/PantryRowSheet.jsx'
 import { PantrySearchBox } from '../components/pantry/PantrySearch.jsx'
+import { MOVE_TITLE } from '../components/putup/MoveJarSheet.jsx'
 import { detailWords, leftWords, discardChip } from '../components/pantry/pantryRows.js'
 import { BATCH_NAMES_PATH } from '../lib/pantryApi.js'
 
@@ -217,5 +223,100 @@ describe('a row its use finished says no "N left" above its done line', () => {
     const BAG = { ...byKind, stock_mode: 'weighed', count_left: null, grams_left: 92 }
     expect(detailWords(BAG, { now: NOW })).toBe('Chest Freezer 1 · about 92 g left')
     expect(detailWords(BAG, { now: NOW, finished: true })).toBe('Chest Freezer 1')
+  })
+})
+
+// M8 (UX 3.6 item 3). Testids are unchanged; these are the words.
+describe('the row sheet\'s action list — what a label\'s ending says', () => {
+  const JarEditor = ({ rec, onCancel }) => (
+    <div data-testid="jar-editor"><span>{rec.label}</span><button type="button" onClick={onCancel}>Cancel</button></div>
+  )
+  function renderSheet(row, props = {}) {
+    const handlers = { onClose: vi.fn(), onUsed: vi.fn(), onChanged: vi.fn(), ...props }
+    render(<PantryRowSheet row={row} fetch={stableFetch.fn} JarEditor={JarEditor} now={NOW.getTime()} {...handlers} />)
+    return handlers
+  }
+  const actions = () => [...screen.getByTestId('row-sheet').querySelectorAll('button[data-testid^="row-"]')]
+    .map(b => [b.getAttribute('data-testid'), b.textContent])
+
+  it('a put-up with several left: every action that asks first ends in an ellipsis, each door in an arrow', () => {
+    renderSheet(REAPER, { onHowItWasMade: vi.fn(), onOpenBatch: vi.fn() })
+    expect(actions()).toEqual([
+      ['row-move', 'Move it…'], ['row-next', 'Next time…'], ['row-give', 'Gave it away…'], ['row-went-bad', 'Went bad…'],
+      ['row-edit', 'Edit…'], ['row-how', 'How it was made →'], ['row-what-went-in', 'What went in →'],
+    ])
+  })
+
+  it('a put-up with one left: Went bad acts at the tap, so it is the one bare label', () => {
+    renderSheet({ ...PLAIN, count_left: 1 })
+    expect(actions()).toEqual([
+      ['row-move', 'Move it…'], ['row-next', 'Next time…'], ['row-give', 'Gave it away…'], ['row-went-bad', 'Went bad'], ['row-edit', 'Edit…'],
+    ])
+  })
+
+  it('a bought item: Move it… and Edit…', () => {
+    renderSheet(MILK)
+    expect(actions()).toEqual([['row-move', 'Move it…'], ['row-edit', 'Edit…']])
+  })
+
+  it('the Move panel keeps "Move it" for its name and for its own button: that tap is the one that writes', async () => {
+    renderSheet(PLAIN)
+    fireEvent.click(screen.getByTestId('row-move'))
+    expect(MOVE_TITLE).toBe('Move it')
+    expect(screen.getByRole('group', { name: 'Move it' })).toBe(screen.getByTestId('move-panel'))
+    expect(screen.getByTestId('move-save').textContent).toBe('Move it')
+  })
+
+  it('the count panel\'s filled button is bare: "Gave it away" is the tap that writes', () => {
+    renderSheet(PLAIN)
+    fireEvent.click(screen.getByTestId('row-give'))
+    expect(screen.getByTestId('give-save').textContent).toBe('Gave it away')
+  })
+
+  it('inside Edit, Remove… asks first — on a put-up and on a bought item — and its second step is bare', async () => {
+    const jar = render(<PantryRowSheet row={PLAIN} fetch={stableFetch.fn} JarEditor={JarEditor} onClose={() => {}} />)
+    fireEvent.click(screen.getByTestId('row-edit'))
+    expect(screen.getByTestId('jar-edit-remove').textContent).toBe('Remove…')
+    fireEvent.click(screen.getByTestId('jar-edit-remove'))
+    expect(screen.getByTestId('jar-edit-remove-confirm').textContent).toBe('Yes, remove it')
+    expect(fake.calls('DELETE')).toHaveLength(0)
+    jar.unmount()
+
+    renderSheet(MILK)
+    fireEvent.click(screen.getByTestId('row-edit'))
+    expect(screen.getByTestId('item-edit-remove').textContent).toBe('Remove…')
+    fireEvent.click(screen.getByTestId('item-edit-remove'))
+    expect(screen.getByTestId('item-edit-remove-confirm').textContent).toBe('Yes, remove it')
+    expect(fake.calls('DELETE')).toHaveLength(0)
+  })
+})
+
+// N7 (ΔUX): on a put-up, where-from is where what WENT IN came from. "from Warner Farms" read as where the
+// jar came from.
+describe('the row sheet\'s record line — a put-up\'s source', () => {
+  const rec = (o) => ({ preserved_at: null, preserved_at_precision: null, source_kind: null, source_label: null, ...o })
+
+  it('a source that is not the garden reads "produce from <name>"', () => {
+    expect(jarRecordWords(rec({ source_kind: 'farm_stand', source_label: 'Warner Farms' }), NOW)).toBe('produce from Warner Farms')
+    expect(jarRecordWords(rec({ source_kind: 'other', source_label: 'Aunt May' }), NOW)).toBe('produce from Aunt May')
+  })
+
+  it('with no typed name it reads the kind\'s own word', () => {
+    expect(jarRecordWords(rec({ source_kind: 'store' }), NOW)).toBe('produce from Store')
+    expect(jarRecordWords(rec({ source_kind: 'gift' }), NOW)).toBe('produce from Gift')
+  })
+
+  it('the garden says nothing here, and a planting still reads "from <its name>"', () => {
+    expect(jarRecordWords(rec({ source_kind: 'own_garden' }), NOW)).toBe('')
+    expect(jarRecordWords(rec({ source_kind: 'own_garden', planting_name: 'Dark Green Zucchini', planting_succession_order: 2 }), NOW))
+      .toBe('from Dark Green Zucchini · wave 2')
+    expect(jarRecordWords(rec({ planting_name: 'Sungold' }), NOW)).toBe('from Sungold')
+  })
+
+  it('on the sheet: the record line of a jar from a farm stand', async () => {
+    wire({ overrides: { 'GET /api/preservation/jar-plain': () => ({ id: 'jar-plain', label: 'Pesto cubes', method: 'pesto', package_count: 3,
+      quantity_value: null, quantity_unit: null, notes: null, preserved_at: null, plant_id: null, source_kind: 'farm_stand', source_label: 'Warner Farms' }) } })
+    render(<PantryRowSheet row={PLAIN} fetch={stableFetch.fn} onClose={() => {}} now={NOW.getTime()} />)
+    await waitFor(() => expect(screen.getByTestId('row-sheet-record').textContent).toBe('produce from Warner Farms'))
   })
 })
