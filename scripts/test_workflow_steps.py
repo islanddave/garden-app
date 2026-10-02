@@ -976,6 +976,15 @@ def test_resolve_refuses_a_schema_gate_value_that_is_not_true_or_false(tmp_path,
     assert _errors(proc) == [f"::error::require_schema_audit must be true or false, got '{given}'"]
 
 
+@pytest.mark.parametrize("given", ["True", "TRUE", "yes", "1", "0", " true", "true ", "null"])
+def test_resolve_refuses_an_integration_gate_value_that_is_not_true_or_false(tmp_path, given):
+    """The preflight enforces integration-tests only when the value is exactly `true`, so anything else that
+    resolved would turn the gate advisory without anyone having asked for that."""
+    proc, out = _resolve(tmp_path, EVENT="workflow_dispatch", IN_REQINT=given)
+    assert proc.returncode == 1 and out == {}
+    assert _errors(proc) == [f"::error::require_integration must be true or false, got '{given}'"]
+
+
 # ── every step of every workflow: no exit-status read that errexit has already decided ─────────────────────
 # The steps above are guarded one at a time. This scans every bash/sh `run:` body for the shape itself, so a new
 # step cannot reintroduce it unnoticed. Under errexit, `$?` read on its own is always 0 (any non-zero ended the
