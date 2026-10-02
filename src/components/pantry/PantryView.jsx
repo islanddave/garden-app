@@ -20,10 +20,17 @@
 // tint (putup/soonTint.js — the sentence is unchanged, the tint and the weight are two more channels
 // beside its words); and an EMPTY Pantry offers the two ways to fill it, as secondary buttons, when the
 // page hands them in (`onPutSomethingUp`, `onWalkPlace`) — neither handed in, it is the one line it was.
+//
+// Put-Up R2a: "Edit places", a quiet door at the right end of the Group-by row, opens the Places sheet
+// (PlacesSheet.jsx). It is drawn once a read of the household's PLACES has answered with at least one —
+// read when the Pantry mounts — and never from the list's own groups: a place with nothing stored has no
+// group, and a mistyped place is usually exactly that. Until that read answers, and if it fails, there is
+// no door. The sheet is handed the UNFILTERED rows, so what it counts as stored in a place is not narrowed
+// by Use soon.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { P } from '../../lib/constants.js'
 import { T } from '../../lib/tokens.js'
-import { listPantry, listBatchNames, undoUse, patchPantryItem, useJar } from '../../lib/pantryApi.js'
+import { listPantry, listBatchNames, listPlaces, undoUse, patchPantryItem, useJar } from '../../lib/pantryApi.js'
 import { mintKey } from '../kitchen/idempotencyKey.js'
 import { usePageScrollYield } from '../../hooks/usePageScrollManager.js'
 import SegmentedControl from '../forms/SegmentedControl.jsx'
@@ -34,6 +41,7 @@ import { DOOR_CTA } from './putSomethingUp.js'
 import { WALK_TITLE } from './WalkPlace.jsx'
 import PantryRowSheet from './PantryRowSheet.jsx'
 import CompletionLine from './CompletionLine.jsx'
+import PlacesSheet, { EDIT_PLACES_LABEL } from './PlacesSheet.jsx'
 import RefusalLine, { refusalOf } from './RefusalLine.jsx'
 import {
   groupRows, rowKey, isItem, detailWords, discardChip, inlineAction, ACTION_LABELS, USED_ONE, USED_UP,
@@ -145,6 +153,17 @@ export default function PantryView({
   }, [moved, yieldScroll])
   const nowDate = useMemo(() => new Date(now ?? Date.now()), [now])
   const batches = useBatchNames({ fetch, rows })
+  // The household's places, for the Edit places door: null until the read answers (and after one that
+  // failed). The open sheet reads them again for itself and hands back what it knows.
+  const [places, setPlaces] = useState(null)
+  const [placesOpen, setPlacesOpen] = useState(false)
+  useEffect(() => {
+    let alive = true
+    Promise.resolve().then(() => listPlaces(fetch))
+      .then(r => { if (alive) setPlaces(r) })
+      .catch(() => { /* no door this visit; the Pantry is whole without it */ })
+    return () => { alive = false }
+  }, [fetch])
 
   const shown = useMemo(() => {
     const merged = mergeRecent(rows ?? [], recent)
@@ -186,8 +205,16 @@ export default function PantryView({
         </div>
       )}
 
-      <div style={{ marginBottom: T.space.md }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: T.space.md,
+        marginBottom: T.space.md }}>
         <SegmentedControl ariaLabel="Group by" small touch value={group} onChange={onGroupChange} options={GROUP_OPTIONS} />
+        {places != null && places.length > 0 && (
+          <button type="button" data-testid="pantry-edit-places" onClick={() => setPlacesOpen(true)}
+            style={{ minHeight: T.buttonMinHeight, background: 'none', border: 'none', padding: '0 2px', color: P.green, fontSize: T.type.sm,
+              fontWeight: 600, fontFamily: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>
+            {EDIT_PLACES_LABEL}
+          </button>
+        )}
       </div>
 
       {useSoonOnly && (
@@ -252,6 +279,9 @@ export default function PantryView({
         JarEditor={JarEditor} onHowItWasMade={onHowItWasMade} canHowItWasMade={canHowItWasMade}
         onOpenBatch={onOpenBatch} canOpenBatch={(r) => batchNameOf(batches, r) != null}
         onUsed={record} onChanged={() => onReload?.()} onMoved={(m) => setMoved(movedWords({ ...m, now: nowDate }))} />
+      {placesOpen && (
+        <PlacesSheet open fetch={fetch} rows={rows} onClose={() => setPlacesOpen(false)} onChanged={() => onReload?.()} onPlaces={setPlaces} />
+      )}
     </div>
   )
 }
