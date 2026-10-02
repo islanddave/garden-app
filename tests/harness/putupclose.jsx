@@ -409,10 +409,13 @@ async function run() {
     }
     click('door-place-id:loc-fridge'); await settle()
     click('door-method-hot_sauce'); await settle()
-    click('door-count-plus'); click('door-count-plus'); await settle()
+    // One tap, then a breath: two taps in one tick both read the state the first has not yet changed.
+    click('door-count-plus'); await settle()
+    click('door-count-plus'); await settle()
     click('door-size-open'); await settle()
     click('door-size-unit-more'); await settle()
-    click('door-size-unit-qt'); typeIn('door-size-value', '1'); await settle()
+    click('door-size-unit-qt'); await settle()
+    typeIn('door-size-value', '1'); await settle()
     click('door-more'); await settle()
     click('door-from'); await settle()
     click('door-source-more'); await settle()
