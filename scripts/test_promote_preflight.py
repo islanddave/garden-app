@@ -28,10 +28,17 @@ SHA = "0123456789abcdef0123456789abcdef01234567"
 JOB = "build-and-test"
 
 
+@pytest.fixture(autouse=True)
+def no_real_api(monkeypatch):
+    """No test here may reach api.github.com: unless a test serves its own stand-in, the API is a closed local port."""
+    monkeypatch.setenv("GITHUB_API_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("NO_PROXY", "*")
+
+
 def run(run_id, event="push", status="completed", conclusion="success", started="2026-10-02T10:00:00Z", attempt=1,
-        sha=SHA, created="2026-10-02T10:00:00Z"):
+        sha=SHA, created="2026-10-02T10:00:00Z", branch="dev"):
     return {"id": run_id, "event": event, "status": status, "conclusion": conclusion, "run_attempt": attempt,
-            "created_at": created, "run_started_at": started, "head_sha": sha}
+            "created_at": created, "run_started_at": started, "head_sha": sha, "head_branch": branch}
 
 
 def runs(*rows, total=None):
@@ -83,11 +90,13 @@ def test_no_runs_at_all_refuses():
 @pytest.mark.parametrize("status", ["queued", "in_progress", "waiting", "requested", "pending", None])
 def test_any_counted_run_not_completed_refuses_even_beside_a_green_one(status):
     """A re-run in flight is the same run id back in a non-completed state; a second run still going is another row."""
-    for listing in (runs(run(1, status=status, conclusion=None, attempt=2)),
-                    runs(run(2, status=status, conclusion=None, started="2026-10-02T11:00:00Z"), run(1)),
-                    runs(run(2, started="2026-10-02T11:00:00Z"), run(1, status=status, conclusion=None))):
-        result, reason, asked = verdict(listing)
-        assert (result, asked) == ("refuse", []) and "wait for it to finish" in reason, reason
+    for conclusion in (None, "success"):  # "success" = the earlier attempt's conclusion still showing
+        for listing in (runs(run(1, status=status, conclusion=conclusion, attempt=2)),
+                        runs(run(2, status=status, conclusion=conclusion, started="2026-10-02T11:00:00Z"), run(1)),
+                        runs(run(2, started="2026-10-02T11:00:00Z"), run(1, status=status, conclusion=conclusion))):
+            result, reason, asked = verdict(listing)
+            assert (result, asked) == ("refuse", []), reason
+            assert reason.startswith(("run 1 is ", "run 2 is ")), reason
 
 
 @pytest.mark.parametrize("conclusion", ["failure", "cancelled", "timed_out", "skipped", "neutral", "action_required",
@@ -97,7 +106,7 @@ def test_any_counted_run_that_did_not_succeed_refuses(conclusion):
                     runs(run(2, started="2026-10-02T11:00:00Z"), run(1, conclusion=conclusion)),
                     runs(run(2, conclusion=conclusion, started="2026-10-02T11:00:00Z"), run(1))):
         result, reason, asked = verdict(listing)
-        assert (result, asked) == ("refuse", []) and "concluded" in reason, reason
+        assert (result, asked) == ("refuse", []) and reason.startswith(("run 1 (push on dev", "run 2 (push on dev"))
 
 
 def test_an_older_run_re_run_to_failure_after_a_newer_success_refuses():
@@ -106,7 +115,28 @@ def test_an_older_run_re_run_to_failure_after_a_newer_success_refuses():
     listing = runs(run(2, created="2026-10-02T10:30:00Z", started="2026-10-02T11:00:00Z"),
                    run(1, conclusion="failure", attempt=2, started="2026-10-02T12:00:00Z"))
     result, reason, _ = verdict(listing)
-    assert (result, reason) == ("refuse", "run 1 (push, attempt 2) concluded failure")
+    assert (result, reason) == ("refuse", "run 1 (push on dev, attempt 2) concluded failure")
+
+
+def test_a_lane_branch_dispatch_on_the_same_commit_counts_for_and_against():
+    """integration-test.yml's real shape on a promoted commit: the dev push run and a lane's own workflow_dispatch
+    at the same SHA. The listing is by commit, not by branch, so both are runs on this commit."""
+    push = run(2, started="2026-10-02T11:00:00Z")
+    lane_red = run(1, event="workflow_dispatch", branch="lane/some-work", conclusion="failure")
+    lane_green = run(1, event="workflow_dispatch", branch="lane/some-work")
+    assert verdict(runs(push, lane_red))[:2] == \
+        ("refuse", "run 1 (workflow_dispatch on lane?some-work, attempt 1) concluded failure")
+    assert verdict(runs(push, lane_green)) == ("pass", "run 2 is the newest of 2 and its job build-and-test "
+                                                       "succeeded", [2])
+    later_lane = run(1, event="workflow_dispatch", branch="lane/some-work", started="2026-10-02T12:00:00Z")
+    assert verdict(runs(push, later_lane))[2] == [1]  # the later-started run's jobs are read, whichever event
+
+
+@pytest.mark.parametrize("order", [(3, 2, 1), (1, 2, 3), (2, 3, 1), (1, 3, 2)])
+def test_the_newest_of_three_is_found_wherever_it_is_listed(order):
+    starts = {1: "2026-10-02T10:00:00Z", 2: "2026-10-02T11:00:00Z", 3: "2026-10-02T12:00:00Z"}
+    listing = runs(*[run(i, started=starts[i]) for i in order])
+    assert verdict(listing) == ("pass", "run 3 is the newest of 3 and its job build-and-test succeeded", [3])
 
 
 def test_the_newest_run_is_chosen_by_run_started_at_not_by_created_at_or_listing_order():
@@ -138,6 +168,20 @@ def test_a_listing_that_does_not_fit_one_page_refuses():
     result, reason, _ = verdict(runs(run(1)), {1: jobs(GREEN_JOB, total=101)})
     assert (result, reason) == ("refuse", "the run 1 jobs listing holds 101 rows and one page shows 1: "
                                           "cannot see them all")
+
+
+@pytest.mark.parametrize("total", [0, -5])
+def test_a_listing_that_counts_fewer_rows_than_it_shows_is_unreadable(total):
+    assert verdict(runs(run(1), total=total))[:2] == ("unreadable", f"the runs listing says {total} rows and shows 1")
+    assert verdict(runs(run(1)), {1: jobs(GREEN_JOB, total=total)})[:2] == \
+        ("unreadable", f"the run 1 jobs listing says {total} rows and shows 1")
+
+
+def test_a_run_id_listed_twice_refuses():
+    """Two rows with one id would also slip past the equal-start check, which is keyed by id."""
+    listing = runs(run(1), run(1, conclusion="failure"))
+    assert verdict(listing)[:2] == ("refuse", "a run id appears twice in the listing")
+    assert verdict(runs(run(1), run(1)))[0] == "refuse"
 
 
 def test_a_counted_run_on_another_commit_refuses():
@@ -180,6 +224,20 @@ def test_a_green_run_whose_named_job_did_not_succeed_refuses(rows, why):
     assert verdict(runs(run(1)), {1: jobs(*rows)})[:2] == ("refuse", why)
 
 
+def test_an_unreadable_jobs_read_keeps_the_runs_it_had_already_read():
+    def read_jobs(_run_id):
+        raise pp.Unreadable("no usable answer from runs/1/jobs (HTTP 502)")
+
+    result, reason, kept = pp.evaluate(SHA, "ci.yml", JOB, runs(run(1)), read_jobs)
+    assert (result, reason, [r["id"] for r in kept]) == ("unreadable", "no usable answer from runs/1/jobs (HTTP 502)",
+                                                         [1])
+
+
+def test_the_wire_constants_are_the_ones_the_promote_jobs_time_budget_was_summed_from():
+    """promote-gate.yml's job comment adds these up against its 60-minute limit; change them together."""
+    assert (pp.ATTEMPTS, pp.PAUSE_S, pp.TIMEOUT_S, pp.PER_PAGE) == (3, 2, 10, 100)
+
+
 def test_the_job_is_matched_by_its_exact_name():
     listing, legs = runs(run(1)), {1: jobs(("integration-tests", "completed", "success"), GREEN_JOB)}
     assert verdict(listing, legs, job="integration-tests")[0] == "pass"
@@ -216,6 +274,8 @@ class _Api:
                     return
                 status, body = reply[0], reply[1].encode()
                 self.send_response(status)
+                for header, value in (reply[2].items() if reply[2:] and isinstance(reply[2], dict) else ()):
+                    self.send_header(header, value)
                 self.send_header("Content-Length", str(len(body) + (10 if reply[2:] == ("cut",) else 0)))
                 self.send_header("Connection", "close")
                 self.end_headers()
@@ -261,7 +321,8 @@ def test_main_reads_one_runs_listing_and_the_newest_runs_jobs_with_the_token(ser
     api = serve(ok(runs(run(41))), ok(jobs(GREEN_JOB)))
     code, out, pauses = main(monkeypatch=monkeypatch)
     assert (code, pauses) == (0, [])
-    assert out == "pass: run 41 is the newest of 1 and its job build-and-test succeeded | runs=41:push:a1:completed/success\n"
+    assert out == ("pass: run 41 is the newest of 1 and its job build-and-test succeeded | "
+                   "runs=41:push@dev:a1:completed/success\n")
     assert api.seen == [
         (f"/repos/owner/repo/actions/workflows/ci.yml/runs?head_sha={SHA}&per_page=100", "Bearer t0ken",
          "application/vnd.github+json"),
@@ -278,7 +339,8 @@ def test_main_sends_no_authorization_header_without_a_token(serve, monkeypatch):
 def test_main_exit_codes_and_the_single_line(serve, monkeypatch):
     serve(ok(runs(run(41, conclusion="failure"))))
     code, out, _ = main(monkeypatch=monkeypatch)
-    assert (code, out) == (1, "refuse: run 41 (push, attempt 1) concluded failure | runs=41:push:a1:completed/failure\n")
+    assert (code, out) == (1, "refuse: run 41 (push on dev, attempt 1) concluded failure | "
+                              "runs=41:push@dev:a1:completed/failure\n")
     serve(ok({"message": "Not Found"}))
     code, out, _ = main(monkeypatch=monkeypatch)
     assert (code, out) == (2, "unreadable: the runs listing has no workflow_runs and total_count | runs=none\n")
@@ -286,8 +348,10 @@ def test_main_exit_codes_and_the_single_line(serve, monkeypatch):
 
 @pytest.mark.parametrize("bad", [(502, "<html>Bad Gateway</html>"), (500, '{"message": "Server Error"}'),
                                  (429, '{"message": "rate limited"}'), (200, "<html>unicorn</html>"), (200, "[]"),
-                                 None, (200, json.dumps(runs(run(41))), "cut")],
-                         ids=["502", "500", "429", "200-not-json", "200-not-an-object", "no-reply", "cut-short"])
+                                 None, (200, json.dumps(runs(run(41))), "cut"), (200, ""), (200, "null"),
+                                 (200, "\ufeff" + json.dumps(runs(run(41))))],
+                         ids=["502", "500", "429", "200-not-json", "200-not-an-object", "no-reply", "cut-short",
+                              "200-empty", "200-null", "200-with-a-bom"])
 def test_an_unreadable_reply_is_asked_again_and_then_given_up_on(serve, monkeypatch, bad):
     api = serve(bad, ok(runs(run(41))), ok(jobs(GREEN_JOB)))
     code, _out, pauses = main(monkeypatch=monkeypatch)
@@ -298,7 +362,7 @@ def test_an_unreadable_reply_is_asked_again_and_then_given_up_on(serve, monkeypa
     assert out.startswith("unreadable: no usable answer from workflows/ci.yml/runs (") and out.endswith(" | runs=none\n")
 
 
-@pytest.mark.parametrize("status", [401, 403, 404, 422])
+@pytest.mark.parametrize("status", [304, 401, 403, 404, 422])
 def test_a_4xx_is_final_and_not_asked_again(serve, monkeypatch, status):
     api = serve((status, '{"message": "no"}'))
     code, out, pauses = main(monkeypatch=monkeypatch)
@@ -309,7 +373,28 @@ def test_a_4xx_is_final_and_not_asked_again(serve, monkeypatch, status):
 def test_an_unreadable_jobs_listing_is_unreadable_not_a_pass(serve, monkeypatch):
     serve(ok(runs(run(41))), (404, '{"message": "Not Found"}'))
     code, out, _ = main(monkeypatch=monkeypatch)
-    assert (code, out) == (2, "unreadable: no usable answer from runs/41/jobs (HTTP 404) | runs=none\n")
+    assert (code, out) == (2, "unreadable: no usable answer from runs/41/jobs (HTTP 404) | "
+                              "runs=41:push@dev:a1:completed/success\n")
+
+
+def test_a_redirect_is_final_and_the_token_goes_nowhere_else(serve, monkeypatch):
+    """urllib follows a redirect by default and re-sends Authorization to wherever it points."""
+    elsewhere = _Api([ok(runs(run(41))), ok(jobs(GREEN_JOB))])
+    try:
+        api = serve((302, "", {"Location": elsewhere.url + "/repos/owner/repo/actions/workflows/ci.yml/runs"}))
+        code, out, pauses = main(monkeypatch=monkeypatch)
+        assert (code, pauses, len(api.seen), elsewhere.seen) == (2, [], 1, [])
+        assert out == "unreadable: no usable answer from workflows/ci.yml/runs (HTTP 302) | runs=none\n"
+    finally:
+        elsewhere.server.shutdown()
+        elsewhere.server.server_close()
+
+
+def test_a_failure_inside_the_check_is_a_verdict_line_and_exit_2_not_a_traceback(serve, monkeypatch):
+    serve(ok(runs(run(41))), ok(jobs(GREEN_JOB)))
+    monkeypatch.setattr(pp, "evaluate", lambda *_args: (_ for _ in ()).throw(RecursionError("deep")))
+    code, out, _ = main(monkeypatch=monkeypatch)
+    assert (code, out) == (2, "unreadable: the check itself failed (RecursionError) | runs=none\n")
 
 
 @pytest.mark.parametrize("flag,value", [("--sha", "abc123"), ("--sha", SHA.upper()), ("--sha", SHA + "\n"),

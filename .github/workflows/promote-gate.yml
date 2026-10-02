@@ -71,9 +71,14 @@ name: promote-gate
 # staging-smoke conclusion blocks the promotion.
 #
 # PREFLIGHT — DUAL EVALUATION (promote-path plan A2.1, push 1, 2026-10-02). "CI green on dev_sha" is decided twice
-# and the promote needs BOTH, so a defect in the new check can refuse a promote but cannot admit one:
-#   * name-based (the check this workflow has always had): the first check-run named `build-and-test` in
-#     commits/<sha>/check-runs?filter=latest must conclude success. Its weakness: that listing is latest per RUN, not
+# and the promote needs BOTH, so a defect in the new check can refuse a promote but cannot admit one on any gate
+# the dispatcher has not opted out of. (One input passes now that used to end the step: require_integration=false
+# with an unreadable integration check-runs reply. It died on a bare errexit; it is now printed as advisory, which
+# is what that opt-out asks for.)
+#   * name-based (the check this workflow has always had): the first check-run named `build-and-test` on the
+#     commit must conclude success. The read is now filtered by check_name, because the unfiltered listing is one
+#     page of 100 and a commit that has already been through a promote carries more (v4.162.0's has 182), which
+#     made a re-dispatch of that commit read MISSING. Its remaining weakness: that listing is latest per RUN, not
 #     per name, and a job that `needs` other jobs has no check-run until they finish — so once ci.yml is split into
 #     parallel legs behind an aggregator, "first by name" can be an OLDER run's green while the current run is
 #     still going.
@@ -82,10 +87,15 @@ name: promote-gate
 #     run_started_at (a re-run keeps created_at), and the newest one's `build-and-test` job must be success.
 #     pull_request runs never count. The rules and exit codes are in that script's header.
 # Each pair is printed as one `::notice::preflight-dual ...` line carrying both verdicts, `agree=yes|no` and the run
-# ids, on every promote, refused or not: those lines are the record push 2 needs (remove the name-based check after
-# >= 5 promotes with both recorded and agreeing, before ci.yml is split). The two Actions reads use github.token
-# (this workflow's `actions` permission), not the bot token. Same pair for integration-test.yml / `integration-tests`;
-# with require_integration=false BOTH of its checks are advisory and printed, never refusing.
+# ids, on every promote, refused or not: those lines are the record push 2 needs. Push 2 removes the name-based
+# check before ci.yml is split, once >= 5 promotes are on record AND, over EVERY dispatched run since this landed
+# (refused ones above all: a green promote agrees by construction), no line reads name-based != success with
+# run-based-exit=0 unexplained. That is the direction push 2 would make unsafe. The two Actions reads use
+# github.token (this workflow's `actions` permission), not the bot token. Same pair for integration-test.yml /
+# `integration-tests`; with require_integration=false BOTH of its checks are advisory and printed, never refusing.
+# A run-based pass is exit 0 AND the script's own `pass: ` line; an exit 0 that says anything else is not a verdict.
+# NOT LIVE FOR A `ref: main` DISPATCH until a promote has carried this file to main: such a dispatch runs main's
+# copy of this workflow. Once main has this copy, `resolve` refuses it (step 0 above).
 #
 # INTEGRATION-TESTS GATE — SOAK CLOSED, DEFAULT FLIPPED TO true 2026-08-06. integration-tests (M5, 2026-07-24) rode
 # advisory (require_integration default false) through its soak window; the dispatch default is now `true`, so the
@@ -236,12 +246,15 @@ jobs:
       lambda_changed: ${{ steps.lam.outputs.changed }}
     # 60 (30 until 2026-07-23, then 50). Widened 2026-07-23 after two promotes fail-closed when a runner-queue backlog pushed the ~16min
     # staging pipeline past the old window (staging was green both times). Worst case for a promote that reaches
-    # the FF: ~1 min before the smoke gate (token, preflight, skew, checkout, psycopg2 install, and a schema gate
-    # that PASSES in seconds) + up to 34.5 min in the staging smoke gate (5 locate + 27.5 poll + 2 jobs read) +
-    # ~10 min FF and snap = ~45.5 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
+    # the FF: ~3.4 min before the smoke gate (token, checkout, a preflight that still PASSES at its slowest: ~2.4
+    # min = three curl reads at up to 15 s each + four script reads that each ride out two 10 s timeouts and two
+    # 2 s pauses; the rest ~1 min as before 2026-10-02: skew, psycopg2 install, and a schema gate that PASSES in
+    # seconds) + up to 34.5 min in the staging smoke gate (5 locate + 27.5 poll + 2 jobs read) + ~10 min FF and
+    # snap = ~48 min. The schema gate's hang bounds (install <=190 s, self-tests <=105 s, audit
     # <=250 s, about 9 min together) end in a refusal BEFORE the FF, so they stack with snap only on a
-    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~54.5
-    # min, which passed the old 50 and would have ended the job inside snap, after the FF (review MINOR 2) — main
+    # require_schema_audit=false dispatch. There, all of them at once on top of a maximal smoke wait come to ~57
+    # min (54.5 before the preflight's retries; the bot token minted in the first step lives 60, so do not raise
+    # this job's limit past it), which passed the old 50 and would have ended the job inside snap, after the FF (review MINOR 2) — main
     # moved, nothing deployed. 60 (was 50, raised 2026-09-24 with the schema gate) covers that worst case.
     timeout-minutes: 60
     steps:
@@ -268,6 +281,9 @@ jobs:
       # that cannot be parsed, or the script's exit 1 or 2, would end the step on the assignment with no annotation
       # and without the other check's verdict. scripts/test_workflow_steps.py runs this body the runner's way.
       - name: Preflight — dev unmoved + CI green on dev_sha (name-based and run-based, both required)
+        # Backstop only: every read inside is bounded (curl --max-time; the script's retries), and a reply that
+        # trickles past those bounds ends here, before the fast-forward.
+        timeout-minutes: 6
         env:
           GH_TOKEN: ${{ steps.bot.outputs.token }}
           ACTIONS_TOKEN: ${{ github.token }}
@@ -276,23 +292,37 @@ jobs:
           REQ_INT: ${{ needs.resolve.outputs.require_integration }}
         run: |
           set -euo pipefail
-          api() { curl -sS -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+          api() { curl -sS --connect-timeout 10 --max-time 15 -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"; }
+          # A value read from a reply is echoed into annotations, so it is used only when it is one plain word.
+          # Anything else (empty, a space, a colon, a line break) is UNREADABLE and cannot start a workflow command.
+          plain() { case "$1" in ''|*[!A-Za-z0-9_]*) echo UNREADABLE ;; *) echo "$1" ;; esac; }
           DEV_HEAD=$(api "https://api.github.com/repos/$REPO/git/refs/heads/dev" | python3 -c "import sys,json;print(json.load(sys.stdin)['object']['sha'])") || DEV_HEAD="UNREADABLE"
+          DEV_HEAD=$(plain "$DEV_HEAD")
+          if [ "$DEV_HEAD" = "UNREADABLE" ]; then
+            echo "::error::could not read dev's HEAD (the API reply was unreadable), so cannot tell whether dev moved. Dispatch again; main has NOT been touched."; exit 1
+          fi
           if [ "$DEV_HEAD" != "$DEV_SHA" ]; then
             echo "::error::dev moved since dispatch ($DEV_HEAD != $DEV_SHA)"; exit 1
           fi
-          # name-based: the first check-run with this name in the commit's latest-per-run listing.
-          by_name() { api "https://api.github.com/repos/$REPO/commits/$DEV_SHA/check-runs?filter=latest&per_page=100" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((c['conclusion'] for c in d['check_runs'] if c['name']==sys.argv[1]),'MISSING'))" "$1"; }
+          # name-based: the first check-run with this name on the commit. check_name keeps the listing to that name
+          # (a promoted commit carries more than one page of check-runs); the python still matches the name itself.
+          by_name() { api "https://api.github.com/repos/$REPO/commits/$DEV_SHA/check-runs?check_name=$1&filter=latest&per_page=100" | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((c['conclusion'] for c in d['check_runs'] if c['name']==sys.argv[1]),'MISSING'))" "$1"; }
           # run-based: scripts/promote-preflight.py over the workflow's runs on this commit (exit 0 pass, 1 refuse,
           # 2 unreadable; one line on stdout). Its two reads are Actions reads, made with github.token.
           by_runs() { GH_TOKEN="$ACTIONS_TOKEN" python3 scripts/promote-preflight.py --repo "$REPO" --sha "$DEV_SHA" --workflow "$1" --job "$2"; }
           agree() { if { [ "$1" = "success" ] && [ "$2" -eq 0 ]; } || { [ "$1" != "success" ] && [ "$2" -ne 0 ]; }; then echo yes; else echo no; fi; }
           CONC=$(by_name build-and-test) || CONC="UNREADABLE"
           INT=$(by_name integration-tests) || INT="UNREADABLE"
+          CONC=$(plain "$CONC"); INT=$(plain "$INT")
           CI_RC=0; CI_RUNS=$(by_runs ci.yml build-and-test) || CI_RC=$?
           INT_RC=0; INT_RUNS=$(by_runs integration-test.yml integration-tests) || INT_RC=$?
-          # One line each, whatever the script printed: a second line could otherwise start a workflow command.
-          CI_RUNS=${CI_RUNS//$'\n'/ }; INT_RUNS=${INT_RUNS//$'\n'/ }
+          # One line each, whatever the script printed: a second line (the runner ends a line on a lone CR too)
+          # could otherwise start a workflow command.
+          CI_RUNS=${CI_RUNS//[$'\r\n']/ }; INT_RUNS=${INT_RUNS//[$'\r\n']/ }
+          # Exit 0 passes only with the script's own `pass: ` line. An exit 0 that says anything else, or nothing,
+          # is not a verdict (97), and is recorded as one.
+          if [ "$CI_RC" -eq 0 ] && [ "${CI_RUNS#pass: }" = "$CI_RUNS" ]; then CI_RC=97; fi
+          if [ "$INT_RC" -eq 0 ] && [ "${INT_RUNS#pass: }" = "$INT_RUNS" ]; then INT_RC=97; fi
           echo "::notice::preflight-dual build-and-test on $DEV_SHA: name-based=$CONC run-based-exit=$CI_RC agree=$(agree "$CONC" "$CI_RC") | ${CI_RUNS:-no output}"
           echo "::notice::preflight-dual integration-tests on $DEV_SHA: name-based=$INT run-based-exit=$INT_RC agree=$(agree "$INT" "$INT_RC") require_integration=$REQ_INT | ${INT_RUNS:-no output}"
           REFUSED=0
@@ -673,7 +703,7 @@ jobs:
           role-to-assume: ${{ vars.SNAP_AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      # (The dev_sha checkout the decision script and snap.py read moved above the prod schema gate, 2026-09-24.)
+      # (The dev_sha checkout the decision script and snap.py read is the job's first step after the token.)
 
       # OPS-LAMSKIPVSMAIN-001 (2026-09-18) — decide whether the Lambdas need deploying by asking THE
       # RUNNING FUNCTIONS, not `main`.
