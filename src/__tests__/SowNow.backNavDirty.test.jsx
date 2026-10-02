@@ -114,7 +114,20 @@ async function renderSowNow() {
 
 // popstate needs >0ms to settle in jsdom; 50ms is the figure BackNav.history.test.jsx measured.
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 50)) })
-const backGesture = async () => { act(() => { window.history.back() }); await settle() }
+// BUG-BACKTWICECLOSESAPP-001: a Back the registry refuses or asks about is answered by a RETURN to the same
+// marker, history.go(1): a second traversal that lands two jsdom tasks and one popstate later. After the
+// sleep, wait until a whole round of turns passes with no further popstate, so `armed()` is read after the
+// marker has settled. Equal-delay timers run first-in first-out: this part is ordering, not a sleep.
+let pops = 0
+window.addEventListener('popstate', () => { pops += 1 })
+const markerSettled = () => act(async () => {
+  let seen
+  do {
+    seen = pops
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0))
+  } while (pops !== seen)
+})
+const backGesture = async () => { act(() => { window.history.back() }); await settle(); await markerSettled() }
 const esc = () => act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
 const armed = () => !!readMarker(window.history.state)
 

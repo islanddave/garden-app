@@ -50,10 +50,22 @@ window.addEventListener('popstate', () => { pops += 1 })
 
 // Defaults to the count read at call time, so a standalone `settle()` after an action that triggers
 // its own back() (the close-by-button case) still waits for that traversal rather than guessing.
+//
+// THE MARKER SETTLES ONE TRAVERSAL LATER (BUG-BACKTWICECLOSESAPP-001). A Back the registry refuses or
+// steps (busy, the discard question, a panel, a stacked close) is answered by a RETURN: history.go(1)
+// back onto the same marker, which jsdom runs as two more queued tasks and a second popstate. So the
+// drain is no longer one turn: wait until a whole round of turns passes with no further popstate.
+// Node runs equal-delay timers first-in first-out, so three turns always outlast the two the
+// traversal needs; this is ordering, not a sleep, and it holds under load.
+const TURNS = 3
 const settle = (from = pops) => act(async () => {
   const deadline = Date.now() + NET_MS
   while (pops === from && Date.now() < deadline) await new Promise((r) => setTimeout(r, 2))
-  await new Promise((r) => setTimeout(r, 0))   // drain anything the handler scheduled
+  let seen
+  do {
+    seen = pops
+    for (let i = 0; i < TURNS; i++) await new Promise((r) => setTimeout(r, 0))
+  } while (pops !== seen && Date.now() < deadline)
 })
 const back = async () => { const from = pops; act(() => { window.history.back() }); await settle(from) }
 const esc = () => act(() => { fireEvent.keyDown(document, { key: 'Escape' }) })
@@ -320,6 +332,93 @@ describe('backIntercept — the topmost handles its own sub-state first', () => 
     await back()
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(atFloor()).toBe(true)
+  })
+})
+
+// BUG-BACKTWICECLOSESAPP-001 — Back twice, with no touch between, closed the installed app.
+//
+// Chrome on Android marks an entry a page creates WITHOUT a tap as "skip on the Back button", and a
+// Back press itself clears whatever tap came before it. The registry used to answer four kinds of
+// Back by pushing a NEW marker from inside its popstate handler; that entry was skippable, so the
+// next Back had nowhere to go. jsdom has no such rule, so "the surface is still armed" stayed green
+// the whole time the phone was closing the app. What jsdom CAN show is the cause: was an entry
+// created? These four pin that none is, and that the marker under the cursor afterwards is the SAME
+// one (same seq), reached again rather than replaced.
+describe('BUG-BACKTWICECLOSESAPP-001 — a Back the registry answers creates NO history entry', () => {
+  const seqNow = () => readMarker(window.history.state)?.seq ?? null
+  // One Back, with history.pushState watched from just before the press until the marker has settled.
+  async function watchedBack() {
+    const before = seqNow()
+    const spy = vi.spyOn(window.history, 'pushState')
+    await back()
+    const pushes = spy.mock.calls.length
+    spy.mockRestore()
+    return { pushes, before, after: seqNow() }
+  }
+
+  it('BLOCKED (a write in flight): the refusal pushes nothing and stands on the same marker', async () => {
+    const onClose = vi.fn()
+    render(
+      <DismissRegistryProvider>
+        <Sheet open onClose={onClose} title="Saving" busy armsBack><button>x</button></Sheet>
+      </DismissRegistryProvider>
+    )
+    const r = await watchedBack()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(r.before, 'SELF-TEST: the sheet was armed before the Back').not.toBeNull()
+    expect(r.pushes, 'a history entry was created inside the Back').toBe(0)
+    expect(r.after, 'not standing on the same marker after the Back').toBe(r.before)
+  })
+
+  it('CONFIRM (unsaved typing): raising the question pushes nothing and stands on the same marker', async () => {
+    const onClose = vi.fn()
+    render(
+      <DismissRegistryProvider>
+        <Sheet open onClose={onClose} title="Form" dirty confirmOnDirty armsBack><button>x</button></Sheet>
+      </DismissRegistryProvider>
+    )
+    const r = await watchedBack()
+    expect(screen.getByTestId('confirm-sheet')).toBeTruthy()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(r.before, 'SELF-TEST: the sheet was armed before the Back').not.toBeNull()
+    expect(r.pushes, 'a history entry was created inside the Back').toBe(0)
+    expect(r.after, 'not standing on the same marker after the Back').toBe(r.before)
+  })
+
+  it('INTERCEPT (a panel steps back): the step pushes nothing and stands on the same marker', async () => {
+    const onClose = vi.fn()
+    const intercept = vi.fn(() => true)
+    render(
+      <DismissRegistryProvider>
+        <Sheet open onClose={onClose} title="Row" armsBack backIntercept={intercept}><button>x</button></Sheet>
+      </DismissRegistryProvider>
+    )
+    const r = await watchedBack()
+    expect(intercept).toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(r.before, 'SELF-TEST: the sheet was armed before the Back').not.toBeNull()
+    expect(r.pushes, 'a history entry was created inside the Back').toBe(0)
+    expect(r.after, 'not standing on the same marker after the Back').toBe(r.before)
+  })
+
+  it('STACKED (the top surface closes, one stays open): the close pushes nothing and stands on the same marker', async () => {
+    const onSheet = vi.fn(); const onDialog = vi.fn()
+    function Host() {
+      const [dialog, setDialog] = useState(true)
+      return (
+        <DismissRegistryProvider>
+          <Sheet open onClose={onSheet} title="Sow" armsBack><button>x</button></Sheet>
+          <BareDialog open={dialog} onClose={() => { onDialog(); setDialog(false) }} />
+        </DismissRegistryProvider>
+      )
+    }
+    render(<Host />)
+    const r = await watchedBack()
+    expect(onDialog).toHaveBeenCalledTimes(1)
+    expect(onSheet).not.toHaveBeenCalled()
+    expect(r.before, 'SELF-TEST: the sheet was armed before the Back').not.toBeNull()
+    expect(r.pushes, 'a history entry was created inside the Back').toBe(0)
+    expect(r.after, 'not standing on the same marker after the Back').toBe(r.before)
   })
 })
 
