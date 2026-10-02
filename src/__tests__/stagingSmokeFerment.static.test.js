@@ -40,7 +40,9 @@ describe('block P is present, after block N, and closed by the next block headin
     'p3-legacy-stale-refused', 'p3-mark-used', 'p3-note-edit', 'p4-weighed-draw', 'p4-draw-to-zero', 'p5-take-out', 'p5-restore',
     'p6-stage-edit', 'p7-shu-save', 'p8-putup-row', 'p8-undo', 'p9-batch-remove', 'l058-sweep',
     // Put-Up UX pass R1
-    'p1b-clear-table', 'p1b-clear-recipe', 'p10-raw-create'])('asserts %s', (tag) => {
+    'p1b-clear-table', 'p1b-clear-recipe', 'p10-raw-create',
+    // Put-Up R2a (lane S): a batch made from a jar that already exists (pinned in PutUpR2S.smoke.static.test.js)
+    'p11-from-jars', 'p11-replay'])('asserts %s', (tag) => {
     expect(BLOCK).toContain(`"${tag}"`)
   })
 })
