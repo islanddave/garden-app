@@ -177,6 +177,13 @@ describe('two paths — the server\'s `hits`, or the arms of an answer without t
     expect(list()).toBeNull()
   })
 
+  it('a hit sent twice is one row, where it first stood', async () => {
+    const a = answerFor('blue', { plantings: [planting()], put_ups: [jar()], crops: [crop()] })
+    mount({ answer: { ...a, hits: [...a.hits, ...a.hits] } })
+    await type('blue')
+    expect(rowIds()).toEqual(['t-hit-planting:p-1', 't-hit-put_up:jar-1', 't-hit-crop:blueberry'])
+  })
+
   it('a hit of a kind the field does not know, or with no id, is not a row', async () => {
     const a = answerFor('blue', { plantings: [planting()] })
     mount({ answer: { ...a, hits: [{ kind: 'recipe', key: 'recipe:r1', label: 'Blue sauce' }, { kind: 'put_up', key: 'jar:x', label: 'No id' }, ...a.hits, null] } })
