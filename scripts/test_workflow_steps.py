@@ -633,18 +633,23 @@ CREATED, DELETED = (201, "{}"), (204, "")
 REHEARSAL_NAMES = ["DEVB=revert-rehearsal-dev-99", "MAINB=revert-rehearsal-main-99", "TV=v0.0.0", "PV=v0.0.7"]
 
 
-def _run_rehearsal_setup(tmp_path, api):
-    """Returns (proc, the lines the step wrote to GITHUB_ENV). No trigger file, so MODE and both versions default."""
-    wf, step = _step(*REHEARSAL_SETUP)
+def _run_rehearsal_step(tmp_path, api, step, **env_extra):
     env = _api_env(tmp_path, api)
     (tmp_path / "scripts").mkdir()
     shutil.copy(os.path.join(HERE, "gh_api_check.py"), tmp_path / "scripts")
-    exported = tmp_path / "github_env"
-    env.update(TARGET_MAIN_SHA=wf["env"]["TARGET_MAIN_SHA"], GITHUB_ENV=str(exported))
+    env.update(env_extra)
     body = step["run"].replace("/tmp/", f"{tmp_path}/tmp/")
     body = body.replace("${{ github.run_number }}", "7").replace("${{ github.run_id }}", "99")
     assert "${{" not in body, "the body holds an expression this harness does not substitute"
-    proc = _run_as_runner(tmp_path, body, env)
+    return _run_as_runner(tmp_path, body, env)
+
+
+def _run_rehearsal_setup(tmp_path, api):
+    """Returns (proc, the lines the step wrote to GITHUB_ENV). No trigger file, so MODE and both versions default."""
+    wf, step = _step(*REHEARSAL_SETUP)
+    exported = tmp_path / "github_env"
+    proc = _run_rehearsal_step(tmp_path, api, step, TARGET_MAIN_SHA=wf["env"]["TARGET_MAIN_SHA"],
+                               GITHUB_ENV=str(exported))
     return proc, (exported.read_text().splitlines() if exported.exists() else [])
 
 
@@ -683,6 +688,58 @@ def test_rehearsal_setup_that_cannot_read_dev_makes_and_names_nothing(tmp_path, 
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert len(_errors(proc)) == 1 and "-> HTTP 401: Bad credentials" in _errors(proc)[0]
     assert exported == [] and api.reads(NEW_REF) == api.reads(OLD_TAG) == 0
+
+
+# snap-rehearsal.yml's last step deletes the v0.0.0 tag snap.py made: the same ruleset lets only garden-bot delete a
+# v* tag, so one left behind could not be removed by hand. The step answers for the outcome, not the DELETE's status.
+
+SNAP_TEARDOWN = ("snap-rehearsal.yml", "rehearse", "Teardown - delete the rehearsal tag")
+TAG_LOOKUP = r"^GET .*/git/ref/tags/v0\.0\.0$"
+GONE = _json({"message": "Not Found"}, 404)
+STILL_THERE = _json({"ref": "refs/tags/v0.0.0", "object": {"type": "tag", "sha": "a" * 40}})
+
+
+def _run_snap_teardown(tmp_path, api, **env_extra):
+    wf, step = _step(*SNAP_TEARDOWN)
+    assert step["if"] == "always()"
+    env = dict(SNAP_VERSION=wf["jobs"]["rehearse"]["env"]["SNAP_VERSION"], GITHUB_REPOSITORY="owner/repo")
+    return _run_rehearsal_step(tmp_path, api, step, **{**env, **env_extra})
+
+
+@pytest.mark.parametrize("deleted", [DELETED, _json({"message": "Reference does not exist"}, 422), GONE],
+                         ids=["deleted", "absent-422", "absent-404"])
+def test_snap_teardown_passes_when_the_rehearsal_tag_is_gone(tmp_path, github, deleted):
+    api = github({OLD_TAG: [deleted], TAG_LOOKUP: [GONE]})
+    proc = _run_snap_teardown(tmp_path, api)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _errors(proc) == [] and (api.reads(OLD_TAG), api.reads(TAG_LOOKUP)) == (1, 1)
+
+
+@pytest.mark.parametrize("deleted,lookup", [
+    (_json({"message": "Repository rule violations found"}, 422), STILL_THERE),
+    (DELETED, STILL_THERE),  # a 204 that did not take: the lookup, not the DELETE, is what the step believes
+    (_json({"message": "Bad credentials"}, 401), _json({"message": "Bad credentials"}, 401)),
+], ids=["delete-refused", "delete-did-not-take", "dead-credential"])
+def test_snap_teardown_fails_when_it_cannot_show_the_rehearsal_tag_is_gone(tmp_path, github, deleted, lookup):
+    api = github({OLD_TAG: [deleted], TAG_LOOKUP: [lookup]})
+    proc = _run_snap_teardown(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    errors = _errors(proc)
+    assert len(errors) == 1, errors
+    assert errors[0].startswith(f"::error::rehearsal tag v0.0.0 is not confirmed gone after teardown (lookup answered "
+                                f"HTTP {lookup[0]};")
+    if deleted[0] != 204:  # the refusal's own words are in the log, not thrown away
+        said = json.loads(deleted[1])["message"]
+        assert any(a.startswith("::warning::DELETE ") and said in a for a in _annotations(proc))
+
+
+@pytest.mark.parametrize("version", ["v4.169.0", "v0.1.0", "promote-v0.0.0", ""])
+def test_snap_teardown_refuses_any_tag_that_is_not_a_rehearsal_tag(tmp_path, github, version):
+    api = github({r".": [DELETED]})
+    proc = _run_snap_teardown(tmp_path, api, SNAP_VERSION=version)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert len(_errors(proc)) == 1 and "refusing to delete tag" in _errors(proc)[0]
+    assert api.log == []
 
 
 # ── promote-gate.yml: the prod schema gate (OPS-PROMOTESCHEMAGATE-001)──────────────────────────────────────────

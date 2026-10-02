@@ -16,7 +16,8 @@ name: snap rehearsal (staging)
 # token that no longer exists (see ruleset-watchdog.yml). A fresh PAT would not have revived this
 # either: since 2026-10-02 ruleset release-tag-integrity (20140435) carries `creation` on
 # refs/tags/v* with garden-bot as its only bypass actor, so no user token can create v0.0.0.
-# The same rule lets only garden-bot DELETE that tag, and this workflow does not delete it.
+# The same rule lets only garden-bot DELETE that tag, so nobody can remove it by hand afterwards:
+# the last step deletes it, as the bot.
 
 on:
   push:
@@ -57,7 +58,7 @@ jobs:
         with:
           ref: dev
 
-      # DIAGNOSTICS (2026-09-10). This workflow makes no curl calls of its own --
+      # DIAGNOSTICS (2026-09-10). The rehearsal itself makes no curl calls --
       # its GitHub API traffic is inside scripts/snap.py, which already reports
       # `{status}: {body}` on every failure. What it lacked was any signal about
       # the CREDENTIAL itself: a dead secret made revert-rehearsal die with a bare
@@ -137,3 +138,38 @@ jobs:
         run: |
           export PATH="/usr/lib/postgresql/17/bin:$PATH"
           python3 scripts/snap.py
+
+      # Only garden-bot may delete refs/tags/v* (release-tag-integrity), so a
+      # rehearsal tag left here could not be removed by hand. Runs on failure
+      # too: the tag is snap.py's first write, so a failed run has usually made it.
+      # The name guard keeps this step off every real release tag whatever
+      # SNAP_VERSION is set to. What it answers for is the OUTCOME: the DELETE
+      # only warns (an absent tag is not a failure), then the tag is looked up
+      # and anything but "not there" fails the step. revert-rehearsal.yml
+      # recreates the tag itself, so nothing depends on it surviving.
+      - name: Teardown - delete the rehearsal tag
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: |
+          set -euo pipefail
+          case "$SNAP_VERSION" in
+            v0.0.*) ;;
+            *) echo "::error::refusing to delete tag '$SNAP_VERSION' - this teardown only removes v0.0.* rehearsal tags"; exit 1 ;;
+          esac
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          ghcurl() {
+            curl -sS -o /tmp/gh-body.json -w "%{http_code}" \
+              -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" "$@"
+          }
+          CODE=$(ghcurl -X DELETE "$API/git/refs/tags/$SNAP_VERSION")
+          python3 scripts/gh_api_check.py status --endpoint "$API/git/refs/tags/$SNAP_VERSION" \
+            --method DELETE --status "$CODE" --body-file /tmp/gh-body.json --ok 204 --severity warning
+          CODE=$(ghcurl "$API/git/ref/tags/$SNAP_VERSION")
+          if [ "$CODE" != "404" ]; then
+            python3 scripts/gh_api_check.py status --endpoint "$API/git/ref/tags/$SNAP_VERSION" \
+              --method GET --status "$CODE" --body-file /tmp/gh-body.json --ok 404 --severity notice
+            echo "::error::rehearsal tag $SNAP_VERSION is not confirmed gone after teardown (lookup answered HTTP $CODE; 200 means it is still on origin). Only garden-bot can delete it: re-run this workflow, or let revert-rehearsal's teardown remove it."
+            exit 1
+          fi
+          echo "rehearsal tag $SNAP_VERSION is not on origin"

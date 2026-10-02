@@ -309,8 +309,8 @@ def test_rehearsal_mints_garden_bot_the_way_promote_gate_does(name):
     assert "continue-on-error" not in mint and "if" not in mint
 
 
-@pytest.mark.parametrize("name", ["revert-rehearsal.yml", "snap-rehearsal.yml"])
-def test_every_rehearsal_step_that_talks_to_github_holds_the_bot_token(name):
+@pytest.mark.parametrize("name,talking", [("revert-rehearsal.yml", 3), ("snap-rehearsal.yml", 4)])
+def test_every_rehearsal_step_that_talks_to_github_holds_the_bot_token(name, talking):
     """One source for GH_TOKEN. A job-level or secret-backed copy is how the
     dead PAT stayed wired in; a probe on one credential while snap.py runs on
     another proves nothing."""
@@ -322,7 +322,7 @@ def test_every_rehearsal_step_that_talks_to_github_holds_the_bot_token(name):
     minted_at = next(i for i, s in enumerate(steps) if s.get("id") == "bot")
     talkers = [i for i, s in enumerate(steps) if TALKS_TO_GITHUB.search(s.get("run", ""))]
     holders = [i for i, s in enumerate(steps) if "GH_TOKEN" in (s.get("env") or {})]
-    assert len(talkers) == 3 and holders == talkers
+    assert len(talkers) == talking and holders == talkers
     for i in holders:
         assert steps[i]["env"]["GH_TOKEN"] == BOT_TOKEN, steps[i].get("name")
         assert i > minted_at, steps[i].get("name")
