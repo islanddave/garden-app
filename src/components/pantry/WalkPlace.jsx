@@ -235,7 +235,7 @@ export default function WalkPlace({ JarEditor = null, onHowItWasMade = null, can
             <button type="button" onClick={exitWalk} data-testid="putup-walk-exit"
               style={{ background: 'none', border: `1px solid ${P.border}`, borderRadius: T.radiusButton, color: P.mid, fontSize: '0.78rem',
                 fontWeight: 700, fontFamily: 'inherit', padding: '6px 12px', minHeight: 48, cursor: 'pointer', flexShrink: 0 }}>
-              Done
+              End the walk
             </button>
           </div>
         </div>

@@ -9,9 +9,9 @@
 // hold none of the eleven words, so nothing has to be cut out of the sweep to make it pass.
 //
 // OUT OF THESE SWEEPS, and said plainly: (1) the jar's Edit panel is the page's RowEditor, in PutUp.jsx,
-// frozen in this pass — the row sheet is swept with the panel's own frame around a stand-in editor;
-// (2) the Walk's fixed band (outside the group) holds an exit button that reads "Done", shipped with the
-// freezer walk — it is not this lane's copy and is reported, not swept.
+// frozen in this pass — the row sheet is swept with the panel's own frame around a stand-in editor.
+// The Walk's fixed band (outside the group) is swept too: its exit read "Done", a banned word shipped with
+// the freezer walk, until the train's render review renamed it "End the walk" (it pairs with "Start the walk").
 // CI LANE: `npm test` plus the blocking TZ re-run. No jest-dom (L-182).
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -405,9 +405,11 @@ describe('a Walk group, its options open', () => {
     expectClean(walkWords(), 'Walk group, a bought item')
   })
 
-  it('the band\'s exit button is outside the group — the one string on this page the sweep does not own', async () => {
+  it('the band\'s exit button is outside the group, says what it does, and the band holds no banned word', async () => {
     await startWalk()
     expect(screen.getByTestId('putup-walk-group').contains(screen.getByTestId('putup-walk-exit'))).toBe(false)
     expect(screen.getByTestId('putup-walk-band').contains(screen.getByTestId('putup-walk-exit'))).toBe(true)
+    expect(screen.getByTestId('putup-walk-exit').textContent.trim()).toBe('End the walk')
+    expectClean(screen.getByTestId('putup-walk-band').textContent, 'Walk band')
   })
 })
