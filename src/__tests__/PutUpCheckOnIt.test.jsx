@@ -425,6 +425,9 @@ describe('Check on it — Android Back (popstate)', () => {
     expect(sheet()).toBeTruthy()
     await act(async () => { settleWrite({}) })
     await waitFor(() => expect(sheet()).toBeNull())
+    // The end of the busy story (QA M-d): the save lands, the sheet closes, and the marker the refusal
+    // returned to goes with it. One left under the cursor here is a dead press on the next Back.
+    await waitFor(() => expect(armed()).toBe(false))
   })
 })
 
