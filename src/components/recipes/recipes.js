@@ -56,6 +56,8 @@ export const LINE_AMOUNT_LABEL = "Amount as you'd write it"
 export const AT_THE_END_LABEL = 'at the end'
 export const EXACT_AMOUNT_CTA = '▸ exact amount'
 export const KEEPS_LABEL = 'How long, and where'
+// What the length is counted from and to (Put-Up R2a, M4): it reads after the legend's "optional — ".
+export const KEEPS_HELP = 'from put-up day to its discard date'
 export const KEEPS_N_LABEL = 'How many'
 export const MORE_PLACES_CTA = 'More…'
 export const COOKED_LABEL = 'Cooked after blending'

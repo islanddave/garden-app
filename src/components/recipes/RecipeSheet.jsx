@@ -35,7 +35,7 @@ import TypePicker from './TypePicker.jsx'
 import {
   emptyDraft, draftFromRecipe, recipeBody, exactAmountOpens, keepsKindChips, RECIPE_KIND_OPTIONS, STORAGE_KIND_WORDS,
   KEEPS_UNIT_WORDS, KITCHEN_UNITS, EMPTY_LINE, TYPE_LABEL, TYPE_HELP, KIND_LABEL, KIND_HELP, LINE_NAME_LABEL,
-  LINE_AMOUNT_LABEL, AT_THE_END_LABEL, EXACT_AMOUNT_CTA, KEEPS_LABEL, KEEPS_N_LABEL, MORE_PLACES_CTA, COOKED_LABEL,
+  LINE_AMOUNT_LABEL, AT_THE_END_LABEL, EXACT_AMOUNT_CTA, KEEPS_LABEL, KEEPS_HELP, KEEPS_N_LABEL, MORE_PLACES_CTA, COOKED_LABEL,
 } from './recipes.js'
 
 export const RECIPE_SHEET = 'recipe'
@@ -208,7 +208,7 @@ function RecipeSheetOpen({ recipe = null, types = [], usedTypeIds = [], fetch, o
         </fieldset>
 
         <fieldset data-testid="recipe-keeps" style={{ border: 'none', padding: 0, margin: `0 0 ${T.space.md}px` }}>
-          <legend style={{ ...heading, marginBottom: 6 }}>{KEEPS_LABEL} <span style={optional}>optional</span></legend>
+          <legend style={{ ...heading, marginBottom: 6 }}>{KEEPS_LABEL} <span style={optional}>optional — {KEEPS_HELP}</span></legend>
           <div style={{ ...chipRow, marginBottom: 8 }}>
             <label htmlFor={ids.keepsN} style={{ fontSize: T.type.sm, color: P.mid }}>{KEEPS_N_LABEL}</label>
             <input id={ids.keepsN} data-testid="recipe-keeps-n" inputMode="numeric" value={d.keepsN} disabled={saving}
