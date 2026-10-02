@@ -2328,6 +2328,28 @@ const EDIT_METHOD_LABEL = 'How was it put up?'
 // "Bought already preserved" is not something a put-up becomes: Edit offers it only on a row that is one.
 const EDIT_BOUGHT_METHOD = 'purchased_preserved'
 
+// THE ECHO UNDER THE AMOUNT. The door asks the size of EACH container and Edit asks how much IN ALL, in
+// the same unit, so each screen says the other number: "3 containers · 1 qt each", or "about 0.83 qt
+// each" when the amount does not divide evenly at the column's two places. From the TYPED amount, unit
+// and count as they stand (it moves as any of them changes), never from the stored row, and it changes
+// no field: the person is shown the mismatch, not corrected. Null — nothing to say — with no amount, no
+// unit, one container (the amount IS that container), or a share that rounds to nothing.
+// Decimal arithmetic on the typed digits, as jarWords.totalOfEach does it: 2.5 / 3 in floats is not 0.83.
+const jarEachWords = (amountText, unit, countText) => {
+  const m = /^\s*(\d*)(?:\.(\d*))?\s*$/.exec(String(amountText ?? ''))
+  const n = Number(countText)
+  if (!m || (!m[1] && !m[2]) || !unit || String(countText ?? '').trim() === '' || !Number.isInteger(n) || n < 2) return null
+  const frac = m[2] ?? ''
+  const places = Math.max(frac.length, 2)
+  // The amount as a whole number of 10^-places, and what ONE hundredth of a share is in that scale.
+  const total = BigInt(`${m[1] || '0'}${frac}`) * 10n ** BigInt(places - frac.length)
+  const perHundredth = BigInt(n) * 10n ** BigInt(places - 2)
+  const each = (2n * total + perHundredth) / (2n * perHundredth)          // hundredths, rounded half-up
+  if (each <= 0n) return null
+  const about = total % perHundredth === 0n ? '' : 'about '
+  return `${n} containers · ${about}${qtyText(`${each / 100n}.${String(each % 100n).padStart(2, '0')}`)} ${unit} each`
+}
+
 // Minimal per-row editor — the fields worth changing after the fact. Sends ONE PATCH of what changed.
 function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
@@ -2409,6 +2431,9 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
     onSave(Object.keys(patch).length ? patch : null)
   }
 
+  // The echo under the amount: live, from what is typed (jarEachWords).
+  const eachWords = jarEachWords(qtyValue, qtyUnit, packageCount)
+
   return (
     <div style={{ padding: '14px 16px', borderTop: `1px solid ${P.cream}`, backgroundColor: P.cream }}>
       <WriteError err={err} style={{ marginBottom: 8 }} />
@@ -2451,6 +2476,9 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
           </Field>
         </div>
       </div>
+      {/* Always mounted, so a screen reader hears it change; empty when there is nothing to say. */}
+      <p role="status" data-testid={`ed-each-${rec.id}`}
+        style={{ margin: eachWords ? `${T.space.xs}px 0 0` : 0, color: P.mid, fontSize: T.type.sm }}>{eachWords}</p>
       <div style={{ marginTop: T.space.sm }}>
         <Field label={EDIT_METHOD_LABEL} htmlFor={`ed-method-${rec.id}`}>
           <Select id={`ed-method-${rec.id}`} value={method} onChange={e => setMethod(e.target.value)} aria-label={EDIT_METHOD_LABEL}>

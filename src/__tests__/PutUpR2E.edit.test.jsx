@@ -146,3 +146,82 @@ describe('the method list says the door\'s words', () => {
     expect(writes()).toEqual([['PATCH', { method: 'blanch_freeze' }]])
   })
 })
+
+// UX F3: the door asks the size of EACH container, Edit asks how much IN ALL, in the same unit. Each
+// screen says the other number, so "1 qt" typed for three bags is seen to be a third of a quart each.
+describe('the echo under the amount', () => {
+  const echo = (id = JAR.id) => screen.getByTestId(`ed-each-${id}`)
+  const amount = () => screen.getByRole('textbox', { name: 'Quantity' })
+  const count = () => screen.getByRole('spinbutton', { name: 'How many were put up?' })
+  const unit = () => screen.getByRole('combobox', { name: 'Unit' })
+  const type = (control, value) => fireEvent.change(control, { target: { value } })
+
+  // MUTATION E-M6: drop "about" on a division that is not even -> "0.83 qt each" is said as if exact.
+  it('2.5 qt in 3 containers reads about 0.83 qt each; 3 qt in 3 reads 1 qt each', async () => {
+    await openEditor()
+    expect(echo().textContent).toBe('3 containers · 1 qt each')
+    type(amount(), '2.5')
+    expect(echo().textContent).toBe('3 containers · about 0.83 qt each')
+    // Exact at the column's two places is exact: no "about".
+    type(amount(), '3.75')
+    expect(echo().textContent).toBe('3 containers · 1.25 qt each')
+    // Half a hundredth rounds up, as the column's own rounding does.
+    type(amount(), '2.125')
+    type(count(), '2')
+    expect(echo().textContent).toBe('2 containers · about 1.06 qt each')
+  })
+
+  // MUTATION E-M6b: work the echo out from the stored row (the seed) -> it does not move as he types.
+  it('change the count: the echo changes before Save', async () => {
+    await openEditor()
+    type(count(), '2')
+    expect(echo().textContent).toBe('2 containers · 1.5 qt each')
+    type(unit(), 'quarts')
+    expect(echo().textContent).toBe('2 containers · 1.5 quarts each')
+    type(amount(), '5')
+    expect(echo().textContent).toBe('2 containers · 2.5 quarts each')
+    // Nothing was saved, and nothing he did not touch was changed for him.
+    expect(writes()).toEqual([])
+    type(unit(), 'qt'); type(amount(), '3.00')
+    expect(amount().value).toBe('3.00')
+    expect(count().value).toBe('2')
+  })
+
+  // MUTATION E-M6c: say it with no size, or for one container -> "3 containers ·  each", "1 containers".
+  it('no size: no echo', async () => {
+    const NO_SIZE = { ...JAR, id: 'rec-nosize', quantity_value: null, quantity_unit: null }
+    await openEditor(NO_SIZE)
+    expect(echo('rec-nosize').textContent).toBe('')
+    // An amount with no unit yet is still no size.
+    type(amount(), '3')
+    expect(echo('rec-nosize').textContent).toBe('')
+    type(unit(), 'quarts')
+    expect(echo('rec-nosize').textContent).toBe('3 containers · 1 quarts each')
+    // No count, and an amount that is not a number: nothing to say, never "NaN".
+    type(count(), '')
+    expect(echo('rec-nosize').textContent).toBe('')
+    type(count(), '3'); type(amount(), 'a few')
+    expect(echo('rec-nosize').textContent).toBe('')
+  })
+
+  it('one container: no echo (the amount is that container)', async () => {
+    await openEditor({ ...JAR, package_count: 1, remaining_count: 1 })
+    expect(echo().textContent).toBe('')
+    type(count(), '4')
+    expect(echo().textContent).toBe('4 containers · 0.75 qt each')
+  })
+
+  // MUTATION: drop the "rounds to nothing" arm -> "3 containers · about 0 qt each".
+  it('a share too small to say is not said as 0', async () => {
+    await openEditor()
+    type(amount(), '0.01')
+    expect(echo().textContent).toBe('')
+  })
+
+  it('is a status, in place under the amount, mounted before it has anything to say', async () => {
+    const panel = await openEditor({ ...JAR, package_count: 1, remaining_count: 1 })
+    expect(echo().getAttribute('role')).toBe('status')
+    const order = [...panel.querySelectorAll('input, select, textarea, [role="status"]')].map(el => el.id || el.getAttribute('data-testid'))
+    expect(order.slice(0, 5)).toEqual(['ed-name-rec-e', 'ed-pkg-rec-e', 'ed-qty-rec-e', 'ed-unit-rec-e', 'ed-each-rec-e'])
+  })
+})
