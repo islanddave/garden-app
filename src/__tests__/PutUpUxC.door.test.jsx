@@ -378,4 +378,93 @@ describe('a draft stored by the client before this pass still restores', () => {
 })
 
 // R2 lane Dn additions go directly under this line
+// Put-Up R2a (lane Dn): the name search on the RANKED answer, through the door and onto the wire. The field's own
+// rules are in PutUpR2Dn.nameSearch.test.jsx; these are what the door SENDS after a crop hit, a variety hit, and
+// a planting hit whose name was edited. Every test above wires an answer with no `hits` and stays on the arms.
+// MUTATIONS (run, see the lane report): a crop hit drops its crop / a variety hit drops variety_id -> the two
+// wire tests red; an edited name drops the planting -> "an edited name still saves under the planting" reds.
+describe('the name search on the ranked answer, through the door (R2a lane Dn)', () => {
+  // The answer as the Lambda builds it: its own ranking (lineSearch.js rankHits) over these arms.
+  async function rankedAnswer(q) {
+    const { rankHits, resolvedCropOf } = await import('../../lambda/preservation/lineSearch.js')
+    const arms = {
+      plantings: LINE_HITS.plantings, put_ups: [], pantry_items: [],
+      crops: [{ crop_type_slug: 'melon', label: 'Melon' }],
+      varieties: [{ variety_id: 'v-mj', label: 'Megatron', crop_type_slug: 'pepper' }],
+    }
+    return { ...arms, hits: rankHits(q, arms), resolved_crop: resolvedCropOf(q, arms.varieties) }
+  }
+  async function saveAsHotSauce(onSaved) {
+    fireEvent.click(screen.getByTestId('door-place-id:loc-3'))
+    fireEvent.click(screen.getByTestId('door-method-hot_sauce'))
+    fireEvent.click(screen.getByTestId('door-save'))
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    return posts('/api/preservation')[0].body
+  }
+
+  it('lists the planting, the crop and the variety in the server\'s order, each in its own words', async () => {
+    const answer = await rankedAnswer('me')
+    wire({ lineSearch: answer })
+    await openDoor()
+    typeWhat('me')
+    await screen.findByTestId('door-what-hit-planting:p-mj', {}, { timeout: 2000 })
+    const rows = [...screen.getByRole('list', { name: 'Matches for me' }).querySelectorAll('button')]
+    expect(rows.map(b => b.getAttribute('data-testid'))).toEqual(answer.hits.map(h => `door-what-hit-${h.key}`))
+    expect(rows.map(b => b.textContent)).toEqual(['Megatron jalapeño · planting', 'Megatron · variety', 'Melon · crop'])
+  })
+
+  it('a crop hit: the save sends its crop', async () => {
+    wire({ lineSearch: await rankedAnswer('me') })
+    const { onSaved } = await openDoor()
+    typeWhat('me')
+    fireEvent.click(await screen.findByTestId('door-what-hit-crop:melon', {}, { timeout: 2000 }))
+    expect(screen.getByTestId('door-what-name').value).toBe('Melon')
+    expect(screen.getByTestId('door-what-picked').textContent).toBe('crop: MelonSearch again')
+    const body = await saveAsHotSauce(onSaved)
+    expect(body).toMatchObject({ label: 'Melon', crop_type_slug: 'melon' })
+    expect('variety_id' in body || 'plant_id' in body || 'source_kind' in body).toBe(false)
+    expect(onSaved.mock.calls[0][0].what).toEqual({ source: 'crop', name: 'Melon', crop_type_slug: 'melon' })
+  })
+
+  it('a variety hit: the save sends its variety and its crop', async () => {
+    wire({ lineSearch: await rankedAnswer('me') })
+    const { onSaved } = await openDoor()
+    typeWhat('me')
+    fireEvent.click(await screen.findByTestId('door-what-hit-variety:v-mj', {}, { timeout: 2000 }))
+    expect(screen.getByTestId('door-what-picked').textContent).toBe('variety: MegatronSearch again')
+    const body = await saveAsHotSauce(onSaved)
+    expect(body).toMatchObject({ label: 'Megatron', variety_id: 'v-mj', crop_type_slug: 'pepper' })
+    expect('plant_id' in body || 'source_kind' in body).toBe(false)
+    expect(onSaved.mock.calls[0][0].what).toEqual({ source: 'variety', name: 'Megatron', variety_id: 'v-mj', crop_type_slug: 'pepper' })
+  })
+
+  it('a picked name stays the field; an edited name still saves under the planting', async () => {
+    wire({ lineSearch: await rankedAnswer('me') })
+    const { onSaved } = await openDoor()
+    typeWhat('me')
+    fireEvent.click(await screen.findByTestId('door-what-hit-planting:p-mj', {}, { timeout: 2000 }))
+    const picked = screen.getByTestId('door-what-picked')
+    expect(within(picked).getByTestId('door-what-tie').textContent).toBe('from your planting: Megatron jalapeño')
+    expect(within(picked).getByTestId('door-what-change').textContent).toBe('Search again')
+    typeWhat('Megatron, the red ones')                                     // door-what-name is still there to type in
+    expect(screen.getByTestId('door-what-tie').textContent).toBe('from your planting: Megatron jalapeño')
+    expect(screen.getByTestId('door-method-as_is').textContent).toBe('Fresh, as picked')   // still a planting to the door
+    const body = await saveAsHotSauce(onSaved)
+    expect(body).toMatchObject({ label: 'Megatron, the red ones', plant_id: 'p-mj', crop_type_slug: 'pepper', variety_id: 'v-mj', source_kind: 'own_garden' })
+  })
+
+  it('a draft written with a picked planting restores it, the name alone on its line', async () => {
+    wire({ lineSearch: await rankedAnswer('me') })
+    const first = await openDoor()
+    typeWhat('me')
+    fireEvent.click(await screen.findByTestId('door-what-hit-planting:p-mj', {}, { timeout: 2000 }))
+    await waitFor(() => expect(readSheetDraft(DRAFT_KEY, DOOR_SHEET, isDoorDraft)?.what).toEqual(
+      { source: 'planting', name: 'Megatron jalapeño', plant_id: 'p-mj', crop_type_slug: 'pepper', variety_id: 'v-mj' }))
+    first.unmount()
+    await openDoor()
+    expect(screen.getByTestId('door-what-name').value).toBe('Megatron jalapeño')
+    expect(screen.getByTestId('door-what-tie').textContent).toBe('from your planting: Megatron jalapeño')
+    expect(screen.getByTestId('door-what-change').textContent).toBe('Search again')
+  })
+})
 // R2 lane Df additions go directly under this line
