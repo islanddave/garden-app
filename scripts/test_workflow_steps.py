@@ -387,6 +387,7 @@ class _GitHubStandIn:
         self.routes = [(re.compile(pattern), replies) for pattern, replies in routes.items()]
         self.served = {}
         self.log = []
+        self.auth = []  # each request's Authorization header, in step with self.log
         stand_in = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -397,6 +398,7 @@ class _GitHubStandIn:
 
             def do_GET(self):
                 self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                stand_in.auth.append(self.headers.get("Authorization"))
                 reply = stand_in.reply_for(f"{self.command} {self.path}")
                 self.close_connection = True
                 if reply is DROP:
@@ -616,6 +618,342 @@ def test_smoke_step_names_a_dispatch_that_got_no_http_answer(tmp_path, github, s
     errors = _errors(proc)
     assert len(errors) == 1 and errors[0].startswith("::error::deploy-staging dispatch failed (HTTP 000)"), errors
     assert api.reads(RUNS) == 0
+
+
+# ── promote-gate.yml: the preflight, CI green on dev_sha by two checks that must both pass ─────────────────────────
+# Promote-path plan A2.1, push 1 (dual evaluation). The name-based check reads the commit's check-runs through the
+# curl shim; the run-based check is the real scripts/promote-preflight.py, copied beside the body, reading the
+# stand-in through GITHUB_API_URL. Its rules have their own file (test_promote_preflight.py); what is pinned here is
+# the step: both checks are read to the end and printed before anything is refused, either one refuses alone, an
+# unreadable reply is a named refusal and never a bare errexit, and require_integration=false makes BOTH
+# integration checks advisory. The script waits PAUSE_S between attempts on an unreadable reply (`sleep` on PATH is
+# not what it calls), so cases that stay unreadable run under one shell only.
+
+PREFLIGHT = "Preflight — dev unmoved + CI green on dev_sha (name-based and run-based, both required)"
+DEV_REF, CHECKS = r"/git/refs/heads/dev$", r"/commits/[0-9a-f]{40}/check-runs\?filter=latest&per_page=100$"
+CI_RUNS, INT_RUNS = (rf"/actions/workflows/{wf}/runs\?head_sha={DEV_SHA}&per_page=100$"
+                     for wf in (r"ci\.yml", r"integration-test\.yml"))
+DEV_AT = _json({"ref": "refs/heads/dev", "object": {"sha": DEV_SHA, "type": "commit"}})
+CI_ID, INT_ID = 7001, 7002
+
+
+def _check_runs(*pairs):
+    return _json({"total_count": len(pairs), "check_runs": [{"name": n, "conclusion": c} for n, c in pairs]})
+
+
+def _wf_run(run_id, event="push", status="completed", conclusion="success", started="2026-10-02T10:00:00Z",
+            attempt=1, sha=DEV_SHA):
+    return {"id": run_id, "event": event, "status": status, "conclusion": conclusion, "run_attempt": attempt,
+            "created_at": "2026-10-02T10:00:00Z", "run_started_at": started, "head_sha": sha}
+
+
+def _wf_runs(*runs, total=None):
+    return _json({"total_count": len(runs) if total is None else total, "workflow_runs": list(runs)})
+
+
+def _wf_jobs(name, status="completed", conclusion="success"):
+    return _json({"total_count": 1, "jobs": [{"name": name, "status": status, "conclusion": conclusion}]})
+
+
+GREEN_CHECKS = _check_runs(("build-and-test", "success"), ("integration-tests", "success"))
+
+
+def _preflight_api(github, dev=(DEV_AT,), checks=(GREEN_CHECKS,), ci=(_wf_runs(_wf_run(CI_ID)),),
+                   integ=(_wf_runs(_wf_run(INT_ID)),), jobs=None):
+    """Defaults are one green push run of each workflow. `jobs` maps a run id to its jobs replies."""
+    jobs = {CI_ID: (_wf_jobs("build-and-test"),), INT_ID: (_wf_jobs("integration-tests"),)} if jobs is None else jobs
+    routes = {DEV_REF: list(dev), CHECKS: list(checks), CI_RUNS: list(ci), INT_RUNS: list(integ)}
+    routes.update({rf"/actions/runs/{run_id}/jobs\?filter=latest&per_page=100$": list(replies)
+                   for run_id, replies in jobs.items()})
+    return github(routes)
+
+
+def _run_preflight(tmp_path, api, shell=RUNNER_SHELL, req_int="true", script=True):
+    if script:  # True = the real script; a string = a stand-in body for it
+        (tmp_path / "scripts").mkdir()
+        if script is True:
+            shutil.copy(os.path.join(HERE, "promote-preflight.py"), tmp_path / "scripts" / "promote-preflight.py")
+        else:
+            (tmp_path / "scripts" / "promote-preflight.py").write_text(script)
+    port = api.server.server_address[1]
+    return _run_promote_step(tmp_path, PREFLIGHT, api, shell, REQ_INT=req_int, ACTIONS_TOKEN="test-actions-token",
+                             GITHUB_API_URL=f"http://127.0.0.1:{port}")
+
+
+def _dual(proc):
+    return [a for a in _annotations(proc) if a.startswith("::notice::preflight-dual ")]
+
+
+def test_preflight_runs_under_the_shell_the_harness_models_and_cannot_be_skipped():
+    wf, step = _step(PROMOTE, "promote", PREFLIGHT)
+    assert _declared_shell(wf, "promote", step) is None
+    assert "if" not in step and "continue-on-error" not in step
+
+
+def test_preflight_env_gives_the_run_based_check_the_workflow_token_and_the_rest_the_bot_token():
+    """The two Actions reads are made with github.token, so this workflow's `permissions:` governs them; minted for
+    this run, it needs nothing from the bot's installation. Everything else in the step keeps the bot token."""
+    wf, step = _step(PROMOTE, "promote", PREFLIGHT)
+    assert step["env"] == {
+        "GH_TOKEN": "${{ steps.bot.outputs.token }}",
+        "ACTIONS_TOKEN": "${{ github.token }}",
+        "REPO": "${{ github.repository }}",
+        "DEV_SHA": "${{ needs.resolve.outputs.dev_sha }}",
+        "REQ_INT": "${{ needs.resolve.outputs.require_integration }}",
+    }
+    assert wf["permissions"]["actions"] in ("read", "write")
+
+
+def test_promote_gate_names_its_runs_by_version_and_commit():
+    assert _workflow(PROMOTE)["run-name"] == "promote ${{ inputs.snap_version }} @ ${{ inputs.dev_sha }}"
+
+
+@PROMOTE_SHELLS
+def test_preflight_passes_when_both_checks_are_green_and_records_both(tmp_path, github, shell):
+    api = _preflight_api(github)
+    proc = _run_preflight(tmp_path, api, shell)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _errors(proc) == []
+    assert _dual(proc) == [
+        f"::notice::preflight-dual build-and-test on {DEV_SHA}: name-based=success run-based-exit=0 agree=yes | "
+        f"pass: run {CI_ID} is the newest of 1 and its job build-and-test succeeded | "
+        f"runs={CI_ID}:push:a1:completed/success",
+        f"::notice::preflight-dual integration-tests on {DEV_SHA}: name-based=success run-based-exit=0 agree=yes "
+        f"require_integration=true | pass: run {INT_ID} is the newest of 1 and its job integration-tests succeeded | "
+        f"runs={INT_ID}:push:a1:completed/success"]
+    assert f"preflight ok: dev=={DEV_SHA}, build-and-test=success, integration-tests=success (enforced" in proc.stdout
+    # one read of dev, two of the check-runs, one runs listing and one jobs listing per workflow: nothing else
+    assert sorted(api.log) == sorted([
+        "GET /repos/owner/repo/git/refs/heads/dev",
+        f"GET /repos/owner/repo/commits/{DEV_SHA}/check-runs?filter=latest&per_page=100",
+        f"GET /repos/owner/repo/commits/{DEV_SHA}/check-runs?filter=latest&per_page=100",
+        f"GET /repos/owner/repo/actions/workflows/ci.yml/runs?head_sha={DEV_SHA}&per_page=100",
+        f"GET /repos/owner/repo/actions/workflows/integration-test.yml/runs?head_sha={DEV_SHA}&per_page=100",
+        f"GET /repos/owner/repo/actions/runs/{CI_ID}/jobs?filter=latest&per_page=100",
+        f"GET /repos/owner/repo/actions/runs/{INT_ID}/jobs?filter=latest&per_page=100"])
+    by_request = dict(zip(api.log, api.auth))
+    assert {auth for request, auth in by_request.items() if "/actions/" in request} == {"Bearer test-actions-token"}
+    assert {auth for request, auth in by_request.items() if "/actions/" not in request} == {"token test-token"}
+
+
+@pytest.mark.parametrize("dev,said", [
+    ((_json({"object": {"sha": "f" * 40}}),), "f" * 40), ((NOT_JSON,), "UNREADABLE"), ((DROP,), "UNREADABLE")],
+    ids=["moved", "not-json", "no-reply"])
+def test_preflight_refuses_when_dev_is_not_at_the_promoted_commit_and_reads_nothing_else(tmp_path, github, dev, said):
+    api = _preflight_api(github, dev=dev)
+    proc = _run_preflight(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert _annotations(proc) == [f"::error::dev moved since dispatch ({said} != {DEV_SHA})"]
+    assert api.reads(CHECKS) == api.reads(CI_RUNS) == api.reads(INT_RUNS) == 0
+
+
+OLDER_RERUN_TO_FAILURE = _wf_runs(  # the listing is created_at descending; a re-run keeps created_at
+    _wf_run(7003, started="2026-10-02T11:00:00Z"),
+    _wf_run(CI_ID, conclusion="failure", attempt=2, started="2026-10-02T12:00:00Z"))
+
+
+@PROMOTE_SHELLS
+def test_preflight_refuses_an_older_run_re_run_to_failure_that_the_name_based_check_passes(tmp_path, github, shell):
+    """The case the run-based check exists for. Two runs on the commit; the older one was re-run and failed AFTER
+    the newer one succeeded. The commit's check-runs still list a success first, so name-based passes."""
+    api = _preflight_api(github, ci=(OLDER_RERUN_TO_FAILURE,),
+                         checks=(_check_runs(("build-and-test", "success"), ("build-and-test", "failure"),
+                                             ("integration-tests", "success")),))
+    proc = _run_preflight(tmp_path, api, shell)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "name-based=success run-based-exit=1 agree=no" in _dual(proc)[0]
+    errors = _errors(proc)
+    assert len(errors) == 1, errors
+    assert errors[0].startswith(f"::error::run-based check of ci.yml on {DEV_SHA} did not pass (exit 1): "
+                                f"refuse: run {CI_ID} (push, attempt 2) concluded failure | runs=7003:push:a1:")
+    assert "preflight refused: main has NOT been touched" in proc.stdout and "preflight ok" not in proc.stdout
+
+
+@PROMOTE_SHELLS
+@pytest.mark.parametrize("first,second,passes", [("success", "failure", True), ("failure", "success", False)],
+                         ids=["success-listed-first", "failure-listed-first"])
+def test_preflight_name_based_check_takes_the_first_same_named_check_run_and_refuses_alone(tmp_path, github, shell,
+                                                                                         first, second, passes):
+    """Two same-named check-runs, both orders, with the run-based check green: the name-based verdict is whichever
+    is listed first, and a name-based refusal stands on its own. Each check must pass; neither outvotes the other."""
+    api = _preflight_api(github, checks=(_check_runs(("build-and-test", first), ("build-and-test", second),
+                                                     ("integration-tests", "success")),))
+    proc = _run_preflight(tmp_path, api, shell)
+    assert proc.returncode == (0 if passes else 1), proc.stdout + proc.stderr
+    assert f"name-based={first} run-based-exit=0 agree={'yes' if passes else 'no'}" in _dual(proc)[0]
+    assert _errors(proc) == ([] if passes else [f"::error::build-and-test on {DEV_SHA} = failure (need success)"])
+
+
+@pytest.mark.parametrize("ci,why", [
+    ((_wf_runs(_wf_run(CI_ID, status="in_progress", conclusion=None, attempt=2)),),
+     f"refuse: run {CI_ID} is in_progress: wait for it to finish, then dispatch again"),
+    ((_wf_runs(_wf_run(CI_ID), _wf_run(7003, status="queued", conclusion=None, started="2026-10-02T11:00:00Z")),),
+     "refuse: run 7003 is queued: wait for it to finish, then dispatch again"),
+    ((_wf_runs(),), "refuse: no push or workflow_dispatch run of ci.yml on this commit (0 run(s) from other events"),
+    ((_wf_runs(_wf_run(CI_ID, event="pull_request")),),
+     "refuse: no push or workflow_dispatch run of ci.yml on this commit (1 run(s) from other events"),
+    ((_wf_runs(_wf_run(CI_ID), total=101),),
+     "refuse: the runs listing holds 101 rows and one page shows 1: cannot see them all"),
+], ids=["re-run-in-flight", "second-run-queued", "no-runs", "pull-request-run-only", "more-than-one-page"])
+def test_preflight_run_based_check_refuses_what_the_name_based_check_passes(tmp_path, github, ci, why):
+    """Every one of these has a green `build-and-test` check-run on the commit (an earlier attempt's, another run's,
+    or a pull_request run's), so the name-based check alone would promote."""
+    api = _preflight_api(github, ci=ci)
+    proc = _run_preflight(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "name-based=success run-based-exit=1 agree=no" in _dual(proc)[0]
+    errors = _errors(proc)
+    assert len(errors) == 1 and f"did not pass (exit 1): {why}" in errors[0], errors
+
+
+@pytest.mark.parametrize("job", [_wf_jobs("build-and-test", conclusion="skipped"), _wf_jobs("some-leg")],
+                         ids=["job-skipped", "job-absent"])
+def test_preflight_refuses_a_green_run_whose_gating_job_did_not_succeed(tmp_path, github, job):
+    """A run concludes success with its aggregator skipped or missing; the job is what the promote depends on."""
+    api = _preflight_api(github, jobs={CI_ID: (job,), INT_ID: (_wf_jobs("integration-tests"),)})
+    proc = _run_preflight(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    errors = _errors(proc)
+    assert len(errors) == 1 and errors[0].startswith(f"::error::run-based check of ci.yml on {DEV_SHA} did not pass")
+
+
+def test_preflight_more_than_a_page_of_check_runs_leaves_the_name_based_check_missing(tmp_path, github):
+    """The name-based check reads one page. With 100 other check-runs ahead of it, build-and-test is not on that page:
+    MISSING, a refusal, even though the run-based check passes."""
+    crowd = [(f"leg-{n}", "success") for n in range(100)]
+    api = _preflight_api(github, checks=(_check_runs(*crowd),))
+    proc = _run_preflight(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "name-based=MISSING run-based-exit=0 agree=no" in _dual(proc)[0]
+    assert _errors(proc) == [
+        f"::error::build-and-test on {DEV_SHA} = MISSING (need success)",
+        f"::error::integration-tests on {DEV_SHA} = MISSING (need success; require_integration=true)"]
+
+
+@pytest.mark.parametrize("bad", [NOT_JSON, DROP, HTML_502, _json({"message": "Server Error"}, 500),
+                                 (200, json.dumps({"check_runs": [{"name": "build-and-test",
+                                                                   "conclusion": "success"}]}), CUT)],
+                         ids=["not-json", "no-reply", "html-502", "status-less-json", "green-reply-cut-short"])
+def test_preflight_an_unreadable_check_runs_reply_is_a_named_refusal_and_the_run_based_check_still_reports(
+        tmp_path, github, bad):
+    """Bare, `CONC=$(api ... | python3 ...)` ended the step on the assignment: no annotation, no second verdict. The
+    cut-short case is why the fallback replaces the value: a verdict read from a failed transfer must not stand."""
+    api = _preflight_api(github, checks=(bad,))
+    proc = _run_preflight(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "name-based=UNREADABLE run-based-exit=0 agree=no" in _dual(proc)[0]
+    assert _errors(proc) == [
+        f"::error::build-and-test on {DEV_SHA} = UNREADABLE (need success)",
+        f"::error::integration-tests on {DEV_SHA} = UNREADABLE (need success; require_integration=true)"]
+
+
+def test_preflight_a_runs_listing_that_stays_unreadable_is_a_named_refusal(tmp_path, github):
+    api = _preflight_api(github, ci=(NOT_JSON,))
+    proc = _run_preflight(tmp_path, api)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "name-based=success run-based-exit=2 agree=no" in _dual(proc)[0]
+    errors = _errors(proc)
+    assert len(errors) == 1 and "did not pass (exit 2): unreadable: no usable answer from workflows/ci.yml/runs" \
+        in errors[0], errors
+    assert api.reads(CI_RUNS) == 3  # asked again before giving up
+
+
+def test_preflight_rides_out_one_unreadable_runs_listing(tmp_path, github):
+    api = _preflight_api(github, ci=(HTML_502, _wf_runs(_wf_run(CI_ID))))
+    proc = _run_preflight(tmp_path, api)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert api.reads(CI_RUNS) == 2 and _errors(proc) == []
+
+
+def test_preflight_without_the_script_refuses_and_says_it_had_no_verdict(tmp_path, github):
+    """A promoted tree that lacks scripts/promote-preflight.py: python3 exits 2 with nothing on stdout."""
+    api = _preflight_api(github)
+    proc = _run_preflight(tmp_path, api, script=False)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert _errors(proc) == [
+        f"::error::run-based check of ci.yml on {DEV_SHA} did not pass (exit 2): no output",
+        f"::error::run-based check of integration-test.yml on {DEV_SHA} did not pass (exit 2; "
+        f"require_integration=true): no output"]
+
+
+INT_RED = dict(checks=(_check_runs(("build-and-test", "success"), ("integration-tests", "failure")),),
+               integ=(_wf_runs(_wf_run(INT_ID, conclusion="failure")),))
+INT_RUNNING = dict(checks=(_check_runs(("build-and-test", "success"), ("integration-tests", None)),),
+                   integ=(_wf_runs(_wf_run(INT_ID, status="in_progress", conclusion=None)),))
+INT_ABSENT = dict(checks=(_check_runs(("build-and-test", "success")),), integ=(_wf_runs(),))
+
+
+@PROMOTE_SHELLS
+@pytest.mark.parametrize("state,name_based", [(INT_RED, "failure"), (INT_RUNNING, "None"), (INT_ABSENT, "MISSING")],
+                         ids=["red", "in-flight", "absent"])
+def test_preflight_integration_is_enforced_by_both_checks_when_required(tmp_path, github, shell, state, name_based):
+    api = _preflight_api(github, **state)
+    proc = _run_preflight(tmp_path, api, shell, req_int="true")
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert f"name-based={name_based} run-based-exit=1 agree=yes require_integration=true" in _dual(proc)[1]
+    errors = _errors(proc)
+    assert len(errors) == 2, errors
+    assert errors[0] == (f"::error::integration-tests on {DEV_SHA} = {name_based} (need success; "
+                         f"require_integration=true)")
+    assert errors[1].startswith(f"::error::run-based check of integration-test.yml on {DEV_SHA} did not pass (exit 1; "
+                                f"require_integration=true): refuse: ")
+
+
+@PROMOTE_SHELLS
+@pytest.mark.parametrize("state,name_based", [(INT_RED, "failure"), (INT_RUNNING, "None"), (INT_ABSENT, "MISSING")],
+                         ids=["red", "in-flight", "absent"])
+def test_preflight_integration_opt_out_makes_both_checks_advisory(tmp_path, github, shell, state, name_based):
+    """require_integration=false is the documented way past a red or absent integration run. The run-based check
+    must not take that away: red, still running and absent all promote, with both verdicts printed."""
+    api = _preflight_api(github, **state)
+    proc = _run_preflight(tmp_path, api, shell, req_int="false")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _errors(proc) == []
+    assert f"name-based={name_based} run-based-exit=1 agree=yes require_integration=false" in _dual(proc)[1]
+    assert (f"::notice::integration-tests on {DEV_SHA} = {name_based}, run-based exit 1 (advisory: "
+            f"require_integration=false; not blocking promote)") in _annotations(proc)
+    assert f"preflight ok: dev=={DEV_SHA}, build-and-test=success (integration advisory={name_based})" in proc.stdout
+
+
+@pytest.mark.parametrize("req_int", ["", "TRUE", "yes", "false "])
+def test_preflight_enforces_integration_unless_the_value_is_exactly_false(tmp_path, github, req_int):
+    """`resolve` only lets true or false through. Should anything else ever reach the step, it enforces."""
+    api = _preflight_api(github, **INT_RED)
+    proc = _run_preflight(tmp_path, api, req_int=req_int)
+    assert proc.returncode == 1 and len(_errors(proc)) == 2, proc.stdout + proc.stderr
+
+
+def test_preflight_integration_opt_out_does_not_excuse_ci(tmp_path, github):
+    api = _preflight_api(github, ci=(_wf_runs(_wf_run(CI_ID, conclusion="failure")),),
+                         checks=(_check_runs(("build-and-test", "failure"), ("integration-tests", "success")),))
+    proc = _run_preflight(tmp_path, api, req_int="false")
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    errors = _errors(proc)
+    assert len(errors) == 2 and errors[0] == f"::error::build-and-test on {DEV_SHA} = failure (need success)"
+
+
+def test_preflight_a_reply_cannot_write_a_workflow_command_of_its_own(tmp_path, github):
+    """Values from a reply reach the annotations only through the script's [A-Za-z0-9_.-] filter."""
+    evil = _wf_run(CI_ID, conclusion="x\n::error::injected\r::warning::also")
+    api = _preflight_api(github, ci=(_wf_runs(evil),))
+    proc = _run_preflight(tmp_path, api)
+    assert proc.returncode == 1
+    assert not [a for a in _annotations(proc) if a.startswith(("::error::injected", "::warning::also"))]
+    assert len(_errors(proc)) == 1
+
+
+def test_preflight_prints_whatever_the_script_said_on_one_line(tmp_path, github):
+    """The script prints one line. Should a later version print more, a second line must not reach the runner as a
+    line of its own, where `::` at its start would make it a workflow command."""
+    two_lines = 'import sys\nprint("refuse: first line")\nprint("::error::a second line")\nsys.exit(1)\n'
+    api = _preflight_api(github)
+    proc = _run_preflight(tmp_path, api, script=two_lines)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert _errors(proc) == [
+        f"::error::run-based check of ci.yml on {DEV_SHA} did not pass (exit 1): refuse: first line "
+        f"::error::a second line",
+        f"::error::run-based check of integration-test.yml on {DEV_SHA} did not pass (exit 1; "
+        f"require_integration=true): refuse: first line ::error::a second line"]
 
 
 # ── revert-rehearsal.yml: setup stops on a target tag it could not create ───────────────────────────────────────
@@ -838,7 +1176,8 @@ def test_schema_gate_is_wired_pre_ff_on_the_promoted_checkout_with_the_prod_secr
     names = [s.get("name") or s.get("uses") for s in steps]
     checkout = next(i for i, n in enumerate(names) if n.startswith("Checkout dev_sha"))
     install, gate = names.index(SCHEMA_INSTALL), names.index(SCHEMA)
-    assert names.index(SKEW) < checkout < install < gate < names.index(SMOKE) < names.index("Fast-forward main -> dev SHA")
+    assert checkout < names.index(PREFLIGHT) < names.index(SKEW) < install < gate < names.index(SMOKE) \
+        < names.index("Fast-forward main -> dev SHA")
     # Exactly ONE checkout in the job. A second one (review T7: `ref: main`, before the gate) was invisible to a test
     # that pinned only the first, and the runtime HEAD check catches it only when the gate is enforced.
     checkouts = [s for s in steps if str(s.get("uses", "")).startswith("actions/checkout@")]
@@ -1070,7 +1409,7 @@ def _resolve(tmp_path, **env_extra):
     _, step = _step(*RESOLVE)
     out = tmp_path / "output"
     out.write_text("")
-    env = dict(os.environ, GITHUB_OUTPUT=str(out), GH_REF_NAME="dev", IN_DEV_SHA=DEV_SHA,
+    env = dict(os.environ, GITHUB_OUTPUT=str(out), GH_REF_NAME="dev", GH_SHA=DEV_SHA, IN_DEV_SHA=DEV_SHA,
                IN_SNAP="v1.2.3", IN_REQINT="", IN_REQSCHEMA="")
     env.update(env_extra)
     proc = _run_as_runner(tmp_path, step["run"], env)
@@ -1103,6 +1442,7 @@ def test_resolve_env_maps_each_variable_to_the_context_the_script_assumes():
         "IN_REQINT": "${{ github.event.inputs.require_integration }}",
         "IN_REQSCHEMA": "${{ github.event.inputs.require_schema_audit }}",
         "GH_REF_NAME": "${{ github.ref_name }}",
+        "GH_SHA": "${{ github.sha }}",
     }
 
 
@@ -1144,6 +1484,20 @@ def test_resolve_refuses_an_integration_gate_value_that_is_not_true_or_false(tmp
     proc, out = _resolve(tmp_path, EVENT="workflow_dispatch", IN_REQINT=given)
     assert proc.returncode == 1 and out == {}
     assert _errors(proc) == [f"::error::require_integration must be true or false, got '{given}'"]
+
+
+@pytest.mark.parametrize("ref,run_sha", [("main", "a" * 40), ("dev", "b" * 40), ("dev", "")],
+                         ids=["dispatched-on-main", "dev-sha-is-not-the-dispatched-head", "no-sha"])
+def test_resolve_refuses_a_dispatch_that_is_not_on_the_promoted_commit(tmp_path, ref, run_sha):
+    """A dispatch on ref main runs main's copy of this file and its gates against a dev commit; one on dev with an
+    older dev_sha runs the newer copy against the older tree. Either way the gates and the promoted tree are two
+    commits, so it is refused before any gate runs, with no output for the promote job to read."""
+    proc, out = _resolve(tmp_path, EVENT="workflow_dispatch", GH_REF_NAME=ref, GH_SHA=run_sha)
+    assert proc.returncode == 1 and out == {}
+    errors = _errors(proc)
+    assert len(errors) == 1, errors
+    assert errors[0].startswith(f"::error::promote-gate must be dispatched on the commit it promotes: this run is "
+                                f"on ref '{ref}' at '{run_sha}', dev_sha is {DEV_SHA}.")
 
 
 # ── every step of every workflow: no exit-status read that errexit has already decided ─────────────────────
