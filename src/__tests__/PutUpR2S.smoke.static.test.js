@@ -173,6 +173,35 @@ describe('block S, R2a: eight steps, one loop, one mint', () => {
   })
 })
 
+// The tag lists in the two older static files accept a tag from pn_check, pn_pass OR pn_fail. Several steps here
+// also name a tag on a missing-prerequisite FAIL path, so a tag whose CHECK was dropped would still be "present"
+// there (a mutant that renamed one check's tag survived those lists). The pre-promote pass reads PASS lines by tag:
+// each tag must have exactly one check that can print one.
+describe('every R2a tag has exactly ONE check that can pass', () => {
+  const S_TAGS = ['s10-door-create', 's10-door-replay', 's10-door-dried', 's11-dated-weighed', 's11-listed-weighed',
+    's12-place-rename', 's13-rekind-refused', 's13-date-by-hand', 's13-rekind-after', 's14-work-it-out', 's14-move',
+    's15-rekind-allowed', 's16-all-remaining', 's16-undo', 's17-delete-refused', 's17-delete-clean',
+    's18-jar-source', 's18-jar-source-garden', 's18-jar-source-pair',
+    's19-item-create', 's19-item-replay', 's19-item-listed', 's19-item-patch', 's19-item-clear']
+
+  it.each(S_TAGS)('pantry:%s', (tag) => {
+    expect(R2A.split(`pn_check "${tag}"`).length - 1).toBe(1)
+  })
+
+  it('and the section checks no tag this list does not name', () => {
+    expect([...R2A.matchAll(/pn_check "([^"]+)"/g)].map((m) => m[1]).sort()).toEqual([...S_TAGS].sort())
+    expect([...R2A.matchAll(/pn_(?:fail|pass) "([^"]+)"/g)].map((m) => m[1]).filter((t) => !S_TAGS.includes(t))).toEqual([])
+  })
+
+  it.each(['p11-from-jars', 'p11-replay'])('ferment:%s', (tag) => {
+    expect(P.split(`fe_check "${tag}"`).length - 1).toBe(1)
+  })
+
+  it('recipes:t3b-patch-lines', () => {
+    expect(T.split('rc_check "t3b-patch-lines"').length - 1).toBe(1)
+  })
+})
+
 describe('S10: the door\'s create, as the door sends it', () => {
   const step = stepText('pn_s10_door')
   const door = bodyOf(lineOf(step, 'PN_DOOR_BODY="{'))
