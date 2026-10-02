@@ -2372,6 +2372,9 @@ const EDIT_DISCARD_SENDS = Object.freeze({ auto: 'clear', none: 'none' })
 // anything else (a general figure, the recipe, the house estimate, nothing, an older row) was worked out.
 const jarDiscardSeed = (rec) => (rec.use_by_basis === 'typed' ? (rec.use_by_target ? 'date' : 'none') : 'auto')
 
+// Put-Up surfaces take 48 px targets; the shared Input and Select stop at the app-wide 44 px floor.
+const EDIT_FIELD_STYLE = Object.freeze({ minHeight: T.buttonMinHeight })
+
 // Minimal per-row editor — the fields worth changing after the fact. Sends ONE PATCH of what changed.
 function RowEditor({ rec, onCancel, onSave, busy, err }) {
   // What the editor OPENED with, taken once. Every field below seeds from it and `dirty` compares
@@ -2478,7 +2481,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       <div style={{ marginBottom: T.space.sm }}>
         <Field label="Name" htmlFor={`ed-name-${rec.id}`} optional>
           <Input id={`ed-name-${rec.id}`} type="text" value={name} maxLength={120}
-            onChange={e => setName(e.target.value)} aria-label="Name" />
+            onChange={e => setName(e.target.value)} aria-label="Name" style={EDIT_FIELD_STYLE} />
         </Field>
       </div>
       {/* The count sits ABOVE the amount (R2a): "How many" alone, beside a row that says "2 left", reads
@@ -2486,19 +2489,20 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
       <div style={{ marginBottom: T.space.sm }}>
         <Field label={EDIT_COUNT_LABEL} htmlFor={`ed-pkg-${rec.id}`}>
           <Input id={`ed-pkg-${rec.id}`} type="number" min={1} value={packageCount}
-            onChange={e => setPackageCount(e.target.value)} aria-label={EDIT_COUNT_LABEL} />
+            onChange={e => setPackageCount(e.target.value)} aria-label={EDIT_COUNT_LABEL} style={EDIT_FIELD_STYLE} />
         </Field>
       </div>
       <div style={{ display: 'flex', gap: T.space.sm }}>
         <div style={{ flex: 2 }}>
           <Field label="How much in all" htmlFor={`ed-qty-${rec.id}`}>
             <Input id={`ed-qty-${rec.id}`} type="text" inputMode="decimal" value={qtyValue}
-              onChange={e => setQtyValue(e.target.value)} aria-label="Quantity" />
+              onChange={e => setQtyValue(e.target.value)} aria-label="Quantity" style={EDIT_FIELD_STYLE} />
           </Field>
         </div>
         <div style={{ flex: 1 }}>
           <Field label="Unit" htmlFor={`ed-unit-${rec.id}`}>
-            <Select id={`ed-unit-${rec.id}`} value={qtyUnit} onChange={e => setQtyUnit(e.target.value)} aria-label="Unit">
+            <Select id={`ed-unit-${rec.id}`} value={qtyUnit} onChange={e => setQtyUnit(e.target.value)} aria-label="Unit"
+              style={EDIT_FIELD_STYLE}>
               {/* A no-size jar opens on the blank; a stored unit outside the list (1b's "fl oz", "cup")
                   is offered as itself rather than displayed as the first option. */}
               {!seed.qtyUnit && <option value="">—</option>}
@@ -2519,7 +2523,8 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
         style={{ margin: eachWords ? `${T.space.xs}px 0 0` : 0, color: P.mid, fontSize: T.type.sm }}>{eachWords}</p>
       <div style={{ marginTop: T.space.sm }}>
         <Field label={EDIT_METHOD_LABEL} htmlFor={`ed-method-${rec.id}`}>
-          <Select id={`ed-method-${rec.id}`} value={method} onChange={e => setMethod(e.target.value)} aria-label={EDIT_METHOD_LABEL}>
+          <Select id={`ed-method-${rec.id}`} value={method} onChange={e => setMethod(e.target.value)} aria-label={EDIT_METHOD_LABEL}
+            style={EDIT_FIELD_STYLE}>
             {/* The form's groups, the door's words for each method (one method reads one way). */}
             {METHOD_GROUPS.map(g => (
               <optgroup key={g.group} label={g.group}>
@@ -2538,7 +2543,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
           <Field label="What method?" htmlFor={`ed-method-other-${rec.id}`}>
             <Input id={`ed-method-other-${rec.id}`} type="text" value={methodOther}
               onChange={e => setMethodOther(e.target.value)} aria-label="Method description"
-              placeholder="Describe how you put it up" />
+              placeholder="Describe how you put it up" style={EDIT_FIELD_STYLE} />
           </Field>
         </div>
       )}
@@ -2560,7 +2565,7 @@ function RowEditor({ rec, onCancel, onSave, busy, err }) {
           <Input id={`ed-useby-${rec.id}`} type="date" value={useByTarget} aria-invalid={dateRefused || undefined}
             onChange={e => { setUseByTarget(e.target.value); setDateRefused(false) }}
             aria-label={useBy ? EDIT_USE_BY_DATE_LABEL : EDIT_DISCARD_DATE_LABEL}
-            style={{ maxWidth: 220, marginTop: 8, minHeight: T.buttonMinHeight }} />
+            style={{ ...EDIT_FIELD_STYLE, maxWidth: 220, marginTop: 8 }} />
         )}
         {dateRefused && (
           <div role="alert" data-testid={`ed-discard-error-${rec.id}`}

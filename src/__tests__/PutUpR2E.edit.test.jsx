@@ -407,3 +407,23 @@ describe('Discard by, on every method, set by hand', () => {
     })
   })
 })
+
+// UX 3.4: "All fields 48 px". The shared Input and Select stop at the app-wide 44 px floor; a Put-Up
+// surface takes 48. jsdom lays nothing out, so this reads the floor each control is given (the render
+// tool measures the boxes).
+describe('48 px targets', () => {
+  // MUTATION: drop the panel's field style from any one field -> that field reads 44px.
+  it('every field, select and chip in the panel is given a 48 px floor', async () => {
+    const panel = await openEditor({ ...JAR, method: 'other', method_other_text: 'Salt-cured', use_by_basis: 'typed' })
+    const floors = Object.fromEntries([...panel.querySelectorAll('input, select, [role="radio"]')]
+      .map(el => [el.id || el.getAttribute('data-testid'), el.style.minHeight]))
+    expect(Object.keys(floors)).toEqual(expect.arrayContaining([
+      'ed-name-rec-e', 'ed-pkg-rec-e', 'ed-qty-rec-e', 'ed-unit-rec-e', 'ed-method-rec-e', 'ed-method-other-rec-e', 'ed-useby-rec-e',
+      'ed-discard-auto-rec-e', 'ed-discard-date-rec-e', 'ed-discard-none-rec-e',
+    ]))
+    expect(floors).toEqual(Object.fromEntries(Object.keys(floors).map(k => [k, '48px'])))
+    // The notes box is taller than the floor; the two buttons are the Button primitive's 48.
+    expect(parseInt(screen.getByRole('textbox', { name: 'Notes' }).style.height, 10)).toBeGreaterThanOrEqual(48)
+    for (const name of ['Save', 'Cancel']) expect(screen.getByRole('button', { name }).style.minHeight).toBe('48px')
+  })
+})
