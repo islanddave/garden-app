@@ -772,6 +772,20 @@ export function segmentLabel(value) {
   return PUT_UP_SEGMENTS.find(s => s.value === value)?.label ?? null
 }
 
+// THE ORIGIN A SENDER DID NOT NAME: the segment on screen. A Going-now card, the door to the closed list, a
+// Recipes row and a batch just started hand the page no origin, and the entry under their push IS that
+// segment — so the page names it, `{ label: <the segment's own label> }`, and the mode's Back pops to it
+// like any other sender's. Left unnamed, each of them was left by a PUSH, and the system's Back after
+// "← Going now" walked back INTO the batch just left (two entries a visit, on the most-used doors).
+// The Back's words do not change by a letter: a pop reads the origin's label, a push the segment's, and
+// they are the same string.
+// null when NO segment is on screen: over the page search's results (the entry under a hit is the results,
+// not a segment) and inside a mode (the entry under it is that mode). Those doors push, as they always did.
+export function segmentOrigin(view, { onScreen = true } = {}) {
+  const label = onScreen ? segmentLabel(view) : null
+  return label ? { label } : null
+}
+
 // POP, OR PUSH. A mode's in-page Back pops ONLY when the entry names where it was opened from AND the
 // router's own history index says an app entry sits under it. Either alone is not enough: an entry with
 // no origin has nowhere it promised to return to, and an origin can outlive what was under it

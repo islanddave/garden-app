@@ -19,6 +19,13 @@
 //   Spare 2 an opener adds its own key and clears no other         -> "From a batch, opening its recipe shows
 //                                                                    the recipe"
 //   (own)   openMode never replaces over a sheet's Back marker     -> "a sender that did not land first …"
+// LANE A2 (the mobile seat's render review; one mutation per rule, each names the test it reds):
+//   A2-1a   openMode passes `origin ?? null` (no segment named)    -> "a Going-now card → batch: the Back reads
+//                                                                    as it always did, POPS …"
+//   A2-1b   the segment is named even over the search's results    -> "over the search's results there is no
+//                                                                    segment on screen …"
+//   A2-1c   the segment is named even inside a mode                -> "inside a mode there is no segment on
+//                                                                    screen either …"
 // CI lane: `npm test` plus the TZ re-run. No jest-dom (L-182). Nothing here reads a clock.
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -237,9 +244,14 @@ function PlantingStub() {
 // Every test starts on a fresh pair of entries: a floor, so a Back that leaves the page is a real
 // traversal, and the entry under test on top of it. `state` is the router's `usr`; `idx` the router's index
 // (0 = the first app entry of the session, which is what a cold deep link and a restored PWA are).
-function renderAt(url, { state = null, idx = 0, sheet = StubStartSheet, registry = false } = {}) {
+// `under` seeds app entries BETWEEN the floor and the entry under test, oldest first, each `{ url, state?,
+// idx?, key? }`: a stack as a reload finds it, which no tap in a fresh render can build. `key` is the
+// router's key for an entry; two entries that share one are a sheet's Back marker and the entry it copied.
+const entryKey = () => `e${pops}-${Math.random().toString(36).slice(2, 8)}`
+function renderAt(url, { state = null, idx = 0, sheet = StubStartSheet, registry = false, under = [], key } = {}) {
   window.history.pushState({ __floor: 1 }, '', '/floor')
-  window.history.pushState({ usr: state, key: `e${pops}-${Math.random().toString(36).slice(2, 8)}`, idx }, '', url)
+  for (const e of under) window.history.pushState({ usr: e.state ?? null, key: e.key ?? entryKey(), idx: e.idx ?? 0 }, '', e.url)
+  window.history.pushState({ usr: state, key: key ?? entryKey(), idx }, '', url)
   const tree = (
     <>
       <Probe />
@@ -287,12 +299,15 @@ describe('the one opener: one mode key, always a push, the state carried through
   const BG = { pathname: '/today', search: '', hash: '', key: 'bg', historyEntry: { idx: 0, doc: 'd1' } }
 
   // M1's page half. Each sender, opened from an overlay entry: the background must ride along, and the
-  // origin must be the sender's own — or absent, when it names none.
+  // origin must be the sender's own. A sender that names none is opened from the segment on screen, so the
+  // page names that segment (lane A2); over the search's results there is no segment, and no origin.
+  // ⚠ AMENDED by lane A2, in the same commit as the change: the three "(no origin)" doors that are tapped ON A
+  // SEGMENT used to push `{ background }` alone; each now also carries `from: { label: <that segment> }`.
   it.each([
-    ['the Going-now card (no origin)', '/put-up', async () => { pickSegment('Going now'); tap('going-open-batch') },
-      '/put-up?batch=kb-1', { background: BG }],
-    ['Going now\'s door to the closed list (no origin)', '/put-up', async () => { pickSegment('Going now'); tap('going-closed-door') },
-      '/put-up?state=closed', { background: BG }],
+    ['the Going-now card (names none: the segment it was tapped on)', '/put-up', async () => { pickSegment('Going now'); tap('going-open-batch') },
+      '/put-up?batch=kb-1', { background: BG, from: { label: 'Going now' } }],
+    ['Going now\'s door to the closed list (names none: the segment)', '/put-up', async () => { pickSegment('Going now'); tap('going-closed-door') },
+      '/put-up?state=closed', { background: BG, from: { label: 'Going now' } }],
     ['a closed row', '/put-up?state=closed', async () => tap('stub-closed-row'),
       '/put-up?batch=kb-closed', { background: BG, from: { label: 'Closed batches' } }],
     ['the Pantry list', '/put-up?view=pantry', async () => tap('stub-pantry-batch'),
@@ -303,8 +318,8 @@ describe('the one opener: one mode key, always a push, the state carried through
       '/put-up?recipe=rc-1', { background: BG, from: { label: 'Megatron mash', kind: 'batch', id: 'kb-1' } }],
     ['a recipe\'s Make this', '/put-up?recipe=rc-1', async () => tap('stub-recipe-make'),
       '/put-up?batch=kb-made', { background: BG, from: { label: 'Petri Dish', kind: 'recipe', id: 'rc-1' } }],
-    ['a row of the Recipes list (no origin)', '/put-up', async () => { pickSegment('Recipes'); tap('stub-recipes-row') },
-      '/put-up?recipe=rc-1', { background: BG }],
+    ['a row of the Recipes list (names none: the segment)', '/put-up', async () => { pickSegment('Recipes'); tap('stub-recipes-row') },
+      '/put-up?recipe=rc-1', { background: BG, from: { label: 'Recipes' } }],
     ['a recipe search hit (no origin)', '/put-up?view=pantry&find=petri', async () => tap(await hit()),
       '/put-up?view=pantry&recipe=rc-1', { background: BG }],
   ])('%s: the pushed state is { background, from }', async (_name, url, act1, wantUrl, wantState) => {
@@ -319,14 +334,15 @@ describe('the one opener: one mode key, always a push, the state carried through
   })
   async function hit() { await screen.findByTestId('stub-search-hit-rc-1'); return 'stub-search-hit-rc-1' }
 
-  it('a batch just started rides the same opener: its background is kept, and it names no origin', async () => {
+  // ⚠ AMENDED by lane A2 (same commit): was "…and it names no origin", `{ background }` alone.
+  it('a batch just started rides the same opener: its background is kept, and its origin is the segment it was started on', async () => {
     renderAt('/put-up', { state: { background: BG } })
     await flush()
     pickSegment('Going now')
     tap('start-a-batch')
     tap('stub-start-it')
     await waitFor(() => expect(loc()).toBe('/put-up?batch=kb-new'))
-    expect(state()).toEqual({ background: BG })
+    expect(state()).toEqual({ background: BG, from: { label: 'Going now' } })
   })
 
   it('a start that answered with no id opens nothing and pushes nothing', async () => {
@@ -426,16 +442,20 @@ describe('the page\'s Back: it says where it lands, and lands there', () => {
     expect(screen.getByTestId('planting-page')).toBeTruthy()
   })
 
-  it('the Going-now card → batch names no origin: the label is the segment, and the press lands on it', async () => {
+  // ⚠ AMENDED by lane A2 (same commit): was "…names no origin: the label is the segment…". The words, the
+  // landing and the segment are asserted exactly as before; what is new is that the press is a POP.
+  it('the Going-now card → batch: the label is the segment it was tapped on, and the press lands on it', async () => {
     renderAt('/put-up')
     await flush()
     pickSegment('Going now')
     tap('going-open-batch')
     await waitFor(() => expect(backBtn().textContent).toBe('← Going now'))
+    const depth = window.history.state.idx
     tap('putup-mode-back')
     await waitFor(() => expect(screen.getByTestId('going-now-view')).toBeTruthy())
     expect(loc()).toBe('/put-up')
     expect(segment()).toBe('Going now')
+    expect(window.history.state.idx).toBe(depth - 1)
   })
 
   it('a recipe search hit names no origin: the label is Recipes, and the press lands on the Recipes list', async () => {
@@ -578,6 +598,148 @@ describe('the page\'s Back: it says where it lands, and lands there', () => {
     expect([name.style.overflow, name.style.textOverflow, name.style.minWidth]).toEqual(['hidden', 'ellipsis', '0'])
     expect(kind.style.flexShrink).toBe('0')
     expect(backBtn().style.minHeight).toBe('48px')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// R1 follow-up, lane A2 (the mobile seat's finding: a Back that walks back INTO a mode). A door that hands
+// the page no origin is opened from the segment on screen, so the page names that segment as the origin and
+// the mode is left by a POP — the words on the Back are the ones it always showed.
+describe('a door that names no origin is opened from the segment on screen', () => {
+  // [name, the segment, the door, the mode's URL, its testid, the Back's exact words, the landing's testid]
+  it.each([
+    ['a Going-now card → batch', 'Going now', () => tap('going-open-batch'),
+      '/put-up?batch=kb-1', 'putup-batch-mode', '← Going now', 'going-now-view'],
+    ['Going now → Closed batches', 'Going now', () => tap('going-closed-door'),
+      '/put-up?state=closed', 'putup-closed-mode', '← Going now', 'going-now-view'],
+    ['a Recipes row → recipe', 'Recipes', () => tap('stub-recipes-row'),
+      '/put-up?recipe=rc-1', 'recipe-detail', '← Recipes', 'recipes-view'],
+    ['a batch just started on Going now', 'Going now', () => { tap('start-a-batch'); tap('stub-start-it') },
+      '/put-up?batch=kb-new', 'putup-batch-mode', '← Going now', 'going-now-view'],
+    ['a batch started through the Pantry\'s door', 'Pantry', () => { tap('putup-door'); tap('stub-door-escape'); tap('stub-start-it') },
+      '/put-up?batch=kb-new', 'putup-batch-mode', '← Pantry', 'pantry-view'],
+  ])('%s: the Back reads as it always did, POPS, and a system Back after it does not walk back in', async (_name, seg, open, modeUrl, modeId, words, landId) => {
+    renderAt('/put-up')
+    await flush()
+    pickSegment(seg)
+    open()
+    await waitFor(() => expect(loc()).toBe(modeUrl))
+    expect(screen.getByTestId(modeId)).toBeTruthy()
+    expect(state()).toEqual({ from: { label: seg } })
+    expect(backBtn().textContent).toBe(words)
+    const depth = window.history.state.idx
+    expect(depth).toBe(1)
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      tap('putup-mode-back')
+      await waitFor(() => expect(loc()).toBe('/put-up'))
+      expect(go.mock.calls).toEqual([[-1]])                     // ONE traversal: the press popped, it did not push
+    } finally { go.mockRestore() }
+    expect(window.history.state.idx).toBe(depth - 1)
+    expect(screen.getByTestId(landId)).toBeTruthy()
+    expect(segment()).toBe(seg)
+    await systemBack()
+    expect(screen.getByTestId('floor')).toBeTruthy()            // …it leaves the page: the mode is not re-opened
+    expect(screen.queryByTestId(modeId)).toBeNull()
+  })
+
+  // A search hit's under-entry is the results, not a segment (the recipe hit is held above, in the pushed-state
+  // table and in "a recipe search hit names no origin"). The same holds for every door under the results.
+  it('over the search\'s results there is no segment on screen: a batch started there names no origin, and its Back is the push', async () => {
+    going = []                                                  // nothing going: the page holds the Pantry
+    renderAt('/put-up?find=kraut')
+    await screen.findByTestId('pantry-search-results')
+    tap('putup-door'); tap('stub-door-escape'); tap('stub-start-it')
+    await waitFor(() => expect(loc()).toBe('/put-up?batch=kb-new'))
+    expect(state()).toBeNull()
+    expect(backBtn().textContent).toBe('← Pantry')
+    const depth = window.history.state.idx
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      tap('putup-mode-back')
+      await waitFor(() => expect(screen.getByTestId('pantry-view')).toBeTruthy())
+      expect(go).not.toHaveBeenCalled()
+    } finally { go.mockRestore() }
+    expect(loc()).toBe('/put-up')
+    expect(window.history.state.idx).toBe(depth + 1)
+  })
+
+  // Inside a mode the entry under a push is that mode. The held segment is not on screen and is not where
+  // the press would land, so naming it would be the Back lying.
+  it('inside a mode there is no segment on screen either: a door there that names no origin gets none', async () => {
+    renderAt('/put-up')
+    await flush()
+    pickSegment('Recipes')
+    tap('stub-recipes-row')
+    await screen.findByTestId('recipe-detail')
+    expect(state()).toEqual({ from: { label: 'Recipes' } })     // instrument: the segment WAS named one step earlier
+    act(() => { seen.recipes.at(-1).onOpen('rc-2') })
+    await waitFor(() => expect(loc()).toBe('/put-up?recipe=rc-2'))
+    expect(state()).toBeNull()
+  })
+
+  it('Going now → a batch → its recipe, then Back twice: each press pops to its own sender, and the system Back then leaves', async () => {
+    renderAt('/put-up')
+    await flush()
+    pickSegment('Going now')
+    tap('going-open-batch')
+    await screen.findByTestId('putup-batch-mode')
+    tap('stub-batch-recipe')
+    await waitFor(() => expect(backBtn().textContent).toBe('← Megatron mash (batch)'))
+    expect(window.history.state.idx).toBe(2)
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up?batch=kb-1'))
+    // The batch entry still names the segment it was opened from: a recipe opened from it took nothing away.
+    expect(state()).toEqual({ from: { label: 'Going now' } })
+    expect(backBtn().textContent).toBe('← Going now')
+    tap('putup-mode-back')
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(window.history.state.idx).toBe(0)
+    expect(screen.getByTestId('going-now-view')).toBeTruthy()
+    expect(segment()).toBe('Going now')
+    await systemBack()
+    expect(screen.getByTestId('floor')).toBeTruthy()
+  })
+
+  it('a removed batch and a removed recipe pop to the segment they were opened from', async () => {
+    renderAt('/put-up')
+    await flush()
+    pickSegment('Going now')
+    tap('going-open-batch')
+    await screen.findByTestId('putup-batch-mode')
+    tap('stub-batch-removed')
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(window.history.state.idx).toBe(0)
+    expect(screen.getByTestId('going-now-view')).toBeTruthy()
+    cleanup()
+    renderAt('/put-up')
+    await flush()
+    pickSegment('Recipes')
+    tap('stub-recipes-row')
+    await screen.findByTestId('recipe-detail')
+    tap('stub-recipe-removed')                                   // onOpen(null)
+    await waitFor(() => expect(loc()).toBe('/put-up'))
+    expect(window.history.state.idx).toBe(0)
+    expect(screen.getByTestId('recipes-view')).toBeTruthy()
+    expect(segment()).toBe('Recipes')
+  })
+
+  // history.state outlives a reload: an entry that names a segment can be the first of a session.
+  it('at history index 0 an entry that names a segment still pushes, as every origin does there', async () => {
+    renderAt('/put-up?recipe=rc-1', { state: { from: { label: 'Recipes' } }, idx: 0 })
+    await screen.findByTestId('recipe-detail')
+    expect(backBtn().textContent).toBe('← Recipes')
+    const go = vi.spyOn(window.history, 'go')
+    try {
+      tap('putup-mode-back')
+      await waitFor(() => expect(screen.getByTestId('recipes-view')).toBeTruthy())
+      expect(go).not.toHaveBeenCalled()
+    } finally { go.mockRestore() }
+    expect(loc()).toBe('/put-up')
+    expect(window.history.state.idx).toBe(1)
+    expect(segment()).toBe('Recipes')
+    expect(state()).toBeNull()
+    expect(screen.queryByTestId('floor')).toBeNull()
   })
 })
 

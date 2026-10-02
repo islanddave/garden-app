@@ -77,7 +77,7 @@ import { FIND_PARAM } from '../lib/putUpClientState.js'
 // URL) and the foot of goingNow.js (pop or push, the Back's words, the segments).
 import { withFrom, modeSearch } from '../components/putup/origin.js'
 import {
-  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, leavePlan, backWords, recipeSearchItems,
+  START_BATCH_CTA, PUT_UP_SEGMENTS, leaveSegment, segmentLabel, segmentOrigin, leavePlan, backWords, recipeSearchItems,
 } from '../components/putup/goingNow.js'
 import { readMarker } from '../lib/backNav.js'
 
@@ -417,6 +417,11 @@ export default function PutUp({
   const recipeId = batchId ? null : (searchParams.get('recipe') || null)
   const closedMode = !batchId && !recipeId && searchParams.get('state') === 'closed'
   const modeActive = !!batchId || !!recipeId || closedMode
+  // The page search's text (`?find=`), and whether its results are what the page is showing. Read here,
+  // above the opener, because the opener asks it: a door under the results is opened from the results,
+  // not from a segment.
+  const findText = searchParams.get(FIND_PARAM) ?? ''
+  const searching = !modeActive && findText.trim() !== ''
 
   // ONE instant for the detail surface, collapsed once per opened batch — GoingNowView.jsx:221-225's
   // rule applied at the page. PutUp is a route element that App renders with no props, so it cannot
@@ -475,8 +480,12 @@ export default function PutUp({
   //   · THE URL carries exactly ONE mode key (origin.js modeSearch), with the page search dropped and
   //     every other param kept. A mode that names nothing (a start that answered with no id) opens nothing.
   //   · THE STATE is withFrom(location.state, origin): the overlay's background and every other key ride
-  //     along, the sender's origin is set — or REMOVED when the sender names none, so the next mode's
-  //     Back can never read the last one's.
+  //     along, and the origin is the SENDER's, never the last entry's. A sender that names none is opened
+  //     from the segment on screen, so that segment is its origin (goingNow.js segmentOrigin): the card, the
+  //     closed list's door, a Recipes row and a batch just started are then left by a POP, like every other
+  //     door, and the system's Back after "← Going now" does not walk back INTO the batch. With no segment
+  //     on screen — over the search's results, or inside a mode — there is none to name and the origin is
+  //     REMOVED, so the next mode's Back can never read the last one's.
   //   · IT IS A PUSH, so Back (the system's and the page's) returns to the sender. A sender inside an
   //     armed sheet lands first (kitchen/sheetLanding.js). The one exception is the net for a sender that did
   //     not: while a sheet's Back marker is still the current entry, a push would strand it mid-stack as
@@ -485,8 +494,9 @@ export default function PutUp({
     const next = modeSearch(searchParams, mode)
     if (!next.has('batch') && !next.has('recipe') && !next.has('state')) return
     const overMarker = typeof window !== 'undefined' && !!readMarker(window.history?.state)
-    setSearchParams(next, { state: withFrom(location.state, origin ?? null), replace: overMarker })
-  }, [searchParams, setSearchParams, location.state])
+    const from = origin ?? segmentOrigin(view, { onScreen: !modeActive && !searching })
+    setSearchParams(next, { state: withFrom(location.state, from), replace: overMarker })
+  }, [searchParams, setSearchParams, location.state, view, modeActive, searching])
   const openBatch = useCallback((id, origin) => openMode({ batch: id }, origin), [openMode])
   const openRecipe = useCallback((id, origin) => openMode({ recipe: id }, origin), [openMode])
   const openClosed = useCallback(() => openMode({ state: 'closed' }), [openMode])
@@ -495,8 +505,8 @@ export default function PutUp({
   // opened from and an app entry is under it: the sender is one Back away, on this route or another, with
   // its own state — and a system Back after it does not walk back INTO the mode. Otherwise it is the push
   // it has always been — the URL with the mode keys removed (anything else, ?session= included, survives)
-  // — so a cold deep link, a restored session and a card that named no origin all have an exit that never
-  // leaves the page by surprise and never does nothing. That push lands on the segment the page is
+  // — so a cold deep link, a restored session and a search hit (which names no origin) all have an exit that
+  // never leaves the page by surprise and never does nothing. That push lands on the segment the page is
   // holding, except a recipe, which is left onto Recipes; the Back's words (backWords, below) name that
   // same landing. A second press while a pop is still landing WAITS: a pop, unlike the push, is not safe
   // to do twice.
@@ -523,8 +533,9 @@ export default function PutUp({
     setSearchParams(modeSearch(searchParams, null), { state: withFrom(location.state, null) })
   }, [location.state, location.key, navigate, chooseView, view, recipeId, searchParams, setSearchParams])
 
-  // RecipesView's `onOpen(id | null)`: an id opens that recipe (no origin — it is left onto Recipes); null,
-  // which a removed recipe sends, is the same act as the page's own Back.
+  // RecipesView's `onOpen(id | null)`: an id opens that recipe (it names no origin, so the opener names the
+  // Recipes segment it was tapped on); null, which a removed recipe sends, is the same act as the page's own
+  // Back.
   const onRecipeOpen = useCallback((id) => {
     if (id == null || id === '') { if (recipeId) leaveMode() } else openRecipe(id)
   }, [recipeId, leaveMode, openRecipe])
@@ -533,7 +544,8 @@ export default function PutUp({
   // a started batch opens straight into the shipped `?batch=` mode: a PUSH, so Back returns to the list
   // it was started from, with the list re-read because it has a new card. R1: through the one opener,
   // and with the origin a sender names — a recipe's Make this and its "Made from this" rows hand theirs
-  // in as the second argument, so the batch's Back returns to that recipe.
+  // in as the second argument, so the batch's Back returns to that recipe; Start's own sheet hands none, and
+  // the opener names the segment it was started on.
   //
   // `startLabel` is the name Start opens WITH — the one the Put something up door carried over when its
   // escape line was tapped (PLAN-V3 D6, D10) — and '' from every other door. Anything that is not text (a
@@ -609,8 +621,6 @@ export default function PutUp({
   // The Pantry list is read at the PAGE: the segment, the page search and the door's name search all
   // read the same rows, and a write from any of them re-reads once.
   const [pantryGroup, setPantryGroup] = useState('place')
-  const findText = searchParams.get(FIND_PARAM) ?? ''
-  const searching = !modeActive && findText.trim() !== ''
   const [doorOpen, setDoorOpen] = useState(false)
   const [doorName, setDoorName] = useState('')
   const pantry = usePantryList({ fetch: pageFetch, group: pantryGroup,
